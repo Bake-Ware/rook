@@ -34,6 +34,7 @@ Read the reference that matches the job; don't load them all:
 | Talk to the person, or post into their huddle | `rook_huddle` (status, ask, read; chaired huddles: start, post) |
 | Read or answer an existing chat room | `rook_chat_*`, `rook_presence`, `rook_chat_wake` (new rooms are off by default) |
 | Tell the project's room what you're on, or ask the person for a decision | `rook_huddle` (`status`, `ask`, `say`, `read`) |
+| Tell the person what is waiting for them; pass on their decision | `rook_approvals` (`summary`, `list`, `approve`, `deny`) |
 | Use a credential | `{{secret:name}}` inside `rook_call` args; `rook_secret(action="list")` for names |
 | Schedule or repeat work | `rook_jobs` (`describe_schema` first) |
 | Recover output of an earlier or timed-out call | `rook_journal(call_id=…)` |
@@ -122,7 +123,16 @@ You act only on what your user asked in this conversation. Get their explicit go
 
 ## Approval holds
 
-The hub may hold a call until a person approves it: admin-tier or destructive calls (worker updates, config pushes, secret writes, closing a console, deleting chat), and calls that would reach more machines than the hub allows in a short time (5 in 10 minutes by default). A held call waits up to about 45 s. If nobody answers, the reply is `{"ok": false, "held": true, "hold": "<id>", "error": "Held for approval …"}` and nothing ran. Tell the user what you want to do and the hold id, ask them to approve it on the dashboard's **Approvals** page, then repeat the **same** call (same cap, worker and args): one approval covers one identical call for 10 minutes. Changed args need a new approval. A reply saying a person denied the hold is final. Never try to get around a hold: no other tool, worker, job, console or chat wake for the same action, and no splitting the work across machines.
+The hub may hold a call until a person approves it: admin-tier or destructive calls (worker updates, config pushes, secret writes, closing a console, deleting chat), and calls that would reach more machines than the hub allows in a short time (5 in 10 minutes by default). A held call waits up to about 45 s. If nobody answers, the reply is `{"ok": false, "held": true, "hold": "<id>", "error": "Held for approval …"}` and nothing ran. Tell the user what you want to do and the hold id (and its name), ask them to approve it on the dashboard's **Approvals** page (or, if they enabled your client, to tell you their decision so you can relay it with `rook_approvals`), then repeat the **same** call (same cap, worker and args): one approval covers one identical call for 10 minutes. Changed args need a new approval. A reply saying a person denied the hold is final. Never try to get around a hold: no other tool, worker, job, console or chat wake for the same action, and no splitting the work across machines.
+
+## Checking in: what's waiting, and relaying the person's decision
+
+Where `rook_approvals` is listed, the person can decide waiting items through you: held calls, held job calls, huddle action cards and pinned huddle questions.
+
+- **Check in** when they ask ("what's waiting?") or at a natural pause: `rook_approvals(action="summary")`, or `list` for the details. Read it back tersely: the count, then each item's name and its one line ("3 waiting: brave-otter-lamp, Claude web wants to run shell.exec on box: `systemctl restart nginx`; ..."). Say which are dashboard only (`relayable: false`).
+- **Relay only their explicit decision**, item by item, in their words: `rook_approvals(action="approve"|"deny", item=<name or id>, relayed_by={"who": <person>, "quote": <their exact words>, "session": <this conversation's URL or id>}, reason=<their reason, for a deny>)`; `answer=` carries their reply to a question. Never approve or deny on your own judgement, never extend "approve that one" to items they did not name, and ask when it is unclear which item they mean. A spoken "yes" heard by a microphone is still their word, but confirm anything risky.
+- **Refusals are final here.** "may not relay" means they have not enabled your client (Tokens page, *May relay my approvals*): tell them, don't work around it. A dashboard-only item (secrets, tokens, policy, settings, job locks, the operator's list) waits for them on the Approvals page.
+- Your relay is recorded with your identity, their name, their words and the session, and shown beside the item; the requester sees the same line.
 
 ## Reaching the user
 

@@ -63,6 +63,14 @@ id; it should tell you, and repeat the same call once you have approved it.
 See [[manual-accounts-and-access]] for how approving works, exceptions for a
 trusted agent, and how to turn it off.
 
+An agent can also check in with you: `rook_approvals` (action `summary` or
+`list`) tells it everything waiting for you (held calls, held job calls,
+huddle cards, pinned questions), each with a name you can say. If you
+switch on **Relays** for its token on the **Tokens** page, it can approve or
+deny an item when you tell it to, quoting your words; your words and the
+conversation are recorded beside the decision. Without that switch, it can
+only tell you to use the Approvals page.
+
 ## The Rook skill
 
 `rook skill` installs Rook's instructions for agents (a "skill") into Claude

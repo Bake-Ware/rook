@@ -36,6 +36,7 @@ are set only in the environment or on the command line.
 | `core.approvals.voice_max_tier` | Highest tier a spoken yes may approve | hub | str | `admin` |  | live |
 | `core.approvals.notify_every_secs` | At most one message per (s) | hub | int | `60` |  | live |
 | `core.approvals.hub_host_workers` | Workers on the hub's own machine | hub | list | `['auto']` | `ROOK_APPROVALS_HUB_HOST_WORKERS` | live |
+| `core.approvals.relay_dashboard_only` | Never relayed: dashboard only | hub | list | `['tier:admin', 'hold:hub-host', 'tag:physica…` |  | live |
 
 ## Core: Features
 

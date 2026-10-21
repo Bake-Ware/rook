@@ -30,6 +30,7 @@ call `rook.hub.authz.require_hub_admin("settings.set")` the same way.
 | E2: worker ticket checks | `rook/worker/authz_guard.py`, `Worker._on_message` | All five modes; default `audit` (`ROOK_AUTHZ_MODE`). Keys learned from signed hub announces or inlined in the ticket; `authz` readiness in the announce; `audit.jsonl` gains `ticket` and `decision`. |
 | Dashboard | `/permissions`, `/api/policy`, `/api/policy/explain` (`rook/remote/policy_web.py`); caps `policy.explain/get/set/status` on `rook` | A minimal page: mode, revision, lint, JSON editor, explain, recent non-allow decisions. The full editor (matrix, pickers, dry run, history) waits for the settings framework. |
 | Approval holds and the spread limit (3.11) | `rook/hub/approvals.py`, `rook/hub/approval_contact.py`, `/api/approvals` (`rook/remote/approvals_web.py`), Approvals page (`rook/web/approvals.js`) | On by default, independent of the policy mode: agents' admin and destructive calls, operator `hold` rules and a 6th machine within 10 minutes wait for a person. Queue in `approvals.db` beside `policy.json`. Settings `core.approvals.*`. |
+| Relayed approvals (3.12) | `rook/hub/relay.py`, hub plugin `approvals` (`approvals.list`, `approvals.relay`, MCP `rook_approvals`), Tokens page *Relays* switch (`rook/band_mcp/account_tokens.py`), huddle chair `waiting`/`relay` | One list of held calls, held job calls, huddle cards and pinned questions. An agent the person enabled may approve or deny with `relayed_by {who, quote, session}`; never secrets, tokens, policy, settings, approvals, job locks or `approvals.relay_dashboard_only`. Append-only `relays` audit in `approvals.db`. |
 | `rook band` TUI | `rook/cli/band_tui.py` (`BandHTTP`), `GET /api/band/whoami` | The TUI has no band path of its own: every call is `POST /api/band/call` (and `/api/band/ban`, `/unban`) with the dashboard login, so the dashboard principal middleware, the band client's policy check, ticket signing and journaling all apply. The dashboard forwards `/api/band/call` to the bridge's `/internal/band-call` (the admitted `human:*` principal travels in `X-Rook-Principal`, internal token), so the call is authorized and journaled where agent calls are and the hub's own caps run in-process. `whoami` reports the principal, the hub policy mode for it and whether the hub signs tickets. On a hub without it (404) the TUI warns that the hub predates permissions, and it adds a `hint` to refusals from hub policy or from ticket-enforcing workers. |
 
 **Current-code gaps (6.3), fixed.**
@@ -796,6 +797,84 @@ and `rook_secret` get/set, memory forget and `updates.check` stay held.
 - In enforce mode, a cap a plugin tool calls in process is checked for holds
   but not for denials (as before); the tool's own cap is checked for both.
 - Spread counters are per process and reset when it restarts.
+
+### 3.12 Relayed approvals
+
+A person may decide waiting items through an agent they trust (claude.ai over
+the MCP, a voice assistant, the house agent chairing a huddle): the agent
+checks in, reads the list back, and passes on the person's own decision.
+`rook/hub/relay.py` and the hub plugin `approvals` (`rook/hub/plugins/approvals`).
+
+**One list.** `approvals.list` (read; MCP `rook_approvals` `summary`/`list`)
+merges four kinds: `hold` (a pending hold), `job` (a hold whose on-behalf-of
+chain has `job:<id>`), `card` (a proposed huddle action card, every huddle)
+and `ask` (an open pinned huddle question). Each item: `kind`, `id`, a
+speakable `name` (holds and questions now get names too: kinds `hold` in
+`approvals.db`, `ask` in `chat.db`), `who`, `what` (one sentence with the
+concrete action and target, from the redacted args), `risk` (tier; `note`
+or `question` for items without a call), `from` (`huddle`, `role`, `job`),
+`age`, and `relayable` / `why_not`. `summary` is one speakable line. Listing
+is for people, hub code and enabled relayers only (the list shows commands
+agents are waiting to run).
+
+**Relaying.** `approvals.relay {item, decision, relayed_by, reason?,
+answer?}` (write tier; MCP `rook_approvals approve|deny`). Refused unless all
+of:
+
+1. the caller is a verified agent principal (not a person, band caller or
+   unverified) listed in `approvals.db` `relayers`. Only the dashboard's
+   Tokens page writes that table (operator account, CSRF, and never for a
+   weak sign-in, as for approving holds); no cap, tool or setting does.
+   Revoking a client's last token removes it. Every change is in the
+   append-only `relayer_log`;
+2. `relayed_by {who, quote, session}` is complete: the person, their words,
+   the conversation they said them in (the task `closed_by` pattern);
+3. the item is not dashboard-only. The fixed floor (`relay.FLOOR`): `secret.*`,
+   `vault.*`, `token.*`, `policy.*`, `settings.*`, `member.*`, `approvals.*`,
+   `band.admin`, `band.deauth`, `guidance.write`, `job.write:lock|unlock`.
+   The setting `approvals.relay_dashboard_only` adds selectors: cap globs
+   with an optional `:action`, `tier:<t>` (that tier and above), `tag:<t>`,
+   `hub:<t>`, `hold:<kind>`, `card:<kind>`, `kind:<kind>`. The default is
+   conservative: `tier:admin`, `hold:hub-host` (a shell on the hub's machine
+   could rewrite `approvals.db`), `tag:physical`, `worker.*`, `band.*`,
+   `hub.plugin.*`, `customcap.*`, `role.set|delete|move`, `job.write:delete`.
+   Changing the setting is `settings.set`, on the floor.
+
+A relayed hold decision is `Approvals.decide(..., relay=)`: `decided_by` is
+`"<who> via <relayer label>"`, a deny's reason is the hold's `note`, and the
+`relays` row is written in the same transaction. A spread hold is approved
+for the call only (no spread grant). A relayed card runs its call as the
+person would from the dashboard (principal `human:relayed`, owner, labelled
+`<who> via <relayer>`); a dismissal's reason is posted in the room mentioning
+the proposer and shown to the chair as "dismissed, with their reason". A
+relayed answer to a question is posted with the attribution and wakes the
+asker as a dashboard answer does.
+
+**Audit.** `approvals.db` `relays` is append-only (triggers refuse UPDATE
+and DELETE; kept beyond the hold history): `kind, item, decision, relayer,
+relayer_label, who, quote, session, reason, summary, created`. Card and
+question relays are also journaled as `approval.relay`; hold relays ride on
+`approval.decide` (`relayed_by`, `reason`). The Approvals page shows
+`relayed_text` ("approved by Bake via Claude web: \"...\"") beside a decided
+hold and lists recent relays of every kind; the huddle view shows it on the
+card or answer.
+
+**The requester.** A denied hold's reply now carries the person's note
+(`Decision.note`: "Their reason: ..."), and an identical repeat within
+`approval_secs` (at least 10 minutes) gets that denial at once instead of a
+new hold (a denial is final, so the agent hears why).
+
+**The chair.** When anything is waiting, the chair's turn offers `waiting`
+(the list) with a rule to answer "what's waiting?" from it, tersely. When the
+house agent's identity is an enabled relayer and a person started the round,
+it also offers `relay {item, decision, quote, reason?, answer?}`: the hub
+checks the quote is in that person's message, `who` is the sender, `session`
+is the huddle and round. A guest agent's post never gets `relay`.
+
+**Limits.** An MCP client's quote cannot be verified: enabling a client
+trusts it to pass on the person's words faithfully, and the record makes a
+false relay visible afterwards, not impossible. Keep the dashboard-only list
+strict and enable only clients the person trusts.
 
 ---
 

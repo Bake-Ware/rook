@@ -11,7 +11,16 @@ from starlette.routing import Route
 
 from ..remote.account_api import account_api, json_reply
 from ..remote.accounts import AccountStore
-from ..remote.account_web import NO_STORE
+from ..remote.account_web import COOKIE, NO_STORE
+
+#: The Tokens page's "May relay my approvals" (rook/hub/relay.py): who may
+#: approve or deny waiting items on the person's behalf. Only this
+#: operator-account route writes it, and never for a sign-in that used a
+#: password agents could also read (a vault value).
+WEAK_RELAY = ('This sign-in uses a password that is stored as a band secret, so agents could sign '
+              'in as you with it. It can\'t change who may relay your approvals. Change the '
+              'password (or remove that secret) and sign in again.')
+HOUSE_AGENT = 'house'
 
 
 def _parse_data_url(u: str) -> tuple[str, bytes | None]:
@@ -41,10 +50,39 @@ def dashboard_tokens_url() -> str:
     return "/#tokens"
 
 
-def build_account_token_routes(provider, chat=None, accounts=None):
+def build_account_token_routes(provider, chat=None, accounts=None, approvals=None, house=None):
+    """``approvals()``: the hub's approval queue holder (or None);
+    ``house()``: ``(identity, label)`` of the house agent (or None)."""
     accounts = accounts or AccountStore()
 
     response = json_reply
+
+    def queue():
+        ap = approvals() if approvals is not None else None
+        return getattr(ap, 'queue', None)
+
+    def house_agent():
+        try:
+            return house() if house is not None else None
+        except Exception:
+            return None
+
+    def relay_view(tokens):
+        """Each token's relay switch, and the house agent's."""
+        q = queue()
+        on = {r['principal']: r for r in (q.relayers() if q is not None else [])}
+        for t in tokens:
+            r = on.get(f"token:{t.get('agent_id')}")
+            t['relay'] = bool(r)
+            if r:
+                t['relay_by'] = r.get('enabled_by')
+        out = {'available': q is not None}
+        h = house_agent()
+        if h:
+            r = on.get(h[0])
+            out['house'] = {'identity': h[0], 'label': h[1], 'relay': bool(r),
+                            **({'relay_by': r.get('enabled_by')} if r else {})}
+        return out
 
     # The dashboard proxy also verifies Origin. CSRF remains mandatory here
     # (account_api), including when this endpoint is reached directly on MCP.
@@ -52,10 +90,41 @@ def build_account_token_routes(provider, chat=None, accounts=None):
                  operator_only='API tokens require an operator account.')
     async def api(request, user, data):
         if data is None:
-            return response({'tokens': provider.list_api_tokens(),
+            tokens = provider.list_api_tokens()
+            relay = relay_view(tokens)
+            return response({'tokens': tokens, 'relay': relay,
                              'avatars': chat.avatar_index() if chat and chat.enabled else {}})
         try:
             op = data.get('op')
+            if op == 'relay':
+                q = queue()
+                if q is None:
+                    return response({'error': 'Approvals are unavailable on this hub.'}, 503)
+                weak = True
+                try:
+                    weak = bool(accounts.session_weak(request.cookies.get(COOKIE, '')))
+                except Exception:
+                    pass  # unknown: fail closed
+                if weak:
+                    return response({'error': WEAK_RELAY, 'weak_credential': True}, 403)
+                enabled = data.get('enabled')
+                if not isinstance(enabled, bool):
+                    raise ValueError('enabled must be true or false.')
+                ident = str(data.get('id', ''))
+                if ident == HOUSE_AGENT:
+                    h = house_agent()
+                    if not h:
+                        raise ValueError('There is no house agent on this hub.')
+                    principal, label = h
+                else:
+                    t = next((t for t in provider.list_api_tokens() if t.get('id') == ident), None)
+                    if t is None or not t.get('agent_id'):
+                        return response({'error': 'Token no longer exists.'}, 404)
+                    principal, label = f"token:{t['agent_id']}", t.get('name') or ident
+                changed = q.set_relayer(principal, enabled,
+                                        'human:' + str(user.get('username') or user.get('id')),
+                                        label)
+                return response({'ok': True, 'relay': enabled, 'changed': changed})
             if op == 'create':
                 name = data.get('name')
                 if not isinstance(name, str) or not 1 <= len(name.strip()) <= 64:
@@ -88,8 +157,18 @@ def build_account_token_routes(provider, chat=None, accounts=None):
             if op == 'revoke':
                 if data.get('confirm') is not True:
                     raise ValueError('Confirm revoking this token.')
+                gone = next((t for t in provider.list_api_tokens()
+                             if t.get('id') == str(data.get('id', ''))), None)
                 if not provider.revoke_api_token(str(data.get('id', ''))):
                     return response({'error': 'Token no longer exists.'}, 404)
+                q = queue()
+                if q is not None and gone and gone.get('agent_id'):
+                    still = any(t.get('agent_id') == gone['agent_id']
+                                for t in provider.list_api_tokens())
+                    if not still:   # its agent has no key left: it relays nothing
+                        q.set_relayer(f"token:{gone['agent_id']}", False,
+                                      'human:' + str(user.get('username') or user.get('id')),
+                                      gone.get('name') or '')
                 return response({'ok': True})
             if op in ('avatar', 'avatar_clear'):
                 if not chat or not chat.enabled:

@@ -66,3 +66,8 @@ Anyone who knows a band's key can join that band and control its machines.
   Approvals page warns you and disables the buttons.
 - Approving by voice is weaker than the dashboard: anyone near the phone can
   answer. It is off unless you choose it.
+- A client you let relay your approvals is trusted to pass on your words
+  faithfully; Rook records what it says you said but can't check it (the
+  chair is the exception: it can only quote your own message). Turn it on
+  only for clients you trust, and keep the dashboard-only list strict.
+  Secrets, tokens, policy, settings and job locks are never relayed.

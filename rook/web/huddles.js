@@ -238,6 +238,9 @@ export async function mountHuddles(root){
     top.append(el('span',KIND[c.kind]||c.kind,'hx-card-kind'),el('span',nameOf(c.by),'hx-dim'),el('span',CARD_STATE[c.state]||c.state,'hx-card-state'));
     if(c.name)top.append(copyChip(c.name,c.name,'hx-card-name'));
     b.append(top,el('p',c.summary,'hx-card-sum'));
+    if(c.relayed_text)b.append(el('p',c.relayed_text,'hx-card-relay hx-dim'));
+    else if(c.decided_by&&c.state!=='proposed')b.append(el('p',(c.state==='dismissed'?'Dismissed by ':'Approved by ')+nameOf(c.decided_by),'hx-card-relay hx-dim'));
+    if(c.state==='dismissed'&&c.result&&c.result.dismissed)b.append(el('p','Reason: '+c.result.dismissed,'hx-card-relay hx-dim'));
     if(c.call){
       const call=el('div',undefined,'hx-card-call');const what=c.call.worker+' · '+c.call.cap;
       call.append(h('code',{text:what,title:what+' (tap to copy)','data-copy':what}));

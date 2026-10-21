@@ -19,6 +19,7 @@ The tables are generated from the code by `tools/gen_skill_reference.py`; don't 
 <!-- BEGIN GENERATED: mcp-tools -->
 | Tool | Args | Does |
 |---|---|---|
+| `rook_approvals` | action='summary', item?, relayed_by?, reason?, answer?, kind? | What is waiting on the person, and relaying their decision. summary: one line to read out. list (kind? hold\|j… |
 | `rook_call` | cap, args?, worker_id?, worker?, timeout?, hint?, text? | Run a cap on one worker. worker= (name or id) is required. |
 | `rook_caps` | prefix?, worker? | Caps and their holders: "*" = every worker, {all_but:[…]}, or names. prefix filters (e.g. "shell."); worker=… |
 | `rook_chat_delete` | room | Delete a room and its messages (participants only; final). |
@@ -60,6 +61,8 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 <!-- BEGIN GENERATED: hub-caps -->
 | Cap | Args | Risk | Does |
 |---|---|---|---|
+| `approvals.list` | kind?, summary_only=false | read | What is waiting on the person: held calls, held job calls, huddle cards and pinned questions (kind: hold\|job\|… |
+| `approvals.relay` | item, decision, relayed_by?, reason='', answer='' | write | Approve or deny one waiting item on the person's behalf: relayed_by {who, quote, session} is their own decisi… |
 | `caps.describe` | prefix='' | read | Arg schema, docstring and declared risk/limit/fields for every hub cap. |
 | `ccmod.activity` | limit=50 | read | What the rules did recently: posts, notifications, capability runs. |
 | `ccmod.delete` | id, note='' | admin | Delete a rule (push afterwards to take it off the workers). |
@@ -163,6 +166,9 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `updates.prepare_hub` | tag | admin | For a `rook hub` install the hub cannot switch itself: download and verify release `tag`, leave a signed hub… |
 | `updates.rollout` | workers?, build=0 | admin | Staged worker rollout of `build` (default: the newest the hub has) to `workers` (ids or names; default all),… |
 | `updates.status` | — | read | Hub version against the newest release, how many workers are behind, the running rollout, and the mode/channe… |
+
+### approvals (relayed)
+`rook_approvals(action="summary")` says what is waiting on the person (held calls, held job calls, huddle cards, pinned questions); `action="list"` gives each item's name, who asked, what exactly would happen, risk, source and age. Read it back tersely: count, then name + one line each. Only when the person has enabled your client (Tokens > May relay my approvals) and tells you their decision, relay it: `rook_approvals(action="approve"|"deny", item=<name or id>, relayed_by={"who": <person>, "quote": <their exact words>, "session": <conversation URL or id>}, reason=<why, for a deny>)`. Never relay your own judgement, never decide items they did not name, and leave dashboard-only items (relayable: false) to them.
 
 ### Claude Code rules
 Hub-managed triggers and actions for Claude Code on the workers (dashboard: Manage > Claude Code). `rook_call(worker="rook", cap="ccmod.list")` lists them; `ccmod.status` shows what each worker holds. Changing or pushing rules writes people's Claude Code settings: ask the user first.

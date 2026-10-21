@@ -53,6 +53,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from ..core import authz as core_authz
+from ..core import names
 from ..core.db import secure_file, transaction
 
 log = logging.getLogger("rook.hub.approvals")
@@ -111,6 +112,9 @@ class Config:
     notify_every_secs: float = 60.0
     hub_host_workers: tuple = ("auto",)
     dashboard_url: str = ""
+    relay_dashboard_only: tuple = ("tier:admin", "hold:hub-host", "tag:physical", "worker.*",
+                                   "band.*", "hub.plugin.*", "customcap.*", "role.set",
+                                   "role.delete", "role.move", "job.write:delete")
 
 
 def _settings() -> dict:
@@ -198,7 +202,9 @@ def load_config(store: Any = None, environ: Any = None) -> Config:
         notify_every_secs=float(values.get("notify_every_secs", 60)),
         hub_host_workers=tuple(str(x).strip() for x in values.get("hub_host_workers") or ()
                                if str(x).strip()),
-        dashboard_url=_dashboard_url(store, environ))
+        dashboard_url=_dashboard_url(store, environ),
+        relay_dashboard_only=tuple(str(x).strip() for x in values.get("relay_dashboard_only")
+                                   or () if str(x).strip()))
 
 
 class ConfigSource:
@@ -387,7 +393,52 @@ CREATE INDEX IF NOT EXISTS holds_match ON holds(principal, cap, target_id, args_
 CREATE TABLE IF NOT EXISTS grants(
     principal TEXT NOT NULL, kind TEXT NOT NULL, until REAL NOT NULL, created REAL NOT NULL,
     created_by TEXT NOT NULL, hold_id TEXT, PRIMARY KEY(principal, kind));
+-- Relayed decisions (rook/hub/relay.py): an agent approved or denied an item
+-- on a person's behalf, with the person's own words. Append-only: never
+-- updated, never deleted (the triggers refuse), kept beyond the hold history.
+CREATE TABLE IF NOT EXISTS relays(
+    id TEXT PRIMARY KEY, kind TEXT NOT NULL, item TEXT NOT NULL, decision TEXT NOT NULL,
+    relayer TEXT NOT NULL, relayer_label TEXT NOT NULL DEFAULT '', who TEXT NOT NULL,
+    quote TEXT NOT NULL, session TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '', created REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS relays_item ON relays(kind, item);
+CREATE TRIGGER IF NOT EXISTS relays_no_update BEFORE UPDATE ON relays
+    BEGIN SELECT RAISE(ABORT, 'relays are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS relays_no_delete BEFORE DELETE ON relays
+    BEGIN SELECT RAISE(ABORT, 'relays are append-only'); END;
+-- Who may relay the person's approvals: set by a person on the dashboard
+-- only (the Tokens page); no cap, tool or setting writes it.
+CREATE TABLE IF NOT EXISTS relayers(
+    principal TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '', enabled_by TEXT NOT NULL,
+    enabled_at REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS relayer_log(
+    principal TEXT NOT NULL, label TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL,
+    by TEXT NOT NULL, at REAL NOT NULL);
+CREATE TRIGGER IF NOT EXISTS relayer_log_no_update BEFORE UPDATE ON relayer_log
+    BEGIN SELECT RAISE(ABORT, 'the relayer log is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS relayer_log_no_delete BEFORE DELETE ON relayer_log
+    BEGIN SELECT RAISE(ABORT, 'the relayer log is append-only'); END;
 """
+
+#: How long a person's denial answers an identical repeat of the call at once
+#: (the agent hears the denial and the reason instead of a new hold).
+DENIAL_ECHO_SECS = 600.0
+RELAY_FIELDS = ("who", "quote", "session")
+
+
+def _relay_row(r: Any) -> dict:
+    return {k: r[k] for k in ("id", "kind", "item", "decision", "relayer", "relayer_label", "who",
+                              "quote", "session", "reason", "summary", "created")}
+
+
+def relay_text(rel: dict) -> str:
+    """``approved by Bake via Claude web: "do it"`` (the dashboard and the
+    requester see the same line)."""
+    verb = {"approve": "approved", "deny": "denied", "answer": "answered"}.get(
+        rel.get("decision"), str(rel.get("decision") or "decided"))
+    via = rel.get("relayer_label") or rel.get("relayer") or "an agent"
+    return f'{verb} by {rel.get("who")} via {via}: "{rel.get("quote")}"'
+
 
 
 def _row(r: Any) -> dict:
@@ -419,6 +470,7 @@ class ApprovalQueue:
                     secure_file(self.path)
                     with transaction(self.path, begin=None, timeout=_DB_TIMEOUT, wal=True) as db:
                         db.executescript(_SCHEMA)
+                        names.ensure_table(db)
                     self._ready = True
         return transaction(self.path, begin="IMMEDIATE" if write else None,
                            timeout=_DB_TIMEOUT, wal=True)
@@ -468,15 +520,18 @@ class ApprovalQueue:
                  json.dumps(list(tags)), target_id, target_name or "", int(bool(is_hub)),
                  json.dumps(args, ensure_ascii=False, default=str), args_hash, reason, rule,
                  now, now + ttl))
+            names.assign(db, "hold", hid)
             r = db.execute("SELECT * FROM holds WHERE id=?", (hid,)).fetchone()
-        return _row(r), True
+        return self._named([_row(r)])[0], True
 
     def decide(self, hold_id: str, approve: bool, by: str, *, scope: str = "call",
                note: str = "", approval_secs: float = 600.0,
-               grant_secs: float = 900.0) -> dict:
+               grant_secs: float = 900.0, relay: dict | None = None) -> dict:
         """Approve or deny a pending hold. ``scope="spread"`` (spread holds
         only) also lets the principal reach more machines for
-        ``grant_secs``. Raises :class:`HoldError` unless the hold is pending."""
+        ``grant_secs``. Raises :class:`HoldError` unless the hold is pending.
+        ``relay`` (an agent relaying the person's decision, rook/hub/relay.py):
+        the audit row is written in the same transaction."""
         if scope not in SCOPES:
             raise HoldError(f"scope must be one of {', '.join(SCOPES)}")
         self.sweep(force=True)
@@ -498,8 +553,12 @@ class ApprovalQueue:
                 db.execute("INSERT OR REPLACE INTO grants(principal, kind, until, created, "
                            "created_by, hold_id) VALUES (?, 'spread', ?, ?, ?, ?)",
                            (r["principal"], now + grant_secs, now, by, r["id"]))
+            if relay is not None:
+                self._relay_insert(db, {**relay, "kind": relay.get("kind") or "hold",
+                                        "item": r["id"],
+                                        "decision": "approve" if approve else "deny"})
             r = db.execute("SELECT * FROM holds WHERE id=?", (r["id"],)).fetchone()
-        return _row(r)
+        return self._named([_row(r)])[0]
 
     def consume_match(self, principal: str, cap: str, target_id: str | None,
                       args_hash: str) -> dict | None:
@@ -517,6 +576,18 @@ class ApprovalQueue:
             r = db.execute("SELECT * FROM holds WHERE id=?", (r["id"],)).fetchone()
         return _row(r)
 
+    def recent_denial(self, principal: str, cap: str, target_id: str | None, args_hash: str,
+                      within: float = DENIAL_ECHO_SECS) -> dict | None:
+        """A person's denial of this identical call in the last ``within``
+        seconds: a repeat gets the denial (and its reason), not a new hold."""
+        since = self.clock() - within
+        with self._db() as db:
+            r = db.execute("SELECT * FROM holds WHERE state='denied' AND principal=? AND cap=? "
+                           "AND target_id IS ? AND args_hash=? AND decided_at>=? "
+                           "ORDER BY decided_at DESC LIMIT 1",
+                           (principal, cap, target_id, args_hash, since)).fetchone()
+        return _row(r) if r is not None else None
+
     def consume_id(self, hold_id: str) -> bool:
         now = self.clock()
         with self._db(write=True) as db:
@@ -528,9 +599,13 @@ class ApprovalQueue:
     def get(self, hold_id: str) -> dict | None:
         with self._db() as db:
             r = db.execute("SELECT * FROM holds WHERE id=?", (str(hold_id),)).fetchone()
+            if r is None and names.looks_like_name(hold_id):
+                hit = names.find(db, "hold", hold_id)
+                if len(hit) == 1:
+                    r = db.execute("SELECT * FROM holds WHERE id=?", (hit[0],)).fetchone()
         if r is None:
             return None
-        d = _row(r)
+        d = self._named([_row(r)])[0]
         if d["state"] == "pending" and d["expires"] < self.clock():
             d["state"] = "expired"
         return d
@@ -540,14 +615,14 @@ class ApprovalQueue:
         with self._db() as db:
             rows = db.execute("SELECT * FROM holds WHERE state='pending' ORDER BY created "
                               "LIMIT ?", (int(limit),)).fetchall()
-        return [_row(r) for r in rows]
+        return self._named([_row(r) for r in rows])
 
     def recent(self, limit: int = 50) -> list[dict]:
         with self._db() as db:
             rows = db.execute("SELECT * FROM holds WHERE state!='pending' "
                               "ORDER BY COALESCE(decided_at, created) DESC LIMIT ?",
                               (int(limit),)).fetchall()
-        return [_row(r) for r in rows]
+        return self._named([_row(r) for r in rows])
 
     def count_pending(self) -> int:
         now = self.clock()
@@ -567,6 +642,106 @@ class ApprovalQueue:
         with self._db() as db:
             return [dict(r) for r in db.execute(
                 "SELECT * FROM grants WHERE until>=? ORDER BY until", (now,)).fetchall()]
+
+    # -- speakable names ---------------------------------------------------
+    def _named(self, rows: list[dict]) -> list[dict]:
+        """Holds with their speakable name (``hold`` kind), given one when
+        they have none yet (holds made before names)."""
+        if not rows:
+            return rows
+        with self._db() as db:
+            have = names.names_of(db, "hold", [r["id"] for r in rows])
+        missing = [r["id"] for r in rows if r["id"] not in have]
+        if missing:
+            with self._db(write=True) as db:
+                for hid in missing:
+                    have[hid] = names.assign(db, "hold", hid)
+        for r in rows:
+            r["name"] = have.get(r["id"])
+        return rows
+
+    # -- relayed decisions (append-only audit) -----------------------------
+    def _relay_insert(self, db: Any, rel: dict) -> dict:
+        for k in RELAY_FIELDS + ("relayer",):
+            if not str(rel.get(k) or "").strip():
+                raise HoldError(f"a relayed decision needs {k}")
+        row = {"id": "rl" + secrets.token_hex(10), "kind": str(rel["kind"]),
+               "item": str(rel["item"]), "decision": str(rel["decision"]),
+               "relayer": str(rel["relayer"]), "relayer_label": str(rel.get("relayer_label") or ""),
+               "who": str(rel["who"])[:120], "quote": str(rel["quote"])[:1000],
+               "session": str(rel["session"])[:500], "reason": str(rel.get("reason") or "")[:500],
+               "summary": str(rel.get("summary") or "")[:300], "created": self.clock()}
+        db.execute("INSERT INTO relays(id, kind, item, decision, relayer, relayer_label, who, "
+                   "quote, session, reason, summary, created) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                   tuple(row[k] for k in ("id", "kind", "item", "decision", "relayer",
+                                          "relayer_label", "who", "quote", "session", "reason",
+                                          "summary", "created")))
+        return row
+
+    def relay_add(self, rel: dict) -> dict:
+        """Record a relayed decision on an item kept elsewhere (a huddle card
+        or question). ``rel``: kind, item, decision, relayer, relayer_label,
+        who, quote, session, reason?, summary?"""
+        with self._db(write=True) as db:
+            return self._relay_insert(db, rel)
+
+    def relays_for(self, kind: str | None, items: list[str]) -> dict[str, dict]:
+        """The relayed decision on each item (the latest), by item id."""
+        items = [str(i) for i in items if i]
+        if not items:
+            return {}
+        out: dict[str, dict] = {}
+        with self._db() as db:
+            for i in range(0, len(items), 500):
+                chunk = items[i:i + 500]
+                q = ",".join("?" * len(chunk))
+                sql = f"SELECT * FROM relays WHERE item IN ({q})"
+                args: list = list(chunk)
+                if kind:
+                    sql += " AND kind=?"
+                    args.append(kind)
+                for r in db.execute(sql + " ORDER BY created", args).fetchall():
+                    out[r["item"]] = _relay_row(r)
+        return out
+
+    def relays(self, limit: int = 50) -> list[dict]:
+        with self._db() as db:
+            return [_relay_row(r) for r in db.execute(
+                "SELECT * FROM relays ORDER BY created DESC LIMIT ?", (int(limit),)).fetchall()]
+
+    # -- who may relay (written from the dashboard only) --------------------
+    def relayer(self, principal: str) -> dict | None:
+        with self._db() as db:
+            r = db.execute("SELECT * FROM relayers WHERE principal=?", (str(principal),)).fetchone()
+        return dict(r) if r is not None else None
+
+    def relayers(self) -> list[dict]:
+        with self._db() as db:
+            return [dict(r) for r in db.execute(
+                "SELECT * FROM relayers ORDER BY enabled_at").fetchall()]
+
+    def set_relayer(self, principal: str, enabled: bool, by: str, label: str = "") -> bool:
+        """Turn relaying on or off for ``principal`` (logged). Only the
+        dashboard calls this, for a signed-in person. Returns whether it
+        changed."""
+        principal = str(principal or "").strip()
+        if not principal:
+            raise HoldError("which identity?")
+        now = self.clock()
+        with self._db(write=True) as db:
+            had = db.execute("SELECT 1 FROM relayers WHERE principal=?",
+                             (principal,)).fetchone() is not None
+            if had == bool(enabled):
+                return False
+            if enabled:
+                db.execute("INSERT INTO relayers(principal, label, enabled_by, enabled_at) "
+                           "VALUES (?, ?, ?, ?)", (principal, str(label)[:120], by, now))
+            else:
+                db.execute("DELETE FROM relayers WHERE principal=?", (principal,))
+            db.execute("INSERT INTO relayer_log(principal, label, enabled, by, at) "
+                       "VALUES (?, ?, ?, ?, ?)", (principal, str(label)[:120], int(bool(enabled)),
+                                                  by, now))
+        return True
 
 
 # -- spread ---------------------------------------------------------------------
@@ -766,6 +941,10 @@ class Approvals:
                                       digest)
         if hit is not None:
             return self._approved(d, hit)
+        denied = await asyncio.to_thread(self.queue.recent_denial, d.principal, d.cap, d.target,
+                                         digest, max(cfg.approval_secs, DENIAL_ECHO_SECS))
+        if denied is not None:
+            return self._denied(d, denied)
         hold, created = await asyncio.to_thread(
             self.queue.create, principal=d.principal, cap=d.cap, tier=d.tier, args_hash=digest,
             label=label, via=tuple(d.via), tags=tuple(d.tags), target_id=d.target,
@@ -787,10 +966,7 @@ class Approvals:
                     return self._approved(d, row)
                 state = "consumed"
             if state == "denied":
-                return dataclasses.replace(
-                    d, decision="deny", rule="approval:denied", hold_id=row["id"],
-                    decided_by=str(row.get("decided_by") or "a person"),
-                    reason=f"denied by {row.get('decided_by')}")
+                return self._denied(d, row)
             if state == "consumed" and _retry:
                 # An identical call used this approval first: wait for another.
                 return await self.resolve(d, args, label, _retry=False)
@@ -801,6 +977,14 @@ class Approvals:
                 break
             await asyncio.sleep(min(POLL_SECS, left))
         return self.held_reply(d, hold, cfg)
+
+    @staticmethod
+    def _denied(d: Any, row: dict) -> Any:
+        return dataclasses.replace(
+            d, decision="deny", rule="approval:denied", hold_id=row["id"],
+            decided_by=str(row.get("decided_by") or "a person"),
+            note=str(row.get("note") or ""),
+            reason=f"denied by {row.get('decided_by')}")
 
     def _approved(self, d: Any, row: dict) -> Any:
         out = dataclasses.replace(d, decision="allow", rule=f"approval:{row['id']}",
@@ -814,22 +998,28 @@ class Approvals:
         where = d.target_name or d.target or "the band"
         minutes = max(1, round(cfg.approval_secs / 60))
         why = f" ({hold.get('reason')})" if hold.get("reason") else ""
-        msg = (f"Held for approval (hold {hold['id']}): {d.cap} on {where}{why}. Ask the user "
+        named = f", {hold['name']}" if hold.get("name") else ""
+        msg = (f"Held for approval (hold {hold['id']}{named}): {d.cap} on {where}{why}. Ask the user "
                f"to approve it on the dashboard's Approvals page, then repeat the same call; "
                f"an approval covers one identical call (same cap, worker and args) for "
                f"{minutes} minutes. Do not try to get around the hold another way.")
         out = {"ok": False, "held": True, "hold": hold["id"], "error": msg}
+        if hold.get("name"):
+            out["name"] = hold["name"]
         if cfg.dashboard_url:
             out["approve_at"] = cfg.dashboard_url + "/#approvals"
         return out
 
     # -- deciding (people only: the dashboard, or the operator's voice) -------------
     def decide(self, hold_id: str, approve: bool, by: str, *, scope: str = "call",
-               note: str = "", heard: str | None = None) -> dict:
+               note: str = "", heard: str | None = None, relay: dict | None = None) -> dict:
+        """A person's decision: from the dashboard, by voice (``heard``), or
+        relayed by an agent the person enabled (``relay``: the relayer and
+        the person's own words; checked by rook/hub/relay.py first)."""
         cfg = self.config()
         row = self.queue.decide(hold_id, approve, by, scope=scope, note=note,
                                 approval_secs=cfg.approval_secs,
-                                grant_secs=cfg.spread_grant_secs)
+                                grant_secs=cfg.spread_grant_secs, relay=relay)
         detail = {"hold": row["id"], "decision": row["state"], "scope": scope,
                   "cap": row["cap"], "principal": row["principal"],
                   "worker": row["target_name"] or row["target_id"]}
@@ -837,6 +1027,11 @@ class Approvals:
             detail["heard"] = heard[:300]
         if scope == "spread":
             detail["grant_secs"] = cfg.spread_grant_secs
+        if relay is not None:
+            detail["relayed_by"] = {k: relay.get(k) for k in ("relayer", "relayer_label", "who",
+                                                               "quote", "session")}
+            if note:
+                detail["reason"] = note
         self._journal("approval.decide", row["target_name"] or row["target_id"], by,
                       {"ok": True, **detail})
         return row
@@ -874,11 +1069,14 @@ class Approvals:
 def public(hold: dict, cfg: Config | None = None) -> dict:
     """A hold as the Approvals page shows it."""
     from .approval_contact import voice_eligible
-    out = {k: hold.get(k) for k in ("id", "state", "kind", "principal", "principal_label", "via",
+    out = {k: hold.get(k) for k in ("id", "name", "state", "kind", "principal", "principal_label", "via",
                                     "cap", "tier", "tags", "target_id", "target_name", "args",
                                     "reason", "rule", "created", "expires", "decided_by",
                                     "decided_at", "scope", "valid_until", "consumed_at", "note")}
     out["worker"] = hold.get("target_name") or hold.get("target_id") or ""
+    if hold.get("relayed"):
+        out["relayed"] = hold["relayed"]
+        out["relayed_text"] = relay_text(hold["relayed"])
     if cfg is not None:
         out["voice_ok"] = voice_eligible(hold, cfg)
     return out
