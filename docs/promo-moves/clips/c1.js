@@ -91,8 +91,7 @@ export default {
       kit.make('coffee', { parent: g, at: V(.22, 0, -.3) });
       kit.make('chair', { parent: g, at: V(-.3, -.74, -1.05) });
       const f = figure(kit, V(-.3, -1.21, -.92), 0); g.add(f.obj); g.userData.fig = f;
-      f.legL.rotation.x = f.legR.rotation.x = -1.45;
-      f.armL.rotation.x = f.armR.rotation.x = -.9; f.foreL.rotation.x = f.foreR.rotation.x = -.7;   // hands on the laptop
+      f.sit();                                                     // hands on the laptop
       wall(g, 0x2f3330, -1.4);
     }
     function rnd2(i) { return ((Math.sin(i * 91.7) * 43758.5453) % 1 + 1) % 1; }

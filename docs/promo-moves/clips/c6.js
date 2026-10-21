@@ -25,7 +25,7 @@ export default {
     const ktab = kit.make('table', { at: K }); ktab.scale.set(.45, 1, .45);       // a 1.2 m kitchen table
     kit.make('chair', { at: K.clone().add(V(0, 0, .78)), rot: Math.PI });
     const f1 = figure(kit, K.clone().add(V(0, -.47, .74)), Math.PI, 1, { f: true });
-    f1.legL.rotation.x = f1.legR.rotation.x = -1.5; f1.armL.rotation.x = f1.armR.rotation.x = -1.0; f1.foreL.rotation.x = f1.foreR.rotation.x = -.4;
+    f1.sit();
     kit.make('tablet', { at: K.clone().add(V(.05, .79, .2)), rot: Math.PI });
     kit.make('coffee', { at: K.clone().add(V(-.32, .79, .22)) });
     // the car at a red light
@@ -34,7 +34,7 @@ export default {
     const carMat = new THREE.MeshToonMaterial({ color: 0x9a6a4a, gradientMap: kit.ramp, transparent: true, opacity: .32, depthWrite: false });
     const car = kit.make('car', { at: C, rot: Math.PI / 2, mats: { body: carMat } });
     const f2 = figure(kit, C.clone().add(V(.36, -.38, .25)), Math.PI);
-    f2.legL.rotation.x = f2.legR.rotation.x = -1.45; f2.armL.rotation.x = f2.armR.rotation.x = -1.2;
+    f2.sit({ hands: 'wheel' }); f2.armL.rotation.x = f2.armR.rotation.x = -1.2;
     const pole = new THREE.Mesh(new THREE.BoxGeometry(.1, 3.2, .1), kit.toon(0x3a3c32)); pole.position.set(1.5, 1.6, -3.0); S.add(pole);
     const head = new THREE.Mesh(new THREE.BoxGeometry(.32, .85, .28), kit.toon(0x24261f)); head.position.set(1.5, 3.1, -3.0); S.add(head);
     const red = new THREE.Mesh(new THREE.CircleGeometry(.1, 16), new THREE.MeshBasicMaterial({ color: 0xff5a48 })); red.position.set(1.5, 3.36, -2.85); S.add(red);
@@ -120,7 +120,7 @@ export default {
         if (!fin) p.fixed(150 + (i % 2) * 330, 130 + Math.floor(i / 2) * 290, a, 1);
         else p.fixed(110 + (i % 2) * 250, 120 + Math.floor(i / 2) * 220, fade(tau, 33.6 + i * .1, 34 + i * .1, 37.6, 38), .74);
       });
-      f1.head.rotation.x = .25; f1.foreR.rotation.x = tau > .3 && tau < 3 ? -.6 + Math.sin(tau * 5) * .2 : 0;
+      f1.head.rotation.x = .25; f1.foreR.rotation.x = tau > .3 && tau < 3 ? -.95 + Math.sin(tau * 5) * .2 : -.75;
       kit.glowSquare(-12, 1, .6 * fade(tau, 2.4, 2.8, 10.6, 11));
       // the car: notes ride out of the speaker
       notes.forEach(({ el, i }) => {

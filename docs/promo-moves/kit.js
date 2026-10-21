@@ -22,7 +22,7 @@ export const COL = {
 const PALETTE = {
   gold: 0xc9a868, body: 0xaaa17d, dark: 0x3a3c32, dark2: 0x24261f, metal: 0x8c8a7a, wood: 0x8a6c42, wood2: 0x5e4a2e,
   stone: 0x9d9473, iron: 0x2d2a22, accent: 0xd8ad6d, paper: 0xe6dcc0, skin: 0xc79f7c, cloth: 0x6d7a63, cloth2: 0x3b4232,
-  cloth3: 0x8f8a76, porcelain: 0xe9e6dc, chrome: 0xb7bab0, tile: 0x7d8a84, mirror: 0x8fa4a6, agentblue: 0x7aa7d8,
+  cloth3: 0x8f8a76, cloth4: 0x8a4f5a, porcelain: 0xe9e6dc, chrome: 0xb7bab0, tile: 0x7d8a84, mirror: 0x8fa4a6, agentblue: 0x7aa7d8,
   gauge: 0x2a3b36, gaugered: 0xe0675c,
 };
 
@@ -397,14 +397,23 @@ export function figure(kit, at, rot = 0, scale = 1, { f = false } = {}) {
   return {
     obj, head: n('head'), torso: n('torso'), armL: n('armL'), armR: n('armR'), legL: n('legL'), legR: n('legR'), hips: n('hips'),
     foreL: n('armL').children.find(c => c.name.startsWith('fore')), foreR: n('armR').children.find(c => c.name.startsWith('fore')),
+    shinL: n('legL').children.find(c => c.name.startsWith('shin')), shinR: n('legR').children.find(c => c.name.startsWith('shin')),
     rest() {
       for (const k of ['head', 'torso', 'armL', 'armR', 'legL', 'legR']) this[k].rotation.set(0, 0, 0);
       this.foreL.rotation.set(0, 0, 0); this.foreR.rotation.set(0, 0, 0);
+      this.shinL?.rotation.set(0, 0, 0); this.shinR?.rotation.set(0, 0, 0);
       this.armL.rotation.z = -.08; this.armR.rotation.z = .08;
+    },
+    // seated on a 0.45 m seat: thighs forward, knees bent; place the figure 0.45 m lower than standing
+    sit({ hands = 'desk' } = {}) {
+      this.legL.rotation.x = this.legR.rotation.x = -1.5;
+      if (this.shinL) this.shinL.rotation.x = this.shinR.rotation.x = 1.45;
+      if (hands === 'desk') { this.armL.rotation.x = this.armR.rotation.x = -.85; this.foreL.rotation.x = this.foreR.rotation.x = -.75; }
     },
     walk(phase, amt = 1) {
       const s = Math.sin(phase) * .45 * amt;
       this.legL.rotation.x = s; this.legR.rotation.x = -s; this.armL.rotation.x = -s * .8; this.armR.rotation.x = s * .8;
+      if (this.shinL) { this.shinL.rotation.x = Math.max(0, -s) * 1.2 + .1; this.shinR.rotation.x = Math.max(0, s) * 1.2 + .1; }
     },
   };
 }

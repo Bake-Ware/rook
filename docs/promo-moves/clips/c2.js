@@ -8,7 +8,7 @@ import { THREE, V, COL, clamp, lerp, inv, ease, fade, pane, chip, goldRook, agen
 export default {
   title: 'Build it, don’t wait up', tagline: 'Make ideas,<br>not time.', body: 58,
   mood: { key: 'A', bpm: 88, minor: true, energy: .6 },
-  assets: ['rook', 'agent', 'workstation', 'printer', 'folio', 'figure', 'nightstand', 'phone', 'chair', 'bed'],
+  assets: ['rook', 'agent', 'workstation', 'printer', 'folio', 'figure', 'nightstand', 'phone', 'chair', 'table'],
   async build(kit) {
     const S = kit.scene;
     kit.board({ size: 60 });
@@ -65,25 +65,41 @@ export default {
       m.position.set(x, .01, 0); bed.add(m); prints.push(m);
     }
     const chamber = new THREE.PointLight(0xfff0d0, 0, 1.6, 1.5); chamber.position.set(0, .9, 0); printer.add(chamber);
-    const done = kit.make('folio', { parent: bed, scale: 1 / .45 }); done.position.set(0, .05, 0); done.rotation.y = .3;
+    const done = kit.make('folio', { parent: bed, scale: 1 / .45 }); done.rotation.y = .3;
+    done.position.set(-.133 * Math.cos(.3), .05, .133 * Math.sin(.3));     // centred on the plate (the model's origin is its spine)
     { const df = kit.node(done, 'front'); df.rotation.z = -Math.PI; df.position.y = .155;
       latch(done.children[0], df, kit.toon(COL.goldHi)); kit.node(done, 'pen').position.set(1.0, .1, 0);
       kit.node(done, 'lips').visible = true; }
     done.visible = false;
     // the person
-    const fig = figure(kit, V(0, 0, .72), Math.PI);
+    const fig = figure(kit, V(0, 0, .72), Math.PI, 1, { f: true });
     // the nightstand and phone, across the board, for the morning
-    const { ns } = bedside(kit, V(-3.6, 0, 3.4), { rot: .4, side: 1 });
-    const phone = kit.make('phone', { at: V(-3.55, .645, 3.45), rot: .6 });
+    // you went out for drinks: the voice message lands on a pub table, two pints, a warm pendant
+    const pub = kit.make('table', { at: V(-3.6, 0, 3.4) }); pub.scale.set(.28, 1.4, .28);          // a 0.7 m bar table, 1.1 m tall
+    const glassMat = new THREE.MeshToonMaterial({ color: 0xcfe0d8, gradientMap: kit.ramp, transparent: true, opacity: .35, depthWrite: false });
+    for (const [dx, dz, full] of [[.12, -.1, .8], [-.14, .05, .35]]) {
+      const gl = new THREE.Mesh(new THREE.CylinderGeometry(.045, .036, .15, 20, 1, true), glassMat); gl.position.set(-3.6 + dx, 1.106 + .075, 3.4 + dz); S.add(gl);
+      const beer = new THREE.Mesh(new THREE.CylinderGeometry(.042, .035, .15 * full, 20), kit.toon(0xc98a2e)); beer.position.set(-3.6 + dx, 1.106 + .075 * full, 3.4 + dz); S.add(beer);
+      const foam = new THREE.Mesh(new THREE.CylinderGeometry(.043, .042, .015, 20), kit.toon(0xf0e6cc)); foam.position.set(-3.6 + dx, 1.106 + .15 * full + .007, 3.4 + dz); S.add(foam);
+    }
+    for (const [dx, dz] of [[.55, .3], [-.5, -.4]]) {                                                // two bar stools
+      const seat = new THREE.Mesh(new THREE.CylinderGeometry(.18, .18, .05, 20), kit.toon(0x5e4a2e)); seat.position.set(-3.6 + dx, .76, 3.4 + dz); S.add(seat);
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(.03, .03, .74, 10), kit.toon(0x3a3c32)); leg.position.set(-3.6 + dx, .37, 3.4 + dz); S.add(leg);
+      for (const m of [seat, leg]) m.add(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, 25), kit.inkMat));
+    }
+    const pendant = new THREE.PointLight(0xffb870, 0, 4, 1.6); pendant.position.set(-3.6, 2.2, 3.4); S.add(pendant);
+    const shade = new THREE.Mesh(new THREE.ConeGeometry(.16, .14, 20, 1, true), kit.toon(0x3a3c32)); shade.position.set(-3.6, 2.25, 3.4); S.add(shade);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(.04, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffd9a0 })); bulb.position.set(-3.6, 2.2, 3.4); S.add(bulb);
+    const phone = kit.make('phone', { at: V(-3.55, 1.106, 3.45), rot: .6 });
     const pscr = kit.meshesOf(phone, 'screen')[0]; pscr.material = new THREE.MeshBasicMaterial({ color: 0x1a2520 });
 
     // ---------------------------------------------------------- overlays
     kit.caption('11:48 PM', .3, 6, 'stamp');
-    kit.caption('6:51 AM', 45.8, 52.6, 'stamp');
+    kit.caption('1:41 AM', 45.8, 52.6, 'stamp');
     kit.caption('Hinge stops at flat · Pen is the pin · Corner lips', 21.5, 28, 'label');
     kit.caption('Sliced · First layer checked', 41.8, 45.6, 'label');
-    kit.say(7.0, 'you', 'Limit the hinge to flat. Use the pen as the latching pin. Add a lip in each corner for the notepad.', 'a');
-    const yEnd = kit.say(28.6, 'you', 'I dig it. Print it. Send me a voice message when it’s done. I’m meeting Tom for drinks.', 'b');
+    kit.say(7.0, 'you_f', 'Limit the hinge to flat. Use the pen as the latching pin. Add a lip in each corner for the notepad.', 'a');
+    const yEnd = kit.say(28.6, 'you_f', 'I dig it. Print it. Send me a voice message when it’s done. I’m meeting Tom for drinks.', 'b');
     kit.say(Math.max(34.2, yEnd + .3), 'rook', 'Sure thing, have fun. I’ll keep an eye on the print.', 'c');
     kit.say(47.6, 'rook', 'Folio’s done and on the bed. Hinge stops at flat, and the pen locks it shut.', 'd');
     const review = pane(kit, { title: '<b>review</b> · folio v6 · yesterday 6:12 PM', w: 470, body: `
@@ -112,7 +128,7 @@ export default {
       { t: 6, type: 'whoosh' }, { t: 45.6, type: 'whoosh' });
 
     const desk3 = [V(-.8, 0, -.4), V(.8, 1.3, .9)], fol = [V(-.45, 1.3, -.2), V(.45, 1.85, .45)], prn = [V(1.75, .6, -.3), V(2.25, 1.2, .2)];
-    const night = [V(-4.0, 0, 3.0), V(-3.2, 1.0, 3.8)], wide = [V(-1, 0, -.6), V(2.4, 1.7, 1.4)];
+    const night = [V(-4.0, .5, 3.0), V(-3.2, 1.4, 3.8)], wide = [V(-1, 0, -.6), V(2.4, 1.7, 1.4)];
     kit.camPath([
       { t: 0, frame: { on: wide, yaw: 34, pitch: 22, fill: .8 } },
       { t: 6, frame: { on: wide, yaw: 28, pitch: 20, fill: .9 }, e: 'lin' },
@@ -161,9 +177,8 @@ export default {
       fig.rest();
       if (tau < 33.5) {
         fig.obj.position.set(0, -.47, .72); fig.obj.rotation.y = Math.PI;       // seated: hips on the chair seat
-        fig.legL.rotation.x = fig.legR.rotation.x = -1.5;
-        fig.armL.rotation.x = -.9; fig.foreL.rotation.x = -.5;
-        fig.armR.rotation.x = tau > 28.8 && tau < 33 ? -1.6 + Math.sin(tau * 2) * .1 : -.9; fig.foreR.rotation.x = -.5;
+        fig.sit();
+        if (tau > 28.8 && tau < 33) { fig.armR.rotation.x = -1.6 + Math.sin(tau * 2) * .1; fig.foreR.rotation.x = -.4; }
         fig.head.rotation.x = tau > 32.4 && tau < 33.2 ? Math.sin((tau - 32.4) * 12) * .18 : -.15;
       } else {
         const w = tau - 33.5;
@@ -172,10 +187,10 @@ export default {
         fig.walk(w * 7);
       }
       fig.obj.visible = tau < 38;
-      // ---- light: the lamp goes out at 33.4; dawn from 45.6
+      // ---- light: the lamp goes out at 33.4; the pub from 45.6
       lampL.intensity = tau < 33.4 ? 2.2 : 2.2 * (1 - inv(33.4, 33.6, tau));
-      dawn.intensity = 1.6 * inv(45.6, 48, tau);
-      kit.hemi.intensity = tau < 45.6 ? (tau < 33.5 ? 1.0 : .7) : lerp(.7, 1.4, inv(45.6, 48, tau));
+      dawn.intensity = 0; pendant.intensity = 2.4 * inv(45.6, 46.4, tau);
+      kit.hemi.intensity = tau < 45.6 ? (tau < 33.5 ? 1.0 : .7) : lerp(.7, .95, inv(45.6, 48, tau));
       scr.material.color.setHex(tau < 33.4 ? 0x2d4a40 : 0x1a2520);
       // ---- the agent glows while it works
       ag.mat.emissiveIntensity = .28 + .5 * fade(tau, 15.8, 16.4, 27, 28) + .4 * fade(tau, 38, 38.4, 45, 45.6);
@@ -202,7 +217,7 @@ export default {
       cl.forEach((el, i) => { el.style.opacity = inv([16.6, 19.6, 21.6, 17.0][i], [16.9, 19.9, 21.9, 17.3][i], tau); });
       slicer.place(V(2, 1.25, -.05), fade(tau, 38.5, 38.9, 45.2, 45.6), { ax: 1.08, ay: .2 });
       camp.place(V(2, 1.25, -.05), fade(tau, 41.4, 41.7, 45.2, 45.6), { ax: -.1, ay: .2 });
-      note.place(V(-3.55, .9, 3.4), fade(tau, 47.4, 47.8, 52.4, 52.8), { ay: 1, dy: -20 });
+      note.place(V(-3.55, 1.35, 3.45), fade(tau, 47.4, 47.8, 52.4, 52.8), { ay: 1, dy: -20 });
       ag.chip.place(ag.top(), fade(tau, 14.8, 15.2, 46, 46.4));
     };
   },

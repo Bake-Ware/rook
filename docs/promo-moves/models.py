@@ -305,9 +305,10 @@ def build_people():
         hips = empty('hips', (0, 0, .92), root)
         for s, leg_name in ((-1, 'legL'), (1, 'legR')):
             leg = empty(leg_name, (s * .095, 0, 0), hips)
-            lathe('leg', [(0, 0), (.085, 0), (.088, -.04), (.072, -.2), (.062, -.4), (.074, -.45), (.06, -.5),
-                          (.05, -.76), (.056, -.82), (0, -.82)], 20, 'cloth2', leg)
-            box('shoe', (.1, .22, .07), (0, -.05, -.875), 'dark', leg, bevel=.02)
+            lathe('thigh', [(0, 0), (.085, 0), (.088, -.04), (.072, -.2), (.062, -.38), (.074, -.43), (.072, -.47), (0, -.47)], 20, 'cloth2', leg)
+            shin = empty('shin', (0, 0, -.45), leg)          # the knee
+            lathe('calf', [(0, 0), (.064, 0), (.058, -.06), (.05, -.31), (.056, -.37), (0, -.37)], 20, 'cloth2', shin)
+            box('shoe', (.1, .22, .07), (0, -.05, -.435), 'dark', shin, bevel=.02)
         torso = empty('torso', (0, 0, 0), hips)
         if female:   # finer rings through the chest so the bust can be sculpted into the shirt
             prof = [(0, -.04), (.2, -.04), (.21, .04), (.15, .24)] + \
@@ -315,15 +316,19 @@ def build_people():
                    [(.19, .52), (.17, .56), (.11, .6), (0, .6)]
         else:
             prof = [(0, -.02), (.16, -.02), (.18, .06), (.16, .25), (.19, .42), (.22, .52), (.2, .56), (.12, .6), (0, .6)]
-        chest = lathe('chest', prof, 64 if female else 28, 'cloth', torso)
+        shirt = 'cloth4' if female else 'cloth'
+        chest = lathe('chest', prof, 64 if female else 28, shirt, torso)
         if female:   # a soft bust pushed out of the front of the shirt: two lobes, no seams
             for v in chest.data.vertices:
                 x, y, z = v.co
                 if y >= 0:
                     continue
                 r = math.hypot(x, y) or 1
-                lobe = max(math.exp(-((x - s * .072) ** 2) / (2 * .045 ** 2)) for s in (-1, 1))
-                d = .1 * lobe * math.exp(-((z - .405) ** 2) / (2 * .045 ** 2)) * max(0, -y / r) ** 1.5
+                # each breast: rounder across, a long gentle slope above and a fuller, quicker curve below
+                lobe = min(1, sum(math.exp(-((x - s * .078) ** 2) / (2 * .042 ** 2)) for s in (-1, 1)))   # summed: no crease between
+                zc, su, sd = .395, .075, .032
+                vert = math.exp(-((z - zc) ** 2) / (2 * (su if z > zc else sd) ** 2))
+                d = .085 * lobe * vert * max(0, -y / r) ** 1.5
                 v.co.y -= d
             smooth(chest, 89)
         else:
@@ -342,7 +347,7 @@ def build_people():
             box('crossh', (.11, .035, .035), (0, 0, .35), 'paper', head)
         for s, arm_name in ((-1, 'armL'), (1, 'armR')):
             arm = empty(arm_name, (s * .26, 0, .52), torso)
-            lathe('upper', [(0, .04), (.05, .04), (.065, 0), (.05, -.05), (.044, -.15), (.05, -.25), (.058, -.29), (0, -.3)], 16, 'cloth', arm)
+            lathe('upper', [(0, .04), (.05, .04), (.065, 0), (.05, -.05), (.044, -.15), (.05, -.25), (.058, -.29), (0, -.3)], 16, shirt, arm)
             fore = empty('fore', (0, 0, -.3), arm)
             lathe('lower', [(0, 0), (.046, 0), (.04, -.08), (.044, -.2), (.034, -.26), (0, -.26)], 16, 'skin', fore)
             sphere('hand', .05, (0, 0, -.31), 'skin', fore, segs=14, rings=9)

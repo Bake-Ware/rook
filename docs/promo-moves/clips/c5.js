@@ -5,7 +5,7 @@
 import { THREE, V, COL, clamp, lerp, inv, ease, fade, pane, chip, goldRook, agent, figure, rnd } from '../kit.js';
 
 export default {
-  title: 'Research team', tagline: 'Explore.<br>More.', body: 60,
+  title: 'Research team', tagline: 'Explore.<br><span class="more">More.</span>', body: 60,
   mood: { key: 'F#', bpm: 84, minor: true, energy: .55 },
   assets: ['rook', 'agent', 'gpurig', 'figure', 'workstation'],
   async build(kit) {
@@ -142,6 +142,7 @@ export default {
     ]);
 
     return tau => {
+      { const m = document.querySelector('.more'); if (m) { const a = inv(61.4, 62.0, tau); m.style.opacity = a; m.style.display = 'inline-block'; m.style.transform = `translateY(${(1 - ease.out(a)) * 24}px)`; } }
       // the network breathes; the asked node swells as we push in, lights gold at the end
       net.rotation.y = Math.sin(tau * .2) * .15;
       nodes.forEach(({ m }, i) => { m.material.emissiveIntensity = .3 + .2 * Math.sin(tau * 2 + i); });
