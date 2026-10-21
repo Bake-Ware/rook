@@ -88,6 +88,7 @@ export async function mountHuddle(root,{onPins}={}){
     if(done.length){const d=el('details',undefined,'hd-answered');d.append(el('summary','Answered lately ('+done.length+')'));
       for(const q of done.slice().reverse()){const r=el('div',undefined,'hd-done');r.append(el('b',name(q.asker)+': '),document.createTextNode(q.text));
         if(q.state==='answered'){const a=el('div',undefined,'hd-done-a');a.append(el('span','↳ '+(q.answered_by||'You')+': ','kn-dim'),document.createTextNode(q.answer));
+          if(q.relayed_text)a.append(el('div',q.relayed_text,'kn-dim hd-relayed'));
           if(q.wake)a.append(el('span',' · '+(q.wake.state==='woken'?'woke '+q.wake.worker:q.wake.state==='waking'?'waking '+q.wake.worker:q.wake.state==='failed'?'wake failed':'seen on its next call'),'kn-dim'));r.append(a);}
         else r.append(el('div','withdrawn','kn-dim'));d.append(r);}
       pins.append(d);}

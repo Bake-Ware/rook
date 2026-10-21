@@ -1,9 +1,10 @@
 """Speakable record names: ``brave-otter-lamp``.
 
 Console rooms, handoff threads, tasks, projects, jobs, job runs, huddles,
-huddle cards and chat rooms each get a three-word name a person can say
-out loud. The name is an alias. The record's hex or prefixed id stays the
-canonical key (storage, foreign keys, links, the journal); the name sits
+huddle cards, huddle questions (``ask``), approval holds and chat rooms
+each get a three-word name a person can say out loud. The name is an
+alias. The record's hex or prefixed id stays the canonical key (storage,
+foreign keys, links, the journal); the name sits
 beside it in a ``record_names`` table inside the store's own database.
 Names are unique per kind per band and never change once assigned.
 
@@ -46,7 +47,7 @@ __all__ = [
 
 #: The record kinds that carry a name. A huddle is a chat room, so it shares
 #: the room's name (kind ``room``).
-KINDS = ("console", "handoff", "task", "project", "job", "run", "room", "card")
+KINDS = ("console", "handoff", "task", "project", "job", "run", "room", "card", "hold", "ask")
 
 TABLE = "record_names"
 

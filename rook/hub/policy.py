@@ -167,6 +167,8 @@ class Decision:
     #: Set on a held call once a person decided it: the hold id and who.
     hold_id: str = ""
     decided_by: str = ""
+    #: The person's reason (or note) when they denied it, passed back to the caller.
+    note: str = ""
     #: The worker this call counts against the spread limit once it proceeds
     #: (set by the approval layer), and whether the target is the hub itself.
     spread_target: str = ""
@@ -203,10 +205,13 @@ class Decision:
             # A person denied this held call (Approvals page, or by voice).
             return {"ok": False,
                     "error": (f"denied: {self.decided_by} denied {self.cap} on {where} "
-                              f"(hold {self.hold_id}). Do not retry it; ask the user."),
+                              f"(hold {self.hold_id})"
+                              + (f". Their reason: {self.note}" if self.note else "")
+                              + ". Do not retry it; ask the user."),
                     "denied": {"tier": self.tier, "rule": self.rule, "rev": self.rev,
                                "principal": self.principal, "via": list(self.via),
-                               "hold": self.hold_id, "by": self.decided_by}}
+                               "hold": self.hold_id, "by": self.decided_by,
+                               **({"reason": self.note} if self.note else {})}}
         return {"ok": False,
                 "error": (f"denied: {self.principal} may not call {self.cap} "
                           f"({self.tier}) on {where}"),

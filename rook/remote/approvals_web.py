@@ -1,7 +1,9 @@
 """The dashboard's Approvals page API (``docs/design/permissions.md`` 3.11).
 
-* ``GET /api/approvals``: pending holds, recent decisions, active spread
-  grants and the approval settings. ``?count=1`` returns only
+* ``GET /api/approvals``: pending holds, recent decisions (a relayed one
+  with who relayed it and the person's words), the latest relayed decisions
+  of every kind (rook/hub/relay.py), who may relay, active spread grants and
+  the approval settings. ``?count=1`` returns only
   ``{"pending": n}`` (the navigation badge polls it).
 * ``POST /api/approvals/<id>``: ``{"decision": "approve"|"deny",
   "scope": "call"|"spread"?, "note"?}``.
@@ -11,7 +13,9 @@ Both API routes sit behind the dashboard's own login (the auth middleware
 admits only the operator: an admin account or the dashboard password) and
 also require a *person* who is a band owner or admin (``human:*`` with
 ``require_hub_admin``): no API token, agent or integration can approve a
-hold, and there is no MCP tool, cap or hub tool for it. Decisions are
+hold here. The only other path is relaying (rook/hub/relay.py): an agent the
+person enabled on the Tokens page passes on the person's own words, recorded
+append-only and shown here. Decisions are
 same-origin JSON POSTs (the policy page's convention): a cross-site form
 cannot send ``application/json`` without a preflight.
 
@@ -124,12 +128,23 @@ class ApprovalsWeb:
                                      status=503, headers=NO_STORE)
         if request.query.get("count"):
             return web.json_response({"pending": ap.queue.count_pending()}, headers=NO_STORE)
-        from ..hub.approvals import public
+        from ..hub.approvals import public, relay_text
         cfg = ap.config()
         weak = await self._weak(request)
+        pending, recent = ap.queue.pending(), ap.queue.recent(50)
+        relayed = ap.queue.relays_for(None, [h["id"] for h in recent])
+        for h in recent:
+            if h["id"] in relayed:
+                h["relayed"] = relayed[h["id"]]
+        relays = ap.queue.relays(30)
+        for r in relays:
+            r["text"] = relay_text(r)
         return web.json_response({
-            "pending": [public(h, cfg) for h in ap.queue.pending()],
-            "recent": [public(h, cfg) for h in ap.queue.recent(50)],
+            "pending": [public(h, cfg) for h in pending],
+            "recent": [public(h, cfg) for h in recent],
+            "relays": relays,
+            "relayers": [{k: r[k] for k in ("principal", "label", "enabled_by", "enabled_at")}
+                         for r in ap.queue.relayers()],
             "grants": ap.queue.grants(),
             "can_decide": not weak,
             "weak_credential": weak,
@@ -142,6 +157,7 @@ class ApprovalsWeb:
                          "spread_grant_secs": cfg.spread_grant_secs,
                          "contact": list(cfg.contact), "contact_worker": cfg.contact_worker,
                          "voice_max_tier": cfg.voice_max_tier,
+                         "relay_dashboard_only": list(cfg.relay_dashboard_only),
                          "hub_host_workers": list(cfg.hub_host_workers)},
         }, headers=NO_STORE)
 

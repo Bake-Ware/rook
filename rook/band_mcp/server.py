@@ -1974,8 +1974,16 @@ class McpService:
             log.exception("secret mask endpoint unavailable; dashboard writes will not be masked")
 
         from .account_tokens import build_account_token_routes
+        def _approvals():
+            return getattr(getattr(self.client, "authz", None), "approvals", None)
+
+        def _house():
+            hub = getattr(mcp, "_rook_hub", None)
+            home = hub.plugin("home") if hub is not None else None
+            return (home.identity, f"House agent ({home.agent_name})") if home is not None \
+                else None
         for route in reversed(build_account_token_routes(store, getattr(mcp, "_rook_chat", None),
-                                                         accounts)):
+                                                         accounts, _approvals, _house)):
             app.router.routes.insert(0, route)
 
         # Thin OAuth front-door for claude.ai's web connector (which won't take a

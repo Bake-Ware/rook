@@ -19,8 +19,9 @@ Chaired huddles (docs/design/huddles.md 5, 8):
 * ``start`` {title, roles?}: a new chaired huddle (roles: ids; none: the
   default roles; [] for a 1:1 with the house agent).
 * ``send`` in a chaired huddle is a post: it starts a round.
-* ``card`` {room, card, decision: approve|dismiss}: approving runs the card's
-  call as this account, under the band's policy.
+* ``card`` {room, card, decision: approve|dismiss, reason?}: approving runs
+  the card's call as this account, under the band's policy; a dismissal's
+  reason goes back to the proposer in the room.
 * ``archive`` {room, archived}.
 * ``roles``: the roles to pick from, the default roles and the chair's
   identity.
@@ -157,7 +158,8 @@ def routes(get_node: Callable[[], Any], accounts):
                 from ...authz import principal_for_user
                 result = await svc.card(str(data.get("room") or ""), str(data.get("card") or ""),
                                         str(data.get("decision") or ""), "human:" + str(user["id"]),
-                                        principal_for_user(user, True))
+                                        principal_for_user(user, True),
+                                        reason=str(data.get("reason") or "")[:500])
             elif action == "archive":
                 result = svc.archive(str(data.get("room") or ""), bool(data.get("archived", True)))
             elif action == "roles":

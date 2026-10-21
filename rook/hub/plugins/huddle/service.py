@@ -67,7 +67,8 @@ class HuddleStore:
 
     Speakable names (rook.core.names) live in chat.db's ``record_names``:
     a huddle has its chat room's name (kind ``room``), a card its own
-    (kind ``card``). Rounds have none."""
+    (kind ``card``), a question its own (kind ``ask``, by message seq).
+    Rounds have none."""
 
     def __init__(self, path: str) -> None:
         self.path = path
@@ -79,6 +80,10 @@ class HuddleStore:
                 names.backfill(self._db, kind, [r[0] for r in self._db.execute(
                     f"SELECT {col} FROM {table} WHERE {col} NOT IN "
                     f"(SELECT id FROM {names.TABLE} WHERE kind=?)", (kind,))])
+            # Open questions (asked before questions had names).
+            names.backfill(self._db, "ask", [str(r[0]) for r in self._db.execute(
+                "SELECT seq FROM huddle_questions WHERE state='open' AND CAST(seq AS TEXT) NOT IN "
+                f"(SELECT id FROM {names.TABLE} WHERE kind='ask')")])
             self._db.commit()
 
     # names
@@ -168,6 +173,7 @@ class HuddleStore:
     def ask(self, seq: int, room: str, asker: str, text: str, data: dict) -> None:
         self._x("INSERT INTO huddle_questions(seq,room,asker,text,data,asked) VALUES(?,?,?,?,?,?)",
                 (seq, room, asker, text, json.dumps(data), time.time()))
+        self.assign("ask", str(seq))
 
     # chaired huddles (migrations/002_chair.sql)
     def set_roles(self, room: str, roles: list[str]) -> None:
@@ -257,6 +263,12 @@ class HuddleStore:
         rows = self._q("SELECT * FROM huddle_cards WHERE id=?", (cid,))
         return names.with_name(self._card(rows[0]), self.name("card", cid)) if rows else None
 
+    def pending_cards(self) -> list[dict]:
+        """Every card waiting for a person, in every huddle, oldest first."""
+        rows = self._q("SELECT * FROM huddle_cards WHERE state='proposed' ORDER BY created")
+        named = self.names("card", [r["id"] for r in rows])
+        return [names.with_name(self._card(r), named.get(r["id"])) for r in rows]
+
     def cards(self, room: str, round: str | None = None) -> list[dict]:
         if round:
             rows = self._q("SELECT * FROM huddle_cards WHERE room=? AND round=? ORDER BY created",
@@ -271,6 +283,9 @@ class HuddleStore:
         with self._lock:
             self._db.execute(f"DELETE FROM {names.TABLE} WHERE kind='card' AND id IN "
                              "(SELECT id FROM huddle_cards WHERE room=?)", (room,))
+            self._db.execute(f"DELETE FROM {names.TABLE} WHERE kind='ask' AND id IN "
+                             "(SELECT CAST(seq AS TEXT) FROM huddle_questions WHERE room=?)",
+                             (room,))
             for table in ("huddles", "huddle_posts", "huddle_status", "huddle_questions",
                           "huddle_rounds", "huddle_cards"):
                 self._db.execute(f"DELETE FROM {table} WHERE room=?", (room,))
@@ -295,7 +310,14 @@ class HuddleStore:
 
     def question(self, seq: int) -> dict | None:
         rows = self._q("SELECT * FROM huddle_questions WHERE seq=?", (int(seq),))
-        return self._question(rows[0]) if rows else None
+        return names.with_name(self._question(rows[0]), self.name("ask", str(seq))) if rows else None
+
+    def open_questions(self) -> list[dict]:
+        """Every question still pinned, in every huddle, oldest first."""
+        rows = [self._question(r) for r in self._q(
+            "SELECT * FROM huddle_questions WHERE state='open' ORDER BY seq")]
+        named = self.names("ask", [str(q["id"]) for q in rows])
+        return [names.with_name(q, named.get(str(q["id"]))) for q in rows]
 
     def origin(self, seq: int) -> dict:
         """The asker's recorded principal and worker (see HuddleService.ask)."""
@@ -311,9 +333,11 @@ class HuddleStore:
             clauses.append("asker=?"); args.append(asker)
         clauses.append("(state='open' OR coalesce(answered,asked)>=?)")
         args.append(since if since is not None else time.time() - ANSWERED_KEEP)
-        return [self._question(r) for r in self._q(
+        rows = [self._question(r) for r in self._q(
             "SELECT * FROM huddle_questions WHERE " + " AND ".join(clauses)
             + " ORDER BY state<>'open', seq", tuple(args))]
+        named = self.names("ask", [str(q["id"]) for q in rows])
+        return [names.with_name(q, named.get(str(q["id"]))) for q in rows]
 
     def answer(self, seq: int, answer: str, by: str, label: str, answer_seq: int) -> bool:
         return self._x("UPDATE huddle_questions SET state='answered',answer=?,answered_by=?,answered_label=?,"
@@ -353,6 +377,9 @@ class HuddleService:
         self._wake_on_answer = wake_on_answer
         self._origin = origin
         self.wakes: set[asyncio.Task] = set()   # running wake-ups (tests await them)
+        #: ``relayed(kind, ids)`` -> relayed decisions by item id (the approvals
+        #: plugin's, rook/hub/relay.py), or None.
+        self.relayed: Callable[[str, list], dict] | None = None
         #: The chair (rounds, cards: :mod:`.chair`), set by the plugin.
         self.chair: Any = None
 
@@ -623,7 +650,8 @@ class HuddleService:
         return self._named({"room": room, "archived": bool(archived)}, room)
 
     async def card(self, room: str, card: str, action: str, by: str, principal=None,
-                   data: dict | None = None) -> dict:
+                   data: dict | None = None, relay: dict | None = None,
+                   reason: str = "") -> dict:
         """``approve`` / ``dismiss`` a card (people only), or ``propose`` one
         (``data`` {kind, summary, worker?, cap?, args?}) as ``by``."""
         chair = self._chair()
@@ -634,7 +662,7 @@ class HuddleService:
         c = self.store.card(card)
         if c is None or c["room"] != h["room"]:
             raise ValueError("no such card in that huddle")
-        out = await chair.decide(card, action, by, principal)
+        out = await chair.decide(card, action, by, principal, reason=reason, relay=relay)
         return names.with_name(out, c.get("name")) if isinstance(out, dict) else out
 
     # -- reading -----------------------------------------------------------
@@ -657,6 +685,8 @@ class HuddleService:
             if m["seq"] in posts:
                 m.update(posts[m["seq"]])
         questions = self.store.questions(room)
+        self._attribute("ask", [q for q in questions if q["state"] == "answered"],
+                        lambda q: f"q{q['id']}")
         if targets:
             for q in questions:
                 if q["state"] == "open":
@@ -667,10 +697,29 @@ class HuddleService:
                "questions": questions, "messages": msgs, "last_seq": read["last_seq"],
                **({"resolved": h["resolved"]} if h.get("resolved") else {})}
         if h.get("roles") is not None:
+            cards = self.store.cards(room)
+            self._attribute("card", [c for c in cards if c["state"] != "proposed"],
+                            lambda c: c["id"])
             out.update(roles=json.loads(h["roles"]), archived=h.get("archived"),
                        chair=self.chair.chair_identity() if self.chair is not None else None,
-                       rounds=self.store.rounds(room, 10), cards=self.store.cards(room))
+                       rounds=self.store.rounds(room, 10), cards=cards)
         return out
+
+    def _attribute(self, kind: str, rows: list[dict], key: Callable[[dict], str]) -> None:
+        """``relayed_text`` on cards and questions an agent decided for the
+        person ("approved by Bake via Claude web: ..."; rook/hub/relay.py)."""
+        if not rows or self.relayed is None:
+            return
+        from ...approvals import relay_text
+        try:
+            found = self.relayed(kind, [key(r) for r in rows])
+        except Exception:
+            log.exception("huddle: relayed decisions unavailable")
+            return
+        for r in rows:
+            rel = found.get(key(r))
+            if rel:
+                r["relayed_text"] = relay_text(rel)
 
     def huddles(self, archived: bool = False) -> list[dict]:
         """Every huddle (archived ones only with ``archived``), newest
@@ -700,11 +749,13 @@ class HuddleService:
         return self.store.questions(asker=identity)
 
     # -- the person --------------------------------------------------------
-    async def answer(self, question: int, text: str, by: str, label: str) -> dict:
+    async def answer(self, question: int, text: str, by: str, label: str,
+                     relayed: str = "") -> dict:
         """The person answers a pinned question: an answer message that
         mentions the asker, the question unpinned, and the asker woken when
         its worker can be (in the background; the result lands on the
-        question as ``wake``)."""
+        question as ``wake``). ``relayed``: the line saying an agent relayed
+        the person's words (rook/hub/relay.py), shown with the answer."""
         q = self.store.question(question)
         if q is None:
             raise ValueError("no such question")
@@ -713,10 +764,13 @@ class HuddleService:
         if self._live(self.store.get(q["room"])) is None:
             raise ValueError("that huddle's chat room was deleted")
         answer = scrub(_text(text, "answer", TEXT_MAX, required=True))
-        sent = self._send(q["room"], PERSON, f"Answer for {q['asker']}: {answer}", [q["asker"]])
+        tail = f" ({relayed})" if relayed else ""
+        sent = self._send(q["room"], PERSON, f"Answer for {q['asker']}: {answer}{tail}",
+                          [q["asker"]])
         if not self.store.answer(q["id"], answer, by, label, sent["seq"]):
             raise ValueError("that question was answered meanwhile")
-        self.store.post(sent["seq"], q["room"], PERSON, "answer", {"question": q["id"]})
+        self.store.post(sent["seq"], q["room"], PERSON, "answer",
+                        {"question": q["id"], **({"relayed": relayed} if relayed else {})})
         wake_state = self._start_wake(q, answer)
         self.store.set_wake(q["id"], wake_state)
         return {"question": q["id"], "seq": sent["seq"], "wake": wake_state}

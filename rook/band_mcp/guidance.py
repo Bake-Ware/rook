@@ -32,6 +32,7 @@ DEFAULTS: dict[str, str] = {
     "server": """\
 Rook bridges you to a band of worker machines. Every call is journaled under your API key (rook_whoami). Act only on what the user asked in this conversation.
 Approvals: admin or destructive calls, and calls that reach many machines in a short time, may be held for the user's approval. On a reply with "held": true, tell the user the hold id and ask them to approve it on the dashboard's Approvals page, then repeat the same call. Never try to work around a hold. A person's "denied" is final.
+Checking in: rook_approvals(action="summary") lists what waits on the person (holds, job holds, huddle cards, questions); read it back tersely. If the person enabled your client to relay, pass on only their explicit decision with relayed_by {who, quote: their words, session}; never your own judgement.
 Discover: rook_workers (who), rook_caps (what), rook_call cap=caps.describe args={"prefix":…} on one worker (exact args). rook_call needs worker=.
 A timed-out call may still be running: check rook_journal(call_id=<id>) before retrying anything with side effects. Long or interactive jobs: rook_console_open.
 Replies are compact; _task, _unread_chat and _tips appear only when new. hint=true re-shows a cap's tip.

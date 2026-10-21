@@ -39,6 +39,12 @@
   "agenthost.turn": {
    "tier": "exec"
   },
+  "approvals.list": {
+   "tier": "read"
+  },
+  "approvals.relay": {
+   "tier": "write"
+  },
   "band.admin": {
    "tier": "admin",
    "tags": [

@@ -118,7 +118,8 @@ told why and can fix it. A card that says the same as one still waiting
 is not added twice: the one who proposed it updates theirs instead. The
 chair's message lists the cards it actually made, by id.
 
-Only people approve or dismiss cards. A role you set to act on its own
+Only people approve or dismiss cards (or a client relaying your words,
+[[manual-accounts-and-access]]). A role you set to act on its own
 (autonomy *act*) runs calls inside its tools directly; its card shows up
 already done. Anything outside its tools still waits for you.
 
