@@ -55,10 +55,23 @@ async def clips(req):
 
 
 async def video(req):
-    f = final(req.match_info['n'])
+    """The full render (?full=1, for download) or a light 720p copy for playing in the page."""
+    n = req.match_info['n']; f = final(n)
     if not f:
         raise web.HTTPNotFound()
-    return web.FileResponse(f)
+    if req.query.get('full'):
+        return web.FileResponse(f, headers={'Content-Disposition': f'attachment; filename="{f.name}"'})
+    w = HERE / 'out' / 'web' / f'c{n}.mp4'
+    if not w.exists() or w.stat().st_mtime < f.stat().st_mtime:
+        w.parent.mkdir(parents=True, exist_ok=True)
+        tmp = w.with_suffix('.tmp.mp4')
+        p = await asyncio.create_subprocess_exec(
+            'ffmpeg', '-v', 'error', '-y', '-i', str(f), '-vf', 'scale=1280:-2:out_range=tv,format=yuv420p',
+            '-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'main', '-crf', '24', '-maxrate', '2500k', '-bufsize', '5000k',
+            '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', str(tmp))
+        await p.wait()
+        tmp.replace(w)
+    return web.FileResponse(w)
 
 
 async def thumb(req):
@@ -78,7 +91,8 @@ async def thumb(req):
 async def no_cache(req, handler):
     # the page is edited while you use it: never let the browser keep an old copy
     res = await handler(req)
-    res.headers['Cache-Control'] = 'no-store'
+    if not req.path.startswith(('/video/', '/thumb/')):   # media may cache; pages and scripts never do
+        res.headers['Cache-Control'] = 'no-store'
     return res
 
 

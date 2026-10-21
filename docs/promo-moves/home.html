@@ -83,7 +83,7 @@ async function load() {
         </div>
         <div class="btns">
           <a class="btn" href="index.html?clip=${c.n}&director=1">Open in director</a>
-          ${c.video ? `<a class="btn" href="video/${c.n}" download>Download mp4</a>` : ''}
+          ${c.video ? `<a class="btn" href="video/${c.n}?full=1">Download full-res mp4</a>` : ''}
         </div>
         <h3>Timed notes</h3>
         ${timed.length ? `<ul class="notes">${timed.map(x => `<li>
@@ -102,7 +102,7 @@ document.addEventListener('click', async e => {
   const play = e.target.closest('[data-play]');
   if (play) {
     const n = play.dataset.play, box = play.parentElement;
-    box.innerHTML = `<video src="video/${n}" controls autoplay playsinline></video>`;
+    box.innerHTML = `<video src="video/${n}" controls autoplay playsinline preload="auto"></video>`;
     return;
   }
   const del = e.target.closest('[data-del]');
