@@ -67,17 +67,17 @@ def test_long_text_is_cut_and_split_for_the_engine():
 # -- the voice ---------------------------------------------------------------------
 
 def test_role_voice_then_band_default_then_the_browser():
-    voices = ["af_heart", "sojourn"]
-    assert speech.choose_voice("sojourn", voices=voices, default="af_heart") == {
-        "mode": "hub", "voice": "sojourn", "source": "role", "label": "sojourn"}
-    assert speech.choose_voice("chatterbox:sojourn", voices=voices)["source"] == "role"
+    voices = ["af_heart", "nova"]
+    assert speech.choose_voice("nova", voices=voices, default="af_heart") == {
+        "mode": "hub", "voice": "nova", "source": "role", "label": "nova"}
+    assert speech.choose_voice("chatterbox:nova", voices=voices)["source"] == "role"
     assert speech.choose_voice("", voices=voices, default="af_heart") == {
         "mode": "hub", "voice": "", "source": "default", "label": "af_heart"}
-    gone = speech.choose_voice("alan", voices=voices, default="af_heart")
-    assert gone["voice"] == "" and gone["source"] == "default" and "alan" in gone["reason"]
+    gone = speech.choose_voice("remy", voices=voices, default="af_heart")
+    assert gone["voice"] == "" and gone["source"] == "default" and "remy" in gone["reason"]
     # An engine that cannot list its voices still gets the role's voice.
-    assert speech.choose_voice("alan", voices=None)["voice"] == "alan"
-    off = speech.choose_voice("sojourn", unavailable="voice is off on this hub", voices=voices)
+    assert speech.choose_voice("remy", voices=None)["voice"] == "remy"
+    off = speech.choose_voice("nova", unavailable="voice is off on this hub", voices=voices)
     assert off == {"mode": "browser", "voice": "", "source": "browser",
                    "reason": "voice is off on this hub"}
 
@@ -104,9 +104,9 @@ class FakeVoice:
         return self.why
 
     async def voices(self):
-        return {"voices": ["af_heart", "sojourn"], "default": "af_heart",
+        return {"voices": ["af_heart", "nova"], "default": "af_heart",
                 "catalog": [{"id": "af_heart", "label": "Heart", "engine": "kokoro"},
-                            {"id": "sojourn", "label": "Sojourn", "engine": "chatterbox"}]}
+                            {"id": "nova", "label": "Nova", "engine": "chatterbox"}]}
 
     async def synthesize(self, text, voice=""):
         if voice in self.broken:
@@ -121,7 +121,7 @@ def _with_voice(hub, monkeypatch, voice):  # noqa: F811
 
 
 async def _qa_said(hub, text):  # noqa: F811
-    await _roles(hub, voice="sojourn")
+    await _roles(hub, voice="nova")
     started = await _call(hub, "huddle.start", {"title": "Speak", "roles": ["qa"]})
     room = started["room"]
     hub.band.script = {"huddle-qa": [{"text": text}]}
@@ -147,10 +147,10 @@ async def test_speak_reads_a_role_message_in_the_role_voice(hub, monkeypatch):  
             return r.status_code, r.json()
         code, body = await api(action="speak", room=room, seq=seq)
         r = body["result"]
-        assert code == 200 and r["mode"] == "hub" and r["source"] == "role" and r["voice"] == "sojourn"
+        assert code == 200 and r["mode"] == "hub" and r["source"] == "role" and r["voice"] == "nova"
         assert r["role"] == "qa" and r["parts"] == 1 and r["mime"] == "audio/wav"
         assert base64.b64decode(r["audio"]).startswith(b"RIFF")
-        assert voice.said[-1] == (f"Room {name.replace('-', ' ')} is green.", "sojourn")
+        assert voice.said[-1] == (f"Room {name.replace('-', ' ')} is green.", "nova")
         # The chair has no role voice: the band's default (the engine's own).
         if chair:
             code, body = await api(action="speak", room=room, seq=chair[-1]["seq"])
@@ -161,12 +161,12 @@ async def test_speak_reads_a_role_message_in_the_role_voice(hub, monkeypatch):  
         assert code == 400 and "no message" in body["error"]
         code, body = await api(action="voices")
         assert body["result"]["available"] and body["result"]["default"] == "af_heart"
-        assert [v["id"] for v in body["result"]["catalog"]] == ["af_heart", "sojourn"]
+        assert [v["id"] for v in body["result"]["catalog"]] == ["af_heart", "nova"]
 
 
 @pytest.mark.asyncio
 async def test_a_failing_role_voice_falls_back_to_the_default_then_the_browser(hub, monkeypatch):  # noqa: F811
-    voice = FakeVoice(broken=("sojourn",))
+    voice = FakeVoice(broken=("nova",))
     _with_voice(hub, monkeypatch, voice)
     room, qa, _ = await _qa_said(hub, "All checks pass.")
     async with _client(hub) as c:
@@ -174,7 +174,7 @@ async def test_a_failing_role_voice_falls_back_to_the_default_then_the_browser(h
                                                        "room": room, "seq": qa["seq"]})).json()["result"]
         assert r["mode"] == "hub" and r["source"] == "default" and "chatterbox is down" in r["reason"]
         assert voice.said == [("All checks pass.", "")]
-        voice.broken = ("sojourn", "")
+        voice.broken = ("nova", "")
         r = (await c.post("/huddle/account-api", json={"csrf": "tok", "action": "speak",
                                                        "room": room, "seq": qa["seq"]})).json()["result"]
         assert r["mode"] == "browser" and r["text"] == "All checks pass." and "audio" not in r
@@ -203,7 +203,7 @@ async def test_without_a_voice_engine_the_browser_reads_it(hub, monkeypatch):  #
 async def test_a_card_is_read_in_its_proposers_voice(hub, monkeypatch):  # noqa: F811
     voice = FakeVoice()
     _with_voice(hub, monkeypatch, voice)
-    await _roles(hub, voice="sojourn")
+    await _roles(hub, voice="nova")
     room = (await _call(hub, "huddle.start", {"title": "Cards", "roles": ["qa"]}))["room"]
     hub.band.script = {"huddle-qa": [{"text": "Card.", "tools": [("propose", {
         "kind": "task.create", "summary": "Ping **box** before the deploy", "worker": "box",
@@ -215,7 +215,7 @@ async def test_a_card_is_read_in_its_proposers_voice(hub, monkeypatch):  # noqa:
         r = (await c.post("/huddle/account-api", json={"csrf": "tok", "action": "speak",
                                                        "room": room, "card": card["id"]})).json()
         assert r["result"]["source"] == "role" and voice.said[-1] == (
-            "Ping box before the deploy.", "sojourn")
+            "Ping box before the deploy.", "nova")
         other = (await _call(hub, "huddle.start", {"title": "Other", "roles": []}))["room"]
         r = await c.post("/huddle/account-api", json={"csrf": "tok", "action": "speak",
                                                       "room": other, "card": card["id"]})
@@ -249,7 +249,7 @@ async def test_play_on_a_device_never_offers_protected_ones(hub, monkeypatch):  
         assert r.status_code == 200 and r.json()["result"]["worker"] == "myphone"
         call = [x for x in hub.band.calls if x.cap == "voice.speak"][-1]
         assert call.target == "w-phone" and call.identity == "human:op"
-        assert call.args == {"text": "Deploy is done.", "wait": False, "voice": "sojourn"}
+        assert call.args == {"text": "Deploy is done.", "wait": False, "voice": "nova"}
 
 
 # -- the button ----------------------------------------------------------------------
@@ -280,7 +280,7 @@ globalThis.document={querySelector:()=>null,head:{append(){}},body:{append(){}},
 globalThis.window=globalThis;globalThis.innerHeight=800;globalThis.innerWidth=400;
 globalThis.posts=[];globalThis.replies=[];
 globalThis.fetch=async(url,opt)=>{if(!opt)return {ok:true,status:200,json:async()=>({csrf:'tok'})};
-  const body=JSON.parse(opt.body);posts.push(body);const r=globalThis.replies.shift()||{mode:'hub',parts:1,part:body.part||0,audio:btoa('RIFF'),mime:'audio/wav',source:'role',voice:'sojourn'};
+  const body=JSON.parse(opt.body);posts.push(body);const r=globalThis.replies.shift()||{mode:'hub',parts:1,part:body.part||0,audio:btoa('RIFF'),mime:'audio/wav',source:'role',voice:'nova'};
   return {ok:true,status:200,json:async()=>({ok:true,result:r})};};
 globalThis.audios=[];
 globalThis.Audio=class{constructor(u){this.src=u;this.paused=false;audios.push(this);} play(){return Promise.resolve();} pause(){this.paused=true;}};
@@ -349,7 +349,7 @@ async def test_remote_engine_speaks_with_the_hubs_voice_key():
     seen = []
 
     async def voices(request):
-        return web.json_response({"voices": ["af_heart", "sojourn"], "default": "sojourn"})
+        return web.json_response({"voices": ["af_heart", "nova"], "default": "nova"})
 
     async def speak(request):
         body = await request.json()
@@ -364,9 +364,9 @@ async def test_remote_engine_speaks_with_the_hubs_voice_key():
     await server.start_server()
     remote = eng.RemoteEngine(str(server.make_url("")).rstrip("/"), "/voice", token="k")
     try:
-        assert (await remote.voices())["default"] == "sojourn"
-        audio = await remote.synthesize("  Hello\nthere. ", "sojourn")
-        assert audio[:4] == b"RIFF" and seen[-1] == ("Bearer k", {"text": "Hello there.", "voice": "sojourn"})
+        assert (await remote.voices())["default"] == "nova"
+        audio = await remote.synthesize("  Hello\nthere. ", "nova")
+        assert audio[:4] == b"RIFF" and seen[-1] == ("Bearer k", {"text": "Hello there.", "voice": "nova"})
         await remote.synthesize("Default voice.")
         assert seen[-1][1] == {"text": "Default voice."}
         with pytest.raises(RuntimeError, match="HTTP 400: Unknown voice"):
@@ -393,7 +393,7 @@ async def test_engine_here_speaks_in_process(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(tmp_path / "pkgs"))
 
     class Provider:
-        voices, default_voice = ["af_heart", "sojourn"], "af_heart"
+        voices, default_voice = ["af_heart", "nova"], "af_heart"
 
         async def synthesize(self, text, voice):
             return (text + "|" + voice).encode().ljust(32, b"\0")[:32], 24000
@@ -402,18 +402,18 @@ async def test_engine_here_speaks_in_process(tmp_path, monkeypatch):
         await local.synthesize("hi")
     local.state, local.app = "ready", SimpleNamespace(state=SimpleNamespace(provider=Provider()))
     try:
-        with wave.open(io.BytesIO(await local.synthesize("Hi  there", "sojourn"))) as w:
-            assert w.getframerate() == 24000 and w.readframes(16).startswith(b"Hi there|sojourn")
+        with wave.open(io.BytesIO(await local.synthesize("Hi  there", "nova"))) as w:
+            assert w.getframerate() == 24000 and w.readframes(16).startswith(b"Hi there|nova")
         with wave.open(io.BytesIO(await local.synthesize("Hi"))) as w:
             assert w.readframes(16).startswith(b"Hi|af_heart")
         with pytest.raises(ValueError, match="unknown voice"):
-            await local.synthesize("Hi", "alan")
+            await local.synthesize("Hi", "remy")
         # The plugin: why it cannot speak, and its voices (kept a minute).
         plugin = Voice()
         assert plugin.speech_unavailable() == "voice is off on this hub"
         plugin.engine = local
         assert plugin.speech_unavailable() == ""
-        assert (await plugin.voices()) == {"voices": ["af_heart", "sojourn"], "default": "af_heart",
+        assert (await plugin.voices()) == {"voices": ["af_heart", "nova"], "default": "af_heart",
                                            "catalog": []}
         local.state = "starting"
         assert plugin.speech_unavailable() == "the voice engine is starting"
