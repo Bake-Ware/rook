@@ -112,3 +112,28 @@ When an agent asks you something through the phone, it can wait for an answer.
 After a short beep the phone listens; what you say goes back to the agent as
 text. Anything near the phone can be heard, so agents treat a spoken reply as
 what the microphone heard, not as a confirmed order.
+
+## Reading huddle messages aloud
+
+Every message and action card in a huddle ([[manual-huddles]]) has a small
+**Speak** button (▶). Tap it to hear the message in the browser you are
+using; tap it again (■) to stop. Only one message speaks at a time.
+
+- **Which voice.** A role's messages are read in that role's **Speaking
+  voice**, set on the Roles page from the voices your voice engine has.
+  Messages from the chair and from roles without one use the band's default
+  voice (the voice engine's own). If a role's voice fails, the default reads
+  it instead.
+- **Where the speech comes from.** The hub makes the audio with its voice
+  engine (on this hub, or the voice server it passes voice to; see above), so
+  it sounds like your phones. When the hub has no voice engine it can reach,
+  your browser reads the message with its own voice, and the button's tooltip
+  says so.
+- **What is read.** Formatting, code blocks and links are left out, and record
+  ids are read by their three-word names ([[manual-names]]).
+- **Play on a phone.** Press and hold the button (or right-click it) to play
+  the message on a device with `voice.speak`, such as your phone, in the same
+  voice. Devices listed in **Protected devices** (`role.protected_workers`)
+  are never offered, and none are offered until that list exists.
+  **Play on devices** (`huddle.speak_devices`) narrows the list to the
+  workers you name.

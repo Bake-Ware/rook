@@ -91,6 +91,10 @@ class HuddleStore:
         with self._lock:
             return names.name_of(self._db, kind, rid)
 
+    def name_for_id(self, rid: str) -> str | None:
+        with self._lock:
+            return names.name_for_id(self._db, rid)
+
     def names(self, kind: str, ids) -> dict[str, str]:
         with self._lock:
             return names.names_of(self._db, kind, list(ids))
@@ -717,6 +721,24 @@ class HuddleService:
                        chair=self.chair.chair_identity() if self.chair is not None else None,
                        rounds=self.store.rounds(room, 10), cards=cards)
         return out
+
+    def spoken(self, room: str, seq: int = 0, card: str = "") -> dict:
+        """``{sender, text}`` of one message (``seq``) or card in ``room``, to
+        read aloud. Reading never marks the room read."""
+        if card:
+            c = self.store.card(self.card_id(card))
+            if c is None or c["room"] != room:
+                raise ValueError(f"no card {card!r} in this huddle")
+            return {"sender": str(c.get("by") or ""), "text": str(c.get("summary") or "")}
+        seq = int(seq or 0)
+        if seq < 1:
+            raise ValueError("seq: the message's number")
+        read = self.chat.read(room, PERSON, since_seq=seq - 1, mark=False, limit=1)
+        msg = next((m for m in read.get("messages") or [] if m.get("seq") == seq), None) \
+            if read.get("ok") else None
+        if msg is None:
+            raise ValueError(f"no message {seq} in this room")
+        return {"sender": str(msg.get("sender") or ""), "text": str(msg.get("text") or "")}
 
     def _attribute(self, kind: str, rows: list[dict], key: Callable[[dict], str]) -> None:
         """``relayed_text`` on cards and questions an agent decided for the

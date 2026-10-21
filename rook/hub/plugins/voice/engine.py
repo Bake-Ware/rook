@@ -51,6 +51,28 @@ _STALE: "asyncio.Task | None" = None
 STALE_REASON = ("The previous voice engine is still loading its models (a setting changed "
                 "while they loaded). Voice starts with the new settings once that load "
                 "finishes; restart the hub if it never does.")
+#: The voice service's /api/voice limit: text per request.
+MAX_SPEAK = 700
+
+
+def wav(pcm: bytes, rate: int) -> bytes:
+    """Mono 16-bit PCM as a WAV file (what /api/voice answers)."""
+    import io
+    import wave
+    out = io.BytesIO()
+    with wave.open(out, "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(int(rate))
+        f.writeframes(pcm)
+    return out.getvalue()
+
+
+def _speak_text(text: str) -> str:
+    text = " ".join(str(text or "").split())
+    if not text or len(text) > MAX_SPEAK:
+        raise ValueError(f"speak 1 to {MAX_SPEAK} characters at a time")
+    return text
 
 
 def find_engine(packages: tuple = ENGINE_PACKAGES) -> str | None:
@@ -232,6 +254,31 @@ class LocalEngine:
         if self.state != "ready":
             raise RuntimeError("voice is not ready on this hub")
         return (await asyncio.wait_for(self.app.state.provider.transcribe(pcm), 30) or "").strip()
+
+    def voices(self) -> dict:
+        """The voice service's voices: ``{voices, default, catalog?}`` (its /voices)."""
+        if self.state != "ready":
+            raise RuntimeError("voice is not ready on this hub")
+        provider = self.app.state.provider
+        tts = getattr(provider, "tts", None)
+        if tts is not None:
+            return tts.describe()
+        return {"voices": list(provider.voices), "default": provider.default_voice}
+
+    async def synthesize(self, text: str, voice: str = "") -> bytes:
+        """``text`` spoken in ``voice`` (blank: the service's default), as WAV."""
+        if self.state != "ready":
+            raise RuntimeError("voice is not ready on this hub")
+        text = _speak_text(text)
+        provider = self.app.state.provider
+        tts = importlib.import_module(self.package + ".tts")
+        chosen = tts.resolve_voice(provider, voice or provider.default_voice)
+        if chosen is None:
+            raise ValueError(f"unknown voice {voice!r}")
+        pcm, rate = await asyncio.wait_for(provider.synthesize(text, chosen), 30)
+        if not pcm:
+            raise RuntimeError("the voice engine returned no audio")
+        return wav(pcm, rate)
 
 
 # -- another machine -------------------------------------------------------------
@@ -551,3 +598,36 @@ class RemoteEngine:
                 raise RuntimeError(f"the voice server said HTTP {r.status}"
                                    + (f": {detail}" if detail else ""))
             return str((data or {}).get("text") or "").strip()
+
+    async def voices(self) -> dict:
+        import aiohttp
+        async with self._http().get(self.url("/voices"), ssl=self._ssl(),
+                                    timeout=aiohttp.ClientTimeout(total=8)) as r:
+            data = await r.json(content_type=None)
+            if r.status != 200 or not isinstance(data, dict):
+                raise RuntimeError(f"the voice server said HTTP {r.status}")
+            return data
+
+    async def synthesize(self, text: str, voice: str = "") -> bytes:
+        import json
+        import aiohttp
+        text = _speak_text(text)
+        body: dict = {"text": text}
+        if voice:
+            body["voice"] = voice
+        headers = {"Content-Type": "application/json"}
+        if self.token:   # a keyless request works only where the server allows guests
+            headers["Authorization"] = f"Bearer {self.token}"
+        async with self._http().post(
+                self.url("/api/voice"), data=json.dumps(body).encode(), ssl=self._ssl(),
+                headers=headers, timeout=aiohttp.ClientTimeout(total=40)) as r:
+            data = await r.read()
+            if r.status != 200:
+                detail = ""
+                try:
+                    detail = str((json.loads(data) or {}).get("detail") or "")
+                except (ValueError, AttributeError):
+                    pass
+                raise RuntimeError(f"the voice server said HTTP {r.status}"
+                                   + (f": {detail}" if detail else ""))
+            return data

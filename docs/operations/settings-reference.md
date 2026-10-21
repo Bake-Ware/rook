@@ -288,6 +288,7 @@ are set only in the environment or on the command line.
 | `huddle.max_role_turns` | Role turns per round | hub | int | `6` | `ROOK_HUDDLE_MAX_ROLE_TURNS` | live |
 | `huddle.retention_days` | Keep archived huddles (days) | hub | int | `90` | `ROOK_HUDDLE_RETENTION_DAYS` | live |
 | `huddle.default_roles` | Default roles | hub | list | `['pm', 'qa', 'lead']` | `ROOK_HUDDLE_DEFAULT_ROLES` | live |
+| `huddle.speak_devices` | Play on devices | hub | list |  | `ROOK_HUDDLE_SPEAK_DEVICES` | live |
 
 ## Jobs (hub plugin, runs in mcp)
 

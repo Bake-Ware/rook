@@ -49,7 +49,7 @@ export function presetDescription(groups,id){
 export async function mountRoles(root){
   useCss();
   if(!document.getElementById('roles-css'))document.head.append(h('style',{id:'roles-css',text:CSS}));
-  let d=null,sel=null,hist=[],busy=false,picked='';
+  let d=null,sel=null,hist=[],busy=false,picked='',voicesP=null;
   const status=h('p',{class:'mg-status',role:'status'});
   const bar=h('div',{class:'mg-bar'}),list=h('div'),panel=h('div',{class:'mg-box strong mg-side'});
   root.replaceChildren(h('div',{class:'mg'},status,h('div',{class:'mg-split'},h('div',{class:'mg-main'},bar,list),panel)));
@@ -155,6 +155,17 @@ export async function mountRoles(root){
     const persona=select([['','The house agent\'s persona'],...(d.personas||[]).map(p=>[p.id,p.name+' ('+p.id+')'])],doc.persona);
     if(doc.persona&&!(d.personas||[]).some(p=>p.id===doc.persona))persona.append(h('option',{value:doc.persona,text:doc.persona+' (missing)',selected:true}));
     const enabled=h('input',{type:'checkbox',checked:doc.enabled!==false});
+    // The voice the Speak button reads its huddle messages in (the hub's voice engine's voices).
+    const voice=h('select',null,h('option',{value:'',text:'Band default'}));
+    if(doc.voice)voice.append(h('option',{value:doc.voice,text:doc.voice,selected:true}));
+    voicesP=voicesP||hapi('voices').catch(()=>({available:false,voices:[]}));
+    voicesP.then(v=>{
+      const cat=(v.catalog&&v.catalog.length)?v.catalog:(v.voices||[]).map(x=>({id:x,label:x}));
+      voice.replaceChildren(h('option',{value:'',text:'Band default'+(v.default?' ('+v.default+')':'')}),
+        ...cat.map(c=>h('option',{value:c.id,text:c.label&&c.label!==c.id?c.label+' ('+c.id+')':c.id,selected:c.id===doc.voice})));
+      if(doc.voice&&!cat.some(c=>c.id===doc.voice))voice.append(h('option',{value:doc.voice,text:doc.voice+' (not on the voice engine)',selected:true}));
+      if(!v.available)voice.title='No voice engine on this hub now ('+(v.reason||'voice is off')+'): the browser reads messages aloud.';
+    });
 
     function value(){
       const srcs=[...srcRows.children].map(r=>{const [cap,worker,args]=r.querySelectorAll('input');
@@ -165,7 +176,7 @@ export async function mountRoles(root){
         charter:charter.value.trim(),concerns:lines(concerns.value),checklist:lines(checklist.value),examples:lines(examples.value),seed_memory:lines(seed.value),sources:srcs,
         tools:{allow:lines(allow.value),deny:lines(deny.value)},builtin:builtin.filter(c=>c.checked).map(c=>c.value),
         autonomy:autonomy.value,memory:memory.value,backend:backend.value,model:model.value.trim(),effort:effort.value,
-        persona:persona.value,enabled:enabled.checked,max_tool_calls:calls.value?Number(calls.value):0};
+        persona:persona.value,enabled:enabled.checked,max_tool_calls:calls.value?Number(calls.value):0,voice:voice.value};
     }
     const save=btn(isNew?'Create':'Save','primary',()=>run(save,async()=>{err.textContent='';
       try{const role=value();const r=await hapi('role_set',{role,expect_rev:isNew?0:doc.rev});
@@ -205,7 +216,7 @@ export async function mountRoles(root){
           field('Example questions',examples,'Shown to the chair, so it knows when to call on this role.'),
           field('Starting memory',seed,'Saved into its memory when its home is created (its first answer). Never passwords, keys or code.'))),
         h('details',null,h('summary',{text:'Model'}),h('div',{class:'mg-pad',style:'padding-left:0;padding-right:0'},
-          field('Runs on',backend),field('Model',model),h('datalist',{id:'role-models'},MODELS.map(m=>h('option',{value:m}))),field('Effort',effort),field('Tool calls per turn',calls,'Blank: its category\'s (engineering 30, operations 24), else Tool calls per role turn in Settings.'),field('Persona (how it talks)',persona))),
+          field('Runs on',backend),field('Model',model),h('datalist',{id:'role-models'},MODELS.map(m=>h('option',{value:m}))),field('Effort',effort),field('Tool calls per turn',calls,'Blank: its category\'s (engineering 30, operations 24), else Tool calls per role turn in Settings.'),field('Persona (how it talks)',persona),field('Speaking voice',voice,'The voice its huddle messages are read aloud in (the Speak button). Band default: the voice engine\'s own.'))),
         hostBox,
         isNew?null:workspaceBox(doc),
         h('div',{class:'mg-actions end rl-save'},err,save),

@@ -41,7 +41,7 @@ from typing import Callable, Iterable
 __all__ = [
     "KINDS", "adjectives", "nouns", "words", "generate", "normalize",
     "is_name", "looks_like_name", "ensure_table", "assign", "name_of",
-    "names_of", "find", "suggest", "backfill", "drop", "resolve", "Resolved",
+    "name_for_id", "names_of", "find", "suggest", "backfill", "drop", "resolve", "Resolved",
     "NameError_", "with_name", "label",
 ]
 
@@ -129,6 +129,17 @@ def ensure_table(conn: sqlite3.Connection) -> None:
 def name_of(conn: sqlite3.Connection, kind: str, rid: str) -> str | None:
     row = conn.execute(f"SELECT name FROM {TABLE} WHERE kind=? AND id=?",
                        (kind, str(rid))).fetchone()
+    return row[0] if row else None
+
+
+def name_for_id(conn: sqlite3.Connection, rid: str) -> str | None:
+    """The name of the record with id ``rid``, whatever its kind (ids do not
+    repeat across kinds in one store), or None. For reading text aloud."""
+    try:
+        row = conn.execute(f"SELECT name FROM {TABLE} WHERE id=? ORDER BY kind LIMIT 1",
+                           (str(rid),)).fetchone()
+    except sqlite3.OperationalError:     # a store that predates names
+        return None
     return row[0] if row else None
 
 
