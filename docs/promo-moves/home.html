@@ -152,11 +152,14 @@ fetch('out/voicesamples/index.json').then(r => r.ok ? r.json() : null).then(v =>
 });
 document.addEventListener('click', e => {
   const b = e.target.closest('.play'); if (!b) return;
-  if (audio) { audio.pause(); cur.classList.remove('on'); cur.textContent = '▶ play'; }
-  if (cur === b) { cur = null; audio = null; return; }
-  audio = new Audio(b.dataset.src); cur = b; b.classList.add('on'); b.textContent = '■ stop';
-  audio.onended = () => { b.classList.remove('on'); b.textContent = '▶ play'; cur = null; };
-  audio.play();
+  const was = cur;
+  if (audio) audio.pause();
+  if (cur) { cur.classList.remove('on'); cur.textContent = '▶ play'; }
+  audio = null; cur = null;
+  if (was === b) return;                       // clicking the playing button stops it
+  const a = new Audio(b.dataset.src); audio = a; cur = b; b.classList.add('on'); b.textContent = '■ stop';
+  a.onended = a.onerror = () => { if (cur === b) { b.classList.remove('on'); b.textContent = '▶ play'; cur = null; audio = null; } };
+  a.play().catch(() => a.onended());
 });
 load();
 </script></body></html>
