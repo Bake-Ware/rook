@@ -169,7 +169,7 @@ export default {
     ]);
 
     return tau => {
-      { const m = document.querySelector('.more'); if (m) { const a = inv(61.4, 62.0, tau); m.style.opacity = a; m.style.display = 'inline-block'; m.style.transform = `translateY(${(1 - ease.out(a)) * 24}px)`; } }
+      { const m = document.querySelector('.more'); if (m) { const a = inv(62.4, 63.0, tau); m.style.opacity = a; m.style.display = 'inline-block'; m.style.transform = `translateY(${(1 - ease.out(a)) * 24}px)`; } }
       // the network breathes; the asked node swells as we push in, lights gold at the end
       net.rotation.y = Math.sin(tau * .25) * .35; net.rotation.x = Math.sin(tau * .17) * .06;
       netMotion(tau);

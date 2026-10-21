@@ -14,7 +14,7 @@ const PANELS = [
 export default {
   title: 'Comic, song, shed', tagline: 'Superpowers,<br>for real life.', body: 38,
   mood: { key: 'D', bpm: 112, energy: .9 },
-  assets: ['rook', 'agent', 'table', 'chair', 'figure', 'tablet', 'coffee', 'car'],
+  assets: ['rook', 'agent', 'table', 'chair', 'figure', 'tablet', 'coffee', 'car', 'dash'],
   async build(kit) {
     const S = kit.scene;
     kit.board({ size: 70 });
@@ -30,14 +30,21 @@ export default {
     kit.make('coffee', { at: K.clone().add(V(-.32, .79, .22)) });
     // the car at a red light
     const C = V(0, 0, 0);
-    // the car body is drawn as glass so you can see the driver (x-ray, like the rest of the Board)
-    const carMat = new THREE.MeshToonMaterial({ color: 0x9a6a4a, gradientMap: kit.ramp, transparent: true, opacity: .32, depthWrite: false });
-    const car = kit.make('car', { at: C, rot: Math.PI / 2, mats: { body: carMat } });
-    const f2 = figure(kit, C.clone().add(V(.36, -.38, .25)), Math.PI);
-    f2.sit({ hands: 'wheel' }); f2.armL.rotation.x = f2.armR.rotation.x = -1.2;
-    const pole = new THREE.Mesh(new THREE.BoxGeometry(.1, 3.2, .1), kit.toon(0x3a3c32)); pole.position.set(1.5, 1.6, -3.0); S.add(pole);
-    const head = new THREE.Mesh(new THREE.BoxGeometry(.32, .85, .28), kit.toon(0x24261f)); head.position.set(1.5, 3.1, -3.0); S.add(head);
-    const red = new THREE.Mesh(new THREE.CircleGeometry(.1, 16), new THREE.MeshBasicMaterial({ color: 0xff5a48 })); red.position.set(1.5, 3.36, -2.85); S.add(red);
+    // the car from outside (wide shots), and its inside for the car scene: dash, wheel, seats, the driver
+    const car = kit.make('car', { at: C, rot: Math.PI / 2, tint: 0x9a6a4a });
+    const cabin = new THREE.Group(); cabin.position.copy(C); S.add(cabin);
+    kit.make('dash', { parent: cabin, at: V(0, .3, -.5) });
+    for (const sx of [-.42, .42]) {
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(.5, .12, .5), kit.toon(0x3b3a33)); seat.position.set(sx, .56, .5); cabin.add(seat);
+      const back = new THREE.Mesh(new THREE.BoxGeometry(.5, .7, .1), kit.toon(0x3b3a33)); back.position.set(sx, .95, .8); back.rotation.x = -.18; cabin.add(back);
+      for (const m of [seat, back]) m.add(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, 25), kit.inkMat));
+    }
+    const doorR = new THREE.Mesh(new THREE.BoxGeometry(.06, .55, 1.2), kit.toon(0x3a3c32)); doorR.position.set(.88, .8, .2); cabin.add(doorR);
+    const f2 = figure(kit, V(-.42, .15, .48), Math.PI); cabin.add(f2.obj);
+    f2.sit({ hands: 'none' }); f2.armL.rotation.x = f2.armR.rotation.x = -1.15; f2.foreL.rotation.x = f2.foreR.rotation.x = -.35;
+    const pole = new THREE.Mesh(new THREE.BoxGeometry(.1, 3.2, .1), kit.toon(0x3a3c32)); pole.position.set(-1.6, 1.6, -4.6); S.add(pole);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(.32, .85, .28), kit.toon(0x24261f)); head.position.set(-1.6, 3.1, -4.6); S.add(head);
+    const red = new THREE.Mesh(new THREE.CircleGeometry(.1, 16), new THREE.MeshBasicMaterial({ color: 0xff5a48 })); red.position.set(-1.6, 3.36, -4.45); S.add(red);
     for (const o of [pole, head]) o.add(new THREE.LineSegments(new THREE.EdgesGeometry(o.geometry), kit.inkMat));
     // the backyard and a shed in wireframe, real size: 10 x 12 ft = 3.05 x 3.66 m
     const B = V(12, 0, 0);
@@ -57,6 +64,25 @@ export default {
     for (let k = 1; k < 4; k++) { const z = D_ * k / 4; seg(c(0, H_, z), c(W_ / 2, H_ + R_, z)); seg(c(W_, H_, z), c(W_ / 2, H_ + R_, z)); }
     const dl = W_ / 2 - .46, dr = W_ / 2 + .46;
     seg(c(dl, 0, D_), c(dl, 2.0, D_)); seg(c(dr, 0, D_), c(dr, 2.0, D_)); seg(c(dl, 2.0, D_), c(dr, 2.0, D_));
+    // the footprint, exactly the shed's 10 x 12 ft, and the door panel on the short (10 ft) side
+    const foot = new THREE.Mesh(new THREE.PlaneGeometry(W_, D_), new THREE.MeshBasicMaterial({ color: 0x79a7d8, transparent: true, opacity: .0, depthWrite: false }));
+    foot.rotation.x = -Math.PI / 2; foot.position.copy(B).setY(.012); S.add(foot);
+    const footEdge = new THREE.LineSegments(new THREE.EdgesGeometry(foot.geometry), new THREE.LineBasicMaterial({ color: 0x9cc4f0, transparent: true, opacity: 0 }));
+    foot.add(footEdge);
+    const doorP = new THREE.Mesh(new THREE.PlaneGeometry(.92, 2.0), new THREE.MeshBasicMaterial({ color: COL.goldHi, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
+    doorP.position.copy(c(W_ / 2, 1.0, D_)); S.add(doorP);
+    // a fence on two sides of the yard (behind the shed and to its right)
+    const fenceMat = kit.toon(0x7a6a52), picket = new THREE.BoxGeometry(.09, 1.05, .025);
+    const runs = [[c(-1.2, 0, -1.4), c(W_ + 2.6, 0, -1.4)], [c(W_ + 2.6, 0, -1.4), c(W_ + 2.6, 0, D_ + 2.2)]];
+    for (const [a0, a1] of runs) {
+      const len = a0.distanceTo(a1), n = Math.floor(len / .16), dir = a1.clone().sub(a0).normalize(), ang = Math.atan2(dir.x, dir.z);
+      const inst = new THREE.InstancedMesh(picket, fenceMat, n); const m4 = new THREE.Matrix4(), q = new THREE.Quaternion().setFromAxisAngle(V(0, 1, 0), ang + Math.PI / 2);
+      for (let k = 0; k < n; k++) { m4.compose(a0.clone().addScaledVector(dir, (k + .5) * len / n).setY(.525), q, V(1, 1, 1)); inst.setMatrixAt(k, m4); }
+      S.add(inst);
+      for (const y of [.25, .8]) { const rail = new THREE.Mesh(new THREE.BoxGeometry(.05, .07, len), fenceMat); rail.position.copy(a0.clone().lerp(a1, .5)).setY(y);
+        rail.rotation.y = ang; rail.position.addScaledVector(V(Math.cos(ang), 0, -Math.sin(ang)), .03); S.add(rail);
+        rail.add(new THREE.LineSegments(new THREE.EdgesGeometry(rail.geometry), kit.inkMat)); }
+    }
     const shedG = new THREE.BufferGeometry().setFromPoints(E);
     const shed = new THREE.LineSegments(shedG, new THREE.LineBasicMaterial({ color: COL.goldHi }));
     S.add(shed);
@@ -102,9 +128,9 @@ export default {
       { t: 0, pos: [-12 + 4, 6.5, 9], look: [-12, .8, 0], fov: 38 },
       { t: 2.6, frame: { on: kit3, yaw: 205, pitch: 18, fill: .62, look: [.7, 0, -.3] }, e: 'outE' },
       { t: 10.9, frame: { on: kit3, yaw: 198, pitch: 18, fill: .68, look: [.7, 0, -.28] }, e: 'lin' },
-      { t: 11.6, frame: { on: carB, yaw: 62, pitch: 14, fill: .72, look: [.6, 0, -1.0] }, e: 'io' },
-      { t: 21.3, frame: { on: carB, yaw: 52, pitch: 14, fill: .78, look: [.7, 0, -.9] }, e: 'lin' },
-      { t: 22.0, frame: { on: yard, yaw: 20, pitch: 10, fill: .55 }, e: 'io' },
+      { t: 11.6, pos: [.2, 1.42, 1.5], look: [-.3, 1.05, -.8], fov: 54, e: 'cut' },
+      { t: 21.3, pos: [.12, 1.4, 1.38], look: [-.32, 1.05, -.8], fov: 54, e: 'lin' },
+      { t: 21.6, frame: { on: yard, yaw: 20, pitch: 10, fill: .55 }, e: 'cut' },
       { t: 25.6, frame: { on: yard, yaw: 12, pitch: 10, fill: .6 }, e: 'lin' },
       { t: 28.5, frame: { on: shedB, yaw: 58, pitch: 20, fill: .78 }, e: 'io' },
       { t: 32.8, frame: { on: shedB, yaw: 140, pitch: 24, fill: .78 }, e: 'lin' },
@@ -127,7 +153,7 @@ export default {
         const t0 = 14.6 + i * .42, u = (tau - t0) / 3.4;
         const a = u > 0 && u < 1 ? Math.sin(u * Math.PI) : 0;
         kit.show(el, tau < 22 ? a : 0);
-        if (a > .003) kit.pin(el, V(.6 + u * 3.2, 1.2 + u * 2.2 + Math.sin(u * 7 + i) * .3, .6 + Math.sin(i) * .4), { ay: .5, depth: true });
+        if (a > .003) kit.pin(el, V(.05 - u * .6 + Math.sin(u * 5 + i) * .15, 1.4 + u * .9, -.65 - u * 1.4), { ay: .5, depth: false });   // out of the dash speaker
       });
       song.fixed(1320, 150, fade(tau, 15.4, 15.8, 21, 21.4) + fade(tau, 33.8, 34.2, 37.6, 38) * (tau > 33 ? 1 : 0), tau > 33 ? .85 : 1);
       if (tau > 33) song.fixed(735, 200, fade(tau, 33.8, 34.2, 37.6, 38), .85);
@@ -144,7 +170,11 @@ export default {
         kit.show(d.el, a); if (a > .003) kit.pin(d.el, d.p, { ay: .5 });
       });
       shedP.fixed(1360, 200, fade(tau, 33.8, 34.2, 37.6, 38), .9);
-      for (let x = 10; x <= 14; x++) for (let z = -2; z <= 2; z++) if (x === 10 || x === 14 || z === -2 || z === 2) kit.glowSquare(x, z, .45 * fade(tau, 24.6, 25.2, 32.6, 33), 1);
+      const fp = fade(tau, 24.6, 25.2, 32.6, 33);
+      foot.material.opacity = .22 * fp; footEdge.material.opacity = .9 * fp; doorP.material.opacity = .35 * inv(30.8, 31.4, tau) * (tau < 33 ? 1 : 0);
+      // only the person in the current scene is shown; the car's inside only for the car scene
+      f1.obj.visible = tau < 11.4; f3.obj.visible = tau > 21.4;
+      const inCar = tau > 11.4 && tau < 21.6; cabin.visible = inCar; car.visible = !inCar;
     };
   },
 };

@@ -6,11 +6,11 @@ import { THREE, V, COL, clamp, lerp, inv, ease, fade, pane, chip, goldRook, agen
 
 const CLIPS = ['Secretary', 'Build it, paint it', 'Team huddle', 'Security reporting', 'Research team', 'Comic, song, shed', 'The campaign'];
 const PIECES = ['phone', 'printer', 'table', 'nas', 'gpurig', 'car', 'rook'];
-const CHANNELS = ['LinkedIn', 'Hacker News', 'Reddit', 'X', 'Bluesky', 'Mastodon', 'YouTube'];
+const CHANNELS = ['LinkedIn', 'Reddit', 'X', 'Bluesky', 'Mastodon', 'YouTube'];
 const STARS = 3;          // github.com/Bake-Ware/rook stargazers on shoot day (2026-10-19)
 
 export default {
-  title: 'Make and track the campaign', tagline: 'Share your <span class="tick">self</span>.', body: 46,
+  title: 'Make and track the campaign', tagline: 'Share your <span class="tick">self.</span>', body: 46,
   mood: { key: 'G', bpm: 108, energy: .8 },
   assets: ['rook', 'agent', 'workstation', 'table', 'phone', 'printer', 'nas', 'gpurig', 'car', 'figure', 'calendar'],
   async build(kit) {
@@ -30,8 +30,8 @@ export default {
     });
     const fig = figure(kit, V(-3.15, 0, 1.3), -1.71);
     // channel pieces on a calendar strip at the board's edge
-    const chans = CHANNELS.map((c, i) => ({ name: c, p: V(-6 + i * 2, 0, 7.5) }));
-    const strip = new THREE.Mesh(new THREE.BoxGeometry(14.6, .04, 1.2), kit.toon(0x3a3c32)); strip.position.set(0, .02, 7.5); S.add(strip);
+    const chans = CHANNELS.map((c, i) => ({ name: c, p: V(-5 + i * 2, 0, 7.5) }));
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(12.6, .04, 1.2), kit.toon(0x3a3c32)); strip.position.set(0, .02, 7.5); S.add(strip);
     strip.add(new THREE.LineSegments(new THREE.EdgesGeometry(strip.geometry), kit.inkMat));
     const cal = chans.map((c, i) => kit.make('calendar', { at: c.p.clone().add(V(0, 0, -.1)), scale: .7 }));
 
@@ -42,7 +42,7 @@ export default {
     kit.say(6.8, 'you', 'Plan a campaign for Rook.', 'a');
     const chat = pane(kit, { title: '<b>chat</b> · rook', w: 560, body: '<div class="m1"><span class="hi">you</span> · Plan a campaign for Rook.</div>' });
     const plan = pane(kit, { title: '<b>planner</b> · campaign plan', w: 560, body: ['Goal · stars and users', 'Audiences · seven, one clip each',
-      'Channels · LinkedIn, HN, Reddit, X, Bluesky, Mastodon, YouTube', 'Schedule · one clip a week', 'Tracking · stars, traffic, replies']
+      'Channels · LinkedIn, Reddit, X, Bluesky, Mastodon, YouTube', 'Schedule · one clip a week', 'Tracking · stars, traffic, replies']
       .map((s, i) => `<div class="pl p${i}">› ${s}</div>`).join('') });
     kit.caption('Storyboarded', 19.5, 23.6, 'label');
     kit.caption('Rendered on the band', 27.8, 31.6, 'label');
@@ -68,6 +68,7 @@ export default {
       .st{font:900 64px var(--sans);color:var(--hi)}
       .ticker{left:0;width:1920px;top:820px;text-align:center;font:900 96px var(--sans);letter-spacing:-.02em;text-transform:uppercase;text-shadow:0 0 50px rgba(0,0,0,.9)}
       .ticker .w{color:var(--acc)}
+      .endcard .tick{color:var(--acc)}
       .made{left:auto;right:60px;top:auto;bottom:50px;font:400 20px var(--mono);letter-spacing:.2em;color:var(--dim)}`;
     document.head.appendChild(st);
     const frameEl = endc.querySelector('.lbl span'), barEl = endc.querySelector('.bar i');
@@ -111,7 +112,8 @@ export default {
       chat.fixed(140, 120, fade(tau, 6.4, 6.8, 13.4, 14)); m1.style.opacity = inv(6.8, 7.0, tau);
       plan.fixed(1180, 120, fade(tau, 8.2, 8.6, 13.4, 14));
       PL.forEach((el, i) => { el.style.opacity = inv(8.8 + i * .8, 9.1 + i * .8, tau); });
-      fig.rest(); fig.armR.rotation.x = tau > 6.4 && tau < 8 ? -.9 : 0; fig.obj.visible = tau < 33;
+      fig.rest(); if (tau > 6.4 && tau < 8) { fig.armR.rotation.x = -.45; fig.armR.rotation.z = -.25; fig.foreR.rotation.x = -.9; }
+      fig.obj.visible = tau < 33;                          // (a small open-hand gesture above, clear of the monitor)
       // 3: storyboard cards laid on the table; they turn into scenes
       team.forEach((a, i) => { a.chip.place(a.top(), fade(tau, 14.6 + i * .2, 15 + i * .2, 23.4, 23.8)); a.mat.emissiveIntensity = .25 + .4 * fade(tau, 15, 15.5, 23, 24); });
       CLIPS.forEach((c, i) => {
@@ -133,23 +135,26 @@ export default {
       chans.forEach((c, i) => { kit.show(chanEls[i], fade(tau, 33.2, 33.6, 39.8, 40.2)); if (tau > 33 && tau < 40.4) kit.pin(chanEls[i], c.p.clone().add(V(0, .9, 0)), { ay: 1 }); });
       flyers.forEach((el, i) => {
         const t0 = 34 + i * .45, u = ease.io(inv(t0, t0 + 1.1, tau));
-        const p = V(-4, 2.2, 1).lerp(chans[i].p.clone().add(V(0, 1.6, 0)), u); p.y += Math.sin(u * Math.PI) * 1.4;
+        const ch = chans[i % chans.length];
+        const p = V(-4, 2.2, 1).lerp(ch.p.clone().add(V(0, 1.6, 0)), u); p.y += Math.sin(u * Math.PI) * 1.4;
         const a = fade(tau, t0, t0 + .2, 39.8, 40.2);
         kit.show(el, a); if (a > .003) kit.pin(el, p, { ay: .5 });
-        if (u >= 1) kit.glowSquare(Math.round(chans[i].p.x), Math.round(chans[i].p.z), .6 * (1 - inv(39.8, 40.2, tau)));
+        if (u >= 1) kit.glowSquare(Math.round(ch.p.x), Math.round(ch.p.z), .6 * (1 - inv(39.8, 40.2, tau)));
       });
       stars.fixed(1440, 120, fade(tau, 36.2, 36.6, 39.8, 40.2));
       starEl.textContent = Math.round(STARS * ease.out(inv(36.6, 38.2, tau)));
       // 6: back to the gold rook: it turns once; the ticker lands on "self"
       hub.obj.rotation.y = tau > 40.6 ? ease.io(inv(40.6, 44, tau)) * Math.PI * 2 : 0;
       kit.show(made, fade(tau, 41, 41.4, 45.6, 46) * .9);
-      const tk = fade(tau, 41.2, 41.5, 45.6, 46);
-      kit.show(ticker, tk);
-      if (tk > 0) {
-        // the word changes faster and faster, landing on "self" at 44.4
-        let idx = 0; const t = tau - 41.3; let acc = 0, d = .42;
-        while (idx < WORDS.length - 1 && acc + d < t) { acc += d; d *= .8; idx++; }
-        wEl.textContent = WORDS[idx];
+      kit.show(ticker, 0);
+      // the end card: "Share your ..." holds still while the word changes faster and faster, landing on "self."
+      const tickEl = document.querySelector('.endcard .tick');
+      if (tickEl) {
+        if (!tickEl.dataset.w) { tickEl.style.display = 'inline-block'; tickEl.style.textAlign = 'left'; tickEl.style.whiteSpace = 'nowrap';
+          tickEl.dataset.w = tickEl.offsetWidth; if (+tickEl.dataset.w) tickEl.style.width = tickEl.dataset.w + 'px'; }
+        let idx = 0; const t = tau - 46.5; let acc = 0, d = .42;
+        while (t > 0 && idx < WORDS.length - 1 && acc + d < t) { acc += d; d *= .8; idx++; }
+        tickEl.textContent = WORDS[tau < 46.5 ? 0 : idx] + '.';
       }
       kit.glowSquare(0, -6, .5);
     };

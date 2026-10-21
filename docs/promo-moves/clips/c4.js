@@ -149,7 +149,7 @@ export default {
       { // the end card's full stop: red, then grey, then it drops off
         const td = document.querySelector('.tdot');
         if (td) {
-          const g = inv(50.6, 51.2, tau), f = clamp((tau - 51.4) / .9);
+          const g = inv(52.0, 52.4, tau), f = clamp((tau - 52.5) / .8);
           td.style.display = 'inline-block';
           td.style.color = `rgb(${Math.round(lerp(224, 120, g))},${Math.round(lerp(103, 124, g))},${Math.round(lerp(92, 114, g))})`;
           td.style.transform = `translateY(${f * f * 420}px) rotate(${f * 70}deg)`; td.style.opacity = 1 - inv(.6, 1, f);
