@@ -298,6 +298,7 @@ export class Kit {
   // A Board piece: any model normalised to a token that fits a square (size in metres).
   piece(name, at, { size = .72, rot = 0, parent = null, ...opts } = {}) {
     const obj = this.make(name, { ...opts, at, rot, parent });
+    if (name === 'rook') plainRook(obj);
     obj.updateMatrixWorld(true);
     const s = new THREE.Box3().setFromObject(obj).getSize(V(0, 0, 0));
     const k = size / Math.max(s.x, s.z, s.y * .85);
@@ -392,8 +393,15 @@ export function figure(kit, at, rot = 0, scale = 1) {
 }
 
 // The gold rook: the hub. Returns the object and its door pivot.
-export function goldRook(kit, at = V(0, 0, 0), scale = .55, rot = 0) {
+// The door, its surround and the stairs belong to the opening and closing only; elsewhere the rook is plain.
+export function plainRook(obj) {
+  obj.traverse(o => { if (/^(surround|doorway|door|step\d|leaf|strap)/.test(o.name)) o.visible = false; });
+  return obj;
+}
+
+export function goldRook(kit, at = V(0, 0, 0), scale = .55, rot = 0, { door = false } = {}) {
   const obj = kit.make('rook', { at, scale, rot, mats: { gold: kit.toon(COL.gold), body: kit.toon(COL.gold) } });
+  if (!door) plainRook(obj);
   return { obj, door: kit.node(obj, 'door') };
 }
 
@@ -403,6 +411,7 @@ export function holoRook(kit, scale = .1) {
   const ink = new THREE.LineBasicMaterial({ color: 0xffd99a, transparent: true, opacity: .9, blending: THREE.AdditiveBlending });
   const allMats = {}; for (const k of ['gold', 'stone', 'wood', 'iron', 'light', 'body']) allMats[k] = mat;
   const obj = kit.make('rook', { scale, mats: allMats, inkMat: ink });
+  plainRook(obj);
   obj.traverse(o => { if (o.isMesh && o.userData.mat === 'light') o.visible = false; });
   return { obj, mat, ink };
 }

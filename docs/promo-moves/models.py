@@ -174,7 +174,10 @@ def rook_body(root, m='gold', segs=16, merlon_m=None, door=True):
 
     inner, outer = arch(dw / 2, z0, z0 + dh), arch(dw / 2 + sw, z0, z0 + dh + sw)
     n = len(outer)
-    v = [(x, sy(x, z, .03), z) for x, z in outer] + [(x, sy(x, z, .03), z) for x, z in inner]
+    # the front of the surround is flat and stands proud of the door leaf all the way up (the body
+    # narrows as it rises, so a surround that followed the surface fell behind the top of the leaf)
+    yf = lambda x: sy(x, z0, .065)
+    v = [(x, yf(x), z) for x, z in outer] + [(x, yf(x), z) for x, z in inner]
     v += [(x, sy(x, z, -.02), z) for x, z in outer] + [(x, sy(x, z, -.02), z) for x, z in inner]
     f = [(i, i + 1, n + i + 1, n + i) for i in range(n - 1)] + [(2 * n + i + 1, 2 * n + i, i, i + 1) for i in range(n - 1)] + \
         [(n + i, n + i + 1, 3 * n + i + 1, 3 * n + i) for i in range(n - 1)]
