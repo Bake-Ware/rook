@@ -178,9 +178,6 @@ export default {
         const a = adj[roomIdx], b = adj[Math.max(0, roomIdx - 1)], w = (idx > 0 && tau < 29) ? ease.io(u) : 1;
         const fovA = lerp(b[0], a[0], w), lookA = lerp(b[1], a[1], w);
         cam.position.copy(camLock.pos); cam.fov = 36 + fovA; cam.lookAt(camLock.look.clone().add(V(0, lookA, 0)));
-        if (roomIdx === 2 && tau < 28.3) {               // in the car: the driver's eyes, the phone on the dash, the road
-          cam.position.set(-.36, .26, .95); cam.fov = 52; cam.lookAt(-.05, .02, -1.4);
-        }
         if (tau >= 37) {                                 // back out of the phone: the opening move in reverse
           const q = ease.outE(inv(37, 38.8, tau)), ph = phone.rotation.y;
           cam.position.copy(V(0, .17, .0001).lerp(camLock.pos, q));

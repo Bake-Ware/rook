@@ -616,7 +616,7 @@ def build_props():
     box('header', (1.6, .14, .06), (0, -.42, 1.56), 'dark2', root)
     box('mirror', (.24, .04, .07), (.02, -.3, 1.44), 'iron', root, bevel=.01)
     tube('mirrorstem', (.02, -.32, 1.48), (.02, -.36, 1.55), .01, 'iron', root)
-    box('glass', (1.6, .02, .9), (0, 0, 1.29), 'glass', root, rot=(math.radians(-52), 0, 0))
+    box('glass', (1.6, .02, .9), (0, 0, 1.29), 'glass', root, rot=(math.radians(52), 0, 0))   # top toward the driver
     box('hood', (1.75, 1.7, .05), (0, 1.25, .86), 'cloth2', root, rot=(math.radians(-4), 0, 0))
     box('doorL', (.06, 1.2, .55), (-.88, -.3, .8), 'dark', root)
     export('dash')

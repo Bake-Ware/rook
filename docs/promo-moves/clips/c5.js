@@ -84,7 +84,7 @@ export default {
     const YAML = 'model: [recurrent, deep]\nparams: 124M  # equal compute\nseeds: 6\ntokens: 2B\ncontrol: depth-12\nmetric: val_loss';
     const lit = pane(kit, { title: '<b>literature</b> · 14 papers', w: 360, body: '<div class="lit"></div>' });
     const LIT = ['Universal Transformers (2018)', 'Looped transformers (2023)', 'Depth vs width at fixed FLOPs', 'Recurrent depth scaling (2025)'];
-    const status = pane(kit, { title: '<b>runs</b> · dormamu', w: 560, body: `
+    const status = pane(kit, { title: '<b>runs</b> · gpu rig', w: 560, body: `
       <div class="st"></div><div class="bars">${[0, 1, 2, 3, 4, 5].map(i => `<div class="bar"><span>run ${i + 1}</span><b><i></i></b></div>`).join('')}</div>
       <div class="eta"><span class="lbl dim">ETA</span> <span class="clock hi">21:00</span> <span class="left dim"></span></div>` });
     const plot = pane(kit, { title: '<b>analysis</b> · val loss', w: 520, body: '<canvas width="480" height="260"></canvas>' });
@@ -110,7 +110,7 @@ export default {
     const barEls = [...status.el.querySelectorAll('.bar')], clockEl = status.el.querySelector('.clock'), leftEl = status.el.querySelector('.left');
     const ctx = plot.el.querySelector('canvas').getContext('2d');
     const rows = [1, 2, 3].map(i => table.el.querySelector('.r' + i));
-    const STATUS = ['6 seed runs queued on Dormamu', 'GPUs idling 3%', 'VRAM 10% and climbing', 'Validating control case'];
+    const STATUS = ['6 seed runs queued on the GPU rig', 'GPUs idling 3%', 'VRAM 10% and climbing', 'Validating control case'];
 
     // run progress (0..1) for run i at clip time t; run 4 (index 3) diverges at 36.5 and restarts
     const runP = (i, t) => {

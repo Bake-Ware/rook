@@ -21,32 +21,37 @@ export default {
     S.fog = new THREE.Fog(COL.page, 12, 30);
     goldRook(kit, V(0, 0, -7), .55, .3);
     // kitchen table corner
+    const mark = () => S.children.length, since = n => S.children.slice(n);   // which objects each place added
+    const m0 = mark();
     const K = V(-12, 0, 0);
     const ktab = kit.make('table', { at: K }); ktab.scale.set(.45, 1, .45);       // a 1.2 m kitchen table
     kit.make('chair', { at: K.clone().add(V(0, 0, .78)), rot: Math.PI });
     const f1 = figure(kit, K.clone().add(V(0, -.47, .74)), Math.PI, 1, { f: true });
-    f1.sit();
+    f1.sit(); f1.armL.rotation.x = f1.armR.rotation.x = -.95; f1.foreL.rotation.x = f1.foreR.rotation.x = -.9;   // forearms resting on the table top
     kit.make('tablet', { at: K.clone().add(V(.05, .79, .2)), rot: Math.PI });
     kit.make('coffee', { at: K.clone().add(V(-.32, .79, .22)) });
     // the car at a red light
+    const kitchenObjs = since(m0), m1 = mark();
     const C = V(0, 0, 0);
     // the car from outside (wide shots), and its inside for the car scene: dash, wheel, seats, the driver
     const car = kit.make('car', { at: C, rot: Math.PI / 2, tint: 0x9a6a4a });
     const cabin = new THREE.Group(); cabin.position.copy(C); S.add(cabin);
     kit.make('dash', { parent: cabin, at: V(0, .3, -.5) });
     for (const sx of [-.42, .42]) {
-      const seat = new THREE.Mesh(new THREE.BoxGeometry(.5, .12, .5), kit.toon(0x3b3a33)); seat.position.set(sx, .56, .5); cabin.add(seat);
-      const back = new THREE.Mesh(new THREE.BoxGeometry(.5, .7, .1), kit.toon(0x3b3a33)); back.position.set(sx, .95, .8); back.rotation.x = -.18; cabin.add(back);
-      for (const m of [seat, back]) m.add(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, 25), kit.inkMat));
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(.5, .12, .52), kit.toon(0x3b3a33)); seat.position.set(sx, .55, .56); cabin.add(seat);
+      const back = new THREE.Mesh(new THREE.BoxGeometry(.5, .72, .12), kit.toon(0x3b3a33)); back.position.set(sx, .96, .86); back.rotation.x = .2; cabin.add(back);
+      const rest = new THREE.Mesh(new THREE.BoxGeometry(.26, .18, .1), kit.toon(0x3b3a33)); rest.position.set(sx, 1.46, .97); rest.rotation.x = .2; cabin.add(rest);
+      for (const m of [seat, back, rest]) m.add(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, 25), kit.inkMat));
     }
     const doorR = new THREE.Mesh(new THREE.BoxGeometry(.06, .55, 1.2), kit.toon(0x3a3c32)); doorR.position.set(.88, .8, .2); cabin.add(doorR);
-    const f2 = figure(kit, V(-.42, .15, .48), Math.PI); cabin.add(f2.obj);
+    const f2 = figure(kit, V(-.42, .14, .56), Math.PI); cabin.add(f2.obj);
     f2.sit({ hands: 'none' }); f2.armL.rotation.x = f2.armR.rotation.x = -1.15; f2.foreL.rotation.x = f2.foreR.rotation.x = -.35;
     const pole = new THREE.Mesh(new THREE.BoxGeometry(.1, 3.2, .1), kit.toon(0x3a3c32)); pole.position.set(-1.6, 1.6, -4.6); S.add(pole);
     const head = new THREE.Mesh(new THREE.BoxGeometry(.32, .85, .28), kit.toon(0x24261f)); head.position.set(-1.6, 3.1, -4.6); S.add(head);
     const red = new THREE.Mesh(new THREE.CircleGeometry(.1, 16), new THREE.MeshBasicMaterial({ color: 0xff5a48 })); red.position.set(-1.6, 3.36, -4.45); S.add(red);
     for (const o of [pole, head]) o.add(new THREE.LineSegments(new THREE.EdgesGeometry(o.geometry), kit.inkMat));
     // the backyard and a shed in wireframe, real size: 10 x 12 ft = 3.05 x 3.66 m
+    const carObjs = since(m1), m2 = mark();
     const B = V(12, 0, 0);
     const f3 = figure(kit, B.clone().add(V(-2.3, 0, 2.5)), -2.3, 1, { f: true });
     const tape = new THREE.Mesh(new THREE.BoxGeometry(.12, .12, .06), kit.toon(0xe8c840)); f3.foreR.add(tape); tape.position.set(0, -.34, 0);
@@ -90,6 +95,7 @@ export default {
     const dims = [['10 ft', c(W_ / 2, 0, D_ + .35)], ['12 ft', c(W_ + .35, 0, D_ / 2)], ['6:12 pitch', c(W_ / 2, H_ + R_ + .3, 0)], ['door · 3 ft', c(W_ / 2, 2.2, D_ + .1)]]
       .map(([t, p], i) => ({ el: kit.el(t, 'dim' + (i === 3 ? ' door' : '')), p, i }));
     // notes riding out of the car speaker
+    const yardObjs = since(m2);
     const notes = [];
     for (let i = 0; i < 16; i++) notes.push({ el: kit.el(i % 3 ? '♪' : '♫', 'note'), i });
 
@@ -128,8 +134,8 @@ export default {
       { t: 0, pos: [-12 + 4, 6.5, 9], look: [-12, .8, 0], fov: 38 },
       { t: 2.6, frame: { on: kit3, yaw: 205, pitch: 18, fill: .62, look: [.7, 0, -.3] }, e: 'outE' },
       { t: 10.9, frame: { on: kit3, yaw: 198, pitch: 18, fill: .68, look: [.7, 0, -.28] }, e: 'lin' },
-      { t: 11.6, pos: [.2, 1.42, 1.5], look: [-.3, 1.05, -.8], fov: 54, e: 'cut' },
-      { t: 21.3, pos: [.12, 1.4, 1.38], look: [-.32, 1.05, -.8], fov: 54, e: 'lin' },
+      { t: 11.6, pos: [.1, 1.34, 1.12], look: [-.32, 1.1, -.7], fov: 50, e: 'cut' },
+      { t: 21.3, pos: [.04, 1.32, 1.02], look: [-.34, 1.1, -.7], fov: 50, e: 'lin' },
       { t: 21.6, frame: { on: yard, yaw: 20, pitch: 10, fill: .55 }, e: 'cut' },
       { t: 25.6, frame: { on: yard, yaw: 12, pitch: 10, fill: .6 }, e: 'lin' },
       { t: 28.5, frame: { on: shedB, yaw: 58, pitch: 20, fill: .78 }, e: 'io' },
@@ -146,7 +152,7 @@ export default {
         if (!fin) p.fixed(150 + (i % 2) * 330, 130 + Math.floor(i / 2) * 290, a, 1);
         else p.fixed(110 + (i % 2) * 250, 120 + Math.floor(i / 2) * 220, fade(tau, 33.6 + i * .1, 34 + i * .1, 37.6, 38), .74);
       });
-      f1.head.rotation.x = .25; f1.foreR.rotation.x = tau > .3 && tau < 3 ? -.95 + Math.sin(tau * 5) * .2 : -.75;
+      f1.head.rotation.x = .25; f1.foreR.rotation.x = tau > .3 && tau < 3 ? -1.1 + Math.sin(tau * 5) * .15 : -.9;
       kit.glowSquare(-12, 1, .6 * fade(tau, 2.4, 2.8, 10.6, 11));
       // the car: notes ride out of the speaker
       notes.forEach(({ el, i }) => {
@@ -174,7 +180,12 @@ export default {
       foot.material.opacity = .22 * fp; footEdge.material.opacity = .9 * fp; doorP.material.opacity = .35 * inv(30.8, 31.4, tau) * (tau < 33 ? 1 : 0);
       // only the person in the current scene is shown; the car's inside only for the car scene
       f1.obj.visible = tau < 11.4; f3.obj.visible = tau > 21.4;
-      const inCar = tau > 11.4 && tau < 21.6; cabin.visible = inCar; car.visible = !inCar;
+      const inCar = tau > 11.4 && tau < 21.6, wide = tau < 2.6 || tau > 33.4;
+      kitchenObjs.forEach(o => { o.visible = wide || tau < 11.4; });
+      carObjs.forEach(o => { o.visible = wide || inCar; });
+      yardObjs.forEach(o => { o.visible = wide || tau > 21.4; });
+      cabin.visible = inCar; car.visible = wide && !inCar; f2.obj.visible = inCar;
+      shed.visible = shed.visible && tau > 25.8; f1.obj.visible = f1.obj.visible && tau < 11.4; f3.obj.visible = f3.obj.visible && tau > 21.4;
     };
   },
 };

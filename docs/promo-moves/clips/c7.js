@@ -48,11 +48,11 @@ export default {
     kit.caption('Rendered on the band', 27.8, 31.6, 'label');
     kit.caption('Posted and tracked', 36.0, 39.8, 'label');
     const cards = CLIPS.map((c, i) => kit.el(`<b>${i + 1}</b> ${c}`, 'sb'));
-    const queue = pane(kit, { title: '<b>render queue</b> · cachyrig', w: 600, body: CLIPS.map((c, i) =>
+    const queue = pane(kit, { title: '<b>render queue</b> · render box', w: 600, body: CLIPS.map((c, i) =>
       `<div class="q"><span>${i + 1} · ${c}</span><b><i></i></b><em>✓</em></div>`).join('') });
     const stars = pane(kit, { title: '<b>github</b> · Bake-Ware/rook', w: 380, body: `<div class="st">★ <span>0</span></div><div class="dim">stars · tracked daily</div>` });
     const chanEls = chans.map(c => kit.el(c.name, 'chip'));
-    const flyers = CLIPS.map((c, i) => kit.el(`▶ ${i + 1}`, 'chip ok'));
+    const flyers = CHANNELS.map((c, i) => kit.el(`▶ ${i + 1}`, 'chip ok'));            // one clip out to each channel
     const ticker = kit.el('Share your <span class="w">message</span>.', 'ticker');
     const made = kit.el('made with Rook', 'made');
     const st = document.createElement('style'); st.textContent = `

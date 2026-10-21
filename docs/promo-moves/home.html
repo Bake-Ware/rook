@@ -61,6 +61,9 @@ textarea:focus{outline:none;border-color:var(--hi)}
 .tabs a{font:400 15px var(--mono);color:var(--dim);text-decoration:none;padding:10px 16px;border:1px solid transparent;border-bottom:0;border-radius:10px 10px 0 0;margin-bottom:-1px}
 .tabs a:hover{color:var(--fg)}
 .tabs a.on{color:var(--hi);background:var(--panel);border-color:var(--line)}
+.notes li.done{opacity:.55}.notes li.done .txt{text-decoration:line-through;text-decoration-color:rgba(207,211,189,.5)}
+.notes .dn{color:var(--ok);font:400 12px var(--mono);text-decoration:none;display:inline-block}
+.notes .rp{display:block;margin-top:4px;color:var(--hi);font-size:14px;text-decoration:none}
 </style></head>
 <body><main>
 <header><h1>Rook <b>Moves</b></h1><span class="sum" id="sum"></span></header>
@@ -81,11 +84,12 @@ const putNotes = (n, notes) => fetch(`notes/${n}`, { method: 'POST', body: JSON.
 
 async function load() {
   const clips = await fetch('clips').then(r => r.json());
-  const total = clips.reduce((a, c) => a + c.notes.filter(x => x.text?.trim()).length, 0);
-  $('#sum').textContent = `${clips.length} clips · ${total} note${total === 1 ? '' : 's'}`;
+  const total = clips.reduce((a, c) => a + c.notes.filter(x => x.text?.trim() && !x.done).length, 0);
+  $('#sum').textContent = `${clips.length} clips · ${total} open note${total === 1 ? '' : 's'}`;
   $('#list').innerHTML = clips.map(c => {
     const timed = c.notes.filter(x => typeof x.t === 'number' && x.text?.trim()).sort((a, b) => a.t - b.t);
-    const general = c.notes.filter(x => typeof x.t !== 'number').map(x => x.text).join('\n\n');
+    const genNotes = c.notes.filter(x => typeof x.t !== 'number'), general = genNotes.map(x => x.text).join('\n\n');
+    const genDone = genNotes.length && genNotes.every(x => x.done);
     const newer = c.keys && c.rendered && c.keys > c.rendered;
     return `<section class="clip" data-n="${c.n}">
       <div class="media">${c.video
@@ -105,14 +109,14 @@ async function load() {
           ${c.video ? `<a class="btn" href="video/${c.n}?full=1">Download full-res mp4</a>` : ''}
         </div>
         <h3>Timed notes</h3>
-        ${timed.length ? `<ul class="notes">${timed.map(x => `<li>
+        ${timed.length ? `<ul class="notes">${timed.map(x => `<li class="${x.done ? 'done' : ''}">
             <a class="t" href="index.html?clip=${c.n}&director=1&t=${x.t}&note=1">@ ${x.t.toFixed(2)}s</a>
-            <span class="txt">${esc(x.text)}</span>
+            <span class="txt">${x.done ? '<b class="dn">✓ done</b> ' : ''}${esc(x.text)}${x.reply ? `<span class="rp">Claude: ${esc(x.reply)}</span>` : ''}</span>
             <button class="x" title="Delete note" data-del="${x.t}">×</button></li>`).join('')}</ul>`
           : `<p class="empty">None yet. Add them in the director at any key or moment.</p>`}
         <h3>Clip notes</h3>
         <textarea data-gen="${c.n}" placeholder="Anything about this clip as a whole (saves as you type)">${esc(general)}</textarea>
-        <div class="saved" id="saved${c.n}"></div>
+        <div class="saved" id="saved${c.n}">${genDone ? '✓ done' : ''}</div>
       </div></section>`;
   }).join('');
 }

@@ -458,7 +458,7 @@ export function bookends(kit, clip) {
   glow.position.set(0, 2.2, -2); s.add(glow);
   const cam = new THREE.PerspectiveCamera(30, W / H, .1, 100);
   const end = kit.el(`<div class="tag">${clip.tagline}</div><div class="move">Your machines, <b>your move.</b></div>
-    <div class="brand">ROOK</div><div class="url">github.com/Bake-Ware/rook</div>`, 'endcard');
+    <div class="brand">ROOK</div><div class="cta">★ Star and fork it on GitHub</div><div class="url">github.com/Bake-Ware/rook</div>`, 'endcard');
   const top = kit.el('ROOK MOVE:', 'sting-move');
   const title = kit.el(`<div class="nm">${clip.title}</div>`, 'sting-title');
   kit.stingTitle = title;

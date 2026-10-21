@@ -66,7 +66,12 @@ export function director(kit, clip) {
   const saveNotes = () => { clearTimeout(saveTimer); saveTimer = setTimeout(async () => {
     // keep the clip-wide notes the clip list may have changed meanwhile; this page owns the timed ones
     const cur = await fetch(`notes/${clip.num}`).then(r => r.json()).catch(() => []);
-    const body = cur.filter(n => typeof n.t !== 'number').concat(notes.filter(n => typeof n.t === 'number' && n.text.trim()));
+    // keep Claude's done marks and replies unless you changed the note's text since
+    const mine = notes.filter(n => typeof n.t === 'number' && n.text.trim()).map(n => {
+      const s = cur.find(x => typeof x.t === 'number' && near(x.t, n.t));
+      return s && s.text === n.text ? { ...n, done: s.done, reply: s.reply } : { ...n, done: undefined, reply: undefined };
+    });
+    const body = cur.filter(n => typeof n.t !== 'number').concat(mine);
     const res = await fetch(`notes/${clip.num}`, { method: 'POST', body: JSON.stringify(body, null, 1) });
     $('msg').textContent = res.ok ? `notes saved (${notes.filter(n => n.text.trim()).length})` : 'note save failed';
   }, 500); };
@@ -79,7 +84,7 @@ export function director(kit, clip) {
     nsel = i;
     $('nrow').style.display = i >= 0 ? 'flex' : 'none';
     fit();
-    if (i >= 0) { $('nlbl').textContent = `note @ ${notes[i].t.toFixed(2)}s`; $('ntext').value = notes[i].text; if (create) $('ntext').focus(); }
+    if (i >= 0) { $('nlbl').textContent = `note @ ${notes[i].t.toFixed(2)}s${notes[i].done ? ' · ✓ done' : ''}${notes[i].reply ? ' · Claude: ' + notes[i].reply : ''}`; $('ntext').value = notes[i].text; if (create) $('ntext').focus(); }
   };
   const frame = () => window.render(t);
   const draw = () => {
@@ -89,7 +94,7 @@ export function director(kit, clip) {
     const items = keys.map((k, i) => ({ t: k.t, i, key: true }))
       .concat(notes.filter(n => typeof n.t === 'number' && !keys.some(k => near(k.t, n.t))).map(n => ({ t: n.t, key: false }))).sort((a, b) => a.t - b.t);
     $('list').innerHTML = items.map(it => {
-      const hasN = noteAt(it.t) >= 0 && notes[noteAt(it.t)].text.trim();
+      const hasN = noteAt(it.t) >= 0 && notes[noteAt(it.t)].text.trim() && !notes[noteAt(it.t)].done;
       const cur = it.key ? it.i === sel : nsel >= 0 && near(notes[nsel]?.t ?? -9, it.t);
       return `<span class="k ${cur ? 'cur' : ''} ${it.key ? '' : 'n'} ${hasN ? 'hasn' : ''}" data-t="${it.t}" data-i="${it.key ? it.i : -1}" title="${hasN ? notes[noteAt(it.t)].text.replace(/"/g, '&quot;') : ''}">${it.t.toFixed(2)}${it.key && keys[it.i].e === 'cut' ? ' ✂' : ''}</span>`;
     }).join('');

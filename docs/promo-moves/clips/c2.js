@@ -45,9 +45,17 @@ export default {
       return loops;
     }
     const loops = latch(fr, front, kit.toon(COL.goldHi));
-    pen.position.set(1.0, .1, 0);
+    pen.position.set(1.0, .1, 0);                   // the pen rides in the latch loops on the opening edge
     // the front cover pivots higher as it closes, so it lands on the notepad instead of through it
-    const frontLift = ang => .025 + .13 * (1 - Math.cos(ang)) / 2;
+    // the front cover hinges on a raised spine (a gusset as deep as the notepad), so it opens flat a little above the
+    // back cover and closes onto the pad; the loops on the back cover are raised to the same axis, so they all line up
+    const AXIS = .1;
+    const alignHinge = (obj, frontNode) => {
+      frontNode.position.y = AXIS;
+      obj.traverse(o => { if (/^loop\d/.test(o.name) && !frontNode.getObjectById(o.id)) o.position.y = AXIS; });
+    };
+    alignHinge(folio, front);
+    const frontLift = () => AXIS;
     // the old design: a snap latch and an elastic band, which fade out in the rebuild
     const oldMat = kit.toon(0x9a4a3a);
     const elastic = new THREE.Mesh(new THREE.BoxGeometry(.05, .02, 1.42), oldMat); elastic.position.set(.75, -.045, 0); fr.add(elastic);
@@ -67,9 +75,9 @@ export default {
     const chamber = new THREE.PointLight(0xfff0d0, 0, 1.6, 1.5); chamber.position.set(0, .9, 0); printer.add(chamber);
     const done = kit.make('folio', { parent: bed, scale: 1 / .45 }); done.rotation.y = .3;
     done.position.set(-.133 * Math.cos(.3), .05, .133 * Math.sin(.3));     // centred on the plate (the model's origin is its spine)
-    { const df = kit.node(done, 'front'); df.rotation.z = -Math.PI; df.position.y = .155;
+    { const df = kit.node(done, 'front'); df.rotation.z = -Math.PI;
       latch(done.children[0], df, kit.toon(COL.goldHi)); kit.node(done, 'pen').position.set(1.0, .1, 0);
-      kit.node(done, 'lips').visible = true; }
+      kit.node(done, 'lips').visible = true; alignHinge(done, df); }
     done.visible = false;
     // the person
     const fig = figure(kit, V(0, 0, .72), Math.PI, 1, { f: true });
@@ -156,7 +164,7 @@ export default {
       } else if (tau < 19.5) {
         ang = lerp(-.7, 0, ease.outE(inv(16, 17.6, tau))) + .05 * Math.sin(inv(16.8, 18, tau) * Math.PI * 3) * (1 - inv(16.8, 19, tau));
       } else ang = tau < 29 ? 0 : lerp(0, Math.PI, ease.io(inv(30.5, 32.5, tau)));
-      front.rotation.z = -ang; front.position.y = frontLift(Math.max(0, ang));
+      front.rotation.z = -ang; front.position.y = frontLift();
       const repl = tau >= 6 && tau < 16;
       const open = Math.PI - ang;
       knob.style.left = (clamp(open / 3.84) * 400) + 'px';
