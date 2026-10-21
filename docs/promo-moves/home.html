@@ -46,10 +46,22 @@ h3{font:400 12.5px var(--mono);color:var(--dim);letter-spacing:.12em;text-transf
 textarea{width:100%;min-height:64px;resize:vertical;font:400 15px/1.45 var(--sans);color:var(--fg);background:#101410;border:1px solid var(--edge);border-radius:8px;padding:8px 10px}
 textarea:focus{outline:none;border-color:var(--hi)}
 .saved{font:400 12px var(--mono);color:var(--ok);height:16px;margin-top:4px}
+.voices{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:28px}
+.voices h2{margin-bottom:4px}.voices .lead{color:var(--dim);font:400 13.5px var(--mono);margin-bottom:14px}
+.vt{width:100%;border-collapse:collapse}.vt th,.vt td{text-align:left;vertical-align:top;padding:10px 8px;border-top:1px solid var(--line)}
+.vt th{font:400 12.5px var(--mono);color:var(--dim);letter-spacing:.08em;font-weight:400;border-top:0}
+.vt .nm{font:600 17px var(--sans)}.vt .eng{font:400 12.5px var(--mono);color:var(--dim)}.vt .lic{font-size:13.5px;color:var(--soft);max-width:300px}
+.vt .pub{font:400 12px var(--mono);border-radius:999px;padding:1px 8px;border:1px solid var(--ok);color:var(--ok);display:inline-block;margin-top:4px}
+.vt .pub.no{border-color:#e0675c;color:#e0675c}
+.play{font:400 13px var(--mono);color:var(--fg);background:var(--panel2);border:1px solid var(--edge);border-radius:8px;padding:5px 10px;cursor:pointer;white-space:nowrap}
+.play.on{border-color:var(--hi);color:var(--hi)}
+.lines{color:var(--dim);font-size:13.5px;margin:0 0 6px 18px}
+.vwrap{overflow-x:auto}
 </style></head>
 <body><main>
 <header><h1>Rook <b>Moves</b></h1><span class="sum" id="sum"></span></header>
 <p class="sub">Your notes here and in the director page go to Claude. Clip notes cover the whole clip; timed notes link into the director at that moment.</p>
+<section class="voices" id="voices" hidden></section>
 <div id="list"></div>
 </main>
 <script>
@@ -124,6 +136,27 @@ document.addEventListener('input', e => {
     $('#saved' + n).textContent = res.ok ? 'saved' : 'save failed';
     setTimeout(() => { const el = $('#saved' + n); if (el) el.textContent = ''; }, 1500);
   }, 600);
+});
+// voice audition: the same lines in each candidate voice
+let audio = null, cur = null;
+fetch('out/voicesamples/index.json').then(r => r.ok ? r.json() : null).then(v => {
+  if (!v) return;
+  const box = $('#voices'); box.hidden = false;
+  box.innerHTML = `<h2>Voices</h2><p class="lead">The same lines in each candidate voice. Green = cleared for the published films.</p>
+    <ol class="lines">${v.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ol>
+    <div class="vwrap"><table class="vt"><tr><th>VOICE</th><th>LICENCE</th>${v.lines.map((_, i) => `<th>LINE ${i + 1}</th>`).join('')}</tr>
+    ${v.voices.map(x => `<tr><td><div class="nm">${esc(x.label)}</div><div class="eng">${esc(x.engine)} · ${esc(x.id)}</div>
+      <span class="pub ${x.public ? '' : 'no'}">${x.public ? 'public OK' : 'not for public'}</span></td>
+      <td class="lic">${esc(x.note)}</td>${x.files.map(f => `<td><button class="play" data-src="${f}">▶ play</button></td>`).join('')}</tr>`).join('')}
+    </table></div>`;
+});
+document.addEventListener('click', e => {
+  const b = e.target.closest('.play'); if (!b) return;
+  if (audio) { audio.pause(); cur.classList.remove('on'); cur.textContent = '▶ play'; }
+  if (cur === b) { cur = null; audio = null; return; }
+  audio = new Audio(b.dataset.src); cur = b; b.classList.add('on'); b.textContent = '■ stop';
+  audio.onended = () => { b.classList.remove('on'); b.textContent = '▶ play'; cur = null; };
+  audio.play();
 });
 load();
 </script></body></html>
