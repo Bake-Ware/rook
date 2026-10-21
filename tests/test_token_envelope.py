@@ -262,7 +262,7 @@ async def test_tools_list_fits_the_budget(tmp_path, monkeypatch):
         tools = (await rpc("tools/list", {}))["tools"]
         assert len(tools) >= 29
         size = len(json.dumps({"tools": tools}, separators=(",", ":"), ensure_ascii=False))
-        assert size <= 14400, size  # +80 rook_workers device workers (device, delegate); +20 rook_task speakable names; +60 rook_task deck paging (project_fields, project, offset, limit); +200 rook_huddle chaired actions, rook_chat_start retired; +120 rook_knowledge's pointer to the user manual; +560 rook_huddle, +30 rook_task dates; +550 rook_jobs; +300 task note/batch/deck options and handoff close; +300 rook_install_claude_code; +100 console_write literal/secrets; +50 console_open task_id, link kind session
+        assert size <= 14950, size  # +550 rook_approvals (relayed approvals); +80 rook_workers device workers (device, delegate); +20 rook_task speakable names; +60 rook_task deck paging (project_fields, project, offset, limit); +200 rook_huddle chaired actions, rook_chat_start retired; +120 rook_knowledge's pointer to the user manual; +560 rook_huddle, +30 rook_task dates; +550 rook_jobs; +300 task note/batch/deck options and handoff close; +300 rook_install_claude_code; +100 console_write literal/secrets; +50 console_open task_id, link kind session
         by = {t["name"]: t for t in tools}
         assert all("outputSchema" not in t for t in tools)
         # Schema slimming keeps a property literally named "title" and required args.

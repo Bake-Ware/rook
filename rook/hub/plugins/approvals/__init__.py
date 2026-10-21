@@ -115,13 +115,10 @@ class Approvals(Plugin):
         async def rook_approvals(action: str = "summary", item: str | None = None,
                                  relayed_by: dict | None = None, reason: str | None = None,
                                  answer: str | None = None, kind: str | None = None) -> str:
-            """What is waiting on the person, and relaying their decision. summary: one line to
-            read out. list (kind? hold|job|card|ask): each item's name, who asked, what would
-            happen, risk, source, age, relayable. approve / deny item=<name or id>,
-            relayed_by={who, quote: the person's exact words, session: conversation URL or id},
-            reason? (deny: goes back to the requester), answer? (a question's reply). Only for
-            clients the person enabled (Tokens > May relay my approvals); relay only their
-            explicit decision, never your own judgement."""
+            """What waits on the person (holds, job holds, huddle cards, questions).
+            summary | list (kind?). approve/deny item=<name|id> with relayed_by {who, quote:
+            their exact words, session}, reason?, answer?: only if they enabled your client
+            and said so; never your own judgement."""
             try:
                 if action in ("list", "summary"):
                     result = await invoke("approvals.list", {

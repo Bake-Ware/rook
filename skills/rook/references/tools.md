@@ -19,7 +19,7 @@ The tables are generated from the code by `tools/gen_skill_reference.py`; don't 
 <!-- BEGIN GENERATED: mcp-tools -->
 | Tool | Args | Does |
 |---|---|---|
-| `rook_approvals` | action='summary', item?, relayed_by?, reason?, answer?, kind? | What is waiting on the person, and relaying their decision. summary: one line to read out. list (kind? hold\|j… |
+| `rook_approvals` | action='summary', item?, relayed_by?, reason?, answer?, kind? | What waits on the person (holds, job holds, huddle cards, questions). summary \| list (kind?). approve/deny it… |
 | `rook_call` | cap, args?, worker_id?, worker?, timeout?, hint?, text? | Run a cap on one worker. worker= (name or id) is required. |
 | `rook_caps` | prefix?, worker? | Caps and their holders: "*" = every worker, {all_but:[…]}, or names. prefix filters (e.g. "shell."); worker=… |
 | `rook_chat_delete` | room | Delete a room and its messages (participants only; final). |
