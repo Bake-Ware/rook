@@ -108,8 +108,7 @@ call on which machine. It waits for you:
   call journal with the card and the huddle. The card then shows the result,
   or, if it failed, **Failed:** and the reason, and the chair says so in
   the huddle.
-- **Dismiss** drops it. A reason, if you give one, goes back to whoever
-  proposed it, so it can adapt instead of proposing it again.
+- **Dismiss** drops it; a reason you give goes back to the proposer.
 
 Rook checks a card when it is proposed: the machine must be on the band
 and have the capability, a task card must name the project it goes under,
@@ -119,16 +118,12 @@ told why and can fix it. A card that says the same as one still waiting
 is not added twice: the one who proposed it updates theirs instead. The
 chair's message lists the cards it actually made, by id.
 
-Only people approve or dismiss cards, on the dashboard or through a
-client you let relay your approvals ([[manual-accounts-and-access]]); a
-relayed decision shows on the card with your words. Ask the chair "what's
-waiting?" and it answers from the list of everything waiting for you
-across the band; if you let the house agent relay your approvals (Tokens
-page), it can also pass on a decision you state in your message, quoting
-you. A role that does routine work (autonomy
-*routine* or *act*) runs reads in its tools directly, and a card it
-proposes for one shows up already done. Everything Rook keeps for you
-(merges, deploys, deletes, settings, secrets, jobs, protected devices,
+Only people approve or dismiss cards, here or through a client you let
+relay your approvals ([[manual-accounts-and-access]]). Ask the chair
+"what's waiting?" for everything waiting on you. A role that does routine
+work (autonomy *routine* or *act*) runs reads in its tools directly, and a
+card it proposes for one shows up already done. Everything Rook keeps for
+you (merges, deploys, deletes, settings, secrets, jobs, protected devices,
 anything unknown) still waits for you, whatever the role's autonomy: see
 **What roles do on their own**.
 
