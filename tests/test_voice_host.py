@@ -314,3 +314,43 @@ def test_the_picker_lists_chatterbox_first_and_previews(tmp_path):
     assert out["preview"] == {"csrf": "tok", "action": "preview", "voice": "nova"}
     assert out["played"] == 1
     assert out["unknown"] == "retired (not on the voice engine)"
+
+
+@pytest.mark.asyncio
+async def test_remote_engine_reads_a_reply_compressed_on_the_way():
+    # A CDN in front of the voice server gzips JSON; the hub's session never
+    # decompresses (it forwards replies untouched), so its own calls must.
+    import gzip
+    seen = []
+
+    async def voices(request):
+        seen.append(request.headers.get("Accept-Encoding"))
+        body = gzip.compress(json.dumps({"voices": ["narrator"], "default": "narrator",
+                                         "catalog": CATALOG[2:]}).encode())
+        return web.Response(body=body, headers={"Content-Encoding": "gzip",
+                                                "Content-Type": "application/json"})
+
+    async def health(request):
+        return web.Response(body=gzip.compress(b'{"ok": true, "version": "2.0.0"}'),
+                            headers={"Content-Encoding": "gzip"})
+
+    async def speak(request):
+        seen.append(request.headers.get("Accept-Encoding"))
+        return web.Response(body=gzip.compress(b"RIFFwav"), headers={"Content-Encoding": "gzip"},
+                            content_type="audio/wav")
+
+    app = web.Application()
+    app.router.add_get("/voices", voices)
+    app.router.add_get("/health", health)
+    app.router.add_post("/api/voice", speak)
+    server = TestServer(app)
+    await server.start_server()
+    remote = eng.RemoteEngine(str(server.make_url("")).rstrip("/"), "/voice")
+    try:
+        assert (await remote.voices())["default"] == "narrator"
+        assert await remote.synthesize("Hi.") == b"RIFFwav"
+        assert (await remote.health())["ok"] is True
+        assert seen == ["identity", "identity"]
+    finally:
+        await remote.stop()
+        await server.close()
