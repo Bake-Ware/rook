@@ -120,10 +120,17 @@ Every message and action card in a huddle ([[manual-huddles]]) has a small
 using; tap it again (■) to stop. Only one message speaks at a time.
 
 - **Which voice.** A role's messages are read in that role's **Speaking
-  voice**, set on the Roles page from the voices your voice engine has.
-  Messages from the chair and from roles without one use the band's default
-  voice (the voice engine's own). If a role's voice fails, the default reads
-  it instead.
+  voice** (Manage > Roles, in each role's form), and the chair's in the house
+  agent's **Speaking voice** (Manage > Home agent). Each picker lists the
+  voice engine's voices, the natural Chatterbox voices first and the quicker
+  Kokoro voices after, and has a **Preview** button. Left on **Band
+  default**, a message is read in the band's default voice: **Band default
+  voice** on Manage > Voice (also `voice.tts_default` in Settings), or the
+  voice engine's own when that is blank. If a role's voice fails, the default
+  reads it instead.
+- **Instant replays.** The hub keeps recently spoken audio in memory per voice
+  and text (**Spoken audio kept**, `voice.speech_cache_mb`, 32 MB by default),
+  so playing a message again starts at once.
 - **Where the speech comes from.** The hub makes the audio with its voice
   engine (on this hub, or the voice server it passes voice to; see above), so
   it sounds like your phones. When the hub has no voice engine it can reach,
@@ -132,8 +139,9 @@ using; tap it again (■) to stop. Only one message speaks at a time.
 - **What is read.** Formatting, code blocks and links are left out, and record
   ids are read by their three-word names ([[manual-names]]).
 - **Play on a phone.** Press and hold the button (or right-click it) to play
-  the message on a device with `voice.speak`, such as your phone, in the same
-  voice. Devices listed in **Protected devices** (`role.protected_workers`)
+  the message on a device with `voice.speak`, such as your phone. The phone
+  uses the role's or the house agent's voice when one is set (and its voice
+  server has it); otherwise it speaks in its own voice, not the band default. Devices listed in **Protected devices** (`role.protected_workers`)
   are never offered, and none are offered until that list exists.
   **Play on devices** (`huddle.speak_devices`) narrows the list to the
   workers you name.

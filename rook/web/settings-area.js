@@ -7,6 +7,8 @@
 const {el, ago, info, copyChip, seg} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 const show=v=>v===null||v===undefined||v===''?'—':typeof v==='object'?JSON.stringify(v):String(v);
 const API='/account/settings/api';
+// Voice ids get a picker of the hub's voices (huddles.js), with what blank means.
+const VOICE_KEYS=new Map([['voice.tts_default',()=>'The voice engine\'s own'],['home.voice',d=>'Band default'+(d?' ('+d+')':'')]]);
 const CSS=`
 .st-page h1{margin:0 8px 0 0;font:500 20px var(--sans);color:var(--accent)}
 .st-page h2{font:500 15px var(--sans);margin:10px 0 0}
@@ -143,6 +145,8 @@ export async function mountSettings(root){
     if(sc.secret){input=el('input');input.type='password';input.autocomplete='new-password';input.placeholder=cur?'●●●●●● (set) · new value or {{secret:name}}':'value or {{secret:name}}';}
     else if(t==='bool'){input=el('input');input.type='checkbox';input.checked=!!cur;}
     else if(sc.choices){input=el('select');for(const c of sc.choices){const o=el('option',String(c));o.value=String(c);if(String(c)===String(cur))o.selected=true;input.append(o);}}
+    else if(VOICE_KEYS.has(r.key)){input=el('select');const o=el('option',String(cur||'')||'Default');o.value=String(cur??'');input.append(o);
+      import('/account/huddle/assets/huddles.js'+new URL(import.meta.url).search).then(m=>m.fillVoiceSelect(input,cur,VOICE_KEYS.get(r.key))).catch(()=>{});}
     else if(t==='int'||t==='float'){input=el('input');input.type='number';if(t==='float')input.step='any';if(sc.min!==undefined)input.min=sc.min;if(sc.max!==undefined)input.max=sc.max;input.value=cur??'';}
     else if(t==='dict'){input=el('textarea');input.value=JSON.stringify(cur??{},null,1);}
     else if(t==='list'){input=el('input');input.type='text';input.value=(cur||[]).join(', ');input.placeholder='comma separated';}

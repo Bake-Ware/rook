@@ -344,6 +344,12 @@ def client_address(request: Any) -> str:
     return peer or "unknown"
 
 
+#: How often a synthesis is tried again while the voice server is busy with
+#: another line, and the first wait between tries (seconds; it grows).
+BUSY_RETRIES = 4
+BUSY_WAIT = 0.4
+
+
 class RemoteEngine:
     """Forwards the voice paths to a standalone voice server."""
 
@@ -618,16 +624,22 @@ class RemoteEngine:
         headers = {"Content-Type": "application/json"}
         if self.token:   # a keyless request works only where the server allows guests
             headers["Authorization"] = f"Bearer {self.token}"
-        async with self._http().post(
-                self.url("/api/voice"), data=json.dumps(body).encode(), ssl=self._ssl(),
-                headers=headers, timeout=aiohttp.ClientTimeout(total=40)) as r:
-            data = await r.read()
-            if r.status != 200:
+        for attempt in range(BUSY_RETRIES + 1):
+            async with self._http().post(
+                    self.url("/api/voice"), data=json.dumps(body).encode(), ssl=self._ssl(),
+                    headers=headers, timeout=aiohttp.ClientTimeout(total=40)) as r:
+                data = await r.read()
+                if r.status == 200:
+                    return data
                 detail = ""
                 try:
                     detail = str((json.loads(data) or {}).get("detail") or "")
                 except (ValueError, AttributeError):
                     pass
-                raise RuntimeError(f"the voice server said HTTP {r.status}"
-                                   + (f": {detail}" if detail else ""))
-            return data
+            # It speaks one line at a time and says 503 "busy" to the next.
+            if r.status == 503 and "busy" in detail.lower() and attempt < BUSY_RETRIES:
+                await asyncio.sleep(BUSY_WAIT * (attempt + 1))
+                continue
+            raise RuntimeError(f"the voice server said HTTP {r.status}"
+                               + (f": {detail}" if detail else ""))
+        raise RuntimeError("the voice server stayed busy")

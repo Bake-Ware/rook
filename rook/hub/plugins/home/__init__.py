@@ -212,6 +212,10 @@ class HomeAgent(Plugin):
         setting("memory", bool, True, group="Behaviour", order=5, label="Use memory",
                 help="Remember people, facts, conversations and skills between conversations "
                      "(Manage > Memory). Off: it neither reads nor writes memory."),
+        setting("voice", str, "", pattern=r"^[A-Za-z0-9_.:-]{0,64}$", group="Behaviour",
+                order=6, label="Speaking voice",
+                help="The voice its huddle messages are read aloud in (the Speak button), "
+                     "from the hub's voice engine. Blank: the band's default voice."),
         setting("job_steps", bool, True, group="Jobs", order=1, label="Work job agent steps",
                 help="Job steps with agent \"home\" may run the home agent with a tool set that "
                      "acts on behalf of the job (never more than the job may do). Chat never "

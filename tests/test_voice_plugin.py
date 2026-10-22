@@ -417,12 +417,12 @@ async def test_remote_engine_says_when_the_voice_server_is_down(tmp_path):
 
 # -- review fixes ------------------------------------------------------------------------------
 
-def test_without_rook_hub_serve_voice_stays_off_and_says_why(tmp_path, monkeypatch):
+def test_without_rook_hub_serve_voice_on_this_hub_stays_off_and_says_why(tmp_path, monkeypatch):
     # The two-process layout (rook-dashboard + rook-mcp): nothing hands /voice/
-    # to the plugin, so it must not load, claim to serve, or load models.
+    # to the plugin, so engine "here" must not load or load models for nothing.
     monkeypatch.setattr(site_mod, "_SERVED", False)
     monkeypatch.setattr(eng, "missing_extras", lambda: [])
-    node = node_for(tmp_path, engine="remote", remote_url="http://192.0.2.7:8900")
+    node = node_for(tmp_path, engine="here")
     assert node.plugin("voice") is None
     st = node.host.status["voice"]
     assert st["state"] == "unavailable" and "rook hub serve" in st["reason"]
@@ -430,6 +430,26 @@ def test_without_rook_hub_serve_voice_stays_off_and_says_why(tmp_path, monkeypat
     assert page["status"]["served"] is False
     assert page["requirements"]["served"] is False
     assert "rook hub serve" in page["requirements"]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_without_rook_hub_serve_a_voice_server_still_reads_aloud_for_the_dashboard(
+        tmp_path, monkeypatch):
+    # Remote needs nothing in this process: the Speak buttons call it, while
+    # no voice path is mounted (phones keep the voice server's own address).
+    monkeypatch.setattr(site_mod, "_SERVED", False)
+    assert voice_mod.requirements("remote", "http://192.0.2.7:8900", "")["reason"] == ""
+    assert "address is not set" in voice_mod.requirements("remote", "", "")["reason"]
+    node = node_for(tmp_path, engine="remote", remote_url="http://192.0.2.7:8900")
+    await node.start()
+    try:
+        voice = node.plugin("voice")
+        assert voice is not None and voice.speech_unavailable() == ""
+        st = voice.status()
+        assert st["engine"] == "remote" and st["served"] is False and st["paths"] == []
+        assert node.site.match("/voice/health") is None
+    finally:
+        await node.stop()
 
 
 def test_credentials_in_the_voice_server_address_are_refused(tmp_path):
