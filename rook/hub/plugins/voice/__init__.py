@@ -21,7 +21,8 @@ plugin puts it on the hub site, served by ``rook hub serve``:
 The dashboard's Speak buttons and voice pickers use :meth:`Voice.voices` and
 :meth:`Voice.synthesize`: blank asks for the band's default voice
 (``voice.tts_default``, else the engine's own), and recent audio is kept in
-memory per (voice, text) up to ``voice.speech_cache_mb``.
+memory per (voice, text) up to ``voice.speech_cache_mb``; the hub asks its
+engine for one line at a time.
 
 Without what the chosen engine needs, the plugin does not load and the
 Plugins page says what is missing in plain words. Its settings (the former
@@ -34,6 +35,7 @@ services.voice.server``); see docs/operations/voice.md for the move.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import os
@@ -356,6 +358,9 @@ class Voice(Plugin):
         self._mounted: list[str] = []
         self.last_check: dict | None = None
         self._audio = AudioCache(0)
+        #: The voice server reads one line at a time (it answers "busy" to a
+        #: second), so the hub sends it one at a time too.
+        self._one_at_a_time = asyncio.Lock()
         self._voices: tuple | None = None
 
     # -- wiring ------------------------------------------------------------------
@@ -565,8 +570,11 @@ class Voice(Plugin):
         key = (voice, " ".join(str(text or "").split()))
         audio = self._audio.get(key)
         if audio is None:
-            audio = await self.engine.synthesize(text, voice)
-            self._audio.put(key, audio)
+            async with self._one_at_a_time:
+                audio = self._audio.get(key)   # it may have been read while this waited
+                if audio is None:
+                    audio = await self.engine.synthesize(text, voice)
+                    self._audio.put(key, audio)
         return audio
 
     async def preview(self, voice: str = "") -> dict:

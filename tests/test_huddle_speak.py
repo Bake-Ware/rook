@@ -59,6 +59,7 @@ def test_long_text_is_cut_and_split_for_the_engine():
     assert len(said) <= speech.MAX_SPOKEN + 20 and said.endswith("The rest is cut.")
     parts = speech.parts(said)
     assert all(len(p) <= speech.PART for p in parts) and len(parts) > 5
+    assert len(parts[0]) <= speech.FIRST_PART
     assert all(p.endswith(".") for p in parts[:-1])
     assert " ".join(parts) == said
     assert speech.parts("") == [] and speech.speakable("```\nonly code\n```") == "(code left out)."
@@ -249,7 +250,7 @@ async def test_play_on_a_device_never_offers_protected_ones(hub, monkeypatch):  
         assert r.status_code == 200 and r.json()["result"]["worker"] == "myphone"
         call = [x for x in hub.band.calls if x.cap == "voice.speak"][-1]
         assert call.target == "w-phone" and call.identity == "human:op"
-        assert call.args == {"text": "Deploy is done.", "wait": False, "voice": "nova"}
+        assert call.args == {"text": "Deploy is done.", "wait": False, "chat": False, "voice": "nova"}
 
 
 # -- the button ----------------------------------------------------------------------
@@ -281,7 +282,7 @@ globalThis.document={querySelector:()=>null,head:{append(){}},body:{append(){}},
 globalThis.window=globalThis;globalThis.innerHeight=800;globalThis.innerWidth=400;
 globalThis.posts=[];globalThis.replies=[];
 globalThis.fetch=async(url,opt)=>{if(!opt)return {ok:true,status:200,json:async()=>({csrf:'tok'})};
-  const body=JSON.parse(opt.body);posts.push(body);const r=globalThis.replies.shift()||{mode:'hub',parts:1,part:body.part||0,audio:btoa('RIFF'),mime:'audio/wav',source:'role',voice:'nova'};
+  const body=JSON.parse(opt.body);posts.push(body);const r=globalThis.replies.shift()||(body.plan?{mode:'hub',parts:1,part:0,chunks:['Hello.'],source:'role',voice:'nova'}:{mode:'hub',parts:1,part:body.part||0,audio:btoa('RIFF'),mime:'audio/wav',source:'role',voice:'nova'});
   return {ok:true,status:200,json:async()=>({ok:true,result:r})};};
 globalThis.audios=[];
 globalThis.Audio=class{constructor(u){this.src=u;this.paused=false;audios.push(this);} play(){return Promise.resolve();} pause(){this.paused=true;}};
@@ -303,7 +304,8 @@ b.onclick(ev);await tick();
 out.one_at_a_time=[audios[0].paused,a.getAttribute('aria-pressed'),b.getAttribute('aria-pressed')];
 b.onclick(ev);await tick();
 out.stopped=[audios[1].paused,b.getAttribute('aria-pressed'),b.textContent];
-globalThis.replies=[{mode:'hub',parts:2,part:0,audio:btoa('RIFF'),mime:'audio/wav',source:'default',voice:'',label:'af_heart'},
+globalThis.replies=[{mode:'hub',parts:2,part:0,chunks:['One.','Two.'],source:'default',voice:'',label:'af_heart'},
+         {mode:'hub',parts:2,part:0,audio:btoa('RIFF'),mime:'audio/wav',source:'default',voice:'',label:'af_heart'},
          {mode:'hub',parts:2,part:1,audio:btoa('RIFF'),mime:'audio/wav',source:'default',voice:'',label:'af_heart'}];
 a.onclick(ev);await tick();
 out.second_part=posts.at(-1).part;audios.at(-1).onended();await tick();
@@ -329,7 +331,7 @@ def test_the_speak_button_plays_stops_and_falls_back(tmp_path):
     assert run.returncode == 0, run.stderr
     out = json.loads(run.stdout)
     assert out["label"] == "Speak" and out["cls"] == "hx-speak" and out["idle"] == "▶"
-    assert out["post"] == {"csrf": "tok", "action": "speak", "room": "r1", "seq": 5, "part": 0}
+    assert out["post"] == {"csrf": "tok", "action": "speak", "room": "r1", "seq": 5, "plan": True}
     assert out["playing"] == ["true", True, "■", "Stop"]
     assert out["one_at_a_time"] == [True, "false", "true"]
     assert out["stopped"] == [True, "false", "▶"]
