@@ -9,6 +9,15 @@ version was `0.1.0`.
 ## Unreleased
 
 ### Added
+- Voice host for the dashboard. With `voice.engine = remote` the hub reads huddle messages
+  aloud through the voice server even on a two-process hub (it then mounts no voice paths;
+  phones keep the server's own address). Voice pickers with a Preview button on every
+  role (now in the main form, no longer folded under Model), on the house agent (new
+  `home.voice`, Manage > Home agent), and for the band default (`voice.tts_default`, now
+  labelled *Band default voice*, on Manage > Voice and in Settings). Voices are listed
+  Chatterbox first, then Kokoro. Spoken audio is kept per (voice, text) up to
+  `voice.speech_cache_mb` (32 MB), so replays start at once, and a busy voice server is
+  retried. Play on a device sends the house agent's voice too.
 - Relayed approvals. One list of everything waiting on a person: held calls, held job
   calls, huddle action cards (every huddle) and pinned huddle questions, each with a
   three-word name, who asked, what exactly would happen, the risk tier, where it came from

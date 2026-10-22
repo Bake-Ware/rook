@@ -1,12 +1,14 @@
 // Manage > Voice: the voice hub plugin (rook/hub/plugins/voice). Where speech
-// runs (this hub or another machine), whether it is ready, the address phones
+// runs (this hub or another machine), whether
+// it is ready, the band's default voice (with a preview), the address phones
 // and the desktop app use, and a microphone check that records a few seconds
 // in the browser and has the hub transcribe them. Settings are voice.* in the
-// settings store; this page writes only the engine choice, through the same
-// "set" action the Settings area uses.
+// settings store; this page writes the engine choice and the default voice,
+// through the same "set" action the Settings area uses.
 // Versioned like this module (?v=...), so a stale edge cache cannot pair it
 // with an old manage.js.
 const {h, ago, useCss, btn, copy, info} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
+const {voicePicker, voiceList} = await import('/account/huddle/assets/huddles.js' + new URL(import.meta.url).search);
 
 const API='/account/settings/api';
 const RATE=16000, RECORD_S=4;
@@ -18,9 +20,10 @@ export async function mountVoice(root){
   const stateBox=h('section',{class:'mg-box strong','aria-label':'Voice status'});
   const connectBox=h('section',{class:'mg-box','aria-label':'Connect a device'});
   const micBox=h('section',{class:'mg-box','aria-label':'Microphone check'});
+  const defaultBox=h('section',{class:'mg-box','aria-label':'Band default voice'});
   const panel=h('section',{class:'mg-box strong mg-side','aria-label':'Where speech runs'});
   root.replaceChildren(h('div',{class:'mg'},status,
-    h('div',{class:'mg-split'},h('div',{class:'mg-main'},stateBox,micBox,connectBox),panel)));
+    h('div',{class:'mg-split'},h('div',{class:'mg-main'},stateBox,defaultBox,micBox,connectBox),panel)));
 
   async function get(){const r=await fetch(API+'?view=voice');const j=await r.json().catch(()=>({error:'Bad response'}));if(j.csrf)csrf=j.csrf;if(!r.ok||j.error)throw Error(j.error||'Sign in with your operator account to set up voice.');return j;}
   async function post(body){const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,...body})});const j=await r.json().catch(()=>({error:'Bad response'}));if(!r.ok||j.error)throw Error(j.error||'Request failed');return j;}
@@ -47,7 +50,29 @@ export async function mountVoice(root){
   // Label beside the value, or above it on a phone.
   const row=(label,...value)=>h('div',{style:'display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:9px 0;border-top:1px solid var(--line-soft);font-size:13px'},h('span',{class:'mg-label',style:'flex:0 0 130px',text:label}),h('span',{style:'flex:1 1 220px;min-width:0;white-space:normal'},...value));
 
-  function draw(){drawState();drawMic();drawConnect();drawPanel();}
+  function draw(){drawState();drawDefault();drawMic();drawConnect();drawPanel();}
+
+  // The band's default voice: what messages are read in when a role or the
+  // house agent has no voice of its own.
+  function drawDefault(){
+    const err=h('small',{class:'mg-error',role:'alert'}),locked=!!d.settings.tts_default?.locked;
+    const vp=voicePicker(val('tts_default'),{blank:()=>'The voice engine\'s own'});
+    vp.select.disabled=locked;
+    voiceList().then(v=>{if(v.engine_default)vp.select.options[0].textContent='The voice engine\'s own ('+v.engine_default+')';});
+    const save=btn('Save','primary',()=>run(save,async()=>{
+      const v=vp.select.value;if(v===(val('tts_default')||'')){status.textContent='No changes.';return;}
+      await post({action:'set',key:'voice.tts_default',value:v,scope:'hub',note:'Voice page'});
+      status.textContent='Band default voice: '+(v||'the voice engine\'s own')+'.';voiceList(true);
+      setTimeout(()=>refresh().catch(()=>{}),1500);
+    },err));
+    save.disabled=locked;
+    defaultBox.replaceChildren(
+      h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:'Band default voice'}),h('small',{text:'voice.tts_default'})),
+        info('Huddle messages are read aloud in the speaking role\'s voice, or the house agent\'s, else this one. Set those on the Roles and Home agent pages.','About the default voice')),
+      h('div',{class:'mg-pad'},vp.el,vp.note,
+        locked?h('small',{class:'mg-sub mg-warn',style:'white-space:normal',text:'Set by '+d.settings.tts_default.env+' in the hub\'s environment.'}):null,
+        h('div',{class:'mg-actions end'},err,save)));
+  }
 
   function drawState(){
     const s=d.status,req=d.requirements,[label,cls]=state(),err=h('small',{class:'mg-error',role:'alert'});
@@ -81,6 +106,9 @@ export async function mountVoice(root){
   function drawConnect(){
     const origin=location.origin,ws=origin.replace(/^http/,'ws')+d.prefix+'/ws';
     const line=(label,text,href)=>{const b=btn('Copy','',()=>copy(text,b));return row(label,h('span',{class:'mg-actions',style:'flex-wrap:nowrap'},href?h('a',{class:'mg-code',href,target:'_blank',rel:'noopener',text}):h('code',{class:'mg-code',text}),b));};
+    // A two-process hub reads aloud for the dashboard but serves no voice paths.
+    if(d.status.loaded&&!d.status.served){connectBox.hidden=true;return;}
+    connectBox.hidden=false;
     connectBox.replaceChildren(
       h('div',{class:'mg-panel-head'},h('div',{class:'mg-two'},h('h2',{text:'Connect'}),h('small',{text:'Phones, desktop app, browsers'})),
         info('In the Rook app, set the voice server to the voice address and paste a voice key. Keys are made on the voice keys page'+(d.status.engine==='remote'?', which belongs to the voice server this hub forwards to.':'.'),'How to connect')),
@@ -144,7 +172,7 @@ export async function mountVoice(root){
       const changed=Object.entries(want).filter(([k,v])=>!locked(k)&&v!==val(k));
       for(const [k,v] of changed)await post({action:'set',key:'voice.'+k,value:v,scope:'hub',note:'Voice page'});
       status.textContent=changed.length?'Saved. Voice restarts with it; this takes a few seconds.':'No changes.';
-      setTimeout(()=>refresh().catch(()=>{}),1500);setTimeout(()=>refresh().catch(()=>{}),5000);
+      voiceList(true);setTimeout(()=>refresh().catch(()=>{}),1500);setTimeout(()=>refresh().catch(()=>{}),5000);
     },err));
     const lockNote=locked('engine')?h('p',{class:'mg-sub mg-warn',style:'white-space:normal',text:'Set by '+d.settings.engine.env+' in the hub\'s environment; change it there.'}):null;
     panel.replaceChildren(

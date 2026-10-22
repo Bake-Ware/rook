@@ -37,6 +37,8 @@ _EMPHASIS = re.compile(r"(\*\*|~~|\*)(?=\S)(.+?)(?<=\S)\1|(?<!\w)(__|_)(?=\S)(.+
 _ID = re.compile(r"\b(?:[a-z]{1,4}_(?=[0-9a-f]*\d)[0-9a-f]{6,}"
                  r"|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
                  r"|(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,64})\b", re.I)
+#: A voice engine's voice id (the roles' ``voice`` field accepts the same).
+VOICE_ID = re.compile(r"^[A-Za-z0-9_.:-]{0,64}$")
 #: A sender prefix in the text (``role:qa``, ``agent:home``, ``user:operator``).
 _PRINCIPAL = re.compile(r"\b(?:role|agent|user|human):([\w.@-]+)")
 _PUNCT_END = re.compile(r"[.!?:;,]$")

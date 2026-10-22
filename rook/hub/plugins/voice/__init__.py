@@ -14,6 +14,14 @@ plugin puts it on the hub site, served by ``rook hub serve``:
   needs ``pip install 'rook[voice]'`` and the model files, so a small hub that
   does not use voice never loads any of it) or ``remote`` (forward everything
   to a standalone voice server on a machine with a GPU, ``voice.remote_url``).
+  On a two-process hub (rook-dashboard and rook-mcp) nothing serves the
+  voice paths, so ``remote`` there reads text aloud for the dashboard only
+  and phones keep their own voice server address.
+
+The dashboard's Speak buttons and voice pickers use :meth:`Voice.voices` and
+:meth:`Voice.synthesize`: blank asks for the band's default voice
+(``voice.tts_default``, else the engine's own), and recent audio is kept in
+memory per (voice, text) up to ``voice.speech_cache_mb``.
 
 Without what the chosen engine needs, the plugin does not load and the
 Plugins page says what is missing in plain words. Its settings (the former
@@ -43,9 +51,17 @@ PREFIX = "/voice"
 ALIASES = ("/api/voice", "/api/transcribe", "/voices")
 OWNER = "plugin:voice"
 #: Settings the hub keeps for itself, never handed to the voice service.
-HUB_ONLY = frozenset({"engine", "remote_url", "remote_verify_tls", "root_aliases"})
+HUB_ONLY = frozenset({"engine", "remote_url", "remote_verify_tls", "root_aliases",
+                      "speech_cache_mb"})
 #: Longest microphone check the Voice page sends (16 kHz mono 16-bit).
 MAX_CHECK_SECONDS = 15
+#: Where speech runs (voice.engine).
+ENGINES = ("here", "remote")
+#: Voice engines in the order the voice pickers list them (the natural,
+#: cloned Chatterbox voices before the quick Kokoro ones; others after).
+ENGINE_ORDER = {"chatterbox": 0, "kokoro": 1}
+#: What a voice preview says (the Preview buttons beside each voice picker).
+PREVIEW_TEXT = "Hello. This is how I sound when I read your huddle messages aloud."
 #: Thinking efforts the voice service accepts (services/voice/thinking.py).
 EFFORTS = ("low", "medium", "high", "xhigh")
 
@@ -56,7 +72,7 @@ def _s(name, type_, default=None, **kw):
 
 SETTINGS = (
     # Where it runs (the hub's own; new with the plugin).
-    _s("engine", str, "here", choices=("here", "remote"), apply="reload", group="Engine",
+    _s("engine", str, "here", choices=ENGINES, apply="reload", group="Engine",
        order=1, label="Where speech runs",
        help="here: in the hub process (needs pip install 'rook[voice]' and the model files). "
             "remote: forward to a voice server on another machine (the address below)."),
@@ -121,11 +137,17 @@ SETTINGS = (
     _s("hotword_enabled", bool, True, scope="user", label="Wake word on this account",
        group="Speech"),
     _s("tts_default", "str", "", env="VOICE_TTS_DEFAULT", apply="reload",
-       label="Starting voice (any engine)", group="Speech",
-       help="A voice from either engine: a Kokoro voice such as af_heart, or a Chatterbox "
-            "voice such as default or a cloned one (kokoro:af_heart and chatterbox:<name> "
-            "work too). Wins over the voice last picked in an app. Blank: the voice last "
-            "picked, else Voice above."),
+       label="Band default voice", group="Speech", order=-1,
+       help="The voice the dashboard reads messages in when a role or the house agent has "
+            "none of its own: a Kokoro voice such as af_heart, or a Chatterbox voice such as "
+            "default or a cloned one (kokoro:af_heart and chatterbox:<name> work too). On "
+            "this hub's own engine it also wins over the voice last picked in an app. Blank: "
+            "the voice engine's own default. Pick it with a preview on Manage > Voice."),
+    _s("speech_cache_mb", float, 32.0, min=0.0, max=512.0, apply="reload", group="Speech",
+       advanced=True,
+       label="Spoken audio kept (MB)",
+       help="Audio the dashboard's Speak buttons got recently, kept in the hub's memory per "
+            "voice and text, so a message played again starts at once. 0: keep none."),
     _s("tts_target_dbfs", float, -20.0, env="VOICE_TTS_TARGET_DBFS", max=0.0, apply="reload",
        label="Speech loudness (dBFS)", group="Speech", advanced=True,
        help="Spoken replies are lifted to this level (RMS of the speech), by at most 12 dB "
@@ -279,18 +301,20 @@ def requirements(engine: str, remote_url: str, model_dir: str,
     out: dict = {"engine": engine, "extras_missing": [], "models_missing": [],
                  "engine_code": None, "model_dir": model_dir, "reason": "",
                  "served": serving() if served is None else bool(served)}
-    if not out["served"]:
-        # Checked first: without rook hub serve nothing would reach the
-        # engine, so never load the speech models for nothing.
-        out["reason"] = NOT_SERVED
-        return out
     if engine == "remote":
+        # Without rook hub serve nothing reaches the voice paths, but the
+        # dashboard's Speak buttons still read text aloud through it.
         if not remote_url:
             out["reason"] = ("Voice is set to run on another machine, but its address is not "
                              "set: Settings > Voice > Voice server address.")
         elif eng.has_userinfo(remote_url):
             out["reason"] = ("The voice server address must not carry a user name or "
                              "password: voice keys go in Client bearer token.")
+        return out
+    if not out["served"]:
+        # Checked first: without rook hub serve nothing would reach the
+        # engine, so never load the speech models for nothing.
+        out["reason"] = NOT_SERVED
         return out
     out["engine_code"] = eng.find_engine(packages)
     out["extras_missing"] = eng.missing_extras()
@@ -331,6 +355,8 @@ class Voice(Plugin):
         self._why = ""
         self._mounted: list[str] = []
         self.last_check: dict | None = None
+        self._audio = AudioCache(0)
+        self._voices: tuple | None = None
 
     # -- wiring ------------------------------------------------------------------
     def bind_host(self, node) -> None:
@@ -385,6 +411,8 @@ class Voice(Plugin):
         return self.settings.get("token") or None
 
     async def start(self) -> None:
+        self._audio = AudioCache(float(self.settings.get("speech_cache_mb") or 0) * 1024 * 1024)
+        self._voices = None
         if (self.settings.get("engine") or "here") == "remote":
             self.engine = eng.RemoteEngine(str(self.settings.get("remote_url")), PREFIX,
                                            verify_tls=bool(self.settings.get("remote_verify_tls")),
@@ -405,9 +433,10 @@ class Voice(Plugin):
             await engine.stop()
 
     def _mount(self) -> None:
+        from ...site import serving
         site = getattr(self._node, "site", None)
-        if site is None:
-            return
+        if site is None or not serving():
+            return            # two processes: it reads aloud for the dashboard only
         self._mounted = [site.mount(OWNER, PREFIX, self.serve)]
         if self.settings.get("root_aliases"):
             for path in ALIASES:
@@ -449,6 +478,8 @@ class Voice(Plugin):
             out["ready_at"] = e.ready_at or None
         if self.last_check is not None:
             out["last_check"] = self.last_check
+        out["cache"] = {"items": len(self._audio), "bytes": self._audio.size,
+                        "hits": self._audio.hits}
         return out
 
     @capability("status", risk="read", fields="*")
@@ -494,32 +525,56 @@ class Voice(Plugin):
             return "the voice engine is " + (getattr(e, "state", "") or "stopped")
         return ""
 
+    def band_default(self) -> str:
+        """The band's default voice (``voice.tts_default``; blank: the engine's own)."""
+        return str(self.settings.get("tts_default") or "").strip()
+
     async def voices(self) -> dict:
-        """The engine's voices ``{voices, default, catalog?}``, kept a minute."""
+        """The engine's voices ``{voices, default, engine_default, catalog}``,
+        kept a minute. ``default`` is the band's default voice."""
         why = self.speech_unavailable()
         if why:
             raise RuntimeError(why)
-        cached = getattr(self, "_voices", None)
+        cached = self._voices
         if cached and time.monotonic() - cached[0] < 60:
             return cached[1]
         res = self.engine.voices()
         if hasattr(res, "__await__"):
             res = await res
-        out = {"voices": [str(v) for v in res.get("voices") or []],
-               "default": str(res.get("default") or ""),
-               "catalog": [{"id": str(c.get("id")), "label": str(c.get("label") or c.get("id")),
-                            "engine": str(c.get("engine") or "")}
-                           for c in res.get("catalog") or [] if isinstance(c, dict) and c.get("id")]}
+        own = str(res.get("default") or "")
+        catalog = sorted(({"id": str(c.get("id")), "label": str(c.get("label") or c.get("id")),
+                           "engine": str(c.get("engine") or "")}
+                          for c in res.get("catalog") or [] if isinstance(c, dict) and c.get("id")),
+                         key=lambda c: ENGINE_ORDER.get(c["engine"], len(ENGINE_ORDER)))
+        ids = [str(v) for v in res.get("voices") or []]
+        rank = {c["id"]: i for i, c in enumerate(catalog)}
+        out = {"voices": sorted(ids, key=lambda v: rank.get(v, len(rank))),
+               "default": self.band_default() or own, "engine_default": own,
+               "catalog": catalog}
         self._voices = (time.monotonic(), out)
         return out
 
     async def synthesize(self, text: str, voice: str = "") -> bytes:
         """``text`` (at most 700 characters) as WAV in ``voice`` (blank: the
-        engine's default), from this hub's engine or its voice server."""
+        band's default voice, else the engine's), from this hub's engine or its
+        voice server. Recent audio comes from memory."""
         why = self.speech_unavailable()
         if why:
             raise RuntimeError(why)
-        return await self.engine.synthesize(text, voice)
+        voice = str(voice or "").strip() or self.band_default()
+        key = (voice, " ".join(str(text or "").split()))
+        audio = self._audio.get(key)
+        if audio is None:
+            audio = await self.engine.synthesize(text, voice)
+            self._audio.put(key, audio)
+        return audio
+
+    async def preview(self, voice: str = "") -> dict:
+        """A short sample in ``voice`` (blank: the band's default), for the
+        Preview buttons beside the voice pickers."""
+        audio = await self.synthesize(PREVIEW_TEXT, voice)
+        return {"audio": base64.b64encode(audio).decode(), "mime": "audio/wav",
+                "voice": str(voice or "").strip() or self.band_default()}
 
     # -- Manage > Voice ------------------------------------------------------------------
     def page(self, svc) -> dict:
@@ -539,6 +594,40 @@ class Voice(Plugin):
         raise ValueError("Use voice_check or voice_transcribe")
 
 
+class AudioCache:
+    """Spoken audio by (voice, text), least recently used first out, at most
+    ``limit`` bytes in all (0: keep nothing)."""
+
+    def __init__(self, limit: float) -> None:
+        from collections import OrderedDict
+        self.limit = max(0, int(limit))
+        self.size = 0
+        self.hits = 0
+        self._items: "OrderedDict[tuple, bytes]" = OrderedDict()
+
+    def get(self, key: tuple) -> bytes | None:
+        audio = self._items.get(key)
+        if audio is not None:
+            self._items.move_to_end(key)
+            self.hits += 1
+        return audio
+
+    def put(self, key: tuple, audio: bytes) -> None:
+        if not audio or len(audio) > self.limit:
+            return
+        old = self._items.pop(key, None)
+        if old is not None:
+            self.size -= len(old)
+        self._items[key] = audio
+        self.size += len(audio)
+        while self.size > self.limit:
+            _, gone = self._items.popitem(last=False)
+            self.size -= len(gone)
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+
 def page_data(svc, node, plugin: "Voice | None") -> dict:
     """What Manage > Voice shows. Works whether or not the plugin loaded (when
     it did not, the reason is the point of the page)."""
@@ -548,9 +637,9 @@ def page_data(svc, node, plugin: "Voice | None") -> dict:
         except Exception:  # noqa: BLE001
             return None
 
-    keys = ("engine", "remote_url", "remote_verify_tls", "model_dir", "root_aliases",
-            "allow_anonymous", "default_voice", "assistant_name", "whisper_model",
-            "whisper_device", "llm_url", "llm_model")
+    keys = ("engine", "remote_url", "remote_verify_tls", "model_dir",
+            "root_aliases", "allow_anonymous", "default_voice", "tts_default", "assistant_name",
+            "whisper_model", "whisper_device", "llm_url", "llm_model")
     settings = {}
     for k in keys:
         try:
