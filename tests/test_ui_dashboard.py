@@ -50,7 +50,8 @@ def test_every_css_variable_the_web_ui_uses_is_defined():
     defined = set(T.TOKENS) | set(T.FONTS) | set(T.ALIASES)
     # Layout variables and per-element ones set inline by the scripts.
     local = {"sidebar-width", "c", "cols", "min",
-             "lbl", "row", "tint"}   # Work timeline layout, avatar tint (workviews.js)
+             "lbl", "row", "tint",   # Work timeline layout, avatar tint (workviews.js)
+             "p"}                    # how far a message being read aloud has got (huddles.js)
     used = set()
     for path in list(WEB.glob("*.css")) + list(WEB.glob("*.js")) + [WEB / "index.html"]:
         if path.name == "rook-scene.js":

@@ -28,16 +28,21 @@ Chaired huddles (docs/design/huddles.md 5, 8):
 
 Reading aloud (the Speak button on each message; huddle/speech.py):
 
-* ``speak`` {room, seq | card, part?}: the message as speakable text, cut in
-  ``parts``; ``mode`` hub with ``audio`` (base64 WAV of part ``part``) in
-  the speaking role's (or the house agent's) voice, else the band's default
-  (``source`` role or default); ``mode`` browser with the whole ``text`` and a ``reason`` when
-  the hub has no voice engine to speak with (the browser reads it).
+* ``speak`` {room, seq | card, part?, plan?}: the message as speakable text,
+  cut in ``parts`` sentence-sized chunks; ``mode`` hub with ``audio`` (base64
+  WAV of chunk ``part``) in the speaking role's (or the house agent's) voice,
+  else the band's default (``source`` role or default); ``mode`` browser with
+  the whole ``text`` and a ``reason`` when the hub has no voice engine to
+  speak with (the browser reads it). ``plan`` returns the voice choice and the
+  chunks' ``chunks`` texts without audio, so the page can fetch them ahead and
+  keep what it has played.
 * ``voices``: the voice engine's voices and the band's default voice (the
   voice pickers on the Roles, Home agent and Voice pages); ``preview``
   {voice?}: a short sample in that voice (blank: the band's default).
 * ``speak_devices``: workers a message may be played on; ``speak_on``
-  {room, seq | card, worker}: ``voice.speak`` it there, in the same voice.
+  {room, seq | card, worker}: ``voice.speak`` it there, in the same voice,
+  one chunk per call in order (the device queues them); the first is
+  waited for, the rest follow in the background.
 
 The Roles page and the Memory page's role filter (huddles.md 8, 3.3) use the
 ``role.*`` caps through here, as this operator account (a band owner, so the
@@ -53,8 +58,10 @@ roles plugin's admin gate lets it change roles):
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
+import logging
 from typing import Any, Callable
 
 from starlette.routing import Route
@@ -70,8 +77,34 @@ SPEECH_ACTIONS = ("speak", "voices", "preview", "speak_devices", "speak_on")
 PREVIEW_FALLBACK = "Hello. This is how this browser sounds; the hub has no voice engine now."
 #: Longest a voice.speak on a device may take to be accepted.
 SPEAK_ON_TIMEOUT = 20.0
+log = logging.getLogger(__name__)
 ROLE_ACTIONS = ("role_list", "role_get", "role_history", "role_presets", "role_memory",
                 "role_set", "role_delete", "role_move", "role_memory_edit")
+
+
+#: "Play on" deliveries still sending their later chunks.
+_background: set = set()
+
+
+async def _speak_rest(say: Callable, pieces: list[str], worker: str) -> None:
+    """Send a message's later chunks to a device in order. A chunk that fails
+    twice is skipped; two skipped in a row (the device is gone) end it."""
+    skipped = 0
+    for i, piece in enumerate(pieces, 2):
+        for attempt in (1, 2):
+            try:
+                reply = await say(piece)
+            except Exception as e:  # noqa: BLE001 - logged, then retried or skipped
+                reply = {"ok": False, "error": str(e)[:160]}
+            if reply.get("ok"):
+                skipped = 0
+                break
+            log.warning("huddle: play on %s: chunk %d failed (try %d): %s",
+                        worker, i, attempt, reply.get("error"))
+        else:
+            skipped += 1
+            if skipped >= 2:
+                return
 
 
 def _role_args(action: str, data: dict) -> dict:
@@ -274,15 +307,25 @@ def routes(get_node: Callable[[], Any], accounts):
             if client is None:
                 raise LookupError("This hub has no band connection.")
             from ...authz import principal_for_user
-            args: dict = {"text": text, "wait": False}
-            if rvoice:
-                args["voice"] = rvoice
-            reply = await client.call(
-                cap="voice.speak", args=args, target=found["id"], timeout=SPEAK_ON_TIMEOUT,
-                identity="human:" + str(user.get("username") or user["id"]),
-                principal=principal_for_user(user, True))
+            identity = "human:" + str(user.get("username") or user["id"])
+            principal = principal_for_user(user, True)
+
+            async def say(piece: str) -> dict:
+                # Chunks queue on the device (interrupt off); chat off, or the
+                # device's chat would get the message in pieces.
+                args: dict = {"text": piece, "wait": False, "chat": False}
+                if rvoice:
+                    args["voice"] = rvoice
+                return await client.call(cap="voice.speak", args=args, target=found["id"],
+                                         timeout=SPEAK_ON_TIMEOUT, identity=identity,
+                                         principal=principal)
+            reply = await say(pieces[0])
             if not reply.get("ok"):
                 raise ValueError(f"{found['worker']}: {reply.get('error') or 'voice.speak failed'}")
+            if len(pieces) > 1:
+                task = asyncio.create_task(_speak_rest(say, pieces[1:], found["worker"]))
+                _background.add(task)
+                task.add_done_callback(_background.discard)
             return {"worker": found["worker"], "voice": rvoice, "parts": len(pieces)}
         vp, why, voices = await engine()
         known = (voices or {}).get("voices")
@@ -292,6 +335,8 @@ def routes(get_node: Callable[[], Any], accounts):
         out: dict = {**choice, "role": role, "parts": len(pieces), "part": part}
         if choice["mode"] == "browser" or not pieces:
             return {**out, "text": text}
+        if data.get("plan"):
+            return {**out, "chunks": pieces}
         if part >= len(pieces):
             raise ValueError(f"part: 0 to {len(pieces) - 1}")
         audio, failed = None, ""

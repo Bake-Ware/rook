@@ -16,11 +16,11 @@ const API='/account/huddle/api';
 export const YOU='user:operator';
 let csrf='';
 /** One action on the huddle account API: its result, or an Error with the reason. */
-export async function hapi(action,body={},retry=true){
+export async function hapi(action,body={},retry=true,signal){
   if(!csrf){const r=await fetch(API);const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Sign in with your operator account.');csrf=d.csrf;}
-  const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,action,...body})});
+  const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,action,...body}),signal});
   const d=await r.json().catch(()=>({}));
-  if(r.status===403&&retry&&/expired/i.test(d.error||'')){csrf='';return hapi(action,body,false);}
+  if(r.status===403&&retry&&/expired/i.test(d.error||'')){csrf='';return hapi(action,body,false,signal);}
   if(!r.ok||d.error)throw Error(d.error||'Request failed');
   return d.result;
 }
@@ -28,36 +28,103 @@ export async function hapi(action,body={},retry=true){
 // -- reading a message aloud ------------------------------------------------------
 // The Speak button on a bubble asks the hub to read it (speech.py on the hub:
 // markdown, code, links and ids made speakable; the role's voice, else the
-// band's default) and plays the audio here. With no voice engine the hub can
-// reach, this browser's own speech reads it, and the button's tooltip says
-// so. One message speaks at a time; tapping again stops it. A long press (or
+// band's default) and plays the audio here. The hub cuts the text into
+// sentence-sized chunks: the first plays as soon as it arrives, the next two
+// load while it plays, and they follow each other without a gap. Chunks are
+// kept per (voice, text), so a replay is instant; a chunk that fails twice is
+// skipped with a short note. With no voice engine the hub can reach, this
+// browser's own speech reads it, and the button's tooltip says so. One
+// message speaks at a time; tapping again stops it. A long press (or
 // right-click) offers "Play on <device>" for the devices the hub allows.
-let speaking=null,devicesP=null;
+let speaking=null,devicesP=null,actx=null;
 const speakKey=(room,ref)=>room+'|'+(ref.card?'c:'+ref.card:ref.seq);
 function speakMark(b,state,tip){
   b.classList.toggle('on',state==='playing');b.classList.toggle('wait',state==='loading');
   b.setAttribute('aria-pressed',String(state==='playing'||state==='loading'));
   b.textContent=state?'■':'▶';
   b.title=tip||(state?'Stop':b.dataset.tip||'Speak');
+  if(!state&&b.style)b.style.removeProperty('--p');
 }
 /** Stop whatever message is speaking. */
 export function stopSpeaking(){
   const s=speaking;if(!s)return;speaking=null;s.stopped=true;
+  try{s.ctl&&s.ctl.abort();}catch(e){}
+  for(const src of s.sources||[])try{src.stop();}catch(e){}
   try{s.audio&&s.audio.pause();}catch(e){}
   if(s.browser&&window.speechSynthesis)speechSynthesis.cancel();
   if(s.url)URL.revokeObjectURL(s.url);
   s.done&&s.done();
   if(s.btn)speakMark(s.btn,'',s.tip);
 }
-function playClip(s,b64,mime){
+const b64buf=b64=>{const bin=atob(b64),buf=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)buf[i]=bin.charCodeAt(i);return buf.buffer;};
+function playClip(s,buf,mime){
   return new Promise((resolve,reject)=>{
-    const bin=atob(b64),buf=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)buf[i]=bin.charCodeAt(i);
     if(s.url)URL.revokeObjectURL(s.url);
     s.url=URL.createObjectURL(new Blob([buf],{type:mime||'audio/wav'}));
     const a=new Audio(s.url);s.audio=a;s.done=resolve;
     a.onended=()=>resolve();a.onerror=()=>reject(Error('this browser could not play the audio'));
     a.play().catch(reject);
   });
+}
+// Played chunks by (voice, text), least recently used out first.
+const CLIPS=new Map(),CLIP_LIMIT=48*1024*1024;let clipBytes=0;
+function clipGet(k){const v=CLIPS.get(k);if(v){CLIPS.delete(k);CLIPS.set(k,v);}return v;}
+function clipPut(k,buf){
+  if(!buf||buf.byteLength>CLIP_LIMIT)return;
+  if(CLIPS.has(k))clipBytes-=CLIPS.get(k).byteLength;
+  CLIPS.delete(k);CLIPS.set(k,buf);clipBytes+=buf.byteLength;
+  for(const [old,v] of CLIPS){if(clipBytes<=CLIP_LIMIT)break;CLIPS.delete(old);clipBytes-=v.byteLength;}
+}
+/** Where chunks play, one after another: Web Audio schedules each to start
+ *  where the last ends (no gap); without it, audio elements in turn. Make it
+ *  inside the click, so the browser lets it play. ``out(buf)`` resolves to
+ *  {started, ended} promises for that chunk. */
+function audioOut(s){
+  const AC=window.AudioContext||window.webkitAudioContext;
+  if(AC){
+    try{actx=actx||new AC();if(actx.state==='suspended')actx.resume().catch(()=>{});}catch(e){actx=null;}
+  }
+  if(actx){
+    const ctx=actx;let at=0;s.sources=[];
+    return async buf=>{
+      const ab=await ctx.decodeAudioData(buf.slice(0));
+      if(s.stopped)return {started:Promise.resolve(),ended:Promise.resolve()};
+      const src=ctx.createBufferSource();src.buffer=ab;src.connect(ctx.destination);
+      const start=Math.max(at,ctx.currentTime+0.03);src.start(start);at=start+ab.duration;s.sources.push(src);
+      return {started:new Promise(r=>setTimeout(r,Math.max(0,(start-ctx.currentTime)*1000))),
+              ended:new Promise(r=>{src.onended=()=>r();})};
+    };
+  }
+  let chain=Promise.resolve();
+  return async buf=>{
+    const started=chain,ended=chain.then(()=>s.stopped?null:playClip(s,buf,'audio/wav'));
+    chain=ended.catch(()=>{});return {started,ended};
+  };
+}
+/** Play ``count`` chunks in order. ``load(i)`` fetches one (a failure is
+ *  tried once more, then skipped with ``onSkip(i, error)``; two skipped in a
+ *  row end it with that error); at most ``ahead`` load at once while earlier
+ *  ones play. ``play(clip, i)`` queues a chunk after the last and resolves to
+ *  {started, ended}. Ends early once ``stopped()``. */
+export async function playChunks({count,load,play,ahead=2,stopped=()=>false,onSkip=()=>{}}){
+  const loads=[];let ended=Promise.resolve(),skipped=0;
+  const want=i=>{if(i<count&&!loads[i])loads[i]=load(i).catch(()=>{if(stopped())throw Error('stopped');return load(i);})
+    .then(c=>({c}),e=>({e}));};
+  for(let i=0;i<count;i++){
+    for(let j=i;j<i+ahead;j++)want(j);
+    const r=await loads[i];
+    if(stopped())return;
+    if(r.e){
+      if(++skipped>=2)throw r.e;
+      onSkip(i,r.e);continue;
+    }
+    skipped=0;
+    const h=await play(r.c,i);
+    ended=h.ended;
+    await h.started;
+    if(stopped())return;
+  }
+  await ended;
 }
 /** Read ``text`` with this browser's speech; resolves when it ends. */
 export function browserSpeak(s,text){
@@ -72,33 +139,50 @@ export function browserSpeak(s,text){
       speechSynthesis.speak(u);});
   });
 }
+/** A short note beside the button that goes away by itself. */
+function speakNote(b,text){
+  if(!b||!b.after)return;
+  b.parentNode?.querySelector('.hx-speak-note')?.remove();
+  const n=h('small',{class:'hx-speak-note',text});b.after(n);setTimeout(()=>n.remove(),8000);
+}
 async function speakNow(b,room,ref){
   stopSpeaking();
-  const s={key:speakKey(room,ref),btn:b,stopped:false,tip:b.dataset.tip};speaking=s;
+  const s={key:speakKey(room,ref),btn:b,stopped:false,tip:b.dataset.tip,
+           ctl:typeof AbortController==='function'?new AbortController():null};speaking=s;
   speakMark(b,'loading');
+  const out=audioOut(s);
   try{
-    let r=await hapi('speak',{room,...ref,part:0});
-    while(!s.stopped){
-      if(r.mode==='browser'){
-        if(r.part)break;      // the engine failed mid-message: never start over
-        // No voice engine the hub can reach: this browser reads it.
-        s.tip='Spoken by this browser: '+(r.reason||'no voice engine')+'.';
-        if(s.btn){s.btn.dataset.tip=s.tip;speakMark(s.btn,'playing','Stop. '+s.tip);}
-        if(r.text)await browserSpeak(s,r.text);
-        break;
-      }
-      if(!r.parts)break;
-      s.tip=r.source==='role'?'Speak (voice '+r.voice+')':'Speak (the band\'s voice'+(r.label?', '+r.label:'')+')';
-      if(r.reason)s.tip+=': '+r.reason;
-      if(s.btn){s.btn.dataset.tip=s.tip;speakMark(s.btn,'playing','Stop');}
-      const next=r.part+1<r.parts?hapi('speak',{room,...ref,part:r.part+1}):null;
-      if(next)next.catch(()=>{});
-      await playClip(s,r.audio,r.mime);
-      if(s.stopped||!next)break;
-      r=await next;
+    const p=await hapi('speak',{room,...ref,plan:true},true,s.ctl?.signal);
+    if(s.stopped)return;
+    if(p.mode==='browser'){
+      // No voice engine the hub can reach: this browser reads it.
+      s.tip='Spoken by this browser: '+(p.reason||'no voice engine')+'.';
+      if(s.btn){s.btn.dataset.tip=s.tip;speakMark(s.btn,'playing','Stop. '+s.tip);}
+      if(p.text)await browserSpeak(s,p.text);
+      return;
     }
+    const chunks=p.chunks||[],n=chunks.length;
+    if(!n)return;
+    s.tip=p.source==='role'?'Speak (voice '+p.voice+')':'Speak (the band\'s voice'+(p.label?', '+p.label:'')+')';
+    if(p.reason)s.tip+=': '+p.reason;
+    const vkey=(p.source==='role'?'role:'+p.voice:'default:'+(p.label||''))+'|';
+    await playChunks({count:n,ahead:2,stopped:()=>s.stopped,
+      load:async i=>{
+        const hit=clipGet(vkey+chunks[i]);if(hit)return hit;
+        const r=await hapi('speak',{room,...ref,part:i},true,s.ctl?.signal);
+        if(r.mode!=='hub'||!r.audio)throw Error(r.reason||'the voice engine failed');
+        const buf=b64buf(r.audio);
+        if(r.source===p.source&&r.voice===p.voice)clipPut(vkey+chunks[i],buf);   // not a fallback voice
+        return buf;},
+      play:async(buf,i)=>{
+        const hd=await out(buf);
+        hd.started.then(()=>{if(s.stopped||!s.btn)return;
+          if(n>1)s.btn.style?.setProperty('--p',String((i+1)/n));
+          speakMark(s.btn,'playing',n>1?'Stop (part '+(i+1)+' of '+n+')':'Stop');});
+        return hd;},
+      onSkip:(i,e)=>{speakNote(s.btn,'Skipped part '+(i+1)+' of '+n+': '+e.message);}});
   }catch(e){if(!s.stopped&&s.btn){s.tip='Speak. Last try failed: '+e.message;s.btn.dataset.tip=s.tip;}}
-  finally{if(speaking===s){speaking=null;if(s.url)URL.revokeObjectURL(s.url);if(s.btn)speakMark(s.btn,'',s.tip);}}
+  finally{if(speaking===s){speaking=null;if(s.url)URL.revokeObjectURL(s.url);if(s.btn){s.btn.dataset.tip=s.tip||'';speakMark(s.btn,'',s.tip);}}}
 }
 function deviceMenu(b,room,ref){
   devicesP=devicesP||hapi('speak_devices').then(r=>r.devices||[]).catch(()=>[]);
@@ -128,7 +212,9 @@ let voicesP=null;
 const ENGINE_NAMES={chatterbox:'Chatterbox (natural voices)',kokoro:'Kokoro (quick voices)'};
 /** The hub's voices (kept for the page's life; ``fresh`` asks again). */
 export function voiceList(fresh){
-  if(fresh||!voicesP)voicesP=hapi('voices').catch(e=>({available:false,voices:[],catalog:[],reason:e.message}));
+  // A failed or empty list is not kept: the next picker asks again.
+  if(fresh||!voicesP)voicesP=hapi('voices').then(v=>{if(!(v.voices||[]).length)voicesP=null;return v;})
+    .catch(e=>{voicesP=null;return {available:false,voices:[],catalog:[],reason:e.message};});
   return voicesP;
 }
 /** A voice select with a Preview button. ``blank`` labels the empty choice
@@ -158,6 +244,7 @@ export function voicePicker(current,{blank=BAND_DEFAULT}={}){
   const play=h('button',{type:'button',class:'mg-btn',text:'Preview',title:'Hear this voice'});
   fillVoiceSelect(sel,current,blank).then(v=>{
     if(!v.available)note.textContent='No voice engine on this hub now ('+(v.reason||'voice is off')+'): the browser reads messages aloud.';
+    else if(!(v.voices||[]).length)note.textContent='The voice engine did not list its voices'+(v.error?' ('+v.error+')':'')+'.';
   });
   play.onclick=async e=>{
     e.preventDefault();
@@ -168,7 +255,7 @@ export function voicePicker(current,{blank=BAND_DEFAULT}={}){
       const r=await hapi('preview',{voice:sel.value});
       if(s.stopped)return;
       if(r.mode==='browser'){note.textContent='Spoken by this browser: '+(r.reason||'no voice engine')+'.';await browserSpeak(s,r.text);}
-      else{note.textContent='';await playClip(s,r.audio,r.mime);}
+      else{note.textContent='';await playClip(s,b64buf(r.audio),r.mime);}
     }catch(err){if(!s.stopped)note.textContent='Preview failed: '+err.message;}
     finally{if(speaking===s){speaking=null;if(s.url)URL.revokeObjectURL(s.url);}play.textContent='Preview';}
   };

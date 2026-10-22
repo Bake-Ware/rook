@@ -4,20 +4,29 @@ A message is chat text written for a screen: markdown, code, links, record
 ids. :func:`speakable` turns it into what a voice should say: no markup,
 code blocks and links left out, record ids said by their three-word names
 (``t_7b47df858bfc`` -> ``brave otter lamp``) or dropped. :func:`parts` cuts
-it into lines the voice engine takes (its /api/voice reads at most 700
-characters at a time). :func:`choose_voice` picks the voice: the speaking
-role's own voice, else the band's default, else (no voice engine the hub can
-reach) the reader's browser.
+it into sentence-sized chunks the voice engine reads whole (see :data:`PART`).
+:func:`choose_voice` picks the voice: the speaking role's own voice, else
+the band's default, else (no voice engine the hub can reach) the reader's
+browser.
 """
 from __future__ import annotations
 
 import re
 from typing import Callable, Iterable
 
-#: Longest text read out for one message; the rest is announced as cut.
-MAX_SPOKEN = 4000
-#: One request to the voice engine (its limit is 700).
-PART = 600
+#: Longest text read out for one message (about ten minutes); the rest is
+#: announced as cut.
+MAX_SPOKEN = 10000
+#: Longest chunk sent to the voice engine in one request. Its /api/voice takes
+#: 700 characters, but Chatterbox stops at about 32 seconds of audio and drops
+#: the rest of a longer line silently; it reads about 16 characters a second,
+#: so 280 (about 17 s) leaves room for slow voices.
+PART = 280
+#: The first chunk is shorter, so the voice starts sooner.
+FIRST_PART = 180
+#: A chunk shorter than this takes the start of a long sentence with it
+#: rather than going alone.
+MIN_PART = 60
 
 _FENCE = re.compile(r"```.*?(?:```|\Z)|~~~.*?(?:~~~|\Z)", re.S)
 _IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
@@ -93,21 +102,61 @@ def speakable(text: str, name_for: Callable[[str], str | None] | None = None,
     return out
 
 
-def parts(text: str, limit: int = PART) -> list[str]:
-    """``text`` in pieces of at most ``limit`` characters, cut at sentence,
-    then word, boundaries (as the phone's voice.speak cuts)."""
+_SENTENCE = re.compile(r"(?<=[.!?\u2026])\s+")
+_CLAUSE = (", ", "; ", ": ", " - ", " \u2014 ", " \u2013 ")
+
+
+def _cut(text: str, room: int, hard: bool) -> tuple[str, str]:
+    """``text`` split as ``(head, rest)`` with ``head`` at most ``room``
+    characters, cut after a clause, else between words. A word longer than
+    ``room`` is cut only when ``hard`` (else the head is empty)."""
+    if len(text) <= room:
+        return text, ""
+    window = text[:room + 1]
+    ends = [i + len(p.rstrip()) for p in _CLAUSE if (i := window.rfind(p)) >= 0]
+    cut = max(ends, default=-1)
+    if cut < room // 3:
+        cut = window.rfind(" ")
+    if cut <= 0:
+        if not hard:
+            return "", text
+        cut = room
+    return text[:cut].strip(), text[cut:].strip()
+
+
+def parts(text: str, limit: int = PART, first: int = FIRST_PART) -> list[str]:
+    """``text`` in chunks for the voice engine, in order: whole sentences
+    packed up to ``limit`` characters (``first`` for the first chunk), a
+    sentence longer than that cut after a clause or between words, never
+    inside a word (unless one word is longer than a chunk), and a very short
+    sentence carried along with the next rather than sent alone.
+    ``" ".join(parts(t)) == t`` for whitespace-normalized ``t``."""
     text = re.sub(r"\s+", " ", str(text or "")).strip()
+    queue = [s for s in _SENTENCE.split(text) if s]
+    queue.reverse()
     out: list[str] = []
-    while len(text) > limit:
-        window = text[:limit + 1]
-        cut = max(window.rfind(p) for p in (". ", "! ", "? ", "; "))
-        if cut < limit // 2:
-            cut = window.rfind(" ")
-        cut = cut + 1 if cut >= limit // 4 else limit
-        out.append(text[:cut].strip())
-        text = text[cut:].strip()
-    if text:
-        out.append(text)
+    cur = ""
+    while queue:
+        sentence = queue.pop()
+        lim = max(1, first if not out else limit)
+        joined = f"{cur} {sentence}" if cur else sentence
+        if len(joined) <= lim:
+            cur = joined
+            continue
+        if len(cur) >= MIN_PART:      # a full chunk: the sentence starts the next one
+            out.append(cur)
+            cur = ""
+            queue.append(sentence)
+            continue
+        room = lim - len(cur) - (1 if cur else 0)
+        head, rest = _cut(sentence, room, hard=not cur)
+        cur = f"{cur} {head}".strip() if head else cur
+        out.append(cur)
+        cur = ""
+        if rest:
+            queue.append(rest)
+    if cur:
+        out.append(cur)
     return out
 
 
