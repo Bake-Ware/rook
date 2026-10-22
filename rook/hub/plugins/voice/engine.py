@@ -394,6 +394,33 @@ class RemoteEngine:
                 auto_decompress=False)
         return self._session
 
+    #: The hub's own calls ask for plain bodies: the session never decompresses
+    #: (forwarded replies pass through as they are), so a gzipped answer from a
+    #: CDN in front of the voice server would not parse.
+    OWN = {"Accept-Encoding": "identity"}
+
+    @staticmethod
+    async def _body(r: Any) -> bytes:
+        """A reply body, decompressed if the server compressed it anyway."""
+        import zlib
+        data = await r.read()
+        enc = (r.headers.get("Content-Encoding") or "").strip().lower()
+        try:
+            if enc in ("gzip", "x-gzip"):
+                return zlib.decompress(data, 16 + zlib.MAX_WBITS)
+            if enc == "deflate":
+                try:
+                    return zlib.decompress(data)
+                except zlib.error:
+                    return zlib.decompress(data, -zlib.MAX_WBITS)
+        except zlib.error as e:
+            raise ValueError(f"the voice server sent a bad {enc} body") from e
+        return data
+
+    async def _json(self, r: Any) -> Any:
+        import json
+        return json.loads(await self._body(r))
+
     def url(self, sub_path: str, query: str = "", ws: bool = False) -> str:
         base = self.base
         if ws:
@@ -577,9 +604,9 @@ class RemoteEngine:
         import aiohttp
         t0 = time.monotonic()
         try:
-            async with self._http().get(self.url("/health"), ssl=self._ssl(),
+            async with self._http().get(self.url("/health"), ssl=self._ssl(), headers=self.OWN,
                                         timeout=aiohttp.ClientTimeout(total=6)) as r:
-                data = await r.json(content_type=None)
+                data = await self._json(r)
                 ok = r.status == 200 and isinstance(data, dict) and bool(data.get("ok"))
                 return {"ok": ok, "state": "ready" if ok else "error",
                         "version": (data or {}).get("version") if isinstance(data, dict) else None,
@@ -596,9 +623,10 @@ class RemoteEngine:
                                "voice.token (Client bearer token) to a key it accepts")
         async with self._http().post(
                 self.url("/api/transcribe"), data=pcm, ssl=self._ssl(),
-                headers={"Content-Type": "audio/L16", "Authorization": f"Bearer {self.token}"},
+                headers={**self.OWN, "Content-Type": "audio/L16",
+                         "Authorization": f"Bearer {self.token}"},
                 timeout=aiohttp.ClientTimeout(total=40)) as r:
-            data = await r.json(content_type=None)
+            data = await self._json(r)
             if r.status != 200:
                 detail = data.get("detail") if isinstance(data, dict) else None
                 raise RuntimeError(f"the voice server said HTTP {r.status}"
@@ -607,9 +635,9 @@ class RemoteEngine:
 
     async def voices(self) -> dict:
         import aiohttp
-        async with self._http().get(self.url("/voices"), ssl=self._ssl(),
+        async with self._http().get(self.url("/voices"), ssl=self._ssl(), headers=self.OWN,
                                     timeout=aiohttp.ClientTimeout(total=8)) as r:
-            data = await r.json(content_type=None)
+            data = await self._json(r)
             if r.status != 200 or not isinstance(data, dict):
                 raise RuntimeError(f"the voice server said HTTP {r.status}")
             return data
@@ -621,14 +649,14 @@ class RemoteEngine:
         body: dict = {"text": text}
         if voice:
             body["voice"] = voice
-        headers = {"Content-Type": "application/json"}
+        headers = {**self.OWN, "Content-Type": "application/json"}
         if self.token:   # a keyless request works only where the server allows guests
             headers["Authorization"] = f"Bearer {self.token}"
         for attempt in range(BUSY_RETRIES + 1):
             async with self._http().post(
                     self.url("/api/voice"), data=json.dumps(body).encode(), ssl=self._ssl(),
                     headers=headers, timeout=aiohttp.ClientTimeout(total=40)) as r:
-                data = await r.read()
+                data = await self._body(r)
                 if r.status == 200:
                     return data
                 detail = ""
