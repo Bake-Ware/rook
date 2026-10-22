@@ -32,6 +32,18 @@ version was `0.1.0`.
   Chatterbox first, then Kokoro. Spoken audio is kept per (voice, text) up to
   `voice.speech_cache_mb` (32 MB), so replays start at once, and a busy voice server is
   retried. Play on a device sends the house agent's voice too. (manual: voice)
+- Long huddle messages are read in full. The hub cuts a message into chunks of whole
+  sentences (at most 280 characters, the first shorter): Chatterbox stops after about
+  32 seconds of audio per request and dropped the rest of the old 600-character parts.
+  The page asks for the plan (`speak` with `plan`), plays the first chunk as soon as it
+  arrives with the next two loading, plays them without gaps (Web Audio), keeps played
+  chunks per (voice, text) for instant replays, retries a failed chunk once and then
+  skips it with a short note, and stops pending requests on Stop; a thin line under the
+  button shows progress. Up to 10,000 characters are read (was 4,000). The hub sends its
+  voice server one line at a time instead of drawing "busy" answers. Play on a device
+  sends the chunks in order (the device queues them). The Android app cuts its own lines
+  at 280 characters too (next app release). A voice picker that got no voices says why and
+  the next one asks again, instead of showing only *Band default*. (manual: voice)
 - Relayed approvals. One list of everything waiting on a person: held calls, held job
   calls, huddle action cards (every huddle) and pinned huddle questions, each with a
   three-word name, who asked, what exactly would happen, the risk tier, where it came from
