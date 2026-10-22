@@ -106,7 +106,7 @@ async def scores(req):
     n = req.match_info['n']; out = []
     if (HERE / 'out' / f'c{n}_music.mp3').exists():
         out.append({'id': 'own', 'label': 'This clip’s score', 'url': f'out/c{n}_music.mp3'})
-    for idx, pre in ((HERE / 'out' / 'music' / 'index.json', 'Tune · '), (HERE / 'out' / 'music' / 'ace' / 'index.json', 'AI cover · ')):
+    for idx, pre in ((HERE / 'out' / 'music' / 'lofi' / 'index.json', 'Lo-fi · '), (HERE / 'out' / 'music' / 'index.json', 'Tune · '), (HERE / 'out' / 'music' / 'ace' / 'index.json', 'AI cover · ')):
         if idx.exists():
             for x in json.loads(idx.read_text()):
                 lab = x.get('title', '') + (f" ({x['note']})" if x.get('note') else '')

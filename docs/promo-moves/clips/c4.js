@@ -6,7 +6,7 @@ import { THREE, V, COL, clamp, lerp, inv, ease, fade, pane, chip, goldRook, agen
 
 export default {
   title: 'Security reporting', tagline: 'Vigilance<br>that’s active<span class="tdot">.</span>', body: 49, holdTitle: true,
-  mood: { key: 'B', bpm: 100, minor: true, energy: .55, theme: 'mountainking' },
+  mood: { key: 'B', bpm: 100, minor: true, energy: .55, theme: 'lofi' },
   assets: ['rook', 'agent', 'nas', 'phone', 'laptop', 'figure', 'gpurig', 'workstation', 'nightstand', 'bed', 'chair'],
   async build(kit) {
     const S = kit.scene;

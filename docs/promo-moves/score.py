@@ -187,6 +187,10 @@ def main():
         import score_mk
         b = score_mk.bed(T)[:music.n]
         music.L[:len(b)] += b * .55; music.R[:len(b)] += b * .55
+    elif mood.get('theme') == 'lofi':                         # clip 4: the lo-fi Mountain King (score_lofi.py)
+        import score_lofi
+        b = score_lofi.bed(T)[:music.n]
+        music.L[:len(b)] += b * .45; music.R[:len(b)] += b * .45
     else:
         underscore(music, T, mood)
     for e in meta['events']:
@@ -203,7 +207,7 @@ def main():
             d = v.get('dur', 2)
         a, b = int(v['t'] * SR), int((v['t'] + d) * SR)
         speech[a:b] = True
-        duck[max(0, a - int(.15 * SR)):b + int(.3 * SR)] = .38 if mood.get('theme') != 'mountainking' else .6
+        duck[max(0, a - int(.15 * SR)):b + int(.3 * SR)] = .6 if mood.get('theme') in ('mountainking', 'lofi') else .38
     duck = lp_fast(duck, 3.0)
     # levels: the music under speech should sit well below the voice (report it for checking)
     sp = speech
