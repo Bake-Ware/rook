@@ -31,7 +31,7 @@ version was `0.1.0`.
   labelled *Band default voice*, on Manage > Voice and in Settings). Voices are listed
   Chatterbox first, then Kokoro. Spoken audio is kept per (voice, text) up to
   `voice.speech_cache_mb` (32 MB), so replays start at once, and a busy voice server is
-  retried. Play on a device sends the house agent's voice too.
+  retried. Play on a device sends the house agent's voice too. (manual: voice)
 - Relayed approvals. One list of everything waiting on a person: held calls, held job
   calls, huddle action cards (every huddle) and pinned huddle questions, each with a
   three-word name, who asked, what exactly would happen, the risk tier, where it came from
