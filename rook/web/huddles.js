@@ -120,6 +120,61 @@ function deviceMenu(b,room,ref){
     setTimeout(()=>{document.addEventListener('pointerdown',away,true);document.addEventListener('keydown',esc,true);});
   });
 }
+// -- picking a voice ----------------------------------------------------------------
+// The voice pickers on the Roles, Home agent and Voice pages: the voice
+// engine's voices (Chatterbox first, then Kokoro), a blank choice for the
+// band's default, and a Preview button that plays a short sample here.
+let voicesP=null;
+const ENGINE_NAMES={chatterbox:'Chatterbox (natural voices)',kokoro:'Kokoro (quick voices)'};
+/** The hub's voices (kept for the page's life; ``fresh`` asks again). */
+export function voiceList(fresh){
+  if(fresh||!voicesP)voicesP=hapi('voices').catch(e=>({available:false,voices:[],catalog:[],reason:e.message}));
+  return voicesP;
+}
+/** A voice select with a Preview button. ``blank`` labels the empty choice
+ *  (given the band's default name). Returns {el, select, note}. */
+const BAND_DEFAULT=d=>'Band default'+(d?' ('+d+')':'');
+/** Fill ``sel`` with the hub's voices, grouped by engine (Chatterbox first),
+ *  ``current`` selected and a blank choice labelled ``blank(default)``.
+ *  Resolves to the voice list. The Settings page uses it too. */
+export async function fillVoiceSelect(sel,current,blank=BAND_DEFAULT){
+  current=String(current||'');
+  const v=await voiceList();
+  const cat=(v.catalog&&v.catalog.length)?v.catalog:(v.voices||[]).map(x=>({id:x,label:x}));
+  const opt=c=>h('option',{value:c.id,text:c.label&&c.label.toLowerCase()!==c.id.toLowerCase()?c.label+' ('+c.id+')':(c.label||c.id),selected:c.id===current});
+  const groups={};for(const c of cat)(groups[c.engine||'']=groups[c.engine||'']||[]).push(c);
+  const rank=k=>k==='chatterbox'?0:k==='kokoro'?1:2;
+  const order=Object.keys(groups).sort((a,b)=>rank(a)-rank(b)||a.localeCompare(b));
+  sel.replaceChildren(h('option',{value:'',text:blank(v.default||'')}),
+    ...(order.length>1||order[0]?order.map(k=>h('optgroup',{label:ENGINE_NAMES[k]||k||'Other'},groups[k].map(opt))):cat.map(opt)));
+  if(current&&!cat.some(c=>c.id===current))sel.append(h('option',{value:current,text:current+' (not on the voice engine)',selected:true}));
+  return v;
+}
+export function voicePicker(current,{blank=BAND_DEFAULT}={}){
+  current=String(current||'');
+  const sel=h('select',{'aria-label':'Voice'},h('option',{value:'',text:blank('')}));
+  if(current)sel.append(h('option',{value:current,text:current,selected:true}));
+  const note=h('small',{class:'mg-sub',style:'white-space:normal'});
+  const play=h('button',{type:'button',class:'mg-btn',text:'Preview',title:'Hear this voice'});
+  fillVoiceSelect(sel,current,blank).then(v=>{
+    if(!v.available)note.textContent='No voice engine on this hub now ('+(v.reason||'voice is off')+'): the browser reads messages aloud.';
+  });
+  play.onclick=async e=>{
+    e.preventDefault();
+    if(speaking&&speaking.key==='preview'){stopSpeaking();return;}
+    stopSpeaking();
+    const s={key:'preview',btn:null,stopped:false};speaking=s;play.textContent='Stop';
+    try{
+      const r=await hapi('preview',{voice:sel.value});
+      if(s.stopped)return;
+      if(r.mode==='browser'){note.textContent='Spoken by this browser: '+(r.reason||'no voice engine')+'.';await browserSpeak(s,r.text);}
+      else{note.textContent='';await playClip(s,r.audio,r.mime);}
+    }catch(err){if(!s.stopped)note.textContent='Preview failed: '+err.message;}
+    finally{if(speaking===s){speaking=null;if(s.url)URL.revokeObjectURL(s.url);}play.textContent='Preview';}
+  };
+  return {el:h('div',{class:'mg-actions',style:'flex-wrap:nowrap'},sel,play),select:sel,note};
+}
+
 /** The Speak button for a message (``ref`` {seq}) or card ({card}) in ``room``. */
 export function speakButton(room,ref){
   const b=h('button',{type:'button',class:'hx-speak','aria-label':'Speak'});

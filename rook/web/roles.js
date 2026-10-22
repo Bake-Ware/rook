@@ -8,7 +8,7 @@
 // is a new revision with you as its author.
 const search=new URL(import.meta.url).search;
 const {h,ago,useCss,btn,table,two,info,more}=await import('/account/bands/assets/manage.js'+search);
-const {hapi}=await import('/account/huddle/assets/huddles.js'+search);
+const {hapi,voicePicker}=await import('/account/huddle/assets/huddles.js'+search);
 
 const BACKENDS=[['','The house agent\'s'],['claude-code','Claude Code'],['codex','Codex'],['opencode','OpenCode']];
 const EFFORTS=['','low','medium','high','xhigh','max'];
@@ -49,7 +49,7 @@ export function presetDescription(groups,id){
 export async function mountRoles(root){
   useCss();
   if(!document.getElementById('roles-css'))document.head.append(h('style',{id:'roles-css',text:CSS}));
-  let d=null,sel=null,hist=[],busy=false,picked='',voicesP=null;
+  let d=null,sel=null,hist=[],busy=false,picked='';
   const status=h('p',{class:'mg-status',role:'status'});
   const bar=h('div',{class:'mg-bar'}),list=h('div'),panel=h('div',{class:'mg-box strong mg-side'});
   root.replaceChildren(h('div',{class:'mg'},status,h('div',{class:'mg-split'},h('div',{class:'mg-main'},bar,list),panel)));
@@ -156,16 +156,7 @@ export async function mountRoles(root){
     if(doc.persona&&!(d.personas||[]).some(p=>p.id===doc.persona))persona.append(h('option',{value:doc.persona,text:doc.persona+' (missing)',selected:true}));
     const enabled=h('input',{type:'checkbox',checked:doc.enabled!==false});
     // The voice the Speak button reads its huddle messages in (the hub's voice engine's voices).
-    const voice=h('select',null,h('option',{value:'',text:'Band default'}));
-    if(doc.voice)voice.append(h('option',{value:doc.voice,text:doc.voice,selected:true}));
-    voicesP=voicesP||hapi('voices').catch(()=>({available:false,voices:[]}));
-    voicesP.then(v=>{
-      const cat=(v.catalog&&v.catalog.length)?v.catalog:(v.voices||[]).map(x=>({id:x,label:x}));
-      voice.replaceChildren(h('option',{value:'',text:'Band default'+(v.default?' ('+v.default+')':'')}),
-        ...cat.map(c=>h('option',{value:c.id,text:c.label&&c.label!==c.id?c.label+' ('+c.id+')':c.id,selected:c.id===doc.voice})));
-      if(doc.voice&&!cat.some(c=>c.id===doc.voice))voice.append(h('option',{value:doc.voice,text:doc.voice+' (not on the voice engine)',selected:true}));
-      if(!v.available)voice.title='No voice engine on this hub now ('+(v.reason||'voice is off')+'): the browser reads messages aloud.';
-    });
+    const vp=voicePicker(doc.voice),voice=vp.select;
 
     function value(){
       const srcs=[...srcRows.children].map(r=>{const [cap,worker,args]=r.querySelectorAll('input');
@@ -212,11 +203,12 @@ export async function mountRoles(root){
         h('div',{class:'mg-field'},'Built-in file tools',h('div',{class:'mg-actions'},
           h('label',{class:'mg-actions'},builtin[0],'Read files'),h('label',{class:'mg-actions'},builtin[1],'Search files'))),
         field('Autonomy',autonomy),field('Memory',memory),
+        h('div',{class:'mg-field'},h('span',{class:'mg-flabel'},'Speaking voice',info('The voice its huddle messages are read aloud in (the Speak button). Band default: Manage > Voice. The house agent (the chair) has its own on the Home agent page.','About the speaking voice')),vp.el,vp.note),
         h('details',null,h('summary',{text:'Examples & memory'}),h('div',{class:'mg-pad',style:'padding-left:0;padding-right:0'},
           field('Example questions',examples,'Shown to the chair, so it knows when to call on this role.'),
           field('Starting memory',seed,'Saved into its memory when its home is created (its first answer). Never passwords, keys or code.'))),
         h('details',null,h('summary',{text:'Model'}),h('div',{class:'mg-pad',style:'padding-left:0;padding-right:0'},
-          field('Runs on',backend),field('Model',model),h('datalist',{id:'role-models'},MODELS.map(m=>h('option',{value:m}))),field('Effort',effort),field('Tool calls per turn',calls,'Blank: its category\'s (engineering 30, operations 24), else Tool calls per role turn in Settings.'),field('Persona (how it talks)',persona),field('Speaking voice',voice,'The voice its huddle messages are read aloud in (the Speak button). Band default: the voice engine\'s own.'))),
+          field('Runs on',backend),field('Model',model),h('datalist',{id:'role-models'},MODELS.map(m=>h('option',{value:m}))),field('Effort',effort),field('Tool calls per turn',calls,'Blank: its category\'s (engineering 30, operations 24), else Tool calls per role turn in Settings.'),field('Persona (how it talks)',persona))),
         hostBox,
         isNew?null:workspaceBox(doc),
         h('div',{class:'mg-actions end rl-save'},err,save),

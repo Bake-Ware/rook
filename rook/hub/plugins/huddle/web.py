@@ -30,10 +30,12 @@ Reading aloud (the Speak button on each message; huddle/speech.py):
 
 * ``speak`` {room, seq | card, part?}: the message as speakable text, cut in
   ``parts``; ``mode`` hub with ``audio`` (base64 WAV of part ``part``) in
-  the speaking role's voice, else the band's default (``source`` role or
-  default); ``mode`` browser with the whole ``text`` and a ``reason`` when
+  the speaking role's (or the house agent's) voice, else the band's default
+  (``source`` role or default); ``mode`` browser with the whole ``text`` and a ``reason`` when
   the hub has no voice engine to speak with (the browser reads it).
-* ``voices``: the voice engine's voices and default (the Roles page).
+* ``voices``: the voice engine's voices and the band's default voice (the
+  voice pickers on the Roles, Home agent and Voice pages); ``preview``
+  {voice?}: a short sample in that voice (blank: the band's default).
 * ``speak_devices``: workers a message may be played on; ``speak_on``
   {room, seq | card, worker}: ``voice.speak`` it there, in the same voice.
 
@@ -65,7 +67,9 @@ from .service import PERSON
 
 PATH = "/huddle/account-api"
 HUDDLE_ACTIONS = ("list", "view", "send", "answer", "start", "card", "archive", "roles")
-SPEECH_ACTIONS = ("speak", "voices", "speak_devices", "speak_on")
+SPEECH_ACTIONS = ("speak", "voices", "preview", "speak_devices", "speak_on")
+#: What a preview says when the hub cannot speak (the browser reads it).
+PREVIEW_FALLBACK = "Hello. This is how this browser sounds; the hub has no voice engine now."
 #: Longest a voice.speak on a device may take to be accepted.
 SPEAK_ON_TIMEOUT = 20.0
 ROLE_ACTIONS = ("role_list", "role_get", "role_history", "role_presets", "role_memory",
@@ -175,8 +179,13 @@ def routes(get_node: Callable[[], Any], accounts):
         return None
 
     def role_voice(sender: str) -> tuple[str, str]:
-        """``(role id, its voice)`` of a role sender (``role:qa``), else blanks."""
+        """``(role id, its voice)`` of a role sender (``role:qa``), ``("", the
+        house agent's voice)`` for the house agent (the chair), else blanks."""
         if not sender.startswith("role:"):
+            hp = plugin("home")
+            if hp is not None and sender == getattr(hp, "identity", None):
+                with contextlib.suppress(Exception):
+                    return "", str(hp.settings.get("voice") or "").strip()
             return "", ""
         rid, rp = sender[5:], plugin("role")
         doc = None
@@ -238,7 +247,21 @@ def routes(get_node: Callable[[], Any], accounts):
             vp, why, voices = await engine()
             return {"available": not why, "reason": why, "voices": (voices or {}).get("voices") or [],
                     "default": (voices or {}).get("default") or "",
-                    "catalog": (voices or {}).get("catalog") or []}
+                    "engine_default": (voices or {}).get("engine_default") or "",
+                    "catalog": (voices or {}).get("catalog") or [],
+                    "error": (voices or {}).get("error") or ""}
+        if action == "preview":
+            vp, why, _ = await engine()
+            if why:
+                return {"mode": "browser", "reason": why, "text": PREVIEW_FALLBACK}
+            voice = str(data.get("voice") or "").strip()
+            if not speech.VOICE_ID.match(voice):
+                raise ValueError("voice: a voice id such as af_heart")
+            try:
+                return {"mode": "hub", **await vp.preview(voice)}
+            except Exception as e:  # noqa: BLE001 - the picker says why
+                return {"mode": "browser", "reason": f"the voice engine failed: {str(e)[:160]}",
+                        "text": PREVIEW_FALLBACK}
         svc = service()
         if svc is None:
             raise LookupError("Huddles are off on this hub.")

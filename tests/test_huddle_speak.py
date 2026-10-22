@@ -263,7 +263,8 @@ def test_every_bubble_and_card_gets_a_compact_speak_button():
     phone = css[css.rindex("@media(max-width:760px)"):]
     assert ".hx-speak{min-width:44px;min-height:44px" in phone
     roles = (ROOT / "rook/web/roles.js").read_text(encoding="utf-8")
-    assert "hapi('voices')" in roles and "voice:voice.value" in roles and "Band default" in roles
+    assert "voicePicker(doc.voice)" in roles and "voice:voice.value" in roles
+    assert "hapi('voices')" in hx and "Band default" in hx
 
 
 _HARNESS = r"""
@@ -414,7 +415,7 @@ async def test_engine_here_speaks_in_process(tmp_path, monkeypatch):
         plugin.engine = local
         assert plugin.speech_unavailable() == ""
         assert (await plugin.voices()) == {"voices": ["af_heart", "nova"], "default": "af_heart",
-                                           "catalog": []}
+                                           "engine_default": "af_heart", "catalog": []}
         local.state = "starting"
         assert plugin.speech_unavailable() == "the voice engine is starting"
         with pytest.raises(RuntimeError, match="starting"):

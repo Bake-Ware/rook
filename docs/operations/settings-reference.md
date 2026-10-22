@@ -267,6 +267,7 @@ are set only in the environment or on the command line.
 | `home.context_messages` | Room messages sent as context | hub | int | `20` | `ROOK_HOME_CONTEXT_MESSAGES` | live |
 | `home.tools` | Tools (knowledge search; memory save and search) | hub | bool | off | `ROOK_HOME_TOOLS` | live |
 | `home.memory` | Use memory | hub | bool | on | `ROOK_HOME_MEMORY` | live |
+| `home.voice` | Speaking voice | hub | str |  | `ROOK_HOME_VOICE` | live |
 | `home.job_steps` | Work job agent steps | hub | bool | on | `ROOK_HOME_JOB_STEPS` | live |
 | `home.job_max_tool_calls` | Tool calls per job step | hub | int | `20` | `ROOK_HOME_JOB_MAX_TOOL_CALLS` | live |
 
@@ -483,7 +484,8 @@ are set only in the environment or on the command line.
 | `voice.owner` | Whose assistant | hub+user | str |  | `ROOK_VOICE_OWNER` | reload |
 | `voice.show_thinking` | Show thinking | user | bool | off | `ROOK_VOICE_SHOW_THINKING` | live |
 | `voice.hotword_enabled` | Wake word on this account | user | bool | on | `ROOK_VOICE_HOTWORD_ENABLED` | live |
-| `voice.tts_default` | Starting voice (any engine) | hub | str |  | `VOICE_TTS_DEFAULT`, `ROOK_VOICE_TTS_DEFAULT` | reload |
+| `voice.tts_default` | Band default voice | hub | str |  | `VOICE_TTS_DEFAULT`, `ROOK_VOICE_TTS_DEFAULT` | reload |
+| `voice.speech_cache_mb` | Spoken audio kept (MB) | hub | float | `32.0` | `ROOK_VOICE_SPEECH_CACHE_MB` | reload |
 | `voice.tts_target_dbfs` | Speech loudness (dBFS) | hub | float | `-20.0` | `VOICE_TTS_TARGET_DBFS`, `ROOK_VOICE_TTS_TARGET_DBFS` | reload |
 | `voice.tts_threads` | Kokoro CPU threads | hub | int | `8` | `VOICE_TTS_THREADS`, `ROOK_VOICE_TTS_THREADS` | reload |
 | `voice.chatterbox_device` | Chatterbox device | hub | str |  | `VOICE_CHATTERBOX_DEVICE`, `ROOK_VOICE_CHATTERBOX_DEVICE` | reload |

@@ -21,9 +21,29 @@ the dashboard's, and a path with a `.` or `..` segment (`/voice/../x`) is
 never handed to the plugin.
 
 In the older two-process layout (`rook-dashboard` + `rook-mcp`) nothing
-serves these paths, so the plugin does not load (no models are loaded) and
-Manage > Plugins and Manage > Voice say "needs the single-process hub: run it
-with `rook hub serve`". Keep running the standalone server there.
+serves these paths. With `voice.engine = here` the plugin does not load (no
+models are loaded) and Manage > Plugins and Manage > Voice say "needs the
+single-process hub: run it with `rook hub serve`". With `remote` it loads but
+mounts nothing: the hub reads huddle messages aloud for the dashboard through
+the voice server, and phones and apps keep the voice server's own address.
+
+## Reading aloud for the dashboard
+
+The huddle Speak buttons and the voice pickers (Roles, Home agent, Voice and
+Settings pages) use the engine's `/voices` and `/api/voice`:
+
+- The voice list comes from the engine, ordered Chatterbox, then Kokoro, then
+  anything else (kept a minute).
+- A blank voice is the band default, `voice.tts_default`, else the engine's own
+  default. A role's `voice` and the house agent's `home.voice` win over it.
+- A voice server says 503 "busy" while it speaks another line; the hub tries
+  again a few times with a short, growing wait.
+- Audio is kept in the hub's memory per (voice, text), least recently used out
+  first, up to `voice.speech_cache_mb` (32 MB; 0 keeps none). It is lost on a
+  restart.
+- `voice.token`, when set, is sent as the bearer key (store it as
+  `{{secret:name}}`). Without one the hub is a guest, which works only where
+  the voice server allows guests (`VOICE_ALLOW_ANONYMOUS=1`).
 
 ## Where speech runs: `voice.engine`
 
@@ -99,7 +119,7 @@ own; see `services/voice/README.md`):
 
 | Group | Keys (variable) |
 | --- | --- |
-| Speech | `voice.tts_default` (`VOICE_TTS_DEFAULT`: the starting voice from either engine, `kokoro:`/`chatterbox:` names accepted); advanced `voice.tts_target_dbfs` (`VOICE_TTS_TARGET_DBFS`, -20), `voice.tts_threads` (`VOICE_TTS_THREADS`, 8) |
+| Speech | `voice.tts_default` (`VOICE_TTS_DEFAULT`: the band default voice, from either engine, `kokoro:`/`chatterbox:` names accepted); `voice.speech_cache_mb` (hub only, 32); advanced `voice.tts_target_dbfs` (`VOICE_TTS_TARGET_DBFS`, -20), `voice.tts_threads` (`VOICE_TTS_THREADS`, 8) |
 | Chatterbox | `voice.chatterbox_device` (`VOICE_CHATTERBOX_DEVICE`, e.g. `cuda:0`; blank keeps Chatterbox off), `voice.chatterbox_python` (`VOICE_CHATTERBOX_PYTHON`, a venv python with torch and chatterbox-tts), `voice.chatterbox_voices_dir` (`VOICE_CHATTERBOX_VOICES_DIR`); advanced `voice.chatterbox_start_timeout_s` (`VOICE_CHATTERBOX_START_TIMEOUT_S`, 180) |
 | Agent (advanced) | `voice.tool_reasoning_effort` (`VOICE_TOOL_REASONING_EFFORT`, high), `voice.tool_max_tokens` (`VOICE_TOOL_MAX_TOKENS`, 4096), `voice.tool_max_steps` (`VOICE_TOOL_MAX_STEPS`, 24), `voice.tool_model_timeout_s` (`VOICE_TOOL_MODEL_TIMEOUT_S`, 180) |
 | Models | `voice.front_url`/`voice.front_model` (`VOICE_FRONT_URL`/`VOICE_FRONT_MODEL`), `voice.background_url`/`voice.background_model` (`VOICE_BACKGROUND_URL`/`VOICE_BACKGROUND_MODEL`), blank meaning `VLLM_URL`/`VLLM_MODEL`; `voice.primary_url`, `voice.primary_model`, `voice.primary_api_key` (secret) (`LLM_PRIMARY_URL`, `LLM_PRIMARY_MODEL`, `LLM_PRIMARY_API_KEY`: a hosted model tried first, falling back to `VLLM_*`); advanced: `voice.front_timeout_s`, `voice.front_max_tokens`, `voice.front_turns`, `voice.background_effort`, `voice.background_max_steps`, `voice.background_timeout_s`, `voice.primary_timeout_s` (`VOICE_FRONT_TIMEOUT_S`, `VOICE_FRONT_MAX_TOKENS`, `VOICE_FRONT_TURNS`, `VOICE_BACKGROUND_EFFORT`, `VOICE_BACKGROUND_MAX_STEPS`, `VOICE_BACKGROUND_TIMEOUT_S`, `LLM_PRIMARY_TIMEOUT_S`) |
