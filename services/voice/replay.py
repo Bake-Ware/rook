@@ -258,9 +258,13 @@ async def run_case(url, headers, tls, directory, case):
                 await ws.send(json.dumps({'type': 'speech_start', 'hold': True}))
             else:
                 audio = load_audio(directory, step, s)
+                if step['step'] == 'say' and time.monotonic() < s.playing_until():
+                    # Talking over a reply that is playing: the phone's local gate holds it.
+                    await ws.send(json.dumps({'type': 'speech_start', 'hold': True}))
             speech_end = await s.stream(audio)
-        # Trailing silence so the server's endpointing can close the utterance.
-        await s.stream(np.zeros(int(1.2 * SR), dtype=np.float32))
+        # Trailing silence, as a phone keeps streaming: long enough for the server's
+        # no-verdict fallback (VOICE_TURN_MAX_SILENCE_MS, 2 s) to close the utterance.
+        await s.stream(np.zeros(int(2.6 * SR), dtype=np.float32))
         await s.idle()
         stts = [e['text'] for e in s.kinds('stt', began)]
         replies = ' '.join(e['text'] for e in s.kinds('assistant_delta', began))
