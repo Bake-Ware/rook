@@ -865,8 +865,9 @@ supersedes the old pin and voids any open vote on it.
 This fixes the proving run's "reviewers read the worktree, not the
 commit": in the H6 design run a review of f758209 was answered from a
 worktree already at a23064c. Reads now come from GitHub at the pinned SHA,
-never from a role's own checkout. Roles cannot pin: `huddle.pin` refuses a
-role caller and is on the roles plugin's never-call list.
+never from a role's own checkout. Only a person or the house agent pins:
+`huddle.pin` refuses anyone else (guest agents ask the chair), and roles
+have it on the roles plugin's never-call list.
 
 ### 10.6 Votes
 
@@ -944,7 +945,8 @@ hub, never by a session or a role:
   labels the PR `ready-for-qa` and comments with the vote.
 - **Deploys and ships** run the deploy target's `deploy` call (`{sha}` is
   the voted commit) as the house agent through the front door's
-  `run_action`, so the trust map rules on that call too.
+  `run_action`, so the trust map rules on that call too. A vote alone never
+  approves a hold that call meets; only the person's yes does.
 - **Audit:** every execution is journaled as `huddle.vote.execute` with the
   vote, the artifact, the voted version, the trust ruling, each gate, each
   ballot's voter, seat, vote, version and commitment, and who approved (the
@@ -1057,7 +1059,8 @@ and 7 (M1, by votes). Still open:
    (`huddle.vote_deploy_targets`, `huddle.vote_github_secret`): with no
    target a deploy or ship vote cannot be called, a target without a dry
    run stops at the rollback gate, and without the credential the hub
-   cannot merge. None is configured on the live hub yet.
+   cannot merge. On the live hub (2026-10-23) the merge credential is set
+   (an owner's token from the vault); no deploy target is configured.
 10. **Local repositories** (no GitHub remote) cannot be pinned; the table
     reads through the GitHub API only.
 11. **Job runs** do not report back the way sessions do (5.5).
@@ -1066,6 +1069,14 @@ and 7 (M1, by votes). Still open:
     tasks are closed by that is Bake's call.
 13. **The hostname of the agent host** in older sections of this file and
     in section 11: scrub it from the public docs or not.
+14. **Vote records and retention.** Deleting an archived huddle (retention)
+    deletes its artifacts, votes and ballots; the `huddle.vote.execute`
+    journal row (votes, versions, gates) stays.
+15. **Authorship** comes from the hub's session records (and who pinned
+    it): a pull request written outside a role's session excludes nobody.
+16. **Claude Code tool calls** (t_1f8866): a role whose turn fails to call
+    `vote` counts as couldn't verify, so votes fail closed but may block
+    more than they should until that is fixed.
 
 ### 10.11 Decision record
 
