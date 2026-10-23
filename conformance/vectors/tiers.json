@@ -1153,6 +1153,21 @@
   "token.admin": {
    "tier": "admin"
   },
+  "trust.check": {
+   "tier": "read"
+  },
+  "trust.get": {
+   "tier": "read"
+  },
+  "trust.history": {
+   "tier": "read"
+  },
+  "trust.propose": {
+   "tier": "write"
+  },
+  "trust.tighten": {
+   "tier": "write"
+  },
   "tv.apps": {
    "tier": "read",
    "tags": [

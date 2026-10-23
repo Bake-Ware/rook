@@ -119,10 +119,15 @@ class Journal:
         # agent | shared | unverified | denied (NULL for pre-attribution rows)
         auth = audit.get("kind")
         az = authz or {}
+        rule = az.get("rule")
+        trust = az.get("trust")
+        if isinstance(trust, dict) and trust.get("rule"):
+            # The trust map's citation (rook/hub/trust.py) rides in the rule column.
+            rule = f"{rule} {trust['rule']}" if rule else trust["rule"]
         row = (cid, round(time.time(), 3), identity or "anonymous", cap,
                worker, thread_id, ok, error, blob,
                audit.get("agent_id"), audit.get("key_id"), auth, audit.get("actor"),
-               az.get("principal"), az.get("decision"), az.get("rule"),
+               az.get("principal"), az.get("decision"), rule,
                az.get("policy_rev"), az.get("tier"))
         try:
             with self._lock:

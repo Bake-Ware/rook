@@ -59,7 +59,8 @@ DECISIONS = ("approve", "deny")
 #: approvals and relay machinery) and job locks. Selectors as in
 #: :func:`matches`.
 FLOOR = ("secret.*", "vault.*", "token.*", "tokens.*", "policy.*", "settings.*", "member.*",
-         "approvals.*", "approval.*", "relay.*", "guidance.write", "band.admin", "band.deauth",
+         "approvals.*", "approval.*", "relay.*", "trust.*", "guidance.write", "band.admin",
+         "band.deauth",
          "job.write:lock", "job.write:unlock")
 
 WHO_MAX, QUOTE_MAX, SESSION_MAX, REASON_MAX = 120, 1000, 500, 500

@@ -481,7 +481,9 @@ Roles never call `role.ask`, `role.move`, `role.memory_edit` or
 
 Gaps, recorded as findings rather than fixed here: the in-session rules are
 Claude Code permission rules on Bake's own account, so branch protection on
-the repository is what really stops a merge; Rook has no notion of a
+the repository is what really stops a merge (since 2026-10-23: `enforce_admins`
+on master, a per-session push guard, and minted per-session tokens once a
+GitHub App is set up; docs/design/trust.md 5); Rook has no notion of a
 "family device" beyond the `role.protected_workers` list; `act` has no
 meaning of its own until H6.
 
