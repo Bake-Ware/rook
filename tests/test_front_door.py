@@ -522,3 +522,23 @@ async def test_an_answer_in_conversation_is_relayed_only_when_the_house_agent_ma
     await _settle(front)
     assert len(_ran(front, "pianobar.restart")) == 1
     assert front.front.store.find_ask(a["id"])["decided_by"].endswith("via the house agent (home)")
+
+
+@pytest.mark.asyncio
+async def test_the_decisions_badge_counts_open_asks_without_the_mcp_service(tmp_path,
+                                                                           monkeypatch):
+    from aiohttp.test_utils import TestClient, TestServer
+    from rook.hub.plugins.home.front import FrontStore
+    from rook.hub.trust import TrustStore
+    from tests.test_trust import AGENT, OWNER, dashboard
+    monkeypatch.setenv("ROOK_DATA_DIR", str(tmp_path))
+    principal = [OWNER]
+    async with TestClient(TestServer(dashboard(tmp_path, principal, TrustStore(None)))) as http:
+        assert (await (await http.get("/api/decisions?count=1")).json()) == {"waiting": 0}
+        st = FrontStore(str(tmp_path / "plugins" / "home" / "front.db"))
+        st.add_ask({"kind": "gap", "line": "Blue theme?", "explain": "x"})
+        st.add_ask({"kind": "gap", "line": "Old one?", "explain": "x", "ttl": -1})
+        assert (await (await http.get("/api/decisions?count=1")).json()) == {"waiting": 1}
+        principal[0] = AGENT
+        assert (await http.get("/api/decisions?count=1")).status == 403
+        st.close()

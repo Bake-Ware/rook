@@ -1136,15 +1136,9 @@ function showFrontCount(n){
  b.textContent=n>99?'99+':String(n);b.hidden=!n;
  $('#tab-decisions').setAttribute('aria-label',n?'Decisions, '+n+' waiting':'Decisions');
 }
-let frontCsrf='';
 async function pollFront(){
  if(document.hidden)return;
- try{
-  if(!frontCsrf){const r=await fetch('/account/huddle/api',{headers:{Accept:'application/json'}});if(!r.ok)return;const d=await r.json();if(!d.front)return;frontCsrf=d.csrf;}
-  const r=await fetch('/account/huddle/api',{method:'POST',headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({csrf:frontCsrf,action:'front_count'})});
-  if(r.status===403){frontCsrf='';return;}
-  if(!r.ok)return;const d=await r.json();showFrontCount(Number(d.result?.asks)||0);
- }catch{}
+ try{const r=await fetch('/api/decisions?count=1',{headers:{Accept:'application/json'}});if(!r.ok)return;const d=await r.json();showFrontCount(Number(d.waiting)||0);}catch{}
 }
 pollFront();setInterval(pollFront,60000);
 let overviewUI=null, overviewLoading=null, startUI=null, startLoading=null;

@@ -7,6 +7,8 @@
   navigation badge polls it).
 * ``POST /api/trust``: ``{"op", "data", "words"}``, one change, recorded with
   the person's words (required).
+* ``GET /api/decisions``: ``{"waiting": n}``, the house agent's open asks
+  (the Decisions badge; read-only from its store).
 * ``GET /account/trust/assets/trust.js``: the page module (static).
 
 Both API routes need a *person* who is a band owner or admin, as the
@@ -36,6 +38,7 @@ class TrustWeb:
 
     def install(self, app: web.Application) -> None:
         app.router.add_get("/api/trust", self.get)
+        app.router.add_get("/api/decisions", self.decisions)
         app.router.add_post("/api/trust", self.post)
         app.router.add_get("/account/trust/assets/{name}", self.asset)
 
@@ -74,6 +77,28 @@ class TrustWeb:
             "weak_message": ApprovalsWeb.WEAK_MSG.replace("approve held calls",
                                                           "change the trust map") if weak else None,
         }, headers=NO_STORE)
+
+    async def decisions(self, request: web.Request) -> web.Response:
+        """``{"waiting": n}``: the house agent's open asks (the Decisions
+        badge), read straight from its store (rook/hub/plugins/home/front.py)
+        so the badge never waits on the MCP service."""
+        if self._ap._person() is None:
+            return self._err("Only a band owner or admin can see the house agent's asks.", 403)
+        import sqlite3
+        import time
+        from ..paths import data_path
+        path = data_path("plugins/home/front.db", "/var/lib/rook-band-mcp/plugins/home/front.db")
+        n = 0
+        try:
+            db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2)
+            try:
+                n = db.execute("SELECT count(*) FROM front_asks WHERE state='open' AND expires>=?",
+                               (time.time(),)).fetchone()[0]
+            finally:
+                db.close()
+        except sqlite3.Error:
+            n = 0          # no house agent store yet
+        return web.json_response({"waiting": int(n)}, headers=NO_STORE)
 
     async def post(self, request: web.Request) -> web.Response:
         from ..hub.trust import Actor, TrustError
