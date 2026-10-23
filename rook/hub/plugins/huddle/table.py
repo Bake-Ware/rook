@@ -1370,11 +1370,13 @@ class Table:
                 spec = t.get("deploy") or {}
                 if not spec.get("cap"):
                     raise TableError(f"deploy target {t['id']} has no deploy call")
+                # Only the person's yes approves a hold the deploy call meets;
+                # a vote alone never does (a sacred or guarded hold stays theirs).
                 out = await self._run_call(spec, m["version"], f"{m['kind']} vote {m['id']}",
-                                           approved_by=approved_by or
-                                           f"vote {m['name']} ({voters})")
+                                           approved_by=approved_by)
                 if not out["ok"]:
-                    raise TableError(out.get("error") or "the deploy call failed")
+                    raise TableError((f"held for a person: {out['error']}" if out.get("held")
+                                      else out.get("error")) or "the deploy call failed")
                 result = {"deployed": t["id"], "reply": out.get("result")}
                 did = (f"{'Shipped' if m['kind'] == 'ship' else 'Deployed'} "
                        f"{short(m['version'])} to {t.get('title') or t['id']}")

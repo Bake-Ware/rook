@@ -118,7 +118,8 @@ class Huddle(Plugin):
                 label="Hub GitHub credential (vault secret name)",
                 help="The vault secret the hub merges with (and reads GitHub with). Sessions and "
                      "roles never see it. Blank: the hub reads public repositories anonymously "
-                     "and cannot merge."),
+                     "and cannot merge. With an 'admins only' ruleset on the default branch it "
+                     "must be a repository admin's token (or on the ruleset's bypass list)."),
         setting("vote_merge_method", str, "merge", choices=("merge", "squash", "rebase"),
                 group="Conference table and votes", label="Merge method"),
         setting("vote_require_ci", bool, True, group="Conference table and votes",
@@ -403,6 +404,12 @@ class Huddle(Plugin):
             raise ValueError("the conference table is off on this hub (huddle.votes)")
         return svc.table
 
+    def _person_or_chair(self, me: str, p) -> bool:
+        home = self._node.plugin("home") if self._node is not None else None
+        person = str(me).startswith(("user:", "human:", "person:")) or \
+            getattr(p, "kind", "") in ("user", "person", "operator")
+        return person or (home is not None and me == home.identity)
+
     @capability("table", risk="read")
     async def table(self, huddle: str, action: str = "list", artifact: str = "",
                     what: str = "summary", path: str = "", offset: int = 0) -> dict:
@@ -423,9 +430,11 @@ class Huddle(Plugin):
                   path: str = "", url: str = "", text: str = "", title: str = "",
                   note: str = "", sha256: str = "") -> dict:
         """Pin an artifact on a chaired huddle's table at its exact version: pr (repo, number), commit (repo, sha), file (repo, path, sha), doc|tests (text), link (url, sha256?)."""
+        from ...authz import current_principal
         me = caller()
-        if str(me).startswith("role:"):
-            raise PermissionError("roles do not pin; ask the chair to")
+        if not self._person_or_chair(me, current_principal.get()):
+            raise PermissionError("only a person or the house agent (the chair) pins; ask the "
+                                  "chair in the huddle")
         data = {k: v for k, v in {"kind": kind, "repo": repo, "number": number, "sha": sha,
                                   "path": path, "url": url, "text": text, "title": title,
                                   "note": note, "sha256": sha256}.items() if v}
@@ -449,11 +458,7 @@ class Huddle(Plugin):
                 return {**m, "ballots": t.ballots(m["id"])}
             if action != "call":
                 raise ValueError("action must be call or status")
-            p = current_principal.get()
-            home = self._node.plugin("home") if self._node is not None else None
-            person = str(me).startswith(("user:", "human:", "person:")) or \
-                getattr(p, "kind", "") in ("user", "person", "operator")
-            if not person and (home is None or me != home.identity):
+            if not self._person_or_chair(me, current_principal.get()):
                 raise PermissionError("only a person or the house agent (the chair) calls a "
                                       "vote; agents ask the chair in the huddle")
             return await t.call(room, me, {"kind": kind, "artifact": artifact, "reason": reason,
