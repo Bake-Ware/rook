@@ -14,6 +14,7 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.widget.ArrayAdapter
+import android.widget.AutoCompleteTextView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -161,6 +162,70 @@ class SettingsActivity : AppCompatActivity() {
             } catch (_: Exception) { startActivity(Intent(Settings.ACTION_SETTINGS)) }
         }
         b.btnSaveVoice.setOnClickListener { saveVoiceSettings() }
+        setupModels()
+    }
+
+    // ---- voice models (the house agent's front and back) ------------------------
+
+    private var models: VoiceModels.State? = null
+    private var pick = arrayOf("", "", "", "")      // front, front effort, back, back effort
+    private val modelsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == VoiceModels.PREF) runOnUiThread { showModels(VoiceModels.parse(prefs.getString(VoiceModels.PREF, null))) }
+    }
+
+    private fun setupModels() {
+        prefs.registerOnSharedPreferenceChangeListener(modelsListener)
+        showModels(VoiceModels.parse(prefs.getString(VoiceModels.PREF, null)))
+        fun dropdown(v: AutoCompleteTextView, slot: Int, ids: () -> List<String>) {
+            v.setOnClickListener { v.showDropDown() }
+            v.setOnItemClickListener { _, _, position, _ ->
+                pick[slot] = ids().getOrNull(position) ?: return@setOnItemClickListener
+                renderModelNotes()
+            }
+        }
+        dropdown(b.modelFront, 0) { models?.fronts?.map { it.id } ?: emptyList() }
+        dropdown(b.modelFrontEffort, 1) { models?.efforts ?: emptyList() }
+        dropdown(b.modelBack, 2) { models?.backs?.map { it.id } ?: emptyList() }
+        dropdown(b.modelBackEffort, 3) { models?.efforts ?: emptyList() }
+        b.btnModelsRefresh.setOnClickListener { requestModels("models_get", org.json.JSONObject()) }
+        b.btnModelsApply.setOnClickListener {
+            val now = models ?: return@setOnClickListener requestModels("models_get", org.json.JSONObject())
+            val args = VoiceModels.changes(now, pick[0], pick[1], pick[2], pick[3])
+            if (args.length() == 0) { b.modelStatus.text = "Nothing changed."; return@setOnClickListener }
+            requestModels("models_set", args)
+        }
+        if (prefs.getBoolean(PREF_FAST_VOICE, false)) requestModels("models_get", org.json.JSONObject())
+    }
+
+    private fun requestModels(type: String, args: org.json.JSONObject) {
+        val service = VoiceService.inst
+        if (service == null) { b.modelStatus.text = "Turn the voice on first, then Refresh."; return }
+        b.modelStatus.text = if (type == "models_set") "Applying…" else "Asking…"
+        service.models(type, args)
+    }
+
+    private fun showModels(state: VoiceModels.State?) {
+        models = state
+        if (state == null) { b.modelStatus.text = "Not loaded yet: Refresh with the voice on."; return }
+        pick = arrayOf(state.front, state.frontEffort, state.back, state.backEffort)
+        b.modelFront.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, state.fronts.map { it.label }))
+        b.modelBack.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, state.backs.map { it.label }))
+        val efforts = state.efforts.map { VoiceModels.effortLabel(it) }
+        b.modelFrontEffort.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, efforts))
+        b.modelBackEffort.setAdapter(ArrayAdapter(this, android.R.layout.simple_dropdown_item_1line, efforts))
+        b.modelStatus.text = state.error ?: "Current settings."
+        renderModelNotes()
+    }
+
+    private fun renderModelNotes() {
+        val s = models ?: return
+        b.modelFront.setText(VoiceModels.label(s.fronts, pick[0]), false)
+        b.modelFrontEffort.setText("effort: " + VoiceModels.effortLabel(pick[1]), false)
+        b.modelBack.setText(VoiceModels.label(s.backs, pick[2]), false)
+        b.modelBackEffort.setText("effort: " + VoiceModels.effortLabel(pick[3]), false)
+        b.modelFrontNote.text = VoiceModels.note(s.fronts, pick[0])
+        b.modelBackNote.text = if (pick[0] == "local") "With the voice on local models, the agent isn't used."
+            else VoiceModels.note(s.backs, pick[2])
     }
 
     /** Voice tab's Save and App tab's Save write the same set, exactly as the single Save button did. */
@@ -503,6 +568,11 @@ class SettingsActivity : AppCompatActivity() {
     // ---- lifecycle --------------------------------------------------------
 
     override fun onSupportNavigateUp(): Boolean { finish(); return true }
+
+    override fun onDestroy() {
+        prefs.unregisterOnSharedPreferenceChangeListener(modelsListener)
+        super.onDestroy()
+    }
 
     override fun onPause() {
         super.onPause()

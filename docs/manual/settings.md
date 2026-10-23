@@ -29,8 +29,10 @@ Each row shows:
   environment variable or command-line option (locked; change it where the hub
   is started), a value saved on this page, an older setup file, or the
   built-in default;
-- **Applies**: when a change takes effect. *live* means at once; *reload*
-  means the plugin restarts; *restart* means the hub or machine must restart.
+- **Applies**: when a change takes effect. *live* means at once (on a hub
+  with the dashboard and the MCP service as two processes, the other one picks
+  it up within a few seconds); *reload* means the plugin restarts; *restart*
+  means the hub or machine must restart.
 
 Passwords and keys are write-only: the page shows that one is set, never its
 value.

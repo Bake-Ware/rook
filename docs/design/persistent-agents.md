@@ -189,7 +189,21 @@ Host -> client: `{"t":"ready","role","session"}`, `{"t":"delta","turn","text"}`,
 `{"t":"push","turn"}` (an unsolicited turn follows: a back-end result being spoken),
 `{"t":"error","turn","error"}`, `{"t":"mode","turn","mode","by":"voice"}` (the voice
 switched its listening mode; the voice server switches the connection, only between
-assistant, dictate, listen and brainstorm, and the phone shows it).
+assistant, dictate, listen and brainstorm, and the phone shows it), `{"t":"config",
+"engine","models"}` (when the hub changes them; `ready` carries them too), `{"t":"models",
+...}` (the hub's answer to a control). Client -> host also `{"t":"control","op":
+"models_get"|"models_set","args","identity"}` (the phone's Voice models screen through the
+voice server): the host reports it as `voice_control`; the hub acts as that identity (only
+the owner changes models) and answers with `voice_event` `models` to that client.
+
+**Engine and models** (2026-10-23): `home.voice_engine` house|local is a hub setting the
+voice server reads per connection from `ready`/`config`: local sends its turns down its own
+Front/Background path on kaiju's models with no error event. `Sessions.set_models` (the
+phone, the voice's `models` op after a spoken yes, or `home.voice_models_set`) writes
+`home.voice_model`, `voice_engine`, `persistent_model` and the efforts through the settings
+service, journals `home.voice_models_set` and reconfigures at once. Settings saved by the
+dashboard process reach the MCP process within ~3 s (the settings plugin watches the
+store), so none of this needs a restart.
 
 The text a user turn goes in with: `[voice | <name or guest>[ | <mode>] | <day, time>]
 <text>`, preceded by `[brief]\n<lines>` whenever the hub's brief changed (and at least

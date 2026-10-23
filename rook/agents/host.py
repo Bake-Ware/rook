@@ -140,17 +140,18 @@ class Host:
             memory = str(rc.get("memory") or "off")
             if memory not in roledir.MEMORY_MODES:
                 raise OpError(f"{role}: memory is write, read or off")
+            vc = rc.get("voice_config") if isinstance(rc.get("voice_config"), dict) else {}
             plans.append((role, files, specs, (str(vh).lower() if vh else None), list(hs),
-                          memory))
+                          memory, vc))
         out = {}
         async with self._configure_lock:
-            for role, files, specs, vh, hs, memory in plans:
-                out[role] = await self._configure_role(role, files, specs, vh, hs, memory)
+            for role, files, specs, vh, hs, memory, vc in plans:
+                out[role] = await self._configure_role(role, files, specs, vh, hs, memory, vc)
         return {"roles": out}
 
     async def _configure_role(self, role: str, files: dict[str, str], specs: dict[str, LaneSpec],
                               voice_hash: str | None, host_servers: list[str],
-                              memory: str) -> dict:
+                              memory: str, voice_config: dict | None = None) -> dict:
         rdir = roledir.ensure(self.cfg.roles_dir, role)
         rs = self.roles.get(role)
         if rs is None:
@@ -202,6 +203,8 @@ class Host:
         elif "voice" not in rs.lanes and rs.voice is not None:
             await rs.voice.close()
             rs.voice = None
+        if rs.voice is not None:
+            rs.voice.set_config(voice_config or {})
         res: dict[str, Any] = {"changed": changed, "lanes": lanes_out}
         if rs.missing_servers:
             res["missing_servers"] = rs.missing_servers
@@ -279,8 +282,10 @@ class Host:
         turn = msg.get("turn")
         if not (isinstance(turn, int) and not isinstance(turn, bool)):
             turn = str(turn)[:64] if turn else None
+        client = msg.get("client")
+        client = client if isinstance(client, int) and not isinstance(client, bool) else None
         try:
-            return self._room(msg).event(str(msg.get("event") or ""), fields, turn)
+            return self._room(msg).event(str(msg.get("event") or ""), fields, turn, client)
         except ValueError as e:
             raise OpError(str(e)) from None
 

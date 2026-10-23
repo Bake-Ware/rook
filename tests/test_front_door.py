@@ -672,6 +672,11 @@ def test_status_reads_are_reads_whatever_an_older_app_announces():
     assert T.classify("battery.status", "read") == "read"
     assert T.classify("notify.list", "exec") == "change"
     assert T.classify("device.vibrate", "exec") == "change"
+    # A worker announcing a status name as admin or destructive gets no pass.
+    assert T.classify("info.host", "admin") == "admin"
+    assert T.classify("device.info", "exec", ("destructive",)) == "admin"
+    assert not authz.is_status_read("device.keep_awake_status")
+    assert not authz.is_status_read("device.unlock_status")
     assert authz.effective_tier("device.info") == "read"            # declared read now
     assert authz.effective_tier("device.info", "exec") == "exec"    # an older app's announce
     assert not authz.STATUS_READS & {"notify.list", "sms.list", "contacts.search",

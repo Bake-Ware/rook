@@ -302,6 +302,13 @@ class HomeAgent(Plugin):
                      "capable)."),
         setting("voice_effort", str, "low", choices=agent_host.EFFORTS,
                 group="Persistent sessions", order=6, label="Voice effort"),
+        setting("voice_engine", str, "house", choices=("house", "local"),
+                group="Persistent sessions", order=15, label="Voice engine",
+                help="house: the voice is this house agent's voice session (Voice model). "
+                     "local: the voice server answers on its own models (voice-front, "
+                     "voice-back on kaiju): no Claude, no web search, no routing to the agent. "
+                     "The voice server reads this per connection; no change on its host. "
+                     "The phone's Voice models screen sets it too."),
         setting("btw_model", str, "haiku", pattern=r"^[A-Za-z0-9_.:\[\]-]{1,80}$",
                 group="Persistent sessions", order=7, advanced=True,
                 label="By-the-way model",
@@ -1391,6 +1398,19 @@ class HomeAgent(Plugin):
                                             dict(args or {}))
         finally:
             FLOW_AS.reset(tok)
+
+    @capability("voice_models", risk="read")
+    def voice_models(self) -> dict:
+        """The house agent's models: the voice (front: Haiku 5.5, Haiku 4.5, Sonnet, or local on kaiju), the agent (back: Opus, Sonnet, Haiku), their efforts, and the choices with a one-line note each."""
+        return {"ok": True, **self.sessions.models()}
+
+    @capability("voice_models_set", risk="admin")
+    def voice_models_set(self, front: str = "", back: str = "", front_effort: str | None = None,
+                         back_effort: str | None = None, words: str = "") -> dict:
+        """Change the house agent's models (the person's call): front (the voice: claude-haiku-5-5, claude-haiku-4-5, sonnet, local), back (the agent: opus, sonnet, haiku), front_effort / back_effort (blank: default). Live, no restart; journaled as home.voice_models_set."""
+        return self.sessions.set_models(front=front, back=back, front_effort=front_effort,
+                                        back_effort=back_effort, who=_actor(),
+                                        words=str(words or ""), via="api")
 
     @capability("session_compact", risk="write")
     async def session_compact(self, lane: str = "main", role: str = "house") -> dict:

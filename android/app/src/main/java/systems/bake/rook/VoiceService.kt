@@ -189,6 +189,9 @@ class VoiceService : Service() {
             // Retrying would only hit the same server and mode again; stay closed and say why.
             override fun onRefused(msg: String) = current { VoiceBus.emit(conn) { it.onError(msg) }; closeSession() }
             override fun onTool(title: String, status: String) = current { VoiceBus.emit(conn) { it.onTool(title, status) } }
+            override fun onVoiceModels(json: String) = current {
+                getSharedPreferences("rook", MODE_PRIVATE).edit().putString(VoiceModels.PREF, json).apply()
+            }
             override fun onModeChanged(mode: String) = current {
                 voiceMode = mode.takeIf { VoiceModes.keepAcrossReconnect(it) }
                 VoiceBus.emit(conn) { it.onMode(VoiceModes.byId(mode).label) }
@@ -229,6 +232,12 @@ class VoiceService : Service() {
 
     /** Close/cancel the predecessor before opening its replacement; invalidate queued callbacks. */
     fun voiceChanged(voice: String) { client?.setVoice(voice) }
+
+    /** The Voice models screen: ask the hub (through the voice server) or change them. */
+    fun models(type: String, args: org.json.JSONObject = org.json.JSONObject()) {
+        openSession()
+        client?.sendModels(type, args)
+    }
 
     fun thinkingChanged() {
         val reopen = sessionWanted

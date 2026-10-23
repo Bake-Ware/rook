@@ -441,6 +441,15 @@ async def websocket(ws: WebSocket):
                             await conn.emit('error', code='unknown_mode', msg=f'{error} Mode unchanged: {conn.mode.id}.')
                         else:
                             await conn.set_mode(mode)
+                    elif kind in ('models_get', 'models_set'):
+                        # The app's Voice models screen: only through the house voice.
+                        house = conn.fb.house if conn.fb else None
+                        if house is None:
+                            await conn.emit('error', code='models_unavailable',
+                                            msg='Voice models need the house voice on this connection.')
+                        else:
+                            args = msg.get('args') if isinstance(msg.get('args'), dict) else {}
+                            await house.control(kind, {k: str(v)[:80] for k, v in list(args.items())[:6]})
                     elif kind == 'voice':
                         # Accepts engine:name ids and legacy bare Kokoro ids; unknown ids are ignored.
                         voice = resolve_voice(app.state.provider, msg.get('voice'))

@@ -53,7 +53,8 @@ class FakeLane:
 
     async def handle(self, ws):
         self.sockets.append(ws)
-        await ws.send(json.dumps({'t': 'ready', 'role': 'house', 'session': 'voice-session-1'}))
+        await ws.send(json.dumps({'t': 'ready', 'role': 'house', 'session': 'voice-session-1',
+                                  **getattr(self, 'config', {})}))
         async for raw in ws:
             message = json.loads(raw)
             self.received.append(message)
@@ -607,3 +608,47 @@ def test_a_routing_line_that_reaches_the_voice_server_is_never_spoken(tmp_path, 
             text = ' '.join(said(events))
             assert 'On it.' in text and '<<' not in text and 'queue' not in text
     asyncio.run(scenario())
+
+
+# --- the hub's engine choice and the phone's Voice models screen ---------------------
+def test_the_hub_choosing_the_local_engine_sends_turns_down_the_old_path(tmp_path, monkeypatch):
+    async def scenario():
+        lane = FakeLane()
+        lane.config = {'engine': 'local', 'models': {'front': {'model': 'local'}}}
+        async with lane:
+            house_env(monkeypatch, lane.url)
+            front = FakeFront()
+            conn, store, jobs, events, _ = connection(tmp_path, front=front, complete=Script(call('no_action')))
+            try:
+                await conn.start(text='hello', speak=False)
+                await idle(conn)
+                assert said(events) == ['Local reply.'] and len(front.calls) == 1
+                assert not [m for m in lane.received if m['t'] == 'user']
+                assert not [e for e in events if e.get('type') == 'error']      # a choice, not a failure
+                # The hub switches back to the house voice: the next turn goes to the lane.
+                await lane.send(t='config', engine='house', models={})
+                await wait_for(lambda: conn.fb.house.lane.config.get('engine') == 'house')
+            finally:
+                await shutdown(conn, store, jobs)
+    asyncio.run(scenario())
+
+
+def test_the_phones_models_screen_goes_through_the_lane_as_its_identity(tmp_path, monkeypatch):
+    async def scenario():
+        async with FakeLane() as lane:
+            house_env(monkeypatch, lane.url)
+            conn, store, jobs, events, _ = connection(tmp_path, front=FakeFront(), complete=Script())
+            try:
+                await conn.fb.house.control('models_set', {'back': 'sonnet'})
+                await wait_for(lambda: any(m['t'] == 'control' for m in lane.received))
+                (msg,) = [m for m in lane.received if m['t'] == 'control']
+                assert msg['op'] == 'models_set' and msg['args'] == {'back': 'sonnet'}
+                assert msg['identity']['owner'] is True
+                await lane.send(t='models', turn=None, ok=True, back={'model': 'sonnet'})
+                await wait_for(lambda: any(e.get('type') == 'voice_models' for e in events))
+                ev = next(e for e in events if e.get('type') == 'voice_models')
+                assert ev['ok'] is True and ev['back'] == {'model': 'sonnet'}
+            finally:
+                await shutdown(conn, store, jobs)
+    asyncio.run(scenario())
+

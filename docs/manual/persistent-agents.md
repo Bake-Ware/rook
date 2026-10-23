@@ -69,6 +69,25 @@ You can keep talking while the agent is busy. The voice can:
   switched to. The voice never switches into or out of the children's
   conversation mode or roleplay.
 
+## Voice models
+
+What the voice and the agent run on is yours to change, live, without a
+restart:
+
+- **On the phone:** Settings > Voice > **Voice models** (with the fast voice
+  on): the voice (Haiku 5.5, Haiku 4.5, Sonnet, or **Local** on kaiju's own
+  models) and the agent (Opus, Sonnet, Haiku), each with an effort and a
+  one-line note. **Apply** changes it for every device.
+- **By voice:** "switch your back end to Sonnet", "use the local model for
+  the voice". It asks first ("Switch the agent to Sonnet?") and changes it
+  after you say yes. Only the owner can.
+- **Local** hands the voice to the voice server's own path (voice-front, with
+  voice-back behind it): no Claude, no web search, nothing routed to the agent.
+  It is the hub setting **Voice engine** (`home.voice_engine`), which the voice
+  server reads for each connection, so nothing changes on kaiju.
+
+Every change is recorded (`home.voice_models_set`, who and how).
+
 ## Web search
 
 The agent can search the web and read pages (**Web search** in **Manage > Home

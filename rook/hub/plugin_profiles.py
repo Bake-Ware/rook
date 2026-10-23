@@ -76,7 +76,7 @@ PRESETS: tuple[dict, ...] = (
     {"id": "knowledge", "default": False, "tiers": ("read", "write"), "title": "Knowledge & tasks",
      "summary": "A shared knowledge base and task deck for your agents.",
      "hub": ["knowledge", "tasks"], "worker": ["memory"], "high_risk": []},
-    {"id": "home", "default": True, "tiers": ("read", "write"), "title": "Home & voice agent",
+    {"id": "home", "default": True, "tiers": ("read", "write", "admin"), "title": "Home & voice agent",
      "summary": "The home agent, what it remembers, its persona in your harnesses, and speech "
                 "on phones.",
      "hub": ["home", "memory"], "worker": ["persona", "speak_android"], "high_risk": []},

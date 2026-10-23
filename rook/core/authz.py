@@ -146,10 +146,12 @@ CORE: dict[str, tuple[str, tuple[str, ...]]] = {c: _t(s) for c, s in _CORE_SPEC.
 #: announces for them (an app released before they were declared read says exec).
 #: Private content (messages, notifications, contacts, call log, calendar, location,
 #: screen, clipboard, files) is not here: on a protected device those still ask.
+#: (Not keep_awake_status or unlock_status: whether a kid's screen is on or locked, and
+#: whether a PIN is saved, say more than a version does. Review of #186.)
 STATUS_READS = frozenset({
-    "battery.status", "device.info", "device.update_status", "device.keep_awake_status",
-    "device.unlock_status", "info.ping", "info.host", "info.uptime", "caps.describe",
-    "worker.description_get", "voice.speak_status", "voice.speak_voices",
+    "battery.status", "device.info", "device.update_status", "info.ping", "info.host",
+    "info.uptime", "caps.describe", "worker.description_get", "voice.speak_status",
+    "voice.speak_voices",
 })
 
 

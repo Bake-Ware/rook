@@ -69,7 +69,26 @@ BTW_TIMEOUT = 60.0
 KEEP_METRICS = 200
 #: Routing ops the voice may use (``quiet``: nothing to do; ``ask``: same as queue).
 ROUTE_OPS = ("queue", "steer", "fork", "fold", "status", "btw", "pause", "resume", "cancel",
-             "mode", "quiet", "ask")
+             "mode", "quiet", "ask", "models")
+#: What the voice and the agent can run on (the phone's pickers and "switch your back end
+#: to Sonnet"). "local" for the voice is the voice server's own path on kaiju's models
+#: (voice-front, with voice-back behind it): home.voice_engine = local.
+VOICE_MODELS = (
+    {"id": "claude-haiku-5-5", "label": "Haiku 5.5",
+     "note": "Default. Fast at low effort; speaks first, the agent does the work."},
+    {"id": "claude-haiku-4-5", "label": "Haiku 4.5",
+     "note": "About 0.3 s quicker to the first word, never thinks; a little less capable."},
+    {"id": "sonnet", "label": "Sonnet", "note": "Smarter, slower to start talking."},
+    {"id": "local", "label": "Local (kaiju)",
+     "note": "Your own GPU: voice-front with voice-back behind it. No Claude; the agent and "
+             "web search aren't used."},
+)
+AGENT_MODELS = (
+    {"id": "opus", "label": "Opus", "note": "Default. Most capable; a few seconds a turn."},
+    {"id": "sonnet", "label": "Sonnet", "note": "Quicker turns, still strong with tools."},
+    {"id": "haiku", "label": "Haiku", "note": "Quickest and simplest; fine for lookups."},
+)
+MODEL_EFFORTS = ("", "low", "medium", "high", "xhigh", "max")
 #: Ops whose result the voice speaks.
 ROUTE_SPEAKS = ("status", "btw")
 #: Listening modes the voice may switch to, by the names it may use.
@@ -415,6 +434,8 @@ class Sessions:
                                   "idle_sleep_s": 0, "thinking": False}
             roles[role] = {"dir_files": files, "lanes": lanes, "host_servers": granted,
                            "memory": rc["memory"], "voice_token_sha256": voice_hash}
+            if rc["voice"]:
+                roles[role]["voice_config"] = self.voice_config(role)
         return {"t": "configure", "roles": roles}
 
     async def configure(self) -> None:
@@ -586,6 +607,8 @@ class Sessions:
         elif kind == "voice_turn":
             self.voice[role] = {"turn": msg.get("turn"), "text": str(msg.get("text") or "")[:300],
                                 "identity": msg.get("identity") or {}, "at": time.time()}
+        elif kind == "voice_control":
+            self._spawn(self._voice_control(role, msg))
         elif kind == "voice_reply":
             row = {"kind": "voice", "role": role, "at": time.time(),
                    **{k: msg.get(k) for k in ("turn", "first_ms", "total_ms", "tools",
@@ -909,6 +932,15 @@ class Sessions:
                     res = self.queue_voice(role, req, prio, turn=turn)
                 elif name == "mode":
                     res = await self.voice_mode(role, args.get("mode"), turn)
+                elif name == "models":
+                    principal, _ = self.voice_principal(role)
+                    if requester(principal, who)["kind"] != "person":
+                        raise ValueError("only the owner changes my models")
+                    res = self.set_models(front=args.get("front", ""), back=args.get("back", ""),
+                                          front_effort=args.get("effort"),
+                                          back_effort=args.get("back_effort"), who=who,
+                                          words=str(args.get("words") or "")[:300], via="voice")
+                    res = {"ok": True, "front": res["front"], "back": res["back"]}
                 else:
                     res = await self.flow(role, name, args)
             except (Unavailable, ValueError, LookupError) as e:
@@ -991,6 +1023,96 @@ class Sessions:
             raise ValueError(str(rep.get("error") or res.get("error") or "the phone did not "
                                  "take it")[:200])
         return {"ok": True, "mode": want}
+
+    # -- models: the phone's pickers, "switch your back end to Sonnet" ----------------------
+    def voice_config(self, role: str = HOUSE) -> dict:
+        """For the voice server (``ready`` and ``config``): which engine answers the
+        voice (house: these sessions; local: its own path on kaiju) and the models."""
+        engine = "local" if role == HOUSE and str(
+            self.home.settings.get("voice_engine") or "house") == "local" else "house"
+        return {"engine": engine, "models": self.models(role)}
+
+    def models(self, role: str = HOUSE) -> dict:
+        rc = self.role_cfg(role)
+        local = role == HOUSE and str(self.home.settings.get("voice_engine") or "") == "local"
+        return {"front": {"model": "local" if local else rc["voice_model"],
+                          "effort": rc["voice_effort"]},
+                "back": {"model": rc["model"], "effort": rc["effort"]},
+                "choices": {"front": list(VOICE_MODELS), "back": list(AGENT_MODELS),
+                            "efforts": list(MODEL_EFFORTS)}}
+
+    def set_models(self, *, front: str = "", back: str = "", front_effort: Any = None,
+                   back_effort: Any = None, who: str, words: str = "", via: str) -> dict:
+        """The person's own change of the house agent's models (the phone's pickers or
+        their voice). Saved as the house agent's settings, live, journaled."""
+        writes: dict[str, Any] = {}
+        front, back = str(front or "").strip(), str(back or "").strip()
+        if front:
+            ids = {m["id"]: m for m in VOICE_MODELS}
+            m = ids.get(front) or next((v for v in VOICE_MODELS
+                                        if v["label"].lower() == front.lower()), None)
+            if m is None:
+                raise ValueError(f"front: one of {', '.join(ids)}")
+            if m["id"] == "local":
+                writes["voice_engine"] = "local"
+            else:
+                writes["voice_engine"] = "house"
+                writes["voice_model"] = m["id"]
+        if back:
+            ids = {m["id"]: m for m in AGENT_MODELS}
+            m = ids.get(back.lower()) or next((v for v in AGENT_MODELS
+                                               if v["label"].lower() == back.lower()), None)
+            if m is None:
+                raise ValueError(f"back: one of {', '.join(ids)}")
+            writes["persistent_model"] = m["id"]
+        for key, val in (("voice_effort", front_effort), ("persistent_effort", back_effort)):
+            if val is not None:
+                val = str(val or "").strip().lower()
+                if val not in MODEL_EFFORTS:
+                    raise ValueError(f"effort: one of {', '.join(e or 'default' for e in MODEL_EFFORTS)}")
+                writes[key] = val or ("low" if key == "voice_effort" else "")
+        if not writes:
+            raise ValueError("nothing to change: front, back or an effort")
+        svc = getattr(self.home._node, "settings", None)
+        before = self.models()
+        for key, val in writes.items():
+            if str(self.home.settings.get(key) or "") == str(val):
+                continue
+            if svc is None or not hasattr(svc, "set"):
+                raise ValueError("this hub has no settings service")
+            svc.set(f"home.{key}", val, actor=who, note=f"via {via}: {words[:200]}",
+                    source=via)
+        after = self.models()
+        self.home.journal("home.voice_models_set", {"who": who, "via": via,
+                                                    "words": words[:300], "set": writes},
+                          {"ok": True, "before": {k: before[k] for k in ("front", "back")},
+                           "after": {k: after[k] for k in ("front", "back")}})
+        self._spawn(self.configure())
+        return {"ok": True, **after}
+
+    async def _voice_control(self, role: str, msg: dict) -> None:
+        """The phone's model pickers, through the voice server: as the connection's
+        identity (the owner is the person; anyone else may only look)."""
+        op = str(msg.get("op") or "")
+        args = msg.get("args") if isinstance(msg.get("args"), dict) else {}
+        ident = msg.get("identity") if isinstance(msg.get("identity"), dict) else {}
+        try:
+            if op == "models_set":
+                if not ident.get("owner"):
+                    raise ValueError("only the owner changes the models")
+                name = re.sub(r"[^A-Za-z0-9 _.'-]", "", str(ident.get("name") or ""))[:40]
+                out = self.set_models(front=args.get("front", ""), back=args.get("back", ""),
+                                      front_effort=args.get("front_effort"),
+                                      back_effort=args.get("back_effort"),
+                                      who=f"user:{name or 'owner'} (phone)",
+                                      words="the phone's Voice models screen", via="phone")
+            else:
+                out = {"ok": True, **self.models(role)}
+        except ValueError as e:
+            out = {"ok": False, "error": str(e)[:200], **self.models(role)}
+        with contextlib.suppress(Unavailable):
+            await self.send({"t": "voice_event", "role": role, "event": "models",
+                             "fields": out, "client": msg.get("client")})
 
     # -- the voice's standing brief -------------------------------------------------------
     def brief(self, role: str = HOUSE) -> str:

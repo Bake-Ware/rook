@@ -620,6 +620,13 @@ into `FrontBackground.turn` in `pipeline.py`.
   goes to the voice as a `[dictation] ...` turn (it offers to save or send it).
 * The conductor routes with hidden lines that the host cuts out; as a backstop
   nothing from a `<<` on in a delta is spoken.
+* The engine is the hub's choice (`home.voice_engine`), sent in the lane's
+  `ready` and `config`: with `local` every turn quietly takes the old
+  Front/Background path (timing `house_engine: local`), no kaiju edit needed.
+* The app's Voice models screen sends `{"type":"models_get"}` or
+  `{"type":"models_set","args":{...}}`; they go to the hub through the lane as
+  this connection's identity and the answer comes back as a `voice_models`
+  event.
 * One lane websocket per voice connection, opened on its first turn and
   reopened after it drops. Per turn it sends `{"t":"user","turn","text",
   "identity":{"owner","name"}}` (`name`: the speaker ID label when it named an
