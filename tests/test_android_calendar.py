@@ -295,7 +295,7 @@ def phone_prefs(allowed=True):
 
 
 def writer(cal, monkeypatch, granted=("android.permission.WRITE_CALENDAR",), allowed=True):
-    resolver = WriteResolver([(1, "Holidays", "x@group", 0, 200), (2, "Bake", "bake@gmail.com", 1, 700)],
+    resolver = WriteResolver([(1, "Holidays", "x@group", 0, 200), (2, "Bake", "owner@example.com", 1, 700)],
                              {5: {"dtstart": 1_790_000_000_000, "dtend": 1_790_003_600_000, "title": "Dentist"}})
     monkeypatch.setattr(cal, "app_context", lambda: SimpleNamespace(getContentResolver=lambda: resolver,
                                                                     getSharedPreferences=phone_prefs(allowed)))
@@ -306,10 +306,10 @@ def writer(cal, monkeypatch, granted=("android.permission.WRITE_CALENDAR",), all
 
 def test_calendar_create_update_delete(cal, monkeypatch):
     p, r = writer(cal, monkeypatch)
-    out = p._create("Xavier soccer", "2026-10-24T10:00")
+    out = p._create("Kai soccer", "2026-10-24T10:00")
     assert out["ok"] and out["event_id"] == 77 and out["calendar"] == "Bake"   # the owned, primary one
     _, _, values = r.writes[0]
-    assert values["calendar_id"] == 2 and values["title"] == "Xavier soccer"
+    assert values["calendar_id"] == 2 and values["title"] == "Kai soccer"
     assert values["dtend"] - values["dtstart"] == HOUR and values["eventTimezone"] == "America/Chicago"
     assert p._create("x", "2026-10-24T10:00", calendar="Holidays")["ok"] is False   # read-only calendar
     assert p._create("", "now")["ok"] is False

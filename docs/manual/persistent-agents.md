@@ -91,19 +91,19 @@ Every change is recorded (`home.voice_models_set`, who and how).
 ## Who's talking
 
 With your voice enrolled ("enroll my voice"), the voice knows when it is you
-and when it is someone else: each turn says "Bake (sure)", "Autumn
+and when it is someone else: each turn says "Bake (sure)", "Robin
 (probably)" or "unknown guest". It is recognition, not a password: anything
 risky still asks you. Someone it doesn't recognise on your phone is treated
 as a guest; a very short "yes" that is too short to recognise counts as you.
 
 **Learning someone else's voice:** say "I want to enroll a new voice" or
-"learn Autumn's voice". It asks their name and who they are to you. An adult
+"learn Robin's voice". It asks their name and who they are to you. An adult
 then says "I agree to have my voice remembered" in their own voice; for a
-child it needs your own yes out loud ("yes, learn Logan's voice"). Then they
+child it needs your own yes out loud ("yes, learn Sam's voice"). Then they
 read a few sentences. Only you, recognised by voice, can start this. It keeps
 a record of them on the hub (who they are, their consent in their words, their
 devices) and a note in its memory; the voiceprint stays on the voice server.
-"Forget Autumn's voice" deletes the voiceprint (it asks whether to keep the
+"Forget Robin's voice" deletes the voiceprint (it asks whether to keep the
 record). **Settings > Voice > People** in the app lists the voices it knows,
 with Forget.
 

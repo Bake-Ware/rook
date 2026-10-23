@@ -269,8 +269,7 @@ _SPEAKS = re.compile(r"(^|[._])(send|reply|forward|respond|call|dial|post_to|mes
                      r"(_\w+)?$")
 #: A notification's own actions that change nothing for anyone else: these alone may run
 #: without asking, and only when named (an index can't be checked here).
-SAFE_NOTIFY_ACTIONS = {"mark as read", "mark read", "read", "dismiss", "snooze", "mute",
-                       "ok", "got it"}
+SAFE_NOTIFY_ACTIONS = {"mark as read", "mark read", "dismiss", "snooze"}
 #: Changes that may only happen on the owner's own phone (home.brief_phone).
 OWNER_PHONE_CAPS = {"calendar.create", "calendar.update", "calendar.delete", "notify.act"}
 

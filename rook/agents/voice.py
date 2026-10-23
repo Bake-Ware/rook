@@ -64,7 +64,7 @@ MODE_NOTES = {"listen": "active listening", "brainstorm": "brainstorm"}
 
 def speaker_line(identity: dict) -> str:
     """Who a turn's marker says is talking: the voice speaker ID heard ("Bake (sure)",
-    "Autumn (probably)", "unknown guest"), else the key's name."""
+    "Robin (probably)", "unknown guest"), else the key's name."""
     sp = identity.get("speaker") if isinstance(identity.get("speaker"), dict) else None
     if sp:
         label = str(sp.get("label") or "guest")

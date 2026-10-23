@@ -1,6 +1,6 @@
 """People the house voice knows by voice (docs/design/persistent-agents.md 3.4).
 
-One record per person enrolled through the voice ("learn Autumn's voice"): who
+One record per person enrolled through the voice ("learn Robin's voice"): who
 they are to the owner, their consent (their own words, as heard), or for a kid
 the owner's say-so (his words), when the voiceprint was made and where it lives
 (the voice server: voiceprints never leave it), and devices that are obviously
@@ -22,7 +22,7 @@ RESERVED = {"guest", "assistant", "unmapped", "unknown", "owner", "voice"}
 RELATIONS = ("household", "kid", "guest", "family", "friend")
 #: An adult's consent, as heard (the transcript, not the model's account of it).
 CONSENT = re.compile(r"\bi\s+(?:agree|consent)\b.{0,60}\bvoice\b", re.I | re.S)
-#: The owner's say-so for a kid ("yes, enroll Logan", "go ahead and learn Logan's voice").
+#: The owner's say-so for a kid ("yes, enroll Sam", "go ahead and learn Sam's voice").
 SAY_SO = re.compile(r"\b(yes|yeah|yep|go ahead|do it|okay|ok|sure|enrol+|learn|add|set up)\b", re.I)
 
 

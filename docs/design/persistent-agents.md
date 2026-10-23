@@ -296,9 +296,9 @@ with a trust-map grant of `web` (the same `grant_tool` op as an MCP server, the 
 request or a proposal); `web` is never passed on as an MCP server. The voice never has
 them: it routes the lookup with `queue`.
 
-**The owner's phone** (2026-10-23): `home.brief_phone` (else the first attention
-device) is read every 5 min for the brief: battery.status, calendar.list (next 24 h, 3) and
-the attention plugin's urgent/family notices (never a family device; no fallback). The agent
+**The owner's phone** (2026-10-23): `home.brief_phone` (never a family device; no fallback)
+is read every 5 min for the brief: battery.status, calendar.list (next 24 h, 3) and the
+attention plugin's urgent/family notices from that phone only. The agent
 acts only on that phone (OWNER_PHONE_CAPS, front door), and the app refuses those caps unless
 its owner ticked Settings > App > "Let the assistant act for me on this phone"; through
 do_action: calendar.create/update (X), calendar.delete (X, destructive: asks), notify.act
@@ -310,7 +310,7 @@ routed through the agent, with the brief answering the common ones.
 
 **Speaker ID live** (2026-10-23): the voice server sends `identity.speaker {label, score,
 sure}` (sure: cosine >= `VOICE_SPEAKER_SURE` 0.65; no voiceprint for a very short utterance:
-no `speaker`). The host's turn marker says "Bake (sure)" / "Autumn (probably)" / "unknown
+no `speaker`). The host's turn marker says "Bake (sure)" / "Robin (probably)" / "unknown
 guest". `Sessions.heard_as`: on the owner's key, the owner's own label (or no voiceprint) is
 the owner; "guest" or another enrolled person is a guest principal. Identification only:
 risky actions still ask. The hub keeps the last 30 voice turns (`heard`, the transcripts) to

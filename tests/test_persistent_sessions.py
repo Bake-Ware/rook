@@ -730,15 +730,15 @@ async def test_the_brief_carries_the_owners_phone(penv, monkeypatch):
         calls.append((worker, cap))
         return {"battery.status": {"percent": 81, "charging": True},
                 "calendar.list": {"events": [
-                    {"title": "Xavier soccer", "start": "2026-10-24T10:00"},
+                    {"title": "Kai soccer", "start": "2026-10-24T10:00"},
                     {"title": "Declined thing", "start": "2026-10-24T11:00", "declined": True},
                     {"title": "Dinner", "start": "2026-10-24T18:30"}]}}.get(cap)
     monkeypatch.setattr(penv.sess, "_phone_call", fake)
     lines = await penv.sess.refresh_phone(force=True)
     assert calls == [("bakephone", "battery.status"), ("bakephone", "calendar.list")]
     assert lines[0] == "Your phone: 81% battery, charging."
-    assert lines[1] == "Next on your calendar (24 h): 10-24 10:00 Xavier soccer; 10-24 18:30 Dinner."
-    assert "Xavier soccer" in penv.sess.brief("house")
+    assert lines[1] == "Next on your calendar (24 h): 10-24 10:00 Kai soccer; 10-24 18:30 Dinner."
+    assert "Kai soccer" in penv.sess.brief("house")
     calls.clear()
     await penv.sess.refresh_phone()                                   # cached for 5 minutes
     assert calls == []
@@ -760,8 +760,8 @@ async def test_who_is_heard_decides_who_the_voice_acts_for(penv):
     sess = penv.sess
     for ident, want in ((OWNER_SURE, "Bake"), ({"owner": True, "name": "Bake"}, "Bake"),
                         (UNKNOWN, "guest:unknown"),
-                        ({**OWNER_SURE, "speaker": {"label": "Autumn", "score": 0.6, "sure": False}},
-                         "guest:Autumn"),
+                        ({**OWNER_SURE, "speaker": {"label": "Robin", "score": 0.6, "sure": False}},
+                         "guest:Robin"),
                         ({"owner": False, "name": "kid"}, "guest:kid")):
         sess.voice["house"] = {"turn": "t", "identity": ident}
         assert sess.voice_principal("house")[1] == want, ident
@@ -775,41 +775,41 @@ async def test_enrolling_someone_by_voice_needs_the_owner_and_their_consent(penv
     route = lambda ops: sess.route("house", ops)                      # noqa: E731
     _heard(host, "e1", UNKNOWN, "I want to enroll a new voice")
     await until(lambda: sess.voice.get("house", {}).get("turn") == "e1")
-    out = await route([{"op": "enroll", "name": "Autumn", "relation": "my wife"}])
+    out = await route([{"op": "enroll", "name": "Robin", "relation": "my wife"}])
     assert out[0]["ok"] is False and "recognised by voice" in out[0]["error"]
-    _heard(host, "e2", OWNER_SURE, "I want to enroll my wife Autumn")
+    _heard(host, "e2", OWNER_SURE, "I want to enroll my wife Robin")
     await until(lambda: sess.voice.get("house", {}).get("turn") == "e2")
-    out = await route([{"op": "enroll", "name": "Autumn", "relation": "my wife"}])
+    out = await route([{"op": "enroll", "name": "Robin", "relation": "my wife"}])
     assert out[0]["ok"] is False and "I agree to have my voice remembered" in out[0]["error"]
     _heard(host, "e3", UNKNOWN, "I agree to have my voice remembered")
     await until(lambda: sess.voice.get("house", {}).get("turn") == "e3")
-    assert (await route([{"op": "enroll", "name": "Autumn", "relation": "my wife"}]))[0]["ok"]
+    assert (await route([{"op": "enroll", "name": "Robin", "relation": "my wife"}]))[0]["ok"]
     ev = host.sent("voice_event")[-1]
-    assert ev["event"] == "enroll_start" and ev["fields"] == {"name": "Autumn"}
-    rec = sess.people().get("autumn")
+    assert ev["event"] == "enroll_start" and ev["fields"] == {"name": "Robin"}
+    rec = sess.people().get("robin")
     assert rec["relation"] == "household" and not rec["kid"]
     assert rec["consent"]["kind"] == "own_words" and "I agree" in rec["consent"]["words"]
     assert rec["voiceprint"]["state"] == "reading"
     # A child: the owner's own say-so, never automatic.
-    out = await route([{"op": "enroll", "name": "Logan", "relation": "my son"}])
+    out = await route([{"op": "enroll", "name": "Sam", "relation": "my son"}])
     assert out[0]["ok"] is False and "say-so" in out[0]["error"]
-    _heard(host, "e4", OWNER_SURE, "yes, learn Logan's voice")
+    _heard(host, "e4", OWNER_SURE, "yes, learn Sam's voice")
     await until(lambda: sess.voice.get("house", {}).get("turn") == "e4")
-    assert (await route([{"op": "enroll", "name": "Logan", "relation": "my son"}]))[0]["ok"]
-    rec = sess.people().get("logan")
+    assert (await route([{"op": "enroll", "name": "Sam", "relation": "my son"}]))[0]["ok"]
+    rec = sess.people().get("sam")
     assert rec["kid"] and rec["consent"] == {**rec["consent"], "kind": "owner_say_so",
-                                              "words": "yes, learn Logan's voice"}
+                                              "words": "yes, learn Sam's voice"}
     # The voice server reports back; the brief knows them.
     host.emit(role="house", lane="voice", kind="voice_control", op="enrolled", client=1,
-              args={"name": "Autumn", "samples": "3"}, identity={})
-    await until(lambda: sess.people().get("autumn")["voiceprint"]["state"] == "ready")
-    assert "People I know by voice: Autumn (household)." in sess.brief("house")
+              args={"name": "Robin", "samples": "3"}, identity={})
+    await until(lambda: sess.people().get("robin")["voiceprint"]["state"] == "ready")
+    assert "People I know by voice: Robin (household)." in sess.brief("house")
     # Forgetting keeps the record unless asked not to.
-    assert (await route([{"op": "forget_voice", "name": "Autumn"}]))[0]["ok"]
+    assert (await route([{"op": "forget_voice", "name": "Robin"}]))[0]["ok"]
     assert host.sent("voice_event")[-1]["event"] == "voice_forget"
-    assert sess.people().get("autumn")["voiceprint"]["state"] == "deleted"
-    assert (await route([{"op": "forget_voice", "name": "Logan", "keep_record": False}]))[0]["ok"]
-    assert sess.people().get("logan") is None
+    assert sess.people().get("robin")["voiceprint"]["state"] == "deleted"
+    assert (await route([{"op": "forget_voice", "name": "Sam", "keep_record": False}]))[0]["ok"]
+    assert sess.people().get("sam") is None
     caps = [r["cap"] for r in penv.node.journal.rows]
     assert caps.count("home.voice_enroll") == 2 and caps.count("home.voice_forget") == 2
     await disconnect(task, host)
@@ -830,7 +830,7 @@ async def test_listen_end_and_scribe_only_with_the_owner_among_the_speakers(penv
     assert host.sent("voice_event")[-1]["fields"] == {"mode": "listen", "by": "voice"}
     assert sess.conversations().open_one() is None
     # With the owner in it: scribe, lines kept, the agent reads them in batches.
-    _heard(host, "s2", OWNER_SURE, "we should book the dentist for Logan")
+    _heard(host, "s2", OWNER_SURE, "we should book the dentist for Sam")
     await until(lambda: sess.voice.get("house", {}).get("turn") == "s2")
     await sess.route("house", [{"op": "mode", "mode": "scribe"}])
     ev = host.sent("voice_event")[-1]

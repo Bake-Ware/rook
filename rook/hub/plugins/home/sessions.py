@@ -1223,7 +1223,7 @@ class Sessions:
                 return t
         return None
 
-    # -- people: "learn Autumn's voice" -----------------------------------------------------
+    # -- people: "learn Robin's voice" -----------------------------------------------------
     def people(self):
         if self._people is None:
             from .people import People
@@ -1521,8 +1521,10 @@ class Sessions:
         with contextlib.suppress(Exception):
             ap = self.home._node.plugin("attention")
             if ap is not None:
-                notes = [n for n in ap.service.notices(10)
-                         if n.get("priority") in ("urgent", "family")][:3]
+                # Only the owner's own phone's notices (other phones' are theirs).
+                notes = [n for n in ap.service.notices(20)
+                         if n.get("priority") in ("urgent", "family")
+                         and str(n.get("device") or "").lower() == dev.lower()][:3]
         if notes:
             lines.append("Important notifications: " + "; ".join(
                 f"{n.get('app') or n.get('category')}: {str(n.get('summary') or '')[:100]}"

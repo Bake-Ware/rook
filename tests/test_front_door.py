@@ -478,7 +478,7 @@ def test_irreversible_actions_are_recognised():
     assert "as you" in F.irreversible("notify.act", "change", (), {"key": "k", "text": "on my way"})
     # A notification's own action asks unless it is named and harmless (review of #188):
     # Delete, Archive, Block, Call back, any action by index.
-    for act in ("Delete", "Archive", "Block", "Call back", "Decline", 0, "1", ""):
+    for act in ("Delete", "Archive", "Block", "Call back", "Decline", "OK", "Got it", 0, "1", ""):
         assert F.irreversible("notify.act", "change", (), {"key": "k", "action": act}), act
     for cap in ("sms.send", "gmail.send", "email.reply", "telegram.send", "msg.send",
                 "signal.send", "discord.post", "slack.post_message", "whatsapp.reply",
@@ -658,27 +658,27 @@ async def test_a_queued_one_to_one_round_answers_its_own_post_and_reports_skip_t
 
 @pytest.mark.asyncio
 async def test_a_family_devices_battery_is_read_without_an_ask_and_its_messages_are_not(front):
-    front.node.settings.set("role.protected_workers", ["Logan's tablet"], actor="human:op")
-    front.band.workers["w-logan"] = {
-        "name": "Logan's tablet", "last_seen": time.time(),
+    front.node.settings.set("role.protected_workers", ["Sam's tablet"], actor="human:op")
+    front.band.workers["w-sam"] = {
+        "name": "Sam's tablet", "last_seen": time.time(),
         "caps": ["battery.status", "device.info", "notify.list", "device.vibrate"],
         # An older app still announces device.info as exec.
         "tiers": {"battery.status": "read", "device.info": "exec", "notify.list": "exec",
                   "device.vibrate": "exec"}}
     for cap in ("battery.status", "device.info"):
         _script(front, "front-voice", {"tools": [("do_action", {
-            "worker": "Logan's tablet", "cap": cap, "args": {},
-            "summary": f"read {cap} on Logan's tablet"})], "text": "It's at 28 percent."})
-        out = await _ask(front, "what's the battery on Logan's tablet")
+            "worker": "Sam's tablet", "cap": cap, "args": {},
+            "summary": f"read {cap} on Sam's tablet"})], "text": "It's at 28 percent."})
+        out = await _ask(front, "what's the battery on Sam's tablet")
         assert out["path"] != "ask" and _ran(front, cap), cap
         assert not [i for i in front.node.plugin("approvals").relay.items()
                     if i["kind"] == "house"]
     # Private content (even a read) and any change still ask, citing the family device.
     for cap in ("notify.list", "device.vibrate"):
         _script(front, "front-voice", {"tools": [("do_action", {
-            "worker": "Logan's tablet", "cap": cap, "args": {},
-            "summary": f"{cap} on Logan's tablet"})], "text": ""})
-        out = await _ask(front, f"{cap} on Logan's tablet")
+            "worker": "Sam's tablet", "cap": cap, "args": {},
+            "summary": f"{cap} on Sam's tablet"})], "text": ""})
+        out = await _ask(front, f"{cap} on Sam's tablet")
         assert out["path"] == "ask" and not _ran(front, cap), cap
         item = [i for i in front.node.plugin("approvals").relay.items()
                 if i["kind"] == "house"][-1]

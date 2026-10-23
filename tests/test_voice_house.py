@@ -743,22 +743,22 @@ def test_the_hub_starts_a_named_enrollment_and_hears_how_it_went(tmp_path, monke
             conn.speakers = FakeSpeakers()
             try:
                 await conn.fb.house.lane.ensure()
-                await lane.send(t='enroll_start', name='Autumn')
+                await lane.send(t='enroll_start', name='Robin')
                 await wait_for(lambda: conn.enrolling is not None)
-                assert conn.enrolling['principal'] == 'Autumn' and conn.enrolling['other']
+                assert conn.enrolling['principal'] == 'Robin' and conn.enrolling['other']
                 await wait_for(lambda: any('Please read: One two three.' in t for t in said(events)))
                 for _ in range(3):
                     assert await conn._voice_command('reading it', b'\0' * 32000, False)
                 await wait_for(lambda: any(m.get('op') == 'enrolled' for m in lane.received))
                 (done,) = [m for m in lane.received if m.get('op') == 'enrolled']
-                assert done['args'] == {'name': 'Autumn', 'samples': '3'} and conn.enrolling is None
-                assert any("Thanks, Autumn" in t for t in said(events))
+                assert done['args'] == {'name': 'Robin', 'samples': '3'} and conn.enrolling is None
+                await wait_for(lambda: any("Thanks, Robin" in t for t in said(events)))
                 await lane.send(t='voices_list')
                 await wait_for(lambda: any(m.get('op') == 'voices' for m in lane.received))
-                assert [m for m in lane.received if m.get('op') == 'voices'][0]['args'] == {'names': 'Alex,Autumn'}
-                await lane.send(t='voice_forget', name='Autumn')
+                assert [m for m in lane.received if m.get('op') == 'voices'][0]['args'] == {'names': 'Alex,Robin'}
+                await lane.send(t='voice_forget', name='Robin')
                 await wait_for(lambda: any(m.get('op') == 'forgot' for m in lane.received))
-                assert 'Autumn' not in conn.speakers.prints
+                assert 'Robin' not in conn.speakers.prints
                 await lane.send(t='listen_end', quiet_minutes=10)
                 await wait_for(lambda: any(e.get('type') == 'bye' for e in events))
                 bye = next(e for e in events if e.get('type') == 'bye')
