@@ -431,7 +431,7 @@
    ]
   },
   "device.info": {
-   "tier": "exec"
+   "tier": "read"
   },
   "device.keep_awake": {
    "tier": "exec",
@@ -443,7 +443,7 @@
    "tier": "exec"
   },
   "device.keep_awake_status": {
-   "tier": "exec"
+   "tier": "read"
   },
   "device.launch": {
    "tier": "exec"
@@ -465,7 +465,7 @@
    ]
   },
   "device.unlock_status": {
-   "tier": "exec"
+   "tier": "read"
   },
   "device.update": {
    "tier": "admin",
@@ -474,7 +474,7 @@
    ]
   },
   "device.update_status": {
-   "tier": "exec"
+   "tier": "read"
   },
   "device.vibrate": {
    "tier": "exec",

@@ -932,7 +932,7 @@
    "tags": []
   },
   "device.info": {
-   "tier": "exec",
+   "tier": "read",
    "tags": []
   },
   "device.keep_awake": {
@@ -946,7 +946,7 @@
    "tags": []
   },
   "device.keep_awake_status": {
-   "tier": "exec",
+   "tier": "read",
    "tags": []
   },
   "device.launch": {
@@ -966,7 +966,7 @@
    "tags": []
   },
   "device.unlock_status": {
-   "tier": "exec",
+   "tier": "read",
    "tags": []
   },
   "device.update": {
@@ -974,7 +974,7 @@
    "tags": []
   },
   "device.update_status": {
-   "tier": "exec",
+   "tier": "read",
    "tags": []
   },
   "device.vibrate": {

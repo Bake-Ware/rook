@@ -31,7 +31,9 @@ Open it on **Manage > Trust**.
 What happens to one action depends on two things: what kind of action it is,
 and the strictest level of what it touches.
 
-- **Reads** always go, on every level.
+- **Reads** always go, on every level. A device's battery, model, Android
+  version, uptime, app version and update progress count as reads on any
+  device, even when an older app still calls them something else.
 - **Preparing** always goes: writing tasks, knowledge pages, chat and huddle
   messages on the hub.
 - **Changes** (running commands, writing files) go on ship-it, ask on

@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import fnmatch
 
+from ....core.authz import is_status_read
+
 FREE = "free"
 ROUTINE = "routine"
 APPROVAL = "approval"
@@ -60,6 +62,9 @@ def cap_tier(role: dict, cap: str, cap_risk: str, worker: str = "",
     call outside it is refused, not carded."""
     if locked(cap):
         return APPROVAL, f"{cap} touches secrets: a person approves every such call"
+    if is_status_read(cap):
+        # Battery, device info, versions: free on any device, family devices included.
+        return FREE, ""
     if worker and any(worker.lower() == str(p).strip().lower() for p in protected or ()):
         return APPROVAL, f"{worker} is a protected device (role.protected_workers): a person " \
                          "approves anything on it"

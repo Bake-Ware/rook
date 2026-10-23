@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from ....core import names
+from ....core.authz import is_status_read
 from ....core.db import open_db
 from ....core.text import clip
 from .onboard import OnboardError, Onboarding
@@ -1399,7 +1400,9 @@ class FrontDoor:
                   "on_hub": w["on_hub"], "kind": kind}
         cite = self.cite_of(r, pb)
         reasons = []
-        if w["name"].lower() in protected:
+        if w["name"].lower() in protected and not is_status_read(cap):
+            # A family device: battery and status reads go; anything else (private
+            # content included, like messages or the screen) asks the person.
             reasons.append(f"{w['name']} is a family device")
         if r is not None and r.tier != "go":
             reasons.append(r.cite)

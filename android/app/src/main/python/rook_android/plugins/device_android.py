@@ -81,7 +81,7 @@ class AndroidDevicePlugin(Plugin):
             updater.setChannel(app_context(), chosen)
         return json.loads(str(updater.request(app_context(), False)))
 
-    @capability("update_status", risk="exec")
+    @capability("update_status", risk="read")
     def _update_status(self) -> dict:
         """APK updater progress, installed/target versions, update channel, and required action."""
         return json.loads(str(jclass("systems.bake.rook.ApkUpdater").status(app_context())))
@@ -102,7 +102,7 @@ class AndroidDevicePlugin(Plugin):
         """Stop the find-device ring and restore the previous alarm volume."""
         return json.loads(str(jclass("systems.bake.rook.FindDeviceBridge").stop()))
 
-    @capability("info", risk="exec")
+    @capability("info", risk="read")
     def _info(self) -> dict:
         """Model, Android version, screen, uptime, and battery-independent bits."""
         ctx = app_context()
@@ -179,7 +179,7 @@ class AndroidDevicePlugin(Plugin):
         given = None if pin is None or not str(pin).strip() else str(pin)
         return await unlock(given, hold_ms=int(hold_ms), pre_swipe=_flag(pre_swipe))
 
-    @capability("unlock_status", risk="exec")
+    @capability("unlock_status", risk="read")
     def _unlock_status(self) -> dict:
         """Whether an unlock PIN is saved in the app (never the PIN itself), and
         whether passive keep-awake may use it (paused after a failed automatic try)."""
@@ -205,7 +205,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("keep_awake_status", risk="exec")
+    @capability("keep_awake_status", risk="read")
     def _keep_awake_status(self) -> dict:
         """Keep-awake state: on, mode (manual|auto), until (epoch s), remaining_s,
         overlay/wake_lock in use, screen_on, locked, the passive setting, whether

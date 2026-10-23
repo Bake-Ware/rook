@@ -296,8 +296,8 @@ Settings, group **Chaired huddles** (the huddle plugin):
 Group **roles**: **Tool calls per role turn** (`role.max_tool_calls`,
 12), **Role tool result length** (`role.tool_result_chars`, 12000),
 **Where code lives** (above), **Protected devices**
-(`role.protected_workers`: workers where every call a role makes, reads
-too, needs your approval, such as family phones, tablets and TVs),
+(`role.protected_workers`: family phones, tablets and TVs, where every
+call needs your approval except status reads such as battery and version),
 **Role session model** (`role.session_model`, blank: Claude Code's
 default), **Session quiet alarm** (`role.session_stall_minutes`, 20),
 **Session time limit** (`role.session_max_minutes`, 180) and **Live

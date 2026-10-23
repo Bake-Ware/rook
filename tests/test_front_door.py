@@ -633,3 +633,47 @@ async def test_a_queued_one_to_one_round_answers_its_own_post_and_reports_skip_t
     assert len(turns) == 2
     assert "first question" in turns[0]["args"]["prompt"]
     assert "second question" not in turns[0]["args"]["prompt"] and first["seq"]
+
+
+# -- family devices: status reads go, the rest asks (Bake, 2026-10-23) ---------------------
+
+@pytest.mark.asyncio
+async def test_a_family_devices_battery_is_read_without_an_ask_and_its_messages_are_not(front):
+    front.node.settings.set("role.protected_workers", ["Logan's tablet"], actor="human:op")
+    front.band.workers["w-logan"] = {
+        "name": "Logan's tablet", "last_seen": time.time(),
+        "caps": ["battery.status", "device.info", "notify.list", "device.vibrate"],
+        # An older app still announces device.info as exec.
+        "tiers": {"battery.status": "read", "device.info": "exec", "notify.list": "exec",
+                  "device.vibrate": "exec"}}
+    for cap in ("battery.status", "device.info"):
+        _script(front, "front-voice", {"tools": [("do_action", {
+            "worker": "Logan's tablet", "cap": cap, "args": {},
+            "summary": f"read {cap} on Logan's tablet"})], "text": "It's at 28 percent."})
+        out = await _ask(front, "what's the battery on Logan's tablet")
+        assert out["path"] != "ask" and _ran(front, cap), cap
+        assert not [i for i in front.node.plugin("approvals").relay.items()
+                    if i["kind"] == "house"]
+    # Private content (even a read) and any change still ask, citing the family device.
+    for cap in ("notify.list", "device.vibrate"):
+        _script(front, "front-voice", {"tools": [("do_action", {
+            "worker": "Logan's tablet", "cap": cap, "args": {},
+            "summary": f"{cap} on Logan's tablet"})], "text": ""})
+        out = await _ask(front, f"{cap} on Logan's tablet")
+        assert out["path"] == "ask" and not _ran(front, cap), cap
+        item = [i for i in front.node.plugin("approvals").relay.items()
+                if i["kind"] == "house"][-1]
+        assert "family device" in item["explain"]
+
+
+def test_status_reads_are_reads_whatever_an_older_app_announces():
+    from rook.core import authz
+    assert T.classify("device.info", "exec") == "read"
+    assert T.classify("battery.status", "read") == "read"
+    assert T.classify("notify.list", "exec") == "change"
+    assert T.classify("device.vibrate", "exec") == "change"
+    assert authz.effective_tier("device.info") == "read"            # declared read now
+    assert authz.effective_tier("device.info", "exec") == "exec"    # an older app's announce
+    assert not authz.STATUS_READS & {"notify.list", "sms.list", "contacts.search",
+                                     "calllog.list", "location.get", "screenshot.capture",
+                                     "ui.text", "device.clipboard_get", "calendar.list"}
