@@ -95,7 +95,8 @@ async def test_hub_and_session_host_end_to_end(stack, fx):  # noqa: F811
                                    headers={"Authorization": "Bearer voice-tok"}) as ws:
             ready = await ws.receive_json(timeout=10)
             assert ready["t"] == "ready"
-            await ws.send_json({"t": "user", "turn": "t1", "text": "hello there",
+            # Integer turn ids, as the kaiju voice server sends them.
+            await ws.send_json({"t": "user", "turn": 1, "text": "hello there",
                                 "identity": {"owner": True, "name": "Bake"}})
             got = []
             while True:
@@ -104,6 +105,7 @@ async def test_hub_and_session_host_end_to_end(stack, fx):  # noqa: F811
                 if m["t"] == "end":
                     break
             assert any(m["t"] == "delta" for m in got) and got[-1]["first_ms"] is not None
+            assert {m["turn"] for m in got} == {1}                  # echoed with its type
             await wait_for(lambda: (penv.sess.voice.get("house") or {}).get("identity"), 5,
                            "voice identity at the hub")
             out = await penv.sess.flow("house", "queue", {"request": "turn on the lights"})

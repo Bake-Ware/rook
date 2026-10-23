@@ -250,6 +250,9 @@ class Lane:
         kind, turn = message.get('t'), message.get('turn')
         if not isinstance(turn, (int, str, type(None))):
             return
+        if isinstance(turn, str) and turn.isdigit() and turn not in self.turns \
+                and turn not in self.pushes and int(turn) in self.turns:
+            turn = int(turn)            # a host that echoes turn numbers as strings
         if kind == 'ready':
             self.session = message.get('session')
             return

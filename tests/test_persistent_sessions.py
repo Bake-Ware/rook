@@ -173,10 +173,11 @@ def test_role_files_name_token_variables_never_tokens():
     assert "Edit(./workspace/**)" in st["permissions"]["allow"]       # Edit rules govern Write
     assert "Bash" in st["permissions"]["deny"] and st["enabledMcpjsonServers"] == ["rook", "rea"]
     vs = json.loads(files["voice/.claude/settings.json"])
-    assert vs["model"] == "haiku" and vs["effortLevel"] == "low"
+    assert vs["model"] == "claude-haiku-4-5" and vs["effortLevel"] == "low"
     assert vs["env"]["MAX_THINKING_TOKENS"] == "0" and vs["alwaysThinkingEnabled"] is False
     assert vs["permissions"]["allow"] == ["mcp__flow"] and "Read" in vs["permissions"]["deny"]
     assert "Speak first" in files["voice/CLAUDE.md"]
+    assert "never with a tool call" in files["voice/CLAUDE.md"]
 
 
 # -- the inbox ------------------------------------------------------------------------
@@ -220,7 +221,7 @@ async def test_the_link_needs_the_token_and_gets_files_and_lanes(penv):
     for tok in host.tokens.values():
         assert tok not in blob                                  # tokens only in env
     assert house["lanes"]["main"]["model"] == "opus"
-    assert house["lanes"]["voice"]["model"] == "haiku"
+    assert house["lanes"]["voice"]["model"] == "claude-haiku-4-5"
     assert house["lanes"]["voice"]["effort"] == "low" and house["lanes"]["voice"]["partial"]
     assert house["voice_token_sha256"] == S.token_hash("voice-token")
     assert "https://mcp.example.com/home/turn-mcp" in house["dir_files"][".mcp.json"]
@@ -229,6 +230,20 @@ async def test_the_link_needs_the_token_and_gets_files_and_lanes(penv):
     assert st["roles"]["house"]["line"] == "house agent: idle"
     await disconnect(task, host)
     assert penv.sess.link is None
+
+
+@pytest.mark.asyncio
+async def test_a_changed_setting_reconfigures_the_host_once(penv):
+    host, task = await connect(penv)
+    await penv.sess.watch_trust()
+    assert len(host.sent("configure")) == 1                  # nothing changed: nothing sent
+    penv.node.settings.set("home.voice_model", "haiku", actor="human:op")
+    await penv.sess.watch_trust()
+    cfgs = host.sent("configure")
+    assert len(cfgs) == 2 and cfgs[-1]["roles"]["house"]["lanes"]["voice"]["model"] == "haiku"
+    await penv.sess.watch_trust()
+    assert len(host.sent("configure")) == 2
+    await disconnect(task, host)
 
 
 @pytest.mark.asyncio

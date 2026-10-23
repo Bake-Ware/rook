@@ -254,7 +254,9 @@ class Host:
         if rs is None or rs.voice is None:
             raise OpError(f"role {role} has no voice lane here")
         turn = msg.get("turn")
-        return rs.voice.say(self._text(msg), str(turn) if turn else None)
+        if not (isinstance(turn, int) and not isinstance(turn, bool)):
+            turn = str(turn) if turn else None      # numbers stay numbers (the voice client's ids)
+        return rs.voice.say(self._text(msg), turn)
 
     async def op_status(self, msg: dict) -> dict:
         return self.status()
