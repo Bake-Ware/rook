@@ -702,6 +702,7 @@ class Worker:
 
     async def _announce_loop(self) -> None:
         import random
+        failing = False
         while not self._stopping:
             try:
                 # Jitter each interval (±20%) so a fleet that (re)started together
@@ -709,10 +710,16 @@ class Worker:
                 await asyncio.sleep(self._announce_interval * (0.8 + random.random() * 0.4))
                 if not self._stopping:
                     await self.announce()
+                    failing = False
             except asyncio.CancelledError:
                 break
-            except Exception:
-                log.exception("announce failed")
+            except Exception as e:
+                # One traceback per outage: an offline phone logged 1,180 of them.
+                if failing:
+                    log.debug("announce failed: %s", e)
+                else:
+                    log.exception("announce failed")
+                failing = True
 
     async def run(self) -> None:
         # on_connect=self.announce: re-announce every time the transport's link
