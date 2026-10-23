@@ -708,3 +708,28 @@ async def test_models_by_the_phone_and_by_voice_apply_live_and_are_journaled(pen
     with pytest.raises(ValueError, match="front: one of"):
         penv.sess.set_models(front="gpt-9", who="x", via="api")
     await disconnect(task, host)
+
+
+@pytest.mark.asyncio
+async def test_the_brief_carries_the_owners_phone(penv, monkeypatch):
+    assert penv.sess.brief_phone() == ""
+    assert await penv.sess.refresh_phone(force=True) == []           # no phone: nothing read
+    penv.node.settings.set("home.brief_phone", "bakephone", actor="human:op")
+    calls = []
+
+    async def fake(worker, cap, args):
+        calls.append((worker, cap))
+        return {"battery.status": {"percent": 81, "charging": True},
+                "calendar.list": {"events": [
+                    {"title": "Xavier soccer", "start": "2026-10-24T10:00"},
+                    {"title": "Declined thing", "start": "2026-10-24T11:00", "declined": True},
+                    {"title": "Dinner", "start": "2026-10-24T18:30"}]}}.get(cap)
+    monkeypatch.setattr(penv.sess, "_phone_call", fake)
+    lines = await penv.sess.refresh_phone(force=True)
+    assert calls == [("bakephone", "battery.status"), ("bakephone", "calendar.list")]
+    assert lines[0] == "Your phone: 81% battery, charging."
+    assert lines[1] == "Next on your calendar (24 h): 10-24 10:00 Xavier soccer; 10-24 18:30 Dinner."
+    assert "Xavier soccer" in penv.sess.brief("house")
+    calls.clear()
+    await penv.sess.refresh_phone()                                   # cached for 5 minutes
+    assert calls == []

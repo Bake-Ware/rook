@@ -296,6 +296,21 @@ with a trust-map grant of `web` (the same `grant_tool` op as an MCP server, the 
 request or a proposal); `web` is never passed on as an MCP server. The voice never has
 them: it routes the lookup with `queue`.
 
+**The owner's phone** (2026-10-23): `home.brief_phone` (else the first attention
+device) is read every 5 min for the brief: battery.status, calendar.list (next 24 h, 3) and
+the attention plugin's urgent/family notices. The agent acts on that phone through
+do_action: calendar.create/update (X), calendar.delete (X, destructive: asks), notify.act
+(X; with text it replies to someone: asks, as does any cap that sends a message as the
+person: sms.send, *.send_message, mail sends), notify.dismiss, device.open_url/launch.
+Read tools for the voice itself: measured, see persistent-agents-20261023; reads stay
+routed through the agent, with the brief answering the common ones.
+
+**Sounds** (as Pianobar's DJ): the voice server offers `sound_tags` ([laugh] [chuckle]
+[sigh] [gasp] [clear throat]) on about one turn in four (`VOICE_HOUSE_SOUND_EVERY`) when
+the app's Expressive voice is on and the voice is a Chatterbox one; the host puts them in
+the turn marker, the voice may use one. Unoffered or unknown bracketed words are cut before
+TTS; the transcript shows tags as stage directions ("(laughs)").
+
 ### 3.6 Role config by the house agent (trust-gated)
 
 The hub keeps each persistent role's config (model, effort, granted MCP servers, env) in

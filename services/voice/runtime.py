@@ -12,6 +12,7 @@ import re
 import traceback
 from .identity import Identity, current_identity
 from .modes import Mode, dictation_command
+from .sounds import stage_directions
 from .timing import TurnTiming, log_dropped
 from .stt_gate import normalise
 
@@ -731,7 +732,8 @@ class Connection:
             if (progress_job not in self.progress.jobs.values() or self.progress.suppressed() or
                     epoch != self.epoch):
                 return False
-        await self.emit("assistant_delta", text=text, turn=epoch)
+        # Sound tags read as stage directions on screen ("(laughs)"); the voice performs them.
+        await self.emit("assistant_delta", text=stage_directions(text), turn=epoch)
         timing = self.timing if progress_job is None and self.timing and self.timing.turn == epoch else None
         if timing:
             timing.mark('first_text_ms')

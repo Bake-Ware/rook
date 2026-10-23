@@ -295,6 +295,7 @@ are set only in the environment or on the command line.
 | `home.web_search` | Web search | hub | bool | on | `ROOK_HOME_WEB_SEARCH` | live |
 | `home.voice_model` | Voice model | hub | str | `claude-haiku-5-5` | `ROOK_HOME_VOICE_MODEL` | live |
 | `home.voice_effort` | Voice effort | hub | str | `low` | `ROOK_HOME_VOICE_EFFORT` | live |
+| `home.brief_phone` | Owner's phone for the voice's brief | hub | str |  | `ROOK_HOME_BRIEF_PHONE` | live |
 | `home.voice_engine` | Voice engine | hub | str | `house` | `ROOK_HOME_VOICE_ENGINE` | live |
 | `home.btw_model` | By-the-way model | hub | str | `haiku` | `ROOK_HOME_BTW_MODEL` | live |
 | `home.compact_at_tokens` | Compact the agent at (tokens) | hub | int | `150000` | `ROOK_HOME_COMPACT_AT_TOKENS` | live |

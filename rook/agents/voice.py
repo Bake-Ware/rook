@@ -29,6 +29,7 @@ import hmac
 import itertools
 import json
 import logging
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -52,6 +53,8 @@ CONTEXT_EVERY = 20
 EVENTS = ("mode", "models")
 #: Control messages a voice client may send (to the hub, as the connection's identity).
 CONTROLS = ("models_get", "models_set")
+#: A sound the voice server offers ("[laugh]"): what may go in a turn's header.
+SOUND_TAG = re.compile(r"^\[[a-z][a-z ]{0,18}\]$")
 #: Listening modes that reach the voice lane, and how a turn says so.
 MODE_NOTES = {"listen": "active listening", "brainstorm": "brainstorm"}
 
@@ -170,7 +173,7 @@ class VoiceRoom:
 
     # -- user turns ---------------------------------------------------------------
     async def user(self, c: Client, turn_id: str, text: str, identity: dict,
-                   mode: str = "") -> None:
+                   mode: str = "", sounds: list | None = None) -> None:
         c.last_active = time.monotonic()
         self._remember(turn_id, c)
         self.host.emit(self.role, "voice", "voice_turn", turn=turn_id, text=text,
@@ -183,7 +186,10 @@ class VoiceRoom:
             async with self.lock:
                 name = str(identity.get("name") or "").strip() or "guest"
                 note = MODE_NOTES.get(mode)
-                body = f"[voice | {name}{' | ' + note if note else ''} | {self.now()}] {text}"
+                extra = f" | {note}" if note else ""
+                if sounds:
+                    extra += " | you may use one sound if it truly fits: " + " ".join(sounds)
+                body = f"[voice | {name}{extra} | {self.now()}] {text}"
                 if self.held:
                     away = "\n".join(f"[back end, while you were away] {h}" for h in self.held)
                     self.held.clear()
@@ -433,7 +439,10 @@ class VoiceServer:
                     ident = obj.get("identity") if isinstance(obj.get("identity"), dict) else {}
                     ident = {k: ident.get(k) for k in ("owner", "name") if k in ident}
                     mode = str(obj.get("mode") or "")[:20]
-                    room.spawn(room.user(c, turn_id, text.strip(), ident, mode))
+                    raw = obj.get("sound_tags") if isinstance(obj.get("sound_tags"), list) else []
+                    sounds = [str(t)[:20] for t in raw[:8]
+                              if isinstance(t, str) and SOUND_TAG.match(str(t)[:20])]
+                    room.spawn(room.user(c, turn_id, text.strip(), ident, mode, sounds))
                 elif t == "control":
                     op = str(obj.get("op") or "")
                     if op not in CONTROLS:

@@ -1,4 +1,4 @@
-"""calendar.* — read the phone's calendars (Chaquopy java bridge, READ_CALENDAR).
+"""calendar.* — the phone's calendars (Chaquopy java bridge, READ_CALENDAR / WRITE_CALENDAR).
 
 Reads Android's CalendarContract.Instances, the store every calendar app syncs
 into: Google Calendar, and Outlook when its "Sync calendars" setting is on,
@@ -16,6 +16,13 @@ from rook.worker.plugin import ANDROID_APP, Plugin, capability, place
 from rook_android.androidctx import app_context, jclass, has_permission
 
 _READ_CALENDAR = "android.permission.READ_CALENDAR"
+_WRITE_CALENDAR = "android.permission.WRITE_CALENDAR"
+NO_WRITE = ("calendar changes not granted: open Rook on the phone, Settings > Permissions > "
+            "\"Grant SMS / contacts / calendar / location\", and allow Calendar")
+_EVENTS = "content://com.android.calendar/events"
+_CALENDARS = "content://com.android.calendar/calendars"
+# CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR: the account may add events.
+_CAN_WRITE = 500
 NO_PERMISSION = ("calendar access not granted: open Rook on the phone, Settings > "
                  "Permissions > \"Grant SMS / contacts / calendar / location\", and allow Calendar")
 DAY_MS = 24 * 3600 * 1000
@@ -193,6 +200,173 @@ class AndroidCalendarPlugin(Plugin):
         events = [event_row(r) for r in select_rows(rows, begin, finish, n)]
         return {"ok": True, "count": len(events), "start": iso_local(begin), "end": iso_local(finish),
                 "timezone_offset_min": _offset_ms(begin) // 60000, "events": events}
+
+    # -- changes (the house agent, for the owner: bakephone only) ---------------------
+    def _calendars(self, ctx) -> list[dict]:
+        Uri = jclass("android.net.Uri")
+        cols = ["_id", "calendar_displayName", "account_name", "isPrimary",
+                "calendar_access_level", "visible", "ownerAccount"]
+        cur = ctx.getContentResolver().query(Uri.parse(_CALENDARS), cols, None, None, None)
+        out = []
+        if cur is None:
+            return out
+        try:
+            while cur.moveToNext():
+                out.append({"id": int(cur.getLong(0)), "name": cur.getString(1) or "",
+                            "account": cur.getString(2) or "",
+                            "primary": (not cur.isNull(3)) and cur.getInt(3) == 1,
+                            "access": 0 if cur.isNull(4) else int(cur.getInt(4)),
+                            "visible": (not cur.isNull(5)) and cur.getInt(5) == 1})
+        finally:
+            cur.close()
+        return out
+
+    def _values(self, title, start, end, all_day, location, description, calendar_id=None,
+                defaults_ms=None):
+        cv = jclass("android.content.ContentValues")()
+        tz = str(jclass("java.util.TimeZone").getDefault().getID())
+        if calendar_id is not None:
+            cv.put("calendar_id", jclass("java.lang.Long")(int(calendar_id)))
+        if title is not None:
+            cv.put("title", str(title)[:500])
+        if location is not None:
+            cv.put("eventLocation", str(location)[:500])
+        if description is not None:
+            cv.put("description", str(description)[:4000])
+        if start is not None or end is not None or all_day is not None:
+            now = int(time.time() * 1000)
+            b0, e0 = defaults_ms or (now, now + 3600 * 1000)
+            begin = parse_time(start, b0)
+            finish = parse_time(end, begin + (e0 - b0 if defaults_ms else 3600 * 1000))
+            if finish <= begin:
+                raise ValueError("end must be after start")
+            day = bool(all_day)
+            if day:
+                # All-day events are stored at UTC midnight.
+                off = _offset_ms(begin)
+                begin = ((begin + off) // DAY_MS) * DAY_MS
+                finish = max(begin + DAY_MS, ((finish + off + DAY_MS - 1) // DAY_MS) * DAY_MS)
+                tz = "UTC"
+            cv.put("dtstart", jclass("java.lang.Long")(int(begin)))
+            cv.put("dtend", jclass("java.lang.Long")(int(finish)))
+            cv.put("allDay", jclass("java.lang.Integer")(1 if day else 0))
+            cv.put("eventTimezone", tz)
+        return cv
+
+    def _writable(self, ctx):
+        if ctx is None:
+            return {"ok": False, "error": "not an Android host"}
+        if not has_permission(_WRITE_CALENDAR):
+            return {"ok": False, "error": NO_WRITE, "needs_permission": "WRITE_CALENDAR"}
+        return None
+
+    @capability("create", risk="exec", tags=("personal",))
+    def _create(self, title: str, start: str | int, end: str | int | None = None,
+                all_day: bool = False, location: str = "", description: str = "",
+                calendar: str = "") -> dict:
+        """Add an event to a calendar on the phone (the owner's own calendar).
+
+        Args:
+          title: what it is. start / end: as for calendar.list (ISO local time, epoch, "now");
+            end defaults to an hour after start. all_day: a whole-day event.
+          location, description: optional. calendar: a calendar's name or account
+            (default: the primary calendar the phone may write to).
+
+        Returns {ok, event_id, calendar, start, end}."""
+        ctx = app_context()
+        bad = self._writable(ctx)
+        if bad:
+            return bad
+        if not str(title or "").strip():
+            return {"ok": False, "error": "title: what the event is"}
+        try:
+            cals = [c for c in self._calendars(ctx) if c["access"] >= _CAN_WRITE]
+            want = str(calendar or "").strip().lower()
+            pick = ([c for c in cals if want and want in (c["name"].lower(), c["account"].lower())]
+                    or ([] if want else [c for c in cals if c["primary"] and c["visible"]])
+                    or ([] if want else [c for c in cals if c["visible"]]))
+            if not pick:
+                names = ", ".join(sorted({c["name"] for c in cals})) or "none"
+                return {"ok": False, "error": f"no calendar to write to{' called ' + calendar if want else ''} "
+                                              f"(writable: {names})"}
+            cv = self._values(title, start, end, all_day, location or None, description or None,
+                              calendar_id=pick[0]["id"])
+            Uri = jclass("android.net.Uri")
+            uri = ctx.getContentResolver().insert(Uri.parse(_EVENTS), cv)
+            if uri is None:
+                return {"ok": False, "error": "the calendar refused the event"}
+            eid = int(jclass("android.content.ContentUris").parseId(uri))
+        except (TypeError, ValueError) as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        return {"ok": True, "event_id": eid, "calendar": pick[0]["name"],
+                "start": iso_local(int(cv.getAsLong("dtstart"))),
+                "end": iso_local(int(cv.getAsLong("dtend")))}
+
+    def _event_uri(self, event_id):
+        return jclass("android.content.ContentUris").withAppendedId(
+            jclass("android.net.Uri").parse(_EVENTS), int(event_id))
+
+    def _times_of(self, ctx, event_id):
+        cur = ctx.getContentResolver().query(self._event_uri(event_id), ["dtstart", "dtend", "title"],
+                                             None, None, None)
+        if cur is None:
+            return None
+        try:
+            if not cur.moveToNext():
+                return None
+            return int(cur.getLong(0)), (int(cur.getLong(1)) if not cur.isNull(1) else None), cur.getString(2)
+        finally:
+            cur.close()
+
+    @capability("update", risk="exec", tags=("personal",))
+    def _update(self, event_id: int, title: str | None = None, start: str | int | None = None,
+                end: str | int | None = None, all_day: bool | None = None,
+                location: str | None = None, description: str | None = None) -> dict:
+        """Change an event on the phone by ``event_id`` (from calendar.list): only the fields given.
+        Moving ``start`` alone keeps the event's length. Returns {ok, event_id, title}."""
+        ctx = app_context()
+        bad = self._writable(ctx)
+        if bad:
+            return bad
+        try:
+            was = self._times_of(ctx, event_id)
+            if was is None:
+                return {"ok": False, "error": f"no event {event_id}"}
+            b0, e0, old_title = was
+            e0 = e0 if e0 is not None else b0 + 3600 * 1000
+            if start is not None and end is None:
+                end = parse_time(start, b0) + (e0 - b0)
+            times = (start, end, all_day) if any(v is not None for v in (start, end, all_day)) \
+                else (None, None, None)
+            cv = self._values(title, times[0], times[1], times[2], location, description,
+                              defaults_ms=(b0, e0))
+            if cv.size() == 0:
+                return {"ok": False, "error": "nothing to change"}
+            n = ctx.getContentResolver().update(self._event_uri(event_id), cv, None, None)
+        except (TypeError, ValueError) as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        return {"ok": n > 0, "event_id": int(event_id), "title": title or old_title,
+                **({} if n > 0 else {"error": "the calendar refused the change"})}
+
+    @capability("delete", risk="exec", tags=("personal", "destructive"))
+    def _delete(self, event_id: int) -> dict:
+        """Delete an event on the phone by ``event_id`` (from calendar.list). Not undone."""
+        ctx = app_context()
+        bad = self._writable(ctx)
+        if bad:
+            return bad
+        try:
+            was = self._times_of(ctx, event_id)
+            if was is None:
+                return {"ok": False, "error": f"no event {event_id}"}
+            n = ctx.getContentResolver().delete(self._event_uri(event_id), None, None)
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        return {"ok": n > 0, "event_id": int(event_id), "title": was[2]}
 
     def _query(self, ctx, begin: int, finish: int, n: int) -> list[dict]:
         Uri = jclass("android.net.Uri")

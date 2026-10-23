@@ -22,6 +22,7 @@
     <string name="voice_off">Voice off</string>
     <string name="hint_voice_token">Voice key (optional if the server allows guests)</string>
     <string name="voice_mode">Conversation mode</string>
+    <string name="expressive_voice">Expressive voice: the occasional laugh, chuckle or sigh (Chatterbox voices)</string>
     <string name="voice_models_help">What the voice and the agent behind it run on. Your change applies at once, for every device; it needs the fast voice on and a voice connection.</string>
     <string name="voice_models_front">Voice (front)</string>
     <string name="voice_models_front_effort">Voice effort</string>

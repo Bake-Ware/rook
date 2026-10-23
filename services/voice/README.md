@@ -623,6 +623,12 @@ into `FrontBackground.turn` in `pipeline.py`.
 * The engine is the hub's choice (`home.voice_engine`), sent in the lane's
   `ready` and `config`: with `local` every turn quietly takes the old
   Front/Background path (timing `house_engine: local`), no kaiju edit needed.
+* Sounds (as Pianobar's DJ, `sounds.py`): with the app's Expressive voice on
+  (hello `"expressive"`, default on) and a Chatterbox voice, about one turn in
+  `VOICE_HOUSE_SOUND_EVERY` (4) offers `sound_tags` ([laugh] [chuckle] [sigh]
+  [gasp] [clear throat]) to the house voice. Spoken clauses keep only offered
+  tags and drop every other bracketed word; the screen gets them as stage
+  directions ("(laughs)").
 * The app's Voice models screen sends `{"type":"models_get"}` or
   `{"type":"models_set","args":{...}}`; they go to the hub through the lane as
   this connection's identity and the answer comes back as a `voice_models`

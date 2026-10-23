@@ -108,11 +108,23 @@
   "battery.status": {
    "tier": "read"
   },
+  "calendar.create": {
+   "tier": "exec"
+  },
+  "calendar.delete": {
+   "tier": "exec",
+   "tags": [
+    "destructive"
+   ]
+  },
   "calendar.list": {
    "tier": "read",
    "tags": [
     "sensitive"
    ]
+  },
+  "calendar.update": {
+   "tier": "exec"
   },
   "calllog.list": {
    "tier": "exec",
@@ -884,6 +896,15 @@
   },
   "msg.send": {
    "tier": "write"
+  },
+  "notify.act": {
+   "tier": "exec"
+  },
+  "notify.actions": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
   },
   "notify.channels": {
    "tier": "read"

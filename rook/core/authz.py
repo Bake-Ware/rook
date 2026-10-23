@@ -113,6 +113,10 @@ _CORE_SPEC = {
     # (battery.*, hid.*, screenshot.* share their names with Python worker
     # plugins, whose declared tiers already cover them.)
     "calendar.list": "R s",
+    # The owner's own calendar, changed for them (2026-10-23); deleting is not undone.
+    "calendar.create": "X", "calendar.update": "X", "calendar.delete": "X d",
+    # A notification's own actions; acting on one can reply to someone as the owner.
+    "notify.actions": "R s", "notify.act": "X",
     "calllog.list": "X s", "contacts.search": "X s", "location.get": "X s",
     "sms.list": "X s", "sms.send": "X", "ui.text": "X s",
     "notify.list": "X s", "notify.dismiss": "X", "notify.post": "X",

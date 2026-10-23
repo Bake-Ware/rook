@@ -468,6 +468,16 @@ def test_irreversible_actions_are_recognised():
     assert not F.irreversible("pianobar.restart", "change", (), {})
     assert not F.irreversible("shell.exec", "change", (), {"argv": ["systemctl", "restart", "x"]})
     assert not F.irreversible("task.write", "prepare", (), {"action": "create"})
+    # The owner's phone (2026-10-23): their own calendar goes; deleting and anything that
+    # speaks for them to someone else asks first.
+    assert not F.irreversible("calendar.create", "change", ("personal",), {"title": "x"})
+    assert not F.irreversible("calendar.update", "change", ("personal",), {"event_id": 1})
+    assert not F.irreversible("notify.dismiss", "change", (), {"key": "k"})
+    assert not F.irreversible("notify.act", "change", (), {"key": "k", "action": "Mark as read"})
+    assert F.irreversible("calendar.delete", "admin", ("personal", "destructive"), {"event_id": 1})
+    assert "as you" in F.irreversible("notify.act", "change", (), {"key": "k", "text": "on my way"})
+    for cap in ("sms.send", "gmail.send", "email.reply", "telegram.send"):
+        assert "as you" in F.irreversible(cap, "change", (), {}), cap
 
 
 # -- the dashboard's Decisions page --------------------------------------------------------------

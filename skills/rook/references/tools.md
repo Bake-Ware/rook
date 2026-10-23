@@ -669,7 +669,10 @@ Native plugins of the Android app's embedded worker, in place of (or beside) the
 
 | Cap | Args | Risk | Does |
 |---|---|---|---|
+| `calendar.create` | title, start, end?, all_day=false, location='', description='', calendar='' | exec | Add an event to a calendar on the phone (the owner's own calendar). |
+| `calendar.delete` | event_id | exec | Delete an event on the phone by `event_id` (from calendar.list). |
 | `calendar.list` | start?, end?, limit=20 | read | Calendar events on the phone (Google Calendar, Outlook if it syncs calendars, others). |
+| `calendar.update` | event_id, title?, start?, end?, all_day?, location?, description? | exec | Change an event on the phone by `event_id` (from calendar.list): only the fields given. |
 
 **calllog_android**
 
@@ -725,6 +728,8 @@ Native plugins of the Android app's embedded worker, in place of (or beside) the
 
 | Cap | Args | Risk | Does |
 |---|---|---|---|
+| `notify.act` | key, action=0, text='' | exec | Run one of a notification's own actions (by `key` from notify.list; `action`: its index or title from notify.… |
+| `notify.actions` | key | read | The actions a notification offers (by `key` from notify.list): index, title ("Reply", "Mark as read"), and wh… |
 | `notify.dismiss` | key | exec | Dismiss a notification by its `key` (from notify.list). |
 | `notify.list` | limit=40, packages? | exec | Recent notifications, newest first. |
 | `notify.post` | title='rook', text='', channel='' | exec | Post a local notification on the phone (needs POST_NOTIFICATIONS). |

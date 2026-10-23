@@ -652,3 +652,48 @@ def test_the_phones_models_screen_goes_through_the_lane_as_its_identity(tmp_path
                 await shutdown(conn, store, jobs)
     asyncio.run(scenario())
 
+
+
+# --- expressive voice (sound tags, as Pianobar's DJ) ---------------------------------
+def test_sound_tags_are_kept_only_when_offered_and_shown_as_stage_directions(tmp_path, monkeypatch):
+    from services.voice import sounds as S
+    assert S.keep_sounds('Ha [Laugh] that [dance] one [clear   throat] works.', True) == \
+        'Ha [laugh] that one [clear throat] works.'
+    assert S.keep_sounds('Ha [laugh] okay.', False) == 'Ha okay.'
+    assert S.stage_directions('Ha [laugh] okay [banana].') == 'Ha (laughs) okay.'
+    monkeypatch.setattr(house_mod, 'SOUND_EVERY', 1)
+
+    async def answer(lane, message):
+        await lane.send(t='delta', turn=message['turn'], text='Oh no [sigh] that is a shame. [wink]')
+        await lane.send(t='end', turn=message['turn'], text='', ok=True)
+
+    async def scenario():
+        for expressive in (True, False):
+            async with FakeLane(answer) as lane:
+                house_env(monkeypatch, lane.url)
+                conn, store, jobs, events, _ = connection(tmp_path, front=FakeFront(), complete=Script())
+                conn.expressive = expressive
+                monkeypatch.setattr(house_mod.HouseVoice, 'sounds',
+                                    lambda self: () if self.conn.expressive is False else house_mod.HOUSE_TAGS)
+                spoken = []
+                real_say = conn.say
+
+                async def say(text, epoch, **kw):
+                    spoken.append(text)
+                    return await real_say(text, epoch, **kw)
+                conn.say = say
+                try:
+                    await conn.start(text='the trip got cancelled', speak=False)
+                    await idle(conn)
+                finally:
+                    await shutdown(conn, store, jobs)
+                (user,) = [m for m in lane.received if m['t'] == 'user']
+                text = ' '.join(spoken)
+                if expressive:
+                    assert user['sound_tags'] == list(house_mod.HOUSE_TAGS)
+                    assert '[sigh]' in text and '[wink]' not in text
+                    assert '(sighs)' in ' '.join(said(events))          # the screen's version
+                else:
+                    assert 'sound_tags' not in user
+                    assert '[' not in text and '(sighs)' not in ' '.join(said(events))
+    asyncio.run(scenario())

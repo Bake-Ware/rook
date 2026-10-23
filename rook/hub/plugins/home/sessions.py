@@ -97,6 +97,8 @@ VOICE_MODES = {"assistant": "assistant", "normal": "assistant", "conversation": 
                "active listening": "listen", "active_listening": "listen",
                "listening": "listen", "brainstorm": "brainstorm"}
 BRIEF_EVERY_S = 15.0
+#: The owner's phone facts in the brief (battery, calendar, notifications) are read this often.
+PHONE_EVERY_S = 300.0
 FOLD_MARK = re.compile(r"FOLD SUMMARY:\s*", re.I)
 ROLE_ID = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 #: Persistent turns only for these vias (the conversation), never for job steps,
@@ -212,6 +214,7 @@ class Sessions:
         self._compact_due: set[str] = set()
         self._steer_voice: dict[str, float] = {}
         self._brief_sent: dict[str, str] = {}
+        self._phone: dict = {"at": 0.0, "lines": []}
         self._state: dict | None = None
         self._trust_version = -1
         self._sent_hash = ""                         # what the host was last configured with
@@ -1132,11 +1135,85 @@ class Sessions:
                 if live:
                     lines.append("Recently decided for " + owner + ": " + "; ".join(
                         str(i.get("summary") or "")[:100] for i in live[:3]) + ".")
+        if role == HOUSE:
+            lines += list(self._phone.get("lines") or [])
         with contextlib.suppress(Exception):
             band = self.home.band_line()
             if band:
                 lines.append(band)
         return "\n".join(x for x in lines if x)
+
+    # -- the owner's phone, for the brief --------------------------------------------------
+    def brief_phone(self) -> str:
+        """The owner's phone the brief reads (home.brief_phone, else the first phone the
+        attention plugin rings), or ""."""
+        name = str(self.home.settings.get("brief_phone") or "").strip()
+        if name:
+            return name
+        with contextlib.suppress(Exception):
+            ap = self.home._node.plugin("attention")
+            devs = ap.settings.get("devices") if ap is not None else None
+            if isinstance(devs, str):
+                devs = [d for d in devs.replace(",", "\n").splitlines() if d.strip()]
+            if devs:
+                return str(devs[0]).strip()
+        return ""
+
+    async def _phone_call(self, worker: str, cap: str, args: dict) -> dict | None:
+        front = self.home.front
+        node = self.home._node
+        client = getattr(node, "client", None)
+        if client is None or front is None:
+            return None
+        try:
+            w = front.resolve_worker(worker, cap)
+            with self.home._as_self():
+                reply = await client.call(cap=cap, args=args, target=w["wid"], timeout=15,
+                                          identity=self.home.identity,
+                                          principal=front.principal())
+        except Exception:  # noqa: BLE001 - a fact left out, never a failed brief
+            return None
+        if not isinstance(reply, dict) or not reply.get("ok", True) or reply.get("held"):
+            return None
+        res = reply.get("result")
+        return res if isinstance(res, dict) and res.get("ok", True) is not False else None
+
+    async def refresh_phone(self, force: bool = False) -> list[str]:
+        """Read the owner's phone for the brief (every PHONE_EVERY_S): battery, the next
+        calendar items, important notifications. Reads only; nothing is changed."""
+        if not force and time.time() - self._phone["at"] < PHONE_EVERY_S:
+            return self._phone["lines"]
+        self._phone["at"] = time.time()
+        dev = self.brief_phone()
+        if not dev:
+            self._phone["lines"] = []
+            return []
+        lines: list[str] = []
+        bat = await self._phone_call(dev, "battery.status", {})
+        if bat and bat.get("percent") is not None:
+            lines.append(f"Your phone: {int(bat['percent'])}% battery"
+                         + (", charging." if bat.get("charging") else "."))
+        cal = await self._phone_call(dev, "calendar.list", {"start": "now", "limit": 3})
+        if cal and isinstance(cal.get("events"), list):
+            evs = [e for e in cal["events"] if not e.get("declined")][:3]
+            if evs:
+                lines.append("Next on your calendar (24 h): " + "; ".join(
+                    f"{str(e.get('start') or '')[5:16].replace('T', ' ')} "
+                    f"{str(e.get('title') or '')[:60]}" for e in evs) + ".")
+            else:
+                lines.append("Nothing on your calendar in the next 24 hours.")
+        notes = []
+        with contextlib.suppress(Exception):
+            ap = self.home._node.plugin("attention")
+            if ap is not None:
+                notes = [n for n in ap.service.notices(10)
+                         if n.get("priority") in ("urgent", "family")][:3]
+        if notes:
+            lines.append("Important notifications: " + "; ".join(
+                f"{n.get('app') or n.get('category')}: {str(n.get('summary') or '')[:100]}"
+                for n in notes) + ".")
+        self._phone["lines"] = lines
+        return lines
 
     async def push_briefs(self) -> None:
         """Send each voice role's brief to the host when it changed."""
@@ -1146,6 +1223,9 @@ class Sessions:
         for role in self.roles():
             if not self.role_cfg(role)["voice"]:
                 continue
+            if role == HOUSE:
+                with contextlib.suppress(Exception):
+                    await self.refresh_phone()
             text = self.brief(role)
             key = hashlib.sha256(f"{tz}\n{text}".encode()).hexdigest()
             if self._brief_sent.get(role) == key:

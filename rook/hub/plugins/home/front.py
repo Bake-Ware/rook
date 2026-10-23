@@ -257,12 +257,21 @@ _GONE_ARGV = re.compile(r"^(rm|rmdir|dd|mkfs\S*|shred|wipefs|fdisk|parted|shutdo
                         r"poweroff|halt|kill|killall|pkill|truncate)$")
 
 
+#: Caps that send a message to someone else as the person (ask first, on any level).
+_SPEAKS = re.compile(r"^(sms\.send|(e?mail|gmail|outlook)\.(send|reply|forward)\w*|"
+                     r"[a-z_]+\.send_message|telegram\.send|whatsapp\.\w*send\w*)$")
+
+
 def irreversible(cap: str, kind: str, tags: tuple | list, args: Any) -> str:
     """Why an action is not easily undone ("" when it looks reversible): an
     admin or destructive cap, a cap named for removing something, or a shell
     command that deletes, wipes, kills or powers off."""
     if kind == "admin":
         return f"{cap} is {'destructive' if 'destructive' in (tags or ()) else 'admin'}"
+    if _SPEAKS.match(cap) or (cap == "notify.act" and isinstance(args, dict)
+                              and str(args.get("text") or "").strip()):
+        # Texts, emails, notification replies: they speak for the person to someone else.
+        return f"{cap} sends a message to someone as you"
     if _GONE.search(cap.split(".", 1)[-1]):
         return f"{cap} removes something"
     if isinstance(args, dict):
