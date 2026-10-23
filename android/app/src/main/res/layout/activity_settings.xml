@@ -78,6 +78,10 @@
           <TextView android:id="@+id/appVersion" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="@color/rook_fg" android:fontFamily="monospace" />
           <TextView android:id="@+id/updateStatus" style="@style/RookHelp" android:textIsSelectable="true" />
           <CheckBox android:id="@+id/autoUpdates" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="Automatic APK updates" />
+          <RadioGroup android:id="@+id/updateChannel" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:contentDescription="Update channel">
+            <RadioButton android:id="@+id/channelStable" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="Stable" />
+            <RadioButton android:id="@+id/channelBeta" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="Beta" />
+          </RadioGroup>
           <TextView style="@style/RookHelp" android:text="Checks every six hours while the worker runs. Android may ask you to confirm installation." />
           <Button android:id="@+id/btnAllowUpdates" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="Allow installation from Rook" style="@style/RookOutlinedButton" />
           <Button android:id="@+id/btnUpdate" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Download APK in browser ↗" style="@style/RookOutlinedButton" />

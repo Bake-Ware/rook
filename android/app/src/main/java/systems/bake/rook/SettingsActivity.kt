@@ -357,6 +357,12 @@ class SettingsActivity : AppCompatActivity() {
         Grant("Notification access", "Read notifications for the band", {
             NotificationManagerCompat.getEnabledListenerPackages(this).contains(packageName) }) {
             startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)); status("enable 'Rook Worker' under Notification access") },
+        Grant("Do Not Disturb access", "Urgent alerts ring through Do Not Disturb", {
+            getSystemService(android.app.NotificationManager::class.java).isNotificationPolicyAccessGranted }) {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)) },
+        Grant("Full-screen alerts", "Urgent alerts take over the screen", {
+            if (Build.VERSION.SDK_INT >= 34) getSystemService(android.app.NotificationManager::class.java).canUseFullScreenIntent() else null }) {
+            if (Build.VERSION.SDK_INT >= 34) startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:$packageName"))) },
         Grant("Battery optimisation off", "Keeps the worker connected in the background", {
             (getSystemService(POWER_SERVICE) as PowerManager).isIgnoringBatteryOptimizations(packageName) }) {
             @Suppress("BatteryLife")
@@ -467,6 +473,11 @@ class SettingsActivity : AppCompatActivity() {
     private fun setupApp() {
         b.autoUpdates.isChecked = prefs.getBoolean("apk_auto_update", true)
         b.autoUpdates.setOnCheckedChangeListener { _, enabled -> prefs.edit().putBoolean("apk_auto_update", enabled).apply() }
+        b.updateChannel.check(if (ApkUpdater.channel(this) == UpdateChannel.BETA) R.id.channelBeta else R.id.channelStable)
+        b.updateChannel.setOnCheckedChangeListener { _, id ->
+            val channel = if (id == R.id.channelBeta) UpdateChannel.BETA else UpdateChannel.STABLE
+            if (channel != ApkUpdater.channel(this)) { ApkUpdater.setChannel(this, channel); status("update channel: $channel") }
+        }
         setupAgentControl()
         b.btnAllowUpdates.setOnClickListener { startActivity(Intent(this, ApkUpdatePermissionActivity::class.java)) }
         b.btnUpdate.setOnClickListener {

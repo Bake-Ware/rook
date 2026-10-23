@@ -629,6 +629,17 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 Native plugins of the Android app's embedded worker, in place of (or beside) the worker plugins above. Most need an Android permission or the app's accessibility service; a cap without one returns an error saying which.
 
 <!-- BEGIN GENERATED: android-caps -->
+**attention_android**
+
+| Cap | Args | Risk | Does |
+|---|---|---|---|
+| `attention.feed` | limit=50 | exec | The phone's quiet feed, newest first: summaries of notifications it sorted as urgent, family or normal (never… |
+| `attention.poll` | since=0 | admin | Events after seq `since`: {events, last}; pass `last` next time. |
+| `attention.post` | id, kind='card', line='', explain='', urgency='normal', channel='approvals', actions?, source='', expires_at=0 | admin | Put a decision card on the phone; re-posting the same id updates it without ringing again. |
+| `attention.rules_get` | — | exec | The notification rules in use: source default\|override and the rules document. |
+| `attention.rules_set` | rules? | admin | Replace the phone's notification rules. |
+| `attention.update` | id, state, message='' | admin | Show what happened after a decision: state done (brief confirmation, then the card closes), failed (shows mes… |
+
 **battery_android**
 
 | Cap | Args | Risk | Does |
@@ -670,8 +681,8 @@ Native plugins of the Android app's embedded worker, in place of (or beside) the
 | `device.torch` | on=true | exec | Flashlight on/off (no permission needed via CameraManager). |
 | `device.unlock` | pin='', hold_ms=9000, pre_swipe=true | exec | Unlock a PIN-secured screen: wake, surface the PIN bouncer, and tap the digits at keypad positions computed f… |
 | `device.unlock_status` | — | exec | Whether an unlock PIN is saved in the app (never the PIN itself), and whether passive keep-awake may use it (… |
-| `device.update` | — | admin | Queue an APK update from the official Rook feed. |
-| `device.update_status` | — | exec | APK updater progress, installed/target versions, and required action. |
+| `device.update` | channel='' | admin | Queue an APK update from the official Rook feed. |
+| `device.update_status` | — | exec | APK updater progress, installed/target versions, update channel, and required action. |
 | `device.vibrate` | ms=300 | exec | Buzz the phone for `ms` milliseconds. |
 | `device.wake` | dismiss_keyguard=false, hold_ms=1200 | exec | Turn the screen ON (and show over the keyguard) so the accessibility service can interact with the lock scree… |
 
@@ -697,7 +708,7 @@ Native plugins of the Android app's embedded worker, in place of (or beside) the
 |---|---|---|---|
 | `notify.dismiss` | key | exec | Dismiss a notification by its `key` (from notify.list). |
 | `notify.list` | limit=40, packages? | exec | Recent notifications, newest first. |
-| `notify.post` | title='rook', text='' | exec | Post a local notification on the phone (needs POST_NOTIFICATIONS). |
+| `notify.post` | title='rook', text='', channel='' | exec | Post a local notification on the phone (needs POST_NOTIFICATIONS). |
 
 **screen**
 

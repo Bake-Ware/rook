@@ -40,9 +40,20 @@ object ApkUpdater {
             .put("message", p.getString("message", ""))
             .put("installed_version", BuildConfig.VERSION_NAME).put("installed_code", BuildConfig.VERSION_CODE)
             .put("target_code", p.getLong("target_code", 0)).put("last_check_ms", p.getLong("last_check", 0))
-            .put("automatic", settings(ctx).getBoolean("apk_auto_update", true))
+            .put("automatic", settings(ctx).getBoolean("apk_auto_update", true)).put("channel", channel(ctx))
             .put("install_permission", Build.VERSION.SDK_INT < 26 || ctx.packageManager.canRequestPackageInstalls())
             .put("busy", busy.get()).toString()
+    }
+
+    /** The persisted update channel; "stable" unless someone chose beta. */
+    @JvmStatic fun channel(ctx: Context): String =
+        UpdateChannel.normalize(settings(ctx).getString(UpdateChannel.PREF, null)) ?: UpdateChannel.STABLE
+
+    /** Persist a channel ("stable" | "beta"); false for anything else. */
+    @JvmStatic fun setChannel(ctx: Context, value: String?): Boolean {
+        val c = UpdateChannel.normalize(value) ?: return false
+        settings(ctx).edit().putString(UpdateChannel.PREF, c).commit()
+        return true
     }
 
     internal fun state(ctx: Context, value: String, message: String = "") {
@@ -76,7 +87,8 @@ object ApkUpdater {
         }
         state(ctx, "checking")
         p.edit().putLong("last_check", System.currentTimeMillis()).commit()
-        val manifest = http.newCall(Request.Builder().url("$ORIGIN/apk.json").header("User-Agent", "rook-worker").build()).execute().use { response ->
+        val feed = channel(ctx)
+        val manifest = http.newCall(Request.Builder().url(UpdateChannel.url(ORIGIN, "apk.json", feed)).header("User-Agent", "rook-worker").build()).execute().use { response ->
             check(response.isSuccessful) { "Update manifest HTTP ${response.code}" }
             val body = response.body ?: error("Empty update manifest")
             require(body.contentLength() <= 16384) { "Update manifest too large" }
@@ -100,7 +112,7 @@ object ApkUpdater {
         val apk = File(ctx.filesDir, "rook-update.apk")
         try {
             state(ctx, "downloading", "Downloading ${manifest.getString("version_name")}")
-            http.newCall(Request.Builder().url("$ORIGIN/apk").header("User-Agent", "rook-worker").build()).execute().use { response ->
+            http.newCall(Request.Builder().url(UpdateChannel.url(ORIGIN, "apk", feed)).header("User-Agent", "rook-worker").build()).execute().use { response ->
                 check(response.isSuccessful) { "APK download HTTP ${response.code}" }
                 val body = response.body ?: error("Empty APK response")
                 val digest = MessageDigest.getInstance("SHA-256")

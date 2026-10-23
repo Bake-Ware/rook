@@ -45,6 +45,12 @@
   "approvals.relay": {
    "tier": "write"
   },
+  "attention.feed": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
   "attention.notices": {
    "tier": "read",
    "tags": [
@@ -61,6 +67,12 @@
    "tier": "admin",
    "tags": [
     "physical"
+   ]
+  },
+  "attention.rules_get": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
    ]
   },
   "attention.rules_set": {

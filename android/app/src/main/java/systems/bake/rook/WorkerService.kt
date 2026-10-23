@@ -52,9 +52,19 @@ class WorkerService : Service() {
         }
     }
 
+    /** ACTION_USER_PRESENT is not a manifest broadcast: attention hears unlocks while the worker runs. */
+    private val unlockReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_USER_PRESENT) runCatching { AttentionStore.unlocked(ctx) }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         createChannel()
+        runCatching { AttentionChannels.ensure(this) }
+        androidx.core.content.ContextCompat.registerReceiver(this, unlockReceiver,
+            android.content.IntentFilter(Intent.ACTION_USER_PRESENT), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         updateHandler.postDelayed(updateTick, 30_000)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             try { getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback) }
@@ -151,6 +161,7 @@ class WorkerService : Service() {
 
     override fun onDestroy() {
         updateHandler.removeCallbacks(updateTick)
+        runCatching { unregisterReceiver(unlockReceiver) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             try { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }
             catch (_: Throwable) {}

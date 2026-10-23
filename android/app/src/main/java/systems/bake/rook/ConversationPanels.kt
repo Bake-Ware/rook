@@ -16,7 +16,8 @@ import java.util.Date
 import java.util.Locale
 
 /** Activity-local presentation, separate from conversation bubbles and transport behavior. */
-class ConversationPanels(private val ctx: Context, private val b: ActivityMainBinding, scope: LifecycleCoroutineScope) {
+class ConversationPanels(private val ctx: Context, private val b: ActivityMainBinding, scope: LifecycleCoroutineScope,
+                         private val attention: AttentionPanel? = null) {
     /** Drops repeated activity events; the events only drive the status strip now. */
     private val activitySeq = ActivitySeqGate()
     private val workers = WorkersPanel(ctx, b, scope)
@@ -44,7 +45,7 @@ class ConversationPanels(private val ctx: Context, private val b: ActivityMainBi
     init {
         b.tabs.setTabTextColors(ctx.getColor(R.color.rook_dim), ctx.getColor(R.color.rook_accent))
         b.tabs.setSelectedTabIndicatorColor(ctx.getColor(R.color.rook_accent))
-        listOf("Chat", "Workers", "Background").forEach { name ->
+        listOf("Chat", "Workers", "Background", "Attention").forEach { name ->
             b.tabs.addTab(b.tabs.newTab().setText(name))
         }
         // Material's default text appearance may uppercase labels: explicitly preserve sentence case.
@@ -59,7 +60,9 @@ class ConversationPanels(private val ctx: Context, private val b: ActivityMainBi
                 b.chatList.visibility = if (selected == 0) View.VISIBLE else View.GONE
                 b.workersRefresh.visibility = if (selected == 1) View.VISIBLE else View.GONE
                 b.backgroundScroll.visibility = if (selected == 2) View.VISIBLE else View.GONE
+                b.attentionScroll.visibility = if (selected == 3) View.VISIBLE else View.GONE
                 workers.shown(selected == 1)
+                attention?.shown(selected == 3)
                 if (selected == 2) { countBackground(); backgroundUnread.seen(); renderBackground() }
                 badges()
             }
@@ -114,6 +117,14 @@ class ConversationPanels(private val ctx: Context, private val b: ActivityMainBi
         if (missed > 0 && selected != 2) backgroundUnread.addMany(missed.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
             background.lastFailure > backgroundCounted)
         backgroundCounted = background.version
+    }
+    fun selectAttention() { b.tabs.getTabAt(3)?.select() }
+    /** Attention tab badge: decision cards waiting on the user. */
+    fun attentionChanged() {
+        val tab = b.tabs.getTabAt(3) ?: return
+        val n = attention?.pendingCount() ?: 0
+        if (n == 0) tab.removeBadge()
+        else tab.orCreateBadge.apply { number = n; backgroundColor = amber; badgeTextColor = ctx.getColor(R.color.rook_bg) }
     }
     private fun badges() {
         listOf(2 to backgroundUnread).forEach { (index, unseen) ->

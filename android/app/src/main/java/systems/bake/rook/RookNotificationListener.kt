@@ -37,6 +37,8 @@ class RookNotificationListener : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn ?: return
         remember(sbn)
+        // Attention: classify on the phone (AttentionStore); only urgent/family summaries leave it.
+        try { AttentionStore.observe(applicationContext, sbn) } catch (_: Throwable) {}
     }
 
     private fun remember(sbn: StatusBarNotification) {

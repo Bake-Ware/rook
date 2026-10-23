@@ -63,18 +63,27 @@ class AndroidDevicePlugin(Plugin):
                 "keep_awake_idle_minutes": int(ka.idleMinutes(ctx))}
 
     @capability("update", risk="admin", tags=("destructive",))
-    def _update(self) -> dict:
+    def _update(self, channel: str = "") -> dict:
         """Queue an APK update from the official Rook feed. Nonblocking.
 
         Validates package, newer version, hash and matching signing certificate.
         Android may require install permission or notification confirmation.
         Poll device.update_status; the worker reconnects after APK replacement.
+        channel: "stable" or "beta" switches the phone's update channel (kept)
+        before checking; empty keeps the current one. Beta gets a build only
+        once the hub has approved it and it is newer, else stable.
         """
-        return json.loads(str(jclass("systems.bake.rook.ApkUpdater").request(app_context(), False)))
+        chosen = str(channel or "").strip().lower()
+        if chosen and chosen not in ("stable", "beta"):
+            return {"ok": False, "error": "channel must be stable or beta"}
+        updater = jclass("systems.bake.rook.ApkUpdater")
+        if chosen:
+            updater.setChannel(app_context(), chosen)
+        return json.loads(str(updater.request(app_context(), False)))
 
     @capability("update_status", risk="exec")
     def _update_status(self) -> dict:
-        """APK updater progress, installed/target versions, and required action."""
+        """APK updater progress, installed/target versions, update channel, and required action."""
         return json.loads(str(jclass("systems.bake.rook.ApkUpdater").status(app_context())))
 
     @capability("find", risk="exec", tags=("physical",))
