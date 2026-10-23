@@ -23,6 +23,8 @@ const val PREF_FAST_VOICE = "fast_voice"
 class VoiceClient(
     private val ctx: Context, private val url: String, private val insecureTls: Boolean,
     private val listener: Listener, private val ownMic: Boolean = false, private val token: String = "",
+    /** A listening mode the voice switched to earlier (kept across a reconnect); null: the chosen one. */
+    private val modeOverride: String? = null,
 ) {
     interface Listener {
         fun onState(state: String)
@@ -45,6 +47,8 @@ class VoiceClient(
         fun onTurn(turn: Int) {}
         /** The server would not run the requested mode; do not retry automatically. */
         fun onRefused(msg: String) = onError(msg)
+        /** The voice switched its listening mode ("switch to dictation"). */
+        fun onModeChanged(mode: String) {}
     }
     companion object { const val SR_IN = 16000; const val FRAME_BYTES = 640; const val PLAY_TAIL_MS = 200L }
     private data class Packet(val turn: Int, val sr: Int, val bytes: ByteArray)
@@ -92,9 +96,13 @@ class VoiceClient(
         val client = builder.build(); http = client
         val prefs = ctx.getSharedPreferences("rook", Context.MODE_PRIVATE)
         // Mode and prompt are read per connection: a mode change applies on the next session.
-        val mode = VoiceModes.byId(prefs.getString(VoiceModes.PREF_MODE, VoiceModes.DEFAULT))
+        val chosen = VoiceModes.byId(prefs.getString(VoiceModes.PREF_MODE, VoiceModes.DEFAULT))
+        // The voice may have switched modes earlier (kept across a reconnect, only between the switchable ones).
+        var mode = modeOverride?.takeIf { chosen.id in VoiceModes.VOICE_SWITCHABLE && VoiceModes.keepAcrossReconnect(it) }
+            ?.let { VoiceModes.byId(it) } ?: chosen
         val modePrompt = prefs.getString(VoiceModes.promptKey(mode.id), "")?.take(VoiceModes.MAX_PROMPT) ?: ""
-        val scope = MessageDigest.getInstance("SHA-256").digest(VoiceModes.conversationScope(url, token, mode.id).toByteArray()).joinToString("") { "%02x".format(it) }
+        // The conversation stays the chosen mode's, whatever the voice switched to.
+        val scope = MessageDigest.getInstance("SHA-256").digest(VoiceModes.conversationScope(url, token, chosen.id).toByteArray()).joinToString("") { "%02x".format(it) }
         val key = "voice_conversation_$scope"
         val conversation = prefs.getString(key, null) ?: UUID.randomUUID().toString().also { prefs.edit().putString(key, it).apply() }
         val thinking = prefs.getBoolean("show_thinking", false)
@@ -145,7 +153,15 @@ class VoiceClient(
                             refuse(VoiceModes.mismatchMessage(mode.id, echoed)); return
                         }
                     }
-                    "mode" -> if (m.optString("mode") != mode.id) { refuse(VoiceModes.mismatchMessage(mode.id, m.optString("mode"))); return }
+                    "mode" -> {
+                        val next = m.optString("mode")
+                        val by = if (m.has("by")) m.optString("by") else null
+                        if (next != mode.id) {
+                            if (!VoiceModes.voiceSwitchAllowed(mode.id, next, by)) { refuse(VoiceModes.mismatchMessage(mode.id, next)); return }
+                            mode = VoiceModes.byId(next)
+                            listener.onModeChanged(next)
+                        }
+                    }
                     "state" -> { if (m.optInt("turn", minimumTurn) >= minimumTurn) listener.onState(m.optString("state")) }
                     "stt" -> listener.onTranscript(m.optString("text"), eventTurn(m))
                     "assistant_delta", "assistant" -> if (!waitingInterrupt) listener.onAssistantDelta(m.optString("text"), eventTurn(m))

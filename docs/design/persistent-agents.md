@@ -21,8 +21,14 @@ Related: [front-door.md](front-door.md), [huddles.md](huddles.md) 4.4 (role home
   directly. Priority: a live person (voice first), then huddle turns, then background
   items; queued background items are batched into one turn ("While you were busy: ...").
 * The Haiku voice session is the **conductor**: it speaks first and routes second, through
-  a small hub-served flow toolset (steer, fork, queue, fold, status, pause/cancel, btw).
+  a small set of flow ops (steer, fork, queue, fold, status, pause/cancel, btw, mode).
   It conducts; it does not act. Only the back end says an action is done.
+* (2026-10-23, later) The voice runs on **Haiku 5.5 at effort low with no tools**: with
+  any tool, 5.5 (whose thinking cannot be turned off) thinks, calls the tool, then speaks
+  (first word 1.6-2.7 s). It routes with a **routing line** at the end of its reply
+  instead (3.4). One assistant with one name (`voice.assistant_name` and `voice.owner`, the
+  voice plugin's: Sojourn, Bake's assistant, here): the
+  voice never talks about the plumbing and never says it can't find something out.
 * The house agent can change other roles' Claude Code configuration at the person's
   request ("give our reverse engineering technician the REA MCP"); granting tools is a
   guarded trust-map change: fine on the person's request, never self-granted.
@@ -45,7 +51,7 @@ directory without touching the worker bundle feed, and it holds no band key.
 ```
  phone ──audio──> kaiju voice server ──LAN ws /voice/house──> session host (cachyrig)
                      (STT, echo guard,                          ├─ voice lane: claude -p (Haiku, effort low)
-                      speaker ID, TTS)  <──text deltas──────────│     └─ MCP "flow" ──https──> hub /home/flow-mcp
+                      speaker ID, TTS)  <──text deltas──────────│     └─ routing lines ──link──> hub (flow ops)
                                                                 ├─ main lane: claude -p (Opus)
                                                                 │     └─ MCP "rook" ──https──> hub /home/turn-mcp
  web, Telegram, MCP, huddles ──> hub home plugin                ├─ forks / btw: claude -p --resume --fork-session
@@ -63,13 +69,15 @@ directory without touching the worker bundle feed, and it holds no band key.
   .rook/sessions.json        host-local: session ids per lane, resume counts (never moved)
   voice/
     CLAUDE.md                the conductor's rules (inherits ../CLAUDE.md)
-    .claude/settings.json    model haiku, effortLevel low, thinking off, no tools but flow
-    .mcp.json                "flow" (hub flow tools, bearer ${ROOK_FLOW_TOKEN})
+    .claude/settings.json    Haiku 5.5, effort low, no tools (never a bare "Read" deny:
+                             that also stops Claude Code loading CLAUDE.md)
+    .mcp.json                no servers (the voice routes with a line, not a tool)
   forks/<fork id>/           a fork's scratch dir (or a git worktree for code)
 ```
 
-Tokens are never written to disk: config files reference `${ROOK_TURN_TOKEN}` /
-`${ROOK_FLOW_TOKEN}`, which the session host puts in each process's environment.
+Tokens are never written to disk: config files reference `${ROOK_TURN_TOKEN}`, which the
+session host puts in each process's environment. (The voice had a flow token for its
+flow tools until it went tool-free; it has none now.)
 
 The session host also passes the files explicitly (`--settings`, `--mcp-config
 --strict-mcp-config`, `--model`, `--effort`), because Claude Code ignores some project
@@ -173,17 +181,37 @@ the latency that matters. The hub stays in charge: it issues the configuration a
 token hash, every voice turn is reported to it (`voice_turn` / `voice_reply`), and
 everything the voice routes to the back end goes through the hub's flow tools and queue.
 
-Client -> host: `{"t":"user","turn","text","identity":{"owner","name"}}`,
+Client -> host: `{"t":"user","turn","text","identity":{"owner","name"},"mode"?}`
+(`mode`: `listen` or `brainstorm` when the connection is in one),
 `{"t":"cancel","turn"}` (barge-in: interrupts the voice turn).
 Host -> client: `{"t":"ready","role","session"}`, `{"t":"delta","turn","text"}`,
 `{"t":"tool","turn","name"}`, `{"t":"end","turn","text","ok","first_ms","total_ms"}`,
 `{"t":"push","turn"}` (an unsolicited turn follows: a back-end result being spoken),
-`{"t":"error","turn","error"}`.
+`{"t":"error","turn","error"}`, `{"t":"mode","turn","mode","by":"voice"}` (the voice
+switched its listening mode; the voice server switches the connection, only between
+assistant, dictate, listen and brainstorm, and the phone shows it).
 
-The text a user turn goes in with: `[voice | <name or guest>] <text>`. Back-end results
-(`voice_say`) wait until the voice lane is idle and go in as
+The text a user turn goes in with: `[voice | <name or guest>[ | <mode>] | <day, time>]
+<text>`, preceded by `[brief]\n<lines>` whenever the hub's brief changed (and at least
+every 20 turns). The brief (`voice_context` from the hub, refreshed every 15 s, sent only
+when it changed): what the agent is working on and what waits, open asks to the person,
+recent decisions, how much of the band is online. The time comes from `home.timezone`.
+Back-end results (`voice_say`) wait until the voice lane is idle and go in as
 `[back end] <text>`; the reply is streamed to the client that asked (else the last active
 one) as a `push` turn.
+
+**Routing lines.** The voice has no tools; it ends a reply with
+`<<flow {"op": "queue", "request": "..."}>>` (ops: queue/ask, steer, fork, fold, status,
+btw, pause, resume, cancel, mode, quiet). The session host's filter
+(`rook/agents/routing.py`) holds back anything that could start a marker until it is
+clear, so no part of a routing line reaches the client however the deltas are split;
+the reply text in `end` and `voice_reply` is clean, and the ops go to the hub in
+`voice_reply.routing` (at most 3; an interrupted reply's ops are dropped). The hub runs
+them (`Sessions.route`) with the flow code as the voice's speaker (the same rules as the
+flow tools: the owner is a person, anyone else a guest), journals each as
+`home.voice_route`, and says status and btw answers and failures back through the voice
+(`voice_say`). A reply to a pushed result never runs status or btw again (no loops).
+The voice server cuts anything from a `<<` on as a backstop.
 
 ### 3.5 The hub: inbox, supervisor, flow tools
 
@@ -220,8 +248,8 @@ outside the current item's set is refused.
 `home.compact_at_tokens` (default 150000; voice 60000) it schedules, when the lane is
 idle: a maintenance item ("save durable facts with memory tools") and then `compact`.
 
-**Flow tools** (`/home/flow-mcp`, the voice lane's token; requester = the identity of the
-last voice turn):
+**Flow ops** (the voice's routing lines, and the `home.session_flow` cap for operators and
+tests, which acts as its caller; requester = the identity of the last voice turn):
 
 | tool | does | waits on Opus? |
 |---|---|---|
@@ -233,6 +261,7 @@ last voice turn):
 | `btw(question)` | side question answered from the back end's current context | no (2-3 s fork) |
 | `pause()` / `resume()` | stop / restart taking items from the queue | no |
 | `cancel(target)` | drop a queued item or side thread, or stop the running turn | no |
+| `mode(mode)` | the phone's listening mode: assistant, dictate, listen, brainstorm | no |
 
 When an item that came from the voice finishes, the hub sends `voice_say` with the
 result, so the conductor tells the person. Forks: the fork ends with a short summary

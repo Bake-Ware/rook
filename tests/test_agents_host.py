@@ -47,6 +47,8 @@ def fx(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_CLAUDE_DIE", str(tmp_path / "die"))
     monkeypatch.setenv("ROOK_AGENTS_LINK_TOKEN", "link-secret")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "must-not-pass")
+    from rook.agents import voice as voice_mod
+    monkeypatch.setattr(voice_mod.VoiceRoom, "now", lambda self: "T")   # turn headers' time
     return SimpleNamespace(tmp=tmp_path, claude=str(claude), cfgdir=cfgdir, log=log,
                            user_cfg=user_cfg, roles=tmp_path / "roles", die=tmp_path / "die")
 
@@ -554,7 +556,7 @@ async def test_voice_turn_streams_deltas(fx):
                 assert len(deltas) > 3
                 end = got[-1]
                 assert end["ok"] and end["turn"] == "t1"
-                assert end["text"] == "".join(deltas) == "echo: [voice | Bake] hello there friend"
+                assert end["text"] == "".join(deltas) == "echo: [voice | Bake | T] hello there friend"
                 assert isinstance(end["first_ms"], int) and end["total_ms"] >= end["first_ms"]
         vt = find(events, "voice_turn", turn="t1")
         assert vt["text"] == "hello there friend" and vt["identity"]["name"] == "Bake"
@@ -568,6 +570,65 @@ async def test_voice_turn_streams_deltas(fx):
         assert a[a.index("--settings") + 1] == str(fx.roles / "house/voice/.claude/settings.json")
         assert st["env"]["MAX_THINKING_TOKENS"] == "0"
         assert not find(events, "result")      # voice turns are voice_reply, not results
+
+
+@pytest.mark.asyncio
+async def test_voice_routing_lines_never_reach_the_client(fx):
+    async with running(fx, voice_listen="127.0.0.1:0") as (host, events):
+        url = await voice_host(fx, host)
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(url, params={"token": VOICE_TOKEN}) as ws:
+                await ws.receive(timeout=3)
+                # The fake echoes the text back word by word: the routing line is
+                # split over several deltas.
+                await ws.send_json({"t": "user", "turn": 7, "identity": {"name": "Bake"},
+                                    "text": 'On it. <<flow {"op": "queue", "request": '
+                                            '"what is on tomorrow"}>>'})
+                got = await recv_until(ws, lambda o: o["t"] == "end")
+                said = "".join(o["text"] for o in got if o["t"] == "delta")
+                assert "<<" not in said and "flow" not in said and "queue" not in said
+                assert said.strip() == got[-1]["text"] == "echo: [voice | Bake | T] On it."
+                assert got[-1]["turn"] == 7                       # the client's own id type
+        vr = await wait_ev(events, "voice_reply", turn=7)
+        assert vr["routing"] == [{"op": "queue", "request": "what is on tomorrow"}]
+        assert vr["text"] == "echo: [voice | Bake | T] On it."
+
+
+@pytest.mark.asyncio
+async def test_voice_brief_goes_in_when_it_changes_and_events_reach_the_client(fx):
+    async with running(fx, voice_listen="127.0.0.1:0") as (host, events):
+        url = await voice_host(fx, host)
+        res = await host.handle({"t": "voice_context", "role": "house",
+                                 "text": "Working on: the backup check.", "tz": "UTC"})
+        assert res["ok"]
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(url, params={"token": VOICE_TOKEN}) as ws:
+                await ws.receive(timeout=3)
+                for turn in ("a", "b"):
+                    await ws.send_json({"t": "user", "turn": turn, "text": "hi",
+                                        "identity": {"name": "Bake"}, "mode": "listen"})
+                    await recv_until(ws, lambda o: o["t"] == "end")
+                await host.handle({"t": "voice_context", "role": "house",
+                                   "text": "Not working on anything.", "tz": "UTC"})
+                await ws.send_json({"t": "user", "turn": "c", "text": "and now",
+                                    "identity": {"name": "Bake"}})
+                await recv_until(ws, lambda o: o["t"] == "end")
+                vsid = host.roles["house"].lanes["voice"].session_id
+                users = [m["text"] for m in transcript(fx, vsid) if m["type"] == "user"]
+                assert users[0] == ("[brief]\nWorking on: the backup check.\n\n"
+                                    "[voice | Bake | active listening | T] hi")
+                assert users[1] == "[voice | Bake | active listening | T] hi"   # unchanged
+                assert users[2].startswith("[brief]\nNot working on anything.")
+                # A mode change for the client that spoke last turn.
+                res = await host.handle({"t": "voice_event", "role": "house", "event": "mode",
+                                         "fields": {"mode": "dictate", "by": "voice"},
+                                         "turn": "c"})
+                assert res["ok"]
+                got = await recv_until(ws, lambda o: o["t"] == "mode")
+                assert got[-1] == {"t": "mode", "turn": "c", "mode": "dictate", "by": "voice"}
+                with pytest.raises(Exception, match="event: one of"):
+                    await host.handle({"t": "voice_event", "role": "house", "event": "exec",
+                                       "fields": {}})
 
 
 @pytest.mark.asyncio
@@ -612,11 +673,11 @@ async def test_voice_say_push_delivery_and_held_pushes(fx):
             await a.send_json({"t": "user", "turn": "a1", "text": "turn off the lights",
                                "identity": {"name": "Bake"}})
             got = await recv_until(a, lambda o: o["t"] == "end")
-            assert got[-1]["text"] == "echo: [voice | Bake] turn off the lights"
+            assert got[-1]["text"] == "echo: [voice | Bake | T] turn off the lights"
             vsid = host.roles["house"].lanes["voice"].session_id
             users = [m["text"] for m in transcript(fx, vsid) if m["type"] == "user"]
             assert users[0] == ("[back end, while you were away] the lights are off\n\n"
-                                "[voice | Bake] turn off the lights")
+                                "[voice | Bake | T] turn off the lights")
             await b.send_json({"t": "user", "turn": "b1", "text": "hi"})
             await recv_until(b, lambda o: o["t"] == "end")
             # For a1: goes to a (the client that asked), not the most recent (b).

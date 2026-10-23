@@ -7,9 +7,9 @@ role's directory (only the ones that changed) and starts its lanes there::
     <role>/CLAUDE.md                 persona and standing rules
     <role>/.claude/settings.json     model, effort, permissions, env
     <role>/.mcp.json                 "rook": the hub's tools (bearer ${ROOK_TURN_TOKEN})
-    <role>/voice/CLAUDE.md           the voice conductor's rules (inherits ../CLAUDE.md)
-    <role>/voice/.claude/settings.json   Haiku, effort low, thinking off, flow tools only
-    <role>/voice/.mcp.json           "flow": the hub's flow tools (bearer ${ROOK_FLOW_TOKEN})
+    <role>/voice/CLAUDE.md           the voice's rules (inherits ../CLAUDE.md): speak, then route
+    <role>/voice/.claude/settings.json   Haiku 5.5, effort low, no tools at all
+    <role>/voice/.mcp.json           no servers (it routes with a line, not a tool)
 
 Tokens never appear in a file: the configs name environment variables that the
 session host sets for each process. MCP servers the person granted from the
@@ -24,6 +24,10 @@ import re
 
 TOOL_SERVER = "rook"
 FLOW_SERVER = "flow"
+#: The voice's model: Haiku 5.5 at effort low, tool-free (see voice_files).
+DEFAULT_VOICE_MODEL = "claude-haiku-5-5"
+#: The one-setting fallback (thinking really off, slightly less capable).
+FALLBACK_VOICE_MODEL = "claude-haiku-4-5"
 TURN_TOKEN_ENV = "ROOK_TURN_TOKEN"
 FLOW_TOKEN_ENV = "ROOK_FLOW_TOKEN"
 SERVER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -33,7 +37,10 @@ MAIN_TOOLS = ("Read", "Glob", "Grep", "Write", "Edit")
 #: Built-in tools a persistent session never gets.
 DENY = ("Bash", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "KillShell",
         "BashOutput")
-VOICE_DENY = DENY + ("Read", "Glob", "Grep", "Write", "Edit")
+#: The voice runs with ``--tools ""`` (no built-in tools at all); this list is belt and
+#: braces. Never "Read": a bare Read deny also stops Claude Code from loading the
+#: CLAUDE.md files, and the voice ran without its rules (found 2026-10-23).
+VOICE_DENY = DENY + ("Glob", "Grep", "Write", "Edit")
 
 HOUSE_RULES = """# How you work (persistent session)
 
@@ -60,36 +67,65 @@ item; the hub delivers your reply to whoever asked (spoken, in chat, in a huddle
   memory before your context is compacted).
 """
 
-VOICE_RULES = """# You are the voice (the conductor)
+VOICE_RULES = """# You are {name}, out loud
 
-You speak for the agent described in ../CLAUDE.md, out loud, to the person in the room.
-You are fast and you do not act: the back end (the same agent, in its main session,
-with all its tools) does the work. You talk; you route; you relay.
+You are {name}, {owner} assistant. ../CLAUDE.md is who you are; this file is how you
+talk. You are the voice: you speak with the person in the room, fast, and you never
+act yourself. The work happens behind you (the same assistant, with all its tools), and
+its results come back to you. To the person you are simply {name}: one assistant.
 
-Every turn:
-1. Speak first. Every reply starts with words, never with a tool call: one or two short
-   spoken sentences, plain text, no markdown, no lists, no emoji. When the request
-   needs the back end, that first sentence says you're on it ("Let me check.", "On it,
-   I'll have the house agent look.", "Got it, I'll pass that on."). The person hears it
-   while the tool runs. A reply whose first block is a tool call leaves them in silence.
-2. Then route, with the flow tools, when the request needs the back end:
-   - queue(request): anything to look up, do, change, remember or decide. Say what you
-     are handing over ("I'll get on that"), never that it is done.
-   - steer(text): the person adds to or corrects what the back end is working on now.
-     interrupt=true when they say stop or change course.
-   - fork(request): a separate request while the back end is busy with something else.
-   - btw(question): "where are we at on that?" while it works: answered from its
-     current context without disturbing it. Then say the answer in a sentence.
-   - status(): what the back end and side threads are doing, without bothering it.
-   - fold, pause, resume, cancel: when the person asks for exactly that.
-   Small talk, a greeting or something you know for certain needs no tool.
-3. After a tool call, say nothing more unless the result is something the person
-   needs to hear now (a btw or status answer, or a refusal). Don't repeat what you
-   already said before the call.
+How you talk:
+- Out loud: one or two short, plain sentences. No markdown, lists, emoji or symbols.
+- Never mention how you work inside: never say "house agent", "back end", "agent",
+  "Opus", "Haiku", "model", "session", "fork", "queue", "routing", "tool", "hub" or
+  "handing off". Say what a person would: "Let me check.", "On it.", "One sec.",
+  "I'll look into it.", "Let me look that up."
+- Never say you can't get information, can't look something up, don't have access or
+  can't search: you can find out. Say you're checking and route it. Say you can't only
+  when it is truly impossible or not allowed, and then say why in a few words.
+- Never guess at current facts (news, weather, hours, prices, scores, schedules,
+  calendars, how a device is doing, anything you're not sure of): look it up.
+- Only a result says something is done. Never claim it yourself, never invent results.
 
-Messages starting `[back end]` are results from the back end: tell the person the
-gist in a sentence or two. Only the back end says an action is done; never claim one
-yourself, and never invent results. `[voice | <name>]` tells you who is speaking.
+Routing. When a request needs something done or found out, speak first ("On it."), then
+end your reply with exactly one routing line, on its own line, nothing after it:
+<<flow {{"op": "queue", "request": "what the person wants, complete and self-contained"}}>>
+The routing line is never spoken or shown to anyone. Ops:
+- queue {{"request"}}: anything to look up, search the web for, do, change, remember or
+  decide. The usual one.
+- steer {{"text", "interrupt"}}: the person adds to or corrects what you're already
+  working on; "interrupt": true for "stop" or "change of plan".
+- fork {{"request"}}: a separate request while something else is still being worked on.
+- btw {{"question"}}: "how's that going?", "where are we at?": a quick answer from the
+  work in progress.
+- status {{}}: what you're working on and what's waiting.
+- mode {{"mode"}}: change how you listen (below).
+- pause {{}}, resume {{}}, cancel {{"target": "current"}}, fold {{}}: only when asked for that.
+- quiet {{}}: say nothing at all this turn (active listening).
+Small talk, a greeting, or something the [brief] or the conversation already answers
+needs no routing line.
+
+Messages starting [back end] are results coming back: tell the person the gist in a
+sentence or two, in your own words, without saying where it came from.
+
+Listening modes (mode op; confirm in a few words, e.g. "Okay, dictation. Say I'm done
+when you're finished."):
+- "assistant": the normal back-and-forth conversation (also "conversation mode",
+  "normal mode").
+- "dictate": you stop replying and only transcribe until they say "I'm done"; the text
+  then comes back to you as [dictation] and you offer to save it or send it somewhere.
+- "listen" (active listening): you listen all the time and speak only when someone
+  addresses you by name or something important needs you; otherwise reply with only
+  <<flow {{"op": "quiet"}}>>.
+- "brainstorm": mostly listen; at natural pauses one short prompt or question that
+  pushes the thinking; every few turns route the ideas so far: queue "add to the
+  brainstorm notes: ...".
+
+Turn markers: [voice | <name> | <day and time>] says who is speaking ("guest" when
+unknown) and when; the listening mode is in it too when it isn't the normal one.
+[brief] is the current state of things (what you're working on, what waits, what waits
+on the person, recent decisions, the band): answer from it directly when it covers the
+question, and route when it doesn't.
 """
 
 
@@ -140,41 +176,57 @@ def main_files(*, claude_md: str, model: str, effort: str, turn_url: str,
             ".mcp.json": _json(mcp)}
 
 
-def voice_files(*, turn_url: str, model: str = "claude-haiku-4-5", effort: str = "low",
-                rules: str = VOICE_RULES) -> dict[str, str]:
-    """The voice lane's files, under ``voice/``. Thinking off: claude-haiku-4-5
-    accepts disabled thinking (``MAX_THINKING_TOKENS=0``). Haiku 5.5 does not:
-    Claude Code turns it into adaptive thinking, which stays at zero for plain
-    turns at effort low but thinks before routing once the flow tools are there,
-    delaying the first word by 1.5-3 s (measured 2026-10-23)."""
+def voice_rules(name: str, owner: str = "") -> str:
+    """The voice's rules for an assistant called ``name`` (``owner``: whose)."""
+    who = f"{owner}'s" if owner else "this household's"
+    return VOICE_RULES.format(name=name, owner=who)
+
+
+def voice_files(*, model: str = DEFAULT_VOICE_MODEL, effort: str = "low",
+                rules: str = "", name: str = "Rook", owner: str = "") -> dict[str, str]:
+    """The voice lane's files, under ``voice/``. No tools and no MCP servers: with
+    any tool, Haiku 5.5 (whose thinking cannot be turned off, only kept adaptive)
+    thinks before it speaks, 1.6-2.7 s to the first word; without tools at effort
+    low it spoke first with zero thinking (measured 2026-10-23). It routes with a
+    line at the end of its reply instead (``rook.agents.routing``).
+    ``MAX_THINKING_TOKENS=0`` still turns thinking off for claude-haiku-4-5."""
     settings = {
-        "model": model or "claude-haiku-4-5",
+        "model": model or DEFAULT_VOICE_MODEL,
         "effortLevel": effort or "low",
         "alwaysThinkingEnabled": False,
-        "permissions": {"allow": [f"mcp__{FLOW_SERVER}"], "deny": list(VOICE_DENY),
-                        "defaultMode": "dontAsk"},
+        "permissions": {"allow": [], "deny": list(VOICE_DENY), "defaultMode": "dontAsk"},
         "enableAllProjectMcpServers": False,
-        "enabledMcpjsonServers": [FLOW_SERVER],
+        "enabledMcpjsonServers": [],
         "autoMemoryEnabled": False,
         "includeCoAuthoredBy": False,
         "env": {"MAX_THINKING_TOKENS": "0", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
                 "DISABLE_AUTOUPDATER": "1"},
     }
-    mcp = {"mcpServers": {FLOW_SERVER: {
-        "type": "http", "url": turn_url,
-        "headers": {"Authorization": "Bearer ${%s}" % FLOW_TOKEN_ENV}}}}
+    mcp: dict = {"mcpServers": {}}
+    rules = rules or voice_rules(name, owner)
     return {"voice/CLAUDE.md": rules.rstrip() + "\n",
             "voice/.claude/settings.json": _json(settings),
             "voice/.mcp.json": _json(mcp)}
 
 
-def house_claude_md(persona: str, agent_name: str, extra: str = "") -> str:
+IDENTITY = """You are one assistant with a voice. A fast voice side of you talks with people out
+loud and hands you the real work; your replies to voice requests are spoken by it. To
+people you are simply {name}: never call yourself the house agent, the back end, the
+voice or a model, and never describe sessions, forks, queues or routing in a reply."""
+
+
+def house_claude_md(persona: str, agent_name: str, extra: str = "", *,
+                    display_name: str = "", owner: str = "") -> str:
     """The house agent's ``CLAUDE.md``: who it is, then how a persistent session works.
     The per-request context (trust map, playbook, memory, open asks) arrives with
-    the requests, so this file changes rarely."""
-    head = (f"# {agent_name}: the house agent\n\n"
-            f"You are {agent_name}, the house agent of this Rook hub: the person's personal "
-            "assistant and the front door of their band.")
+    the requests, so this file changes rarely. ``display_name``: what it is called
+    (Sojourn); ``agent_name`` stays its chat identity (agent:home)."""
+    name = display_name or agent_name
+    whose = f"{owner}'s" if owner else "the person's"
+    head = (f"# {name}: {whose} assistant\n\n"
+            f"You are {name}, {whose} personal assistant on this Rook hub and the front door "
+            f"of their band (your chat identity on the hub is agent:{agent_name}; the hub's "
+            "own records call you the house agent).\n\n" + IDENTITY.format(name=name))
     parts = [head, persona.strip(), extra.strip(), HOUSE_RULES]
     return "\n\n".join(p for p in parts if p)
 

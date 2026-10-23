@@ -251,6 +251,7 @@ are set only in the environment or on the command line.
 |---|---|---|---|---|---|---|
 | `home.enabled` | Enabled | hub | bool | off | `ROOK_HOME_ENABLED` | live |
 | `home.name` | Name | hub | str | `home` | `ROOK_HOME_NAME` | live |
+| `home.timezone` | Time zone | hub | str |  | `ROOK_HOME_TIMEZONE` | live |
 | `home.backend` | Backend | hub | str | `openai` | `ROOK_HOME_BACKEND` | live |
 | `home.llm_provider` | Model provider | hub | str |  | `ROOK_HOME_LLM_PROVIDER` | live |
 | `home.provider` | Provider | hub | str | `openai` | `ROOK_HOME_PROVIDER` | live |
@@ -291,7 +292,7 @@ are set only in the environment or on the command line.
 | `home.voice_lane` | Voice session | hub | bool | on | `ROOK_HOME_VOICE_LANE` | live |
 | `home.persistent_model` | Agent model | hub | str | `opus` | `ROOK_HOME_PERSISTENT_MODEL` | live |
 | `home.persistent_effort` | Agent effort | hub | str |  | `ROOK_HOME_PERSISTENT_EFFORT` | live |
-| `home.voice_model` | Voice model | hub | str | `claude-haiku-4-5` | `ROOK_HOME_VOICE_MODEL` | live |
+| `home.voice_model` | Voice model | hub | str | `claude-haiku-5-5` | `ROOK_HOME_VOICE_MODEL` | live |
 | `home.voice_effort` | Voice effort | hub | str | `low` | `ROOK_HOME_VOICE_EFFORT` | live |
 | `home.btw_model` | By-the-way model | hub | str | `haiku` | `ROOK_HOME_BTW_MODEL` | live |
 | `home.compact_at_tokens` | Compact the agent at (tokens) | hub | int | `150000` | `ROOK_HOME_COMPACT_AT_TOKENS` | live |

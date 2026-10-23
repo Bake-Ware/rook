@@ -266,6 +266,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
     override fun onError(msg: String) { syncConnection(); panels.note(msg, failed = true); panels.done() }
     override fun onWake() { addSystem("wake word"); if (!VoiceBus.replaying) panels.listening() }
     override fun onBye(mode: String) { addSystem(if (mode == "off") "voice off" else sleepingNote()) }
+    override fun onMode(label: String) { addSystem("listening: $label") }
     override fun onTool(title: String, status: String) { syncConnection(); panels.tool(title, status) }
 
     // ---- chat rendering -------------------------------------------------

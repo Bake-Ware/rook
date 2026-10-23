@@ -205,6 +205,9 @@ def test_android_defaults_match_server():
     android = {m[0]: (m[1], m[2]) for m in re.findall(r'Mode\("(\w+)", "([^"]*)", "([^"]*)"\)', source)}
     assert android == {key: (value['label'], value['prompt']) for key, value in modes.MODES.items()}
     assert f'MAX_PROMPT = {modes.MAX_PROMPT}' in source
+    switchable = re.search(r'VOICE_SWITCHABLE = setOf\(([^)]*)\)', source).group(1)
+    assert set(re.findall(r'"(\w+)"', switchable)) == set(modes.VOICE_SWITCHABLE)
+    assert not modes.VOICE_SWITCHABLE & {'conversation', 'roleplay'}
 
 
 # --- wire protocol ------------------------------------------------------------

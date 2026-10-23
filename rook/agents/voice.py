@@ -9,6 +9,14 @@ Back-end results (``voice_say`` from the hub) wait until the lane is idle and
 no user turn is pending, go in as ``[back end] <text>`` and are streamed to the
 client that asked (else the most recently active one) as a ``push`` turn; with
 nobody connected, the latest few are kept for the next user turn.
+
+The voice session has no tools; it routes with a line at the end of its reply
+(:mod:`.routing`). Routing lines never reach the client: they are cut from the
+stream and the reply text, and their ops go to the hub in ``voice_reply``.
+The hub keeps a short standing brief (``voice_context``: time, what the agent is
+doing, recent decisions) that goes in front of the next user turn whenever it
+changed, and sends control events for the client (``voice_event``: a listening
+mode change).
 """
 
 from __future__ import annotations
@@ -26,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 from aiohttp import WSMsgType, web
 
+from . import routing
 from .lane import Lane, LaneError, Turn
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -36,6 +45,13 @@ log = logging.getLogger("rook.agents.voice")
 MAX_TEXT = 8000
 HELD = 5
 TURN_ID_MAX = 64
+MAX_CONTEXT = 4000
+#: The standing brief goes in again at least this often (turns), in case it was compacted away.
+CONTEXT_EVERY = 20
+#: Control events the hub may send a voice client (``voice_event``).
+EVENTS = ("mode",)
+#: Listening modes that reach the voice lane, and how a turn says so.
+MODE_NOTES = {"listen": "active listening", "brainstorm": "brainstorm"}
 
 
 class Client:
@@ -83,6 +99,10 @@ class VoiceRoom:
         self.turn_client: collections.OrderedDict[str, int] = collections.OrderedDict()
         self.current: Turn | None = None
         self.current_turn_id: str | None = None
+        self.context = ""
+        self.tz = ""
+        self._context_sent: tuple[str, str | None] | None = None
+        self._since_context = 0
         self._push_n = 0
         self._tasks: set[asyncio.Task] = set()
 
@@ -111,12 +131,45 @@ class VoiceRoom:
         while len(self.turn_client) > 200:
             self.turn_client.popitem(last=False)
 
+    # -- the standing brief ---------------------------------------------------------
+    def set_context(self, text: str, tz: str = "") -> dict:
+        self.context = str(text or "").strip()[:MAX_CONTEXT]
+        self.tz = tz.strip()[:64]
+        return {"ok": True, "chars": len(self.context)}
+
+    def now(self) -> str:
+        """The time for a turn's header, in the hub's time zone (else the host's)."""
+        import datetime as _dt
+        t = None
+        if self.tz:
+            with contextlib.suppress(Exception):
+                from zoneinfo import ZoneInfo
+                t = _dt.datetime.now(ZoneInfo(self.tz))
+        t = t or _dt.datetime.now().astimezone()
+        return t.strftime("%a %b %-d, %-I:%M %p")
+
+    def _context_due(self) -> str:
+        """The brief, when it changed since it last went in (or the session changed)."""
+        lane = self.lane()
+        if not self.context:
+            return ""
+        key = (self.context, lane.session_id if lane else None)
+        if key != self._context_sent or self._since_context >= CONTEXT_EVERY:
+            return self.context
+        return ""
+
+    def _context_used(self) -> None:
+        lane = self.lane()
+        self._context_sent = (self.context, lane.session_id if lane else None)
+        self._since_context = 0
+
     # -- user turns ---------------------------------------------------------------
-    async def user(self, c: Client, turn_id: str, text: str, identity: dict) -> None:
+    async def user(self, c: Client, turn_id: str, text: str, identity: dict,
+                   mode: str = "") -> None:
         c.last_active = time.monotonic()
         self._remember(turn_id, c)
         self.host.emit(self.role, "voice", "voice_turn", turn=turn_id, text=text,
-                       identity=identity)
+                       identity=identity, **({"mode": mode} if mode else {}))
         self.pending_user += 1
         self.quiet.clear()
         try:
@@ -124,12 +177,18 @@ class VoiceRoom:
                 self.spawn(self._barge(self.current))     # barge-in
             async with self.lock:
                 name = str(identity.get("name") or "").strip() or "guest"
-                body = f"[voice | {name}] {text}"
+                note = MODE_NOTES.get(mode)
+                body = f"[voice | {name}{' | ' + note if note else ''} | {self.now()}] {text}"
                 if self.held:
                     away = "\n".join(f"[back end, while you were away] {h}" for h in self.held)
                     self.held.clear()
                     body = f"{away}\n\n{body}"
-                await self._run(c, turn_id, body)
+                ctx = self._context_due()
+                if ctx:
+                    body = f"[brief]\n{ctx}\n\n{body}"
+                self._since_context += 1
+                if await self._run(c, turn_id, body) and ctx:
+                    self._context_used()
         finally:
             self.pending_user -= 1
             if self.pending_user <= 0:
@@ -155,13 +214,20 @@ class VoiceRoom:
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(asyncio.shield(turn.done), 1.0)
 
-    async def _run(self, c: Client, turn_id: str, body: str, push_for: Any = None) -> None:
+    async def _run(self, c: Client, turn_id: str, body: str, push_for: Any = None) -> bool:
+        """One turn on the voice lane, streamed to ``c``; True when it started."""
         lane = self.lane()
         if lane is None:
             c.send({"t": "error", "turn": turn_id, "error": "this role has no voice lane"})
-            return
+            return False
+        route = routing.RoutingFilter()
 
         def sink(kind: str, **fields) -> None:
+            if kind == "delta":
+                text = route.feed(str(fields.get("text") or ""))
+                if text:
+                    c.send({"t": "delta", "turn": turn_id, "text": text})
+                return
             c.send({"t": kind, "turn": turn_id, **fields})
 
         turn = Turn(None, "voice", sink)
@@ -179,13 +245,20 @@ class VoiceRoom:
                 if str(e) == "busy":
                     continue
                 c.send({"t": "error", "turn": turn_id, "error": str(e)})
-                return
+                return False
         try:
             res = await turn.done
         finally:
             self.current = self.current_turn_id = None
         total_ms = round((time.monotonic() - turn.t0) * 1000)
-        text = "".join(turn.deltas) or str(res.get("text") or "")
+        if turn.deltas:
+            tail = route.finish()
+            if tail:
+                c.send({"t": "delta", "turn": turn_id, "text": tail})
+            text, ops, bad = routing.strip("".join(turn.deltas)) + (route.bad,)
+        else:
+            text, ops = routing.strip(str(res.get("text") or ""))
+            bad = 0
         ok = bool(res.get("ok"))
         end = {"t": "end", "turn": turn_id, "text": text, "ok": ok,
                "first_ms": turn.first_ms, "total_ms": total_ms}
@@ -197,6 +270,11 @@ class VoiceRoom:
         reply = {"turn": turn_id, "text": text, "first_ms": turn.first_ms, "total_ms": total_ms,
                  "tools": list(turn.tools), "thinking_tokens": res.get("thinking_tokens", 0),
                  "ok": ok}
+        if ops and not turn.interrupted:
+            # An interrupted reply's routing is dropped: the person spoke over it.
+            reply["routing"] = ops
+        if bad:
+            reply["routing_bad"] = bad
         if not ok:
             reply["error"] = end["error"]
             reply["interrupted"] = turn.interrupted
@@ -205,6 +283,17 @@ class VoiceRoom:
             if push_for:
                 reply["for_turn"] = push_for
         self.host.emit(self.role, "voice", "voice_reply", **reply)
+        return True
+
+    # -- control events for the client (a mode change) ---------------------------------
+    def event(self, kind: str, fields: dict, for_turn: Any = None) -> dict:
+        if kind not in EVENTS:
+            raise ValueError(f"event: one of {', '.join(EVENTS)}")
+        c = self._target(for_turn)
+        if c is None:
+            return {"ok": False, "error": "no voice client is connected"}
+        c.send({"t": kind, "turn": for_turn, **fields})
+        return {"ok": True, "client": c.id}
 
     # -- back-end results ---------------------------------------------------------
     def say(self, text: str, for_turn: str | None) -> dict:
@@ -314,14 +403,15 @@ class VoiceServer:
                     turn_id = str(raw or "")[:TURN_ID_MAX]
                 if t == "user":
                     text = obj.get("text")
-                    if not turn_id or not isinstance(text, str) or not text.strip() \
+                    if turn_id == "" or not isinstance(text, str) or not text.strip() \
                             or len(text) > MAX_TEXT:
                         c.send({"t": "error", "turn": turn_id or None,
                                 "error": "user: turn and text (up to 8000 characters)"})
                         continue
                     ident = obj.get("identity") if isinstance(obj.get("identity"), dict) else {}
                     ident = {k: ident.get(k) for k in ("owner", "name") if k in ident}
-                    room.spawn(room.user(c, turn_id, text.strip(), ident))
+                    mode = str(obj.get("mode") or "")[:20]
+                    room.spawn(room.user(c, turn_id, text.strip(), ident, mode))
                 elif t == "cancel":
                     c.last_active = time.monotonic()
                     room.spawn(room.cancel(c, turn_id or None))

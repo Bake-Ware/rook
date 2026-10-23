@@ -59,6 +59,7 @@ class FakeSessionHost:
         self.script: list[dict] = []
         self.hold: asyncio.Event | None = None     # set: a turn waits for it
         self.tokens: dict[str, str] = {}
+        self.voice_clients = 1
         ws.on_send = self.on_send
 
     def emit(self, **ev):
@@ -70,7 +71,7 @@ class FakeSessionHost:
         if t == "configure":
             for role, spec in msg["roles"].items():
                 for lane, ls in spec["lanes"].items():
-                    self.tokens[f"{role}/{lane}"] = next(iter(ls["env"].values()))
+                    self.tokens[f"{role}/{lane}"] = next(iter(ls["env"].values()), "")
                     self.emit(role=role, lane=lane, kind="state", state="idle",
                               session_id=ls.get("session_id") or f"sid-{role}-{lane}")
         elif t == "send":
@@ -81,6 +82,12 @@ class FakeSessionHost:
         elif t == "fork":
             self.emit(role=msg["role"], lane="main", kind="fork", fork=msg["fork"],
                       state="started", session_id="sid-fork")
+        elif t == "voice_event":
+            ok = self.voice_clients > 0
+            self.ws.inq.put_nowait(json.dumps(
+                {"t": "reply", "req": msg["req"], "ok": True,
+                 "result": {"ok": True, "client": 1} if ok else
+                 {"ok": False, "error": "no voice client is connected"}}))
 
     async def turn(self, msg):
         step = self.script.pop(0) if self.script else {}
@@ -163,21 +170,28 @@ async def disconnect(task, host):
 def test_role_files_name_token_variables_never_tokens():
     files = roledir.main_files(claude_md="# x", model="opus", effort="", turn_url="https://h/x",
                                host_servers=["rea", "rook", "bad name"])
-    files.update(roledir.voice_files(turn_url="https://h/x"))
+    files.update(roledir.voice_files(name="Sojourn", owner="Bake"))
     mcp = json.loads(files[".mcp.json"])
     assert mcp["mcpServers"]["rook"]["headers"]["Authorization"] == "Bearer ${ROOK_TURN_TOKEN}"
     vm = json.loads(files["voice/.mcp.json"])
-    assert vm["mcpServers"]["flow"]["headers"]["Authorization"] == "Bearer ${ROOK_FLOW_TOKEN}"
+    assert vm["mcpServers"] == {}                          # the voice has no tools at all
     st = json.loads(files[".claude/settings.json"])
     assert st["model"] == "opus" and "mcp__rea" in st["permissions"]["allow"]
     assert "Edit(./workspace/**)" in st["permissions"]["allow"]       # Edit rules govern Write
     assert "Bash" in st["permissions"]["deny"] and st["enabledMcpjsonServers"] == ["rook", "rea"]
     vs = json.loads(files["voice/.claude/settings.json"])
-    assert vs["model"] == "claude-haiku-4-5" and vs["effortLevel"] == "low"
+    assert vs["model"] == "claude-haiku-5-5" and vs["effortLevel"] == "low"
     assert vs["env"]["MAX_THINKING_TOKENS"] == "0" and vs["alwaysThinkingEnabled"] is False
-    assert vs["permissions"]["allow"] == ["mcp__flow"] and "Read" in vs["permissions"]["deny"]
-    assert "Speak first" in files["voice/CLAUDE.md"]
-    assert "never with a tool call" in files["voice/CLAUDE.md"]
+    assert vs["permissions"]["allow"] == [] and "Edit" in vs["permissions"]["deny"]
+    # A bare Read deny would stop Claude Code loading the voice's CLAUDE.md.
+    assert "Read" not in vs["permissions"]["deny"]
+    assert vs["enabledMcpjsonServers"] == []
+    rules = files["voice/CLAUDE.md"]
+    assert rules.startswith("# You are Sojourn, out loud") and "Bake's assistant" in rules
+    assert '<<flow {"op": "queue", "request":' in rules and "{{" not in rules
+    for word in ("house agent", "back end", "Haiku"):
+        assert f'"{word}"' in rules                        # named only as words never to say
+    assert "can't get information" in rules
 
 
 # -- the inbox ------------------------------------------------------------------------
@@ -219,9 +233,10 @@ async def test_the_link_needs_the_token_and_gets_files_and_lanes(penv):
                                        "voice/CLAUDE.md", "voice/.mcp.json"}
     blob = json.dumps(house["dir_files"])
     for tok in host.tokens.values():
-        assert tok not in blob                                  # tokens only in env
+        assert not tok or tok not in blob                       # tokens only in env
     assert house["lanes"]["main"]["model"] == "opus"
-    assert house["lanes"]["voice"]["model"] == "claude-haiku-4-5"
+    assert house["lanes"]["voice"]["model"] == "claude-haiku-5-5"
+    assert house["lanes"]["voice"]["env"] == {}                # no flow token: no tools
     assert house["lanes"]["voice"]["effort"] == "low" and house["lanes"]["voice"]["partial"]
     assert house["voice_token_sha256"] == S.token_hash("voice-token")
     assert "https://mcp.example.com/home/turn-mcp" in house["dir_files"][".mcp.json"]
@@ -504,3 +519,92 @@ async def test_flow_through_the_cap_acts_as_the_caller_never_the_voice(penv):
     assert "from agent:claude" in text and "from Bake" not in text
     await until(lambda: host.sent("voice_say"))
     await disconnect(task, host)
+
+
+# -- routing lines (the voice has no tools) -------------------------------------------
+
+def _reply(host, ops, turn="t7", push=False, **extra):
+    ev = {"role": "house", "lane": "voice", "kind": "voice_reply", "turn": turn,
+          "text": "On it.", "ok": True, "first_ms": 700, "routing": ops, **extra}
+    if push:
+        ev.update(push=True, for_turn=turn, turn="push-1")
+    host.emit(**ev)
+
+
+@pytest.mark.asyncio
+async def test_routing_lines_run_as_the_speaker_and_answers_come_back(penv):
+    host, task = await connect(penv)
+    penv.sess.voice["house"] = {"turn": "t7", "identity": {"owner": True, "name": "Bake"}}
+    host.script = [{"text": "Epoch Coffee is open all night."}]
+    _reply(host, [{"op": "queue", "request": "coffee open at midnight?"}])
+    await until(lambda: host.sent("voice_say"))
+    (say,) = host.sent("voice_say")
+    assert say["turn"] == "t7" and "Epoch Coffee" in say["text"]
+    (send,) = host.sent("send")
+    assert "from Bake" in send["text"] and "coffee open at midnight?" in send["text"]
+    # status is said back; a mode change goes to the phone; nonsense says it failed.
+    _reply(host, [{"op": "status"}, {"op": "mode", "mode": "dictation"}, {"op": "rm -rf"}],
+           turn="t8")
+    await until(lambda: len(host.sent("voice_say")) == 3)
+    says = [m["text"] for m in host.sent("voice_say")[1:]]
+    assert says[0].startswith("(status) not working on anything right now")
+    assert says[1].startswith("(that didn't go through: rm -rf) unknown routing op")
+    (ev,) = host.sent("voice_event")
+    assert ev["event"] == "mode" and ev["fields"] == {"mode": "dictate", "by": "voice"}
+    assert ev["turn"] == "t8"
+    rows = [r for r in penv.node.journal.rows if r["cap"] == "home.voice_route"]
+    assert [r["args"]["op"] for r in rows] == ["queue", "status", "mode", "rm -rf"]
+    assert rows[0]["args"]["who"] == "Bake" and rows[-1]["reply"]["ok"] is False
+    m = penv.sess.metrics[-1]
+    assert m["kind"] == "voice" and m["routing"] == ["status", "mode", "rm -rf"]
+    await disconnect(task, host)
+
+
+@pytest.mark.asyncio
+async def test_a_reply_to_a_result_never_asks_again_and_quiet_does_nothing(penv):
+    host, task = await connect(penv)
+    penv.sess.voice["house"] = {"turn": "t1", "identity": {"owner": True, "name": "Bake"}}
+    _reply(host, [{"op": "status"}, {"op": "btw", "question": "and?"}], push=True)
+    _reply(host, [{"op": "quiet"}], turn="t2")
+    host.voice_clients = 0
+    _reply(host, [{"op": "mode", "mode": "telepathy"}], turn="t3")
+    _reply(host, [{"op": "mode", "mode": "listen"}], turn="t4")
+    await until(lambda: len([r for r in penv.node.journal.rows
+                             if r["cap"] == "home.voice_route"]) == 5)
+    await asyncio.sleep(0.05)
+    says = [m["text"] for m in host.sent("voice_say")]
+    assert len(says) == 2 and "one of assistant, dictate, listen, brainstorm" in says[0]
+    assert "no voice client is connected" in says[1]
+    assert not host.sent("btw")                          # skipped: no loop
+    await disconnect(task, host)
+
+
+@pytest.mark.asyncio
+async def test_the_voice_brief_and_identity(penv):
+    penv.node.settings.set("voice.assistant_name", "Sojourn", actor="human:op")
+    penv.node.settings.set("voice.owner", "bake", actor="human:op")
+    penv.node.settings.set("home.timezone", "America/Chicago", actor="human:op")
+    host, task = await connect(penv)
+    (cfg,) = host.sent("configure")
+    files = cfg["roles"]["house"]["dir_files"]
+    assert files["CLAUDE.md"].startswith("# Sojourn: Bake's assistant")
+    assert "never call yourself the house agent" in files["CLAUDE.md"]
+    assert files["voice/CLAUDE.md"].startswith("# You are Sojourn, out loud")
+    assert penv.home.display_name == "Sojourn"
+    await penv.sess.push_briefs()
+    (ctx,) = host.sent("voice_context")
+    assert ctx["tz"] == "America/Chicago" and ctx["role"] == "house"
+    assert ctx["text"].startswith("Not working on anything right now")
+    assert "The band:" in ctx["text"]
+    await penv.sess.push_briefs()
+    assert len(host.sent("voice_context")) == 1           # unchanged: not sent again
+    penv.sess.inbox("house").paused = True
+    await penv.sess.push_briefs()
+    assert "paused" in host.sent("voice_context")[-1]["text"]
+    # Words keep their case ("Bake's", "PR #183"): only the first letter is raised.
+    penv.sess.inbox("house").put(I.Item(id="q1", via="ask", priority=I.PERSON,
+                                        text="[Bake] merge PR #183 for Bake's voice"))
+    await penv.sess.push_briefs()
+    assert "merge PR #183 for Bake's voice" in host.sent("voice_context")[-1]["text"]
+    await disconnect(task, host)
+

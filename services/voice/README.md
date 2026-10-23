@@ -606,9 +606,20 @@ into `FrontBackground.turn` in `pipeline.py`.
 | `VOICE_HOUSE_CONNECT_S` | budget for opening the lane, `ready` included (2) |
 | `VOICE_HOUSE_TURN_S` | longest silence inside a turn once it spoke, e.g. between tool calls (60) |
 
-* Only connections with hello `"pipeline": "front_background"` in an agent mode
-  (assistant) use it; their `session` event carries `"engine": "house"`. Other
-  modes, the classic pipeline and dictation are unchanged.
+* Only connections with hello `"pipeline": "front_background"` use it, in the
+  assistant mode and in `listen` (active listening) and `brainstorm` with their
+  built-in prompts; their `session` event carries `"engine": "house"`. The turn
+  carries `"mode"` when it isn't assistant. Conversation (children), roleplay,
+  custom prompts, the classic pipeline and dictation are unchanged.
+* The voice may switch the connection's mode itself ("switch to dictation"):
+  the host sends `{"t":"mode","mode","by":"voice"}`; the server switches only
+  between `modes.VOICE_SWITCHABLE` (assistant, dictate, listen, brainstorm) and
+  only from a mode the house voice serves, and emits `{"type":"mode",...,"by":
+  "voice"}`, which the APK accepts only between those same modes. A dictation
+  the voice started goes back to the previous mode on "I'm done", and its text
+  goes to the voice as a `[dictation] ...` turn (it offers to save or send it).
+* The conductor routes with hidden lines that the host cuts out; as a backstop
+  nothing from a `<<` on in a delta is spoken.
 * One lane websocket per voice connection, opened on its first turn and
   reopened after it drops. Per turn it sends `{"t":"user","turn","text",
   "identity":{"owner","name"}}` (`name`: the speaker ID label when it named an

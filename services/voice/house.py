@@ -18,6 +18,14 @@ a front_background turn goes to that lane instead of Front + Background:
     one that cannot be spoken is reported (owner ``background`` event + log).
   * the lane unreachable, refused, or no first delta within FIRST_DELTA_S: the
     turn runs on the old Front/Background path, so the voice never goes silent.
+  * control events from the host: ``{"t":"mode","mode","by":"voice"}`` (the voice
+    was asked to switch its listening mode) switches the connection, only between
+    modes.VOICE_SWITCHABLE; into dictation it remembers the mode to return to.
+  * the conductor routes with hidden lines (``<<flow {...}>>``) that the host cuts
+    out; should one ever arrive here, nothing from it on is spoken.
+
+The house voice serves the assistant mode and, unless a custom prompt was set,
+active listening and brainstorm (the turn says which: ``"mode"``).
 
 The token is never logged, put in an event or an error text.
 """
@@ -30,6 +38,7 @@ import time
 from typing import NamedTuple
 from urllib.parse import urlsplit, urlunsplit
 
+from . import modes
 from .front import Clauses
 
 # No first delta this long after the turn started (connecting included): the
@@ -46,6 +55,10 @@ BACKOFF_MIN_S, BACKOFF_MAX_S = 2.0, 60.0
 # A pushed result nobody could hear: how long to keep collecting its text for the report.
 DROP_COLLECT_S = 10.0
 FILLER = 'One moment.'
+# Control events from the host (not part of a turn's reply).
+CONTROL = ('mode',)
+# A routing line's start: the host strips them; this is the backstop.
+ROUTE_MARK = '<<'
 FAILED = "Sorry, that didn't work. Please try again."
 
 log = logging.getLogger('voice.house')
@@ -131,9 +144,10 @@ class Lane:
     on first use, reopened after it drops (pushes keep arriving), and not retried
     during a backoff after a failure, so turns don't each pay a connect timeout."""
 
-    def __init__(self, url, token, on_push=None):
+    def __init__(self, url, token, on_push=None, on_control=None):
         self.url, self._token = url, token
         self.on_push = on_push
+        self.on_control = on_control
         self.ws = None
         self.reader = None
         self.session = None
@@ -256,6 +270,10 @@ class Lane:
         if kind == 'ready':
             self.session = message.get('session')
             return
+        if kind in CONTROL:
+            if self.on_control is not None:
+                self.on_control(message)
+            return
         if kind == 'push':
             if turn is None or turn in self.pushes or turn in self.turns:
                 return
@@ -336,15 +354,46 @@ class HouseVoice:
 
     def __init__(self, fb, config):
         self.fb, self.conn = fb, fb.conn
-        self.lane = Lane(config.url, config.token, on_push=self._on_push)
+        self.lane = Lane(config.url, config.token, on_push=self._on_push, on_control=self._on_control)
+        self.control_tasks = set()
         self.push_lock = asyncio.Lock()
         self.push_tasks = set()
         self.speaking_task = None
         self.stops = 0
 
     def serves(self, mode):
-        """Agent modes only: the conversation/roleplay/listen modes keep their own prompts."""
-        return mode.agent
+        """The assistant mode, and active listening and brainstorm with their built-in
+        prompts; conversation (children), roleplay and custom prompts keep their own path."""
+        return mode.agent or (mode.id in modes.HOUSE_SERVED and not mode.custom)
+
+    # --- control events ------------------------------------------------------------
+    def _on_control(self, message):
+        if message.get('t') == 'mode':
+            task = asyncio.create_task(self._switch(message.get('mode'), message.get('by')))
+            self.control_tasks.add(task)
+            task.add_done_callback(lambda t: (self.control_tasks.discard(t),
+                                              t.exception() if not t.cancelled() else None))
+
+    async def _switch(self, target, by):
+        """The voice was asked to change how it listens ("switch to dictation")."""
+        conn = self.conn
+        if conn.closed:
+            return
+        try:
+            name = modes.normalize(target)
+        except modes.UnknownMode:
+            log.warning('House voice: unknown mode %r ignored', str(target)[:20])
+            return
+        here = conn.mode
+        if by != 'voice' or name not in modes.VOICE_SWITCHABLE or here.id not in modes.VOICE_SWITCHABLE \
+                or not self.serves(here):
+            log.warning('House voice: mode switch %s -> %s refused', here.id, name)
+            return
+        if name == here.id:
+            return
+        await conn.set_mode(modes.resolve(name), by='voice')
+        if name == 'dictate':
+            conn.mode_return = here
 
     def speaking(self):
         return self.speaking_task is not None and not self.speaking_task.done()
@@ -369,6 +418,8 @@ class HouseVoice:
         deadline = time.monotonic() + FIRST_DELTA_S
         timing.extra['engine'] = 'house'
         message = {'t': 'user', 'turn': epoch, 'text': text, 'identity': self.identity(timing)}
+        if conn.mode.id != 'assistant':
+            message['mode'] = conn.mode.id
         if merged_from is not None:
             # This text includes the earlier, cancelled turn's words.
             message['merged_from'] = merged_from
@@ -377,7 +428,7 @@ class HouseVoice:
         except Unavailable as error:
             return self._fallback(epoch, timing, error.code, error.detail)
         spoken, clauses = [], Clauses()
-        got = ended = cancelled = failed = False
+        got = ended = cancelled = failed = routed = False
         tools, reason = 0, None
 
         async def speak(parts):
@@ -408,8 +459,14 @@ class HouseVoice:
                 kind = message.get('t')
                 if kind == 'delta':
                     piece = message.get('text')
-                    if not isinstance(piece, str) or not piece:
+                    if not isinstance(piece, str) or not piece or routed:
                         continue
+                    if ROUTE_MARK in piece:
+                        # A routing line the host should have cut: say nothing from it on.
+                        routed = True
+                        piece = piece.split(ROUTE_MARK, 1)[0]
+                        if not piece.strip():
+                            continue
                     if not got:
                         got = True
                         timing.mark('front_first_token_ms')
@@ -599,7 +656,7 @@ class HouseVoice:
                     await conn.emit('state', state='listening', turn=epoch)
 
     async def close(self):
-        for task in [*self.push_tasks, self.speaking_task]:
+        for task in [*self.push_tasks, *self.control_tasks, self.speaking_task]:
             if task is not None and not task.done():
                 task.cancel()
         await self.lane.close()

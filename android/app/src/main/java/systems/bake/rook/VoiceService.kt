@@ -40,6 +40,8 @@ import kotlin.concurrent.thread
 class VoiceService : Service() {
 
     @Volatile private var client: VoiceClient? = null
+    /** A listening mode the voice switched to; kept for reconnects, cleared when the session ends. */
+    private var voiceMode: String? = null
     private var generation = 0L
     private val capture = VoiceCaptureLifetime { stopMic(); stopForegroundCompat(); if (::arbiter.isInitialized) arbiter.idle() }
     private var sessionWanted: Boolean
@@ -187,6 +189,10 @@ class VoiceService : Service() {
             // Retrying would only hit the same server and mode again; stay closed and say why.
             override fun onRefused(msg: String) = current { VoiceBus.emit(conn) { it.onError(msg) }; closeSession() }
             override fun onTool(title: String, status: String) = current { VoiceBus.emit(conn) { it.onTool(title, status) } }
+            override fun onModeChanged(mode: String) = current {
+                voiceMode = mode.takeIf { VoiceModes.keepAcrossReconnect(it) }
+                VoiceBus.emit(conn) { it.onMode(VoiceModes.byId(mode).label) }
+            }
             override fun onBye(mode: String, afterMs: Long) = current {
                 Log.i(TAG, "bye mode=$mode after=${afterMs}ms")
                 VoiceBus.emit(conn) { it.onBye(mode) }
@@ -207,7 +213,7 @@ class VoiceService : Service() {
                 }
                 closeSession()
             }
-        }, ownMic = false, token = token).also { it.setAecAvailable(aecAvailable); it.connect() }
+        }, ownMic = false, token = token, modeOverride = voiceMode).also { it.setAecAvailable(aecAvailable); it.connect() }
         main.removeCallbacks(idleCheck)
         main.postDelayed(idleCheck, IDLE_CLOSE_MS)
     }
@@ -236,7 +242,7 @@ class VoiceService : Service() {
     }
 
     private fun closeSession() {
-        sessionWanted = false; ++generation; retries = 0
+        sessionWanted = false; ++generation; retries = 0; voiceMode = null
         main.removeCallbacks(idleCheck)
         val old = client; client = null
         try { old?.close() } finally {
@@ -621,6 +627,8 @@ object VoiceBus {
         fun onError(msg: String)
         fun onWake() {}
         fun onBye(mode: String) {}
+        /** The voice switched its listening mode ([label]: "Dictate", "Active listening"). */
+        fun onMode(label: String) {}
         fun onTool(title: String, status: String) {}
         fun onTranscript(text: String, turn: Int?) = onTranscript(text)
         fun onAssistantDelta(text: String, turn: Int?) = onAssistantDelta(text)
