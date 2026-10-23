@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "hardware": {
+    "bachelor": {
+      "description": "One laptop (no GPU, modest RAM) that hosts the hub and is its only desktop worker, plus a phone running the APK.",
+      "machines": [
+        {"role": "laptop", "memory_mb": 4096, "cores": 2, "disk_gb": 20, "hub": true, "worker": true}
+      ],
+      "phone": true
+    },
+    "homelab": {
+      "description": "A small hub VM plus two worker VMs; no phone.",
+      "machines": [
+        {"role": "hub", "memory_mb": 1536, "cores": 2, "disk_gb": 16, "hub": true, "worker": false},
+        {"role": "worker1", "memory_mb": 2048, "cores": 2, "disk_gb": 16, "hub": false, "worker": true},
+        {"role": "worker2", "memory_mb": 1024, "cores": 1, "disk_gb": 12, "hub": false, "worker": true}
+      ],
+      "phone": false
+    },
+    "gpu-box": {
+      "description": "Later: a cloud hub plus a GPU worker for local models. Not runnable yet.",
+      "machines": [],
+      "phone": false,
+      "planned": true
+    }
+  },
+  "models": {
+    "claude-subscription": {
+      "description": "Claude Code with a subscription token drives the house agent and sessions.",
+      "house_agent": {"backend": "claude-code", "model": "haiku"},
+      "sessions": {"harness": "claude"},
+      "needs": ["claude_oauth_token"]
+    },
+    "local-only": {
+      "description": "A small CPU model on the laptop behind an OpenAI-compatible endpoint (llama.cpp server). No cloud.",
+      "house_agent": {"backend": "openai", "model": "local"},
+      "sessions": {"harness": null},
+      "local_model": {
+        "server": "llama.cpp",
+        "candidates": [
+          {"name": "qwen2.5-1.5b-instruct-q4_k_m", "url": "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf", "min_free_mb": 2000},
+          {"name": "qwen2.5-0.5b-instruct-q4_k_m", "url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf", "min_free_mb": 900}
+        ],
+        "ctx": 8192,
+        "port": 8080
+      },
+      "needs": []
+    },
+    "mixed": {
+      "description": "Local fast front (the small CPU model) for the house agent; Claude Code at the back for sessions.",
+      "house_agent": {"backend": "openai", "model": "local"},
+      "sessions": {"harness": "claude"},
+      "local_model": {"inherit": "local-only"},
+      "needs": ["claude_oauth_token"]
+    }
+  },
+  "trust": {
+    "locked-down": {"description": "Everything asks: blanket approval holds on, targets not on the trust map are guarded.", "approvals_enabled": true, "default_level": "guarded"},
+    "balanced": {"description": "Shipped defaults: blanket holds on for agents' admin calls, unlisted targets balanced (changes go, admin asks).", "approvals_enabled": true, "default_level": "balanced"},
+    "yolo": {"description": "Agents just go: blanket holds off, unlisted targets ship-it.", "approvals_enabled": false, "default_level": "ship-it"}
+  },
+  "scenarios": [
+    {"id": "onboard-hub", "title": "Install the hub from zero with the one-command installer"},
+    {"id": "pair-laptop", "title": "Pair the laptop as a worker with a dashboard pairing code"},
+    {"id": "pair-phone", "title": "Install the APK and pair the phone", "needs_phone": true},
+    {"id": "trust", "title": "Apply the trust preset the way a person would"},
+    {"id": "model-setup", "title": "Make the model profile available (Claude Code sign-in or a local model server)"},
+    {"id": "first-request", "title": "First text request to the house agent"},
+    {"id": "fix-bug", "title": "'Fix this bug' in a toy repo, end to end (session to a PR)", "needs": ["sessions"]},
+    {"id": "approval", "title": "An approval path: a held call, approved by the operator, runs once"},
+    {"id": "worker-failure", "title": "Kill a worker mid-call; it comes back and the band recovers"},
+    {"id": "learn-preference", "title": "The house agent learns one preference and uses it next turn"},
+    {"id": "voice", "title": "First voice request (synthetic audio)", "needs_phone": true}
+  ]
+}
