@@ -230,3 +230,12 @@
 @media(max-width:760px){
   .hx-speak{min-width:44px;min-height:44px;height:auto;margin:-12px -10px -12px -4px;font-size:13px}
 }
+
+/* The conference table (pinned artifacts and votes) */
+.hx-table{margin-top:4px;font-size:.85em}
+.hx-table summary{cursor:pointer;color:var(--dim)}
+.hx-tb-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:2px 0;min-width:0}
+.hx-tb-row a,.hx-tb-row span{overflow-wrap:anywhere}
+.hx-tb-n{font-weight:600}
+.hx-tb-ballots{display:flex;flex-wrap:wrap;gap:4px;width:100%}
+.hx-tb-no{outline:1px solid var(--bad)}

@@ -308,6 +308,16 @@ are set only in the environment or on the command line.
 | `huddle.max_role_turns` | Role turns per round | hub | int | `6` | `ROOK_HUDDLE_MAX_ROLE_TURNS` | live |
 | `huddle.retention_days` | Keep archived huddles (days) | hub | int | `90` | `ROOK_HUDDLE_RETENTION_DAYS` | live |
 | `huddle.default_roles` | Default roles | hub | list | `['pm', 'qa', 'lead']` | `ROOK_HUDDLE_DEFAULT_ROLES` | live |
+| `huddle.votes` | Conference table and votes | hub | bool | on | `ROOK_HUDDLE_VOTES` | live |
+| `huddle.vote_voters` | Required voters | hub | dict | `{'merge': ['lead', 'qa', 'security', 'critic…` | `ROOK_HUDDLE_VOTE_VOTERS` | live |
+| `huddle.vote_alternates` | Stand-in voters | hub | dict | `{'lead': ['architect']}` | `ROOK_HUDDLE_VOTE_ALTERNATES` | live |
+| `huddle.vote_auto` | Carry out after a passed vote | hub | list | `['merge', 'qa']` | `ROOK_HUDDLE_VOTE_AUTO` | live |
+| `huddle.vote_github_secret` | Hub GitHub credential (vault secret name) | hub | str |  | `ROOK_HUDDLE_VOTE_GITHUB_SECRET` | live |
+| `huddle.vote_merge_method` | Merge method | hub | str | `merge` | `ROOK_HUDDLE_VOTE_MERGE_METHOD` | live |
+| `huddle.vote_require_ci` | Require CI | hub | bool | on | `ROOK_HUDDLE_VOTE_REQUIRE_CI` | live |
+| `huddle.vote_test_checks` | Test checks | hub | list | `['*test*']` | `ROOK_HUDDLE_VOTE_TEST_CHECKS` | live |
+| `huddle.vote_gate_wait_minutes` | Wait for CI (minutes) | hub | int | `20` | `ROOK_HUDDLE_VOTE_GATE_WAIT_MINUTES` | live |
+| `huddle.vote_deploy_targets` | Deploy targets | hub | list |  | `ROOK_HUDDLE_VOTE_DEPLOY_TARGETS` | live |
 | `huddle.speak_devices` | Play on devices | hub | list |  | `ROOK_HUDDLE_SPEAK_DEVICES` | live |
 
 ## Jobs (hub plugin, runs in mcp)

@@ -109,9 +109,12 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `huddle.archive` | huddle, archived=true | write | Archive a huddle (hidden from the list, kept; deleted after huddle.retention_days) or unarchive it. |
 | `huddle.card` | huddle, card='', action='approve', data? | write | An action card: approve (runs its call as you, under the band's policy) or dismiss; people only. propose (dat… |
 | `huddle.list` | archived=false | read | Every huddle: chaired ones (roles, open cards) and project/band status huddles; archived ones with archived=t… |
+| `huddle.pin` | huddle, kind, repo='', number=0, sha='', path='', url='', text='', title='', note='', sha256='' | write | Pin an artifact on a chaired huddle's table at its exact version: pr (repo, number), commit (repo, sha), file… |
 | `huddle.post` | huddle, text, mention?, wait=false | write | Post in a chaired huddle. |
 | `huddle.read` | action='read', room?, project?, band?, since_seq=0, limit=30 | read | Read huddles: read (room\|project\|band: statuses, questions, messages after since_seq), list, mine. |
 | `huddle.start` | title='', roles?, band? | write | Start a chaired huddle: you, the house agent in the chair and roles (ids; default huddle.default_roles; [] fo… |
+| `huddle.table` | huddle, action='list', artifact='', what='summary', path='', offset=0 | read | A chaired huddle's conference table: list (pinned artifacts, and votes with ballots sealed until all are in),… |
+| `huddle.vote` | huddle, action='call', kind='', artifact='', reason='', target='', skip_vote=false, motion='' | write | Votes on a chaired huddle's table: call (kind merge\|qa\|deploy\|ship, artifact, reason?, target? for deploy/shi… |
 | `huddle.write` | action, room?, project?, band?, text?, data?, mention? | write | Post in a huddle: status (data {working_on, blocked_on?, needs_decision?, task?}), ask (text, data {options?,… |
 | `job.read` | action='list', id?, query='', data? | read | Read jobs and runs: list\|get\|runs\|run_get\|next\|validate\|guardrails_preview\|describe_schema. |
 | `job.write` | action, id?, data? | write | Write jobs: create\|update\|delete\|enable\|disable\|run\|cancel\|set_guardrails\|settings\|lock\|unlock. |

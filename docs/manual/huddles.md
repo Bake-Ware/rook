@@ -113,10 +113,9 @@ call on which machine. It waits for you:
 Rook checks a card when it is proposed: the machine must be on the band
 and have the capability, a task card must name the project it goes under,
 and a new coding session must start in one of the code locations (below).
-A card that fails these checks never appears; the role or the chair is
-told why and can fix it. A card that says the same as one still waiting
-is not added twice: the one who proposed it updates theirs instead. The
-chair's message lists the cards it actually made, by id.
+A card that fails these checks never appears; its proposer is told why.
+A card like one still waiting is not added twice. The chair's message
+lists the cards it actually made, by id.
 
 Only people approve or dismiss cards (or a client relaying your words,
 [[manual-accounts-and-access]]). A role that does routine work (autonomy
@@ -124,7 +123,8 @@ Only people approve or dismiss cards (or a client relaying your words,
 proposes for one shows up already done. Everything Rook keeps for you
 (merges, deploys, deletes, settings, secrets, jobs, protected devices,
 anything unknown) still waits for you, whatever the role's autonomy: see
-**What roles do on their own**.
+**What roles do on their own**. Merges and deploys go to a vote: see
+[[manual-conference-table]].
 
 ## Roles
 

@@ -149,7 +149,7 @@ async def test_a_round_the_chair_calls_on_roles_they_answer_and_it_closes(hub):
     assert posted["round"]
     await _settle(hub)
     chair, = [t for t in hub.band.turns if t["kind"] == "huddle-chair"]
-    assert chair["listed"] == ["call_on", "answer", "propose"]
+    assert chair["listed"] == ["call_on", "answer", "propose", "pin", "call_vote"]
     assert chair["seen"][0] == {"ok": True, "called": ["qa", "pm"], "not_in_huddle": ["ops"],
                                 "roles": ["pm", "qa"]}
     assert "@qa (QA engineer): Watches quality." in chair["args"]["system"]

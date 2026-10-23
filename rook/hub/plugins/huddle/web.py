@@ -73,7 +73,8 @@ from . import speech
 from .service import PERSON
 
 PATH = "/huddle/account-api"
-HUDDLE_ACTIONS = ("list", "view", "send", "answer", "start", "card", "archive", "roles")
+HUDDLE_ACTIONS = ("list", "view", "send", "answer", "start", "card", "archive", "roles", "pin",
+                  "vote")
 SPEECH_ACTIONS = ("speak", "voices", "preview", "speak_devices", "speak_on")
 #: What a preview says when the hub cannot speak (the browser reads it).
 PREVIEW_FALLBACK = "Hello. This is how this browser sounds; the hub has no voice engine now."
@@ -489,6 +490,18 @@ def routes(get_node: Callable[[], Any], accounts):
                                             mention)
                 else:
                     result = await svc.say(PERSON, str(data.get("text") or ""), mention, **where)
+            elif action in ("pin", "vote"):
+                # The conference table, as the person (table.py).
+                if svc.table is None:
+                    raise ValueError("the conference table is off on this hub")
+                room = svc.room_id(str(data.get("room") or ""))[0]
+                body = {k: v for k, v in (data.get("data") or {}).items() if v not in (None, "")}
+                from .table import TableError
+                try:
+                    result = await (svc.table.pin(room, PERSON, body) if action == "pin"
+                                    else svc.table.call(room, PERSON, body))
+                except TableError as e:
+                    raise ValueError(str(e)) from None
             elif action == "answer":
                 result = await svc.answer(int(data.get("question") or 0), str(data.get("text") or ""),
                                           "human:" + str(user["id"]), str(user.get("name") or user["id"]))

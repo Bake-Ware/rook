@@ -702,6 +702,9 @@
   "huddle.list": {
    "tier": "read"
   },
+  "huddle.pin": {
+   "tier": "write"
+  },
   "huddle.post": {
    "tier": "write"
   },
@@ -709,6 +712,12 @@
    "tier": "read"
   },
   "huddle.start": {
+   "tier": "write"
+  },
+  "huddle.table": {
+   "tier": "read"
+  },
+  "huddle.vote": {
    "tier": "write"
   },
   "huddle.write": {

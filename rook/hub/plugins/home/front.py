@@ -57,7 +57,7 @@ log = logging.getLogger("rook.hub.plugins.home.front")
 MIGRATIONS = Path(__file__).resolve().parent / "migrations"
 NAMESPACE = "home"
 PATHS = ("answer", "do", "dispatch", "huddle", "ask", "onboard")
-ASK_KINDS = ("action", "dispute", "gap", "playbook", "remember", "restore", "review")
+ASK_KINDS = ("action", "dispute", "gap", "playbook", "remember", "restore", "review", "vote")
 ASK_STATES = ("open", "yes", "no", "expired", "cancelled")
 DECISION_KINDS = ("did", "dispatched", "huddle", "ruled", "tightened")
 LINE_MAX, EXPLAIN_MAX, MORE_MAX = 160, 600, 4000
@@ -814,6 +814,8 @@ class FrontDoor:
             result.update(await self._carry_out(a, by, relay))
         elif a["kind"] == "review":
             result.update(self.onboard.answer_review(a, False, by))
+        elif a["kind"] == "vote":
+            result.update(await self._vote_answer(a, False, by))
         else:
             result["note"] = "Nothing was done."
         self.store.set_result(a["id"], result)
@@ -825,8 +827,23 @@ class FrontDoor:
                                                   if k in ("note", "remember", "ok")}})
         return result
 
+    async def _vote_answer(self, a: dict, yes: bool, by: str) -> dict:
+        """A vote that reached the person (rook/hub/plugins/huddle/table.py):
+        Yes carries it out with the hub's credential, No drops it."""
+        table = getattr(getattr(self.plugin("huddle"), "service", None), "table", None)
+        mid = (a.get("action") or {}).get("motion")
+        if table is None or not mid:
+            return {"ok": False, "note": "The vote is gone (huddles are off)."}
+        try:
+            out = await table.answer(mid, yes, by)
+        except Exception as e:  # noqa: BLE001 - say why
+            return {"ok": False, "note": f"Not done: {str(e)[:300]}"}
+        return {"ok": bool(out.get("ok")), "note": out.get("note") or ""}
+
     async def _carry_out(self, a: dict, by: str, relay: dict | None) -> dict:
         kind = a["kind"]
+        if kind == "vote":
+            return await self._vote_answer(a, True, by)
         if kind in ("action", "restore") and a.get("action"):
             act = a["action"]
             closing = (act.get("after") or {}).get("close_lease")
