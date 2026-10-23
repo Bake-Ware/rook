@@ -1,0 +1,19 @@
+# The voice lane over SSH (docs/design/persistent-agents.md 3.4): the session
+# host listens on 127.0.0.1:8791 only; this reverse tunnel makes that port
+# appear on the voice server's loopback, so nothing is opened on the LAN or in
+# a firewall. Install on the session host (cachyrig) as a user unit:
+#   cp rook-agent-voice-tunnel.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now rook-agent-voice-tunnel
+# VOICE_HOST is the voice server's SSH name (key auth, no password).
+[Unit]
+Description=Rook persistent agents: voice lane tunnel to the voice server
+After=network-online.target rook-agent-sessions.service
+
+[Service]
+Environment=VOICE_HOST=kaiju
+ExecStart=/usr/bin/ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -R 127.0.0.1:8791:127.0.0.1:8791 ${VOICE_HOST}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
