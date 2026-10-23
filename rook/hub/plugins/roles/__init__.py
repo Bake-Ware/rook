@@ -169,6 +169,17 @@ class RolesPlugin(Plugin):
                      "and reported as blocked."),
         setting("sessions_per_role", int, 2, min=1, max=10, label="Live sessions per role",
                 help="How many coding sessions one role may have running at once."),
+        setting("session_github_app_id", str, "", label="Session GitHub App id",
+                help="A GitHub App the hub mints per-session tokens from (one repository, "
+                     "contents and pull requests only, under an hour). With the installation "
+                     "and private key set, sessions run without the host's own GitHub "
+                     "credentials. Blank: sessions keep the push guard only."),
+        setting("session_github_installation", str, "", label="Session GitHub App installation",
+                help="The app's installation id on the repository's owner (from the app's "
+                     "installation page URL)."),
+        setting("session_github_app_key", str, "", secret=True,
+                label="Session GitHub App private key",
+                help="The app's private key (PEM). Kept in the vault; sessions never see it."),
     )
     SKILL = ("### roles\n"
              "Huddle roles (project manager, QA, lead developer, ...) each have a charter, a "
@@ -331,8 +342,29 @@ class RolesPlugin(Plugin):
         return ""
 
     def cap_tier(self, role: dict, cap: str, entry: dict | None, worker: str = "") -> tuple[str, str]:
-        """``(tier, why)``: free (runs), or approval (a card); see :mod:`.tiers`."""
-        return tiers.cap_tier(role, cap, self._tier(cap, entry), worker, self.protected())
+        """``(tier, why)``: free (runs), or approval (a card); see :mod:`.tiers`.
+        A card's why cites the trust map's entry when the map asks for a person."""
+        risk = self._tier(cap, entry)
+        tier, why = tiers.cap_tier(role, cap, risk, worker, self.protected())
+        if tier != tiers.FREE:
+            r = self.trust_rule(cap, risk, worker)
+            if r is not None and r.tier != "go":
+                why = f"{why}; {r.cite}"
+        return tier, why
+
+    def trust_rule(self, cap: str, risk: str, worker: str = "", *, repo: str = "",
+                   branch: str = ""):
+        """The trust map's ruling (rook/hub/trust.py), or None without a map."""
+        from ..trust import node_store
+        st = node_store(self._node)
+        if st is None:
+            return None
+        try:
+            on_hub = worker == "rook"
+            return st.rule(cap, risk, (), worker=worker, on_hub=on_hub, repo=repo, branch=branch)
+        except Exception:  # noqa: BLE001 - the authorizer still rules on the call itself
+            log.exception("roles: trust ruling failed for %s", cap)
+            return None
 
     def runs_now(self, role: dict, cap: str, entry: dict | None, worker: str = "") -> bool:
         """In scope and free: the role may call it without a person."""
@@ -557,6 +589,10 @@ class RolesPlugin(Plugin):
                     "branch": str(args.get("branch") or ""),
                     "instructions": str(args.get("instructions") or ""),
                     "title": str(args.get("title") or ""), "room": room}
+            if tier == tiers.ROUTINE:
+                held = self.session_trust(call["location"], call["branch"])
+                if held:
+                    tier, why = tiers.APPROVAL, held
             if tier != tiers.ROUTINE:
                 return await self._needs_approval(role, why, approval, {
                     "kind": "session.start", "worker": "rook", "cap": "role.session_start",
@@ -573,6 +609,19 @@ class RolesPlugin(Plugin):
             return await self.resume_session(role, str(args.get("id") or ""),
                                              str(args.get("text") or ""), room=room)
         return {"ok": False, "error": f"unknown tool {name!r}"}
+
+    def session_trust(self, location: str, branch: str) -> str:
+        """Why the trust map wants a person before a session starts in this
+        code location (its repository or worker is sacred or guarded), or ""."""
+        try:
+            loc = rs.pick_location(rs.locations(self.code_locations()), location)
+        except rs.SessionError:
+            return ""    # start_session refuses it with the reason
+        r = self.trust_rule("role.session_start", "write", loc["worker"],
+                            repo=rs.repo_of(loc), branch=branch)
+        if r is None or r.tier == "go" or (r.unlisted and r.level == "balanced"):
+            return ""
+        return f"a session in {loc['name']} needs the person: {r.cite}"
 
     def _session(self, ref: str, role: dict | None = None) -> dict:
         from ....core import names
@@ -652,12 +701,16 @@ class RolesPlugin(Plugin):
         title = (title or f"@{role['id']}: {branch}").strip()
         args = rs.launch_args(loc, branch, wt, native, prompt, settings, title,
                               model=str(self.settings.get("session_model") or ""))
+        data = {"by": actor or self.identity(role), "location": loc["name"]}
+        minted = await self.mint_session_token(loc, sid, role, title)
+        if minted:
+            args["env"]["ROOK_SESSION_GH_TOKEN"] = minted["token"]
+            data["token"] = {k: minted[k] for k in ("fingerprint", "expires_at", "repo")}
         rec = self.sessions.add({"id": sid, "role": role["id"], "room": room or "",
                                  "worker": loc["worker"], "native_id": native, "repo": loc["repo"],
                                  "branch": branch, "worktree": wt, "title": title,
                                  "instructions": instructions, "state": "starting",
-                                 "data": {"by": actor or self.identity(role),
-                                          "location": loc["name"]}})
+                                 "data": data})
         from ....core import names
         with contextlib.suppress(Exception):
             with self.store._lock, self.store.db:
@@ -680,6 +733,27 @@ class RolesPlugin(Plugin):
         return {"ok": True, **self._named(rec),
                 "note": "Started. It reports progress and DONE/BLOCKED back to you and the huddle "
                         "on its own; do not poll it."}
+
+    async def mint_session_token(self, loc: dict, sid: str, role: dict, why: str) -> dict | None:
+        """A token for this session's repository only (rook/hub/session_tokens.py),
+        or None when no GitHub App is configured (the push guard still applies).
+        A configured app that fails to mint stops the session: it never falls
+        back to the host's own credentials."""
+        from ...session_tokens import AppConfig, Minter, NotConfigured
+        try:
+            cfg = AppConfig.from_settings(self.settings.get)
+        except NotConfigured:
+            return None
+        repo = rs.repo_of(loc)
+        if not repo:
+            raise rs.SessionError(f"{loc['name']} names no github.com repository, so the hub "
+                                  "cannot mint it a session token")
+        minter = Minter(str(self.data_dir / "session-tokens.jsonl"))
+        try:
+            return await asyncio.to_thread(minter.mint, cfg, repo=repo, session=sid,
+                                           role=role["id"], why=why)
+        except Exception as e:  # noqa: BLE001 - say why, never fall back
+            raise rs.SessionError(f"could not mint a session token for {repo}: {e}") from None
 
     async def _open_terminal(self, role: dict, worker: str, args: dict) -> str:
         """``work.stream.open`` on ``worker`` as hub system code for the role
@@ -724,6 +798,10 @@ class RolesPlugin(Plugin):
                               model=str(self.settings.get("session_model") or ""))
         data = dict(rec.get("data") or {})
         data.pop("reported", None)
+        minted = await self.mint_session_token(loc, rec["id"], role, "resume: " + text[:200])
+        if minted:
+            args["env"]["ROOK_SESSION_GH_TOKEN"] = minted["token"]
+            data["token"] = {k: minted[k] for k in ("fingerprint", "expires_at", "repo")}
         data.pop("stalled", None)
         opened = await self._open_terminal(role, rec["worker"], args)
         self.sessions.set(rec["id"], terminal=opened, state="running", cursor=0, ended=None,
@@ -1031,6 +1109,10 @@ class RolesPlugin(Plugin):
                          "done, say exactly what (which cap on which worker, with what) so the "
                          "person can approve it.")
         lines.append(TIER_TEXT)
+        from ..trust import summary_text
+        trust = summary_text(self._node)
+        if trust:
+            lines.append(trust)
         deny = ((role.get("tools") or {}).get("deny")) or []
         if deny:
             lines.append("Never call these yourself, whatever your autonomy; when one is needed, "
