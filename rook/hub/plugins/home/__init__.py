@@ -1324,12 +1324,12 @@ class HomeAgent(Plugin):
         """The house agent's persistent sessions: the session host, each role's line ("house agent: busy, 2 waiting, 1 fork"), lanes, queue, side threads, recent latencies."""
         return self.sessions.overview()
 
-    @capability("session_ask", risk="admin")
+    @capability("session_ask", risk="write")
     async def session_ask(self, text: str, role: str = "house") -> dict:
         """Send text to a persistent role's main session through its inbox, with no hub tools (tests, operators); for the house agent use home.ask, which routes."""
         return await self.sessions.ask_role(str(role or "house"), str(text or ""))
 
-    @capability("session_flow", risk="admin")
+    @capability("session_flow", risk="write")
     async def session_flow(self, tool: str, args: dict | None = None, role: str = "house",
                            identity: dict | None = None) -> dict:
         """Run one of the voice conductor's flow tools (queue, steer, fork, fold, status, btw, pause, resume, cancel) as if the voice called it; identity {owner, name} stands for the speaker (tests, operators)."""

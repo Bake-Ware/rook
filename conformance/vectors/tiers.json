@@ -667,10 +667,10 @@
    "tier": "write"
   },
   "home.session_ask": {
-   "tier": "admin"
+   "tier": "write"
   },
   "home.session_flow": {
-   "tier": "admin"
+   "tier": "write"
   },
   "home.session_note": {
    "tier": "write"
