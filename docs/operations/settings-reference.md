@@ -287,6 +287,21 @@ are set only in the environment or on the command line.
 | `home.onboard_quiet_days` | Offer to restore after quiet (days) | hub | int | `14` | `ROOK_HOME_ONBOARD_QUIET_DAYS` | live |
 | `home.onboard_concept` | Concept for new projects | hub | str |  | `ROOK_HOME_ONBOARD_CONCEPT` | live |
 | `home.onboard_sweep_minutes` | Check borrowed state every (minutes) | hub | int | `10` | `ROOK_HOME_ONBOARD_SWEEP_MINUTES` | live |
+| `home.persistent` | Always-on sessions | hub | bool | off | `ROOK_HOME_PERSISTENT` | live |
+| `home.voice_lane` | Voice session | hub | bool | on | `ROOK_HOME_VOICE_LANE` | live |
+| `home.persistent_model` | Agent model | hub | str | `opus` | `ROOK_HOME_PERSISTENT_MODEL` | live |
+| `home.persistent_effort` | Agent effort | hub | str |  | `ROOK_HOME_PERSISTENT_EFFORT` | live |
+| `home.voice_model` | Voice model | hub | str | `haiku` | `ROOK_HOME_VOICE_MODEL` | live |
+| `home.voice_effort` | Voice effort | hub | str | `low` | `ROOK_HOME_VOICE_EFFORT` | live |
+| `home.btw_model` | By-the-way model | hub | str | `haiku` | `ROOK_HOME_BTW_MODEL` | live |
+| `home.compact_at_tokens` | Compact the agent at (tokens) | hub | int | `150000` | `ROOK_HOME_COMPACT_AT_TOKENS` | live |
+| `home.voice_compact_at_tokens` | Compact the voice at (tokens) | hub | int | `60000` | `ROOK_HOME_VOICE_COMPACT_AT_TOKENS` | live |
+| `home.fork_max` | Side threads at once | hub | int | `2` | `ROOK_HOME_FORK_MAX` | live |
+| `home.fold_auto` | Fold finished side threads | hub | bool | on | `ROOK_HOME_FOLD_AUTO` | live |
+| `home.persistent_idle_sleep_min` | Sleep when idle (minutes) | hub | int | `0` | `ROOK_HOME_PERSISTENT_IDLE_SLEEP_MIN` | live |
+| `home.mcp_catalog` | Grantable MCP servers | hub | list |  | `ROOK_HOME_MCP_CATALOG` | live |
+| `home.link_token_sha256` | Session host token (sha256) | hub | str |  | `ROOK_HOME_LINK_TOKEN_SHA256` | live |
+| `home.voice_token_sha256` | Voice server token (sha256) | hub | str |  | `ROOK_HOME_VOICE_TOKEN_SHA256` | live |
 | `home.job_steps` | Work job agent steps | hub | bool | on | `ROOK_HOME_JOB_STEPS` | live |
 | `home.job_max_tool_calls` | Tool calls per job step | hub | int | `20` | `ROOK_HOME_JOB_MAX_TOOL_CALLS` | live |
 

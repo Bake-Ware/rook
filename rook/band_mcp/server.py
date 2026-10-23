@@ -1924,6 +1924,14 @@ class McpService:
         _home_turns()
         for route in home_turn_routes(_home_turns):
             app.router.routes.insert(0, route)
+        # The session host's link for the house agent's persistent sessions.
+        from ..hub.plugins.home.sessions import routes as home_session_routes
+
+        def _home_sessions():
+            home = mcp._rook_hub.plugin("home") if mcp._rook_hub is not None else None
+            return getattr(home, "sessions", None)
+        for route in home_session_routes(_home_sessions):
+            app.router.routes.insert(0, route)
         # Overview, start page and themes (the ui hub plugin).
         from ..hub.plugins.ui.web import routes as ui_routes
         for route in ui_routes(lambda: mcp._rook_hub, accounts):

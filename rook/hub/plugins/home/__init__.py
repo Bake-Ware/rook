@@ -50,6 +50,7 @@ from .front import FrontDoor, FrontError
 from .playbook import PlaybookError
 from .agent_host import AgentHostBackend, TurnFailed, Unavailable
 from .llm import PROVIDERS, ChatClient, LLMError, aiohttp_request, base_url
+from .sessions import Sessions
 
 log = logging.getLogger("rook.hub.plugins.home")
 
@@ -268,6 +269,61 @@ class HomeAgent(Plugin):
                 order=4, advanced=True, label="Check borrowed state every (minutes)",
                 help="How often it looks for borrowed state to offer back and projects to "
                      "review. 0: never."),
+        setting("persistent", bool, False, group="Persistent sessions", order=1,
+                label="Always-on sessions",
+                help="On: the house agent runs as always-on Claude Code sessions on the session "
+                     "host (Opus in its role directory, Haiku as its voice in voice/), and every "
+                     "request goes through its inbox. Off, or no session host connected: one "
+                     "turn at a time on the agent host, as before. "
+                     "docs/design/persistent-agents.md."),
+        setting("voice_lane", bool, True, group="Persistent sessions", order=2,
+                label="Voice session",
+                help="Also run the voice (the conductor): a Haiku session in voice/ that the "
+                     "voice server streams from, routing to the house agent through the inbox."),
+        setting("persistent_model", str, "opus", pattern=r"^[A-Za-z0-9_.:\[\]-]{1,80}$",
+                group="Persistent sessions", order=3, label="Agent model"),
+        setting("persistent_effort", str, "", choices=agent_host.EFFORTS,
+                group="Persistent sessions", order=4, label="Agent effort",
+                help="Blank: Claude Code's default for the model."),
+        setting("voice_model", str, "haiku", pattern=r"^[A-Za-z0-9_.:\[\]-]{1,80}$",
+                group="Persistent sessions", order=5, label="Voice model",
+                help="haiku (thinking held off with effort low) or claude-haiku-4-5 (thinking "
+                     "strictly off)."),
+        setting("voice_effort", str, "low", choices=agent_host.EFFORTS,
+                group="Persistent sessions", order=6, label="Voice effort"),
+        setting("btw_model", str, "haiku", pattern=r"^[A-Za-z0-9_.:\[\]-]{1,80}$",
+                group="Persistent sessions", order=7, advanced=True,
+                label="By-the-way model",
+                help="The model that answers side questions from the agent's context."),
+        setting("compact_at_tokens", int, 150000, min=0, max=900000,
+                group="Persistent sessions", order=8, label="Compact the agent at (tokens)",
+                help="Above this context size it saves durable facts to memory, then compacts. "
+                     "0: only Claude Code's own auto-compaction."),
+        setting("voice_compact_at_tokens", int, 60000, min=0, max=900000,
+                group="Persistent sessions", order=9, label="Compact the voice at (tokens)"),
+        setting("fork_max", int, 2, min=0, max=8, group="Persistent sessions", order=10,
+                label="Side threads at once"),
+        setting("fold_auto", bool, True, group="Persistent sessions", order=11,
+                label="Fold finished side threads",
+                help="A finished side thread's summary goes into the agent's next turn."),
+        setting("persistent_idle_sleep_min", int, 0, min=0, max=1440,
+                group="Persistent sessions", order=12, label="Sleep when idle (minutes)",
+                help="Stop the house agent's processes after this long without input (they "
+                     "resume by id on the next one). 0: always on."),
+        setting("mcp_catalog", list, [], group="Persistent sessions", order=13, advanced=True,
+                label="Grantable MCP servers",
+                help="MCP server names the house agent may grant to roles at the person's "
+                     "request, besides the ones in the session host's own Claude Code config."),
+        setting("link_token_sha256", str, "", pattern=r"^([0-9a-f]{64})?$",
+                group="Persistent sessions", order=20, advanced=True,
+                label="Session host token (sha256)",
+                help="sha256 of the token the session host dials in with; the token itself "
+                     "stays on the host."),
+        setting("voice_token_sha256", str, "", pattern=r"^([0-9a-f]{64})?$",
+                group="Persistent sessions", order=21, advanced=True,
+                label="Voice server token (sha256)",
+                help="sha256 of the token the voice server uses on the session host's voice "
+                     "lane."),
         setting("job_steps", bool, True, group="Jobs", order=1, label="Work job agent steps",
                 help="Job steps with agent \"home\" may run the home agent with a tool set that "
                      "acts on behalf of the job (never more than the job may do). Chat never "
@@ -309,6 +365,7 @@ class HomeAgent(Plugin):
         self._http = aiohttp_request          # tests swap in a fake endpoint
         self.agents = AgentHostBackend(self)
         self.front = FrontDoor(self)
+        self.sessions = Sessions(self)
 
     # -- wiring ------------------------------------------------------------
     def bind_host(self, node) -> None:
@@ -353,6 +410,7 @@ class HomeAgent(Plugin):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._task = None
+        await self.sessions.close()
         self.front.close()
 
     # -- configuration -----------------------------------------------------
@@ -586,6 +644,13 @@ class HomeAgent(Plugin):
                 msgs.append({"role": "tool", "tool_call_id": str(call.get("id") or ""),
                              "content": out})
         raise LLMError("the model kept calling tools")  # pragma: no cover - loop bound
+
+    def _ask_gate(self):
+        """At most two asks at once on a one-shot backend; with the persistent
+        session connected its inbox orders them (by priority), so none waits here."""
+        if self.sessions.on() and self.sessions.connected():
+            return contextlib.nullcontext()
+        return self._ask_sem
 
     def use_agent_host(self, cfg: dict) -> bool:
         return agent_host.harness_of(cfg) is not None
@@ -1184,7 +1249,7 @@ class HomeAgent(Plugin):
             src = re.sub(r"[^a-z0-9_-]", "", str(source or "").lower())[:20] or (
                 "voice" if "voice" in str(context or "").lower()[:200] else "ask")
             try:
-                async with self._ask_sem:
+                async with self._ask_gate():
                     out = await self.front.handle(question, source=src, asker=who,
                                                   principal=principal, context=context)
             except (LLMError, HomeError) as e:
@@ -1210,7 +1275,7 @@ class HomeAgent(Plugin):
                     recalled["text"])},
                 {"role": "user", "content": user[:20000]}]
         try:
-            async with self._ask_sem:
+            async with self._ask_gate():
                 res = await self.complete(msgs, cfg, via="ask",
                                           may_search=self.may_read_knowledge(principal),
                                           memory={"person": None, "room": None,
@@ -1225,6 +1290,64 @@ class HomeAgent(Plugin):
         return {"agent": self.identity, "answer": res["content"], "model": res["model"],
                 "latency_ms": res["latency_ms"], "tools_used": res["tools_used"],
                 "memories_used": len(recalled["ids"])}
+
+    async def voice_request(self, text: str, *, asker: str, principal: Any) -> dict:
+        """A request the voice conductor queued (flow tool ``queue``): through the
+        front door when it is on, else answered like ``home.ask``. Returns
+        ``{answer, path?}``."""
+        if self.front_door():
+            async with self._ask_gate():
+                out = await self.front.handle(text, source="voice", asker=asker,
+                                              principal=principal)
+            self._note("voice", True, sender=asker, model=out.get("model"),
+                       latency_ms=out.get("latency_ms"), tools=out.get("tools_used"),
+                       path=out.get("path"))
+            return out
+        cfg = self.config()
+        use_memory = self.may_use_memory(principal)
+        recalled = (await self.recall_for(text, None) if use_memory
+                    else {"text": "", "ids": []})
+        msgs = [{"role": "system", "content": self.system_prompt(
+                    cfg, "The person is talking to you through your voice.", recalled["text"])},
+                {"role": "user", "content": f"[{asker}] {text}"[:20000]}]
+        async with self._ask_gate():
+            res = await self.complete(msgs, cfg, via="ask",
+                                      may_search=self.may_read_knowledge(principal),
+                                      memory={"person": None, "room": None,
+                                              "save": self.may_call(principal, "memory.remember")}
+                                      if use_memory else None)
+        return {"answer": res["content"]}
+
+    # -- persistent sessions (sessions.py, docs/design/persistent-agents.md) ------------
+    @capability("sessions", risk="read")
+    def sessions_status(self) -> dict:
+        """The house agent's persistent sessions: the session host, each role's line ("house agent: busy, 2 waiting, 1 fork"), lanes, queue, side threads, recent latencies."""
+        return self.sessions.overview()
+
+    @capability("session_ask", risk="write")
+    async def session_ask(self, text: str, role: str = "house") -> dict:
+        """Send text to a persistent role's main session through its inbox, with no hub tools (tests, operators); for the house agent use home.ask, which routes."""
+        return await self.sessions.ask_role(str(role or "house"), str(text or ""))
+
+    @capability("session_flow", risk="write")
+    async def session_flow(self, tool: str, args: dict | None = None, role: str = "house",
+                           identity: dict | None = None) -> dict:
+        """Run one of the voice conductor's flow tools (queue, steer, fork, fold, status, btw, pause, resume, cancel) as if the voice called it; identity {owner, name} stands for the speaker (tests, operators)."""
+        role = str(role or "house")
+        if identity is not None:
+            self.sessions.voice[role] = {**(self.sessions.voice.get(role) or {}),
+                                         "identity": dict(identity), "at": time.time()}
+        return await self.sessions.flow(role, str(tool or ""), dict(args or {}))
+
+    @capability("session_note", risk="write")
+    def session_note(self, text: str, via: str = "report", role: str = "house") -> dict:
+        """A background note for a persistent role (a session report, a job result): batched into its next turn ("While you were busy: ...")."""
+        if via not in ("report", "job", "note"):
+            raise HomeError("via: report, job or note")
+        role = str(role or "house")
+        item = self.sessions.note(str(text or ""), via=via, who=_actor(), role=role)
+        return {"ok": True, "item": item.id, "role": role,
+                "queued": self.sessions.inbox(role).counts()}
 
     # -- the front door's records (front.py, docs/design/front-door.md) -------------
     @capability("digest", risk="read")
@@ -1344,7 +1467,7 @@ class HomeAgent(Plugin):
                           else cfg.get("model")) or "", "missing": self.missing(cfg),
                 "tools": bool(cfg.get("tools")), "key_set": bool(cfg.get("api_key")),
                 "chat": self._store() is not None, "memory": self._memory() is not None,
-                "last_error": self.last_error}
+                "sessions": self.sessions.overview(), "last_error": self.last_error}
 
     # -- MCP -----------------------------------------------------------------
     def mcp_tools(self, invoke):
@@ -1437,6 +1560,7 @@ class HomeAgent(Plugin):
                 "providers": list(PROVIDERS), "llm_providers": llm_providers,
                 "backends": list(BACKENDS), "claude_models": list(agent_host.CLAUDE_MODELS),
                 "agent_hosts": self.agents.hosts(), "usage": self.agents.usage(24.0),
+                "sessions": self.sessions.overview(),
                 "history": svc.store.history(key="home.", limit=30)}
 
     def _form(self, data: dict) -> dict:

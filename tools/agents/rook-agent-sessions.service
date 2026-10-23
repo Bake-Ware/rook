@@ -1,0 +1,26 @@
+# Rook's session host for persistent agents (docs/design/persistent-agents.md 3.2).
+# Install: copy to ~/.config/systemd/user/, then
+#   systemctl --user daemon-reload && systemctl --user enable --now rook-agent-sessions
+# ~/.config/rook-agents/env (mode 0600) holds ROOK_AGENTS_LINK_TOKEN=...;
+# ~/.config/rook-agents/host.json is the config (see host.example.json).
+[Unit]
+Description=Rook session host (persistent agents)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/rook-agents/current
+Environment=PYTHONPATH=%h/rook-agents/current
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=%h/.config/rook-agents/env
+ExecStart=%h/.rook-band-worker/venv/bin/python -m rook.agents --config %h/.config/rook-agents/host.json
+Restart=on-failure
+RestartSec=5
+# SIGTERM to the host only: it closes each session's input so Claude Code ends
+# its sessions cleanly; anything left is killed after the timeout.
+KillMode=mixed
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

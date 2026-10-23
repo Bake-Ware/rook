@@ -99,6 +99,10 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `home.playbook_edit` | op, words, section='', text='', id='' | write | Change the house agent's playbook on the person's correction: op add (section, text) or remove (id); words: t… |
 | `home.projects` | — | read | Projects the house agent set up from a conversation, and its brainstorm and intake threads (stage, plan read… |
 | `home.restore` | what, words='', relayed_by? | write | Bring borrowed state back ("bring Strata back"): what = the resource, project or lease; runs the recorded res… |
+| `home.session_ask` | text, role='house' | write | Send text to a persistent role's main session through its inbox, with no hub tools (tests, operators); for th… |
+| `home.session_flow` | tool, args?, role='house', identity? | write | Run one of the voice conductor's flow tools (queue, steer, fork, fold, status, btw, pause, resume, cancel) as… |
+| `home.session_note` | text, via='report', role='house' | write | A background note for a persistent role (a session report, a job result): batched into its next turn ("While… |
+| `home.sessions` | — | read | The house agent's persistent sessions: the session host, each role's line ("house agent: busy, 2 waiting, 1 f… |
 | `home.settle` | question, positions?, cap='', worker='', repo='', branch='', project='', ruling='', rule='', room='' | write | A disagreement between agents for the house agent to settle: question, positions [{who, says}], the action at… |
 | `home.status` | — | read | Whether the home agent is on, its identity, endpoint host and model, and the last error (never the key). |
 | `hub.info` | — | read | What the hub runs: version, core API, roles, facts and plugins. |

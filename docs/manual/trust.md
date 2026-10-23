@@ -90,6 +90,14 @@ lists each machine's recorded normal state. The house agent fills these in
 when you start a project by talking to it and say it may borrow something:
 see [[manual-onboarding]].
 
+## Tool grants
+
+When a role runs as an always-on session ([[manual-persistent-agents]]), the
+MCP servers it was given are listed on the map as **tool grants** ("rea for
+re-tech"), with who asked and their words. The house agent adds one only when
+you ask for it yourself; another agent's request waits for you as a proposal.
+Taking a tool away is a tightening, so the house agent may always do that.
+
 ## Coding sessions can't push the main branch
 
 A role's coding session pushes only its own branch and opens a pull request.

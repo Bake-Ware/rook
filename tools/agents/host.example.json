@@ -1,0 +1,8 @@
+{
+  "hub_url": "wss://hub.example/home/agents-link",
+  "host": "cachyrig",
+  "token_env": "ROOK_AGENTS_LINK_TOKEN",
+  "roles_dir": "~/.rook-band-worker/plugins/agenthost/roles",
+  "voice_listen": "0.0.0.0:8791",
+  "max_forks": 2
+}

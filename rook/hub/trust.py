@@ -42,6 +42,14 @@ call for that resource (:data:`borrowing`) matches, never anything else on
 the host. Every change made that way is a ``ledger`` lease: what changed,
 why, the person's words, how to restore it, until when (B3,
 docs/design/onboarding.md).
+
+**Tool grants.** ``grants`` lists the MCP servers a role's persistent Claude
+Code sessions were given (``grant_tool`` / ``revoke_tool``,
+docs/design/persistent-agents.md 3.6). A grant is guarded: the person makes it
+(dashboard), or the house agent makes it because the person asked for it in
+the request it is working on (``Actor.via == "person-request"``, with their
+words); an agent's own idea is a proposal. A revoke tightens, so the house
+agent may always revoke.
 """
 from __future__ import annotations
 
@@ -310,7 +318,7 @@ def _brief(e: dict) -> dict:
 def empty_map() -> dict:
     return {"format": FORMAT, "version": 0, "updated": 0, "unlisted": "balanced",
             "unlisted_set_by": None, "entries": [], "exceptions": [], "baseline": [], "ledger": [],
-            "proposals": [], "notices": []}
+            "proposals": [], "notices": [], "grants": []}
 
 
 def rule_map(doc: dict, ctx: Ctx, tier: str, tags: tuple | list = (), on_hub: bool = False,
@@ -478,7 +486,25 @@ def clean_lease(raw: Any) -> dict:
 # -- the store --------------------------------------------------------------------
 
 OPS = ("set_entry", "delete_entry", "set_unlisted", "add_exception", "end_exception",
-       "add_lease", "close_lease", "set_baseline", "decide_proposal", "ack", "confirm")
+       "add_lease", "close_lease", "set_baseline", "decide_proposal", "ack", "confirm",
+       "grant_tool", "revoke_tool")
+#: ``Actor.via`` for a grant the house agent makes because the person asked for
+#: it in the request it is working on (docs/design/persistent-agents.md 3.6).
+PERSON_REQUEST = "person-request"
+
+
+def clean_grant(raw: Any) -> dict:
+    """A tool grant: an MCP server (by name) for a role's persistent sessions."""
+    if not isinstance(raw, dict):
+        raise TrustError("grant: {role, server}")
+    role = str(raw.get("role") or "").strip()
+    server = str(raw.get("server") or "").strip()
+    if not re.match(r"^[a-z][a-z0-9_-]{0,31}$", role):
+        raise TrustError("grant role: a role id")
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$", server) or server in ("rook", "flow"):
+        raise TrustError("grant server: an MCP server name (not rook or flow)")
+    return {"id": f"{role}:{server}", "role": role, "server": server,
+            "note": str(raw.get("note") or "")[:TEXT_MAX]}
 
 
 class TrustStore:
@@ -735,6 +761,29 @@ class TrustStore:
             lease["state"] = "restored" if data.get("restored", True) else "closed"
             lease["closed_by"] = actor.stamp(now)
             return old, lease, ident
+        if op == "grant_tool":
+            g = clean_grant(data.get("grant") if "grant" in data else data)
+            if house and actor.via != PERSON_REQUEST:
+                raise TrustError("granting a tool is the person's call: the house agent grants "
+                                 "only when the person asked for it; propose it instead")
+            doc.setdefault("grants", [])
+            old = next((r for r in doc["grants"] if r["id"] == g["id"] and not r.get("revoked")),
+                       None)
+            if old is not None:
+                return old, old, g["id"]
+            g["granted_by"] = actor.stamp(now)
+            doc["grants"] = [r for r in doc["grants"] if r["id"] != g["id"]] + [g]
+            return None, g, g["id"]
+        if op == "revoke_tool":
+            g = clean_grant(data.get("grant") if "grant" in data else data)
+            doc.setdefault("grants", [])
+            old = next((r for r in doc["grants"] if r["id"] == g["id"] and not r.get("revoked")),
+                       None)
+            if old is None:
+                raise TrustError(f"{g['server']} is not granted to {g['role']}")
+            before = dict(old)
+            old["revoked"] = actor.stamp(now)
+            return before, old, g["id"]
         if op == "decide_proposal":
             if actor.kind != "person":
                 raise TrustError("only the person accepts or rejects a proposal")
@@ -795,7 +844,8 @@ class TrustStore:
         if not isinstance(change, dict) or change.get("op") not in OPS \
                 or change.get("op") in ("decide_proposal", "ack", "confirm"):
             raise TrustError("change: {op, data} with op one of set_entry, delete_entry, "
-                             "set_unlisted, add_exception, end_exception, add_lease, close_lease")
+                             "set_unlisted, add_exception, end_exception, add_lease, close_lease, "
+                             "grant_tool, revoke_tool")
         why = _clean_words(why)
         if len(why) < 4:
             raise TrustError("why is required: what you saw that makes this change right "
@@ -850,6 +900,10 @@ class TrustStore:
                 scope += " except " + ", ".join(x["excludes"])
             parts.append(f"Exception {x['id']}: {scope} -> {x.get('tier', 'go')} until "
                          f"{x.get('expires')}.")
+        grants = [g for g in doc.get("grants") or () if not g.get("revoked")]
+        if grants:
+            parts.append("Tool grants: " + "; ".join(
+                f"{g['server']} for {g['role']}" for g in grants[:8]) + ".")
         borrowed = [r for r in doc.get("ledger") or () if r.get("state") == "open"]
         if borrowed:
             parts.append("Borrowed now: " + "; ".join(
@@ -858,6 +912,11 @@ class TrustStore:
         parts.append("Reads and the band's records are always free. Only the person loosens "
                      "the map (dashboard); propose changes with rook_trust action=propose.")
         return " ".join(parts)
+
+    def grants(self, role: str = "") -> list[dict]:
+        """Live tool grants (not revoked), for one role or all."""
+        return [dict(g) for g in self.current().get("grants") or ()
+                if not g.get("revoked") and (not role or g.get("role") == role)]
 
     def public(self, now: float | None = None) -> dict:
         doc = copy.deepcopy(self.current())

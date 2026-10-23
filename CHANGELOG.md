@@ -8,6 +8,20 @@ version was `0.1.0`.
 
 ## Unreleased
 
+### Added
+- Always-on house agent: with `home.persistent` the house agent runs as persistent Claude Code
+  sessions on a session host (`python -m rook.agents`, on the machine with the Claude login): Opus
+  in its role directory (`CLAUDE.md`, `.claude/settings.json`, `.mcp.json`, rendered by the hub)
+  and Haiku as its voice in `voice/`. Sessions resume by id after restarts (a fresh start is
+  reported, never silent), save memory then compact at a threshold, and sleep when idle if set.
+  The hub owns a per-role inbox (voice, person, huddle, background; notes batched "While you were
+  busy"); without a session host, turns fall back to one-shot runs. The voice conductor's flow
+  tools: queue, steer, fork, fold, status, btw (a throwaway fork; Claude Code's `/btw` is not
+  available headless), pause, resume, cancel. The house agent's `role_config` tool grants or
+  revokes a role's MCP servers as trust-map `grant_tool` entries, only on the person's own
+  request. Caps `home.sessions`, `home.session_ask`, `home.session_flow`, `home.session_note`.
+  Design: docs/design/persistent-agents.md. (manual: persistent-agents, trust)
+
 ## [0.3.0] - 2026-10-23
 
 The house agent release: about 180 builds since 0.2.0. The house agent as the front
