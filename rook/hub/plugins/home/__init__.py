@@ -112,6 +112,11 @@ def summarise(err: str) -> str:
         return "the model endpoint is unreachable"
     if "vault" in e or "secret" in e or "API key" in e:
         return "the API key is unavailable (check Manage > Home agent)"
+    if "public URL" in e or "callback" in e:
+        return ("agent hosts cannot reach the hub: set its callback URL "
+                "(Manage > Home agent)")
+    if "agent host" in e:
+        return "no agent host can run the home agent now (Manage > Home agent)"
     if "base URL" in e or "model" in e or "provider" in e:
         return "the home agent is not fully configured (Manage > Home agent)"
     return "the model call failed"

@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import contextlib
+import os
 import logging
 import time
 import uuid
@@ -202,13 +203,23 @@ class AgentHostBackend:
 
     def turn_url(self, cfg: dict) -> str:
         base = (str(cfg.get("agent_callback_url") or "").strip() or self.public_url
-                or self._setting("core.mcp.public_url"))
+                or self._setting("core.mcp.public_url") or self._dashboard_base())
         if not base:
             raise Unavailable("the hub's public URL is unknown; set home.agent_callback_url")
         base = base.rstrip("/")
         if base.endswith("/mcp"):
             base = base[:-4]
         return base + PATH
+
+    def _dashboard_base(self) -> str:
+        """The dashboard's public base (``--domain``, what workers already use
+        to reach the hub): on a single-process hub it serves the turn server
+        too, so a fresh install needs no callback URL of its own."""
+        from ...approvals import dashboard_url
+        node = self.plugin._node
+        with contextlib.suppress(Exception):
+            return dashboard_url(getattr(node, "settings_store", None), os.environ)
+        return ""
 
     def _setting(self, key: str) -> str:
         svc = getattr(self.plugin._node, "settings", None)

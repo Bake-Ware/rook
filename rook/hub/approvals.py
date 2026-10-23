@@ -161,6 +161,11 @@ def _dashboard_url(store: Any, environ: Any) -> str:
         return ""
 
 
+def dashboard_url(store: Any = None, environ: Any = None) -> str:
+    """The dashboard's public base URL (``http(s)://host[:port]``), or ""."""
+    return _dashboard_url(store, os.environ if environ is None else environ)
+
+
 def load_config(store: Any = None, environ: Any = None) -> Config:
     """Approval settings: environment > Settings page (hub scope) > default.
     A bad value is logged and skipped, never fatal."""
