@@ -80,7 +80,14 @@ class VoiceClient(
     }
     fun connect() {
         check(!ownMic) { "VoiceService must own the microphone" }
-        val builder = OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS).pingInterval(20, TimeUnit.SECONDS)
+        // The app permits cleartext for LAN hubs: ws:// only to a local-network voice server.
+        if (!HubAddress.cleartextAllowed(url)) {
+            running = true
+            listener.onError("Use wss:// for the voice server (ws:// works only on your local network)")
+            shutdown()
+            return
+        }
+        val builder =OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS).pingInterval(20, TimeUnit.SECONDS)
         if (insecureTls) VoiceTls.trustAll(builder)
         val client = builder.build(); http = client
         val prefs = ctx.getSharedPreferences("rook", Context.MODE_PRIVATE)

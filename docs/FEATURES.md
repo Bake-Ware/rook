@@ -198,7 +198,7 @@ On top of the usual `shell.*`, `file.*` and `info.*`, the app adds what only a p
 
 **Voice assistant.** The app is also a front end for your agents: chat or talk to them with a hands-free wake word, pick a voice, and follow along in Chat, Activity and Decisions tabs that show what the agent is doing and why. It can be set as Android's default assistant.
 
-**Install and updates.** Your hub serves the APK at `/apk`. Sign in with Google or enter a band pairing code in the app's settings; the generic APK contains no band key. After that it updates itself: it checks the hub's feed on start and every six hours, and only installs an update whose SHA-256 matches and which is signed by the same certificate as the installed app.
+**Install and updates.** Your hub serves the APK at `/apk`. Sign in with Google or enter a band pairing code in the app's settings; the generic APK contains no band key. A hub on your home network can be entered as its plain `http://<lan-ip>:7005` address: the app accepts `http://` only for local-network addresses (private, loopback, link-local and CGNAT/tailnet IPs, `localhost`, and `.local`, `.lan`, `.home.arpa` and `.internal` names) and joins the band through that hub's WebSocket bridge. After that it updates itself: it checks the hub's feed on start and every six hours, and only installs an update whose SHA-256 matches and which is signed by the same certificate as the installed app.
 
 Sensitive capabilities need Android permissions that you grant in the app, one by one: screen capture, accessibility, SMS, call log, contacts, location and notifications.
 

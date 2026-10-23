@@ -15,7 +15,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.URI
 import java.util.concurrent.TimeUnit
 
 /** Google proves account ownership; only the Rook backend decides band access. */
@@ -23,18 +22,10 @@ object GoogleEnrollment {
     private val http = OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS)
         .followRedirects(false).followSslRedirects(false).build()
 
-    private fun origin(server: String): String {
-        val uri = URI(server.trim())
-        require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null &&
-            uri.query == null && uri.fragment == null && (uri.path.isNullOrEmpty() || uri.path == "/")) {
-            "Enter the HTTPS address of your Rook server."
-        }
-        return server.trim().trimEnd('/')
-    }
-
     private suspend fun post(server: String, path: String, data: JSONObject): JSONObject =
         withContext(Dispatchers.IO) {
-            val request = Request.Builder().url(origin(server) + path)
+            // HTTPS, or plain HTTP to a server on the local network (a LAN hub).
+            val request = Request.Builder().url(HubAddress.serverOrigin(server) + path)
                 .post(data.toString().toRequestBody("application/json".toMediaType())).build()
             http.newCall(request).execute().use { response ->
                 require(response.isSuccessful) { "Rook could not complete enrollment (${response.code})." }

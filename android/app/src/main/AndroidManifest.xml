@@ -51,8 +51,15 @@
         </intent>
     </queries>
 
+    <!-- usesCleartextTraffic: a LAN hub from the one-command installer serves plain
+         http://<lan-ip>:7005, and pairing with it happens over that address. A network
+         security config can't list IP ranges, so cleartext is permitted here and each
+         HTTP client checks its own URL instead: HubAddress allows http:// and ws:// only
+         to local-network hosts (enrollment, voice WebSocket); the updater and the voice
+         HTTP calls build https:// URLs only. -->
     <application
         android:allowBackup="false"
+        android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"

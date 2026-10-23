@@ -261,8 +261,11 @@ class SettingsActivity : AppCompatActivity() {
             val hub = b.hub.text.toString().trim()
             val psk = b.psk.text.toString().trim()
             val name = b.name.text.toString().trim().ifEmpty { (Build.MODEL ?: "android").replace(' ', '-') }
+            // A hub address from the Rook server is its WebSocket bridge whatever the port;
+            // an edited address goes back to the port rule (443/8443 WebSocket, else UDP).
+            val ws = prefs.getBoolean(PREF_HUB_WS, false) && hub == prefs.getString("hub", null)
             prefs.edit().putString("hub", hub).putString("psk", psk).putString("name", name)
-                .putBoolean("autostart", true).apply()
+                .putBoolean(PREF_HUB_WS, ws).putBoolean("autostart", true).apply()
             WorkerService.start(this, hub, psk, name)
             status("worker starting as $name -> $hub")
         }
@@ -311,6 +314,7 @@ class SettingsActivity : AppCompatActivity() {
                 b.psk.setText(band.getString("psk"))
                 prefs.edit()
                     .putString("hub", band.getString("hub"))
+                    .putBoolean(PREF_HUB_WS, HubAddress.bandUsesWebSocket(band))
                     .putString("psk", band.getString("psk"))
                     .putString("band_id", band.getString("id"))
                     .putInt("band_epoch", band.getInt("epoch")).apply()
