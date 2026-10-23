@@ -1,6 +1,8 @@
 """``rook hub``: build, deploy, inspect and roll back hub releases.
 
     rook hub release build [--ref HEAD] [--out DIR] [--url-base URL] [--repo DIR]
+                           [--worker-bundle build|live|none|DIR] [--apk live|none|DIR]
+                           [--apk-beta live|none|DIR] [--public-base URL]
     rook hub release verify MANIFEST [--pubkey B64]
     rook hub deploy MANIFEST [--services dashboard,mcp] [--test PATH]... [--yes]
     rook hub status [--json]
@@ -19,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -92,6 +95,77 @@ def _history_line(ev: dict) -> str:
     return f"{ts}  {ev.get('event', '?'):8s} {ev.get('result', ''):8s} {ch}{extra}"
 
 
+def _live_feed(config: str | None):
+    """(release tree the live feed service runs, its environment), or None
+    when there is no deploy config or no running release."""
+    from . import feed as fd
+    from .selector import Selector, systemctl_argv
+    try:
+        cfg = cfgmod.load(config)
+    except cfgmod.ConfigError:
+        return None
+    svc = cfg.feed_svc()
+    cur = Selector(cfg).current(svc) if svc else None
+    if not cur or not cfg.release_dir(cur).is_dir():
+        return None
+    argv = (systemctl_argv(cfg, "show", "-p", "Environment", "--value", svc.unit)
+            if cfg.mode == "systemd" and svc.unit else None)
+    return cfg.release_dir(cur), fd.service_env(argv)
+
+
+def _feed_sources(a) -> dict:
+    """build_release(worker=, apk=, apk_beta=, public_base=) from the flags."""
+    from . import feed as fd
+    wants_live = "live" in (a.worker_bundle, a.apk, a.apk_beta) or not a.apk or not a.apk_beta
+    live = _live_feed(a.config) if wants_live else None
+
+    def need_live(flag):
+        if live is None:
+            raise cfgmod.ConfigError(f"{flag} live: no deploy config with a running release "
+                                     "(pass --config, or a directory)")
+        return live
+
+    out = {"worker": None, "apk": None, "apk_beta": None}
+    if a.worker_bundle == "build":
+        out["worker"] = "build"
+    elif a.worker_bundle == "live":
+        out["worker"] = need_live("--worker-bundle")[0] / fd.REMOTE
+    elif a.worker_bundle != "none":
+        out["worker"] = Path(a.worker_bundle)
+    apk = a.apk or ("live" if live and "apk" in fd.tree_kinds(live[0]) else "none")
+    if apk == "live":
+        tree = need_live("--apk")[0]
+        if "apk" not in fd.tree_kinds(tree):
+            raise cfgmod.ConfigError(f"--apk live: {tree.name} serves no APK")
+        out["apk"] = tree / fd.REMOTE
+    elif apk != "none":
+        out["apk"] = Path(apk)
+    beta = a.apk_beta or "live"
+    if beta == "live":
+        found = None
+        if live is not None:
+            tree, env = live
+            gate = (env.get("ROOK_BETA_APK_SHA256") or "").strip()
+            upd = fd.updates_dir(env)
+            for d in ([upd / "apk-beta"] if upd else []) + [tree / fd.BETA]:
+                m = fd._read_json(d / fd.APK_MANIFEST)
+                if gate and isinstance(m, dict) and m.get("sha256") == gate and (d / fd.APK).is_file():
+                    found = d
+                    break
+        if found is None and a.apk_beta == "live":
+            raise cfgmod.ConfigError("--apk-beta live: the live hub approves no beta APK")
+        out["apk_beta"] = found
+    elif beta != "none":
+        out["apk_beta"] = Path(beta)
+    base = a.public_base or os.environ.get("ROOK_PUBLIC_BASE", "")
+    if not base and live is not None:
+        m = fd._read_json(live[0] / fd.REMOTE / fd.PYZ_MANIFEST) or {}
+        url = str(m.get("url") or "")
+        base = url.rsplit("/", 1)[0] if "/" in url else ""
+    out["public_base"] = base
+    return out
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="rook hub", description="Hub release deploys")
     ap.add_argument("--config", help="deploy config JSON (default $ROOK_HUB_DEPLOY_CONFIG "
@@ -106,6 +180,20 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--out", default="dist/hub", help="output dir (default dist/hub)")
     b.add_argument("--url-base", default="", help="public URL the tarball will be served "
                                                   "from; signed into the manifest")
+    b.add_argument("--worker-bundle", default="build", metavar="build|live|none|DIR",
+                   help="worker bundle the release serves at /band-worker.pyz: build it from "
+                        "the commit (default), take the one the live hub serves, none, or a "
+                        "directory with a signed band-worker.pyz + band-worker.json")
+    b.add_argument("--apk", default="", metavar="live|none|DIR",
+                   help="Android app the release serves at /apk: the live hub's (default when "
+                        "a deploy config is found), none, or a directory with rook-worker.apk + "
+                        "rook-worker-apk.json")
+    b.add_argument("--apk-beta", default="", metavar="live|none|DIR",
+                   help="beta-channel app (/apk?channel=beta): the live hub's approved beta "
+                        "(default when a deploy config is found), none, or a directory")
+    b.add_argument("--public-base", default="",
+                   help="hub URL signed into a built worker bundle's manifest (default "
+                        "$ROOK_PUBLIC_BASE, else the live bundle's)")
     v = rsub.add_parser("verify", help="check a manifest's signature (and artifact if local)")
     v.add_argument("manifest")
     v.add_argument("--pubkey")
@@ -135,6 +223,12 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--pubkey", help="trusted update public key (default: this hub's)")
     d.add_argument("--allow-downgrade", action="store_true")
     d.add_argument("--skip-preflight", action="store_true")
+    d.add_argument("--no-carry-feed", action="store_true",
+                   help="don't carry the worker bundle / APKs the release lacks from the "
+                        "running release")
+    d.add_argument("--skip-feed-check", action="store_true",
+                   help="don't check the APK gates before, or what /band-worker.pyz and /apk "
+                        "serve after (a dark feed then goes unnoticed)")
     activation_opts(d)
 
     r = sub.add_parser("rollback", help="switch services back to their previous release")
@@ -170,17 +264,26 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if a.cmd == "release":
             if a.rcmd == "build":
-                tb, mp, m = mf.build_release(Path(a.repo), Path(a.out), a.ref, a.url_base)
+                src = _feed_sources(a)
+                tb, mp, m = mf.build_release(Path(a.repo), Path(a.out), a.ref, a.url_base,
+                                             log=print, **src)
                 print(f"built {m['version']} (commit {m['commit'][:12]})\n  {tb}\n  {mp}")
                 return 0
             m = mf.verify(mf.load_manifest(a.manifest), a.pubkey)
             print(f"signature ok: {m['version']} commit {m['commit']}")
             src = mf.artifact_source(m, a.manifest)
+            ok = True
             if Path(src).is_file():
                 ok = mf.sha256_file(Path(src)) == m["sha256"]
                 print(f"artifact {src}: {'sha256 ok' if ok else 'SHA256 MISMATCH'}")
-                return 0 if ok else 1
-            return 0
+            from . import feed as fd
+            for e in m.get("feed") or []:
+                b = fd.blob_source(m, a.manifest, e["sha256"])
+                if Path(b).is_file():
+                    good = mf.sha256_file(Path(b)) == e["sha256"]
+                    ok = ok and good
+                    print(f"feed {e['path']}: {'sha256 ok' if good else 'SHA256 MISMATCH'}")
+            return 0 if ok else 1
 
         cfg = cfgmod.load(a.config)
         if a.cmd == "deploy":
@@ -188,7 +291,8 @@ def main(argv: list[str] | None = None) -> int:
             _confirm(cfg, names, a.yes or a.no_restart, "this deploy")
             dp.deploy(cfg, a.manifest, services=names, tests=a.test, pubkey=a.pubkey,
                       allow_downgrade=a.allow_downgrade, skip_preflight=a.skip_preflight,
-                      adopt_strays=a.adopt_strays, **_activation_kw(a))
+                      adopt_strays=a.adopt_strays, carry_feed=not a.no_carry_feed,
+                      check_feed=not a.skip_feed_check, **_activation_kw(a))
         elif a.cmd == "rollback":
             names = _services(a.services)
             _confirm(cfg, names, a.yes or a.no_restart, "this rollback")

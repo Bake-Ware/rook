@@ -42,6 +42,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from . import feed as fd
 from . import manifest as mf
 from .config import Config, Service
 from .selector import Selector, restart_argv, restore_script_lines, systemctl_argv
@@ -129,14 +130,18 @@ def read_release(cfg: Config, version: str) -> dict | None:
         return None
 
 
-def unpack(cfg: Config, tarball: Path, manifest: dict) -> Path:
+def unpack(cfg: Config, tarball: Path, manifest: dict,
+           feed_blobs: dict[str, Path] | None = None) -> Path:
     """Extract into a fresh ``releases/<version>``. Never overlays an existing
-    tree: the same release is reused only if it came from the same artifact."""
+    tree: the same release is reused only if it came from the same artifact.
+    ``feed_blobs`` ({path: checked blob}, feed.fetch) are linked into the tree."""
     version = manifest["version"]
     dest = cfg.release_dir(version)
     if dest.exists():
         rel = read_release(cfg, version)
         if rel and rel.get("sha256") == manifest["sha256"]:
+            if feed_blobs:
+                fd.install(feed_blobs, dest)
             return dest
         raise DeployError(f"{dest} exists but was not unpacked from this artifact; "
                           "remove it (or prune) before deploying this release")
@@ -160,6 +165,8 @@ def unpack(cfg: Config, tarball: Path, manifest: dict) -> Path:
         src = tmp / version
         if not src.is_dir():
             raise DeployError(f"artifact has no top-level {version}/ directory")
+        if feed_blobs:
+            fd.install(feed_blobs, src)
         (src / "RELEASE.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         os.rename(src, dest)
     finally:
@@ -486,7 +493,7 @@ def new_deploy_id(version: str) -> str:
 def activate(cfg: Config, plan: dict[str, str], *, kind: str = "deploy",
              restart: bool = True, parallel: bool = False, adopt_strays: bool = False,
              backup_dbs: bool = True, deadman_minutes: float | None = None,
-             auto_rollback: bool = True, log=_log_default) -> dict:
+             auto_rollback: bool = True, post_check=None, log=_log_default) -> dict:
     """Point each service in ``plan`` ({service: version}) at its release,
     restart and verify. On failure, run the rollback script and raise."""
     sel = Selector(cfg)
@@ -568,6 +575,10 @@ def activate(cfg: Config, plan: dict[str, str], *, kind: str = "deploy",
                 sel.reload()
                 restart_service(cfg, s, log=log)
                 verify_service(cfg, s, plan[s.name], sel, log=log)
+        if restart and post_check is not None:
+            probs = post_check()
+            if probs:
+                raise DeployError("the feed went dark or wrong: " + "; ".join(probs))
     except (DeployError, OSError, subprocess.SubprocessError) as e:
         log(f"{kind} {deploy_id} FAILED: {e}")
         if auto_rollback:
@@ -598,7 +609,8 @@ def activate(cfg: Config, plan: dict[str, str], *, kind: str = "deploy",
 
 def deploy(cfg: Config, manifest_src: str, *, services: list[str] | None = None,
            tests: list[str] = (), pubkey: str | None = None, allow_downgrade: bool = False,
-           skip_preflight: bool = False, log=_log_default, **kw) -> dict:
+           skip_preflight: bool = False, carry_feed: bool = True, check_feed: bool = True,
+           log=_log_default, **kw) -> dict:
     with deploy_lock(cfg):
         m = mf.verify(mf.load_manifest(manifest_src), pubkey or cfg.pubkey or None)
         version = m["version"]
@@ -615,11 +627,52 @@ def deploy(cfg: Config, manifest_src: str, *, services: list[str] | None = None,
                                       "pass --allow-downgrade (or use rollback)")
         tarball = mf.fetch_artifact(m, manifest_src, cfg.state / "downloads")
         log(f"artifact ok: {tarball.name} sha256 {m['sha256'][:16]}...")
-        release = unpack(cfg, tarball, m)
+        try:
+            blobs = fd.fetch(m, manifest_src, cfg.state / "downloads" / fd.BLOB_DIR)
+        except fd.FeedError as e:
+            raise DeployError(str(e)) from None
+        for kind, info in (m.get("feed_info") or {}).items():
+            log(f"feed {kind}: " + ", ".join(f"{k} {str(v)[:16]}" for k, v in info.items()
+                                             if k != "url"))
+        release = unpack(cfg, tarball, m, blobs)
         log(f"release dir: {release}")
+        post = prepare_feed(cfg, release, targets, sel, carry=carry_feed,
+                            check=check_feed and cfg.feed_check, log=log)
         if not skip_preflight:
             preflight(cfg, version, targets, tests, log=log)
-        return activate(cfg, {s.name: version for s in targets}, kind="deploy", log=log, **kw)
+        return activate(cfg, {s.name: version for s in targets}, kind="deploy",
+                        post_check=post, log=log, **kw)
+
+
+def prepare_feed(cfg: Config, release: Path, targets: list[Service], sel: Selector, *,
+                 carry: bool = True, check: bool = True, log=_log_default):
+    """Before anything switches: carry into ``release`` the feed files it lacks
+    from the release the feed service runs now, then refuse it if the APK
+    gates would not approve what it serves. Returns the after-restart check
+    (None when the feed service is not part of this deploy or checks are off)."""
+    svc = cfg.feed_svc()
+    if svc is None or svc not in targets:
+        return None
+    cur = sel.current(svc)
+    cur_dir = cfg.release_dir(cur) if cur else None
+    if carry and cur_dir is not None and cur_dir.is_dir() and cur_dir != release:
+        missing = sorted(fd.tree_kinds(cur_dir) - fd.tree_kinds(release))
+        if missing:
+            fd.carry(cur_dir, release, missing, log)
+    if not check:
+        return None
+    argv = (systemctl_argv(cfg, "show", "-p", "Environment", "--value", svc.unit)
+            if cfg.mode == "systemd" and svc.unit else None)
+    want = fd.expected(release, fd.service_env(argv))
+    for w in want["warnings"]:
+        log(f"feed WARNING: {w}")
+    if want["problems"]:
+        raise DeployError("refusing: " + "; ".join(want["problems"]))
+    base = cfg.feed_base()
+    if not base:
+        log("feed: no http health URL for the feed service; not checking what it serves")
+        return None
+    return lambda: fd.served_problems(base, want, log)
 
 
 def rollback(cfg: Config, *, to: str | None = None, services: list[str] | None = None,
@@ -708,6 +761,16 @@ def prune(cfg: Config, keep: int | None = None, keep_deploys: int = 20,
                 shutil.rmtree(cfg.release_dir(v))
                 for f in (cfg.state / "downloads").glob(f"rook-hub-{v}.*"):
                     f.unlink()
+        blob_dir = cfg.state / "downloads" / fd.BLOB_DIR
+        if blob_dir.is_dir():
+            kept = set(list_releases(cfg)) - set(removed)
+            used = {e.get("sha256") for v in kept
+                    for e in ((read_release(cfg, v) or {}).get("feed") or [])}
+            for b in blob_dir.iterdir():
+                if b.name not in used:
+                    log(f"{'would remove' if dry_run else 'removing'} feed file {b.name[:16]}")
+                    if not dry_run:
+                        b.unlink()
         ddirs = sorted((cfg.state / "deploys").glob("*")) if (cfg.state / "deploys").is_dir() else []
         armed = set(armed_deploys(cfg))
         old = [d for d in ddirs[:-keep_deploys] if d.name not in armed] if keep_deploys else []

@@ -40,6 +40,10 @@
 #   --git-ref REF       install Rook from git at REF (needs git; the fallback
 #                       when there is no release wheel)
 #   --python PATH       Python 3.11+ to build the virtualenv with
+#   --no-apk            don't fetch the Android app from the release (by default
+#                       the hub serves the release's app at /apk, checked
+#                       against the release's SHA256SUMS; with --git-ref or
+#                       --package, the latest release's)
 set -euo pipefail
 
 # Everything runs from main(), called on the last line: a download cut short
@@ -67,7 +71,7 @@ usage() {
 # ---- options -----------------------------------------------------------------
 MODE="" VERSION="" RELAY_VERSION="" DATA_DIR="" BIND="" PUBLIC_HOST=""
 DASHBOARD_PORT="" MCP_PORT="" RELAY_PORT="" ASSUME_YES="" UNINSTALL="" PURGE=""
-NO_SYSTEMD="" RELAY_BIN="" PACKAGE="" GIT_REF="" PYTHON_BIN=""
+NO_SYSTEMD="" RELAY_BIN="" PACKAGE="" GIT_REF="" PYTHON_BIN="" NO_APK=""
 # Which network options this run was given: on a re-run only those change hub.env.
 BIND_SET="" PUBLIC_SET="" DPORT_SET="" MPORT_SET="" RPORT_SET=""
 
@@ -92,6 +96,7 @@ while [ $# -gt 0 ]; do
     --package) need_arg "$@"; PACKAGE="$2"; shift ;;
     --git-ref) need_arg "$@"; GIT_REF="$2"; shift ;;
     --python) need_arg "$@"; PYTHON_BIN="$2"; shift ;;
+    --no-apk) NO_APK=1 ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1 (see --help)" ;;
   esac
@@ -647,6 +652,59 @@ if [ -n "$RELAY_BIN" ]; then
   say "relay: installed $RELAY_BIN"
 else
   fetch_relay || build_relay
+fi
+
+# ---- the Android app ---------------------------------------------------------------------------
+# The release's app (a generic build: no server address or band key inside) is
+# published the way Manage > Updates publishes one, into DATA_DIR/updates/apk,
+# so the hub serves it at /apk and /apk.json from the first start. Each file is
+# checked against the release's SHA256SUMS, and the APK against its manifest.
+# Never replaces a newer app the operator published since.
+APK_DIR="$DATA_DIR/updates/apk"
+fetch_apk() {   # fetch_apk TAG
+  local base="$GITHUB/$ROOK_REPO/releases/download/$1" f want got
+  curl -fsSL --retry 3 -o "$TMP/apk-SHA256SUMS" "$base/SHA256SUMS" 2>/dev/null || return 1
+  for f in rook-worker.apk rook-worker-apk.json; do
+    want="$(awk -v f="$f" '$2 == f || $2 == "*" f {print $1}' "$TMP/apk-SHA256SUMS" | head -n1)"
+    [ -n "$want" ] || { say "release $1 has no Android app"; return 1; }
+    curl -fsSL --retry 3 -o "$TMP/$f" "$base/$f" || { warn "could not download $base/$f"; return 1; }
+    got="$(sha256_of "$TMP/$f")"
+    [ "$want" = "$got" ] || { warn "checksum mismatch for $f (SHA256SUMS: $want, file: $got)"; return 1; }
+  done
+  "$VENV/bin/python" - "$TMP/rook-worker.apk" "$TMP/rook-worker-apk.json" "$APK_DIR/rook-worker-apk.json" <<'PY' || return 1
+import hashlib, json, os, sys
+apk, man, cur = sys.argv[1:4]
+m = json.load(open(man))
+h = hashlib.sha256(open(apk, "rb").read()).hexdigest()
+if (m.get("package") != "systems.bake.rook" or type(m.get("version_code")) is not int
+        or m.get("sha256") != h or m.get("size") != os.path.getsize(apk)):
+    sys.exit("[rook] WARNING: the release's APK does not match its manifest; not published")
+try:
+    old = json.load(open(cur))
+except (OSError, ValueError):
+    old = {}
+if isinstance(old.get("version_code"), int) and old["version_code"] >= m["version_code"]:
+    print(f"[rook] app: keeping the published {old.get('version_name')} ({old['version_code']})")
+    sys.exit(3)
+PY
+}
+if [ -z "$NO_APK" ]; then
+  APK_TAG="${TAG:-}"
+  [ -n "$APK_TAG" ] || APK_TAG="$(latest_tag "$ROOK_REPO" 2>/dev/null || true)"
+  rc=1
+  if [ -n "$APK_TAG" ]; then rc=0; fetch_apk "$APK_TAG" || rc=$?; fi
+  if [ "$rc" = 0 ]; then
+    as_app mkdir -p "$APK_DIR"
+    # The manifest is the approval: withdraw it, swap the file, then publish it.
+    as_app rm -f "$APK_DIR/rook-worker-apk.json"
+    as_app install -m 0644 "$TMP/rook-worker.apk" "$APK_DIR/rook-worker.apk.new"
+    as_app mv -f "$APK_DIR/rook-worker.apk.new" "$APK_DIR/rook-worker.apk"
+    as_app install -m 0644 "$TMP/rook-worker-apk.json" "$APK_DIR/rook-worker-apk.json"
+    [ "$MODE" != system ] || as_root chown -R "$SVC_USER:" "$DATA_DIR/updates"
+    say "app: $(sed -n 's/.*"version_name": *"\([^"]*\)".*/\1/p' "$TMP/rook-worker-apk.json") from $APK_TAG, served at /apk"
+  elif [ "$rc" != 3 ]; then
+    say "no Android app to serve yet: /apk stays empty until you publish one (Manage > Updates)"
+  fi
 fi
 
 # ---- configuration and secrets -----------------------------------------------------------------

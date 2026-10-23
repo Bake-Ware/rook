@@ -30,8 +30,12 @@ PHONE_NAME = "phone"
 class Ctx:
     """Everything one run needs: the profile, the machines, the hub."""
 
-    def __init__(self, run: Run, site: dict, matrix: dict, *, ref: str, repo: str, log=print):
+    def __init__(self, run: Run, site: dict, matrix: dict, *, ref: str, repo: str, log=print,
+                 release: str = ""):
         self.run, self.site, self.matrix, self.ref, self.repo, self.log = run, site, matrix, ref, repo, log
+        # release: install a published release (the installer's default path,
+        # "latest" or a tag) instead of git at ref.
+        self.release = release
         self.hw = matrix["hardware"][run.hardware]
         self.model = dict(matrix["models"][run.model])
         lm = self.model.get("local_model") or {}
@@ -106,8 +110,15 @@ def onboard_hub(ctx: Ctx):
     hubm = ctx.hub_machine
     with run.step("onboard-hub", "one-command hub installer") as s:
         s.touch("paste the installer one-liner into a terminal on the hub machine")
-        url = INSTALLER.format(repo=ctx.repo, ref=ctx.ref)
-        r = hubm.sh(f"curl -fsSL {url} | bash -s -- --yes --git-ref {ctx.ref} 2>&1", timeout=1800, check=False)
+        if ctx.release:
+            # What the README tells a new user: master's installer, which
+            # installs the latest release (or the tag given).
+            url = INSTALLER.format(repo=ctx.repo, ref="master" if ctx.release == "latest" else ctx.release)
+            flags = "" if ctx.release == "latest" else f" --version {shlex.quote(ctx.release)}"
+            r = hubm.sh(f"curl -fsSL {url} | bash -s -- --yes{flags} 2>&1", timeout=1800, check=False)
+        else:
+            url = INSTALLER.format(repo=ctx.repo, ref=ctx.ref)
+            r = hubm.sh(f"curl -fsSL {url} | bash -s -- --yes --git-ref {ctx.ref} 2>&1", timeout=1800, check=False)
         out = r.stdout
         open(os.path.join(ctx.site["_run_dir"], "hub-install.log"), "w").write(out)
         if r.returncode != 0:
@@ -125,7 +136,11 @@ def onboard_hub(ctx: Ctx):
             if time.time() > deadline:
                 s.fail("hub /health never answered")
             time.sleep(2)
-        s.note(f"installed in {time.time() - s.s.started:.0f} s")
+        m = re.search(r"Rook (\S+) \(build (\S+)\) installed", out)
+        if m:
+            ctx.run.env["rook_installed"] = f"{m.group(1)} ({m.group(2)})"
+        s.note(f"installed in {time.time() - s.s.started:.0f} s"
+               + (f": Rook {m.group(1)} ({m.group(2)})" if m else ""))
     with run.step("onboard-hub", "dashboard sign-in") as s:
         s.touch("open the dashboard and type the printed password")
         ctx.hub.login()
@@ -173,15 +188,35 @@ def pair_phone(ctx: Ctx):
             emu.adb("shell", "settings", "put", "global", k, "0", check=False)
         emu.adb("shell", "settings", "put", "global", "hide_error_dialogs", "1", check=False)
     with run.step("pair-phone", "get and install the APK") as s:
-        st, _, _ = hub._req("GET", "/apk", headers=hub._basic())
+        # The way a phone gets it: open http://<hub>/apk, no sign-in.
+        st, _, man = hub._req("GET", "/apk.json", timeout=30)
+        apk_path = ""
         if st == 200:
-            s.note("the hub serves the APK at /apk")
+            meta = json.loads(man)
+            st, _, body = hub._req("GET", "/apk", timeout=600)
+            import hashlib
+            if st == 200 and hashlib.sha256(body).hexdigest() == meta.get("sha256"):
+                fd, apk_path = tempfile.mkstemp(suffix=".apk", prefix="cleanroom-hub-")
+                with os.fdopen(fd, "wb") as f:
+                    f.write(body)
+                s.note(f"installed the hub's own APK from /apk: {meta.get('version_name')} "
+                       f"({meta.get('version_code')}, sha256 {meta['sha256'][:12]}), no sign-in")
+                run.env["apk"] = f"hub /apk {meta.get('version_name')} ({meta['sha256'][:12]})"
+                run.env["apk_source"] = "hub"
+            else:
+                s.note(f"/apk.json answered but /apk gave {st} or a different file")
         else:
-            s.note(f"the hub has no APK to give (/apk -> {st}); sideloaded the site's APK")
+            s.note(f"the hub has no public APK (/apk.json -> {st})")
+        if not apk_path:
+            if ctx.site.get("require_hub_apk"):
+                s.fail("the fresh hub serves no APK, and this run requires the hub's own")
+            s.note("sideloaded the site's APK")
             run.findings.append("A fresh hub has no APK at /apk and no release carries one: a new user has no way to get the app.")
-        s.touch("download the APK and allow installing it")
-        run.env["apk"] = os.path.basename(os.path.expanduser(ctx.site["apk"]))
-        emu.adb("install", "-r", os.path.expanduser(ctx.site["apk"]), timeout=300)
+            apk_path = os.path.expanduser(ctx.site["apk"])
+            run.env["apk"] = os.path.basename(apk_path)
+            run.env["apk_source"] = "site"
+        s.touch("open the hub's /apk link on the phone and allow installing it")
+        emu.adb("install", "-r", apk_path, timeout=300)
         ver = emu.adb("shell", "dumpsys", "package", android.PACKAGE).stdout
         m = re.search(r"versionName=(\S+)", ver)
         s.note(f"APK {m.group(1) if m else '?'}")
