@@ -467,9 +467,13 @@ class Chair:
                     self.svc._send(room, self.chair_identity(),
                                    "(The chair could not finish this round: " + err + ")", quiet=True)
 
-    def _transcript(self, room: str) -> str:
+    def _transcript(self, room: str, upto: int = 0) -> str:
+        """The room's recent messages, oldest first (``upto``: none after that
+        seq, so a queued round answers its own post, not a later one)."""
         lines = []
-        for m in self.svc.chat.tail(room, CONTEXT_MESSAGES):
+        for m in self.svc.chat.tail(room, CONTEXT_MESSAGES + (20 if upto else 0)):
+            if upto and int(m.get("seq") or 0) > upto:
+                continue
             lines.append(f"[{m['sender']}] {m['text']}")
         return clip("\n".join(lines), CONTEXT_CHARS, tail=True)
 
@@ -497,6 +501,9 @@ class Chair:
             self.store.round_set(rid, state="done", ended=time.time(),
                                  error="skipped: the role already answered after this report")
             return
+        elif owner and not roster:
+            # A 1:1 huddle: nobody else to route to; the owner hears its report.
+            plan["calls"] = [{"role": owner, "ask": text}]
         elif owner:
             try:
                 plan.update(await self._chair_turn(rid, room, h, roster, text,
@@ -701,7 +708,8 @@ class Chair:
 
     async def _front_turn(self, rid: str, room: str, text: str) -> dict:
         home = self.home()
-        asker = str((self.store.round(rid) or {}).get("asker") or "")
+        rnd = self.store.round(rid) or {}
+        asker = str(rnd.get("asker") or "")
         if asker == home.identity:
             return {"calls": [], "answered": False}     # its own post: no loop
         relay = self._relay()
@@ -716,7 +724,8 @@ class Chair:
         out = await home.front.handle(
             text, source="web", asker=asker or "user:operator",
             principal=home.chat_principal(asker), room=room,
-            context="The conversation so far, oldest first:\n" + self._transcript(room),
+            context="The conversation so far, oldest first (answer only the newest message):\n"
+            + self._transcript(room, int(rnd.get("trigger_seq") or 0)),
             extra_tools=extra, extra_handler=extra_handler, person=home.person_of(asker))
         sent = self.svc._send(room, home.identity, clip(scrub(out["answer"]), POST_CHARS))
         self._attach(rid, home.identity, sent["seq"])

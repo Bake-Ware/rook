@@ -9,6 +9,7 @@ Model turns run on the fake agent host of test_huddle_chair, which calls the
 hub's real per-turn tool server."""
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 
@@ -542,3 +543,69 @@ async def test_the_decisions_badge_counts_open_asks_without_the_mcp_service(tmp_
         principal[0] = AGENT
         assert (await http.get("/api/decisions?count=1")).status == 403
         st.close()
+
+
+# -- found live on 892 ------------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_yes_to_a_question_carries_the_request_out(front):
+    _script(front, "front-voice", {"tools": [("ask_person", {
+        "line": "Delete the old station list on pianobar?", "explain": "It can't be undone."})],
+        "text": ""})
+    out = await _ask(front, "delete the old station list on pianobar")
+    assert out["path"] == "ask" and not _ran(front, "file.delete")
+    _script(front, "front-answer", {"tools": [("do_action", {
+        "worker": "pianobar", "cap": "file.delete", "args": {"path": "/x/stations"},
+        "summary": "delete the old station list", "ask_first": True})], "text": ""})
+    res = await front.front.answer(out["asks"][0], "yes", by="Bake", quote="yes")
+    assert res["note"] == "Noted; I'm acting on it."
+    await asyncio.gather(*list(front.front._tasks))
+    (call,) = _ran(front, "file.delete")
+    assert call.args["path"] == "/x/stations"
+    turn = next(t for t in front.band.turns if t["kind"] == "front-answer")
+    assert "Bake answered yes" in turn["args"]["prompt"] and "station list" in turn["args"]["prompt"]
+    assert front.front.store.asks("open") == []                 # no second ask for the same yes
+    assert front.front.store.find_ask(out["asks"][0])["result"]["path"] == "do"
+    assert front.front.digest()["decisions"] == []               # the person decided it
+
+
+def test_a_failure_a_later_attempt_fixed_is_not_reported():
+    st = {"did": [{"summary": "make task", "ok": False, "error": "x"},
+                  {"summary": "make task", "ok": True}], "started": [], "asked": []}
+    assert F.compose(st, "")[0] == "Done: make task."
+
+
+@pytest.mark.asyncio
+async def test_hub_record_writes_get_a_request_id(front, monkeypatch):
+    entry = front.node.entry()
+    monkeypatch.setattr(front.node, "entry", lambda: {**entry, "caps": entry["caps"] + ["task.write"]})
+    _script(front, "front-voice", {"tools": [
+        ("do_action", {"worker": "rook", "cap": "task.write", "args": {"action": "create", "data": {
+            "title": "x", "parent": "p"}}, "summary": "create a task"}),
+        ("do_action", {"worker": "rook", "cap": "job.write", "args": {"action": "list"},
+                       "summary": "list jobs"})], "text": ""})
+    await _ask(front, "make a task")
+    (task,) = _ran(front, "task.write")
+    assert task.args["request_id"].startswith("front-fr_")
+    (job,) = _ran(front, "job.write")
+    assert "request_id" not in job.args                     # only caps that take one
+
+
+@pytest.mark.asyncio
+async def test_a_queued_one_to_one_round_answers_its_own_post_and_reports_skip_the_chair(front):
+    await _call(front, "role.set", {"role": {"id": "lead", "name": "Lead developer",
+                                             "charter": "Writes code."}})
+    h = await _call(front, "huddle.start", {"title": "Home", "roles": []})
+    rid = front.svc.chair.on_report(front.svc.store.get(h["room"]), h["room"], "lead",
+                                    "session:a-b-c", "DONE: it works")
+    front.band.script["huddle-lead"] = [{"text": "Checked it."}]
+    await _settle(front)
+    assert not any(t["kind"] == "huddle-chair" for t in front.band.turns)
+    assert ("role:lead", "Checked it.") in _texts(front, h["room"]) and rid
+    first = await _call(front, "huddle.post", {"huddle": h["room"], "text": "first question"})
+    await _call(front, "huddle.post", {"huddle": h["room"], "text": "second question"})
+    await _settle(front)
+    turns = [t for t in front.band.turns if t["kind"] == "front-web"]
+    assert len(turns) == 2
+    assert "first question" in turns[0]["args"]["prompt"]
+    assert "second question" not in turns[0]["args"]["prompt"] and first["seq"]
