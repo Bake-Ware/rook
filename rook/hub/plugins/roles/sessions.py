@@ -52,6 +52,29 @@ PR = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/pull/\d+")
 FINAL = {"DONE": "done", "BLOCKED": "blocked", "QUESTION": "blocked"}
 WAKES = ("DONE", "BLOCKED", "QUESTION", "UNEXPECTED")
 
+#: The push guard every session runs with (pre-push hook, through
+#: ``core.hooksPath`` in the environment): a session pushes only its own
+#: branch. The allowlist already refuses ``git -c`` and ``--no-verify``, and
+#: GitHub's branch protection refuses ``master`` for every credential.
+GUARD = r"""guard="${XDG_RUNTIME_DIR:-$HOME/.cache}/rook-session-guard/$sid"
+mkdir -p "$guard" || { say "BLOCKED could not make the push guard"; printf 'ROOK-EXIT: 3\n'; exit 3; }
+cat > "$guard/pre-push" <<'ROOKHOOK'
+#!/bin/sh
+# Rook session push guard: this session pushes only its own branch.
+want="refs/heads/$ROOK_SESSION_BRANCH"
+while read -r lref lsha rref rsha; do
+  if [ "$rref" != "$want" ]; then
+    echo "rook: refused: this session may push only $want, not $rref" >&2
+    exit 1
+  fi
+done
+exit 0
+ROOKHOOK
+chmod 755 "$guard/pre-push"
+export ROOK_SESSION_BRANCH="$branch" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath \
+  GIT_CONFIG_VALUE_0="$guard"
+"""
+
 LAUNCH = r"""set -u
 repo=$1 wt=$2 branch=$3 base=$4 sid=$5 resume=$6 model=$7
 say() { printf 'ROOK-STATUS: %s\n' "$*"; }
@@ -71,15 +94,37 @@ fi
 cd "$wt" || { say "BLOCKED no worktree at $wt"; printf 'ROOK-EXIT: 3\n'; exit 3; }
 cur=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 [ "$cur" = "$branch" ] || { say "BLOCKED $wt is on $cur, not $branch"; printf 'ROOK-EXIT: 3\n'; exit 3; }
+__GUARD__
 if [ -n "$resume" ]; then set -- --resume "$resume"; else set -- --session-id "$sid"; fi
 [ -n "$model" ] && set -- "$@" --model "$model"
-printf '%s' "$ROOK_SESSION_PROMPT" | "$claude" -p --output-format stream-json --verbose \
+set -- "$claude" -p --output-format stream-json --verbose \
   --setting-sources "" --strict-mcp-config --settings "$ROOK_SESSION_SETTINGS" \
   --permission-mode dontAsk "$@"
+if [ -n "${ROOK_SESSION_GH_TOKEN:-}" ]; then
+  # Isolated: the hub minted a token for this repository only. The session
+  # runs without the host's own GitHub credentials (masked), with that token.
+  command -v bwrap >/dev/null 2>&1 || { say "BLOCKED bwrap is needed to isolate the session"; printf 'ROOK-EXIT: 3\n'; exit 3; }
+  mask=""
+  for d in "$HOME/.config/gh" "$HOME/.ssh" "$HOME/.config/rook" "$HOME/.rook" "$HOME/.local/share/rook"; do
+    [ -d "$d" ] && mask="$mask --tmpfs $d"
+  done
+  for f in "$HOME/.git-credentials" "$HOME/.netrc"; do
+    [ -e "$f" ] && mask="$mask --ro-bind /dev/null $f"
+  done
+  export GH_TOKEN="$ROOK_SESSION_GH_TOKEN"
+  unset GITHUB_TOKEN GH_ENTERPRISE_TOKEN ROOK_SESSION_GH_TOKEN
+  export GIT_CONFIG_COUNT=3 GIT_CONFIG_KEY_1=credential.helper GIT_CONFIG_VALUE_1= \
+    GIT_CONFIG_KEY_2=credential.helper \
+    GIT_CONFIG_VALUE_2='!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f'
+  # shellcheck disable=SC2086
+  set -- bwrap --dev-bind / / --proc /proc --unshare-pid --die-with-parent $mask -- "$@"
+fi
+printf '%s' "$ROOK_SESSION_PROMPT" | "$@"
 code=$?
 printf 'ROOK-EXIT: %s\n' "$code"
 exit $code
 """
+LAUNCH = LAUNCH.replace("__GUARD__", GUARD.rstrip("\n"))
 
 
 class SessionError(ValueError):
@@ -135,6 +180,15 @@ def pick_location(locs: list[dict], ref: str) -> dict:
             return loc
     raise SessionError(f"{ref!r} is not a code location; use one of "
                        + ", ".join(f"{l['name']} ({l['repo']} on {l['worker']})" for l in locs))
+
+
+REPO = re.compile(r"github\.com[/:]([\w.-]+/[\w.-]+?)(?:\.git)?(?=[\s,;:()'\"`]|$)", re.I)
+
+
+def repo_of(loc: dict) -> str:
+    """The GitHub ``owner/name`` a code location's line names, or ""."""
+    m = REPO.search(str((loc or {}).get("line") or ""))
+    return m.group(1) if m else ""
 
 
 def check_branch(branch: str, base: str = "origin/master") -> str:

@@ -795,7 +795,9 @@ class Approvals:
 
     def __init__(self, path: str, config: "ConfigSource | Config | None" = None,
                  record: Callable[..., Any] | None = None, clock: Callable[[], float] = time.time,
-                 monotonic: Callable[[], float] = time.monotonic) -> None:
+                 monotonic: Callable[[], float] = time.monotonic, trust: Any = None) -> None:
+        #: The trust map (:class:`rook.hub.trust.TrustStore`), or None: no map.
+        self.trust = trust
         if isinstance(config, Config):
             config = ConfigSource(fixed=config)
         self.config_source = config or ConfigSource()
@@ -892,8 +894,18 @@ class Approvals:
         count = countable(d.cap, d.tier, d.tags, target)
         if count:
             d.spread_target = str(target.id)
+        ruling = None if own_resource.get() else self.trust_ruling(d, target)
+        if ruling is not None:
+            d = dataclasses.replace(d, trust_rule=ruling.rule, trust=ruling.cite)
         if d.held:
             return d  # an operator hold rule or cell
+        # The trust map (rook/hub/trust.py): a change to something sacred waits
+        # for the person, one to something guarded asks first. A gap
+        # (unlisted, balanced) falls through to the holds below, as before.
+        if ruling is not None and ruling.tier in ("ask", "person") \
+                and not (ruling.unlisted and ruling.level == "balanced"):
+            return dataclasses.replace(d, decision="hold", hold_kind="trust",
+                                       hold_reason=ruling.cite, rule=ruling.rule)
         best = default_score(cfg.hold, d.cap, d.tier, d.tags)
         if best is not None and not own_resource.get():
             rule = policy.best_rule(p, d.cap, d.tier, d.tags, target)
@@ -919,6 +931,15 @@ class Approvals:
         if d.decision in _PROCEEDS:
             self.proceeded(d)
         return d
+
+    def trust_ruling(self, d: Any, target: Any) -> Any:
+        """The trust map's ruling for a call (None without a map)."""
+        if self.trust is None:
+            return None
+        is_hub = bool(getattr(target, "is_rook", False))
+        name = "rook" if is_hub else str(getattr(target, "name", "") or "")
+        return self.trust.rule(d.cap, d.tier, tuple(d.tags or ()), worker=name,
+                               worker_id=str(getattr(target, "id", "") or ""), on_hub=is_hub)
 
     @staticmethod
     def _unhold(d: Any, why: str) -> Any:
