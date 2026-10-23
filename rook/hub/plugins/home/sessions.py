@@ -1366,7 +1366,7 @@ class Sessions:
     async def scribe_start(self, role: str, turn: Any = None) -> dict:
         """Scribe only while the owner is among the speakers: otherwise listen quietly for
         the name and record nothing (other people's conversation is theirs)."""
-        if not self.owner_heard(role, sure=False, seconds=SCRIBE_OWNER_S):
+        if not self.owner_heard(role, sure=True, seconds=SCRIBE_OWNER_S):
             await self._event(role, "mode", {"mode": "listen", "by": "voice"}, turn)
             return {"ok": True, "mode": "listen", "note": "the owner isn't among the speakers, "
                     "so I'm only listening for my name, not taking notes"}

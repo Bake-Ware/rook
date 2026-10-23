@@ -659,14 +659,17 @@ class SessionSpeakers:
     gets the next letter ("Speaker A", "Speaker B") by matching its embedding to the
     ones heard before in this conversation. Enrolled people keep their names."""
 
-    def __init__(self, threshold=0.55, limit=8):
+    def __init__(self, threshold=0.55, limit=8, sure=None):
         self.threshold, self.limit = threshold, limit
+        # An enrolled name only for a sure match (VOICE_SPEAKER_SURE, as the house voice):
+        # a lookalike voice (a sibling) must not count as the owner and keep a scribe going.
+        self.sure = float(os.environ.get('VOICE_SPEAKER_SURE', '0.65')) if sure is None else sure
         self.centroids = []          # [(label, vector, count)]
 
     def label(self, result):
         if not result:
             return "Speaker"
-        if result.get("principal"):
+        if result.get("principal") and (result.get("score") or 0) >= self.sure:
             return result["principal"]
         vector = result.get("vector")
         if vector is None:

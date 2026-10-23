@@ -875,3 +875,43 @@ async def test_listen_end_and_scribe_only_with_the_owner_among_the_speakers(penv
     assert sess.conversations().get(conv2["id"])["lines"] == 0
     assert host.sent("voice_event")[events:][-1]["fields"] == {"mode": "listen", "by": "voice"}
     await disconnect(task, host)
+
+
+@pytest.mark.asyncio
+async def test_a_lookalike_voice_never_keeps_a_scribe_going(penv):
+    """Review of #191: a line the voice server could only weakly match to the owner comes
+    as 'Speaker A' (SessionSpeakers), never refreshes 'the owner is here', and the scribe
+    ends 600 s after the owner's last sure line. Starting also needs a sure owner."""
+    from services.voice.speaker import SessionSpeakers
+    penv.node.settings.set("voice.owner", "bake", actor="human:op")
+    host, task = await connect(penv)
+    sess = penv.sess
+    probably = {"owner": True, "name": "Bake",
+                "speaker": {"label": "Bake", "score": 0.55, "sure": False}}
+    _heard(host, "k1", probably, "take some notes")
+    await until(lambda: sess.voice.get("house", {}).get("turn") == "k1")
+    await sess.route("house", [{"op": "mode", "mode": "scribe"}])
+    assert host.sent("voice_event")[-1]["fields"]["mode"] == "listen"     # not sure: no record
+    assert sess.conversations().open_one() is None
+    _heard(host, "k2", OWNER_SURE, "take some notes please")
+    await until(lambda: sess.voice.get("house", {}).get("turn") == "k2")
+    await sess.route("house", [{"op": "mode", "mode": "scribe"}])
+    conv = sess.conversations().open_one()
+    owner_at = conv["owner_at"]
+    # The voice server's labels for a sure and a lookalike match of the owner.
+    labels = SessionSpeakers(sure=0.65)
+    sure = labels.label({"principal": "Bake", "score": 0.74, "vector": [1.0, 0.0]})
+    lookalike = labels.label({"principal": "Bake", "score": 0.55, "vector": [0.0, 1.0]})
+    assert (sure, lookalike) == ("Bake", "Speaker A")
+    host.emit(role="house", lane="voice", kind="voice_control", op="scribe", client=1,
+              identity={}, args={"text": "sounds like the owner", "speaker": lookalike})
+    await until(lambda: sess.conversations().get(conv["id"])["lines"] == 1)
+    assert sess.conversations().get(conv["id"])["owner_at"] == owner_at     # unchanged
+    sess.conversations().update(conv["id"], owner_at=owner_at - 601)
+    host.emit(role="house", lane="voice", kind="voice_control", op="scribe", client=1,
+              identity={}, args={"text": "still talking", "speaker": lookalike})
+    await until(lambda: sess.conversations().get(conv["id"])["ended"])
+    assert sess.conversations().get(conv["id"])["lines"] == 1                # not kept
+    assert host.sent("voice_event")[-1]["fields"] == {"mode": "listen", "by": "voice"}
+    await disconnect(task, host)
+
