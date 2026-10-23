@@ -471,8 +471,7 @@ class Huddle(Plugin):
             answered; the answer comes back as chat and wakes you. say text. read (data.since_seq,
             data.room), mine, list. Chaired (person, house agent, roles): start data {title,
             roles}; post text data {room}; card data {room, card, action}; archive data {room}.
-            Table: table data {room, artifact?, what?}; pin data {room, kind, repo, number|sha,
-            ...}; vote data {room, kind, artifact, reason} (people and the chair)."""
+            table data {room, artifact?, what?}; pin, vote: the conference table."""
             d = dict(data or {})
 
             def failed(error):
