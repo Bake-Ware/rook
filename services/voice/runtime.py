@@ -1,6 +1,7 @@
 """Conversation orchestration without model or web-framework dependencies."""
 import asyncio
 import contextlib
+import difflib
 import json
 import logging
 import os
@@ -12,6 +13,7 @@ import traceback
 from .identity import Identity, current_identity
 from .modes import Mode, dictation_command
 from .timing import TurnTiming, log_dropped
+from .stt_gate import normalise
 
 
 SILENT_RECORD = "[Stayed silent: speech was not addressed to the assistant]"
@@ -25,8 +27,15 @@ HOLD_QUIET_S = float(os.environ.get('VOICE_HOLD_QUIET_S', '2.5'))
 HOLD_MAX_S = float(os.environ.get('VOICE_HOLD_MAX_S', '8'))   # the phone gives up at 10 s
 # 'enforce': drop an utterance whose speaker is the assistant's own voice (echo)
 # while it speaks or just after; 'shadow': log the label only; 'off'.
-ECHO_GUARD = os.environ.get('VOICE_ECHO_GUARD', 'shadow').strip().lower()
+ECHO_GUARD = os.environ.get('VOICE_ECHO_GUARD', 'enforce').strip().lower()
 ECHO_WINDOW_S = 1.5
+# The voice match must be clearly the assistant's: its own echo scored >= 0.59
+# (5th percentile) through simulated phone/room channels, people at most 0.43
+# (TitaNet small, kaiju, 2026-10-23). The speaker label itself uses 0.50.
+ECHO_SPEAKER_MIN = float(os.environ.get('VOICE_ECHO_SPEAKER_MIN', '0.6'))
+ENROLL_RE = re.compile(r"\b(enrol+|learn|register|remember|know)\s+my\s+voice\b", re.I)
+FORGET_RE = re.compile(r"\b(forget|delete|remove|erase)\s+my\s+voice\b", re.I)
+CANCEL_RE = re.compile(r"^\W*(stop|cancel|never ?mind|forget it|quit)\b", re.I)
 
 
 class Connection:
@@ -70,6 +79,7 @@ class Connection:
         self._unheld.set()
         self.speech_permission_until = 0.0
         self.speakers = None
+        self.enrolling = None
         self.timing = None
         self.mode = Mode()
         # 'classic' (default) or 'front_background' (hello opt-in); see pipeline.py.
@@ -289,17 +299,121 @@ class Connection:
         reason = result.get('reason')
         if not reason and not result.get('text', '').strip():
             reason = 'empty'
-        if (not reason and ECHO_GUARD == 'enforce' and echo_window and speaker
-                and speaker.get('label') == 'assistant'):
-            reason = 'echo'
+        if not reason and echo_window and ECHO_GUARD != 'off':
+            if self.echo_text(result['text']):
+                # Our own words came back (the transcript repeats what was just said).
+                reason = 'echo_text'
+            elif (ECHO_GUARD == 'enforce' and speaker and speaker.get('label') == 'assistant'
+                  and (speaker.get('assistant_score') or 0) >= ECHO_SPEAKER_MIN):
+                reason = 'echo'
+        known = getattr(self.speakers, 'has_assistant_voice', None)
+        if speaker and known is not None and not known(self.voice):
+            self._learn_voice()
         if reason:
             log_dropped(self.epoch, reason, endpoint_ms, stt_ms, held=held or None, **extra)
             self.activity_event('dropped', self.epoch, 'Ignored sound', reason=reason)
             if held:
                 await self.release_hold(resume=True)
             return
-        await self.start(text=result['text'].strip(), heard={'speech_end': speech_end, 'decided': decided,
-                                                              'stt_ms': stt_ms, 'extra': extra})
+        text = result['text'].strip()
+        if await self._voice_command(text, pcm, held):
+            return
+        await self.start(text=text, heard={'speech_end': speech_end, 'decided': decided,
+                                           'stt_ms': stt_ms, 'extra': extra})
+
+    def echo_text(self, text):
+        """The transcript repeats a run of what the assistant said in this or the
+        previous turn: its own speech leaking back into the microphone."""
+        words = normalise(text).split()
+        if len(words) < 3 or ENROLL_RE.search(text) or FORGET_RE.search(text):
+            # Short answers often reuse the question's words; commands it just taught are meant.
+            return False
+        spoken = ' '.join(clause for epoch in (self.epoch - 1, self.epoch)
+                          for clause, _, _ in self.spoken_audio.get(epoch, []))
+        said = normalise(spoken).split()
+        if not said:
+            return False
+        match = difflib.SequenceMatcher(None, words, said, autojunk=False).find_longest_match(
+            0, len(words), 0, len(said))
+        return match.size >= max(3, int(0.6 * len(words) + 0.5))
+
+    def _learn_voice(self):
+        """Once per voice (cached by the speaker store): render the assistant's voice
+        so its echo can be recognised."""
+        voice = self.voice
+        async def synthesize(text):
+            return await self.synthesize(text, self.epoch)
+        task = asyncio.create_task(self.speakers.learn_assistant_voice(voice, synthesize))
+        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+
+    # --- voice enrollment (opt-in, owner keys only; voiceprints stay on this host) ---
+    async def _voice_command(self, text, pcm, held):
+        """'enroll my voice' / 'forget my voice', and the enrollment reading itself.
+        Returns True when the utterance was handled here (no model turn)."""
+        speakers = self.speakers if self.speakers is not None and getattr(self.speakers, 'available', False) else None
+        if self.enrolling is not None:
+            if time.monotonic() - self.enrolling['started'] > 300 or CANCEL_RE.search(text):
+                self.enrolling = None
+                await self._reply_direct(text, ['Okay, I stopped learning your voice. Nothing new was saved.'])
+                return True
+            principal = self.enrolling['principal']
+            result = await speakers.enroll_add(principal, pcm) if speakers else {'ok': False, 'reason': 'off'}
+            sentences = speakers.enrollment_sentences() if speakers else []
+            if result.get('ok') and result.get('samples', 0) >= result.get('needed', 3) and \
+                    speakers.enroll_finish(principal):
+                self.enrolling = None
+                await self._reply_direct(text, ["Thanks, I've learned your voice. I only use it to know who's "
+                                                "talking, never as a password. Say forget my voice to delete it."])
+                return True
+            if result.get('ok'):
+                self.enrolling['index'] += 1
+            lines = [] if result.get('ok') else [{
+                'too_short': 'That was a bit short.', 'too_quiet': 'That was a bit quiet.',
+                'clipped': 'That was a bit loud.', 'inconsistent': "That didn't sound like the earlier ones.",
+            }.get(result.get('reason'), "That one didn't work.") + ' Please try this one again.']
+            if not sentences:
+                self.enrolling = None
+                await self._reply_direct(text, ["Voice learning isn't available right now."])
+                return True
+            lines.append('Next, please read: ' if result.get('ok') else 'Please read: ')
+            lines[-1] += sentences[self.enrolling['index'] % len(sentences)]
+            await self._reply_direct(text, lines)
+            return True
+        if FORGET_RE.search(text):
+            if not self.identity.owner or speakers is None:
+                return False
+            gone = speakers.forget(self.identity.principal)
+            await self._reply_direct(text, ['Done, I deleted your voiceprint.' if gone else
+                                            "I didn't have your voice saved."])
+            return True
+        if ENROLL_RE.search(text):
+            if speakers is None:
+                return False
+            if not self.identity.owner or self.identity.principal in ('unmapped', 'guest', 'assistant'):
+                # Kids and guests only with the owner's say-so: an owner key enrolls its own person.
+                await self._reply_direct(text, ['Learning a voice needs the owner to set it up for you, so I '
+                                                "won't do that from this device."])
+                return True
+            self.enrolling = {'principal': self.identity.principal, 'index': 0, 'started': time.monotonic()}
+            await self._reply_direct(text, ["Sure. I'll ask you to read three short sentences, one at a time. "
+                                            "Say stop to cancel.",
+                                            'Please read: ' + speakers.enrollment_sentences()[0]])
+            return True
+        return False
+
+    async def _reply_direct(self, heard, lines):
+        """A fixed spoken reply without the model (enrollment); recorded in history."""
+        await self.interrupt()
+        epoch = self.epoch
+        await self.emit("stt", text=heard, turn=epoch)
+        self.store.append(self.session, "user", {"text": heard})
+        async def speak():
+            for line in lines:
+                await self.say(line, epoch, record=True)
+            if epoch == self.epoch and not self.closed:
+                await self.emit("assistant_done", turn=epoch)
+                await self.emit("state", state="listening", turn=epoch)
+        self.task = asyncio.create_task(speak())
 
     # --- confirmed barge-in -----------------------------------------------------
     def hold(self):

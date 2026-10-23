@@ -95,7 +95,20 @@ async def lifespan(app):
                     credential_sessions.pop(credential, None)
     app.state.jobs = Jobs(app.state.store, DIRECT_TOOLS, ACP_HOST, ACP_PORT, notify,
                           agent=ThinkingAgent(direct=DIRECT_TOOLS))
+    # Speaker identification (shadow labels, echo guard, opt-in enrollment): only when
+    # a model is configured; never a reason for the service not to start.
+    app.state.speakers = None
+    if os.environ.get('VOICE_SPEAKER_MODEL', '').strip():
+        try:
+            from .speaker import Speakers
+            app.state.speakers = await asyncio.to_thread(
+                Speakers, os.environ.get('VOICE_SPEAKER_DB', str(ROOT / 'voice-speakers.sqlite3')))
+        except Exception as error:
+            import logging
+            logging.warning('Speaker identification not started: %s', type(error).__name__)
     yield
+    if app.state.speakers is not None:
+        app.state.speakers.close()
     worker_maintenance.cancel()
     schema_maintenance.cancel()
     await asyncio.gather(worker_maintenance, schema_maintenance, return_exceptions=True)

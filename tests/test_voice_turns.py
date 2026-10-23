@@ -437,3 +437,95 @@ def test_house_agent_tool_asks_the_hub_and_is_owner_only():
     assert 'house_agent' in background_tools(OWNER, 'assistant')
     assert 'house_agent' not in background_tools(Identity('Kid', worker='kidphone'), 'assistant')
     assert 'house_agent' not in background_tools(OWNER, 'conversation') and 'house_agent' not in BASE_TOOLS
+
+
+# --- echo by text, enrollment commands -------------------------------------------------
+def test_echo_text_matches_what_was_just_said(tmp_path):
+    conn, store, jobs, events = connection(tmp_path, pipeline=False)
+    conn.epoch = 4
+    conn.spoken_audio[4] = [('Once upon a time there was a very sleepy cat.', 0, 100)]
+    assert conn.echo_text('there was a very sleepy cat')
+    assert conn.echo_text('Once upon a time, there was')
+    assert not conn.echo_text('stop, what is two plus two')
+    assert not conn.echo_text('sleepy cat')                # two words are never enough
+    store.db.close()
+
+
+def test_echoed_words_never_interrupt(tmp_path, caplog):
+    async def scenario():
+        front = SlowFront(clauses=('The weather today is sunny and warm.',) * 4)
+        conn, store, jobs, events = connection(tmp_path, transcripts=['weather', 'today is sunny and warm'],
+                                               front=front)
+        try:
+            await conn.heard(b'\0' * 32000, time.monotonic())
+            await wait_for(lambda: conn.audio_sent.get(conn.epoch))
+            epoch = conn.epoch
+            with caplog.at_level(logging.INFO, logger='voice.timing'):
+                await conn.heard(b'\0' * 32000, time.monotonic())
+            assert conn.epoch == epoch
+        finally:
+            await shutdown(conn, store, jobs)
+        assert any('"reason":"echo_text"' in r.getMessage() for r in caplog.records)
+    asyncio.run(scenario())
+
+
+class EnrollSpeakers:
+    available = True
+
+    def __init__(self):
+        self.samples, self.prints = {}, {}
+
+    async def identify(self, pcm, assistant_voice=None):
+        return {'label': 'guest', 'score': 0.1, 'assistant_score': None}
+
+    def has_assistant_voice(self, voice):
+        return True
+
+    def enrollment_sentences(self):
+        return ['One fish.', 'Two fish.', 'Red fish.', 'Blue fish.']
+
+    async def enroll_add(self, principal, pcm):
+        n = self.samples[principal] = self.samples.get(principal, 0) + 1
+        return {'ok': True, 'samples': n, 'needed': 3}
+
+    def enroll_finish(self, principal):
+        self.prints[principal] = True
+        return True
+
+    def forget(self, principal):
+        return self.prints.pop(principal, None) is not None
+
+
+def test_enroll_my_voice_reads_three_sentences_then_forget(tmp_path):
+    async def scenario():
+        speakers = EnrollSpeakers()
+        conn, store, jobs, events = connection(
+            tmp_path, transcripts=['Enroll my voice please', 'one fish', 'two fish', 'red fish', 'forget my voice'],
+            pipeline=False, speakers=speakers)
+        try:
+            for _ in range(5):
+                await conn.heard(b'\0' * 32000, time.monotonic())
+                await wait_for(lambda: conn.task is not None and conn.task.done())
+        finally:
+            await shutdown(conn, store, jobs)
+        said = [e['text'] for e in kinds(events, 'assistant_delta')]
+        assert 'Please read: One fish.' in said and 'Next, please read: Two fish.' in said
+        assert any("I've learned your voice" in s for s in said) and 'Done, I deleted your voiceprint.' in said
+        assert speakers.samples == {'Alex': 3} and speakers.prints == {}
+        assert conn.provider.chats == 0                    # never a model turn
+    asyncio.run(scenario())
+
+
+def test_only_owner_keys_enroll(tmp_path):
+    async def scenario():
+        conn, store, jobs, events = connection(tmp_path, transcripts=['learn my voice'], pipeline=False,
+                                               speakers=EnrollSpeakers())
+        conn.identity = Identity('Kid', worker='kidphone')
+        try:
+            await conn.heard(b'\0' * 32000, time.monotonic())
+            await wait_for(lambda: conn.task is not None and conn.task.done())
+        finally:
+            await shutdown(conn, store, jobs)
+        assert conn.enrolling is None
+        assert any('needs the owner' in e['text'] for e in kinds(events, 'assistant_delta'))
+    asyncio.run(scenario())
