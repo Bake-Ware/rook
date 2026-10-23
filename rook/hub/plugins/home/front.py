@@ -413,7 +413,6 @@ class FrontDoor:
         self.home = home
         self._store: FrontStore | None = None
         self._playbook: Playbook | None = None
-        self._bg: set[asyncio.Task] = set()
 
     # -- plumbing --------------------------------------------------------------
     @property
@@ -431,8 +430,7 @@ class FrontDoor:
     def close(self) -> None:
         if self._store is not None:
             self._store.close()
-        for t in list(self._bg):
-            t.cancel()
+            self._store = None
 
     @property
     def node(self) -> Any:
@@ -467,11 +465,6 @@ class FrontDoor:
             if name and name != "the person":
                 return name
         return "the person"
-
-    def _spawn(self, coro: Awaitable) -> None:
-        task = asyncio.get_running_loop().create_task(coro)
-        self._bg.add(task)
-        task.add_done_callback(self._bg.discard)
 
     # -- workers and rulings ---------------------------------------------------------
     def _roster(self) -> tuple[dict, str | None]:
