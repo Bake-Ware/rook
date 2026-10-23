@@ -17,6 +17,7 @@ version was `0.1.0`.
   entry, id and three-word name) is under Explain. `rook_call` takes `why=`; holds keep the
   caller's claimed task, its project, the console room, job or huddle. The Android decision card
   shows the body under the title (0.4.22); older apps get it folded into the line and Explain.
+  (manual: phone-attention, security)
 - Always-on house agent: with `home.persistent` the house agent runs as persistent Claude Code
   sessions on a session host (`python -m rook.agents`, on the machine with the Claude login): Opus
   in its role directory (`CLAUDE.md`, `.claude/settings.json`, `.mcp.json`, rendered by the hub)
@@ -46,7 +47,7 @@ version was `0.1.0`.
   on any level, like `home.ask`.
 - A task card whose `attrs.criteria` (or tags, workers, dependencies) is one string is fixed when
   proposed; anything else that is not a list of strings is refused then, not when the person taps
-  Yes.
+  Yes. (manual: huddles)
 
 ## [0.3.0] - 2026-10-23
 
