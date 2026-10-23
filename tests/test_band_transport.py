@@ -14,8 +14,9 @@ from telesthete.protocol.framing import HEADER_SIZE, pack_packet, unpack_packet
 from rook.worker.transports import dispatch as dispatch_mod
 from rook.worker.transports import writer as writer_mod
 from rook.worker.transports.dispatch import Dispatcher
+from rook.worker.transports import telesthete_hub as hub_mod
 from rook.worker.transports.telesthete_hub import (
-    TelestheteHubTransport, set_socket_buffers, udp_pacer_from_env)
+    TelestheteHubTransport, WsLink, set_socket_buffers, udp_pacer_from_env)
 from rook.worker.transports.writer import FrameWriter, TokenBucket
 from rook.worker.wire.codec import KEEPALIVE_PAYLOAD, BandCodec
 
@@ -457,6 +458,62 @@ async def test_ws_link_drop_fails_queued_and_inflight_sends():
     await asyncio.sleep(0.01)
     assert len(link.frames) <= 1          # nothing of the queued bulk went out
     await t.stop()
+
+
+class _HungSession:
+    """aiohttp session whose handshake never answers (a phone mid network switch)."""
+    started = 0
+
+    def __init__(self, *a, **k):
+        pass
+
+    async def ws_connect(self, *a, **k):
+        _HungSession.started += 1
+        await asyncio.Event().wait()
+
+    async def close(self):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_ws_handshake_is_bounded(monkeypatch):
+    """A handshake that never completes fails into the retry loop instead of
+    keeping the worker off the band for hours (bakephone, 2026-10-22)."""
+    import aiohttp
+    _HungSession.started = 0
+    monkeypatch.setattr(aiohttp, "ClientSession", _HungSession)
+    monkeypatch.setattr(hub_mod, "_env_num", lambda name, default, cast=float, minimum=0:
+                        0.05 if name == "ROOK_BAND_WS_CONNECT_TIMEOUT" else default)
+    link = WsLink("wss://hub.example.com/band")
+    link.backoff.next = lambda: 0.01
+    task = asyncio.create_task(link.run(lambda f: None, _noop_up, lambda: None))
+    await asyncio.sleep(0.4)
+    assert _HungSession.started >= 2       # timed out and tried again
+    await link.close()
+    task.cancel()
+
+
+async def _noop_up():
+    pass
+
+
+@pytest.mark.asyncio
+async def test_ws_kick_abandons_hung_connect_and_retries_now(monkeypatch):
+    """kick() (network changed) drops the connect in flight and skips the backoff."""
+    import aiohttp
+    _HungSession.started = 0
+    monkeypatch.setattr(aiohttp, "ClientSession", _HungSession)
+    link = WsLink("wss://hub.example.com/band")
+    link.backoff.next = lambda: 3600.0     # only a kick can get past this
+    task = asyncio.create_task(link.run(lambda f: None, _noop_up, lambda: None))
+    await asyncio.sleep(0.05)
+    assert _HungSession.started == 1
+    link.kick()
+    await asyncio.sleep(0.05)
+    assert _HungSession.started == 2
+    assert not task.done()                 # the loop survived the cancelled attempt
+    await link.close()
+    task.cancel()
 
 
 # -- dispatch ----------------------------------------------------------------
