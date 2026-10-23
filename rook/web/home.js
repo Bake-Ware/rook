@@ -77,6 +77,7 @@ export async function mountHome(root){
   function drawPanel(){
     const err=h('small',{class:'mg-error',role:'alert'}),out=h('pre',{hidden:true,style:'white-space:pre-wrap'});
     const enabled=h('input',{type:'checkbox',checked:!!val('enabled')});
+    const frontDoor=h('input',{type:'checkbox',checked:!!val('front_door')});
     const name=h('input',{value:val('name')||'home',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)'});
     const provider=h('select',null,d.providers.map(p=>h('option',{value:p,text:p==='openai'?'OpenAI-compatible':p,selected:p===val('provider')})));
     // A named model provider (Manage > Model providers) replaces the endpoint fields.
@@ -134,7 +135,7 @@ export async function mountHome(root){
       ...Object.values(modelFields),h('div',{class:'mg-actions'},listModels),...Object.values(agLists),
       ...Object.values(effortFields),claudeOnly,
       field('Turn timeout (s)',agTimeout,'agent_timeout_s'));
-    const values=()=>({enabled:enabled.checked,backend:backend.value,agent_host:agHost.value,
+    const values=()=>({enabled:enabled.checked,front_door:frontDoor.checked,backend:backend.value,agent_host:agHost.value,
       agent_fallback_hosts:agFallbacks.value.split(',').map(x=>x.trim()).filter(Boolean),agent_on_unavailable:agUnavail.value,
       agent_timeout_s:Number(agTimeout.value||180),claude_model:agModel.claude.value.trim(),codex_model:agModel.codex.value.trim(),
       opencode_model:agModel.opencode.value.trim(),claude_effort:agEffort.claude.value,codex_effort:agEffort.codex.value,
@@ -177,6 +178,7 @@ export async function mountHome(root){
         info('It chairs your huddles and talks with you here; agents ask it with home.ask on worker rook. It acts as '+d.status.identity+' and everything it does is journaled under that name.','About the home agent')),
       h('div',{class:'mg-pad'},
         h('label',{class:'mg-actions',title:'Answer in chat and to home.ask'},enabled,'Enabled'),
+        h('div',{class:'mg-actions'},h('label',{class:'mg-actions',title:'Route every request: answer, do it (trust map permitting), start a coding session or a huddle; ask you only when it must'},frontDoor,'Front door'),h('a',{href:'#decisions',text:'Decisions'})),
         field('Name',name,'name','Chat identity agent:<name>; people write @'+(val('name')||'home')+'.'),
         field('Backend',backend,'backend'),
         cc,oaiHead,oai,

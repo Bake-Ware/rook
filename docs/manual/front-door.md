@@ -27,7 +27,7 @@ panel, write in a chat room, or a Claude session asks it with
   ([[manual-huddles]]) with the roles that fit: "I've got the team on it:
   <huddle name>."
 
-Turn it on under **Manage > Home agent**, group **Front door**.
+Turn it on with **Front door** on **Manage > Home agent** (next to Enabled).
 
 ## When it asks you
 
