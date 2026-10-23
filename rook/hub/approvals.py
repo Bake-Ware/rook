@@ -946,6 +946,9 @@ class Approvals:
         """The trust map's ruling for a call (None without a map)."""
         if self.trust is None:
             return None
+        doc = self.trust.current()
+        if not doc.get("entries") and doc.get("unlisted", "balanced") == "balanced":
+            return None     # an empty map changes nothing, so it cites nothing
         is_hub = bool(getattr(target, "is_rook", False))
         name = "rook" if is_hub else str(getattr(target, "name", "") or "")
         return self.trust.rule(d.cap, d.tier, tuple(d.tags or ()), worker=name,
