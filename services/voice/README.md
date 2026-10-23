@@ -586,6 +586,58 @@ anything else, or no field, keeps the classic planner path unchanged. Code:
   self-signed certificate. Lights, switches, scenes and media players only;
   services turn_on/turn_off/toggle, scene activate, media play/pause/next.
 
+## House engine (`VOICE_ENGINE=house`, opt-in)
+
+Design: [docs/design/persistent-agents.md](../../docs/design/persistent-agents.md)
+3.4. The house agent's persistent voice session (Claude Haiku on the session
+host, cachyrig) replaces Front and Background as the brain of a
+`front_background` turn. Everything else stays here: STT and its gate,
+endpointing, echo guard, speaker ID, TTS with clause chunking and the early
+first clause, barge-in, timing. Code: `house.py` (`Lane`, `HouseVoice`), hooked
+into `FrontBackground.turn` in `pipeline.py`.
+
+| Variable | Meaning |
+|---|---|
+| `VOICE_ENGINE` | `house` turns it on; unset or anything else: Front/Background as before |
+| `VOICE_HOUSE_URL` | the session host's voice lane, e.g. `ws://192.168.1.144:8791/voice/house` |
+| `VOICE_HOUSE_TOKEN` | its bearer token (secret: from the secret store, never logged or sent to clients) |
+| `VOICE_HOUSE_FOR` | `owner` (default: owner keys only; guests and other keys keep the old path) or `all` |
+| `VOICE_HOUSE_FIRST_DELTA_S` | no first words this long after the turn started: the old path answers it (4) |
+| `VOICE_HOUSE_CONNECT_S` | budget for opening the lane, `ready` included (2) |
+| `VOICE_HOUSE_TURN_S` | longest silence inside a turn once it spoke, e.g. between tool calls (60) |
+
+* Only connections with hello `"pipeline": "front_background"` in an agent mode
+  (assistant) use it; their `session` event carries `"engine": "house"`. Other
+  modes, the classic pipeline and dictation are unchanged.
+* One lane websocket per voice connection, opened on its first turn and
+  reopened after it drops. Per turn it sends `{"t":"user","turn","text",
+  "identity":{"owner","name"}}` (`name`: the speaker ID label when it named an
+  enrolled person, else the key's name; plus `merged_from` when the utterance
+  joined an earlier, cancelled turn). `delta` text is spoken clause by clause;
+  words after the conductor's tool calls continue the same turn; `tool` events
+  are owner `background` events (`tool_call`); `end` closes the turn. Barge-in
+  or a newer turn sends `{"t":"cancel","turn"}`.
+* `push` (a back-end result) is spoken like a follow-up, once nothing is being
+  said and the user is quiet (up to `VOICE_FOLLOWUP_WAIT_S`). One that cannot be
+  spoken (the client said stop, the connection closed, it stayed busy) is
+  reported: an owner `background` `dropped` event with its text and a log line
+  without it.
+* History is what was heard, as for Front: the echo guard knows the house
+  voice's words, an interrupted reply is cut where it stopped, and Front's
+  transcript gets the same exchange.
+* Fallback: lane unreachable, refused, no `ready`, an error before any words,
+  or no first words within `VOICE_HOUSE_FIRST_DELTA_S`: this turn runs on
+  Front/Background and the log says why. After a failed connect the lane is not
+  tried for 2 s doubling to 60 s (60 s after a refusal), so turns don't each pay
+  the connect timeout. If the conductor already called a tool but has said
+  nothing, it is not run twice: "One moment." and the turn keeps waiting.
+* Timing: `voice_turn_timing` adds `engine` (`house`, or `front_background`
+  with `house_fallback`: `unreachable`, `refused`, `timeout`, `not_ready`,
+  `backoff`, `no_first_delta`, `error`, `closed`, `send_failed`);
+  `front_first_token_ms` is the first delta, `front_first_audio_ms` its audio.
+* Back to the old path: remove `VOICE_ENGINE=house` from
+  `/etc/voice-agent/unified.env` and restart the service.
+
 ## Deployment
 
 See [deploy/README.md](deploy/README.md): releases are built from a commit,

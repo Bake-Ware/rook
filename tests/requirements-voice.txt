@@ -4,6 +4,7 @@
 # CI installs this on top of rook[dev]; without it those tests skip.
 fastapi
 uvicorn
+websockets   # the house engine's lane client (tests/test_voice_house.py)
 numpy
 webrtcvad==2.0.10
 setuptools<81  # webrtcvad still imports pkg_resources

@@ -105,6 +105,32 @@ def early_clause(pending):
     return [pending[:j + 1].strip()], pending[j + 2:]
 
 
+class Clauses:
+    """Streamed text -> speakable clauses: whole sentences, and the first clause
+    early at a comma once it has a few words. Shared by Front and the house engine."""
+
+    def __init__(self):
+        self.pending, self.first = '', True
+
+    def feed(self, piece):
+        self.pending += piece
+        done, self.pending = providers.split_sentences(self.pending)
+        if self.first and not done:
+            # Start speaking sooner: the first clause may end at a comma.
+            done, self.pending = early_clause(self.pending)
+        if done:
+            self.first = False
+        return [clause for clause in done if len(clause.strip()) >= 2]
+
+    def flush(self, restart=False):
+        """The rest as one clause. ``restart``: the next clause may end early again
+        (text after a pause, e.g. the house voice's words after a tool call)."""
+        rest, self.pending = self.pending.strip(), ''
+        if restart:
+            self.first = True
+        return [rest] if rest else []
+
+
 def followup_note(facts):
     return ('[Internal note, not from the user] Your background work just finished: ' + facts +
             '\nTell the user the result now, in the first person, in one or two short sentences. '
@@ -168,6 +194,17 @@ class Transcript:
             self.messages = self.messages[:-1]
         return text
 
+    def add_assistant(self, text):
+        """Speech that answered no user line (a pushed back-end result), as heard. The
+        transcript stays what was said; joining the last reply edits it, so the
+        model's cache misses once."""
+        if not text or self.fixed is None or self.pending is not None:
+            return
+        if self.messages and self.messages[-1]['role'] == 'assistant':
+            self.messages[-1] = {'role': 'assistant', 'content': self.messages[-1]['content'] + ' ' + text}
+        else:
+            self.messages.append({'role': 'assistant', 'content': text})
+
     def commit(self, reply):
         """After the completion: ``reply`` exactly as generated (or as heard)."""
         if self.pending is None:
@@ -187,7 +224,7 @@ async def stream(messages, on_clause, on_token=None, transport=None, url=None, c
     and ``on_clause(text)`` per complete clause. Returns the full text.
     ``client``: a caller-owned httpx.AsyncClient to reuse (kept open)."""
     body = payload(messages)
-    content, pending, first, first_clause = '', '', True, True
+    content, first, clauses = '', True, Clauses()
     async with contextlib.AsyncExitStack() as stack:
         if client is None:
             kwargs = {'timeout': float(os.environ.get('VOICE_FRONT_TIMEOUT_S', '30')), 'trust_env': False}
@@ -213,16 +250,8 @@ async def stream(messages, on_clause, on_token=None, transport=None, url=None, c
                     on_token()
                 first = False
                 content += piece
-                pending += piece
-                done, pending = providers.split_sentences(pending)
-                if first_clause and not done:
-                    # Start speaking sooner: the first clause may end at a comma.
-                    done, pending = early_clause(pending)
-                if done:
-                    first_clause = False
-                for clause in done:
-                    if len(clause.strip()) >= 2:
-                        await on_clause(clause)
-    if pending.strip():
-        await on_clause(pending.strip())
+                for clause in clauses.feed(piece):
+                    await on_clause(clause)
+    for clause in clauses.flush():
+        await on_clause(clause)
     return content.strip()
