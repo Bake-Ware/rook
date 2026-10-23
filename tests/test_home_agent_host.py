@@ -290,6 +290,32 @@ async def test_home_ask_runs_on_the_agent_host(cenv):
 
 
 @pytest.mark.asyncio
+async def test_without_a_callback_url_turns_call_back_to_the_dashboards_address(cenv, monkeypatch):
+    # A fresh one-command install: no --public-url, no home.agent_callback_url;
+    # the dashboard's own address (ROOK_DOMAIN) serves /home/turn-mcp.
+    cenv.home.agents.public_url = ""
+    monkeypatch.setenv("ROOK_DOMAIN", "http://192.0.2.10:7005")
+    res = await cenv.node.dispatch("home.ask", {"question": "hello?"}, "agent:claude")
+    assert res["ok"], res
+    assert cenv.band.calls[-1].args["mcp_url"] == "http://192.0.2.10:7005/home/turn-mcp"
+    # An explicit callback URL still wins.
+    cenv.svc.set("home.agent_callback_url", "http://10.0.0.5:8765", actor="human:op")
+    res = await cenv.node.dispatch("home.ask", {"question": "again?"}, "agent:claude")
+    assert res["ok"] and cenv.band.calls[-1].args["mcp_url"] == "http://10.0.0.5:8765/home/turn-mcp"
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_hub_address_is_named_not_hidden(cenv, monkeypatch):
+    cenv.home.agents.public_url = ""
+    monkeypatch.delenv("ROOK_DOMAIN", raising=False)
+    monkeypatch.setattr(cenv.home.agents, "_dashboard_base", lambda: "")
+    res = await cenv.node.dispatch("home.ask", {"question": "hello?"}, "agent:claude")
+    assert not res["ok"] and "callback URL" in res["error"], res
+    assert cenv.band.calls == []
+    assert "callback URL" in cenv.home.status()["last_error"]
+
+
+@pytest.mark.asyncio
 async def test_tools_come_back_to_the_hub_as_the_home_agent(cenv, monkeypatch):
     cenv.svc.set("home.tools", True, actor="human:op")
     seen = []
