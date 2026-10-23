@@ -74,7 +74,7 @@ ROUTER_RULES = """Paths (pick one; the hub tells the person which one you took):
 - do: a quick, reversible action. Call do_action (worker, cap, args, summary). The hub checks the trust map: it runs the action when the map says go, and otherwise turns it into a one-line ask for the person. When the playbook says to ask first, pass ask_first=true and the rule id.
 - dispatch: one clear piece of code work. Call dispatch_session (instructions the session can follow alone, a branch name like fix/short-name, a title). It reports back on its own.
 - huddle: fuzzy, big or multi-discipline work. Call open_huddle (title, roles, brief), or continue_huddle when a huddle on it exists.
-- ask: something only the person can decide that no tool covers: call ask_person with a one-line question (under 120 characters, answerable Yes or No), a 2-3 sentence plain explanation, and more detail.
+- ask: something only the person can decide that no tool covers: call ask_person. Never use ask_person for an action you could run (deleting, restarting, sending): call do_action with ask_first=true instead, so their yes runs it with a one-line question (under 120 characters, answerable Yes or No), a 2-3 sentence plain explanation, and more detail.
 Rules:
 - Never say you did, started, sent or changed anything yourself: the hub writes that line from what your tools returned. Write only what the person needs beyond it, in one to three short sentences, plain words.
 - When the person corrects how you route ("next time just do that", "ask me about X", "don't bother me with Y"), call playbook_edit with their exact words; tightening applies at once, loosening becomes a question for them.
@@ -221,7 +221,9 @@ def compose(state: dict, content: str) -> tuple[str, str]:
             path = "ask"
         a = asked[0]
         heads.append(f"I need you for one thing: {a['line']} (Yes / No / Explain: {a['name']})")
-    failed = [a for a in state["did"] if not a.get("ok") and not a.get("asked")]
+    fixed = {a["summary"] for a in did}
+    failed = [a for a in state["did"] if not a.get("ok") and not a.get("asked")
+              and a["summary"] not in fixed]
     if failed:
         heads.append("Not done: " + "; ".join(f"{a['summary']} ({a.get('error') or 'failed'})"
                                               for a in failed) + ".")
@@ -413,6 +415,7 @@ class FrontDoor:
         self.home = home
         self._store: FrontStore | None = None
         self._playbook: Playbook | None = None
+        self._tasks: set[asyncio.Task] = set()
 
     # -- plumbing --------------------------------------------------------------
     @property
@@ -431,6 +434,8 @@ class FrontDoor:
         if self._store is not None:
             self._store.close()
             self._store = None
+        for t in list(self._tasks):
+            t.cancel()
 
     @property
     def node(self) -> Any:
@@ -727,8 +732,41 @@ class FrontDoor:
             res = {"ok": True, "note": "Noted; the team carries on with your answer."}
             if kind == "dispute":
                 res["remember"] = self._offer_remember(a)
+            elif a.get("request"):
+                res["note"] = "Noted; I'm acting on it."
+                self.follow_up(a, "yes", by)
             return res
         return {"ok": True}
+
+    def follow_up(self, a: dict, answer: str, by: str) -> None:
+        """After the person answers a question the router asked (a ``gap``
+        ask from a request), the house agent picks the request up again with
+        their answer and acts on it; the reply goes to the room it came from."""
+        rows = self.store._q("SELECT * FROM front_requests WHERE id=?", (a["request"],))
+        if not rows:
+            return
+        req = rows[0]
+        text = (f"{by} answered {answer} to your question \"{a['line']}\" about their request: "
+                f"\"{clip(req['text'], 1500)}\". Carry the request out now as that answer says "
+                "(or, for no, leave it and say so in a line).")
+
+        async def run() -> None:
+            try:
+                out = await self.handle(text, source="answer", asker=req["asker"] or by,
+                                        room=a.get("room") or "",
+                                        approved=(by, a) if answer == "yes" else None)
+            except Exception as e:  # noqa: BLE001 - the ask stays answered; the log says why
+                log.warning("front door: follow-up on %s failed: %s", a["id"], e)
+                return
+            cur = (self.store.ask(a["id"]) or {}).get("result") or {}
+            self.store.set_result(a["id"], {**cur, "followed_up": out["request"],
+                                            "path": out["path"], "note": out["answer"][:300]})
+            if a.get("room"):
+                self._tell_room(a, out["answer"])
+
+        task = asyncio.get_running_loop().create_task(run())
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     def _offer_remember(self, a: dict) -> str | None:
         """After acting on a Yes, offer to remember it: a playbook rule (the
@@ -973,7 +1011,7 @@ class FrontDoor:
                      context: str = "", room: str = "", history: list[dict] | None = None,
                      extra_tools: list | None = None,
                      extra_handler: Callable[[str, dict], Awaitable[str]] | None = None,
-                     person: str | None = None) -> dict:
+                     person: str | None = None, approved: tuple | None = None) -> dict:
         """Route one request. Returns ``{answer, path, refs, request, done,
         asks, model}``; raises HomeError/LLMError when the model fails."""
         home = self.home
@@ -982,7 +1020,8 @@ class FrontDoor:
             raise FrontError("an empty request")
         rid = self.store.add_request(source, asker, text)
         cfg = home.config()
-        state: dict = {"did": [], "started": [], "asked": [], "edits": [], "tools": []}
+        state: dict = {"did": [], "started": [], "asked": [], "edits": [], "tools": [],
+                       "approved": approved}
         may_search = home.may_read_knowledge(principal)
         use_memory = home.may_use_memory(principal)
         recalled = (await home.recall_for(text, person, room or None, people=person is not None)
@@ -1109,8 +1148,13 @@ class FrontDoor:
                   room: str, request: str) -> dict:
         cap = str(args.get("cap") or "").strip()
         summary = _one_line(args.get("summary") or cap, 120)
-        call_args = args.get("args") if isinstance(args.get("args"), dict) else {}
+        call_args = dict(args.get("args")) if isinstance(args.get("args"), dict) else {}
         w = self.resolve_worker(str(args.get("worker") or ""), cap)
+        if w["on_hub"] and cap in ("task.write", "knowledge.write") \
+                and not call_args.get("request_id"):
+            # The hub's record writes (tasks, knowledge) need one; a retry of
+            # the same request never makes two records.
+            call_args["request_id"] = f"front-{request}-{len(state['did'])}"
         if not self.home.may_call(principal, cap):
             raise FrontError(f"{asker} may not run {cap} themselves, so I won't for them")
         protected = self._protected()
@@ -1128,9 +1172,10 @@ class FrontDoor:
         if r is not None and r.tier != "go":
             reasons.append(r.cite)
         gone = irreversible(cap, kind, w["tags"], call_args)
-        if gone:
+        yes = state.get("approved")
+        if gone and not yes:
             reasons.append(gone)
-        if args.get("ask_first"):
+        if args.get("ask_first") and not yes:
             reasons.append("my playbook says to ask you first"
                            + (f" ({pb.id}: {pb.text})" if pb else ""))
         if reasons:
@@ -1146,9 +1191,17 @@ class FrontDoor:
             state["did"].append({"summary": summary, "ok": False, "asked": a["name"]})
             return {"ok": True, "asked": a["name"], "why": reasons,
                     "note": "Not done: it waits for the person's yes (the hub tells them)."}
-        out = await self.run_action(action)
+        if yes:
+            # The person said yes to this request (follow_up): their answer,
+            # not the house agent's judgement, is what lets it run.
+            by, a = yes
+            cite = {**cite, "note": f"{by} said yes to {a.get('name') or a['id']}"}
+            out = await self.run_action(action, approved_by=f"{by} (yes to house ask "
+                                                            f"{a.get('name') or a['id']})")
+        else:
+            out = await self.run_action(action)
         state["did"].append({"summary": summary, **out})
-        if out["ok"] and kind != "read":
+        if out["ok"] and kind != "read" and not yes:     # a yes is the person's decision
             self.decide("did", f"{summary} ({cap} on {w['name']})", cite, source=source,
                         room=room, request=request, data={"subject": f"{cap} on {w['name']}",
                                                           "action": {k: action[k] for k in
