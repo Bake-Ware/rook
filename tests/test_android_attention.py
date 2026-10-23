@@ -75,6 +75,28 @@ def test_clean_post_defaults_and_clips(mod):
     assert mod.clean_post("a", line="l", actions=[])["actions"] == ["ack"]
 
 
+def test_clean_post_body_keeps_lines(mod):
+    # Old hubs send no body: the card is unchanged apart from an empty body.
+    assert mod.clean_post("a", line="Read hub approvals database")["body"] == ""
+    body = ("For: Approval cards plain (task)\n"
+            "Who:   Claude web\n\n"
+            "  I want to: run a read-only sqlite query on the hub server bakenetcanada\n"
+            "Risk: Low: read-only, but the hub is guarded so changes there ask you\n")
+    c = mod.clean_post("a", line="Read hub approvals database", body=body, explain="sqlite3 -readonly ...")
+    assert c["body"].split("\n") == [
+        "For: Approval cards plain (task)",
+        "Who: Claude web",
+        "I want to: run a read-only sqlite query on the hub server bakenetcanada",
+        "Risk: Low: read-only, but the hub is guarded so changes there ask you",
+    ]
+    assert c["line"] == "Read hub approvals database" and c["explain"] == "sqlite3 -readonly ..."
+    many = mod.clean_post("a", line="l", body="\n".join(f"line {i}" for i in range(9)))["body"]
+    assert many.split("\n") == [f"line {i}" for i in range(5)] + ["line 5…"]
+    long = mod.clean_post("a", line="l", body="w " * 400 + "\nnext")["body"]
+    assert len(long) == mod.BODY_MAX and long.endswith("…") and "\n" not in long
+    assert mod.clean_post("a", line="l", body=None)["body"] == ""
+
+
 @pytest.mark.parametrize("kwargs, msg", [
     ({"id": "", "line": "l"}, "id"),
     ({"id": "x" * 65, "line": "l"}, "id"),
@@ -106,6 +128,9 @@ def test_post_and_update_reach_the_store(mod, monkeypatch):
     assert r == {"ok": True, "id": "hold-7", "new": True}
     sent = store.calls[-1][1]
     assert sent["urgency"] == "urgent" and sent["kind"] == "hold" and sent["expires_at"] == 1900000000.0
+    assert sent["body"] == ""
+    p._post(id="hold-8", line="Read hub approvals database", body="For: Plain cards\nRisk: Low")
+    assert store.calls[-1][1]["body"] == "For: Plain cards\nRisk: Low"
     assert p._post(id="x", line="l", channel="nope")["ok"] is False
     assert p._update(id="hold-7", state="DONE")["ok"] is True
     assert store.calls[-1] == ("update", "hold-7", "done", "")

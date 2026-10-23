@@ -26,7 +26,25 @@ class AttentionModelTest {
         }
     }
 
-    @Test fun repostUpdatesWithoutRinging() {
+    @Test fun bodyKeepsShortLines() {
+        assertEquals("", card("a").body)
+        val c = AttentionCard.fromPost(JSONObject().put("id", "b").put("line", "Read hub approvals database")
+            .put("body", "For: Approval cards plain (task)\nWho:   Claude web\n\n  I want to: run a query \nRisk: Low\n"), 0.0)
+        assertEquals("For: Approval cards plain (task)\nWho: Claude web\nI want to: run a query\nRisk: Low", c.body)
+        val many = AttentionCard.cleanBody((0 until 9).joinToString("\n") { "line $it" })
+        assertEquals((0 until 5).map { "line $it" } + "line 5…", many.split("\n"))
+        val long = AttentionCard.cleanBody("w ".repeat(400))
+        assertEquals(AttentionCard.BODY_MAX, long.length); assertTrue(long.endsWith("…"))
+        // Persisted with the card; cards stored before body existed load with an empty one.
+        assertEquals(c.body, AttentionCard.fromJson(c.toJson()).body)
+        assertEquals("", AttentionCard.fromJson(card("old").toJson().apply { remove("body") }).body)
+        val book = CardBook(); book.post(card("r"))
+        book.post(AttentionCard.fromPost(JSONObject().put("id", "r").put("line", "Deploy it?").put("body", "Risk: Low"), 1.0))
+        assertEquals("Risk: Low", book["r"]!!.body)
+        assertEquals("Risk: Low", CardBook().apply { load(book.toJson()) }["r"]!!.body)
+    }
+
+        @Test fun repostUpdatesWithoutRinging() {
         val book = CardBook()
         assertTrue(book.post(card("a", 1.0)))
         book["a"]!!.seen = true
