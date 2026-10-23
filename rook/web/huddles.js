@@ -16,13 +16,265 @@ const API='/account/huddle/api';
 export const YOU='user:operator';
 let csrf='';
 /** One action on the huddle account API: its result, or an Error with the reason. */
-export async function hapi(action,body={},retry=true){
+export async function hapi(action,body={},retry=true,signal){
   if(!csrf){const r=await fetch(API);const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Sign in with your operator account.');csrf=d.csrf;}
-  const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,action,...body})});
+  const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,action,...body}),signal});
   const d=await r.json().catch(()=>({}));
-  if(r.status===403&&retry&&/expired/i.test(d.error||'')){csrf='';return hapi(action,body,false);}
+  if(r.status===403&&retry&&/expired/i.test(d.error||'')){csrf='';return hapi(action,body,false,signal);}
   if(!r.ok||d.error)throw Error(d.error||'Request failed');
   return d.result;
+}
+
+// -- reading a message aloud ------------------------------------------------------
+// The Speak button on a bubble asks the hub to read it (speech.py on the hub:
+// markdown, code, links and ids made speakable; the role's voice, else the
+// band's default) and plays the audio here. The hub cuts the text into
+// sentence-sized chunks: the first plays as soon as it arrives, the next two
+// load while it plays, and they follow each other without a gap. Chunks are
+// kept per (voice, text), so a replay is instant; a chunk that fails twice is
+// skipped with a short note. With no voice engine the hub can reach, this
+// browser's own speech reads it, and the button's tooltip says so. One
+// message speaks at a time; tapping again stops it. A long press (or
+// right-click) offers "Play on <device>" for the devices the hub allows.
+let speaking=null,devicesP=null,actx=null;
+const speakKey=(room,ref)=>room+'|'+(ref.card?'c:'+ref.card:ref.seq);
+function speakMark(b,state,tip){
+  b.classList.toggle('on',state==='playing');b.classList.toggle('wait',state==='loading');
+  b.setAttribute('aria-pressed',String(state==='playing'||state==='loading'));
+  b.textContent=state?'■':'▶';
+  b.title=tip||(state?'Stop':b.dataset.tip||'Speak');
+  if(!state&&b.style)b.style.removeProperty('--p');
+}
+/** Stop whatever message is speaking. */
+export function stopSpeaking(){
+  const s=speaking;if(!s)return;speaking=null;s.stopped=true;
+  try{s.ctl&&s.ctl.abort();}catch(e){}
+  for(const src of s.sources||[])try{src.stop();}catch(e){}
+  try{s.audio&&s.audio.pause();}catch(e){}
+  if(s.browser&&window.speechSynthesis)speechSynthesis.cancel();
+  if(s.url)URL.revokeObjectURL(s.url);
+  s.done&&s.done();
+  if(s.btn)speakMark(s.btn,'',s.tip);
+}
+const b64buf=b64=>{const bin=atob(b64),buf=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)buf[i]=bin.charCodeAt(i);return buf.buffer;};
+function playClip(s,buf,mime){
+  return new Promise((resolve,reject)=>{
+    if(s.url)URL.revokeObjectURL(s.url);
+    s.url=URL.createObjectURL(new Blob([buf],{type:mime||'audio/wav'}));
+    const a=new Audio(s.url);s.audio=a;s.done=resolve;
+    a.onended=()=>resolve();a.onerror=()=>reject(Error('this browser could not play the audio'));
+    a.play().catch(reject);
+  });
+}
+// Played chunks by (voice, text), least recently used out first.
+const CLIPS=new Map(),CLIP_LIMIT=48*1024*1024;let clipBytes=0;
+function clipGet(k){const v=CLIPS.get(k);if(v){CLIPS.delete(k);CLIPS.set(k,v);}return v;}
+function clipPut(k,buf){
+  if(!buf||buf.byteLength>CLIP_LIMIT)return;
+  if(CLIPS.has(k))clipBytes-=CLIPS.get(k).byteLength;
+  CLIPS.delete(k);CLIPS.set(k,buf);clipBytes+=buf.byteLength;
+  for(const [old,v] of CLIPS){if(clipBytes<=CLIP_LIMIT)break;CLIPS.delete(old);clipBytes-=v.byteLength;}
+}
+/** Where chunks play, one after another: Web Audio schedules each to start
+ *  where the last ends (no gap); without it, audio elements in turn. Make it
+ *  inside the click, so the browser lets it play. ``out(buf)`` resolves to
+ *  {started, ended} promises for that chunk. */
+function audioOut(s){
+  const AC=window.AudioContext||window.webkitAudioContext;
+  if(AC){
+    try{actx=actx||new AC();if(actx.state==='suspended')actx.resume().catch(()=>{});}catch(e){actx=null;}
+  }
+  if(actx){
+    const ctx=actx;let at=0;s.sources=[];
+    return async buf=>{
+      const ab=await ctx.decodeAudioData(buf.slice(0));
+      if(s.stopped)return {started:Promise.resolve(),ended:Promise.resolve()};
+      const src=ctx.createBufferSource();src.buffer=ab;src.connect(ctx.destination);
+      const start=Math.max(at,ctx.currentTime+0.03);src.start(start);at=start+ab.duration;s.sources.push(src);
+      return {started:new Promise(r=>setTimeout(r,Math.max(0,(start-ctx.currentTime)*1000))),
+              ended:new Promise(r=>{src.onended=()=>r();})};
+    };
+  }
+  let chain=Promise.resolve();
+  return async buf=>{
+    const started=chain,ended=chain.then(()=>s.stopped?null:playClip(s,buf,'audio/wav'));
+    chain=ended.catch(()=>{});return {started,ended};
+  };
+}
+/** Play ``count`` chunks in order. ``load(i)`` fetches one (a failure is
+ *  tried once more, then skipped with ``onSkip(i, error)``; two skipped in a
+ *  row end it with that error); at most ``ahead`` load at once while earlier
+ *  ones play. ``play(clip, i)`` queues a chunk after the last and resolves to
+ *  {started, ended}. Ends early once ``stopped()``. */
+export async function playChunks({count,load,play,ahead=2,stopped=()=>false,onSkip=()=>{}}){
+  const loads=[];let ended=Promise.resolve(),skipped=0;
+  const want=i=>{if(i<count&&!loads[i])loads[i]=load(i).catch(()=>{if(stopped())throw Error('stopped');return load(i);})
+    .then(c=>({c}),e=>({e}));};
+  for(let i=0;i<count;i++){
+    for(let j=i;j<i+ahead;j++)want(j);
+    const r=await loads[i];
+    if(stopped())return;
+    if(r.e){
+      if(++skipped>=2)throw r.e;
+      onSkip(i,r.e);continue;
+    }
+    skipped=0;
+    const h=await play(r.c,i);
+    ended=h.ended;
+    await h.started;
+    if(stopped())return;
+  }
+  await ended;
+}
+/** Read ``text`` with this browser's speech; resolves when it ends. */
+export function browserSpeak(s,text){
+  return new Promise((resolve,reject)=>{
+    if(!window.speechSynthesis||!window.SpeechSynthesisUtterance)return reject(Error('this browser cannot speak'));
+    // Short utterances: some browsers stop a long one after about 15 s.
+    const bits=(String(text).match(/[^.!?]+[.!?]*\s*/g)||[String(text)]).reduce((out,x)=>{
+      if(out.length&&(out[out.length-1]+x).length<220)out[out.length-1]+=x;else out.push(x);return out;},[]);
+    s.browser=true;s.done=resolve;speechSynthesis.cancel();
+    bits.forEach((t,i)=>{const u=new SpeechSynthesisUtterance(t.trim());
+      if(i===bits.length-1){u.onend=()=>resolve();u.onerror=e=>e.error==='interrupted'||e.error==='canceled'?resolve():reject(Error(e.error||'speech failed'));}
+      speechSynthesis.speak(u);});
+  });
+}
+/** A short note beside the button that goes away by itself. */
+function speakNote(b,text){
+  if(!b||!b.after)return;
+  b.parentNode?.querySelector('.hx-speak-note')?.remove();
+  const n=h('small',{class:'hx-speak-note',text});b.after(n);setTimeout(()=>n.remove(),8000);
+}
+async function speakNow(b,room,ref){
+  stopSpeaking();
+  const s={key:speakKey(room,ref),btn:b,stopped:false,tip:b.dataset.tip,
+           ctl:typeof AbortController==='function'?new AbortController():null};speaking=s;
+  speakMark(b,'loading');
+  const out=audioOut(s);
+  try{
+    const p=await hapi('speak',{room,...ref,plan:true},true,s.ctl?.signal);
+    if(s.stopped)return;
+    if(p.mode==='browser'){
+      // No voice engine the hub can reach: this browser reads it.
+      s.tip='Spoken by this browser: '+(p.reason||'no voice engine')+'.';
+      if(s.btn){s.btn.dataset.tip=s.tip;speakMark(s.btn,'playing','Stop. '+s.tip);}
+      if(p.text)await browserSpeak(s,p.text);
+      return;
+    }
+    const chunks=p.chunks||[],n=chunks.length;
+    if(!n)return;
+    s.tip=p.source==='role'?'Speak (voice '+p.voice+')':'Speak (the band\'s voice'+(p.label?', '+p.label:'')+')';
+    if(p.reason)s.tip+=': '+p.reason;
+    const vkey=(p.source==='role'?'role:'+p.voice:'default:'+(p.label||''))+'|';
+    await playChunks({count:n,ahead:2,stopped:()=>s.stopped,
+      load:async i=>{
+        const hit=clipGet(vkey+chunks[i]);if(hit)return hit;
+        const r=await hapi('speak',{room,...ref,part:i},true,s.ctl?.signal);
+        if(r.mode!=='hub'||!r.audio)throw Error(r.reason||'the voice engine failed');
+        const buf=b64buf(r.audio);
+        if(r.source===p.source&&r.voice===p.voice)clipPut(vkey+chunks[i],buf);   // not a fallback voice
+        return buf;},
+      play:async(buf,i)=>{
+        const hd=await out(buf);
+        hd.started.then(()=>{if(s.stopped||!s.btn)return;
+          if(n>1)s.btn.style?.setProperty('--p',String((i+1)/n));
+          speakMark(s.btn,'playing',n>1?'Stop (part '+(i+1)+' of '+n+')':'Stop');});
+        return hd;},
+      onSkip:(i,e)=>{speakNote(s.btn,'Skipped part '+(i+1)+' of '+n+': '+e.message);}});
+  }catch(e){if(!s.stopped&&s.btn){s.tip='Speak. Last try failed: '+e.message;s.btn.dataset.tip=s.tip;}}
+  finally{if(speaking===s){speaking=null;if(s.url)URL.revokeObjectURL(s.url);if(s.btn){s.btn.dataset.tip=s.tip||'';speakMark(s.btn,'',s.tip);}}}
+}
+function deviceMenu(b,room,ref){
+  devicesP=devicesP||hapi('speak_devices').then(r=>r.devices||[]).catch(()=>[]);
+  devicesP.then(list=>{
+    document.querySelector('.hx-speak-menu')?.remove();
+    if(!list.length){b.title='No device to play on.';return;}
+    const menu=h('ul',{class:'hx-speak-menu',role:'menu'});
+    const close=()=>{menu.remove();document.removeEventListener('pointerdown',away,true);document.removeEventListener('keydown',esc,true);};
+    const away=e=>{if(!menu.contains(e.target))close();};
+    const esc=e=>{if(e.key==='Escape'){close();b.focus();}};
+    for(const d of list){const it=h('button',{type:'button',role:'menuitem',text:'Play on '+d.worker});
+      it.onclick=async()=>{close();b.title='Sending to '+d.worker+'…';
+        try{await hapi('speak_on',{room,...ref,worker:d.worker});b.title='Playing on '+d.worker+'.';}
+        catch(e){b.title='Play on '+d.worker+' failed: '+e.message;}};
+      menu.append(h('li',{role:'none'},it));}
+    const r=b.getBoundingClientRect();
+    menu.style.top=Math.min(r.bottom+4,innerHeight-60*list.length-8)+'px';menu.style.left=Math.max(8,Math.min(r.left,innerWidth-220))+'px';
+    document.body.append(menu);menu.querySelector('button').focus();
+    setTimeout(()=>{document.addEventListener('pointerdown',away,true);document.addEventListener('keydown',esc,true);});
+  });
+}
+// -- picking a voice ----------------------------------------------------------------
+// The voice pickers on the Roles, Home agent and Voice pages: the voice
+// engine's voices (Chatterbox first, then Kokoro), a blank choice for the
+// band's default, and a Preview button that plays a short sample here.
+let voicesP=null;
+const ENGINE_NAMES={chatterbox:'Chatterbox (natural voices)',kokoro:'Kokoro (quick voices)'};
+/** The hub's voices (kept for the page's life; ``fresh`` asks again). */
+export function voiceList(fresh){
+  // A failed or empty list is not kept: the next picker asks again.
+  if(fresh||!voicesP)voicesP=hapi('voices').then(v=>{if(!(v.voices||[]).length)voicesP=null;return v;})
+    .catch(e=>{voicesP=null;return {available:false,voices:[],catalog:[],reason:e.message};});
+  return voicesP;
+}
+/** A voice select with a Preview button. ``blank`` labels the empty choice
+ *  (given the band's default name). Returns {el, select, note}. */
+const BAND_DEFAULT=d=>'Band default'+(d?' ('+d+')':'');
+/** Fill ``sel`` with the hub's voices, grouped by engine (Chatterbox first),
+ *  ``current`` selected and a blank choice labelled ``blank(default)``.
+ *  Resolves to the voice list. The Settings page uses it too. */
+export async function fillVoiceSelect(sel,current,blank=BAND_DEFAULT){
+  current=String(current||'');
+  const v=await voiceList();
+  const cat=(v.catalog&&v.catalog.length)?v.catalog:(v.voices||[]).map(x=>({id:x,label:x}));
+  const opt=c=>h('option',{value:c.id,text:c.label&&c.label.toLowerCase()!==c.id.toLowerCase()?c.label+' ('+c.id+')':(c.label||c.id),selected:c.id===current});
+  const groups={};for(const c of cat)(groups[c.engine||'']=groups[c.engine||'']||[]).push(c);
+  const rank=k=>k==='chatterbox'?0:k==='kokoro'?1:2;
+  const order=Object.keys(groups).sort((a,b)=>rank(a)-rank(b)||a.localeCompare(b));
+  sel.replaceChildren(h('option',{value:'',text:blank(v.default||'')}),
+    ...(order.length>1||order[0]?order.map(k=>h('optgroup',{label:ENGINE_NAMES[k]||k||'Other'},groups[k].map(opt))):cat.map(opt)));
+  if(current&&!cat.some(c=>c.id===current))sel.append(h('option',{value:current,text:current+' (not on the voice engine)',selected:true}));
+  return v;
+}
+export function voicePicker(current,{blank=BAND_DEFAULT}={}){
+  current=String(current||'');
+  const sel=h('select',{'aria-label':'Voice'},h('option',{value:'',text:blank('')}));
+  if(current)sel.append(h('option',{value:current,text:current,selected:true}));
+  const note=h('small',{class:'mg-sub',style:'white-space:normal'});
+  const play=h('button',{type:'button',class:'mg-btn',text:'Preview',title:'Hear this voice'});
+  fillVoiceSelect(sel,current,blank).then(v=>{
+    if(!v.available)note.textContent='No voice engine on this hub now ('+(v.reason||'voice is off')+'): the browser reads messages aloud.';
+    else if(!(v.voices||[]).length)note.textContent='The voice engine did not list its voices'+(v.error?' ('+v.error+')':'')+'.';
+  });
+  play.onclick=async e=>{
+    e.preventDefault();
+    if(speaking&&speaking.key==='preview'){stopSpeaking();return;}
+    stopSpeaking();
+    const s={key:'preview',btn:null,stopped:false};speaking=s;play.textContent='Stop';
+    try{
+      const r=await hapi('preview',{voice:sel.value});
+      if(s.stopped)return;
+      if(r.mode==='browser'){note.textContent='Spoken by this browser: '+(r.reason||'no voice engine')+'.';await browserSpeak(s,r.text);}
+      else{note.textContent='';await playClip(s,b64buf(r.audio),r.mime);}
+    }catch(err){if(!s.stopped)note.textContent='Preview failed: '+err.message;}
+    finally{if(speaking===s){speaking=null;if(s.url)URL.revokeObjectURL(s.url);}play.textContent='Preview';}
+  };
+  return {el:h('div',{class:'mg-actions',style:'flex-wrap:nowrap'},sel,play),select:sel,note};
+}
+
+/** The Speak button for a message (``ref`` {seq}) or card ({card}) in ``room``. */
+export function speakButton(room,ref){
+  const b=h('button',{type:'button',class:'hx-speak','aria-label':'Speak'});
+  speakMark(b,'');
+  if(speaking&&speaking.key===speakKey(room,ref)){speaking.btn=b;b.dataset.tip=speaking.tip||'';speakMark(b,'playing','Stop');}
+  let held=null,long=false;
+  b.addEventListener('pointerdown',e=>{if(e.button)return;long=false;clearTimeout(held);held=setTimeout(()=>{long=true;deviceMenu(b,room,ref);},600);});
+  for(const ev of ['pointerup','pointerleave','pointercancel'])b.addEventListener(ev,()=>clearTimeout(held));
+  b.addEventListener('contextmenu',e=>{e.preventDefault();clearTimeout(held);if(!long)deviceMenu(b,room,ref);long=true;});
+  b.onclick=e=>{e.preventDefault();e.stopPropagation();if(long){long=false;return;}
+    if(speaking&&speaking.key===speakKey(room,ref)){stopSpeaking();return;}
+    speakNow(b,room,ref);};
+  return b;
 }
 
 function loadCss(){if(document.querySelector('link[data-hd]'))return;const l=document.createElement('link');l.rel='stylesheet';l.href='/account/huddle/assets/huddle.css'+search;l.dataset.hd='1';document.head.append(l);}
@@ -121,6 +373,7 @@ export async function mountHuddles(root){
   // -- a thread ----------------------------------------------------------------
   async function open(room,kind,name){
     name=name||(huddles.find(x=>x.room===room)||rooms.find(x=>x.room===room)||{}).name;
+    if(!cur||cur.room!==room)stopSpeaking();
     cur={room,kind};view=null;msgs=[];lastSeq=0;sig='';err.textContent='';
     wrap.classList.add('hx-open');drawList();
     history.replaceState(null,'','#huddles?room='+encodeURIComponent(name||room));
@@ -229,6 +482,7 @@ export async function mountHuddles(root){
     else if(chair)by.append(chip(short(sender)+' · chair','hx-chair'));
     else by.append(el('b',short(sender)));
     by.append(h('time',{class:'hx-time',text:when(m.ts),title:new Date(m.ts*1000).toLocaleString()}));
+    if(String(m.text||'').trim())by.append(speakButton(cur.room,{seq:m.seq}));
     row.append(by,el('div',m.text,'hx-text'));
     return row;
   }
@@ -237,7 +491,11 @@ export async function mountHuddles(root){
     const top=el('div',undefined,'hx-card-top');
     top.append(el('span',KIND[c.kind]||c.kind,'hx-card-kind'),el('span',nameOf(c.by),'hx-dim'),el('span',CARD_STATE[c.state]||c.state,'hx-card-state'));
     if(c.name)top.append(copyChip(c.name,c.name,'hx-card-name'));
+    if(String(c.summary||'').trim())top.append(speakButton(cur.room,{card:c.id}));
     b.append(top,el('p',c.summary,'hx-card-sum'));
+    if(c.relayed_text)b.append(el('p',c.relayed_text,'hx-card-relay hx-dim'));
+    else if(c.decided_by&&c.state!=='proposed')b.append(el('p',(c.state==='dismissed'?'Dismissed by ':'Approved by ')+nameOf(c.decided_by),'hx-card-relay hx-dim'));
+    if(c.state==='dismissed'&&c.result&&c.result.dismissed)b.append(el('p','Reason: '+c.result.dismissed,'hx-card-relay hx-dim'));
     if(c.call){
       const call=el('div',undefined,'hx-card-call');const what=c.call.worker+' · '+c.call.cap;
       call.append(h('code',{text:what,title:what+' (tap to copy)','data-copy':what}));
@@ -382,5 +640,5 @@ export async function mountHuddles(root){
       const first=huddles.find(x=>x.chaired)||huddles[0];
       if(first&&innerWidth>NARROW)await open(first.room,'huddle');else empty();
     },
-    deactivate(){active=false;clearTimeout(timer);}};
+    deactivate(){active=false;clearTimeout(timer);stopSpeaking();}};
 }

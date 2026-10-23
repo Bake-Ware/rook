@@ -1,9 +1,10 @@
 """Speakable record names: ``brave-otter-lamp``.
 
 Console rooms, handoff threads, tasks, projects, jobs, job runs, huddles,
-huddle cards and chat rooms each get a three-word name a person can say
-out loud. The name is an alias. The record's hex or prefixed id stays the
-canonical key (storage, foreign keys, links, the journal); the name sits
+huddle cards, huddle questions (``ask``), approval holds and chat rooms
+each get a three-word name a person can say out loud. The name is an
+alias. The record's hex or prefixed id stays the canonical key (storage,
+foreign keys, links, the journal); the name sits
 beside it in a ``record_names`` table inside the store's own database.
 Names are unique per kind per band and never change once assigned.
 
@@ -40,13 +41,13 @@ from typing import Callable, Iterable
 __all__ = [
     "KINDS", "adjectives", "nouns", "words", "generate", "normalize",
     "is_name", "looks_like_name", "ensure_table", "assign", "name_of",
-    "names_of", "find", "suggest", "backfill", "drop", "resolve", "Resolved",
+    "name_for_id", "names_of", "find", "suggest", "backfill", "drop", "resolve", "Resolved",
     "NameError_", "with_name", "label",
 ]
 
 #: The record kinds that carry a name. A huddle is a chat room, so it shares
 #: the room's name (kind ``room``).
-KINDS = ("console", "handoff", "task", "project", "job", "run", "room", "card")
+KINDS = ("console", "handoff", "task", "project", "job", "run", "room", "card", "hold", "ask")
 
 TABLE = "record_names"
 
@@ -128,6 +129,17 @@ def ensure_table(conn: sqlite3.Connection) -> None:
 def name_of(conn: sqlite3.Connection, kind: str, rid: str) -> str | None:
     row = conn.execute(f"SELECT name FROM {TABLE} WHERE kind=? AND id=?",
                        (kind, str(rid))).fetchone()
+    return row[0] if row else None
+
+
+def name_for_id(conn: sqlite3.Connection, rid: str) -> str | None:
+    """The name of the record with id ``rid``, whatever its kind (ids do not
+    repeat across kinds in one store), or None. For reading text aloud."""
+    try:
+        row = conn.execute(f"SELECT name FROM {TABLE} WHERE id=? ORDER BY kind LIMIT 1",
+                           (str(rid),)).fetchone()
+    except sqlite3.OperationalError:     # a store that predates names
+        return None
     return row[0] if row else None
 
 

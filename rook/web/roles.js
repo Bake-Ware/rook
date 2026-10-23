@@ -8,7 +8,7 @@
 // is a new revision with you as its author.
 const search=new URL(import.meta.url).search;
 const {h,ago,useCss,btn,table,two,info,more}=await import('/account/bands/assets/manage.js'+search);
-const {hapi}=await import('/account/huddle/assets/huddles.js'+search);
+const {hapi,voicePicker}=await import('/account/huddle/assets/huddles.js'+search);
 
 const BACKENDS=[['','The house agent\'s'],['claude-code','Claude Code'],['codex','Codex'],['opencode','OpenCode']];
 const EFFORTS=['','low','medium','high','xhigh','max'];
@@ -155,6 +155,8 @@ export async function mountRoles(root){
     const persona=select([['','The house agent\'s persona'],...(d.personas||[]).map(p=>[p.id,p.name+' ('+p.id+')'])],doc.persona);
     if(doc.persona&&!(d.personas||[]).some(p=>p.id===doc.persona))persona.append(h('option',{value:doc.persona,text:doc.persona+' (missing)',selected:true}));
     const enabled=h('input',{type:'checkbox',checked:doc.enabled!==false});
+    // The voice the Speak button reads its huddle messages in (the hub's voice engine's voices).
+    const vp=voicePicker(doc.voice),voice=vp.select;
 
     function value(){
       const srcs=[...srcRows.children].map(r=>{const [cap,worker,args]=r.querySelectorAll('input');
@@ -165,7 +167,7 @@ export async function mountRoles(root){
         charter:charter.value.trim(),concerns:lines(concerns.value),checklist:lines(checklist.value),examples:lines(examples.value),seed_memory:lines(seed.value),sources:srcs,
         tools:{allow:lines(allow.value),deny:lines(deny.value)},builtin:builtin.filter(c=>c.checked).map(c=>c.value),
         autonomy:autonomy.value,memory:memory.value,backend:backend.value,model:model.value.trim(),effort:effort.value,
-        persona:persona.value,enabled:enabled.checked,max_tool_calls:calls.value?Number(calls.value):0};
+        persona:persona.value,enabled:enabled.checked,max_tool_calls:calls.value?Number(calls.value):0,voice:voice.value};
     }
     const save=btn(isNew?'Create':'Save','primary',()=>run(save,async()=>{err.textContent='';
       try{const role=value();const r=await hapi('role_set',{role,expect_rev:isNew?0:doc.rev});
@@ -201,6 +203,7 @@ export async function mountRoles(root){
         h('div',{class:'mg-field'},'Built-in file tools',h('div',{class:'mg-actions'},
           h('label',{class:'mg-actions'},builtin[0],'Read files'),h('label',{class:'mg-actions'},builtin[1],'Search files'))),
         field('Autonomy',autonomy),field('Memory',memory),
+        h('div',{class:'mg-field'},h('span',{class:'mg-flabel'},'Speaking voice',info('The voice its huddle messages are read aloud in (the Speak button). Band default: Manage > Voice. The house agent (the chair) has its own on the Home agent page.','About the speaking voice')),vp.el,vp.note),
         h('details',null,h('summary',{text:'Examples & memory'}),h('div',{class:'mg-pad',style:'padding-left:0;padding-right:0'},
           field('Example questions',examples,'Shown to the chair, so it knows when to call on this role.'),
           field('Starting memory',seed,'Saved into its memory when its home is created (its first answer). Never passwords, keys or code.'))),

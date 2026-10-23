@@ -51,6 +51,28 @@ _STALE: "asyncio.Task | None" = None
 STALE_REASON = ("The previous voice engine is still loading its models (a setting changed "
                 "while they loaded). Voice starts with the new settings once that load "
                 "finishes; restart the hub if it never does.")
+#: The voice service's /api/voice limit: text per request.
+MAX_SPEAK = 700
+
+
+def wav(pcm: bytes, rate: int) -> bytes:
+    """Mono 16-bit PCM as a WAV file (what /api/voice answers)."""
+    import io
+    import wave
+    out = io.BytesIO()
+    with wave.open(out, "wb") as f:
+        f.setnchannels(1)
+        f.setsampwidth(2)
+        f.setframerate(int(rate))
+        f.writeframes(pcm)
+    return out.getvalue()
+
+
+def _speak_text(text: str) -> str:
+    text = " ".join(str(text or "").split())
+    if not text or len(text) > MAX_SPEAK:
+        raise ValueError(f"speak 1 to {MAX_SPEAK} characters at a time")
+    return text
 
 
 def find_engine(packages: tuple = ENGINE_PACKAGES) -> str | None:
@@ -233,6 +255,31 @@ class LocalEngine:
             raise RuntimeError("voice is not ready on this hub")
         return (await asyncio.wait_for(self.app.state.provider.transcribe(pcm), 30) or "").strip()
 
+    def voices(self) -> dict:
+        """The voice service's voices: ``{voices, default, catalog?}`` (its /voices)."""
+        if self.state != "ready":
+            raise RuntimeError("voice is not ready on this hub")
+        provider = self.app.state.provider
+        tts = getattr(provider, "tts", None)
+        if tts is not None:
+            return tts.describe()
+        return {"voices": list(provider.voices), "default": provider.default_voice}
+
+    async def synthesize(self, text: str, voice: str = "") -> bytes:
+        """``text`` spoken in ``voice`` (blank: the service's default), as WAV."""
+        if self.state != "ready":
+            raise RuntimeError("voice is not ready on this hub")
+        text = _speak_text(text)
+        provider = self.app.state.provider
+        tts = importlib.import_module(self.package + ".tts")
+        chosen = tts.resolve_voice(provider, voice or provider.default_voice)
+        if chosen is None:
+            raise ValueError(f"unknown voice {voice!r}")
+        pcm, rate = await asyncio.wait_for(provider.synthesize(text, chosen), 30)
+        if not pcm:
+            raise RuntimeError("the voice engine returned no audio")
+        return wav(pcm, rate)
+
 
 # -- another machine -------------------------------------------------------------
 
@@ -297,6 +344,12 @@ def client_address(request: Any) -> str:
     return peer or "unknown"
 
 
+#: How often a synthesis is tried again while the voice server is busy with
+#: another line, and the first wait between tries (seconds; it grows).
+BUSY_RETRIES = 4
+BUSY_WAIT = 0.4
+
+
 class RemoteEngine:
     """Forwards the voice paths to a standalone voice server."""
 
@@ -340,6 +393,33 @@ class RemoteEngine:
                 timeout=aiohttp.ClientTimeout(total=None, connect=10, sock_connect=10),
                 auto_decompress=False)
         return self._session
+
+    #: The hub's own calls ask for plain bodies: the session never decompresses
+    #: (forwarded replies pass through as they are), so a gzipped answer from a
+    #: CDN in front of the voice server would not parse.
+    OWN = {"Accept-Encoding": "identity"}
+
+    @staticmethod
+    async def _body(r: Any) -> bytes:
+        """A reply body, decompressed if the server compressed it anyway."""
+        import zlib
+        data = await r.read()
+        enc = (r.headers.get("Content-Encoding") or "").strip().lower()
+        try:
+            if enc in ("gzip", "x-gzip"):
+                return zlib.decompress(data, 16 + zlib.MAX_WBITS)
+            if enc == "deflate":
+                try:
+                    return zlib.decompress(data)
+                except zlib.error:
+                    return zlib.decompress(data, -zlib.MAX_WBITS)
+        except zlib.error as e:
+            raise ValueError(f"the voice server sent a bad {enc} body") from e
+        return data
+
+    async def _json(self, r: Any) -> Any:
+        import json
+        return json.loads(await self._body(r))
 
     def url(self, sub_path: str, query: str = "", ws: bool = False) -> str:
         base = self.base
@@ -524,9 +604,9 @@ class RemoteEngine:
         import aiohttp
         t0 = time.monotonic()
         try:
-            async with self._http().get(self.url("/health"), ssl=self._ssl(),
+            async with self._http().get(self.url("/health"), ssl=self._ssl(), headers=self.OWN,
                                         timeout=aiohttp.ClientTimeout(total=6)) as r:
-                data = await r.json(content_type=None)
+                data = await self._json(r)
                 ok = r.status == 200 and isinstance(data, dict) and bool(data.get("ok"))
                 return {"ok": ok, "state": "ready" if ok else "error",
                         "version": (data or {}).get("version") if isinstance(data, dict) else None,
@@ -543,11 +623,51 @@ class RemoteEngine:
                                "voice.token (Client bearer token) to a key it accepts")
         async with self._http().post(
                 self.url("/api/transcribe"), data=pcm, ssl=self._ssl(),
-                headers={"Content-Type": "audio/L16", "Authorization": f"Bearer {self.token}"},
+                headers={**self.OWN, "Content-Type": "audio/L16",
+                         "Authorization": f"Bearer {self.token}"},
                 timeout=aiohttp.ClientTimeout(total=40)) as r:
-            data = await r.json(content_type=None)
+            data = await self._json(r)
             if r.status != 200:
                 detail = data.get("detail") if isinstance(data, dict) else None
                 raise RuntimeError(f"the voice server said HTTP {r.status}"
                                    + (f": {detail}" if detail else ""))
             return str((data or {}).get("text") or "").strip()
+
+    async def voices(self) -> dict:
+        import aiohttp
+        async with self._http().get(self.url("/voices"), ssl=self._ssl(), headers=self.OWN,
+                                    timeout=aiohttp.ClientTimeout(total=8)) as r:
+            data = await self._json(r)
+            if r.status != 200 or not isinstance(data, dict):
+                raise RuntimeError(f"the voice server said HTTP {r.status}")
+            return data
+
+    async def synthesize(self, text: str, voice: str = "") -> bytes:
+        import json
+        import aiohttp
+        text = _speak_text(text)
+        body: dict = {"text": text}
+        if voice:
+            body["voice"] = voice
+        headers = {**self.OWN, "Content-Type": "application/json"}
+        if self.token:   # a keyless request works only where the server allows guests
+            headers["Authorization"] = f"Bearer {self.token}"
+        for attempt in range(BUSY_RETRIES + 1):
+            async with self._http().post(
+                    self.url("/api/voice"), data=json.dumps(body).encode(), ssl=self._ssl(),
+                    headers=headers, timeout=aiohttp.ClientTimeout(total=40)) as r:
+                data = await self._body(r)
+                if r.status == 200:
+                    return data
+                detail = ""
+                try:
+                    detail = str((json.loads(data) or {}).get("detail") or "")
+                except (ValueError, AttributeError):
+                    pass
+            # It speaks one line at a time and says 503 "busy" to the next.
+            if r.status == 503 and "busy" in detail.lower() and attempt < BUSY_RETRIES:
+                await asyncio.sleep(BUSY_WAIT * (attempt + 1))
+                continue
+            raise RuntimeError(f"the voice server said HTTP {r.status}"
+                               + (f": {detail}" if detail else ""))
+        raise RuntimeError("the voice server stayed busy")

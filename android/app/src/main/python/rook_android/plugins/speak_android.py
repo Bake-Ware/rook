@@ -34,8 +34,10 @@ except Exception:  # pragma: no cover - only importable on a Chaquopy host
     _Bridge = None
 
 #: The voice server's /api/voice takes at most 700 characters per request (device
-#: TTS allows 4000), so lines are cut at sentence boundaries below that.
-MAX_CHUNK = 600
+#: TTS allows 4000), but its Chatterbox voices stop at about 32 seconds of audio
+#: and drop the rest of a longer line, so lines are cut at sentence boundaries
+#: well below that (about 17 seconds).
+MAX_CHUNK = 280
 MAX_TEXT = 20000
 POLL_S = 0.2
 

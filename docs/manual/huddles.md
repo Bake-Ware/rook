@@ -118,7 +118,8 @@ told why and can fix it. A card that says the same as one still waiting
 is not added twice: the one who proposed it updates theirs instead. The
 chair's message lists the cards it actually made, by id.
 
-Only people approve or dismiss cards. A role that does routine work (autonomy
+Only people approve or dismiss cards (or a client relaying your words,
+[[manual-accounts-and-access]]). A role that does routine work (autonomy
 *routine* or *act*) runs reads in its tools directly, and a card it
 proposes for one shows up already done. Everything Rook keeps for you
 (merges, deploys, deletes, settings, secrets, jobs, protected devices,

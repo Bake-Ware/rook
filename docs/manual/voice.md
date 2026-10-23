@@ -112,3 +112,50 @@ When an agent asks you something through the phone, it can wait for an answer.
 After a short beep the phone listens; what you say goes back to the agent as
 text. Anything near the phone can be heard, so agents treat a spoken reply as
 what the microphone heard, not as a confirmed order.
+
+## Reading huddle messages aloud
+
+Every message and action card in a huddle ([[manual-huddles]]) has a small
+**Speak** button (▶). Tap it to hear the message in the browser you are
+using; tap it again (■) to stop. Only one message speaks at a time.
+
+- **Which voice.** A role's messages are read in that role's **Speaking
+  voice** (Manage > Roles, in each role's form), and the chair's in the house
+  agent's **Speaking voice** (Manage > Home agent). Each picker lists the
+  voice engine's voices, the natural Chatterbox voices first and the quicker
+  Kokoro voices after, and has a **Preview** button. Left on **Band
+  default**, a message is read in the band's default voice: **Band default
+  voice** on Manage > Voice (also `voice.tts_default` in Settings), or the
+  voice engine's own when that is blank. If a role's voice fails, the default
+  reads it instead. If a picker shows only **Band default**, the hub could
+  not get the voice list; a note under the picker says why, and the next
+  page you open asks again.
+- **Long messages.** The hub reads a message in chunks of a few sentences
+  (at most about 280 characters, roughly 17 seconds of speech), because the
+  Chatterbox voices stop after about 32 seconds of audio in one go. The first
+  chunk is short, so the voice starts within a few seconds; the next ones load
+  while it plays and follow without a gap. A thin line under the button shows
+  how far it has got, and its tooltip says which part is playing. A chunk that
+  fails is tried once more, then skipped with a short note beside the button;
+  if two in a row fail, reading stops. Up to about 10,000 characters are
+  read; anything longer is cut, and the voice says so.
+- **Instant replays.** The page keeps the chunks it has played, and the hub
+  keeps recently spoken audio in memory per voice and text (**Spoken audio
+  kept**, `voice.speech_cache_mb`, 32 MB by default), so playing a message
+  again starts at once.
+- **Where the speech comes from.** The hub makes the audio with its voice
+  engine (on this hub, or the voice server it passes voice to; see above), so
+  it sounds like your phones. When the hub has no voice engine it can reach,
+  your browser reads the message with its own voice, and the button's tooltip
+  says so.
+- **What is read.** Formatting, code blocks and links are left out, and record
+  ids are read by their three-word names ([[manual-names]]).
+- **Play on a phone.** Press and hold the button (or right-click it) to play
+  the message on a device with `voice.speak`, such as your phone. The phone
+  uses the role's or the house agent's voice when one is set (and its voice
+  server has it); otherwise it speaks in its own voice, not the band default.
+  The hub sends it the same chunks in order and the phone queues them; the
+  message is not added to the phone's chat. Devices listed in **Protected devices** (`role.protected_workers`)
+  are never offered, and none are offered until that list exists.
+  **Play on devices** (`huddle.speak_devices`) narrows the list to the
+  workers you name.

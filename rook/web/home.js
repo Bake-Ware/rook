@@ -7,7 +7,7 @@
 // Versioned like this module (?v=...), so a stale edge cache cannot pair it
 // with an old manage.js.
 const {h, ago, useCss, btn, table, two, info} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
-const {hapi} = await import('/account/huddle/assets/huddles.js' + new URL(import.meta.url).search);
+const {hapi, voicePicker} = await import('/account/huddle/assets/huddles.js' + new URL(import.meta.url).search);
 
 const API='/account/settings/api';
 const VIA={chat:'Chat',ask:'home.ask',test:'Test','huddle-chair':'Huddle','huddle-close':'Huddle summary',job:'Job'};
@@ -88,6 +88,7 @@ export async function mountHome(root){
     const ref=String(val('api_key')||''),refName=(ref.match(/^\{\{secret:(.+)\}\}$/)||[])[1]||'';
     const key=h('select',null,h('option',{value:'',text:'No key'}),d.secrets.map(n=>h('option',{value:n,text:n,selected:n===refName})),refName&&!d.secrets.includes(refName)?h('option',{value:refName,text:refName+' (missing from the vault)',selected:true}):null);
     const persona=h('select',null,h('option',{value:'',text:'The persona assigned to family "home" (or the default)'}),d.personas.map(p=>h('option',{value:p.id,text:p.name+' ('+p.id+')',selected:p.id===val('persona')})));
+    const vp=voicePicker(val('voice'));
     const prompt=h('textarea',{rows:'4',placeholder:'Extra instructions for the home agent',style:'font:13px/1.6 var(--mono)'});prompt.value=val('system_prompt')||'';
     const tools=h('input',{type:'checkbox',checked:!!val('tools')});
     const memory=h('input',{type:'checkbox',checked:val('memory')!==false});
@@ -137,7 +138,7 @@ export async function mountHome(root){
       agent_fallback_hosts:agFallbacks.value.split(',').map(x=>x.trim()).filter(Boolean),agent_on_unavailable:agUnavail.value,
       agent_timeout_s:Number(agTimeout.value||180),claude_model:agModel.claude.value.trim(),codex_model:agModel.codex.value.trim(),
       opencode_model:agModel.opencode.value.trim(),claude_effort:agEffort.claude.value,codex_effort:agEffort.codex.value,
-      claude_auth:ccAuth.value,claude_token:ccToken.value?'{{secret:'+ccToken.value+'}}':'',name:name.value.trim().toLowerCase(),llm_provider:llmProvider.value,provider:provider.value,base_url:base.value.trim(),model:model.value.trim(),
+      claude_auth:ccAuth.value,claude_token:ccToken.value?'{{secret:'+ccToken.value+'}}':'',voice:vp.select.value,name:name.value.trim().toLowerCase(),llm_provider:llmProvider.value,provider:provider.value,base_url:base.value.trim(),model:model.value.trim(),
       api_key:key.value?'{{secret:'+key.value+'}}':'',persona:persona.value,system_prompt:prompt.value,tools:tools.checked,memory:memory.checked,
       timeout_s:Number(timeout.value||90),max_tokens:Number(maxTok.value||1024),temperature:temp.value===''?null:Number(temp.value),context_messages:Number(ctx.value||20)});
     const run=async(b,work)=>{if(busy)return;busy=true;b.disabled=true;err.textContent='';try{await work();}catch(e){err.textContent=e.message;}finally{busy=false;b.disabled=false;}};
@@ -180,6 +181,7 @@ export async function mountHome(root){
         field('Backend',backend,'backend'),
         cc,oaiHead,oai,
         field('Persona',persona,'persona'),
+        field('Speaking voice',h('div',{style:'display:flex;flex-direction:column;gap:6px'},vp.el,vp.note),'voice','The voice its huddle messages are read aloud in (the Speak button). Band default: Manage > Voice.'),
         field('System prompt addition',prompt,'system_prompt'),
         h('div',{class:'mg-actions'},h('label',{class:'mg-actions',title:'Remember people, facts and past conversations'},memory,'Memory'),h('a',{href:'#memory',text:'View'})),
         h('div',{class:'mg-actions'},h('label',{class:'mg-actions'},tools,'Tools'),info('Search the knowledge wiki, and save and search its memory. Each call is journaled as '+d.status.identity+'.','About tools')),

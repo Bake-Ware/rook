@@ -12,6 +12,9 @@ export async function mountApprovals(root, opts = {}){
   const note = h('p');
   const waiting = h('div', {style: 'display:flex;flex-direction:column;gap:10px'});
   const recent = h('div', {class: 'mg-box'});
+  const relayed = h('div', {class: 'mg-box', hidden: true});
+  const relayHead = h('div', {class: 'mg-bar ap-recent', hidden: true}, h('h2', {text: 'Relayed for you'}),
+    info('Decisions an agent passed on from you, with your words. Who may relay is set per client on the Tokens page (May relay my approvals).', 'About relayed decisions'));
   const grants = h('div');
   const hubhost = h('p');
   const count = h('span', {class: 'mg-tag line'});
@@ -20,7 +23,7 @@ export async function mountApprovals(root, opts = {}){
     h('div', {class: 'mg-bar'}, h('h2', {class: 'ap-h'}, 'Waiting', count), info(h('div', null, note, hubhost), 'How approvals work'),
       h('span', {class: 'mg-grow'}), btn('↻', 'icon', () => refresh().catch(fail), {'aria-label': 'Refresh', title: 'Refresh'})),
     warn, status, waiting, grants,
-    h('div', {class: 'mg-bar ap-recent'}, h('h2', {text: 'Recent'})), recent));
+    h('div', {class: 'mg-bar ap-recent'}, h('h2', {text: 'Recent'})), recent, relayHead, relayed));
 
   function fail(e){ status.textContent = e.message; }
 
@@ -61,7 +64,7 @@ export async function mountApprovals(root, opts = {}){
       : null;
     return h('div', {class: 'mg-box mg-pad ap-card', style: 'gap:8px'},
       h('div', {style: 'display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;justify-content:space-between'},
-        two(x.cap + ' on ' + x.worker, who(x) + (x.via && x.via.length ? ' · for ' + x.via.join(', ') : ''), true),
+        two(x.cap + ' on ' + x.worker, (x.name ? x.name + ' · ' : '') + who(x) + (x.via && x.via.length ? ' · for ' + x.via.join(', ') : ''), true),
         h('span', {class: 'mg-dimtext', text: 'held ' + ago(x.created), title: new Date(x.created * 1000).toLocaleString()})),
       h('div', {class: 'mg-warn', text: 'Held: ' + (x.reason || x.kind)}),
       args(x),
@@ -89,8 +92,14 @@ export async function mountApprovals(root, opts = {}){
       two(x.cap + ' on ' + x.worker, who(x), true),
       h('span', {class: x.state === 'denied' ? 'mg-bad' : x.state === 'expired' ? 'mg-dimtext' : 'mg-good',
         text: (OUTCOME[x.state] || x.state) + (x.scope === 'spread' ? ', more machines' : '')}),
-      h('span', {class: 'mg-dimtext', text: x.decided_by || '—'}),
+      h('span', {class: 'mg-dimtext ap-by', text: x.relayed_text || x.decided_by || '—', title: x.relayed ? 'session: ' + x.relayed.session : ''}),
       h('span', {class: 'mg-dimtext', text: ago(x.decided_at || x.created)})));
+    const rel = data.relays || [];
+    relayHead.hidden = relayed.hidden = !rel.length;
+    relayed.replaceChildren(table('70px minmax(0,2fr) minmax(0,2fr) 90px', ['Kind', 'What', 'Decision', 'When'], rel.map(r => h('div', {class: 'mg-row ap-row'},
+      h('span', {class: 'mg-tag line', text: r.kind}), h('span', {text: r.summary || r.item}),
+      h('span', {class: r.decision === 'deny' ? 'mg-bad' : 'mg-good', text: r.text + (r.reason ? ' · reason: ' + r.reason : ''), title: 'session: ' + r.session}),
+      h('span', {class: 'mg-dimtext', text: ago(r.created)})))));
     recent.replaceChildren(table('minmax(0,2fr) minmax(0,1.2fr) minmax(0,1fr) 90px', ['Call · who', 'Outcome', 'By', 'When'],
       done.length ? done : [h('div', {class: 'mg-empty', text: 'No decisions yet.'})]));
   }

@@ -23,6 +23,46 @@ version was `0.1.0`.
   `role.sessions`, `role.session_start`, `role.session_send`, `role.session_stop`; card kind
   `call`; settings `role.protected_workers`, `role.session_model`, `role.session_stall_minutes`,
   `role.session_max_minutes`, `role.sessions_per_role`. (manual: role-agency, huddles)
+- Voice host for the dashboard. With `voice.engine = remote` the hub reads huddle messages
+  aloud through the voice server even on a two-process hub (it then mounts no voice paths;
+  phones keep the server's own address). Voice pickers with a Preview button on every
+  role (now in the main form, no longer folded under Model), on the house agent (new
+  `home.voice`, Manage > Home agent), and for the band default (`voice.tts_default`, now
+  labelled *Band default voice*, on Manage > Voice and in Settings). Voices are listed
+  Chatterbox first, then Kokoro. Spoken audio is kept per (voice, text) up to
+  `voice.speech_cache_mb` (32 MB), so replays start at once, and a busy voice server is
+  retried. Play on a device sends the house agent's voice too. (manual: voice)
+- Long huddle messages are read in full. The hub cuts a message into chunks of whole
+  sentences (at most 280 characters, the first shorter): Chatterbox stops after about
+  32 seconds of audio per request and dropped the rest of the old 600-character parts.
+  The page asks for the plan (`speak` with `plan`), plays the first chunk as soon as it
+  arrives with the next two loading, plays them without gaps (Web Audio), keeps played
+  chunks per (voice, text) for instant replays, retries a failed chunk once and then
+  skips it with a short note, and stops pending requests on Stop; a thin line under the
+  button shows progress. Up to 10,000 characters are read (was 4,000). The hub sends its
+  voice server one line at a time instead of drawing "busy" answers. Play on a device
+  sends the chunks in order (the device queues them). The Android app cuts its own lines
+  at 280 characters too (next app release). A voice picker that got no voices says why and
+  the next one asks again, instead of showing only *Band default*. (manual: voice)
+- Relayed approvals. One list of everything waiting on a person: held calls, held job
+  calls, huddle action cards (every huddle) and pinned huddle questions, each with a
+  three-word name, who asked, what exactly would happen, the risk tier, where it came from
+  and its age (`approvals.list`, MCP `rook_approvals` `summary`/`list`, with a line short
+  enough to speak). A client the person enables on the Tokens page (*Relays*, "May relay
+  my approvals"; off for everyone, only a person signed in to the dashboard turns it on)
+  may approve or deny an item with `relayed_by {who, quote, session}`: the person's own
+  words. Secrets and the vault, tokens, policy, settings, approvals and job locks are never
+  relayed, nor anything on the new setting `approvals.relay_dashboard_only` (conservative
+  by default: admin tier, commands on the hub's machine, physical actions, worker and band
+  changes, plugins, custom commands, roles, deleting jobs). Every relayed decision is kept
+  append-only with the relaying identity, the person, the quote and the session, and shows
+  beside the hold, card or answer ("approved by Bake via Claude web: ..."). A deny's reason
+  goes back to the requester: a denied call's reply carries it (and an identical repeat
+  gets the denial at once), a dismissed card's proposer is told in the room and the chair
+  sees it. The huddle chair answers "what's waiting?" from the list and, if the house agent
+  is enabled, relays a decision the person states in their message, quoting it. Holds and
+  huddle questions now have speakable names. Permissions 3.12. (manual:
+  accounts-and-access, huddles, agents-and-mcp, security)
 - Device workers. A worker can be the *delegate* for things that run no worker of their
   own, such as TVs and later light switches and thermostats. Each one joins the band as a
   worker in its own right, with its own name, caps and live heartbeat, plus `delegate`
@@ -57,6 +97,15 @@ version was `0.1.0`.
   person signed in to the dashboard may lock or unlock, and each change is a history row.
   A locked job keeps its own limits; the hub's default `max_failures` doesn't apply to it, and
   an agent can complete it only from a step with `complete: "agent"`. (manual: jobs)
+- Speak button on huddle messages. Every message and action card in a huddle (Huddles and
+  the Work huddle board) has a compact Speak button: the hub reads the message aloud in the
+  browser, in the speaking role's voice (new role field `voice`, picked on the Roles page from
+  the voice engine's voices), else the band's default voice, with markdown, code blocks and
+  links left out and record ids read by their three-word names. With no voice engine the hub
+  can reach, the browser's own speech reads it and the tooltip says so. Tap again to stop; one
+  message at a time. A long press offers "Play on <device>" (`voice.speak`) for devices that
+  are not protected (`role.protected_workers`), narrowed by the new setting
+  `huddle.speak_devices`. (manual: voice)
 
 ### Changed
 - The dashboard works on a phone. At 800px wide or less the sidebar becomes a drawer (☰, or

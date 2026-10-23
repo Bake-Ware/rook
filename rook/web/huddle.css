@@ -214,3 +214,19 @@
   .hx-msg,.hx-card{max-width:96%}
   .hx-form{padding:14px 12px}
 }
+/* Speak (huddles.js speakButton): a compact icon on each bubble and card; 44px to tap on a phone. */
+.hx-speak{all:unset;box-sizing:border-box;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;min-width:28px;height:22px;margin:-3px -4px -3px 0;border-radius:6px;font-size:11px;line-height:1;color:var(--dim);-webkit-touch-callout:none;user-select:none;touch-action:manipulation}
+.hx-speak:hover{color:var(--fg);background-color:var(--panel2)}
+.hx-speak:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.hx-speak.on,.hx-speak.wait{color:var(--accent)}
+.hx-speak.wait{animation:hx-speak-wait 1s ease-in-out infinite}
+@keyframes hx-speak-wait{50%{opacity:.4}}
+/* how far a long message has got: a thin line under the button */
+.hx-speak.on{background-image:linear-gradient(var(--accent),var(--accent));background-repeat:no-repeat;background-position:left bottom;background-size:calc(var(--p,0)*100%) 2px}
+.hx-speak-note{margin-left:6px;font-size:11px;color:var(--dim)}
+.hx-speak-menu{position:fixed;z-index:50;list-style:none;margin:0;padding:4px;min-width:180px;background:var(--panel);border:1px solid var(--line2);border-radius:8px;box-shadow:0 12px 40px var(--shadow)}
+.hx-speak-menu button{all:unset;box-sizing:border-box;cursor:pointer;display:block;width:100%;padding:10px 12px;min-height:44px;font-size:13px;border-radius:6px}
+.hx-speak-menu button:hover,.hx-speak-menu button:focus-visible{background:var(--panel2)}
+@media(max-width:760px){
+  .hx-speak{min-width:44px;min-height:44px;height:auto;margin:-12px -10px -12px -4px;font-size:13px}
+}
