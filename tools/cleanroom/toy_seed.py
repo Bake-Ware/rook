@@ -7,6 +7,8 @@ deliberately failing test.
 BUG = ("median() is wrong for an even number of values: median([4, 1, 3, 2]) returns 3 "
        "but should be 2.5. Fix it so `python3 -m unittest -q` passes.")
 
+TEST_COMMAND = "python3 -m unittest"
+
 FILES = {
     "README.md": "# toy-stats\n\nA tiny statistics module the Rook clean-room harness uses as a \"fix this bug\"\ntarget. Run the tests with `python3 -m pytest -q` (or `python3 -m unittest`).\n",
     "tests/__init__.py": "",

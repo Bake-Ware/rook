@@ -356,6 +356,13 @@ def first_request(ctx: Ctx):
         on = ctx.hub.hub_cap("settings.set", {"key": "home.front_door", "value": True, "note": "cleanroom"})
         if not on.get("ok"):
             s.skip("no front door on this hub")
+        res = _ask(ctx, "Which machines are on my band right now? One short sentence.")
+        ans = str(res.get("answer", ""))
+        hit = [n for n in names if n.lower() in ans.lower()]
+        s.note(f"machines again, front door on: {res['_wall_s']} s, tools {res.get('tools_used')}, "
+               f"named {hit}: {ans[:120]!r}")
+        if hit:
+            run.mark_first_useful()
         m = ctx.agent_host
         approver = PersonApprover(ctx.hub, s, caps=("shell.", "work.", "sys."))
         approver.start()
@@ -498,6 +505,12 @@ def fix_bug(ctx: Ctx):
         r = hub.hub_cap("settings.set", {"key": "role.code_locations", "value": [line], "note": "cleanroom"})
         if not r.get("ok"):
             s.fail(json.dumps(r)[:300])
+        t = hub.hub_cap("settings.set", {"key": "role.session_test_commands",
+                                         "value": [toy_seed.TEST_COMMAND], "note": "cleanroom"})
+        if t.get("ok"):
+            s.touch("Settings > Roles: allow the repo's test command")
+        else:
+            s.note("this hub has no role.session_test_commands: sessions can only run rook-pytest")
         s.touch("Manage > Roles: add a lead role from the presets")
         pre = (hub.hub_cap("role.presets", {"id": "lead", "full": True}).get("result") or {})
         role = dict(pre.get("preset") or pre.get("role") or {})
@@ -532,6 +545,18 @@ def fix_bug(ctx: Ctx):
                     s.fail("role.session_start: " + json.dumps(st)[:400])
                 session = _newest_session(hub, t1)
             pr, session = _wait_pr(hub, session, timeout=1500)
+            if not pr and session and session.get("state") in ("blocked", "stopped", "done"):
+                s.note(f"session {session.get('name')} {session.get('state')}: "
+                       f"{str(session.get('status'))[:160]}")
+                s.touch("answer the session's question")
+                sent = hub.hub_cap("role.session_send", {"id": session["id"], "text": (
+                    "Go ahead: if you cannot run the tests, say so in the pull request and open "
+                    "it anyway.")}, timeout=180)
+                if sent.get("ok"):
+                    time.sleep(15)
+                    pr, session = _wait_pr(hub, dict(session, state="running"), timeout=1200)
+                else:
+                    s.note("role.session_send: " + json.dumps(sent)[:200])
         finally:
             approver.stop()
         if session:
@@ -628,32 +653,43 @@ def worker_failure(ctx: Ctx):
                 out["r"] = hub.band_call("shell.exec", {"argv": ["sleep", "40"], "timeout": 50}, worker=m.name, timeout=60)
             except Exception as e:  # noqa: BLE001
                 out["e"] = str(e)
+            out["done"] = time.time()
         th = threading.Thread(target=slow)
         t0 = time.time()
         th.start()
         time.sleep(5)
         m.sh("pkill -KILL -f 'band-worker|rook.worker|rook-worker' || true", check=False)
         t1 = time.time()
+        back = None
+        while time.time() - t1 < 180:
+            try:
+                r = hub.band_call("shell.exec", {"argv": ["true"], "timeout": 10}, worker=m.name, timeout=20)
+                if r.get("ok"):
+                    back = time.time() - t1
+                    break
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(2)
         th.join(130)
-        waited = time.time() - t1
+        waited = (out.get("done") or time.time()) - t1
         s.note(f"in-flight call returned {waited:.0f} s after the kill: "
                + (out.get("e") or json.dumps(out.get("r"))[:160]))
         if waited > 30:
             run.findings.append(f"A call in flight on a worker that dies is not failed when the worker drops: "
                                 f"the caller waits out the call's own timeout ({waited:.0f} s here).")
-        back = False
-        while time.time() - t1 < 180:
-            try:
-                r = hub.band_call("shell.exec", {"argv": ["true"], "timeout": 10}, worker=m.name, timeout=30)
-                if r.get("ok"):
-                    back = True
-                    break
-            except Exception:  # noqa: BLE001
-                pass
-            time.sleep(3)
-        if not back:
+        if back is None:
             s.fail("the worker did not come back within 3 minutes")
-        s.note(f"worker answered again {time.time() - t1:.0f} s after the kill")
+        s.note(f"worker answered again {back:.0f} s after the kill")
+    others = [w for w in ctx.worker_machines() if w.name != ctx.hub_machine.name and w is not m]
+    if others:
+        w = others[-1]
+        with run.step("worker-failure", f"power {w.name} off hard, then on") as s:
+            ctx.vms.stop(w)
+            hub.wait_worker(w.name, timeout=200, online=False)
+            t1 = time.time()
+            ctx.vms.start(w)
+            hub.wait_worker(w.name, timeout=300)
+            s.note(f"{w.name} back on the band {time.time() - t1:.0f} s after power-on (no person needed)")
     if ctx.emu and hub.worker(PHONE_NAME):
         with run.step("worker-failure", "phone loses its network for 60 s") as s:
             emu = ctx.emu
@@ -691,6 +727,11 @@ def learn_preference(ctx: Ctx):
             s.skip("no playbook on this hub (front door not landed)")
         res = _ask(ctx, f"From now on, ask me before you run anything on {m.name}.")
         s.note(f"{res['_wall_s']} s, path {res.get('path')}, tools {res.get('tools_used')}: {str(res.get('answer'))[:160]!r}")
+        if res.get("path") == "ask" and res.get("asks"):
+            s.touch("answer Yes to the house agent's question about the new rule")
+            ans = hub.account_post("/account/huddle/api", {"action": "front_answer",
+                                                            "ask": res["asks"][0], "decision": "yes"})
+            s.note("answered Yes: " + json.dumps(ans)[:160])
         pb = json.dumps(hub.hub_cap("home.playbook", {}).get("result"))
         if m.name.lower() not in pb.lower():
             s.fail("the playbook has no rule naming the machine")
