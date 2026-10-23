@@ -95,7 +95,7 @@ export async function mountHome(root){
     const persistent=h('input',{type:'checkbox',checked:!!val('persistent')});
     const voiceLane=h('input',{type:'checkbox',checked:val('voice_lane')!==false});
     const pModel=h('input',{value:val('persistent_model')||'opus',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)'});
-    const vModel=h('input',{value:val('voice_model')||'haiku',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)'});
+    const vModel=h('input',{value:val('voice_model')||'claude-haiku-4-5',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)'});
     const name=h('input',{value:val('name')||'home',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)'});
     const provider=h('select',null,d.providers.map(p=>h('option',{value:p,text:p==='openai'?'OpenAI-compatible':p,selected:p===val('provider')})));
     // A named model provider (Manage > Model providers) replaces the endpoint fields.
@@ -156,7 +156,7 @@ export async function mountHome(root){
     const values=()=>({enabled:enabled.checked,front_door:frontDoor.checked,backend:backend.value,agent_host:agHost.value,
       agent_fallback_hosts:agFallbacks.value.split(',').map(x=>x.trim()).filter(Boolean),agent_on_unavailable:agUnavail.value,
       agent_timeout_s:Number(agTimeout.value||180),persistent:persistent.checked,voice_lane:voiceLane.checked,
-      persistent_model:pModel.value.trim()||'opus',voice_model:vModel.value.trim()||'haiku',claude_model:agModel.claude.value.trim(),codex_model:agModel.codex.value.trim(),
+      persistent_model:pModel.value.trim()||'opus',voice_model:vModel.value.trim()||'claude-haiku-4-5',claude_model:agModel.claude.value.trim(),codex_model:agModel.codex.value.trim(),
       opencode_model:agModel.opencode.value.trim(),claude_effort:agEffort.claude.value,codex_effort:agEffort.codex.value,
       claude_auth:ccAuth.value,claude_token:ccToken.value?'{{secret:'+ccToken.value+'}}':'',voice:vp.select.value,name:name.value.trim().toLowerCase(),llm_provider:llmProvider.value,provider:provider.value,base_url:base.value.trim(),model:model.value.trim(),
       api_key:key.value?'{{secret:'+key.value+'}}':'',persona:persona.value,system_prompt:prompt.value,tools:tools.checked,memory:memory.checked,

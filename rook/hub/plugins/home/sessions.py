@@ -173,6 +173,7 @@ class Sessions:
         self._steer_voice: dict[str, float] = {}
         self._state: dict | None = None
         self._trust_version = -1
+        self._sent_hash = ""                         # what the host was last configured with
 
     # -- settings and saved state ------------------------------------------------
     def cfg(self) -> dict:
@@ -209,7 +210,7 @@ class Sessions:
             base = {"persistent": True, "voice": bool(s.get("voice_lane", True)),
                     "model": str(s.get("persistent_model") or "opus"),
                     "effort": str(s.get("persistent_effort") or ""),
-                    "voice_model": str(s.get("voice_model") or "haiku"),
+                    "voice_model": str(s.get("voice_model") or "claude-haiku-4-5"),
                     "voice_effort": str(s.get("voice_effort") or "low"),
                     "idle_sleep_min": int(s.get("persistent_idle_sleep_min") or 0),
                     "memory": "off"}
@@ -217,7 +218,7 @@ class Sessions:
             return base
         return {"persistent": bool(saved.get("persistent")), "voice": bool(saved.get("voice")),
                 "model": str(saved.get("model") or "sonnet"),
-                "effort": str(saved.get("effort") or ""), "voice_model": "haiku",
+                "effort": str(saved.get("effort") or ""), "voice_model": "claude-haiku-4-5",
                 "voice_effort": "low", "idle_sleep_min": int(saved.get("idle_sleep_min", 30)),
                 "memory": str(saved.get("memory") or "write")}
 
@@ -395,7 +396,19 @@ class Sessions:
         if trust is not None:
             with contextlib.suppress(Exception):
                 self._trust_version = int(trust.current().get("version") or 0)
-        await self.send(self.configure_msg())
+        msg = self.configure_msg()
+        await self.send(msg)
+        self._sent_hash = self._hash(msg)
+
+    @staticmethod
+    def _hash(msg: dict) -> str:
+        """What the host runs, without the session ids it reports back itself
+        (a new id alone is no reason to configure it again)."""
+        bare = json.loads(json.dumps(msg, default=str))
+        for role in (bare.get("roles") or {}).values():
+            for lane in (role.get("lanes") or {}).values():
+                lane.pop("session_id", None)
+        return hashlib.sha256(json.dumps(bare, sort_keys=True).encode()).hexdigest()
 
     async def _configure_safely(self) -> None:
         try:
@@ -437,14 +450,13 @@ class Sessions:
         return None
 
     async def watch_trust(self) -> None:
-        """Re-configure when the trust map changes (a grant accepted on the
-        Trust page takes effect without anyone asking)."""
-        trust = self._trust()
-        if trust is None or self.link is None:
+        """Re-configure when what the host should run changed: the trust map (a
+        grant accepted on the Trust page), a setting (a model on the Home agent
+        page), the persona. Nothing is sent when nothing changed."""
+        if self.link is None:
             return
         with contextlib.suppress(Exception):
-            v = int(trust.current().get("version") or 0)
-            if v != self._trust_version:
+            if self._hash(self.configure_msg()) != self._sent_hash:
                 await self.configure()
 
     # -- events --------------------------------------------------------------------

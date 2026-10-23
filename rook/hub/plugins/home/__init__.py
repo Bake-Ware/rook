@@ -285,10 +285,11 @@ class HomeAgent(Plugin):
         setting("persistent_effort", str, "", choices=agent_host.EFFORTS,
                 group="Persistent sessions", order=4, label="Agent effort",
                 help="Blank: Claude Code's default for the model."),
-        setting("voice_model", str, "haiku", pattern=r"^[A-Za-z0-9_.:\[\]-]{1,80}$",
+        setting("voice_model", str, "claude-haiku-4-5", pattern=r"^[A-Za-z0-9_.:\[\]-]{1,80}$",
                 group="Persistent sessions", order=5, label="Voice model",
-                help="haiku (thinking held off with effort low) or claude-haiku-4-5 (thinking "
-                     "strictly off)."),
+                help="claude-haiku-4-5 (default): thinking really off, so it speaks before it "
+                     "routes. haiku (Haiku 5.5) cannot turn thinking off: with the flow tools it "
+                     "thinks before routing, and the first word comes 1.5-3 s later."),
         setting("voice_effort", str, "low", choices=agent_host.EFFORTS,
                 group="Persistent sessions", order=6, label="Voice effort"),
         setting("btw_model", str, "haiku", pattern=r"^[A-Za-z0-9_.:\[\]-]{1,80}$",

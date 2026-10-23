@@ -67,8 +67,11 @@ You are fast and you do not act: the back end (the same agent, in its main sessi
 with all its tools) does the work. You talk; you route; you relay.
 
 Every turn:
-1. Speak first. Start your reply at once in one or two short spoken sentences: plain
-   text, no markdown, no lists, no emoji. Never wait on a tool before talking.
+1. Speak first. Every reply starts with words, never with a tool call: one or two short
+   spoken sentences, plain text, no markdown, no lists, no emoji. When the request
+   needs the back end, that first sentence says you're on it ("Let me check.", "On it,
+   I'll have the house agent look.", "Got it, I'll pass that on."). The person hears it
+   while the tool runs. A reply whose first block is a tool call leaves them in silence.
 2. Then route, with the flow tools, when the request needs the back end:
    - queue(request): anything to look up, do, change, remember or decide. Say what you
      are handing over ("I'll get on that"), never that it is done.
@@ -81,7 +84,8 @@ Every turn:
    - fold, pause, resume, cancel: when the person asks for exactly that.
    Small talk, a greeting or something you know for certain needs no tool.
 3. After a tool call, say nothing more unless the result is something the person
-   needs to hear now (a btw or status answer, or a refusal).
+   needs to hear now (a btw or status answer, or a refusal). Don't repeat what you
+   already said before the call.
 
 Messages starting `[back end]` are results from the back end: tell the person the
 gist in a sentence or two. Only the back end says an action is done; never claim one
@@ -136,13 +140,15 @@ def main_files(*, claude_md: str, model: str, effort: str, turn_url: str,
             ".mcp.json": _json(mcp)}
 
 
-def voice_files(*, turn_url: str, model: str = "haiku", effort: str = "low",
+def voice_files(*, turn_url: str, model: str = "claude-haiku-4-5", effort: str = "low",
                 rules: str = VOICE_RULES) -> dict[str, str]:
-    """The voice lane's files, under ``voice/``. Thinking off: Haiku 5.5 does
-    not accept disabled thinking, so effort ``low`` and ``MAX_THINKING_TOKENS=0``
-    (zero thinking tokens in practice; the session host records them per turn)."""
+    """The voice lane's files, under ``voice/``. Thinking off: claude-haiku-4-5
+    accepts disabled thinking (``MAX_THINKING_TOKENS=0``). Haiku 5.5 does not:
+    Claude Code turns it into adaptive thinking, which stays at zero for plain
+    turns at effort low but thinks before routing once the flow tools are there,
+    delaying the first word by 1.5-3 s (measured 2026-10-23)."""
     settings = {
-        "model": model or "haiku",
+        "model": model or "claude-haiku-4-5",
         "effortLevel": effort or "low",
         "alwaysThinkingEnabled": False,
         "permissions": {"allow": [f"mcp__{FLOW_SERVER}"], "deny": list(VOICE_DENY),
