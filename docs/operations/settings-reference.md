@@ -411,6 +411,11 @@ are set only in the environment or on the command line.
 | `role.max_tool_calls` | Tool calls per role turn | hub | int | `12` | `ROOK_ROLE_MAX_TOOL_CALLS` | live |
 | `role.tool_result_chars` | Role tool result length | hub | int | `12000` | `ROOK_ROLE_TOOL_RESULT_CHARS` | live |
 | `role.code_locations` | Where code lives | hub | list |  | `ROOK_ROLE_CODE_LOCATIONS` | live |
+| `role.protected_workers` | Protected devices | hub | list |  | `ROOK_ROLE_PROTECTED_WORKERS` | live |
+| `role.session_model` | Role session model | hub | str |  | `ROOK_ROLE_SESSION_MODEL` | live |
+| `role.session_stall_minutes` | Session quiet alarm | hub | int | `20` | `ROOK_ROLE_SESSION_STALL_MINUTES` | live |
+| `role.session_max_minutes` | Session time limit | hub | int | `180` | `ROOK_ROLE_SESSION_MAX_MINUTES` | live |
+| `role.sessions_per_role` | Live sessions per role | hub | int | `2` | `ROOK_ROLE_SESSIONS_PER_ROLE` | live |
 
 ## Tasks (hub plugin, runs in mcp)
 

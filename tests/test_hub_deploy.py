@@ -645,3 +645,12 @@ def test_cli_status_verify_and_disruptive_guard(repo, tmp_path, key, svc, capsys
     assert cli.main(["--config", str(cfg_path), "history"]) == 0
     assert "deploy" in capsys.readouterr().out
     assert cli.main(["--config", str(tmp_path / "missing.json"), "status"]) == 1
+
+
+def test_a_release_builds_from_relative_paths(repo, tmp_path, key, monkeypatch):
+    """`rook hub release build --repo src --out dist` from the deploy folder:
+    git archive -o resolves against -C, so the paths are made absolute."""
+    monkeypatch.chdir(repo.parent)
+    tb, _mpath, m = mf.build_release(Path(repo.name), Path("dist"), signing_key=key)
+    assert tb == (repo.parent / "dist" / f"rook-hub-{m['version']}.tar.gz").resolve()
+    assert tb.is_file()

@@ -84,7 +84,11 @@ def test_every_preset_is_a_deep_valid_role(doc):
     assert doc["enabled"] and not doc["host"] and not doc["backend"] and not doc["model"]
     # Least privilege: named read caps only (one family wildcard: info.*), no
     # harness file tools, and every source is within the role's own tools.
-    assert doc["autonomy"] == "propose" and doc["builtin"] == []
+    # Architect and lead do routine work themselves (huddles.md 4.5); the
+    # rest propose. Every charter says the workspace is the notepad.
+    assert doc["autonomy"] == ("routine" if doc["id"] in ("architect", "lead") else "propose")
+    assert doc["builtin"] == []
+    assert "workspace" in charter and "never a notepad" in charter
     assert "knowledge.read" in doc["tools"]["allow"]
     for pat in doc["tools"]["allow"]:
         assert pat == "info.*" or "*" not in pat, f"{doc['id']}: {pat} is too broad"
@@ -187,8 +191,12 @@ async def test_every_presets_tools_render_into_each_harness(hub, tmp_path, pid):
     await _call(hub, "role.set", {"role": doc})
     role = hub.roles.role(pid)
     names = sorted((t.get("function") or t)["name"] for t in hub.roles.tools_for(role))
-    assert "rook_call" in names and set(names) <= {"knowledge_search", "rook_workers",
-                                                    "rook_call"}
+    space = {"workspace_list", "workspace_read", "workspace_write", "workspace_edit",
+             "workspace_search", "workspace_delete"}
+    sessions = {"start_session", "session_status", "session_send"}
+    assert "rook_call" in names and space <= set(names)
+    assert (sessions <= set(names)) == (pid in ("architect", "lead"))
+    assert set(names) <= {"knowledge_search", "rook_workers", "rook_call"} | space | sessions
     home = rolehome.ensure(tmp_path, pid)
     rolehome.render(home, role=pid, name=role["name"], rev=role["rev"], mcp_url=URL,
                     tools=names, builtin=role["builtin"], memory=role["memory"])

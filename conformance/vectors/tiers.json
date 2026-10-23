@@ -967,8 +967,23 @@
   "role.presets": {
    "tier": "read"
   },
+  "role.session_send": {
+   "tier": "write"
+  },
+  "role.session_start": {
+   "tier": "write"
+  },
+  "role.session_stop": {
+   "tier": "write"
+  },
+  "role.sessions": {
+   "tier": "read"
+  },
   "role.set": {
    "tier": "admin"
+  },
+  "role.workspace": {
+   "tier": "read"
   },
   "screenshot.capture": {
    "tier": "read",

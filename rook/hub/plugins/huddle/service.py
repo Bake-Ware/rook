@@ -645,6 +645,19 @@ class HuddleService:
         rid = self._chair().on_post(h, sent["seq"], identity, text)
         return self._named({"room": room, "seq": sent["seq"], "round": rid}, room)
 
+    def session_report(self, room: str, owner: str, sender: str, text: str,
+                       word: str = "") -> str | None:
+        """A role's coding session reports back here (roles plugin): posted,
+        and the chair wakes the role (:meth:`.chair.Chair.on_report`)."""
+        h = self._live(self.store.get(room))
+        if h is None:
+            raise ValueError(f"{room!r} is not a huddle")
+        if h.get("roles") is None:
+            self._send(room, sender, text, [f"role:{owner}"])
+            return None
+        from ....core.text import clip
+        return self._chair().on_report(h, room, owner, sender, clip(str(text or ""), 7900), word)
+
     def archive(self, room: str, archived: bool = True) -> dict:
         room = self.room_id(room)[0] if room else room
         h = self._live(self.store.get(room)) if room else None

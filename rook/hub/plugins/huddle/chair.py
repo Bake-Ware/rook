@@ -55,11 +55,12 @@ from ....core.text import clip
 log = logging.getLogger("rook.hub.plugins.huddle.chair")
 
 CARD_KINDS = ("task.create", "task.update", "job.run", "job.create", "session.send",
-              "session.start", "note", "ask_bake")
+              "session.start", "call", "note", "ask_bake")
 #: Kinds that carry a call; ``note`` and ``ask_bake`` never run anything.
 NO_CALL = ("note", "ask_bake")
 #: The caps a session card may run (the lead developer fronts the sessions).
-SESSION_CAPS = {"session.send": ("sessions.send",), "session.start": ("work.stream.open",)}
+SESSION_CAPS = {"session.send": ("sessions.send", "role.session_send"),
+                "session.start": ("work.stream.open", "role.session_start")}
 CARD_STATES = ("proposed", "approved", "dismissed", "done", "failed")
 SUMMARY_MAX = 300
 ARGS_MAX = 4000
@@ -102,6 +103,7 @@ PROPOSE = _fn(
       "native_id, text}. session.start starts one: cap work.stream.open, args {harness, cwd, "
       "title?, task?}: cwd is one of the code locations you were given, task is a Rook task id "
       "or slug (the session reads its instructions there), never the instructions themselves. "
+      "call runs any other cap the person should approve (worker, cap, args). "
       "To change a card you proposed that is still waiting, pass revise: its id; never propose "
       "a second version.",
     {"kind": {"type": "string", "enum": list(CARD_KINDS)},
@@ -159,9 +161,17 @@ CLOSE_RULES = (
     "should happen next), in a few sentences. Do not repeat each answer.\n"
     "- When only one role answered and nothing is open, reply with exactly " + SETTLED
     + " (nothing is posted).\n"
+    "- Roles do routine work themselves (their workspace, coding sessions on a branch that open "
+    "pull requests); never propose a card for that.\n"
     "Propose a card only for something none of the roles proposed; to change a card you "
     "proposed, propose with revise set to its id. Never say a card exists or a task was created "
     "unless the propose call returned ok; the hub lists your cards under your message.")
+REPORT_ASK = (
+    "This is a report from a coding session that @{owner} started (newest message). Call on "
+    "@{owner} with what it says, so it can check the result and say what is next. When the "
+    "session produced something the thread asked other roles in this huddle to review (a pull "
+    "request, a draft), also call on those roles, each with the link and what to look for. Do "
+    "not answer it yourself and do not propose cards for it.")
 RETRY_ASK = (
     "Your last turn on this question stopped before you answered ({error}). Answer now from "
     "what you already know, with at most a few tool calls; where you could not find something, "
@@ -222,9 +232,14 @@ def validate_card(raw: Any) -> dict:
             cap, args = _task_call(kind, cap, args)
         if kind in SESSION_CAPS and cap not in SESSION_CAPS[kind]:
             raise CardError(f"a {kind} card runs {' or '.join(SESSION_CAPS[kind])}, not {cap}")
-        if kind == "session.send" and not (args.get("native_id") and args.get("text")):
+        if kind == "session.send" and cap == "sessions.send" and not (
+                args.get("native_id") and args.get("text")):
             raise CardError("a session.send card needs args {agent, native_id, text}")
-        if kind == "session.start":
+        if kind == "session.start" and cap == "role.session_start":
+            if not (args.get("role") and args.get("branch") and args.get("instructions")):
+                raise CardError("a role.session_start card needs args {role, branch, "
+                                "instructions, location?}")
+        elif kind == "session.start":
             if not args.get("cwd"):
                 raise CardError("a session.start card needs args {harness, cwd}")
             task = str(args.get("task") or "")
@@ -375,6 +390,22 @@ class Chair:
         task.add_done_callback(self.tasks.discard)
         return rid
 
+    def on_report(self, h: dict, room: str, owner: str, sender: str, text: str,
+                  word: str = "") -> str | None:
+        """A coding session a role started reports back (DONE, BLOCKED,
+        QUESTION or something unexpected): posted in the huddle, and a round
+        starts where the chair calls on that role (always) and on any role the
+        thread asked to review the result. Returns the round id."""
+        if h.get("roles") is None or h.get("archived"):
+            return None
+        sent = self.svc._send(room, sender, text, [f"role:{owner}"])
+        rid = "r_" + uuid.uuid4().hex[:12]
+        self.store.round_add(rid, room, int(sent["seq"]), sender, {"report": word, "owner": owner})
+        task = asyncio.get_running_loop().create_task(self._run(rid, room, text, owner=owner))
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+        return rid
+
     async def wait(self, rid: str, timeout: float) -> dict:
         """Wait for a round to end (a job's huddle step)."""
         deadline = time.monotonic() + timeout
@@ -392,11 +423,11 @@ class Chair:
                                  ended=time.time())
 
     # -- a round -------------------------------------------------------------------
-    async def _run(self, rid: str, room: str, text: str) -> None:
+    async def _run(self, rid: str, room: str, text: str, owner: str = "") -> None:
         lock = self._locks.setdefault(room, asyncio.Lock())
         async with lock:                      # one round per huddle at a time
             try:
-                await self._round(rid, room, text)
+                await self._round(rid, room, text, owner)
             except Exception as e:  # noqa: BLE001 - a round failing never breaks the huddle
                 log.warning("huddle %s: round %s failed: %s", room, rid, e)
                 err = str(e)[:300]
@@ -411,17 +442,38 @@ class Chair:
             lines.append(f"[{m['sender']}] {m['text']}")
         return clip("\n".join(lines), CONTEXT_CHARS, tail=True)
 
-    async def _round(self, rid: str, room: str, text: str) -> None:
+    async def _round(self, rid: str, room: str, text: str, owner: str = "") -> None:
         h = self.store.get(room)
         roster = self.roster(h)
         by_id = {r["id"]: r for r in roster}
+        if owner and owner not in by_id:
+            # The role that started the session left the huddle (or is off):
+            # it still hears its own session's report.
+            with contextlib.suppress(Exception):
+                doc = self.roles().role(owner)
+                if doc.get("enabled", True):
+                    by_id[owner] = doc
         max_turns = int(self.setting("max_role_turns", 6))
         followups = max(0, int(self.setting("max_followups", 2)))
         mentioned = [m.lower() for m in MENTION.findall(text or "")]
-        direct = [r for r in dict.fromkeys(mentioned) if r in by_id]
+        direct = [r for r in dict.fromkeys(mentioned) if r in by_id] if not owner else []
         plan: dict = {"direct": bool(direct), "calls": [], "answered": False}
         if direct:
             plan["calls"] = [{"role": r, "ask": text} for r in direct[:max_turns]]
+        elif owner and self._report_seen(room, owner, rid):
+            # The role already spoke after this report was posted (a round
+            # queued behind another one): it saw the report; skip the round.
+            self.store.round_set(rid, state="done", ended=time.time(),
+                                 error="skipped: the role already answered after this report")
+            return
+        elif owner:
+            try:
+                plan.update(await self._chair_turn(rid, room, h, roster, text,
+                                                   REPORT_ASK.format(owner=owner)))
+            except Exception as e:  # noqa: BLE001 - the owner still hears its report
+                log.warning("huddle %s: chair turn on a session report failed: %s", room, e)
+            if owner not in [c["role"] for c in plan["calls"]]:
+                plan["calls"] = [{"role": owner, "ask": text}] + plan["calls"]
         else:
             plan.update(await self._chair_turn(rid, room, h, roster, text))
         self.store.round_set(rid, plan=plan)
@@ -440,9 +492,10 @@ class Chair:
                 self.svc._send(room, self.chair_identity(), "\n".join(lines),
                                [f"role:{c['role']}" for c in calls], quiet=True)
             routed = True                    # follow-ups are always the chair's routing
+            seen = self.svc.chat.last_seq(room)          # what these turns are shown
             transcript = self._transcript(room)
             start = len(replies)
-            replies += [{"role": c["role"], "ask": c["ask"], "state": "running",
+            replies += [{"role": c["role"], "ask": c["ask"], "state": "running", "seen": seen,
                          **({"followup": passes} if passes else {})} for c in calls]
             self.store.round_set(rid, replies=replies)
             results = await asyncio.gather(*(
@@ -463,6 +516,23 @@ class Chair:
             calls = [c for c in verdict.get("calls") or [] if c["role"] in by_id][:max_turns] \
                 if left > 0 else []
         self.store.round_set(rid, state="done", ended=time.time())
+
+    def _report_seen(self, room: str, owner: str, rid: str) -> bool:
+        """The owner already answered in a turn that was shown this report
+        (its turn started after the report was posted). A turn that was
+        already running when the report arrived did not see it."""
+        r = self.store.round(rid) or {}
+        after = int(r.get("trigger_seq") or 0)
+        if not after:
+            return False
+        for other in self.store.rounds(room, 10):
+            if other["id"] == rid:
+                continue
+            for rep in other.get("replies") or []:
+                if rep.get("role") == owner and rep.get("state") == "done" \
+                        and int(rep.get("seen") or 0) >= after:
+                    return True
+        return False
 
     def _chair_messages(self, home: Any, cfg: dict, roster: list[dict], room: str,
                         rules: str, extra: str = "", memory: str = "") -> list[dict]:
@@ -531,7 +601,7 @@ class Chair:
         return json.dumps(out)
 
     async def _chair_turn(self, rid: str, room: str, h: dict, roster: list[dict],
-                          text: str) -> dict:
+                          text: str, extra: str = "") -> dict:
         home = self.home()
         cfg = home.config()
         cfg["tools"] = False
@@ -575,7 +645,7 @@ class Chair:
             tools.append(KNOWLEDGE)
         msgs = self._chair_messages(home, cfg, roster, room,
                                     CHAIR_RULES + (" " + extra_rules if extra_rules else ""),
-                                    "Respond to the newest message.", memory)
+                                    extra or "Respond to the newest message.", memory)
         res = await home.tool_turn(msgs, cfg, tools, handler, via="huddle-chair", max_calls=6)
         self.journal("huddle.chair", {"round": rid}, {"ok": True, "result": {
             "model": res.get("model"), "called": [c["role"] for c in state["calls"]],
@@ -681,19 +751,26 @@ class Chair:
         roles = self.roles()
         chars = int(self.setting("reply_chars", 1200))
         guide = (f"You are answering in a huddle the house agent chairs. Aim for under "
-                 f"{chars} characters. When something should be done, call propose with the "
-                 "exact call (an action card the person approves); do not describe it at length, "
-                 "and never say a card exists unless propose returned ok.")
+                 f"{chars} characters. Do routine work yourself (your workspace; a coding session "
+                 "on a branch when you may start one). For anything that needs the person, call "
+                 "propose with the exact call (an action card); do not describe it at length, "
+                 "and never say a card exists unless propose (or the tool that made it) "
+                 "returned ok.")
         ident = f"role:{role['id']}"
 
         async def extra(role_doc: dict, name: str, args: dict) -> str:
             return json.dumps(await self._propose(rid, room, ident, args, role=role_doc))
 
+        async def approval(card: dict) -> dict:
+            # A call above the role's tier (the hub's rule, not the role's):
+            # it becomes a card the person approves.
+            return await self._propose(rid, room, ident, card)
+
         try:
             res = await roles.turn(role, ask, "The huddle so far:\n" + transcript,
                                    self.chair_identity(), extra_tools=[PROPOSE],
                                    extra_handler=extra, guide=guide, via=f"huddle-{role['id']}",
-                                   preread=True)
+                                   preread=True, room=room, approval=approval)
             # Posted whole: reply_chars is what the role aims for, not a cut.
             # Only past a chat post's size is it cut, and then visibly.
             text = clip((res.get("answer") or "").strip() or "(no answer)", POST_CHARS)
@@ -802,7 +879,7 @@ class Chair:
             near = sorted(c for c in caps if c.split(".")[0] == call["cap"].split(".")[0])[:8]
             return (f"{found[1]} has no cap {call['cap']}"
                     + (f" (it has {', '.join(near)})" if near else ""))
-        if card["kind"] == "session.start":
+        if card["kind"] == "session.start" and call["cap"] == "work.stream.open":
             where = self._code_paths()
             cwd = str(call["args"].get("cwd") or "").rstrip("/")
             if where and not any(cwd == p or cwd.startswith(p + "/") for p in where):
@@ -853,18 +930,39 @@ class Chair:
                         "note": f"{c['by']} already proposed this; it is waiting for the person"}
         card.update(id="c_" + uuid.uuid4().hex[:12], room=room, round=rid, seq=seq, by=by,
                     state="proposed")
-        if role is not None and role.get("autonomy") == "act" and card.get("call"):
+        if role is not None and card.get("call") and self._runs_now(role, card):
+            # A card for something the role may do itself (a read in its
+            # scope): the hub runs it at once and keeps the card as done.
             roles = self.roles()
             call = card["call"]
-            if not roles.scope_refusal(role, call["cap"], None):
-                reply = await roles.role_call(role, call["worker"], call["cap"],
-                                              self._call_args(card))
-                card["state"] = "done" if reply.get("ok", True) and "error" not in reply else "failed"
-                card["result"] = _short(reply)
+            reply = await roles.role_call(role, call["worker"], call["cap"],
+                                          self._call_args(card))
+            card["state"] = "done" if reply.get("ok", True) and "error" not in reply else "failed"
+            card["result"] = _short(reply)
         self.store.card_add(card)
         if card["state"] == "failed":
             self._report_failure(card)
         return {"ok": True, "card": card["id"], "name": card.get("name"), "state": card["state"]}
+
+    def _runs_now(self, role: dict, card: dict) -> bool:
+        """The hub's tier (rook/hub/plugins/roles/tiers.py) lets ``role`` run
+        this card's call without a person: a role with routine (or act)
+        autonomy proposing a read in its scope. A role that only proposes
+        always waits for the person; unknown caps are approval."""
+        call = card["call"]
+        roles = self.roles()
+        from ..roles import tiers
+        if not tiers.is_routine(role):
+            return False                     # a role that only proposes: its cards wait
+        roster, hub_id = self._roster_now()
+        entry = None
+        with contextlib.suppress(Exception):
+            from ..jobs.kinds import resolve_worker
+            found = resolve_worker(roster, call["worker"], call["cap"], hub_id)
+            entry = roster.get(found[0]) if found else None
+        with contextlib.suppress(Exception):
+            return roles.runs_now(role, call["cap"], entry, call["worker"])
+        return False
 
     def _revise(self, old: dict, card: dict) -> dict:
         """The proposer's newer version of a card still waiting: one card,

@@ -13,6 +13,8 @@ Never: deploys, rolls back, restarts services or pushes updates itself. Every st
 How it decides: no rollback plan, no release. A release is done when the fleet is healthy on the new build and the checks passed, not when the deploy command returned. If the workers that came back are fewer than before, stop and look before going further. Family devices and phones are checked by name.
 
 Asks a person when: a check fails mid-rollout, the rollback would lose data, a release would restart something people are using, or the fleet is smaller after the deploy than before it.
+
+Workspace: keeps its notes, drafts and working documents in its own workspace folder; tasks are for work items only, never a notepad.
 """
 concerns = [
   "deploys without a rollback plan or a backup",

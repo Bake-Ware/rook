@@ -12,7 +12,7 @@ const {hapi,voicePicker}=await import('/account/huddle/assets/huddles.js'+search
 
 const BACKENDS=[['','The house agent\'s'],['claude-code','Claude Code'],['codex','Codex'],['opencode','OpenCode']];
 const EFFORTS=['','low','medium','high','xhigh','max'];
-const AUTONOMY={propose:'Proposes (you approve)',act:'Acts within its tools'};
+const AUTONOMY={propose:'Proposes (you approve)',routine:'Does routine work (workspace, coding sessions on a branch)',act:'Acts (as routine, until H6 tiers)'};
 const MEMORY={write:'Reads and writes',read:'Read only',off:'Off'};
 const MODELS=['haiku','sonnet','opus'];
 const lines=t=>t.split('\n').map(x=>x.trim()).filter(Boolean);
@@ -25,7 +25,12 @@ const CSS='@media(max-width:700px){#view-roles .rl-tbl .mg-table>div{min-width:0
   +'#view-roles .rl-pick{min-width:0;flex:1 1 220px;max-width:340px}#view-roles .rl-pick select{width:100%}'
   +'#view-roles .mg-bar{flex-wrap:nowrap}#view-roles .rl-idle{display:flex;align-items:center;gap:8px}'
   +'@media(max-width:900px){#view-roles .rl-panel-idle{display:none}}'
-  +'@media(max-width:700px){#view-roles .rl-pick{max-width:none}}';
+  +'@media(max-width:700px){#view-roles .rl-pick{max-width:none}}'
+  +'#view-roles .rl-ws{display:flex;flex-direction:column;gap:2px;margin:6px 0}'
+  +'#view-roles .rl-ws button{all:unset;cursor:pointer;display:flex;justify-content:space-between;gap:8px;padding:6px 4px;border-bottom:1px solid var(--line,#8883);font-family:var(--mono);font-size:13px;min-width:0}'
+  +'#view-roles .rl-ws button span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}'
+  +'#view-roles .rl-ws button:focus-visible{outline:2px solid var(--accent,#48f)}'
+  +'#view-roles .rl-file{white-space:pre-wrap;word-break:break-word;font-family:var(--mono);font-size:12.5px;max-height:60vh;overflow:auto;padding:8px;border:1px solid var(--line,#8883);border-radius:6px;margin:6px 0 0}';
 
 // The preset dropdown: one <select>, its options grouped under their category's
 // name (optgroup headings are not selectable), in the categories' and presets'
@@ -84,6 +89,31 @@ export async function mountRoles(root){
   function field(label,ctl,note){return h('label',{class:'mg-field'},note?h('span',{class:'mg-flabel'},label,info(note,'About '+label)):label,ctl);}
   function select(options,value){return h('select',null,options.map(([v,t])=>h('option',{value:v,text:t,selected:v===(value||'')})));}
   function area(value,rows,ph){const t=h('textarea',{rows:String(rows),placeholder:ph||''});t.value=value;return t;}
+
+  // Its workspace (drafts, notes, working files), read-only: the list, then
+  // one file. Loaded when opened, so the form stays fast.
+  function workspaceBox(doc){
+    const body=h('div'),box=h('details',null,h('summary',{text:'Workspace'}),body);
+    const size=n=>n==null?'':n<1024?n+' B':(n/1024).toFixed(n<10240?1:0)+' kB';
+    async function list(){
+      body.replaceChildren(h('p',{class:'mg-sub',text:'Loading…'}));
+      try{const r=await hapi('role_workspace',{id:doc.id});const files=r.files||[];
+        body.replaceChildren(files.length?h('div',{class:'rl-ws'},files.map(f=>h('button',{type:'button',title:f.path,onclick:()=>open(f.path)},
+          h('span',{text:f.path}),h('span',{class:'mg-sub',text:size(f.size)+(f.modified?' · '+ago(f.modified):'')})))):
+          h('p',{class:'mg-sub',text:'Empty. The role keeps its drafts and notes here.'}));}
+      catch(e){body.replaceChildren(h('p',{class:'mg-bad',text:e.message}));}
+    }
+    async function open(path){
+      body.replaceChildren(h('p',{class:'mg-sub',text:'Loading…'}));
+      try{const r=await hapi('role_workspace',{id:doc.id,path});
+        body.replaceChildren(h('div',{class:'mg-actions',style:'justify-content:space-between'},
+          btn('‹ Files','',list,{'aria-label':'Back to the file list'}),h('span',{class:'mg-mono',text:path,style:'overflow-wrap:anywhere'})),
+          h('pre',{class:'rl-file',text:(r.content||'')+(r.truncated?'\n'+r.truncated:'')}));}
+      catch(e){body.replaceChildren(btn('‹ Files','',list),h('p',{class:'mg-bad',text:e.message}));}
+    }
+    box.addEventListener('toggle',()=>{if(box.open&&!body.childNodes.length)list();});
+    return box;
+  }
 
   function drawPanel(){
     panel.classList.toggle('rl-panel-idle',!sel);
@@ -180,6 +210,7 @@ export async function mountRoles(root){
         h('details',null,h('summary',{text:'Model'}),h('div',{class:'mg-pad',style:'padding-left:0;padding-right:0'},
           field('Runs on',backend),field('Model',model),h('datalist',{id:'role-models'},MODELS.map(m=>h('option',{value:m}))),field('Effort',effort),field('Tool calls per turn',calls,'Blank: its category\'s (engineering 30, operations 24), else Tool calls per role turn in Settings.'),field('Persona (how it talks)',persona))),
         hostBox,
+        isNew?null:workspaceBox(doc),
         h('div',{class:'mg-actions end rl-save'},err,save),
         isNew?null:h('div',null,h('div',{class:'mg-label',style:'margin-bottom:8px',text:'History'}),
           hist.length?hist.slice(0,15).map(e=>h('div',{class:'mg-log'},h('span',{class:'mg-mono',text:e.doc?'rev '+e.rev:'deleted'}),

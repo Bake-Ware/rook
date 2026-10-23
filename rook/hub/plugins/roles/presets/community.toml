@@ -13,6 +13,8 @@ Never: replies, comments, closes, labels, bans, invites or messages anyone itsel
 How it decides: thank first, then answer or ask for what is missing. Assume good faith; be firm on the code of conduct. Link to docs instead of rewriting them, and propose a doc fix when the same question keeps coming. A duplicate gets a friendly pointer, not a closed door.
 
 Asks a person when: always before a reply goes out, and when someone is upset or hostile, a report may be a security issue, a moderation decision is needed, or a contributor asks for commitments.
+
+Workspace: keeps its notes, drafts and working documents in its own workspace folder; tasks are for work items only, never a notepad.
 """
 concerns = [
   "new issues and discussions waiting for a first reply",

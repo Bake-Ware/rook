@@ -29,6 +29,9 @@ from tests.test_home_agent import FakeVault
 
 URL = "https://hub.example/home/turn-mcp"
 
+WORKSPACE_TOOLS = ["workspace_list", "workspace_read", "workspace_write", "workspace_edit",
+                   "workspace_search", "workspace_delete"]
+
 
 # -- role homes ------------------------------------------------------------------------
 
@@ -77,7 +80,8 @@ def test_a_role_home_declares_exactly_the_roles_tools_for_every_harness(tmp_path
 
     spec = json.loads((home / "role.json").read_text())
     assert spec == {"id": "qa", "name": "QA engineer", "rev": 3, "builtin": [],
-                    "memory": "write", "tools": ["knowledge_search", "rook_call"]}
+                    "memory": "write", "tools": ["knowledge_search", "rook_call"],
+                    "workspace": False}
     # Nothing secret is ever written into a home.
     assert "Bearer tok" not in "".join(p.read_text() for p in home.rglob("*") if p.is_file())
 
@@ -508,7 +512,8 @@ async def test_role_ask_runs_a_turn_in_the_roles_home(hub):
     a = call.args
     assert call.target == "w-hosta" and call.principal.kind == "system"
     assert a["role"] == "qa" and a["role_name"] == "QA engineer" and a["role_rev"] == 1
-    assert a["tools"] == ["rook_workers", "rook_call"]       # no knowledge plugin here
+    assert a["tools"] == ["rook_workers", "rook_call", *WORKSPACE_TOOLS]   # no knowledge here
+    assert "workspace" not in a                              # hosta has no native workspace
     assert a["builtin"] == ["read"] and a["memory"] == "read" and a["model"] == "sonnet"
     assert "QA engineer (role:qa)" in a["system"] and "flaky jobs" in a["system"]
     assert "[agent:claude] anything failing?" in a["prompt"]
@@ -544,22 +549,27 @@ async def test_a_role_calls_only_within_its_scope(hub):
     await _call(hub, "role.ask", {"id": "qa", "question": "check box"})
     ping, shell, shot, workers = step["seen"]
     assert ping["ok"] and ping["result"]["via"] == "w-box"
-    assert not shell["ok"] and "only proposes" in shell["error"]       # exec cap, propose role
+    assert not shell["ok"] and shell["needs_approval"]                 # exec cap: a person's
+    assert "roles run only reads and routine work" in shell["error"]
     assert not shot["ok"] and "outside role qa" in shot["error"]
     box = next(w for w in workers["workers"] if w["name"] == "box")
     assert box["caps"] == ["info.ping", "job.read"]                    # in scope, read tier
+    assert box["needs_approval"] == ["shell.exec"]                     # in scope, a card
     sent = [c for c in hub.band.calls if c.cap == "info.ping"]
     assert sent[0].identity == "agent:home/role:qa"
     assert sent[0].principal.id == "home:home/role:qa" and sent[0].principal.kind == "token"
     assert not [c for c in hub.band.calls if c.cap == "shell.exec"]
     rows = {r["cap"]: r for r in hub.node.journal.rows}
-    assert rows["shell.exec"]["reply"]["denied"] and rows["info.ping"]["reply"]["ok"]
-    # A role that may act can call the exec cap in its scope.
-    await _save(hub, autonomy="act")
-    hub.band.script = [{"tools": [("rook_call", {"worker": "box", "cap": "shell.exec"})]}]
-    step = hub.band.script[0]
-    await _call(hub, "role.ask", {"id": "qa", "question": "run it"})
-    assert step["seen"][0]["ok"]
+    assert rows["shell.exec"]["reply"]["held"] and rows["info.ping"]["reply"]["ok"]
+    # The tier is the hub's, not the role's: even a role that may act needs a
+    # person for an exec cap (huddles.md 4.5); outside a huddle it is refused.
+    for autonomy in ("routine", "act"):
+        await _save(hub, autonomy=autonomy)
+        hub.band.script = [{"tools": [("rook_call", {"worker": "box", "cap": "shell.exec"})]}]
+        step = hub.band.script[0]
+        await _call(hub, "role.ask", {"id": "qa", "question": "run it"})
+        assert not step["seen"][0]["ok"] and step["seen"][0]["needs_approval"]
+    assert not [c for c in hub.band.calls if c.cap == "shell.exec"]
 
 
 @pytest.mark.asyncio
@@ -568,7 +578,7 @@ async def test_knowledge_search_is_offered_only_in_scope(hub, monkeypatch):
                         object() if ns == "knowledge" else _p(ns))
     role = model.validate({"id": "qa", "tools": {"allow": ["knowledge.read"]}})
     assert [t["function"]["name"] for t in hub.roles.tools_for(role)] == [
-        "knowledge_search", "rook_workers", "rook_call"]
+        "knowledge_search", "rook_workers", "rook_call", *WORKSPACE_TOOLS]
     role = model.validate({"id": "qa", "tools": {"allow": ["job.read"]}})
     assert "knowledge_search" not in [t["function"]["name"] for t in hub.roles.tools_for(role)]
 

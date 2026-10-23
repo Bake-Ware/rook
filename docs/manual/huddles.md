@@ -119,14 +119,17 @@ is not added twice: the one who proposed it updates theirs instead. The
 chair's message lists the cards it actually made, by id.
 
 Only people approve or dismiss cards (or a client relaying your words,
-[[manual-accounts-and-access]]). A role you set to act on its own
-(autonomy *act*) runs calls inside its tools directly; its card shows up
-already done. Anything outside its tools still waits for you.
+[[manual-accounts-and-access]]). A role that does routine work (autonomy
+*routine* or *act*) runs reads in its tools directly, and a card it
+proposes for one shows up already done. Everything Rook keeps for you
+(merges, deploys, deletes, settings, secrets, jobs, protected devices,
+anything unknown) still waits for you, whatever the role's autonomy: see
+**What roles do on their own**.
 
 ## Roles
 
 Open **Roles** under Manage. The list shows each role, the machine that
-keeps its folder (its host) and whether it only proposes or acts.
+keeps its folder (its host) and its autonomy.
 
 Pick a role to change it. The **(i)** beside a field explains it:
 
@@ -143,10 +146,12 @@ Pick a role to change it. The **(i)** beside a field explains it:
   optionally on one machine and with arguments.
 - **Tools it may call** and **Never**: one capability or pattern per line
   (for example `task.read` or `info.*`). A role never gets a shell, file
-  editing, or other roles.
+  editing outside its workspace, or other roles.
 - **Built-in file tools**: let it read or search files on its host.
-- **Autonomy**: *proposes (you approve)* each action, or *acts within its
-  tools*.
+- **Autonomy**: *proposes (you approve)* each action; *does routine work*
+  (its coding sessions on a branch, which open pull requests); or *acts*,
+  which for now is the same as routine work. Either way Rook asks you for
+  everything that is not routine.
 - **Memory**: *reads and writes*, *read only* (reads what it remembers,
   adds nothing) or *off*.
 - **Examples & memory**: questions it answers well (shown to the
@@ -191,7 +196,9 @@ Agents and scripts can do the same through worker `rook`: `role.list`,
 
 Every preset is a full starting role: a charter, concerns, a checklist,
 example questions, starting memory, the sources it reads before each turn,
-and a tool scope of read-only caps. All of them only propose: anything that
+and a tool scope of read-only caps. Every role has its own workspace (below).
+The architect and the lead developer do routine work themselves (see
+**What roles do on their own**); the others only propose: anything that
 changes something is an action card you approve.
 
 | Category | Preset | What it is for |
@@ -236,16 +243,25 @@ Presets and their categories are plain files in the Rook source
 for the category names and order. A new preset or category is a new file or
 entry there.
 
+## A role's workspace and what it does on its own
+
+Every role has its own workspace for drafts and notes, and some roles start
+coding sessions on a branch without asking you. Rook, not the role, decides
+what needs your approval. See [[manual-role-agency]].
+
 ## Where code lives
 
 Roles never guess where your code is. In **Settings**, group **roles**,
 **Where code lives** (`role.code_locations`) takes one line per
-repository: its name, the machine, the folder of the main checkout, and
-where new worktrees go, for example
-`myapp: worker devbox, /srv/src/myapp (main checkout; worktrees next to it)`.
+repository: its name first, then `worker <machine>`, the folder of the
+main checkout, where new worktrees go and the branch to start from, for
+example
+`myapp: worker devbox, main checkout /srv/src/myapp; branch off origin/main; new worktrees go under /srv/src/worktrees`.
 Every role is given these lines on every turn; with none set, a role says
-so instead of searching. A card that starts a coding session must use one
-of these folders.
+so instead of searching. A role's coding sessions start only here, in a
+worktree under the worktrees folder (without one named: `.claude/worktrees`
+in the checkout). A card that starts a session by hand must use one of
+these folders.
 
 ## Huddles from jobs
 
@@ -278,8 +294,14 @@ Settings, group **Chaired huddles** (the huddle plugin):
   huddle starts with, of those that exist.
 
 Group **roles**: **Tool calls per role turn** (`role.max_tool_calls`,
-12), **Role tool result length** (`role.tool_result_chars`, 12000) and
-**Where code lives** (above). Anything Rook shortens for a role or for you
+12), **Role tool result length** (`role.tool_result_chars`, 12000),
+**Where code lives** (above), **Protected devices**
+(`role.protected_workers`: workers where every call a role makes, reads
+too, needs your approval, such as family phones, tablets and TVs),
+**Role session model** (`role.session_model`, blank: Claude Code's
+default), **Session quiet alarm** (`role.session_stall_minutes`, 20),
+**Session time limit** (`role.session_max_minutes`, 180) and **Live
+sessions per role** (`role.sessions_per_role`, 2). Anything Rook shortens for a role or for you
 ends with `[truncated: N of M chars]`, so a cut is never silent.
 
 The home agent must be on (Manage > Home agent) to chair; the Huddles page
