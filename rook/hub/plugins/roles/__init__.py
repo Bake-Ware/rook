@@ -167,6 +167,12 @@ class RolesPlugin(Plugin):
         setting("session_max_minutes", int, 180, min=5, max=1440, label="Session time limit",
                 help="A role's coding session still running after this many minutes is stopped "
                      "and reported as blocked."),
+        setting("session_test_commands", list, [], label="Session test commands",
+                help="Commands a role's coding session may also run to test its work, one per "
+                     "line with any arguments after them (python3 -m pytest, npm test, cargo "
+                     "test). Each runs the repository's own code in the session's worktree, so "
+                     "list only what you would run yourself. rook-pytest is always allowed; "
+                     "shell control characters and git, gh, sudo or shell commands are ignored."),
         setting("sessions_per_role", int, 2, min=1, max=10, label="Live sessions per role",
                 help="How many coding sessions one role may have running at once."),
         setting("session_github_app_id", str, "", label="Session GitHub App id",
@@ -696,8 +702,9 @@ class RolesPlugin(Plugin):
             hp = self._node.plugin("huddle")
             with contextlib.suppress(Exception):
                 huddle = hp.service.store.name("room", room) or room
-        prompt = rs.session_prompt(role, loc, branch, wt, instructions, space, huddle)
-        settings = rs.session_settings(wt, branch, space)
+        tests = rs.allowed_test_commands(self.settings.get("session_test_commands"))
+        prompt = rs.session_prompt(role, loc, branch, wt, instructions, space, huddle, tests)
+        settings = rs.session_settings(wt, branch, space, tests)
         title = (title or f"@{role['id']}: {branch}").strip()
         args = rs.launch_args(loc, branch, wt, native, prompt, settings, title,
                               model=str(self.settings.get("session_model") or ""))
@@ -791,8 +798,10 @@ class RolesPlugin(Plugin):
         space = ""
         with contextlib.suppress(Exception):
             space = (await self._workspace(role)).root
-        prompt = rs.session_prompt(role, loc, rec["branch"], rec["worktree"], text, space)
-        settings = rs.session_settings(rec["worktree"], rec["branch"], space)
+        tests = rs.allowed_test_commands(self.settings.get("session_test_commands"))
+        prompt = rs.session_prompt(role, loc, rec["branch"], rec["worktree"], text, space,
+                                   tests=tests)
+        settings = rs.session_settings(rec["worktree"], rec["branch"], space, tests)
         args = rs.launch_args(loc, rec["branch"], rec["worktree"], rec["native_id"], prompt,
                               settings, rec.get("title") or rec["branch"], resume=rec["native_id"],
                               model=str(self.settings.get("session_model") or ""))

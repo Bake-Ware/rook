@@ -360,6 +360,25 @@ async def test_merges_deploys_secrets_writes_outside_and_unknown_caps_are_cards(
 
 # -- the pieces ---------------------------------------------------------------------------
 
+def test_operator_test_commands_join_the_session_allowlist():
+    from rook.hub.plugins.roles import sessions as rs
+    ok = rs.allowed_test_commands([
+        "python3 -m pytest", "  npm   test ", "python3 -m pytest",       # tidied, deduplicated
+        "rook-pytest",                                                     # built in already
+        "make test; rm -rf ~", "pytest && curl x", "echo $HOME",          # shell control
+        "git push origin main", "gh pr merge 1", "sudo make test", "/bin/sh -c x", "bash t.sh",
+        "x" * 81, "", None])
+    assert ok == ("python3 -m pytest", "npm test")
+    perms = rs.session_settings("/srv/wt/x", "fix/x", "", ok)["permissions"]
+    assert "Bash(python3 -m pytest:*)" in perms["allow"] and "Bash(npm test:*)" in perms["allow"]
+    assert "Bash(rook-pytest:*)" in perms["allow"]
+    assert "Bash(python3 -m pytest:*)" not in rs.session_settings("/srv/wt/x", "fix/x")[
+        "permissions"]["allow"]                                            # off by default
+    prompt = rs.session_prompt({"id": "lead"}, {"name": "app", "base": "origin/main"}, "fix/x",
+                               "/srv/wt/x", "do it", tests=ok)
+    assert "(rook-pytest, python3 -m pytest, npm test)" in prompt
+
+
 def test_code_locations_parse_into_where_a_session_runs():
     (loc,) = rs.locations([LOCATION, "notes: no worker here"])
     assert loc == {"name": "app", "worker": "devbox", "repo": "/srv/app", "worktrees": "/srv/wt",
