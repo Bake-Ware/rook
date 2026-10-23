@@ -328,7 +328,12 @@ class Connection:
         try:
             await asyncio.wait_for(self._unheld.wait(), HOLD_MAX_S)
         except asyncio.TimeoutError:
-            if epoch == self.epoch:
+            if epoch != self.epoch or self.held_since is None:
+                return
+            if self.receiving_speech or self.intake_pending:
+                # Still talking after HOLD_MAX_S: a real barge-in (the phone gives up at 10 s).
+                await self.interrupt()
+            else:
                 await self.release_hold(resume=True)
 
     def check_hold(self, utterance_open):
