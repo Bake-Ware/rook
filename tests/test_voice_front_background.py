@@ -19,6 +19,7 @@ import pytest
 pytest.importorskip("numpy")
 
 from services.voice import front as front_mod
+from services.voice import pipeline as pipeline_mod
 from services.voice import providers
 from services.voice import timing as timing_module
 from services.voice.bgtools import HomeAssistant, Toolbox, parse_at
@@ -557,6 +558,106 @@ def test_failure_detail_generic_for_non_owner(tmp_path):
             await shutdown(conn, store, jobs)
         note = model.requests[-1]['messages'][-1]['content']
         assert 'did not work' in note and 'Background' not in note and 'step limit' not in note
+    asyncio.run(scenario())
+
+
+class Gateway:
+    """llmanifold with no healthy Strata lane: every chat completion is a 502."""
+    def __init__(self, front_ok=False):
+        self.front_ok, self.requests = front_ok, []
+
+    async def handler(self, request):
+        body = json.loads(request.content)
+        self.requests.append(body)
+        if self.front_ok:
+            return httpx.Response(200, text=sse('Sorry, I could not check that.'),
+                                  headers={'content-type': 'text/event-stream'})
+        return httpx.Response(502, json={'error': {'message': 'no healthy pool endpoint (pool: connect)'}})
+
+    def front(self):
+        return functools.partial(front_mod.stream, transport=httpx.MockTransport(self.handler), url='http://model/v1')
+
+
+def bad_gateway():
+    request = httpx.Request('POST', 'http://127.0.0.1:1234/v1/chat/completions')
+    return httpx.HTTPStatusError("Server error '502 Bad Gateway' for url 'http://127.0.0.1:1234/v1/chat/completions'",
+                                 request=request, response=httpx.Response(502, request=request))
+
+
+class Raises:
+    def __init__(self, error):
+        self.error = error
+
+    async def __call__(self, messages, tools, effort):
+        raise self.error
+
+
+def spoken(events):
+    return [e['text'] for e in events if e.get('type') in ('assistant_delta', 'assistant')]
+
+
+@pytest.mark.parametrize('identity', [OWNER, GUEST])
+def test_model_outage_is_never_read_aloud(tmp_path, identity):
+    # 2026-10-22: with both Strata lanes down, the phone read out
+    # "The lookup or action failed: Server error '502 Bad Gateway' for url ...".
+    gateway = Gateway()
+    async def scenario():
+        conn, store, jobs, events, _ = connection(tmp_path, identity=identity, front=gateway.front(),
+                                                  complete=Raises(bad_gateway()), background_events=True)
+        try:
+            await conn.start(text='what is on my calendar', speak=False)
+            await settle(conn)
+        finally:
+            await shutdown(conn, store, jobs)
+        said = spoken(events)
+        assert said == ['Give me a moment.', pipeline_mod.SPOKEN_FAILURE]
+        assert not any(w in ' '.join(said).lower() for w in ('gateway', '502', 'http', 'error'))
+        if identity.owner:     # the detail is still there for the owner, as an event
+            assert any('502 Bad Gateway' in e.get('text', '') for e in events
+                       if e.get('type') == 'background' and e.get('kind') == 'error')
+    asyncio.run(scenario())
+
+
+def test_model_outage_note_reaches_front_without_raw_error(tmp_path):
+    gateway = Gateway(front_ok=True)
+    async def scenario():
+        conn, store, jobs, events, _ = connection(tmp_path, front=gateway.front(), complete=Raises(bad_gateway()))
+        try:
+            await conn.start(text='what is on my calendar', speak=False)
+            await settle(conn)
+        finally:
+            await shutdown(conn, store, jobs)
+        note = gateway.requests[-1]['messages'][-1]['content']
+        assert pipeline_mod.MODEL_DOWN_NOTE in note and '502' not in note and 'Gateway' not in note
+    asyncio.run(scenario())
+
+
+def test_tool_failure_not_read_raw_when_front_is_down(tmp_path):
+    # The tool error is owner detail; with Front down too, the model outage is what's said.
+    gateway = Gateway()
+    async def scenario():
+        conn, store, jobs, events, _ = connection(tmp_path, front=gateway.front(),
+                                                  complete=Raises(RuntimeError('rook call failed: worker x timed out')))
+        try:
+            await conn.start(text='check my phone', speak=False)
+            await settle(conn)
+        finally:
+            await shutdown(conn, store, jobs)
+        assert spoken(events) == ['Give me a moment.', pipeline_mod.SPOKEN_FAILURE]
+    asyncio.run(scenario())
+
+
+def test_result_still_read_when_front_is_down(tmp_path):
+    gateway = Gateway()
+    async def scenario():
+        conn, store, jobs, events, _ = connection(tmp_path, front=gateway.front(),
+                                                  complete=Script(call('finish', {'text': 'You have no events today.'})))
+        try:
+            await conn.start(text='what is on my calendar', speak=False)
+            await settle(conn)
+        finally:
+            await shutdown(conn, store, jobs)
+        assert spoken(events)[-1] == 'You have no events today.'
     asyncio.run(scenario())
 
 

@@ -41,6 +41,21 @@ PIPELINES = ('classic', 'front_background')
 KINDS = ('start', 'prefetch', 'thought', 'tool_call', 'tool_result', 'board', 'followup', 'dropped', 'done', 'error')
 _turn = ContextVar('background_turn', default=0)
 
+# Spoken when a failure would otherwise be read out verbatim. The detail stays in
+# the owner-only 'error' background event: an upstream error such as llmanifold's
+# "Server error '502 Bad Gateway' for url ..." must never be spoken as a reply.
+MODEL_DOWN_NOTE = 'The language model behind the voice was unavailable, so nothing was looked up or done.'
+SPOKEN_FAILURE = "Sorry, I couldn't reach my language model just now. Please try again in a minute."
+SPOKEN_FAILURE_OTHER = "Sorry, that didn't work. Please try again."
+
+
+def model_unavailable(exc):
+    """An outage of the chat model itself (no healthy endpoint, overloaded, unreachable),
+    as opposed to a tool or policy failure the model can explain."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code >= 500 or exc.response.status_code in (408, 429)
+    return isinstance(exc, (httpx.TransportError, asyncio.TimeoutError))
+
 NARRATION = {
     'calendar_list': 'Checking your calendar.', 'mail_list': 'Checking your mail.',
     'weather': 'Checking the weather.', 'web_search': 'Searching the web.',
@@ -402,7 +417,7 @@ class FrontBackground:
     async def _background(self, turn, text, past, timing):
         _turn.set(turn)
         started = time.monotonic()
-        status, result, error, agent, refusal = 'ok', '', None, None, False
+        status, result, error, agent, refusal, down = 'ok', '', None, None, False, False
         self.emit('start', turn, 'Background started: ' + text[:200])
         try:
             try:
@@ -420,6 +435,7 @@ class FrontBackground:
             except Exception as exc:
                 status, error = 'failed', (str(exc) or type(exc).__name__)[:300]
                 refusal = isinstance(exc, PolicyRefusal)
+                down = model_unavailable(exc)
                 self.emit('error', turn, 'Background failed: ' + error, status='failed')
             timing.mark('background_ms')
             facts = ''
@@ -430,13 +446,14 @@ class FrontBackground:
             elif error:
                 # Non-owners hear a generic failure; detail stays in owner-only events.
                 # A policy refusal's text is safe to speak to anyone.
-                facts = (error if refusal else 'The lookup or action failed: ' + error if self.conn.identity.owner
+                facts = (error if refusal else MODEL_DOWN_NOTE if down
+                         else 'The lookup or action failed: ' + error if self.conn.identity.owner
                          else 'The lookup or action did not work.')
             if facts:
                 if turn != self.latest_turn:
                     self.emit('dropped', turn, 'Follow-up dropped: a newer turn is in progress', result=facts)
                 else:
-                    await self._followup(turn, facts, timing)
+                    await self._followup(turn, facts, timing, failed=bool(error) and not result and not refusal)
             front = self.front_tasks.get(turn)
             if front is not None and front is not asyncio.current_task() and not front.done():
                 # One timing line per turn, after Front has closed its part.
@@ -471,7 +488,7 @@ class FrontBackground:
         while len(self.result_keys) > 3:
             self.board.remove(self.result_keys.popleft())
 
-    async def _followup(self, turn, facts, timing):
+    async def _followup(self, turn, facts, timing, failed=False):
         conn = self.conn
         deadline = time.monotonic() + float(os.environ.get('VOICE_FOLLOWUP_WAIT_S', '90'))
         # Wait for Front (and any narration or older follow-up) to finish speaking.
@@ -492,7 +509,7 @@ class FrontBackground:
             self.emit('dropped', turn, 'Follow-up dropped: a newer turn is in progress', result=facts)
             return
         self.emit('followup', turn, 'Telling you: ' + facts, result=facts)
-        task = self.followup_task = asyncio.create_task(self._speak_followup(turn, facts, timing))
+        task = self.followup_task = asyncio.create_task(self._speak_followup(turn, facts, timing, failed))
         task.add_done_callback(lambda t: (t.exception() if not t.cancelled() else None, self._poke()))
         # A barge-in (Connection.interrupt) cancels the follow-up like any reply.
         conn.task = task
@@ -505,7 +522,7 @@ class FrontBackground:
                 task.cancel()
                 raise
 
-    async def _speak_followup(self, turn, facts, timing):
+    async def _speak_followup(self, turn, facts, timing, failed=False):
         conn = self.conn
         epoch = conn.epoch
         token = current_identity.set(conn.identity)
@@ -528,7 +545,10 @@ class FrontBackground:
         except Exception as error:
             logging.warning('Front follow-up failed: %s', type(error).__name__)
             if not spoken:
-                await on_clause(facts[:300])
+                # Only a real result may be read as-is; a failure note is never spoken raw.
+                await on_clause(facts[:300] if not failed else
+                                SPOKEN_FAILURE if facts == MODEL_DOWN_NOTE or model_unavailable(error)
+                                else SPOKEN_FAILURE_OTHER)
         finally:
             current_identity.reset(token)
             if spoken:
