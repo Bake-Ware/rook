@@ -557,3 +557,21 @@ def test_reply_waits_for_the_user_to_finish_then_merges(tmp_path):
             await shutdown(conn, store, jobs)
         assert users == ['what is the tallest mountain in Africa']
     asyncio.run(scenario())
+
+
+def test_house_agent_answer_ends_the_background_run():
+    from services.voice.bgtools import Toolbox
+    from services.voice.identity import current_identity
+    from services.voice.pipeline import BackgroundAgent
+    from services.voice.policy import background_tools
+    calls = []
+    async def complete(messages, tools, effort):
+        calls.append(1)
+        return {'tool_calls': [{'id': 'h', 'type': 'function', 'function': {
+            'name': 'house_agent', 'arguments': json.dumps({'request': 'What is on the shopping list?'})}}]}
+    async def scenario():
+        current_identity.set(OWNER)
+        agent = BackgroundAgent(Toolbox('s', None, Board(), mcp=HouseMCP('Milk and eggs.')),
+                                background_tools(OWNER, 'assistant'), complete=complete)
+        return await agent.run('what is on the shopping list', [], lambda u: None)
+    assert asyncio.run(scenario()) == 'Milk and eggs.' and len(calls) == 1

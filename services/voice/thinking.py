@@ -309,6 +309,9 @@ class ThinkingAgent:
                 reply = await self.dispatch(name, args, trace, writes, on_event)
                 step_event('tool_result', tool=name, result=reply, status='ok',
                            elapsed_ms=int((time.monotonic() - started) * 1000))
+                if name in getattr(self, 'final_tools', ()) and isinstance(reply, str) and reply.strip():
+                    # Its answer is already the spoken result: no extra model step to restate it.
+                    return reply.strip()
             except UncertainToolOutcome as error:
                 step_event('tool_result', tool=call['function'].get('name'), result=str(error), status='failed')
                 raise
