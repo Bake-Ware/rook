@@ -106,7 +106,17 @@ async def lifespan(app):
         except Exception as error:
             import logging
             logging.warning('Speaker identification not started: %s', type(error).__name__)
+    learning = None
+    speakers, provider = app.state.speakers, app.state.provider
+    if speakers is not None and speakers.available and not speakers.has_assistant_voice(provider.default_voice):
+        # Once per voice (cached in the store): before any session needs the echo guard.
+        async def synthesize(text):
+            return await provider.synthesize(text, provider.default_voice)
+        learning = asyncio.create_task(speakers.learn_assistant_voice(provider.default_voice, synthesize))
+        learning.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
     yield
+    if learning is not None:
+        learning.cancel()
     if app.state.speakers is not None:
         app.state.speakers.close()
     worker_maintenance.cancel()

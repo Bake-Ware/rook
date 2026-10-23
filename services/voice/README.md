@@ -246,7 +246,28 @@ synthesis bursts).
 `speaker.py` labels each voice turn with who spoke it: an enrolled person, a
 `guest`, or `assistant` (the server's own TTS voice coming back through a
 loudspeaker: echo). It is **shadow mode**: the label and scores are logged per
-turn and never change a reply, a tool choice or a permission.
+turn (`speaker`, `speaker_score`, `assistant_score` in the timing line) and
+never change a reply, a tool choice or a permission. The one exception is the
+echo guard below. The server starts it when `VOICE_SPEAKER_MODEL` is set; the
+store is `VOICE_SPEAKER_DB` (default `VOICE_MODEL_DIR/voice-speakers.sqlite3`).
+The assistant's voice reference is learned in the background the first time a
+session's voice has none (cached in the store afterwards).
+
+**Echo guard in the server** (`VOICE_ECHO_GUARD`: `enforce` (default),
+`shadow`, `off`). While the assistant speaks, is held for a barge-in, or within
+1.5 s after, an utterance is dropped (logged as `dropped` with the reason) when
+its transcript repeats a run of at least 3 words, and at least 60% of its words,
+of what the assistant said in this or the previous turn (`echo_text`), or, when
+enforcing, its voice scores at least `VOICE_ECHO_SPEAKER_MIN` (0.6, stricter
+than the 0.50 label) against the assistant's reference (`echo`). Commands it
+just taught ("say forget my voice") are never treated as echo.
+
+**Enrollment by voice.** An owner key saying "enroll my voice" (also learn /
+register / remember) starts it: the assistant asks for three of the
+enrollment sentences, one at a time, without calling the model; "stop" cancels;
+"forget my voice" deletes the voiceprint. Other keys are told it needs the owner
+to set it up (children only with the owner's say-so). The voiceprint is stored
+under the key's principal.
 
 * Model: NeMo TitaNet small (`nemo_en_titanet_small.onnx`, 192-dim embeddings;
   URL and digest in `models.json`) through sherpa-onnx on the CPU, no torch. It
@@ -425,6 +446,62 @@ Images received through protocol-2 `image` messages remain available in native
 image content when a task escalates. The Qwen backend must advertise image input.
 The reference host uses a CPU vision encoder and a 32,768-token model context.
 
+## Turns: intake, barge-in and what was heard
+
+* **Transcribe first.** A finished utterance (`Connection.heard`) is transcribed,
+  and speaker-labelled when that is on, before it may touch the current turn.
+  Utterances are handled one at a time, in order. Silence, noise, Whisper's stock
+  phrases (`stt_gate.py`) and echo never cancel a reply; they are logged as
+  `voice_turn_timing` with `status: dropped` and a `reason` (`quiet`,
+  `no_speech`, `too_short`, `low_confidence`, `repetitive`, `hallucination`,
+  `empty`, `echo_text`, `echo`).
+* **Whisper's gate** (`stt_gate.py`): faster-whisper's VAD (min speech 200 ms,
+  200 ms padding) then per segment `no_speech_prob` > `MAX_NO_SPEECH` (0.6),
+  `avg_logprob` < `MIN_LOGPROB` (-1.0) or `compression_ratio` >
+  `MAX_COMPRESSION_RATIO` (2.4) drops it; under `VOICE_MIN_SPEECH_S` (0.25 s) of
+  voiced audio is too short; a stock phrase ("thank you", "thanks for watching",
+  "you", "bye", ...) is believed only when Whisper was sure (no_speech <= 0.15,
+  logprob >= -0.45, >= 0.6 s of speech). `condition_on_previous_text` is off.
+* **One turn at a time.** Words heard while a spoken turn is still pending and
+  none of its reply has played (within `VOICE_MERGE_WINDOW_S`, 10 s) join it:
+  one user line, one reply. Otherwise the new turn replaces it. A new turn stops
+  older Background runs that have not started an action; follow-ups of older
+  turns are never spoken.
+* **Confirmed barge-in.** A hello with `"barge": "confirm"` (Android from PR
+  #154) gets `"barge": "confirm"` back in `session`. On local speech the client
+  pauses playback and sends `speech_start` with `"hold": true`; the server stops
+  sending audio and lets the utterance through. Real words: `interrupt` and a new
+  turn. Nothing usable (or echo): `{"type": "resume", "turn": n}` and the reply
+  continues where it paused. No utterance within `VOICE_HOLD_QUIET_S` (2.5 s):
+  resume. Held for `VOICE_HOLD_MAX_S` (8 s): resume, or interrupt if the user is
+  still talking (the phone gives up at 10 s).
+* **History is what was heard.** An interrupted reply is recorded up to the
+  played sample count (the client's `playback` acknowledgements, else the
+  server's send clock), cutting the clause in progress by its played share and
+  marking it `[cut off]`.
+* **Endpointing.** Smart Turn scores the utterance at `VOICE_TURN_ANALYZE_MS`
+  (300) of silence; a complete verdict ends it at `VOICE_TURN_COMPLETE_MS` (400,
+  was 600); `VOICE_TURN_MAX_SILENCE_MS` (2000, was 2500) ends it regardless.
+  Smart Turn takes ~65 ms on kaiju's CPU. On synthetic speech it scored
+  cut-off sentences as complete too, so the thresholds were not lowered further.
+
+### Replay set
+
+`replay.py` makes and replays synthetic turns over a real socket, streamed in
+real time like the Android client (aec, `barge: confirm`, playback acks):
+
+```sh
+python -m services.voice.replay make --url https://127.0.0.1:8900 --out ~/voice-replay/set1 --insecure
+python -m services.voice.replay run --url wss://127.0.0.1:8931/ws --dir ~/voice-replay/set1 --insecure
+```
+
+Cases: silence, low noise, a noise burst, mains hum (no turn); three questions
+(one turn, right answer); a question split by a pause (right answer); a real
+barge-in (interrupt, new question answered); a noise barge-in (resume, no
+interrupt); echo of the assistant's voice during its reply (informational). One
+JSON line per case, exit 1 on a failed required case. Run it against the
+candidate after every change, and against live after activation.
+
 ## Per-turn timing
 
 Every turn logs one JSON line on stderr (logger `voice.timing`, so it reaches
@@ -444,6 +521,11 @@ start). `endpoint_ms` is the end-of-utterance wait, `stt_ms` the transcription,
 `total_ms` the end of the turn. Missing keys mean the stage did not happen
 (typed, unspoken or tool-only turns). No transcript or reply text is logged.
 
+Voice turns also carry the STT gate's numbers (`speech_s`, `no_speech`,
+`logprob`, `compression`), the speaker label when that is on (`speaker`,
+`speaker_score`, `assistant_score`) and `merged` (the turn it joined). Dropped
+utterances log `status: dropped` with a `reason` (see "Turns" above).
+
 In the `front_background` pipeline the line is written once Background (and
 its follow-up) finished, and adds `front_first_token_ms`,
 `front_first_audio_ms`, `background_ms` and `followup_ms` (first follow-up
@@ -459,9 +541,27 @@ anything else, or no field, keeps the classic planner path unchanged. Code:
 `bgtools.py` (timers, weather, calendar, mail, Rook tasks, music, Home Assistant).
 
 * Front: one streaming completion per turn to `VOICE_FRONT_URL`/`VOICE_FRONT_MODEL`
-  (default `VLLM_URL`/`VLLM_MODEL`), no tools, thinking off. Prompt = fixed block (persona, rules, mode) + board + last
-  `VOICE_FRONT_TURNS` (6) exchanges + utterance. `VOICE_FRONT_MAX_TOKENS` (200),
-  `VOICE_FRONT_TIMEOUT_S` (30).
+  (default `VLLM_URL`/`VLLM_MODEL`), no tools, thinking off (`reasoning_effort:
+  none` plus `chat_template_kwargs.enable_thinking: false`; verified on kaiju:
+  no reasoning tokens). The prompt is an **append-only transcript**
+  (`front.Transcript`): the fixed block (persona, rules, mode) as the system
+  message, then every exchange as it happened; new board facts ride in the
+  next user message as a bracketed note. kaiju's model (Qwen3-Next on Strata)
+  reuses its cache only when a prompt extends the previous prompt and reply: an
+  append costs ~0.1-0.3 s to first token, any earlier edit a full prefill at
+  ~600 tokens/s. It starts from the last `VOICE_FRONT_TURNS` (6) stored
+  exchanges and restarts past `VOICE_FRONT_TRANSCRIPT_CHARS` (14,000) or when the
+  fixed block changes. At session start a silent one-line exchange warms it
+  (`VOICE_FRONT_WARM=0` disables). The first clause may end at a comma once it
+  has `VOICE_FRONT_EARLY_WORDS` (5) words, so speech starts sooner. Front never
+  says an action is done; a follow-up corrects an earlier wrong answer.
+  `VOICE_FRONT_MAX_TOKENS` (200), `VOICE_FRONT_TIMEOUT_S` (30).
+* House agent (owners): Background's `house_agent` tool asks the hub's house
+  agent (`home.ask` on worker `VOICE_HOUSE_WORKER`, default `rook`; up to
+  `VOICE_HOUSE_TIMEOUT_S`, 100 s) for anything its own tools cannot do; the
+  answer is the result Front speaks. Front's transcript starts with the house
+  agent's shared profile and fact memories (`memory.list`), fetched at session
+  start.
 * Background: the thinking agent's tool loop on `VOICE_BACKGROUND_URL`/
   `VOICE_BACKGROUND_MODEL` (default `VLLM_*`) with only the policy tools, effort
   `VOICE_BACKGROUND_EFFORT` (`low`), `VOICE_BACKGROUND_MAX_STEPS` (8),
