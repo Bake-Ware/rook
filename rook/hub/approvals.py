@@ -884,28 +884,38 @@ class Approvals:
         into an allow where holds do not apply)."""
         cfg = self.config()
         d.target_is_hub = bool(getattr(target, "is_rook", False))
-        if not cfg.enabled:
-            # Off: no holds at all, operator hold rules included.
-            return self._unhold(d, "approvals off") if d.held else d
         if d.denied:
             return d  # a deny always beats a hold
-        if not holdable(p, cfg.principals):
+        agent = holdable(p, cfg.principals)
+        # The trust map (rook/hub/trust.py): a change to something sacred waits
+        # for the person, one to something guarded asks first. It holds even
+        # with approvals.enabled off (that switch is for the blanket holds
+        # below: the person asked for this map by name). A gap (unlisted,
+        # balanced) falls through to the holds below, as before.
+        ruling = self.trust_ruling(d, target) if agent and not own_resource.get() else None
+        trust_hold = None
+        if ruling is not None:
+            d = dataclasses.replace(d, trust_rule=ruling.rule, trust=ruling.cite)
+            if ruling.tier in ("ask", "person") and not (ruling.unlisted
+                                                         and ruling.level == "balanced"):
+                trust_hold = dataclasses.replace(d, decision="hold", hold_kind="trust",
+                                                 hold_reason=ruling.cite, rule=ruling.rule)
+        if not cfg.enabled:
+            # Off: no blanket holds, operator hold rules included; the trust map still holds.
+            if trust_hold is not None:
+                return trust_hold
+            return self._unhold(d, "approvals off") if d.held else d
+        if not agent:
             return self._unhold(d, "never held") if d.held else d
         count = countable(d.cap, d.tier, d.tags, target)
         if count:
             d.spread_target = str(target.id)
-        ruling = None if own_resource.get() else self.trust_ruling(d, target)
-        if ruling is not None:
-            d = dataclasses.replace(d, trust_rule=ruling.rule, trust=ruling.cite)
+            if trust_hold is not None:
+                trust_hold.spread_target = d.spread_target
         if d.held:
             return d  # an operator hold rule or cell
-        # The trust map (rook/hub/trust.py): a change to something sacred waits
-        # for the person, one to something guarded asks first. A gap
-        # (unlisted, balanced) falls through to the holds below, as before.
-        if ruling is not None and ruling.tier in ("ask", "person") \
-                and not (ruling.unlisted and ruling.level == "balanced"):
-            return dataclasses.replace(d, decision="hold", hold_kind="trust",
-                                       hold_reason=ruling.cite, rule=ruling.rule)
+        if trust_hold is not None:
+            return trust_hold
         best = default_score(cfg.hold, d.cap, d.tier, d.tags)
         if best is not None and not own_resource.get():
             rule = policy.best_rule(p, d.cap, d.tier, d.tags, target)
