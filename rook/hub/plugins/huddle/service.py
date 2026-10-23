@@ -621,6 +621,30 @@ class HuddleService:
         self.store.set_roles(room, roles)
         return {"room": room, "name": self.store.assign("room", room), "title": title, "roles": roles}
 
+    async def open_episode(self, title: str, roles: list[str] | None, brief: str,
+                           identity: str) -> dict:
+        """The house agent opens a huddle episode for a request (front door,
+        rook/hub/plugins/home/front.py): a chaired huddle with ``roles``, its
+        brief posted by the house agent, and a round started on it."""
+        out = await self.start(identity, title, roles)
+        h = self._chaired(out["room"])
+        text = _text(brief, "brief", 8000, required=True)
+        sent = self._send(out["room"], identity, text, [])
+        out["round"] = self._chair().begin(h, sent["seq"], identity, text)
+        return out
+
+    async def continue_episode(self, ref: str, text: str, identity: str) -> dict:
+        """The house agent adds to a huddle episode: posted, and a round started."""
+        h = self._chaired(ref)
+        if h.get("archived"):
+            raise ValueError("that huddle is archived; unarchive it to post")
+        if not h.get("roles"):
+            raise ValueError("that is a 1:1 huddle with the house agent; open a huddle with roles")
+        text = _text(text, "text", 8000, required=True)
+        sent = self._send(h["room"], identity, text, [])
+        rid = self._chair().begin(h, sent["seq"], identity, text)
+        return self._named({"room": h["room"], "seq": sent["seq"], "round": rid}, h["room"])
+
     def _chaired(self, room: str) -> dict:
         """The chaired huddle ``room`` (its id or exact name) names."""
         room = self.room_id(room)[0] if room else room

@@ -82,7 +82,8 @@ TIER_WORDS = {
 #: a change to a machine or a project's code. Free on any level.
 PREPARE_CAPS = ("task.write", "knowledge.write", "chat.write", "chat.presence", "huddle.write",
                 "huddle.post", "huddle.start", "memory.remember", "home.ask", "role.ask",
-                "trust.propose", "trust.tighten")
+                "trust.propose", "trust.tighten", "home.settle", "home.playbook_edit",
+                "home.overturn")
 
 WORDS_MAX, WHO_MAX, TEXT_MAX = 1000, 120, 2000
 PROPOSALS_MAX = 50

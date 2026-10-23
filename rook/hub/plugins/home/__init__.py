@@ -46,6 +46,8 @@ from ....core.plugin import Plugin, capability, place, setting
 from ....core.text import clip
 from ....core.settings import SECRET_REF
 from . import agent_host, job_agent
+from .front import FrontDoor, FrontError
+from .playbook import PlaybookError
 from .agent_host import AgentHostBackend, TurnFailed, Unavailable
 from .llm import PROVIDERS, ChatClient, LLMError, aiohttp_request, base_url
 
@@ -216,6 +218,25 @@ class HomeAgent(Plugin):
                 order=6, label="Speaking voice",
                 help="The voice its huddle messages are read aloud in (the Speak button), "
                      "from the hub's voice engine. Blank: the band's default voice."),
+        setting("front_door", bool, False, group="Front door", order=1,
+                label="Route requests (front door)",
+                help="On: every request (voice, web, chat, MCP, huddles it chairs) is triaged: "
+                     "answer it, do it (quick, reversible, allowed by the trust map), dispatch a "
+                     "coding session, or open a huddle; anything else becomes a one-line ask in "
+                     "Approvals. Off: it only answers. docs/design/front-door.md."),
+        setting("front_dispatch_role", str, "lead", pattern=r"^[a-z][a-z0-9_-]{0,31}$",
+                group="Front door", order=2, label="Role for coding sessions",
+                help="The role that owns sessions the house agent dispatches (it needs a code "
+                     "location, role.code_locations)."),
+        setting("ask_ttl_hours", float, 72.0, min=1.0, max=720.0, group="Front door", order=3,
+                label="Asks wait (hours)",
+                help="An unanswered ask expires after this long; nothing is done."),
+        setting("offer_remember", bool, True, group="Front door", order=4,
+                label="Offer to remember answers",
+                help="After acting on your yes, ask once whether to remember it (a playbook rule, "
+                     "or a trust change you accept on the Trust page)."),
+        setting("front_max_calls", int, 8, min=2, max=20, group="Front door", order=5,
+                advanced=True, label="Tool calls per request"),
         setting("job_steps", bool, True, group="Jobs", order=1, label="Work job agent steps",
                 help="Job steps with agent \"home\" may run the home agent with a tool set that "
                      "acts on behalf of the job (never more than the job may do). Chat never "
@@ -255,6 +276,7 @@ class HomeAgent(Plugin):
         self.last_error = ""
         self._http = aiohttp_request          # tests swap in a fake endpoint
         self.agents = AgentHostBackend(self)
+        self.front = FrontDoor(self)
 
     # -- wiring ------------------------------------------------------------
     def bind_host(self, node) -> None:
@@ -280,6 +302,7 @@ class HomeAgent(Plugin):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._task = None
+        self.front.close()
 
     # -- configuration -----------------------------------------------------
     @property
@@ -293,6 +316,10 @@ class HomeAgent(Plugin):
 
     def enabled(self) -> bool:
         return bool(self.settings.get("enabled"))
+
+    def front_door(self) -> bool:
+        """Requests go through the front door (front.py)."""
+        return self.enabled() and bool(self.settings.get("front_door", False))
 
     def config(self, overrides: dict | None = None) -> dict:
         cfg = {s.name: self.settings.get(s.name) for s in self.SETTINGS}
@@ -891,18 +918,31 @@ class HomeAgent(Plugin):
                 person = self.person_of(trigger["sender"])
                 principal = self.chat_principal(trigger["sender"])
                 use_memory = self.may_use_memory(principal)
-                recalled = (await self.recall_for(str(trigger.get("text") or ""), person, rid,
-                                                  people=person is not None)
-                            if use_memory else {"text": "", "ids": []})
-                msgs = [{"role": "system", "content": self.system_prompt(cfg, where,
-                                                                         recalled["text"])}]
-                msgs += self.room_messages(store, rid, cfg)
-                res = await self.complete(
-                    msgs, cfg, thread=rid, via="chat",
-                    may_search=self.may_read_knowledge(principal),
-                    memory={"person": person, "room": rid,
-                            "save": self.may_call(principal, "memory.remember")}
-                    if person and use_memory else None)
+                if self.front_door():
+                    # The front door (front.py): routed, with the room as history.
+                    history = self.room_messages(store, rid, cfg)
+                    if history and history[-1]["role"] == "user":
+                        history = history[:-1]
+                    out = await self.front.handle(
+                        str(trigger.get("text") or ""), source="chat", asker=trigger["sender"],
+                        principal=principal, room=rid, history=history, person=person)
+                    res = {"content": out["answer"], "model": out.get("model") or "",
+                           "latency_ms": out.get("latency_ms"),
+                           "tools_used": out.get("tools_used") or []}
+                    recalled = {"text": "", "ids": []}
+                else:
+                    recalled = (await self.recall_for(str(trigger.get("text") or ""), person,
+                                                      rid, people=person is not None)
+                                if use_memory else {"text": "", "ids": []})
+                    msgs = [{"role": "system", "content": self.system_prompt(cfg, where,
+                                                                             recalled["text"])}]
+                    msgs += self.room_messages(store, rid, cfg)
+                    res = await self.complete(
+                        msgs, cfg, thread=rid, via="chat",
+                        may_search=self.may_read_knowledge(principal),
+                        memory={"person": person, "room": rid,
+                                "save": self.may_call(principal, "memory.remember")}
+                        if person and use_memory else None)
             text = res["content"] or "(no answer)"
             # Address the person who asked in a group room; never @mention an
             # agent (a mention is what makes the other bot answer back).
@@ -1056,12 +1096,16 @@ class HomeAgent(Plugin):
 
     # -- caps ----------------------------------------------------------------
     @capability("ask", risk="write", timeout=None)
-    async def ask(self, question: str, context: str = "") -> dict:
-        """Ask the hub's home agent (its own LLM) a question; returns its answer.
+    async def ask(self, question: str, context: str = "", source: str = "") -> dict:
+        """Ask the hub's home agent a question or give it a request; returns its answer.
 
-        ``context`` is extra text it should consider (it cannot see your
-        conversation). Errors when the home agent is off or not configured, and
-        when one caller asks more than ASK_RATE times a minute."""
+        With the front door on (home.front_door) the request is routed: it
+        answers, does it (trust map permitting), dispatches a coding session
+        or opens a huddle, or asks the person; ``path`` says which, and the
+        answer starts with it. ``context`` is extra text it should consider
+        (it cannot see your conversation); ``source`` names the client
+        (voice, mcp, ...). Errors when the home agent is off or not
+        configured, and when one caller asks more than ASK_RATE times a minute."""
         if not self.enabled():
             raise HomeError("the home agent is off (Manage > Home agent)")
         question = str(question or "").strip()
@@ -1074,6 +1118,23 @@ class HomeAgent(Plugin):
                            ASK_RATE):
             raise HomeError(f"rate limited: at most {ASK_RATE} home.ask calls a minute; "
                             "try again shortly")
+        if self.front_door():
+            src = re.sub(r"[^a-z0-9_-]", "", str(source or "").lower())[:20] or (
+                "voice" if "voice" in str(context or "").lower()[:200] else "ask")
+            try:
+                async with self._ask_sem:
+                    out = await self.front.handle(question, source=src, asker=who,
+                                                  principal=principal, context=context)
+            except (LLMError, HomeError) as e:
+                self._note("ask", False, sender=who, error=str(e)[:300])
+                raise HomeError(summarise(str(e))) from None
+            self._note("ask", True, sender=who, model=out.get("model"),
+                       latency_ms=out.get("latency_ms"), tools=out.get("tools_used"),
+                       path=out["path"])
+            return {"agent": self.identity, "answer": out["answer"], "path": out["path"],
+                    "refs": out["refs"], "done": out["done"], "asks": out["asks"],
+                    "request": out["request"], "model": out.get("model") or "",
+                    "latency_ms": out.get("latency_ms"), "tools_used": out.get("tools_used")}
         user = f"[{who}] {question}" + (f"\n\nContext:\n{context.strip()}" if context else "")
         # Asked by an agent (or a person) directly: shared memory only, never
         # anyone's profile or conversations, and nothing is captured from the
@@ -1102,6 +1163,75 @@ class HomeAgent(Plugin):
         return {"agent": self.identity, "answer": res["content"], "model": res["model"],
                 "latency_ms": res["latency_ms"], "tools_used": res["tools_used"],
                 "memories_used": len(recalled["ids"])}
+
+    # -- the front door's records (front.py, docs/design/front-door.md) -------------
+    @capability("digest", risk="read")
+    def digest(self, limit: int = 20, since: float = 0.0) -> dict:
+        """What the house agent decided for the person without asking, newest first, each with the entry it cited (spoken: a line to read aloud), and its open asks."""
+        return self.front.digest(limit, since)
+
+    @capability("explain", risk="read")
+    def explain(self, ask: str, more: bool = False) -> dict:
+        """One of the house agent's asks explained: 2-3 plain sentences, and more detail with more=true."""
+        try:
+            return self.front.explain(ask, more)
+        except FrontError as e:
+            raise HomeError(str(e)) from None
+
+    @capability("overturn", risk="write")
+    def overturn(self, decision: str, words: str, relayed_by: dict | None = None) -> dict:
+        """Overturn a decision the house agent made for the person (digest): it tightens the entry it cited (trust entry one level up, or an "Ask me first" playbook rule). A person, or a client the person enabled to relay (relayed_by {who, quote, session})."""
+        p = self.ask_principal()
+        by = self._person_or_relay(p, relayed_by, "overturn a decision")
+        try:
+            return self.front.overturn(decision, by=by, words=str(
+                (relayed_by or {}).get("quote") or words), kind="person")
+        except (FrontError, PlaybookError) as e:
+            raise HomeError(str(e)) from None
+
+    @capability("playbook", risk="read")
+    def playbook(self) -> dict:
+        """The house agent's playbook: its routing rules by section (Just do it, Ask me first, coding sessions, huddles, Just answer, Settling disagreements), the file text and recent changes."""
+        return self.front.playbook.public()
+
+    @capability("playbook_edit", risk="write")
+    def playbook_edit(self, op: str, words: str, section: str = "", text: str = "",
+                      id: str = "") -> dict:
+        """Change the house agent's playbook on the person's correction: op add (section, text) or remove (id); words: their exact words. Tightening applies now and is logged; loosening becomes a one-line ask the person answers."""
+        try:
+            return self.front.edit_playbook(op, section, text, id, words=words, by=_actor(),
+                                            source="cap")
+        except (FrontError, PlaybookError) as e:
+            raise HomeError(str(e)) from None
+
+    @capability("settle", risk="write")
+    def settle(self, question: str, positions: list | None = None, cap: str = "",
+               worker: str = "", repo: str = "", branch: str = "", project: str = "",
+               ruling: str = "", rule: str = "", room: str = "") -> dict:
+        """A disagreement between agents for the house agent to settle: question, positions [{who, says}], the action at stake (cap + worker, or repo + branch, or project), the ruling proposed and the playbook rule it relies on. Ruled with a citation when the trust map or playbook settles it, else a one-line ask for the person."""
+        try:
+            return self.front.settle(question, positions, cap=cap, worker=worker, repo=repo,
+                                     branch=branch, project=project, ruling=ruling, rule=rule,
+                                     room=room, source=f"settle:{_actor()}"[:60])
+        except FrontError as e:
+            raise HomeError(str(e)) from None
+
+    def _person_or_relay(self, p: Any, relayed_by: dict | None, what: str) -> str:
+        """Who is deciding: a verified person, or the person through a client
+        they enabled to relay (their words required). Anything else is refused."""
+        if p is not None and getattr(p, "kind", "") == "human" and getattr(p, "verified", False):
+            return str(getattr(p, "label", "") or p.id).split(":", 1)[-1]
+        relay = self.front.relay()
+        if p is None or relay is None or not relay.may_relay(p.id):
+            raise PermissionError(f"only the person may {what}: on the dashboard's Decisions "
+                                  "page, or through a client they enabled to relay (Tokens > "
+                                  "May relay my approvals)")
+        from ...relay import RelayError, relayed_by as clean
+        try:
+            said = clean(relayed_by)
+        except RelayError as e:
+            raise PermissionError(str(e)) from None
+        return f"{said['who']} via {getattr(p, 'label', '') or p.id}"
 
     @capability("status", risk="read")
     def status(self) -> dict:
@@ -1142,7 +1272,44 @@ class HomeAgent(Plugin):
                                                             "context": context}))
             except Exception as e:  # noqa: BLE001
                 return json.dumps({"ok": False, "error": str(e)})
-        return [rook_home_ask]
+        async def rook_house(action: str = "digest", ask: str | None = None,
+                             decision: str | None = None, words: str | None = None,
+                             more: bool = False, relayed_by: dict | None = None,
+                             data: dict | None = None) -> str:
+            """The house agent as front door. digest: what it decided for the person
+            (spoken line + items) and its open asks | explain ask=<name> more? |
+            overturn decision=<name> words, relayed_by {who, quote, session} | playbook |
+            playbook_edit data {op, section, text|id} words | settle data {question,
+            positions, cap, worker, ruling, rule}. Requests go to rook_home_ask."""
+            d = data if isinstance(data, dict) else {}
+            try:
+                if action == "digest":
+                    result = await invoke("home.digest", {"limit": int(d.get("limit") or 20)})
+                elif action == "explain":
+                    result = await invoke("home.explain", {"ask": ask or "", "more": bool(more)})
+                elif action == "overturn":
+                    result = await invoke("home.overturn", {"decision": decision or "",
+                                                            "words": words or "",
+                                                            "relayed_by": relayed_by})
+                elif action == "playbook":
+                    result = await invoke("home.playbook", {})
+                elif action == "playbook_edit":
+                    result = await invoke("home.playbook_edit", {
+                        "op": d.get("op") or "", "section": d.get("section") or "",
+                        "text": d.get("text") or "", "id": d.get("id") or "",
+                        "words": words or ""})
+                elif action == "settle":
+                    result = await invoke("home.settle", {k: d[k] for k in (
+                        "question", "positions", "cap", "worker", "repo", "branch", "project",
+                        "ruling", "rule", "room") if k in d})
+                else:
+                    raise ValueError("action: digest, explain, overturn, playbook, "
+                                     "playbook_edit or settle")
+                return json.dumps({"ok": True, "result": result}, separators=(",", ":"),
+                                  ensure_ascii=False, default=str)
+            except Exception as e:  # noqa: BLE001
+                return json.dumps({"ok": False, "error": str(e)})
+        return [rook_home_ask] + ([rook_house] if self.front_door() else [])
 
     # -- the Manage > Home agent page (operator account; via settings_web) ----
     def page(self, svc) -> dict:

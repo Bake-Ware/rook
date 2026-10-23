@@ -123,3 +123,10 @@ is unsure or when an action looks irreversible. It is a preview, off by
 default, and its **Kill switch** and **Dry run** settings let you stop it or
 watch without acting. Its settings are on the Settings page under
 **Decide (decision model)**.
+
+## The front door
+
+With **Front door** on (Manage > Home agent), the home agent routes every
+request: it answers, does quick things the trust map allows, starts coding
+sessions or brings in the team, and asks you only when it must. See
+[[manual-front-door]].

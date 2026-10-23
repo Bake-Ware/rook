@@ -9,6 +9,22 @@ version was `0.1.0`.
 ## Unreleased
 
 ### Added
+- The house agent as front door (`home.front_door`, off by default). Every request that reaches
+  it (the phone's voice background through `home.ask`, the web chat panel, chat rooms and bridged
+  Telegram, MCP clients, huddles it chairs) is routed one way and the reply says which: it
+  answers; it does it (quick, reversible, and `go` on the trust map; "Done:" is written by the
+  hub only when the action ran); it starts a coding session for the lead developer and tracks it,
+  or opens a huddle ("I've got the team on it: <name>"); or it asks you one line with Yes, No and
+  Explain, listed with the relayed approvals (kind `house`) so the phone's decision card and any
+  client can answer, then acts and offers to remember the answer. Disputes between agents are
+  ruled from the trust map or the playbook with a citation (`home.settle`, the chair's `settle`),
+  and asked otherwise. A playbook file in the house agent's home holds its routing rules
+  (corrections tighten at once, loosening is asked). The dashboard's **Decisions** page lists its
+  asks, what it decided for you with the entry each relied on and a one-tap Overturn (which only
+  tightens), and the playbook editor. New caps `home.digest`, `home.explain`, `home.overturn`,
+  `home.playbook`, `home.playbook_edit`, `home.settle`; MCP tool `rook_house`; settings
+  `home.front_door`, `home.front_dispatch_role`, `home.ask_ttl_hours`, `home.offer_remember`,
+  `home.front_max_calls`. (manual: front-door, home-agent)
 - Decisions and alerts on your phone. The new hub plugin **attention** puts everything waiting
   on you (held calls, held job calls, huddle cards, pinned questions) on the phones named in
   `attention.devices` as decision cards with Yes, No and Explain, and withdraws a card once it

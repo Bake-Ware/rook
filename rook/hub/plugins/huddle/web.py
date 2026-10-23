@@ -80,6 +80,12 @@ PREVIEW_FALLBACK = "Hello. This is how this browser sounds; the hub has no voice
 #: Longest a voice.speak on a device may take to be accepted.
 SPEAK_ON_TIMEOUT = 20.0
 log = logging.getLogger(__name__)
+#: The house agent's front door (rook/hub/plugins/home/front.py; the Decisions page).
+FRONT_ACTIONS = ("front_count", "front_view", "front_answer", "front_explain", "front_overturn",
+                 "front_playbook_save")
+WEAK_FRONT = ("This sign-in uses a password that is stored as a band secret, so agents could "
+              "sign in as you with it. It can't say yes to an action. Answer on your phone's "
+              "card, or change the password (or remove that secret) and sign in again.")
 ROLE_ACTIONS = ("role_list", "role_get", "role_history", "role_presets", "role_memory",
                 "role_workspace", "role_sessions", "role_set", "role_delete", "role_move",
                 "role_memory_edit")
@@ -185,6 +191,48 @@ def routes(get_node: Callable[[], Any], accounts):
                       "personas": personas,
                       "chair": home.identity if home is not None else None}
         return result
+
+    async def front_action(action: str, data: dict, user: dict, request) -> Any:
+        """The Decisions page: the house agent's asks (Yes / No / Explain),
+        the digest with Overturn, and the playbook, as this person."""
+        home = plugin("home")
+        front = getattr(home, "front", None)
+        if home is None or front is None or not home.enabled():
+            raise LookupError("The house agent is off on this hub (Manage > Home agent).")
+        who = str(user.get("name") or user.get("username") or user["id"])
+        if action == "front_count":
+            return {"asks": len(front.store.asks("open"))}
+        if action == "front_view":
+            return {**front.view(), "front_door": home.front_door()}
+        if action == "front_explain":
+            return front.explain(str(data.get("ask") or ""), bool(data.get("more")))
+        if action == "front_answer":
+            a = front.store.find_ask(str(data.get("ask") or ""))
+            decision = str(data.get("decision") or "")
+            if a is not None and a["kind"] == "action" and decision == "yes":
+                weak = True
+                with contextlib.suppress(Exception):
+                    from ....remote.account_web import COOKIE
+                    weak = bool(accounts.session_weak(request.cookies.get(COOKIE, "")))
+                if weak:
+                    raise PermissionError(WEAK_FRONT)
+            return await front.answer(str(data.get("ask") or ""), decision, by=who,
+                                      quote=f"{'Yes' if decision == 'yes' else 'No'} on the "
+                                            "dashboard's Decisions page",
+                                      reason=str(data.get("reason") or "")[:500])
+        if action == "front_overturn":
+            return front.overturn(str(data.get("decision") or ""), by=who,
+                                  words=str(data.get("words") or "Overturned on the dashboard"),
+                                  kind="person")
+        if action == "front_playbook_save":
+            from ..home.playbook import PlaybookError
+            try:
+                out = front.playbook.save_text(str(data.get("text") or ""), who=who,
+                                               words=str(data.get("words") or ""))
+            except PlaybookError as e:
+                raise ValueError(str(e)) from None
+            return {**out, "playbook": front.playbook.public()}
+        raise ValueError("unknown front action")
 
     # -- reading aloud ------------------------------------------------------------
     def name_for(rid: str) -> str | None:
@@ -368,11 +416,22 @@ def routes(get_node: Callable[[], Any], accounts):
         if data is None:
             return json_reply({"csrf": user["csrf"], "you": PERSON,
                                "huddles": service() is not None,
+                               "front": getattr(plugin("home"), "front", None) is not None,
                                "roles": plugin("role") is not None})
         action = data.get("action")
         if action in SPEECH_ACTIONS:
             try:
                 return json_reply({"ok": True, "result": await speech_action(action, data, user)})
+            except PermissionError as error:
+                return json_error(str(error), 403)
+            except LookupError as error:
+                return json_error(str(error), 503)
+            except (ValueError, KeyError, TypeError) as error:
+                return json_error(str(error), 400)
+        if action in FRONT_ACTIONS:
+            try:
+                return json_reply({"ok": True, "result": await front_action(action, data, user,
+                                                                            request)})
             except PermissionError as error:
                 return json_error(str(error), 403)
             except LookupError as error:

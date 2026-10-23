@@ -273,6 +273,7 @@
     <nav id="nav-workspace" aria-label="Workspace">
       <a id="tab-overview" href="#overview" onclick="showView('overview');return false">Overview</a>
       <a id="tab-approvals" href="#approvals" onclick="showView('approvals');return false">Approvals<span class="nav-badge" id="approvals-badge" hidden></span></a>
+      <a id="tab-decisions" href="#decisions" onclick="showView('decisions');return false">Decisions<span class="nav-badge" id="decisions-badge" hidden></span></a>
       <a id="tab-start" href="#start" onclick="showView('start');return false">Start page</a>
       <a id="tab-workers" href="#workers" onclick="showView('workers');return false">Workers</a>
       <a id="tab-bands" href="#bands" onclick="showView('bands');return false">Bands</a>
@@ -404,6 +405,7 @@
     <div id="view-huddles" hidden></div>
     <div id="view-roles" hidden></div>
     <div id="view-trust" hidden></div>
+    <div id="view-decisions" hidden></div>
 
     <!-- INSTALL VIEW -->
     <div id="view-sessions" hidden></div>
@@ -1046,6 +1048,7 @@ const viewInfo={
  overview:['Overview','What is running, what is waiting on you, and the work in progress.'],
  approvals:['Approvals','Agent calls waiting for your yes or no: risky actions, and reaching many machines at once.'],
  trust:['Trust','What agents may change on their own: sacred, guarded or ship-it, in your words.'],
+ decisions:['Decisions','What the house agent asks you, what it decided for you (with what it relied on), and its playbook.'],
  start:['Start page','Your own page: links, news and your band at a glance.'],
  workers:['Workers','Your connected machines, across every band.'],
  account:['Account & access','Your profile, connected logins, and band permissions.'],
@@ -1121,6 +1124,23 @@ async function pollTrust(){
  try{const r=await fetch('/api/trust?count=1',{headers:{Accept:'application/json'}});if(!r.ok)return;const d=await r.json();showTrustCount(Number(d.waiting)||0);}catch{}
 }
 pollTrust();setInterval(pollTrust,60000);
+let frontUI=null, frontLoading=null;
+async function ensureFront(){
+ if(frontUI)return frontUI;
+ if(!frontLoading)frontLoading=import('/account/huddle/assets/front.js').then(m=>m.mountFront($('#view-decisions'),{onCount:showFrontCount})).then(ui=>frontUI=ui).finally(()=>{frontLoading=null;});
+ return frontLoading;
+}
+/* The decisions badge: the house agent's asks waiting for the person. */
+function showFrontCount(n){
+ const b=$('#decisions-badge');if(!b)return;
+ b.textContent=n>99?'99+':String(n);b.hidden=!n;
+ $('#tab-decisions').setAttribute('aria-label',n?'Decisions, '+n+' waiting':'Decisions');
+}
+async function pollFront(){
+ if(document.hidden)return;
+ try{const r=await fetch('/api/decisions?count=1',{headers:{Accept:'application/json'}});if(!r.ok)return;const d=await r.json();showFrontCount(Number(d.waiting)||0);}catch{}
+}
+pollFront();setInterval(pollFront,60000);
 let overviewUI=null, overviewLoading=null, startUI=null, startLoading=null;
 async function ensureOverview(){
  if(overviewUI)return overviewUI;
@@ -1294,6 +1314,7 @@ function showView(v,updateHistory=true){
  if(activeView==='jobs')jobsUI?.deactivate();
  if(activeView==='approvals')approvalsUI?.deactivate();
  if(activeView==='trust')trustUI?.deactivate();
+ if(activeView==='decisions')frontUI?.deactivate();
  if(activeView==='home')homeUI?.deactivate();
  if(activeView==='voice')voiceUI?.deactivate();
  if(activeView==='memory')memoryUI?.deactivate();
@@ -1327,6 +1348,7 @@ function showView(v,updateHistory=true){
  if(v==='guidance')ensureGuidance().then(ui=>{if(activeView==='guidance')ui.activate();}).catch(e=>{$('#view-guidance').textContent=e.message;});
  if(v==='jobs')ensureJobs().then(ui=>{if(activeView==='jobs')return ui.activate();}).catch(e=>{$('#view-jobs').textContent=e.message;});
  if(v==='trust')ensureTrust().then(ui=>{if(activeView==='trust')return ui.activate();}).catch(e=>{$('#view-trust').textContent=e.message;});
+ if(v==='decisions')ensureFront().then(ui=>{if(activeView==='decisions')return ui.activate();}).catch(e=>{$('#view-decisions').textContent=e.message;});
  if(v==='approvals')ensureApprovals().then(ui=>{if(activeView==='approvals')return ui.activate();}).catch(e=>{$('#view-approvals').textContent=e.message;});
  if(v==='help')ensureManual().then(ui=>{if(activeView==='help')return ui.activate();}).catch(e=>{$('#view-help').textContent=e.message;});
  if(v==='knowledge')ensureKnowledge().then(ui=>{if(activeView==='knowledge')ui.activate();}).catch(e=>{$('#view-knowledge').textContent=e.message;});

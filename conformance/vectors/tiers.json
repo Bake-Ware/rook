@@ -642,6 +642,24 @@
   "home.ask": {
    "tier": "write"
   },
+  "home.digest": {
+   "tier": "read"
+  },
+  "home.explain": {
+   "tier": "read"
+  },
+  "home.overturn": {
+   "tier": "write"
+  },
+  "home.playbook": {
+   "tier": "read"
+  },
+  "home.playbook_edit": {
+   "tier": "write"
+  },
+  "home.settle": {
+   "tier": "write"
+  },
   "home.status": {
    "tier": "read"
   },

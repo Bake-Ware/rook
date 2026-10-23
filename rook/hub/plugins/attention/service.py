@@ -88,9 +88,15 @@ def card_for(item: dict) -> dict:
     if not item.get("relayable", True):
         explain += (f" This one is {item.get('why_not') or 'dashboard only'}: decide it on the "
                     "dashboard's Approvals page.")
+    if item.get("line"):
+        # The house agent's own one-line ask (front door): its line and its
+        # plain explanation, not a description of a call.
+        explain = str(item.get("explain") or item["line"])
+        if not item.get("relayable", True):
+            explain += " Answer it on the dashboard's Decisions page."
     created = float(item.get("created") or time.time())
     return {"id": str(item["id"]), "kind": item.get("kind") or "hold",
-            "line": short(f"{who} wants to {what}", LINE_MAX),
+            "line": short(item.get("line") or f"{who} wants to {what}", LINE_MAX),
             "explain": short(explain, EXPLAIN_MAX), "urgency": "normal",
             "channel": "approvals",
             "actions": ["yes", "no", "explain"] if item.get("relayable", True) else ["explain"],
