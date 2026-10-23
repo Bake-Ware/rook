@@ -5,7 +5,9 @@ role memory: 3.3, 4) is built as decided here; H3 (chaired huddles: 5, 7), H4
 (the web: 8) and H5 (jobs and the lead developer: 6, 4.2) are built. Role
 agency (2026-10-21: each role's workspace, the interim action tier the hub
 keeps per cap, and sessions that report back by themselves: 4.5, 5.5) is
-built; it is the precursor of H6's tiers.
+built; it is the precursor of H6's tiers. H6 (10, as built 2026-10-23) is
+the house agent's front door, the trust map, onboarding and the conference
+table with votes.
 Built choices where this document left room: a round starts on a person's or
 a job's post, or a guest agent's that names the chair or a role; the chair
 closes every round it routed (and a direct one where a role failed or two
@@ -718,7 +720,371 @@ As built (H4):
 H1 lands first (everything else needs a backend that can run roles). H2 and
 H4's settings group can follow in parallel; H3 needs H1 and H2; H5 last.
 
-## 10. Rules for every PR
+## 10. H6: the house agent's front door, the trust map and the conference table (as built 2026-10-23)
+
+Status: built 2026-10-23 (overnight track B, phases B1 to B4). B1 to B3
+are merged and live; B4 (the conference table and votes, 10.5 to 10.7) is
+built on branch `overnight-b4/table-votes` and described here as that code
+stands. This replaces the H6 proposal of 2026-10-21 (episodes, intake,
+report-back and action tiers; PR #147, huddle husky-stairwell-hive), which
+is not built in that form. Vision: Rook knowledge page `house-agent-vision`.
+
+### 10.1 What changed from the 2026-10-21 proposal
+
+The proposal put a new layer (episodes behind an `intake.request` cap)
+between Bake and the chair. Bake's vision (2026-10-22) put the house agent
+there instead: it is his assistant and the front door of the band, and a
+huddle is one of the tools it reaches for. So:
+
+| Proposed (2026-10-21) | As built 2026-10-23 |
+|---|---|
+| `intake.request` from every client | The house agent's front door: every client already reaches it (`home.ask`, the chat panel, chat rooms, the voice Background, MCP); one router per request (10.2) |
+| Episodes: a new huddle kind with a store, budget and migration | A chaired huddle the front door opens (`open_huddle`) or continues (`continue_huddle`); no new store, nothing migrated |
+| Action tiers (just do it / do it, then tell / ask first) replacing `autonomy` | The trust map (sacred / guarded / ship-it), enforced by the hub on every holdable principal (10.3); the interim per-cap tier for roles (4.5) stays |
+| Merges and deploys ask first (M1) | Votes at the conference table, carried out by the hub (10.5 to 10.7): merges and ready-for-QA go after a unanimous vote, deploys and ships still ask |
+| Report-back (10.5 of the proposal) | Built for coding sessions before H6 (5.5); job runs do not report back |
+| Roles calling roles, per-episode budgets | Not built (10.10) |
+
+Nothing in sections 4 to 9 is amended by this section; the "As amended"
+notes the proposal added to 4.1, 4.2, 5.1, 5.2, 5.4, 7 and 8 are dropped
+with it. Role `autonomy` keeps its 4.5 meaning. H6 went into `master`, not
+`beta-huddles` (section 9 is the H1 to H5 history).
+
+### 10.2 The front door (B2)
+
+[front-door.md](front-door.md). Every request that reaches the house agent
+goes through one router turn with five paths: **answer**, **do** (a
+reversible action the trust map says `go` to, run as the house agent, never
+on a family device), **dispatch** (a coding session for the lead through
+the roles plugin's own path, 4.5), **huddle** (open or continue a chaired
+huddle with the roles) and **ask**. The reply's first line is written by
+the hub from tool results, so the model cannot claim something was done.
+
+Asks are one line with Yes / No / Explain, kept in `front_asks`, delivered
+through the relayed approvals list (kind `house`): the phone's decision
+card, `rook_approvals` and the dashboard's **Decisions** page. What the
+house agent decided on its own lands in the **digest** with its citation
+(trust entry and the person's words, or a playbook rule); **overturn** only
+tightens. The **playbook** holds Bake's standing rules; the trust map
+always wins over it. Setting `home.front_door` (off by default; on for the
+live hub).
+
+The chair of every huddle is the house agent, so the front door and the
+chair are one identity with one set of limits (10.3).
+
+### 10.3 Trust map and session isolation (B1)
+
+[trust.md](trust.md). One versioned record (`trust.json`, with an
+append-only history) says, per host, repository, project and resource, how
+much agents may do alone: **sacred** (only on Bake's direct instruction;
+agents read, propose, prepare), **guarded** (vote, act, then tell; an ask
+for anything without a vote), **ship-it** (just go). Targets not on the map
+are `balanced`, which is the hub's behaviour before the map (changes go,
+admin asks).
+
+It answers the proposal's action tiers:
+
+- **Enforced by the hub, not by prompts.** The approval layer rules on every
+  call from a holdable principal (agents, roles, integrations, the house
+  agent itself) by cap kind (read, prepare, change, admin) and level; an
+  `ask` or `person` ruling is a hold that cites the entry, its version and
+  Bake's words. The map holds even with `approvals.enabled` off.
+- **Only the person loosens it.** The house agent may only tighten; other
+  agents propose; changes are never relayed (`trust.*` is in the relay
+  FLOOR). Exceptions are scoped and expire, and never cover what they
+  exclude (family devices).
+- **Roles** keep the interim tier (4.5) on top of the map: reads and their
+  workspace are free, `start_session` and `session_send` are routine,
+  everything else is an action card, and secrets (`*secret*`, `vault.*`,
+  `settings.worker_secret`, `*token*`, ...) are an approval for every role,
+  with no setting that lowers them. A routine session in a guarded or
+  sacred code location becomes a card.
+
+Open question 5 of the proposal (sessions could push master under Bake's
+admin credential, card c_839e89992532) is settled:
+
+1. `enforce_admins` is on for `master` (2026-10-23): GitHub refuses a direct
+   push from anyone, admins included (probed live: GH006).
+2. Every session gets a push guard (a pre-push hook outside the worktree)
+   that refuses any ref but its own branch; `tests/test_trust.py` runs the
+   real launcher with a fake `claude` and its `git push origin HEAD:master`
+   is refused.
+3. Minted per-session GitHub App tokens (one repository, contents and pull
+   requests only) and a sandbox that hides the host's credentials are
+   built; they switch on when Bake creates the GitHub App. Until then
+   sessions still run under the host's own GitHub credential, held back by
+   1 and 2. The repository ruleset that stops the app from merging is also
+   Bake's step.
+
+The band's policy file is still in audit mode (4.5); the trust map and the
+interim tiers are enforced whatever that mode is.
+
+### 10.4 Onboarding and the borrowed-state ledger (B3)
+
+[onboarding.md](onboarding.md). A brainstorm with the house agent is one
+thread; when it turns to building, the hub offers once to set up a project
+and asks three questions in fixed words (where it lives, how protected it
+is, what it touches). Answers must be in the person's own message. Setup
+makes the folder or repository, a wiki page, a project record, a trust
+entry (guarded and sacred apply at once; ship-it is a proposal) and a
+starter team (toy: lead; guarded: lead, qa, critic; sacred: lead, qa,
+security, critic).
+
+A sacred host's normal state is recorded as a **baseline** (exact stop and
+restore calls). A project may borrow a baseline resource under a **scoped
+exception** (a proposal Bake accepts on the Trust page, with an expiry);
+the exception covers only that recorded stop or restore call, nothing else
+on the host. Every borrow is a lease in the **ledger** with the restore
+call; a sweep offers to restore when the exception ends, the project ends
+or goes quiet.
+
+### 10.5 The conference table (B4)
+
+`rook/hub/plugins/huddle/table.py`, tables `huddle_artifacts`,
+`huddle_motions`, `huddle_ballots` (migration `003_table.sql`). In a
+chaired huddle the chair (tools `pin`, `call_vote`) or a person (caps
+`huddle.pin`, `huddle.vote`) puts artifacts **on the table**, each pinned
+to an exact version:
+
+| Kind | What | Version |
+|---|---|---|
+| `pr` | a pull request (repo, number) | its head commit SHA |
+| `commit` | a commit | its SHA |
+| `file` | a file in a repository | the commit SHA it was read at (and its hash) |
+| `doc`, `tests` | pasted text: a document, test output | SHA-256 of the text |
+| `link` | a screenshot or preview build | SHA-256 of what the hub fetched |
+
+Every role in the huddle reads what is pinned through the hub with
+`table_read`, always at the pinned version: `summary`, `diff`, `files`,
+`file` (a path), `checks` (CI at that commit), `comments` (the PR's),
+`content` (a pinned document or link). Long text is paged. A read of a PR
+that has moved on says so. Each read is journaled (`huddle.table.read`)
+with the reader. Pinning the same PR or file again at a new version
+supersedes the old pin and voids any open vote on it.
+
+This fixes the proving run's "reviewers read the worktree, not the
+commit": in the H6 design run a review of f758209 was answered from a
+worktree already at a23064c. Reads now come from GitHub at the pinned SHA,
+never from a role's own checkout. Roles cannot pin: `huddle.pin` refuses a
+role caller and is on the roles plugin's never-call list.
+
+### 10.6 Votes
+
+**Who decides a vote is needed.** The chair, when work is ready for an
+action, calls `call_vote(kind, artifact)`; kinds are `merge` and `qa`
+(ready for QA, on a PR) and `deploy` and `ship` (on a commit or PR, to a
+deploy target from `huddle.vote_deploy_targets`). Only a person or the
+house agent calls a vote; roles never do. The hub checks the trust map for
+the target (the PR's repository and base branch, the deploy target's
+worker; a family device counts as sacred): **ship-it** may skip the vote
+(`skip_vote`; the gates still run), **guarded** and unlisted always vote,
+**sacred** votes and then always goes to the person. An active exception
+changes rulings on calls, never whether a vote is needed.
+
+**Required voters** are data (`huddle.vote_voters`); a seat `a|b` is the
+first of those roles that exists, is on and may vote:
+
+| Action | Seats |
+|---|---|
+| merge | lead, qa, security, critic\|skeptic |
+| qa | lead, qa, critic\|skeptic |
+| deploy | release\|devops\|sre, qa, security, critic\|skeptic |
+| ship | release\|devops\|sre, qa, security, critic\|skeptic, product |
+
+Stand-ins (`huddle.vote_alternates`): lead -> architect. A seat nobody can
+fill counts as couldn't verify.
+
+**Who never votes.** Authors: a role whose coding session wrote the branch
+or pull request (from the session records), and a role that pinned it. The
+proposer, if a role. The chair never votes.
+
+**Hard gates first, not voted on** (`GATES`): `version` (the PR is still at
+the pinned head, open, not a draft for a merge), `mergeable` (merge only),
+`ci` (every check on the voted commit green; `huddle.vote_require_ci`),
+`tests` (a check matching `huddle.vote_test_checks` passed), `secrets` (no
+credential-shaped string in the diff), and for deploy and ship `rollback`
+(the target's dry-run call passed). A failed gate stops the vote with the
+reason; the gates run again just before execution.
+
+**The ballot.**
+
+- *Blind.* The required voters vote in parallel, each in a turn of its own
+  with `table_read` and `vote`. A ballot is sealed when cast: the huddle
+  sees "@qa has voted (sealed <hash>)", a commitment over the ballot and a
+  salt; nobody sees another's ballot until all are in, then all are
+  revealed together with their salts.
+- *Bound to the version.* A ballot records the version it read; a new
+  commit on the PR (seen at the tally or at execution) voids the vote, and
+  GitHub merges only at the voted SHA (a moved head is a 409, and the vote
+  is void).
+- *Couldn't verify is a no.* A yes with no evidence, or without a
+  `table_read` of the pinned version in that turn, is counted as couldn't
+  verify. The critic (or skeptic) seat must name a specific risk, or its
+  yes is counted as couldn't verify. A role whose turn fails or that does
+  not vote is couldn't verify.
+- *Any no blocks.* The chair gets one resolution round: `revote` (once,
+  blind again, with a note on what to check), `escalate`, or `withdraw`
+  (the dissent is right; fix the work and pin it again). It never votes
+  and never overrules. A second blocked vote, an escalation, or a chair
+  that cannot decide goes to the person.
+- *The person's ask* is the front door's: kind `vote` in `front_asks`, one
+  line ("Merge Bake-Ware/rook#180: <title>? security said no"), the explanation with
+  each side summarised, the full ballots under Explain. So the phone's
+  decision card, `rook_approvals` and the Decisions page carry it. Yes
+  carries the vote out (gates again first); No drops it.
+
+### 10.7 Execution
+
+A passed vote (every gate, every required voter yes) is carried out by the
+hub, never by a session or a role:
+
+- **Merges** use the GitHub API with the hub's own credential: the vault
+  secret named by `huddle.vote_github_secret` (sessions and roles never see
+  it), at the voted SHA, method `huddle.vote_merge_method`. **Ready for QA**
+  labels the PR `ready-for-qa` and comments with the vote.
+- **Deploys and ships** run the deploy target's `deploy` call (`{sha}` is
+  the voted commit) as the house agent through the front door's
+  `run_action`, so the trust map rules on that call too.
+- **Audit:** every execution is journaled as `huddle.vote.execute` with the
+  vote, the artifact, the voted version, the trust ruling, each gate, each
+  ballot's voter, seat, vote, version and commitment, and who approved (the
+  person, or none for an automatic one). The digest gets a `did` line
+  ("Merged Bake-Ware/rook#180 at abc1234 after a unanimous vote (...)"):
+  do it, then tell.
+
+**The trust ramp** (`huddle.vote_auto`, default `merge`, `qa`): those kinds
+go on their own after a passed vote; `deploy` and `ship` still ask the
+person with a one-line ask until Bake adds them. Sacred targets always ask.
+Exceptions (like the overnight one) never remove a vote, never let a
+sacred target skip the person, and never loosen the ramp.
+
+### 10.8 Worked example (as built)
+
+Bake, on the phone: "get the desktop app work going, and land it when it's
+ready". The repository's trust entry is guarded for `master` only.
+
+1. The voice Background hands it to the house agent (`home.ask`, source
+   `voice`). The router opens a huddle with lead, qa, security and critic
+   (`open_huddle`); the voice reply is "I've got the team on it:
+   <three-word name>." Interruptions: 0.
+2. The chair calls on the lead; the lead (autonomy `routine`) starts a
+   coding session on a branch in the rook checkout (`start_session`; a
+   branch is not `master`, so the trust map says go).
+3. The session reports DONE with a pull request (5.5); the chair pins the
+   PR at its head SHA and calls a merge vote. Interruptions: 0.
+4. The hub runs the gates (head unchanged, merges cleanly, CI and tests
+   green, no secrets in the diff). The lead's session wrote it, so the
+   architect stands in; architect, qa, security and critic read the diff
+   and checks at the pinned SHA and vote blind.
+5. Unanimous yes: the hub merges at that SHA with its own credential and
+   the digest says so. Bake hears it when he asks "what did you decide for
+   me?". Interruptions: 0.
+
+If someone votes no and the chair's one round does not settle it, Bake
+gets one card: "Merge Bake-Ware/rook#180: <title>? security said no" (Yes /
+No / Explain). A deploy of the merged commit is another vote and, with the
+default ramp, one card after it passes.
+
+| Case | Interruptions | Bake sees |
+|---|---|---|
+| ship-it target, merge or qa, gates pass (vote skipped) | 0 | a digest line |
+| guarded or unlisted, unanimous merge or qa | 0 | a digest line |
+| any no, not settled by the chair | 1 | a Yes / No / Explain card |
+| deploy or ship, passed | 1 (until he loosens `huddle.vote_auto`) | a card |
+| sacred target | 1, always | a card |
+| a gate fails | 0 | the reason in the huddle; the work goes back |
+
+### 10.9 Review findings (huddle husky-stairwell-hive, 2026-10-21)
+
+| Finding [raised by] | Status |
+|---|---|
+| Tiers must be hub-enforced per cap and argument, deny by default [skeptic] | Addressed: the trust map is enforced in the approval layer (10.3) and the interim role tier per cap and argument, unknown caps an approval (4.5). Unlisted targets are `balanced` by decision (B1), not deny-all |
+| Topic routing misroutes; needs a replay test [skeptic] | Open: there are no topic-grouped episodes; the router chooses `open_huddle` or `continue_huddle` per request, and there is no routing replay test |
+| No budgets or loop limits [skeptic, security] | Partly: `huddle.max_role_turns`, `huddle.max_followups`, `role.max_tool_calls`, `role.sessions_per_role`, `role.session_max_minutes`, one resolution round per vote, roles never call `role.ask`, a 1:1 huddle refuses `continue_huddle`. No token or money budget per request |
+| Don't remove watcher jobs before report-back is proven [skeptic] | Addressed: nothing here removes them; removal stays gated on a failure test (10.10) |
+| Who checks the rollback was tested [skeptic] | Addressed for votes: the `rollback` gate runs the target's dry run before any deploy or ship vote, and again before execution |
+| Policy audit to enforce is a blocker [security] | Partly: the trust map and interim tiers are enforced whatever the policy mode; the policy file itself is still in audit mode |
+| The never-call list cannot be lowered [security] | Addressed: secrets are an approval for every role with no setting that lowers them (4.5); `trust.*` is never relayed; roles never call `huddle.vote` or `huddle.pin` |
+| Intake auth; request text as data [security, skeptic] | Partly: no new intake surface; requests come through authenticated callers (the house agent never does for a caller what the caller could not do), a dashboard Yes needs a sign-in that is not a band secret, and the hub (not the request text) decides tiers and writes the "Done" line. The router still reads the text as a prompt |
+| Cross-episode leaks: query-time checks [security] | Open: no per-huddle scoping of search |
+| Secret-scan transcripts [security] | Partly: the vote's `secrets` gate scans diffs and action results are masked; transcripts are not scanned |
+| The chair has no privilege [security] | Addressed in a changed form: the chair is the house agent, held by the trust map like any agent; it cannot approve holds, cards or votes, and never votes |
+| Append-only audit tagged role, episode, worker, approver [security] | Partly: the journal (`home.front.action` with `approved_by`, `huddle.vote.execute` with the vote, versions, gates and ballots), `trust-history.jsonl`, `session-tokens.jsonl`. Tagged by huddle, not episode; the huddle's own vote rows are deleted with the huddle (`huddle.retention_days`), the journal rows stay |
+| Worked voice example, interruptions per tier, a test per phase, smallest slice first [product] | Addressed: 10.8; tests `tests/test_trust.py`, `tests/test_front_door.py`, `tests/test_onboarding.py`, `tests/test_table_votes.py`; built in slices B1 to B4 |
+| t_1f8866 dependency [pm] | Open: Claude Code as a provider is still unreliable at tool calls (task in progress). A role that fails to vote counts as couldn't verify, so it fails closed |
+| Rewrite 5.1, 5.2, 5.4, 7 and 9 consistently [architect] | Addressed by not amending them (10.1) |
+| Sessions could push master with the admin token (card c_839e89992532) [skeptic, security] | Addressed: `enforce_admins`, the push guard; minted tokens pending the GitHub App (10.3) |
+| Tier bypass by chaining calls [skeptic] | Partly: every call is ruled on by itself, so a chain reaches nothing a single call could not; `session_send` only resumes the role's own session. No dedicated chaining test |
+| Report-back failure and a forged DONE [skeptic, security] | Partly: the hub follows the session's own terminal stream (5.5), so no other sender can report, and a stall, a vanished terminal or overtime is reported. A session can still print DONE when it is not done, which is why a merge needs gates and a vote. Hub-down fallback open |
+| H6c job-run failure test, H6b budget test [product] | Open: job runs do not report back; no budgets |
+| Private path and hostname in the public repo (old 10.11) [security] | Addressed in this section; the hostname in older sections is open (10.10) |
+| The H6a push test must be a real git push [skeptic] | Addressed: `tests/test_trust.py` pushes with real git through the real launcher; and a live probe |
+| M1: merges ask first or do it, then tell | Settled by votes: merges and ready-for-QA go after a unanimous vote, deploys and ships ask (10.7) |
+| M2: one request or grouped by topic | Open (10.10) |
+| S1 three-word names | Addressed: huddles, asks, votes and artifacts have speakable names |
+| S2 projects are tags on episodes | Superseded: projects are records (B3, 10.4) |
+| S3 how an episode ends | Superseded: no episodes; a huddle is archived, and its rounds close when settled (5.1) |
+| S4 what a role's context carries | Partly: the huddle transcript, its open cards and the table summary; no recap of other huddles |
+| S5 escalation worker, role, chair, Bake | Addressed: a session reports to its role (5.5), the chair closes or settles (front-door.md 4), and what remains is one ask |
+| S6 the chair is a single point of failure | Open (10.10) |
+| S7 tiers for spending money and test hubs | Open (10.10) |
+| Reviewers read the worktree, not the commit (proving run) | Addressed: `table_read` at the pinned version (10.5) |
+
+### 10.10 Open items
+
+Settled: proposal questions 1 (H6 into `master`), 2 and 3 (no episode
+store; huddles and project records instead), 5 (session isolation, 10.3)
+and 7 (M1, by votes). Still open:
+
+1. **Report-back when the hub is down.** Who tells Bake? Watcher jobs stay
+   until a failing session and a failing job run are shown reaching him.
+2. **Topic grouping (M2).** Bake's decision 1 groups work by topic; the
+   router decides per request with no replay test.
+3. **Tiers for spending money and test hubs** (S7): unlisted is `balanced`
+   today, so they need a trust entry or a rule.
+4. **The chair is down** (S6). Any fallback router must keep the same trust
+   map and holds, and cannot approve cards, holds or votes.
+5. **Budgets** per request or huddle (tokens, money, tool calls) and a
+   daily cap: not built.
+6. **Transcript secret scan** and **query-time scoping** of huddle search:
+   not built.
+7. **Roles calling roles**: not built; the chair still routes every turn.
+8. **Bake's GitHub steps**: create the GitHub App (minted session tokens)
+   and the master ruleset (trust.md 5). If the ruleset restricts updates
+   to repository admins, the hub's merge credential has to be an admin's
+   or be on the bypass list.
+9. **Deploy targets and the merge credential** are per hub
+   (`huddle.vote_deploy_targets`, `huddle.vote_github_secret`): with no
+   target a deploy or ship vote cannot be called, a target without a dry
+   run stops at the rollback gate, and without the credential the hub
+   cannot merge. None is configured on the live hub yet.
+10. **Local repositories** (no GitHub remote) cannot be pinned; the table
+    reads through the GitHub API only.
+11. **Job runs** do not report back the way sessions do (5.5).
+12. **Voice tasks** (proposal question 4): voice reaches the front door
+    through the voice Background (`home.ask`); whether the two older voice
+    tasks are closed by that is Bake's call.
+13. **The hostname of the agent host** in older sections of this file and
+    in section 11: scrub it from the public docs or not.
+
+### 10.11 Decision record
+
+- The house agent is the front door and the huddle one of its tools.
+  Reason: one assistant for every client, one identity and one set of
+  limits. Rejected: a separate intake and episode layer (a second front
+  door and a second store for the same conversation).
+- Tiers are the trust map, enforced by the hub on every holdable call.
+  Reason: a mislabel by a role or a prompt cannot loosen it, and Bake reads
+  and changes one record. Rejected: role-chosen tiers, prompt-only rules,
+  a separate tiers table.
+- Merges and deploys are votes carried out by the hub. Reason: review is
+  real (every voter reads the same pinned version), facts are gates rather
+  than opinions, and no session ever holds a credential that can merge.
+  Rejected: sessions merging their own work; asking Bake for every merge.
+- The ramp starts at merge and ready-for-QA; deploys and ships ask until
+  Bake loosens `huddle.vote_auto`. Sacred always asks.
+
+## 11. Rules for every PR
 
 As in jobs.md 10: tests run with a scratch `HOME`, never the real one; no
 secret values anywhere (`{{secret:name}}`); nothing installed on or changed
