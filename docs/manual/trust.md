@@ -85,8 +85,10 @@ tap **OK**. Nothing relays a change to the map.
 When an exception lets an experiment change something sacred (stop a
 service on a GPU, say), the map keeps a ledger row: what changed, why, who
 allowed it, and exactly how to restore it. The Trust page lists open rows
-under **Borrowed state**. Onboarding a project will fill these in; for now
-they can be added by hand.
+under **Borrowed state**, with your words and until when; **Normal state**
+lists each machine's recorded normal state. The house agent fills these in
+when you start a project by talking to it and say it may borrow something:
+see [[manual-onboarding]].
 
 ## Coding sessions can't push the main branch
 

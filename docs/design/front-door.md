@@ -143,3 +143,7 @@ rule is added. The action is not undone.
 - Votes (H6, phase 5): guarded actions still ask the person.
 - Asks are not yet urgency-classified; the attention plugin posts each list
   item as a normal card.
+- Starting a project from a conversation and the borrowed-state ledger came
+  with B3: docs/design/onboarding.md (router tools `note`, `offer_project`,
+  `project_intake`, `project_setup`, `borrow`, `restore`, `ledger`,
+  `record_baseline`; path `onboard`; ask kinds `restore`, `review`).

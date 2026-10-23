@@ -9,6 +9,23 @@ version was `0.1.0`.
 ## Unreleased
 
 ### Added
+- Starting a project by talking to the house agent, and the borrowed-state ledger (with the
+  front door on). While you brainstorm it keeps running notes; when the talk turns to building
+  it asks once "Sounds like this wants to be a project. Want me to set it up?", then asks where
+  it lives, how protected it is and what it touches, recording each answer in your words (it
+  never fills one in), reads the plan back, and on your yes creates the folder or local git repo,
+  a project record, a wiki page from its notes, a trust entry with your words (guarded and sacred
+  at once; ship-it waits for your tap on the Trust page) and a starter team. A toy on a stricter
+  host (kaiju) gets a proposed scoped exception naming only that host's recorded resources (new
+  trust map `baseline` and `resource:` selector: only the house agent's own recorded stop or
+  restore call for it matches). Borrowing ("shut down Strata on GPU 1 for it") is recorded as a
+  lease with what changed, why, your words and how to restore it; "bring Strata back" restores
+  it; the house agent offers once to restore when the project finishes, goes quiet or its
+  exception ends, and asks "Still a toy?" on the review date. Decisions page: **Borrowed now**
+  and **New projects**; Trust page: the ledger with your words and **Normal state**. New caps
+  `home.ledger`, `home.projects`, `home.restore`; `rook_house` actions `ledger`, `restore`,
+  `projects`; settings `home.onboard_review_days`, `home.onboard_quiet_days`,
+  `home.onboard_concept`, `home.onboard_sweep_minutes`. (manual: onboarding, trust)
 - The house agent as front door (`home.front_door`, off by default). Every request that reaches
   it (the phone's voice background through `home.ask`, the web chat panel, chat rooms and bridged
   Telegram, MCP clients, huddles it chairs) is routed one way and the reply says which: it

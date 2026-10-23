@@ -93,9 +93,12 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `home.ask` | question, context='', source='' | write | Ask the hub's home agent a question or give it a request; returns its answer. |
 | `home.digest` | limit=20, since=0.0 | read | What the house agent decided for the person without asking, newest first, each with the entry it cited (spoke… |
 | `home.explain` | ask, more=false | read | One of the house agent's asks explained: 2-3 plain sentences, and more detail with more=true. |
+| `home.ledger` | host='' | read | Borrowed state: what changed away from a host's normal state, why, whose words, how to restore it (spoken: a… |
 | `home.overturn` | decision, words, relayed_by? | write | Overturn a decision the house agent made for the person (digest): it tightens the entry it cited (trust entry… |
 | `home.playbook` | — | read | The house agent's playbook: its routing rules by section (Just do it, Ask me first, coding sessions, huddles,… |
 | `home.playbook_edit` | op, words, section='', text='', id='' | write | Change the house agent's playbook on the person's correction: op add (section, text) or remove (id); words: t… |
+| `home.projects` | — | read | Projects the house agent set up from a conversation, and its brainstorm and intake threads (stage, plan read… |
+| `home.restore` | what, words='', relayed_by? | write | Bring borrowed state back ("bring Strata back"): what = the resource, project or lease; runs the recorded res… |
 | `home.settle` | question, positions?, cap='', worker='', repo='', branch='', project='', ruling='', rule='', room='' | write | A disagreement between agents for the house agent to settle: question, positions [{who, says}], the action at… |
 | `home.status` | — | read | Whether the home agent is on, its identity, endpoint host and model, and the last error (never the key). |
 | `hub.info` | — | read | What the hub runs: version, core API, roles, facts and plugins. |
@@ -176,7 +179,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `telegram.send` | text, chat? | write | Post a message to the configured Telegram chat. |
 | `telegram.status` | — | read | Telegram integration status: connected, chat and token configured (never the token), bridged rooms, counters… |
 | `trust.check` | cap='', worker='', repo='', branch='', project='', tier='' | read | The ruling for an action, with its citation: a cap on a worker (its tier is the band's), or repo + branch (a… |
-| `trust.get` | section='' | read | The trust map: summary (what agents get in context) and the map; section: entries\|exceptions\|ledger\|proposals… |
+| `trust.get` | section='' | read | The trust map: summary (what agents get in context) and the map; section: entries\|exceptions\|baseline\|ledger\|… |
 | `trust.history` | limit=30, entry='' | read | Changes to the trust map, newest first: who, when, the person's words, before and after (entry: one entry's). |
 | `trust.propose` | change?, why='' | write | Ask the person to change the trust map: change {op, data} (set_entry, delete_entry, set_unlisted, add_excepti… |
 | `trust.tighten` | op, data?, words='', session='' | write | Make the trust map stricter (house agent or a person): op set_entry (new guarded/sacred entry, or a higher le… |

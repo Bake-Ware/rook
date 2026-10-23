@@ -242,6 +242,23 @@ class HomeAgent(Plugin):
                      "or a trust change you accept on the Trust page)."),
         setting("front_max_calls", int, 8, min=2, max=20, group="Front door", order=5,
                 advanced=True, label="Tool calls per request"),
+        setting("onboard_review_days", int, 14, min=1, max=365, group="New projects", order=1,
+                label="Review a new project after (days)",
+                help="A project the house agent set up comes back as \"Still a toy?\" after "
+                     "this long; a scoped exception it proposes expires then. "
+                     "docs/design/onboarding.md."),
+        setting("onboard_quiet_days", int, 14, min=1, max=365, group="New projects", order=2,
+                label="Offer to restore after quiet (days)",
+                help="When a project that borrowed something (e.g. a stopped service) has been "
+                     "quiet this long, the house agent offers to restore it."),
+        setting("onboard_concept", str, "", pattern=r"^[a-z0-9_-]{0,64}$", group="New projects",
+                order=3, advanced=True, label="Concept for new projects",
+                help="The concept new projects are filed under (slug or id). Blank: "
+                     "house-projects, created on first use."),
+        setting("onboard_sweep_minutes", int, 10, min=0, max=1440, group="New projects",
+                order=4, advanced=True, label="Check borrowed state every (minutes)",
+                help="How often it looks for borrowed state to offer back and projects to "
+                     "review. 0: never."),
         setting("job_steps", bool, True, group="Jobs", order=1, label="Work job agent steps",
                 help="Job steps with agent \"home\" may run the home agent with a tool set that "
                      "acts on behalf of the job (never more than the job may do). Chat never "
@@ -265,6 +282,7 @@ class HomeAgent(Plugin):
         self._node: Any = None
         self._chat: Any = None
         self._task: asyncio.Task | None = None
+        self._sweeper: asyncio.Task | None = None
         self._replies: set[asyncio.Task] = set()
         self._busy: set[str] = set()
         self._sem = asyncio.Semaphore(2)
@@ -299,9 +317,28 @@ class HomeAgent(Plugin):
     async def start(self) -> None:
         self._load_cursor()
         self._task = asyncio.get_running_loop().create_task(self._watch())
+        self._sweeper = asyncio.get_running_loop().create_task(self._sweep_loop())
+
+    async def _sweep_loop(self) -> None:
+        """Borrowed state and new projects (onboard.py): offer to restore and
+        ask "still a toy?" when their time comes."""
+        await asyncio.sleep(60)
+        while True:
+            every = int(self.settings.get("onboard_sweep_minutes") or 0)
+            if every and self.front_door():
+                try:
+                    made = await self.front.onboard.sweep()
+                    if made:
+                        log.info("home agent: offered %s", ", ".join(made))
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 - try again next time
+                    log.exception("home agent: borrowed-state sweep failed")
+            await asyncio.sleep(max(1, every or 10) * 60)
 
     async def stop(self) -> None:
-        tasks = [t for t in [self._task, *self._replies] if t is not None and not t.done()]
+        tasks = [t for t in [self._task, self._sweeper, *self._replies]
+                 if t is not None and not t.done()]
         for t in tasks:
             t.cancel()
         if tasks:
@@ -1221,6 +1258,32 @@ class HomeAgent(Plugin):
         except FrontError as e:
             raise HomeError(str(e)) from None
 
+    @capability("ledger", risk="read")
+    def ledger(self, host: str = "") -> dict:
+        """Borrowed state: what changed away from a host's normal state, why, whose words, how to restore it (spoken: a line to read aloud); and each host's recorded normal state. host: one machine."""
+        return self.front.onboard.ledger(host)
+
+    @capability("projects", risk="read")
+    def projects(self) -> dict:
+        """Projects the house agent set up from a conversation, and its brainstorm and intake threads (stage, plan read back, what setup did)."""
+        rows = self.front.store._q("SELECT * FROM onboard_projects ORDER BY created DESC")
+        for r in rows:
+            r["data"] = json.loads(r.get("data") or "{}")
+            r["exceptions"] = json.loads(r.get("exceptions") or "[]")
+        return {"projects": rows, "threads": self.front.onboard_view()["onboarding"]}
+
+    @capability("restore", risk="write", timeout=None)
+    async def restore(self, what: str, words: str = "", relayed_by: dict | None = None) -> dict:
+        """Bring borrowed state back (\"bring Strata back\"): what = the resource, project or lease; runs the recorded restore call and closes the lease. A person, or a client the person enabled to relay (relayed_by {who, quote, session})."""
+        p = self.ask_principal()
+        by = self._person_or_relay(p, relayed_by, "restore borrowed state")
+        lease = self.front.onboard.find_lease(what)
+        if lease is None:
+            raise HomeError(f"nothing borrowed matches {what!r} (home.ledger lists what is)")
+        quote = str((relayed_by or {}).get("quote") or words or f"restore {what}")
+        return await self.front.onboard.restore_lease(
+            lease, by=by, words=quote, source="cap", approved=f"{by} (restore {lease['id']})")
+
     def _person_or_relay(self, p: Any, relayed_by: dict | None, what: str) -> str:
         """Who is deciding: a verified person, or the person through a client
         they enabled to relay (their words required). Anything else is refused."""
@@ -1285,7 +1348,8 @@ class HomeAgent(Plugin):
             (spoken line + items) and its open asks | explain ask=<name> more? |
             overturn decision=<name> words, relayed_by {who, quote, session} | playbook |
             playbook_edit data {op, section, text|id} words | settle data {question,
-            positions, cap, worker, ruling, rule}. Requests go to rook_home_ask."""
+            positions, cap, worker, ruling, rule} | ledger data {host?}: what is borrowed |
+            restore data {what} words, relayed_by | projects. Requests go to rook_home_ask."""
             d = data if isinstance(data, dict) else {}
             try:
                 if action == "digest":
@@ -1303,13 +1367,21 @@ class HomeAgent(Plugin):
                         "op": d.get("op") or "", "section": d.get("section") or "",
                         "text": d.get("text") or "", "id": d.get("id") or "",
                         "words": words or ""})
+                elif action == "ledger":
+                    result = await invoke("home.ledger", {"host": d.get("host") or ""})
+                elif action == "projects":
+                    result = await invoke("home.projects", {})
+                elif action == "restore":
+                    result = await invoke("home.restore", {"what": d.get("what") or "",
+                                                           "words": words or "",
+                                                           "relayed_by": relayed_by})
                 elif action == "settle":
                     result = await invoke("home.settle", {k: d[k] for k in (
                         "question", "positions", "cap", "worker", "repo", "branch", "project",
                         "ruling", "rule", "room") if k in d})
                 else:
                     raise ValueError("action: digest, explain, overturn, playbook, "
-                                     "playbook_edit or settle")
+                                     "playbook_edit, settle, ledger, restore or projects")
                 return json.dumps({"ok": True, "result": result}, separators=(",", ":"),
                                   ensure_ascii=False, default=str)
             except Exception as e:  # noqa: BLE001

@@ -49,14 +49,15 @@ from typing import Any, Awaitable, Callable
 from ....core import names
 from ....core.db import open_db
 from ....core.text import clip
+from .onboard import OnboardError, Onboarding
 from .playbook import ACT, TITLES, Playbook, PlaybookError, direction
 
 log = logging.getLogger("rook.hub.plugins.home.front")
 
 MIGRATIONS = Path(__file__).resolve().parent / "migrations"
 NAMESPACE = "home"
-PATHS = ("answer", "do", "dispatch", "huddle", "ask")
-ASK_KINDS = ("action", "dispute", "gap", "playbook", "remember")
+PATHS = ("answer", "do", "dispatch", "huddle", "ask", "onboard")
+ASK_KINDS = ("action", "dispute", "gap", "playbook", "remember", "restore", "review")
 ASK_STATES = ("open", "yes", "no", "expired", "cancelled")
 DECISION_KINDS = ("did", "dispatched", "huddle", "ruled", "tightened")
 LINE_MAX, EXPLAIN_MAX, MORE_MAX = 160, 600, 4000
@@ -171,6 +172,56 @@ TOOLS = {
         "desktop worker.",
         {"worker": {"type": "string"}, "prefix": {"type": "string"}}),
 }
+TOOLS.update({
+    "note": _fn("note", "Brainstorming: add the gist of a new point to your running notes for "
+                "this conversation (title: a short name for the idea, once you have one).",
+                {"text": {"type": "string"}, "title": {"type": "string"}}, ["text"]),
+    "offer_project": _fn(
+        "offer_project", "The talk turned to building: offer once to set it up as a project "
+        "(the hub asks the question). title: a short name for it.",
+        {"title": {"type": "string"}}),
+    "project_intake": _fn(
+        "project_intake", "Record the person's answer while setting up a project. answer: start "
+        "(yes, set it up) | decline | cancel | title | where (machine, kind folder|repo, new, "
+        "path, repo) | protection (level toy|guarded|sacred) | touches (touches [{host, "
+        "resource, what}] or nothing=true) | review (review_days). words: their exact words "
+        "from this message. The hub asks the next question.",
+        {"answer": {"type": "string"}, "words": {"type": "string"},
+         "title": {"type": "string"}, "machine": {"type": "string"},
+         "kind": {"type": "string", "enum": ["folder", "repo"]}, "new": {"type": "boolean"},
+         "path": {"type": "string"}, "repo": {"type": "string"},
+         "level": {"type": "string", "enum": ["toy", "guarded", "sacred"]},
+         "touches": {"type": "array", "items": {"type": "object", "properties": {
+             "host": {"type": "string"}, "resource": {"type": "string"},
+             "what": {"type": "string"}}}},
+         "nothing": {"type": "boolean"}, "review_days": {"type": "integer"}},
+        ["answer", "words"]),
+    "project_setup": _fn(
+        "project_setup", "The person agreed to the plan read back: set the project up. words: "
+        "their exact words.", {"words": {"type": "string"}}, ["words"]),
+    "borrow": _fn(
+        "borrow", "Stop a host's known normal state (a baseline resource) for a project, "
+        "recorded in the ledger with how to restore it. words: their exact words.",
+        {"resource": {"type": "string"}, "project": {"type": "string"},
+         "words": {"type": "string"}}, ["resource", "words"]),
+    "restore": _fn(
+        "restore", "Bring borrowed state back (\"bring Strata back\"): what (resource, project "
+        "or lease), words: their exact words.",
+        {"what": {"type": "string"}, "words": {"type": "string"}}, ["what", "words"]),
+    "ledger": _fn("ledger", "What is borrowed right now (what changed, why, how to restore), "
+                  "and each host's normal state. host: one machine.",
+                  {"host": {"type": "string"}}),
+    "record_baseline": _fn(
+        "record_baseline", "Record a sacred host's normal state for one resource: id, entry "
+        "(the host's trust entry), title, normal (one line), stop and restore {worker, cap, "
+        "args}: the exact calls.",
+        {"id": {"type": "string"}, "entry": {"type": "string"}, "title": {"type": "string"},
+         "normal": {"type": "string"}, "stop": {"type": "object"},
+         "restore": {"type": "object"}, "words": {"type": "string"}},
+        ["id", "entry", "title", "normal", "stop", "restore"]),
+})
+ONBOARD_TOOLS = ("note", "offer_project", "project_intake", "project_setup", "borrow", "restore",
+                 "ledger", "record_baseline")
 KNOWLEDGE = _fn("knowledge_search", "Search the band's shared knowledge wiki (excerpts with "
                 "slugs).", {"query": {"type": "string"}}, ["query"])
 
@@ -216,6 +267,7 @@ def compose(state: dict, content: str) -> tuple[str, str]:
     did = [a for a in state["did"] if a.get("ok")]
     started = state["started"]
     asked = state["asked"]
+    said = [x for x in state.get("onboard") or () if x]
     heads = []
     path = "answer"
     if did:
@@ -229,20 +281,33 @@ def compose(state: dict, content: str) -> tuple[str, str]:
             path = "ask"
         a = asked[0]
         heads.append(f"I need you for one thing: {a['line']} (Yes / No / Explain: {a['name']})")
+    ask_last = ""
+    if said:
+        # The onboarding line is the hub's, word for word: what setup did
+        # leads; a question (the offer, the next intake question, the plan
+        # read back) ends the reply, so it is the last thing they hear.
+        if path in ("answer", "ask"):
+            path = "onboard"
+        if said[-1].rstrip().endswith("?"):
+            ask_last = said[-1]
+        else:
+            heads.append(said[-1])
     fixed = {a["summary"] for a in did}
     failed = [a for a in state["did"] if not a.get("ok") and not a.get("asked")
               and a["summary"] not in fixed]
     if failed:
         heads.append("Not done: " + "; ".join(f"{a['summary']} ({a.get('error') or 'failed'})"
                                               for a in failed) + ".")
-    if not did and not started:
+    if not did and not started and not state.get("acted"):
         # Only the hub says an action happened. A model claiming one is corrected.
         text = _LEAD_DONE.sub("", text)
         if _CLAIM.search(text):
             text = "Nothing has been done yet. " + text
     elif did:
         text = _LEAD_DONE.sub("", text)
-    out = " ".join(p for p in heads + [text] if p).strip()
+    if ask_last and text.rstrip().endswith("?"):
+        text = ""        # one question at a time: the hub's
+    out = " ".join(p for p in heads + [text, ask_last] if p).strip()
     return out or "(no answer)", path
 
 
@@ -424,6 +489,7 @@ class FrontDoor:
         self._store: FrontStore | None = None
         self._playbook: Playbook | None = None
         self._tasks: set[asyncio.Task] = set()
+        self.onboard = Onboarding(self)
 
     # -- plumbing --------------------------------------------------------------
     @property
@@ -618,6 +684,12 @@ class FrontDoor:
         t0 = _now()
 
         async def call() -> dict:
+            if action.get("borrow"):
+                # A baseline resource's own stop or restore call: the approval
+                # layer lets an exception naming that resource rule on it.
+                from ...trust import borrowing
+                borrowing.set({"resource": action["borrow"], "cap": cap,
+                               "worker": action.get("worker") or "", "principal": principal.id})
             with self.home._as_self():
                 if client is None:
                     return await asyncio.wait_for(node.dispatch(cap, args, self.home.identity),
@@ -732,6 +804,8 @@ class FrontDoor:
         result: dict = {"ask": a["id"], "name": a.get("name"), "answer": "yes" if yes else "no"}
         if yes:
             result.update(await self._carry_out(a, by, relay))
+        elif a["kind"] == "review":
+            result.update(self.onboard.answer_review(a, False, by))
         else:
             result["note"] = "Nothing was done."
         self.store.set_result(a["id"], result)
@@ -745,15 +819,22 @@ class FrontDoor:
 
     async def _carry_out(self, a: dict, by: str, relay: dict | None) -> dict:
         kind = a["kind"]
-        if kind == "action" and a.get("action"):
+        if kind in ("action", "restore") and a.get("action"):
             act = a["action"]
+            closing = (act.get("after") or {}).get("close_lease")
+            if closing and not self.onboard.lease_open(closing):
+                return {"ok": True, "note": "Already restored; nothing to do."}
             out = await self.run_action(act, approved_by=f"{by} (yes to house ask "
                                         f"{a.get('name') or a['id']})", relay=relay)
             res: dict = {"ok": out["ok"], "note": (f"Done: {act.get('summary')}." if out["ok"]
                                                   else f"Not done: {out.get('error')}.")}
-            if out["ok"]:
+            if out["ok"] and act.get("after"):
+                res["ledger"] = self.onboard.apply_after(act, by, f"yes to {a['line']}")
+            elif out["ok"] and kind == "action":
                 res["remember"] = self._offer_remember(a)
             return res
+        if kind == "review":
+            return self.onboard.answer_review(a, True, by)
         if kind in ("playbook", "remember"):
             ch = a.get("change") or {}
             if ch.get("trust_propose"):
@@ -1067,7 +1148,7 @@ class FrontDoor:
         rid = self.store.add_request(source, asker, text)
         cfg = home.config()
         state: dict = {"did": [], "started": [], "asked": [], "edits": [], "tools": [],
-                       "approved": approved}
+                       "approved": approved, "onboard": [], "acted": False}
         may_search = home.may_read_knowledge(principal)
         use_memory = home.may_use_memory(principal)
         recalled = (await home.recall_for(text, person, room or None, people=person is not None)
@@ -1087,13 +1168,17 @@ class FrontDoor:
                     return await home._run_tool(name, args, room or None)
                 out = await self._tool(name, args, state, source=source, asker=asker,
                                        principal=principal, room=room, request=rid, said=text)
-            except (FrontError, PlaybookError, ValueError, PermissionError, LookupError) as e:
+            except (FrontError, OnboardError, PlaybookError, ValueError, PermissionError,
+                    LookupError) as e:
                 out = {"ok": False, "error": str(e)[:400]}
             return json.dumps(out, default=str)
 
         where = ROUTER_WHERE + f" This request came from {source} (asked by {asker})."
         system = home.system_prompt(cfg, where, recalled["text"])
         system += "\n\n" + self.playbook.prompt_text() + "\n\n" + ROUTER_RULES
+        with contextlib.suppress(Exception):
+            system += "\n\n" + self.onboard.prompt_text(self.onboard.key(source, asker, room),
+                                                         text)
         roles = self._role_line()
         if roles:
             system += "\n\n" + roles
@@ -1148,6 +1233,9 @@ class FrontDoor:
                                                             "tells them."}
         if name == "check_trust":
             return self._check(args)
+        if name in ONBOARD_TOOLS:
+            return await self._onboard_tool(name, args, state, asker=asker, said=said,
+                                            principal=principal, **where)
         if name == "playbook_edit":
             out = self.edit_playbook(str(args.get("op") or ""), str(args.get("section") or ""),
                                      str(args.get("text") or ""), str(args.get("id") or ""),
@@ -1178,6 +1266,42 @@ class FrontDoor:
             return {"ok": True, "summary": summary(items),
                     "items": [Relay.public(i) for i in items]}
         return {"ok": False, "error": f"unknown tool {name!r}"}
+
+    async def _onboard_tool(self, name: str, args: dict, state: dict, *, asker: str, said: str,
+                            principal: Any, source: str, room: str, request: str) -> dict:
+        ob = self.onboard
+        key = ob.key(source, asker, room)
+        where = {"asker": asker, "source": source, "room": room}
+        if name == "note":
+            return ob.note(key, str(args.get("text") or ""), title=str(args.get("title") or ""),
+                           **where)
+        if name == "offer_project":
+            out = ob.offer(key, title=str(args.get("title") or ""), **where)
+        elif name == "project_intake":
+            out = ob.intake(key, args, said, **where)
+        elif name == "project_setup":
+            out = await ob.setup(key, str(args.get("words") or ""), said, request=request,
+                                 principal=principal, **where)
+            state["acted"] = True
+            for a in out.get("asked") or ():
+                state["asked"].append({"name": a["asked"], "line": a["line"]})
+        elif name == "borrow":
+            out = await ob.borrow(key, str(args.get("resource") or ""),
+                                  str(args.get("words") or ""), said,
+                                  project=str(args.get("project") or ""), request=request,
+                                  state=state, principal=principal, **where)
+            return out
+        elif name == "restore":
+            return await ob.restore(key, str(args.get("what") or ""),
+                                    str(args.get("words") or ""), said, request=request,
+                                    state=state, **where)
+        elif name == "ledger":
+            return {"ok": True, **ob.ledger(str(args.get("host") or ""))}
+        else:
+            return {"ok": True, **ob.record_baseline(args, str(args.get("words") or ""))}
+        if out.get("say"):
+            state["onboard"].append(out["say"])
+        return out
 
     def _check(self, args: dict) -> dict:
         cap, worker = str(args.get("cap") or ""), str(args.get("worker") or "")
@@ -1408,5 +1532,21 @@ class FrontDoor:
                              | {"text": _one_line(r["text"], 160),
                                 "reply": _one_line(r["reply"], 200)}
                              for r in self.store.requests(15)],
-                "person": self.person_name()}
+                "person": self.person_name(), **self.onboard_view()}
+
+    def onboard_view(self) -> dict:
+        """New projects (threads and what setup did) and borrowed state."""
+        threads = [{"id": t["id"], "stage": t["stage"], "title": t["title"], "slug": t["slug"],
+                    "source": t["source"], "asker": t["asker"], "updated": t["updated"],
+                    "notes": t["notes"].count("\n- ") + 1 if t["notes"] else 0,
+                    "readback": (t["plan"] or {}).get("readback") or "",
+                    "result": [{k: s.get(k) for k in ("step", "ok", "error", "asked", "proposal")
+                                if s.get(k) is not None}
+                               for s in (t["result"] or {}).get("steps") or []]}
+                   for t in self.onboard.threads(10)]
+        led = {}
+        with contextlib.suppress(Exception):
+            led = self.onboard.ledger()
+        return {"onboarding": threads, "borrowed": led.get("open") or [],
+                "baseline": led.get("baseline") or []}
 

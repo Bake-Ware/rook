@@ -34,12 +34,19 @@ shown on the Trust page until the person acknowledges it. Nothing relays a
 change. ``system`` (the hub machine's own CLI, like editing policy.json) may
 seed it.
 
-**Borrowed state** (``ledger``) and scoped exceptions are data here; the
-flows that open and close them come with onboarding (B3).
+**Borrowed state.** ``baseline`` records a sacred host's normal state, one
+resource at a time ("kaiju runs Strata A on GPU 1"), with the exact calls that
+stop and restore it. A scoped exception may name such resources
+(``resource:<id>`` targets): only the house agent's declared stop or restore
+call for that resource (:data:`borrowing`) matches, never anything else on
+the host. Every change made that way is a ``ledger`` lease: what changed,
+why, the person's words, how to restore it, until when (B3,
+docs/design/onboarding.md).
 """
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import copy
 import datetime as _dt
 import fnmatch
@@ -89,7 +96,15 @@ WORDS_MAX, WHO_MAX, TEXT_MAX = 1000, 120, 2000
 PROPOSALS_MAX = 50
 HISTORY_TAIL = 200
 _ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-_SEL = re.compile(r"^(worker|cap|repo|project):(.+)$")
+_SEL = re.compile(r"^(worker|cap|repo|project|resource):(.+)$")
+
+#: Set by the house agent around one declared stop or restore call of a
+#: baseline resource (``{"resource", "cap", "worker", "principal"}``); the
+#: approval layer passes the resource to the ruling only when the call it is
+#: ruling on is that call (same cap, worker and principal). In-process only:
+#: no agent can set it.
+borrowing: contextvars.ContextVar[dict | None] = contextvars.ContextVar("rook_trust_borrowing",
+                                                                        default=None)
 
 
 class TrustError(ValueError):
@@ -141,6 +156,7 @@ class Ctx:
     repo: str = ""
     branch: str = ""
     project: str = ""
+    resource: str = ""
 
 
 def _glob(pat: str, value: str) -> bool:
@@ -158,6 +174,8 @@ def selector_matches(sel: str, ctx: Ctx) -> bool:
         return _glob(pat, ctx.cap)
     if kind == "project":
         return _glob(pat, ctx.project)
+    if kind == "resource":
+        return bool(ctx.resource) and pat.lower() == ctx.resource.lower()
     if kind == "repo":
         repo, _, branch = pat.partition("#")
         if not ctx.repo or norm_repo(repo) != norm_repo(ctx.repo):
@@ -170,7 +188,7 @@ def check_selector(sel: Any) -> str:
     s = " ".join(str(sel or "").split())
     if not _SEL.match(s):
         raise TrustError(f"target {sel!r}: one of worker:<name>, cap:<cap glob>, "
-                         "repo:<owner>/<name>[#<branch>], project:<slug>")
+                         "repo:<owner>/<name>[#<branch>], project:<slug>, resource:<baseline id>")
     return s
 
 
@@ -291,7 +309,7 @@ def _brief(e: dict) -> dict:
 
 def empty_map() -> dict:
     return {"format": FORMAT, "version": 0, "updated": 0, "unlisted": "balanced",
-            "unlisted_set_by": None, "entries": [], "exceptions": [], "ledger": [],
+            "unlisted_set_by": None, "entries": [], "exceptions": [], "baseline": [], "ledger": [],
             "proposals": [], "notices": []}
 
 
@@ -382,13 +400,50 @@ def clean_exception(raw: Any) -> dict:
     if tier not in TIERS:
         raise TrustError("tier: one of " + ", ".join(TIERS))
     expires_at = parse_when(raw.get("expires"))
-    return {"id": _check_id(raw.get("id"), "id"), "title": str(raw.get("title") or raw.get("id"))
-            .strip()[:120], "applies_to": applies or ["*"], "excludes": excludes,
-            "targets": [check_selector(t) for t in raw.get("targets") or []],
-            "kinds": kinds or ["change", "admin"], "tier": tier,
-            "expires": str(raw.get("expires")) if not isinstance(raw.get("expires"), (int, float))
-            else _iso(expires_at), "expires_at": expires_at,
-            "description": str(raw.get("description") or "").strip()[:TEXT_MAX]}
+    out = {"id": _check_id(raw.get("id"), "id"), "title": str(raw.get("title") or raw.get("id"))
+           .strip()[:120], "applies_to": applies or ["*"], "excludes": excludes,
+           "targets": [check_selector(t) for t in raw.get("targets") or []],
+           "kinds": kinds or ["change", "admin"], "tier": tier,
+           "expires": str(raw.get("expires")) if not isinstance(raw.get("expires"), (int, float))
+           else _iso(expires_at), "expires_at": expires_at,
+           "description": str(raw.get("description") or "").strip()[:TEXT_MAX]}
+    if raw.get("project"):
+        out["project"] = _check_id(raw["project"], "project")
+    return out
+
+
+def clean_call(raw: Any, what: str) -> dict:
+    """``{worker, cap, args}``: one exact call (a baseline resource's stop or
+    restore)."""
+    if not isinstance(raw, dict):
+        raise TrustError(f"{what}: an object {{worker, cap, args}}")
+    worker, cap = str(raw.get("worker") or "").strip(), str(raw.get("cap") or "").strip()
+    if not worker or not re.match(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$", cap):
+        raise TrustError(f"{what}: worker and cap are required (e.g. kaiju, shell.exec)")
+    args = raw.get("args") if isinstance(raw.get("args"), dict) else {}
+    if len(json.dumps(args, default=str)) > TEXT_MAX:
+        raise TrustError(f"{what}.args: too long")
+    return {"worker": worker[:WHO_MAX], "cap": cap, "args": args}
+
+
+def clean_baseline(raw: Any) -> dict:
+    """A sacred host's normal state, one resource: what normal is, and the
+    exact calls that stop and restore it."""
+    if not isinstance(raw, dict):
+        raise TrustError("baseline: an object {id, entry, title, normal, stop, restore}")
+    out = {"id": _check_id(raw.get("id"), "id"),
+           "entry": _check_id(raw.get("entry"), "entry (the host's trust entry id)"),
+           "title": str(raw.get("title") or raw.get("id")).strip()[:120]}
+    normal = " ".join(str(raw.get("normal") or "").split())
+    if not normal:
+        raise TrustError("baseline.normal: what normal looks like (\"kaiju runs Strata A on "
+                         "GPU 1\")")
+    out["normal"] = normal[:TEXT_MAX]
+    out["stop"] = clean_call(raw.get("stop"), "baseline.stop")
+    out["restore"] = clean_call(raw.get("restore"), "baseline.restore")
+    if raw.get("check"):
+        out["check"] = clean_call(raw.get("check"), "baseline.check")
+    return out
 
 
 def clean_lease(raw: Any) -> dict:
@@ -405,6 +460,14 @@ def clean_lease(raw: Any) -> dict:
         out[k] = v[:TEXT_MAX]
     if raw.get("exception"):
         out["exception"] = _check_id(raw["exception"], "exception")
+    if raw.get("project"):
+        out["project"] = _check_id(raw["project"], "project")
+    if raw.get("baseline"):
+        out["baseline"] = _check_id(raw["baseline"], "baseline")
+    if raw.get("restore_call"):
+        out["restore_call"] = clean_call(raw["restore_call"], "lease.restore_call")
+    if raw.get("words"):
+        out["words"] = _clean_words(raw["words"])
     if raw.get("until"):
         out["until_at"] = parse_when(raw["until"])
         out["until"] = str(raw["until"])
@@ -415,7 +478,7 @@ def clean_lease(raw: Any) -> dict:
 # -- the store --------------------------------------------------------------------
 
 OPS = ("set_entry", "delete_entry", "set_unlisted", "add_exception", "end_exception",
-       "add_lease", "close_lease", "decide_proposal", "ack", "confirm")
+       "add_lease", "close_lease", "set_baseline", "decide_proposal", "ack", "confirm")
 
 
 class TrustStore:
@@ -474,9 +537,9 @@ class TrustStore:
 
     def rule(self, cap: str, tier: str, tags: tuple | list = (), *, worker: str = "",
              worker_id: str = "", on_hub: bool = False, repo: str = "", branch: str = "",
-             project: str = "", now: float | None = None) -> Ruling:
+             project: str = "", resource: str = "", now: float | None = None) -> Ruling:
         ctx = Ctx(cap=cap, worker=worker, worker_id=worker_id or "", repo=repo, branch=branch,
-                  project=project)
+                  project=project, resource=resource)
         return rule_map(self.current(), ctx, tier, tags, on_hub,
                         self._clock() if now is None else now)
 
@@ -636,6 +699,24 @@ class TrustStore:
             old = dict(x)
             x["ended"] = actor.stamp(now)
             return old, x, ident
+        if op == "set_baseline":
+            # Describing a host's normal state loosens nothing: an exception
+            # (the person's) still has to name the resource before any of
+            # its calls goes without the person.
+            b = clean_baseline(data.get("baseline") if "baseline" in data else data)
+            if not any(e["id"] == b["entry"] for e in doc["entries"]):
+                raise TrustError(f"no entry {b['entry']!r}: a baseline belongs to a host's entry")
+            doc.setdefault("baseline", [])
+            old = next((r for r in doc["baseline"] if r["id"] == b["id"]), None)
+            if old is not None and house and any(
+                    x.get("ended") is None and f"resource:{b['id']}" in (x.get("targets") or ())
+                    for x in doc["exceptions"]) and (old.get("stop"), old.get("restore")) != (
+                    b["stop"], b["restore"]):
+                raise TrustError(f"an exception names {b['id']}: changing its calls is the "
+                                 "person's alone")
+            b["set_by"] = actor.stamp(now)
+            doc["baseline"] = [r for r in doc["baseline"] if r["id"] != b["id"]] + [b]
+            return old, b, b["id"]
         if op == "add_lease":
             lease = clean_lease(data.get("lease") if "lease" in data else data)
             if not any(e["id"] == lease["resource"] for e in doc["entries"]):
@@ -769,6 +850,11 @@ class TrustStore:
                 scope += " except " + ", ".join(x["excludes"])
             parts.append(f"Exception {x['id']}: {scope} -> {x.get('tier', 'go')} until "
                          f"{x.get('expires')}.")
+        borrowed = [r for r in doc.get("ledger") or () if r.get("state") == "open"]
+        if borrowed:
+            parts.append("Borrowed now: " + "; ".join(
+                f"{r['resource']}: {r['what']} ({r.get('project') or r['why'][:60]})"
+                for r in borrowed[:6]) + ".")
         parts.append("Reads and the band's records are always free. Only the person loosens "
                      "the map (dashboard); propose changes with rook_trust action=propose.")
         return " ".join(parts)
