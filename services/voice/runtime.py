@@ -43,6 +43,8 @@ _LEAD = r"^\W*(?:(?:hey|ok|okay)\W+\w+\W+)?(?:(?:please|can you|could you|would 
 ENROLL_RE = re.compile(_LEAD + r"(?:enrol+|learn|register|remember)\s+my\s+voice\b", re.I)
 FORGET_RE = re.compile(_LEAD + r"(?:forget|delete|remove|erase)\s+my\s+voice\b", re.I)
 CANCEL_RE = re.compile(r"^\W*(stop|cancel|never ?mind|forget it|quit)\b", re.I)
+# A scribed conversation ends after this long with nobody talking.
+SCRIBE_IDLE_S = float(os.environ.get('VOICE_SCRIBE_IDLE_S', '300'))
 
 
 class Connection:
@@ -89,8 +91,10 @@ class Connection:
         self.enrolling = None
         self.timing = None
         self.mode = Mode()
-        # Set when the house voice switched into dictation: where "I'm done" goes back to.
+        # Set when the house voice switched into dictation or scribe: the mode to go back to.
         self.mode_return = None
+        self.scribe_speakers = None
+        self.scribe_idle = None
         self.handoff_tasks = set()
         # 'classic' (default) or 'front_background' (hello opt-in); see pipeline.py.
         self.pipeline = 'classic'
@@ -332,7 +336,7 @@ class Connection:
         if await self._voice_command(text, pcm, held):
             return
         await self.start(text=text, heard={'speech_end': speech_end, 'decided': decided,
-                                           'stt_ms': stt_ms, 'extra': extra})
+                                           'stt_ms': stt_ms, 'extra': extra, 'speaker': speaker})
 
     def echo_text(self, text):
         """The transcript repeats a run of what the assistant said in this or the
@@ -368,15 +372,26 @@ class Connection:
             return False
         if self.enrolling is not None:
             if time.monotonic() - self.enrolling['started'] > 300 or CANCEL_RE.search(text):
+                who = self.enrolling
                 self.enrolling = None
-                await self._reply_direct(text, ['Okay, I stopped learning your voice. Nothing new was saved.'])
+                if who.get('other'):
+                    self.report('enroll_failed', {'name': who['principal'], 'reason': 'stopped'})
+                await self._reply_direct(text, ['Okay, I stopped learning ' + ("that voice" if who.get('other')
+                                                                              else 'your voice') +
+                                                '. Nothing new was saved.'])
                 return True
             principal = self.enrolling['principal']
             result = await speakers.enroll_add(principal, pcm) if speakers else {'ok': False, 'reason': 'off'}
             sentences = speakers.enrollment_sentences() if speakers else []
             if result.get('ok') and result.get('samples', 0) >= result.get('needed', 3) and \
                     speakers.enroll_finish(principal):
+                other = self.enrolling.get('other')
                 self.enrolling = None
+                if other:
+                    self.report('enrolled', {'name': principal, 'samples': str(result.get('samples', 0))})
+                    await self._reply_direct(text, [f"Thanks, {principal}, I've learned your voice. I only use it "
+                                                    "to know who's talking, never as a password."])
+                    return True
                 await self._reply_direct(text, ["Thanks, I've learned your voice. I only use it to know who's "
                                                 "talking, never as a password. Say forget my voice to delete it."])
                 return True
@@ -525,7 +540,10 @@ class Connection:
                 if image:
                     await self.emit("error", msg="Images are not used in dictation mode.")
                 if text and text.strip():
-                    await self._dictate(text.strip(), epoch)
+                    if self.mode.id == 'scribe':
+                        await self._scribe(text.strip(), epoch, heard)
+                    else:
+                        await self._dictate(text.strip(), epoch)
                 return
             if heard is not None:
                 await self.emit("stt", text=text, turn=epoch)
@@ -856,11 +874,77 @@ class Connection:
     async def set_mode(self, mode, by=None):
         """``by='voice'``: the house voice switched it (the client accepts that only
         between modes.VOICE_SWITCHABLE); a client's own switch clears the way back."""
+        if self.mode.id == 'scribe' and mode.id != 'scribe':
+            # Out of scribe however it ends (the name, a quiet spell, the hub: owner gone).
+            if self.scribe_idle is not None and self.scribe_idle is not asyncio.current_task():
+                self.scribe_idle.cancel()
+            self.scribe_idle = None
+            self.scribe_speakers = None
         self.mode = mode
         if by != 'voice':
             self.mode_return = None
         await self.emit("mode", mode=mode.id, custom=mode.custom, **({'by': by} if by else {}))
         self.drain_results()
+
+    def report(self, op, args):
+        """Tell the hub (through the house voice's lane) what happened here: a voice
+        learned or forgotten, a scribed line. Nothing without the house voice."""
+        house = self.fb.house if self.fb is not None else None
+        if house is None:
+            return
+        task = asyncio.create_task(house.control(op, args))
+        self.handoff_tasks.add(task)
+        task.add_done_callback(lambda t: (self.handoff_tasks.discard(t), t.exception() if not t.cancelled() else None))
+
+    # --- scribe: an overheard conversation (the hub keeps the transcript) -------
+    async def _scribe(self, text, epoch, heard):
+        """No reply: who said what, and when, goes to the hub. Saying the assistant's
+        name ends it (and is answered); so does a quiet spell."""
+        from .speaker import SessionSpeakers
+        name = os.environ.get("ROOK_VOICE_ASSISTANT_NAME", "").strip() or "Rook"
+        if re.search(rf"\b{re.escape(name)}\b", text, re.I):
+            await self.scribe_end(then=text)
+            return
+        if self.scribe_speakers is None:
+            self.scribe_speakers = SessionSpeakers()
+        label = self.scribe_speakers.label((heard or {}).get('speaker'))
+        self.report('scribe', {'text': text, 'speaker': label, 'at': f'{time.time():.3f}'})
+        self._arm_scribe_idle()
+
+    def _arm_scribe_idle(self):
+        if self.scribe_idle is not None:
+            self.scribe_idle.cancel()
+
+        async def idle():
+            await asyncio.sleep(SCRIBE_IDLE_S)
+            if not self.closed and self.mode.id == 'scribe':
+                await self.scribe_end()
+        self.scribe_idle = asyncio.create_task(idle())
+        self.scribe_idle.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+
+    async def scribe_end(self, then=None):
+        """Back to the mode before (the house voice's), the hub told the conversation ended;
+        ``then``: what was just said (the assistant's name) becomes a normal turn."""
+        if self.scribe_idle is not None and self.scribe_idle is not asyncio.current_task():
+            self.scribe_idle.cancel()
+        self.scribe_idle = None
+        self.scribe_speakers = None
+        self.report('scribe', {'end': 'true'})
+        back = self.mode_return or Mode()
+        self.mode_return = None
+        await self.set_mode(back, by='voice')
+        if then:
+            current = self.task
+
+            async def handoff():
+                if current is not None and current is not asyncio.current_task():
+                    with contextlib.suppress(BaseException):
+                        await current
+                if not self.closed:
+                    await self.start(text=then, speak=self.speak_out)
+            task = asyncio.create_task(handoff())
+            self.handoff_tasks.add(task)
+            task.add_done_callback(lambda t: (self.handoff_tasks.discard(t), t.exception() if not t.cancelled() else None))
 
     def _dictation_done(self, body):
         """A dictation the house voice started is finished: back to the mode it came
@@ -945,7 +1029,7 @@ class Connection:
 
     async def close(self):
         self.closed = True
-        for task in [*self.intake_tasks, *self.handoff_tasks]:
+        for task in [*self.intake_tasks, *self.handoff_tasks, *([self.scribe_idle] if self.scribe_idle else [])]:
             task.cancel()
         await self.interrupt()
         await self.progress.close()

@@ -53,6 +53,10 @@ class VoiceClient(
         fun onModeChanged(mode: String) {}
         /** The house agent's models (the hub's answer to a models_get/models_set, or a change). */
         fun onVoiceModels(json: String) {}
+        /** The voices the voice server knows (the People list). */
+        fun onVoices(names: List<String>) {}
+        /** "Go to sleep for 10 minutes": don't wake on the wake word for this long. */
+        fun onQuiet(ms: Long) {}
     }
     companion object { const val SR_IN = 16000; const val FRAME_BYTES = 640; const val PLAY_TAIL_MS = 200L }
     private data class Packet(val turn: Int, val sr: Int, val bytes: ByteArray)
@@ -175,7 +179,11 @@ class VoiceClient(
                     "interrupt" -> { minimumTurn = m.optInt("turn", minimumTurn); flush(); waitingInterrupt = false; listener.onInterrupt() }
                     // Held barge was not real speech (empty transcript): carry on where the reply paused.
                     "resume" -> synchronized(audioLock) { if (gate.resume()) unpause() }
-                    "bye" -> listener.onBye(m.optString("mode", "sleep"), m.optLong("after_ms", 0))
+                    "bye" -> {
+                        if (m.optLong("quiet_ms", 0) > 0) listener.onQuiet(m.optLong("quiet_ms"))
+                        listener.onBye(m.optString("mode", "sleep"), m.optLong("after_ms", 0))
+                    }
+                    "voices" -> m.optJSONArray("names")?.let { a -> listener.onVoices((0 until a.length()).map { a.optString(it) }) }
                     "voice_models" -> listener.onVoiceModels(m.toString())
                     "tool" -> listener.onTool(m.optString("title"), m.optString("status"))
                     "error" -> if (m.optString("code") == "unknown_mode") { refuse(m.optString("msg")); return } else listener.onError(m.optString("msg"))
@@ -274,6 +282,8 @@ class VoiceClient(
     fun setVoice(voice: String) = enqueue(JSONObject().put("type", "voice").put("voice", voice))
     /** The Voice models screen: models_get, or models_set with the changed pickers. */
     fun sendModels(type: String, args: JSONObject) = enqueue(JSONObject().put("type", type).put("args", args))
+    /** The People list: voices_get, or voice_forget [name]. */
+    fun sendVoices(type: String, name: String? = null) = enqueue(JSONObject().put("type", type).apply { name?.let { put("name", it) } })
     fun interrupt() { waitingInterrupt = protocol >= 2; flush(); enqueue(JSONObject().put("type", "stop")) }
     fun close() { ws?.close(1000, "bye"); shutdown() }
     @Synchronized private fun shutdown() {

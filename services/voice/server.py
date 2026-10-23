@@ -443,6 +443,21 @@ async def websocket(ws: WebSocket):
                             await conn.emit('error', code='unknown_mode', msg=f'{error} Mode unchanged: {conn.mode.id}.')
                         else:
                             await conn.set_mode(mode)
+                    elif kind in ('voices_get', 'voice_forget'):
+                        # The app's People list: the voices this server knows (owner keys only;
+                        # voiceprints never leave this host).
+                        speakers = getattr(conn, 'speakers', None)
+                        if not conn.identity.owner or speakers is None or not getattr(speakers, 'available', False):
+                            await conn.emit('error', code='voices_unavailable', msg='Voices are not available here.')
+                        else:
+                            if kind == 'voice_forget' and isinstance(msg.get('name'), str) and msg['name'].strip():
+                                name = msg['name'].strip()[:120]
+                                try:
+                                    gone = speakers.forget(name)
+                                except ValueError:
+                                    gone = False
+                                conn.report('forgot', {'name': name, 'removed': 'true' if gone else 'false'})
+                            await conn.emit('voices', names=speakers.enrolled())
                     elif kind in ('models_get', 'models_set'):
                         # The app's Voice models screen: only through the house voice.
                         house = conn.fb.house if conn.fb else None

@@ -50,13 +50,28 @@ MAX_CONTEXT = 4000
 #: The standing brief goes in again at least this often (turns), in case it was compacted away.
 CONTEXT_EVERY = 20
 #: Control events the hub may send a voice client (``voice_event``).
-EVENTS = ("mode", "models")
-#: Control messages a voice client may send (to the hub, as the connection's identity).
-CONTROLS = ("models_get", "models_set")
+EVENTS = ("mode", "models", "enroll_start", "voice_forget", "voices_list", "listen_end")
+#: Control messages a voice client may send (to the hub, as the connection's identity):
+#: the phone's model pickers, and the voice server's own reports (a voice learned or
+#: forgotten, the voices it knows, a scribed line).
+CONTROLS = ("models_get", "models_set", "enrolled", "enroll_failed", "forgot", "voices",
+            "scribe")
 #: A sound the voice server offers ("[laugh]"): what may go in a turn's header.
 SOUND_TAG = re.compile(r"^\[[a-z][a-z ]{0,18}\]$")
 #: Listening modes that reach the voice lane, and how a turn says so.
 MODE_NOTES = {"listen": "active listening", "brainstorm": "brainstorm"}
+
+
+def speaker_line(identity: dict) -> str:
+    """Who a turn's marker says is talking: the voice speaker ID heard ("Bake (sure)",
+    "Robin (probably)", "unknown guest"), else the key's name."""
+    sp = identity.get("speaker") if isinstance(identity.get("speaker"), dict) else None
+    if sp:
+        label = str(sp.get("label") or "guest")
+        if label == "guest":
+            return "unknown guest"
+        return f"{label} ({'sure' if sp.get('sure') else 'probably'})"
+    return str(identity.get("name") or "").strip() or "guest"
 
 
 class Client:
@@ -184,7 +199,7 @@ class VoiceRoom:
             if self.current is not None:
                 self.spawn(self._barge(self.current))     # barge-in
             async with self.lock:
-                name = str(identity.get("name") or "").strip() or "guest"
+                name = speaker_line(identity)
                 note = MODE_NOTES.get(mode)
                 extra = f" | {note}" if note else ""
                 if sounds:
@@ -437,7 +452,14 @@ class VoiceServer:
                                 "error": "user: turn and text (up to 8000 characters)"})
                         continue
                     ident = obj.get("identity") if isinstance(obj.get("identity"), dict) else {}
+                    sp = ident.get("speaker") if isinstance(ident.get("speaker"), dict) else None
                     ident = {k: ident.get(k) for k in ("owner", "name") if k in ident}
+                    if sp is not None:
+                        score = sp.get("score")
+                        ident["speaker"] = {
+                            "label": str(sp.get("label") or "guest")[:40],
+                            "score": score if isinstance(score, (int, float)) else None,
+                            "sure": sp.get("sure") is True}
                     mode = str(obj.get("mode") or "")[:20]
                     raw = obj.get("sound_tags") if isinstance(obj.get("sound_tags"), list) else []
                     sounds = [str(t)[:20] for t in raw[:8]
@@ -450,7 +472,8 @@ class VoiceServer:
                                                                      f"{', '.join(CONTROLS)}"})
                         continue
                     args = obj.get("args") if isinstance(obj.get("args"), dict) else {}
-                    args = {k: str(v)[:80] for k, v in list(args.items())[:8]}
+                    cap = 2000 if op == "scribe" else 400 if op == "voices" else 80
+                    args = {k: str(v)[:cap] for k, v in list(args.items())[:8]}
                     ident = obj.get("identity") if isinstance(obj.get("identity"), dict) else {}
                     ident = {k: ident.get(k) for k in ("owner", "name") if k in ident}
                     room.control(c, op, args, ident)

@@ -296,6 +296,9 @@ are set only in the environment or on the command line.
 | `home.voice_model` | Voice model | hub | str | `claude-haiku-5-5` | `ROOK_HOME_VOICE_MODEL` | live |
 | `home.voice_effort` | Voice effort | hub | str | `low` | `ROOK_HOME_VOICE_EFFORT` | live |
 | `home.brief_phone` | Owner's phone for the voice's brief | hub | str |  | `ROOK_HOME_BRIEF_PHONE` | live |
+| `home.voice_signoff` | Sign-off when it stops listening | hub | str | `short` | `ROOK_HOME_VOICE_SIGNOFF` | live |
+| `home.scribe_ask` | Always ask before taking notes | hub | bool | off | `ROOK_HOME_SCRIBE_ASK` | live |
+| `home.scribe_keep_days` | Keep scribed transcripts (days) | hub | int | `30` | `ROOK_HOME_SCRIBE_KEEP_DAYS` | live |
 | `home.voice_engine` | Voice engine | hub | str | `house` | `ROOK_HOME_VOICE_ENGINE` | live |
 | `home.btw_model` | By-the-way model | hub | str | `haiku` | `ROOK_HOME_BTW_MODEL` | live |
 | `home.compact_at_tokens` | Compact the agent at (tokens) | hub | int | `150000` | `ROOK_HOME_COMPACT_AT_TOKENS` | live |

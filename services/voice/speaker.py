@@ -491,7 +491,7 @@ class Speakers:
             label = principal or "guest"
         return {"label": label, "score": None if score is None else round(score, 4), "principal": principal,
                 "assistant_score": None if assistant_score is None else round(assistant_score, 4),
-                "candidate": best, "ms": ms}
+                "candidate": best, "ms": ms, "vector": vector}
 
     # --- echo guard: the assistant's own voice ---------------------------------------
     def has_assistant_voice(self, voice):
@@ -652,6 +652,40 @@ class Speakers:
     def enrolled(self):
         """Principals with a voiceprint usable by the current model."""
         return sorted(self._prints)
+
+
+class SessionSpeakers:
+    """Who is who in one overheard conversation, without enrollment: each new voice
+    gets the next letter ("Speaker A", "Speaker B") by matching its embedding to the
+    ones heard before in this conversation. Enrolled people keep their names."""
+
+    def __init__(self, threshold=0.55, limit=8):
+        self.threshold, self.limit = threshold, limit
+        self.centroids = []          # [(label, vector, count)]
+
+    def label(self, result):
+        if not result:
+            return "Speaker"
+        if result.get("principal"):
+            return result["principal"]
+        vector = result.get("vector")
+        if vector is None:
+            return "Speaker"
+        vector = normalize(np.asarray(vector, dtype=np.float32))
+        best, score = None, -1.0
+        for i, (label, c, n) in enumerate(self.centroids):
+            s = float(np.dot(vector, c))
+            if s > score:
+                best, score = i, s
+        if best is not None and score >= self.threshold:
+            label, c, n = self.centroids[best]
+            self.centroids[best] = (label, normalize(c * n + vector), n + 1)
+            return label
+        if len(self.centroids) >= self.limit:
+            return self.centroids[best][0] if best is not None else "Speaker"
+        label = "Speaker " + "ABCDEFGH"[len(self.centroids)]
+        self.centroids.append((label, vector, 1))
+        return label
 
 
 def shadow_record(result, turn=None):
