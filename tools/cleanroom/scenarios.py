@@ -337,6 +337,18 @@ def _ask(ctx, text, *, timeout=600):
     return res
 
 
+def _say_yes(ctx, step, res) -> dict:
+    """The person answers Yes to the house agent's ask on the Decisions page."""
+    step.touch("answer Yes to the house agent's one-line ask")
+    if not ctx.hub._cookie:
+        ctx.hub.login()
+    out = ctx.hub.account_post("/account/huddle/api", {"action": "front_answer",
+                                                        "ask": res["asks"][0], "decision": "yes"},
+                               timeout=300)
+    step.note("answered Yes: " + json.dumps(out)[:200])
+    return out if isinstance(out, dict) else {}
+
+
 def first_request(ctx: Ctx):
     run = ctx.run
     names = [m.name for m in ctx.worker_machines()] + ([PHONE_NAME] if ctx.emu else [])
@@ -374,8 +386,11 @@ def first_request(ctx: Ctx):
         s.note(f"{res['_wall_s']} s, path {res.get('path')}, done {res.get('done')}, asks {res.get('asks')}: {ans[:200]!r}")
         if res.get("_error"):
             s.fail(res["_error"])
-        if res.get("path") == "ask":
-            s.touch("answer the house agent's Yes/No ask")
+        if res.get("path") == "ask" and res.get("asks"):
+            out = _say_yes(ctx, s, res)
+            if not json.dumps(out).count("up"):
+                s.fail("the approved action gave no uptime")
+            run.mark_first_useful()
         elif res.get("path") != "do" or "up" not in ans.lower():
             s.fail("expected the do path with an uptime answer")
         else:
@@ -530,8 +545,10 @@ def fix_bug(ctx: Ctx):
             res = _ask(ctx, f"In the toy repo: {toy_seed.BUG} Please get it fixed and open a pull request.")
             s.note(f"house agent: {res['_wall_s']} s, path {res.get('path')}, refs {res.get('refs')}: "
                    f"{str(res.get('answer'))[:160]!r}")
+            if res.get("path") == "ask" and res.get("asks"):
+                _say_yes(ctx, s, res)
             session = _newest_session(hub, t0)
-            if res.get("path") != "dispatch" or session is None or session.get("state") == "failed":
+            if session is None or session.get("state") == "failed":
                 if session is not None:
                     s.note(f"dispatched session {session.get('name')} {session.get('state')}: "
                            f"{str(session.get('status'))[:120]}")
