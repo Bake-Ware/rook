@@ -55,8 +55,9 @@ BACKOFF_MIN_S, BACKOFF_MAX_S = 2.0, 60.0
 # A pushed result nobody could hear: how long to keep collecting its text for the report.
 DROP_COLLECT_S = 10.0
 FILLER = 'One moment.'
-# Control events from the host (not part of a turn's reply).
-CONTROL = ('mode',)
+# Control events from the host (not part of a turn's reply): a listening-mode switch,
+# the hub's answer about models, and the voice config (engine, models) when it changes.
+CONTROL = ('mode', 'models', 'config')
 # A routing line's start: the host strips them; this is the backstop.
 ROUTE_MARK = '<<'
 FAILED = "Sorry, that didn't work. Please try again."
@@ -160,6 +161,8 @@ class Lane:
         self.closed = False
         self.reconnect_task = None
         self.tasks = set()
+        # From the hub through the host: {"engine": "house"|"local", "models": {...}}.
+        self.config = {}
 
     def __repr__(self):
         return f'Lane({safe_url(self.url)!r}, open={self.open})'
@@ -207,6 +210,7 @@ class Lane:
         # says nothing costs a turn CONNECT_S once, then the backoff applies.
         ws, hello = await asyncio.wait_for(self._open(), CONNECT_S)
         self.session = hello.get('session')
+        self.config = {k: hello[k] for k in ('engine', 'models') if k in hello}
         self.ws = ws
         self.reader = asyncio.create_task(self._read(ws))
         self.reader.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
@@ -269,7 +273,10 @@ class Lane:
             turn = int(turn)            # a host that echoes turn numbers as strings
         if kind == 'ready':
             self.session = message.get('session')
+            self.config = {k: message[k] for k in ('engine', 'models') if k in message}
             return
+        if kind == 'config':
+            self.config = {k: message[k] for k in ('engine', 'models') if k in message}
         if kind in CONTROL:
             if self.on_control is not None:
                 self.on_control(message)
@@ -368,6 +375,14 @@ class HouseVoice:
 
     # --- control events ------------------------------------------------------------
     def _on_control(self, message):
+        if message.get('t') in ('models', 'config'):
+            # The phone's Voice models screen: the hub's answer, or a change made elsewhere.
+            fields = {k: v for k, v in message.items() if k not in ('t', 'turn')}
+            task = asyncio.create_task(self.conn.emit('voice_models', **fields))
+            self.control_tasks.add(task)
+            task.add_done_callback(lambda t: (self.control_tasks.discard(t),
+                                              t.exception() if not t.cancelled() else None))
+            return
         if message.get('t') == 'mode':
             task = asyncio.create_task(self._switch(message.get('mode'), message.get('by')))
             self.control_tasks.add(task)
@@ -416,6 +431,16 @@ class HouseVoice:
         and nothing routed), and the caller runs the old path for this turn."""
         fb, conn, lane = self.fb, self.conn, self.lane
         deadline = time.monotonic() + FIRST_DELTA_S
+        try:
+            await lane.ensure()
+        except Unavailable as error:
+            return self._fallback(epoch, timing, error.code, error.detail)
+        if lane.config.get('engine') == 'local':
+            # The hub chose this server's own models for the voice (home.voice_engine):
+            # not a failure, so no error event; the old path answers.
+            timing.extra['engine'] = 'front_background'
+            timing.extra['house_engine'] = 'local'
+            return False
         timing.extra['engine'] = 'house'
         message = {'t': 'user', 'turn': epoch, 'text': text, 'identity': self.identity(timing)}
         if conn.mode.id != 'assistant':
@@ -550,6 +575,19 @@ class HouseVoice:
         self.push_tasks.add(task)
         task.add_done_callback(lambda t: (self.push_tasks.discard(t), t.exception() if not t.cancelled() else None,
                                           self.fb._poke()))
+
+    async def control(self, op, args):
+        """The phone's Voice models screen (models_get, models_set): to the hub through
+        the host, as this connection's identity; the answer comes back as voice_models."""
+        message = {'t': 'control', 'op': op, 'args': dict(args or {}),
+                   'identity': {'owner': bool(self.conn.identity.owner),
+                                'name': self.conn.identity.principal}}
+        try:
+            await self.lane.ensure()
+            await self.lane.send(message)
+        except Unavailable as error:
+            await self.conn.emit('error', code='models_unavailable',
+                                 msg=f'The voice models can\'t be reached right now ({error.code}).')
 
     def stop(self):
         """The client said stop: pushed results waiting to be spoken stay silent (reported)."""

@@ -106,6 +106,8 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `home.sessions` | — | read | The house agent's persistent sessions: the session host, each role's line ("house agent: busy, 2 waiting, 1 f… |
 | `home.settle` | question, positions?, cap='', worker='', repo='', branch='', project='', ruling='', rule='', room='' | write | A disagreement between agents for the house agent to settle: question, positions [{who, says}], the action at… |
 | `home.status` | — | read | Whether the home agent is on, its identity, endpoint host and model, and the last error (never the key). |
+| `home.voice_models` | — | read | The house agent's models: the voice (front: Haiku 5.5, Haiku 4.5, Sonnet, or local on kaiju), the agent (back… |
+| `home.voice_models_set` | front='', back='', front_effort?, back_effort?, words='' | admin | Change the house agent's models (the person's call): front (the voice: claude-haiku-5-5, claude-haiku-4-5, so… |
 | `hub.info` | — | read | What the hub runs: version, core API, roles, facts and plugins. |
 | `hub.plugin.disable` | module | admin | Unload a hub plugin now (its caps go, its stop() runs) and keep it off. |
 | `hub.plugin.enable` | module | admin | Load a hub plugin module now (placement, settings, available(), bind_host, start). |

@@ -661,3 +661,50 @@ async def test_the_house_agent_searches_the_web_and_other_roles_need_a_grant(pen
     assert scout["lanes"]["main"]["tools"][-2:] == ["WebSearch", "WebFetch"]
     assert scout["host_servers"] == []                           # not passed on as an MCP server
     await disconnect(task, host)
+
+
+# -- models: the phone's pickers and "switch your back end to Sonnet" ---------------------
+
+@pytest.mark.asyncio
+async def test_models_by_the_phone_and_by_voice_apply_live_and_are_journaled(penv):
+    host, task = await connect(penv)
+    house = host.sent("configure")[-1]["roles"]["house"]
+    assert house["voice_config"]["engine"] == "house"
+    m = house["voice_config"]["models"]
+    assert m["front"] == {"model": "claude-haiku-5-5", "effort": "low"}
+    assert m["back"]["model"] == "opus"
+    assert [c["id"] for c in m["choices"]["front"]][-1] == "local"
+    # The phone (the owner's voice connection): back to Sonnet, voice on Haiku 4.5.
+    host.emit(role="house", lane="voice", kind="voice_control", op="models_set", client=3,
+              args={"front": "claude-haiku-4-5", "back": "Sonnet"},
+              identity={"owner": True, "name": "Bake"})
+    await until(lambda: host.sent("voice_event"))
+    (ev,) = host.sent("voice_event")
+    assert ev["event"] == "models" and ev["client"] == 3 and ev["fields"]["ok"]
+    assert ev["fields"]["back"]["model"] == "sonnet"
+    await until(lambda: len(host.sent("configure")) >= 2)
+    lanes = host.sent("configure")[-1]["roles"]["house"]["lanes"]
+    assert lanes["main"]["model"] == "sonnet" and lanes["voice"]["model"] == "claude-haiku-4-5"
+    row = [r for r in penv.node.journal.rows if r["cap"] == "home.voice_models_set"][-1]
+    assert row["args"]["who"] == "user:Bake (phone)" and row["args"]["via"] == "phone"
+    # A guest's phone may look, not change.
+    host.emit(role="house", lane="voice", kind="voice_control", op="models_set", client=4,
+              args={"back": "haiku"}, identity={"owner": False, "name": "guest"})
+    await until(lambda: len(host.sent("voice_event")) == 2)
+    ev = host.sent("voice_event")[-1]["fields"]
+    assert not ev["ok"] and "only the owner" in ev["error"] and ev["back"]["model"] == "sonnet"
+    # By voice: "use the local model for the voice" (after the voice asked and Bake said yes).
+    penv.sess.voice["house"] = {"turn": "t9", "identity": {"owner": True, "name": "Bake"}}
+    await penv.sess.route("house", [{"op": "models", "front": "local",
+                                     "words": "yes, use the local model for the voice"}])
+    assert penv.home.settings.get("voice_engine") == "local"
+    await until(lambda: host.sent("configure")[-1]["roles"]["house"]["voice_config"]["engine"]
+                == "local")
+    assert penv.sess.models()["front"]["model"] == "local"
+    # A guest's voice can't.
+    penv.sess.voice["house"] = {"turn": "t10", "identity": {"owner": False, "name": "guest"}}
+    out = await penv.sess.route("house", [{"op": "models", "back": "haiku"}])
+    assert out[0]["ok"] is False and penv.sess.models()["back"]["model"] == "sonnet"
+    with pytest.raises(ValueError, match="front: one of"):
+        penv.sess.set_models(front="gpt-9", who="x", via="api")
+    await disconnect(task, host)

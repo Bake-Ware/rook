@@ -376,6 +376,35 @@ async def test_hub_caps_and_live_refresh(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_value_saved_by_another_process_applies_without_a_restart(tmp_path, monkeypatch):
+    """The dashboard runs in its own process and writes the same store: its saves
+    reach the MCP side's plugins within a few seconds, live ones at once, reload
+    ones by reloading that plugin, and this process's own writes are not applied twice."""
+    monkeypatch.delenv("ROOK_HUB_MOTD", raising=False)
+    from rook.hub.node import HubNode
+    import rook.hub.plugins.settings as settings_plugin
+    monkeypatch.setattr(settings_plugin, "_admin_gate", lambda what: None)
+    node = HubNode(str(tmp_path), entry_points=False, vault=FakeVault(),
+                   settings_store=SettingsStore(tmp_path / "settings.db"))
+    sp = node.plugin("settings")
+    sp._seen = sp._snapshot()
+    reloads = []
+    monkeypatch.setattr(node.host, "request_reload", lambda module: reloads.append(module) or True)
+    other = SettingsStore(tmp_path / "settings.db")        # the dashboard's own handle
+    before = other.marker()
+    other.set("hub.motd", "hub", "", value="from the dashboard", actor="human:op")
+    assert other.marker() != before
+    assert (await node.dispatch("hub.info", {}))["result"]["motd"] != "from the dashboard"
+    out = sp.sync_from_store()
+    assert out["changed"] == {"hub": ["motd"]} and out["reloading"] == []
+    assert (await node.dispatch("hub.info", {}))["result"]["motd"] == "from the dashboard"
+    assert sp.sync_from_store() == {"changed": {}}          # nothing new: nothing done
+    # A write made here is applied by its own hook, not again by the watch.
+    await node.dispatch("settings.set", {"key": "hub.motd", "value": "here"}, "agent:ops")
+    assert sp.sync_from_store() == {"changed": {}} and reloads == []
+
+
+@pytest.mark.asyncio
 async def test_sensitive_band_reply_is_not_journaled(tmp_path, monkeypatch):
     from rook.hub.node import attach_hub_node
     records = []

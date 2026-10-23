@@ -26,6 +26,23 @@
           <Button android:id="@+id/btnRetryVoices" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/retry_voices" style="@style/RookOutlinedButton" />
         </LinearLayout>
         <LinearLayout style="@style/RookPanel">
+          <TextView style="@style/RookSectionLabel" android:text="VOICE MODELS" />
+          <TextView style="@style/RookHelp" android:text="@string/voice_models_help" />
+          <TextView style="@style/RookHelp" android:text="@string/voice_models_front" android:labelFor="@id/modelFront" />
+          <AutoCompleteTextView android:id="@+id/modelFront" android:layout_width="match_parent" android:layout_height="48dp" android:inputType="none" android:focusable="false" android:contentDescription="@string/voice_models_front" android:drawableEnd="@android:drawable/arrow_down_float" />
+          <AutoCompleteTextView android:id="@+id/modelFrontEffort" android:layout_width="match_parent" android:layout_height="48dp" android:inputType="none" android:focusable="false" android:contentDescription="@string/voice_models_front_effort" android:drawableEnd="@android:drawable/arrow_down_float" />
+          <TextView android:id="@+id/modelFrontNote" style="@style/RookHelp" />
+          <TextView style="@style/RookHelp" android:text="@string/voice_models_back" android:labelFor="@id/modelBack" />
+          <AutoCompleteTextView android:id="@+id/modelBack" android:layout_width="match_parent" android:layout_height="48dp" android:inputType="none" android:focusable="false" android:contentDescription="@string/voice_models_back" android:drawableEnd="@android:drawable/arrow_down_float" />
+          <AutoCompleteTextView android:id="@+id/modelBackEffort" android:layout_width="match_parent" android:layout_height="48dp" android:inputType="none" android:focusable="false" android:contentDescription="@string/voice_models_back_effort" android:drawableEnd="@android:drawable/arrow_down_float" />
+          <TextView android:id="@+id/modelBackNote" style="@style/RookHelp" />
+          <TextView android:id="@+id/modelStatus" style="@style/RookHelp" android:accessibilityLiveRegion="polite" />
+          <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+            <Button android:id="@+id/btnModelsRefresh" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/voice_models_refresh" style="@style/RookOutlinedButton" />
+            <Button android:id="@+id/btnModelsApply" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:text="@string/voice_models_apply" />
+          </LinearLayout>
+        </LinearLayout>
+        <LinearLayout style="@style/RookPanel">
           <TextView style="@style/RookSectionLabel" android:text="BEHAVIOUR" />
           <CheckBox android:id="@+id/fastVoice" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="false" android:text="@string/fast_voice" />
           <CheckBox android:id="@+id/showThinking" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="false" android:text="@string/show_thinking" />

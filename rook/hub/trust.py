@@ -138,8 +138,9 @@ def classify(cap: str, tier: str, tags: tuple | list = (), on_hub: bool = False)
     if (tier or "exec") == "read":
         return "read"
     from ..core.authz import is_status_read
-    if is_status_read(cap):
-        # Battery, device info: a read whatever tier an older app still announces.
+    if is_status_read(cap) and tier != "admin" and "destructive" not in (tags or ()):
+        # Battery, device info: a read whatever tier an older app still announces, but
+        # never something a worker announces as admin or destructive under that name.
         return "read"
     if on_hub and cap in PREPARE_CAPS:
         return "prepare"

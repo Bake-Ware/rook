@@ -49,6 +49,8 @@ class VoiceClient(
         fun onRefused(msg: String) = onError(msg)
         /** The voice switched its listening mode ("switch to dictation"). */
         fun onModeChanged(mode: String) {}
+        /** The house agent's models (the hub's answer to a models_get/models_set, or a change). */
+        fun onVoiceModels(json: String) {}
     }
     companion object { const val SR_IN = 16000; const val FRAME_BYTES = 640; const val PLAY_TAIL_MS = 200L }
     private data class Packet(val turn: Int, val sr: Int, val bytes: ByteArray)
@@ -171,6 +173,7 @@ class VoiceClient(
                     // Held barge was not real speech (empty transcript): carry on where the reply paused.
                     "resume" -> synchronized(audioLock) { if (gate.resume()) unpause() }
                     "bye" -> listener.onBye(m.optString("mode", "sleep"), m.optLong("after_ms", 0))
+                    "voice_models" -> listener.onVoiceModels(m.toString())
                     "tool" -> listener.onTool(m.optString("title"), m.optString("status"))
                     "error" -> if (m.optString("code") == "unknown_mode") { refuse(m.optString("msg")); return } else listener.onError(m.optString("msg"))
                 }
@@ -266,6 +269,8 @@ class VoiceClient(
         return socket.send(JSONObject().put("type", "timer").put("action", "cancel").put("id", id).toString())
     }
     fun setVoice(voice: String) = enqueue(JSONObject().put("type", "voice").put("voice", voice))
+    /** The Voice models screen: models_get, or models_set with the changed pickers. */
+    fun sendModels(type: String, args: JSONObject) = enqueue(JSONObject().put("type", type).put("args", args))
     fun interrupt() { waitingInterrupt = protocol >= 2; flush(); enqueue(JSONObject().put("type", "stop")) }
     fun close() { ws?.close(1000, "bye"); shutdown() }
     @Synchronized private fun shutdown() {

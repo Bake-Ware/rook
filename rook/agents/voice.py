@@ -49,7 +49,9 @@ MAX_CONTEXT = 4000
 #: The standing brief goes in again at least this often (turns), in case it was compacted away.
 CONTEXT_EVERY = 20
 #: Control events the hub may send a voice client (``voice_event``).
-EVENTS = ("mode",)
+EVENTS = ("mode", "models")
+#: Control messages a voice client may send (to the hub, as the connection's identity).
+CONTROLS = ("models_get", "models_set")
 #: Listening modes that reach the voice lane, and how a turn says so.
 MODE_NOTES = {"listen": "active listening", "brainstorm": "brainstorm"}
 
@@ -101,6 +103,9 @@ class VoiceRoom:
         self.current_turn_id: str | None = None
         self.context = ""
         self.tz = ""
+        #: What the hub says about the voice (engine: house|local, models): in "ready"
+        #: and sent to every client when it changes.
+        self.config: dict = {}
         self._context_sent: tuple[str, str | None] | None = None
         self._since_context = 0
         self._push_n = 0
@@ -286,10 +291,26 @@ class VoiceRoom:
         return True
 
     # -- control events for the client (a mode change) ---------------------------------
-    def event(self, kind: str, fields: dict, for_turn: Any = None) -> dict:
+    def set_config(self, config: dict) -> None:
+        config = dict(config or {})
+        if config == self.config:
+            return
+        self.config = config
+        for c in list(self.clients.values()):
+            c.send({"t": "config", **config})
+
+    def control(self, c: Client, op: str, args: dict, identity: dict) -> None:
+        """A control message from a voice client (the phone's model pickers): to the
+        hub, which acts as the connection's identity and answers with an event."""
+        c.last_active = time.monotonic()
+        self.host.emit(self.role, "voice", "voice_control", op=op, args=args,
+                       identity=identity, client=c.id)
+
+    def event(self, kind: str, fields: dict, for_turn: Any = None,
+              client: int | None = None) -> dict:
         if kind not in EVENTS:
             raise ValueError(f"event: one of {', '.join(EVENTS)}")
-        c = self._target(for_turn)
+        c = self.clients.get(client) if client is not None else self._target(for_turn)
         if c is None:
             return {"ok": False, "error": "no voice client is connected"}
         c.send({"t": kind, "turn": for_turn, **fields})
@@ -379,7 +400,8 @@ class VoiceServer:
         await ws.prepare(request)
         c = room.add(ws)
         lane = room.lane()
-        c.send({"t": "ready", "role": role, "session": lane.session_id if lane else None})
+        c.send({"t": "ready", "role": role, "session": lane.session_id if lane else None,
+                **room.config})
         try:
             async for msg in ws:
                 if msg.type != WSMsgType.TEXT:
@@ -412,6 +434,17 @@ class VoiceServer:
                     ident = {k: ident.get(k) for k in ("owner", "name") if k in ident}
                     mode = str(obj.get("mode") or "")[:20]
                     room.spawn(room.user(c, turn_id, text.strip(), ident, mode))
+                elif t == "control":
+                    op = str(obj.get("op") or "")
+                    if op not in CONTROLS:
+                        c.send({"t": "error", "turn": None, "error": f"control: one of "
+                                                                     f"{', '.join(CONTROLS)}"})
+                        continue
+                    args = obj.get("args") if isinstance(obj.get("args"), dict) else {}
+                    args = {k: str(v)[:80] for k, v in list(args.items())[:8]}
+                    ident = obj.get("identity") if isinstance(obj.get("identity"), dict) else {}
+                    ident = {k: ident.get(k) for k in ("owner", "name") if k in ident}
+                    room.control(c, op, args, ident)
                 elif t == "cancel":
                     c.last_active = time.monotonic()
                     room.spawn(room.cancel(c, turn_id or None))

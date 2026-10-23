@@ -18,6 +18,8 @@ service through ``/settings/account-api``; agents and services use these caps.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import time
 from typing import Any
@@ -71,9 +73,14 @@ class HubSettings(Plugin):
              "`settings.reset`, `settings.apply_worker`) are admin actions: ask the user "
              "first. A key set by an environment variable is locked; the reply says which.\n")
 
+    #: How often this process looks for settings another hub process saved.
+    WATCH_S = 3.0
+
     def __init__(self) -> None:
         super().__init__()
         self.svc = None
+        self._watch: asyncio.Task | None = None
+        self._seen: dict[str, dict] = {}
 
     def bind_host(self, node) -> None:
         from ..settings_schema import Schema
@@ -85,6 +92,10 @@ class HubSettings(Plugin):
         def refresh(entry) -> None:
             if entry.origin != "hub-plugin":
                 return
+            # This process applies its own writes here; the store watch must not
+            # apply (and reload) them a second time.
+            with contextlib.suppress(Exception):
+                self._seen[entry.namespace] = self.svc.store.namespace_values(entry.namespace)
             # live: the next read sees it; reload: restart that plugin with it.
             node.host.settings_changed([entry.namespace] if entry.setting.apply == "reload"
                                        else [])
@@ -115,6 +126,65 @@ class HubSettings(Plugin):
         except Exception:
             log.warning("could not write the MCP runtime report to %s", self.svc.store.path,
                         exc_info=True)
+        self._seen = self._snapshot()
+        self._watch = asyncio.get_running_loop().create_task(self._watch_store())
+
+    async def stop(self) -> None:
+        if self._watch is not None:
+            self._watch.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._watch
+            self._watch = None
+
+    # -- changes another process saved (the dashboard's Settings and Home agent pages) --
+    def _snapshot(self) -> dict[str, dict]:
+        node = self.svc.node if self.svc is not None else None
+        host = getattr(node, "host", None)
+        out = {}
+        for p in list(getattr(host, "plugins", []) or []):
+            if p.SETTINGS:
+                with contextlib.suppress(Exception):
+                    out[p.NAMESPACE] = self.svc.store.namespace_values(p.NAMESPACE)
+        return out
+
+    def sync_from_store(self) -> dict:
+        """Apply what changed in the store since the last look: refresh every
+        plugin's view (``live`` settings take effect at once) and reload the
+        plugins whose changed settings say ``reload``. The dashboard runs in
+        another process and writes the same store, so without this a value
+        saved there reached the house agent only after a restart."""
+        node = self.svc.node
+        now = self._snapshot()
+        changed: dict[str, set] = {}
+        for ns in set(now) | set(self._seen):
+            old, new = self._seen.get(ns) or {}, now.get(ns) or {}
+            keys = {k for k in set(old) | set(new) if old.get(k) != new.get(k)}
+            if keys:
+                changed[ns] = keys
+        self._seen = now
+        if not changed:
+            return {"changed": {}}
+        reload_ns = []
+        for p in list(node.host.plugins):
+            keys = changed.get(p.NAMESPACE)
+            if keys and any(s.name in keys and s.apply == "reload" for s in p.SETTINGS):
+                reload_ns.append(p.NAMESPACE)
+        out = node.host.settings_changed(reload_ns)
+        log.info("settings saved elsewhere, applied here: %s",
+                 {ns: sorted(k)[:8] for ns, k in changed.items()})
+        return {"changed": {ns: sorted(k) for ns, k in changed.items()}, **out}
+
+    async def _watch_store(self) -> None:
+        mark = None
+        while True:
+            await asyncio.sleep(self.WATCH_S)
+            try:
+                now = await asyncio.to_thread(self.svc.store.marker)
+                if mark is not None and now != mark:
+                    self.sync_from_store()
+                mark = now
+            except Exception:  # noqa: BLE001 - keep watching
+                log.debug("settings store watch failed", exc_info=True)
 
     def _svc(self):
         if self.svc is None:

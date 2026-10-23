@@ -632,6 +632,40 @@ async def test_voice_brief_goes_in_when_it_changes_and_events_reach_the_client(f
 
 
 @pytest.mark.asyncio
+async def test_voice_config_in_ready_and_on_change_and_controls_go_to_the_hub(fx):
+    async with running(fx, voice_listen="127.0.0.1:0") as (host, events):
+        cfg = {"engine": "house", "models": {"front": {"model": "claude-haiku-5-5"}}}
+        await configure(host, files={"CLAUDE.md": "# p\n", "voice/CLAUDE.md": "# v\n"},
+                        lanes=voice_lanes(), voice_token_sha256=VOICE_HASH, voice_config=cfg)
+        url = f"ws://127.0.0.1:{host.voice_server.port}/voice/house"
+        async with aiohttp.ClientSession() as s:
+            async with s.ws_connect(url, params={"token": VOICE_TOKEN}) as ws:
+                ready = json.loads((await ws.receive(timeout=3)).data)
+                assert ready["engine"] == "house" and ready["models"] == cfg["models"]
+                # The hub switches the voice to the local engine: every client hears it.
+                await configure(host, files={"CLAUDE.md": "# p\n", "voice/CLAUDE.md": "# v\n"},
+                                lanes=voice_lanes(), voice_token_sha256=VOICE_HASH,
+                                voice_config={**cfg, "engine": "local"})
+                got = await recv_until(ws, lambda o: o["t"] == "config")
+                assert got[-1]["engine"] == "local"
+                # The phone's pickers: a control goes to the hub with the identity.
+                await ws.send_json({"t": "control", "op": "models_set",
+                                    "args": {"back": "sonnet"},
+                                    "identity": {"owner": True, "name": "Bake"}})
+                ev = await wait_ev(events, "voice_control")
+                assert ev["op"] == "models_set" and ev["args"] == {"back": "sonnet"}
+                assert ev["identity"] == {"owner": True, "name": "Bake"}
+                # ... and the hub's answer comes back to that client.
+                await host.handle({"t": "voice_event", "role": "house", "event": "models",
+                                   "fields": {"ok": True}, "client": ev["client"]})
+                got = await recv_until(ws, lambda o: o["t"] == "models")
+                assert got[-1]["ok"] is True
+                await ws.send_json({"t": "control", "op": "shell", "args": {}})
+                got = await recv_until(ws, lambda o: o["t"] == "error")
+                assert "control: one of" in got[-1]["error"]
+
+
+@pytest.mark.asyncio
 async def test_voice_barge_in_interrupts_the_running_turn(fx):
     async with running(fx, voice_listen="127.0.0.1:0") as (host, events):
         url = await voice_host(fx, host)

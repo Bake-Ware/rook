@@ -124,6 +124,16 @@ class SettingsStore:
         with self._db() as db:
             return [self._row(r) for r in db.execute(q + " ORDER BY key, scope, target", args)]
 
+    def marker(self) -> tuple:
+        """What changes whenever any hub-scope row is written or removed (a cheap
+        check for changes another process made): (count, sum of revs, latest write)."""
+        if not self.exists():
+            return (0, 0, 0.0)
+        with self._db() as db:
+            r = db.execute("SELECT COUNT(*), COALESCE(SUM(rev), 0), COALESCE(MAX(updated_at), 0) "
+                           "FROM settings WHERE scope='hub'").fetchone()
+        return (int(r[0]), int(r[1]), float(r[2]))
+
     def namespace_values(self, namespace: str, scope: str = "hub", target: str = "") -> dict:
         """``{name: value}`` of non-secret rows under ``<namespace>.`` (what a
         plugin's SettingsView reads as stored values)."""

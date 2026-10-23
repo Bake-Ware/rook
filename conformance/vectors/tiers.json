@@ -687,6 +687,12 @@
   "home.status": {
    "tier": "read"
   },
+  "home.voice_models": {
+   "tier": "read"
+  },
+  "home.voice_models_set": {
+   "tier": "admin"
+  },
   "hub.info": {
    "tier": "read"
   },
