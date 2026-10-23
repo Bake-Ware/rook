@@ -10,7 +10,8 @@ in one process:
 * one aiohttp server. The dashboard is the app; the MCP paths a public hub
   routes to the MCP server (:data:`PUBLIC_MCP_PATHS`: ``/mcp``, ``/band``,
   ``/tokens/account-api``, ``/authorize``, ``/token``, ``/.well-known/*``,
-  ``/skill/*``, ``/healthz``) are handed to the FastMCP ASGI app through
+  ``/skill/*``, ``/healthz``, and the home agent's per-turn tool server
+  ``/home/turn-mcp``) are handed to the FastMCP ASGI app through
   rook/hub/asgi_bridge.py before any dashboard middleware sees them, so one
   port serves the whole site with the same split a reverse proxy made.
 * paths a hub plugin serves on the site (rook/hub/site.py: the voice
@@ -51,8 +52,12 @@ log = logging.getLogger("rook.hub.serve")
 # The other MCP-side routes (``/<x>/account-api`` but tokens, ``/internal/
 # mask``) were only ever reachable on loopback; here the dashboard calls
 # them in memory and the main port does not serve them.
+# ``/home/turn-mcp`` is the per-turn tool server an agent host's Claude Code
+# turn calls back to (rook/hub/plugins/home/turn_mcp.py); its per-turn bearer
+# token is its whole credential, so the dashboard's password gate must not
+# stand in front of it.
 PUBLIC_MCP_PATHS = ("/mcp", "/band", "/tokens/account-api", "/authorize", "/token",
-                    "/healthz")
+                    "/healthz", "/home/turn-mcp")
 PUBLIC_MCP_PREFIXES = ("/mcp/", "/.well-known/", "/skill/")
 
 DEFAULT_MCP_BIND = "127.0.0.1:8765"

@@ -37,7 +37,7 @@ class EchoRelay(asyncio.DatagramProtocol):
 def test_public_mcp_paths_match_the_documented_proxy_split():
     for p in ("/mcp", "/mcp/", "/band", "/tokens/account-api", "/authorize", "/token",
               "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource/mcp",
-              "/skill/rook.skill", "/healthz"):
+              "/skill/rook.skill", "/healthz", "/home/turn-mcp"):
         assert is_mcp_path(p), p
     for p in ("/", "/tokens", "/health", "/account/tokens/api", "/knowledge/account-api",
               "/internal/mask", "/mcpx", "/bands", "/install", "/api/band/call"):
@@ -194,6 +194,22 @@ async def test_merged_hub_end_to_end(hub_env, monkeypatch):
                 assert (await r.json())["ok"] is True
             async with http.get(hub_env.base + "/.well-known/oauth-protected-resource/mcp") as r:
                 assert r.status == 200
+            # An agent host's Claude Code turn calls back to the per-turn tool
+            # server on the dashboard port: its own token check answers, not
+            # the dashboard's password gate (which would refuse every turn).
+            ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+            async with http.post(hub_env.base + "/home/turn-mcp", json=ping,
+                                 headers={"Authorization": "Bearer no-such-turn"}) as r:
+                assert r.status == 401 and "turn" in (await r.json())["error"]
+            reg = hub.mcp.mcp._rook_hub.plugin("home").agents.registry
+
+            async def no_tool(name, args):
+                return "unused"
+            turn_token, _ = reg.open([], no_tool, 30)
+            async with http.post(hub_env.base + "/home/turn-mcp", json=ping,
+                                 headers={"Authorization": "Bearer " + turn_token}) as r:
+                assert r.status == 200 and (await r.json())["result"] == {}
+            reg.close(turn_token)
 
             # /account/<x>/api reaches the MCP side in memory, with the same
             # session, operator and CSRF checks.
