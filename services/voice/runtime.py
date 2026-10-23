@@ -33,8 +33,11 @@ ECHO_WINDOW_S = 1.5
 # (5th percentile) through simulated phone/room channels, people at most 0.43
 # (TitaNet small, kaiju, 2026-10-23). The speaker label itself uses 0.50.
 ECHO_SPEAKER_MIN = float(os.environ.get('VOICE_ECHO_SPEAKER_MIN', '0.6'))
-ENROLL_RE = re.compile(r"\b(enrol+|learn|register|remember|know)\s+my\s+voice\b", re.I)
-FORGET_RE = re.compile(r"\b(forget|delete|remove|erase)\s+my\s+voice\b", re.I)
+# Commands only at the start of an utterance ("hey sojourn, please enroll my voice"),
+# so a sentence that merely mentions a voice never starts or deletes anything.
+_LEAD = r"^\W*(?:(?:hey|ok|okay)\W+\w+\W+)?(?:(?:please|can you|could you|would you)\W+)?"
+ENROLL_RE = re.compile(_LEAD + r"(?:enrol+|learn|register|remember)\s+my\s+voice\b", re.I)
+FORGET_RE = re.compile(_LEAD + r"(?:forget|delete|remove|erase)\s+my\s+voice\b", re.I)
 CANCEL_RE = re.compile(r"^\W*(stop|cancel|never ?mind|forget it|quit)\b", re.I)
 
 
@@ -351,6 +354,8 @@ class Connection:
         """'enroll my voice' / 'forget my voice', and the enrollment reading itself.
         Returns True when the utterance was handled here (no model turn)."""
         speakers = self.speakers if self.speakers is not None and getattr(self.speakers, 'available', False) else None
+        if not self.mode.agent:
+            return False
         if self.enrolling is not None:
             if time.monotonic() - self.enrolling['started'] > 300 or CANCEL_RE.search(text):
                 self.enrolling = None

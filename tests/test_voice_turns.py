@@ -516,6 +516,15 @@ def test_enroll_my_voice_reads_three_sentences_then_forget(tmp_path):
     asyncio.run(scenario())
 
 
+def test_voice_commands_only_at_the_start():
+    assert runtime_mod.ENROLL_RE.search('Hey Sojourn, please enroll my voice')
+    assert runtime_mod.ENROLL_RE.search('learn my voice')
+    assert not runtime_mod.ENROLL_RE.search('you know my voice is hoarse today')
+    assert not runtime_mod.ENROLL_RE.search('I said remember my voice memo')
+    assert runtime_mod.FORGET_RE.search('Okay Rook, forget my voice.')
+    assert not runtime_mod.FORGET_RE.search("don't forget my voice lesson at five")
+
+
 def test_only_owner_keys_enroll(tmp_path):
     async def scenario():
         conn, store, jobs, events = connection(tmp_path, transcripts=['learn my voice'], pipeline=False,
