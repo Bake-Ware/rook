@@ -538,3 +538,40 @@ def test_only_owner_keys_enroll(tmp_path):
         assert conn.enrolling is None
         assert any('needs the owner' in e['text'] for e in kinds(events, 'assistant_delta'))
     asyncio.run(scenario())
+
+
+def test_reply_waits_for_the_user_to_finish_then_merges(tmp_path):
+    async def scenario():
+        conn, store, jobs, events = connection(tmp_path, transcripts=['what is the tallest mountain', 'in Africa'],
+                                               front=SlowFront(clauses=('Mount Kilimanjaro.',)))
+        try:
+            conn.receiving_speech = True                       # the user is still talking
+            await conn.heard(b'\0' * 32000, time.monotonic())
+            await asyncio.sleep(.2)
+            assert not kinds(events, '_audio')                 # no talking over the user
+            conn.receiving_speech = False
+            await conn.heard(b'\0' * 32000, time.monotonic())
+            await wait_for(lambda: conn.task.done() and kinds(events, '_audio'))
+            users = [m['content'] for m in store.messages('session') if m['role'] == 'user']
+        finally:
+            await shutdown(conn, store, jobs)
+        assert users == ['what is the tallest mountain in Africa']
+    asyncio.run(scenario())
+
+
+def test_house_agent_answer_ends_the_background_run():
+    from services.voice.bgtools import Toolbox
+    from services.voice.identity import current_identity
+    from services.voice.pipeline import BackgroundAgent
+    from services.voice.policy import background_tools
+    calls = []
+    async def complete(messages, tools, effort):
+        calls.append(1)
+        return {'tool_calls': [{'id': 'h', 'type': 'function', 'function': {
+            'name': 'house_agent', 'arguments': json.dumps({'request': 'What is on the shopping list?'})}}]}
+    async def scenario():
+        current_identity.set(OWNER)
+        agent = BackgroundAgent(Toolbox('s', None, Board(), mcp=HouseMCP('Milk and eggs.')),
+                                background_tools(OWNER, 'assistant'), complete=complete)
+        return await agent.run('what is on the shopping list', [], lambda u: None)
+    assert asyncio.run(scenario()) == 'Milk and eggs.' and len(calls) == 1

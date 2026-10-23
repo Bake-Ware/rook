@@ -27,6 +27,9 @@ HOLD_QUIET_S = float(os.environ.get('VOICE_HOLD_QUIET_S', '2.5'))
 HOLD_MAX_S = float(os.environ.get('VOICE_HOLD_MAX_S', '8'))   # the phone gives up at 10 s
 # 'enforce': drop an utterance whose speaker is the assistant's own voice (echo)
 # while it speaks or just after; 'shadow': log the label only; 'off'.
+# A reply does not start talking over the user: its first audio waits this long at
+# most while an utterance is still coming in (it usually merges into the turn).
+FLOOR_WAIT_S = float(os.environ.get('VOICE_FLOOR_WAIT_S', '3'))
 ECHO_GUARD = os.environ.get('VOICE_ECHO_GUARD', 'enforce').strip().lower()
 ECHO_WINDOW_S = 1.5
 # The voice match must be clearly the assistant's: its own echo scored >= 0.59
@@ -215,7 +218,10 @@ class Connection:
         self.speak_out = speak
         if not internal:
             self.sleeping = False
-        self.receiving_speech = False
+        if heard is None:
+            # A transcribed utterance starts after STT, maybe while the user already says
+            # more: the audio loop owns receiving_speech then.
+            self.receiving_speech = False
         epoch = self.epoch
         voice = pcm is not None or heard is not None
         if self.thinking or self.shadow:
@@ -750,6 +756,8 @@ class Connection:
             first = self.audio_sent.get(epoch, 0)
             self.audio_rate[epoch] = sr
             self.spoken_audio.setdefault(epoch, []).append((text, first, first + len(pcm) // 2))
+        if progress_job is None and not self.audio_sent.get(epoch):
+            await self._wait_floor(epoch)
         step = int(sr * .04) * 2
         for offset in range(0, len(pcm), step):
             if self.held_since is not None:
@@ -783,6 +791,14 @@ class Connection:
             for old in list(table):
                 if old < epoch - 8:
                     del table[old]
+
+    async def _wait_floor(self, epoch):
+        """The user is still talking (or their words are being transcribed): hold the
+        reply's first audio until they finish, at most FLOOR_WAIT_S."""
+        end = time.monotonic() + FLOOR_WAIT_S
+        while ((self.receiving_speech or self.intake_pending) and epoch == self.epoch and not self.closed
+               and time.monotonic() < end):
+            await asyncio.sleep(.02)
 
     def played_samples(self, epoch):
         """Samples of this turn's speech the listener has heard: the client's playback

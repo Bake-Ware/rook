@@ -116,6 +116,8 @@ class BackgroundAgent(ThinkingAgent):
                       [SCHEMAS[name] for name in sorted(self.allowed) if name in SCHEMAS] + finish + [NO_ACTION])
         self.system = BACKGROUND_SYSTEM
         self.tainted = False
+        # The house agent's answer is the result as it stands (saves a ~10 s model step).
+        self.final_tools = frozenset({'house_agent'})
 
     def taint(self):
         """Untrusted text is now in context: drop every tool that acts or could carry
