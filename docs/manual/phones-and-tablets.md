@@ -18,7 +18,8 @@ battery level.
 ## Installing the app
 
 1. On the phone, open `https://<your-hub>/apk` and install the app. (Android
-   asks you to allow installs from your browser.)
+   asks you to allow installs from your browser.) A hub set up with the
+   installer has the release's app there from the start, without signing in.
 2. Open the app's settings and either **sign in with Google** or enter a
    **pairing code** from the Install page ([[manual-adding-machines]]).
 3. The phone joins the band and appears on the Workers page.

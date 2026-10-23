@@ -26,7 +26,8 @@ This page is for whoever looks after the hub machine.
   `rook-hub`, checks every download against its published checksum, and keeps
   the hub's settings in `hub.env` and its keys in `secrets.env`. Run it again
   to upgrade; `--uninstall` removes it and keeps the data (`--purge` deletes
-  that too). `--user` installs without root. When it finishes it prints, in
+  that too). It also puts the release's Android app on the hub, so phones
+  can install it from `/apk` from the first start (`--no-apk` to skip). `--user` installs without root. When it finishes it prints, in
   plain words, the dashboard address and password, the next steps, the address
   and token for AI agents, and how to check on, upgrade or remove the hub. All
   options and troubleshooting: docs/operations/install.md.
@@ -74,9 +75,15 @@ For a hub deployed from a git checkout rather than the installer, `rook hub`
 builds, deploys and rolls back signed hub releases:
 
 - `rook hub release build` and `rook hub release verify`: package a version and
-  sign it; check a signature.
+  sign it; check a signature. A release also carries what the hub serves
+  besides its code: the worker bundle (built from the same version, or the one
+  your workers run now) and the Android app and beta app the hub serves now.
 - `rook hub deploy`: install a signed release and switch the services to it.
   If the new version does not come up healthy, it switches back by itself.
+  It refuses a release whose app the approved hashes (`ROOK_PUBLIC_APK_SHA256`,
+  `ROOK_BETA_APK_SHA256`) would not serve, keeps serving the worker bundle and
+  app when a release has none, and after the switch checks that `/apk` and
+  `/band-worker.pyz` still answer, switching back if not.
 - `rook hub disarm`: cancel that automatic switch-back once you are happy.
 - `rook hub rollback`: go back to the previous release.
 - `rook hub status` and `rook hub history`: what is running and what happened.

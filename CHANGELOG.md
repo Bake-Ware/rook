@@ -20,14 +20,16 @@ version was `0.1.0`.
   never changed), and after the restart checks `/band-worker.json`, `/band-worker.pyz`, `/apk.json`,
   `/apk` and `/apk.json?channel=beta`, rolling back when one went dark (`--skip-feed-check`).
   Deploy config keys `feed_service`, `feed_url`, `feed_check`. Docs: docs/operations/hub-deploy.md.
+  (manual: running-a-hub)
 - A fresh hub serves the Android app from the first start: `install-hub.sh` fetches the release's
   generic APK (checked against its SHA256SUMS and its manifest) into `DATA_DIR/updates/apk`, the
   place Manage > Updates publishes to (`--no-apk` to skip; with `--git-ref` the latest release's).
   A published release APK is served at `/apk` without the dashboard login; an operator's copy in
   `rook/remote` still needs `ROOK_PUBLIC_APK_SHA256`. The beta channel can also come from the
-  release (`rook/remote/apk-beta`) when the gate approves it.
+  release (`rook/remote/apk-beta`) when the gate approves it. (manual: phones-and-tablets,
+  running-a-hub)
 - Clean-room harness: `--release latest|TAG` installs a published release the way the README
-  says, and the phone installs the APK it downloads from the fresh hub's `/apk`.
+  says, and the phone installs the APK it downloads from the fresh hub's `/apk`. (manual: n/a)
 
 ### Changed
 - The Android app's default version is 0.4.20 (code 25), the next stable after the 0.4.20-beta.1
