@@ -1,7 +1,7 @@
 // Trust: what agents may do to what, enforced by the hub (docs/design/trust.md).
 // Everything shown comes from the hub and is rendered as text. Every change asks
 // for the person's own words, which are recorded with it.
-const {h, ago, useCss, btn, info, seg, dialog} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
+const {h, ago, useCss, btn, info, seg, dialog, more} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 
 const LEVEL_TEXT = {
   'sacred': 'Changes only on your direct instruction. Agents may read, propose and prepare.',
@@ -86,8 +86,8 @@ export async function mountTrust(root, opts = {}){
         e.confirmed === false ? h('span', {class: 'mg-tag line', text: 'not confirmed', title: 'Set from your words by someone else (' + ((e.set_by || {}).via || '') + '). Confirm it if it is right.'}) : null,
         h('span', {class: 'mg-grow'}),
         e.confirmed === false ? btn('Confirm', 'primary', () => change('confirm', {id: e.id}, 'Confirm ' + e.title + ' as ' + e.level + '? (your words)', 'yes, that is right'), {disabled: !can}) : null,
-        btn('Edit', 'soft', () => editEntry(e), {disabled: !can}),
-        btn('Remove', 'danger', () => change('delete_entry', {id: e.id}, 'Remove ' + e.title + ' from the map? Why? (your words)'), {disabled: !can})),
+        can ? more([{label: 'Edit', run: () => editEntry(e)},
+          {label: 'Remove', danger: true, run: () => change('delete_entry', {id: e.id}, 'Remove ' + e.title + ' from the map? Why? (your words)')}], 'Actions for ' + e.title) : null),
       e.description ? h('div', {text: e.description}) : null,
       h('div', {class: 'mg-sub mg-mono', style: 'overflow-wrap:anywhere', text: (e.targets || []).join(' · ')}),
       levels, said(e.set_by));
@@ -154,9 +154,9 @@ export async function mountTrust(root, opts = {}){
     summary.textContent = data.summary || '';
     if(m.error){ warn.hidden = false; warn.textContent = 'The map file is unreadable; the hub keeps the last good version: ' + m.error; }
     // Only what needs you: the house agent's changes, proposals.
-    const nv = (m.notices || []).map(n => h('div', {class: 'mg-box mg-pad mg-warn', style: 'display:flex;flex-wrap:wrap;gap:8px;align-items:center'},
-      h('span', {text: 'The house agent tightened ' + n.id + ' (' + n.op + ', v' + n.version + ') ' + ago(n.at) + (n.words ? ': “' + n.words + '”' : '')}),
-      h('span', {class: 'mg-grow'}), btn('OK', 'soft', () => change('ack', {version: n.version}), {disabled: !can})));
+    const nv = (m.notices || []).map(n => h('div', {class: 'mg-box mg-pad', style: 'display:flex;gap:8px;align-items:center;justify-content:space-between'},
+      h('span', {class: 'mg-warn', style: 'flex:1;min-width:0', text: 'The house agent tightened ' + n.id + ' (v' + n.version + ', ' + ago(n.at) + ')' + (n.words ? ': “' + n.words + '”' : '')}),
+      btn('OK', 'soft', () => change('ack', {version: n.version}), {disabled: !can})));
     const pv = (m.proposals || []).filter(p => p.state === 'pending').map(p => h('div', {class: 'mg-box mg-pad', style: 'display:flex;flex-direction:column;gap:6px'},
       h('div', null, h('b', {text: 'Proposed by ' + p.by}), h('span', {class: 'mg-dimtext', text: ' · ' + ago(p.at)})),
       h('div', {text: p.why}),
@@ -172,7 +172,7 @@ export async function mountTrust(root, opts = {}){
       if(l !== m.unlisted) change('set_unlisted', {level: l}, 'Treat everything not listed as ' + l + '? Why? (your words)');
     }, 'Everything else');
     for(const b of us.querySelectorAll('button')) b.disabled = !can;
-    unlisted.replaceChildren(us, h('span', {class: 'mg-sub', text: LEVEL_TEXT[m.unlisted] || ''}), said(m.unlisted_set_by));
+    unlisted.replaceChildren(...[us, h('span', {class: 'mg-sub', text: LEVEL_TEXT[m.unlisted] || ''}), said(m.unlisted_set_by)].filter(Boolean));
     const xs = [...(m.exceptions || [])].sort((a, b) => (b.active - a.active) || (b.expires_at - a.expires_at)).slice(0, 12);
     exceptions.replaceChildren(...(xs.length ? xs.map(x => h('div', {class: 'mg-box mg-pad', style: 'display:flex;flex-direction:column;gap:4px;' + (x.active ? '' : 'opacity:.6')},
       h('div', {style: 'display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center'},

@@ -50,7 +50,7 @@ The tables are generated from the code by `tools/gen_skill_reference.py`; don't 
 | `rook_project` | action='list', band?, id?, query?, data?, request_id? | Projects (outcomes) under concepts: list/search/get/create/update/link. create data {title, body, parent: con… |
 | `rook_secret` | action='list', name?, value?, description? | Vault: list (names only) \| get name (logged) \| set name value description \| delete name \| log name?. |
 | `rook_task` | action='deck', band?, id?, query?, data?, request_id? | Tasks. deck (id=project narrows): in progress with claimants and latest handoff, blocked, paused, todo, recen… |
-| `rook_trust` | action='summary', data? | The hub-enforced trust map: what is sacred (only on the person's direct instruction), guarded (ask first) or… |
+| `rook_trust` | action='summary', data? | Hub-enforced trust map: sacred (person only), guarded (ask), ship-it (go). summary\|get\|history\|check data {ca… |
 | `rook_whoami` | — | Your identity as this hub records it (agent_id, key_id, kind, identity). |
 | `rook_workers` | name?, cap_prefix?, online?, fields? | Workers on the band. |
 <!-- END GENERATED: mcp-tools -->

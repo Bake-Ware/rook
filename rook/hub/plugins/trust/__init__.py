@@ -181,11 +181,9 @@ class Trust(Plugin):
     # -- MCP -------------------------------------------------------------------
     def mcp_tools(self, invoke):
         async def rook_trust(action: str = "summary", data: dict | None = None) -> str:
-            """The hub-enforced trust map: what is sacred (only on the person's direct
-            instruction), guarded (ask first) or ship-it (just go). summary | get |
-            check data {cap, worker} or {repo, branch} | history | propose data {change
-            {op, data}, why}: the person decides on the dashboard | tighten (house agent
-            only). Only the person loosens it."""
+            """Hub-enforced trust map: sacred (person only), guarded (ask), ship-it (go).
+            summary|get|history|check data {cap, worker}|{repo, branch}|propose data
+            {change {op, data}, why}|tighten (house agent)."""
             d = data if isinstance(data, dict) else {}
             try:
                 if action == "summary":
