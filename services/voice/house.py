@@ -39,6 +39,7 @@ from typing import NamedTuple
 from urllib.parse import urlsplit, urlunsplit
 
 import random
+import re
 
 from . import modes
 from .front import Clauses
@@ -61,9 +62,15 @@ FILLER = 'One moment.'
 # Models overuse sounds they are merely allowed (Pianobar's DJ found the same), so the
 # server offers them on about one turn in this many, and the voice may still use none.
 SOUND_EVERY = int(os.environ.get('VOICE_HOUSE_SOUND_EVERY', '4'))
+# A speaker match at or above this cosine is "sure"; below (but above the label
+# threshold) it is "probably". Identification only, never authentication.
+SPEAKER_SURE = float(os.environ.get('VOICE_SPEAKER_SURE', '0.65'))
+# On the local models nothing routes, so this phrase is caught here: back to the house voice.
+BACK_TO_HOUSE = re.compile(r"\b(switch|go|change|come)\s+back\b.{0,30}\b(claude|haiku|sojourn|house|normal|"
+                           r"usual)\b|\buse\s+claude\b|\bback\s+to\s+claude\b", re.I)
 # Control events from the host (not part of a turn's reply): a listening-mode switch,
 # the hub's answer about models, and the voice config (engine, models) when it changes.
-CONTROL = ('mode', 'models', 'config')
+CONTROL = ('mode', 'models', 'config', 'enroll_start', 'voice_forget', 'voices_list', 'listen_end')
 # A routing line's start: the host strips them; this is the backstop.
 ROUTE_MARK = '<<'
 FAILED = "Sorry, that didn't work. Please try again."
@@ -392,6 +399,13 @@ class HouseVoice:
 
     # --- control events ------------------------------------------------------------
     def _on_control(self, message):
+        kind = message.get('t')
+        if kind in ('enroll_start', 'voice_forget', 'voices_list', 'listen_end'):
+            task = asyncio.create_task(self._people_control(kind, message))
+            self.control_tasks.add(task)
+            task.add_done_callback(lambda t: (self.control_tasks.discard(t),
+                                              t.exception() if not t.cancelled() else None))
+            return
         if message.get('t') in ('models', 'config'):
             # The phone's Voice models screen: the hub's answer, or a change made elsewhere.
             fields = {k: v for k, v in message.items() if k not in ('t', 'turn')}
@@ -405,6 +419,44 @@ class HouseVoice:
             self.control_tasks.add(task)
             task.add_done_callback(lambda t: (self.control_tasks.discard(t),
                                               t.exception() if not t.cancelled() else None))
+
+    async def _people_control(self, kind, message):
+        """What the hub decided after the voice routed it: learn a named person's voice
+        (they read the sentences now), forget one, list them, or end listening."""
+        conn = self.conn
+        speakers = getattr(conn, 'speakers', None)
+        speakers = speakers if speakers is not None and getattr(speakers, 'available', False) else None
+        if kind == 'listen_end':
+            # After the sign-off has been heard: the phone closes the mic then.
+            after = max(0.0, getattr(conn, 'play_until', 0.0) - time.monotonic())
+            try:
+                quiet = max(0, int(float(message.get('quiet_minutes') or 0)))
+            except (TypeError, ValueError):
+                quiet = 0
+            await conn.emit('bye', mode='sleep', after_ms=int(after * 1000) + 400,
+                            **({'quiet_ms': quiet * 60000} if quiet else {}))
+            return
+        if kind == 'voices_list':
+            names = speakers.enrolled() if speakers else []
+            await self.control('voices', {'names': ','.join(names)})
+            return
+        name = str(message.get('name') or '').strip()
+        if not name:
+            return
+        if kind == 'voice_forget':
+            gone = speakers.forget(name) if speakers else False
+            await self.control('forgot', {'name': name, 'removed': 'true' if gone else 'false'})
+            return
+        # enroll_start
+        if speakers is None:
+            await self.control('enroll_failed', {'name': name, 'reason': 'speaker ID is off here'})
+            await conn.say("Voice learning isn't available right now.", conn.epoch)
+            return
+        conn.enrolling = {'principal': name, 'index': 0, 'started': time.monotonic(), 'other': True}
+        epoch = conn.epoch
+        for line in (f"Okay, {name}. Please read these short sentences one at a time; say stop to cancel.",
+                     'Please read: ' + speakers.enrollment_sentences()[0]):
+            await conn.say(line, epoch, record=False)
 
     async def _switch(self, target, by):
         """The voice was asked to change how it listens ("switch to dictation")."""
@@ -424,23 +476,29 @@ class HouseVoice:
         if name == here.id:
             return
         await conn.set_mode(modes.resolve(name), by='voice')
-        if name == 'dictate':
+        if name in ('dictate', 'scribe'):
             conn.mode_return = here
 
     def speaking(self):
         return self.speaking_task is not None and not self.speaking_task.done()
 
     def identity(self, timing):
-        """``{"owner", "name"}``: the speaker label when speaker ID named someone, else the key's name."""
+        """``{"owner", "name", "speaker"?}``: ``owner`` and ``name`` are the key's (an
+        owner key names its person); ``speaker`` is who speaker ID heard this turn:
+        ``{"label": an enrolled name or "guest", "score", "sure"}`` (absent when no
+        voiceprint could be made, e.g. a very short utterance). The hub decides what
+        that means for the turn (an unknown voice on the owner's phone is a guest)."""
         ident = self.conn.identity
-        speaker = (timing.extra.get('speaker') if timing is not None else None)
-        if isinstance(speaker, str) and speaker not in ('guest', 'assistant', ''):
-            name = speaker
-        elif ident.owner or ident.principal != 'unmapped':
-            name = ident.principal
-        else:
-            name = 'guest'
-        return {'owner': bool(ident.owner), 'name': name}
+        extra = timing.extra if timing is not None else {}
+        label = extra.get('speaker')
+        name = ident.principal if (ident.owner or ident.principal != 'unmapped') else 'guest'
+        out = {'owner': bool(ident.owner), 'name': name}
+        if isinstance(label, str) and label and label != 'assistant':
+            score = extra.get('speaker_score')
+            score = float(score) if isinstance(score, (int, float)) else None
+            out['speaker'] = {'label': label, 'score': None if score is None else round(score, 3),
+                              'sure': bool(label != 'guest' and score is not None and score >= SPEAKER_SURE)}
+        return out
 
     # --- a user turn ------------------------------------------------------------
     async def turn(self, epoch, text, timing, merged_from=None, past=()):
@@ -453,6 +511,12 @@ class HouseVoice:
         except Unavailable as error:
             return self._fallback(epoch, timing, error.code, error.detail)
         if lane.config.get('engine') == 'local':
+            if conn.identity.owner and BACK_TO_HOUSE.search(text):
+                # Nothing routes on the local models: the way back is caught here.
+                timing.extra['engine'] = 'house'
+                await self.control('models_set', {'front': 'claude-haiku-5-5'})
+                await conn.say('Okay, switching back.', epoch)
+                return True
             # The hub chose this server's own models for the voice (home.voice_engine):
             # not a failure, so no error event; the old path answers.
             timing.extra['engine'] = 'front_background'

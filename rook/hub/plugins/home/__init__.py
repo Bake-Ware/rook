@@ -309,6 +309,19 @@ class HomeAgent(Plugin):
                      "(reads only), and it is the only phone where the agent may change the "
                      "calendar or act on notifications (when that phone allows it). Never a "
                      "family device. Blank: none."),
+        setting("voice_signoff", str, "short", choices=("short", "none"),
+                group="Persistent sessions", order=19, label="Sign-off when it stops listening",
+                help="short: a few words (\"Talk soon.\") before the phone closes the mic; "
+                     "none: it just stops."),
+        setting("scribe_ask", bool, False, group="Persistent sessions", order=17,
+                label="Always ask before taking notes",
+                help="When people talk among themselves with you there, the voice stops replying "
+                     "and takes notes (scribe), only if you are among the speakers. On: it asks "
+                     "you first."),
+        setting("scribe_keep_days", int, 30, min=1, max=3650, group="Persistent sessions",
+                order=18, label="Keep scribed transcripts (days)",
+                help="Transcripts of overheard conversations are deleted after this; the "
+                     "takeaways on each conversation's knowledge page stay. Audio is never kept."),
         setting("voice_engine", str, "house", choices=("house", "local"),
                 group="Persistent sessions", order=15, label="Voice engine",
                 help="house: the voice is this house agent's voice session (Voice model). "

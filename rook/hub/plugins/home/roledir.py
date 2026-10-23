@@ -122,6 +122,18 @@ The routing line is never spoken or shown to anyone. Ops:
   route it only after they say yes.
 - pause {{}}, resume {{}}, cancel {{"target": "current"}}, fold {{}}: only when asked for that.
 - quiet {{}}: say nothing at all this turn (active listening).
+- enroll {{"name", "relation", "kid"}}: learn a new person's voice ("I want to enroll a new
+  voice", "learn my wife's voice", "add Autumn"). Ask their name and who they are to
+  {owner_short} (household, family, kid, friend, guest). An adult says, in their own
+  voice, "I agree to have my voice remembered"; a child only with {owner_short}'s own
+  spoken yes ("yes, learn Logan's voice"). Then route it; the phone asks them to read
+  a few sentences. Only {owner_short} can start this. Never answer it from old tasks.
+- forget_voice {{"name", "keep_record"}}: "forget Autumn's voice": ask whether to keep
+  their person record (keep_record true/false), then route.
+- list_voices {{}}: whose voices you know.
+- listen_end {{"minutes"}}: end your own listening: "that's all", "thanks, bye", "stop
+  listening", "go to sleep for 10 minutes" (minutes: 10), or when the conversation has
+  clearly ended. {signoff}
 Small talk, a greeting, or something the [brief] or the conversation already answers
 needs no routing line.
 
@@ -140,9 +152,16 @@ when you're finished."):
 - "brainstorm": mostly listen; at natural pauses one short prompt or question that
   pushes the thinking; every few turns route the ideas so far: queue "add to the
   brainstorm notes: ...".
+- "scribe" (taking notes): when two or more people are talking to each other, not to
+  you, stop replying and route mode "scribe": you write down who said what, and the
+  takeaways get filed. Only when {owner_short} is one of them; otherwise route mode
+  "listen" (say nothing, record nothing, wait for your name). Saying your name, or a
+  quiet spell, ends it.
 
-Turn markers: [voice | <name> | <day and time>] says who is speaking ("guest" when
-unknown) and when; the listening mode is in it too when it isn't the normal one.
+Turn markers: [voice | <name> | <day and time>] says who is speaking and when: who your
+ears recognised ("Bake (sure)", "Autumn (probably)", "unknown guest"), else the phone's
+owner. That is recognition, not proof: anything risky still asks. The listening mode is in
+it too when it isn't the normal one.
 Sounds: when a turn marker says "you may use one sound if it truly fits: [laugh] ...",
 your voice can perform those: at most one, only where a person would really make that
 sound (a laugh at something funny, a sigh at bad news), never as the first word, never
@@ -212,15 +231,22 @@ def main_files(*, claude_md: str, model: str, effort: str, turn_url: str,
             ".mcp.json": _json(mcp)}
 
 
-def voice_rules(name: str, owner: str = "") -> str:
+SIGNOFF = {"short": "Sign off in a few words first (\"Talk soon.\"), then route it.",
+           "none": "Say nothing first: just route it."}
+
+
+def voice_rules(name: str, owner: str = "", signoff: str = "short") -> str:
     """The voice's rules for an assistant called ``name`` (``owner``: whose)."""
     who = f"{owner}'s" if owner else "this household's"
     only = f"for {owner} only" if owner else "for the household only"
-    return VOICE_RULES.format(name=name, owner=who, owner_only=only)
+    return VOICE_RULES.format(name=name, owner=who, owner_only=only,
+                              owner_short=owner or "the owner",
+                              signoff=SIGNOFF.get(signoff, SIGNOFF["short"]))
 
 
 def voice_files(*, model: str = DEFAULT_VOICE_MODEL, effort: str = "low",
-                rules: str = "", name: str = "Rook", owner: str = "") -> dict[str, str]:
+                rules: str = "", name: str = "Rook", owner: str = "",
+                signoff: str = "short") -> dict[str, str]:
     """The voice lane's files, under ``voice/``. No tools and no MCP servers: with
     any tool, Haiku 5.5 (whose thinking cannot be turned off, only kept adaptive)
     thinks before it speaks, 1.6-2.7 s to the first word; without tools at effort
@@ -240,7 +266,7 @@ def voice_files(*, model: str = DEFAULT_VOICE_MODEL, effort: str = "low",
                 "DISABLE_AUTOUPDATER": "1"},
     }
     mcp: dict = {"mcpServers": {}}
-    rules = rules or voice_rules(name, owner)
+    rules = rules or voice_rules(name, owner, signoff)
     return {"voice/CLAUDE.md": rules.rstrip() + "\n",
             "voice/.claude/settings.json": _json(settings),
             "voice/.mcp.json": _json(mcp)}

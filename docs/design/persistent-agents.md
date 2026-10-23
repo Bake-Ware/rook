@@ -308,6 +308,38 @@ action, asks: front.speaks_for), notify.dismiss, device.open_url/launch.
 Read tools for the voice itself: measured, see persistent-agents-20261023; reads stay
 routed through the agent, with the brief answering the common ones.
 
+**Speaker ID live** (2026-10-23): the voice server sends `identity.speaker {label, score,
+sure}` (sure: cosine >= `VOICE_SPEAKER_SURE` 0.65; no voiceprint for a very short utterance:
+no `speaker`). The host's turn marker says "Bake (sure)" / "Autumn (probably)" / "unknown
+guest". `Sessions.heard_as`: on the owner's key, the owner's own label (or no voiceprint) is
+the owner; "guest" or another enrolled person is a guest principal. Identification only:
+risky actions still ask. The hub keeps the last 30 voice turns (`heard`, the transcripts) to
+check consent, the owner's say-so and a spoken yes (models) against what was actually heard.
+
+**People** (`people.py`, `plugins/home/people.json`): routing ops `enroll {name, relation,
+kid}` (the owner, recognised sure, within 5 min; an adult's "I agree ... voice" heard in a
+non-owner voice; a kid only with the owner's say-so naming them), `forget_voice {name,
+keep_record}`, `list_voices`. The hub writes the record (relation, consent with the words and
+turn, devices whose worker name has the name, voiceprint state) and a memory fact, then
+`voice_event enroll_start {name}`: the voice server reads the enrollment sentences with them
+and reports `enrolled` / `enroll_failed` / `forgot` / `voices` as client controls. The app's
+People list talks to the voice server directly (owner keys; voiceprints never leave it).
+
+**listen_end {minutes}** -> `voice_event listen_end {quiet_minutes}` -> the voice server
+emits `bye {mode: sleep, after_ms: until the sign-off is heard, quiet_ms}`; the app closes the
+mic and ignores the wake word for quiet_ms. `home.voice_signoff` short|none.
+
+**Scribe** (`scribe.py`): mode `scribe` (VOICE_SWITCHABLE, no model). The hub allows it only
+when the owner was heard in the last 10 min, else switches to `listen` and records nothing; it
+opens a conversation record and a knowledge page "Conversation <date time>". The voice server
+sends each utterance as client control `scribe {text, speaker, at}` (enrolled names, else
+per-conversation clustering "Speaker A/B", `SessionSpeakers`); the assistant's name or
+`VOICE_SCRIBE_IDLE_S` (300) quiet ends it (`scribe {end}`), the named utterance then becomes a
+normal turn. Every 15 lines and at the end the agent gets the new lines as a background item
+with its usual tools (propose tasks, never send; takeaways and decisions with times on the
+page). Transcripts pruned after `home.scribe_keep_days` (30); `home.scribe_ask` makes the
+voice ask first.
+
 **Sounds** (as Pianobar's DJ): the voice server offers `sound_tags` ([laugh] [chuckle]
 [sigh] [gasp] [clear throat]) on about one turn in four (`VOICE_HOUSE_SOUND_EVERY`) when
 the app's Expressive voice is on and the voice is a Chatterbox one; the host puts them in

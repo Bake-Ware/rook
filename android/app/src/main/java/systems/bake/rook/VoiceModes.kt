@@ -17,6 +17,7 @@ object VoiceModes {
         Mode("dictate", "Dictate", ""),
         Mode("brainstorm", "Brainstorm", "Be an energetic brainstorming partner. Offer a few fresh, varied ideas at a time, build on what the user says, combine and twist ideas, and ask one probing question that pushes the thinking further. Keep it spoken and brief: no lists longer than three items, no long explanations unless asked."),
         Mode("roleplay", "Roleplay", "Play the character or scenario the user describes and stay in character. If no scenario has been given yet, ask what they would like to play. Keep replies short and spoken, move the scene along, and step out of character only if the user asks or something becomes unsafe."),
+        Mode("scribe", "Taking notes", ""),
         Mode("listen", "Active listening", "Mostly listen. Reply with short, warm acknowledgements and occasionally reflect back what you heard or the feeling behind it, in a sentence. Do not give advice, solve problems or change the subject unless the user directly asks for that. A gentle open question is fine when they pause."),
     )
 
@@ -27,14 +28,14 @@ object VoiceModes {
      * services/voice/modes.py VOICE_SWITCHABLE. The children's conversation and roleplay
      * modes are never among them, so a spoken request never widens or leaves those.
      */
-    val VOICE_SWITCHABLE = setOf("assistant", "dictate", "listen", "brainstorm")
+    val VOICE_SWITCHABLE = setOf("assistant", "dictate", "listen", "brainstorm", "scribe")
 
     /** Whether a server "mode" event the voice asked for ([by] "voice") may be taken. */
     fun voiceSwitchAllowed(current: String, next: String, by: String?): Boolean =
         by == "voice" && current in VOICE_SWITCHABLE && next in VOICE_SWITCHABLE
 
     /** A switch the voice made outlives a reconnect, except dictation (its way back is on the server). */
-    fun keepAcrossReconnect(id: String?): Boolean = id != null && id != "dictate" && id in VOICE_SWITCHABLE
+    fun keepAcrossReconnect(id: String?): Boolean = id != null && id != "dictate" && id != "scribe" && id in VOICE_SWITCHABLE
     fun promptKey(id: String) = "voice_mode_prompt_$id"
 
     /**

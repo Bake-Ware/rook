@@ -248,9 +248,15 @@ def test_whole_reply_in_end_and_speaker_name(tmp_path, monkeypatch):
     asyncio.run(scenario())
     engine = house_mod.HouseVoice.__new__(house_mod.HouseVoice)
     engine.conn = type('C', (), {'identity': OWNER})()
-    timing = type('T', (), {'extra': {'speaker': 'Sam'}})()
-    assert engine.identity(timing) == {'owner': True, 'name': 'Sam'}
-    timing.extra['speaker'] = 'guest'
+    # The key names its person; speaker ID says who was heard (the hub decides what it means).
+    timing = type('T', (), {'extra': {'speaker': 'Sam', 'speaker_score': 0.58}})()
+    assert engine.identity(timing) == {'owner': True, 'name': 'Alex',
+                                       'speaker': {'label': 'Sam', 'score': 0.58, 'sure': False}}
+    timing.extra.update(speaker='Alex', speaker_score=0.731)
+    assert engine.identity(timing)['speaker'] == {'label': 'Alex', 'score': 0.731, 'sure': True}
+    timing.extra.update(speaker='guest', speaker_score=0.2)
+    assert engine.identity(timing)['speaker'] == {'label': 'guest', 'score': 0.2, 'sure': False}
+    timing.extra['speaker'] = 'assistant'                         # our own echo: no speaker
     assert engine.identity(timing) == {'owner': True, 'name': 'Alex'}
     engine.conn.identity = GUEST
     assert engine.identity(None) == {'owner': False, 'name': 'guest'}
@@ -696,4 +702,120 @@ def test_sound_tags_are_kept_only_when_offered_and_shown_as_stage_directions(tmp
                 else:
                     assert 'sound_tags' not in user
                     assert '[' not in text and '(sighs)' not in ' '.join(said(events))
+    asyncio.run(scenario())
+
+
+# --- people by voice, ending listening, scribe ------------------------------------------
+class FakeSpeakers:
+    available = True
+
+    def __init__(self):
+        self.prints, self.samples = {'Alex'}, {}
+
+    def enrollment_sentences(self):
+        return ['One two three.', 'Four five six.', 'Seven eight nine.']
+
+    async def enroll_add(self, principal, pcm):
+        n = self.samples.get(principal, 0) + 1
+        self.samples[principal] = n
+        return {'ok': True, 'samples': n, 'needed': max(0, 3 - n)}
+
+    def enroll_finish(self, principal):
+        if self.samples.get(principal, 0) >= 3:
+            self.prints.add(principal)
+            return True
+        return False
+
+    def forget(self, principal):
+        gone = principal in self.prints
+        self.prints.discard(principal)
+        return gone
+
+    def enrolled(self):
+        return sorted(self.prints)
+
+
+def test_the_hub_starts_a_named_enrollment_and_hears_how_it_went(tmp_path, monkeypatch):
+    async def scenario():
+        async with FakeLane() as lane:
+            house_env(monkeypatch, lane.url)
+            conn, store, jobs, events, _ = connection(tmp_path, front=FakeFront(), complete=Script())
+            conn.speakers = FakeSpeakers()
+            try:
+                await conn.fb.house.lane.ensure()
+                await lane.send(t='enroll_start', name='Autumn')
+                await wait_for(lambda: conn.enrolling is not None)
+                assert conn.enrolling['principal'] == 'Autumn' and conn.enrolling['other']
+                await wait_for(lambda: any('Please read: One two three.' in t for t in said(events)))
+                for _ in range(3):
+                    assert await conn._voice_command('reading it', b'\0' * 32000, False)
+                await wait_for(lambda: any(m.get('op') == 'enrolled' for m in lane.received))
+                (done,) = [m for m in lane.received if m.get('op') == 'enrolled']
+                assert done['args'] == {'name': 'Autumn', 'samples': '3'} and conn.enrolling is None
+                assert any("Thanks, Autumn" in t for t in said(events))
+                await lane.send(t='voices_list')
+                await wait_for(lambda: any(m.get('op') == 'voices' for m in lane.received))
+                assert [m for m in lane.received if m.get('op') == 'voices'][0]['args'] == {'names': 'Alex,Autumn'}
+                await lane.send(t='voice_forget', name='Autumn')
+                await wait_for(lambda: any(m.get('op') == 'forgot' for m in lane.received))
+                assert 'Autumn' not in conn.speakers.prints
+                await lane.send(t='listen_end', quiet_minutes=10)
+                await wait_for(lambda: any(e.get('type') == 'bye' for e in events))
+                bye = next(e for e in events if e.get('type') == 'bye')
+                assert bye['mode'] == 'sleep' and bye['quiet_ms'] == 600000 and bye['after_ms'] >= 400
+            finally:
+                await shutdown(conn, store, jobs)
+    asyncio.run(scenario())
+
+
+def test_scribe_sends_lines_and_the_assistants_name_ends_it(tmp_path, monkeypatch):
+    monkeypatch.setenv('ROOK_VOICE_ASSISTANT_NAME', 'Sojourn')
+
+    async def answer(lane, message):
+        await lane.send(t='delta', turn=message['turn'], text='Yes?')
+        await lane.send(t='end', turn=message['turn'], text='', ok=True)
+
+    async def scenario():
+        async with FakeLane(answer) as lane:
+            house_env(monkeypatch, lane.url)
+            conn, store, jobs, events, _ = connection(tmp_path, front=FakeFront(), complete=Script())
+            try:
+                await conn.fb.house.lane.ensure()
+                await lane.send(t='mode', mode='scribe', by='voice')
+                await wait_for(lambda: conn.mode.id == 'scribe')
+                await conn.start(text='we should call the plumber', speak=False)
+                await idle(conn)
+                lines = [m for m in lane.received if m.get('op') == 'scribe']
+                assert lines and lines[0]['args']['text'] == 'we should call the plumber'
+                assert lines[0]['args']['speaker'] == 'Speaker'
+                assert not [m for m in lane.received if m['t'] == 'user']      # no replies while scribing
+                await conn.start(text='Sojourn, what did we decide?', speak=False)
+                await wait_for(lambda: any(m['t'] == 'user' for m in lane.received))
+                await idle(conn, .2)
+                assert conn.mode.id == 'assistant'
+                ends = [m for m in lane.received if m.get('op') == 'scribe' and m['args'].get('end')]
+                assert ends
+                (user,) = [m for m in lane.received if m['t'] == 'user']
+                assert user['text'] == 'Sojourn, what did we decide?'
+            finally:
+                await shutdown(conn, store, jobs)
+    asyncio.run(scenario())
+
+
+def test_on_the_local_models_the_way_back_is_caught_here(tmp_path, monkeypatch):
+    async def scenario():
+        lane = FakeLane()
+        lane.config = {'engine': 'local'}
+        async with lane:
+            house_env(monkeypatch, lane.url)
+            front = FakeFront()
+            conn, store, jobs, events, _ = connection(tmp_path, front=front, complete=Script())
+            try:
+                await conn.start(text='switch back to claude please', speak=False)
+                await idle(conn)
+                (ctl,) = [m for m in lane.received if m['t'] == 'control']
+                assert ctl['op'] == 'models_set' and ctl['args'] == {'front': 'claude-haiku-5-5'}
+                assert 'Okay, switching back.' in said(events) and front.calls == []
+            finally:
+                await shutdown(conn, store, jobs)
     asyncio.run(scenario())

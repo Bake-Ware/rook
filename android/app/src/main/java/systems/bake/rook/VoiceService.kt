@@ -37,11 +37,18 @@ import kotlin.concurrent.thread
  *
  * UI observes via [VoiceBus] (main-thread callbacks) — no binder needed.
  */
+/** SharedPreferences key: the voices the voice server knows (JSON array of names). */
+const val PREF_PEOPLE = "voice_people"
+
 class VoiceService : Service() {
 
     @Volatile private var client: VoiceClient? = null
     /** A listening mode the voice switched to; kept for reconnects, cleared when the session ends. */
     private var voiceMode: String? = null
+    /** The mode the server last reported (scribe shows on the notification). */
+    private var modeNow: String? = null
+    /** "Go to sleep for 10 minutes": the wake word is ignored until then (elapsedRealtime). */
+    private var wakeQuietUntil = 0L
     private var generation = 0L
     private val capture = VoiceCaptureLifetime { stopMic(); stopForegroundCompat(); if (::arbiter.isInitialized) arbiter.idle() }
     private var sessionWanted: Boolean
@@ -189,11 +196,21 @@ class VoiceService : Service() {
             // Retrying would only hit the same server and mode again; stay closed and say why.
             override fun onRefused(msg: String) = current { VoiceBus.emit(conn) { it.onError(msg) }; closeSession() }
             override fun onTool(title: String, status: String) = current { VoiceBus.emit(conn) { it.onTool(title, status) } }
+            override fun onVoices(names: List<String>) = current {
+                getSharedPreferences("rook", MODE_PRIVATE).edit().putString(PREF_PEOPLE, org.json.JSONArray(names).toString()).apply()
+            }
+            override fun onQuiet(ms: Long) = current {
+                wakeQuietUntil = SystemClock.elapsedRealtime() + ms.coerceIn(0L, 4 * 3600_000L)
+                Log.i(TAG, "wake word quiet for ${ms / 60000} min")
+            }
             override fun onVoiceModels(json: String) = current {
                 getSharedPreferences("rook", MODE_PRIVATE).edit().putString(VoiceModels.PREF, json).apply()
             }
             override fun onModeChanged(mode: String) = current {
                 voiceMode = mode.takeIf { VoiceModes.keepAcrossReconnect(it) }
+                // Taking notes shows on the ongoing notification while it lasts.
+                modeNow = mode
+                setState(VoiceBus.state)
                 VoiceBus.emit(conn) { it.onMode(VoiceModes.byId(mode).label) }
             }
             override fun onBye(mode: String, afterMs: Long) = current {
@@ -233,6 +250,12 @@ class VoiceService : Service() {
     /** Close/cancel the predecessor before opening its replacement; invalidate queued callbacks. */
     fun voiceChanged(voice: String) { client?.setVoice(voice) }
 
+    /** The People list: ask the voice server for the voices it knows, or forget one. */
+    fun voices(type: String, name: String? = null) {
+        openSession()
+        client?.sendVoices(type, name)
+    }
+
     /** The Voice models screen: ask the hub (through the voice server) or change them. */
     fun models(type: String, args: org.json.JSONObject = org.json.JSONObject()) {
         openSession()
@@ -251,7 +274,7 @@ class VoiceService : Service() {
     }
 
     private fun closeSession() {
-        sessionWanted = false; ++generation; retries = 0; voiceMode = null
+        sessionWanted = false; ++generation; retries = 0; voiceMode = null; modeNow = null
         main.removeCallbacks(idleCheck)
         val old = client; client = null
         try { old?.close() } finally {
@@ -424,6 +447,7 @@ class VoiceService : Service() {
     private fun onWake(d: WakeWordDetector) {
         val now = SystemClock.elapsedRealtime()
         if (now - lastWakeAt < WAKE_REFRACTORY_MS) return
+        if (now < wakeQuietUntil) { d.reset(); return }
         lastWakeAt = now
         Log.i(TAG, "WAKE score=${d.lastScore}")
         d.reset()
@@ -564,7 +588,8 @@ class VoiceService : Service() {
         val b = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, CHANNEL)
                 else @Suppress("DEPRECATION") Notification.Builder(this)
         val paused = VoiceBus.micPaused
-        return b.setContentTitle("Rook voice · ${if (paused != null) getString(R.string.mic_paused) else text}")
+        val shown = if (modeNow == "scribe") getString(R.string.taking_notes) else text
+        return b.setContentTitle("Rook voice · ${if (paused != null) getString(R.string.mic_paused) else shown}")
             .setContentText(paused ?: if (text == "standby") getString(R.string.st_standby) else url)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentIntent(NotificationNavigation.mainActivity(this))

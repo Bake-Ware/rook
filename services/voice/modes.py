@@ -46,6 +46,10 @@ MODES = {
                    'and spoken, move the scene along, and step out of character only if the user asks '
                    'or something becomes unsafe.'),
     },
+    'scribe': {
+        'label': 'Taking notes',
+        'prompt': '',
+    },
     'listen': {
         'label': 'Active listening',
         'prompt': ('Mostly listen. Reply with short, warm acknowledgements and occasionally reflect back '
@@ -57,13 +61,14 @@ MODES = {
 
 # Accept a few natural spellings from clients.
 ALIASES = {'active_listening': 'listen', 'active listening': 'listen', 'listening': 'listen',
-           'dictation': 'dictate', 'chat': 'conversation', 'agent': 'assistant'}
+           'dictation': 'dictate', 'chat': 'conversation', 'agent': 'assistant',
+           'take notes': 'scribe', 'notes': 'scribe'}
 
 # Modes the house voice may switch a connection between by itself ("switch to
 # dictation"), and the ones it serves (with VOICE_ENGINE=house; owner connections).
 # The children's and roleplay modes are never among them: a voice switch never
 # leaves or enters those, so no spoken request widens what a child's session can do.
-VOICE_SWITCHABLE = frozenset({'assistant', 'dictate', 'listen', 'brainstorm'})
+VOICE_SWITCHABLE = frozenset({'assistant', 'dictate', 'listen', 'brainstorm', 'scribe'})
 HOUSE_SERVED = frozenset({'assistant', 'listen', 'brainstorm'})
 
 # Tools a mode may use; None means every tool the provider offers.
@@ -113,7 +118,8 @@ class Mode:
 
     @property
     def uses_model(self):
-        return self.id != 'dictate'
+        """Dictation and scribing never call the model: they write down what is said."""
+        return self.id not in ('dictate', 'scribe')
 
     def allows(self, tool):
         allowed = ALLOWED_TOOLS.get(self.id, NON_AGENT_TOOLS)

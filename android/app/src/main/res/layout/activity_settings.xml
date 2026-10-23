@@ -43,6 +43,13 @@
           </LinearLayout>
         </LinearLayout>
         <LinearLayout style="@style/RookPanel">
+          <TextView style="@style/RookSectionLabel" android:text="PEOPLE" />
+          <TextView style="@style/RookHelp" android:text="@string/voice_people_help" />
+          <LinearLayout android:id="@+id/peopleList" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
+          <TextView android:id="@+id/peopleStatus" style="@style/RookHelp" android:accessibilityLiveRegion="polite" />
+          <Button android:id="@+id/btnPeopleRefresh" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/voice_models_refresh" style="@style/RookOutlinedButton" />
+        </LinearLayout>
+        <LinearLayout style="@style/RookPanel">
           <TextView style="@style/RookSectionLabel" android:text="BEHAVIOUR" />
           <CheckBox android:id="@+id/fastVoice" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="false" android:text="@string/fast_voice" />
           <CheckBox android:id="@+id/showThinking" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="false" android:text="@string/show_thinking" />

@@ -88,6 +88,40 @@ restart:
 
 Every change is recorded (`home.voice_models_set`, who and how).
 
+## Who's talking
+
+With your voice enrolled ("enroll my voice"), the voice knows when it is you
+and when it is someone else: each turn says "Bake (sure)", "Autumn
+(probably)" or "unknown guest". It is recognition, not a password: anything
+risky still asks you. Someone it doesn't recognise on your phone is treated
+as a guest; a very short "yes" that is too short to recognise counts as you.
+
+**Learning someone else's voice:** say "I want to enroll a new voice" or
+"learn Autumn's voice". It asks their name and who they are to you. An adult
+then says "I agree to have my voice remembered" in their own voice; for a
+child it needs your own yes out loud ("yes, learn Logan's voice"). Then they
+read a few sentences. Only you, recognised by voice, can start this. It keeps
+a record of them on the hub (who they are, their consent in their words, their
+devices) and a note in its memory; the voiceprint stays on the voice server.
+"Forget Autumn's voice" deletes the voiceprint (it asks whether to keep the
+record). **Settings > Voice > People** in the app lists the voices it knows,
+with Forget.
+
+**Ending its own listening:** "that's all", "thanks, bye", "stop listening",
+or "go to sleep for 10 minutes" (it then ignores the wake word that long).
+Sign-off: **Sign-off when it stops listening** (short or none).
+
+**Taking notes (scribe):** when people talk among themselves and not to it,
+it stops replying and writes down who said what (enrolled names, else
+"Speaker A", "Speaker B"), only if you are one of them. If you aren't, it just
+stops replying and waits for its name, and records nothing. The phone shows
+"taking notes" while it lasts. Now and then the agent reads the new lines and
+files tasks it implies (proposed as usual, never sent to anyone), takeaways
+and decisions with the time they were said, on a knowledge page "Conversation
+<date time>". Saying its name, or five quiet minutes, ends it. Transcripts are
+deleted after **Keep scribed transcripts** (30 days); the takeaways stay;
+audio is never kept. **Always ask before taking notes** makes it ask first.
+
 ## Your phone
 
 With **Owner's phone for the voice's brief** set (e.g. `bakephone`), the

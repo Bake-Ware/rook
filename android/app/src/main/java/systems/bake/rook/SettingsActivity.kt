@@ -169,6 +169,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         b.btnSaveVoice.setOnClickListener { saveVoiceSettings() }
         setupModels()
+        setupPeople()
     }
 
     // ---- voice models (the house agent's front and back) ------------------------
@@ -177,6 +178,40 @@ class SettingsActivity : AppCompatActivity() {
     private var pick = arrayOf("", "", "", "")      // front, front effort, back, back effort
     private val modelsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == VoiceModels.PREF) runOnUiThread { showModels(VoiceModels.parse(prefs.getString(VoiceModels.PREF, null))) }
+        if (key == PREF_PEOPLE) runOnUiThread { showPeople() }
+    }
+
+    // ---- people: the voices the assistant recognises ----------------------------------
+
+    private fun setupPeople() {
+        showPeople()
+        b.btnPeopleRefresh.setOnClickListener {
+            val service = VoiceService.inst ?: return@setOnClickListener run { b.peopleStatus.text = "Turn the voice on first, then Refresh." }
+            b.peopleStatus.text = "Asking…"
+            service.voices("voices_get")
+        }
+    }
+
+    private fun showPeople() {
+        val names = try { org.json.JSONArray(prefs.getString(PREF_PEOPLE, "[]")).let { a -> (0 until a.length()).map { a.optString(it) } } }
+            catch (_: Exception) { emptyList() }
+        b.peopleList.removeAllViews()
+        b.peopleStatus.text = if (names.isEmpty()) "No voices known yet (or not loaded: Refresh)." else ""
+        for (name in names) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            row.addView(TextView(this).apply { text = name; textSize = 16f }, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(android.widget.Button(this).apply {
+                text = "Forget"
+                contentDescription = "Forget $name's voice"
+                setOnClickListener {
+                    AlertDialog.Builder(this@SettingsActivity).setTitle("Forget $name's voice?")
+                        .setMessage("The voiceprint is deleted on the voice server. Their person record on the hub stays.")
+                        .setPositiveButton("Forget") { _, _ -> VoiceService.inst?.voices("voice_forget", name) }
+                        .setNegativeButton("Keep", null).show()
+                }
+            })
+            b.peopleList.addView(row)
+        }
     }
 
     private fun setupModels() {
