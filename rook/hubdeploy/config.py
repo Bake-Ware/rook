@@ -11,6 +11,7 @@ Looked up as ``--config``, then ``$ROOK_HUB_DEPLOY_CONFIG``, then
       "databases": ["/var/lib/rook/*.db"],
       "keep": 5,
       "deadman_minutes": 10,
+      "feed_service": "",         # optional: who serves /apk (default: the dashboard)
       "services": {
         "dashboard": {"unit": "rook-hub-dashboard.service",
                       "health": ["http://127.0.0.1:7005/"], "order": 10},
@@ -36,6 +37,7 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -98,6 +100,13 @@ class Config:
     settle_seconds: float = 3
     pubkey: str = ""
     services: dict[str, Service] = field(default_factory=dict)
+    # The service that serves /band-worker.pyz and /apk (rook/hubdeploy/feed.py):
+    # "" = the one that imports rook.remote.bootstrap (dashboard, or the merged
+    # hub). feed_url: its base URL for the after-deploy check ("" = from its
+    # first http health URL). feed_check false skips the gate and served checks.
+    feed_service: str = ""
+    feed_url: str = ""
+    feed_check: bool = True
 
     @property
     def releases(self) -> Path:
@@ -113,6 +122,24 @@ class Config:
     def ordered(self, names=None) -> list[Service]:
         svcs = [s for s in self.services.values() if names is None or s.name in names]
         return sorted(svcs, key=lambda s: (s.order, s.name))
+
+    def feed_svc(self) -> Service | None:
+        if self.feed_service:
+            return self.services.get(self.feed_service)
+        for s in self.ordered():
+            if "rook.remote.bootstrap" in s.modules:
+                return s
+        return None
+
+    def feed_base(self) -> str:
+        if self.feed_url:
+            return self.feed_url.rstrip("/")
+        svc = self.feed_svc()
+        for url in (svc.health if svc else []):
+            u = urllib.parse.urlparse(url)
+            if u.scheme in ("http", "https"):
+                return f"{u.scheme}://{u.netloc}"
+        return ""
 
     def python_for(self, svc: Service) -> str:
         return svc.python or self.python
@@ -199,7 +226,12 @@ def from_dict(raw: dict, path: Path = Path("<memory>")) -> Config:
         settle_seconds=float(raw.get("settle_seconds", 3)),
         pubkey=raw.get("pubkey", "") or "",
         services=services,
+        feed_service=str(raw.get("feed_service", "") or ""),
+        feed_url=str(raw.get("feed_url", "") or ""),
+        feed_check=bool(raw.get("feed_check", True)),
     )
+    if cfg.feed_service and cfg.feed_service not in services:
+        raise ConfigError(f"feed_service {cfg.feed_service!r} is not a configured service")
     if cfg.keep < 2:
         raise ConfigError("keep must be at least 2 (current + one rollback target)")
     return cfg

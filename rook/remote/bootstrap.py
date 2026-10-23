@@ -1903,8 +1903,12 @@ class CombinedServer:
         # Always public: worker bootstrap/artifacts, health, websockets.
         is_exempt = self._auth_exempt(request.path)
         if request.path in ("/apk", "/apk.json"):
-            if os.environ.get("ROOK_PUBLIC_APK_SHA256"):
-                is_exempt = True  # handler verifies the exact approved generic artifact
+            from ..hub.update_feed import published_apk
+            if os.environ.get("ROOK_PUBLIC_APK_SHA256") or published_apk() is not None:
+                # The handler verifies the exact approved generic artifact: the
+                # gate's sha256, or a published release APK's (checked against
+                # its release when the update service or installer published it).
+                is_exempt = True
             elif (request.query.get("channel") == "beta"
                   and os.environ.get("ROOK_BETA_APK_SHA256")):
                 # Public for the approved beta only: without a stable approval
@@ -2569,7 +2573,18 @@ class CombinedServer:
         if not env_hash:
             return None
         from ..hub.update_feed import beta_apk_paths
-        return (*beta_apk_paths(), env_hash)
+        # The updates dir first (where an operator drops a beta), then the one
+        # the hub release carries (rook/remote/apk-beta, rook hub release build):
+        # whichever the gate approves.
+        here = Path(__file__).parent / "apk-beta"
+        cands = [beta_apk_paths(), (here / "rook-worker.apk", here / "rook-worker-apk.json")]
+        for apk, man in cands:
+            try:
+                if json.loads(man.read_text()).get("sha256") == env_hash and apk.is_file():
+                    return apk, man, env_hash
+            except (OSError, ValueError, AttributeError):
+                continue
+        return (*cands[0], env_hash)
 
     @staticmethod
     def _approved_apk_manifest(apk: Path, manifest_path: Path, expected: str) -> dict:

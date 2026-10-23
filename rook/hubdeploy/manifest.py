@@ -7,7 +7,14 @@ A hub release is a tarball of one git commit (``git archive``) plus a manifest::
      "built_at": "2026-09-30T12:00:00+00:00",
      "filename": "rook-hub-412.salty.otter.tar.gz",
      "sha256": "<hex>", "size": 1234567, "url": "https://...",   # url optional
+     "feed": [{"kind": "apk", "path": "rook/remote/rook-worker.apk",  # optional
+               "sha256": "<hex>", "size": 145193524}, ...],
+     "feed_info": {"worker": {"build": 738, ...}, "apk": {"version_name": ...}},
      "sig": "<base64 ed25519>"}
+
+``feed`` names the files the release serves besides its code (worker bundle,
+APKs: rook/hubdeploy/feed.py). Each ships beside the tarball as
+``feed/<sha256>`` and is checked against this signed list when deployed.
 
 It is signed with the same ed25519 update key that signs worker bundles
 (``rook/remote/update_keys.py``), but under its own domain prefix
@@ -24,6 +31,7 @@ import datetime
 import json
 import os
 import re
+import shutil
 import subprocess
 import urllib.parse
 import urllib.request
@@ -87,6 +95,12 @@ def check_fields(manifest: dict) -> None:
         raise ManifestError(f"bad filename {fn!r}")
     if not re.fullmatch(r"[0-9a-f]{64}", str(manifest["sha256"])):
         raise ManifestError("sha256 must be 64 lowercase hex characters")
+    if "feed" in manifest:
+        from .feed import FeedError, check_entries
+        try:
+            check_entries(manifest["feed"])
+        except FeedError as e:
+            raise ManifestError(str(e)) from None
 
 
 def verify(manifest: dict, pubkey_b64: str | None = None) -> dict:
@@ -173,11 +187,17 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def build_release(repo: Path, out_dir: Path, ref: str = "HEAD",
-                  url_base: str = "", signing_key=None) -> tuple[Path, Path, dict]:
+                  url_base: str = "", signing_key=None, *, worker=None, apk=None,
+                  apk_beta=None, public_base: str = "", log=None) -> tuple[Path, Path, dict]:
     """``git archive`` one commit into ``out_dir`` and write its signed manifest.
 
     Only committed content goes in: a dirty working tree cannot leak into a
-    release. Returns (tarball, manifest_path, manifest)."""
+    release. The feed (rook/hubdeploy/feed.py) is optional: ``worker`` is
+    ``"build"`` (build the bundle of this commit, signed with the same key) or
+    a directory holding a signed bundle; ``apk`` / ``apk_beta`` are
+    directories holding rook-worker.apk + rook-worker-apk.json.
+    Returns (tarball, manifest_path, manifest)."""
+    from . import feed as fd
     from rook.remote.build_band_worker import build_name
     # git archive -o is resolved against -C: relative paths would land inside
     # the repository (and fail when that folder is missing).
@@ -192,6 +212,30 @@ def build_release(repo: Path, out_dir: Path, ref: str = "HEAD",
     build = int(_git(repo, "rev-list", "--count", commit))
     version = f"{build}.{build_name(commit[:7])}"
     out_dir.mkdir(parents=True, exist_ok=True)
+    entries, info = [], {}
+    try:
+        pub = base64.b64encode(bytes(signing_key.verify_key)).decode("ascii")
+        if worker == "build":
+            wdir = out_dir / f".worker-{version}"
+            shutil.rmtree(wdir, ignore_errors=True)
+            try:
+                fd.build_worker(repo, commit, wdir, signing_key, public_base)
+                files, info["worker"] = fd.worker_files(wdir, pub)
+                entries += fd.store(files, "worker", out_dir)
+            finally:
+                shutil.rmtree(wdir, ignore_errors=True)
+        elif worker:
+            files, info["worker"] = fd.worker_files(Path(worker), pub)
+            entries += fd.store(files, "worker", out_dir)
+        for kind, src in (("apk", apk), ("apk_beta", apk_beta)):
+            if src:
+                files, info[kind] = fd.apk_files(Path(src), kind)
+                entries += fd.store(files, kind, out_dir)
+    except fd.FeedError as e:
+        raise ManifestError(str(e)) from None
+    if log:
+        for kind, i in info.items():
+            log(f"feed {kind}: " + ", ".join(f"{k} {v}" for k, v in i.items() if k != "url"))
     tarball = out_dir / f"rook-hub-{version}.tar.gz"
     subprocess.run(["git", "-C", str(repo), "archive", "--format=tar.gz",
                     f"--prefix={version}/", "-o", str(tarball), commit], check=True)
@@ -204,6 +248,8 @@ def build_release(repo: Path, out_dir: Path, ref: str = "HEAD",
     }
     if url_base:
         manifest["url"] = f"{url_base.rstrip('/')}/{tarball.name}"
+    if entries:
+        manifest["feed"], manifest["feed_info"] = entries, info
     manifest = sign(manifest, signing_key)
     mpath = out_dir / f"rook-hub-{version}.json"
     mpath.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

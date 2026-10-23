@@ -122,12 +122,21 @@ async def test_beta_phone_rejoins_stable_once_stable_passes_it(hub, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_beta_only_approval_never_opens_the_stable_apk(hub, monkeypatch):
+async def test_beta_only_approval_never_opens_the_stable_apk(hub, monkeypatch, tmp_path):
     """With only the beta approved, /apk?channel=beta is public for the beta
-    alone: plain /apk stays behind login, and a beta that is not newer gets
-    no stable fallback (the stable copy is not approved for the public)."""
+    alone: an operator's stable copy that no gate approves (rook/remote, maybe
+    a legacy build with a band key inside) stays behind login. A stable APK
+    published from a release (updates/apk) is a verified generic build and is
+    public on its own (rook hub release / the installer publish one)."""
+    from rook.remote import bootstrap
     server, updates, stable = hub
     monkeypatch.delenv("ROOK_PUBLIC_APK_SHA256")
+    legacy = tmp_path / "release" / "rook" / "remote"
+    _artifact(legacy, b"stable apk" * 50, 30, "0.4.19", "https://rook.example.com/apk")
+    monkeypatch.setattr(bootstrap, "__file__", str(legacy / "bootstrap.py"))
+    published = updates / "apk"
+    for f in published.iterdir():
+        f.rename(tmp_path / f.name)
     beta = _beta(updates)
     monkeypatch.setenv("ROOK_BETA_APK_SHA256", beta["sha256"])
     async with TestClient(TestServer(server._app)) as client:
@@ -136,7 +145,10 @@ async def test_beta_only_approval_never_opens_the_stable_apk(hub, monkeypatch):
         for path in ("/apk", "/apk.json", "/apk.json?channel=stable"):
             r = await client.get(path, allow_redirects=False)
             assert r.status != 200 and b"stable apk" not in await r.read()
+        for f in ("rook-worker.apk", "rook-worker-apk.json"):
+            (tmp_path / f).rename(published / f)
+        r = await client.get("/apk.json", allow_redirects=False)
+        assert r.status == 200 and (await r.json())["sha256"] == stable["sha256"]
         _beta(updates, code=29)
-        for path in ("/apk.json?channel=beta", "/apk?channel=beta"):
-            r = await client.get(path)
-            assert r.status == 503 and b"stable apk" not in await r.read()
+        r = await client.get("/apk.json?channel=beta")
+        assert r.status == 200 and (await r.json())["sha256"] == stable["sha256"]

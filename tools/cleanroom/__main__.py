@@ -116,8 +116,11 @@ def cmd_run(args):
         logf.write(line + "\n")
         logf.flush()
 
-    run = Run(run_id=run_id, hardware=args.hardware, model=args.model, trust=args.trust, rook_ref=ref)
-    ctx = scenarios.Ctx(run, site, matrix, ref=ref, repo=args.repo, log=log)
+    run = Run(run_id=run_id, hardware=args.hardware, model=args.model, trust=args.trust,
+              rook_ref=f"release {args.release}" if args.release else ref)
+    if args.release:
+        site["require_hub_apk"] = True
+    ctx = scenarios.Ctx(run, site, matrix, ref=ref, repo=args.repo, log=log, release=args.release)
     log(f"[run] {run_id} rook {ref}")
     try:
         for name, fn in scenarios.ORDER:
@@ -175,7 +178,12 @@ def main(argv=None):
     r.add_argument("--repo", default="Bake-Ware/rook", help="GitHub repo the installer and code come from")
     r.add_argument("--only", help="comma-separated scenarios (onboarding always runs)")
     r.add_argument("--keep", action="store_true", help="leave the machines up afterwards")
-    r.add_argument("--apk", help="the APK to install on the phone (default: the site's)")
+    r.add_argument("--apk", help="the APK to install on the phone when the hub serves none "
+                                 "(default: the site's)")
+    r.add_argument("--release", default="",
+                   help="install a published release the way the README says (latest, or a "
+                        "tag) instead of git at --ref; the phone must then get the app from "
+                        "the fresh hub's /apk")
     r.add_argument("--reports", help="reports directory (default: site reports_dir)")
     sub.add_parser("sweep", help="destroy leftover clean-room machines")
     args = p.parse_args(argv)

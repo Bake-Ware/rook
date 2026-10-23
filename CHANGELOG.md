@@ -9,6 +9,32 @@ version was `0.1.0`.
 ## Unreleased
 
 ### Added
+- Hub releases carry what the hub serves besides its code. `rook hub release build` puts the
+  worker bundle (on a live hub the one it serves, so a hub deploy never changes what new workers
+  get; `--worker-bundle build` builds it from the same commit in a throwaway worktree, signed with
+  the same key; also `DIR|none`), the general APK and the beta channel's APK (`--apk`,
+  `--apk-beta`: by default the ones the live hub serves and approves) into the signed manifest
+  (`feed`, path + sha256 + size per file), stored once by content beside the tarball.
+  `rook hub deploy` fetches and checks each file and links it into the release, carries any kind
+  the release lacks from the running release (`--no-carry-feed`), refuses a release whose APK
+  `ROOK_PUBLIC_APK_SHA256` or whose beta `ROOK_BETA_APK_SHA256` would not approve (the gates are
+  never changed), and after the restart checks `/band-worker.json`, `/band-worker.pyz`, `/apk.json`,
+  `/apk` and `/apk.json?channel=beta`, rolling back when one went dark (`--skip-feed-check`).
+  Deploy config keys `feed_service`, `feed_url`, `feed_check`. Docs: docs/operations/hub-deploy.md.
+  (manual: running-a-hub)
+- A fresh hub serves the Android app from the first start: `install-hub.sh` fetches the release's
+  generic APK (checked against its SHA256SUMS and its manifest) into `DATA_DIR/updates/apk`, the
+  place Manage > Updates publishes to (`--no-apk` to skip; with `--git-ref` the latest release's).
+  A published release APK is served at `/apk` without the dashboard login; an operator's copy in
+  `rook/remote` still needs `ROOK_PUBLIC_APK_SHA256`. The beta channel can also come from the
+  release (`rook/remote/apk-beta`) when the gate approves it. (manual: phones-and-tablets,
+  running-a-hub)
+- Clean-room harness: `--release latest|TAG` installs a published release the way the README
+  says, and the phone installs the APK it downloads from the fresh hub's `/apk`. (manual: n/a)
+
+### Changed
+- The Android app's default version is 0.4.20 (code 25), the next stable after the 0.4.20-beta.1
+  (24) beta.
 - The conference table and votes in chaired huddles. The chair pins artifacts (a pull request,
   commit, file, document, test output, screenshot or preview link) at an exact version (commit
   SHA or content hash), and every role reads them through the hub at that version (`table_read`:

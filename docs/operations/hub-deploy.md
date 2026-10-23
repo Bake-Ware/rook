@@ -166,6 +166,9 @@ The two-process layout configures two services instead:
 | `deadman_minutes` | auto-rollback delay; `0` disables |
 | `health_timeout`, `settle_seconds` | how long a restarted service may take to become healthy, and how long it must then stay healthy |
 | `pubkey` | trusted update public key (default: `$ROOK_UPDATE_PUBKEY`, else this hub's own key) |
+| `feed_service` | the service that serves `/band-worker.pyz` and `/apk` (default: the one that imports `rook.remote.bootstrap`: `dashboard` or `hub`) |
+| `feed_url` | its base URL for the after-deploy feed check (default: from its first `http` health URL) |
+| `feed_check` | `false` skips the APK gate check and the served-feed check |
 
 Per service: `unit`, `order` (lower restarts first; defaults dashboard 10,
 hub 50, mcp 90), `modules` and `packages` (preflight imports; defaults cover
@@ -198,6 +201,33 @@ and untracked files cannot leak in) and writes
  "sig": "<ed25519>"}
 ```
 
+### What the release serves besides its code (the feed)
+
+The worker bundle and the Android app are not in git, so a release that is
+only `git archive` would drop them (and a hub's workers and phones would stop
+finding updates). `release build` puts them in the release too:
+
+```sh
+rook hub release build --ref COMMIT                        # on a live hub: its bundle, APK and
+                                                           # approved beta, carried forward
+rook hub release build --ref COMMIT --worker-bundle build  # ship a new bundle built from COMMIT
+rook hub release build --ref COMMIT --apk DIR --apk-beta none
+```
+
+| Flag | Values (default first) |
+|---|---|
+| `--worker-bundle` | `live` (the default when a deploy config with a running release that serves a bundle is found): that bundle, so a hub deploy never changes what new workers get; `build` (the default otherwise): build `band-worker.pyz` from the commit in a throwaway git worktree, signed with the same key; `none`; or a directory holding a signed `band-worker.pyz` + `band-worker.json` (+ `band-worker-enrollment.pyz`) |
+| `--apk` | `live` when a deploy config with a running release is found (else `none`); or a directory holding `rook-worker.apk` + `rook-worker-apk.json` |
+| `--apk-beta` | `live`: the beta APK the live hub's `ROOK_BETA_APK_SHA256` approves (updates dir `apk-beta/`, else the running release's), if any; `none`; or a directory |
+| `--public-base` | URL signed into a built bundle's manifest (default `$ROOK_PUBLIC_BASE`, else the live bundle's) |
+
+A bundle must verify against the signing key and match its sha256; an APK
+must match its manifest (package `systems.bake.rook`, size, sha256). The
+manifest gains a signed `feed` list (path, sha256, size per file) and a
+`feed_info` summary. The files go beside the tarball as `feed/<sha256>`,
+stored once by content, so a 145 MB APK that ten releases carry is on disk
+once (hard links where the filesystem allows).
+
 The version uses the worker scheme `<build>.<adjective>.<noun>` (build = the
 commit count, the name derived from the commit). The signature covers
 `b"rook-hub-release-v1\n" + canonical(manifest without sig)`: the same key as
@@ -223,6 +253,17 @@ Steps, in order; any failure before step 7 changes nothing:
 4. Unpack into a new `releases/<version>` (via a temporary directory and a
    rename; members outside `<version>/` are rejected). An existing directory
    is reused only if it was unpacked from the same artifact.
+   Each `feed` file is fetched into `state/downloads/feed/<sha256>`, checked
+   against the signed list and linked into the tree (`rook/remote/...`, the
+   beta under `rook/remote/apk-beta/`).
+4b. Feed: a kind the release does not carry (no bundle, no APK) but the
+   running release serves is carried over from it (logged, and listed in the
+   release's `FEED-CARRIED.json`; `--no-carry-feed` turns this off). Then the
+   APK gates of the feed service's environment are checked, and never
+   changed: the deploy refuses if `ROOK_PUBLIC_APK_SHA256` approves neither
+   the release's APK nor one published in the updates dir, or if
+   `ROOK_BETA_APK_SHA256` approves no beta there or in the release. An APK no
+   gate approves is a warning (it is served behind the dashboard login only).
 5. Preflight: with each service's interpreter and the release on
    `PYTHONPATH`, import every configured module and every submodule of the
    configured packages, and check each came from the release. Optionally run
@@ -238,9 +279,15 @@ Steps, in order; any failure before step 7 changes nothing:
    systemd's `NRestarts` goes up meanwhile (the release crashes at start and
    `Restart=on-failure` brings it back), verification fails at once instead
    of waiting out `health_timeout`.
-10. Disarm the dead-man and record success.
+10. Feed check: ask the feed service for `/band-worker.json`,
+    `/band-worker.pyz` (sha256 must be the release's bundle), `/apk.json` and
+    `HEAD /apk` (the approved APK), and `/apk.json?channel=beta` (the approved
+    beta, or stable when stable is newer). Anything dark or different fails
+    the deploy like a failed health check (rollback). `--skip-feed-check`
+    skips this and the gate check.
+11. Disarm the dead-man and record success.
 
-If step 9 fails, `rollback.sh` runs at once: it restores the selectors from the
+If step 9 or 10 fails, `rollback.sh` runs at once: it restores the selectors from the
 snapshot and restarts only the services that had been switched. With
 `--no-auto-rollback` the deploy stops as it is and the dead-man still fires.
 If the deploy process itself dies (lost SSH session, killed terminal), nothing

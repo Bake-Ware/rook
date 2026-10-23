@@ -34,6 +34,9 @@ Thumbs.db
 rook/remote/band-worker.pyz
 rook/remote/band-worker.json
 rook/remote/rook-worker.apk
+rook/remote/rook-worker-apk.json
+rook/remote/band-worker-enrollment.pyz
+rook/remote/apk-beta/
 
 # OTA update signing key (private half — never commit; default lives in ~/.config/rook/)
 update-signing-key
