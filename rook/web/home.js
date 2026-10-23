@@ -21,7 +21,7 @@ export async function mountHome(root){
   const panel=h('div',{class:'mg-box strong mg-side'});
   const chat=homeChat({
     toForm(){panel.scrollIntoView({behavior:'smooth',block:'start'});panel.querySelector('input,select')?.focus({preventScroll:true});},
-    async status(){const j=await get();d.status=j.status;d.activity=j.activity;d.usage=j.usage;drawList();return j;}});
+    async status(){const j=await get();d.status=j.status;d.activity=j.activity;d.usage=j.usage;d.sessions=j.sessions;drawList();return j;}});
   const list=h('div',{class:'mg-main'},top,chat.el,acts);
   root.replaceChildren(h('div',{class:'mg'},status,h('div',{class:'mg-split'},list,panel)));
 
@@ -50,7 +50,21 @@ export async function mountHome(root){
     acts.replaceChildren(
       h('div',{class:'mg-label',style:'margin-top:6px',title:'Since the MCP server started',text:'Recent activity'}),
       table('90px 80px minmax(0,1fr) minmax(0,1fr)',['When','Via','From · room','Result'],rows.length?rows:[h('div',{class:'mg-empty',text:'Nothing yet.'})]),
-      ...usage());
+      ...sessions(),...usage());
+  }
+  // Always-on sessions (docs/design/persistent-agents.md): one line per role,
+  // "house agent: busy, 2 waiting, 1 fork", and a fresh start only when one happened.
+  function sessions(){
+    const s=d.sessions;if(!s||!s.on)return [];
+    const k=n=>n?fmtN(n)+' tokens':'';
+    const rows=Object.entries(s.roles||{}).map(([r,x])=>h('div',{class:'mg-row'},
+      h('span',{text:x.line}),
+      h('span',{class:'mg-dimtext',text:[k((x.main||{}).context_tokens),x.voice?'voice '+(x.voice.state||''):''].filter(Boolean).join(' · ')}),
+      h('span',{class:'mg-dimtext mg-mono',text:((x.main||{}).session_id||'').slice(0,8)})));
+    const reset=(s.resets||[]).filter(r=>Date.now()/1000-r.at<86400).slice(-1)[0];
+    return [h('div',{class:'mg-label',style:'margin-top:6px',text:s.connected?'Sessions on '+s.host:'Sessions: no session host connected (one-off runs)'}),
+      table('minmax(0,1.4fr) minmax(0,1fr) 90px',['Agent','Context','Session'],rows),
+      reset?h('p',{class:'mg-sub mg-warn',style:'white-space:normal',text:reset.role+' '+reset.lane+' started a fresh session: '+reset.reason}):null].filter(Boolean);
   }
   // Turns on agent hosts in the last 24 hours, per role (what huddles cost the
   // subscription signed in there). Only when there were any.
@@ -78,6 +92,10 @@ export async function mountHome(root){
     const err=h('small',{class:'mg-error',role:'alert'}),out=h('pre',{hidden:true,style:'white-space:pre-wrap'});
     const enabled=h('input',{type:'checkbox',checked:!!val('enabled')});
     const frontDoor=h('input',{type:'checkbox',checked:!!val('front_door')});
+    const persistent=h('input',{type:'checkbox',checked:!!val('persistent')});
+    const voiceLane=h('input',{type:'checkbox',checked:val('voice_lane')!==false});
+    const pModel=h('input',{value:val('persistent_model')||'opus',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)'});
+    const vModel=h('input',{value:val('voice_model')||'haiku',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)'});
     const name=h('input',{value:val('name')||'home',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)'});
     const provider=h('select',null,d.providers.map(p=>h('option',{value:p,text:p==='openai'?'OpenAI-compatible':p,selected:p===val('provider')})));
     // A named model provider (Manage > Model providers) replaces the endpoint fields.
@@ -137,7 +155,8 @@ export async function mountHome(root){
       field('Turn timeout (s)',agTimeout,'agent_timeout_s'));
     const values=()=>({enabled:enabled.checked,front_door:frontDoor.checked,backend:backend.value,agent_host:agHost.value,
       agent_fallback_hosts:agFallbacks.value.split(',').map(x=>x.trim()).filter(Boolean),agent_on_unavailable:agUnavail.value,
-      agent_timeout_s:Number(agTimeout.value||180),claude_model:agModel.claude.value.trim(),codex_model:agModel.codex.value.trim(),
+      agent_timeout_s:Number(agTimeout.value||180),persistent:persistent.checked,voice_lane:voiceLane.checked,
+      persistent_model:pModel.value.trim()||'opus',voice_model:vModel.value.trim()||'haiku',claude_model:agModel.claude.value.trim(),codex_model:agModel.codex.value.trim(),
       opencode_model:agModel.opencode.value.trim(),claude_effort:agEffort.claude.value,codex_effort:agEffort.codex.value,
       claude_auth:ccAuth.value,claude_token:ccToken.value?'{{secret:'+ccToken.value+'}}':'',voice:vp.select.value,name:name.value.trim().toLowerCase(),llm_provider:llmProvider.value,provider:provider.value,base_url:base.value.trim(),model:model.value.trim(),
       api_key:key.value?'{{secret:'+key.value+'}}':'',persona:persona.value,system_prompt:prompt.value,tools:tools.checked,memory:memory.checked,
@@ -179,6 +198,11 @@ export async function mountHome(root){
       h('div',{class:'mg-pad'},
         h('label',{class:'mg-actions',title:'Answer in chat and to home.ask'},enabled,'Enabled'),
         h('div',{class:'mg-actions'},h('label',{class:'mg-actions',title:'Route every request: answer, do it (trust map permitting), start a coding session or a huddle; ask you only when it must'},frontDoor,'Front door'),h('a',{href:'#decisions',text:'Decisions'})),
+        h('div',{class:'mg-actions'},h('label',{class:'mg-actions',title:'Run as always-on Claude Code sessions on the session host (Opus, with a Haiku voice); every request goes through its inbox'},persistent,'Always-on sessions'),
+          info('Needs the session host (python -m rook.agents) on the machine with the Claude login. Without it, requests are one-off runs as before.','About always-on sessions')),
+        h('details',null,h('summary',{text:'Always-on sessions'}),h('div',{class:'mg-pad',style:'padding-left:0;padding-right:0'},
+          h('label',{class:'mg-actions'},voiceLane,'Voice session (Haiku)'),
+          field('Agent model',pModel,'persistent_model'),field('Voice model',vModel,'voice_model'))),
         field('Name',name,'name','Chat identity agent:<name>; people write @'+(val('name')||'home')+'.'),
         field('Backend',backend,'backend'),
         cc,oaiHead,oai,
