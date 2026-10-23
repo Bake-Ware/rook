@@ -21,6 +21,9 @@ from ..core.throttle import client_keys, message as throttle_message, shared as 
 log = logging.getLogger(__name__)
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
+#: Request mark: /apk or /apk.json was let in only for the approved beta APK.
+APK_BETA_ONLY = (web.RequestKey("rook_apk_beta_only", bool) if hasattr(web, "RequestKey")
+                 else "rook_apk_beta_only")
 
 
 def _update_note(row: dict, pending: dict | None) -> str:
@@ -1899,8 +1902,15 @@ class CombinedServer:
 
         # Always public: worker bootstrap/artifacts, health, websockets.
         is_exempt = self._auth_exempt(request.path)
-        if request.path in ("/apk", "/apk.json") and os.environ.get("ROOK_PUBLIC_APK_SHA256"):
-            is_exempt = True  # handler verifies the exact approved generic artifact
+        if request.path in ("/apk", "/apk.json"):
+            if os.environ.get("ROOK_PUBLIC_APK_SHA256"):
+                is_exempt = True  # handler verifies the exact approved generic artifact
+            elif (request.query.get("channel") == "beta"
+                  and os.environ.get("ROOK_BETA_APK_SHA256")):
+                # Public for the approved beta only: without a stable approval
+                # the handler never falls back to the unapproved stable copy.
+                is_exempt = True
+                request[APK_BETA_ONLY] = True
 
         if is_exempt:
             return await handler(request)
@@ -2549,18 +2559,89 @@ class CombinedServer:
         here = Path(__file__).parent
         return here / "rook-worker.apk", here / "rook-worker-apk.json", env_hash
 
+    def _beta_apk_files(self) -> tuple[Path, Path, str] | None:
+        """(apk, manifest, approved sha256) of the beta channel, or None when
+        ``ROOK_BETA_APK_SHA256`` approves none."""
+        env_hash = os.environ.get("ROOK_BETA_APK_SHA256", "").strip()
+        if not env_hash:
+            return None
+        from ..hub.update_feed import beta_apk_paths
+        return (*beta_apk_paths(), env_hash)
+
+    @staticmethod
+    def _approved_apk_manifest(apk: Path, manifest_path: Path, expected: str) -> dict:
+        """The manifest bound to the approved APK; ValueError/OSError if not."""
+        manifest = json.loads(manifest_path.read_text())
+        if (not expected or manifest.get("sha256") != expected
+                or manifest.get("package") != "systems.bake.rook"
+                or type(manifest.get("version_code")) is not int
+                or manifest["version_code"] <= 0
+                or not isinstance(manifest.get("version_name"), str)
+                or manifest.get("size") != apk.stat().st_size):
+            raise ValueError("APK manifest does not match approved release")
+        return manifest
+
+    async def _beta_apk(self, request: web.Request) -> tuple[Path, Path, str] | None:
+        """The beta files for ``?channel=beta`` when approved, verified (manifest
+        and file hash) and newer than the stable APK; else None and the request
+        gets exactly the stable answer, so a beta phone rejoins stable once
+        stable passes it."""
+        if request.query.get("channel") != "beta":
+            return None
+        beta = self._beta_apk_files()
+        if beta is None:
+            return None
+        apk, manifest_path, expected = beta
+        try:
+            manifest = self._approved_apk_manifest(apk, manifest_path, expected)
+        except (OSError, ValueError, TypeError):
+            return None
+        try:
+            stable = self._approved_apk_manifest(*self._apk_files())["version_code"]
+        except (OSError, ValueError, TypeError):
+            stable = 0
+        if manifest["version_code"] <= stable:
+            return None
+        import hashlib
+        import hmac
+        stat = apk.stat()
+        fingerprint = (stat.st_ino, stat.st_size, stat.st_mtime_ns, expected)
+        if getattr(self, "_verified_beta_apk", None) != fingerprint:
+            def hash_apk():
+                with apk.open("rb") as source:
+                    return hashlib.file_digest(source, "sha256").hexdigest()
+            if not hmac.compare_digest(await asyncio.to_thread(hash_apk), expected):
+                return None
+            self._verified_beta_apk = fingerprint
+        return beta
+
     async def _worker_apk(self, request: web.Request) -> web.Response:
         """Serve the native Android worker APK (built by android/, dropped here)."""
+        return (await self._apk_response(request))[0]
+
+    async def _apk_response(self, request: web.Request) -> tuple[web.StreamResponse, tuple | None]:
+        """(response, the (apk, manifest, sha256) it serves): the approved beta
+        for ``?channel=beta`` (``_beta_apk``), else the stable APK."""
+        beta = await self._beta_apk(request)
+        if beta is not None:
+            return web.FileResponse(beta[0], headers={
+                "Content-Disposition": "attachment; filename=rook-worker.apk",
+                "Content-Type": "application/vnd.android.package-archive",
+            }), beta
+        if request.get(APK_BETA_ONLY):
+            # Let in for the beta alone: no stable approval to fall back on.
+            return web.Response(status=503, text="APK update metadata unavailable."), None
         # Legacy APK builds may contain a default PSK. Keep them behind login
         # until the Google enrollment work supplies a verified generic APK.
-        apk_path, _, expected_hash = self._apk_files()
+        files = self._apk_files()
+        apk_path, _, expected_hash = files
         if not self.web_pass and not expected_hash:
-            return web.Response(status=503, text="Configure dashboard login before downloading the APK.")
+            return web.Response(status=503, text="Configure dashboard login before downloading the APK."), None
         if not apk_path.exists():
             return web.Response(
                 status=404,
                 text="rook-worker.apk not built yet. Build android/ and drop the APK here.",
-            )
+            ), None
         if expected_hash:
             import hashlib
             import hmac
@@ -2572,7 +2653,7 @@ class CombinedServer:
                         return hashlib.file_digest(source, "sha256").hexdigest()
                 actual = await asyncio.to_thread(hash_apk)
                 if not hmac.compare_digest(actual, expected_hash):
-                    return web.Response(status=503, text="APK verification failed; contact the operator.")
+                    return web.Response(status=503, text="APK verification failed; contact the operator."), None
                 self._verified_apk = fingerprint
         return web.FileResponse(
             apk_path,
@@ -2580,23 +2661,15 @@ class CombinedServer:
                 "Content-Disposition": "attachment; filename=rook-worker.apk",
                 "Content-Type": "application/vnd.android.package-archive",
             },
-        )
+        ), files
 
     async def _worker_apk_manifest(self, request: web.Request) -> web.Response:
         """Public update metadata bound to the same approved APK as /apk."""
-        response = await self._worker_apk(request)
+        response, files = await self._apk_response(request)
         if not isinstance(response, web.FileResponse):
             return response
         try:
-            apk, manifest_path, expected = self._apk_files()
-            manifest = json.loads(manifest_path.read_text())
-            if (not expected or manifest.get("sha256") != expected
-                    or manifest.get("package") != "systems.bake.rook"
-                    or type(manifest.get("version_code")) is not int
-                    or manifest["version_code"] <= 0
-                    or not isinstance(manifest.get("version_name"), str)
-                    or manifest.get("size") != apk.stat().st_size):
-                raise ValueError("APK manifest does not match approved release")
+            manifest = self._approved_apk_manifest(*files)
             return web.json_response(manifest, headers={"Cache-Control": "no-store"})
         except (OSError, ValueError, TypeError):
             return web.Response(status=503, text="APK update metadata unavailable.")

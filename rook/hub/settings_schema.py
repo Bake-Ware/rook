@@ -227,6 +227,11 @@ _CORE: list[tuple[Setting, str, dict]] = [
         label="Push updates to outdated workers", group="Updates"), "dashboard", {}),
     (_s("updates.apk_sha256", list, [], env="ROOK_PUBLIC_APK_SHA256", bootstrap=True,
         label="Published APK hashes", group="Updates", advanced=True), "dashboard", {}),
+    (_s("updates.apk_beta_sha256", "str", "", env="ROOK_BETA_APK_SHA256", bootstrap=True,
+        label="Beta APK hash", group="Updates", advanced=True,
+        help="sha256 of the APK in <updates dir>/apk-beta/. Phones on the beta channel "
+             "(/apk.json?channel=beta) get it while it is newer than the published APK; "
+             "every other phone keeps the published one. Blank: no beta."), "dashboard", {}),
     (_s("updates.signing_key", "path", "", env="ROOK_UPDATE_KEY", bootstrap=True,
         apply="restart", label="Update signing key file", group="Updates", advanced=True),
      "dashboard", {}),

@@ -60,6 +60,25 @@ instead: the hub checks both against the release's `SHA256SUMS`, serves them
 at `/apk` and `/apk.json`, and asks phones that are behind to check now
 (docs/operations/updates.md).
 
+## Beta channel
+
+A beta APK lives in the updates directory, outside the release dirs so hub
+deploys keep it: `<updates dir>/apk-beta/rook-worker.apk` and
+`rook-worker-apk.json` (build_apk_manifest.py output; set its `url` to
+`<base>/apk?channel=beta`). It is approved by `ROOK_BETA_APK_SHA256`
+(`updates.apk_beta_sha256`) and checked like the stable APK: the file's
+SHA-256, the manifest's sha256, package `systems.bake.rook`, an integer
+`version_code` and the size.
+
+`/apk.json?channel=beta` and `/apk?channel=beta` serve the beta only while it
+is approved, verifies and has a higher `version_code` than the stable APK;
+otherwise they answer exactly as `/apk.json` and `/apk` do, so a beta phone
+rejoins stable once stable passes it. Any other or missing `channel` gets the
+stable answer unchanged. With only the beta hash set, `?channel=beta` is
+public for the beta alone (no stable fallback; plain `/apk` stays behind the
+login). The update service (Manage > Updates, `device.update` pushes) never
+reads the beta.
+
 ## Verification
 
 On an isolated Android 14 emulator, version code 5 accepted a same-signer test

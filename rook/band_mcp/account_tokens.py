@@ -50,9 +50,12 @@ def dashboard_tokens_url() -> str:
     return "/#tokens"
 
 
-def build_account_token_routes(provider, chat=None, accounts=None, approvals=None, house=None):
+def build_account_token_routes(provider, chat=None, accounts=None, approvals=None, house=None,
+                                devices=None):
     """``approvals()``: the hub's approval queue holder (or None);
-    ``house()``: ``(identity, label)`` of the house agent (or None)."""
+    ``house()``: ``(identity, label)`` of the house agent (or None);
+    ``devices()``: ``[(device:<worker_id>, label)]`` of the phones the
+    attention plugin puts decision cards on (their taps relay)."""
     accounts = accounts or AccountStore()
 
     response = json_reply
@@ -67,8 +70,14 @@ def build_account_token_routes(provider, chat=None, accounts=None, approvals=Non
         except Exception:
             return None
 
+    def phones():
+        try:
+            return list(devices() or []) if devices is not None else []
+        except Exception:
+            return []
+
     def relay_view(tokens):
-        """Each token's relay switch, and the house agent's."""
+        """Each token's relay switch, the house agent's and each phone's."""
         q = queue()
         on = {r['principal']: r for r in (q.relayers() if q is not None else [])}
         for t in tokens:
@@ -82,6 +91,13 @@ def build_account_token_routes(provider, chat=None, accounts=None, approvals=Non
             r = on.get(h[0])
             out['house'] = {'identity': h[0], 'label': h[1], 'relay': bool(r),
                             **({'relay_by': r.get('enabled_by')} if r else {})}
+        rows = []
+        for ident, label in phones():
+            r = on.get(ident)
+            rows.append({'identity': ident, 'label': label, 'relay': bool(r),
+                         **({'relay_by': r.get('enabled_by')} if r else {})})
+        if rows:
+            out['devices'] = rows
         return out
 
     # The dashboard proxy also verifies Origin. CSRF remains mandatory here
@@ -116,6 +132,11 @@ def build_account_token_routes(provider, chat=None, accounts=None, approvals=Non
                     if not h:
                         raise ValueError('There is no house agent on this hub.')
                     principal, label = h
+                elif ident.startswith('device:'):
+                    hit = next((d for d in phones() if d[0] == ident), None)
+                    if hit is None:
+                        return response({'error': 'That phone is not in attention.devices.'}, 404)
+                    principal, label = hit
                 else:
                     t = next((t for t in provider.list_api_tokens() if t.get('id') == ident), None)
                     if t is None or not t.get('agent_id'):

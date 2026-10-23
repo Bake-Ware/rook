@@ -126,6 +126,12 @@ _CORE_SPEC = {
     "ui.nodes": "X s", "ui.click": "X", "ui.scroll": "X", "ui.back": "X",
     "voice.speak": "W p", "voice.speak_status": "R", "voice.replies": "R",
     "voice.speak_stop": "W", "voice.speak_voices": "R",
+    # The app's attention surface (docs/design/attention.md): only the hub's
+    # attention plugin should post cards or read taps and notice summaries.
+    # A card's Yes is relayed as the person's decision, so an agent that
+    # could post one could word the question; admin keeps agents' calls held.
+    "attention.post": "A p", "attention.update": "A", "attention.poll": "A s",
+    "attention.rules_set": "A",
 }
 
 CORE: dict[str, tuple[str, tuple[str, ...]]] = {c: _t(s) for c, s in _CORE_SPEC.items()}
