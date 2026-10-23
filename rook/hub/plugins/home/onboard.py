@@ -354,7 +354,8 @@ class Onboarding:
                 q = "What should we call it, and where do you want it to live: a new folder " \
                     "or repo, or an existing one, and on which machine?"
             return {"ok": True, "thread": t["id"], "say": q, "asking": field,
-                    "note": "The hub asks them this; wait for their answer."}
+                    "note": "Recorded only: nothing is set until they agree to the plan. The "
+                            "hub asks them this; don't say you set anything."}
         if not t["title"]:
             return {"ok": True, "thread": t["id"], "say": "What should we call it?",
                     "asking": "title"}
