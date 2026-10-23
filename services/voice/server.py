@@ -24,6 +24,13 @@ from . import pipeline
 from .tts import resolve_voice
 
 VERSION = '2.0.0'
+# End of turn, in 20 ms frames of silence: Smart Turn scores the utterance at
+# ANALYZE, a "complete" verdict ends it at COMPLETE, and MAX_SILENCE ends it
+# regardless (2026-10-23: 400 ms / 2 s, were 600 ms / 2.5 s; Smart Turn takes
+# ~65 ms on kaiju's CPU).
+TURN_ANALYZE = int(os.environ.get('VOICE_TURN_ANALYZE_MS', '300')) // 20
+TURN_COMPLETE = int(os.environ.get('VOICE_TURN_COMPLETE_MS', '400')) // 20
+TURN_MAX_SILENCE = int(os.environ.get('VOICE_TURN_MAX_SILENCE_MS', '2000')) // 20
 ROOT = Path(os.environ.get('VOICE_MODEL_DIR', '.'))
 TOKEN = os.environ.get('VOICE_TOKEN', '')
 
@@ -282,6 +289,7 @@ async def websocket(ws: WebSocket):
             conn.fb.resend_timers()
             conn.fb.prefetch('session')
             conn.fb.load_house_context()
+            conn.fb.warm()
         import webrtcvad   # here, not at import: a hub mounting this app imports it first
         vad = webrtcvad.Vad(3)
         preroll = deque(maxlen=10)
@@ -328,7 +336,7 @@ async def websocket(ws: WebSocket):
                     silence += 1
                 else:
                     preroll.append(data)
-                if utterance and silence == 20 and speech >= 10:
+                if utterance and silence == TURN_ANALYZE and speech >= 10:
                     analysis = asyncio.create_task(app.state.provider.turn_complete(bytes(utterance)))
                     analysis.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
                 complete = False
@@ -336,7 +344,8 @@ async def websocket(ws: WebSocket):
                     with contextlib.suppress(Exception):
                         complete = analysis.result()
                 # Semantic completion, with a finite fallback for model uncertainty.
-                if utterance and ((silence >= 30 and complete) or silence >= 125 or len(utterance) >= 16000 * 2 * 30):
+                if utterance and ((silence >= TURN_COMPLETE and complete) or silence >= TURN_MAX_SILENCE
+                                  or len(utterance) >= 16000 * 2 * 30):
                     if analysis is not None:
                         analysis.cancel(); analysis = None
                     pcm = bytes(utterance)

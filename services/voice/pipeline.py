@@ -195,6 +195,8 @@ class FrontBackground:
         self.transcript = front_mod.Transcript()
         # What the house agent knows (persona, memory), told to Front once per transcript.
         self.house_context = ''
+        self.house_task = None
+        self.warm_task = None
 
     # --- events -----------------------------------------------------------
     def emit(self, kind, turn, text, **fields):
@@ -293,9 +295,52 @@ class FrontBackground:
         voice and the house agent share one memory. Never awaited by a turn."""
         if self.conn.closed or 'house_agent' not in self.allowed():
             return None
-        task = asyncio.create_task(self._house_context())
+        task = self.house_task = asyncio.create_task(self._house_context())
         task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
         return task
+
+    # --- warm start --------------------------------------------------------------
+    WARM_NOTE = '[The user opened a voice session and is about to speak. Reply with just: Ready.]'
+
+    def warm(self):
+        """Session start: open Front's transcript with one tiny unspoken exchange, so
+        the user's first turn extends a cached prompt instead of paying a cold prefill
+        of the fixed block and history (about 2 s on kaiju)."""
+        if self.conn.closed or self.warm_task is not None or os.environ.get('VOICE_FRONT_WARM', '1') == '0':
+            return None
+        self.warm_task = asyncio.create_task(self._warm())
+        self.warm_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+        return self.warm_task
+
+    async def _warm(self):
+        if self.house_task is not None:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(asyncio.shield(self.house_task), 4)
+        self._time_fact()
+        messages = self.transcript.request(self.fixed(), self._past_all(), self.board.facts(), self.WARM_NOTE,
+                                           self.house_context)
+        async def silent(clause):
+            pass
+        try:
+            content = await asyncio.wait_for(self.front(messages, silent, None), 20)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            logging.info('Front warm-up failed: %s', type(error).__name__)
+            return
+        self.transcript.commit(content or '')
+
+    async def _after_warm(self):
+        """A turn waits briefly for the warm-up (it shares the model) and never builds
+        its prompt while the warm-up's is in flight."""
+        task = self.warm_task
+        if task is None or task.done():
+            return
+        done, _ = await asyncio.wait({task}, timeout=float(os.environ.get('VOICE_FRONT_WARM_WAIT_S', '2.5')))
+        if not done:
+            task.cancel()
+            with contextlib.suppress(BaseException):
+                await task
 
     async def _house_context(self):
         try:
@@ -388,6 +433,7 @@ class FrontBackground:
         self.prefetch('speech')
         timing.deferred = True
         self._start_background(epoch, text, past, timing)
+        await self._after_warm()
         if merged_from is not None:
             self.transcript.replace_last_user(text)
         messages = self.transcript.request(self.fixed(), past, self.board.facts(), text, self.house_context)
@@ -626,7 +672,7 @@ class FrontBackground:
                                  int(os.environ.get('VOICE_FRONT_TURNS', '6')))
 
     async def close(self):
-        tasks = [t for t in [self.prefetch_task, self.followup_task, self.narration_task,
+        tasks = [t for t in [self.prefetch_task, self.followup_task, self.narration_task, self.warm_task, self.house_task,
                              *self.backgrounds.values()] if t and not t.done()]
         # Cancel without waiting: each task finishes on its own (their done
         # callbacks collect the outcome) and closing a socket stays instant.

@@ -388,3 +388,52 @@ def test_early_first_clause_at_a_comma():
     assert front_mod.early_clause('Well, ') == ([], 'Well, ')
     assert front_mod.early_clause('The capital of France is Paris, which ') == \
         (['The capital of France is Paris,'], 'which ')
+
+
+# --- warm start and the house agent -------------------------------------------------
+class HouseMCP:
+    def __init__(self, answer='Done: I added milk to the shopping list.'):
+        self.calls, self.answer = [], answer
+
+    async def call(self, name, args):
+        self.calls.append((name, args))
+        if args.get('cap') == 'memory.list':
+            return json.dumps({'ok': True, 'result': {'items': [{'text': 'Bake prefers short answers.'}]}})
+        if args.get('cap') == 'home.ask':
+            return json.dumps({'ok': True, 'result': {'answer': self.answer, 'model': 'test'}})
+        return json.dumps({'deck': []})
+
+
+def test_warm_start_then_first_turn_extends_it(tmp_path):
+    async def scenario():
+        front = SlowFront(clauses=('Ready.',))
+        conn, store, jobs, events = connection(tmp_path, transcripts=['hello'], front=front)
+        conn.fb = FrontBackground(conn, front=front, complete=no_action, board=Board(), mcp=HouseMCP(), read=no_reads)
+        try:
+            conn.fb.load_house_context()
+            await conn.fb.warm()
+            assert not kinds(events, '_audio')              # the warm-up is never spoken
+            await conn.heard(b'\0' * 32000, time.monotonic())
+            await wait_for(lambda: conn.task is not None and conn.task.done())
+        finally:
+            await shutdown(conn, store, jobs)
+        warm, first = front.requests[0], front.requests[1]
+        assert 'Bake prefers short answers' in warm[-1]['content'] and 'Reply with just: Ready.' in warm[-1]['content']
+        assert first[:len(warm)] == warm and first[len(warm)] == {'role': 'assistant', 'content': 'Ready.'}
+        assert first[-1]['content'].endswith('hello')
+    asyncio.run(scenario())
+
+
+def test_house_agent_tool_asks_the_hub_and_is_owner_only():
+    from services.voice.bgtools import Toolbox
+    from services.voice.policy import background_tools, BASE_TOOLS
+    mcp = HouseMCP()
+    box = Toolbox('s', None, Board(), mcp=mcp)
+    answer = asyncio.run(box.run('house_agent', {'request': 'Add milk to the shopping list.'}))
+    assert answer == 'Done: I added milk to the shopping list.'
+    name, args = mcp.calls[0]
+    assert name == 'rook_call' and args['worker'] == 'rook' and args['cap'] == 'home.ask'
+    assert args['args']['question'] == 'Add milk to the shopping list.' and 'spoken' in args['args']['context']
+    assert 'house_agent' in background_tools(OWNER, 'assistant')
+    assert 'house_agent' not in background_tools(Identity('Kid', worker='kidphone'), 'assistant')
+    assert 'house_agent' not in background_tools(OWNER, 'conversation') and 'house_agent' not in BASE_TOOLS
