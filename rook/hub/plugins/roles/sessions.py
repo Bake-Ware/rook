@@ -227,9 +227,35 @@ DENY = ("Bash(gh pr merge:*)", "Bash(gh api:*)", "Bash(gh repo:*)", "Bash(gh rel
         "Bash(scp:*)", "Bash(curl:*)", "Bash(wget:*)", "Bash(rook:*)", "WebFetch", "WebSearch")
 
 
-def session_settings(worktree: str, branch: str, workspace: str = "") -> dict:
+#: What a test command set on the Settings page may not contain: shell
+#: control characters, and the commands the session rules govern on their own.
+_TEST_BAD = re.compile(r"[;&|<>`$\\\n\r*?(){}]")
+_TEST_RULED = ("git", "gh", "sudo", "ssh", "scp", "curl", "wget", "rook", "rm", "cd", "sh",
+               "bash", "env", "eval", "exec")
+
+
+def allowed_test_commands(lines: Any) -> tuple[str, ...]:
+    """``role.session_test_commands`` as the commands a session may also run
+    (each with any arguments), after the built-in ``rook-pytest``. A line
+    with shell control characters, or naming a command the session rules
+    already govern (git, gh, sudo, a shell ...), is skipped."""
+    out: list[str] = []
+    for line in lines or []:
+        cmd = " ".join(str(line or "").split())
+        if not cmd or len(cmd) > 80 or _TEST_BAD.search(cmd):
+            continue
+        if cmd.split(" ", 1)[0].rsplit("/", 1)[-1] in _TEST_RULED:
+            continue
+        if cmd not in out and cmd not in TEST_CMDS:
+            out.append(cmd)
+    return tuple(out[:12])
+
+
+def session_settings(worktree: str, branch: str, workspace: str = "",
+                     tests: tuple[str, ...] = ()) -> dict:
     """The ``--settings`` of a role's session: an allowlist, nothing else.
-    ``//`` is an absolute path in Claude Code's permission rules."""
+    ``//`` is an absolute path in Claude Code's permission rules. ``tests``:
+    the extra test commands the operator allowed (:func:`allowed_test_commands`)."""
     allow = [f"Edit(/{worktree}/**)", f"Write(/{worktree}/**)", f"Read(/{worktree}/**)",
              "Glob", "Grep", "TodoWrite"]
     if workspace:
@@ -244,14 +270,15 @@ def session_settings(worktree: str, branch: str, workspace: str = "") -> dict:
                 "git push origin HEAD:{b}", "git push -u origin HEAD:{b}"):
         allow.append(f"Bash({how.format(b=branch)})")
     allow += [f"Bash(gh {c}:*)" for c in GH_OK]
-    allow += [f"Bash({c}:*)" for c in READ_CMDS + TEST_CMDS]
+    allow += [f"Bash({c}:*)" for c in READ_CMDS + TEST_CMDS + tuple(tests)]
     return {"permissions": {"allow": allow, "deny": list(DENY), "defaultMode": "dontAsk"},
             "includeCoAuthoredBy": True, "autoMemoryEnabled": False,
             "env": {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1", "DISABLE_AUTOUPDATER": "1"}}
 
 
 def session_prompt(role: dict, loc: dict, branch: str, worktree: str, instructions: str,
-                   workspace: str = "", huddle: str = "") -> str:
+                   workspace: str = "", huddle: str = "", tests: tuple[str, ...] = ()) -> str:
+    runners = ", ".join(TEST_CMDS + tuple(tests))
     base = loc["base"].split("/", 1)[-1]
     lines = [
         f"You are a Claude Code session started by the Rook role {role.get('name') or role['id']} "
@@ -268,7 +295,7 @@ def session_prompt(role: dict, loc: dict, branch: str, worktree: str, instructio
         "  ROOK-STATUS: BLOCKED <why, and what you need> (when you cannot finish)",
         "  End with exactly one DONE or BLOCKED line.",
         "- Read and search files with the Read, Glob and Grep tools, and change them with Edit and "
-        "Write; the shell is only for git, gh and the test runner (rook-pytest). Other shell "
+        f"Write; the shell is only for git, gh and the test runners ({runners}). Other shell "
         "commands are refused. Your working folder is already the worktree: run git and gh "
         "commands bare, one per call (git add ..., then git commit ...), without cd or git -C. "
         "Update the pull request's description with gh pr edit <n> --body-file <file>; delete a "
