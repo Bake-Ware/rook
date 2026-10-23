@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import datetime
 import time
 from types import SimpleNamespace
 
@@ -454,7 +455,12 @@ async def test_consolidation_summarises_with_the_home_model(env):
 async def test_rollup_merge_fade_and_budget(env):
     env.svc.set("memory.retention_days", 0, actor="human:op")    # keep what fades, to look at
     now = time.time()
-    old = now - 40 * DAY
+    # A Wednesday 10:00 UTC about 40 days back: the three episodes, two hours
+    # apart, stay in one week in any time zone (from now - 40 days they crossed
+    # into a new week when that day was a Sunday evening).
+    day = datetime.datetime.fromtimestamp(now - 40 * DAY, datetime.timezone.utc).replace(
+        hour=10, minute=0, second=0, microsecond=0)
+    old = (day - datetime.timedelta(days=day.weekday() - 2)).timestamp()
     for i in range(3):
         await env.m.add(f"Conversation {i} about the garden hose", "episode", about=OP,
                         automatic=True, created=old + i * 3600)
