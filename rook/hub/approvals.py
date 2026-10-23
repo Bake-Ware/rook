@@ -951,8 +951,18 @@ class Approvals:
             return None     # an empty map changes nothing, so it cites nothing
         is_hub = bool(getattr(target, "is_rook", False))
         name = "rook" if is_hub else str(getattr(target, "name", "") or "")
+        # A borrowed resource (docs/design/onboarding.md): only the house
+        # agent's own declared stop/restore call for it carries the resource.
+        from .trust import borrowing
+        b = borrowing.get() or {}
+        resource = ""
+        if b and b.get("cap") == d.cap and str(b.get("principal") or "") == str(
+                getattr(d, "principal", "") or "") and str(b.get("worker") or "").lower() in (
+                name.lower(), str(getattr(target, "id", "") or "").lower()):
+            resource = str(b.get("resource") or "")
         return self.trust.rule(d.cap, d.tier, tuple(d.tags or ()), worker=name,
-                               worker_id=str(getattr(target, "id", "") or ""), on_hub=is_hub)
+                               worker_id=str(getattr(target, "id", "") or ""), on_hub=is_hub,
+                               resource=resource)
 
     @staticmethod
     def _unhold(d: Any, why: str) -> Any:

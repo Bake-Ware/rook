@@ -35,14 +35,25 @@ append-only history: version, time, op, the actor (`person`, `house`,
  "exceptions": [{"id": "overnight-20261023", "applies_to": ["*"], "excludes": ["family-devices"],
                  "targets": [], "kinds": ["change", "admin"], "tier": "go",
                  "expires": "2026-10-23T12:00:00-05:00", "expires_at": 1792774800, "set_by": {...}}],
- "ledger": [{"id": "...", "resource": "kaiju", "what": "Strata on GPU 1 stopped", "why": "...",
-             "restore": "systemctl start strata@1", "until": "...", "state": "open", "authorized_by": {...}}],
+ "baseline": [{"id": "strata-gpu1", "entry": "kaiju", "title": "Strata A on GPU 1", "normal": "...",
+               "stop": {"worker": "kaiju", "cap": "shell.exec", "args": {...}}, "restore": {...}}],
+ "ledger": [{"id": "...", "resource": "kaiju", "baseline": "strata-gpu1", "project": "gpu-toy",
+             "what": "Strata A on GPU 1 stopped", "why": "...", "words": "...",
+             "restore": "shell.exec on kaiju: ...", "restore_call": {...}, "exception": "...",
+             "until": "...", "state": "open", "authorized_by": {...}}],
  "proposals": [{"id": "tp_...", "state": "pending", "change": {"op": "...", "data": {...}}, "by": "...", "why": "..."}],
  "notices": [{"version": 8, "op": "set_entry", "id": "nas", "who": "rook", "words": "..."}]}
 ```
 
 Selectors: `worker:<name glob>` (or worker id), `cap:<cap glob>` (any
-worker), `repo:<owner>/<name>[#<branch glob>]`, `project:<slug>`.
+worker), `repo:<owner>/<name>[#<branch glob>]`, `project:<slug>`,
+`resource:<baseline id>` (matches only the house agent's own recorded stop or
+restore call for that baseline resource: `trust.borrowing`, checked in
+`Approvals.trust_ruling`; docs/design/onboarding.md).
+
+`baseline` is a sacred host's normal state per resource, with the exact stop
+and restore calls (op `set_baseline`: person, house agent or `system`; the
+house agent cannot change the calls of a resource an exception names).
 
 ## 3. Rulings
 
@@ -140,6 +151,7 @@ Revocation at session end is not wired yet (tokens expire on their own).
 
 Drift checks (stale or often-overridden entries), learning from repeated
 approvals (proposals exist; nothing generates them automatically yet),
-onboarding presets (locked down / balanced / YOLO), the borrowed-state
-flows (B3), votes for guarded (B5), and `project:` selectors ruling on task
-writes (they match only when a caller passes the project: `trust.check`).
+onboarding presets (locked down / balanced / YOLO), votes for guarded (B5),
+and `project:` selectors ruling on task writes (they match only when a caller
+passes the project: `trust.check`). The borrowed-state flows (borrow, restore,
+the sweep's offers) and project onboarding are built: docs/design/onboarding.md.

@@ -24,6 +24,8 @@ export async function mountTrust(root, opts = {}){
   const ledger = h('div', {style: 'display:flex;flex-direction:column;gap:8px'});
   const ledgerHead = h('div', {class: 'mg-bar', hidden: true}, h('h2', {text: 'Borrowed state'}),
     info('Changes away from a sacred thing’s normal state: what changed, why, how to restore it. Onboarding fills this in.', 'About borrowed state'));
+  const baseline = h('div', {style: 'display:flex;flex-direction:column;gap:6px'});
+  const baselineBox = h('details', {hidden: true}, h('summary', {class: 'mg-sub', style: 'cursor:pointer', text: 'Normal state'}), baseline);
   const history = h('div', {class: 'mg-box'});
   const summary = h('p', {class: 'mg-sub'});
   root.replaceChildren(h('div', {class: 'mg tr'},
@@ -38,7 +40,7 @@ export async function mountTrust(root, opts = {}){
     warn, status, notices, entries,
     h('div', {class: 'mg-bar'}, h('h2', {text: 'Everything else'})), unlisted,
     h('div', {class: 'mg-bar'}, h('h2', {text: 'Exceptions'}), h('span', {class: 'mg-grow'}), btn('+ Exception', 'soft', () => addException())), exceptions,
-    ledgerHead, ledger,
+    ledgerHead, ledger, baselineBox,
     h('details', null, h('summary', {class: 'mg-sub', style: 'cursor:pointer', text: 'History'}), history)));
 
   function fail(e){ status.textContent = e.message; }
@@ -184,9 +186,17 @@ export async function mountTrust(root, opts = {}){
     const ls = m.ledger || [];
     ledgerHead.hidden = !ls.length;
     ledger.replaceChildren(...ls.map(r => h('div', {class: 'mg-box mg-pad', style: 'display:flex;flex-direction:column;gap:4px'},
-      h('div', null, h('b', {text: r.what}), h('span', {class: 'mg-dimtext', text: ' · ' + r.resource + ' · ' + r.state})),
-      h('div', {class: 'mg-sub', text: 'Why: ' + r.why}), h('div', {class: 'mg-sub', text: 'Restore: ' + r.restore}),
+      h('div', null, h('b', {text: r.what}), h('span', {class: 'mg-dimtext', text: ' · ' + r.resource + (r.project ? ' · ' + r.project : '') + ' · ' + r.state})),
+      h('div', {class: 'mg-sub', text: 'Why: ' + r.why}),
+      r.words ? h('q', {class: 'mg-sub', text: r.words}) : null,
+      h('div', {class: 'mg-sub', text: 'Restore: ' + r.restore}),
+      r.until ? h('div', {class: 'mg-sub', text: 'Until ' + r.until + (r.exception ? ' (exception ' + r.exception + ')' : '')}) : null,
       r.state === 'open' ? h('div', {class: 'mg-actions'}, btn('Restored', 'soft', () => change('close_lease', {id: r.id, restored: true}, 'Mark restored? (your words)'), {disabled: !can})) : null)));
+    const bs = m.baseline || [];
+    baselineBox.hidden = !bs.length;
+    baseline.replaceChildren(...bs.map(b => h('div', {class: 'mg-row', style: 'display:flex;flex-wrap:wrap;gap:4px 10px;padding:6px 10px'},
+      h('b', {text: b.title || b.id}), h('span', {class: 'mg-dimtext', text: b.entry + ' · ' + b.id}),
+      h('span', {class: 'mg-sub', text: b.normal, style: 'flex-basis:100%'}))));
     history.replaceChildren(...(data.history || []).map(r => h('div', {class: 'mg-row', style: 'display:flex;flex-wrap:wrap;gap:4px 10px;padding:6px 10px'},
       h('span', {class: 'mg-mono', text: 'v' + r.version}), h('span', {text: r.op + ' ' + (r.id || '')}),
       h('span', {class: 'mg-dimtext', text: ((r.actor || {}).who || '?') + ((r.actor || {}).kind === 'house' ? ' (house agent)' : '') + ' · ' + ago(r.at)}),

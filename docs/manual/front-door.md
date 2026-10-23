@@ -77,3 +77,9 @@ Correct it in conversation:
 
 The trust map always wins: a playbook rule can make the house agent ask
 more than the map does, never act where the map says to ask.
+
+## Starting a project
+
+When a conversation turns from an idea to "let's build it", the house agent
+offers once to set it up as a project and asks where it lives, how protected
+it is and what it touches: see [[manual-onboarding]].

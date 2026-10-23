@@ -283,6 +283,10 @@ are set only in the environment or on the command line.
 | `home.ask_ttl_hours` | Asks wait (hours) | hub | float | `72.0` | `ROOK_HOME_ASK_TTL_HOURS` | live |
 | `home.offer_remember` | Offer to remember answers | hub | bool | on | `ROOK_HOME_OFFER_REMEMBER` | live |
 | `home.front_max_calls` | Tool calls per request | hub | int | `8` | `ROOK_HOME_FRONT_MAX_CALLS` | live |
+| `home.onboard_review_days` | Review a new project after (days) | hub | int | `14` | `ROOK_HOME_ONBOARD_REVIEW_DAYS` | live |
+| `home.onboard_quiet_days` | Offer to restore after quiet (days) | hub | int | `14` | `ROOK_HOME_ONBOARD_QUIET_DAYS` | live |
+| `home.onboard_concept` | Concept for new projects | hub | str |  | `ROOK_HOME_ONBOARD_CONCEPT` | live |
+| `home.onboard_sweep_minutes` | Check borrowed state every (minutes) | hub | int | `10` | `ROOK_HOME_ONBOARD_SWEEP_MINUTES` | live |
 | `home.job_steps` | Work job agent steps | hub | bool | on | `ROOK_HOME_JOB_STEPS` | live |
 | `home.job_max_tool_calls` | Tool calls per job step | hub | int | `20` | `ROOK_HOME_JOB_MAX_TOOL_CALLS` | live |
 

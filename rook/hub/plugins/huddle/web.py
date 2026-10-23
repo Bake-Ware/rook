@@ -209,7 +209,7 @@ def routes(get_node: Callable[[], Any], accounts):
         if action == "front_answer":
             a = front.store.find_ask(str(data.get("ask") or ""))
             decision = str(data.get("decision") or "")
-            if a is not None and a["kind"] == "action" and decision == "yes":
+            if a is not None and a.get("action") and decision == "yes":
                 weak = True
                 with contextlib.suppress(Exception):
                     from ....remote.account_web import COOKIE

@@ -105,11 +105,13 @@ class Trust(Plugin):
     # -- reads -----------------------------------------------------------------
     @capability("get", risk="read")
     def get(self, section: str = "") -> dict:
-        """The trust map: summary (what agents get in context) and the map; section: entries|exceptions|ledger|proposals|notices for just that part."""
+        """The trust map: summary (what agents get in context) and the map; section: entries|exceptions|baseline|ledger|proposals|notices for just that part."""
         doc = self.store.public()
         if section:
-            if section not in ("entries", "exceptions", "ledger", "proposals", "notices"):
-                raise ValueError("section: entries, exceptions, ledger, proposals or notices")
+            if section not in ("entries", "exceptions", "baseline", "ledger", "proposals",
+                               "notices"):
+                raise ValueError("section: entries, exceptions, baseline, ledger, proposals or "
+                                 "notices")
             return {"version": doc["version"], section: doc.get(section) or []}
         return {"summary": self.store.summary(), "map": doc}
 

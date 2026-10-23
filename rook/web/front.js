@@ -6,7 +6,8 @@ const {h, ago, useCss, btn, info} = await import('/account/bands/assets/manage.j
 
 const API = '/account/huddle/api';
 const KIND = {did: 'did', dispatched: 'session', huddle: 'huddle', ruled: 'ruled', tightened: 'tightened'};
-const PATH = {answer: 'answered', do: 'did it', dispatch: 'session', huddle: 'huddle', ask: 'asked you'};
+const PATH = {answer: 'answered', do: 'did it', dispatch: 'session', huddle: 'huddle', ask: 'asked you', onboard: 'new project'};
+const STAGE = {brainstorm: 'brainstorm', offered: 'offered', intake: 'asking', readback: 'plan', done: 'set up', declined: 'declined', cancelled: 'dropped'};
 
 export async function mountFront(root, opts = {}){
   useCss();
@@ -17,6 +18,10 @@ export async function mountFront(root, opts = {}){
   const asks = h('div', {class: 'fd-list'});
   const asksHead = h('div', {class: 'mg-bar', hidden: true}, h('h2', null, 'For you ', count));
   const decisions = h('div', {class: 'fd-list'});
+  const borrowed = h('div', {class: 'fd-list'});
+  const borrowedHead = h('div', {class: 'mg-bar', hidden: true}, h('h2', {text: 'Borrowed now'}));
+  const projects = h('div', {class: 'fd-list', style: 'margin-top:8px'});
+  const projectsBox = h('details', {hidden: true}, h('summary', {class: 'mg-sub', style: 'cursor:pointer', text: 'New projects'}), projects);
   const answered = h('div', {class: 'fd-list'});
   const book = h('textarea', {class: 'mg-input fd-book', rows: 18, spellcheck: false, 'aria-label': 'Playbook'});
   const bookNote = h('p', {class: 'mg-sub'});
@@ -40,8 +45,9 @@ export async function mountFront(root, opts = {}){
         h('p', {text: 'Overturn tightens what a decision relied on: the trust entry goes one level stricter, or the playbook gets an “Ask me first” rule. The action itself is not undone.'})), 'How the house agent decides'),
       h('span', {class: 'mg-grow'}),
       btn('↻', 'icon', () => refresh().catch(fail), {'aria-label': 'Refresh', title: 'Refresh'})),
-    status, off, asksHead, asks,
+    status, off, asksHead, asks, borrowedHead, borrowed,
     h('div', {class: 'mg-bar'}, h('h2', {text: 'Decided for you'})), decisions,
+    projectsBox,
     h('details', null, h('summary', {class: 'mg-sub', style: 'cursor:pointer', text: 'Answered'}), answered),
     h('details', null, h('summary', {class: 'mg-sub', style: 'cursor:pointer', text: 'Playbook'}),
       h('div', {class: 'fd-card', style: 'margin-top:8px'}, bookNote, book,
@@ -126,6 +132,29 @@ export async function mountFront(root, opts = {}){
       h('div', {class: 'fd-meta mg-dimtext'}, h('span', {text: (d.name || d.id) + ' · ' + ago(d.created)}), h('span', {class: 'mg-grow'}), over));
   }
 
+  function leaseCard(r){
+    return h('div', {class: 'mg-box mg-pad fd-card'},
+      h('div', {class: 'fd-meta'}, h('span', {class: 'fd-line', text: r.what}),
+        r.project ? h('span', {class: 'mg-tag line', text: r.project}) : null),
+      r.words ? h('q', {class: 'mg-sub', text: r.words}) : null,
+      h('div', {class: 'mg-sub fd-cite', text: 'Restore: ' + r.restore}),
+      h('div', {class: 'fd-meta mg-dimtext'}, h('span', {text: r.resource + (r.exception ? ' · exception ' + r.exception : '')}),
+        r.until ? h('span', {text: 'until ' + r.until}) : null));
+  }
+
+  function threadCard(t){
+    const steps = t.stage === 'done' ? (t.result || []) : [];
+    return h('div', {class: 'mg-box mg-pad fd-card'},
+      h('div', {class: 'fd-meta'}, h('span', {class: 'mg-tag line', text: STAGE[t.stage] || t.stage}),
+        h('span', {class: 'fd-line', text: t.title || 'Brainstorm'})),
+      t.stage === 'readback' && t.readback ? h('div', {class: 'mg-sub', text: t.readback}) : null,
+      ...steps.map(x => h('div', {class: 'mg-sub'},
+        h('span', {class: x.ok ? 'mg-good' : 'mg-bad', text: x.ok ? 'done' : x.asked ? 'asks you' : 'not done'}),
+        ' ' + x.step + (x.error ? ': ' + x.error : '') + (x.asked ? ': ' + x.asked : '')
+        + (x.proposal ? ' · accept ' + x.proposal + ' on Trust' : ''))),
+      h('div', {class: 'fd-meta mg-dimtext'}, h('span', {text: (t.notes ? t.notes + ' note' + (t.notes > 1 ? 's' : '') + ' · ' : '') + (t.source || '') + ' · ' + ago(t.updated)})));
+  }
+
   async function saveBook(button){
     const words = prompt('What changed, in your words (recorded with the playbook):', '');
     if(words === null) return;
@@ -144,6 +173,12 @@ export async function mountFront(root, opts = {}){
     const a = data.asks || [];
     asksHead.hidden = !a.length; count.hidden = !a.length; count.textContent = String(a.length);
     asks.replaceChildren(...a.map(askCard));
+    const ls = data.borrowed || [];
+    borrowedHead.hidden = !ls.length;
+    borrowed.replaceChildren(...ls.map(leaseCard));
+    const ts = data.onboarding || [];
+    projectsBox.hidden = !ts.length;
+    projects.replaceChildren(...ts.map(threadCard));
     const ds = data.decisions || [];
     decisions.replaceChildren(...(ds.length ? ds.map(decisionRow) : [h('div', {class: 'mg-box mg-empty', text: 'Nothing decided for you yet.'})]));
     answered.replaceChildren(...(data.answered || []).map(x => h('div', {class: 'mg-row fd-meta'},

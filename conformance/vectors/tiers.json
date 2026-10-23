@@ -648,6 +648,9 @@
   "home.explain": {
    "tier": "read"
   },
+  "home.ledger": {
+   "tier": "read"
+  },
   "home.overturn": {
    "tier": "write"
   },
@@ -655,6 +658,12 @@
    "tier": "read"
   },
   "home.playbook_edit": {
+   "tier": "write"
+  },
+  "home.projects": {
+   "tier": "read"
+  },
+  "home.restore": {
    "tier": "write"
   },
   "home.settle": {
