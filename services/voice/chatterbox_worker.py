@@ -50,9 +50,17 @@ class Synth:
     def synthesize(self, text, voice):
         import numpy as np
         self.model.conds = self.conds.get(voice) or self.conds.get("default") or next(iter(self.conds.values()))
-        with self.torch.inference_mode():
-            wav = self.model.generate(text)
-        return np.asarray(wav.squeeze(0).float().cpu().numpy(), dtype=np.float32), self.sr
+        try:
+            with self.torch.inference_mode():
+                wav = self.model.generate(text)
+            return np.asarray(wav.squeeze(0).float().cpu().numpy(), dtype=np.float32), self.sr
+        finally:
+            # Hand the activations back to the GPU after each utterance. Torch otherwise keeps
+            # its peak cached for good, and on kaiju's GPU0 (shared with a Strata lane and
+            # Whisper) that left Whisper too little memory to transcribe (2026-10-22).
+            cuda = getattr(self.torch, "cuda", None)
+            if cuda is not None and cuda.is_available():
+                cuda.empty_cache()
 
 
 def main():

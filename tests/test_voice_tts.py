@@ -284,6 +284,41 @@ def test_worker_module_imports_without_torch():
     assert hasattr(worker, 'Synth') and hasattr(worker, 'main')
 
 
+def test_worker_releases_cached_gpu_memory_after_each_utterance():
+    import contextlib
+    import types
+    import services.voice.chatterbox_worker as worker
+    pytest.importorskip("numpy")
+    calls = []
+    class Wav:
+        def squeeze(self, _):
+            return self
+        def float(self):
+            return self
+        def cpu(self):
+            return self
+        def numpy(self):
+            return [0.0, 0.5]
+    class Model:
+        conds = None
+        def __init__(self, fail=False):
+            self.fail = fail
+        def generate(self, text):
+            if self.fail:
+                raise RuntimeError('CUDA out of memory')
+            return Wav()
+    cuda = types.SimpleNamespace(is_available=lambda: True, empty_cache=lambda: calls.append('empty'))
+    synth = object.__new__(worker.Synth)
+    synth.torch = types.SimpleNamespace(cuda=cuda, inference_mode=contextlib.nullcontext)
+    synth.sr, synth.conds, synth.model = 24000, {'default': object()}, Model()
+    samples, sr = synth.synthesize('Hello.', 'default')
+    assert sr == 24000 and len(samples) == 2 and calls == ['empty']
+    synth.model = Model(fail=True)
+    with pytest.raises(RuntimeError):
+        synth.synthesize('Hello.', 'default')
+    assert calls == ['empty', 'empty']      # also after a failed utterance
+
+
 class HangProc(FakeProc):
     """Answers the ready line, then hangs on every request until killed (a stuck GPU)."""
     def __init__(self):
