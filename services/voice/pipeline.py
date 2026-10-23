@@ -187,6 +187,12 @@ class FrontBackground:
         self.prefetch_task = None
         self.prefetched_at = None
         self.max_backgrounds = 3
+        # Turns whose Background started an action: never cancelled as stale.
+        self.acting = set()
+        # Front's prompt, append-only so the model's cache carries over (front.Transcript).
+        self.transcript = front_mod.Transcript()
+        # What the house agent knows (persona, memory), told to Front once per transcript.
+        self.house_context = ''
 
     # --- events -----------------------------------------------------------
     def emit(self, kind, turn, text, **fields):
@@ -274,6 +280,7 @@ class FrontBackground:
     def front_idle(self):
         c = self.conn
         return (not (c.task and not c.task.done()) and time.monotonic() >= c.play_until and not c.receiving_speech
+                and c.held_since is None and not c.intake_pending
                 and not (self.followup_task and not self.followup_task.done())
                 and not (self.narration_task and not self.narration_task.done()))
 
@@ -328,7 +335,16 @@ class FrontBackground:
             current_identity.reset(token)
 
     # --- a user turn --------------------------------------------------------
-    async def turn(self, epoch, text, timing):
+    def _cancel_stale(self, epoch, merged_from=None):
+        """One turn at a time: a new turn ends older Background runs that have not
+        started an action (their answers would be stale; a run that acts finishes)."""
+        for turn, task in list(self.backgrounds.items()):
+            if turn < epoch and not task.done() and turn not in self.acting:
+                self.emit('dropped', turn, 'Background stopped: ' +
+                          ('merged into the next utterance' if turn == merged_from else 'a newer turn started'))
+                task.cancel()
+
+    async def turn(self, epoch, text, timing, merged_from=None):
         """Runs inside Connection._turn (identity context already set)."""
         conn = self.conn
         self.latest_turn = epoch
@@ -337,21 +353,27 @@ class FrontBackground:
         asyncio.current_task().add_done_callback(self._poke)
         for old in [t for t in self.front_tasks if t < epoch - 8]:
             del self.front_tasks[old]
+        self._cancel_stale(epoch, merged_from)
         self._time_fact()
         past = self._past()
         self.prefetch('speech')
         timing.deferred = True
         self._start_background(epoch, text, past, timing)
-        messages = front_mod.build_messages(self.fixed(), self.board.render(), past, text)
-        spoken = []
+        if merged_from is not None:
+            self.transcript.replace_last_user(text)
+        messages = self.transcript.request(self.fixed(), past, self.board.facts(), text, self.house_context)
+        spoken, content, completed, cancelled = [], '', False, False
         async def on_clause(clause):
             spoken.append(clause)
             await conn.say(clause, epoch, record=False)
         try:
-            await asyncio.wait_for(self.front(messages, on_clause, lambda: timing.mark('front_first_token_ms')),
-                                   float(os.environ.get('VOICE_FRONT_TIMEOUT_S', '30')))
+            content = await asyncio.wait_for(
+                self.front(messages, on_clause, lambda: timing.mark('front_first_token_ms')),
+                float(os.environ.get('VOICE_FRONT_TIMEOUT_S', '30')))
+            completed = True
         except asyncio.CancelledError:
             self.interrupted[epoch] = True
+            cancelled = True
             raise
         except Exception as error:
             logging.warning('Front reply failed: %s', type(error).__name__)
@@ -362,9 +384,13 @@ class FrontBackground:
         finally:
             if 'first_audio_ms' in timing.marks:
                 timing.marks.setdefault('front_first_audio_ms', timing.marks['first_audio_ms'])
-            if spoken:
-                # Model-visible history carries no playback marker; interruption is kept here.
-                conn.store.append(conn.session, 'assistant', {'text': ' '.join(spoken)})
+            # History holds what the user heard: the whole reply, or up to the interruption.
+            heard = conn.heard_text(epoch, spoken) if cancelled and spoken else ' '.join(spoken)
+            if heard:
+                # Model-visible history carries no playback marker.
+                conn.store.append(conn.session, 'assistant', {'text': heard})
+            # The exact reply keeps the model's cache; an interruption records what was heard.
+            self.transcript.commit((content or heard) if completed else heard)
             for old in [t for t in self.interrupted if t < epoch - 8]:
                 del self.interrupted[old]
 
@@ -384,6 +410,8 @@ class FrontBackground:
                 self.emit('thought', turn, fields.get('text', ''))
             elif kind == 'tool_call':
                 tool = fields.get('tool')
+                if tool in MUTATING or tool == 'house_agent':
+                    self.acting.add(turn)
                 self.emit('tool_call', turn, 'Calling ' + str(tool), tool=tool, args=fields.get('args') or {})
                 self._narrate(turn, tool)
             elif kind == 'tool_result':
@@ -464,6 +492,7 @@ class FrontBackground:
         finally:
             # Always one timing line and one done event, also when cancelled
             # mid-run or while waiting to speak the follow-up.
+            self.acting.discard(turn)
             timing.mark('background_ms')
             fields = timing.fields()
             front_status = getattr(timing, 'front_status', 'ok')
@@ -534,13 +563,16 @@ class FrontBackground:
             if not conn.speak_out:
                 timing.mark('followup_ms')
             await conn.say(clause, epoch, record=False, on_audio=on_audio)
+        content, completed, cancelled = '', False, False
         try:
-            messages = front_mod.build_messages(self.fixed(), self.board.render(), self._past_all(),
-                                                front_mod.followup_note(facts))
-            await asyncio.wait_for(self.front(messages, on_clause, None),
-                                   float(os.environ.get('VOICE_FRONT_TIMEOUT_S', '30')))
+            messages = self.transcript.request(self.fixed(), self._past_all(), self.board.facts(),
+                                               front_mod.followup_note(facts), self.house_context)
+            content = await asyncio.wait_for(self.front(messages, on_clause, None),
+                                             float(os.environ.get('VOICE_FRONT_TIMEOUT_S', '30')))
+            completed = True
         except asyncio.CancelledError:
             self.interrupted[turn] = True
+            cancelled = True
             raise
         except Exception as error:
             logging.warning('Front follow-up failed: %s', type(error).__name__)
@@ -551,8 +583,10 @@ class FrontBackground:
                                 else SPOKEN_FAILURE_OTHER)
         finally:
             current_identity.reset(token)
-            if spoken:
-                conn.store.append(conn.session, 'assistant', {'text': ' '.join(spoken)})
+            heard = conn.heard_text(epoch, spoken) if cancelled and spoken else ' '.join(spoken)
+            if heard:
+                conn.store.append(conn.session, 'assistant', {'text': heard})
+            self.transcript.commit((content or heard) if completed else heard)
             if epoch == conn.epoch and not conn.closed:
                 with contextlib.suppress(Exception):
                     await conn.emit('assistant_done', turn=epoch)

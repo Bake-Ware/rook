@@ -233,6 +233,10 @@ async def websocket(ws: WebSocket):
                           activity=hello.get('activity') is True, enqueue=enqueue,
                           progress_updates=hello.get('progress_updates'), identity=identity_for(supplied, live_identities))
         conn.full_duplex = protocol == 2 and hello.get('aec') is True
+        # Confirmed barge-in: the client pauses (not flushes) playback on local speech
+        # and waits for "interrupt" (real words) or "resume" (it was nothing).
+        conn.barge_confirm = protocol == 2 and hello.get('barge') == 'confirm'
+        conn.speakers = getattr(app.state, 'speakers', None)
         # An owner key may name the device it is talking from (the app sends its worker
         # name), so "my battery / where am I / my calendar" default to that device. Never
         # for other keys: their device comes only from the key's server-side mapping.
@@ -248,6 +252,8 @@ async def websocket(ws: WebSocket):
         credential_sockets.setdefault(credential_id, []).append((ws, conn))
         credential_sessions.setdefault(credential_id, set()).add(key)
         extra = {'pipeline': conn.pipeline} if conn.fb else {}
+        if conn.barge_confirm:
+            extra['barge'] = 'confirm'
         await conn.emit('session', conversation=conversation, protocol=protocol, version=VERSION, full_duplex=conn.full_duplex,
                         mode=conn.mode.id, custom_mode=conn.mode.custom, thinking=conn.thinking,
                         activity=conn.activity_enabled, **extra)
@@ -280,7 +286,6 @@ async def websocket(ws: WebSocket):
         preroll = deque(maxlen=10)
         utterance = bytearray()
         speech = silence = 0
-        speech_permission_until = 0.0
         message = None if hello.get('type') == 'hello' else first
         while True:
             if message is None:
@@ -294,9 +299,13 @@ async def websocket(ws: WebSocket):
                 if len(data) != 640:
                     continue
                 playing = time.monotonic() < conn.play_until + .4
-                if playing and (not conn.full_duplex or time.monotonic() > speech_permission_until):
+                if playing and (not conn.full_duplex or time.monotonic() > conn.speech_permission_until):
                     preroll.clear(); utterance.clear(); speech = silence = 0
                     continue
+                if conn.held_since is not None:
+                    resumed = conn.check_hold(bool(utterance))
+                    if resumed is not None:
+                        await resumed
                 sp = vad.is_speech(data, 16000)
                 if sp:
                     conn.last_speech = time.monotonic()
@@ -334,8 +343,11 @@ async def websocket(ws: WebSocket):
                     utterance.clear(); speech = silence = 0
                     conn.receiving_speech = False
                     if enough:
-                        await conn.start(pcm=pcm)
+                        # Transcribed first; only real words may interrupt or start a turn.
+                        conn.heard(pcm, conn.last_speech, held=conn.held_since is not None)
                     else:
+                        if conn.held_since is not None and not conn.intake_pending:
+                            await conn.release_hold(resume=True)
                         conn.drain_results()
             elif text:
                 if len(text) > 8 * 1024 * 1024:
@@ -365,11 +377,15 @@ async def websocket(ws: WebSocket):
                         conn.fb.client_timer(msg)
                     elif kind == 'speech_start' and conn.full_duplex:
                         conn.last_speech = time.monotonic()
-                        speech_permission_until = time.monotonic() + 35
+                        conn.speech_permission_until = time.monotonic() + 35
                         conn.receiving_speech = True
-                        if conn.fb:
-                            conn.fb.drop_followups()
-                        await conn.interrupt()
+                        if msg.get('hold') is True and conn.barge_confirm:
+                            # Paused, not stopped: the transcript decides (Connection.heard).
+                            conn.hold()
+                        else:
+                            if conn.fb:
+                                conn.fb.drop_followups()
+                            await conn.interrupt()
                     elif kind == 'audio_config':
                         conn.full_duplex = protocol == 2 and msg.get('aec') is True
                     elif kind == 'playback':

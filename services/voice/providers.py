@@ -37,21 +37,9 @@ FRAME_MS = 20
 FRAME_BYTES = int(SR * FRAME_MS / 1000) * 2
 SIL_LIMIT = int(700 / FRAME_MS)
 MIN_SPEECH = int(float(os.environ.get("MIN_SPEECH_MS", "450")) / FRAME_MS)
-# --- anti-hallucination gates (Whisper invents "Thank you." etc. on noise) ---
+# --- anti-hallucination gates (Whisper invents "Thank you." etc. on noise): stt_gate.py ---
 MIN_RMS = float(os.environ.get("MIN_RMS", "0.008"))          # utterance energy floor (float PCM)
-MAX_NO_SPEECH = float(os.environ.get("MAX_NO_SPEECH", "0.6")) # whisper no_speech_prob ceiling
-MIN_LOGPROB = float(os.environ.get("MIN_LOGPROB", "-1.0"))    # whisper avg_logprob floor
-HALLUCINATIONS = {"thank you", "thanks", "thank you very much", "thanks for watching", "you", "bye",
-                  "thank you for watching", "so", "okay", "oh", "hmm", "uh", "um", "the end", "subtitles by"}
-def looks_hallucinated(text: str) -> bool:
-    t = "".join(c for c in text.lower() if c.isalnum() or c == " ").strip()
-    if not t:
-        return True
-    if t in HALLUCINATIONS:
-        return True
-    # repeated token spam ("you you you you")
-    w = t.split()
-    return len(w) >= 4 and len(set(w)) == 1
+from .stt_gate import MAX_NO_SPEECH, MIN_LOGPROB, judge as judge_transcript, stats as transcript_stats  # noqa: E402
 HIST_MAX = 64
 TICK_SECS = 5.0
 
@@ -589,17 +577,24 @@ class Provider:
         return await asyncio.shield(future)
 
     async def transcribe(self, pcm):
+        return (await self.transcribe_detail(pcm))['text']
+
+    async def transcribe_detail(self, pcm):
+        """``{'text', 'reason', 'stats'}``: ``reason`` says why nothing usable was heard
+        (stt_gate.judge), None for a real transcript."""
         audio = np.frombuffer(pcm, dtype='<i2').astype(np.float32) / 32768
         if len(audio) == 0 or float(np.sqrt(np.mean(audio * audio))) < MIN_RMS:
-            return ''
+            return {'text': '', 'reason': 'quiet', 'stats': {}}
         def run():
-            segs = list(self.whisper.transcribe(audio, language='en', beam_size=1,
-                condition_on_previous_text=False, no_speech_threshold=MAX_NO_SPEECH,
-                log_prob_threshold=MIN_LOGPROB, vad_filter=True)[0])
-            text = ''.join(s.text for s in segs if s.no_speech_prob <= MAX_NO_SPEECH and s.avg_logprob >= MIN_LOGPROB).strip()
-            # A real brief acknowledgement is useful conversation, not a reason to
-            # discard "okay" or "bye" unconditionally after VAD/confidence passed.
-            return '' if len(text.split()) >= 4 and len(set(text.lower().split())) == 1 else text
+            segments, info = self.whisper.transcribe(
+                audio, language='en', beam_size=1, condition_on_previous_text=False,
+                no_speech_threshold=MAX_NO_SPEECH, log_prob_threshold=MIN_LOGPROB, without_timestamps=True,
+                vad_filter=True, vad_parameters={'min_speech_duration_ms': 200, 'speech_pad_ms': 200})
+            segs = [{'text': s.text, 'no_speech_prob': s.no_speech_prob, 'avg_logprob': s.avg_logprob,
+                     'compression_ratio': s.compression_ratio} for s in segments]
+            speech_s = getattr(info, 'duration_after_vad', None)
+            text, reason = judge_transcript(segs, speech_s)
+            return {'text': text, 'reason': reason, 'stats': transcript_stats(segs, speech_s)}
         return await self._model('stt', run)
 
     def resolve_voice(self, voice):
