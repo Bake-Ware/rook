@@ -200,8 +200,7 @@ READ_FLAGS = {
 #: For these the words after the flags must also pass (``None``: any words).
 READ_WORDS = {
     "uniq": lambda w: len(w) <= 1,                      # a second file is the output
-    "nvidia-smi": lambda w: all(x in ("dmon", "pmon") or x.isdigit() or "," in x or "=" in x
-                                for x in w),
+    "nvidia-smi": lambda w: all(x in ("dmon", "pmon") or re.fullmatch(r"[\d,]+", x) for x in w),
     "date": lambda w: not any(x[:1].isdigit() for x in w),   # date MMDDhhmm sets the clock
 }
 #: Subcommand tools: the subcommands that read, with any flags after them.
@@ -220,6 +219,11 @@ READ_SUBS = {
     "loginctl": {"list-sessions", "list-users", "list-seats", "session-status",
                  "user-status", "show-session", "show-user", "show-seat"},
 }
+#: Value-less options a subcommand tool may take before its subcommand; any
+#: other leading option may take a value that would look like a subcommand
+#: (``kubectl --namespace get delete pod x`` deletes).
+SUB_GLOBAL = {"systemctl": {"--user", "--system", "--no-pager", "-l", "--full", "-a", "--all",
+                            "-q", "--quiet", "--no-legend"}}
 #: Subcommand tools that read with no subcommand at all.
 READ_BARE = {"systemctl", "hostnamectl", "timedatectl", "loginctl", "hostname"}
 #: Flags that make a subcommand tool act elsewhere or run code: never read.
@@ -272,17 +276,22 @@ SQL_FUNCS = {
 SQL_PRAGMA_READ = {"table_info", "table_xinfo", "index_list", "index_info", "index_xinfo",
                    "foreign_key_list", "table_list", "database_list", "function_list",
                    "integrity_check", "quick_check", "foreign_key_check"}
+#: PRAGMAs that only read when given no argument (``pragma optimize``,
+#: ``wal_checkpoint``, ``incremental_vacuum`` and ``shrink_memory`` act).
+SQL_PRAGMA_BARE = {"journal_mode", "user_version", "schema_version", "application_id",
+                   "page_size", "page_count", "freelist_count", "encoding", "foreign_keys",
+                   "table_list", "database_list", "compile_options", "integrity_check",
+                   "quick_check", "foreign_key_check", "function_list", "collation_list",
+                   "module_list", "pragma_list", "data_version", "cache_size", "synchronous",
+                   "auto_vacuum", "busy_timeout", "mmap_size", "temp_store", "locking_mode",
+                   "max_page_count", "secure_delete", "recursive_triggers", "query_only",
+                   "cell_size_check", "defer_foreign_keys", "ignore_check_constraints",
+                   "legacy_alter_table", "reverse_unordered_selects", "trusted_schema"}
 SQL_DOT_READ = re.compile(r"^\s*\.(tables|schema|indexes|indices|headers|mode|databases|"
                           r"show|width|nullvalue)\b[^;]*$", re.I)
 SQLITE_FLAGS = {"-readonly", "-safe", "-header", "-noheader", "-column", "-json", "-line",
                 "-csv", "-list", "-box", "-markdown", "-table", "-batch", "-bail", "-separator",
                 "-newline", "-nullvalue"}
-CURL_READ_LONG = ("--silent", "--show-error", "--fail", "--location", "--insecure", "--verbose",
-                  "--include", "--head", "--header", "--max-time", "--connect-timeout",
-                  "--user-agent", "--user", "--referer", "--compressed", "--retry",
-                  "--write-out", "--get", "--url", "--http1.1", "--http2", "--ipv4", "--ipv6",
-                  "--proxy", "--cacert", "--resolve", "--fail-with-body", "--no-progress-meter")
-CURL_READ_SHORT = set("sSfLkviIHmAueGw46x")
 GH_API_READ = ("--paginate", "--jq", "--template", "--header", "--include", "--cache",
                "--hostname", "--silent", "--verbose", "--slurp")
 GH_API_SHORT = set("qtHi")
@@ -357,6 +366,24 @@ def _unwrap(argv: list[str]) -> list[str] | None:
     return None
 
 
+def _plain_words(line: str) -> bool:
+    """No word of ``line`` is changed by the shell before the command sees
+    it: no ``$`` (variables, ``${..}``, ``$'..'``), no unquoted glob at the
+    start of a word (``*`` can expand to a file named ``-delete``), no brace
+    expansion. Read from the raw words, quotes kept (vote sticky-foal-vanilla)."""
+    lex = shlex.shlex(line, posix=False, punctuation_chars=";&|<>()")
+    lex.whitespace_split = True
+    lex.commenters = ""
+    try:
+        raw = list(lex)
+    except ValueError:
+        return False
+    for w in raw:
+        if "$" in w or w[:1] in "*?[" or ("{" in w and ("," in w or ".." in w)):
+            return False
+    return True
+
+
 def _tokens(script: str) -> tuple[list[list[str]], list[str]] | None:
     """``(simple commands, files written by redirects)`` of a script, or
     ``None`` when it uses shell the tokenizer does not follow (command or
@@ -367,6 +394,8 @@ def _tokens(script: str) -> tuple[list[list[str]], list[str]] | None:
     segs: list[list[str]] = []
     writes: list[str] = []
     for line in script.split("\n"):
+        if not _plain_words(line):
+            return None
         lex = shlex.shlex(line, posix=True, punctuation_chars=";&|<>()")
         lex.whitespace_split = True
         lex.commenters = ""
@@ -414,7 +443,7 @@ def _sql_read(stmt: str, safe: bool) -> bool:
     m = re.match(r"^\s*pragma\s+([\w.]+)\s*(\(\s*[\w.'\"]*\s*\))?\s*$", s, re.I)
     if m:
         name = m.group(1).split(".")[-1].lower()
-        return not m.group(2) or name in SQL_PRAGMA_READ
+        return name in (SQL_PRAGMA_READ if m.group(2) else SQL_PRAGMA_BARE)
     if not SQL_READ.match(s) or SQL_WRITE.search(s):
         return False
     if safe:
@@ -508,18 +537,17 @@ def _reads(prog: str, rest: list[str]) -> bool:
     if prog in READ_SUBS:
         if _has(rest, SUB_DENY):
             return False
-        sub = words[0] if words else ""
-        if not sub:
+        lead = SUB_GLOBAL.get(prog, set())
+        i = 0
+        while i < len(rest) and rest[i] in lead:
+            i += 1
+        if i == len(rest):
             return prog in READ_BARE
-        return sub in READ_SUBS[prog]
+        return not rest[i].startswith("-") and rest[i] in READ_SUBS[prog]
     if prog == "pacman":
         first = rest[0] if rest else ""
         return (first.startswith("-Q") or first in ("-Ss", "-Si")) and all(
             not a.startswith("-") for a in rest[1:])
-    if prog == "curl":
-        urls = [w for w in words if "://" in w]
-        return bool(urls) and all(u.startswith(("http://", "https://")) for u in urls) and \
-            _flags_ok(rest, CURL_READ_LONG, CURL_READ_SHORT)
     if prog == "gh":
         sub = rest[0] if rest else ""
         if sub == "api":
@@ -575,8 +603,6 @@ def _shell_segment(argv: list[str], depth: int = 0) -> dict:
                     "want": f"list files{' in ' + target if target else ''}"}
         if prog in ("grep", "egrep", "fgrep", "zgrep", "rg"):
             return {"kind": "read", "title": "Search files", "want": "search files for text"}
-        if prog == "curl":
-            return {"kind": "read", "title": "Fetch a web page", "want": "fetch a URL"}
         if prog in ("gh",):
             return {"kind": "read", "title": "Look at GitHub", "want": "read from GitHub"}
         if prog == "ip":
@@ -602,10 +628,14 @@ def _shell_segment(argv: list[str], depth: int = 0) -> dict:
     if prog == "sed" and (_has(rest, ("--in-place",)) or any(
             re.match(r"-[A-Za-z]*i", a) for a in rest if not a.startswith("--"))):
         return {"kind": "change", "title": "Edit a file", "want": "edit a file in place"}
+    if prog in ("curl", "wget"):
+        # Even a GET can change things on the server it reaches (an admin URL),
+        # and curl's -w can write a file: never "read-only".
+        return {"kind": "change", "title": "Send a web request",
+                "want": "send a web request (it can change things on the server, or save a file)"}
     if prog in ("cp", "mv", "tee", "touch", "mkdir", "ln", "chmod", "chown", "install",
-                "rsync", "scp", "tar", "unzip", "wget", "sed", "awk", "patch", "curl"):
-        return {"kind": "change", "title": "Change files" if prog != "curl"
-                else "Send or save a web request", "want": f"run {prog}, which can change things"}
+                "rsync", "scp", "tar", "unzip", "sed", "awk", "patch"):
+        return {"kind": "change", "title": "Change files", "want": f"run {prog}, which can change things"}
     if prog in ("apt", "apt-get", "pip", "pip3", "npm", "pacman", "yay", "dnf", "brew"):
         return {"kind": "change", "title": "Install or change software",
                 "want": f"run {prog} {words[0] if words else ''}".strip()}

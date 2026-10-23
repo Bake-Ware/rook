@@ -85,7 +85,7 @@ def test_without_a_task_or_why_it_says_no_task():
     (["bash", "deploy-local.sh", "abc123"], "change", "Deploy"),
     (["reboot"], "destroy", "Reboot"),
     (["find", "/tmp", "-name", "*.log", "-delete"], "destroy", "Find and delete files"),
-    (["curl", "-s", "https://example.org/health"], "read", "Fetch a web page"),
+    (["curl", "-s", "https://example.org/health"], "change", "Send a web request"),
     (["timeout", "60", "rook-pytest", "-q"], "change", "Run tests"),
 ])
 def test_shell_commands_are_said_by_what_they_do(argv, kind, title):
@@ -134,6 +134,18 @@ def test_shell_commands_are_said_by_what_they_do(argv, kind, title):
     ["top", "-b"], ["less", "f"], ["sudo", "-u", "x", "cat", "f"], ["sudo", "-E", "cat", "f"],
     ["timeout", "--signal=9", "5", "rm", "x"], ["docker", "-H", "tcp://x", "ps"],
     ["kubectl", "--kubeconfig", "k", "get", "po"], ["systemctl", "-H", "host", "status"],
+    # From the review of vote sticky-foal-vanilla: shell expansion, subcommand position,
+    # curl -w, side-effecting pragmas.
+    ["sh", "-c", "find /srv $N-delete"], ["sh", "-c", "find . ${N:--delete}"],
+    ["sh", "-c", "find . $'\\x2ddelete'"], ["sh", "-c", "find . $N-exec rm {} +"],
+    ["sh", "-c", "journalctl $N--vacuum-size=1"], ["sh", "-c", "date $N--set=x"],
+    ["sh", "-c", "sort $N-o/etc/x f"], ["sh", "-c", "git log $N--output=/x"],
+    ["sh", "-c", "rg $N--pre=sh x"], ["sh", "-c", "gh api $N-XDELETE x"],
+    ["sh", "-c", "find . {-delete,-print}"], ["sh", "-c", "sort *"], ["sh", "-c", "cat \"$X\""],
+    ["kubectl", "--namespace", "get", "delete", "pod", "x"], ["docker", "--log-level", "ps", "rm", "x"],
+    ["curl", "-sS", "https://x"], ["curl", "-w", "%output{/etc/x}", "https://x"],
+    ["sqlite3", "x.db", "pragma optimize"], ["sqlite3", "x.db", "pragma wal_checkpoint"],
+    ["sqlite3", "x.db", "pragma incremental_vacuum"], ["sqlite3", "x.db", "pragma shrink_memory"],
 ])
 def test_commands_that_can_write_never_read_as_read_only(argv):
     assert plain.shell_summary({"argv": argv})["kind"] != "read"
@@ -147,7 +159,7 @@ def test_a_cmd_string_is_read_like_argv():
                  ["ip", "-br", "a"], ["nvidia-smi", "--query-gpu=name"], ["date", "+%s"],
                  ["sqlite3", "/x.db", "SELECT a FROM t; PRAGMA table_info(t)"],
                  ["sqlite3", "-readonly", "/x.db", "SELECT count(*) FROM t"],
-                 ["journalctl", "-fu", "x"], ["curl", "-sSL", "-H", "A: b", "https://x"],
+                 ["journalctl", "-fu", "x"], ["sh", "-c", "find . -name '*.py' | head"],
                  ["sudo", "-n", "systemctl", "status", "x"], ["timeout", "10", "cat", "f"],
                  ["head", "-20", "f"], ["find", ".", "-name", "*.py", "-type", "f"]):
         assert plain.shell_summary({"argv": argv})["kind"] == "read", argv
