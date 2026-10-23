@@ -161,7 +161,8 @@ class Sessions:
         self.current: dict[str, Item | None] = {}
         self.lanes: dict[str, dict] = {}            # "role/lane" -> state
         self.forks: dict[str, dict] = {}
-        self.pending: dict[str, asyncio.Future] = {}
+        self.pending: dict[str, asyncio.Future] = {}     # replies to requests
+        self.btws: dict[str, asyncio.Future] = {}        # ev btw, by request id
         self.voice: dict[str, dict] = {}            # role -> last voice turn
         self.metrics: list[dict] = []               # voice replies and main results
         self._tokens: dict[str, str] = {}           # "role/lane" -> tool server token
@@ -524,7 +525,7 @@ class Sessions:
         elif kind == "fork":
             await self._on_fork(msg)
         elif kind == "btw":
-            fut = self.pending.get(str(msg.get("req") or ""))
+            fut = self.btws.get(str(msg.get("req") or ""))
             if fut is not None and not fut.done():
                 fut.set_result(msg)
         elif kind == "voice_turn":
@@ -953,7 +954,7 @@ class Sessions:
             return {"ok": False, "error": "the back end has no conversation yet"}
         req = uuid.uuid4().hex[:12]
         fut = asyncio.get_running_loop().create_future()
-        self.pending[req] = fut
+        self.btws[req] = fut            # the host replies {started} at once, then ev btw
         t0 = time.monotonic()
         try:
             await self.send({"t": "btw", "req": req, "role": role, "question": question,
@@ -962,7 +963,7 @@ class Sessions:
         except asyncio.TimeoutError:
             return {"ok": False, "error": "no answer in time"}
         finally:
-            self.pending.pop(req, None)
+            self.btws.pop(req, None)
         out = {"ok": bool(ev.get("ok")), "answer": str(ev.get("text") or "")[:1500],
                "ms": ev.get("ms") or round((time.monotonic() - t0) * 1000)}
         if ev.get("error"):
