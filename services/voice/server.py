@@ -282,6 +282,8 @@ async def websocket(ws: WebSocket):
         credential_sockets.setdefault(credential_id, []).append((ws, conn))
         credential_sessions.setdefault(credential_id, set()).add(key)
         extra = {'pipeline': conn.pipeline} if conn.fb else {}
+        if conn.fb and conn.fb.house is not None:
+            extra['engine'] = 'house'
         if conn.barge_confirm:
             extra['barge'] = 'confirm'
         await conn.emit('session', conversation=conversation, protocol=protocol, version=VERSION, full_duplex=conn.full_duplex,
@@ -397,7 +399,7 @@ async def websocket(ws: WebSocket):
                         if conn.fb:
                             # Stop means stop: results still on their way stay silent.
                             # Before interrupt, so no waiting follow-up starts in between.
-                            conn.fb.drop_followups()
+                            conn.fb.stop()
                         await conn.interrupt()
                     elif kind == 'client_state':
                         was_sleeping = conn.sleeping

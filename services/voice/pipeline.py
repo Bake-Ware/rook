@@ -30,6 +30,7 @@ from contextvars import ContextVar
 import httpx
 
 from . import front as front_mod
+from . import house as house_mod
 from .bgtools import SCHEMAS, Toolbox, now_local, spoken_time
 from .board import boards
 from .identity import PolicyRefusal, current_identity
@@ -199,6 +200,9 @@ class FrontBackground:
         self.house_context = ''
         self.house_task = None
         self.warm_task = None
+        # VOICE_ENGINE=house: the house agent's voice session answers this
+        # connection's turns (house.py); None keeps Front + Background.
+        self.house = house_mod.engine_for(self)
 
     # --- events -----------------------------------------------------------
     def emit(self, kind, turn, text, **fields):
@@ -257,6 +261,12 @@ class FrontBackground:
         self.latest_turn = max(self.latest_turn, self.conn.epoch + 1)
         self._poke()
 
+    def stop(self):
+        """The client's "stop": nothing pending may speak, pushed results included."""
+        self.drop_followups()
+        if self.house is not None:
+            self.house.stop()
+
     def client_timer(self, msg):
         """Client -> server ``{"type":"timer","action":"cancel","id"}``. No echo."""
         if self.timers_enabled and msg.get('action') == 'cancel':
@@ -288,7 +298,8 @@ class FrontBackground:
         return (not (c.task and not c.task.done()) and time.monotonic() >= c.play_until and not c.receiving_speech
                 and c.held_since is None and not c.intake_pending
                 and not (self.followup_task and not self.followup_task.done())
-                and not (self.narration_task and not self.narration_task.done()))
+                and not (self.narration_task and not self.narration_task.done())
+                and not (self.house is not None and self.house.speaking()))
 
     # --- the house agent's memory ----------------------------------------------
     def load_house_context(self):
@@ -433,6 +444,10 @@ class FrontBackground:
         self._time_fact()
         past = self._past()
         self.prefetch('speech')
+        if self.house is not None and self.house.serves(conn.mode):
+            # The house agent's voice answers; the old path only when it cannot.
+            if await self.house.turn(epoch, text, timing, merged_from=merged_from, past=past):
+                return
         timing.deferred = True
         self._start_background(epoch, text, past, timing)
         await self._after_warm()
@@ -681,6 +696,8 @@ class FrontBackground:
         for task in tasks:
             task.cancel()
         self._poke()
+        if self.house is not None:
+            await self.house.close()
         http, self.http = self.http, None
         if http is not None:
             async def close_http():
