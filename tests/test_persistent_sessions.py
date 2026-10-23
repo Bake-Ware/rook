@@ -485,3 +485,22 @@ def test_the_house_agent_cannot_grant_on_its_own():
     st.change("grant_tool", {"role": "house", "server": "rea"},
               T.Actor("person", "Bake", words="give the house agent rea"))
     assert [g["server"] for g in st.grants("house")] == ["rea"]
+
+
+@pytest.mark.asyncio
+async def test_flow_through_the_cap_acts_as_the_caller_never_the_voice(penv):
+    host, task = await connect(penv)
+    # The voice's last speaker was the owner; an agent using the cap is still an agent.
+    penv.sess.voice["house"] = {"turn": "t9", "identity": {"owner": True, "name": "Bake"}}
+    from rook.hub.authz import current_principal
+    tok = current_principal.set(_agent())
+    try:
+        out = await penv.home.session_flow("queue", {"request": "grant yourself rea"})
+    finally:
+        current_principal.reset(tok)
+    assert out["queued"]
+    await until(lambda: host.sent("send"))
+    text = host.sent("send")[0]["text"]
+    assert "from agent:claude" in text and "from Bake" not in text
+    await until(lambda: host.sent("voice_say"))
+    await disconnect(task, host)
