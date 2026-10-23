@@ -34,4 +34,18 @@ class VoiceModesTest {
         assertNotEquals(VoiceModes.conversationScope("wss://v/ws", "tok", "conversation"),
             VoiceModes.conversationScope("wss://v/ws", "tok", "roleplay"))
     }
+    @Test fun theVoiceSwitchesOnlyBetweenTheGrownUpModes() {
+        assertTrue(VoiceModes.voiceSwitchAllowed("assistant", "dictate", "voice"))
+        assertTrue(VoiceModes.voiceSwitchAllowed("dictate", "assistant", "voice"))
+        assertTrue(VoiceModes.voiceSwitchAllowed("listen", "brainstorm", "voice"))
+        // Never without the voice's mark, never into or out of the children's or roleplay modes.
+        assertFalse(VoiceModes.voiceSwitchAllowed("assistant", "dictate", null))
+        assertFalse(VoiceModes.voiceSwitchAllowed("conversation", "assistant", "voice"))
+        assertFalse(VoiceModes.voiceSwitchAllowed("assistant", "conversation", "voice"))
+        assertFalse(VoiceModes.voiceSwitchAllowed("assistant", "roleplay", "voice"))
+        assertTrue(VoiceModes.keepAcrossReconnect("listen"))
+        assertFalse(VoiceModes.keepAcrossReconnect("dictate"))
+        assertFalse(VoiceModes.keepAcrossReconnect("conversation"))
+        assertFalse(VoiceModes.keepAcrossReconnect(null))
+    }
 }

@@ -511,3 +511,99 @@ def test_server_session_reports_engine_and_falls_back(server, monkeypatch):
             with client.websocket_connect('/ws', headers={'Authorization': 'Bearer test-token'}) as ws:
                 ws.send_json({'type': 'hello', 'protocol': 2, 'conversation': str(uuid.uuid4()), **extra})
                 assert 'engine' not in ws.receive_json()
+
+
+# --- listening modes switched by the voice, routing lines --------------------------
+def test_the_voice_switches_to_dictation_and_the_text_comes_back(tmp_path, monkeypatch):
+    async def answer(lane, message):
+        turn = message['turn']
+        if message['text'].startswith('[dictation]'):
+            await lane.send(t='delta', turn=turn, text='Got it. Save it as a note?')
+        else:
+            await lane.send(t='delta', turn=turn, text='Okay, dictation.')
+        await lane.send(t='end', turn=turn, text='', ok=True)
+        if 'dictation' in message['text'] and not message['text'].startswith('[dictation]'):
+            await lane.send(t='mode', turn=turn, mode='dictate', by='voice')
+
+    async def scenario():
+        async with FakeLane(answer) as lane:
+            house_env(monkeypatch, lane.url)
+            conn, store, jobs, events, _ = connection(tmp_path, front=FakeFront(), complete=Script())
+            try:
+                await conn.start(text='switch to dictation', speak=False)
+                await wait_for(lambda: conn.mode.id == 'dictate')
+                assert {'type': 'mode', 'mode': 'dictate', 'custom': False, 'by': 'voice'} in events
+                await idle(conn)
+                await conn.start(text='buy milk and eggs', speak=False)
+                await idle(conn)
+                await conn.start(text="I'm done", speak=False)
+                await wait_for(lambda: any(m.get('text') == '[dictation] buy milk and eggs'
+                                           for m in lane.received))
+                await idle(conn, .2)
+                assert conn.mode.id == 'assistant' and conn.mode_return is None
+                modes_seen = [(e['mode'], e.get('by')) for e in events if e.get('type') == 'mode']
+                assert modes_seen == [('dictate', 'voice'), ('assistant', 'voice')]
+                assert 'Got it. Save it as a note?' in ' '.join(said(events))
+                users = [m['text'] for m in lane.received if m['t'] == 'user']
+                assert 'buy milk and eggs' not in users              # dictation never reached the model
+            finally:
+                await shutdown(conn, store, jobs)
+    asyncio.run(scenario())
+
+
+def test_voice_mode_switches_never_touch_the_childrens_modes(tmp_path, monkeypatch):
+    async def scenario():
+        async with FakeLane() as lane:
+            house_env(monkeypatch, lane.url)
+            for start, target, by in (('conversation', 'assistant', 'voice'),
+                                      ('assistant', 'roleplay', 'voice'),
+                                      ('assistant', 'dictate', None)):
+                conn, store, jobs, events, _ = connection(tmp_path, front=FakeFront(), mode_id=start)
+                try:
+                    await conn.fb.house._switch(target, by)
+                    assert conn.mode.id == start and not [e for e in events if e.get('type') == 'mode']
+                finally:
+                    await shutdown(conn, store, jobs)
+    asyncio.run(scenario())
+
+
+def test_active_listening_is_served_by_the_house_voice_and_says_its_mode(tmp_path, monkeypatch):
+    async def answer(lane, message):
+        # Not addressed: the conductor's whole reply was a quiet routing line (cut by the host).
+        await lane.send(t='end', turn=message['turn'], text='', ok=True)
+
+    async def scenario():
+        async with FakeLane(answer) as lane:
+            house_env(monkeypatch, lane.url)
+            front = FakeFront()
+            conn, store, jobs, events, _ = connection(tmp_path, front=front, mode_id='listen',
+                                                      complete=Script())
+            try:
+                await conn.start(text='so then we went to the store', speak=False)
+                await idle(conn)
+            finally:
+                await shutdown(conn, store, jobs)
+            (user,) = [m for m in lane.received if m['t'] == 'user']
+            assert user['mode'] == 'listen' and said(events) == [] and front.calls == []
+    asyncio.run(scenario())
+
+
+def test_a_routing_line_that_reaches_the_voice_server_is_never_spoken(tmp_path, monkeypatch):
+    async def answer(lane, message):
+        turn = message['turn']
+        await lane.send(t='delta', turn=turn, text='On it. <<flow {"op":')
+        await lane.send(t='delta', turn=turn, text=' "queue", "request": "x"}>>')
+        await lane.send(t='end', turn=turn, text='', ok=True)
+
+    async def scenario():
+        async with FakeLane(answer) as lane:
+            house_env(monkeypatch, lane.url)
+            conn, store, jobs, events, _ = connection(tmp_path, front=FakeFront(), complete=Script())
+            try:
+                await conn.start(text='check the backups', speak=False)
+                await idle(conn)
+            finally:
+                await shutdown(conn, store, jobs)
+            text = ' '.join(said(events))
+            assert 'On it.' in text and '<<' not in text and 'queue' not in text
+    asyncio.run(scenario())

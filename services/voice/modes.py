@@ -59,6 +59,13 @@ MODES = {
 ALIASES = {'active_listening': 'listen', 'active listening': 'listen', 'listening': 'listen',
            'dictation': 'dictate', 'chat': 'conversation', 'agent': 'assistant'}
 
+# Modes the house voice may switch a connection between by itself ("switch to
+# dictation"), and the ones it serves (with VOICE_ENGINE=house; owner connections).
+# The children's and roleplay modes are never among them: a voice switch never
+# leaves or enters those, so no spoken request widens what a child's session can do.
+VOICE_SWITCHABLE = frozenset({'assistant', 'dictate', 'listen', 'brainstorm'})
+HOUSE_SERVED = frozenset({'assistant', 'listen', 'brainstorm'})
+
 # Tools a mode may use; None means every tool the provider offers.
 ALLOWED_TOOLS = {'assistant': None}
 NON_AGENT_TOOLS = frozenset({'end_session'})

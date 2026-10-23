@@ -19,9 +19,20 @@ talks for it:
   Claude login. Its persona and rules are in `CLAUDE.md` there, its model and
   permissions in `.claude/settings.json`, and its tools in `.mcp.json`, the
   same files Claude Code reads anywhere.
-- **The voice** runs on Haiku with thinking held off, in `voice/` inside that
+- **The voice** runs on Haiku 5.5 at low effort, in `voice/` inside that
   directory. It inherits the persona. It answers you at once and hands real
   work to the agent; it never claims something is done until the agent says so.
+  It has no tools at all (tools make Haiku 5.5 think before it speaks): it ends
+  what it says with a short hidden line that tells the hub what to do, and that
+  line is never spoken or shown.
+
+To you they are one assistant, under the name in **Manage > Voice > Speech >
+Assistant name** (for example Sojourn; **Whose assistant** there is your name). It
+doesn't talk about how it works inside, and it doesn't say it can't find
+something out: it says it's checking and gets the answer. The voice also gets a
+short brief kept fresh by the hub (what the agent is working on, what waits on
+you, recent decisions, how much of the band is online) and the time, so common
+questions need no lookup.
 
 Both keep their identity: if the machine or the hub restarts, they resume the
 same conversation. If a conversation can't be resumed, it starts fresh and the
@@ -49,7 +60,14 @@ You can keep talking while the agent is busy. The voice can:
   the agent's own context without interrupting it;
 - **start a side thread** for something separate, which comes back and is
   folded into the agent's conversation when it is done;
-- **queue, pause, resume or cancel** work.
+- **queue, pause, resume or cancel** work;
+- **change how it listens**: "switch to dictation" (it only writes down what
+  you say until you say "I'm done", then offers to save or send it), "active
+  listening" (it listens and only speaks when you say its name or something
+  important comes up), "brainstorm" (mostly listens, asks a short question at
+  a pause and keeps notes), and "back to normal". The phone shows the mode it
+  switched to. The voice never switches into or out of the children's
+  conversation mode or roleplay.
 
 ## Giving a role more tools
 
@@ -66,4 +84,7 @@ sessions**. It needs the session host running on the machine with the Claude
 login. Turn it off and every request is a one-off run again. If the session
 host is not connected, requests use one-off runs automatically. The voice
 server keeps its old voice path as a fallback, a single setting on its host.
+**Voice model** picks the voice's model: `claude-haiku-5-5` (default) or
+`claude-haiku-4-5`, about 0.3 s quicker to the first word and never thinking,
+a little less capable.
 See [[manual-voice]] and [[manual-front-door]].

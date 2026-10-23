@@ -143,6 +143,10 @@ class HomeAgent(Plugin):
         setting("name", str, "home", pattern=NAME_RE.pattern, group="Home agent", order=2,
                 label="Name",
                 help="Chat identity agent:<name>; people address it as @<name>."),
+        setting("timezone", str, "", pattern=r"^([A-Za-z_]+(/[A-Za-z0-9_+-]+){0,2})?$",
+                group="Home agent", order=3, label="Time zone",
+                help="IANA name (America/Chicago) for the times the assistant says. Blank: the "
+                     "hub's local time."),
         setting("backend", str, "openai", choices=BACKENDS, group="Model", order=-1,
                 label="Backend",
                 help="openai: an OpenAI-compatible endpoint (below). claude-code, codex, "
@@ -285,11 +289,12 @@ class HomeAgent(Plugin):
         setting("persistent_effort", str, "", choices=agent_host.EFFORTS,
                 group="Persistent sessions", order=4, label="Agent effort",
                 help="Blank: Claude Code's default for the model."),
-        setting("voice_model", str, "claude-haiku-4-5", pattern=r"^[A-Za-z0-9_.:\[\]-]{1,80}$",
+        setting("voice_model", str, "claude-haiku-5-5", pattern=r"^[A-Za-z0-9_.:\[\]-]{1,80}$",
                 group="Persistent sessions", order=5, label="Voice model",
-                help="claude-haiku-4-5 (default): thinking really off, so it speaks before it "
-                     "routes. haiku (Haiku 5.5) cannot turn thinking off: with the flow tools it "
-                     "thinks before routing, and the first word comes 1.5-3 s later."),
+                help="claude-haiku-5-5 (default) at effort low: the voice has no tools and routes "
+                     "with a hidden line at the end of what it says, so it speaks with no thinking "
+                     "first. claude-haiku-4-5: the fallback (thinking off too, a little less "
+                     "capable)."),
         setting("voice_effort", str, "low", choices=agent_host.EFFORTS,
                 group="Persistent sessions", order=6, label="Voice effort"),
         setting("btw_model", str, "haiku", pattern=r"^[A-Za-z0-9_.:\[\]-]{1,80}$",
@@ -419,6 +424,44 @@ class HomeAgent(Plugin):
     def agent_name(self) -> str:
         n = str(self.settings.get("name") or "home").strip().lower()
         return n if NAME_RE.match(n) else "home"
+
+    def _voice_setting(self, key: str) -> str:
+        """One of the voice plugin's settings (the assistant's name and owner live there:
+        Manage > Voice > Speech), or "" when the voice plugin isn't set up."""
+        with contextlib.suppress(Exception):
+            node_settings = getattr(self._node, "settings", None)
+            if node_settings is not None:
+                return " ".join(str(node_settings.resolve(f"voice.{key}").get("value")
+                                    or "").split())[:40]
+        return ""
+
+    @property
+    def display_name(self) -> str:
+        """What the assistant calls itself (Sojourn): voice.assistant_name, else its
+        chat name capitalised. Its chat identity stays agent:<name>."""
+        return self._voice_setting("assistant_name") or self.agent_name.capitalize()
+
+    @property
+    def owner_name(self) -> str:
+        """Whose assistant it is (voice.owner, e.g. "bake" -> "Bake"), else ""."""
+        n = self._voice_setting("owner")
+        return n[:1].upper() + n[1:] if n else ""
+
+    def band_line(self) -> str:
+        """One line for the voice's brief: how much of the band is online."""
+        st = self.front.band_status()
+        return f"The band: {st.get('online', 0)} of {st.get('total', 0)} machines online."
+
+    def local_now(self, ts: float | None = None):
+        """Now (or ``ts``) in the configured time zone, else the hub's local time."""
+        import datetime as _dt
+        ts = time.time() if ts is None else ts
+        tz = str(self.settings.get("timezone") or "").strip()
+        if tz:
+            with contextlib.suppress(Exception):
+                from zoneinfo import ZoneInfo
+                return _dt.datetime.fromtimestamp(ts, ZoneInfo(tz))
+        return _dt.datetime.fromtimestamp(ts).astimezone()
 
     @property
     def identity(self) -> str:

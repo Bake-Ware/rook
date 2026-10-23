@@ -21,6 +21,20 @@ object VoiceModes {
     )
 
     fun byId(id: String?): Mode = ALL.firstOrNull { it.id == id } ?: ALL.first()
+
+    /**
+     * Modes the voice may switch between by itself ("switch to dictation"), mirroring
+     * services/voice/modes.py VOICE_SWITCHABLE. The children's conversation and roleplay
+     * modes are never among them, so a spoken request never widens or leaves those.
+     */
+    val VOICE_SWITCHABLE = setOf("assistant", "dictate", "listen", "brainstorm")
+
+    /** Whether a server "mode" event the voice asked for ([by] "voice") may be taken. */
+    fun voiceSwitchAllowed(current: String, next: String, by: String?): Boolean =
+        by == "voice" && current in VOICE_SWITCHABLE && next in VOICE_SWITCHABLE
+
+    /** A switch the voice made outlives a reconnect, except dictation (its way back is on the server). */
+    fun keepAcrossReconnect(id: String?): Boolean = id != null && id != "dictate" && id in VOICE_SWITCHABLE
     fun promptKey(id: String) = "voice_mode_prompt_$id"
 
     /**

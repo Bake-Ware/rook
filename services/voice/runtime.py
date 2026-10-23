@@ -88,6 +88,9 @@ class Connection:
         self.enrolling = None
         self.timing = None
         self.mode = Mode()
+        # Set when the house voice switched into dictation: where "I'm done" goes back to.
+        self.mode_return = None
+        self.handoff_tasks = set()
         # 'classic' (default) or 'front_background' (hello opt-in); see pipeline.py.
         self.pipeline = 'classic'
         self.fb = None
@@ -848,10 +851,33 @@ class Connection:
             return by_identity if by_mode is None else by_mode
         return set(by_mode) & set(by_identity)
 
-    async def set_mode(self, mode):
+    async def set_mode(self, mode, by=None):
+        """``by='voice'``: the house voice switched it (the client accepts that only
+        between modes.VOICE_SWITCHABLE); a client's own switch clears the way back."""
         self.mode = mode
-        await self.emit("mode", mode=mode.id, custom=mode.custom)
+        if by != 'voice':
+            self.mode_return = None
+        await self.emit("mode", mode=mode.id, custom=mode.custom, **({'by': by} if by else {}))
         self.drain_results()
+
+    def _dictation_done(self, body):
+        """A dictation the house voice started is finished: back to the mode it came
+        from, and the text goes to the voice, which offers to save or send it."""
+        back, self.mode_return = self.mode_return, None
+        current = self.task
+
+        async def handoff():
+            if current is not None:
+                with contextlib.suppress(BaseException):
+                    await current
+            if self.closed:
+                return
+            await self.set_mode(back, by='voice')
+            if body:
+                await self.start(text='[dictation] ' + body[:8000], speak=self.speak_out)
+        task = asyncio.create_task(handoff())
+        self.handoff_tasks.add(task)
+        task.add_done_callback(lambda t: (self.handoff_tasks.discard(t), t.exception() if not t.cancelled() else None))
 
     async def _dictate(self, text, epoch):
         """Dictation never calls the model: record speech, act only on explicit commands."""
@@ -874,6 +900,11 @@ class Connection:
             self.store.drop_dictation(self.session, through=segments[-1][0])
         if not body:
             await self.say("Nothing has been dictated yet.", epoch)
+            if final and self.mode_return is not None:
+                self._dictation_done("")
+        elif final and self.mode_return is not None:
+            await self.emit("assistant_delta", text=body, turn=epoch)
+            self._dictation_done(body)
         elif command == "read":
             # Synthesise sentence by sentence so long dictation stays within TTS limits.
             for sentence in re.split(r"(?<=[.!?])\s+", body):
@@ -912,7 +943,7 @@ class Connection:
 
     async def close(self):
         self.closed = True
-        for task in list(self.intake_tasks):
+        for task in [*self.intake_tasks, *self.handoff_tasks]:
             task.cancel()
         await self.interrupt()
         await self.progress.close()

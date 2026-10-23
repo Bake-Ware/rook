@@ -258,6 +258,32 @@ class Host:
             turn = str(turn) if turn else None      # numbers stay numbers (the voice client's ids)
         return rs.voice.say(self._text(msg), turn)
 
+    def _room(self, msg: dict):
+        role = roledir.check_role(msg.get("role"))
+        rs = self.roles.get(role)
+        if rs is None or rs.voice is None:
+            raise OpError(f"role {role} has no voice lane here")
+        return rs.voice
+
+    async def op_voice_context(self, msg: dict) -> dict:
+        """The hub's standing brief for the voice: it goes in front of the next
+        user turn whenever it changed."""
+        text = msg.get("text")
+        if not isinstance(text, str):
+            raise OpError("text: the brief")
+        return self._room(msg).set_context(text, str(msg.get("tz") or ""))
+
+    async def op_voice_event(self, msg: dict) -> dict:
+        """A control event for the voice client that asked (``mode``)."""
+        fields = msg.get("fields") if isinstance(msg.get("fields"), dict) else {}
+        turn = msg.get("turn")
+        if not (isinstance(turn, int) and not isinstance(turn, bool)):
+            turn = str(turn)[:64] if turn else None
+        try:
+            return self._room(msg).event(str(msg.get("event") or ""), fields, turn)
+        except ValueError as e:
+            raise OpError(str(e)) from None
+
     async def op_status(self, msg: dict) -> dict:
         return self.status()
 

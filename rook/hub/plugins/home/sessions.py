@@ -18,8 +18,14 @@ hub's half:
 * **the main lane's tools**: the main lane calls the hub's tools at
   ``/home/turn-mcp`` with its own long-lived token, and each call runs with the
   handler of the item being worked (that requester's permissions);
-* **the flow tools** for the voice lane (same tool server, another token):
-  queue, steer, fork, fold, status, btw, pause, resume, cancel;
+* **routing** for the voice lane: the voice has no tools; it ends a reply with
+  a routing line (``<<flow {"op": ...}>>``) that the session host cuts out and
+  reports in ``voice_reply``; :meth:`Sessions.route` runs it with the flow code
+  (queue, steer, fork, fold, status, btw, pause, resume, cancel, mode) as the
+  voice's speaker, and says status, btw and failures back through the voice;
+* **the voice brief**: a few lines the voice answers common questions from
+  (what the agent is doing, what waits, recent decisions), sent to the host
+  when they change and put in front of the voice's next turn;
 * **maintenance**: above ``home.compact_at_tokens`` the main lane is asked to
   save durable facts to memory, then compacted;
 * **role config**: the persistent roles' model, effort and MCP grants (grants
@@ -61,6 +67,17 @@ REQUEST_TIMEOUT = 20.0
 BTW_TIMEOUT = 60.0
 #: Voice-turn timings kept for status (the latency numbers).
 KEEP_METRICS = 200
+#: Routing ops the voice may use (``quiet``: nothing to do; ``ask``: same as queue).
+ROUTE_OPS = ("queue", "steer", "fork", "fold", "status", "btw", "pause", "resume", "cancel",
+             "mode", "quiet", "ask")
+#: Ops whose result the voice speaks (a reply to a pushed result never asks again).
+ROUTE_SPEAKS = ("status", "btw")
+#: Listening modes the voice may switch to, by the names it may use.
+VOICE_MODES = {"assistant": "assistant", "normal": "assistant", "conversation": "assistant",
+               "dictate": "dictate", "dictation": "dictate", "listen": "listen",
+               "active listening": "listen", "active_listening": "listen",
+               "listening": "listen", "brainstorm": "brainstorm"}
+BRIEF_EVERY_S = 15.0
 FOLD_MARK = re.compile(r"FOLD SUMMARY:\s*", re.I)
 ROLE_ID = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 #: Persistent turns only for these vias (the conversation), never for job steps,
@@ -175,6 +192,7 @@ class Sessions:
         self._tasks: set[asyncio.Task] = set()
         self._compact_due: set[str] = set()
         self._steer_voice: dict[str, float] = {}
+        self._brief_sent: dict[str, str] = {}
         self._state: dict | None = None
         self._trust_version = -1
         self._sent_hash = ""                         # what the host was last configured with
@@ -214,7 +232,7 @@ class Sessions:
             base = {"persistent": True, "voice": bool(s.get("voice_lane", True)),
                     "model": str(s.get("persistent_model") or "opus"),
                     "effort": str(s.get("persistent_effort") or ""),
-                    "voice_model": str(s.get("voice_model") or "claude-haiku-4-5"),
+                    "voice_model": str(s.get("voice_model") or roledir.DEFAULT_VOICE_MODEL),
                     "voice_effort": str(s.get("voice_effort") or "low"),
                     "idle_sleep_min": int(s.get("persistent_idle_sleep_min") or 0),
                     "memory": "off"}
@@ -222,7 +240,8 @@ class Sessions:
             return base
         return {"persistent": bool(saved.get("persistent")), "voice": bool(saved.get("voice")),
                 "model": str(saved.get("model") or "sonnet"),
-                "effort": str(saved.get("effort") or ""), "voice_model": "claude-haiku-4-5",
+                "effort": str(saved.get("effort") or ""),
+                "voice_model": roledir.DEFAULT_VOICE_MODEL,
                 "voice_effort": "low", "idle_sleep_min": int(saved.get("idle_sleep_min", 30)),
                 "memory": str(saved.get("memory") or "write")}
 
@@ -382,11 +401,12 @@ class Sessions:
                               "partial": False, "session_id": sess.get("main") or "",
                               "idle_sleep_s": int(rc["idle_sleep_min"]) * 60, "thinking": True}}
             if rc["voice"]:
-                files.update(roledir.voice_files(turn_url=url, model=rc["voice_model"],
-                                                 effort=rc["voice_effort"]))
+                name, owner = self._names(role)
+                files.update(roledir.voice_files(model=rc["voice_model"],
+                                                 effort=rc["voice_effort"], name=name,
+                                                 owner=owner))
                 lanes["voice"] = {"model": rc["voice_model"], "effort": rc["voice_effort"],
-                                  "tools": [],
-                                  "env": {roledir.FLOW_TOKEN_ENV: self._token(role, "voice")},
+                                  "tools": [], "env": {},
                                   "partial": True, "session_id": sess.get("voice") or "",
                                   "idle_sleep_s": 0, "thinking": False}
             roles[role] = {"dir_files": files, "lanes": lanes, "host_servers": granted,
@@ -423,17 +443,32 @@ class Sessions:
 
     async def _watch(self, link: Link) -> None:
         """While a host is connected: follow trust-map changes (grants)."""
+        last_brief = last_trust = 0.0
         while self.link is link:
-            await asyncio.sleep(10.0)
-            with contextlib.suppress(Exception):
-                await self.watch_trust()
+            await asyncio.sleep(5.0)
+            now = time.monotonic()
+            if now - last_brief >= BRIEF_EVERY_S:
+                last_brief = now
+                with contextlib.suppress(Exception):
+                    await self.push_briefs()
+            if now - last_trust >= 10.0:
+                last_trust = now
+                with contextlib.suppress(Exception):
+                    await self.watch_trust()
+
+    def _names(self, role: str) -> tuple[str, str]:
+        """(what it is called, whose assistant) for a role's voice."""
+        if role == HOUSE:
+            return self.home.display_name, self.home.owner_name
+        return role.replace("_", " ").replace("-", " ").title(), self.home.owner_name
 
     def _claude_md(self, role: str) -> str:
         cfg = self.cfg()
         if role == HOUSE:
             extra = str(cfg.get("system_prompt") or "").strip()
             return roledir.house_claude_md(self.home.persona_text(cfg), self.home.agent_name,
-                                           extra)
+                                           extra, display_name=self.home.display_name,
+                                           owner=self.home.owner_name)
         rp = self.home._node.plugin("role") if self.home._node is not None else None
         doc = None
         if rp is not None:
@@ -551,7 +586,17 @@ class Sessions:
             row = {"kind": "voice", "role": role, "at": time.time(),
                    **{k: msg.get(k) for k in ("turn", "first_ms", "total_ms", "tools",
                                                "thinking_tokens")}}
+            ops = msg.get("routing")
+            if isinstance(ops, list) and ops:
+                row["routing"] = [str((o or {}).get("op") or "?")[:20] for o in ops
+                                  if isinstance(o, dict)]
+            if msg.get("routing_bad"):
+                row["routing_bad"] = msg.get("routing_bad")
             self._metric(row)
+            if isinstance(ops, list) and ops:
+                self._spawn(self.route(role, [o for o in ops if isinstance(o, dict)],
+                                       turn=msg.get("for_turn") or msg.get("turn"),
+                                       push=bool(msg.get("push"))))
 
     def _metric(self, row: dict) -> None:
         self.metrics = (self.metrics + [row])[-KEEP_METRICS:]
@@ -823,7 +868,161 @@ class Sessions:
             return {"ok": True, "paused": False}
         if name == "cancel":
             return await self.cancel(role, str(args.get("target") or ""))
+        if name == "mode":
+            return await self.voice_mode(role, args.get("mode"))
         raise ValueError(f"unknown flow tool {name!r}")
+
+    # -- routing lines (the voice's replies) --------------------------------------------
+    async def route(self, role: str, ops: list[dict], *, turn: Any = None,
+                    push: bool = False) -> list[dict]:
+        """Run the routing lines of one voice reply, in order, as the voice's
+        speaker (the same permissions as the flow tools had). Status and btw
+        answers, and anything that failed, go back to the voice to say."""
+        _, who = self.voice_principal(role)
+        out = []
+        for op in ops[:3]:
+            name = str(op.get("op") or "").strip().lower()
+            args = dict(op["args"]) if isinstance(op.get("args"), dict) else \
+                {k: v for k, v in op.items() if k != "op"}
+            if name == "ask":
+                name = "queue"
+            try:
+                if name not in ROUTE_OPS:
+                    raise ValueError(f"unknown routing op {name[:20]!r}")
+                if name == "quiet":
+                    res: dict = {"ok": True}
+                elif push and name in ROUTE_SPEAKS:
+                    # Speaking a result never asks for another one (no loops).
+                    res = {"ok": True, "skipped": "a reply to a result"}
+                elif name == "queue":
+                    req = str(args.get("request") or args.get("text") or
+                              args.get("question") or "")
+                    prio = {"now": VOICE, "next": PERSON, "later": BACKGROUND}.get(
+                        str(args.get("priority") or "now"), VOICE)
+                    res = self.queue_voice(role, req, prio, turn=turn)
+                elif name == "mode":
+                    res = await self.voice_mode(role, args.get("mode"), turn)
+                else:
+                    res = await self.flow(role, name, args)
+            except (Unavailable, ValueError, LookupError) as e:
+                res = {"ok": False, "error": str(e)[:300]}
+            except Exception as e:  # noqa: BLE001 - one bad op never stops the rest
+                log.exception("voice routing %s failed", name)
+                res = {"ok": False, "error": f"{type(e).__name__}"}
+            ok = res.get("ok", True) is not False
+            out.append({"op": name, "ok": ok, **({"error": res.get("error")} if not ok else {})})
+            self.home.journal("home.voice_route", {
+                "role": role, "op": name[:20], "who": who,
+                "args": {k: str(v)[:300] for k, v in list(args.items())[:6]}},
+                {"ok": ok, **({"error": str(res.get("error") or "")[:300]} if not ok else {})})
+            said = self._route_says(name, res, ok)
+            if said:
+                with contextlib.suppress(Unavailable):
+                    await self.voice_say(role, said, turn)
+        return out
+
+    def _route_says(self, name: str, res: dict, ok: bool) -> str:
+        if not ok:
+            return (f"(that didn't go through: {name}) {res.get('error') or 'failed'}. Tell the "
+                    "person briefly, in your own words, and offer to try again.")
+        if res.get("skipped"):
+            return ""
+        if name == "status":
+            return "(status) " + self._status_words(res)
+        if name == "btw":
+            return "(how it's going) " + (str(res.get("answer") or "").strip() or
+                                          "no answer yet")
+        return ""
+
+    @staticmethod
+    def _gist(text: str, n: int = 110) -> str:
+        """A request's words without its headers, on one line."""
+        text = str(text or "")
+        if "The message to answer now:" in text:
+            text = text.rsplit("The message to answer now:", 1)[1]
+        text = re.sub(r"^\s*(\[[^\]\n]{0,120}\]\s*)+", "", text.strip())
+        text = " ".join(text.split())
+        return text if len(text) <= n else text[:n - 1].rstrip() + "…"
+
+    def _status_words(self, st: dict) -> str:
+        bits = []
+        w = st.get("working_on")
+        if w:
+            run = w.get("running_s") or 0
+            bits.append(f"working on: {self._gist(w.get('text'))} (for {int(run // 60)} min"
+                        f"{', last step ' + w['last_tool'] if w.get('last_tool') else ''})")
+        else:
+            bits.append("not working on anything right now")
+        waiting = st.get("waiting") or []
+        if waiting:
+            bits.append(f"{len(waiting)} waiting: " +
+                        "; ".join(self._gist(i.get("text"), 60) for i in waiting[:3]))
+        forks = [f for f in st.get("forks") or [] if f.get("state") in ("starting", "started")]
+        if forks:
+            bits.append("side threads: " + "; ".join(str(f.get("task") or "")[:60]
+                                                     for f in forks[:3]))
+        if st.get("paused"):
+            bits.append("paused: not taking new requests")
+        return ". ".join(bits) + "."
+
+    async def voice_mode(self, role: str, mode: Any, turn: Any = None) -> dict:
+        """Change the phone's listening mode (the voice client that asked)."""
+        name = " ".join(str(mode or "").strip().lower().replace("_", " ").split())
+        want = VOICE_MODES.get(name) or VOICE_MODES.get(name.replace(" mode", ""))
+        if want is None:
+            raise ValueError(f"mode: one of assistant, dictate, listen, brainstorm (not "
+                             f"{str(mode)[:30]!r})")
+        if turn is None:
+            turn = (self.voice.get(role) or {}).get("turn")
+        msg: dict = {"t": "voice_event", "role": role, "event": "mode",
+                     "fields": {"mode": want, "by": "voice"}}
+        if turn is not None:
+            msg["turn"] = turn
+        rep = await self.request(msg, timeout=5.0)
+        res = rep.get("result") if isinstance(rep.get("result"), dict) else rep
+        if rep.get("error") or (isinstance(res, dict) and res.get("ok") is False):
+            raise ValueError(str(rep.get("error") or res.get("error") or "the phone did not "
+                                 "take it")[:200])
+        return {"ok": True, "mode": want}
+
+    # -- the voice's standing brief -------------------------------------------------------
+    def brief(self, role: str = HOUSE) -> str:
+        """A few lines the voice can answer common questions from: what the agent
+        is doing and what waits, what waits on the person, recent decisions."""
+        words = self._status_words(self.status(role))[:600]
+        lines = [words[:1].upper() + words[1:]]
+        with contextlib.suppress(Exception):
+            if role == HOUSE and self.home.front is not None:
+                d = self.home.front.digest(limit=5)
+                asks = d.get("asks") or []
+                owner = self.home.owner_name or "the person"
+                if asks:
+                    lines.append(f"Waiting on {owner}: " + "; ".join(
+                        str(a.get("line") or "")[:120] for a in asks[:3]) + ".")
+                live = [i for i in d.get("decisions") or [] if not i.get("overturned")]
+                if live:
+                    lines.append("Recently decided for " + owner + ": " + "; ".join(
+                        str(i.get("summary") or "")[:100] for i in live[:3]) + ".")
+        with contextlib.suppress(Exception):
+            band = self.home.band_line()
+            if band:
+                lines.append(band)
+        return "\n".join(x for x in lines if x)
+
+    async def push_briefs(self) -> None:
+        """Send each voice role's brief to the host when it changed."""
+        if self.link is None:
+            return
+        tz = str(self.home.settings.get("timezone") or "")
+        for role in self.roles():
+            if not self.role_cfg(role)["voice"]:
+                continue
+            text = self.brief(role)
+            key = hashlib.sha256(f"{tz}\n{text}".encode()).hexdigest()
+            if self._brief_sent.get(role) == key:
+                continue
+            await self.send({"t": "voice_context", "role": role, "text": text, "tz": tz})
+            self._brief_sent[role] = key
 
     def queue_voice(self, role: str, request: str, priority: int = VOICE,
                     turn: str | None = None) -> dict:
