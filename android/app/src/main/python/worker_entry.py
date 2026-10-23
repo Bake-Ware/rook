@@ -74,3 +74,9 @@ def start(hub: str, psk: str, name: str) -> None:
 def stop() -> None:
     from rook_android.worker_runtime import stop as stop_runtime
     stop_runtime()
+
+
+def kick(reason: str = "") -> bool:
+    """Reconnect the band link now (the default network changed)."""
+    from rook_android.worker_runtime import kick as kick_runtime
+    return kick_runtime(reason)

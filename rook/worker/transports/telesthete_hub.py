@@ -81,6 +81,10 @@ UDP_SOCKET_BUFFER = 4 * 1024 * 1024
 # A WS session that lasted at least this long resets the reconnect backoff;
 # one that dies sooner keeps backing off (a hub that accepts then drops).
 WS_STABLE_SECS = 10.0
+#: The whole WebSocket handshake (DNS, TCP, TLS, HTTP upgrade). sock_connect
+#: alone bounds only TCP: a phone that switched networks mid-handshake sat in
+#: one attempt for hours, off the band, until Android aborted the socket.
+WS_CONNECT_TIMEOUT = 30.0
 
 # Receive loops yield to the event loop after this many frames in a row.
 # sock_recvfrom / ws.receive return without suspending while data is
@@ -234,10 +238,25 @@ class WsLink:
         self._session = None
         self._stopping = False
         self.backoff = backoff or Backoff(base=1.0, cap=30.0)
+        self._attempt: Optional[asyncio.Task] = None
+        self._kicked: Optional[asyncio.Event] = None
 
     @property
     def connected(self) -> bool:
         return self.conn is not None
+
+    def kick(self) -> None:
+        """The network changed (or the caller saw the link go stale): drop the
+        connection or the connect in flight and retry at once, without the
+        backoff. Call on the link's loop."""
+        self.backoff.reset()
+        if self._kicked is not None:
+            self._kicked.set()
+        if self._attempt is not None and not self._attempt.done():
+            self._attempt.cancel()
+        ws = self.conn
+        if ws is not None:
+            asyncio.ensure_future(ws.close())
 
     async def write(self, frame: bytes) -> None:
         ws = self.conn
@@ -255,16 +274,30 @@ class WsLink:
             timeout=aiohttp.ClientTimeout(total=None, sock_connect=20.0))
         # heartbeat: aiohttp sends WS pings and tears the connection down if
         # pongs stop — dead-peer detection, and keeps the tunnel from idling.
-        return await self._session.ws_connect(self.url, heartbeat=30.0, autoping=True)
+        return await asyncio.wait_for(
+            self._session.ws_connect(self.url, heartbeat=30.0, autoping=True),
+            _env_num("ROOK_BAND_WS_CONNECT_TIMEOUT", WS_CONNECT_TIMEOUT, minimum=1))
 
     async def run(self, on_frame: OnFrame,
                   on_up: Callable[[], Awaitable[None]],
                   on_down: Callable[[], None],
                   hold: Optional[Hold] = None) -> None:
+        self._kicked = asyncio.Event()
         while not self._stopping:
             began = None
+            self._kicked.clear()
             try:
-                ws = await self._connect()
+                # A task, so kick() can abandon a hung handshake without
+                # cancelling this loop.
+                self._attempt = asyncio.ensure_future(self._connect())
+                try:
+                    ws = await self._attempt
+                except asyncio.CancelledError:
+                    if self._stopping or not self._kicked.is_set():
+                        raise
+                    raise ConnectionAbortedError("connect abandoned: network changed")
+                finally:
+                    self._attempt = None
                 self.conn = ws
                 began = time.monotonic()
                 log.info("WS connected: %s", self.url)
@@ -285,10 +318,12 @@ class WsLink:
                 break
             if began is not None and time.monotonic() - began >= WS_STABLE_SECS:
                 self.backoff.reset()
-            delay = self.backoff.next()
+            delay = 0.0 if self._kicked.is_set() else self.backoff.next()
             log.info("WS reconnecting in %.1fs", delay)
             try:
-                await asyncio.sleep(delay)
+                await asyncio.wait_for(self._kicked.wait(), delay)
+            except asyncio.TimeoutError:
+                pass
             except asyncio.CancelledError:
                 break
 

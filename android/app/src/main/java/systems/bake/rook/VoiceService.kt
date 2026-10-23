@@ -350,6 +350,7 @@ class VoiceService : Service() {
                 arbiter.ownSessionId = rec.audioSessionId   // before start: our own config is not "another app"
                 if (AcousticEchoCanceler.isAvailable()) echo = AcousticEchoCanceler.create(rec.audioSessionId)?.also { it.enabled = true }
                 if (NoiseSuppressor.isAvailable()) noise = NoiseSuppressor.create(rec.audioSessionId)?.also { it.enabled = true }
+                // AutomaticGainControl deliberately not enabled: it boosts residual echo and defeats the canceller.
                 aecAvailable = echo?.enabled == true
                 client?.setAecAvailable(aecAvailable)
                 synchronized(recorderLock) {

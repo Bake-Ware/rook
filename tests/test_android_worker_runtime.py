@@ -113,3 +113,57 @@ def test_stop_reaches_every_live_runner(monkeypatch):
     runtime.stop()
     for t in threads:t.join(5)
     assert not any(t.is_alive() for t in threads)
+
+
+def test_link_down_too_long_rebuilds_the_connection(monkeypatch):
+    """A link that stays down (a wedged connect) gets a fresh transport after
+    STALE_SECONDS instead of leaving the phone off the band for hours."""
+    from rook.worker import enroll
+    from rook.worker.transports import telesthete_hub
+    runtime,core=_runtime(monkeypatch)
+    runtime.STALE_SECONDS=.2
+    monkeypatch.setattr(enroll,'load',lambda:{})
+    transports=[]
+    def make(**kwargs):
+        t=SimpleNamespace(link=SimpleNamespace(connected=False),**kwargs);transports.append(t);return t
+    monkeypatch.setattr(telesthete_hub,'TelestheteHubTransport',make)
+    class Idle:
+        def __init__(self,transport,**kwargs):
+            self.registry=SimpleNamespace(register=lambda *args,**kw:None);self.done=asyncio.Event()
+        async def run(self):
+            if len(transports)>=3:runtime.stop()
+            await self.done.wait()
+        async def shutdown(self):self.done.set()
+    monkeypatch.setattr(core,'Worker',Idle)
+    runtime.start('hub.example.com:443','key','phone')
+    assert len(transports)>=3
+
+
+def test_kick_reaches_the_live_link(monkeypatch):
+    import threading
+    from rook.worker import enroll
+    from rook.worker.transports import telesthete_hub
+    runtime,core=_runtime(monkeypatch)
+    monkeypatch.setattr(enroll,'load',lambda:{})
+    kicked=threading.Event()
+    link=SimpleNamespace(connected=True,kick=kicked.set)
+    monkeypatch.setattr(telesthete_hub,'TelestheteHubTransport',lambda **kwargs:SimpleNamespace(link=link,**kwargs))
+    up=threading.Event()
+    class Idle:
+        def __init__(self,transport,**kwargs):
+            self.registry=SimpleNamespace(register=lambda *args,**kw:None);self.done=None
+        async def run(self):
+            self.done=asyncio.Event();up.set();await self.done.wait()
+        async def shutdown(self):
+            if self.done:self.done.set()
+    monkeypatch.setattr(core,'Worker',Idle)
+    assert runtime.kick('test') is False          # nothing running yet
+    t=threading.Thread(target=runtime.start,args=('hub.example.com:443','key','phone'),daemon=True);t.start()
+    assert up.wait(5)
+    for _ in range(50):
+        if runtime._transport is not None:break
+        import time;time.sleep(.02)
+    assert runtime.kick('wifi -> cellular') is True
+    assert kicked.wait(5)
+    runtime.stop();t.join(5)
+    assert not t.is_alive() and runtime._transport is None
