@@ -58,6 +58,10 @@ CARD_KINDS = ("task.create", "task.update", "job.run", "job.create", "session.se
               "session.start", "call", "note", "ask_bake")
 #: Kinds that carry a call; ``note`` and ``ask_bake`` never run anything.
 NO_CALL = ("note", "ask_bake")
+#: Kinds recorded as done when proposed: information for the room, never an
+#: ask waiting on the person (2026-10-23: day-old role notes reached Bake's
+#: phone as approval asks he could not read).
+NOTED = ("note",)
 #: The caps a session card may run (the lead developer fronts the sessions).
 SESSION_CAPS = {"session.send": ("sessions.send", "role.session_send"),
                 "session.start": ("work.stream.open", "role.session_start")}
@@ -94,7 +98,9 @@ def _fn(name: str, description: str, props: dict, required: list | None = None) 
 PROPOSE = _fn(
     "propose",
     "Propose an action card for the person to approve: kind is one of " + ", ".join(CARD_KINDS)
-    + ". summary says what and why in one line. For every kind but note and ask_bake give the "
+    + ". summary says what and why in one line, in plain words the person reads on their phone. "
+      "A note is recorded at once for the room and never waits on the person; ask_bake waits "
+      "for their answer. For every kind but note and ask_bake give the "
       "call to run on approval: worker (\"rook\" is the hub), cap and args; the hub checks the "
       "worker has the cap and refuses the card if not. task.create: cap task.write, args "
       "{action: \"create\", data: {title, body, parent (a project), attrs: {criteria}}}; "
@@ -240,7 +246,32 @@ def _task_call(kind: str, cap: str, args: dict) -> tuple[str, dict]:
                         "the task goes under (rook_call task.read {action: \"deck\"} lists them)")
     if action == "update" and not out.get("id"):
         raise CardError("a task.update card needs args.id (the task) and data {revision, patch}")
+    for holder in (data, data.get("patch") if isinstance(data.get("patch"), dict) else None):
+        attrs = holder.get("attrs") if holder is not None else None
+        if isinstance(attrs, dict):
+            holder["attrs"] = _list_attrs(kind, attrs)
     return "task.write", out
+
+
+#: Task attrs the store keeps as lists of strings.
+LIST_ATTRS = ("criteria", "tags", "workers", "dependencies")
+
+
+def _list_attrs(kind: str, attrs: dict) -> dict:
+    """A role's ``criteria: "one line"`` becomes ``["one line"]`` when the card
+    is proposed; anything else that is not a list of strings is refused then,
+    not when the person taps Yes (2026-10-23: a card failed on approval with
+    "Expected a bounded list of strings")."""
+    out = dict(attrs)
+    for k in LIST_ATTRS:
+        v = out.get(k)
+        if v is None:
+            continue
+        if isinstance(v, str):
+            out[k] = [v.strip()] if v.strip() else []
+        elif not (isinstance(v, list) and all(isinstance(x, str) for x in v)):
+            raise CardError(f"a {kind} card's attrs.{k} is a list of strings")
+    return out
 
 
 def validate_card(raw: Any) -> dict:
@@ -874,6 +905,8 @@ class Chair:
                        {"proposed": "waiting for your approval", "done": "done",
                         "failed": "failed"}.get(c.get("state") or out.get("state"), "proposed"))
                 kind = c.get("kind") or args.get("kind")
+                if kind in NOTED:
+                    how = "noted"
                 lines.append(f"- {_card_label({'id': out['card'], **c}, f'{kind}, {how}')}: "
                              f"{c.get('summary') or what}")
             else:
@@ -1100,6 +1133,8 @@ class Chair:
                         "note": f"{c['by']} already proposed this; it is waiting for the person"}
         card.update(id="c_" + uuid.uuid4().hex[:12], room=room, round=rid, seq=seq, by=by,
                     state="proposed")
+        if card["kind"] in NOTED:
+            card.update(state="done", result={"ok": True, "noted": True})
         if role is not None and card.get("call") and self._runs_now(role, card):
             # A card for something the role may do itself (a read in its
             # scope): the hub runs it at once and keeps the card as done.
@@ -1241,6 +1276,12 @@ class Chair:
             return {"ok": False, "error": f"no live worker {call['worker']!r}"}
         wid, name = found
         args = {"card": card["id"], "huddle": card["room"], "worker": name, "cap": call["cap"]}
+        # A hold this call meets says which huddle it is for, and the card's summary as why.
+        from ...approvals import hold_context
+        title = ""
+        with contextlib.suppress(Exception):
+            title = str((self.store.get(card["room"]) or {}).get("title") or "")
+        ctok = hold_context.set({"huddle": title or card["room"], "why": card.get("summary") or ""})
         try:
             if client is None:
                 reply = await asyncio.wait_for(node.dispatch(call["cap"], self._call_args(card), by),
@@ -1252,6 +1293,8 @@ class Chair:
             reply = {"ok": False, "error": f"no reply within {CALL_TIMEOUT:.0f}s"}
         except Exception as e:  # noqa: BLE001
             reply = {"ok": False, "error": f"{type(e).__name__}: {e}"[:300]}
+        finally:
+            hold_context.reset(ctok)
         reply = scrub(reply) if isinstance(reply, dict) else {"ok": True, "result": reply}
         self.journal("huddle.card", args, {"ok": reply.get("ok", True), "result": _short(reply)},
                      card["room"], by)

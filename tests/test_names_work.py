@@ -251,7 +251,7 @@ def huddle(node):
 async def chaired(node):
     svc = huddle(node)
     h = await svc.start(PERSON, "Standup", [])
-    card = await svc.chair._propose(None, h["room"], "role:qa", {"kind": "note", "summary": "Ship it"})
+    card = await svc.chair._propose(None, h["room"], "role:qa", {"kind": "ask_bake", "summary": "Ship it?"})
     return svc, h, card
 
 

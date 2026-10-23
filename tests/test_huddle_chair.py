@@ -227,8 +227,11 @@ async def test_cards_are_approved_by_people_and_run_as_them(hub):
     res = await hub.node.dispatch("huddle.card", {"huddle": h["room"], "card": task_card["id"],
                                                  "action": "dismiss"}, PERSON)
     assert not res["ok"] and "already done" in res["error"]
-    assert (await _call(hub, "huddle.card", {"huddle": h["room"], "card": note["id"],
-                                             "action": "dismiss"}))["state"] == "dismissed"
+    # A note never waits on the person: it is recorded as noted when proposed.
+    assert note["state"] == "done" and note["result"] == {"ok": True, "noted": True}
+    res = await hub.node.dispatch("huddle.card", {"huddle": h["room"], "card": note["id"],
+                                                 "action": "dismiss"}, PERSON)
+    assert not res["ok"] and "already done" in res["error"]
     assert any(r["cap"] == "huddle.card" and r["args"]["card"] == task_card["id"]
                and r["thread_id"] == h["room"] for r in hub.node.journal.rows)
 
@@ -263,7 +266,7 @@ async def test_a_media_role_that_acts_still_leaves_publishing_to_a_person(hub):
     await _call(hub, "huddle.post", {"huddle": h["room"], "text": "@social draft the launch"})
     await _settle(hub)
     post, note, ping = (await _call(hub, "huddle.read", {"room": h["room"]}))["cards"]
-    assert post["state"] == "proposed" and note["state"] == "proposed"
+    assert post["state"] == "proposed" and note["state"] == "done"      # notes never wait
     assert ping["state"] == "done"                             # a read in its scope: fine
     assert not [c for c in hub.band.calls if c.cap == "shell.exec"]
     turn = next(t for t in hub.band.turns if t["kind"] == "huddle-social")

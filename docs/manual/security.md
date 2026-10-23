@@ -35,7 +35,9 @@ Anyone who knows a band's key can join that band and control its machines.
 - **Risky agent calls wait for you.** When an agent wants to do something
   admin-level or destructive (update or restart a machine, push config, change
   secrets or settings), or starts reaching more than 5 machines in 10 minutes,
-  the call is held until you approve it on the **Approvals** page. A
+  the call is held until you approve it on the **Approvals** page, where it
+  reads as a plain ask: a title, what it is for, who asks, what will happen
+  and the risk, with the technical detail under Explain. A
   prompt-injected agent cannot run one bad command on every machine at once.
   People are never held. See [[manual-accounts-and-access]].
 - **Permissions and guardrails** limit what agents and jobs may do

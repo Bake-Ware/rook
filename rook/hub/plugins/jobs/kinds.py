@@ -10,7 +10,7 @@ import asyncio
 import json
 from typing import Any
 
-from ...approvals import shown_args
+from ...approvals import hold_context, shown_args
 from .cron import parse_duration, parse_instant
 from .expr import compile_expr
 from .notices import NOTICE_CAPS
@@ -119,6 +119,9 @@ async def call_cap(ctx: StepContext, cap: str, raw_args: dict, spec: Any) -> Ste
     remaining = deadline - loop.time()
     wait = max(0.01, remaining - min(CALL_MARGIN, remaining / 10))
     stok = shown_args.set(shown)   # an approval hold shows placeholders, never values
+    # A hold says which job it is for, and the job's own description as why.
+    why = str(ctx.job.get("description") or "").strip()
+    ctok = hold_context.set({"job": str(ctx.job.get("name") or ""), **({"why": why} if why else {})})
     try:
         reply = await rt.call(cap, args, wid, wait, ctx.identity)
     except asyncio.TimeoutError:
@@ -126,6 +129,7 @@ async def call_cap(ctx: StepContext, cap: str, raw_args: dict, spec: Any) -> Ste
                                                    "error": f"no reply within {wait:.0f}s"})
         raise
     finally:
+        hold_context.reset(ctok)
         shown_args.reset(stok)
     reply = rt.mask(reply, ctx.used)
     rt.journal(cap, name, ctx.identity, shown, reply)

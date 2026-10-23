@@ -95,23 +95,33 @@ def _where(hold: dict) -> str:
     return str(hold.get("target_name") or hold.get("target_id") or "the band")
 
 
+def _plain(hold: dict) -> dict:
+    from .plain import for_hold
+    try:
+        return for_hold(hold)
+    except Exception:  # noqa: BLE001 - fall back to the bare facts
+        return {"title": f"{hold.get('cap')} on {_where(hold)}", "who": _who(hold),
+                "for": "no task", "risk": f"tier {hold.get('tier') or 'exec'}."}
+
+
 def message(holds: list[dict], url: str = "") -> str:
-    """The short text sent to the operator (never any args)."""
+    """The short text sent to the operator: the plain title, what it is for,
+    who asks and the risk (rook/hub/plain.py); never the args themselves."""
     tail = f"Approve on the dashboard: {url}" if url else "Approve on the dashboard."
     if len(holds) == 1:
-        h = holds[0]
-        return f"Rook: {_who(h)} wants to run {h['cap']} on {_where(h)}. {tail}"
-    items = "; ".join(f"{_who(h)}: {h['cap']} on {_where(h)}" for h in holds[:5])
+        p = _plain(holds[0])
+        return (f"Rook: {p['title']}. For: {p['for']}. Who: {p['who']}. Risk: {p['risk']} "
+                f"{tail}")
+    items = "; ".join(f"{p['title']} ({p['who']}, for {p['for']})"
+                      for p in (_plain(h) for h in holds[:5]))
     more = f"; and {len(holds) - 5} more" if len(holds) > 5 else ""
-    return f"Rook: {len(holds)} calls are waiting for approval: {items}{more}. {tail}"
+    return f"Rook: {len(holds)} asks are waiting for you: {items}{more}. {tail}"
 
 
 def question(hold: dict) -> str:
-    cap = str(hold["cap"]).replace(".", " ").replace("_", " ")
-    extra = ""
-    if hold.get("kind") == "spread":
-        extra = ", one more machine than its limit"
-    return f"Rook: {_who(hold)} wants to run {cap} on {_where(hold)}{extra}. Approve?"
+    """The spoken question: title, who, and the risk level."""
+    p = _plain(hold)
+    return f"Rook: {p['who']} asks to {p['title'][:1].lower() + p['title'][1:]}. Risk: {p['risk']} Approve?"
 
 
 class Contact:

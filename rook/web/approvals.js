@@ -43,7 +43,7 @@ export async function mountApprovals(root, opts = {}){
         headers: {'Content-Type': 'application/json'}, body: JSON.stringify({decision, scope})});
       const d = await r.json().catch(() => ({}));
       if(!r.ok || d.error) throw Error(d.error || 'Request failed');
-      status.textContent = (decision === 'approve' ? 'Approved ' : 'Denied ') + hold.cap + ' on ' + hold.worker + '.';
+      status.textContent = (decision === 'approve' ? 'Approved: ' : 'Denied: ') + (hold.plain ? hold.plain.title : hold.cap + ' on ' + hold.worker) + '.';
     }catch(e){ status.textContent = e.message; }
     finally{ busy = false; button.disabled = false; await refresh().catch(fail); }
   }
@@ -62,12 +62,27 @@ export async function mountApprovals(root, opts = {}){
       ? btn('Approve + ' + minutes + ' min spread', 'soft', e => decide(x, 'approve', 'spread', e.currentTarget),
         {disabled: !can, title: 'Approves this call and lets ' + (x.principal_label || x.principal) + ' reach more machines for ' + minutes + ' minutes'})
       : null;
-    return h('div', {class: 'mg-box mg-pad ap-card', style: 'gap:8px'},
+    const held = h('span', {class: 'mg-dimtext', text: 'held ' + ago(x.created), title: new Date(x.created * 1000).toLocaleString()});
+    const p = x.plain;
+    if(!p) return h('div', {class: 'mg-box mg-pad ap-card', style: 'gap:8px'},
       h('div', {style: 'display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;justify-content:space-between'},
-        two(x.cap + ' on ' + x.worker, (x.name ? x.name + ' · ' : '') + who(x) + (x.via && x.via.length ? ' · for ' + x.via.join(', ') : ''), true),
-        h('span', {class: 'mg-dimtext', text: 'held ' + ago(x.created), title: new Date(x.created * 1000).toLocaleString()})),
+        two(x.cap + ' on ' + x.worker, (x.name ? x.name + ' · ' : '') + who(x) + (x.via && x.via.length ? ' · for ' + x.via.join(', ') : ''), true), held),
       h('div', {class: 'mg-warn', text: 'Held: ' + (x.reason || x.kind)}),
       args(x),
+      h('div', {class: 'mg-actions ap-acts', style: 'flex-wrap:wrap'}, no, more, ok));
+    // The plain ask (rook/hub/plain.py): title, for, who, what, why, risk; the cap, args and trust entry under Explain.
+    const rows = [['For', p.for], ['Who', p.who], ['I want to', p.want]].concat(p.why ? [['Why', p.why]] : []).concat([['Risk', p.risk]]);
+    const explain = h('details', null, h('summary', {class: 'mg-sub', style: 'cursor:pointer', text: 'Explain'}),
+      h('p', {class: 'mg-sub', style: 'margin:6px 0;overflow-wrap:anywhere', text: p.explain}),
+      h('pre', {class: 'mg-code', style: 'white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;margin:6px 0 0',
+        text: JSON.stringify(x.args ?? {}, null, 2)}));
+    return h('div', {class: 'mg-box mg-pad ap-card', style: 'gap:8px'},
+      h('div', {style: 'display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;justify-content:space-between'},
+        h('strong', {style: 'font-size:15px', text: p.title}),
+        h('span', {class: 'mg-dimtext'}, x.name ? h('span', {class: 'mg-tag line', style: 'margin-right:8px', text: x.name}) : null, held)),
+      h('div', {class: 'ap-plain', style: 'display:grid;grid-template-columns:84px minmax(0,1fr);gap:3px 10px;font-size:13.5px'},
+        ...rows.flatMap(([k, v]) => [h('span', {class: 'mg-dimtext', text: k}), h('span', {style: 'overflow-wrap:anywhere', text: v})])),
+      explain,
       h('div', {class: 'mg-actions ap-acts', style: 'flex-wrap:wrap'}, no, more, ok));
   }
 
@@ -89,7 +104,7 @@ export async function mountApprovals(root, opts = {}){
     grants.replaceChildren(...(data.grants || []).map(g => h('p', {class: 'mg-sub',
       text: g.principal + ': more machines until ' + new Date(g.until * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) + ' (by ' + g.created_by + ')'})));
     const done = data.recent.map(x => h('div', {class: 'mg-row ap-row'},
-      two(x.cap + ' on ' + x.worker, who(x), true),
+      two(x.plain ? x.plain.title : x.cap + ' on ' + x.worker, x.plain ? x.plain.who + ' · ' + x.cap + ' on ' + x.worker : who(x), true),
       h('span', {class: x.state === 'denied' ? 'mg-bad' : x.state === 'expired' ? 'mg-dimtext' : 'mg-good',
         text: (OUTCOME[x.state] || x.state) + (x.scope === 'spread' ? ', more machines' : '')}),
       h('span', {class: 'mg-dimtext ap-by', text: x.relayed_text || x.decided_by || '—', title: x.relayed ? 'session: ' + x.relayed.session : ''}),
@@ -100,7 +115,7 @@ export async function mountApprovals(root, opts = {}){
       h('span', {class: 'mg-tag line', text: r.kind}), h('span', {text: r.summary || r.item}),
       h('span', {class: r.decision === 'deny' ? 'mg-bad' : 'mg-good', text: r.text + (r.reason ? ' · reason: ' + r.reason : ''), title: 'session: ' + r.session}),
       h('span', {class: 'mg-dimtext', text: ago(r.created)})))));
-    recent.replaceChildren(table('minmax(0,2fr) minmax(0,1.2fr) minmax(0,1fr) 90px', ['Call · who', 'Outcome', 'By', 'When'],
+    recent.replaceChildren(table('minmax(0,2fr) minmax(0,1.2fr) minmax(0,1fr) 90px', ['Ask · who', 'Outcome', 'By', 'When'],
       done.length ? done : [h('div', {class: 'mg-empty', text: 'No decisions yet.'})]));
   }
 

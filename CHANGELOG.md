@@ -9,6 +9,14 @@ version was `0.1.0`.
 ## Unreleased
 
 ### Added
+- Approval asks in plain words: every ask that reaches the person (Approvals page, phone decision
+  card, `rook_approvals`, huddle cards and questions, job, trust, hub-host and spread holds, house
+  asks, the operator's Telegram/notify/voice messages) reads Title / For / Who / I want to / Why /
+  Risk, built by one summariser (`rook/hub/plain.py`) with cap-specific phrasing (shell commands
+  read as what they do and whether they only read). The technical detail (cap, args, trust
+  entry, id and three-word name) is under Explain. `rook_call` takes `why=`; holds keep the
+  caller's claimed task, its project, the console room, job or huddle. The Android decision card
+  shows the body under the title (0.4.22); older apps get it folded into the line and Explain.
 - Always-on house agent: with `home.persistent` the house agent runs as persistent Claude Code
   sessions on a session host (`python -m rook.agents`, on the machine with the Claude login): Opus
   in its role directory (`CLAUDE.md`, `.claude/settings.json`, `.mcp.json`, rendered by the hub)
@@ -30,6 +38,15 @@ version was `0.1.0`.
   restarts after the MCP side. Refused, with the reason, unless systemd would restart it
   (`Restart=always`/`on-failure`) or `ROOK_RESTART_SUPERVISED=1`. The page reloads when the hub
   is back. (manual: settings)
+
+### Changed
+- Huddle note cards never wait on the person: a note runs nothing, so it is recorded as noted when
+  proposed (migration `004_notes_never_wait` settles the old waiting ones). `home.session_note`
+  (a background note into a persistent role's inbox) is a "prepare" action in the trust map, free
+  on any level, like `home.ask`.
+- A task card whose `attrs.criteria` (or tags, workers, dependencies) is one string is fixed when
+  proposed; anything else that is not a list of strings is refused then, not when the person taps
+  Yes.
 
 ## [0.3.0] - 2026-10-23
 

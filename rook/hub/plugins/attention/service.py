@@ -44,7 +44,7 @@ RING_MAX = 500
 ALERT_TTL = 24 * 3600          # an alert no phone took in a day is dropped
 CARD_TTL = 7 * 24 * 3600       # the phone's own safety net; the hub sends gone sooner
 ALERTS_KEPT = 200
-ID_MAX, LINE_MAX, EXPLAIN_MAX, SUMMARY_MAX = 64, 140, 600, 140
+ID_MAX, LINE_MAX, EXPLAIN_MAX, SUMMARY_MAX, BODY_MAX = 64, 140, 600, 140, 600
 URGENCIES = ("urgent", "normal")
 CHANNELS = ("urgent", "family", "approvals", "digest", "jobs")
 SIGNALS = ("seen", "opened", "dismissed", "acked", "unlocked")
@@ -78,7 +78,27 @@ def _from_text(frm: Any) -> str:
 
 
 def card_for(item: dict) -> dict:
-    """The ``attention.post`` args for one waiting item (rook/hub/relay.py)."""
+    """The ``attention.post`` args for one waiting item (rook/hub/relay.py):
+    the plain title as the line, For / Who / I want to / Why / Risk as the
+    body (always shown), the technical detail behind Explain
+    (rook/hub/plain.py)."""
+    p = item.get("plain")
+    if p:
+        explain = str(p.get("explain") or "")
+        if not item.get("relayable", True):
+            where = "Decisions" if item.get("kind") == "house" else "Approvals"
+            explain = (f"{item.get('why_not') or 'Dashboard only'}: decide it on the "
+                       f"dashboard's {where} page. " + explain)
+        created = float(item.get("created") or time.time())
+        from ...plain import lines
+        return {"id": str(item["id"]), "kind": item.get("kind") or "hold",
+                "line": short(p.get("title") or "A decision for you", LINE_MAX),
+                "body": "\n".join(short(x, 200) for x in lines(p))[:BODY_MAX],
+                "explain": short(explain, EXPLAIN_MAX), "urgency": "normal",
+                "channel": "approvals",
+                "actions": ["yes", "no", "explain"] if item.get("relayable", True) else ["explain"],
+                "source": short(item.get("name") or "approvals", 64),
+                "expires_at": int(created + CARD_TTL)}
     who, what = item.get("who") or "an agent", str(item.get("what") or "").rstrip(".")
     frm = _from_text(item.get("from"))
     explain = (f"{who} asked to {what}. "
@@ -102,6 +122,30 @@ def card_for(item: dict) -> dict:
             "actions": ["yes", "no", "explain"] if item.get("relayable", True) else ["explain"],
             "source": short(item.get("name") or "approvals", 64),
             "expires_at": int(created + CARD_TTL)}
+
+
+def without_body(card: dict) -> dict:
+    """A card for a phone whose app predates ``body`` (0.4.21 and older): the
+    title and what it is for as the line, the body ahead of the detail under
+    Explain."""
+    body = str(card.get("body") or "")
+    out = {k: v for k, v in card.items() if k != "body"}
+    if not body:
+        return out
+    first = body.split("\n", 1)[0]
+    if first.startswith("For: ") and first != "For: no task":
+        out["line"] = short(f"{card['line']} ({first[5:]})", LINE_MAX)
+    out["explain"] = short(" ".join(body.split("\n")) + " Details: " + str(card.get("explain") or ""),
+                           EXPLAIN_MAX)
+    if "explain" not in out.get("actions", []) and out.get("actions"):
+        out["actions"] = list(out["actions"]) + ["explain"]
+    return out
+
+
+def no_body(error: Exception) -> bool:
+    """An older app refusing the ``body`` argument."""
+    text = str(error)
+    return "body" in text and ("unexpected" in text or "bad args" in text)
 
 
 def alert_post(alert: dict) -> dict:
@@ -393,7 +437,7 @@ class AttentionService:
                 continue
             card = card_for(it)
             try:
-                await self.call("attention.post", card, wid)
+                await self._post_card(dev, card)
             except Exception as e:
                 log.info("attention: post %s to %s: %s", ident, dev["name"], e)
                 continue
@@ -407,6 +451,25 @@ class AttentionService:
                 del posted[ident]
                 n_gone += 1
         return {"posted": n_new, "gone": n_gone}
+
+    async def _post_card(self, dev: dict, card: dict) -> None:
+        """``attention.post`` with the body; a phone whose app predates it
+        gets the card folded into line + Explain (remembered per app
+        version, so an updated app gets bodies again)."""
+        wid = dev["worker_id"]
+        d = self._dev(wid)
+        w = self.roster().get(wid) or {}
+        version = str(w.get("version") or w.get("build") or "")
+        if "body" in card and d.get("no_body") is not None and d.get("no_body") == version:
+            await self.call("attention.post", without_body(card), wid)
+            return
+        try:
+            await self.call("attention.post", card, wid)
+        except Exception as e:  # noqa: BLE001
+            if "body" not in card or not no_body(e):
+                raise
+            d["no_body"] = version
+            await self.call("attention.post", without_body(card), wid)
 
     # -- alerts ---------------------------------------------------------------------
     def _expire_alerts(self) -> None:

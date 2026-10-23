@@ -150,6 +150,10 @@
 .hx-card-state{margin-left:auto;font:10px var(--mono);color:var(--dim)}
 .hx-c-done .hx-card-state{color:var(--green)}.hx-c-failed .hx-card-state{color:var(--bad)}
 .hx-card-sum{margin:0;font-size:13px;line-height:1.45}
+.hx-plain-title{font-weight:600;font-size:14px}
+.hx-plain{display:grid;gap:2px;font-size:13px;line-height:1.4}
+.hx-plain-row{display:grid;grid-template-columns:76px minmax(0,1fr);gap:8px}
+.hx-plain-k{color:var(--dim)}
 .hx-card-call code{font:11px var(--mono);color:var(--dim)}
 .hx-card-call details,.hx-card-res{font-size:11.5px}
 .hx-card summary{cursor:pointer;color:var(--dim);font:10px var(--mono)}

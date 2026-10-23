@@ -793,6 +793,39 @@ def build_server(client: "BandClient | MultiBandClient",
         except Exception:
             return None
 
+    def _hold_context(why: str | None = None, room: dict | None = None) -> dict:
+        """What a hold this call may make is for (rook/hub/plain.py): the
+        caller's claimed task with its title and project, the caller's own
+        ``why``, and the console room it types into."""
+        ctx: dict = {}
+        tid = _claimed_task()
+        k = getattr(mcp, "_rook_knowledge", None)
+        if tid:
+            ctx["task"] = tid
+            try:
+                with k.store.db(False) as db:
+                    row = db.execute("SELECT title, parent, kind FROM records WHERE id=?",
+                                     (tid,)).fetchone()
+                    if row is not None:
+                        ctx["task_title"] = row["title"]
+                    for _ in range(4):        # up to the project the task sits under
+                        if row is None or not row["parent"]:
+                            break
+                        row = db.execute("SELECT title, parent, kind FROM records WHERE id=?",
+                                         (row["parent"],)).fetchone()
+                        if row is not None and row["kind"] == "project":
+                            ctx["project"] = row["title"]
+                            break
+            except Exception:
+                pass
+        if why and str(why).strip():
+            ctx["why"] = " ".join(str(why).split())[:300]
+        if room:
+            ctx["room"] = str(room.get("room") or "")
+            if room.get("title"):
+                ctx["room_title"] = str(room["title"])
+        return ctx
+
     def _decision_row() -> dict | None:
         d = _hub_authz.last_decision.get()
         return d.journal() if d is not None else None
@@ -866,7 +899,8 @@ def build_server(client: "BandClient | MultiBandClient",
                         worker: str | None = None,
                         timeout: float | None = None,
                         hint: bool = False,
-                        text: bool = False) -> str:
+                        text: bool = False,
+                        why: str | None = None) -> str:
         """Invoke a capability on the band and return the reply.
 
         Args:
@@ -890,6 +924,10 @@ def build_server(client: "BandClient | MultiBandClient",
                 again. Tips are sent once per MCP session.
             text: return a successful result as plain text (shell.exec:
                 stdout, then stderr / exit code only when non-empty/non-zero).
+            why: one plain sentence saying why you make this call ("check which
+                asks were about notes"). If the call is held for the person's
+                approval, it is shown to them as "Why:" next to your task, so
+                give one for anything that may be held (changes, admin, the hub).
 
         Returns compact JSON (envelope.call_reply): ``{"ok","id","from",
         "result"|"error"}`` where ``id`` is the journal id and ``from`` the
@@ -973,6 +1011,8 @@ def build_server(client: "BandClient | MultiBandClient",
         # An approval hold shows (and matches retries by) the args as given,
         # placeholders and all, never the substituted values.
         stok = _approvals.shown_args.set(args if args is not None else {})
+        # Looked up only if the call is held (the task and its project are queries).
+        ctok = _approvals.hold_context.set(lambda: _hold_context(why))
         try:
             reply = await client.call(cap=cap, args=send_args, target=target,
                                       timeout=wait, identity=identity)
@@ -996,6 +1036,7 @@ def build_server(client: "BandClient | MultiBandClient",
                          f"args.timeout (if the cap takes one) or pass timeout=; "
                          f"for long jobs use rook_console_open.")
         finally:
+            _approvals.hold_context.reset(ctok)
             _approvals.shown_args.reset(stok)
             _hub_authz.caller_journals.reset(jtok)
         hub = getattr(mcp, "_rook_hub", None)
@@ -1608,12 +1649,14 @@ def build_server(client: "BandClient | MultiBandClient",
                 _auto_link("secret", name, f"typed into console {room}")
             console.remember_typed(room, used)
         stok = _approvals.shown_args.set({"data": text, "newline": newline})
+        ctok = _approvals.hold_context.set(lambda: _hold_context(room={**r, "room": room}))
         try:
             reply = await _room_call(r, "write",
                                      {"data": data, "newline": newline})
         except asyncio.TimeoutError:
             return _fail(f"worker {r['worker_name']!r} did not confirm the write")
         finally:
+            _approvals.hold_context.reset(ctok)
             _approvals.shown_args.reset(stok)
         result = reply.get("result") or {}
         if result.get("ok"):
