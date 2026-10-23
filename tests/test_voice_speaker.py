@@ -327,3 +327,14 @@ def test_worker_pipe(tmp_path, monkeypatch):
         assert time.monotonic() - started < 5
     finally:
         worker.close()
+
+
+def test_scribe_labels_use_an_enrolled_name_only_for_a_sure_match():
+    from services.voice.speaker import SessionSpeakers
+    s = SessionSpeakers(sure=0.65)
+    v = [1.0, 0.0, 0.0]
+    assert s.label({"principal": "bake", "score": 0.73, "vector": v}) == "bake"
+    # A weak match (a sibling who sounds like the owner) is just another speaker.
+    assert s.label({"principal": "bake", "score": 0.52, "vector": v}) == "Speaker A"
+    assert s.label({"principal": None, "score": 0.2, "vector": [0.0, 1.0, 0.0]}) == "Speaker B"
+    assert s.label(None) == "Speaker"
