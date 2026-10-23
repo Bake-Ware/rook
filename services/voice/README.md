@@ -120,6 +120,11 @@ Playback is paced and Android uses a bounded queue, with stale responses discard
 at interruption. `speech_start` confirms local speech during playback. Android
 sends it only with an enabled platform echo canceller and sustained Silero speech.
 A shorter candidate pauses playback and can resume after a false interruption.
+Android also sends `"barge": "confirm"` in hello. Only when the session event echoes
+it, sustained speech sends `{"type":"speech_start","hold":true}` instead: playback
+stays paused with its queue, the mic streams, and the server answers `interrupt`
+(real speech) or `{"type":"resume","turn":n}` (nothing transcribed). With neither
+within 10 s the phone drops the reply locally.
 Older clients keep the original PCM protocol and explicit interrupt control.
 
 Android 0.4.2 adds a Settings button for the default assistant. Android 12+ uses
