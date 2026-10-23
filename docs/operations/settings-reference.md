@@ -292,6 +292,7 @@ are set only in the environment or on the command line.
 | `home.voice_lane` | Voice session | hub | bool | on | `ROOK_HOME_VOICE_LANE` | live |
 | `home.persistent_model` | Agent model | hub | str | `opus` | `ROOK_HOME_PERSISTENT_MODEL` | live |
 | `home.persistent_effort` | Agent effort | hub | str |  | `ROOK_HOME_PERSISTENT_EFFORT` | live |
+| `home.web_search` | Web search | hub | bool | on | `ROOK_HOME_WEB_SEARCH` | live |
 | `home.voice_model` | Voice model | hub | str | `claude-haiku-5-5` | `ROOK_HOME_VOICE_MODEL` | live |
 | `home.voice_effort` | Voice effort | hub | str | `low` | `ROOK_HOME_VOICE_EFFORT` | live |
 | `home.btw_model` | By-the-way model | hub | str | `haiku` | `ROOK_HOME_BTW_MODEL` | live |

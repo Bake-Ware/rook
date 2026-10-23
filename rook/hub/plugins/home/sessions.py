@@ -70,7 +70,7 @@ KEEP_METRICS = 200
 #: Routing ops the voice may use (``quiet``: nothing to do; ``ask``: same as queue).
 ROUTE_OPS = ("queue", "steer", "fork", "fold", "status", "btw", "pause", "resume", "cancel",
              "mode", "quiet", "ask")
-#: Ops whose result the voice speaks (a reply to a pushed result never asks again).
+#: Ops whose result the voice speaks.
 ROUTE_SPEAKS = ("status", "btw")
 #: Listening modes the voice may switch to, by the names it may use.
 VOICE_MODES = {"assistant": "assistant", "normal": "assistant", "conversation": "assistant",
@@ -235,7 +235,7 @@ class Sessions:
                     "voice_model": str(s.get("voice_model") or roledir.DEFAULT_VOICE_MODEL),
                     "voice_effort": str(s.get("voice_effort") or "low"),
                     "idle_sleep_min": int(s.get("persistent_idle_sleep_min") or 0),
-                    "memory": "off"}
+                    "memory": "off", "web": bool(s.get("web_search", True))}
             base.update({k: v for k, v in saved.items() if k in ("model", "effort")})
             return base
         return {"persistent": bool(saved.get("persistent")), "voice": bool(saved.get("voice")),
@@ -243,7 +243,7 @@ class Sessions:
                 "effort": str(saved.get("effort") or ""),
                 "voice_model": roledir.DEFAULT_VOICE_MODEL,
                 "voice_effort": "low", "idle_sleep_min": int(saved.get("idle_sleep_min", 30)),
-                "memory": str(saved.get("memory") or "write")}
+                "memory": str(saved.get("memory") or "write"), "web": False}
 
     def roles(self) -> list[str]:
         """Roles that run persistently (the house agent first)."""
@@ -391,12 +391,16 @@ class Sessions:
         for role in self.roles():
             rc = self.role_cfg(role)
             granted = [g["server"] for g in (trust.grants(role) if trust is not None else [])]
+            # The web tools: the house agent's setting, or a trust-map grant for a role.
+            web = bool(rc["web"]) or roledir.WEB_GRANT in granted
+            granted = [g for g in granted if g != roledir.WEB_GRANT]
             files = roledir.main_files(claude_md=self._claude_md(role), model=rc["model"],
                                        effort=rc["effort"], turn_url=url,
-                                       host_servers=granted)
+                                       host_servers=granted, web=web)
             sess = self.state()["sessions"].get(role) or {}
             lanes = {"main": {"model": rc["model"], "effort": rc["effort"],
-                              "tools": list(roledir.MAIN_TOOLS),
+                              "tools": list(roledir.MAIN_TOOLS) +
+                              (list(roledir.SEARCH_TOOLS) if web else []),
                               "env": {roledir.TURN_TOKEN_ENV: self._token(role, "main")},
                               "partial": False, "session_id": sess.get("main") or "",
                               "idle_sleep_s": int(rc["idle_sleep_min"]) * 60, "thinking": True}}
@@ -891,9 +895,12 @@ class Sessions:
                     raise ValueError(f"unknown routing op {name[:20]!r}")
                 if name == "quiet":
                     res: dict = {"ok": True}
-                elif push and name in ROUTE_SPEAKS:
-                    # Speaking a result never asks for another one (no loops).
-                    res = {"ok": True, "skipped": "a reply to a result"}
+                elif push:
+                    # A reply that speaks a result runs nothing: the result may carry text
+                    # from the web or a page, and nothing in it may queue, cancel or steer
+                    # work as the person (and status or btw would loop). The person's own
+                    # next words route as usual.
+                    res = {"ok": True, "skipped": "a reply to a result routes nothing"}
                 elif name == "queue":
                     req = str(args.get("request") or args.get("text") or
                               args.get("question") or "")
@@ -1280,7 +1287,7 @@ class Sessions:
             if trust is None:
                 raise ValueError("this hub has no trust map")
             grantable = set(((self.link.hello.get("servers") if self.link else None) or [])) | \
-                set((self.home.settings.get("mcp_catalog") or []))
+                set((self.home.settings.get("mcp_catalog") or [])) | {roledir.WEB_GRANT}
             if action == "grant" and server not in grantable:
                 raise ValueError(f"{server!r} is not an MCP server the session host can give "
                                  f"(it has: {', '.join(sorted(grantable)) or 'none'})")

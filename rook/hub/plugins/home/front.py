@@ -168,7 +168,8 @@ TOOLS = {
     "role_config": _fn(
         "role_config", "A role's Claude Code setup for its persistent sessions (role: an id, "
         "or house for you). action get: model, effort, granted MCP servers and what can be "
-        "granted. grant / revoke (server: an MCP server name): only when the person asks for "
+        "granted. grant / revoke (server: an MCP server name, or \"web\" for web search and "
+        "reading pages): only when the person asks for "
         "it in this request (words: their exact words); granting a tool is theirs to decide, "
         "never yours to start. set (the person's request): persistent, voice, model, effort.",
         {"action": {"type": "string", "enum": ["get", "grant", "revoke", "set"]},
