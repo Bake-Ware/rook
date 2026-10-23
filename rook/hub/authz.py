@@ -359,8 +359,10 @@ def build_authorizer(data_dir: str | None, *, record: Callable[..., Any] | None 
     if data_dir:
         try:
             from .approvals import Approvals, ConfigSource
+            from .trust import store_for
             approvals = Approvals(os.path.join(data_dir, "approvals.db"),
-                                  ConfigSource(store=settings_store), record=record)
+                                  ConfigSource(store=settings_store), record=record,
+                                  trust=store_for(os.path.join(data_dir, "trust.json")))
         except Exception:
             log.exception("ROOK AUTHZ ALERT: approval queue unavailable; hold rules refuse")
     if signer is None:
