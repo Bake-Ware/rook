@@ -84,7 +84,7 @@ def test_without_a_task_or_why_it_says_no_task():
     (["git", "reset", "--hard", "HEAD~1"], "destroy", "Discard code changes"),
     (["bash", "deploy-local.sh", "abc123"], "change", "Deploy"),
     (["reboot"], "destroy", "Reboot"),
-    (["find", "/tmp", "-name", "*.log", "-delete"], "destroy", "Find and change files"),
+    (["find", "/tmp", "-name", "*.log", "-delete"], "destroy", "Find and delete files"),
     (["curl", "-s", "https://example.org/health"], "read", "Fetch a web page"),
     (["timeout", "60", "rook-pytest", "-q"], "change", "Run tests"),
 ])
@@ -115,6 +115,25 @@ def test_shell_commands_are_said_by_what_they_do(argv, kind, title):
     ["sort", "-o", "f", "g"], ["awk", "{system(\"rm x\")}"], ["find", ".", "-fprint", "x"],
     ["uniq", "a", "b"], ["tree", "-o", "f"], ["rg", "--pre", "x", "y"],
     ["PGPASSWORD=x", "psql", "-c", "drop table t"],
+    # From the review of vote gifted-organ-marigold.
+    ["sqlite3", "x.db", "select writefile('/p','x')"], ["sqlite3", "-readonly", "x.db", "select edit('a')"],
+    ["sqlite3", "x.db", "select load_extension('/tmp/x.so')"], ["sqlite3", "x.db", "pragma user_version(5)"],
+    ["sqlite3", "x.db", "pragma journal_mode(wal)"], ["sqlite3", "x.db", "pragma user_version = 5"],
+    ["sqlite3", "-cmd", ".shell id", "x.db", "select 1"],
+    ["sh", "-c", "echo x >&/etc/x"], ["sh", "-c", "cat a#; rm x"], ["sh", "-c", "echo '#'; rm x"],
+    ["sh", "-c", "(rm x)"], ["sh", "-c", "cat a\nrm b"],
+    ["git", "reflog", "expire", "--all"], ["git", "reflog", "delete", "x"],
+    ["git", "-c", "core.fsmonitor=rm -rf ~", "status"], ["git", "-C", "/x", "status"],
+    ["git", "ls-remote", "--upload-pack=cmd", "x"], ["git", "grep", "-Ocmd", "x"], ["git", "diff", "--ext-diff"],
+    ["GIT_EXTERNAL_DIFF=cmd", "git", "diff"], ["LD_PRELOAD=x.so", "cat", "f"], ["LESSOPEN=|cmd", "less", "f"],
+    ["env", "X=1", "cat", "f"], ["ssh", "-o", "ProxyCommand=cmd", "host", "cat", "x"],
+    ["ssh", "-oProxyCommand=touch /tmp/p", "h", "uptime"], ["ssh", "h", "find", "/tmp", "-delete"],
+    ["ip", "netns", "exec", "x", "sh"], ["journalctl", "--rotate"], ["date", "0101"],
+    ["curl", "gopher://x/_a"], ["gh", "api", "graphql", "-f", "q=x"], ["sort", "-of", "g"],
+    ["find", ".", "-exec", "rm", "{}", ";"], ["fd", "-x", "rm"], ["ss", "-K"], ["ss", "-tK"],
+    ["top", "-b"], ["less", "f"], ["sudo", "-u", "x", "cat", "f"], ["sudo", "-E", "cat", "f"],
+    ["timeout", "--signal=9", "5", "rm", "x"], ["docker", "-H", "tcp://x", "ps"],
+    ["kubectl", "--kubeconfig", "k", "get", "po"], ["systemctl", "-H", "host", "status"],
 ])
 def test_commands_that_can_write_never_read_as_read_only(argv):
     assert plain.shell_summary({"argv": argv})["kind"] != "read"
@@ -124,9 +143,13 @@ def test_commands_that_can_write_never_read_as_read_only(argv):
 
 def test_a_cmd_string_is_read_like_argv():
     assert plain.shell_summary({"cmd": "cat /etc/hostname"})["title"] == "Read hostname"
-    for argv in (["git", "-C", "/opt/rook", "log", "-3"], ["git", "config", "--get", "user.name"],
+    for argv in (["git", "log", "-3", "--oneline"], ["git", "config", "--get", "user.name"],
                  ["ip", "-br", "a"], ["nvidia-smi", "--query-gpu=name"], ["date", "+%s"],
-                 ["sqlite3", "/x.db", "SELECT a FROM t; PRAGMA table_info(t)"]):
+                 ["sqlite3", "/x.db", "SELECT a FROM t; PRAGMA table_info(t)"],
+                 ["sqlite3", "-readonly", "/x.db", "SELECT count(*) FROM t"],
+                 ["journalctl", "-fu", "x"], ["curl", "-sSL", "-H", "A: b", "https://x"],
+                 ["sudo", "-n", "systemctl", "status", "x"], ["timeout", "10", "cat", "f"],
+                 ["head", "-20", "f"], ["find", ".", "-name", "*.py", "-type", "f"]):
         assert plain.shell_summary({"argv": argv})["kind"] == "read", argv
 
 

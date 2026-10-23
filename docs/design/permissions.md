@@ -915,13 +915,18 @@ console writes (room), job steps (job, description) and huddle card runs
 column added in place; older code ignores it). The args shown are the
 redacted display args, so the summary never sees a secret value.
 
-Two rules from the review (vote high-inch-gallery): **read-only is earned,
-not guessed**: a shell command is "looks read-only" only when every part of
-it is understood and only reads; command substitution, backticks, process
-substitution, a lone `&`, heredocs, `xargs`/`eval`, any redirect into a file,
-`sed`/`awk`, and read tools with writing options (`find -delete`, `sort -o`,
-`journalctl --vacuum`, `git config k v`, `ip ... set`, `curl -XPOST`, a
-sqlite3 statement that is not a plain SELECT/PRAGMA/EXPLAIN) are changes.
+Two rules from the review (votes high-inch-gallery and gifted-organ-marigold):
+**read-only is earned, not guessed**: a shell command "looks read-only" only
+when it is a known read-only program with flags from that program's
+allowlist (`READ_ANY`, `READ_FLAGS`, `READ_SUBS`, git read subcommands
+without global options or program-running flags, `ip ... show`, curl with
+read flags and http(s) URLs, `gh api` without write flags, sqlite3 with
+plain SELECT/EXPLAIN, read pragmas, read dot commands and allowlisted
+functions or `-safe`), with no `NAME=value` prefix, no `env`/`ssh`, no
+wrapper options, no redirect into a file and no shell the tokenizer does not
+follow (substitution, backticks, `&`, subshells, heredocs, comments).
+Everything else is a change, said as Medium, so an unusual read errs the
+safe way.
 **Nothing argument-derived leaves the dashboard and the phone**: Telegram,
 notify, voice and the spoken `rook_approvals` summary use a title made from
 the cap and machine only (`safe_title`), and `rook_approvals` items carry no

@@ -138,87 +138,158 @@ HOUSE_FOR = {
 
 # -- shell commands ------------------------------------------------------------------
 #
-# The classifier is deliberately conservative: a command is "read" only when
-# every part of it is understood and only reads. Anything it cannot parse
-# fully (command substitution, backticks, process substitution, a lone &,
-# heredocs, xargs/eval) or any redirect into a file is a change. A wrong
-# "Low: looks read-only" could lead the person to approve a write, so when in
-# doubt it says Medium (vote high-inch-gallery, 2026-10-23).
+# Read-only is earned, not guessed (votes high-inch-gallery and
+# gifted-organ-marigold, 2026-10-23): a command reads only when it is a known
+# read-only program, run with flags from that program's allowlist, with no
+# environment prefix, no ssh, no wrapper options, no redirect into a file and
+# no shell the tokenizer does not follow. Everything else is a change, said
+# as Medium, so a wrong "Low: looks read-only" cannot lead the person to
+# approve a write. Unusual reads are Medium too: that errs the safe way.
 
-#: Programs that only read whatever their arguments (writes need a redirect,
-#: which is caught separately).
-READ_PROGS = {
-    "cat", "head", "tail", "less", "more", "ls", "ll", "stat", "file", "wc", "du", "df", "free",
-    "uptime", "ps", "pgrep", "top", "id", "whoami", "uname", "which", "type", "printenv",
-    "echo", "printf", "grep", "egrep", "fgrep", "ag", "fd", "lsblk", "lsusb", "lspci", "ss",
-    "netstat", "ping", "dig", "nslookup", "host", "jq", "cut", "diff", "cmp", "md5sum",
-    "sha256sum", "sha1sum", "readlink", "realpath", "basename", "dirname", "test", "true",
-    "false", "sleep", "column", "tr", "hexdump", "strings", "lscpu", "lsmod", "last", "w",
-    "who", "groups", "getent", "nproc", "vmstat", "iostat", "zcat", "zgrep", "cd", "pwd",
-    "nl", "tac", "rev", "seq", "expr",
+#: Programs whose every flag only changes what they print; their other
+#: arguments are files, patterns or names to read.
+READ_ANY = {
+    "cat", "head", "tail", "ls", "wc", "du", "df", "free", "uptime", "ps", "pgrep", "id",
+    "whoami", "uname", "which", "printenv", "echo", "printf", "grep", "egrep", "fgrep", "zcat",
+    "zgrep", "lsblk", "lsusb", "lspci", "netstat", "ping", "dig", "nslookup", "host", "jq",
+    "cut", "diff", "cmp", "md5sum", "sha256sum", "sha1sum", "readlink", "realpath", "basename",
+    "dirname", "test", "true", "false", "sleep", "column", "tr", "hexdump", "strings", "lscpu",
+    "lsmod", "last", "w", "who", "groups", "getent", "nproc", "vmstat", "iostat", "pwd", "nl",
+    "tac", "rev", "seq", "expr", "stat", "cd",
 }
-#: Programs that only read unless one of these arguments (or argument
-#: prefixes) appears.
-READ_UNLESS = {
-    "find": ("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fls"),
-    "journalctl": ("--vacuum", "--rotate", "--flush", "--sync", "--relinquish",
-                   "--smart-relinquish", "--setup-keys", "--update-catalog"),
-    "dmesg": ("-c", "-C", "-D", "-E", "-n", "--clear", "--read-clear", "--console"),
-    "sort": ("-o", "--output"),
-    "tree": ("-o",),
-    "rg": ("--pre",),
-    "sensors": ("-s",),
+#: Programs that read with these flags only: ``{prog: (long flags, short letters)}``.
+#: A long flag matches exactly or as ``--flag=value``; values that follow a flag
+#: are plain words, which these programs read.
+READ_FLAGS = {
+    "journalctl": (("--unit", "--lines", "--follow", "--boot", "--priority", "--since",
+                    "--until", "--output", "--no-pager", "--reverse", "--dmesg", "--utc",
+                    "--grep", "--identifier", "--user", "--system", "--all", "--list-boots",
+                    "--disk-usage", "--no-hostname", "--case-sensitive", "--catalog",
+                    "--pager-end", "--quiet", "--merge", "--user-unit", "--facility"),
+                   set("unfbpSUoreqxkgtaimM")),
+    "dmesg": (("--ctime", "--human", "--follow", "--level", "--kernel", "--decode",
+               "--color", "--time-format", "--notime", "--reltime", "--facility", "--userspace",
+               "--nopager", "--raw", "--show-delta"), set("THwlkxLtefurPd")),
+    "find": (("-name", "-iname", "-type", "-maxdepth", "-mindepth", "-mtime", "-mmin", "-atime",
+              "-amin", "-ctime", "-cmin", "-size", "-path", "-ipath", "-wholename", "-newer",
+              "-print", "-print0", "-ls", "-perm", "-user", "-group", "-empty", "-regex",
+              "-iregex", "-not", "-o", "-a", "-or", "-and", "-prune", "-xdev", "-mount",
+              "-follow", "-L", "-H", "-P", "-readable", "-writable", "-executable", "-links",
+              "-inum", "-samefile", "-nouser", "-nogroup", "-true", "-false"), set()),
+    "sort": (("--reverse", "--numeric-sort", "--human-numeric-sort", "--unique", "--key",
+              "--field-separator", "--ignore-case", "--version-sort", "--stable",
+              "--general-numeric-sort", "--month-sort", "--random-sort", "--zero-terminated",
+              "--check"), set("rnhuktfgVsMRzbdci")),
+    "uniq": (("--count", "--repeated", "--unique", "--ignore-case", "--skip-fields",
+              "--skip-chars", "--check-chars", "--zero-terminated"), set("cduifswz")),
+    "ss": (("--tcp", "--udp", "--listening", "--numeric", "--processes", "--all", "--extended",
+            "--info", "--summary", "--unix", "--raw", "--ipv4", "--ipv6", "--resolve",
+            "--memory", "--options", "--no-header"), set("tulnpaeismxwr46OHZ")),
+    "rg": (("--files", "--count", "--line-number", "--no-heading", "--ignore-case",
+            "--smart-case", "--fixed-strings", "--word-regexp", "--hidden", "--glob",
+            "--type", "--max-count", "--context", "--before-context", "--after-context",
+            "--files-with-matches", "--json", "--no-ignore", "--follow", "--max-depth",
+            "--color", "--sort", "--multiline", "--invert-match", "--only-matching",
+            "--trim", "--stats", "--max-columns", "--type-list"), set("ciFwlLgtmCABnNsvoUeuj")),
+    "nvidia-smi": (("--query", "--query-gpu", "--query-compute-apps", "--format", "--id",
+                    "--list-gpus", "--loop", "--loop-ms", "--display", "--xml-format"),
+                   set("qLilxd")),
+    "date": (("--utc", "--universal", "--rfc-email", "--iso-8601", "--rfc-3339", "--date",
+              "--reference"), set("uRIdr")),
 }
-#: Subcommands that only read, for tools that also write.
+#: For these the words after the flags must also pass (``None``: any words).
+READ_WORDS = {
+    "uniq": lambda w: len(w) <= 1,                      # a second file is the output
+    "nvidia-smi": lambda w: all(x in ("dmon", "pmon") or x.isdigit() or "," in x or "=" in x
+                                for x in w),
+    "date": lambda w: not any(x[:1].isdigit() for x in w),   # date MMDDhhmm sets the clock
+}
+#: Subcommand tools: the subcommands that read, with any flags after them.
 READ_SUBS = {
-    "systemctl": {"", "status", "is-active", "is-enabled", "is-failed", "show", "cat",
-                  "list-units", "list-timers", "list-unit-files", "list-sockets"},
+    "systemctl": {"status", "is-active", "is-enabled", "is-failed", "show", "cat",
+                  "list-units", "list-timers", "list-unit-files", "list-sockets",
+                  "list-dependencies"},
     "docker": {"ps", "logs", "inspect", "images", "stats", "version", "info"},
     "podman": {"ps", "logs", "inspect", "images", "stats", "version", "info"},
     "kubectl": {"get", "describe", "logs", "top", "version"},
-    "pip": {"list", "show", "freeze"}, "npm": {"ls", "list", "view"},
-    "apt": {"list", "show", "search", "policy"},
+    "pip": {"list", "show", "freeze"}, "pip3": {"list", "show", "freeze"},
+    "npm": {"ls", "list", "view"}, "apt": {"list", "show", "search", "policy"},
     "tailscale": {"status", "ip"}, "rook": {"status", "version"},
-    "hostnamectl": {"", "status"}, "timedatectl": {"", "status", "show",
-                                                   "list-timezones", "timesync-status"},
-    "loginctl": {"", "list-sessions", "list-users", "list-seats", "session-status",
+    "hostnamectl": {"status"}, "timedatectl": {"status", "show", "list-timezones",
+                                               "timesync-status"},
+    "loginctl": {"list-sessions", "list-users", "list-seats", "session-status",
                  "user-status", "show-session", "show-user", "show-seat"},
 }
+#: Subcommand tools that read with no subcommand at all.
+READ_BARE = {"systemctl", "hostnamectl", "timedatectl", "loginctl", "hostname"}
+#: Flags that make a subcommand tool act elsewhere or run code: never read.
+SUB_DENY = ("-H", "--host", "-M", "--machine", "--kubeconfig", "--context", "--server",
+            "--exec", "-c", "--config")
 GIT_READ = {"status", "log", "diff", "show", "rev-parse", "describe", "ls-files", "blame",
-            "shortlog", "rev-list", "cat-file", "ls-tree", "ls-remote", "grep", "reflog"}
-#: Git subcommands that read only with these arguments (or no arguments).
-GIT_READ_WITH = {"branch": ("--list", "-l", "-a", "-r", "-v", "-vv", "--show-current",
-                            "--contains", "--merged", "--no-merged"),
-                 "tag": ("--list", "-l", "-n", "--contains"),
-                 "remote": ("-v", "show", "get-url"),
-                 "config": ("--get", "--get-all", "--get-regexp", "--list", "-l"),
-                 "stash": ("list", "show"), "worktree": ("list",)}
+            "shortlog", "rev-list", "cat-file", "ls-tree"}
+#: Git flags that run a program or write a file.
+GIT_DENY = ("--ext-diff", "--textconv", "--output", "-O", "--open-files-in-pager",
+            "--upload-pack", "--exec", "--receive-pack", "--run", "--config", "--hook")
+GIT_LIST = {"branch": {"--list", "-l", "-a", "-r", "-v", "-vv", "--show-current", "--all",
+                       "--remotes", "--merged", "--no-merged"},
+            "tag": {"--list", "-l", "-n"}}
+#: ip objects and the verbs that only show them.
+IP_OBJECTS = {"addr", "address", "a", "link", "l", "route", "r", "ro", "neigh", "neighbour",
+              "n", "rule", "ru", "maddr", "maddress", "-br", "-brief", "-c", "-color", "-4",
+              "-6", "-s", "-stats", "-j", "-json", "-d", "-details", "-p", "-pretty"}
+IP_VERBS = {"show", "list", "ls", "lst", "get"}
 DESTROY_PROGS = {"rm", "rmdir", "shred", "dd", "mkfs", "wipefs", "fdisk", "parted", "reboot",
                  "shutdown", "poweroff", "halt", "kill", "pkill", "killall", "truncate"}
-WRAPPERS = {"sudo", "doas", "nice", "ionice", "timeout", "nohup", "stdbuf", "time", "env",
-            "command", "flock"}
-#: Shell text the classifier does not follow: always a change.
-OPAQUE = re.compile(r"\$\(|`|<\(|>\(|<<|(?<![&|>])&(?![&>])|\b(eval|xargs|source|exec)\b")
+#: Wrappers that run the command after them, with the options they may take
+#: and still say what runs (any other option: a change).
+WRAPPERS = {"sudo": {"-n", "--non-interactive"}, "nice": {"-n"}, "timeout": {"-s", "-k"},
+            "time": {"-p"}, "stdbuf": {"-oL", "-eL", "-o0", "-e0"}}
+#: Shell the tokenizer does not follow: always a change.
+OPAQUE = re.compile(r"\$\(|`|<\(|>\(")
 _ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_SEPS = {";", "|", "||", "&&", "|&"}
+_REDIRS = {">", ">>", ">|", "&>", "&>>", ">&", "<>", "<", "<&"}
+_PUNCT = set(";&|<>()")
 SQL_WRITE = re.compile(r"\b(insert|update|delete|replace|upsert|create|drop|alter|attach|detach|"
-                       r"vacuum|reindex|analyze|begin|commit|savepoint|release)\b", re.I)
-SQL_READ = re.compile(r"^\s*(select|explain|with|values)\b|^\s*pragma\s+[\w.]+\s*(\(\s*[\w.'\"]*\s*\))?\s*$",
-                      re.I)
+                       r"vacuum|reindex|analyze|begin|commit|rollback|savepoint|release)\b", re.I)
+SQL_READ = re.compile(r"^\s*(select|explain|with|values)\b", re.I)
+#: Read-only SQL functions (a call to anything else, writefile() or
+#: load_extension() included, is a change unless the CLI runs with -safe).
+SQL_FUNCS = {
+    "count", "sum", "total", "min", "max", "avg", "length", "lower", "upper", "substr",
+    "substring", "trim", "ltrim", "rtrim", "coalesce", "ifnull", "nullif", "iif", "abs",
+    "round", "typeof", "instr", "printf", "format", "quote", "hex", "date", "time", "datetime",
+    "julianday", "unixepoch", "strftime", "group_concat", "string_agg", "json", "json_extract",
+    "json_object", "json_array", "json_group_array", "json_group_object", "json_each",
+    "json_tree", "json_type", "json_valid", "json_array_length", "cast", "like", "glob",
+    "row_number", "rank", "dense_rank", "lag", "lead", "random", "char", "unicode", "sign",
+    # SQL words followed by a parenthesis, not functions
+    "in", "exists", "values", "as", "over", "filter", "using", "on", "and", "or", "not",
+    "from", "join", "where", "select", "with", "case", "when", "then", "else", "is",
+}
+#: PRAGMAs that read with an argument (``pragma name(arg)``); any other
+#: ``pragma name(arg)`` or ``pragma name = value`` sets something.
+SQL_PRAGMA_READ = {"table_info", "table_xinfo", "index_list", "index_info", "index_xinfo",
+                   "foreign_key_list", "table_list", "database_list", "function_list",
+                   "integrity_check", "quick_check", "foreign_key_check"}
 SQL_DOT_READ = re.compile(r"^\s*\.(tables|schema|indexes|indices|headers|mode|databases|"
                           r"show|width|nullvalue)\b[^;]*$", re.I)
-SQLITE_FLAGS = {"-readonly", "-header", "-noheader", "-column", "-json", "-line", "-csv", "-list",
-                "-box", "-markdown", "-table", "-batch", "-bail", "-separator", "-newline"}
-CURL_WRITE_LONG = ("--request", "--data", "--json", "--form", "--upload-file", "--output",
-                   "--remote-name", "--post", "--config", "--cookie-jar", "--dump-header",
-                   "--trace", "--libcurl", "--create-dirs", "--etag-save", "--hsts",
-                   "--alt-svc", "--output-dir", "--remote-header-name", "--stderr")
-CURL_WRITE_SHORT = set("XdFToOKcD")
-GH_WRITE = ("-X", "--method", "-f", "-F", "--field", "--raw-field", "--input")
-NVIDIA_READ = ("-q", "--query", "-L", "--list", "--format", "-i", "--id", "-l", "--loop",
-               "-d", "--display", "-x")
+SQLITE_FLAGS = {"-readonly", "-safe", "-header", "-noheader", "-column", "-json", "-line",
+                "-csv", "-list", "-box", "-markdown", "-table", "-batch", "-bail", "-separator",
+                "-newline", "-nullvalue"}
+CURL_READ_LONG = ("--silent", "--show-error", "--fail", "--location", "--insecure", "--verbose",
+                  "--include", "--head", "--header", "--max-time", "--connect-timeout",
+                  "--user-agent", "--user", "--referer", "--compressed", "--retry",
+                  "--write-out", "--get", "--url", "--http1.1", "--http2", "--ipv4", "--ipv6",
+                  "--proxy", "--cacert", "--resolve", "--fail-with-body", "--no-progress-meter")
+CURL_READ_SHORT = set("sSfLkviIHmAueGw46x")
+GH_API_READ = ("--paginate", "--jq", "--template", "--header", "--include", "--cache",
+               "--hostname", "--silent", "--verbose", "--slurp")
+GH_API_SHORT = set("qtHi")
 SERVICE_VERBS = {"restart": "restart", "stop": "stop", "start": "start", "reload": "reload",
                  "enable": "enable", "disable": "disable", "mask": "mask", "kill": "kill",
                  "daemon-reload": "reload the service definitions"}
+_CHANGE = {"kind": "change"}
 
 
 def _argv(args: Any) -> list[str]:
@@ -236,81 +307,137 @@ def _argv(args: Any) -> list[str]:
     return []
 
 
-def _unwrap(argv: list[str]) -> list[str]:
-    """Drop sudo/timeout/env wrappers and ``NAME=value`` prefixes, and turn
-    ``sh -c "<script>"`` into ``['<script>', script]``. A wrapper option
-    the unwrapping does not understand leaves an unknown program (a change)."""
+def _flags_ok(rest: list[str], longs: tuple | set, shorts: set) -> bool:
+    """Every flag in ``rest`` is allowed: a long flag (or a single-dash word
+    flag such as find's ``-name``) exactly or as ``--flag=value``; a short
+    group whose letters are all allowed, with an optional glued number
+    (``-n20``); a bare number (``head -20``)."""
+    for a in rest:
+        if not a.startswith("-") or a in ("-", "--") or re.fullmatch(r"-\d+", a):
+            continue
+        if a.split("=", 1)[0] in longs:
+            continue
+        if a.startswith("--"):
+            return False
+        m = re.fullmatch(r"-([A-Za-z]+)\d*", a)
+        if m is None or not set(m.group(1)) <= shorts:
+            return False
+    return True
+
+
+def _unwrap(argv: list[str]) -> list[str] | None:
+    """The command a wrapper runs (``sudo``, ``timeout 60``, ``nice``), or
+    ``None`` when the wrapper or a ``NAME=value`` prefix changes how it runs
+    (env, an option we don't know): those are changes. ``sh -c "<script>"``
+    becomes ``['<script>', script]``."""
     out = list(argv)
-    for _ in range(8):
-        while out and _ASSIGN.match(out[0]):
-            out = out[1:]
+    for _ in range(6):
         if not out:
             return out
+        if _ASSIGN.match(out[0]):
+            return None                            # GIT_EXTERNAL_DIFF=..., LD_PRELOAD=...
         prog = _base(out[0])
         if prog in WRAPPERS:
             out = out[1:]
-            while out and (out[0].startswith("-") or re.fullmatch(r"[\d.]+[smhd]?", out[0])
-                           or _ASSIGN.match(out[0]) or (prog == "flock" and "/" in out[0])):
+            ok = WRAPPERS[prog]
+            while out and out[0].startswith("-"):
+                if out[0] not in ok:
+                    return None
+                takes = prog in ("nice", "timeout") and out[0] in ("-n", "-s", "-k")
+                out = out[2:] if takes else out[1:]
+            if prog == "timeout":
+                if not out or not re.fullmatch(r"[\d.]+[smhd]?", out[0]):
+                    return None
                 out = out[1:]
             continue
-        if prog in ("sh", "bash", "zsh", "dash") and len(out) >= 3 and out[1] in (
-                "-c", "-lc", "-ec", "-euc", "-xc"):
+        if prog in ("sh", "bash", "dash", "zsh") and len(out) == 3 and out[1] in (
+                "-c", "-lc", "-ec", "-euc", "-eucx", "-xc"):
             return ["<script>", out[2]]
-        if prog == "ssh" and len(out) >= 3:
-            rest = [x for x in out[1:] if not x.startswith("-")]
-            return ["<script>", " ".join(rest[1:])] if len(rest) > 1 else out
         return out
-    return out
-
-
-def _segments(script: str) -> list[list[str]] | None:
-    """The simple commands of a script, or None when it has shell the
-    classifier does not follow (:data:`OPAQUE`)."""
-    if OPAQUE.search(script):
-        return None
-    out = []
-    for p in re.split(r"\|\||&&|;|\n|\|", script):
-        p = p.strip()
-        if not p:
-            continue
-        try:
-            out.append(shlex.split(p, comments=True))
-        except ValueError:
-            return None
-    return [s for s in out if s]
-
-
-def _writes_file(script: str) -> str | None:
-    """The file a redirect writes into (``None`` when there is none;
-    /dev/null and duplicating a stream, ``2>&1``, are not files)."""
-    for m in re.finditer(r"(\d*|&)>(>|\|)?\s*([^\s;|&]+|&\d)", script):
-        target = m.group(3)
-        if target in ("/dev/null", "/dev/stderr", "/dev/stdout") or re.fullmatch(r"&\d", target):
-            continue
-        return target
     return None
 
 
-def _has(rest: list[str], marks: tuple) -> bool:
-    """An argument equal to, or starting with, one of ``marks`` (``--vacuum``
-    matches ``--vacuum-time=1s``; ``-o`` matches ``-ofile``)."""
-    return any(a == m or a.startswith(m) for a in rest for m in marks)
+def _tokens(script: str) -> tuple[list[list[str]], list[str]] | None:
+    """``(simple commands, files written by redirects)`` of a script, or
+    ``None`` when it uses shell the tokenizer does not follow (command or
+    process substitution, backticks, background ``&``, subshells, heredocs,
+    comments)."""
+    if OPAQUE.search(script):
+        return None
+    segs: list[list[str]] = []
+    writes: list[str] = []
+    for line in script.split("\n"):
+        lex = shlex.shlex(line, posix=True, punctuation_chars=";&|<>()")
+        lex.whitespace_split = True
+        lex.commenters = ""
+        try:
+            toks = list(lex)
+        except ValueError:
+            return None
+        cur: list[str] = []
+        i = 0
+        while i < len(toks):
+            t = toks[i]
+            if t.startswith("#"):
+                return None
+            if t in _SEPS:
+                if cur:
+                    segs.append(cur)
+                cur = []
+                i += 1
+                continue
+            if t in _REDIRS:
+                if cur and cur[-1].isdigit():
+                    cur.pop()                      # 2>&1: the 2 is the stream
+                target = toks[i + 1] if i + 1 < len(toks) else ""
+                if not target or set(target) & _PUNCT:
+                    return None
+                if t in ("<", "<&") or (t == ">&" and (target.isdigit() or target == "-")):
+                    pass
+                elif target not in ("/dev/null", "/dev/stdout", "/dev/stderr"):
+                    writes.append(target)
+                i += 2
+                continue
+            if set(t) <= _PUNCT:                   # &, (, ), <<, <<<, ...
+                return None
+            cur.append(t)
+            i += 1
+        if cur:
+            segs.append(cur)
+    return segs, writes
 
 
-def _short_flags(rest: list[str]) -> set:
-    return {c for a in rest if a.startswith("-") and not a.startswith("--") for c in a[1:]}
+def _sql_read(stmt: str, safe: bool) -> bool:
+    s = stmt.strip()
+    if SQL_DOT_READ.match(s):
+        return True
+    m = re.match(r"^\s*pragma\s+([\w.]+)\s*(\(\s*[\w.'\"]*\s*\))?\s*$", s, re.I)
+    if m:
+        name = m.group(1).split(".")[-1].lower()
+        return not m.group(2) or name in SQL_PRAGMA_READ
+    if not SQL_READ.match(s) or SQL_WRITE.search(s):
+        return False
+    if safe:
+        return True
+    calls = {c.lower() for c in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", s)}
+    return calls <= SQL_FUNCS
 
 
 def _sqlite(rest: list[str]) -> dict:
-    words = [a for a in rest if not a.startswith("-")]
-    flags = [a for a in rest if a.startswith("-")]
-    db = next((w for w in words if "/" in w or w.endswith((".db", ".sqlite", ".sqlite3"))), "")
-    stmts = [s for w in words if w != db for s in re.split(r";", w) if s.strip()]
-    name = _base(db).rsplit(".", 1)[0] if db else ""
-    label = f"{name} database" if name else "a database"
-    ok_flags = all(f in SQLITE_FLAGS for f in flags)
-    ro = ok_flags and bool(stmts) and all(
-        (SQL_READ.match(s) or SQL_DOT_READ.match(s)) and not SQL_WRITE.search(s) for s in stmts)
+    words, flags = [], []
+    it = iter(rest)
+    for a in it:
+        if a.startswith("-"):
+            flags.append(a)
+            if a in ("-separator", "-newline", "-nullvalue"):
+                next(it, None)
+        else:
+            words.append(a)
+    db = words[0] if words else ""
+    stmts = [s for w in words[1:] for s in w.split(";") if s.strip()]
+    label = f"{_base(db).rsplit('.', 1)[0]} database" if db else "a database"
+    ro = all(f in SQLITE_FLAGS for f in flags) and bool(stmts) and all(
+        _sql_read(s, "-safe" in flags) for s in stmts)
     if ro:
         return {"kind": "read", "title": f"Read {label}",
                 "want": f"run a read-only query on the {label}"}
@@ -319,26 +446,28 @@ def _sqlite(rest: list[str]) -> dict:
 
 
 def _git(rest: list[str]) -> dict:
-    rest = list(rest)
-    while rest and rest[0] in ("-C", "-c", "--git-dir", "--work-tree", "--namespace") \
-            or rest and rest[0].startswith(("--git-dir=", "--work-tree=", "--no-pager",
-                                            "--paginate", "-P")):
-        rest = rest[2:] if rest[0] in ("-C", "-c", "--git-dir", "--work-tree",
-                                       "--namespace") else rest[1:]
+    if rest and rest[0].startswith("-"):
+        # git -c / -C / --git-dir before the subcommand: config (core.fsmonitor,
+        # core.pager...) or another repository; not judged.
+        return {"kind": "change", "title": "Run git", "want": "run git with global options"}
     sub = rest[0] if rest else ""
     args = rest[1:]
-    if sub in GIT_READ:
-        read = not _has(args, ("--output",))
-    elif sub in ("branch", "tag"):
-        read = all(a in GIT_READ_WITH[sub] for a in args)
+    if any(a == d or a.startswith(d + "=") or (d == "-O" and a.startswith("-O"))
+           for a in args for d in GIT_DENY):
+        read = False
+    elif sub in GIT_READ:
+        read = True
+    elif sub in GIT_LIST:
+        read = all(a in GIT_LIST[sub] for a in args)
     elif sub == "remote":
-        read = not args or args == ["-v"] or args[0] in ("show", "get-url")
+        read = not args or args == ["-v"] or (args[0] in ("show", "get-url") and all(
+            not a.startswith("-") for a in args[1:]))
     elif sub == "config":
-        read = _has(args, GIT_READ_WITH["config"]) and not _has(args, (
-            "--add", "--unset", "--replace-all", "--rename-section", "--remove-section", "-e",
-            "--edit"))
-    elif sub in ("stash", "worktree"):
-        read = bool(args) and args[0] in GIT_READ_WITH[sub]
+        read = bool(args) and args[0] in ("--get", "--get-all", "--list", "-l") and len(args) <= 2
+    elif sub == "stash":
+        read = bool(args) and args[0] == "list"
+    elif sub == "worktree":
+        read = args == ["list"]
     else:
         read = False
     if read:
@@ -352,9 +481,60 @@ def _git(rest: list[str]) -> dict:
     return {"kind": "change", "title": "Change a git checkout", "want": f"run git {sub}".strip()}
 
 
+def _has(rest: list[str], marks: tuple) -> bool:
+    return any(a == m or a.startswith(m) for a in rest for m in marks)
+
+
+def _reads(prog: str, rest: list[str]) -> bool:
+    """Whether ``prog rest`` only reads, by the allowlists above."""
+    words = [a for a in rest if not a.startswith("-")]
+    if prog in READ_ANY:
+        return True
+    if prog in READ_FLAGS:
+        longs, shorts = READ_FLAGS[prog]
+        if not _flags_ok(rest, longs, shorts):
+            return False
+        check = READ_WORDS.get(prog)
+        return check is None or check(words)
+    if prog == "hostname":
+        return not rest or all(a in ("-f", "-s", "-i", "-I", "-d", "--fqdn", "--short",
+                                     "--ip-address", "--all-ip-addresses") for a in rest)
+    if prog == "ip":
+        if not words:
+            return False
+        objs = [a for a in rest if a in IP_OBJECTS]
+        rest_words = [a for a in rest if a not in IP_OBJECTS]
+        return bool(objs) and (not rest_words or rest_words[0] in IP_VERBS)
+    if prog in READ_SUBS:
+        if _has(rest, SUB_DENY):
+            return False
+        sub = words[0] if words else ""
+        if not sub:
+            return prog in READ_BARE
+        return sub in READ_SUBS[prog]
+    if prog == "pacman":
+        first = rest[0] if rest else ""
+        return (first.startswith("-Q") or first in ("-Ss", "-Si")) and all(
+            not a.startswith("-") for a in rest[1:])
+    if prog == "curl":
+        urls = [w for w in words if "://" in w]
+        return bool(urls) and all(u.startswith(("http://", "https://")) for u in urls) and \
+            _flags_ok(rest, CURL_READ_LONG, CURL_READ_SHORT)
+    if prog == "gh":
+        sub = rest[0] if rest else ""
+        if sub == "api":
+            return _flags_ok(rest[1:], GH_API_READ, GH_API_SHORT)
+        return sub in ("pr", "run", "issue", "repo", "release") and len(rest) > 1 and rest[1] in (
+            "view", "list", "status", "diff", "checks")
+    return False
+
+
 def _shell_segment(argv: list[str], depth: int = 0) -> dict:
     """``{kind: read|change|destroy, title, want}`` for one simple command."""
     argv = _unwrap(argv)
+    if argv is None:
+        return {"kind": "change", "title": "Run a command",
+                "want": "run a command with settings that change how it runs"}
     if not argv:
         return {"kind": "change", "title": "Run a command", "want": "run a command"}
     if argv[0] == "<script>":
@@ -364,87 +544,48 @@ def _shell_segment(argv: list[str], depth: int = 0) -> dict:
     prog = _base(argv[0])
     rest = argv[1:]
     words = [a for a in rest if not a.startswith("-")]
-    sub = words[0] if words else ""
     if prog == "sqlite3":
         return _sqlite(rest)
     if prog == "git":
         return _git(rest)
+    if prog == "ssh":
+        return {"kind": "change", "title": "Run a command over ssh",
+                "want": "run a command on another machine over ssh"}
+    reads = _reads(prog, rest)
     if prog in ("systemctl", "service"):
+        sub = words[0] if words else ""
         unit = words[1] if len(words) > 1 else ""
         if prog == "service":
-            unit, sub = (words[0], words[1]) if len(words) > 1 else (sub, "status")
-        if sub in READ_SUBS["systemctl"]:
+            unit, sub = (words[0], words[1]) if len(words) > 1 else (sub, "")
+        if reads or (prog == "service" and sub == "status"):
             return {"kind": "read", "title": "Check a service" if unit else "Check services",
                     "want": f"check the status of {unit or 'services'}"}
         verb = SERVICE_VERBS.get(sub, sub)
-        return {"kind": "change", "title": f"{verb.capitalize()} {unit or 'a service'}",
+        return {"kind": "change", "title": f"{verb.capitalize()} {unit or 'a service'}".strip(),
                 "want": f"{verb} the service {unit}".strip()}
-    if prog in READ_SUBS:
-        if sub in READ_SUBS[prog] and len(words) <= (1 if prog in ("hostnamectl",) else 99):
-            return {"kind": "read", "title": f"Look at {prog}", "want": f"run {prog} {sub}".strip()}
-        if prog in ("apt", "pip", "npm"):
-            return {"kind": "change", "title": "Install or change software",
-                    "want": f"run {prog} {sub}".strip()}
-        if prog in ("docker", "podman", "kubectl"):
-            kind = "destroy" if sub in ("rm", "rmi", "prune", "delete", "down", "kill") else "change"
-            return {"kind": kind, "title": f"Change containers ({sub})" if sub else f"Run {prog}",
-                    "want": f"run {prog} {sub}".strip()}
-        return {"kind": "change", "title": f"Change {prog} settings" if sub else f"Run {prog}",
-                "want": f"run {prog} {sub}".strip()}
-    if prog == "pacman":
-        first = next((a for a in rest if a.startswith("-")), "")
-        if first.startswith("-Q") or first in ("-Ss", "-Si"):
-            return {"kind": "read", "title": "Look at packages", "want": "list or search packages"}
-        return {"kind": "change", "title": "Install or change software", "want": "run pacman"}
-    if prog == "gh":
-        if sub == "api" and not _has(rest, GH_WRITE) and not (_short_flags(rest) & set("XfF")):
-            return {"kind": "read", "title": "Look at GitHub", "want": "read the GitHub API"}
-        if sub in ("pr", "run", "issue", "repo", "release") and len(words) > 1 and words[1] in (
-                "view", "list", "status", "diff", "checks"):
-            return {"kind": "read", "title": "Look at GitHub", "want": f"read GitHub ({sub})"}
-        return {"kind": "change", "title": "Change something on GitHub", "want": f"run gh {sub}"}
-    if prog == "ip":
-        writes = {"add", "del", "delete", "set", "change", "replace", "flush", "append", "save",
-                  "restore", "monitor", "exec", "attach", "detach"}
-        if not (set(words) & writes):
-            return {"kind": "read", "title": "Look at the network", "want": "show network settings"}
-        return {"kind": "change", "title": "Change the network", "want": "change network settings"}
-    if prog == "hostname":
-        if not words and not _has(rest, ("-F", "--file", "-b", "--boot")):
-            return {"kind": "read", "title": "Check the machine", "want": "show the host name"}
-        return {"kind": "change", "title": "Change the host name", "want": "set the host name"}
-    if prog == "date":
-        if not _has(rest, ("-s", "--set")) and all(w.startswith("+") for w in words):
-            return {"kind": "read", "title": "Check the machine", "want": "show the date"}
-        return {"kind": "change", "title": "Set the clock", "want": "set the system clock"}
-    if prog == "nvidia-smi":
-        flags_ok = all(a.startswith(NVIDIA_READ) for a in rest if a.startswith("-"))
-        if flags_ok and all(w in ("dmon", "pmon") or w.isdigit() for w in words):
-            return {"kind": "read", "title": "Check the GPUs", "want": "show GPU status"}
-        return {"kind": "change", "title": "Change GPU settings", "want": "run nvidia-smi"}
-    if prog == "uniq" and len(words) <= 1:
-        return {"kind": "read", "title": "Check the machine", "want": "run uniq"}
-    if prog in READ_UNLESS:
-        if _has(rest, READ_UNLESS[prog]):
-            kind = "destroy" if prog == "find" and "-delete" in rest else "change"
-            return {"kind": kind, "title": "Find and change files" if prog == "find"
-                    else f"Run {prog}", "want": f"run {prog} with options that change things"}
+    if reads:
+        target = next((w for w in words if "/" in w or "." in w), "")
         if prog in ("journalctl", "dmesg"):
             return {"kind": "read", "title": "Read logs", "want": "read the system logs"}
-        if prog in ("find", "tree"):
-            return {"kind": "read", "title": "Look at files", "want": "list files"}
-        return {"kind": "read", "title": "Search files" if prog == "rg" else "Check the machine",
-                "want": f"run {prog}"}
-    if prog in READ_PROGS:
-        target = next((w for w in words if "/" in w or "." in w), "")
-        if prog in ("cat", "head", "tail", "less", "more", "zcat", "tac", "nl"):
+        if prog in ("cat", "head", "tail", "zcat", "tac", "nl"):
             return {"kind": "read", "title": f"Read {_base(target)}" if target else "Read a file",
                     "want": f"read {target}" if target else "read a file"}
-        if prog in ("ls", "ll", "stat", "du", "df", "fd", "file"):
+        if prog in ("ls", "stat", "du", "df", "find"):
             return {"kind": "read", "title": "Look at files",
                     "want": f"list files{' in ' + target if target else ''}"}
-        if prog in ("grep", "egrep", "fgrep", "ag", "zgrep"):
+        if prog in ("grep", "egrep", "fgrep", "zgrep", "rg"):
             return {"kind": "read", "title": "Search files", "want": "search files for text"}
+        if prog == "curl":
+            return {"kind": "read", "title": "Fetch a web page", "want": "fetch a URL"}
+        if prog in ("gh",):
+            return {"kind": "read", "title": "Look at GitHub", "want": "read from GitHub"}
+        if prog == "ip":
+            return {"kind": "read", "title": "Look at the network", "want": "show network settings"}
+        if prog == "nvidia-smi":
+            return {"kind": "read", "title": "Check the GPUs", "want": "show GPU status"}
+        if prog in READ_SUBS or prog == "pacman":
+            return {"kind": "read", "title": f"Look at {prog}", "want": f"run {prog} "
+                    f"{words[0] if words else ''}".strip()}
         return {"kind": "read", "title": "Check the machine", "want": f"run {prog}"}
     if prog in DESTROY_PROGS:
         what = {"reboot": "reboot the machine", "shutdown": "shut the machine down",
@@ -456,24 +597,29 @@ def _shell_segment(argv: list[str], depth: int = 0) -> dict:
             return {"kind": "destroy", "title": "Stop a process", "want": "stop a running process"}
         return {"kind": "destroy", "title": "Delete files" if prog in ("rm", "rmdir", "shred")
                 else "Erase a disk or file", "want": f"run {prog}, which deletes data"}
-    if prog == "curl":
-        if not _has(rest, ("-X",) + CURL_WRITE_LONG) and not (_short_flags(
-                [a for a in rest if not a.startswith("--")]) & CURL_WRITE_SHORT):
-            return {"kind": "read", "title": "Fetch a web page", "want": "fetch a URL"}
-        return {"kind": "change", "title": "Send or save a web request",
-                "want": "send a web request that can change or save things"}
+    if prog == "find" and _has(rest, ("-delete",)):
+        return {"kind": "destroy", "title": "Find and delete files", "want": "find and delete files"}
+    if prog == "sed" and (_has(rest, ("--in-place",)) or any(
+            re.match(r"-[A-Za-z]*i", a) for a in rest if not a.startswith("--"))):
+        return {"kind": "change", "title": "Edit a file", "want": "edit a file in place"}
     if prog in ("cp", "mv", "tee", "touch", "mkdir", "ln", "chmod", "chown", "install",
-                "rsync", "scp", "tar", "unzip", "wget", "sed", "awk", "patch"):
-        if prog == "sed" and (_has(rest, ("--in-place",)) or "i" in _short_flags(rest)):
-            return {"kind": "change", "title": "Edit a file", "want": "edit a file in place"}
-        return {"kind": "change", "title": "Change files", "want": f"run {prog}, which can change files"}
+                "rsync", "scp", "tar", "unzip", "wget", "sed", "awk", "patch", "curl"):
+        return {"kind": "change", "title": "Change files" if prog != "curl"
+                else "Send or save a web request", "want": f"run {prog}, which can change things"}
+    if prog in ("apt", "apt-get", "pip", "pip3", "npm", "pacman", "yay", "dnf", "brew"):
+        return {"kind": "change", "title": "Install or change software",
+                "want": f"run {prog} {words[0] if words else ''}".strip()}
+    if prog in ("docker", "podman", "kubectl"):
+        sub = words[0] if words else ""
+        kind = "destroy" if sub in ("rm", "rmi", "prune", "delete", "down", "kill") else "change"
+        return {"kind": kind, "title": f"Change containers ({sub})" if sub else f"Run {prog}",
+                "want": f"run {prog} {sub}".strip()}
     if "deploy" in " ".join(argv).lower():
         return {"kind": "change", "title": "Deploy", "want": "run a deploy script"}
-    if prog in ("python", "python3", "node", "bash", "sh", "make", "cargo", "go", "pytest",
-                "rook-pytest", "npx", "uv", "ruby", "perl"):
-        if prog in ("pytest", "rook-pytest") or (prog in ("python", "python3") and
-                                                  "pytest" in rest):
-            return {"kind": "change", "title": "Run tests", "want": "run the test suite"}
+    if prog in ("pytest", "rook-pytest") or (prog in ("python", "python3") and "pytest" in rest):
+        return {"kind": "change", "title": "Run tests", "want": "run the test suite"}
+    if prog in ("python", "python3", "node", "bash", "sh", "make", "cargo", "go", "npx", "uv",
+                "ruby", "perl"):
         script = next((w for w in words), "")
         return {"kind": "change", "title": f"Run {_base(script) or prog}",
                 "want": f"run {prog} {_base(script)}".strip()}
@@ -481,15 +627,15 @@ def _shell_segment(argv: list[str], depth: int = 0) -> dict:
 
 
 def _script(script: str, depth: int = 0) -> dict:
-    segs_raw = _segments(script)
-    if segs_raw is None:
+    parsed = _tokens(script)
+    if parsed is None:
         return {"kind": "change", "title": "Run a script",
                 "want": "run a shell script (not checked: it uses shell features the summary "
                         "does not follow)", "steps": 1}
+    segs_raw, writes = parsed
     segs = [_shell_segment(s, depth) for s in segs_raw] or [
         {"kind": "change", "title": "Run a script", "want": "run a shell script"}]
-    path = _writes_file(script)
-    if path is not None:
+    for path in writes:
         segs.append({"kind": "change", "title": f"Write {_base(path)}", "want": f"write {path}"})
     kinds = {s["kind"] for s in segs}
     kind = "destroy" if "destroy" in kinds else "change" if "change" in kinds else "read"
@@ -501,18 +647,19 @@ def _script(script: str, depth: int = 0) -> dict:
 
 def shell_summary(args: Any) -> dict:
     """``{kind, title, want, command}`` for a shell call: ``kind`` is read
-    only when every part of the command is understood and only reads (said as
+    only when every part of the command is on the read allowlists (said as
     "looks read-only"), destroy when any part deletes, else change."""
     argv = _argv(args)
     if not argv:
         return {"kind": "change", "title": "Run a command", "want": "run a command", "command": ""}
     inner = _unwrap(argv)
-    if inner[:1] == ["<script>"]:
+    if inner is not None and inner[:1] == ["<script>"]:
         out = _script(inner[1])
         command = inner[1]
     else:
-        out = _shell_segment(inner)
-        out.setdefault("steps", 1)
+        out = _shell_segment(argv)
+        if any(a in _REDIRS for a in argv):
+            out = {**out, "kind": "destroy" if out["kind"] == "destroy" else "change"}
         command = " ".join(argv)
     return {"kind": out["kind"], "title": out["title"], "want": out["want"],
             "command": short(command, 300), "steps": out.get("steps", 1)}
