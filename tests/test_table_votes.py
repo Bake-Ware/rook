@@ -320,9 +320,10 @@ async def test_a_veto_gets_one_resolution_round_then_a_one_line_ask_to_the_perso
     front = table.node.plugin("home").front
     ask = front.store.ask(m["ask"])
     assert ask["kind"] == "vote" and len(ask["line"]) <= 160
-    assert ask["line"].startswith("Merge bake-ware/rook#7") and "skeptic said no" in ask["line"]
-    assert ask["explain"].startswith("For: lead: Docs only") and "Against: skeptic:" in ask["explain"]
-    assert "Same risk" in ask["explain"]
+    assert ask["line"] == "Merge bake-ware/rook#7? skeptic said no."
+    assert ask["explain"].startswith("bake-ware/rook#7: Docs: a line at 1111111. For: lead: Docs")
+    assert "Against: skeptic: Still deletes the test." in ask["explain"]
+    assert "truncated" not in ask["explain"]
     # It is in the relayed approvals list (the phone's card, rook_approvals).
     relay = table.node.plugin("approvals").relay
     item = next(i for i in relay.items() if i["kind"] == "house" and i["id"] == ask["id"])
@@ -368,6 +369,9 @@ async def test_couldnt_verify_counts_as_no_and_a_yes_must_show_its_work(table):
     assert "needs evidence" in got["security"]["note"]
     assert "names a specific risk" in got["skeptic"]["note"]
     assert m["state"] == "asked" and not _merges(table)
+    ask = table.node.plugin("home").front.store.ask(m["ask"])
+    assert ask["line"] == ("Merge bake-ware/rook#7? lead, qa, security and skeptic couldn't "
+                           "verify.")
     msgs = "\n".join(t for _, t in _texts(table, room))
     assert "COULDN'T VERIFY (counts as no)" in msgs
 
@@ -400,6 +404,12 @@ async def test_authors_never_vote_on_their_own_work_and_a_stand_in_takes_the_sea
     assert m["seats"][0]["role"] is None and "lead wrote the work" in m["seats"][0]["note"]
     assert m["state"] == "withdrawn"
     assert len(_merges(table)) == 1
+
+
+@pytest.mark.asyncio
+async def test_words_cuts_at_a_word_with_no_marker():
+    assert TB.words("one two three four", 12) == "one two\u2026"
+    assert TB.words("short", 12) == "short"
 
 
 @pytest.mark.asyncio
