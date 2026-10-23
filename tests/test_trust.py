@@ -210,6 +210,19 @@ def test_the_journal_row_carries_the_citation(tmp_path):
     assert "trust:pianobar-super@v" in rule
 
 
+def test_the_map_holds_even_with_blanket_approval_holds_off(tmp_path):
+    ap = A.Approvals(str(tmp_path / "approvals.db"), A.Config(enabled=False, contact=()),
+                     trust=seeded())
+    az = Authorizer(PolicyStore(str(tmp_path / "policy.json")), None, approvals=ap)
+    d = check(az, "shell.exec", "kaiju")
+    assert d.held and d.hold_kind == "trust" and BAKE_KAIJU in d.hold_reason
+    assert check(az, "shell.exec", "bakenetcanada").hold_kind == "trust"
+    assert not check(az, "worker.update", "cachyrig").held           # blanket holds stay off
+    ship = check(az, "worker.update", "pianobar")
+    assert not ship.held and ship.trust_rule.startswith("trust:pianobar-super@v")
+    assert not check(az, "shell.exec", "kaiju", principal=OWNER).held
+
+
 def test_no_map_file_is_the_old_behaviour(tmp_path):
     az = authorizer(tmp_path, T.TrustStore(str(tmp_path / "trust.json")))
     assert not check(az, "shell.exec", "kaiju").held

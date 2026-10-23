@@ -44,6 +44,10 @@ Anything not on the map is **Everything else**. It starts as *balanced*:
 changes go and admin actions ask, which is how Rook behaved before the map
 existed. You can make it guarded or sacred on the Trust page.
 
+The map holds even when approval holds are switched off (Settings > Hub >
+Approvals): that switch turns off the blanket holds on risky actions, not
+the entries you set here.
+
 ## What you see when the map stops an agent
 
 A held call shows on **Approvals** with the entry it came from, for example

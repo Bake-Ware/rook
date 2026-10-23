@@ -81,7 +81,7 @@ export async function mountApprovals(root, opts = {}){
     else if((hh.workers || []).length) hubhost.textContent = 'Treated as running on the hub’s machine (exec calls there are held): ' + hh.workers.map(w => w.worker).join(', ') + '.';
     else hubhost.textContent = hh.note ? 'Hub-machine workers: ' + hh.note + '.' : '';
     note.textContent = s.enabled === false
-      ? 'Approval holds are off (Settings > Hub > Approvals). Only the permission policy applies.'
+      ? 'Approval holds are off (Settings > Hub > Approvals). Only the permission policy and the trust map (Manage > Trust) apply.'
       : 'Agents wait up to ' + Math.round(s.wait_secs || 0) + ' s for your answer, then are told to ask you and retry. ' +
         'An approval covers one identical call for ' + Math.round((s.approval_secs || 600) / 60) + ' minutes.';
     waiting.replaceChildren(...(data.pending.length ? data.pending.map(x => card(x, s))

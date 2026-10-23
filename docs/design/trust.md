@@ -71,6 +71,10 @@ code): `ask` or `person` from an entry (or a tightened `unlisted`) becomes a
 hold of kind `trust` whose reason is the citation; the agent's held reply
 says the same. Approving it on the Approvals page (or a relayed approval in
 the person's words) runs that one call: the person's direct instruction.
+The trust map holds even when `approvals.enabled` is off (the live hub has
+had blanket holds off since Bake turned them off on 2026-10-14): that switch
+turns off the built-in admin/destructive, operator-rule and spread holds, not
+the map the person asked for by name.
 `go` adds no hold; the band's other holds (built-in admin/destructive,
 operator rules, hub-host, spread) still apply. A ship-it entry never lowers
 a hold the band already had, and unlisted/balanced is exactly the hub's
