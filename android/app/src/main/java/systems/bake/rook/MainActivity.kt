@@ -37,6 +37,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
     private var eventTurn: Int? = null
     private val userTurns = mutableSetOf<TurnKey>()
     private lateinit var panels: ConversationPanels
+    private lateinit var attention: AttentionPanel
     private var connectionGeneration = -1L
     private var state = "idle"
     private var photoUri: Uri? = null
@@ -61,7 +62,10 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         chat = ChatAdapter { prefs.getBoolean("show_thinking", false) }
         b.chatList.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this).apply { stackFromEnd = true }
         b.chatList.adapter = chat
-        panels = ConversationPanels(this, b, lifecycleScope)
+        attention = AttentionPanel(this, b) { askNotifications() }
+        panels = ConversationPanels(this, b, lifecycleScope, attention)
+        attention.onChanged = { panels.attentionChanged() }
+        b.attentionSetup.setOnClickListener { panels.selectAttention() }
         b.versionLabel.text = "APK ${BuildConfig.VERSION_NAME} · ${BuildConfig.VERSION_CODE}"
         maybeRequestNotifications()
         // A force-stop clears alarms without telling us; arming again is idempotent.
@@ -285,6 +289,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         // After the replay: panels skip per-event renders while replaying and render once here.
         panels.resume()
         renderTimers()
+        attention.resume()
         onState(VoiceBus.state)
         if (intent?.action == Intent.ACTION_ASSIST) {
             intent.action = null
@@ -292,14 +297,21 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         }
     }
 
-    override fun onPause() { panels.pause(); b.timersRow.removeCallbacks(timerTick); if (VoiceBus.listener === this) VoiceBus.listener = null; super.onPause() }
+    override fun onPause() { attention.pause(); panels.pause(); b.timersRow.removeCallbacks(timerTick); if (VoiceBus.listener === this) VoiceBus.listener = null; super.onPause() }
 
     override fun onStop() {
         VoiceService.inst?.releaseIfIdle()
         super.onStop()
     }
 
-    private val notifPermLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private val notifPermLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { attention.render() }
+    /** From the Attention setup: the runtime prompt, or the app's notification settings once Android stops asking. */
+    private fun askNotifications() {
+        if (Build.VERSION.SDK_INT >= 33 && prefs.getBoolean("notif_asked", false) &&
+            !shouldShowRequestPermissionRationale(android.Manifest.permission.POST_NOTIFICATIONS))
+            startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, packageName))
+        else { prefs.edit().putBoolean("notif_asked", true).apply(); maybeRequestNotifications() }
+    }
     private fun maybeRequestNotifications() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)

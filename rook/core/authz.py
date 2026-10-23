@@ -126,6 +126,9 @@ _CORE_SPEC = {
     "ui.nodes": "X s", "ui.click": "X", "ui.scroll": "X", "ui.back": "X",
     "voice.speak": "W p", "voice.speak_status": "R", "voice.replies": "R",
     "voice.speak_stop": "W", "voice.speak_voices": "R",
+    # attention (decision cards, read/ack signals, the phone's notification feed)
+    "attention.post": "X", "attention.update": "X", "attention.poll": "X s",
+    "attention.feed": "X s", "attention.rules_get": "X s", "attention.rules_set": "X",
 }
 
 CORE: dict[str, tuple[str, tuple[str, ...]]] = {c: _t(s) for c, s in _CORE_SPEC.items()}

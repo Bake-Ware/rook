@@ -865,6 +865,36 @@
   }
  },
  "android": {
+  "attention.feed": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "attention.poll": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "attention.post": {
+   "tier": "exec",
+   "tags": []
+  },
+  "attention.rules_get": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "attention.rules_set": {
+   "tier": "exec",
+   "tags": []
+  },
+  "attention.update": {
+   "tier": "exec",
+   "tags": []
+  },
   "battery.status": {
    "tier": "read",
    "tags": []

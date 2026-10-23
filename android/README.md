@@ -145,3 +145,15 @@ The version-2 backend preserves conversation and tool results across reconnects.
 Interrupting speech does not cancel background work; explicitly ask to stop a
 job when that is intended. See [the voice service](../services/voice/README.md)
 for protocol, deployment and acoustic-test limitations.
+
+## Attention: decision cards and the quiet feed
+
+`attention.*` puts Yes/No decision cards on the phone and reports what was
+done with them (decided, seen, opened, dismissed, acknowledged, unlocked);
+the notification listener also sorts other apps' notifications on the phone
+into urgent / family / normal / ignore with `assets/attention_rules.json`.
+Content stays on the phone; only short summaries of urgent and family items
+leave it. The **Attention** tab lists the grants it needs, waiting cards and
+the feed. Contract, privacy and rules: [docs/design/attention-phone.md](../docs/design/attention-phone.md).
+
+Settings → App → Stable / Beta picks the APK update channel (stable by default).

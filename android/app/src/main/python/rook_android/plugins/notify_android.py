@@ -21,6 +21,22 @@ except Exception:  # pragma: no cover
     _Listener = None
 
 
+#: notify.post ``channel`` names -> the app's attention channels (AttentionChannels.kt).
+CHANNELS = {"urgent": "rook_urgent", "family": "rook_family", "approvals": "rook_approvals",
+            "digest": "rook_digest", "jobs": "rook_jobs"}
+
+
+def channel_id(name) -> str | None:
+    """The Android channel for a notify.post ``channel``; None = the plain "Rook messages" channel.
+    Raises ValueError for an unknown name."""
+    key = str(name or "").strip().lower()
+    if not key:
+        return None
+    if key not in CHANNELS:
+        raise ValueError(f"channel must be one of {sorted(CHANNELS)}")
+    return CHANNELS[key]
+
+
 def _packages(value) -> set[str]:
     """Package filter from a list or a comma/space separated string (empty = all)."""
     if value is None:
@@ -78,8 +94,17 @@ class AndroidNotifyPlugin(Plugin):
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
     @capability("post", risk="exec")
-    def _post(self, title: str = "rook", text: str = "") -> dict:
-        """Post a local notification on the phone (needs POST_NOTIFICATIONS)."""
+    def _post(self, title: str = "rook", text: str = "", channel: str = "") -> dict:
+        """Post a local notification on the phone (needs POST_NOTIFICATIONS).
+
+        channel: empty = the ordinary "Rook messages" channel; or one of the
+        attention channels urgent (alarm sound, through Do Not Disturb when
+        allowed), family, approvals (heads-up), digest (quiet), jobs (silent).
+        """
+        try:
+            attention_channel = channel_id(channel)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
         ctx = app_context()
         if ctx is None:
             return {"ok": False, "error": "not an Android host"}
@@ -91,8 +116,11 @@ class AndroidNotifyPlugin(Plugin):
             Builder = jclass("android.app.Notification$Builder")
             VER = jclass("android.os.Build$VERSION")
             nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE)
-            chan_id = "rook_msgs"
-            if VER.SDK_INT >= 26:
+            chan_id = attention_channel or "rook_msgs"
+            if attention_channel:
+                jclass("systems.bake.rook.AttentionChannels").ensure(ctx)
+                b = Builder(ctx, chan_id) if VER.SDK_INT >= 26 else Builder(ctx)
+            elif VER.SDK_INT >= 26:
                 ch = NotificationChannel(chan_id, "Rook messages", NotificationManager.IMPORTANCE_DEFAULT)
                 nm.createNotificationChannel(ch)
                 b = Builder(ctx, chan_id)
@@ -103,7 +131,7 @@ class AndroidNotifyPlugin(Plugin):
             b.setContentIntent(jclass("systems.bake.rook.NotificationNavigation").mainActivity(ctx))
             nid = int(time.time()) & 0x7fffffff
             nm.notify(nid, b.build())
-            return {"ok": True, "id": nid}
+            return {"ok": True, "id": nid, "channel": chan_id}
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 

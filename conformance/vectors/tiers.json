@@ -45,6 +45,33 @@
   "approvals.relay": {
    "tier": "write"
   },
+  "attention.feed": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "attention.poll": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "attention.post": {
+   "tier": "exec"
+  },
+  "attention.rules_get": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "attention.rules_set": {
+   "tier": "exec"
+  },
+  "attention.update": {
+   "tier": "exec"
+  },
   "band.admin": {
    "tier": "admin",
    "tags": [
