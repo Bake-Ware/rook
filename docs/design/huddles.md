@@ -722,10 +722,12 @@ H4's settings group can follow in parallel; H3 needs H1 and H2; H5 last.
 
 ## 10. H6: the house agent's front door, the trust map and the conference table (as built 2026-10-23)
 
-Status: built 2026-10-23 (overnight track B, phases B1 to B4). B1 to B3
-are merged and live; B4 (the conference table and votes, 10.5 to 10.7) is
-built on branch `overnight-b4/table-votes` and described here as that code
-stands. This replaces the H6 proposal of 2026-10-21 (episodes, intake,
+Status: built 2026-10-23 (overnight track B, phases B1 to B4), all merged
+and live (B4, the conference table and votes, 10.5 to 10.7: PR #175, hub
+919.rustic.turnip). Verified live on [TEST] pull requests into a throwaway
+branch: one pinned, gated, voted yes by lead, qa, security and skeptic, and
+merged by the hub at the voted SHA; one blocked by all four and asked of the
+person. This replaces the H6 proposal of 2026-10-21 (episodes, intake,
 report-back and action tiers; PR #147, huddle husky-stairwell-hive), which
 is not built in that form. Vision: Rook knowledge page `house-agent-vision`.
 
@@ -929,7 +931,7 @@ reason; the gates run again just before execution.
   and never overrules. A second blocked vote, an escalation, or a chair
   that cannot decide goes to the person.
 - *The person's ask* is the front door's: kind `vote` in `front_asks`, one
-  line ("Merge Bake-Ware/rook#180: <title>? security said no"), the explanation with
+  line ("Merge bake-ware/rook#180? security said no."), the explanation with
   each side summarised, the full ballots under Explain. So the phone's
   decision card, `rook_approvals` and the Decisions page carry it. Yes
   carries the vote out (gates again first); No drops it.
@@ -983,7 +985,7 @@ ready". The repository's trust entry is guarded for `master` only.
    me?". Interruptions: 0.
 
 If someone votes no and the chair's one round does not settle it, Bake
-gets one card: "Merge Bake-Ware/rook#180: <title>? security said no" (Yes /
+gets one card: "Merge bake-ware/rook#180? security said no." (Yes /
 No / Explain). A deploy of the merged commit is another vote and, with the
 default ramp, one card after it passes.
 
