@@ -232,6 +232,12 @@ _CLAIM = re.compile(
     r"ran|run|set up|installed)\b", re.I)
 
 
+#: While setting a project up only the answers are recorded: a model line
+#: saying it already set or marked something is dropped (the hub's question
+#: and, after setup, its read-back say what is set).
+_SET_CLAIM = re.compile(r"\b(?:i(?:'ve| have)?|it'?s|it is|that'?s|that is)\s+(?:now\s+|just\s+)?"
+                        r"(?:set|marked|made|configured|created|saved|recorded)\b", re.I)
+
 _GONE = re.compile(r"(?:^|[._-])(delete|remove|rm|drop|purge|wipe|erase|format|destroy|reset|"
                    r"uninstall|deauth|revoke|kill|truncate|prune|forget)(?:$|[._-])", re.I)
 _GONE_ARGV = re.compile(r"^(rm|rmdir|dd|mkfs\S*|shred|wipefs|fdisk|parted|shutdown|reboot|"
@@ -305,8 +311,10 @@ def compose(state: dict, content: str) -> tuple[str, str]:
             text = "Nothing has been done yet. " + text
     elif did:
         text = _LEAD_DONE.sub("", text)
-    if ask_last and text.rstrip().endswith("?"):
-        text = ""        # one question at a time: the hub's
+    if ask_last and (text.rstrip().endswith("?") or (
+            not did and not started and not state.get("acted")
+            and (_CLAIM.search(text) or _SET_CLAIM.search(text)))):
+        text = ""        # one question at a time, and nothing claimed as set: the hub's
     out = " ".join(p for p in heads + [text, ask_last] if p).strip()
     return out or "(no answer)", path
 

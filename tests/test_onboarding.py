@@ -511,3 +511,18 @@ async def test_an_archived_project_gets_no_more_check_ins(ob):
                                             "state": "archived"}}}, "human:op")
     assert await ob.ob.sweep(now=time.time() + 30 * 86400) == []
     assert ob.front.store._q("SELECT state FROM onboard_projects")[0]["state"] == "archived"
+
+
+@pytest.mark.asyncio
+async def test_during_intake_a_claim_to_have_set_something_is_dropped(ob):
+    await turn(ob, "let's build it", ("offer_project", {"title": "Wifi namer"}))
+    await turn(ob, "yes", ("project_intake", {"answer": "start", "words": "yes"}))
+    await turn(ob, "new folder on cachyrig", ("project_intake", {
+        "answer": "where", "machine": "cachyrig", "words": "new folder on cachyrig"}))
+    out = await turn(ob, "it's just a toy", ("project_intake", {
+        "answer": "protection", "level": "toy", "words": "it's just a toy"}),
+        text="I've set it as a toy, so agents can ship changes without asking you.")
+    assert out["answer"] == O.QUESTIONS["touches"]
+    out = await turn(ob, "nothing shared", ("project_intake", {
+        "answer": "touches", "nothing": True, "words": "nothing shared"}), text="Got it.")
+    assert out["answer"].startswith("Got it. Here's the plan for Wifi namer")
