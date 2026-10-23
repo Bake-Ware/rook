@@ -510,6 +510,11 @@ class SettingsActivity : AppCompatActivity() {
     // ---- app --------------------------------------------------------------
 
     private fun setupAgentControl() {
+        b.assistantActions.isChecked = prefs.getBoolean("assistant_actions", false)
+        b.assistantActions.setOnCheckedChangeListener { _, on ->
+            prefs.edit().putBoolean("assistant_actions", on).apply()
+            status("assistant actions on this phone ${if (on) "on" else "off"}")
+        }
         b.keepAwakeAuto.isChecked = KeepAwake.autoEnabled(this)
         b.keepAwakeAuto.setOnCheckedChangeListener { _, enabled ->
             prefs.edit().putBoolean(KeepAwake.PREF_AUTO, enabled).apply()

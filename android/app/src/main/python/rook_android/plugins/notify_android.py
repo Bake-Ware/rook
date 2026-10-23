@@ -113,6 +113,14 @@ class AndroidNotifyPlugin(Plugin):
             return {"ok": False, "error": "not an Android host"}
         ctx = app_context()
         try:
+            allowed = bool(ctx.getSharedPreferences("rook", 0).getBoolean("assistant_actions", False))
+        except Exception:
+            allowed = False
+        if not allowed:
+            return {"ok": False, "needs_setting": "assistant_actions",
+                    "error": "this phone doesn't let the assistant act here: on the phone, Settings > "
+                             "App > \"Let the assistant act for me on this phone\""}
+        try:
             index = action
             if isinstance(action, str) and not action.strip().lstrip("-").isdigit():
                 acts = json.loads(str(_Listener.actionsJson(str(key))))

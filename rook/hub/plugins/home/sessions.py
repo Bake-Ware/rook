@@ -1145,19 +1145,14 @@ class Sessions:
 
     # -- the owner's phone, for the brief --------------------------------------------------
     def brief_phone(self) -> str:
-        """The owner's phone the brief reads (home.brief_phone, else the first phone the
-        attention plugin rings), or ""."""
+        """The owner's own phone (home.brief_phone), never a family device, or ""."""
         name = str(self.home.settings.get("brief_phone") or "").strip()
-        if name:
-            return name
+        if not name:
+            return ""
         with contextlib.suppress(Exception):
-            ap = self.home._node.plugin("attention")
-            devs = ap.settings.get("devices") if ap is not None else None
-            if isinstance(devs, str):
-                devs = [d for d in devs.replace(",", "\n").splitlines() if d.strip()]
-            if devs:
-                return str(devs[0]).strip()
-        return ""
+            if name.lower() in self.home.front._protected():
+                return ""
+        return name
 
     async def _phone_call(self, worker: str, cap: str, args: dict) -> dict | None:
         front = self.home.front

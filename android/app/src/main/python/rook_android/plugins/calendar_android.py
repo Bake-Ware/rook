@@ -23,6 +23,16 @@ _EVENTS = "content://com.android.calendar/events"
 _CALENDARS = "content://com.android.calendar/calendars"
 # CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR: the account may add events.
 _CAN_WRITE = 500
+#: The phone's own opt-in (Settings > App), off by default: without it nothing is changed.
+NOT_ALLOWED = ("this phone doesn't let the assistant change things: on the phone, Settings > App > "
+               "\"Let the assistant act for me on this phone\"")
+
+
+def assistant_allowed(ctx) -> bool:
+    try:
+        return bool(ctx.getSharedPreferences("rook", 0).getBoolean("assistant_actions", False))
+    except Exception:
+        return False
 NO_PERMISSION = ("calendar access not granted: open Rook on the phone, Settings > "
                  "Permissions > \"Grant SMS / contacts / calendar / location\", and allow Calendar")
 DAY_MS = 24 * 3600 * 1000
@@ -256,6 +266,8 @@ class AndroidCalendarPlugin(Plugin):
     def _writable(self, ctx):
         if ctx is None:
             return {"ok": False, "error": "not an Android host"}
+        if not assistant_allowed(ctx):
+            return {"ok": False, "error": NOT_ALLOWED, "needs_setting": "assistant_actions"}
         if not has_permission(_WRITE_CALENDAR):
             return {"ok": False, "error": NO_WRITE, "needs_permission": "WRITE_CALENDAR"}
         return None

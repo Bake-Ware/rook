@@ -298,10 +298,13 @@ them: it routes the lookup with `queue`.
 
 **The owner's phone** (2026-10-23): `home.brief_phone` (else the first attention
 device) is read every 5 min for the brief: battery.status, calendar.list (next 24 h, 3) and
-the attention plugin's urgent/family notices. The agent acts on that phone through
+the attention plugin's urgent/family notices (never a family device; no fallback). The agent
+acts only on that phone (OWNER_PHONE_CAPS, front door), and the app refuses those caps unless
+its owner ticked Settings > App > "Let the assistant act for me on this phone"; through
 do_action: calendar.create/update (X), calendar.delete (X, destructive: asks), notify.act
-(X; with text it replies to someone: asks, as does any cap that sends a message as the
-person: sms.send, *.send_message, mail sends), notify.dismiss, device.open_url/launch.
+(X: asks unless the action is named and on SAFE_NOTIFY_ACTIONS, so Delete/Archive/Call back
+or an index asks; any non-read cap in a messaging family, or any send/reply/forward/call/dial
+action, asks: front.speaks_for), notify.dismiss, device.open_url/launch.
 Read tools for the voice itself: measured, see persistent-agents-20261023; reads stay
 routed through the agent, with the brief answering the common ones.
 

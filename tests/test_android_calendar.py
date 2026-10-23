@@ -290,10 +290,15 @@ def write_jclass(name):
     return fake_jclass(name)
 
 
-def writer(cal, monkeypatch, granted=("android.permission.WRITE_CALENDAR",)):
+def phone_prefs(allowed=True):
+    return lambda name, mode: SimpleNamespace(getBoolean=lambda k, d: allowed if k == "assistant_actions" else d)
+
+
+def writer(cal, monkeypatch, granted=("android.permission.WRITE_CALENDAR",), allowed=True):
     resolver = WriteResolver([(1, "Holidays", "x@group", 0, 200), (2, "Bake", "bake@gmail.com", 1, 700)],
                              {5: {"dtstart": 1_790_000_000_000, "dtend": 1_790_003_600_000, "title": "Dentist"}})
-    monkeypatch.setattr(cal, "app_context", lambda: SimpleNamespace(getContentResolver=lambda: resolver))
+    monkeypatch.setattr(cal, "app_context", lambda: SimpleNamespace(getContentResolver=lambda: resolver,
+                                                                    getSharedPreferences=phone_prefs(allowed)))
     monkeypatch.setattr(cal, "has_permission", lambda p: p in granted)
     monkeypatch.setattr(cal, "jclass", write_jclass)
     return cal.AndroidCalendarPlugin(), resolver
@@ -318,6 +323,11 @@ def test_calendar_create_update_delete(cal, monkeypatch):
     assert gone["ok"] and gone["title"] == "Dentist" and r.writes[-1][0] == "delete"
     p2, _ = writer(cal, monkeypatch, granted=())
     assert p2._create("x", "now")["needs_permission"] == "WRITE_CALENDAR"
+    # Off unless the phone's owner allowed it on the phone (Settings > App).
+    p3, r3 = writer(cal, monkeypatch, allowed=False)
+    for out in (p3._create("x", "now"), p3._update(5, title="y"), p3._delete(5)):
+        assert out["ok"] is False and out["needs_setting"] == "assistant_actions"
+    assert r3.writes == []
 
 
 def test_calendar_write_caps_are_declared_with_their_risk(cal):
@@ -346,10 +356,14 @@ class ActListener(FakeListener):
 def test_notify_actions_and_act_by_title_or_index(monkeypatch):
     m = load(monkeypatch, "notify_android")
     monkeypatch.setattr(m, "_Listener", ActListener)
-    monkeypatch.setattr(m, "app_context", lambda: object())
+    monkeypatch.setattr(m, "app_context", lambda: SimpleNamespace(getSharedPreferences=phone_prefs(True)))
     p = m.AndroidNotifyPlugin()
     assert [a["title"] for a in p._actions("k1")["actions"]] == ["Mark as read", "Reply"]
     assert p._act("k1", "mark as read")["action"] == "Mark as read"
     assert p._act("k1", 1, "on my way")["ok"] and ActListener.acted[-1] == ("k1", 1, "on my way")
     out = p._act("k1", "archive")
     assert out["ok"] is False and out["actions"] == ["Mark as read", "Reply"]
+    monkeypatch.setattr(m, "app_context", lambda: SimpleNamespace(getSharedPreferences=phone_prefs(False)))
+    before = len(ActListener.acted)
+    assert p._act("k1", "mark as read")["needs_setting"] == "assistant_actions"
+    assert len(ActListener.acted) == before

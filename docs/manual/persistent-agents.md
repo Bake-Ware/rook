@@ -103,8 +103,12 @@ changed). The agent can also act on that phone for you:
   to someone else (a text, an email, replying to a notification) and deleting
   something, such as a calendar event.
 
-Family devices are never offered. The app needs Calendar access (Settings >
-Permissions) to add or change events.
+This only ever happens on the phone set as **Owner's phone for the voice's
+brief**, never a family device, and only after you tick **Let the assistant act
+for me on this phone** in that phone's app (Settings > App; off by default).
+A notification's own buttons count as "asks first" unless the button is a
+harmless one named outright (Mark as read, Dismiss, Snooze). The app needs
+Calendar access (Settings > Permissions) to add or change events.
 
 **Expressive voice** (Settings > Voice > Behaviour, on by default): with a
 Chatterbox voice, the voice may now and then laugh, chuckle or sigh. The

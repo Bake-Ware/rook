@@ -106,6 +106,8 @@
         </LinearLayout>
         <LinearLayout style="@style/RookPanel">
           <TextView style="@style/RookSectionLabel" android:text="AGENT CONTROL" />
+          <CheckBox android:id="@+id/assistantActions" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="false" android:text="@string/assistant_actions" />
+          <TextView style="@style/RookHelp" android:text="@string/assistant_actions_help" />
           <CheckBox android:id="@+id/keepAwakeAuto" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Keep phone awake while agent is working" />
           <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
             <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:textColor="@color/rook_fg" android:text="Release after this many idle minutes" />
