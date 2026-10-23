@@ -2448,9 +2448,12 @@ class CombinedServer:
                                      headers={**headers, "Retry-After": "60"})
         except JoinDenied as e:
             return web.json_response({"error": str(e)}, status=403, headers=headers)
+        # "hub" is this server's /band WebSocket bridge (the desktop installer
+        # joins it with --ws), whatever its port: say so, so a native client
+        # doesn't guess the transport from the port (a LAN hub serves <ip>:7005).
         return web.json_response({"band_id": band["id"], "name": band["name"],
                                   "psk": band["psk"], "hub": band["hub"] or self.hub_public,
-                                  "epoch": band["epoch"]}, headers=headers)
+                                  "epoch": band["epoch"], "transport": "ws"}, headers=headers)
 
     def _bundle_missing(self, name: str) -> web.Response:
         """No bundle to serve: 503 while the background build runs (or was

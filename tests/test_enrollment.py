@@ -188,6 +188,8 @@ async def test_config_fetch_and_revocation_between_services(server, store):
         assert response.status == 200
         data = await response.json()
         assert data["psk"] == band["psk"] and data["band_id"] == band["id"]
+        # "hub" is the WebSocket bridge whatever its port (a LAN hub's <ip>:7005).
+        assert data["transport"] == "ws" and data["hub"]
         EnrollmentStore().rotate(band["id"])
         response = await client.get("/worker", params={"band": code})
         assert response.status == 403

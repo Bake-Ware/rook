@@ -87,6 +87,8 @@ object ApkUpdater {
         }
         state(ctx, "checking")
         p.edit().putLong("last_check", System.currentTimeMillis()).commit()
+        // The app permits cleartext for LAN hubs; updates still come only over HTTPS.
+        check(ORIGIN.startsWith("https://")) { "Updates need an https:// Rook server" }
         val feed = channel(ctx)
         val manifest = http.newCall(Request.Builder().url(UpdateChannel.url(ORIGIN, "apk.json", feed)).header("User-Agent", "rook-worker").build()).execute().use { response ->
             check(response.isSuccessful) { "Update manifest HTTP ${response.code}" }

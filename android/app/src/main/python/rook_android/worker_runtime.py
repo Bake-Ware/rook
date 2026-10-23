@@ -21,6 +21,17 @@ BACKOFF_MAX=60
 STALE_SECONDS=120
 #: The transport of the live worker, for kick() (network changes).
 _transport=None
+#: SharedPreferences key (HubAddress.kt PREF_HUB_WS): the saved hub came from
+#: the Rook server (pairing code, Google sign-in), so it is the server's /band
+#: WebSocket bridge whatever the port.
+PREF_HUB_WS='hub_ws'
+
+
+def use_ws(port,bridge):
+    """Dial the hub over WebSocket? A hub address from the Rook server (its
+    /band bridge, e.g. a LAN hub's <ip>:7005) always is; a typed host:port
+    keeps the port rule: 443/8443 is the TLS edge, anything else the UDP relay."""
+    return bool(bridge) or str(port) in ('443','8443')
 
 
 def start(hub,psk,name):
@@ -44,6 +55,7 @@ def start(hub,psk,name):
 
     async def desired(force=False):
         current=tuple(str(prefs.getString(k,v) or v) for k,v in zip(('hub','psk','name'),fallback)) if prefs else fallback
+        bridge=bool(prefs.getBoolean(PREF_HUB_WS,False)) if prefs else False
         saved=enroll.load()
         selected=str(prefs.getString('band_id','') or '') if prefs else ''
         use_identity=saved.get('auto_start') and saved.get('device') and (not selected or selected==saved.get('active_band'))
@@ -59,13 +71,18 @@ def start(hub,psk,name):
             roster.note_identity(True,band)
             current=(band['hub'],band['psk'],current[2])
             if prefs:
-                prefs.edit().putString('hub',band['hub']).putString('psk',band['psk']).putString('band_id',band['id']).putInt('band_epoch',band['epoch']).apply()
+                prefs.edit().putString('hub',band['hub']).putBoolean(PREF_HUB_WS,True).putString('psk',band['psk']).putString('band_id',band['id']).putInt('band_epoch',band['epoch']).apply()
         else:
             roster.note_identity(False)
         cfg=wconfig.load();wconfig.apply_env(cfg)
-        return (current[0] if use_identity else cfg.get('hub',current[0]),
+        hub=current[0] if use_identity else cfg.get('hub',current[0])
+        # The device's band comes from the server (the bridge, like the desktop
+        # installer's --enrolled --ws); a hub pushed by worker.config_apply that
+        # differs from the paired one is a typed address: port rule.
+        return (hub,
                 current[1] if use_identity else cfg.get('psk',current[1]),
-                cfg.get('name',current[2]))
+                cfg.get('name',current[2]),
+                True if use_identity else bridge and hub==current[0])
 
     async def runner():
         global _stop,_loop
@@ -84,9 +101,9 @@ def start(hub,psk,name):
                 except Exception as error:
                     log.error('Device authorization unavailable (%s); leaving band.',type(error).__name__)
                     return
-                address,key,worker_name=current
+                address,key,worker_name,bridge=current
                 host,port=address.rsplit(':',1)
-                transport=TelestheteHubTransport(psk=key,hub_host=host,hub_port=int(port),use_ws=port in ('443','8443'))
+                transport=TelestheteHubTransport(psk=key,hub_host=host,hub_port=int(port),use_ws=use_ws(port,bridge))
                 worker=Worker(transport=transport,name=worker_name,**worker_kwargs())
                 # Passive keep-awake: screen-driving caps wake the phone and hold
                 # it awake. It must never keep the worker off the band.
