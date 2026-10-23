@@ -79,6 +79,8 @@ YES = re.compile(r"\b(yes|yeah|yep|yup|sure|ok(ay)?|go ahead|do it|please do|cor
                  r"that's right|switch it|use it)\b", re.I)
 #: The scribe: the agent reads new lines after this many, and at the end.
 SCRIBE_EXTRACT_LINES = 15
+#: The scribe records only while the owner was heard this recently (start and every line).
+SCRIBE_OWNER_S = 600.0
 #: What the voice and the agent can run on (the phone's pickers and "switch your back end
 #: to Sonnet"). "local" for the voice is the voice server's own path on kaiju's models
 #: (voice-front, with voice-back behind it): home.voice_engine = local.
@@ -1216,12 +1218,19 @@ class Sessions:
         if since_last_reply:
             turns = turns[-1:]
         for t in reversed(turns):
-            if self.heard_as(t.get("identity") or {}) != "owner":
+            if not self._owner_sure(t):
                 continue
             text = str(t.get("text") or "")
             if pattern.search(text) and (not also or also.lower() in text.lower()):
                 return t
         return None
+
+    def _owner_sure(self, turn: dict) -> bool:
+        """A turn speaker ID was sure was the owner. A short utterance with no voiceprint
+        never counts here: a yes, a say-so or a request must be recognisably theirs."""
+        ident = turn.get("identity") or {}
+        sp = ident.get("speaker") if isinstance(ident.get("speaker"), dict) else None
+        return bool(sp and sp.get("sure")) and self.heard_as(ident) == "owner"
 
     # -- people: "learn Robin's voice" -----------------------------------------------------
     def people(self):
@@ -1267,16 +1276,25 @@ class Sessions:
         relation, kid = relation_of(args.get("relation"))
         if args.get("kid") is True:
             relation, kid = "kid", True
+        asked = self.owner_said(role, SAY_SO, also=name)
+        if asked is None:
+            raise ValueError(f"I need you to ask for it yourself, naming them: 'learn {name}'s "
+                             "voice'")
         if kid:
-            said = self.owner_said(role, SAY_SO, also=name)
-            if said is None:
-                raise ValueError(f"{name} is a child: I need your own say-so out loud, e.g. "
+            # A child: a separate yes from the owner, after the voice asked, as well as the
+            # request naming them.
+            said = self.owner_said(role, YES, since_last_reply=True)
+            if said is None or said is asked:
+                raise ValueError(f"{name} is a child: ask the owner to confirm out loud, e.g. "
                                  f"'yes, learn {name}'s voice'")
-            consent = {"kind": "owner_say_so", "words": said["text"], "at": said["at"],
-                       "turn": said.get("turn")}
+            consent = {"kind": "owner_say_so", "words": f"{asked['text']} / {said['text']}",
+                       "at": said["at"], "turn": said.get("turn")}
         else:
+            # The adult's own words, in a voice that isn't the owner's, after the owner
+            # asked for this person.
             agreed = [t for t in self.recent(role) if CONSENT.search(str(t.get("text") or ""))
-                      and self.heard_as(t.get("identity") or {}) != "owner"]
+                      and self.heard_as(t.get("identity") or {}) != "owner"
+                      and t.get("at", 0) >= asked.get("at", 0)]
             if not agreed:
                 raise ValueError(f"{name} needs to say 'I agree to have my voice remembered' "
                                  "first, in their own voice")
@@ -1342,14 +1360,26 @@ class Sessions:
             self._convs = Conversations(self.home.data_dir / "conversations")
         return self._convs
 
+    def _owner_label(self) -> str:
+        return (self.home.owner_name or "").strip().lower()
+
     async def scribe_start(self, role: str, turn: Any = None) -> dict:
         """Scribe only while the owner is among the speakers: otherwise listen quietly for
         the name and record nothing (other people's conversation is theirs)."""
-        if not self.owner_heard(role, sure=False, seconds=600):
+        if not self.owner_heard(role, sure=False, seconds=SCRIBE_OWNER_S):
             await self._event(role, "mode", {"mode": "listen", "by": "voice"}, turn)
             return {"ok": True, "mode": "listen", "note": "the owner isn't among the speakers, "
                     "so I'm only listening for my name, not taking notes"}
+        if self.home.settings.get("scribe_ask") and \
+                self.owner_said(role, YES, since_last_reply=True) is None:
+            raise ValueError("ask the owner first whether to take notes (always ask is on)")
         conv = self.conversations().open_one()
+        if conv is not None and time.time() - float(conv.get("last") or conv["started"]) > \
+                SCRIBE_OWNER_S:
+            # A conversation the voice server never ended (it restarted): close it, start fresh.
+            self._extract(role, conv, final=True)
+            self.conversations().end(conv["id"])
+            conv = None
         if conv is None:
             when = self.home.local_now().strftime("%Y-%m-%d %H:%M")
             page = ""
@@ -1366,6 +1396,7 @@ class Sessions:
                 res = out.get("result") if isinstance(out, dict) else None
                 page = str((res or {}).get("slug") or (res or {}).get("id") or "")
             conv = self.conversations().start(by=self.home.owner_name or "owner", page=page)
+        self.conversations().update(conv["id"], owner_at=time.time())
         await self._event(role, "mode", {"mode": "scribe", "by": "voice",
                                          "conversation": conv["id"]}, turn)
         self.home.journal("home.scribe_start", {"conversation": conv["id"]}, {"ok": True})
@@ -1388,6 +1419,19 @@ class Sessions:
             return                        # nothing being scribed: nothing kept
         text = str(args.get("text") or "").strip()
         if not text:
+            return
+        speaker = str(args.get("speaker") or "Speaker")
+        if self._owner_label() and speaker.strip().lower() == self._owner_label():
+            conv = self.conversations().update(conv["id"], owner_at=time.time()) or conv
+        elif time.time() - float(conv.get("owner_at") or conv["started"]) > SCRIBE_OWNER_S:
+            # The owner hasn't been heard for a while: stop recording other people's
+            # conversation. Nothing more is kept; the phone goes back to listening for its name.
+            self._extract(role, conv, final=True)
+            self.conversations().end(conv["id"])
+            self.home.journal("home.scribe_end", {"conversation": conv["id"],
+                                                  "why": "the owner left"}, {"ok": True})
+            with contextlib.suppress(Exception):
+                await self._event(role, "mode", {"mode": "listen", "by": "voice"})
             return
         at = None
         with contextlib.suppress(TypeError, ValueError):

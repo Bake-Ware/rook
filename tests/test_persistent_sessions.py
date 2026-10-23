@@ -790,15 +790,23 @@ async def test_enrolling_someone_by_voice_needs_the_owner_and_their_consent(penv
     assert rec["relation"] == "household" and not rec["kid"]
     assert rec["consent"]["kind"] == "own_words" and "I agree" in rec["consent"]["words"]
     assert rec["voiceprint"]["state"] == "reading"
-    # A child: the owner's own say-so, never automatic.
+    # A child: the owner asks for them by name, then confirms with a separate yes; a short
+    # yes that speaker ID couldn't place never counts.
     out = await route([{"op": "enroll", "name": "Sam", "relation": "my son"}])
-    assert out[0]["ok"] is False and "say-so" in out[0]["error"]
-    _heard(host, "e4", OWNER_SURE, "yes, learn Sam's voice")
+    assert out[0]["ok"] is False and "naming them" in out[0]["error"]
+    _heard(host, "e4", OWNER_SURE, "please learn my son Sam's voice")
     await until(lambda: sess.voice.get("house", {}).get("turn") == "e4")
+    out = await route([{"op": "enroll", "name": "Sam", "relation": "my son"}])
+    assert out[0]["ok"] is False and "confirm out loud" in out[0]["error"]
+    _heard(host, "e5", {"owner": True, "name": "Bake"}, "yes")         # no voiceprint: not enough
+    await until(lambda: sess.voice.get("house", {}).get("turn") == "e5")
+    assert (await route([{"op": "enroll", "name": "Sam", "relation": "my son"}]))[0]["ok"] is False
+    _heard(host, "e6", OWNER_SURE, "yes go ahead")
+    await until(lambda: sess.voice.get("house", {}).get("turn") == "e6")
     assert (await route([{"op": "enroll", "name": "Sam", "relation": "my son"}]))[0]["ok"]
     rec = sess.people().get("sam")
-    assert rec["kid"] and rec["consent"] == {**rec["consent"], "kind": "owner_say_so",
-                                              "words": "yes, learn Sam's voice"}
+    assert rec["kid"] and rec["consent"]["kind"] == "owner_say_so"
+    assert rec["consent"]["words"] == "please learn my son Sam's voice / yes go ahead"
     # The voice server reports back; the brief knows them.
     host.emit(role="house", lane="voice", kind="voice_control", op="enrolled", client=1,
               args={"name": "Robin", "samples": "3"}, identity={})
@@ -829,6 +837,7 @@ async def test_listen_end_and_scribe_only_with_the_owner_among_the_speakers(penv
     await sess.route("house", [{"op": "mode", "mode": "scribe"}])
     assert host.sent("voice_event")[-1]["fields"] == {"mode": "listen", "by": "voice"}
     assert sess.conversations().open_one() is None
+    penv.node.settings.set("voice.owner", "bake", actor="human:op")
     # With the owner in it: scribe, lines kept, the agent reads them in batches.
     _heard(host, "s2", OWNER_SURE, "we should book the dentist for Sam")
     await until(lambda: sess.voice.get("house", {}).get("turn") == "s2")
@@ -851,4 +860,18 @@ async def test_listen_end_and_scribe_only_with_the_owner_among_the_speakers(penv
     await until(lambda: sess.conversations().get(conv["id"])["ended"])
     assert sess.conversations().get(conv["id"])["speakers"] == ["Bake", "Speaker A"]
     assert sess.conversations().prune(0) == [conv["id"]]                # retention
+    # The owner leaves: once no line of theirs for 10 minutes, nothing more is kept and
+    # the phone goes back to listening for its name (review of #189).
+    _heard(host, "s3", OWNER_SURE, "can you take notes")
+    await until(lambda: sess.voice.get("house", {}).get("turn") == "s3")
+    await sess.route("house", [{"op": "mode", "mode": "scribe"}])
+    conv2 = sess.conversations().open_one()
+    assert conv2 and conv2["id"] != conv["id"]
+    sess.conversations().update(conv2["id"], owner_at=time.time() - 601)
+    events = len(host.sent("voice_event"))
+    host.emit(role="house", lane="voice", kind="voice_control", op="scribe", client=1,
+              identity={}, args={"text": "so anyway, about the party", "speaker": "Speaker A"})
+    await until(lambda: sess.conversations().get(conv2["id"])["ended"])
+    assert sess.conversations().get(conv2["id"])["lines"] == 0
+    assert host.sent("voice_event")[events:][-1]["fields"] == {"mode": "listen", "by": "voice"}
     await disconnect(task, host)

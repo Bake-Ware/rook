@@ -469,8 +469,7 @@ class HouseVoice:
             log.warning('House voice: unknown mode %r ignored', str(target)[:20])
             return
         here = conn.mode
-        if by != 'voice' or name not in modes.VOICE_SWITCHABLE or here.id not in modes.VOICE_SWITCHABLE \
-                or not self.serves(here):
+        if by != 'voice' or name not in modes.VOICE_SWITCHABLE or here.id not in modes.VOICE_SWITCHABLE:
             log.warning('House voice: mode switch %s -> %s refused', here.id, name)
             return
         if name == here.id:

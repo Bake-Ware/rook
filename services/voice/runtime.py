@@ -874,6 +874,12 @@ class Connection:
     async def set_mode(self, mode, by=None):
         """``by='voice'``: the house voice switched it (the client accepts that only
         between modes.VOICE_SWITCHABLE); a client's own switch clears the way back."""
+        if self.mode.id == 'scribe' and mode.id != 'scribe':
+            # Out of scribe however it ends (the name, a quiet spell, the hub: owner gone).
+            if self.scribe_idle is not None and self.scribe_idle is not asyncio.current_task():
+                self.scribe_idle.cancel()
+            self.scribe_idle = None
+            self.scribe_speakers = None
         self.mode = mode
         if by != 'voice':
             self.mode_return = None
