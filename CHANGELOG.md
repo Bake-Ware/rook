@@ -21,6 +21,15 @@ version was `0.1.0`.
   revokes a role's MCP servers as trust-map `grant_tool` entries, only on the person's own
   request. Caps `home.sessions`, `home.session_ask`, `home.session_flow`, `home.session_note`.
   Design: docs/design/persistent-agents.md. (manual: persistent-agents, trust)
+- Dashboard chat dock: once the house agent is set up, an **@home** button at the bottom right of
+  every page opens the same chat as Manage > Home agent (the operator's 1:1 huddle). It stays open
+  across page switches and reloads until closed, polls only while open, and steps aside on the
+  Home agent page. (manual: home-agent)
+- Settings > **Restart** (top right, operator only): the hub process exits with code 75 and its
+  service manager starts it again, so no root is needed; with two processes the dashboard
+  restarts after the MCP side. Refused, with the reason, unless systemd would restart it
+  (`Restart=always`/`on-failure`) or `ROOK_RESTART_SUPERVISED=1`. The page reloads when the hub
+  is back. (manual: settings)
 
 ## [0.3.0] - 2026-10-23
 

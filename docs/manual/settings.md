@@ -35,6 +35,18 @@ Each row shows:
 Passwords and keys are write-only: the page shows that one is set, never its
 value.
 
+## Restarting the hub
+
+**Restart** (top right, operator only) restarts the hub so *restart* settings
+take effect. The page waits and reloads itself when the hub is back, usually
+within a few seconds; machines and agents reconnect on their own.
+
+It works when the hub runs as a systemd service that starts it again
+(`Restart=on-failure` or `always`, as the installer and `rook hub deploy` set
+up). Otherwise the page says why and you restart the hub the way you started
+it. A hub kept running by something else, such as a Docker restart policy, can
+set `ROOK_RESTART_SUPERVISED=1` to allow the button.
+
 ## Where settings live
 
 - **Overview**: a summary, and any settings that need attention.

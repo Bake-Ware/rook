@@ -136,6 +136,23 @@ def test_status_never_shows_the_key(env):
     assert st["endpoint_host"] == "llm.example:1234" and KEY not in json.dumps(st)
 
 
+
+def test_the_chat_dock_appears_once_the_agent_is_set_up(env):
+    """home-dock.js: the dashboard's UI state names the agent only when it can answer,
+    and only for the operator (the dock is the operator's 1:1 huddle)."""
+    from rook.hub.plugins.ui.web import _home
+    op, member = {"id": "1", "admin": True}, {"id": "2", "admin": False}
+    assert _home(env.node, op) is None                        # off, and unconfigured
+    configure(env)
+    brief = _home(env.node, op)
+    assert brief["name"] == "home" and brief["identity"] == "agent:home"
+    assert brief["enabled"] and brief["missing"] == [] and brief["chat"] and brief["timeout"] > 0
+    assert _home(env.node, member) is None
+    env.svc.set("home.model", "", actor="human:op")
+    assert _home(env.node, op) is None                        # missing a model
+    configure(env, enabled=False)
+    assert _home(env.node, op) is None
+
 # -- the client against a real HTTP server ---------------------------------------------
 
 @pytest.mark.asyncio

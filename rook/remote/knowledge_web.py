@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 from aiohttp import web
 from . import upstream
+from ..core import restart
 from .account_web import COOKIE, NO_STORE
 
 
@@ -87,10 +88,33 @@ class SettingsWeb(KnowledgeWeb):
     upstream limits non-operators to their own preferences (user scope)."""
     PATH = '/account/settings'
     UPSTREAM = ('ROOK_SETTINGS_ADMIN_URL', 'http://127.0.0.1:8765/settings/account-api')
-    ASSETS = ('settings-area.js', 'home.js', 'memory.js', 'voice.js', 'llm.js')
+    ASSETS = ('settings-area.js', 'home.js', 'home-dock.js', 'memory.js', 'voice.js', 'llm.js')
     UNAVAILABLE = 'The settings service is unavailable (is the MCP server running?).'
     ADMIN_ONLY = False
     TIMEOUT = 30   # a worker page asks the worker for its plugins and config
+
+    async def api(self, request):
+        # Settings > Restart. When the dashboard is its own process (not `rook
+        # hub serve`), it restarts along with the MCP server: it must be able to
+        # come back first, and goes only once the MCP side has agreed.
+        if request.method != 'POST' or upstream.local_app(self.url) is not None:
+            return await super().api(request)
+        try:
+            data = await request.json()   # aiohttp keeps the body for super().api
+        except ValueError:
+            data = None
+        if not (isinstance(data, dict) and data.get('action') == 'restart'):
+            return await super().api(request)
+        user = self.account.require(request)
+        if user['admin']:
+            why = restart.supervised() if restart.available() else "it can't restart itself"
+            if why:
+                return web.json_response({'error': f'Not restarted: the dashboard: {why}.'},
+                                         status=400, headers=NO_STORE)
+        reply = await super().api(request)
+        if user['admin'] and reply.status == 200:
+            restart.request('human:' + str(user.get('username') or user.get('id') or ''))
+        return reply
 
 
 class PluginsWeb(KnowledgeWeb):

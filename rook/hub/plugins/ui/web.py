@@ -54,6 +54,23 @@ def _user_value(svc, key: str, uid: str) -> Any:
         return None
 
 
+def _home(node, user: dict) -> dict | None:
+    """The house agent for the dashboard's chat dock, only once it is set up.
+    The dock is the operator's 1:1 huddle with it, and the huddle API is the
+    operator's alone, so other accounts get None."""
+    if not user.get("admin") or node is None:
+        return None
+    home, huddle = node.plugin("home"), node.plugin("huddle")
+    if home is None or huddle is None:
+        return None
+    try:
+        brief = home.chat_brief()
+    except Exception:
+        log.exception("reading the house agent's state for the chat dock failed")
+        return None
+    return brief if brief["enabled"] and not brief["missing"] and brief["chat"] else None
+
+
 def _limit(value) -> int:
     """A feed's item count from the request: 1 to 30, or ValueError."""
     if value is None or value == "":
@@ -121,7 +138,7 @@ def routes(get_node: Callable[[], Any], accounts):
                 return json_reply({"csrf": user["csrf"], "admin": bool(user.get("admin")),
                                    "theme": ui.theme_css(theme_id), "themes": ui.theme_list(),
                                    "startpage": layout, "widgets": ui.widgets(),
-                                   "saved": svc is not None})
+                                   "saved": svc is not None, "home": _home(node, user)})
             if view == "overview":
                 know = node.plugin("knowledge")
                 service = getattr(know, "service", None)

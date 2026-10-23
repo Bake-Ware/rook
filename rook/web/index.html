@@ -1452,6 +1452,8 @@ setInterval(loadWorkers,3000); setInterval(loadBands,20000);
 <script type="module">
 // The account's saved theme (theme-boot.js applied this browser's last one).
 import('/account/ui/assets/themes.js').then(m=>m.syncTheme()).catch(()=>{});
+// The house agent's chat dock, on every page once the agent is set up.
+import('/account/ui/assets/themes.js').then(m=>m.uiState()).then(s=>s.home&&import('/account/settings/assets/home-dock.js').then(m=>m.mountDock(s.home))).catch(()=>{});
 const loadArtwork=()=>import('/account/bands/assets/rook-scene.js').then(({mountRook})=>mountRook(document.getElementById('rook-art'),document.getElementById('art-toggle'))).catch(()=>{});
 if(!navigator.connection?.saveData){
  if('requestIdleCallback' in window)requestIdleCallback(loadArtwork,{timeout:1800});
