@@ -7,6 +7,9 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -26,6 +29,19 @@ class WorkerService : Service() {
     private var workerThread: Thread? = null
     private var entry: PyObject? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
+    private var lastNetwork: Network? = null
+    /** The phone hops between Wi-Fi and cellular; the band link on the old
+     *  network then dies slowly (or its connect hangs). Reconnect at once on
+     *  the new default network instead (bakephone drop-offs, 2026-10-22). */
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            val previous = lastNetwork
+            lastNetwork = network
+            if (previous != null && previous != network) kick("default network changed")
+        }
+        override fun onLost(network: Network) { Log.i(TAG, "default network lost") }
+    }
     @Volatile private var wantProjection = false
     private var lastName: String = ""
     private val updateHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -50,6 +66,17 @@ class WorkerService : Service() {
         androidx.core.content.ContextCompat.registerReceiver(this, unlockReceiver,
             android.content.IntentFilter(Intent.ACTION_USER_PRESENT), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         updateHandler.postDelayed(updateTick, 30_000)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            try { getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback) }
+            catch (t: Throwable) { Log.w(TAG, "network callback unavailable", t) }
+        }
+    }
+
+    private fun kick(reason: String) {
+        Log.i(TAG, "kick: $reason")
+        thread(name = "rook-kick", isDaemon = true) {
+            try { entry?.callAttr("kick", reason) } catch (t: Throwable) { Log.w(TAG, "kick failed", t) }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -135,11 +162,16 @@ class WorkerService : Service() {
     override fun onDestroy() {
         updateHandler.removeCallbacks(updateTick)
         runCatching { unregisterReceiver(unlockReceiver) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            try { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }
+            catch (_: Throwable) {}
+        }
         ScreenCaptureBridge.stopSession()
         FindDeviceBridge.stop()
         KeepAwake.shutdown()
         stopWorker()
         wakeLock?.let { if (it.isHeld) it.release() }
+        wifiLock?.let { if (it.isHeld) it.release() }
         super.onDestroy()
     }
 
@@ -153,6 +185,15 @@ class WorkerService : Service() {
             setReferenceCounted(false)
             acquire()
         }
+        // Keep Wi-Fi up while the screen is off, so the phone stays on the home
+        // network instead of falling back to cellular and dropping the band link.
+        if (wifiLock == null) try {
+            @Suppress("DEPRECATION")
+            wifiLock = (applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager)
+                .createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "rook:band").apply {
+                    setReferenceCounted(false); acquire()
+                }
+        } catch (t: Throwable) { Log.w(TAG, "wifi lock unavailable", t) }
     }
 
     private fun defaultName(): String =

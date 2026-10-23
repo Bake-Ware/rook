@@ -16,6 +16,11 @@ REFRESH_SECONDS=30
 STABLE_SECONDS=10
 BACKOFF_MIN=2
 BACKOFF_MAX=60
+#: Off the band this long with the link still not up: rebuild the transport.
+#: The link retries on its own; this is the backstop for one that wedges.
+STALE_SECONDS=120
+#: The transport of the live worker, for kick() (network changes).
+_transport=None
 
 
 def start(hub,psk,name):
@@ -108,7 +113,17 @@ def start(hub,psk,name):
                     """Build, app version and supervisor of this embedded worker."""
                     from rook.worker._build_info import as_dict
                     package=context.getPackageManager().getPackageInfo(context.getPackageName(),0) if context else None
-                    return {**as_dict(),'supervisor':'android-service','pyz_exists':False,
+                    power={}
+                    try:
+                        from java import jclass
+                        Ctx=jclass('android.content.Context')
+                        pm=context.getSystemService(Ctx.POWER_SERVICE)
+                        power['battery_optimization_exempt']=bool(pm.isIgnoringBatteryOptimizations(context.getPackageName()))
+                        power['device_idle']=bool(pm.isDeviceIdleMode())
+                        usage=context.getSystemService(Ctx.USAGE_STATS_SERVICE)
+                        if usage is not None:power['standby_bucket']=int(usage.getAppStandbyBucket())
+                    except Exception:pass
+                    return {**as_dict(),'supervisor':'android-service','pyz_exists':False,'power':power,
                             'app_version':str(package.versionName) if package else '',
                             'app_version_code':int(package.versionCode) if package else 0,
                             'app_release':worker.app_release}
@@ -121,11 +136,20 @@ def start(hub,psk,name):
                 worker.registry.register('worker.status',status,meta=CapMeta(risk='read'))
                 task=asyncio.create_task(worker.run())
                 began=loop.time()
+                global _transport
+                _transport=transport
                 try:
                     checked=loop.time()
+                    down_since=None
                     while not stopping.is_set() and not cycle.is_set() and not task.done():
                         try:await asyncio.wait_for(stopping.wait(),1)
                         except asyncio.TimeoutError:pass
+                        link=getattr(transport,'link',None)
+                        if link is not None and link.connected:down_since=None
+                        elif down_since is None:down_since=loop.time()
+                        elif loop.time()-down_since>=STALE_SECONDS:
+                            log.warning('Off the band for %ds; rebuilding the connection.',STALE_SECONDS)
+                            break
                         if loop.time()-checked>=REFRESH_SECONDS:
                             checked=loop.time()
                             try:
@@ -134,6 +158,7 @@ def start(hub,psk,name):
                                 log.error('Device authorization unavailable (%s); leaving band.',type(error).__name__)
                                 stopping.set()
                 finally:
+                    if _transport is transport:_transport=None
                     roster.detach(worker)
                     await worker.shutdown()
                     try:await asyncio.wait_for(task,2)
@@ -155,6 +180,19 @@ def start(hub,psk,name):
                 _loop=None;_stop=None
 
     asyncio.run(runner())
+
+
+def kick(reason=''):
+    """The phone's default network changed: drop the band link (or the connect
+    in flight) and reconnect at once on the new network. Thread-safe; called
+    from WorkerService's network callback."""
+    loop,transport=_loop,_transport
+    link=getattr(transport,'link',None)
+    if loop is None or link is None or not hasattr(link,'kick'):return False
+    log.info('Network changed (%s); reconnecting the band link.',reason or 'unknown')
+    try:loop.call_soon_threadsafe(link.kick)
+    except RuntimeError:return False
+    return True
 
 
 def stop():
