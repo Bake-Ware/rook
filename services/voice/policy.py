@@ -17,7 +17,7 @@ BASE_TOOLS = TIMER_TOOLS | {'web_search', 'weather'}
 # Own-device reads; identity.authorize_read still pins them to the mapped device.
 DEVICE_TOOLS = BASE_TOOLS | {'rook_read', 'calendar_list', 'mail_list'}
 OWNER_ONLY = frozenset({'rook_devices', 'rook_describe', 'rook_call', 'rook_mcp_describe', 'rook_mcp',
-                        'tasks_deck', 'task_get', 'music', 'ha_list', 'ha_call'})
+                        'tasks_deck', 'task_get', 'music', 'ha_list', 'ha_call', 'house_agent'})
 ALL_TOOLS = DEVICE_TOOLS | OWNER_ONLY
 CHAT_MODES = frozenset({'conversation', 'brainstorm', 'roleplay', 'listen'})
 
@@ -61,4 +61,6 @@ def capability_summary(tools):
         parts.append('home lights, switches, scenes and media players')
     if 'rook_call' in tools:
         parts.append('work on your Rook devices')
+    if 'house_agent' in tools:
+        parts.append('anything bigger through the house agent on the hub (projects, plans, memory, band work)')
     return ', '.join(parts) if parts else 'nothing beyond conversation'

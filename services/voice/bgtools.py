@@ -44,6 +44,12 @@ SCHEMAS = {
                       {'action': {'type': 'string', 'enum': ['now_playing', 'play', 'pause', 'toggle', 'next',
                                                              'love', 'ban', 'volume_up', 'volume_down',
                                                              'stations']}}, ('action',)),
+    'house_agent': function('house_agent', 'Hand the request to the house agent on the Rook hub: the same assistant '
+                            'with its memory of the owner, the band\'s tools and more time to think. Use it for '
+                            'anything your other tools cannot do, questions about the owner\'s projects, plans or '
+                            'preferences, and work on the Rook band. It answers in about 10-60 seconds; its answer '
+                            'is the result. Phrase request as a complete instruction with the context it needs '
+                            '(it cannot see this conversation).', {'request': {'type': 'string'}}, ('request',)),
     'ha_list': function('ha_list', 'List Home Assistant lights, switches, scenes and media players with their state.',
                         {'domain': {'type': 'string', 'enum': ['light', 'switch', 'scene', 'media_player']}}),
     'ha_call': function('ha_call', 'Control one Home Assistant entity. target: entity id or its spoken name. '
@@ -590,6 +596,30 @@ class Toolbox:
         text = f"Music {args['action'].replace('_', ' ')}: " + (result if isinstance(result, str) else json.dumps(result))[:300]
         self.note('music', text, 120, untrusted=True)
         return text
+
+    async def tool_house_agent(self, args):
+        """home.ask on the hub: the house agent answers with its own memory and tools."""
+        request = ' '.join(str(args.get('request', '')).split())[:4000]
+        if not request:
+            raise ValueError('house_agent needs a request')
+        # Inside Background's own limit (VOICE_BACKGROUND_TIMEOUT_S, 120 s).
+        timeout = float(os.environ.get('VOICE_HOUSE_TIMEOUT_S', '100'))
+        mcp = RookMCP(timeout=timeout + 5) if isinstance(self.mcp, RookMCP) else self.mcp
+        context = ('Asked by voice from the owner\'s phone, through the voice assistant (your fast voice). '
+                   'Answer in one to three short spoken sentences: plain words, no markdown. Say plainly what '
+                   'you did or found, and whether anything is still in progress.')
+        reply = decode(await asyncio.wait_for(mcp.call('rook_call', {
+            'worker': os.environ.get('VOICE_HOUSE_WORKER', 'rook'), 'cap': 'home.ask',
+            'args': {'question': request, 'context': context}, 'timeout': timeout}), timeout + 10))
+        if not isinstance(reply, dict) or reply.get('ok') is False:
+            raise ValueError(str((reply or {}).get('error') if isinstance(reply, dict) else reply)[:300]
+                             or 'The house agent did not answer')
+        result = reply.get('result') if isinstance(reply.get('result'), dict) else {}
+        answer = ' '.join(str(result.get('answer') or '').split())[:1500]
+        if not answer:
+            raise ValueError('The house agent gave no answer')
+        self.note('house', 'House agent: ' + answer, 900, untrusted=True)
+        return answer
 
     async def tool_ha_list(self, args):
         domain = args.get('domain')

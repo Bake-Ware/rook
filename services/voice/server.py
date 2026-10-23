@@ -281,6 +281,7 @@ async def websocket(ws: WebSocket):
         if conn.fb:
             conn.fb.resend_timers()
             conn.fb.prefetch('session')
+            conn.fb.load_house_context()
         import webrtcvad   # here, not at import: a hub mounting this app imports it first
         vad = webrtcvad.Vad(3)
         preroll = deque(maxlen=10)

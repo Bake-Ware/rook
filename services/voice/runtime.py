@@ -22,7 +22,7 @@ MERGE_WINDOW_S = float(os.environ.get('VOICE_MERGE_WINDOW_S', '10'))
 # A held barge-in (client paused playback on local speech) resumes on its own when
 # no utterance arrives in this long, and is forced back after HOLD_MAX_S.
 HOLD_QUIET_S = float(os.environ.get('VOICE_HOLD_QUIET_S', '2.5'))
-HOLD_MAX_S = float(os.environ.get('VOICE_HOLD_MAX_S', '12'))
+HOLD_MAX_S = float(os.environ.get('VOICE_HOLD_MAX_S', '8'))   # the phone gives up at 10 s
 # 'enforce': drop an utterance whose speaker is the assistant's own voice (echo)
 # while it speaks or just after; 'shadow': log the label only; 'off'.
 ECHO_GUARD = os.environ.get('VOICE_ECHO_GUARD', 'shadow').strip().lower()
