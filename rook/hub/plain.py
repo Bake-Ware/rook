@@ -482,9 +482,13 @@ def _sql_read(stmt: str, safe: bool) -> bool:
 
 def _sql_calls_ok(stmt: str) -> bool:
     """Every parenthesis in a statement is grouping or a call of an
-    allowlisted function: string literals are removed first; a comment, or a
-    parenthesis after a quoted or bracketed name (``"writefile"(``,
-    ``[edit](``), is never read-only (vote steep-garlic-comic)."""
+    allowlisted function. Only single-quoted literals are allowed, so they
+    pair up unambiguously: any double quote, bracket or backtick (a quoted
+    identifier, which could hide a quote inside it: vote olive-flipper-birch)
+    and any comment (``--``, ``/*``: vote steep-garlic-comic) is never
+    read-only. Literals are removed before the parentheses are checked."""
+    if re.search(r'["`\[\]]', stmt):
+        return False
     text = re.sub(r"'(?:[^']|'')*'", "''", stmt)          # string literals
     if "'" in text.replace("''", "") or "--" in text or "/*" in text:
         return False

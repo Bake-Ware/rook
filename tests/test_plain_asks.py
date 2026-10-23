@@ -153,6 +153,11 @@ def test_shell_commands_are_said_by_what_they_do(argv, kind, title):
     ["sh", "-c", "find . \"\"*"], ["sh", "-c", "rg x \"\"*"], ["sh", "-c", "find . ''*"], ["sh", "-c", "sort ?"],
     ["sh", "-c", "find . \\-*"], ["uniq", "-", "out"], ["zgrep", "x", "f"],
     ["git", "cat-file", "--filters", "HEAD:x"],
+    # From the review of vote olive-flipper-birch: a quote inside a quoted alias.
+    ["sqlite3", "x.db", "select 1 as \"'\", writefile('/p','x') as \"'\""],
+    ["sqlite3", "x.db", "select 1 as ['], writefile('/p','x') as [']"],
+    ["sqlite3", "x.db", "select 1 as `'`, writefile('/p','x') as `'`"],
+    ["sqlite3", "x.db", "select \"a\" from t"],
 ])
 def test_commands_that_can_write_never_read_as_read_only(argv):
     assert plain.shell_summary({"argv": argv})["kind"] != "read"
