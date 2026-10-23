@@ -38,8 +38,11 @@ import time
 from typing import NamedTuple
 from urllib.parse import urlsplit, urlunsplit
 
+import random
+
 from . import modes
 from .front import Clauses
+from .sounds import HOUSE_TAGS, keep_sounds
 
 # No first delta this long after the turn started (connecting included): the
 # old Front/Background path answers the turn instead.
@@ -55,6 +58,9 @@ BACKOFF_MIN_S, BACKOFF_MAX_S = 2.0, 60.0
 # A pushed result nobody could hear: how long to keep collecting its text for the report.
 DROP_COLLECT_S = 10.0
 FILLER = 'One moment.'
+# Models overuse sounds they are merely allowed (Pianobar's DJ found the same), so the
+# server offers them on about one turn in this many, and the voice may still use none.
+SOUND_EVERY = int(os.environ.get('VOICE_HOUSE_SOUND_EVERY', '4'))
 # Control events from the host (not part of a turn's reply): a listening-mode switch,
 # the hub's answer about models, and the voice config (engine, models) when it changes.
 CONTROL = ('mode', 'models', 'config')
@@ -368,6 +374,17 @@ class HouseVoice:
         self.speaking_task = None
         self.stops = 0
 
+    def sounds(self):
+        """The sound tags this connection's voice performs, when the app wants them
+        (hello "expressive", on unless the app says false): Chatterbox voices only."""
+        if getattr(self.conn, 'expressive', True) is False:
+            return ()
+        tts = getattr(getattr(self.conn, 'provider', None), 'tts', None)
+        try:
+            return HOUSE_TAGS if tts is not None and tts.supports_tags(self.conn.voice) else ()
+        except Exception:
+            return ()
+
     def serves(self, mode):
         """The assistant mode, and active listening and brainstorm with their built-in
         prompts; conversation (children), roleplay and custom prompts keep their own path."""
@@ -445,6 +462,9 @@ class HouseVoice:
         message = {'t': 'user', 'turn': epoch, 'text': text, 'identity': self.identity(timing)}
         if conn.mode.id != 'assistant':
             message['mode'] = conn.mode.id
+        sounds = self.sounds()
+        if sounds and SOUND_EVERY > 0 and random.SystemRandom().randrange(SOUND_EVERY) == 0:
+            message['sound_tags'] = list(sounds)
         if merged_from is not None:
             # This text includes the earlier, cancelled turn's words.
             message['merged_from'] = merged_from
@@ -458,6 +478,9 @@ class HouseVoice:
 
         async def speak(parts):
             for clause in parts:
+                clause = keep_sounds(clause, bool(sounds))
+                if not clause.strip():
+                    continue
                 spoken.append(clause)
                 await conn.say(clause, epoch, record=False)
 
@@ -651,6 +674,7 @@ class HouseVoice:
         spoken, clauses, said = [], Clauses(), ''
         ended = cancelled = False
         fb.emit('followup', epoch, 'House voice: telling you a back-end result')
+        sounds = self.sounds()
         try:
             while True:
                 try:
@@ -671,13 +695,17 @@ class HouseVoice:
                     if kind == 'end' and not said and isinstance(message.get('text'), str):
                         parts = clauses.feed(message['text'])
                 for clause in parts:
-                    spoken.append(clause)
-                    await conn.say(clause, epoch, record=False)
+                    clause = keep_sounds(clause, bool(sounds))
+                    if clause.strip():
+                        spoken.append(clause)
+                        await conn.say(clause, epoch, record=False)
                 if ended:
                     break
             for clause in clauses.flush():
-                spoken.append(clause)
-                await conn.say(clause, epoch, record=False)
+                clause = keep_sounds(clause, bool(sounds))
+                if clause.strip():
+                    spoken.append(clause)
+                    await conn.say(clause, epoch, record=False)
         except asyncio.CancelledError:
             cancelled = True
             raise

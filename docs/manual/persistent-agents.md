@@ -88,6 +88,32 @@ restart:
 
 Every change is recorded (`home.voice_models_set`, who and how).
 
+## Your phone
+
+With **Owner's phone for the voice's brief** set (e.g. `bakephone`), the
+voice knows your battery, the next things on your calendar and your important
+notifications without looking them up (read every few minutes; nothing is
+changed). The agent can also act on that phone for you:
+
+- **Just does it:** reads, opening an app or a link, adding or changing your
+  own calendar events, dismissing a notification.
+- **Does it, then tells you** (in the decisions it made for you): dismissing
+  notifications, reminders.
+- **Asks first** (one line, Yes / No / Explain): anything that speaks for you
+  to someone else (a text, an email, replying to a notification) and deleting
+  something, such as a calendar event.
+
+This only ever happens on the phone set as **Owner's phone for the voice's
+brief**, never a family device, and only after you tick **Let the assistant act
+for me on this phone** in that phone's app (Settings > App; off by default).
+A notification's own buttons count as "asks first" unless the button is a
+harmless one named outright (Mark as read, Dismiss, Snooze). The app needs
+Calendar access (Settings > Permissions) to add or change events.
+
+**Expressive voice** (Settings > Voice > Behaviour, on by default): with a
+Chatterbox voice, the voice may now and then laugh, chuckle or sigh. The
+screen shows it as "(laughs)". Off, or with another voice, it never does.
+
 ## Web search
 
 The agent can search the web and read pages (**Web search** in **Manage > Home

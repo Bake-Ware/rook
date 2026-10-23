@@ -901,11 +901,25 @@
    "tier": "read",
    "tags": []
   },
+  "calendar.create": {
+   "tier": "exec",
+   "tags": []
+  },
+  "calendar.delete": {
+   "tier": "exec",
+   "tags": [
+    "destructive"
+   ]
+  },
   "calendar.list": {
    "tier": "read",
    "tags": [
     "personal"
    ]
+  },
+  "calendar.update": {
+   "tier": "exec",
+   "tags": []
   },
   "calllog.list": {
    "tier": "exec",
@@ -1016,6 +1030,16 @@
   "location.get": {
    "tier": "exec",
    "tags": []
+  },
+  "notify.act": {
+   "tier": "exec",
+   "tags": []
+  },
+  "notify.actions": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
   },
   "notify.dismiss": {
    "tier": "exec",

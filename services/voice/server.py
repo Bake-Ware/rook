@@ -266,6 +266,8 @@ async def websocket(ws: WebSocket):
         # Confirmed barge-in: the client pauses (not flushes) playback on local speech
         # and waits for "interrupt" (real words) or "resume" (it was nothing).
         conn.barge_confirm = protocol == 2 and hello.get('barge') == 'confirm'
+        # "Expressive voice" in the app: sound tags like [laugh] for voices that perform them.
+        conn.expressive = hello.get('expressive') is not False
         conn.speakers = getattr(app.state, 'speakers', None)
         # An owner key may name the device it is talking from (the app sends its worker
         # name), so "my battery / where am I / my calendar" default to that device. Never

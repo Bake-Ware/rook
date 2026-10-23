@@ -150,6 +150,12 @@ class SettingsActivity : AppCompatActivity() {
             prefs.edit().putBoolean("show_thinking", enabled).apply()
             VoiceService.inst?.thinkingChanged()
         }
+        b.expressiveVoice.isChecked = prefs.getBoolean(PREF_EXPRESSIVE, true)
+        b.expressiveVoice.setOnCheckedChangeListener { _, enabled ->
+            prefs.edit().putBoolean(PREF_EXPRESSIVE, enabled).apply()
+            VoiceService.inst?.thinkingChanged()      // reopens the session with the new hello
+            status("expressive voice ${if (enabled) "on" else "off"}")
+        }
         b.wakeEnabled.isChecked = prefs.getBoolean("wake_enabled", true)
         b.btnDefaultAssistant.setOnClickListener {
             try {
@@ -410,8 +416,9 @@ class SettingsActivity : AppCompatActivity() {
             request(Manifest.permission.READ_CONTACTS) },
         Grant("Call log", "Recent calls", { granted(Manifest.permission.READ_CALL_LOG) }) {
             request(Manifest.permission.READ_CALL_LOG) },
-        Grant("Calendar", "Read your events", { granted(Manifest.permission.READ_CALENDAR) }) {
-            request(Manifest.permission.READ_CALENDAR) },
+        Grant("Calendar", "Read your events, and add or change them when you ask", {
+            granted(Manifest.permission.READ_CALENDAR) && granted(Manifest.permission.WRITE_CALENDAR) }) {
+            request(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR) },
         Grant("Location", "Where the phone is, while the app is open", {
             granted(Manifest.permission.ACCESS_FINE_LOCATION) || granted(Manifest.permission.ACCESS_COARSE_LOCATION) }) {
             request(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION) },
@@ -503,6 +510,11 @@ class SettingsActivity : AppCompatActivity() {
     // ---- app --------------------------------------------------------------
 
     private fun setupAgentControl() {
+        b.assistantActions.isChecked = prefs.getBoolean("assistant_actions", false)
+        b.assistantActions.setOnCheckedChangeListener { _, on ->
+            prefs.edit().putBoolean("assistant_actions", on).apply()
+            status("assistant actions on this phone ${if (on) "on" else "off"}")
+        }
         b.keepAwakeAuto.isChecked = KeepAwake.autoEnabled(this)
         b.keepAwakeAuto.setOnCheckedChangeListener { _, enabled ->
             prefs.edit().putBoolean(KeepAwake.PREF_AUTO, enabled).apply()
@@ -595,7 +607,7 @@ class SettingsActivity : AppCompatActivity() {
         private val BASIC_PERMISSIONS = arrayOf(
             Manifest.permission.READ_SMS, Manifest.permission.SEND_SMS,
             Manifest.permission.READ_CONTACTS, Manifest.permission.READ_CALL_LOG,
-            Manifest.permission.READ_CALENDAR,
+            Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR,
             Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.RECORD_AUDIO,
         )
     }

@@ -93,6 +93,49 @@ class AndroidNotifyPlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
+    @capability("actions", risk="read", tags=("sensitive",))
+    def _actions(self, key: str) -> dict:
+        """The actions a notification offers (by ``key`` from notify.list): index, title
+        ("Reply", "Mark as read"), and whether it takes text."""
+        if _Listener is None:
+            return {"ok": False, "error": "not an Android host"}
+        try:
+            return json.loads(str(_Listener.actionsJson(str(key))))
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    @capability("act", risk="exec")
+    def _act(self, key: str, action: int | str = 0, text: str = "") -> dict:
+        """Run one of a notification's own actions (by ``key`` from notify.list; ``action``:
+        its index or title from notify.actions). ``text`` fills a reply action: that sends a
+        message to someone as the phone's owner."""
+        if _Listener is None:
+            return {"ok": False, "error": "not an Android host"}
+        ctx = app_context()
+        try:
+            allowed = bool(ctx.getSharedPreferences("rook", 0).getBoolean("assistant_actions", False))
+        except Exception:
+            allowed = False
+        if not allowed:
+            return {"ok": False, "needs_setting": "assistant_actions",
+                    "error": "this phone doesn't let the assistant act here: on the phone, Settings > "
+                             "App > \"Let the assistant act for me on this phone\""}
+        try:
+            index = action
+            if isinstance(action, str) and not action.strip().lstrip("-").isdigit():
+                acts = json.loads(str(_Listener.actionsJson(str(key))))
+                if not acts.get("ok"):
+                    return acts
+                match = [a for a in acts.get("actions") or []
+                         if str(a.get("title") or "").strip().lower() == action.strip().lower()]
+                if not match:
+                    return {"ok": False, "error": f"no action {action!r}",
+                            "actions": [a.get("title") for a in acts.get("actions") or []]}
+                index = match[0]["index"]
+            return json.loads(str(_Listener.act(ctx, str(key), int(index), str(text or "")[:2000])))
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
     @capability("post", risk="exec")
     def _post(self, title: str = "rook", text: str = "", channel: str = "") -> dict:
         """Post a local notification on the phone (needs POST_NOTIFICATIONS).

@@ -19,6 +19,8 @@ import kotlin.concurrent.thread
 /** Versioned voice transport. Audio has response IDs; the shared service owns the mic. */
 /** SharedPreferences key: use the front/background voice pipeline. */
 const val PREF_FAST_VOICE = "fast_voice"
+/** SharedPreferences key: sound tags ([laugh]) for voices that perform them (default on). */
+const val PREF_EXPRESSIVE = "expressive_voice"
 
 class VoiceClient(
     private val ctx: Context, private val url: String, private val insecureTls: Boolean,
@@ -127,6 +129,7 @@ class VoiceClient(
                     .put("conversation", conversation).put("aec", aec)
                     // Confirmed barge-in: hold playback on local speech, the server resumes or interrupts.
                     .put("barge", "confirm")
+                    .put("expressive", prefs.getBoolean(PREF_EXPRESSIVE, true))
                     .put("mode", mode.id).apply { if (modePrompt.isNotBlank()) put("mode_prompt", modePrompt) }
                     .apply { if (thinking) put("thinking", true) }.toString())
                 webSocket.send(JSONObject().put("type", "voice")

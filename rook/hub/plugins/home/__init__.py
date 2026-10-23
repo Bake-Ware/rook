@@ -302,6 +302,13 @@ class HomeAgent(Plugin):
                      "capable)."),
         setting("voice_effort", str, "low", choices=agent_host.EFFORTS,
                 group="Persistent sessions", order=6, label="Voice effort"),
+        setting("brief_phone", str, "", pattern=r"^[^\n]{0,64}$", group="Persistent sessions",
+                order=16, label="Owner's phone for the voice's brief",
+                help="A worker name (e.g. bakephone): its battery, next calendar items and "
+                     "important notifications go in the voice's brief, read every 5 minutes "
+                     "(reads only), and it is the only phone where the agent may change the "
+                     "calendar or act on notifications (when that phone allows it). Never a "
+                     "family device. Blank: none."),
         setting("voice_engine", str, "house", choices=("house", "local"),
                 group="Persistent sessions", order=15, label="Voice engine",
                 help="house: the voice is this house agent's voice session (Voice model). "

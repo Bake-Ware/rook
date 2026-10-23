@@ -468,6 +468,25 @@ def test_irreversible_actions_are_recognised():
     assert not F.irreversible("pianobar.restart", "change", (), {})
     assert not F.irreversible("shell.exec", "change", (), {"argv": ["systemctl", "restart", "x"]})
     assert not F.irreversible("task.write", "prepare", (), {"action": "create"})
+    # The owner's phone (2026-10-23): their own calendar goes; deleting and anything that
+    # speaks for them to someone else asks first.
+    assert not F.irreversible("calendar.create", "change", ("personal",), {"title": "x"})
+    assert not F.irreversible("calendar.update", "change", ("personal",), {"event_id": 1})
+    assert not F.irreversible("notify.dismiss", "change", (), {"key": "k"})
+    assert not F.irreversible("notify.act", "change", (), {"key": "k", "action": "Mark as read"})
+    assert F.irreversible("calendar.delete", "admin", ("personal", "destructive"), {"event_id": 1})
+    assert "as you" in F.irreversible("notify.act", "change", (), {"key": "k", "text": "on my way"})
+    # A notification's own action asks unless it is named and harmless (review of #188):
+    # Delete, Archive, Block, Call back, any action by index.
+    for act in ("Delete", "Archive", "Block", "Call back", "Decline", 0, "1", ""):
+        assert F.irreversible("notify.act", "change", (), {"key": "k", "action": act}), act
+    for cap in ("sms.send", "gmail.send", "email.reply", "telegram.send", "msg.send",
+                "signal.send", "discord.post", "slack.post_message", "whatsapp.reply",
+                "device.call", "phone.dial", "matrix.send_message"):
+        assert "as you" in F.irreversible(cap, "change", (), {}), cap
+    for cap in ("notify.post", "voice.speak", "notify.dismiss", "sms.list", "gmail.search",
+                "pianobar.restart", "task.write", "chat.write"):
+        assert not F.irreversible(cap, "change", (), {}), cap
 
 
 # -- the dashboard's Decisions page --------------------------------------------------------------
@@ -664,6 +683,30 @@ async def test_a_family_devices_battery_is_read_without_an_ask_and_its_messages_
         item = [i for i in front.node.plugin("approvals").relay.items()
                 if i["kind"] == "house"][-1]
         assert "family device" in item["explain"]
+
+
+@pytest.mark.asyncio
+async def test_calendar_and_notification_changes_run_only_on_the_owners_phone(front):
+    front.band.workers.update({
+        "w-bake": {"name": "bakephone", "last_seen": time.time(),
+                   "caps": ["calendar.create", "notify.act"], "tiers": {"calendar.create": "exec"}},
+        "w-other": {"name": "otherphone", "last_seen": time.time(),
+                    "caps": ["calendar.create"], "tiers": {"calendar.create": "exec"}}})
+    for phone in ("", "otherphone"):
+        front.node.settings.set("home.brief_phone", phone, actor="human:op")
+        _script(front, "front-voice", {"tools": [("do_action", {
+            "worker": "bakephone", "cap": "calendar.create", "args": {"title": "Dentist",
+                                                                   "start": "2026-10-24T10:00"},
+            "summary": "add the dentist"})], "text": ""})
+        await _ask(front, "add the dentist tomorrow at 10")
+        assert not _ran(front, "calendar.create")
+    front.node.settings.set("home.brief_phone", "bakephone", actor="human:op")
+    _script(front, "front-voice", {"tools": [("do_action", {
+        "worker": "bakephone", "cap": "calendar.create", "args": {"title": "Dentist",
+                                                               "start": "2026-10-24T10:00"},
+        "summary": "add the dentist"})], "text": ""})
+    await _ask(front, "add the dentist tomorrow at 10")
+    assert _ran(front, "calendar.create")
 
 
 def test_status_reads_are_reads_whatever_an_older_app_announces():
