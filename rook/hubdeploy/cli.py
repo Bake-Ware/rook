@@ -116,7 +116,8 @@ def _live_feed(config: str | None):
 def _feed_sources(a) -> dict:
     """build_release(worker=, apk=, apk_beta=, public_base=) from the flags."""
     from . import feed as fd
-    wants_live = "live" in (a.worker_bundle, a.apk, a.apk_beta) or not a.apk or not a.apk_beta
+    wants_live = ("live" in (a.worker_bundle, a.apk, a.apk_beta)
+                  or not (a.worker_bundle and a.apk and a.apk_beta))
     live = _live_feed(a.config) if wants_live else None
 
     def need_live(flag):
@@ -126,12 +127,13 @@ def _feed_sources(a) -> dict:
         return live
 
     out = {"worker": None, "apk": None, "apk_beta": None}
-    if a.worker_bundle == "build":
+    worker = a.worker_bundle or ("live" if live and "worker" in fd.tree_kinds(live[0]) else "build")
+    if worker == "build":
         out["worker"] = "build"
-    elif a.worker_bundle == "live":
+    elif worker == "live":
         out["worker"] = need_live("--worker-bundle")[0] / fd.REMOTE
-    elif a.worker_bundle != "none":
-        out["worker"] = Path(a.worker_bundle)
+    elif worker != "none":
+        out["worker"] = Path(worker)
     apk = a.apk or ("live" if live and "apk" in fd.tree_kinds(live[0]) else "none")
     if apk == "live":
         tree = need_live("--apk")[0]
@@ -180,10 +182,12 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--out", default="dist/hub", help="output dir (default dist/hub)")
     b.add_argument("--url-base", default="", help="public URL the tarball will be served "
                                                   "from; signed into the manifest")
-    b.add_argument("--worker-bundle", default="build", metavar="build|live|none|DIR",
-                   help="worker bundle the release serves at /band-worker.pyz: build it from "
-                        "the commit (default), take the one the live hub serves, none, or a "
-                        "directory with a signed band-worker.pyz + band-worker.json")
+    b.add_argument("--worker-bundle", default="", metavar="build|live|none|DIR",
+                   help="worker bundle the release serves at /band-worker.pyz: the one the "
+                        "live hub serves (default when a deploy config with a running release "
+                        "is found, so a hub deploy never changes what new workers get), build "
+                        "it from the commit (the default otherwise), none, or a directory with "
+                        "a signed band-worker.pyz + band-worker.json")
     b.add_argument("--apk", default="", metavar="live|none|DIR",
                    help="Android app the release serves at /apk: the live hub's (default when "
                         "a deploy config is found), none, or a directory with rook-worker.apk + "

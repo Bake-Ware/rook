@@ -382,7 +382,7 @@ def test_cli_live_sources_and_verify(repo, tmp_path, key, svc, monkeypatch, caps
     monkeypatch.setenv("ROOK_BETA_APK_SHA256", json.loads((b / fd.APK_MANIFEST).read_text())["sha256"])
     out = tmp_path / "dist2"
     rc = cli.main(["--config", str(tmp_path / "hub-deploy.json"), "release", "build",
-                   "--repo", str(repo), "--out", str(out), "--worker-bundle", "live"])
+                   "--repo", str(repo), "--out", str(out)])       # defaults: all live
     assert rc == 0, capsys.readouterr().err
     m2 = json.loads((out / "rook-hub-latest.json").read_text())
     assert m2["feed_info"]["worker"]["build"] == 738

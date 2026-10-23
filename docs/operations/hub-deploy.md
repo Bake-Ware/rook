@@ -208,15 +208,15 @@ only `git archive` would drop them (and a hub's workers and phones would stop
 finding updates). `release build` puts them in the release too:
 
 ```sh
-rook hub release build --ref COMMIT                       # bundle built from COMMIT; the live
-                                                          # hub's APK and approved beta APK
-rook hub release build --ref COMMIT --worker-bundle live  # keep the bundle the fleet runs
+rook hub release build --ref COMMIT                        # on a live hub: its bundle, APK and
+                                                           # approved beta, carried forward
+rook hub release build --ref COMMIT --worker-bundle build  # ship a new bundle built from COMMIT
 rook hub release build --ref COMMIT --apk DIR --apk-beta none
 ```
 
 | Flag | Values (default first) |
 |---|---|
-| `--worker-bundle` | `build`: build `band-worker.pyz` from the commit in a throwaway git worktree, signed with the same key; `live`: the bundle the running release serves; `none`; or a directory holding a signed `band-worker.pyz` + `band-worker.json` (+ `band-worker-enrollment.pyz`) |
+| `--worker-bundle` | `live` (the default when a deploy config with a running release that serves a bundle is found): that bundle, so a hub deploy never changes what new workers get; `build` (the default otherwise): build `band-worker.pyz` from the commit in a throwaway git worktree, signed with the same key; `none`; or a directory holding a signed `band-worker.pyz` + `band-worker.json` (+ `band-worker-enrollment.pyz`) |
 | `--apk` | `live` when a deploy config with a running release is found (else `none`); or a directory holding `rook-worker.apk` + `rook-worker-apk.json` |
 | `--apk-beta` | `live`: the beta APK the live hub's `ROOK_BETA_APK_SHA256` approves (updates dir `apk-beta/`, else the running release's), if any; `none`; or a directory |
 | `--public-base` | URL signed into a built bundle's manifest (default `$ROOK_PUBLIC_BASE`, else the live bundle's) |

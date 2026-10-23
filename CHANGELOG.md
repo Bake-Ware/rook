@@ -10,8 +10,9 @@ version was `0.1.0`.
 
 ### Added
 - Hub releases carry what the hub serves besides its code. `rook hub release build` puts the
-  worker bundle (built from the same commit in a throwaway worktree, signed with the same key;
-  or `--worker-bundle live|DIR|none`), the general APK and the beta channel's APK (`--apk`,
+  worker bundle (on a live hub the one it serves, so a hub deploy never changes what new workers
+  get; `--worker-bundle build` builds it from the same commit in a throwaway worktree, signed with
+  the same key; also `DIR|none`), the general APK and the beta channel's APK (`--apk`,
   `--apk-beta`: by default the ones the live hub serves and approves) into the signed manifest
   (`feed`, path + sha256 + size per file), stored once by content beside the tarball.
   `rook hub deploy` fetches and checks each file and links it into the release, carries any kind
