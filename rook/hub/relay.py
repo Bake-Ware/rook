@@ -9,7 +9,9 @@ Four kinds of item wait on a person:
   ``job:<id>``);
 * ``card``: an action card proposed in a chaired huddle
   (:mod:`rook.hub.plugins.huddle.chair`);
-* ``ask``: a question an agent pinned in a huddle.
+* ``ask``: a question an agent pinned in a huddle;
+* ``house``: a one-line ask from the house agent's front door (Yes / No /
+  Explain; rook/hub/plugins/home/front.py), with ``line`` and ``explain``.
 
 :meth:`Relay.items` lists them, each with a speakable name, who asked, what
 exactly would happen (one plain sentence), the risk tier, where it came from
@@ -51,7 +53,7 @@ from ..core.text import clip
 
 log = logging.getLogger("rook.hub.relay")
 
-KINDS = ("hold", "job", "card", "ask")
+KINDS = ("hold", "job", "card", "ask", "house")
 DECISIONS = ("approve", "deny")
 
 #: Never relayed, whatever ``approvals.relay_dashboard_only`` says: secret and
@@ -264,6 +266,8 @@ class Relay:
                 out += self._cards(svc, titles)
             if "ask" in want:
                 out += self._asks(svc, titles)
+        if "house" in want:
+            out += self._house()
         rules = self.dashboard_only()
         for it in out:
             why = refusal(it, rules)
@@ -381,11 +385,25 @@ class Relay:
                 "question": q["id"], "room": q["room"], "options": opts})
         return out
 
+    def _house(self) -> list[dict]:
+        home = self._plugin("home")
+        front = getattr(home, "front", None)
+        if front is None or not getattr(home, "enabled", lambda: False)():
+            return []
+        try:
+            items = front.relay_items()
+        except Exception:  # noqa: BLE001 - the list failing never sinks the others
+            log.exception("relay: listing the house agent's asks failed")
+            return []
+        for it in items:
+            it["age"] = _age(it["age_s"])
+        return items
+
     @staticmethod
     def public(item: dict) -> dict:
         """An item as agents and the voice summary see it (no internal facts)."""
         keys = ("kind", "id", "name", "who", "what", "risk", "from", "age", "relayable", "why_not",
-                "options")
+                "options", "line", "explain")
         return {k: item[k] for k in keys if item.get(k) not in (None, "", [], {})
                 or k == "relayable"}
 
@@ -456,6 +474,19 @@ class Relay:
                                  relay={**rel, "label": by, "text": text})
             out = {"state": res.get("state"), **({"error": res["error"]} if res.get("error")
                                                  else {})}
+        elif it["kind"] == "house":
+            front = getattr(self._plugin("home"), "front", None)
+            if front is None:
+                raise RelayError("the house agent is off on this hub")
+            if ap is not None:
+                ap.queue.relay_add({**rel, "kind": "house", "item": it["id"],
+                                    "decision": decision})
+            res = await front.answer(it["id"], "yes" if decision == "approve" else "no", by=by,
+                                     quote=said["quote"], relay={**rel, "kind": "house"},
+                                     reason=reason)
+            out = {"state": res.get("answer"), **({"note": res["note"]} if res.get("note")
+                                                  else {}),
+                   **({"remember": res["remember"]} if res.get("remember") else {})}
         else:
             svc = self.huddles()
             if ap is None:

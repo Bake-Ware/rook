@@ -90,7 +90,13 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `decide.stop` | run_id='' | write | Kill switch: stop one drive (`run_id`) or every live drive. |
 | `discord.send` | text, chat? | write | Post a message to the configured Discord channel. |
 | `discord.status` | — | read | Discord integration status: connected, channel and token configured (never the token), bridged rooms, counter… |
-| `home.ask` | question, context='' | write | Ask the hub's home agent (its own LLM) a question; returns its answer. |
+| `home.ask` | question, context='', source='' | write | Ask the hub's home agent a question or give it a request; returns its answer. |
+| `home.digest` | limit=20, since=0.0 | read | What the house agent decided for the person without asking, newest first, each with the entry it cited (spoke… |
+| `home.explain` | ask, more=false | read | One of the house agent's asks explained: 2-3 plain sentences, and more detail with more=true. |
+| `home.overturn` | decision, words, relayed_by? | write | Overturn a decision the house agent made for the person (digest): it tightens the entry it cited (trust entry… |
+| `home.playbook` | — | read | The house agent's playbook: its routing rules by section (Just do it, Ask me first, coding sessions, huddles,… |
+| `home.playbook_edit` | op, words, section='', text='', id='' | write | Change the house agent's playbook on the person's correction: op add (section, text) or remove (id); words: t… |
+| `home.settle` | question, positions?, cap='', worker='', repo='', branch='', project='', ruling='', rule='', room='' | write | A disagreement between agents for the house agent to settle: question, positions [{who, says}], the action at… |
 | `home.status` | — | read | Whether the home agent is on, its identity, endpoint host and model, and the last error (never the key). |
 | `hub.info` | — | read | What the hub runs: version, core API, roles, facts and plugins. |
 | `hub.plugin.disable` | module | admin | Unload a hub plugin now (its caps go, its stop() runs) and keep it off. |

@@ -278,6 +278,11 @@ are set only in the environment or on the command line.
 | `home.tools` | Tools (knowledge search; memory save and search) | hub | bool | off | `ROOK_HOME_TOOLS` | live |
 | `home.memory` | Use memory | hub | bool | on | `ROOK_HOME_MEMORY` | live |
 | `home.voice` | Speaking voice | hub | str |  | `ROOK_HOME_VOICE` | live |
+| `home.front_door` | Route requests (front door) | hub | bool | off | `ROOK_HOME_FRONT_DOOR` | live |
+| `home.front_dispatch_role` | Role for coding sessions | hub | str | `lead` | `ROOK_HOME_FRONT_DISPATCH_ROLE` | live |
+| `home.ask_ttl_hours` | Asks wait (hours) | hub | float | `72.0` | `ROOK_HOME_ASK_TTL_HOURS` | live |
+| `home.offer_remember` | Offer to remember answers | hub | bool | on | `ROOK_HOME_OFFER_REMEMBER` | live |
+| `home.front_max_calls` | Tool calls per request | hub | int | `8` | `ROOK_HOME_FRONT_MAX_CALLS` | live |
 | `home.job_steps` | Work job agent steps | hub | bool | on | `ROOK_HOME_JOB_STEPS` | live |
 | `home.job_max_tool_calls` | Tool calls per job step | hub | int | `20` | `ROOK_HOME_JOB_MAX_TOOL_CALLS` | live |
 

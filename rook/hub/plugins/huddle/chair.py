@@ -134,6 +134,30 @@ RELAY = _fn(
      "decision": {"type": "string", "enum": ["approve", "deny"]},
      "quote": {"type": "string"}, "reason": {"type": "string"}, "answer": {"type": "string"}},
     ["item", "decision", "quote"])
+SETTLE = _fn(
+    "settle",
+    "The roles disagree: hand it to the house agent's front door to settle. question: what they "
+    "disagree on; positions: [{who, says}]; the action at stake: worker + cap, or repo + branch; "
+    "ruling: the side you would pick; rule: the playbook rule id that supports it. The hub "
+    "rules (citing the trust entry or playbook rule) when one settles it, else asks the person "
+    "one line. Post nothing else about it.",
+    {"question": {"type": "string"},
+     "positions": {"type": "array", "items": {"type": "object", "properties": {
+         "who": {"type": "string"}, "says": {"type": "string"}}}},
+     "worker": {"type": "string"}, "cap": {"type": "string"}, "repo": {"type": "string"},
+     "branch": {"type": "string"}, "ruling": {"type": "string"}, "rule": {"type": "string"}},
+    ["question", "positions"])
+ASK_PERSON = _fn(
+    "ask_person",
+    "Ask the person one thing only they can decide (not a disagreement: use settle): line, one "
+    "Yes/No question under 120 characters; explain, 2-3 plain sentences. It reaches their phone "
+    "and Approvals; their answer comes back here.",
+    {"line": {"type": "string"}, "explain": {"type": "string"}, "more": {"type": "string"}},
+    ["line", "explain"])
+SETTLE_RULES = (
+    "\n- When roles disagree and the thread cannot go on without picking a side, call settle "
+    "(never ask the person in prose); when only the person can decide something else, call "
+    "ask_person. After either, write one short line or nothing.")
 WAITING_RULES = (
     "When the person asks what is waiting (for them, for approval), call waiting and answer from "
     "it tersely: the count, then each item's name and one line. Never invent items.")
@@ -383,6 +407,13 @@ class Chair:
             if str(sender).startswith("role:") or sender == self.chair_identity() or \
                     not {m.lower() for m in MENTION.findall(text or "")} & ids:
                 return None
+        return self.begin(h, seq, sender, text)
+
+    def begin(self, h: dict, seq: int, sender: str, text: str) -> str | None:
+        """Start a round on post ``seq`` (no check of who wrote it: the house
+        agent's own episodes start here, front.py). Returns the round id."""
+        if h.get("roles") is None or h.get("archived"):
+            return None
         rid = "r_" + uuid.uuid4().hex[:12]
         self.store.round_add(rid, h["room"], int(seq), sender, {})
         task = asyncio.get_running_loop().create_task(self._run(rid, h["room"], text))
@@ -474,6 +505,10 @@ class Chair:
                 log.warning("huddle %s: chair turn on a session report failed: %s", room, e)
             if owner not in [c["role"] for c in plan["calls"]]:
                 plan["calls"] = [{"role": owner, "ask": text}] + plan["calls"]
+        elif not roster and self._front_on():
+            # A 1:1 huddle with the house agent (the web's chat panel): the
+            # front door routes it (rook/hub/plugins/home/front.py).
+            plan.update(await self._front_turn(rid, room, text))
         else:
             plan.update(await self._chair_turn(rid, room, h, roster, text))
         self.store.round_set(rid, plan=plan)
@@ -658,6 +693,64 @@ class Chair:
             self._attach(rid, home.identity, sent["seq"])
         return {"calls": state["calls"], "answered": bool(answer), "model": res.get("model")}
 
+    def _front_on(self) -> bool:
+        home = self.home()
+        with contextlib.suppress(Exception):
+            return bool(home is not None and home.front_door())
+        return False
+
+    async def _front_turn(self, rid: str, room: str, text: str) -> dict:
+        home = self.home()
+        asker = str((self.store.round(rid) or {}).get("asker") or "")
+        if asker == home.identity:
+            return {"calls": [], "answered": False}     # its own post: no loop
+        relay = self._relay()
+        extra: list[dict] = []
+        if relay is not None:
+            extra = [t for t in self._waiting_tools(relay, asker)[0]
+                     if t["function"]["name"] == "relay"]
+
+        async def extra_handler(name: str, args: dict) -> str:
+            return await self._relay_tool(relay, name, args, rid, room, asker, text)
+
+        out = await home.front.handle(
+            text, source="web", asker=asker or "user:operator",
+            principal=home.chat_principal(asker), room=room,
+            context="The conversation so far, oldest first:\n" + self._transcript(room),
+            extra_tools=extra, extra_handler=extra_handler, person=home.person_of(asker))
+        sent = self.svc._send(room, home.identity, clip(scrub(out["answer"]), POST_CHARS))
+        self._attach(rid, home.identity, sent["seq"])
+        self.journal("huddle.chair", {"round": rid}, {"ok": True, "result": {
+            "model": out.get("model"), "path": out["path"], "refs": out["refs"]}},
+            room, home.identity, home.audit())
+        return {"calls": [], "answered": True, "model": out.get("model"), "path": out["path"]}
+
+    async def _front_tool(self, name: str, args: dict, room: str, rid: str) -> str:
+        """``settle`` and ``ask_person`` in a chaired huddle: the house agent's
+        front door rules or asks (front.py)."""
+        home = self.home()
+        front = getattr(home, "front", None)
+        if front is None:
+            return json.dumps({"ok": False, "error": "the front door is off"})
+        try:
+            if name == "settle":
+                out = front.settle(str(args.get("question") or ""), args.get("positions") or [],
+                                   cap=str(args.get("cap") or ""),
+                                   worker=str(args.get("worker") or ""),
+                                   repo=str(args.get("repo") or ""),
+                                   branch=str(args.get("branch") or ""),
+                                   ruling=str(args.get("ruling") or ""),
+                                   rule=str(args.get("rule") or ""), room=room,
+                                   source="huddle", request=rid)
+            else:
+                a = front.make_ask("gap", args.get("line"), args.get("explain"),
+                                   args.get("more") or "", source="huddle", room=room,
+                                   request=rid)
+                out = {"asked": a["name"], "line": a["line"]}
+        except ValueError as e:
+            return json.dumps({"ok": False, "error": str(e)[:300]})
+        return json.dumps({"ok": True, **out}, default=str)
+
     # -- what is waiting, and relaying the person's decisions (rook/hub/relay.py) ----
     def _relay(self):
         ap = self._plugin("approvals")
@@ -812,6 +905,10 @@ class Chair:
                 return json.dumps(out)
             if name == "call_on" and followups > 0:
                 return self._call_on(state, ids, max_turns, args)
+            if name in ("settle", "ask_person") and front_on:
+                out = await self._front_tool(name, args, room, rid)
+                state.setdefault("front", []).append(json.loads(out))
+                return out
             return json.dumps({"ok": False, "error": f"unknown tool {name!r}"})
 
         cards = [c["summary"] for c in self.store.cards(room, rid)]
@@ -824,8 +921,12 @@ class Chair:
         again = (f" (you may do this {followups} more time{'s' if followups != 1 else ''} this "
                  "round)") if followups > 0 else " (no more this round: say what is still open)"
         rules = CLOSE_RULES.replace("{again}", again)
+        front_on = self._front_on()
+        if front_on:
+            rules += SETTLE_RULES
         msgs = self._chair_messages(home, cfg, roster, room, rules, extra)
-        tools = [PROPOSE] + ([CALL_ON] if followups > 0 and roster else [])
+        tools = [PROPOSE] + ([CALL_ON] if followups > 0 and roster else []) \
+            + ([SETTLE, ASK_PERSON] if front_on else [])
         res = await home.tool_turn(msgs, cfg, tools, handler, via="huddle-close", max_calls=4)
         body = (res.get("content") or "").strip()
         if state["calls"] or body.strip(" .").upper() == SETTLED:
