@@ -112,6 +112,19 @@ def _line(text: Any, limit: int) -> str:
     return clip(" ".join(str(text or "").split()), limit)
 
 
+def words(text: Any, limit: int) -> str:
+    """One line for a person: cut at a word with an ellipsis (no markers)."""
+    t = " ".join(str(text or "").split())
+    if len(t) <= limit:
+        return t
+    cut = t[:limit - 1].rsplit(" ", 1)[0].rstrip(",;:.")
+    return (cut or t[:limit - 1]) + "\u2026"
+
+
+def _names(xs: list[str]) -> str:
+    return xs[0] if len(xs) == 1 else ", ".join(xs[:-1]) + " and " + xs[-1]
+
+
 def short(sha: str) -> str:
     return str(sha or "")[:7]
 
@@ -1249,12 +1262,14 @@ class Table:
 
     # -- the person -----------------------------------------------------------------------------
     def _sides(self, rows: list[dict]) -> tuple[str, str]:
+        """Each side in about two lines: who, and their first reason."""
         def side(bs: list[dict]) -> str:
             if not bs:
                 return "nobody"
-            parts = [f"{b['voter']}: {_line(b.get('risk') if b['vote'] != 'yes' and b.get('risk') else b['reasons'], 110)}"
-                     for b in bs[:3]]
-            return clip("; ".join(parts), 260)
+            each = max(60, 250 // min(len(bs), 3))
+            parts = [f"{b['voter']}: {words(b['reasons'], each)}" for b in bs[:3]]
+            more = f" (+{len(bs) - 3} more)" if len(bs) > 3 else ""
+            return "; ".join(parts) + more
         yes = [b for b in rows if b["vote"] == "yes"]
         no = [b for b in rows if b["vote"] != "yes"]
         return side(yes), side(no)
@@ -1263,18 +1278,23 @@ class Table:
         a = self.artifact(m["artifact"])
         what = {"merge": "Merge", "deploy": "Deploy", "qa": "Mark ready for QA",
                 "ship": "Ship"}[m["kind"]]
-        tgt = a["title"] if m["kind"] in ("merge", "qa") else \
+        ref = a.get("ref") or {}
+        tgt = (f"{ref['repo']}#{ref['number']}" if ref.get("number") else a["title"]) \
+            if m["kind"] in ("merge", "qa") else \
             f"{short(m['version'])} to {m['target'].get('title') or m['target'].get('id')}"
+        about = f"{a['title']} at {short(m['version'])}."
         if passed:
             line = f"{what} {tgt}? The vote passed; {m['decision'].get('why')}."
-            explain = (f"Every required voter said yes at {short(m['version'])}: "
-                       f"{self._sides(rows)[0]}. Trust: {m['decision'].get('cite')}")
+            explain = (f"{about} Every required voter said yes: {self._sides(rows)[0]}. "
+                       f"Trust: {m['decision'].get('cite')}")
         else:
-            no = [b for b in rows if b["vote"] != "yes"]
-            line = (f"{what} {tgt}? " + ", ".join(b["voter"] for b in no)
-                    + (" said no" if len(no) == 1 else " said no or couldn't verify"))
+            no = [b["voter"] for b in rows if b["vote"] == "no"]
+            cv = [b["voter"] for b in rows if b["vote"] == "cant_verify"]
+            said = "; ".join(p for p in (f"{_names(no)} said no" if no else "",
+                                         f"{_names(cv)} couldn't verify" if cv else "") if p)
+            line = f"{what} {tgt}? {said}."
             yes_side, no_side = self._sides(rows)
-            explain = f"For: {yes_side}. Against: {no_side}."
+            explain = f"{about} For: {yes_side}. Against: {no_side}."
         more = "\n".join(f"{b['voter']} ({b['seat']}): {b['vote']}. {b['reasons']}"
                          + (f" Risk: {b['risk']}" if b.get("risk") else "")
                          + (f" Evidence: {'; '.join(b['evidence'])}" if b['evidence'] else "")
