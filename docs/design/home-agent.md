@@ -141,10 +141,13 @@ as usual; what the home agent then does is journaled under the home agent.
 
 ### 1.5 Tools
 
-None by default. With `home.tools` on, the model gets one OpenAI function,
+None by default. With `home.tools` on, the model gets
 `knowledge_search(query)`, which calls `knowledge.read` (action `search`) in
-process when the knowledge plugin is loaded; at most three tool rounds per
-turn. The tool is offered only when whoever asked may call `knowledge.read`
+process when the knowledge plugin is loaded, and `band_status(worker?,
+prefix?)`, which reads the hub's roster (the machines, online or not, what
+each is and its cap families; with a worker, that machine's caps) and calls
+nothing; at most three tool rounds per turn. Both are offered only when
+whoever asked may call `knowledge.read`
 on the hub under the policy (`deny` and `would_deny` both count as no; a chat
 sender is evaluated with the policy's defaults for its kind, since chat
 identities are not credentials). Every tool call is journaled as described

@@ -316,6 +316,27 @@ async def test_an_unknown_hub_address_is_named_not_hidden(cenv, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_with_tools_on_the_house_agent_sees_the_band(cenv, monkeypatch):
+    # Front door off (the default): "which machines are on my band?" still has an answer.
+    cenv.svc.set("home.tools", True, actor="human:op")
+    step = {"tools": [("band_status", {}), ("band_status", {"worker": "nope"})],
+            "text": "cachyrig is online."}
+    cenv.band.script = [step]
+    res = await cenv.node.dispatch("home.ask", {"question": "which machines?"}, "agent:claude")
+    assert res["ok"] and res["result"]["tools_used"] == ["band_status", "band_status"]
+    allw, nope = (json.loads(t) for t in step["seen"])
+    assert allw["workers"][0]["name"] == "rook"
+    assert "cachyrig" in [w["name"] for w in allw["workers"]]
+    assert nope["ok"] is False and "nope" in nope["error"]
+    assert [c.cap for c in cenv.band.calls] == ["agenthost.turn"]       # read the roster only
+    cenv.svc.set("home.tools", False, actor="human:op")             # tools off: not offered
+    step = {"tools": [("band_status", {})], "text": "I can't tell."}
+    cenv.band.script = [step]
+    await cenv.node.dispatch("home.ask", {"question": "which machines?"}, "agent:claude")
+    assert "unknown tool" in step["seen"][0]
+
+
+@pytest.mark.asyncio
 async def test_tools_come_back_to_the_hub_as_the_home_agent(cenv, monkeypatch):
     cenv.svc.set("home.tools", True, actor="human:op")
     seen = []

@@ -19,7 +19,7 @@ on the dashboard's Manage > Home agent page. The agent is then:
   person or agent who asked.
 
 Tools are off by default. With ``home.tools`` on it may search the shared
-knowledge wiki (read-only). With ``home.memory`` on (the default) and the
+knowledge wiki and see the band's machines and their caps (both read-only). With ``home.memory`` on (the default) and the
 memory plugin loaded it remembers: before answering it reads what it knows
 about the person and what is relevant to the message (``memory.context``),
 after answering it keeps what it learned (``memory.observe``), and it gets
@@ -81,6 +81,15 @@ KNOWLEDGE_TOOL = {"type": "function", "function": {
     "description": "Search the band's shared knowledge wiki. Returns up to 5 excerpts with slugs.",
     "parameters": {"type": "object", "properties": {"query": {"type": "string"}},
                    "required": ["query"]}}}
+
+
+BAND_TOOL = {"type": "function", "function": {
+    "name": "band_status",
+    "description": "The band's machines (\"rook\" is the hub): name, online, what each is and the "
+                   "cap families it offers; with worker: that machine's caps (prefix narrows them). "
+                   "Read-only.",
+    "parameters": {"type": "object", "properties": {"worker": {"type": "string"},
+                                                    "prefix": {"type": "string"}}}}}
 
 
 BACKENDS = ("openai", "claude-code", "codex", "opencode")
@@ -473,6 +482,10 @@ class HomeAgent(Plugin):
         room}``) offers the memory tools, acting for that person."""
         tools = ([KNOWLEDGE_TOOL] if cfg.get("tools") and may_search and self._has_knowledge()
                  else [])
+        # The machines on the band, read-only: what a new person asks first
+        # ("which machines are on my band?"), front door or not.
+        if cfg.get("tools") and may_search:
+            tools.append(BAND_TOOL)
         # Memory tools ride the same switch as knowledge search: some local
         # endpoints refuse any request that carries tools.
         mem = self._memory() if memory is not None and cfg.get("tools") else None
@@ -678,6 +691,13 @@ class HomeAgent(Plugin):
             args = {}
         if name in ("memory_save", "memory_search") and memory is not None:
             return await self._memory_tool(name, args, thread, memory)
+        if name == "band_status":
+            try:
+                out = self.front.band_status(str(args.get("worker") or ""),
+                                             str(args.get("prefix") or ""))
+            except ValueError as e:              # FrontError: no such worker
+                out = {"ok": False, "error": str(e)[:300]}
+            return clip(json.dumps(out, default=str), TOOL_RESULT_CHARS)
         if name != "knowledge_search":
             return json.dumps({"error": f"unknown tool {name!r}"})
         cap_args = {"action": "search", "query": str(args.get("query") or "")[:300]}
