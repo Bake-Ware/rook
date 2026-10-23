@@ -174,6 +174,10 @@ class Decision:
     spread_target: str = ""
     target_is_hub: bool = False
     label: str = ""                 # the principal's display label (holds show it)
+    #: The trust map's ruling for this call (rook/hub/trust.py): its rule
+    #: (``trust:<entry>@v<version>``) and the citation people and agents read.
+    trust_rule: str = ""
+    trust: str = ""
 
     @property
     def denied(self) -> bool:
@@ -185,8 +189,11 @@ class Decision:
         return self.decision == "hold"
 
     def journal(self) -> dict:
-        return {"principal": self.principal, "decision": self.decision, "rule": self.rule,
-                "policy_rev": self.rev, "tier": self.tier}
+        out = {"principal": self.principal, "decision": self.decision, "rule": self.rule,
+               "policy_rev": self.rev, "tier": self.tier}
+        if self.trust_rule:
+            out["trust"] = {"rule": self.trust_rule, "cite": self.trust}
+        return out
 
     def explain(self) -> dict:
         out = {"decision": self.decision, "cap": self.cap, "tier": self.tier,
@@ -197,6 +204,8 @@ class Decision:
             out["tags"] = list(self.tags)
         if self.hold_kind:
             out["hold"] = {"kind": self.hold_kind, "reason": self.hold_reason}
+        if self.trust_rule:
+            out["trust"] = {"rule": self.trust_rule, "cite": self.trust}
         return out
 
     def denial(self) -> dict:

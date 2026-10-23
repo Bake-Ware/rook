@@ -50,6 +50,7 @@ The tables are generated from the code by `tools/gen_skill_reference.py`; don't 
 | `rook_project` | action='list', band?, id?, query?, data?, request_id? | Projects (outcomes) under concepts: list/search/get/create/update/link. create data {title, body, parent: con… |
 | `rook_secret` | action='list', name?, value?, description? | Vault: list (names only) \| get name (logged) \| set name value description \| delete name \| log name?. |
 | `rook_task` | action='deck', band?, id?, query?, data?, request_id? | Tasks. deck (id=project narrows): in progress with claimants and latest handoff, blocked, paused, todo, recen… |
+| `rook_trust` | action='summary', data? | Hub-enforced trust map: sacred (person only), guarded (ask), ship-it (go). summary\|get\|history\|check data {ca… |
 | `rook_whoami` | — | Your identity as this hub records it (agent_id, key_id, kind, identity). |
 | `rook_workers` | name?, cap_prefix?, online?, fields? | Workers on the band. |
 <!-- END GENERATED: mcp-tools -->
@@ -168,6 +169,11 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `task.write` | action, kind='task', band?, id?, data?, request_id? | write | Write tasks/projects/concepts: create\|update\|link\|retract\|claim\|release\|note\|batch. |
 | `telegram.send` | text, chat? | write | Post a message to the configured Telegram chat. |
 | `telegram.status` | — | read | Telegram integration status: connected, chat and token configured (never the token), bridged rooms, counters… |
+| `trust.check` | cap='', worker='', repo='', branch='', project='', tier='' | read | The ruling for an action, with its citation: a cap on a worker (its tier is the band's), or repo + branch (a… |
+| `trust.get` | section='' | read | The trust map: summary (what agents get in context) and the map; section: entries\|exceptions\|ledger\|proposals… |
+| `trust.history` | limit=30, entry='' | read | Changes to the trust map, newest first: who, when, the person's words, before and after (entry: one entry's). |
+| `trust.propose` | change?, why='' | write | Ask the person to change the trust map: change {op, data} (set_entry, delete_entry, set_unlisted, add_excepti… |
+| `trust.tighten` | op, data?, words='', session='' | write | Make the trust map stricter (house agent or a person): op set_entry (new guarded/sacred entry, or a higher le… |
 | `updates.apply_hub` | tag | admin | Update the hub to release `tag` (restarts it). |
 | `updates.check` | — | admin | Check GitHub for new releases now. |
 | `updates.history` | n=30 | read | Recent update events: hub updates, rollouts, rollbacks, APK publishes. |
@@ -245,6 +251,9 @@ Tasks, projects and concepts. Use `rook_task(action="deck")` to see what is on; 
 
 ### telegram
 When the Telegram integration is on: `telegram.send` (text) posts to the configured chat; `telegram.status` shows whether it is connected. Prefer `notify.send` to reach every configured channel.
+
+### trust map
+The hub enforces a trust map: each project, host, repo or resource is `sacred` (changes only on the person's direct instruction; you may read, propose and prepare), `guarded` (ask first; votes later) or `ship-it` (just go). A held call cites its entry. `rook_trust(action="summary")` before acting on something you are unsure of; `action="check", data={"cap":…, "worker":…}` gives the ruling. Never try to get around a trust hold. To change the map, `action="propose", data={"change": {"op": "set_entry", "data": {...}}, "why": …}`: the person decides on the dashboard. Only the person loosens it.
 
 ### updates
 `updates.status` on worker `rook`: hub version vs the newest release, workers behind, the running rollout. Applying updates (`updates.apply_hub`, `updates.prepare_hub`, `updates.rollout`) is for operators: ask the person who runs the hub first.

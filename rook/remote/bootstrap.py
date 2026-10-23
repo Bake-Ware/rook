@@ -1744,6 +1744,8 @@ class CombinedServer:
         # Approvals page API: held agent calls wait for the operator here (3.11).
         from .approvals_web import ApprovalsWeb
         ApprovalsWeb(self).install(self._app)
+        from .trust_web import TrustWeb
+        TrustWeb(self).install(self._app)
         self._runner: web.AppRunner | None = None
         # Seconds stop() lets open requests (long-polls, terminal sockets)
         # finish before cancelling them; aiohttp's default.

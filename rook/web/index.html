@@ -291,6 +291,7 @@
       <a id="tab-plugins" href="#plugins" onclick="showView('plugins');return false">Plugins</a>
       <a id="tab-ccmod" href="#ccmod" onclick="showView('ccmod');return false">Claude Code</a>
       <a id="tab-updates" href="#updates" onclick="showView('updates');return false">Updates</a>
+      <a id="tab-trust" href="#trust" onclick="showView('trust');return false">Trust<span class="nav-badge" id="trust-badge" hidden></span></a>
       <a id="tab-account" href="#account" onclick="showView('account');return false">Account & access</a>
       <a id="tab-tokens" href="#tokens" onclick="showView('tokens');return false">API tokens</a>
       <a id="tab-guidance" href="#guidance" onclick="showView('guidance');return false">Agent instructions</a>
@@ -402,6 +403,7 @@
     <div id="view-bands" hidden><p class="empty">Loading bands…</p></div>
     <div id="view-huddles" hidden></div>
     <div id="view-roles" hidden></div>
+    <div id="view-trust" hidden></div>
 
     <!-- INSTALL VIEW -->
     <div id="view-sessions" hidden></div>
@@ -1043,6 +1045,7 @@ function renderCapResult(out,cap,reply){
 const viewInfo={
  overview:['Overview','What is running, what is waiting on you, and the work in progress.'],
  approvals:['Approvals','Agent calls waiting for your yes or no: risky actions, and reaching many machines at once.'],
+ trust:['Trust','What agents may change on their own: sacred, guarded or ship-it, in your words.'],
  start:['Start page','Your own page: links, news and your band at a glance.'],
  workers:['Workers','Your connected machines, across every band.'],
  account:['Account & access','Your profile, connected logins, and band permissions.'],
@@ -1101,6 +1104,23 @@ async function pollApprovals(){
  try{const r=await fetch('/api/approvals?count=1',{headers:{Accept:'application/json'}});if(!r.ok)return;const d=await r.json();showApprovalCount(Number(d.pending)||0);}catch{}
 }
 pollApprovals();setInterval(pollApprovals,15000);document.addEventListener('visibilitychange',pollApprovals);
+let trustUI=null, trustLoading=null;
+async function ensureTrust(){
+ if(trustUI)return trustUI;
+ if(!trustLoading)trustLoading=import('/account/trust/assets/trust.js').then(m=>m.mountTrust($('#view-trust'),{onCount:showTrustCount})).then(ui=>trustUI=ui).finally(()=>{trustLoading=null;});
+ return trustLoading;
+}
+/* The trust badge: proposals and the house agent's tightenings wait for the person. */
+function showTrustCount(n){
+ const b=$('#trust-badge');if(!b)return;
+ b.textContent=n>99?'99+':String(n);b.hidden=!n;
+ $('#tab-trust').setAttribute('aria-label',n?'Trust, '+n+' waiting':'Trust');
+}
+async function pollTrust(){
+ if(document.hidden)return;
+ try{const r=await fetch('/api/trust?count=1',{headers:{Accept:'application/json'}});if(!r.ok)return;const d=await r.json();showTrustCount(Number(d.waiting)||0);}catch{}
+}
+pollTrust();setInterval(pollTrust,60000);
 let overviewUI=null, overviewLoading=null, startUI=null, startLoading=null;
 async function ensureOverview(){
  if(overviewUI)return overviewUI;
@@ -1273,6 +1293,7 @@ function showView(v,updateHistory=true){
  if(activeView==='knowledge')knowledgeUI?.deactivate();
  if(activeView==='jobs')jobsUI?.deactivate();
  if(activeView==='approvals')approvalsUI?.deactivate();
+ if(activeView==='trust')trustUI?.deactivate();
  if(activeView==='home')homeUI?.deactivate();
  if(activeView==='voice')voiceUI?.deactivate();
  if(activeView==='memory')memoryUI?.deactivate();
@@ -1305,6 +1326,7 @@ function showView(v,updateHistory=true){
  if(v==='memory')ensureMemory().then(ui=>{if(activeView==='memory')ui.activate();}).catch(e=>{$('#view-memory').textContent=e.message;});
  if(v==='guidance')ensureGuidance().then(ui=>{if(activeView==='guidance')ui.activate();}).catch(e=>{$('#view-guidance').textContent=e.message;});
  if(v==='jobs')ensureJobs().then(ui=>{if(activeView==='jobs')return ui.activate();}).catch(e=>{$('#view-jobs').textContent=e.message;});
+ if(v==='trust')ensureTrust().then(ui=>{if(activeView==='trust')return ui.activate();}).catch(e=>{$('#view-trust').textContent=e.message;});
  if(v==='approvals')ensureApprovals().then(ui=>{if(activeView==='approvals')return ui.activate();}).catch(e=>{$('#view-approvals').textContent=e.message;});
  if(v==='help')ensureManual().then(ui=>{if(activeView==='help')return ui.activate();}).catch(e=>{$('#view-help').textContent=e.message;});
  if(v==='knowledge')ensureKnowledge().then(ui=>{if(activeView==='knowledge')ui.activate();}).catch(e=>{$('#view-knowledge').textContent=e.message;});

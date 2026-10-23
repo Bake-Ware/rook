@@ -385,6 +385,10 @@ class HomeAgent(Plugin):
         extra = str(cfg.get("system_prompt") or "").strip()
         if extra:
             parts.append(extra)
+        from ..trust import summary_text
+        trust = summary_text(self._node)
+        if trust:
+            parts.append(trust)
         if memory:
             parts.append(memory)
         return "\n\n".join(p for p in parts if p)

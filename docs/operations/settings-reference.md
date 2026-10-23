@@ -426,6 +426,9 @@ are set only in the environment or on the command line.
 | `role.session_stall_minutes` | Session quiet alarm | hub | int | `20` | `ROOK_ROLE_SESSION_STALL_MINUTES` | live |
 | `role.session_max_minutes` | Session time limit | hub | int | `180` | `ROOK_ROLE_SESSION_MAX_MINUTES` | live |
 | `role.sessions_per_role` | Live sessions per role | hub | int | `2` | `ROOK_ROLE_SESSIONS_PER_ROLE` | live |
+| `role.session_github_app_id` | Session GitHub App id | hub | str |  | `ROOK_ROLE_SESSION_GITHUB_APP_ID` | live |
+| `role.session_github_installation` | Session GitHub App installation | hub | str |  | `ROOK_ROLE_SESSION_GITHUB_INSTALLATION` | live |
+| `role.session_github_app_key` | Session GitHub App private key (secret) | hub | str |  | `ROOK_ROLE_SESSION_GITHUB_APP_KEY` | live |
 
 ## Tasks (hub plugin, runs in mcp)
 
