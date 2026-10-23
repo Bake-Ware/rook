@@ -289,6 +289,11 @@ class HomeAgent(Plugin):
         setting("persistent_effort", str, "", choices=agent_host.EFFORTS,
                 group="Persistent sessions", order=4, label="Agent effort",
                 help="Blank: Claude Code's default for the model."),
+        setting("web_search", bool, True, group="Persistent sessions", order=14,
+                label="Web search",
+                help="The house agent may search the web and read pages (Claude Code's WebSearch "
+                     "and WebFetch). The voice never has tools; it asks the agent. Another role "
+                     "gets them only with a tool grant of \"web\" on the trust map."),
         setting("voice_model", str, "claude-haiku-5-5", pattern=r"^[A-Za-z0-9_.:\[\]-]{1,80}$",
                 group="Persistent sessions", order=5, label="Voice model",
                 help="claude-haiku-5-5 (default) at effort low: the voice has no tools and routes "

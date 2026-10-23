@@ -235,7 +235,7 @@ class Sessions:
                     "voice_model": str(s.get("voice_model") or roledir.DEFAULT_VOICE_MODEL),
                     "voice_effort": str(s.get("voice_effort") or "low"),
                     "idle_sleep_min": int(s.get("persistent_idle_sleep_min") or 0),
-                    "memory": "off"}
+                    "memory": "off", "web": bool(s.get("web_search", True))}
             base.update({k: v for k, v in saved.items() if k in ("model", "effort")})
             return base
         return {"persistent": bool(saved.get("persistent")), "voice": bool(saved.get("voice")),
@@ -243,7 +243,7 @@ class Sessions:
                 "effort": str(saved.get("effort") or ""),
                 "voice_model": roledir.DEFAULT_VOICE_MODEL,
                 "voice_effort": "low", "idle_sleep_min": int(saved.get("idle_sleep_min", 30)),
-                "memory": str(saved.get("memory") or "write")}
+                "memory": str(saved.get("memory") or "write"), "web": False}
 
     def roles(self) -> list[str]:
         """Roles that run persistently (the house agent first)."""
@@ -391,12 +391,16 @@ class Sessions:
         for role in self.roles():
             rc = self.role_cfg(role)
             granted = [g["server"] for g in (trust.grants(role) if trust is not None else [])]
+            # The web tools: the house agent's setting, or a trust-map grant for a role.
+            web = bool(rc["web"]) or roledir.WEB_GRANT in granted
+            granted = [g for g in granted if g != roledir.WEB_GRANT]
             files = roledir.main_files(claude_md=self._claude_md(role), model=rc["model"],
                                        effort=rc["effort"], turn_url=url,
-                                       host_servers=granted)
+                                       host_servers=granted, web=web)
             sess = self.state()["sessions"].get(role) or {}
             lanes = {"main": {"model": rc["model"], "effort": rc["effort"],
-                              "tools": list(roledir.MAIN_TOOLS),
+                              "tools": list(roledir.MAIN_TOOLS) +
+                              (list(roledir.SEARCH_TOOLS) if web else []),
                               "env": {roledir.TURN_TOKEN_ENV: self._token(role, "main")},
                               "partial": False, "session_id": sess.get("main") or "",
                               "idle_sleep_s": int(rc["idle_sleep_min"]) * 60, "thinking": True}}
@@ -1280,7 +1284,7 @@ class Sessions:
             if trust is None:
                 raise ValueError("this hub has no trust map")
             grantable = set(((self.link.hello.get("servers") if self.link else None) or [])) | \
-                set((self.home.settings.get("mcp_catalog") or []))
+                set((self.home.settings.get("mcp_catalog") or [])) | {roledir.WEB_GRANT}
             if action == "grant" and server not in grantable:
                 raise ValueError(f"{server!r} is not an MCP server the session host can give "
                                  f"(it has: {', '.join(sorted(grantable)) or 'none'})")

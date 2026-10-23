@@ -69,6 +69,15 @@ You can keep talking while the agent is busy. The voice can:
   switched to. The voice never switches into or out of the children's
   conversation mode or roleplay.
 
+## Web search
+
+The agent can search the web and read pages (**Web search** in **Manage > Home
+agent > Persistent sessions**, on by default). Ask the voice anything current
+("are any coffee shops open at midnight near me?", "what's the weather this
+weekend"): it says it's looking, the agent searches, and the voice tells you
+the answer. The voice itself never searches. Another role gets web search only
+when you grant it, like an MCP server: "give our researcher web search".
+
 ## Giving a role more tools
 
 Ask the house agent, for example "give our reverse engineering technician the

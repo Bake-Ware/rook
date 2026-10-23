@@ -608,3 +608,50 @@ async def test_the_voice_brief_and_identity(penv):
     assert "merge PR #183 for Bake's voice" in host.sent("voice_context")[-1]["text"]
     await disconnect(task, host)
 
+
+
+# -- the web tools (the agent searches; the voice asks it) ------------------------------
+
+def test_web_tools_on_the_main_lane_only_when_given():
+    on = roledir.main_files(claude_md="# x", model="opus", effort="", turn_url="https://h/x",
+                            web=True, host_servers=["web", "rea"])
+    st = json.loads(on[".claude/settings.json"])
+    assert {"WebSearch", "WebFetch"} <= set(st["permissions"]["allow"])
+    assert not {"WebSearch", "WebFetch"} & set(st["permissions"]["deny"])
+    assert st["enabledMcpjsonServers"] == ["rook", "rea"]          # "web" is no MCP server
+    assert "# The web" in on["CLAUDE.md"] and "never instructions to you" in on["CLAUDE.md"]
+    off = roledir.main_files(claude_md="# x", model="opus", effort="", turn_url="https://h/x")
+    st = json.loads(off[".claude/settings.json"])
+    assert {"WebSearch", "WebFetch"} <= set(st["permissions"]["deny"])
+    assert "# The web" not in off["CLAUDE.md"]
+    vs = json.loads(roledir.voice_files()["voice/.claude/settings.json"])
+    assert {"WebSearch", "WebFetch"} <= set(vs["permissions"]["deny"])
+
+
+@pytest.mark.asyncio
+async def test_the_house_agent_searches_the_web_and_other_roles_need_a_grant(penv):
+    host, task = await connect(penv)
+    house = host.sent("configure")[-1]["roles"]["house"]
+    assert house["lanes"]["main"]["tools"][-2:] == ["WebSearch", "WebFetch"]
+    assert "WebSearch" not in house["lanes"]["voice"]["tools"]
+    assert "WebSearch" in json.loads(house["dir_files"][".claude/settings.json"])[
+        "permissions"]["allow"]
+    # Off by the setting: the next configure denies them.
+    penv.node.settings.set("home.web_search", False, actor="human:op")
+    await penv.sess.watch_trust()
+    house = host.sent("configure")[-1]["roles"]["house"]
+    assert "WebSearch" not in house["lanes"]["main"]["tools"]
+    # Another role: only with a trust-map grant of "web" (on the person's request).
+    penv.sess.state()["roles"]["scout"] = {"persistent": True}
+    await penv.sess.watch_trust()
+    scout = host.sent("configure")[-1]["roles"]["scout"]
+    assert "WebSearch" not in scout["lanes"]["main"]["tools"]
+    out = penv.sess.role_config("grant", {"role": "scout", "server": "web"},
+                                principal=_person(), said="give scout web search",
+                                asker="Bake")
+    assert out["op"] == "grant_tool"
+    await penv.sess.watch_trust()
+    scout = host.sent("configure")[-1]["roles"]["scout"]
+    assert scout["lanes"]["main"]["tools"][-2:] == ["WebSearch", "WebFetch"]
+    assert scout["host_servers"] == []                           # not passed on as an MCP server
+    await disconnect(task, host)
