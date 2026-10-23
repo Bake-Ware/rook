@@ -64,14 +64,16 @@ ACTION_TIMEOUT = 60.0
 #: How long a Yes waits for the hold its call meets (the trust map's) to show up.
 HOLD_WAIT = 8.0
 DIGEST_DEFAULT = 20
+#: A worker counts as online when it was heard from this recently (as rook_workers).
+ONLINE_SECS = 65
 
 ROUTER_WHERE = (
     "You are the person's personal assistant and the front door of their Rook band: every "
     "request reaches you first. Understand what they want, protect their attention, and take "
     "exactly one path per request.")
 ROUTER_RULES = """Paths (pick one; the hub tells the person which one you took):
-- answer: questions, chat, status. Just reply (use knowledge_search, digest or waiting when you need facts).
-- do: a quick, reversible action. Call do_action (worker, cap, args, summary). The hub checks the trust map: it runs the action when the map says go, and otherwise turns it into a one-line ask for the person. When the playbook says to ask first, pass ask_first=true and the rule id.
+- answer: questions, chat, status. Just reply (use band_status, knowledge_search, digest or waiting when you need facts).
+- do: a quick, reversible action. Call do_action (worker, cap, args, summary); band_status with the worker lists its caps. The hub checks the trust map: it runs the action when the map says go, and otherwise turns it into a one-line ask for the person. When the playbook says to ask first, pass ask_first=true and the rule id.
 - dispatch: one clear piece of code work. Call dispatch_session (instructions the session can follow alone, a branch name like fix/short-name, a title). It reports back on its own.
 - huddle: fuzzy, big or multi-discipline work. Call open_huddle (title, roles, brief), or continue_huddle when a huddle on it exists.
 - ask: something only the person can decide that no tool covers: call ask_person. Never use ask_person for an action you could run (deleting, restarting, sending): call do_action with ask_first=true instead, so their yes runs it with a one-line question (under 120 characters, answerable Yes or No), a 2-3 sentence plain explanation, and more detail.
@@ -162,6 +164,12 @@ TOOLS = {
                   {"limit": {"type": "integer"}}),
     "waiting": _fn("waiting", "Everything waiting on the person across the band (held calls, "
                    "cards, questions, your asks)."),
+    "band_status": _fn(
+        "band_status", "The band's machines (\"rook\" is the hub): name, online, what each is, "
+        "and the cap families it offers. With worker: that machine's caps (prefix narrows "
+        "them), to pick one for do_action; shell.exec {\"argv\": [...]} runs a command on a "
+        "desktop worker.",
+        {"worker": {"type": "string"}, "prefix": {"type": "string"}}),
 }
 KNOWLEDGE = _fn("knowledge_search", "Search the band's shared knowledge wiki (excerpts with "
                 "slugs).", {"query": {"type": "string"}}, ["query"])
@@ -482,6 +490,44 @@ class FrontDoor:
             if hub_id:
                 roster[hub_id] = node.entry()
         return roster, hub_id
+
+    def band_status(self, worker: str = "", prefix: str = "") -> dict:
+        """Read-only: the machines on the band, or one machine's caps."""
+        roster, hub_id = self._roster()
+        now = time.time()
+
+        def row(wid: str, e: dict) -> dict:
+            on_hub = wid == hub_id
+            age = None if on_hub else round(max(0.0, now - float(e.get("last_seen") or 0.0)))
+            facts = e.get("facts") if isinstance(e.get("facts"), dict) else {}
+            caps = [c for c in (e.get("caps") or []) if isinstance(c, str)]
+            out = {"name": "rook" if on_hub else str(e.get("name") or wid),
+                   "online": on_hub or (age is not None and age <= ONLINE_SECS),
+                   "description": clip(str(e.get("description") or ""), 120),
+                   "families": sorted({c.split(".")[0] for c in caps})[:40]}
+            if age is not None:
+                out["last_seen_s"] = age
+            if facts.get("os"):
+                out["os"] = facts["os"]
+            if e.get("device"):
+                out["device"] = True
+            return out
+        w = worker.strip()
+        if not w:
+            rows = sorted((row(k, e) for k, e in roster.items() if isinstance(e, dict)),
+                          key=lambda r: (r["name"] != "rook", not r["online"], r["name"].lower()))
+            return {"ok": True, "workers": rows[:60],
+                    "online": sum(1 for r in rows if r["online"]), "total": len(rows)}
+        for k, e in roster.items():
+            if not isinstance(e, dict):
+                continue
+            name = "rook" if k == hub_id else str(e.get("name") or k)
+            if w.lower() in (name.lower(), k.lower()) or (k == hub_id and w.lower() == "hub"):
+                caps = sorted(c for c in (e.get("caps") or []) if isinstance(c, str)
+                              and c.startswith(prefix))
+                return {"ok": True, **row(k, e), "caps": caps[:150],
+                        **({"more_caps": len(caps) - 150} if len(caps) > 150 else {})}
+        raise FrontError(f"no worker {w!r} on the band")
 
     def resolve_worker(self, worker: str, cap: str) -> dict:
         """``{wid, name, on_hub, tier, tags}`` for a cap on a worker, or FrontError."""
@@ -1121,6 +1167,8 @@ class FrontDoor:
             return {"ok": True, "spoken": d["spoken"], "decisions": [
                 {k: i[k] for k in ("name", "kind", "summary", "cite", "overturned")}
                 for i in d["decisions"]], "asks": d["asks"]}
+        if name == "band_status":
+            return self.band_status(str(args.get("worker") or ""), str(args.get("prefix") or ""))
         if name == "waiting":
             relay = self.relay()
             if relay is None:

@@ -30,7 +30,9 @@ Every request that reaches the house agent goes through
 
 One model turn with the router tools: `do_action`, `dispatch_session`,
 `open_huddle`, `continue_huddle`, `ask_person`, `check_trust`,
-`playbook_edit`, `overturn`, `answer_ask`, `digest`, `waiting` (and
+`playbook_edit`, `overturn`, `answer_ask`, `digest`, `waiting`, `band_status`
+(the machines, online or not, and one machine's caps, so a status question
+or a quick action never depends on the model guessing cap names) (and
 `knowledge_search` with `home.tools`). Its system prompt carries the
 persona, the trust summary, memory, the whole playbook (rule ids to cite),
 the roles, and its open asks.
