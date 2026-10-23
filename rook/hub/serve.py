@@ -55,9 +55,10 @@ log = logging.getLogger("rook.hub.serve")
 # ``/home/turn-mcp`` is the per-turn tool server an agent host's Claude Code
 # turn calls back to (rook/hub/plugins/home/turn_mcp.py); its per-turn bearer
 # token is its whole credential, so the dashboard's password gate must not
-# stand in front of it.
+# stand in front of it. ``/home/agents-link`` is the session host's websocket
+# for persistent sessions (rook/hub/plugins/home/sessions.py), with its own token.
 PUBLIC_MCP_PATHS = ("/mcp", "/band", "/tokens/account-api", "/authorize", "/token",
-                    "/healthz", "/home/turn-mcp")
+                    "/healthz", "/home/turn-mcp", "/home/agents-link")
 PUBLIC_MCP_PREFIXES = ("/mcp/", "/.well-known/", "/skill/")
 
 DEFAULT_MCP_BIND = "127.0.0.1:8765"

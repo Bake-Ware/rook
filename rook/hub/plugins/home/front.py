@@ -165,6 +165,17 @@ TOOLS = {
                   {"limit": {"type": "integer"}}),
     "waiting": _fn("waiting", "Everything waiting on the person across the band (held calls, "
                    "cards, questions, your asks)."),
+    "role_config": _fn(
+        "role_config", "A role's Claude Code setup for its persistent sessions (role: an id, "
+        "or house for you). action get: model, effort, granted MCP servers and what can be "
+        "granted. grant / revoke (server: an MCP server name): only when the person asks for "
+        "it in this request (words: their exact words); granting a tool is theirs to decide, "
+        "never yours to start. set (the person's request): persistent, voice, model, effort.",
+        {"action": {"type": "string", "enum": ["get", "grant", "revoke", "set"]},
+         "role": {"type": "string"}, "server": {"type": "string"},
+         "words": {"type": "string"}, "persistent": {"type": "boolean"},
+         "voice": {"type": "boolean"}, "model": {"type": "string"},
+         "effort": {"type": "string"}}, ["action", "role"]),
     "band_status": _fn(
         "band_status", "The band's machines (\"rook\" is the hub): name, online, what each is, "
         "and the cap families it offers. With worker: that machine's caps (prefix narrows "
@@ -1174,29 +1185,12 @@ class FrontDoor:
         cfg = home.config()
         state: dict = {"did": [], "started": [], "asked": [], "edits": [], "tools": [],
                        "approved": approved, "onboard": [], "acted": False}
-        may_search = home.may_read_knowledge(principal)
         use_memory = home.may_use_memory(principal)
         recalled = (await home.recall_for(text, person, room or None, people=person is not None)
                     if use_memory else {"text": "", "ids": []})
-        tools = [TOOLS[n] for n in TOOLS]
-        if cfg.get("tools") and may_search and home._has_knowledge():
-            tools.append(KNOWLEDGE)
-        tools += list(extra_tools or [])
-        extra_names = {(t.get("function") or t)["name"] for t in extra_tools or []}
-
-        async def handler(name: str, args: dict) -> str:
-            state["tools"].append(name)
-            try:
-                if name in extra_names and extra_handler is not None:
-                    return await extra_handler(name, args)
-                if name == "knowledge_search":
-                    return await home._run_tool(name, args, room or None)
-                out = await self._tool(name, args, state, source=source, asker=asker,
-                                       principal=principal, room=room, request=rid, said=text)
-            except (FrontError, OnboardError, PlaybookError, ValueError, PermissionError,
-                    LookupError) as e:
-                out = {"ok": False, "error": str(e)[:400]}
-            return json.dumps(out, default=str)
+        tools, handler = self.toolkit(text, source=source, asker=asker, principal=principal,
+                                      room=room, request=rid, state=state,
+                                      extra_tools=extra_tools, extra_handler=extra_handler)
 
         where = ROUTER_WHERE + f" This request came from {source} (asked by {asker})."
         system = home.system_prompt(cfg, where, recalled["text"])
@@ -1228,6 +1222,42 @@ class FrontDoor:
                 "asks": [a["name"] for a in state["asked"]], "model": res.get("model"),
                 "latency_ms": res.get("latency_ms"), "tools_used": res.get("tools_used") or []}
 
+    def toolkit(self, text: str, *, source: str, asker: str, principal: Any = None,
+                room: str = "", request: str = "", state: dict | None = None,
+                extra_tools: list | None = None,
+                extra_handler: Callable[[str, dict], Awaitable[str]] | None = None
+                ) -> tuple[list[dict], Callable[[str, dict], Awaitable[str]]]:
+        """The front door's tools for one request and the handler that runs them
+        as the house agent for ``principal`` (a request, or a side thread forked
+        from the persistent session: docs/design/persistent-agents.md)."""
+        home = self.home
+        cfg = home.config()
+        if state is None:
+            state = {"did": [], "started": [], "asked": [], "edits": [], "tools": [],
+                     "approved": None, "onboard": [], "acted": False}
+        tools = [TOOLS[n] for n in TOOLS]
+        if cfg.get("tools") and home.may_read_knowledge(principal) and home._has_knowledge():
+            tools.append(KNOWLEDGE)
+        tools += list(extra_tools or [])
+        extra_names = {(t.get("function") or t)["name"] for t in extra_tools or []}
+
+        async def handler(name: str, args: dict) -> str:
+            state["tools"].append(name)
+            try:
+                if name in extra_names and extra_handler is not None:
+                    return await extra_handler(name, args)
+                if name == "knowledge_search":
+                    return await home._run_tool(name, args, room or None)
+                out = await self._tool(name, args, state, source=source, asker=asker,
+                                       principal=principal, room=room, request=request,
+                                       said=text)
+            except (FrontError, OnboardError, PlaybookError, ValueError, PermissionError,
+                    LookupError) as e:
+                out = {"ok": False, "error": str(e)[:400]}
+            return json.dumps(out, default=str)
+
+        return tools, handler
+
     def _role_line(self) -> str:
         rp = self.plugin("role")
         if rp is None:
@@ -1258,6 +1288,10 @@ class FrontDoor:
                                                             "tells them."}
         if name == "check_trust":
             return self._check(args)
+        if name == "role_config":
+            return self.home.sessions.role_config(
+                str(args.get("action") or "get"), args, principal=principal, said=said,
+                asker=asker)
         if name in ONBOARD_TOOLS:
             return await self._onboard_tool(name, args, state, asker=asker, said=said,
                                             principal=principal, **where)

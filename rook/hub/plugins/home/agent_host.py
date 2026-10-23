@@ -265,6 +265,18 @@ class AgentHostBackend:
         harness = harness_of(cfg)
         if harness is None:
             raise Unavailable(f"home.backend {cfg.get('backend')!r} is not an agent harness")
+        sessions = getattr(self.plugin, "sessions", None)
+        if sessions is not None and sessions.accepts(cfg, tools, via, role):
+            # The house agent's always-on session, through its inbox
+            # (sessions.py); without a session host, the one-shot turn below.
+            try:
+                res = await sessions.run(cfg, messages, tools=tools, handler=handler, via=via)
+            except Unavailable as e:
+                log.warning("persistent session unavailable (%s); one-shot turn instead", e)
+            else:
+                self._book(None, via, res.get("worker") or "", res.get("model") or "", True,
+                           res.get("usage"), res.get("cost_usd"))
+                return res
         wid, name = self.pick(cfg, harness, only=(role or {}).get("host") or None)
         url = self.turn_url(cfg)
         system, prompt = flatten(messages)
