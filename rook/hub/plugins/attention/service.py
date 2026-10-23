@@ -252,6 +252,8 @@ class AttentionService:
         d = self._dev(wid)
         res = await self.call("attention.poll", {"since": int(d["last_seq"])}, wid)
         d["last_poll"] = self.clock()
+        if res.get("reset") is True:
+            self._restarted(d)             # the phone's log is behind us: app data cleared
         events = [e for e in (res.get("events") or []) if isinstance(e, dict)
                   and type(e.get("seq")) is int]
         events.sort(key=lambda e: e["seq"])
@@ -271,10 +273,17 @@ class AttentionService:
         last = res.get("last")
         if type(last) is int and not events:
             if last < d["last_seq"]:
-                d["last_seq"] = 0          # the app's counter restarted (reinstalled)
+                self._restarted(d)         # the app's counter restarted (reinstalled)
             elif last > d["last_seq"]:
                 d["last_seq"] = last
         return n
+
+    @staticmethod
+    def _restarted(d: dict) -> None:
+        """The phone lost its log (app data cleared, reinstalled): read it from
+        the start, and post its open cards again since it lost those too."""
+        d["last_seq"] = 0
+        d["posted"] = {k: v for k, v in d["posted"].items() if v.get("closed")}
 
     def _ts(self, ev: dict) -> float:
         ts = ev.get("ts")

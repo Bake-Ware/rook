@@ -56,6 +56,8 @@ class FakePhone:
             return {"ok": True}
         if cap == "attention.poll":
             self.polls.append(args["since"])
+            if args["since"] > self.seq:   # the app's contract: behind the caller
+                return {"events": list(self.events), "last": self.seq, "reset": True}
             evs = [e for e in self.events if e["seq"] > args["since"]]
             return {"events": evs, "last": self.seq}
         if cap == "attention.rules_set":
@@ -322,3 +324,26 @@ async def test_relay_rows_name_the_configured_phones(att):
     assert att.att.relay_rows() == [(f"device:{PHONE}", "pixel (phone)")]
     status = att.att.service.status()
     assert status["devices"][1]["note"] == "no worker on the band has this name or id"
+
+
+@pytest.mark.asyncio
+async def test_a_phone_whose_log_restarted_is_read_from_the_start_and_reposted(att):
+    """App data cleared: the phone answers reset with its new, low-seq events;
+    a tap among them still counts, and the cards it lost are posted again."""
+    att.configure()
+    item = hold(att.ap)
+    for _ in range(5):
+        att.phone.event("unlocked")
+    await att.att.service.tick()
+    assert att.att.service.state["devices"][PHONE]["last_seq"] == 5
+    assert len(att.phone.posts) == 1
+    # Reinstall: cards and log gone, the counter starts again.
+    att.phone.cards.clear()
+    att.phone.events.clear()
+    att.phone.seq = 0
+    att.phone.event("seen", id=item["id"])
+    await att.att.service.tick()
+    assert att.att.service.state["devices"][PHONE]["last_seq"] == 1
+    assert item["id"] in att.phone.cards and len(att.phone.posts) == 2
+    sig = att.att.service.state["signals"][-1]
+    assert sig["type"] == "seen" and sig["id"] == item["id"]
