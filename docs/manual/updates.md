@@ -84,6 +84,14 @@ The **Apps** tab can publish a release's Android app through your
 hub and ask phones (**Notify phones**) that are behind to update ([[manual-phones-and-tablets]]);
 the **Firmware** tab shows firmware versions (flashing stays by hand).
 
+A test build of the app can go to a few phones without touching the others:
+the hub serves a **beta** app to phones that ask for it (the app's beta
+channel) while it is newer than the published app. Every other phone keeps
+getting the published app, and the hub never tells or pushes a phone to the
+beta. A beta phone goes back to the published app once that passes it. The
+operator puts the beta in the updates directory (`apk-beta/`) and approves it
+with its hash, `updates.apk_beta_sha256` (`ROOK_BETA_APK_SHA256`).
+
 You are told in chat when a new worker version is waiting. If you switch the
 **updates** plugin off (Plugins page), or the update service stops running,
 the hub goes back to offering its newest version to every worker.

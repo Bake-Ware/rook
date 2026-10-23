@@ -267,6 +267,15 @@ def published_apk(root: Path | None = None) -> tuple[Path, dict] | None:
     return apk, manifest
 
 
+def beta_apk_paths(root: Path | None = None) -> tuple[Path, Path]:
+    """(apk, manifest) of the beta APK channel: ``apk-beta/`` in the updates
+    dir, beside the release dirs so a hub deploy does not drop it. Served at
+    ``/apk?channel=beta`` only while ``ROOK_BETA_APK_SHA256`` approves it; the
+    update service never reads it (phones are told about stable only)."""
+    base = (Path(root) if root is not None else updates_dir()) / "apk-beta"
+    return base / "rook-worker.apk", base / "rook-worker-apk.json"
+
+
 def summary(root: Path | None = None) -> dict:
     """The service's public summary (``summary.json``): newest releases and
     the floors of a pending breaking one, for the Workers page and the

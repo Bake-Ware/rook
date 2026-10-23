@@ -45,6 +45,36 @@
   "approvals.relay": {
    "tier": "write"
   },
+  "attention.notices": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "attention.poll": {
+   "tier": "admin",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "attention.post": {
+   "tier": "admin",
+   "tags": [
+    "physical"
+   ]
+  },
+  "attention.rules_set": {
+   "tier": "admin"
+  },
+  "attention.send": {
+   "tier": "write"
+  },
+  "attention.status": {
+   "tier": "read"
+  },
+  "attention.update": {
+   "tier": "admin"
+  },
   "band.admin": {
    "tier": "admin",
    "tags": [

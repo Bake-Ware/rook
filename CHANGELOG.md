@@ -9,6 +9,23 @@ version was `0.1.0`.
 ## Unreleased
 
 ### Added
+- Decisions and alerts on your phone. The new hub plugin **attention** puts everything waiting
+  on you (held calls, held job calls, huddle cards, pinned questions) on the phones named in
+  `attention.devices` as decision cards with Yes, No and Explain, and withdraws a card once it
+  is decided elsewhere; dashboard-only items get Explain only. The hub pulls taps and read
+  signals from the phone (`attention.poll`; the phone never calls the hub). A tap counts only
+  after you tick "May relay my approvals" for the phone on the Tokens page (listed there, off
+  by default) and is recorded as "approved by <attention.person> via <phone> (phone)". New
+  caps `attention.send` (alerts, queued while the phone is offline), `attention.status`
+  (whether you saw, opened or unlocked it) and `attention.notices` (short summaries of urgent
+  and family notifications; full notification text never leaves the phone). Settings
+  `attention.devices`, `attention.person`, `attention.poll_secs`, `attention.push_rules`.
+  Inert while `attention.devices` is empty. (manual: phone-attention)
+- Beta channel for the Android app: `/apk.json?channel=beta` and `/apk?channel=beta` serve the
+  APK in `<updates dir>/apk-beta/` while `updates.apk_beta_sha256` (`ROOK_BETA_APK_SHA256`)
+  approves it and it is newer than the published APK; every other request, including every
+  installed phone's plain `/apk.json`, gets exactly the stable answer, and the hub never
+  pushes a beta. (manual: updates)
 - Roles act inside their own space. Every role has a **workspace** (`workspace/` in its home) for
   drafts, notes and working files, which it reads, writes, searches and deletes with no card
   (Claude Code's own file tools where the agent host supports it, else hub tools for every
