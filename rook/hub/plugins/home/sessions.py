@@ -67,6 +67,10 @@ ROLE_ID = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 #: chair turns, role turns or the memory summariser.
 PERSISTENT_VIAS = ("ask", "chat")
 
+#: Set around flow tools run through the ``home.session_flow`` cap: who is
+#: really asking (the cap's caller), never the voice's last speaker.
+FLOW_AS: contextvars.ContextVar[tuple | None] = contextvars.ContextVar(
+    "home_sessions_flow_as", default=None)
 #: Set around a turn started by a flow tool: the priority it was queued with.
 PRIORITY_OVERRIDE: contextvars.ContextVar[int | None] = contextvars.ContextVar(
     "home_sessions_priority", default=None)
@@ -779,7 +783,10 @@ class Sessions:
 
     def voice_principal(self, role: str) -> tuple[Any, str]:
         """Who the voice is talking to (the last voice turn's identity): the
-        owner is a person; anyone else a guest."""
+        owner is a person; anyone else a guest. Through the cap, the caller."""
+        as_ = FLOW_AS.get()
+        if as_ is not None:
+            return as_
         ident = (self.voice.get(role) or {}).get("identity") or {}
         name = re.sub(r"[^A-Za-z0-9 _.'-]", "", str(ident.get("name") or ""))[:40].strip()
         if ident.get("owner"):

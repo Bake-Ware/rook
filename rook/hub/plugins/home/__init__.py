@@ -1331,14 +1331,18 @@ class HomeAgent(Plugin):
         return await self.sessions.ask_role(str(role or "house"), str(text or ""))
 
     @capability("session_flow", risk="write")
-    async def session_flow(self, tool: str, args: dict | None = None, role: str = "house",
-                           identity: dict | None = None) -> dict:
-        """Run one of the voice conductor's flow tools (queue, steer, fork, fold, status, btw, pause, resume, cancel) as if the voice called it; identity {owner, name} stands for the speaker (tests, operators)."""
-        role = str(role or "house")
-        if identity is not None:
-            self.sessions.voice[role] = {**(self.sessions.voice.get(role) or {}),
-                                         "identity": dict(identity), "at": time.time()}
-        return await self.sessions.flow(role, str(tool or ""), dict(args or {}))
+    async def session_flow(self, tool: str, args: dict | None = None,
+                           role: str = "house") -> dict:
+        """Run one of the voice conductor's flow tools (queue, steer, fork, fold, status, btw, pause, resume, cancel) as the voice would (tests, operators). The request is yours, not the voice's last speaker's: an agent asking is an agent."""
+        from .sessions import FLOW_AS
+        p = self.ask_principal()
+        label = str(getattr(p, "label", "") or getattr(p, "id", "") or _actor())
+        tok = FLOW_AS.set((p, label))
+        try:
+            return await self.sessions.flow(str(role or "house"), str(tool or ""),
+                                            dict(args or {}))
+        finally:
+            FLOW_AS.reset(tok)
 
     @capability("session_compact", risk="write")
     async def session_compact(self, lane: str = "main", role: str = "house") -> dict:
