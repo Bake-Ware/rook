@@ -306,7 +306,7 @@ def test_socket_closed_mid_turn_cancels_front_and_background(server):
 
 
 # --- Front prompt and stream -------------------------------------------------
-def test_front_prompt_fixed_prefix_identical_across_turns_and_no_marker(tmp_path):
+def test_front_prompt_is_append_only_across_turns_and_no_marker(tmp_path):
     model = Model(reply=('Sure.',))
     async def scenario():
         conn, store, jobs, events, _ = connection(tmp_path, front=model.front(),
@@ -324,13 +324,14 @@ def test_front_prompt_fixed_prefix_identical_across_turns_and_no_marker(tmp_path
         fixed = conn.fb.fixed()
         first, second = model.requests[0]['messages'], model.requests[1]['messages']
         for messages in (first, second):
-            assert messages[0]['role'] == 'system'
-            assert messages[0]['content'].startswith(fixed + front_mod.BOARD_HEADER)
+            assert messages[0] == {'role': 'system', 'content': fixed}
         assert 'It is ' not in fixed and 'Weather' not in fixed    # nothing per-turn in the fixed block
-        assert 'Weather at home' in second[0]['content'] and 'Weather at home' not in first[0]['content']
-        assert first[-1] == {'role': 'user', 'content': 'hello'}
-        assert second[-1] == {'role': 'user', 'content': 'and now?'}
-        assert [m['role'] for m in second[1:]] == ['user', 'assistant', 'user']
+        # The second prompt extends the first prompt plus its reply exactly (the model's cache carries over).
+        assert second[:len(first)] == first[:-1] + [first[-1]] and second[len(first)] == {'role': 'assistant', 'content': 'Sure.'}
+        assert first[-1]['content'].endswith('\nhello') and 'It is ' in first[-1]['content']
+        assert second[-1]['content'].endswith('\nand now?') and 'Weather at home' in second[-1]['content']
+        assert 'Weather at home' not in json.dumps(first)
+        assert [m['role'] for m in second[1:]][-3:] == ['user', 'assistant', 'user']
         assert not any('Spoken response generated' in m['content'] for m in second)
         assert 'Spoken response generated' not in json.dumps(stored[1:])
     asyncio.run(scenario())
@@ -492,7 +493,7 @@ def test_followup_spoken_after_front_with_timing(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
-def test_followup_dropped_when_newer_turn_supersedes(tmp_path, monkeypatch):
+def test_stale_background_stopped_when_newer_turn_supersedes(tmp_path, monkeypatch):
     monkeypatch.setenv('VOICE_HOME_LAT', '1')
     monkeypatch.setenv('VOICE_HOME_LON', '2')
     model = Model(reply=('Okay.',))
@@ -517,13 +518,12 @@ def test_followup_dropped_when_newer_turn_supersedes(tmp_path, monkeypatch):
         finally:
             await shutdown(conn, store, jobs)
         first = [e for e in events if e.get('type') == 'background' and e['turn'] == 1]
+        # One turn at a time: the newer turn stopped the older lookup (it had not acted yet).
         assert 'dropped' in [e['kind'] for e in first] and 'followup' not in [e['kind'] for e in first]
-        assert next(e for e in first if e['kind'] == 'dropped')['result'] == 'It is sunny.'
+        assert next(e for e in first if e['kind'] == 'dropped')['text'] == 'Background stopped: a newer turn started'
+        assert next(e for e in first if e['kind'] == 'done')['status'] == 'cancelled'
         assert not any('sunny' in e.get('text', '') for e in events if e.get('type') == 'assistant_delta')
-        # Still on the board for later, keyed to its own turn and marked as superseded.
-        assert conn.fb.board.get('result') is None
-        assert conn.fb.board.get('result:1')['text'] == \
-            "Earlier, for 'weather?' (the user has moved on since): It is sunny."
+        assert conn.fb.board.get('result:1') is None
     asyncio.run(scenario())
 
 

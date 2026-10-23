@@ -126,9 +126,13 @@ _CORE_SPEC = {
     "ui.nodes": "X s", "ui.click": "X", "ui.scroll": "X", "ui.back": "X",
     "voice.speak": "W p", "voice.speak_status": "R", "voice.replies": "R",
     "voice.speak_stop": "W", "voice.speak_voices": "R",
-    # attention (decision cards, read/ack signals, the phone's notification feed)
-    "attention.post": "X", "attention.update": "X", "attention.poll": "X s",
-    "attention.feed": "X s", "attention.rules_get": "X s", "attention.rules_set": "X",
+    # The app's attention surface (docs/design/attention.md, attention-phone.md):
+    # only the hub's attention plugin should post cards or read taps and notice
+    # summaries. A card's Yes is relayed as the person's decision, so an agent
+    # that could post one could word the question; admin keeps agents' calls held.
+    # The feed and the rules are summaries the phone keeps (like notify.list).
+    "attention.post": "A p", "attention.update": "A", "attention.poll": "A s",
+    "attention.rules_set": "A", "attention.feed": "X s", "attention.rules_get": "X s",
 }
 
 CORE: dict[str, tuple[str, tuple[str, ...]]] = {c: _t(s) for c, s in _CORE_SPEC.items()}

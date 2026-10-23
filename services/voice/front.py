@@ -1,10 +1,13 @@
 """Front: the fast voice of the front_background pipeline.
 
 One streaming chat completion per turn to the local model (VLLM_URL /
-VLLM_MODEL), with no tools and thinking disabled. The prompt is laid out for
-prefix caching: a fixed block (persona, mode, rules) that never changes within
-a conversation, then the context board, then the last N turns, then the
-utterance. Nothing that changes per turn sits before the fixed block.
+VLLM_MODEL), with no tools and thinking disabled. The prompt is an append-only
+transcript (:class:`Transcript`): a fixed block (persona, mode, rules) that
+never changes within a conversation, then every exchange as it happened, with
+new board facts riding in the user message that follows them. The kaiju model
+(Qwen3-Next on Strata, a hybrid recurrent model) reuses its cache only when a
+prompt extends the previous prompt exactly; any edit earlier in the prompt
+costs a full prefill (about 600 tokens a second there, 2026-10-23).
 """
 import contextlib
 import json
@@ -32,6 +35,9 @@ RULES = (
     'result comes to you separately and you will tell the user then.\n'
     'If Known facts already answer the request, answer directly from them.\n'
     'Call a task, room, job or other record by its three-word name (say "brave otter lamp"), never by its id.\n'
+    'Never say that something was done, set, sent, booked, turned on or changed: only your background work can '
+    'confirm an action, and it tells you when it has.\n'
+    'Lines in square brackets are notes to you, not from the user.\n'
 )
 
 
@@ -88,10 +94,86 @@ def build_messages(fixed, board_text, past, utterance):
     return messages
 
 
+EARLY_CLAUSE_WORDS = int(os.environ.get('VOICE_FRONT_EARLY_WORDS', '5'))
+
+
+def early_clause(pending):
+    """(clauses, rest): the text up to a comma once it has a few words, else nothing."""
+    j = pending.find(', ')
+    if j == -1 or len(pending[:j].split()) < EARLY_CLAUSE_WORDS:
+        return [], pending
+    return [pending[:j + 1].strip()], pending[j + 2:]
+
+
 def followup_note(facts):
     return ('[Internal note, not from the user] Your background work just finished: ' + facts +
             '\nTell the user the result now, in the first person, in one or two short sentences. '
-            'Do not greet and do not repeat what you already said.')
+            'If it contradicts something you said earlier, correct yourself plainly first '
+            '("Actually, I was wrong: ..."). Do not greet and do not repeat what you already said.')
+
+
+def facts_note(facts, told):
+    """Board facts not yet told to Front (new or changed), as a bracketed note for the
+    next user message; updates ``told`` (key -> text)."""
+    new = [f for f in facts if told.get(f['key']) != f['text']]
+    for fact in new:
+        told[fact['key']] = fact['text']
+    if not new:
+        return ''
+    return '[Known facts now (current; you may state these): ' + ' '.join(
+        f['text'].rstrip('.') + '.' for f in new) + ']'
+
+
+class Transcript:
+    """Front's prompt as an append-only list of messages, so every request extends
+    the previous one (prompt + reply) and the model's cache carries over. It starts
+    from the stored history, and starts again when the fixed block changes or it
+    outgrows ``max_chars``. An interrupted reply is recorded as heard, which breaks
+    the cache once; the truth matters more than one slow prefill."""
+
+    def __init__(self, max_chars=None, keep_turns=None):
+        self.max_chars = max_chars or int(os.environ.get('VOICE_FRONT_TRANSCRIPT_CHARS', '14000'))
+        self.keep_turns = keep_turns if keep_turns is not None else int(os.environ.get('VOICE_FRONT_TURNS', '6'))
+        self.fixed = None
+        self.messages = []
+        self.told = {}
+        self.pending = None
+        self.resets = 0
+
+    def size(self):
+        return sum(len(m['content']) for m in self.messages)
+
+    def request(self, fixed, past, facts, text, preface=''):
+        """Messages for the next completion: the transcript plus one user message
+        (``text`` after any new facts). ``past``: stored history, used on a (re)start."""
+        if fixed != self.fixed or self.size() > self.max_chars:
+            self.fixed, self.told, self.resets = fixed, {}, self.resets + 1
+            self.messages = history(past, min(self.keep_turns, 3) if self.size() > self.max_chars else self.keep_turns)
+            if preface:
+                text = preface + '\n' + text
+        note = facts_note(facts, self.told)
+        content = (note + '\n' + text) if note else text
+        messages = list(self.messages)
+        if messages and messages[-1]['role'] == 'user':
+            # Keep roles alternating: an unanswered earlier line joins this one.
+            messages[-1] = {'role': 'user', 'content': messages[-1]['content'] + '\n' + content}
+        else:
+            messages.append({'role': 'user', 'content': content})
+        self.pending = messages
+        return [{'role': 'system', 'content': fixed}] + messages
+
+    def replace_last_user(self, text):
+        """A merged utterance: the unanswered user line becomes ``text``."""
+        if self.messages and self.messages[-1]['role'] == 'user':
+            self.messages = self.messages[:-1]
+        return text
+
+    def commit(self, reply):
+        """After the completion: ``reply`` exactly as generated (or as heard)."""
+        if self.pending is None:
+            return
+        self.messages = self.pending + ([{'role': 'assistant', 'content': reply}] if reply else [])
+        self.pending = None
 
 
 def payload(messages):
@@ -105,7 +187,7 @@ async def stream(messages, on_clause, on_token=None, transport=None, url=None, c
     and ``on_clause(text)`` per complete clause. Returns the full text.
     ``client``: a caller-owned httpx.AsyncClient to reuse (kept open)."""
     body = payload(messages)
-    content, pending, first = '', '', True
+    content, pending, first, first_clause = '', '', True, True
     async with contextlib.AsyncExitStack() as stack:
         if client is None:
             kwargs = {'timeout': float(os.environ.get('VOICE_FRONT_TIMEOUT_S', '30')), 'trust_env': False}
@@ -133,6 +215,11 @@ async def stream(messages, on_clause, on_token=None, transport=None, url=None, c
                 content += piece
                 pending += piece
                 done, pending = providers.split_sentences(pending)
+                if first_clause and not done:
+                    # Start speaking sooner: the first clause may end at a comma.
+                    done, pending = early_clause(pending)
+                if done:
+                    first_clause = False
                 for clause in done:
                     if len(clause.strip()) >= 2:
                         await on_clause(clause)

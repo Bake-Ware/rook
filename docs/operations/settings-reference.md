@@ -121,6 +121,7 @@ are set only in the environment or on the command line.
 |---|---|---|---|---|---|---|
 | `core.updates.push` | Push updates to outdated workers | hub | bool | on | `ROOK_PUSH_UPDATES` | restart · bootstrap |
 | `core.updates.apk_sha256` | Published APK hashes | hub | list |  | `ROOK_PUBLIC_APK_SHA256` | live · bootstrap |
+| `core.updates.apk_beta_sha256` | Beta APK hash | hub | str |  | `ROOK_BETA_APK_SHA256` | live · bootstrap |
 | `core.updates.signing_key` | Update signing key file | hub | path |  | `ROOK_UPDATE_KEY` | restart · bootstrap |
 
 ## Core: Worker defaults
@@ -141,6 +142,15 @@ are set only in the environment or on the command line.
 | `agenthost.enabled` | House agent host | worker | bool | on | `ROOK_AGENTHOST` | restart |
 | `agenthost.roles_dir` | Role homes directory | worker | str |  | `ROOK_AGENTHOST_ROLES_DIR` | live |
 | `agenthost.harness_home` | Harness home | worker | str |  | `ROOK_AGENTHOST_HARNESS_HOME` | restart |
+
+## Attention (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `attention.devices` | Phones | hub | list |  | `ROOK_ATTENTION_DEVICES` | live |
+| `attention.person` | Your name | hub | str | `the person` | `ROOK_ATTENTION_PERSON` | live |
+| `attention.poll_secs` | Check phones every (s) | hub | int | `10` | `ROOK_ATTENTION_POLL_SECS` | live |
+| `attention.push_rules` | Send notification rules to phones | hub | bool | off | `ROOK_ATTENTION_PUSH_RULES` | live |
 
 ## Chat (hub plugin, runs in mcp)
 

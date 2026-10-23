@@ -1,8 +1,10 @@
 """Conversation orchestration without model or web-framework dependencies."""
 import asyncio
 import contextlib
+import difflib
 import json
 import logging
+import os
 import struct
 import time
 import uuid
@@ -10,10 +12,33 @@ import re
 import traceback
 from .identity import Identity, current_identity
 from .modes import Mode, dictation_command
-from .timing import TurnTiming
+from .timing import TurnTiming, log_dropped
+from .stt_gate import normalise
 
 
 SILENT_RECORD = "[Stayed silent: speech was not addressed to the assistant]"
+# A new utterance joins the pending turn (instead of replacing it) when that turn
+# started from speech this recently and nothing of its reply was played yet:
+# "what's the weather" ... "in Austin" becomes one question.
+MERGE_WINDOW_S = float(os.environ.get('VOICE_MERGE_WINDOW_S', '10'))
+# A held barge-in (client paused playback on local speech) resumes on its own when
+# no utterance arrives in this long, and is forced back after HOLD_MAX_S.
+HOLD_QUIET_S = float(os.environ.get('VOICE_HOLD_QUIET_S', '2.5'))
+HOLD_MAX_S = float(os.environ.get('VOICE_HOLD_MAX_S', '8'))   # the phone gives up at 10 s
+# 'enforce': drop an utterance whose speaker is the assistant's own voice (echo)
+# while it speaks or just after; 'shadow': log the label only; 'off'.
+ECHO_GUARD = os.environ.get('VOICE_ECHO_GUARD', 'enforce').strip().lower()
+ECHO_WINDOW_S = 1.5
+# The voice match must be clearly the assistant's: its own echo scored >= 0.59
+# (5th percentile) through simulated phone/room channels, people at most 0.43
+# (TitaNet small, kaiju, 2026-10-23). The speaker label itself uses 0.50.
+ECHO_SPEAKER_MIN = float(os.environ.get('VOICE_ECHO_SPEAKER_MIN', '0.6'))
+# Commands only at the start of an utterance ("hey sojourn, please enroll my voice"),
+# so a sentence that merely mentions a voice never starts or deletes anything.
+_LEAD = r"^\W*(?:(?:hey|ok|okay)\W+\w+\W+)?(?:(?:please|can you|could you|would you)\W+)?"
+ENROLL_RE = re.compile(_LEAD + r"(?:enrol+|learn|register|remember)\s+my\s+voice\b", re.I)
+FORGET_RE = re.compile(_LEAD + r"(?:forget|delete|remove|erase)\s+my\s+voice\b", re.I)
+CANCEL_RE = re.compile(r"^\W*(stop|cancel|never ?mind|forget it|quit)\b", re.I)
 
 
 class Connection:
@@ -40,6 +65,24 @@ class Connection:
         self.progress = ProgressUpdates(self, progress_updates)
         self.audio_sent = {}
         self.audio_played = {}
+        # Per turn: what was spoken, as (text, first sample, end sample) at the audio rate.
+        self.spoken_audio = {}
+        self.audio_rate = {}
+        # Turn intake: utterances are transcribed one at a time, in order, before
+        # they may interrupt anything (see heard()).
+        self.intake_lock = asyncio.Lock()
+        self.intake_pending = 0
+        self.intake_tasks = set()
+        self.turn_meta = {}
+        # Confirmed barge-in (hello "barge": "confirm"): the client paused playback on
+        # local speech; audio stops here too until the transcript decides.
+        self.barge_confirm = False
+        self.held_since = None
+        self._unheld = asyncio.Event()
+        self._unheld.set()
+        self.speech_permission_until = 0.0
+        self.speakers = None
+        self.enrolling = None
         self.timing = None
         self.mode = Mode()
         # 'classic' (default) or 'front_background' (hello opt-in); see pipeline.py.
@@ -155,20 +198,270 @@ class Connection:
                 await old
         self.finish_decision(interrupted_turn, "Turn interrupted before reply dispatch")
         self.play_until = 0
+        if self.held_since is not None:
+            # The client flushes on "interrupt"; nothing to resume.
+            self.held_since = None
+            self.speech_permission_until = 0.0
+            self._unheld.set()
         await self.emit("interrupt", turn=self.epoch)
         await self.emit("state", state="listening", turn=self.epoch)
 
-    async def start(self, text=None, pcm=None, image=None, speak=True, internal=False):
+    async def start(self, text=None, pcm=None, image=None, speak=True, internal=False, heard=None):
+        """``heard``: an utterance already transcribed by heard() (stt_ms, speech_end, ...)."""
+        merged = self._mergeable() if heard is not None and text else None
+        if merged is not None:
+            text = merged['text'] + ' ' + text
         await self.interrupt()
         self.speak_out = speak
         if not internal:
             self.sleeping = False
         self.receiving_speech = False
         epoch = self.epoch
+        voice = pcm is not None or heard is not None
         if self.thinking or self.shadow:
-            self.decision_turns[epoch] = {'source': 'voice' if pcm is not None else 'text',
+            self.decision_turns[epoch] = {'source': 'voice' if voice else 'text',
                                           'created': time.monotonic(), 'started': False, 'internal': internal}
-        self.task = asyncio.create_task(self._turn(epoch, text, pcm, image, internal))
+        if not internal:
+            self.turn_meta[epoch] = {'text': text, 'voice': voice, 'started': time.monotonic(),
+                                     'merged_from': merged['epoch'] if merged else None}
+            for old in [t for t in self.turn_meta if t < epoch - 8]:
+                del self.turn_meta[old]
+        self.task = asyncio.create_task(self._turn(epoch, text, pcm, image, internal, heard, merged))
+
+    def _mergeable(self):
+        """The pending turn a new utterance should join, or None: a spoken turn still
+        running, started within MERGE_WINDOW_S, with none of its reply played yet."""
+        meta = self.turn_meta.get(self.epoch)
+        if (meta is None or not meta['voice'] or not (self.task and not self.task.done()) or
+                self.audio_sent.get(self.epoch, 0) or time.monotonic() - meta['started'] > MERGE_WINDOW_S):
+            return None
+        return {'epoch': self.epoch, 'text': meta['text']}
+
+    # --- turn intake ----------------------------------------------------------
+    def heard(self, pcm, speech_end=None, held=False):
+        """A finished utterance. It is transcribed (and its speaker labelled) before it
+        may touch the current turn, so silence, noise, Whisper's stock phrases and the
+        assistant's own voice never cancel a reply. Utterances are handled in order."""
+        self.intake_pending += 1
+        task = asyncio.create_task(self._intake(pcm, speech_end or time.monotonic(), held, time.monotonic()))
+        self.intake_tasks.add(task)
+        task.add_done_callback(lambda t: (self.intake_tasks.discard(t), t.exception() if not t.cancelled() else None))
+        return task
+
+    async def _intake(self, pcm, speech_end, held, decided):
+        try:
+            async with self.intake_lock:
+                if not self.closed:
+                    await self._intake_one(pcm, speech_end, held, decided)
+        finally:
+            self.intake_pending -= 1
+            if not self.intake_pending and not self.closed:
+                asyncio.get_running_loop().call_soon(self.drain_results)
+
+    async def _transcribe(self, pcm):
+        if hasattr(self.provider, 'transcribe_detail'):
+            return await self.provider.transcribe_detail(pcm)
+        text = await self.provider.transcribe(pcm)
+        return {'text': text or '', 'reason': None if text else 'empty', 'stats': {}}
+
+    async def _identify(self, pcm):
+        try:
+            return await asyncio.wait_for(self.speakers.identify(pcm, assistant_voice=self.voice), 3)
+        except Exception as error:
+            logging.warning('Speaker identification failed: %s', type(error).__name__)
+            return None
+
+    def echo_window(self):
+        """The assistant is speaking, held, or stopped speaking moments ago."""
+        return self.held_since is not None or time.monotonic() < self.play_until + ECHO_WINDOW_S
+
+    async def _intake_one(self, pcm, speech_end, held, decided):
+        echo_window = self.echo_window()
+        stt_started = time.monotonic()
+        who = None
+        if self.speakers is not None and getattr(self.speakers, 'available', False):
+            who = asyncio.create_task(self._identify(pcm))
+        try:
+            result = await asyncio.wait_for(self._transcribe(pcm), 25)
+        except Exception as error:
+            if who:
+                who.cancel()
+            logging.warning("Voice turn failed: %s at %s", type(error).__name__,
+                            [(frame.name, frame.lineno) for frame in traceback.extract_tb(error.__traceback__)])
+            if held:
+                await self.release_hold(resume=True)
+            await self.emit("error", msg="Voice turn failed: " + type(error).__name__ + ". Please try again.")
+            return
+        stt_ms = max(0, int((time.monotonic() - stt_started) * 1000))
+        speaker = await who if who else None
+        endpoint_ms = max(0, int((decided - speech_end) * 1000))
+        extra = dict(result.get('stats') or {})
+        if speaker:
+            extra.update(speaker=speaker.get('label'), speaker_score=speaker.get('score'),
+                         assistant_score=speaker.get('assistant_score'))
+        reason = result.get('reason')
+        if not reason and not result.get('text', '').strip():
+            reason = 'empty'
+        if not reason and echo_window and ECHO_GUARD != 'off':
+            if self.echo_text(result['text']):
+                # Our own words came back (the transcript repeats what was just said).
+                reason = 'echo_text'
+            elif (ECHO_GUARD == 'enforce' and speaker and speaker.get('label') == 'assistant'
+                  and (speaker.get('assistant_score') or 0) >= ECHO_SPEAKER_MIN):
+                reason = 'echo'
+        known = getattr(self.speakers, 'has_assistant_voice', None)
+        if speaker and known is not None and not known(self.voice):
+            self._learn_voice()
+        if reason:
+            log_dropped(self.epoch, reason, endpoint_ms, stt_ms, held=held or None, **extra)
+            self.activity_event('dropped', self.epoch, 'Ignored sound', reason=reason)
+            if held:
+                await self.release_hold(resume=True)
+            return
+        text = result['text'].strip()
+        if await self._voice_command(text, pcm, held):
+            return
+        await self.start(text=text, heard={'speech_end': speech_end, 'decided': decided,
+                                           'stt_ms': stt_ms, 'extra': extra})
+
+    def echo_text(self, text):
+        """The transcript repeats a run of what the assistant said in this or the
+        previous turn: its own speech leaking back into the microphone."""
+        words = normalise(text).split()
+        if len(words) < 3 or ENROLL_RE.search(text) or FORGET_RE.search(text):
+            # Short answers often reuse the question's words; commands it just taught are meant.
+            return False
+        spoken = ' '.join(clause for epoch in (self.epoch - 1, self.epoch)
+                          for clause, _, _ in self.spoken_audio.get(epoch, []))
+        said = normalise(spoken).split()
+        if not said:
+            return False
+        match = difflib.SequenceMatcher(None, words, said, autojunk=False).find_longest_match(
+            0, len(words), 0, len(said))
+        return match.size >= max(3, int(0.6 * len(words) + 0.5))
+
+    def _learn_voice(self):
+        """Once per voice (cached by the speaker store): render the assistant's voice
+        so its echo can be recognised."""
+        voice = self.voice
+        async def synthesize(text):
+            return await self.synthesize(text, self.epoch)
+        task = asyncio.create_task(self.speakers.learn_assistant_voice(voice, synthesize))
+        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+
+    # --- voice enrollment (opt-in, owner keys only; voiceprints stay on this host) ---
+    async def _voice_command(self, text, pcm, held):
+        """'enroll my voice' / 'forget my voice', and the enrollment reading itself.
+        Returns True when the utterance was handled here (no model turn)."""
+        speakers = self.speakers if self.speakers is not None and getattr(self.speakers, 'available', False) else None
+        if not self.mode.agent:
+            return False
+        if self.enrolling is not None:
+            if time.monotonic() - self.enrolling['started'] > 300 or CANCEL_RE.search(text):
+                self.enrolling = None
+                await self._reply_direct(text, ['Okay, I stopped learning your voice. Nothing new was saved.'])
+                return True
+            principal = self.enrolling['principal']
+            result = await speakers.enroll_add(principal, pcm) if speakers else {'ok': False, 'reason': 'off'}
+            sentences = speakers.enrollment_sentences() if speakers else []
+            if result.get('ok') and result.get('samples', 0) >= result.get('needed', 3) and \
+                    speakers.enroll_finish(principal):
+                self.enrolling = None
+                await self._reply_direct(text, ["Thanks, I've learned your voice. I only use it to know who's "
+                                                "talking, never as a password. Say forget my voice to delete it."])
+                return True
+            if result.get('ok'):
+                self.enrolling['index'] += 1
+            lines = [] if result.get('ok') else [{
+                'too_short': 'That was a bit short.', 'too_quiet': 'That was a bit quiet.',
+                'clipped': 'That was a bit loud.', 'inconsistent': "That didn't sound like the earlier ones.",
+            }.get(result.get('reason'), "That one didn't work.") + ' Please try this one again.']
+            if not sentences:
+                self.enrolling = None
+                await self._reply_direct(text, ["Voice learning isn't available right now."])
+                return True
+            lines.append('Next, please read: ' if result.get('ok') else 'Please read: ')
+            lines[-1] += sentences[self.enrolling['index'] % len(sentences)]
+            await self._reply_direct(text, lines)
+            return True
+        if FORGET_RE.search(text):
+            if not self.identity.owner or speakers is None:
+                return False
+            gone = speakers.forget(self.identity.principal)
+            await self._reply_direct(text, ['Done, I deleted your voiceprint.' if gone else
+                                            "I didn't have your voice saved."])
+            return True
+        if ENROLL_RE.search(text):
+            if speakers is None:
+                return False
+            if not self.identity.owner or self.identity.principal in ('unmapped', 'guest', 'assistant'):
+                # Kids and guests only with the owner's say-so: an owner key enrolls its own person.
+                await self._reply_direct(text, ['Learning a voice needs the owner to set it up for you, so I '
+                                                "won't do that from this device."])
+                return True
+            self.enrolling = {'principal': self.identity.principal, 'index': 0, 'started': time.monotonic()}
+            await self._reply_direct(text, ["Sure. I'll ask you to read three short sentences, one at a time. "
+                                            "Say stop to cancel.",
+                                            'Please read: ' + speakers.enrollment_sentences()[0]])
+            return True
+        return False
+
+    async def _reply_direct(self, heard, lines):
+        """A fixed spoken reply without the model (enrollment); recorded in history."""
+        await self.interrupt()
+        epoch = self.epoch
+        await self.emit("stt", text=heard, turn=epoch)
+        self.store.append(self.session, "user", {"text": heard})
+        async def speak():
+            for line in lines:
+                await self.say(line, epoch, record=True)
+            if epoch == self.epoch and not self.closed:
+                await self.emit("assistant_done", turn=epoch)
+                await self.emit("state", state="listening", turn=epoch)
+        self.task = asyncio.create_task(speak())
+
+    # --- confirmed barge-in -----------------------------------------------------
+    def hold(self):
+        """The client paused playback for possible speech: stop sending audio until
+        the utterance's transcript decides (interrupt) or it was nothing (resume)."""
+        if self.held_since is None:
+            self.held_since = time.monotonic()
+            self._unheld.clear()
+
+    async def release_hold(self, resume=True):
+        if self.held_since is None:
+            return
+        paused = time.monotonic() - self.held_since
+        self.held_since = None
+        self.speech_permission_until = 0.0
+        if self.play_until:
+            # The client's playback stood still while held.
+            self.play_until += paused
+        self._unheld.set()
+        if self.fb is not None:
+            self.fb._poke()
+        if resume:
+            await self.emit("resume", turn=self.epoch)
+
+    async def _wait_unheld(self, epoch):
+        try:
+            await asyncio.wait_for(self._unheld.wait(), HOLD_MAX_S)
+        except asyncio.TimeoutError:
+            if epoch != self.epoch or self.held_since is None:
+                return
+            if self.receiving_speech or self.intake_pending:
+                # Still talking after HOLD_MAX_S: a real barge-in (the phone gives up at 10 s).
+                await self.interrupt()
+            else:
+                await self.release_hold(resume=True)
+
+    def check_hold(self, utterance_open):
+        """From the audio loop: resume a hold that no utterance followed."""
+        if self.held_since is None or utterance_open or self.intake_pending:
+            return None
+        if time.monotonic() - max(self.held_since, self.last_speech) > HOLD_QUIET_S:
+            return self.release_hold(resume=True)
+        return None
 
     async def _gate(self, text, epoch):
         """Pre-reply needs_response check for a voice turn. Returns (began, gate): gate is set only
@@ -193,12 +486,20 @@ class Connection:
             return True, None
         return True, {'p': p, 'threshold': self.gate_threshold, 'answers': event.get('answers', [])}
 
-    async def _turn(self, epoch, text, pcm, image, internal):
+    async def _turn(self, epoch, text, pcm, image, internal, heard=None, merged=None):
         identity_token = current_identity.set(self.identity)
         started = time.monotonic()
-        source = 'internal' if internal else 'voice' if pcm is not None else 'text'
-        timing = self.timing = TurnTiming(epoch, source, started,
-                                          self.last_speech if source == 'voice' and self.last_speech else None)
+        source = 'internal' if internal else 'voice' if pcm is not None or heard is not None else 'text'
+        if heard is not None:
+            # Measured from the end of speech: endpointing, then STT, then this turn.
+            timing = self.timing = TurnTiming(epoch, source, heard['decided'], heard['speech_end'])
+            timing.marks['stt_ms'] = heard['stt_ms']
+            timing.extra.update({k: v for k, v in heard.get('extra', {}).items() if v is not None})
+            if merged:
+                timing.extra['merged'] = merged['epoch']
+        else:
+            timing = self.timing = TurnTiming(epoch, source, started,
+                                              self.last_speech if source == 'voice' and self.last_speech else None)
         turn_status = 'ok'
         decision_reason = 'No reply was dispatched'
         try:
@@ -216,14 +517,20 @@ class Connection:
                 if text and text.strip():
                     await self._dictate(text.strip(), epoch)
                 return
+            if heard is not None:
+                await self.emit("stt", text=text, turn=epoch)
             if not internal:
                 self.activity_event('heard', epoch, 'Heard you', detail=text or 'Describe this image.')
-                self.store.append(self.session, "user", {"text": (text or "Describe this image.") +
-                                                         (" [image attached]" if image else "")})
+                entry = (text or "Describe this image.") + (" [image attached]" if image else "")
+                if merged:
+                    # The earlier part was recorded already; one user line for both.
+                    self.store.amend_last_user(self.session, entry)
+                else:
+                    self.store.append(self.session, "user", {"text": entry})
             if self.fb is not None and not internal and not image:
                 # Fast Front reply plus a parallel Background worker; no planner call here.
                 decision_reason = 'front_background pipeline'
-                await self.fb.turn(epoch, text, timing)
+                await self.fb.turn(epoch, text, timing, merged_from=merged['epoch'] if merged else None)
                 return
             # The planner appends the personal-data policy (agent modes only).
             system = self.mode.system(self.provider.system)
@@ -439,8 +746,14 @@ class Connection:
         if progress_job is None:
             pcm, sr = await asyncio.wait_for(self.synthesize(text, epoch), 25)
         await self.emit("audio_sr", sr=sr, turn=epoch)
+        if progress_job is None:
+            first = self.audio_sent.get(epoch, 0)
+            self.audio_rate[epoch] = sr
+            self.spoken_audio.setdefault(epoch, []).append((text, first, first + len(pcm) // 2))
         step = int(sr * .04) * 2
         for offset in range(0, len(pcm), step):
+            if self.held_since is not None:
+                await self._wait_unheld(epoch)
             if epoch != self.epoch or self.closed:
                 return
             part = pcm[offset:offset+step]
@@ -466,10 +779,51 @@ class Connection:
             self.play_until = max(self.play_until, time.monotonic()) + len(part)/(2*sr)
             await asyncio.sleep(len(part)/(2*sr))
         # Limit per-connection telemetry growth.
-        for table in (self.audio_sent, self.audio_played):
+        for table in (self.audio_sent, self.audio_played, self.spoken_audio, self.audio_rate):
             for old in list(table):
                 if old < epoch - 8:
                     del table[old]
+
+    def played_samples(self, epoch):
+        """Samples of this turn's speech the listener has heard: the client's playback
+        acknowledgement when it sends them, else what was sent minus what is still
+        due to play."""
+        if epoch in self.audio_played:
+            return self.audio_played[epoch]
+        sent = self.audio_sent.get(epoch, 0)
+        # interrupt() cancels the turn before it clears play_until, so this still holds.
+        ahead = max(0.0, self.play_until - time.monotonic())
+        return max(0, sent - int(ahead * self.audio_rate.get(epoch, 24000)))
+
+    def heard_text(self, epoch, clauses):
+        """What of ``clauses`` (said in turn ``epoch``) was actually heard, cut at the
+        interruption: whole clauses that played, then the played share of the next
+        one's words, marked as cut off. Unspoken clauses count as unheard."""
+        played = self.played_samples(epoch)
+        spans = {}
+        for text, first, end in self.spoken_audio.get(epoch, []):
+            spans.setdefault(text, []).append((first, end))
+        out, cut = [], False
+        for clause in clauses:
+            span = spans.get(clause, [])
+            if not span:
+                cut = True
+                break
+            first, end = span.pop(0)
+            if played >= end:
+                out.append(clause)
+                continue
+            if played > first:
+                words = clause.split()
+                n = int(len(words) * (played - first) / max(1, end - first))
+                if n:
+                    out.append(' '.join(words[:n]))
+            cut = True
+            break
+        text = ' '.join(out).strip()
+        if cut:
+            text = (text + ' [cut off]') if text else ''
+        return text
 
     def _tools(self):
         """Tools offered this turn: the mode's set narrowed by the credential's."""
@@ -532,7 +886,7 @@ class Connection:
     def drain_results(self):
         # Job reports wait for assistant mode; they are persisted and reported on switching back.
         if self.closed or not self.mode.agent or self.receiving_speech or (self.task and not self.task.done()) \
-                or not self.pending_results:
+                or self.intake_pending or not self.pending_results:
             return
         event = self.pending_results.pop(0)
         async def report():
@@ -542,6 +896,8 @@ class Connection:
 
     async def close(self):
         self.closed = True
+        for task in list(self.intake_tasks):
+            task.cancel()
         await self.interrupt()
         await self.progress.close()
         if self.fb:

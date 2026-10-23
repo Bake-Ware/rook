@@ -54,7 +54,8 @@ export async function mountTokens(root){
     const now=Date.now()/1000;
     const rows=data.tokens.map(t=>({token:t,id:'agent:'+(t.name||t.id),label:t.name||t.id,soon:!!t.expires_at&&t.expires_at-now<SOON,idle:!t.last_used_at||now-t.last_used_at>IDLE}));
     const house=data.relay&&data.relay.house;
-    if(house)rows.unshift({id:house.identity,label:house.label,house,soon:false,idle:false});
+    const phones=((data.relay&&data.relay.devices)||[]).map(d=>({id:d.identity,label:d.label,relayer:d,relayId:d.identity,phone:true,soon:false,idle:false}));
+    rows.unshift(...(house?[{id:house.identity,label:house.label,relayer:house,relayId:'house',soon:false,idle:false}]:[]),...phones);
     const taken=new Set(rows.map(r=>r.id));
     for(const id of new Set(['user:operator','agent:static',...Object.keys(data.avatars)]))if(!taken.has(id))rows.push({id,label:id.split(':').pop(),soon:false,idle:false});
     const tokens=rows.filter(r=>r.token);
@@ -76,15 +77,16 @@ export async function mountTokens(root){
     summary.textContent=shown.filter(r=>r.token).length+' of '+tokens.length+' tokens';
   }
   function relaySwitch(r){
-    const who=r.token||r.house;
+    const who=r.token||r.relayer,rid=r.token?r.token.id:r.relayId;
     if(!who||!(data.relay&&data.relay.available))return h('span',{class:'mg-dimtext',text:'—'});
-    const box=h('input',{type:'checkbox','data-relay':r.token?r.token.id:'house','aria-label':'May relay my approvals: '+r.label,title:who.relay?'Relays your approvals'+(who.relay_by?' (turned on by '+who.relay_by+')':''):'May relay my approvals'});
+    const box=h('input',{type:'checkbox','data-relay':rid,'aria-label':'May relay my approvals: '+r.label,title:who.relay?'Relays your approvals'+(who.relay_by?' (turned on by '+who.relay_by+')':''):'May relay my approvals'});
     box.checked=!!who.relay;
-    const set=on=>perform(async()=>{await api({op:'relay',id:r.token?r.token.id:'house',enabled:on});await refresh();status.textContent=on?r.label+' may relay your approvals.':r.label+' no longer relays your approvals.';});
+    const set=on=>perform(async()=>{await api({op:'relay',id:rid,enabled:on});await refresh();status.textContent=on?r.label+' may relay your approvals.':r.label+' no longer relays your approvals.';});
     box.onchange=()=>{const on=box.checked;box.checked=!on;if(!on){set(false);return;}
       const err=h('small',{class:'mg-error dialog-error',role:'alert'});
-      const d=dialog('May relay my approvals',h('form',{onsubmit:e=>{e.preventDefault();perform(async()=>{await api({op:'relay',id:r.token?r.token.id:'house',enabled:true});d.close();await refresh();status.textContent=r.label+' may relay your approvals.';},err);}},
-        h('p',null,h('strong',{text:r.label}),' may approve or deny waiting items (held calls, huddle cards, questions) when you tell it your decision. Each one records your words and shows them beside the item.'),
+      const d=dialog('May relay my approvals',h('form',{onsubmit:e=>{e.preventDefault();perform(async()=>{await api({op:'relay',id:rid,enabled:true});d.close();await refresh();status.textContent=r.label+' may relay your approvals.';},err);}},
+        r.phone?h('p',null,'Tapping Yes or No on a Rook decision card on ',h('strong',{text:r.label}),' approves or denies that waiting item (held calls, huddle cards, questions). Each tap is recorded with the phone and the time and shown beside the item.')
+          :h('p',null,h('strong',{text:r.label}),' may approve or deny waiting items (held calls, huddle cards, questions) when you tell it your decision. Each one records your words and shows them beside the item.'),
         h('p',{class:'mg-dimtext',text:'Secrets, tokens, policy, settings, job locks and the dashboard-only list (Settings > Approvals) still need you here.'}),
         err,h('div',{class:'mg-actions end'},h('button',{class:'mg-btn primary',text:'Allow relaying'}))));};
     return h('label',{class:'mg-dimtext token-relay'},box,h('span',{class:'sm-only',text:' relays approvals'}));

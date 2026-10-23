@@ -1312,3 +1312,32 @@ async def test_phones_are_not_told_about_an_apk_the_hub_will_not_serve(make_svc,
     # the published one, so it is not what phones are compared against.
     monkeypatch.setenv("ROOK_PUBLIC_APK_SHA256", "0" * 64)
     assert (s.app_available() or {}).get("source") != "release"
+
+
+@pytest.mark.asyncio
+async def test_beta_apk_is_never_advertised_or_pushed(make_svc, gh, band, monkeypatch):
+    """The beta channel (apk-beta/, /apk.json?channel=beta) is pull-only for
+    phones that opted in: app_available, the Phones rows and notify_apps
+    compare against stable alone, so no phone is ever pushed to a beta."""
+    apk = b"PK fake apk" * 100
+    man = {"package": "systems.bake.rook", "version_name": "0.4.16", "version_code": 20,
+           "sha256": hashlib.sha256(apk).hexdigest(), "size": len(apk)}
+    gh.add_release(REPO, "v0.3.0", {"release.json": release_json("0.3.0", 530),
+                                    "rook-worker.apk": apk,
+                                    "rook-worker-apk.json": json.dumps(man).encode()})
+    band.add("p1", "phone", 142, app={"platform": "android", "version": "0.4.16"},
+             caps=("device.update",))
+    s = make_svc()
+    await s.check(force=True)
+    await s.publish_apk("v0.3.0", "human:owner")
+    beta_apk, beta_manifest = update_feed.beta_apk_paths(s.root)
+    beta_apk.parent.mkdir(parents=True)
+    beta_apk.write_bytes(b"PK beta" * 100)
+    beta = {**man, "version_name": "0.4.99", "version_code": 99,
+            "sha256": hashlib.sha256(beta_apk.read_bytes()).hexdigest(), "size": 700}
+    beta_manifest.write_text(json.dumps(beta))
+    monkeypatch.setenv("ROOK_BETA_APK_SHA256", beta["sha256"])
+    assert s.app_available()["version_code"] == 20
+    assert {m["name"]: m for m in s.members()}["phone"]["state"] == "current"
+    res = await s.notify_apps("human:owner")
+    assert res["sent"] == [] and not [c for c, _, _ in band.calls if c == "device.update"]

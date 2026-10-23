@@ -136,7 +136,7 @@ class AndroidAttentionPlugin(Plugin):
     def available(self) -> bool:
         return _ready()
 
-    @capability("post", risk="exec")
+    @capability("post", risk="admin", tags=("physical",))
     def _post(self, id: str, kind: str = "card", line: str = "", explain: str = "", urgency: str = "normal",
               channel: str = "approvals", actions: list | str | None = None, source: str = "",
               expires_at: float = 0) -> dict:
@@ -158,7 +158,7 @@ class AndroidAttentionPlugin(Plugin):
             return {"ok": False, "error": str(e)}
         return _call("post", json.dumps(card, ensure_ascii=False))
 
-    @capability("update", risk="exec")
+    @capability("update", risk="admin")
     def _update(self, id: str, state: str, message: str = "") -> dict:
         """Show what happened after a decision: state done (brief confirmation,
         then the card closes), failed (shows message) or gone (removed silently)."""
@@ -167,7 +167,7 @@ class AndroidAttentionPlugin(Plugin):
             return {"ok": False, "error": f"state must be one of {list(STATES)}"}
         return _call("update", str(id), state, _clip(message, 300))
 
-    @capability("poll", risk="exec", tags=("sensitive",))
+    @capability("poll", risk="admin", tags=("sensitive",))
     def _poll(self, since: int = 0) -> dict:
         """Events after seq ``since``: {events, last}; pass ``last`` next time.
 
@@ -200,7 +200,7 @@ class AndroidAttentionPlugin(Plugin):
         """The notification rules in use: source default|override and the rules document."""
         return _call("rulesGet")
 
-    @capability("rules_set", risk="exec")
+    @capability("rules_set", risk="admin")
     def _rules_set(self, rules: list | dict | str | None = None) -> dict:
         """Replace the phone's notification rules. Empty resets to the shipped defaults.
 

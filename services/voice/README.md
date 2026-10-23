@@ -241,6 +241,103 @@ clause's synthesis time. While it synthesizes it time-slices the GPU with
 anything else there (an LLM sharing the card decodes ~40% slower during
 synthesis bursts).
 
+## Speaker identification (shadow mode)
+
+`speaker.py` labels each voice turn with who spoke it: an enrolled person, a
+`guest`, or `assistant` (the server's own TTS voice coming back through a
+loudspeaker: echo). It is **shadow mode**: the label and scores are logged per
+turn (`speaker`, `speaker_score`, `assistant_score` in the timing line) and
+never change a reply, a tool choice or a permission. The one exception is the
+echo guard below. The server starts it when `VOICE_SPEAKER_MODEL` is set; the
+store is `VOICE_SPEAKER_DB` (default `VOICE_MODEL_DIR/voice-speakers.sqlite3`).
+The assistant's voice reference is learned in the background the first time a
+session's voice has none (cached in the store afterwards).
+
+**Echo guard in the server** (`VOICE_ECHO_GUARD`: `enforce` (default),
+`shadow`, `off`). While the assistant speaks, is held for a barge-in, or within
+1.5 s after, an utterance is dropped (logged as `dropped` with the reason) when
+its transcript repeats a run of at least 3 words, and at least 60% of its words,
+of what the assistant said in this or the previous turn (`echo_text`), or, when
+enforcing, its voice scores at least `VOICE_ECHO_SPEAKER_MIN` (0.6, stricter
+than the 0.50 label) against the assistant's reference (`echo`). Commands it
+just taught ("say forget my voice") are never treated as echo.
+
+**Enrollment by voice.** An owner key saying "enroll my voice" (also learn /
+register / remember) starts it: the assistant asks for three of the
+enrollment sentences, one at a time, without calling the model; "stop" cancels;
+"forget my voice" deletes the voiceprint. Other keys are told it needs the owner
+to set it up (children only with the owner's say-so). The voiceprint is stored
+under the key's principal.
+
+* Model: NeMo TitaNet small (`nemo_en_titanet_small.onnx`, 192-dim embeddings;
+  URL and digest in `models.json`) through sherpa-onnx on the CPU, no torch. It
+  runs in its own Python like Chatterbox: `speaker_worker.py` started with
+  `VOICE_SPEAKER_PYTHON` (a venv with `sherpa-onnx`), or in-process when that is
+  unset and sherpa-onnx is importable here.
+* `VOICE_SPEAKER_MODEL`: path to the `.onnx`. Unset, or the model/worker fails to
+  load: the feature is off (logged once) and turns are untouched.
+* `VOICE_SPEAKER_THREADS` (2): ONNX threads; the GPU host's cores are shared.
+* `VOICE_SPEAKER_THRESHOLD` (0.45): cosine to an enrolled voiceprint to name the person.
+* `VOICE_SPEAKER_ASSISTANT_THRESHOLD` (0.50): cosine to the assistant voice's
+  reference to call a turn echo (and only when above the best person score).
+
+Install on the GPU host, outside the voice venv:
+
+```sh
+uv venv -p 3.12 ~/voice-speaker/.venv
+uv pip install -p ~/voice-speaker/.venv/bin/python sherpa-onnx numpy
+curl -L -o ~/voice-speaker/models/nemo_en_titanet_small.onnx \
+  https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_small.onnx
+sha256sum ~/voice-speaker/models/nemo_en_titanet_small.onnx    # compare with models.json
+# voice service environment:
+VOICE_SPEAKER_PYTHON=/home/<user>/voice-speaker/.venv/bin/python
+VOICE_SPEAKER_MODEL=/home/<user>/voice-speaker/models/nemo_en_titanet_small.onnx
+```
+
+Audio under 0.6 s gets no embedding; audio past 10 s is cut to 10 s. Each
+embedding is bounded by 2 s; a worker that crashes or hangs is killed and
+restarted at most once a minute. Measured on kaiju (2 threads, through the pipe):
+8 ms for 1 s of speech, 22 ms for 3 s, 73 ms for 10 s; about 2 cores while
+busy; worker RSS 123 MB after load, ~315 MB peak after 10 s inputs. TitaNet
+large was ~3x slower (57 ms for 3 s, 192 ms for 10 s), only slightly better on
+people (same-person minimum 0.54 vs 0.43) and no better as an echo guard.
+
+**Echo guard.** `learn_assistant_voice(voice, synthesize)` renders four
+sentences in the session's TTS voice and stores the mean embedding of each
+render clean *and* through two simulated echo paths (phone: 300-3400 Hz, 8 kHz
+round trip, -10 dB, 15 dB SNR; loudspeaker in a room: 300 Hz high-pass, 0.4 s
+reverb, 20 dB SNR). A clean-only reference failed: TitaNet scores lean on the
+low band, so band-limited echo of the right voice scored medians of only
+0.33-0.50, overlapping other voices and people. The reference is cached per voice and model.
+
+**How the thresholds were chosen** (2026-10-22, kaiju, TitaNet small). People:
+three Hi-Fi TTS readers, LJSpeech, Jenny and three voice-clone source clips (8
+speakers, studio audio). A voiceprint (mean of 3 utterances) scored 0.43-0.92
+(5th percentile 0.56) against the same person's other utterances and at most
+0.27 (single utterances: 0.32) against other people; at most 0.44 against
+Kokoro/Chatterbox voices. 1 s snippets of the same person: 5th percentile 0.34,
+so short turns are often `guest`. Threshold 0.45. Through a phone-band channel
+the same person drops to a median 0.22: enroll on the device you use.
+Assistant: 8 Kokoro voices (8 sentences each) and Chatterbox output/reference
+clips. Multi-condition reference vs held-out sentences of the same voice: clean
+>= 0.57 (p5 0.66), phone channel p5 0.63 (min 0.49), phone + reverb p5 0.59
+(min 0.41), loudspeaker room p5 0.68 (min 0.54); vs people (clean or through
+the same channels) at most 0.43. Threshold 0.50 leaves a margin of only ~0.07
+over the highest person; telephone-band echo with a brick-wall filter still
+scored a median 0.43 (missed). Similar Kokoro voices score up to 0.63 against
+each other (af_bella/af_heart), which only matters if two assistants share a
+room. Revisit both thresholds with real shadow logs before ever acting on them.
+
+**Enrollment and privacy.** Enrollment is opt-in, per person: read the four
+`enrollment_sentences()` aloud; `enroll_add` refuses samples under 1.5 s, quieter
+than -45 dBFS, clipped, or unlike that person's earlier samples, and
+`enroll_finish` averages at least three into the voiceprint. Voiceprints
+(embeddings, never audio) stay in one SQLite file on the voice host (mode 0600,
+secure delete); pending samples expire after a day; `forget` deletes everything
+for that person. A voice match is never authentication: it must not unlock,
+approve or authorize anything risky (replayed or cloned voices pass easily).
+Children are enrolled only with the owner's say-so.
+
 ## Speech speed and interruption
 
 `VOICE_TTS_THREADS` controls Kokoro's ONNX CPU inference threads (default eight).
@@ -349,6 +446,62 @@ Images received through protocol-2 `image` messages remain available in native
 image content when a task escalates. The Qwen backend must advertise image input.
 The reference host uses a CPU vision encoder and a 32,768-token model context.
 
+## Turns: intake, barge-in and what was heard
+
+* **Transcribe first.** A finished utterance (`Connection.heard`) is transcribed,
+  and speaker-labelled when that is on, before it may touch the current turn.
+  Utterances are handled one at a time, in order. Silence, noise, Whisper's stock
+  phrases (`stt_gate.py`) and echo never cancel a reply; they are logged as
+  `voice_turn_timing` with `status: dropped` and a `reason` (`quiet`,
+  `no_speech`, `too_short`, `low_confidence`, `repetitive`, `hallucination`,
+  `empty`, `echo_text`, `echo`).
+* **Whisper's gate** (`stt_gate.py`): faster-whisper's VAD (min speech 200 ms,
+  200 ms padding) then per segment `no_speech_prob` > `MAX_NO_SPEECH` (0.6),
+  `avg_logprob` < `MIN_LOGPROB` (-1.0) or `compression_ratio` >
+  `MAX_COMPRESSION_RATIO` (2.4) drops it; under `VOICE_MIN_SPEECH_S` (0.25 s) of
+  voiced audio is too short; a stock phrase ("thank you", "thanks for watching",
+  "you", "bye", ...) is believed only when Whisper was sure (no_speech <= 0.15,
+  logprob >= -0.45, >= 0.6 s of speech). `condition_on_previous_text` is off.
+* **One turn at a time.** Words heard while a spoken turn is still pending and
+  none of its reply has played (within `VOICE_MERGE_WINDOW_S`, 10 s) join it:
+  one user line, one reply. Otherwise the new turn replaces it. A new turn stops
+  older Background runs that have not started an action; follow-ups of older
+  turns are never spoken.
+* **Confirmed barge-in.** A hello with `"barge": "confirm"` (Android from PR
+  #154) gets `"barge": "confirm"` back in `session`. On local speech the client
+  pauses playback and sends `speech_start` with `"hold": true`; the server stops
+  sending audio and lets the utterance through. Real words: `interrupt` and a new
+  turn. Nothing usable (or echo): `{"type": "resume", "turn": n}` and the reply
+  continues where it paused. No utterance within `VOICE_HOLD_QUIET_S` (2.5 s):
+  resume. Held for `VOICE_HOLD_MAX_S` (8 s): resume, or interrupt if the user is
+  still talking (the phone gives up at 10 s).
+* **History is what was heard.** An interrupted reply is recorded up to the
+  played sample count (the client's `playback` acknowledgements, else the
+  server's send clock), cutting the clause in progress by its played share and
+  marking it `[cut off]`.
+* **Endpointing.** Smart Turn scores the utterance at `VOICE_TURN_ANALYZE_MS`
+  (300) of silence; a complete verdict ends it at `VOICE_TURN_COMPLETE_MS` (400,
+  was 600); `VOICE_TURN_MAX_SILENCE_MS` (2000, was 2500) ends it regardless.
+  Smart Turn takes ~65 ms on kaiju's CPU. On synthetic speech it scored
+  cut-off sentences as complete too, so the thresholds were not lowered further.
+
+### Replay set
+
+`replay.py` makes and replays synthetic turns over a real socket, streamed in
+real time like the Android client (aec, `barge: confirm`, playback acks):
+
+```sh
+python -m services.voice.replay make --url https://127.0.0.1:8900 --out ~/voice-replay/set1 --insecure
+python -m services.voice.replay run --url wss://127.0.0.1:8931/ws --dir ~/voice-replay/set1 --insecure
+```
+
+Cases: silence, low noise, a noise burst, mains hum (no turn); three questions
+(one turn, right answer); a question split by a pause (right answer); a real
+barge-in (interrupt, new question answered); a noise barge-in (resume, no
+interrupt); echo of the assistant's voice during its reply (informational). One
+JSON line per case, exit 1 on a failed required case. Run it against the
+candidate after every change, and against live after activation.
+
 ## Per-turn timing
 
 Every turn logs one JSON line on stderr (logger `voice.timing`, so it reaches
@@ -368,6 +521,11 @@ start). `endpoint_ms` is the end-of-utterance wait, `stt_ms` the transcription,
 `total_ms` the end of the turn. Missing keys mean the stage did not happen
 (typed, unspoken or tool-only turns). No transcript or reply text is logged.
 
+Voice turns also carry the STT gate's numbers (`speech_s`, `no_speech`,
+`logprob`, `compression`), the speaker label when that is on (`speaker`,
+`speaker_score`, `assistant_score`) and `merged` (the turn it joined). Dropped
+utterances log `status: dropped` with a `reason` (see "Turns" above).
+
 In the `front_background` pipeline the line is written once Background (and
 its follow-up) finished, and adds `front_first_token_ms`,
 `front_first_audio_ms`, `background_ms` and `followup_ms` (first follow-up
@@ -383,9 +541,27 @@ anything else, or no field, keeps the classic planner path unchanged. Code:
 `bgtools.py` (timers, weather, calendar, mail, Rook tasks, music, Home Assistant).
 
 * Front: one streaming completion per turn to `VOICE_FRONT_URL`/`VOICE_FRONT_MODEL`
-  (default `VLLM_URL`/`VLLM_MODEL`), no tools, thinking off. Prompt = fixed block (persona, rules, mode) + board + last
-  `VOICE_FRONT_TURNS` (6) exchanges + utterance. `VOICE_FRONT_MAX_TOKENS` (200),
-  `VOICE_FRONT_TIMEOUT_S` (30).
+  (default `VLLM_URL`/`VLLM_MODEL`), no tools, thinking off (`reasoning_effort:
+  none` plus `chat_template_kwargs.enable_thinking: false`; verified on kaiju:
+  no reasoning tokens). The prompt is an **append-only transcript**
+  (`front.Transcript`): the fixed block (persona, rules, mode) as the system
+  message, then every exchange as it happened; new board facts ride in the
+  next user message as a bracketed note. kaiju's model (Qwen3-Next on Strata)
+  reuses its cache only when a prompt extends the previous prompt and reply: an
+  append costs ~0.1-0.3 s to first token, any earlier edit a full prefill at
+  ~600 tokens/s. It starts from the last `VOICE_FRONT_TURNS` (6) stored
+  exchanges and restarts past `VOICE_FRONT_TRANSCRIPT_CHARS` (14,000) or when the
+  fixed block changes. At session start a silent one-line exchange warms it
+  (`VOICE_FRONT_WARM=0` disables). The first clause may end at a comma once it
+  has `VOICE_FRONT_EARLY_WORDS` (5) words, so speech starts sooner. Front never
+  says an action is done; a follow-up corrects an earlier wrong answer.
+  `VOICE_FRONT_MAX_TOKENS` (200), `VOICE_FRONT_TIMEOUT_S` (30).
+* House agent (owners): Background's `house_agent` tool asks the hub's house
+  agent (`home.ask` on worker `VOICE_HOUSE_WORKER`, default `rook`; up to
+  `VOICE_HOUSE_TIMEOUT_S`, 100 s) for anything its own tools cannot do; the
+  answer is the result Front speaks. Front's transcript starts with the house
+  agent's shared profile and fact memories (`memory.list`), fetched at session
+  start.
 * Background: the thinking agent's tool loop on `VOICE_BACKGROUND_URL`/
   `VOICE_BACKGROUND_MODEL` (default `VLLM_*`) with only the policy tools, effort
   `VOICE_BACKGROUND_EFFORT` (`low`), `VOICE_BACKGROUND_MAX_STEPS` (8),

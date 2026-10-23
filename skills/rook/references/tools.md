@@ -64,6 +64,9 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 |---|---|---|---|
 | `approvals.list` | kind?, summary_only=false | read | What is waiting on the person: held calls, held job calls, huddle cards and pinned questions (kind: hold\|job\|… |
 | `approvals.relay` | item, decision, relayed_by?, reason='', answer='' | write | Approve or deny one waiting item on the person's behalf: relayed_by {who, quote, session} is their own decisi… |
+| `attention.notices` | limit=20 | read | Recent short summaries (at most 140 characters) of urgent and family notifications the phones reported, newes… |
+| `attention.send` | text, title='', urgency='normal', channel='digest', explain='' | write | Put an alert on the person's phones (attention.devices): text, title?, urgency urgent\|normal (urgent rings on… |
+| `attention.status` | — | read | Per phone: online, last poll, last event, queued alerts, open cards, and when the person last saw, opened or… |
 | `caps.describe` | prefix='' | read | Arg schema, docstring and declared risk/limit/fields for every hub cap. |
 | `ccmod.activity` | limit=50 | read | What the rules did recently: posts, notifications, capability runs. |
 | `ccmod.delete` | id, note='' | admin | Delete a rule (push afterwards to take it off the workers). |
@@ -180,6 +183,9 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 
 ### approvals (relayed)
 `rook_approvals(action="summary")` says what is waiting on the person (held calls, held job calls, huddle cards, pinned questions); `action="list"` gives each item's name, who asked, what exactly would happen, risk, source and age. Read it back tersely: count, then name + one line each. Only when the person has enabled your client (Tokens > May relay my approvals) and tells you their decision, relay it: `rook_approvals(action="approve"|"deny", item=<name or id>, relayed_by={"who": <person>, "quote": <their exact words>, "session": <conversation URL or id>}, reason=<why, for a deny>)`. Never relay your own judgement, never decide items they did not name, and leave dashboard-only items (relayable: false) to them.
+
+### attention (the person's phone)
+`attention.send {text, title?, urgency: urgent|normal, channel?, explain?}` on worker `rook` puts an alert on the person's phone (queued while it is offline). Use it sparingly: only what they must know now. `attention.status` says whether they saw, opened or unlocked the phone since (no answer is not unseen); `attention.notices {limit}` lists short summaries of their urgent and family notifications. Approvals reach the phone by themselves.
 
 ### Claude Code rules
 Hub-managed triggers and actions for Claude Code on the workers (dashboard: Manage > Claude Code). `rook_call(worker="rook", cap="ccmod.list")` lists them; `ccmod.status` shows what each worker holds. Changing or pushing rules writes people's Claude Code settings: ask the user first.
@@ -628,11 +634,11 @@ Native plugins of the Android app's embedded worker, in place of (or beside) the
 | Cap | Args | Risk | Does |
 |---|---|---|---|
 | `attention.feed` | limit=50 | exec | The phone's quiet feed, newest first: summaries of notifications it sorted as urgent, family or normal (never… |
-| `attention.poll` | since=0 | exec | Events after seq `since`: {events, last}; pass `last` next time. |
-| `attention.post` | id, kind='card', line='', explain='', urgency='normal', channel='approvals', actions?, source='', expires_at=0 | exec | Put a decision card on the phone; re-posting the same id updates it without ringing again. |
+| `attention.poll` | since=0 | admin | Events after seq `since`: {events, last}; pass `last` next time. |
+| `attention.post` | id, kind='card', line='', explain='', urgency='normal', channel='approvals', actions?, source='', expires_at=0 | admin | Put a decision card on the phone; re-posting the same id updates it without ringing again. |
 | `attention.rules_get` | — | exec | The notification rules in use: source default\|override and the rules document. |
-| `attention.rules_set` | rules? | exec | Replace the phone's notification rules. |
-| `attention.update` | id, state, message='' | exec | Show what happened after a decision: state done (brief confirmation, then the card closes), failed (shows mes… |
+| `attention.rules_set` | rules? | admin | Replace the phone's notification rules. |
+| `attention.update` | id, state, message='' | admin | Show what happened after a decision: state done (brief confirmation, then the card closes), failed (shows mes… |
 
 **battery_android**
 

@@ -59,6 +59,15 @@ class Store:
                         "(SELECT id FROM events WHERE session=? ORDER BY id DESC LIMIT 160)", (session, session))
         self.db.commit()
 
+    def amend_last_user(self, session, text):
+        """Replace the newest event's text if it is the user's (a merged utterance);
+        otherwise append it."""
+        row = self.db.execute("SELECT id,kind FROM events WHERE session=? ORDER BY id DESC LIMIT 1", (session,)).fetchone()
+        if row is None or row["kind"] != "user":
+            return self.append(session, "user", {"text": text})
+        self.db.execute("UPDATE events SET body=? WHERE id=?", (json.dumps({"text": text}), row["id"]))
+        self.db.commit()
+
     def messages(self, session):
         rows = self.db.execute("SELECT kind,body FROM events WHERE session=? ORDER BY id DESC LIMIT 80",
                                (session,)).fetchall()

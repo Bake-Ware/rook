@@ -284,7 +284,7 @@ def test_worker_module_imports_without_torch():
     assert hasattr(worker, 'Synth') and hasattr(worker, 'main')
 
 
-def test_worker_releases_cached_gpu_memory_after_each_utterance():
+def test_worker_releases_cached_gpu_memory_after_each_utterance_when_asked(monkeypatch):
     import contextlib
     import types
     import services.voice.chatterbox_worker as worker
@@ -312,7 +312,11 @@ def test_worker_releases_cached_gpu_memory_after_each_utterance():
     synth.torch = types.SimpleNamespace(cuda=cuda, inference_mode=contextlib.nullcontext)
     synth.sr, synth.conds, synth.model = 24000, {'default': object()}, Model()
     samples, sr = synth.synthesize('Hello.', 'default')
-    assert sr == 24000 and len(samples) == 2 and calls == ['empty']
+    assert sr == 24000 and len(samples) == 2 and calls == []          # off by default: Chatterbox stays hot
+    monkeypatch.setenv('VOICE_CHATTERBOX_EMPTY_CACHE', '1')
+    calls.clear()
+    samples, sr = synth.synthesize('Hello.', 'default')
+    assert calls == ['empty']
     synth.model = Model(fail=True)
     with pytest.raises(RuntimeError):
         synth.synthesize('Hello.', 'default')

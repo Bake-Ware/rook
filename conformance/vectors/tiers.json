@@ -51,14 +51,23 @@
     "sensitive"
    ]
   },
+  "attention.notices": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
   "attention.poll": {
-   "tier": "exec",
+   "tier": "admin",
    "tags": [
     "sensitive"
    ]
   },
   "attention.post": {
-   "tier": "exec"
+   "tier": "admin",
+   "tags": [
+    "physical"
+   ]
   },
   "attention.rules_get": {
    "tier": "exec",
@@ -67,10 +76,16 @@
    ]
   },
   "attention.rules_set": {
-   "tier": "exec"
+   "tier": "admin"
+  },
+  "attention.send": {
+   "tier": "write"
+  },
+  "attention.status": {
+   "tier": "read"
   },
   "attention.update": {
-   "tier": "exec"
+   "tier": "admin"
   },
   "band.admin": {
    "tier": "admin",

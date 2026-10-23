@@ -24,6 +24,13 @@ from . import pipeline
 from .tts import resolve_voice
 
 VERSION = '2.0.0'
+# End of turn, in 20 ms frames of silence: Smart Turn scores the utterance at
+# ANALYZE, a "complete" verdict ends it at COMPLETE, and MAX_SILENCE ends it
+# regardless (2026-10-23: 400 ms / 2 s, were 600 ms / 2.5 s; Smart Turn takes
+# ~65 ms on kaiju's CPU).
+TURN_ANALYZE = int(os.environ.get('VOICE_TURN_ANALYZE_MS', '300')) // 20
+TURN_COMPLETE = int(os.environ.get('VOICE_TURN_COMPLETE_MS', '400')) // 20
+TURN_MAX_SILENCE = int(os.environ.get('VOICE_TURN_MAX_SILENCE_MS', '2000')) // 20
 ROOT = Path(os.environ.get('VOICE_MODEL_DIR', '.'))
 TOKEN = os.environ.get('VOICE_TOKEN', '')
 
@@ -88,7 +95,30 @@ async def lifespan(app):
                     credential_sessions.pop(credential, None)
     app.state.jobs = Jobs(app.state.store, DIRECT_TOOLS, ACP_HOST, ACP_PORT, notify,
                           agent=ThinkingAgent(direct=DIRECT_TOOLS))
+    # Speaker identification (shadow labels, echo guard, opt-in enrollment): only when
+    # a model is configured; never a reason for the service not to start.
+    app.state.speakers = None
+    if os.environ.get('VOICE_SPEAKER_MODEL', '').strip():
+        try:
+            from .speaker import Speakers
+            app.state.speakers = await asyncio.to_thread(
+                Speakers, os.environ.get('VOICE_SPEAKER_DB', str(ROOT / 'voice-speakers.sqlite3')))
+        except Exception as error:
+            import logging
+            logging.warning('Speaker identification not started: %s', type(error).__name__)
+    learning = None
+    speakers, provider = app.state.speakers, app.state.provider
+    if speakers is not None and speakers.available and not speakers.has_assistant_voice(provider.default_voice):
+        # Once per voice (cached in the store): before any session needs the echo guard.
+        async def synthesize(text):
+            return await provider.synthesize(text, provider.default_voice)
+        learning = asyncio.create_task(speakers.learn_assistant_voice(provider.default_voice, synthesize))
+        learning.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
     yield
+    if learning is not None:
+        learning.cancel()
+    if app.state.speakers is not None:
+        app.state.speakers.close()
     worker_maintenance.cancel()
     schema_maintenance.cancel()
     await asyncio.gather(worker_maintenance, schema_maintenance, return_exceptions=True)
@@ -233,6 +263,10 @@ async def websocket(ws: WebSocket):
                           activity=hello.get('activity') is True, enqueue=enqueue,
                           progress_updates=hello.get('progress_updates'), identity=identity_for(supplied, live_identities))
         conn.full_duplex = protocol == 2 and hello.get('aec') is True
+        # Confirmed barge-in: the client pauses (not flushes) playback on local speech
+        # and waits for "interrupt" (real words) or "resume" (it was nothing).
+        conn.barge_confirm = protocol == 2 and hello.get('barge') == 'confirm'
+        conn.speakers = getattr(app.state, 'speakers', None)
         # An owner key may name the device it is talking from (the app sends its worker
         # name), so "my battery / where am I / my calendar" default to that device. Never
         # for other keys: their device comes only from the key's server-side mapping.
@@ -248,6 +282,8 @@ async def websocket(ws: WebSocket):
         credential_sockets.setdefault(credential_id, []).append((ws, conn))
         credential_sessions.setdefault(credential_id, set()).add(key)
         extra = {'pipeline': conn.pipeline} if conn.fb else {}
+        if conn.barge_confirm:
+            extra['barge'] = 'confirm'
         await conn.emit('session', conversation=conversation, protocol=protocol, version=VERSION, full_duplex=conn.full_duplex,
                         mode=conn.mode.id, custom_mode=conn.mode.custom, thinking=conn.thinking,
                         activity=conn.activity_enabled, **extra)
@@ -275,12 +311,13 @@ async def websocket(ws: WebSocket):
         if conn.fb:
             conn.fb.resend_timers()
             conn.fb.prefetch('session')
+            conn.fb.load_house_context()
+            conn.fb.warm()
         import webrtcvad   # here, not at import: a hub mounting this app imports it first
         vad = webrtcvad.Vad(3)
         preroll = deque(maxlen=10)
         utterance = bytearray()
         speech = silence = 0
-        speech_permission_until = 0.0
         message = None if hello.get('type') == 'hello' else first
         while True:
             if message is None:
@@ -294,9 +331,13 @@ async def websocket(ws: WebSocket):
                 if len(data) != 640:
                     continue
                 playing = time.monotonic() < conn.play_until + .4
-                if playing and (not conn.full_duplex or time.monotonic() > speech_permission_until):
+                if playing and (not conn.full_duplex or time.monotonic() > conn.speech_permission_until):
                     preroll.clear(); utterance.clear(); speech = silence = 0
                     continue
+                if conn.held_since is not None:
+                    resumed = conn.check_hold(bool(utterance))
+                    if resumed is not None:
+                        await resumed
                 sp = vad.is_speech(data, 16000)
                 if sp:
                     conn.last_speech = time.monotonic()
@@ -318,7 +359,7 @@ async def websocket(ws: WebSocket):
                     silence += 1
                 else:
                     preroll.append(data)
-                if utterance and silence == 20 and speech >= 10:
+                if utterance and silence == TURN_ANALYZE and speech >= 10:
                     analysis = asyncio.create_task(app.state.provider.turn_complete(bytes(utterance)))
                     analysis.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
                 complete = False
@@ -326,7 +367,8 @@ async def websocket(ws: WebSocket):
                     with contextlib.suppress(Exception):
                         complete = analysis.result()
                 # Semantic completion, with a finite fallback for model uncertainty.
-                if utterance and ((silence >= 30 and complete) or silence >= 125 or len(utterance) >= 16000 * 2 * 30):
+                if utterance and ((silence >= TURN_COMPLETE and complete) or silence >= TURN_MAX_SILENCE
+                                  or len(utterance) >= 16000 * 2 * 30):
                     if analysis is not None:
                         analysis.cancel(); analysis = None
                     pcm = bytes(utterance)
@@ -334,8 +376,11 @@ async def websocket(ws: WebSocket):
                     utterance.clear(); speech = silence = 0
                     conn.receiving_speech = False
                     if enough:
-                        await conn.start(pcm=pcm)
+                        # Transcribed first; only real words may interrupt or start a turn.
+                        conn.heard(pcm, conn.last_speech, held=conn.held_since is not None)
                     else:
+                        if conn.held_since is not None and not conn.intake_pending:
+                            await conn.release_hold(resume=True)
                         conn.drain_results()
             elif text:
                 if len(text) > 8 * 1024 * 1024:
@@ -365,11 +410,15 @@ async def websocket(ws: WebSocket):
                         conn.fb.client_timer(msg)
                     elif kind == 'speech_start' and conn.full_duplex:
                         conn.last_speech = time.monotonic()
-                        speech_permission_until = time.monotonic() + 35
+                        conn.speech_permission_until = time.monotonic() + 35
                         conn.receiving_speech = True
-                        if conn.fb:
-                            conn.fb.drop_followups()
-                        await conn.interrupt()
+                        if msg.get('hold') is True and conn.barge_confirm:
+                            # Paused, not stopped: the transcript decides (Connection.heard).
+                            conn.hold()
+                        else:
+                            if conn.fb:
+                                conn.fb.drop_followups()
+                            await conn.interrupt()
                     elif kind == 'audio_config':
                         conn.full_duplex = protocol == 2 and msg.get('aec') is True
                     elif kind == 'playback':

@@ -872,14 +872,16 @@
    ]
   },
   "attention.poll": {
-   "tier": "exec",
+   "tier": "admin",
    "tags": [
     "sensitive"
    ]
   },
   "attention.post": {
-   "tier": "exec",
-   "tags": []
+   "tier": "admin",
+   "tags": [
+    "physical"
+   ]
   },
   "attention.rules_get": {
    "tier": "exec",
@@ -888,11 +890,11 @@
    ]
   },
   "attention.rules_set": {
-   "tier": "exec",
+   "tier": "admin",
    "tags": []
   },
   "attention.update": {
-   "tier": "exec",
+   "tier": "admin",
    "tags": []
   },
   "battery.status": {

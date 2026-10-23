@@ -28,12 +28,17 @@ polls and posts against the contract below.
 
 | Cap | Args | Returns | Tier |
 |---|---|---|---|
-| `attention.post` | id (≤64), kind hold\|job\|card\|ask\|alert, line (≤140), explain="" (≤600), urgency normal\|urgent, channel approvals\|urgent\|family\|digest\|jobs, actions ⊆ yes/no/explain/ack (default yes,no,explain; alerts ack), source="", expires_at=0 | `{ok, id, new}` | exec |
-| `attention.update` | id, state done\|failed\|gone, message="" | `{ok}` | exec |
-| `attention.poll` | since=0 | `{ok, events, last}` (+ `more`, `reset`, `gap`) | exec, sensitive |
+| `attention.post` | id (≤64), kind hold\|job\|card\|ask\|alert, line (≤140), explain="" (≤600), urgency normal\|urgent, channel approvals\|urgent\|family\|digest\|jobs, actions ⊆ yes/no/explain/ack (default yes,no,explain; alerts ack), source="", expires_at=0 | `{ok, id, new}` | admin |
+| `attention.update` | id, state done\|failed\|gone, message="" | `{ok}` | admin |
+| `attention.poll` | since=0 | `{ok, events, last}` (+ `more`, `reset`, `gap`) | admin, sensitive |
 | `attention.feed` | limit=50 | `{ok, entries, ignored_7d}` (summaries only) | exec, sensitive |
 | `attention.rules_get` | — | `{ok, source, extend_default, rules}` | exec, sensitive |
-| `attention.rules_set` | rules (list, document, or empty to reset) | `{ok, source}` | exec |
+| `attention.rules_set` | rules (list, document, or empty to reset) | `{ok, source}` | admin |
+
+Tiers are the hub's floor (`rook/core/authz.py`): only the hub's attention
+plugin should post cards or read taps, because a card's Yes is relayed as the
+person's decision; agents' admin calls are held for the person. `feed` and
+`rules_get` stay exec (sensitive), like `notify.list`.
 
 Re-posting an id updates the card in place and never re-rings. Over-long
 text is clipped, unknown enum values are refused.
