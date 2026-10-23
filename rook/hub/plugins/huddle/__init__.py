@@ -41,13 +41,15 @@ from ....core.plugin import Plugin, capability, place, setting
 from ..rooms import caller
 from .chair import Chair, CardError
 from .service import SYSTEM, HuddleService, HuddleStore
+from .table import ALTERNATES, AUTO, VOTERS, GitHubError, Table, TableError
 
 log = logging.getLogger("rook.hub.plugins.huddle")
 
 READS = ("read", "list", "mine")
 WRITES = ("status", "ask", "say", "withdraw")
 CHAIRED = ("start", "post", "card", "archive")
-ERRORS = (ValueError, KeyError, TypeError, PermissionError)
+TABLE = ("table", "pin", "vote")
+ERRORS = (ValueError, KeyError, TypeError, PermissionError, GitHubError)
 SWEEP_S = 3600.0
 
 
@@ -92,6 +94,48 @@ class Huddle(Plugin):
                 label="Default roles",
                 help="Roles a new huddle starts with when none are named (only those that "
                      "exist on the Roles tab)."),
+        setting("votes", bool, True, group="Conference table and votes",
+                label="Conference table and votes",
+                help="The chair pins artifacts (a PR, a commit, test output, a document, a link) "
+                     "at an exact version for every role to read, and calls votes on merge, "
+                     "ready for QA, deploy and ship: gates first, then the required roles vote "
+                     "blind; the hub carries out a passed vote (docs/manual/conference-table.md)."),
+        setting("vote_voters", dict, {k: list(v) for k, v in VOTERS.items()},
+                group="Conference table and votes", label="Required voters",
+                help="Per action (merge, qa, deploy, ship) the seats that must all vote yes. "
+                     "A seat 'critic|skeptic' is the first of those roles that exists and may "
+                     "vote. Authors and the proposer never vote on their own work."),
+        setting("vote_alternates", dict, {k: list(v) for k, v in ALTERNATES.items()},
+                group="Conference table and votes", label="Stand-in voters",
+                help="Who fills a seat when its role wrote the work (e.g. lead -> architect). "
+                     "With nobody to stand in, the seat counts as couldn't verify."),
+        setting("vote_auto", list, list(AUTO), group="Conference table and votes",
+                label="Carry out after a passed vote",
+                help="Actions the hub carries out on its own after every gate and every required "
+                     "voter says yes (the trust ramp). Others (deploy, ship) ask you with one "
+                     "Yes / No / Explain line. Sacred targets always ask you."),
+        setting("vote_github_secret", str, "", group="Conference table and votes",
+                label="Hub GitHub credential (vault secret name)",
+                help="The vault secret the hub merges with (and reads GitHub with). Sessions and "
+                     "roles never see it. Blank: the hub reads public repositories anonymously "
+                     "and cannot merge."),
+        setting("vote_merge_method", str, "merge", choices=("merge", "squash", "rebase"),
+                group="Conference table and votes", label="Merge method"),
+        setting("vote_require_ci", bool, True, group="Conference table and votes",
+                label="Require CI",
+                help="The CI and tests gates fail when no check ran on the voted commit."),
+        setting("vote_test_checks", list, ["*test*"], group="Conference table and votes",
+                label="Test checks",
+                help="Check names (globs) that count as the test run for the tests gate."),
+        setting("vote_gate_wait_minutes", int, 20, min=0, max=120,
+                group="Conference table and votes", label="Wait for CI (minutes)",
+                help="How long the gates wait for running checks before they fail."),
+        setting("vote_deploy_targets", list, [], group="Conference table and votes",
+                label="Deploy targets",
+                help="Deploy and ship votes name one: {id, title, dry_run: {worker, cap, args}, "
+                     "deploy: {worker, cap, args}}; '{sha}' in args is the voted commit. The "
+                     "dry run is the rollback gate; both run as the house agent under the trust "
+                     "map."),
         setting("speak_devices", list, [], label="Play on devices",
                 help="Workers a message's Speak menu may play on (voice.speak, e.g. your "
                      "phone). Blank: every online worker with voice.speak except the "
@@ -145,6 +189,7 @@ class Huddle(Plugin):
                                      origin=self._origin,
                                      wake_on_answer=lambda: bool(self.settings.get("wake_on_answer", False)))
         self.service.chair = Chair(self.service, lambda: self._node, self._chair_settings)
+        self.service.table = Table(self.service, lambda: self._node, self._table_settings)
         self.service.relayed = self._relayed
 
     def _relayed(self, kind: str, ids: list) -> dict:
@@ -153,13 +198,22 @@ class Huddle(Plugin):
 
     def _chair_settings(self) -> dict:
         return {k: self.settings.get(k) for k in ("reply_chars", "max_role_turns", "retention_days",
-                                                  "default_roles", "role_retries", "max_followups")}
+                                                  "default_roles", "role_retries", "max_followups",
+                                                  "votes")}
+
+    def _table_settings(self) -> dict:
+        return {k: self.settings.get(k) for k in (
+            "vote_voters", "vote_alternates", "vote_auto", "vote_github_secret",
+            "vote_merge_method", "vote_require_ci", "vote_test_checks", "vote_gate_wait_minutes",
+            "vote_deploy_targets")}
 
     async def start(self) -> None:
         if self.service is None:
             return
         with contextlib.suppress(Exception):
             self.service.chair.resume()
+        with contextlib.suppress(Exception):
+            self.service.table.resume()
         self._sweeper = asyncio.get_running_loop().create_task(self._sweep_loop())
 
     async def _sweep_loop(self) -> None:
@@ -342,6 +396,71 @@ class Huddle(Plugin):
         """Archive a huddle (hidden from the list, kept; deleted after huddle.retention_days) or unarchive it."""
         return self._svc().archive(huddle, archived)
 
+    # -- the conference table and votes (table.py) -------------------------------
+    def _table(self) -> Table:
+        svc = self._svc()
+        if svc.table is None or not self.settings.get("votes", True):
+            raise ValueError("the conference table is off on this hub (huddle.votes)")
+        return svc.table
+
+    @capability("table", risk="read")
+    async def table(self, huddle: str, action: str = "list", artifact: str = "",
+                    what: str = "summary", path: str = "", offset: int = 0) -> dict:
+        """A chaired huddle's conference table: list (pinned artifacts, and votes with ballots sealed until all are in), read (artifact, what: summary|diff|files|file|checks|comments|content, path, offset: always at the pinned version)."""
+        t = self._table()
+        room = self._svc()._chaired(huddle)["room"]
+        try:
+            if action == "list":
+                return {"room": room, **t.view(room)}
+            if action == "read":
+                return await t.read(room, artifact, what, path, int(offset or 0), caller())
+        except TableError as e:
+            raise ValueError(str(e)) from None
+        raise ValueError("action must be list or read")
+
+    @capability("pin", risk="write")
+    async def pin(self, huddle: str, kind: str, repo: str = "", number: int = 0, sha: str = "",
+                  path: str = "", url: str = "", text: str = "", title: str = "",
+                  note: str = "", sha256: str = "") -> dict:
+        """Pin an artifact on a chaired huddle's table at its exact version: pr (repo, number), commit (repo, sha), file (repo, path, sha), doc|tests (text), link (url, sha256?)."""
+        me = caller()
+        if str(me).startswith("role:"):
+            raise PermissionError("roles do not pin; ask the chair to")
+        data = {k: v for k, v in {"kind": kind, "repo": repo, "number": number, "sha": sha,
+                                  "path": path, "url": url, "text": text, "title": title,
+                                  "note": note, "sha256": sha256}.items() if v}
+        try:
+            return await self._table().pin(huddle, me, data)
+        except TableError as e:
+            raise ValueError(str(e)) from None
+
+    @capability("vote", risk="write")
+    async def vote(self, huddle: str, action: str = "call", kind: str = "", artifact: str = "",
+                   reason: str = "", target: str = "", skip_vote: bool = False,
+                   motion: str = "") -> dict:
+        """Votes on a chaired huddle's table: call (kind merge|qa|deploy|ship, artifact, reason?, target? for deploy/ship, skip_vote? only on ship-it), status (motion). People and the house agent call votes; roles vote only when the hub asks them."""
+        from ...authz import current_principal
+        me = caller()
+        t = self._table()
+        room = self._svc()._chaired(huddle)["room"]
+        try:
+            if action == "status":
+                m = t.motion(motion, room)
+                return {**m, "ballots": t.ballots(m["id"])}
+            if action != "call":
+                raise ValueError("action must be call or status")
+            p = current_principal.get()
+            home = self._node.plugin("home") if self._node is not None else None
+            person = str(me).startswith(("user:", "human:", "person:")) or \
+                getattr(p, "kind", "") in ("user", "person", "operator")
+            if not person and (home is None or me != home.identity):
+                raise PermissionError("only a person or the house agent (the chair) calls a "
+                                      "vote; agents ask the chair in the huddle")
+            return await t.call(room, me, {"kind": kind, "artifact": artifact, "reason": reason,
+                                           "target": target, "skip_vote": skip_vote})
+        except TableError as e:
+            raise ValueError(str(e)) from None
+
     # -- MCP -----------------------------------------------------------------
     def mcp_tools(self, invoke):
         async def rook_huddle(action: str = "read", project: str | None = None, text: str | None = None,
@@ -351,7 +470,9 @@ class Huddle(Plugin):
             finish. ask text, data {options?}: a decision only the person can make; pinned until
             answered; the answer comes back as chat and wakes you. say text. read (data.since_seq,
             data.room), mine, list. Chaired (person, house agent, roles): start data {title,
-            roles}; post text data {room}; card data {room, card, action}; archive data {room}."""
+            roles}; post text data {room}; card data {room, card, action}; archive data {room}.
+            Table: table data {room, artifact?, what?}; pin data {room, kind, repo, number|sha,
+            ...}; vote data {room, kind, artifact, reason} (people and the chair)."""
             d = dict(data or {})
 
             def failed(error):
@@ -359,6 +480,29 @@ class Huddle(Plugin):
                 if getattr(error, "candidates", None):   # a name that was not exactly one record's
                     out.update({k: v for k, v in error.payload().items() if k != "error"})
                 return json.dumps(out, separators=(",", ":"))
+            if action in TABLE:
+                room = d.pop("room", None)
+                if action == "table":
+                    cap, args = "huddle.table", {"huddle": room,
+                                                 "action": "read" if d.get("artifact") else "list",
+                                                 "artifact": d.get("artifact"),
+                                                 "what": d.get("what"), "path": d.get("path"),
+                                                 "offset": d.get("offset")}
+                elif action == "pin":
+                    cap, args = "huddle.pin", {"huddle": room, **{k: d.get(k) for k in (
+                        "kind", "repo", "number", "sha", "path", "url", "title", "note",
+                        "sha256")}, "text": text or d.get("text")}
+                else:
+                    cap, args = "huddle.vote", {"huddle": room, "action": d.get("action") or "call",
+                                                **{k: d.get(k) for k in (
+                                                    "kind", "artifact", "reason", "target",
+                                                    "skip_vote", "motion")}}
+                try:
+                    result = await invoke(cap, {k: v for k, v in args.items() if v is not None})
+                    return json.dumps({"ok": True, "result": result}, separators=(",", ":"),
+                                      ensure_ascii=False, default=str)
+                except ERRORS as error:
+                    return failed(error)
             if action in CHAIRED:
                 room = d.pop("room", None)
                 if action == "start":
@@ -405,6 +549,13 @@ def lean_view(view: dict) -> dict:
         extra = {"roles": view["roles"],
                  "cards": [{k: c[k] for k in ("id", "name", "kind", "by", "summary", "state", "seq", "error")
                             if c.get(k) is not None} for c in view.get("cards") or []]}
+        tb = view.get("table") or {}
+        if tb.get("artifacts") or tb.get("motions"):
+            extra["table"] = {
+                "artifacts": [{k: a.get(k) for k in ("n", "id", "kind", "title", "version", "state")}
+                              for a in tb.get("artifacts") or []],
+                "motions": [{k: m.get(k) for k in ("id", "name", "kind", "artifact", "version",
+                                                   "state")} for m in tb.get("motions") or []]}
     named = {k: view[k] for k in ("name", "resolved") if view.get(k)}
     return {"room": view["room"], **named, "title": view["title"], **extra,
             "statuses": [{k: s[k] for k in ("identity", "state", "working_on", "blocked_on", "needs_decision",

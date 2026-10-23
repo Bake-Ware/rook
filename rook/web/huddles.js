@@ -406,7 +406,8 @@ export async function mountHuddles(root){
   function draw(){
     const r=(view.rounds||[]).at(-1);
     const s=JSON.stringify([view.title,view.archived,lastSeq,msgs.length,chairOn,(view.cards||[]).map(c=>c.id+c.state),
-      r&&[r.id,r.state,(r.replies||[]).map(x=>x.state)],(view.questions||[]).filter(q=>q.state==='open').length]);
+      r&&[r.id,r.state,(r.replies||[]).map(x=>x.state)],(view.questions||[]).filter(q=>q.state==='open').length,
+      view.table&&[(view.table.artifacts||[]).map(a=>a.id+a.state),(view.table.motions||[]).map(m=>m.id+m.state+(m.ballots||[]).length)]]);
     if(s===sig)return;
     const first=!sig;sig=s;
     drawHead();drawNotice();drawLog(first);drawCompose();
@@ -421,6 +422,7 @@ export async function mountHuddles(root){
     else if(view.roles){meta.append(chip(short(chairOf())+' · chair','hx-chair'));for(const id of view.roles)meta.append(chip(roleName(id),'hx-role'));}
     else meta.append(el('span',view.scope==='project'?'Project status':'Band status','hx-dim'));
     t.append(meta);
+    const tbl=tableStrip();if(tbl)t.append(tbl);
     const acts=el('div',undefined,'hx-acts');
     if(view.roles){
       const room=view.room,archived=!!view.archived;
@@ -428,6 +430,40 @@ export async function mountHuddles(root){
       acts.append(b);
     }else if(!view.chat)acts.append(h('a',{class:'hx-btn',href:'#work?v=huddle&h='+encodeURIComponent(view.room),text:'Board',title:'Status board'}));
     head.replaceChildren(back,t,acts);
+  }
+  // The conference table: what is pinned (each at its exact version) and the
+  // votes on it; ballots stay sealed until every required voter has voted.
+  const VOTE_WORD={yes:'yes',no:'no',cant_verify:"couldn't verify"};
+  function tableStrip(){
+    const tb=view.table;if(!tb)return null;
+    const arts=(tb.artifacts||[]).filter(a=>a.state==='pinned'),mots=tb.motions||[];
+    if(!arts.length&&!mots.length)return null;
+    const d=h('details',{class:'hx-table'});
+    const live=mots.filter(m=>!['executed','void','rejected','withdrawn','gates_failed','failed'].includes(m.state));
+    d.append(h('summary',{text:'Table · '+arts.length+' pinned'+(live.length?' · '+live.length+' vote'+(live.length===1?'':'s')+' open':'')}));
+    for(const a of tb.artifacts||[]){
+      const row=el('div',undefined,'hx-tb-row'+(a.state==='pinned'?'':' hx-dim'));
+      const ver=['pr','commit','file'].includes(a.kind)?String(a.version).slice(0,7):String(a.version).slice(0,12);
+      const url=(a.ref&&(a.ref.url||''))||'';
+      row.append(el('span','A'+a.n,'hx-tb-n'),el('span',a.kind,'hx-card-kind'));
+      row.append(url?h('a',{href:url,target:'_blank',rel:'noopener',text:a.title}):el('span',a.title));
+      row.append(h('code',{text:'@'+ver,title:String(a.version)}));
+      if(a.state!=='pinned')row.append(el('span',a.state,'hx-dim'));
+      d.append(row);
+    }
+    for(const m of mots){
+      const row=el('div',undefined,'hx-tb-row hx-tb-vote');
+      row.append(el('span','vote','hx-card-kind'),el('span',m.kind+' @'+String(m.version).slice(0,7)),el('b',m.state.replace('_',' ')));
+      if(m.name)row.append(copyChip(m.name,m.name,'hx-card-name'));
+      const bs=el('div',undefined,'hx-tb-ballots');
+      for(const s of m.seats||[]){
+        const b=(m.ballots||[]).filter(x=>x.voter===s.role||x.seat===s.seat).at(-1);
+        const word=!b?'waiting':b.sealed?'sealed':(VOTE_WORD[b.vote]||b.vote);
+        bs.append(chip((s.role?roleName(s.role):s.seat)+': '+word,'hx-role'+(b&&!b.sealed&&b.vote!=='yes'?' hx-tb-no':'')));
+      }
+      row.append(bs);d.append(row);
+    }
+    return d;
   }
   // Only notices you can act on.
   function drawNotice(){

@@ -290,8 +290,13 @@ class HuddleStore:
             self._db.execute(f"DELETE FROM {names.TABLE} WHERE kind='ask' AND id IN "
                              "(SELECT CAST(seq AS TEXT) FROM huddle_questions WHERE room=?)",
                              (room,))
+            for kind, table in (("artifact", "huddle_artifacts"), ("motion", "huddle_motions")):
+                self._db.execute(f"DELETE FROM {names.TABLE} WHERE kind=? AND id IN "
+                                 f"(SELECT id FROM {table} WHERE room=?)", (kind, room))
+            self._db.execute("DELETE FROM huddle_ballots WHERE motion IN "
+                             "(SELECT id FROM huddle_motions WHERE room=?)", (room,))
             for table in ("huddles", "huddle_posts", "huddle_status", "huddle_questions",
-                          "huddle_rounds", "huddle_cards"):
+                          "huddle_rounds", "huddle_cards", "huddle_artifacts", "huddle_motions"):
                 self._db.execute(f"DELETE FROM {table} WHERE room=?", (room,))
             self._db.commit()
 
@@ -386,6 +391,8 @@ class HuddleService:
         self.relayed: Callable[[str, list], dict] | None = None
         #: The chair (rounds, cards: :mod:`.chair`), set by the plugin.
         self.chair: Any = None
+        #: The conference table and votes (:mod:`.table`), set by the plugin.
+        self.table: Any = None
 
     # -- which huddle ----------------------------------------------------
     def _band(self, ref: str | None) -> dict:
@@ -744,6 +751,8 @@ class HuddleService:
             out.update(roles=json.loads(h["roles"]), archived=h.get("archived"),
                        chair=self.chair.chair_identity() if self.chair is not None else None,
                        rounds=self.store.rounds(room, 10), cards=cards)
+            if self.table is not None:
+                out["table"] = self.table.view(room)
         return out
 
     def spoken(self, room: str, seq: int = 0, card: str = "") -> dict:

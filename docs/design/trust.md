@@ -12,7 +12,7 @@ host, repository and resource, how much agents may do on their own:
 | Level | Meaning |
 |---|---|
 | sacred | Changed only on the person's direct instruction. Agents may read, propose and prepare. |
-| guarded | Agents vote, act, then tell. Until votes exist (H6 / B5): an ask-first hold. |
+| guarded | Agents vote, act, then tell. Votes on merges, QA, deploys and ships are built (B4, the conference table: docs/design/huddles.md 10); any other change is an ask-first hold. |
 | ship-it | Agents just go. |
 
 The hub enforces it (`rook/hub/trust.py`, consulted by the approval layer in
@@ -151,7 +151,9 @@ Revocation at session end is not wired yet (tokens expire on their own).
 
 Drift checks (stale or often-overridden entries), learning from repeated
 approvals (proposals exist; nothing generates them automatically yet),
-onboarding presets (locked down / balanced / YOLO), votes for guarded (B5),
+onboarding presets (locked down / balanced / YOLO), votes for guarded actions
+other than merge, ready for QA, deploy and ship (those are B4's conference
+table, `rook/hub/plugins/huddle/table.py`),
 and `project:` selectors ruling on task writes (they match only when a caller
 passes the project: `trust.check`). The borrowed-state flows (borrow, restore,
 the sweep's offers) and project onboarding are built: docs/design/onboarding.md.

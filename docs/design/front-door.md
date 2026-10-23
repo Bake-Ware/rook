@@ -140,7 +140,10 @@ rule is added. The action is not undone.
 
 - Proactive interjection (the back correcting the front mid-conversation)
   stays Track A's voice pipeline.
-- Votes (H6, phase 5): guarded actions still ask the person.
+- Votes are built for merge, ready for QA, deploy and ship (B4: the conference
+  table in chaired huddles, rook/hub/plugins/huddle/table.py; a blocked or
+  ask-mode vote reaches the person as an ask of kind `vote`). Other guarded
+  actions still ask the person.
 - Asks are not yet urgency-classified; the attention plugin posts each list
   item as a normal card.
 - Starting a project from a conversation and the borrowed-state ledger came

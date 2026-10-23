@@ -60,7 +60,7 @@ BUDGET_WARN = 3
 BUDGET_SLACK = 4
 #: Caps no role may call, whatever its tools say: another role's turn (no
 #: loops) and the agent host's own caps (role homes, turns).
-NEVER = ("role.ask", "role.move", "role.memory_edit", "agenthost.*")
+NEVER = ("role.ask", "role.move", "role.memory_edit", "agenthost.*", "huddle.vote", "huddle.pin")
 CALL_TIMEOUT = 60.0
 ASK_CHARS = 20000
 #: Pre-reading a role's sources (docs/design/huddles.md 4.1): per result, in

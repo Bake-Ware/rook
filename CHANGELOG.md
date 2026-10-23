@@ -9,6 +9,26 @@ version was `0.1.0`.
 ## Unreleased
 
 ### Added
+- The conference table and votes in chaired huddles. The chair pins artifacts (a pull request,
+  commit, file, document, test output, screenshot or preview link) at an exact version (commit
+  SHA or content hash), and every role reads them through the hub at that version (`table_read`:
+  summary, diff, files, file, checks, comments), not its own checkout. The chair calls a vote on
+  merge, ready for QA, deploy or ship; the trust map decides whether one is needed (ship-it may
+  skip, sacred always asks you). Gates run first and are never voted on (still at the pinned
+  commit, merges cleanly, CI green, a test run passed, no secret in the diff, rollback dry run
+  for deploys). The required roles (data: merge = lead, QA, security, critic) vote blind, each
+  ballot sealed with a posted commitment until all are in and bound to the commit (a new commit
+  voids it); couldn't verify counts as no, a yes needs evidence and a read of the pinned version,
+  authors never vote (a stand-in takes the seat). Any no blocks; the chair gets one re-vote,
+  then you get one Yes / No / Explain line with each side. A passed vote is carried out by the
+  hub with a vault credential sessions never see (GitHub merges only at the voted SHA), recorded
+  with the vote, versions and gates, and listed in the house agent's digest. Merges and ready
+  for QA go on their own after a pass; deploys and ships still ask you (`huddle.vote_auto`). New
+  caps `huddle.table`, `huddle.pin`, `huddle.vote`; `rook_huddle` actions `table`, `pin`,
+  `vote`; settings `huddle.votes`, `huddle.vote_voters`, `huddle.vote_alternates`,
+  `huddle.vote_auto`, `huddle.vote_github_secret`, `huddle.vote_merge_method`,
+  `huddle.vote_require_ci`, `huddle.vote_test_checks`, `huddle.vote_gate_wait_minutes`,
+  `huddle.vote_deploy_targets`. (manual: conference-table, huddles)
 - Starting a project by talking to the house agent, and the borrowed-state ledger (with the
   front door on). While you brainstorm it keeps running notes; when the talk turns to building
   it asks once "Sounds like this wants to be a project. Want me to set it up?", then asks where

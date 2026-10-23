@@ -154,6 +154,14 @@ ASK_PERSON = _fn(
     "and Approvals; their answer comes back here.",
     {"line": {"type": "string"}, "explain": {"type": "string"}, "more": {"type": "string"}},
     ["line", "explain"])
+from .table import CALL_VOTE, PIN, TABLE_READ  # noqa: E402 - tool definitions only
+TABLE_TOOLS = ("pin", "call_vote", "table_read")
+TABLE_RULES = (
+    " The table: pin what the roles must look at (a PR, a commit, test output, a document) with "
+    "pin, at its exact version; roles read it with table_read. When the work is ready for an "
+    "action (merge, ready for QA, deploy, ship), call_vote on the pinned artifact: the hub "
+    "checks the trust map and the gates, and the required roles vote blind. You decide when a "
+    "vote is needed; you never vote and never merge or deploy any other way.")
 SETTLE_RULES = (
     "\n- When roles disagree and the thread cannot go on without picking a side, call settle "
     "(never ask the person in prose); when only the person can decide something else, call "
@@ -604,6 +612,7 @@ class Chair:
         """The cards still waiting in this huddle, for the chair: it revises
         its own instead of proposing another version."""
         mine = self.chair_identity()
+        table = self._table_text(room)
         cards = self.store.cards(room)
         rows = [c for c in cards if c["state"] == "proposed"]
         dismissed = [c for c in cards if c["state"] == "dismissed"
@@ -621,7 +630,45 @@ class Chair:
             for c in dismissed[-6:]:
                 lines.append(f"- {c['id']} [{c['kind']}] {c['summary']}: "
                              f"{c['result']['dismissed']}")
+        if table:
+            lines.append(table)
         return "\n".join(lines)
+
+    # -- the conference table (table.py) ----------------------------------------------------
+    def _table(self):
+        t = getattr(self.svc, "table", None)
+        return t if t is not None and self.setting("votes", True) else None
+
+    def _table_tools(self, roster: list[dict]) -> list[dict]:
+        """``pin`` and ``call_vote`` for the chair of a huddle with roles."""
+        return [PIN, CALL_VOTE] if roster and self._table() is not None else []
+
+    def _table_text(self, room: str) -> str:
+        t = self._table()
+        if t is None:
+            return ""
+        with contextlib.suppress(Exception):
+            return t.summary_text(room)
+        return ""
+
+    async def _table_tool(self, name: str, args: dict, room: str, reader: str = "") -> str:
+        t = self._table()
+        if t is None:
+            return json.dumps({"ok": False, "error": "the conference table is off (huddle.votes)"})
+        from .table import GitHubError, TableError
+        try:
+            if name == "pin":
+                out = await t.pin(room, self.chair_identity(), args)
+            elif name == "call_vote":
+                out = await t.call(room, self.chair_identity(), args)
+            else:
+                out = await t.read(room, str(args.get("artifact") or ""),
+                                   str(args.get("what") or "summary"), str(args.get("path") or ""),
+                                   int(args.get("offset") or 0), reader)
+                return clip(json.dumps({"ok": True, **out}, default=str), 14000)
+        except (TableError, GitHubError, ValueError) as e:
+            return json.dumps({"ok": False, "error": str(e)[:400]})
+        return json.dumps({"ok": True, **out}, default=str)
 
     def _call_on(self, state: dict, ids: set, max_turns: int, args: dict) -> str:
         ok, bad = [], []
@@ -665,9 +712,11 @@ class Chair:
                 return await home._run_tool(name, args, room)
             if name in ("waiting", "relay") and relay is not None:
                 return await self._relay_tool(relay, name, args, rid, room, asker, text)
+            if name in TABLE_TOOLS:
+                return await self._table_tool(name, args, room)
             return json.dumps({"ok": False, "error": f"unknown tool {name!r}"})
 
-        tools = ([CALL_ON] if roster else []) + [ANSWER, PROPOSE]
+        tools = ([CALL_ON] if roster else []) + [ANSWER, PROPOSE] + self._table_tools(roster)
         asker = (self.store.round(rid) or {}).get("asker")
         extra_rules = ""
         relay = self._relay()
@@ -686,7 +735,8 @@ class Chair:
         if search:
             tools.append(KNOWLEDGE)
         msgs = self._chair_messages(home, cfg, roster, room,
-                                    CHAIR_RULES + (" " + extra_rules if extra_rules else ""),
+                                    CHAIR_RULES + (" " + extra_rules if extra_rules else "")
+                                    + (TABLE_RULES if self._table_tools(roster) else ""),
                                     extra or "Respond to the newest message.", memory)
         res = await home.tool_turn(msgs, cfg, tools, handler, via="huddle-chair", max_calls=6)
         self.journal("huddle.chair", {"round": rid}, {"ok": True, "result": {
@@ -859,8 +909,15 @@ class Chair:
                  "and never say a card exists unless propose (or the tool that made it) "
                  "returned ok.")
         ident = f"role:{role['id']}"
+        table = self._table_text(room)
+        tools = [PROPOSE] + ([TABLE_READ] if table else [])
+        if table:
+            guide += ("\n\n" + table + "\nRead pinned artifacts with table_read: it reads the "
+                      "pinned version through the hub, not your own checkout.")
 
         async def extra(role_doc: dict, name: str, args: dict) -> str:
+            if name == "table_read":
+                return await self._table_tool(name, args, room, ident)
             return json.dumps(await self._propose(rid, room, ident, args, role=role_doc))
 
         async def approval(card: dict) -> dict:
@@ -870,7 +927,7 @@ class Chair:
 
         try:
             res = await roles.turn(role, ask, "The huddle so far:\n" + transcript,
-                                   self.chair_identity(), extra_tools=[PROPOSE],
+                                   self.chair_identity(), extra_tools=tools,
                                    extra_handler=extra, guide=guide, via=f"huddle-{role['id']}",
                                    preread=True, room=room, approval=approval)
             # Posted whole: reply_chars is what the role aims for, not a cut.
@@ -918,6 +975,8 @@ class Chair:
                 out = await self._front_tool(name, args, room, rid)
                 state.setdefault("front", []).append(json.loads(out))
                 return out
+            if name in TABLE_TOOLS:
+                return await self._table_tool(name, args, room)
             return json.dumps({"ok": False, "error": f"unknown tool {name!r}"})
 
         cards = [c["summary"] for c in self.store.cards(room, rid)]
@@ -929,13 +988,14 @@ class Chair:
             extra += "\n\nCards proposed this round:\n" + "\n".join(f"- {c}" for c in cards)
         again = (f" (you may do this {followups} more time{'s' if followups != 1 else ''} this "
                  "round)") if followups > 0 else " (no more this round: say what is still open)"
-        rules = CLOSE_RULES.replace("{again}", again)
+        rules = CLOSE_RULES.replace("{again}", again) \
+            + (TABLE_RULES if self._table_tools(roster) else "")
         front_on = self._front_on()
         if front_on:
             rules += SETTLE_RULES
         msgs = self._chair_messages(home, cfg, roster, room, rules, extra)
         tools = [PROPOSE] + ([CALL_ON] if followups > 0 and roster else []) \
-            + ([SETTLE, ASK_PERSON] if front_on else [])
+            + ([SETTLE, ASK_PERSON] if front_on else []) + self._table_tools(roster)
         res = await home.tool_turn(msgs, cfg, tools, handler, via="huddle-close", max_calls=4)
         body = (res.get("content") or "").strip()
         if state["calls"] or body.strip(" .").upper() == SETTLED:
