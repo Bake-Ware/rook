@@ -151,7 +151,7 @@ HOUSE_FOR = {
 READ_ANY = {
     "cat", "head", "tail", "ls", "wc", "du", "df", "free", "uptime", "ps", "pgrep", "id",
     "whoami", "uname", "which", "printenv", "echo", "printf", "grep", "egrep", "fgrep", "zcat",
-    "zgrep", "lsblk", "lsusb", "lspci", "netstat", "ping", "dig", "nslookup", "host", "jq",
+    "lsblk", "lsusb", "lspci", "netstat", "ping", "dig", "nslookup", "host", "jq",
     "cut", "diff", "cmp", "md5sum", "sha256sum", "sha1sum", "readlink", "realpath", "basename",
     "dirname", "test", "true", "false", "sleep", "column", "tr", "hexdump", "strings", "lscpu",
     "lsmod", "last", "w", "who", "groups", "getent", "nproc", "vmstat", "iostat", "pwd", "nl",
@@ -233,7 +233,8 @@ GIT_READ = {"status", "log", "diff", "show", "rev-parse", "describe", "ls-files"
             "shortlog", "rev-list", "cat-file", "ls-tree"}
 #: Git flags that run a program or write a file.
 GIT_DENY = ("--ext-diff", "--textconv", "--output", "-O", "--open-files-in-pager",
-            "--upload-pack", "--exec", "--receive-pack", "--run", "--config", "--hook")
+            "--upload-pack", "--exec", "--receive-pack", "--run", "--config", "--hook",
+            "--filters")
 GIT_LIST = {"branch": {"--list", "-l", "-a", "-r", "-v", "-vv", "--show-current", "--all",
                        "--remotes", "--merged", "--no-merged"},
             "tag": {"--list", "-l", "-n"}}
@@ -267,9 +268,15 @@ SQL_FUNCS = {
     "json_object", "json_array", "json_group_array", "json_group_object", "json_each",
     "json_tree", "json_type", "json_valid", "json_array_length", "cast", "like", "glob",
     "row_number", "rank", "dense_rank", "lag", "lead", "random", "char", "unicode", "sign",
+    "sqlite_version", "sqlite_source_id", "changes", "total_changes", "last_insert_rowid",
+    "randomblob", "zeroblob", "octet_length", "concat", "concat_ws", "unhex", "timediff",
+    "likely", "unlikely", "likelihood", "ntile", "first_value", "last_value", "nth_value",
+    "percent_rank", "cume_dist", "median", "percentile",
     # SQL words followed by a parenthesis, not functions
     "in", "exists", "values", "as", "over", "filter", "using", "on", "and", "or", "not",
     "from", "join", "where", "select", "with", "case", "when", "then", "else", "is",
+    "by", "between", "limit", "offset", "having", "distinct", "all", "union", "except",
+    "intersect", "escape",
 }
 #: PRAGMAs that read with an argument (``pragma name(arg)``); any other
 #: ``pragma name(arg)`` or ``pragma name = value`` sets something.
@@ -379,9 +386,31 @@ def _plain_words(line: str) -> bool:
     except ValueError:
         return False
     for w in raw:
-        if "$" in w or w[:1] in "*?[" or ("{" in w and ("," in w or ".." in w)):
+        if "$" in w or ("{" in w and ("," in w or ".." in w)):
+            return False
+        if _unquoted_glob(w) and not (w[:1] not in "-*?[\"'\\" and w[:1] != ""):
+            # a glob is safe only behind a plain literal start (/var/log/*.log):
+            # *, ""* or '-'* could expand to a file named -delete
             return False
     return True
+
+
+def _unquoted_glob(word: str) -> bool:
+    """Whether a raw shell word has a glob character outside quotes."""
+    quote, i = "", 0
+    while i < len(word):
+        c = word[i]
+        if quote:
+            if c == quote:
+                quote = ""
+        elif c in "'\"":
+            quote = c
+        elif c == "\\":
+            i += 1
+        elif c in "*?[":
+            return True
+        i += 1
+    return False
 
 
 def _tokens(script: str) -> tuple[list[list[str]], list[str]] | None:
@@ -448,8 +477,29 @@ def _sql_read(stmt: str, safe: bool) -> bool:
         return False
     if safe:
         return True
-    calls = {c.lower() for c in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", s)}
-    return calls <= SQL_FUNCS
+    return _sql_calls_ok(s)
+
+
+def _sql_calls_ok(stmt: str) -> bool:
+    """Every parenthesis in a statement is grouping or a call of an
+    allowlisted function: string literals are removed first; a comment, or a
+    parenthesis after a quoted or bracketed name (``"writefile"(``,
+    ``[edit](``), is never read-only (vote steep-garlic-comic)."""
+    text = re.sub(r"'(?:[^']|'')*'", "''", stmt)          # string literals
+    if "'" in text.replace("''", "") or "--" in text or "/*" in text:
+        return False
+    for m in re.finditer(r"\(", text):
+        before = text[:m.start()].rstrip()
+        if not before:
+            continue
+        last = before[-1]
+        if last in "\"]`'":
+            return False
+        if last.isalnum() or last == "_":
+            name = re.search(r"([A-Za-z_][A-Za-z0-9_]*)$", before)
+            if name is None or name.group(1).lower() not in SQL_FUNCS:
+                return False
+    return True
 
 
 def _sqlite(rest: list[str]) -> dict:
@@ -516,7 +566,7 @@ def _has(rest: list[str], marks: tuple) -> bool:
 
 def _reads(prog: str, rest: list[str]) -> bool:
     """Whether ``prog rest`` only reads, by the allowlists above."""
-    words = [a for a in rest if not a.startswith("-")]
+    words = [a for a in rest if not a.startswith("-") or a == "-"]   # "-" is stdin/stdout
     if prog in READ_ANY:
         return True
     if prog in READ_FLAGS:
@@ -601,7 +651,7 @@ def _shell_segment(argv: list[str], depth: int = 0) -> dict:
         if prog in ("ls", "stat", "du", "df", "find"):
             return {"kind": "read", "title": "Look at files",
                     "want": f"list files{' in ' + target if target else ''}"}
-        if prog in ("grep", "egrep", "fgrep", "zgrep", "rg"):
+        if prog in ("grep", "egrep", "fgrep", "rg"):
             return {"kind": "read", "title": "Search files", "want": "search files for text"}
         if prog in ("gh",):
             return {"kind": "read", "title": "Look at GitHub", "want": "read from GitHub"}

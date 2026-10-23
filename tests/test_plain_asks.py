@@ -146,6 +146,13 @@ def test_shell_commands_are_said_by_what_they_do(argv, kind, title):
     ["curl", "-sS", "https://x"], ["curl", "-w", "%output{/etc/x}", "https://x"],
     ["sqlite3", "x.db", "pragma optimize"], ["sqlite3", "x.db", "pragma wal_checkpoint"],
     ["sqlite3", "x.db", "pragma incremental_vacuum"], ["sqlite3", "x.db", "pragma shrink_memory"],
+    # From the review of vote steep-garlic-comic.
+    ["sqlite3", "x.db", "select writefile/**/('/p','x')"], ["sqlite3", "x.db", "select \"writefile\"('/p','x')"],
+    ["sqlite3", "x.db", "select [writefile]('/p','x')"], ["sqlite3", "x.db", "select `writefile`('/p','x')"],
+    ["sqlite3", "x.db", "select writefile --c\n('/p','x')"], ["sqlite3", "x.db", "select 1 -- x"],
+    ["sh", "-c", "find . \"\"*"], ["sh", "-c", "rg x \"\"*"], ["sh", "-c", "find . ''*"], ["sh", "-c", "sort ?"],
+    ["sh", "-c", "find . \\-*"], ["uniq", "-", "out"], ["zgrep", "x", "f"],
+    ["git", "cat-file", "--filters", "HEAD:x"],
 ])
 def test_commands_that_can_write_never_read_as_read_only(argv):
     assert plain.shell_summary({"argv": argv})["kind"] != "read"
@@ -161,7 +168,10 @@ def test_a_cmd_string_is_read_like_argv():
                  ["sqlite3", "-readonly", "/x.db", "SELECT count(*) FROM t"],
                  ["journalctl", "-fu", "x"], ["sh", "-c", "find . -name '*.py' | head"],
                  ["sudo", "-n", "systemctl", "status", "x"], ["timeout", "10", "cat", "f"],
-                 ["head", "-20", "f"], ["find", ".", "-name", "*.py", "-type", "f"]):
+                 ["head", "-20", "f"], ["find", ".", "-name", "*.py", "-type", "f"],
+                 ["sh", "-c", "ls /var/log/*.log"], ["sh", "-c", "find . -name '*.py'"],
+                 ["sqlite3", "x.db", "select count(*), max(a) from t where b in (1, 2) and (c > 1)"],
+                 ["sqlite3", "x.db", "select 'writefile(' as s from t"]):
         assert plain.shell_summary({"argv": argv})["kind"] == "read", argv
 
 
