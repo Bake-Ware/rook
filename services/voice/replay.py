@@ -59,6 +59,9 @@ CASES = [
     ('echo_during_reply', [('say', 'Tell me a long story about a sleepy cat.'),
                            ('barge_echo', 'Once upon a time there was a very sleepy cat.')],
      {'interrupt': False, 'informational': True}),
+    # The reply's own audio, as received, played back through the phone channel: real echo.
+    ('echo_of_reply', [('say', 'Tell me a long story about a brave little mouse.'), ('barge_reply_echo', 2.5)],
+     {'interrupt': False}),
 ]
 
 
@@ -132,6 +135,9 @@ async def make(url, out, insecure=False):
                 if kind == 'silence':
                     files.append({'step': step[0], 'silence': step[1]})
                     continue
+                if kind == 'reply_echo':
+                    files.append({'step': step[0], 'reply_echo': step[1]})
+                    continue
                 if kind == 'say':
                     audio = await tts(step[1], USER_VOICE)
                 elif kind == 'echo':
@@ -155,6 +161,7 @@ class Session:
         self.ws = ws
         self.events = []
         self.audio = {}            # turn -> samples received
+        self.pcm = {}              # turn -> received audio bytes
         self.first_audio = {}      # turn -> monotonic time
         self.sr = 24000
         self.reader = asyncio.create_task(self._read())
@@ -168,6 +175,7 @@ class Session:
                         continue
                     turn = int.from_bytes(raw[4:8], 'big')
                     self.audio[turn] = self.audio.get(turn, 0) + (len(raw) - 8) // 2
+                    self.pcm[turn] = self.pcm.get(turn, b'') + raw[8:]
                     self.first_audio.setdefault(turn, now)
                     # Acknowledge as if played on arrival (the phone acks its play head).
                     await self.ws.send(json.dumps({'type': 'playback', 'turn': turn, 'frames': self.audio[turn]}))
@@ -211,7 +219,12 @@ class Session:
         return False
 
 
-def load_audio(directory, step):
+def load_audio(directory, step, session=None):
+    if 'reply_echo' in step:
+        # The newest reply's last seconds as the phone's mic would hear them.
+        turn = max(session.pcm)
+        audio = to16k(session.pcm[turn], session.sr)[-int(step['reply_echo'] * SR):]
+        return phone_channel(audio, np.random.default_rng(3))
     if 'silence' in step:
         return np.zeros(int(step['silence'] * SR), dtype=np.float32)
     return read_wav(os.path.join(directory, step['wav']))
@@ -232,7 +245,6 @@ async def run_case(url, headers, tls, directory, case):
         began = time.monotonic()
         speech_end = barge_t = None
         for step in case['steps']:
-            audio = load_audio(directory, step)
             if step['step'].startswith('barge_'):
                 # Wait for the reply's audio, let it play a moment, then talk over it like the phone does.
                 # The mic keeps sending (silence) so the question's end is detected.
@@ -242,7 +254,10 @@ async def run_case(url, headers, tls, directory, case):
                 await s.stream(np.zeros(int(1.2 * SR), dtype=np.float32))
                 barge_t = time.monotonic()
                 result['barge_at_ms'] = int((barge_t - began) * 1000)
+                audio = load_audio(directory, step, s)
                 await ws.send(json.dumps({'type': 'speech_start', 'hold': True}))
+            else:
+                audio = load_audio(directory, step, s)
             speech_end = await s.stream(audio)
         # Trailing silence so the server's endpointing can close the utterance.
         await s.stream(np.zeros(int(1.2 * SR), dtype=np.float32))
