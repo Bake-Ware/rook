@@ -2,5 +2,10 @@
   "smart-turn-v3.2-cpu.onnx": {
     "url": "https://raw.githubusercontent.com/pipecat-ai/pipecat/397ddee2b278f2eb217b48d73ada13c790220cd9/src/pipecat/audio/turn/smart_turn/data/smart-turn-v3.2-cpu.onnx",
     "sha256": "2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f"
+  },
+  "nemo_en_titanet_small.onnx": {
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_small.onnx",
+    "sha256": "ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e",
+    "use": "optional: speaker identification (VOICE_SPEAKER_MODEL); outside VOICE_MODEL_DIR is fine"
   }
 }

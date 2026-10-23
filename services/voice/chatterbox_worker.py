@@ -55,11 +55,12 @@ class Synth:
                 wav = self.model.generate(text)
             return np.asarray(wav.squeeze(0).float().cpu().numpy(), dtype=np.float32), self.sr
         finally:
-            # Hand the activations back to the GPU after each utterance. Torch otherwise keeps
-            # its peak cached for good, and on kaiju's GPU0 (shared with a Strata lane and
-            # Whisper) that left Whisper too little memory to transcribe (2026-10-22).
+            # Opt-in (VOICE_CHATTERBOX_EMPTY_CACHE=1): hand the activations back to the GPU
+            # after each utterance. Torch otherwise keeps its peak cached, which once left a
+            # GPU-sharing Whisper too little memory (kaiju, 2026-10-22). Off by default:
+            # Bake keeps Chatterbox hot and moved Whisper to the other GPU instead.
             cuda = getattr(self.torch, "cuda", None)
-            if cuda is not None and cuda.is_available():
+            if os.environ.get("VOICE_CHATTERBOX_EMPTY_CACHE") == "1" and cuda is not None and cuda.is_available():
                 cuda.empty_cache()
 
 

@@ -38,6 +38,8 @@ class TurnTiming:
         # A stale or future speech mark (typed turn, clock edge) falls back to the turn start.
         self.t0 = speech_end if speech_end is not None and speech_end <= started else started
         self.marks = {'endpoint_ms': _ms(started - self.t0)}
+        # Small non-timing facts for the same line (speaker label, merged turn, STT stats).
+        self.extra = {}
 
     def mark(self, name, now=None):
         """Record the first time a stage was reached, from end of speech."""
@@ -50,7 +52,7 @@ class TurnTiming:
             self.marks[name] = _ms((end if end is not None else time.monotonic()) - start)
 
     def fields(self):
-        return {'source': self.source, **{k: self.marks[k] for k in FIELDS if k in self.marks}}
+        return {'source': self.source, **{k: self.marks[k] for k in FIELDS if k in self.marks}, **self.extra}
 
     def finish(self, status, now=None, emit=True):
         """Close the spoken turn. ``emit=False`` defers the log line to a later
@@ -66,3 +68,12 @@ class TurnTiming:
         log.info(json.dumps({'event': 'voice_turn_timing', 'turn': self.turn, 'status': status, **fields},
                             separators=(',', ':')))
         return fields
+
+
+def log_dropped(turn, reason, endpoint_ms, stt_ms, **extra):
+    """An utterance that never became a turn (silence, noise, echo, Whisper's stock
+    phrases). Same event name, status ``dropped``, so traces count them."""
+    fields = {'event': 'voice_turn_timing', 'turn': turn, 'status': 'dropped', 'reason': reason, 'source': 'voice',
+              'endpoint_ms': endpoint_ms, 'stt_ms': stt_ms, **{k: v for k, v in extra.items() if v is not None}}
+    log.info(json.dumps(fields, separators=(',', ':')))
+    return fields
