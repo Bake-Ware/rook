@@ -669,6 +669,9 @@
   "home.session_ask": {
    "tier": "write"
   },
+  "home.session_compact": {
+   "tier": "write"
+  },
   "home.session_flow": {
    "tier": "write"
   },

@@ -1340,6 +1340,11 @@ class HomeAgent(Plugin):
                                          "identity": dict(identity), "at": time.time()}
         return await self.sessions.flow(role, str(tool or ""), dict(args or {}))
 
+    @capability("session_compact", risk="write")
+    async def session_compact(self, lane: str = "main", role: str = "house") -> dict:
+        """Compact a persistent session now (lane main or voice): the main lane saves durable facts to memory first; the voice lane is compacted straight away."""
+        return await self.sessions.compact_now(str(role or "house"), str(lane or "main"))
+
     @capability("session_note", risk="write")
     def session_note(self, text: str, via: str = "report", role: str = "house") -> dict:
         """A background note for a persistent role (a session report, a job result): batched into its next turn ("While you were busy: ...")."""

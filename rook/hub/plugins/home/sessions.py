@@ -613,6 +613,28 @@ class Sessions:
         elif not self._over(role, "voice"):
             self.lanes[key].pop("compacting", None)
 
+    async def compact_now(self, role: str, lane: str) -> dict:
+        """An operator's compaction: the voice lane at once; the main lane after
+        a maintenance turn that saves memory (queued like any background item)."""
+        if lane not in ("main", "voice"):
+            raise ValueError("lane: main or voice")
+        if role not in self.roles():
+            raise ValueError(f"{role} does not run persistently")
+        if lane == "voice":
+            await self.send({"t": "compact", "role": role, "lane": "voice",
+                             "instructions": "Keep who is speaking and anything still pending "
+                                             "with the back end."})
+            return {"ok": True, "compacting": f"{role}/voice"}
+        self._compact_due.add(role)
+        item = self.inbox(role).put(Item(id=Inbox.new_id(), via="maintenance",
+                                         priority=BACKGROUND, text=SAVE_PROMPT,
+                                         kind="maintenance", who="the hub",
+                                         tools=frozenset({"memory_save", "memory_search"}),
+                                         handler=self._memory_handler(),
+                                         meta={"then_compact": True}))
+        self._ensure_pump(role)
+        return {"ok": True, "queued": item.id, "note": "saves memory, then compacts"}
+
     def _memory_handler(self):
         home = self.home
 

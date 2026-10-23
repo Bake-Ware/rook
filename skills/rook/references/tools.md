@@ -100,6 +100,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `home.projects` | — | read | Projects the house agent set up from a conversation, and its brainstorm and intake threads (stage, plan read… |
 | `home.restore` | what, words='', relayed_by? | write | Bring borrowed state back ("bring Strata back"): what = the resource, project or lease; runs the recorded res… |
 | `home.session_ask` | text, role='house' | write | Send text to a persistent role's main session through its inbox, with no hub tools (tests, operators); for th… |
+| `home.session_compact` | lane='main', role='house' | write | Compact a persistent session now (lane main or voice): the main lane saves durable facts to memory first; the… |
 | `home.session_flow` | tool, args?, role='house', identity? | write | Run one of the voice conductor's flow tools (queue, steer, fork, fold, status, btw, pause, resume, cancel) as… |
 | `home.session_note` | text, via='report', role='house' | write | A background note for a persistent role (a session report, a job result): batched into its next turn ("While… |
 | `home.sessions` | — | read | The house agent's persistent sessions: the session host, each role's line ("house agent: busy, 2 waiting, 1 f… |

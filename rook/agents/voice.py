@@ -305,7 +305,13 @@ class VoiceServer:
                 if not isinstance(obj, dict):
                     continue
                 t = obj.get("t")
-                turn_id = str(obj.get("turn") or "")[:TURN_ID_MAX]
+                # Echoed back exactly as sent: the voice server keys its turns by
+                # number, others by string; a converted id never matches.
+                raw = obj.get("turn")
+                if isinstance(raw, int) and not isinstance(raw, bool):
+                    turn_id = raw
+                else:
+                    turn_id = str(raw or "")[:TURN_ID_MAX]
                 if t == "user":
                     text = obj.get("text")
                     if not turn_id or not isinstance(text, str) or not text.strip() \
