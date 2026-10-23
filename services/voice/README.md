@@ -236,6 +236,82 @@ clause's synthesis time. While it synthesizes it time-slices the GPU with
 anything else there (an LLM sharing the card decodes ~40% slower during
 synthesis bursts).
 
+## Speaker identification (shadow mode)
+
+`speaker.py` labels each voice turn with who spoke it: an enrolled person, a
+`guest`, or `assistant` (the server's own TTS voice coming back through a
+loudspeaker: echo). It is **shadow mode**: the label and scores are logged per
+turn and never change a reply, a tool choice or a permission.
+
+* Model: NeMo TitaNet small (`nemo_en_titanet_small.onnx`, 192-dim embeddings;
+  URL and digest in `models.json`) through sherpa-onnx on the CPU, no torch. It
+  runs in its own Python like Chatterbox: `speaker_worker.py` started with
+  `VOICE_SPEAKER_PYTHON` (a venv with `sherpa-onnx`), or in-process when that is
+  unset and sherpa-onnx is importable here.
+* `VOICE_SPEAKER_MODEL`: path to the `.onnx`. Unset, or the model/worker fails to
+  load: the feature is off (logged once) and turns are untouched.
+* `VOICE_SPEAKER_THREADS` (2): ONNX threads; the GPU host's cores are shared.
+* `VOICE_SPEAKER_THRESHOLD` (0.45): cosine to an enrolled voiceprint to name the person.
+* `VOICE_SPEAKER_ASSISTANT_THRESHOLD` (0.50): cosine to the assistant voice's
+  reference to call a turn echo (and only when above the best person score).
+
+Install on the GPU host, outside the voice venv:
+
+```sh
+uv venv -p 3.12 ~/voice-speaker/.venv
+uv pip install -p ~/voice-speaker/.venv/bin/python sherpa-onnx numpy
+curl -L -o ~/voice-speaker/models/nemo_en_titanet_small.onnx \
+  https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_small.onnx
+sha256sum ~/voice-speaker/models/nemo_en_titanet_small.onnx    # compare with models.json
+# voice service environment:
+VOICE_SPEAKER_PYTHON=/home/<user>/voice-speaker/.venv/bin/python
+VOICE_SPEAKER_MODEL=/home/<user>/voice-speaker/models/nemo_en_titanet_small.onnx
+```
+
+Audio under 0.6 s gets no embedding; audio past 10 s is cut to 10 s. Each
+embedding is bounded by 2 s; a worker that crashes or hangs is killed and
+restarted at most once a minute. Measured on kaiju (2 threads, through the pipe):
+8 ms for 1 s of speech, 22 ms for 3 s, 73 ms for 10 s; about 2 cores while
+busy; worker RSS 123 MB after load, ~315 MB peak after 10 s inputs. TitaNet
+large was ~3x slower (57 ms for 3 s, 192 ms for 10 s), only slightly better on
+people (same-person minimum 0.54 vs 0.43) and no better as an echo guard.
+
+**Echo guard.** `learn_assistant_voice(voice, synthesize)` renders four
+sentences in the session's TTS voice and stores the mean embedding of each
+render clean *and* through two simulated echo paths (phone: 300-3400 Hz, 8 kHz
+round trip, -10 dB, 15 dB SNR; loudspeaker in a room: 300 Hz high-pass, 0.4 s
+reverb, 20 dB SNR). A clean-only reference failed: TitaNet scores lean on the
+low band, so band-limited echo of the right voice scored medians of only
+0.33-0.50, overlapping other voices and people. The reference is cached per voice and model.
+
+**How the thresholds were chosen** (2026-10-22, kaiju, TitaNet small). People:
+three Hi-Fi TTS readers, LJSpeech, Jenny and three voice-clone source clips (8
+speakers, studio audio). A voiceprint (mean of 3 utterances) scored 0.43-0.92
+(5th percentile 0.56) against the same person's other utterances and at most
+0.27 (single utterances: 0.32) against other people; at most 0.44 against
+Kokoro/Chatterbox voices. 1 s snippets of the same person: 5th percentile 0.34,
+so short turns are often `guest`. Threshold 0.45. Through a phone-band channel
+the same person drops to a median 0.22: enroll on the device you use.
+Assistant: 8 Kokoro voices (8 sentences each) and Chatterbox output/reference
+clips. Multi-condition reference vs held-out sentences of the same voice: clean
+>= 0.57 (p5 0.66), phone channel p5 0.63 (min 0.49), phone + reverb p5 0.59
+(min 0.41), loudspeaker room p5 0.68 (min 0.54); vs people (clean or through
+the same channels) at most 0.43. Threshold 0.50 leaves a margin of only ~0.07
+over the highest person; telephone-band echo with a brick-wall filter still
+scored a median 0.43 (missed). Similar Kokoro voices score up to 0.63 against
+each other (af_bella/af_heart), which only matters if two assistants share a
+room. Revisit both thresholds with real shadow logs before ever acting on them.
+
+**Enrollment and privacy.** Enrollment is opt-in, per person: read the four
+`enrollment_sentences()` aloud; `enroll_add` refuses samples under 1.5 s, quieter
+than -45 dBFS, clipped, or unlike that person's earlier samples, and
+`enroll_finish` averages at least three into the voiceprint. Voiceprints
+(embeddings, never audio) stay in one SQLite file on the voice host (mode 0600,
+secure delete); pending samples expire after a day; `forget` deletes everything
+for that person. A voice match is never authentication: it must not unlock,
+approve or authorize anything risky (replayed or cloned voices pass easily).
+Children are enrolled only with the owner's say-so.
+
 ## Speech speed and interruption
 
 `VOICE_TTS_THREADS` controls Kokoro's ONNX CPU inference threads (default eight).
