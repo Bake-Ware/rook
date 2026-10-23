@@ -70,6 +70,30 @@ async def test_a_question_is_answered_directly(front):
 
 
 @pytest.mark.asyncio
+async def test_band_status_lists_the_machines_and_one_machines_caps(front):
+    front.band.workers["w-old"] = {"name": "attic-pc", "caps": ["shell.exec"],
+                                   "last_seen": time.time() - 600}
+    _script(front, "front-voice", {"tools": [("band_status", {}),
+                                             ("band_status", {"worker": "pianobar",
+                                                              "prefix": "pianobar."}),
+                                             ("band_status", {"worker": "nope"})],
+                                   "text": "pianobar and kaiju are up; attic-pc is offline."})
+    out = await _ask(front, "which machines are on my band?")
+    assert out["path"] == "answer"
+    turn = front.band.turns[-1]
+    assert "band_status" in turn["listed"] and "band_status" in turn["args"]["system"]
+    allw, piano, nope = turn["seen"]
+    by = {w["name"]: w for w in allw["workers"]}
+    assert allw["workers"][0]["name"] == "rook" and by["rook"]["online"]
+    assert by["pianobar"]["online"] and "pianobar" in by["pianobar"]["families"]
+    assert by["attic-pc"]["online"] is False and by["attic-pc"]["last_seen_s"] >= 600
+    assert allw["online"] == allw["total"] - 1
+    assert piano["caps"] == ["pianobar.now_playing", "pianobar.restart"]
+    assert nope["ok"] is False and "nope" in nope["error"]
+    assert front.band.calls == [c for c in front.band.calls if c.cap == "agenthost.turn"]
+
+
+@pytest.mark.asyncio
 async def test_a_quick_action_on_ship_it_runs_and_says_done_with_the_citation(front):
     _script(front, "front-voice", {"tools": [("do_action", {
         "worker": "pianobar", "cap": "pianobar.restart", "args": {}, "summary":
