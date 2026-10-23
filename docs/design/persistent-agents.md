@@ -210,7 +210,10 @@ the reply text in `end` and `voice_reply` is clean, and the ops go to the hub in
 them (`Sessions.route`) with the flow code as the voice's speaker (the same rules as the
 flow tools: the owner is a person, anyone else a guest), journals each as
 `home.voice_route`, and says status and btw answers and failures back through the voice
-(`voice_say`). A reply to a pushed result never runs status or btw again (no loops).
+(`voice_say`). A reply to a pushed result runs no ops at all: the result may quote a web
+page, and nothing the voice merely reads out may queue, cancel or steer work as the person
+(it also can't loop on status/btw). The brief is the owner's: the rules tell the voice
+never to share it with a guest.
 The voice server cuts anything from a `<<` on as a backstop.
 
 ### 3.5 The hub: inbox, supervisor, flow tools
