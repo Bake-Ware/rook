@@ -145,9 +145,16 @@ def test_the_tier_is_the_hubs_per_cap():
     # Secrets are never lowerable: a read of the vault is still a card.
     for cap in ("vault.get", "settings.worker_secret", "secret.read", "x.token_show"):
         assert tiers.cap_tier(acts, cap, "read")[0] == tiers.APPROVAL, cap
-    # A protected (family) device: even a read is a card.
-    assert tiers.cap_tier(acts, "info.ping", "read", "Kids Tablet", ["kids tablet"])[0] == \
-        tiers.APPROVAL
+    # A protected (family) device: battery and status reads go; private content (even a
+    # read) and anything that changes something is a card.
+    for cap, risk in (("battery.status", "read"), ("info.ping", "read"),
+                      ("device.info", "exec")):            # an older app still says exec
+        assert tiers.cap_tier(acts, cap, risk, "Kids Tablet", ["kids tablet"])[0] == \
+            tiers.FREE, cap
+    for cap, risk in (("notify.list", "exec"), ("calendar.list", "read"),
+                      ("screenshot.capture", "read"), ("device.vibrate", "exec")):
+        assert tiers.cap_tier(acts, cap, risk, "Kids Tablet", ["kids tablet"])[0] == \
+            tiers.APPROVAL, cap
     assert tiers.tool_tier(routine, "start_session")[0] == tiers.ROUTINE
     assert tiers.tool_tier({"id": "p", "autonomy": "propose"}, "start_session")[0] == \
         tiers.APPROVAL
@@ -336,23 +343,27 @@ async def test_merges_deploys_secrets_writes_outside_and_unknown_caps_are_cards(
                                           "made.up"]
     hub.band.workers["w-box"]["tiers"].update({"git.merge": "exec", "hub.deploy": "admin",
                                                "vault.get": "read", "file.write": "exec"})
+    hub.band.workers["w-devbox"]["caps"].append("file.write")
     hub.node.settings.set("role.protected_workers", ["devbox"], actor="human:op")
     h = await _call(hub, "huddle.start", {"title": "Ops", "roles": ["architect"]})
     calls = [("git.merge", {"pr": 7}), ("hub.deploy", {}), ("vault.get", {"name": "x"}),
              ("file.write", {"path": "/etc/motd", "content": "x"}), ("made.up", {})]
     hub.band.script = {"huddle-architect": [{"text": "Asked.", "tools": [
         ("rook_call", {"worker": "box", "cap": c, "args": a, "why": f"need {c}"}) for c, a in calls]
-        + [("rook_call", {"worker": "devbox", "cap": "info.ping"}),
+        + [("rook_call", {"worker": "devbox", "cap": "file.write",
+                          "args": {"path": "/tmp/x", "content": "x"}}),
+           ("rook_call", {"worker": "devbox", "cap": "info.ping"}),
            ("rook_call", {"worker": "box", "cap": "info.ping"})]}]}
     await _call(hub, "huddle.post", {"huddle": h["room"], "text": "@architect ship it"})
     await _settle(hub)
     seen = next(t for t in hub.band.turns if t["kind"] == "huddle-architect")["seen"]
-    *held, family, free = seen
+    *held, family, family_status, free = seen
     assert all(not r["ok"] and r["needs_approval"] and r["card"] for r in held)
-    assert not family["ok"] and family["needs_approval"]               # protected device
-    assert free["ok"]                                                  # a read: just done
+    assert not family["ok"] and family["needs_approval"]    # a change on a protected device
+    assert family_status["ok"]                              # a status read there: just done
+    assert free["ok"]                                       # a read: just done
     cards = (await _call(hub, "huddle.read", {"room": h["room"]}))["cards"]
-    assert [c["call"]["cap"] for c in cards] == [c for c, _ in calls] + ["info.ping"]
+    assert [c["call"]["cap"] for c in cards] == [c for c, _ in calls] + ["file.write"]
     assert all(c["state"] == "proposed" and c["kind"] == "call" for c in cards)
     assert not [c for c in hub.band.calls if c.cap in ("git.merge", "hub.deploy", "vault.get",
                                                        "file.write", "made.up")]

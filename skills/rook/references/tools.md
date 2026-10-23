@@ -689,17 +689,17 @@ Native plugins of the Android app's embedded worker, in place of (or beside) the
 | `device.clipboard_set` | text | exec | Put text on the clipboard. |
 | `device.find` | seconds=30 | exec | Ring at maximum alarm volume for 1–120 seconds; restores volume after. |
 | `device.find_stop` | — | exec | Stop the find-device ring and restore the previous alarm volume. |
-| `device.info` | — | exec | Model, Android version, screen, uptime, and battery-independent bits. |
+| `device.info` | — | read | Model, Android version, screen, uptime, and battery-independent bits. |
 | `device.keep_awake` | on, minutes=30 | exec | Keep the screen on (so it never locks) for `minutes` (1–1440), then release; on=false releases now. |
 | `device.keep_awake_settings` | auto?, idle_minutes? | exec | Change the passive setting now (same as the app's Settings screen): auto = "Keep phone awake while agent is w… |
-| `device.keep_awake_status` | — | exec | Keep-awake state: on, mode (manual\|auto), until (epoch s), remaining_s, overlay/wake_lock in use, screen_on,… |
+| `device.keep_awake_status` | — | read | Keep-awake state: on, mode (manual\|auto), until (epoch s), remaining_s, overlay/wake_lock in use, screen_on,… |
 | `device.launch` | package | exec | Launch an installed app by package name (e.g. com.android.settings). |
 | `device.open_url` | url | exec | Open a URL (or any Uri) in the default handler app. |
 | `device.torch` | on=true | exec | Flashlight on/off (no permission needed via CameraManager). |
 | `device.unlock` | pin='', hold_ms=9000, pre_swipe=true | exec | Unlock a PIN-secured screen: wake, surface the PIN bouncer, and tap the digits at keypad positions computed f… |
-| `device.unlock_status` | — | exec | Whether an unlock PIN is saved in the app (never the PIN itself), and whether passive keep-awake may use it (… |
+| `device.unlock_status` | — | read | Whether an unlock PIN is saved in the app (never the PIN itself), and whether passive keep-awake may use it (… |
 | `device.update` | channel='' | admin | Queue an APK update from the official Rook feed. |
-| `device.update_status` | — | exec | APK updater progress, installed/target versions, update channel, and required action. |
+| `device.update_status` | — | read | APK updater progress, installed/target versions, update channel, and required action. |
 | `device.vibrate` | ms=300 | exec | Buzz the phone for `ms` milliseconds. |
 | `device.wake` | dismiss_keyguard=false, hold_ms=1200 | exec | Turn the screen ON (and show over the keyguard) so the accessibility service can interact with the lock scree… |
 

@@ -116,13 +116,15 @@ _CORE_SPEC = {
     "calllog.list": "X s", "contacts.search": "X s", "location.get": "X s",
     "sms.list": "X s", "sms.send": "X", "ui.text": "X s",
     "notify.list": "X s", "notify.dismiss": "X", "notify.post": "X",
-    "device.update": "A d", "device.update_status": "X", "device.info": "X",
+    # update_status, info, unlock_status and keep_awake_status only report state:
+    # declared read (2026-10-23, with the plugin; see STATUS_READS).
+    "device.update": "A d", "device.update_status": "R", "device.info": "R",
     "device.find": "X p", "device.find_stop": "X p", "device.wake": "X p",
     "device.vibrate": "X p", "device.torch": "X p", "device.unlock": "X s,p",
     "device.clipboard_set": "X", "device.clipboard_get": "X s",
     "device.open_url": "X", "device.launch": "X",
-    "device.unlock_status": "X", "device.keep_awake": "X p",
-    "device.keep_awake_status": "X", "device.keep_awake_settings": "X",
+    "device.unlock_status": "R", "device.keep_awake": "X p",
+    "device.keep_awake_status": "R", "device.keep_awake_settings": "X",
     "ui.nodes": "X s", "ui.click": "X", "ui.scroll": "X", "ui.back": "X",
     "voice.speak": "W p", "voice.speak_status": "R", "voice.replies": "R",
     "voice.speak_stop": "W", "voice.speak_voices": "R",
@@ -136,6 +138,24 @@ _CORE_SPEC = {
 }
 
 CORE: dict[str, tuple[str, tuple[str, ...]]] = {c: _t(s) for c, s in _CORE_SPEC.items()}
+
+#: Reads of a device's state with no private content in them: battery, model and
+#: Android version, uptime, app version and update progress, the worker's own caps
+#: and description, the voice engine's status. These never need anyone's approval,
+#: on any device, family devices included, whatever tier an older app still
+#: announces for them (an app released before they were declared read says exec).
+#: Private content (messages, notifications, contacts, call log, calendar, location,
+#: screen, clipboard, files) is not here: on a protected device those still ask.
+STATUS_READS = frozenset({
+    "battery.status", "device.info", "device.update_status", "device.keep_awake_status",
+    "device.unlock_status", "info.ping", "info.host", "info.uptime", "caps.describe",
+    "worker.description_get", "voice.speak_status", "voice.speak_voices",
+})
+
+
+def is_status_read(cap: str) -> bool:
+    """A read of a device's state with nothing private in it (:data:`STATUS_READS`)."""
+    return str(cap or "") in STATUS_READS
 # Prefixes whose every cap has a fixed tier (custom command caps are shell).
 BUILTIN_PREFIX: tuple[tuple[str, str], ...] = (("cmd.", "exec"),)
 
