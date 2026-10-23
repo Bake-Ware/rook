@@ -666,6 +666,18 @@
   "home.restore": {
    "tier": "write"
   },
+  "home.session_ask": {
+   "tier": "admin"
+  },
+  "home.session_flow": {
+   "tier": "admin"
+  },
+  "home.session_note": {
+   "tier": "write"
+  },
+  "home.sessions": {
+   "tier": "read"
+  },
   "home.settle": {
    "tier": "write"
   },
