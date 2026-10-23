@@ -8,6 +8,13 @@ version was `0.1.0`.
 
 ## Unreleased
 
+## [0.3.0] - 2026-10-23
+
+The house agent release: about 180 builds since 0.2.0. The house agent as the front
+door, trust map, huddles with the conference table and votes, role agency, jobs, beta
+app channel, attention on the phone. A fresh hub now serves the Android app from the
+first start.
+
 ### Added
 - Hub releases carry what the hub serves besides its code. `rook hub release build` puts the
   worker bundle (on a live hub the one it serves, so a hub deploy never changes what new workers
