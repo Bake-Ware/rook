@@ -93,8 +93,51 @@ def test_shell_commands_are_said_by_what_they_do(argv, kind, title):
     assert (s["kind"], s["title"]) == (kind, title)
 
 
+@pytest.mark.parametrize("argv", [
+    # From the review of vote high-inch-gallery: none of these may read as "looks read-only".
+    ["sqlite3", "x.db", "SELECT 1", "DELETE FROM t"],
+    ["sqlite3", "x.db", "WITH x AS (SELECT 1) DELETE FROM t"],
+    ["sqlite3", "x.db", ".output /tmp/o"], ["sqlite3", "x.db", ".shell rm -rf /"], ["sqlite3", "x.db"],
+    ["sed", "-Ei", "s/a/b/", "f"], ["sed", "-ni", "p", "f"], ["sed", "--in-place", "s/a/b/", "f"],
+    ["sh", "-c", "cat a 1>/etc/x"], ["sh", "-c", "cmd &>/srv/log"], ["sh", "-c", "uptime 2>/etc/x"],
+    ["sh", "-c", "echo $(rm -rf ~)"], ["sh", "-c", "uptime & rm -rf ~/x"], ["sh", "-c", "cat a >| b"],
+    ["sh", "-c", "echo `id`"], ["sh", "-c", "cat <<EOF > f"], ["sh", "-c", "ls | xargs rm"],
+    ["git", "config", "user.name", "x"], ["git", "remote", "set-url", "origin", "u"],
+    ["git", "remote", "add", "o", "u"], ["git", "branch", "new"], ["git", "tag", "v1"],
+    ["git", "stash"], ["git", "fetch"], ["git", "log", "--output=/etc/x"],
+    ["ip", "link", "set", "eth0", "down"], ["hostnamectl", "set-hostname", "x"],
+    ["timedatectl", "set-time", "x"], ["loginctl", "terminate-user", "x"],
+    ["journalctl", "--vacuum-time=1s"], ["dmesg", "-C"], ["hostname", "newname"],
+    ["date", "-s", "2020-01-01"], ["nvidia-smi", "-pl", "100"],
+    ["curl", "-XPOST", "u"], ["curl", "--request", "DELETE", "u"], ["curl", "--json", "{}", "u"],
+    ["curl", "-d@f", "u"], ["curl", "-sSo", "f", "u"], ["wget", "u"],
+    ["gh", "api", "--method=DELETE", "x"], ["gh", "api", "--input", "f", "x"], ["gh", "api", "-XPOST", "x"],
+    ["sort", "-o", "f", "g"], ["awk", "{system(\"rm x\")}"], ["find", ".", "-fprint", "x"],
+    ["uniq", "a", "b"], ["tree", "-o", "f"], ["rg", "--pre", "x", "y"],
+    ["PGPASSWORD=x", "psql", "-c", "drop table t"],
+])
+def test_commands_that_can_write_never_read_as_read_only(argv):
+    assert plain.shell_summary({"argv": argv})["kind"] != "read"
+    p = plain.for_hold(held(args={"argv": argv}))
+    assert not p["risk"].startswith("Low")
+
+
 def test_a_cmd_string_is_read_like_argv():
     assert plain.shell_summary({"cmd": "cat /etc/hostname"})["title"] == "Read hostname"
+    for argv in (["git", "-C", "/opt/rook", "log", "-3"], ["git", "config", "--get", "user.name"],
+                 ["ip", "-br", "a"], ["nvidia-smi", "--query-gpu=name"], ["date", "+%s"],
+                 ["sqlite3", "/x.db", "SELECT a FROM t; PRAGMA table_info(t)"]):
+        assert plain.shell_summary({"argv": argv})["kind"] == "read", argv
+
+
+def test_what_leaves_the_dashboard_never_carries_the_args():
+    from rook.hub.approval_contact import message, question
+    typed = held(cap="proc.write", args={"data": "hunter2"}, name="calm-otter-lamp")
+    run = held(args={"argv": ["sh", "-c", "PGPASSWORD=s3cret psql -c 'select 1'"]})
+    for h in (typed, run):
+        for text in (message([h]), question(h), message([h, h])):
+            assert "hunter2" not in text and "s3cret" not in text and "psql" not in text
+    assert message([run]).startswith("Rook: Run a command on bakenetcanada. For: no task.")
 
 
 # -- each hold kind -----------------------------------------------------------------------
@@ -124,10 +167,13 @@ def test_each_hold_kind_says_its_risk_plainly():
     assert (job["who"], job["for"], job["why"]) == ("job nightly-backup", "job nightly-backup",
                                                     "keep a nightly copy")
     assert job["title"] == "Write today.tar" and job["risk"].startswith("Medium")
-    console = plain.for_hold(held(cap="proc.write", args={"data": "sudo reboot", "newline": True},
+    console = plain.for_hold(held(cap="proc.write", args={"data": "hunter2", "newline": True},
                                   context={"room": "r1", "room_title": "Kernel upgrade on nas"}))
-    assert console["for"] == "console Kernel upgrade on nas" and console["title"] == "Reboot"
-    assert console["want"].startswith("Type `sudo reboot` into a console")
+    # Typed text may answer a password prompt: never in the title or sentence.
+    assert console["for"] == "console Kernel upgrade on nas"
+    assert (console["title"], console["want"]) == ("Type into a console",
+                                                   "Type a line into a console on bakenetcanada")
+    assert "hunter2" not in console["title"] + console["want"] + console["risk"]
     role = plain.for_hold(held(principal="home:home/role:qa", principal_label="role:qa"))
     assert role["who"] == "qa (huddle role)"
     note = plain.for_hold(held(cap="home.session_note", tier="write", target_name="rook",
@@ -159,7 +205,10 @@ async def test_the_relay_list_carries_the_plain_ask_for_every_kind(hub):  # noqa
     hub.ap.queue.set_relayer(CLAUDE.id, True, "human:bake", "Claude web")
     res = await cap(hub, "approvals.list", {})
     assert all(i["plain"]["title"] for i in res["result"]["items"])
-    assert "Restart nginx (Claude web, for no task; " in res["result"]["summary"]
+    # Spoken: titles from the cap and machine only, never the args; no Explain.
+    assert "Run a command on box (Claude web, for no task; " in res["result"]["summary"]
+    assert "nginx" not in res["result"]["summary"]
+    assert all("explain" not in i["plain"] for i in res["result"]["items"])
 
 
 # -- notes never wait -------------------------------------------------------------------

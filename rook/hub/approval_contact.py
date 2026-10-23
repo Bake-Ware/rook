@@ -96,9 +96,11 @@ def _where(hold: dict) -> str:
 
 
 def _plain(hold: dict) -> dict:
-    from .plain import for_hold
+    """The ask with a title made from the cap and machine only: this text
+    goes to Telegram, notify and voice, so it never carries the args."""
+    from .plain import hold_item, outside
     try:
-        return for_hold(hold)
+        return outside(hold_item(hold))
     except Exception:  # noqa: BLE001 - fall back to the bare facts
         return {"title": f"{hold.get('cap')} on {_where(hold)}", "who": _who(hold),
                 "for": "no task", "risk": f"tier {hold.get('tier') or 'exec'}."}

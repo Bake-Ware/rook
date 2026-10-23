@@ -913,8 +913,19 @@ The context travels in the `hold_context` contextvar
 console writes (room), job steps (job, description) and huddle card runs
 (huddle, card summary), and is stored in `holds.context_json` (a nullable
 column added in place; older code ignores it). The args shown are the
-redacted display args, so the summary never sees a secret value; the
-operator's Telegram/notify text carries only the title, for, who and risk.
+redacted display args, so the summary never sees a secret value.
+
+Two rules from the review (vote high-inch-gallery): **read-only is earned,
+not guessed**: a shell command is "looks read-only" only when every part of
+it is understood and only reads; command substitution, backticks, process
+substitution, a lone `&`, heredocs, `xargs`/`eval`, any redirect into a file,
+`sed`/`awk`, and read tools with writing options (`find -delete`, `sort -o`,
+`journalctl --vacuum`, `git config k v`, `ip ... set`, `curl -XPOST`, a
+sqlite3 statement that is not a plain SELECT/PRAGMA/EXPLAIN) are changes.
+**Nothing argument-derived leaves the dashboard and the phone**: Telegram,
+notify, voice and the spoken `rook_approvals` summary use a title made from
+the cap and machine only (`safe_title`), and `rook_approvals` items carry no
+Explain; a console write is "Type into a console", never the typed text.
 Phones whose app predates the card body (0.4.21 and older) refuse `body`;
 the hub then folds it into the line and Explain, remembered per app version.
 

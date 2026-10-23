@@ -198,7 +198,10 @@ def summary(items: list[dict]) -> str:
         tag = "" if it.get("relayable", True) else ", dashboard only"
         p = it.get("plain")
         if p:
-            parts.append(f"{p['title']} ({p['who']}, for {p['for']}; "
+            # Spoken: a title from the cap and machine only, never the args.
+            title = p["title"] if it["kind"] in ("ask", "house") or not it.get("cap") else \
+                _plain.safe_title(it["cap"], str(it.get("worker") or ""), hub=bool(it.get("hub")))
+            parts.append(f"{title} ({p['who']}, for {p['for']}; "
                          f"{it.get('name') or it['id']}{tag})")
         else:
             parts.append(f"{it.get('name') or it['id']}: {it['who']} wants to {it['what']}{tag}")
@@ -423,8 +426,12 @@ class Relay:
         """An item as agents and the voice summary see it (no internal facts)."""
         keys = ("kind", "id", "name", "plain", "who", "what", "risk", "from", "age", "relayable",
                 "why_not", "options", "line", "explain")
-        return {k: item[k] for k in keys if item.get(k) not in (None, "", [], {})
-                or k == "relayable"}
+        out = {k: item[k] for k in keys if item.get(k) not in (None, "", [], {})
+               or k == "relayable"}
+        if isinstance(out.get("plain"), dict):
+            # Explain (cap, args, trust cite) stays on the dashboard and the phone.
+            out["plain"] = {k: v for k, v in out["plain"].items() if k != "explain"}
+        return out
 
     def find(self, ref: str) -> dict:
         """A waiting item by id or speakable name (any case, spaces or

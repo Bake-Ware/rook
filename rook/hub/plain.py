@@ -137,43 +137,85 @@ HOUSE_FOR = {
 
 
 # -- shell commands ------------------------------------------------------------------
+#
+# The classifier is deliberately conservative: a command is "read" only when
+# every part of it is understood and only reads. Anything it cannot parse
+# fully (command substitution, backticks, process substitution, a lone &,
+# heredocs, xargs/eval) or any redirect into a file is a change. A wrong
+# "Low: looks read-only" could lead the person to approve a write, so when in
+# doubt it says Medium (vote high-inch-gallery, 2026-10-23).
 
-#: Programs that only look at things (with the exceptions in :func:`_shell_segment`).
+#: Programs that only read whatever their arguments (writes need a redirect,
+#: which is caught separately).
 READ_PROGS = {
-    "cat", "head", "tail", "less", "more", "ls", "ll", "tree", "stat", "file", "wc", "du", "df",
-    "free", "uptime", "ps", "pgrep", "top", "htop", "id", "whoami", "hostname", "uname", "date",
-    "which", "type", "env", "printenv", "echo", "printf", "grep", "egrep", "rg", "ag", "find",
-    "fd", "locate", "journalctl", "dmesg", "lsblk", "lsusb", "lspci", "nvidia-smi", "sensors",
-    "ip", "ss", "netstat", "ping", "dig", "nslookup", "host", "jq", "sort", "uniq", "cut", "awk",
-    "sed", "diff", "cmp", "md5sum", "sha256sum", "sha1sum", "readlink", "realpath", "basename",
-    "dirname", "test", "true", "false", "sleep", "column", "tr", "xxd", "hexdump", "strings",
-    "lscpu", "lsmod", "last", "w", "who", "groups", "getent", "nproc", "vmstat", "iostat",
-    "timedatectl", "hostnamectl", "loginctl", "zcat", "zgrep", "cd", "pwd",
+    "cat", "head", "tail", "less", "more", "ls", "ll", "stat", "file", "wc", "du", "df", "free",
+    "uptime", "ps", "pgrep", "top", "id", "whoami", "uname", "which", "type", "printenv",
+    "echo", "printf", "grep", "egrep", "fgrep", "ag", "fd", "lsblk", "lsusb", "lspci", "ss",
+    "netstat", "ping", "dig", "nslookup", "host", "jq", "cut", "diff", "cmp", "md5sum",
+    "sha256sum", "sha1sum", "readlink", "realpath", "basename", "dirname", "test", "true",
+    "false", "sleep", "column", "tr", "hexdump", "strings", "lscpu", "lsmod", "last", "w",
+    "who", "groups", "getent", "nproc", "vmstat", "iostat", "zcat", "zgrep", "cd", "pwd",
+    "nl", "tac", "rev", "seq", "expr",
+}
+#: Programs that only read unless one of these arguments (or argument
+#: prefixes) appears.
+READ_UNLESS = {
+    "find": ("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fls"),
+    "journalctl": ("--vacuum", "--rotate", "--flush", "--sync", "--relinquish",
+                   "--smart-relinquish", "--setup-keys", "--update-catalog"),
+    "dmesg": ("-c", "-C", "-D", "-E", "-n", "--clear", "--read-clear", "--console"),
+    "sort": ("-o", "--output"),
+    "tree": ("-o",),
+    "rg": ("--pre",),
+    "sensors": ("-s",),
 }
 #: Subcommands that only read, for tools that also write.
 READ_SUBS = {
-    "git": {"status", "log", "diff", "show", "branch", "remote", "rev-parse", "describe",
-            "ls-files", "blame", "shortlog", "tag", "config", "fetch", "worktree", "stash"},
-    "systemctl": {"status", "is-active", "is-enabled", "is-failed", "show", "cat",
-                  "list-units", "list-timers", "list-unit-files"},
+    "systemctl": {"", "status", "is-active", "is-enabled", "is-failed", "show", "cat",
+                  "list-units", "list-timers", "list-unit-files", "list-sockets"},
     "docker": {"ps", "logs", "inspect", "images", "stats", "version", "info"},
     "podman": {"ps", "logs", "inspect", "images", "stats", "version", "info"},
     "kubectl": {"get", "describe", "logs", "top", "version"},
-    "gh": {"pr", "run", "api", "issue", "repo"},
     "pip": {"list", "show", "freeze"}, "npm": {"ls", "list", "view"},
-    "apt": {"list", "show", "search", "policy"}, "pacman": {"-Q", "-Qi", "-Ql", "-Ss", "-Si"},
-    "tailscale": {"status", "ip"}, "rook": {"status", "version", "workers", "band"},
+    "apt": {"list", "show", "search", "policy"},
+    "tailscale": {"status", "ip"}, "rook": {"status", "version"},
+    "hostnamectl": {"", "status"}, "timedatectl": {"", "status", "show",
+                                                   "list-timezones", "timesync-status"},
+    "loginctl": {"", "list-sessions", "list-users", "list-seats", "session-status",
+                 "user-status", "show-session", "show-user", "show-seat"},
 }
-GIT_WRITE_FLAGS = {"branch": ("-d", "-D", "-m", "-M", "--delete"), "tag": ("-d", "--delete"),
-                   "config": ("--add", "--unset", "--replace-all"),
-                   "stash": ("pop", "drop", "clear", "apply", "push", "save"),
-                   "worktree": ("add", "remove", "prune", "move")}
+GIT_READ = {"status", "log", "diff", "show", "rev-parse", "describe", "ls-files", "blame",
+            "shortlog", "rev-list", "cat-file", "ls-tree", "ls-remote", "grep", "reflog"}
+#: Git subcommands that read only with these arguments (or no arguments).
+GIT_READ_WITH = {"branch": ("--list", "-l", "-a", "-r", "-v", "-vv", "--show-current",
+                            "--contains", "--merged", "--no-merged"),
+                 "tag": ("--list", "-l", "-n", "--contains"),
+                 "remote": ("-v", "show", "get-url"),
+                 "config": ("--get", "--get-all", "--get-regexp", "--list", "-l"),
+                 "stash": ("list", "show"), "worktree": ("list",)}
 DESTROY_PROGS = {"rm", "rmdir", "shred", "dd", "mkfs", "wipefs", "fdisk", "parted", "reboot",
                  "shutdown", "poweroff", "halt", "kill", "pkill", "killall", "truncate"}
 WRAPPERS = {"sudo", "doas", "nice", "ionice", "timeout", "nohup", "stdbuf", "time", "env",
-            "command", "exec", "flock"}
-SQL_READ = re.compile(r"^\s*(select|pragma|explain|with\s+[\s\S]*?\bselect\b)\b", re.I)
-SQL_DOT_READ = re.compile(r"^\s*\.(tables|schema|indexes|headers|mode|dump)\b", re.I)
+            "command", "flock"}
+#: Shell text the classifier does not follow: always a change.
+OPAQUE = re.compile(r"\$\(|`|<\(|>\(|<<|(?<![&|>])&(?![&>])|\b(eval|xargs|source|exec)\b")
+_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+SQL_WRITE = re.compile(r"\b(insert|update|delete|replace|upsert|create|drop|alter|attach|detach|"
+                       r"vacuum|reindex|analyze|begin|commit|savepoint|release)\b", re.I)
+SQL_READ = re.compile(r"^\s*(select|explain|with|values)\b|^\s*pragma\s+[\w.]+\s*(\(\s*[\w.'\"]*\s*\))?\s*$",
+                      re.I)
+SQL_DOT_READ = re.compile(r"^\s*\.(tables|schema|indexes|indices|headers|mode|databases|"
+                          r"show|width|nullvalue)\b[^;]*$", re.I)
+SQLITE_FLAGS = {"-readonly", "-header", "-noheader", "-column", "-json", "-line", "-csv", "-list",
+                "-box", "-markdown", "-table", "-batch", "-bail", "-separator", "-newline"}
+CURL_WRITE_LONG = ("--request", "--data", "--json", "--form", "--upload-file", "--output",
+                   "--remote-name", "--post", "--config", "--cookie-jar", "--dump-header",
+                   "--trace", "--libcurl", "--create-dirs", "--etag-save", "--hsts",
+                   "--alt-svc", "--output-dir", "--remote-header-name", "--stderr")
+CURL_WRITE_SHORT = set("XdFToOKcD")
+GH_WRITE = ("-X", "--method", "-f", "-F", "--field", "--raw-field", "--input")
+NVIDIA_READ = ("-q", "--query", "-L", "--list", "--format", "-i", "--id", "-l", "--loop",
+               "-d", "--display", "-x")
 SERVICE_VERBS = {"restart": "restart", "stop": "stop", "start": "start", "reload": "reload",
                  "enable": "enable", "disable": "disable", "mask": "mask", "kill": "kill",
                  "daemon-reload": "reload the service definitions"}
@@ -195,135 +237,215 @@ def _argv(args: Any) -> list[str]:
 
 
 def _unwrap(argv: list[str]) -> list[str]:
-    """Drop sudo/timeout/env wrappers and ``sh -c "<script>"``: the command
-    the wrapper runs (a script stays one string in ``['<script>']``)."""
+    """Drop sudo/timeout/env wrappers and ``NAME=value`` prefixes, and turn
+    ``sh -c "<script>"`` into ``['<script>', script]``. A wrapper option
+    the unwrapping does not understand leaves an unknown program (a change)."""
     out = list(argv)
-    for _ in range(6):
+    for _ in range(8):
+        while out and _ASSIGN.match(out[0]):
+            out = out[1:]
         if not out:
             return out
         prog = _base(out[0])
         if prog in WRAPPERS:
             out = out[1:]
             while out and (out[0].startswith("-") or re.fullmatch(r"[\d.]+[smhd]?", out[0])
-                           or "=" in out[0] or (prog == "flock" and "/" in out[0])):
+                           or _ASSIGN.match(out[0]) or (prog == "flock" and "/" in out[0])):
                 out = out[1:]
             continue
-        if prog in ("sh", "bash", "zsh", "dash", "fish") and len(out) >= 3 and out[1] in (
+        if prog in ("sh", "bash", "zsh", "dash") and len(out) >= 3 and out[1] in (
                 "-c", "-lc", "-ec", "-euc", "-xc"):
             return ["<script>", out[2]]
-        if prog in ("ssh",) and len(out) >= 3:
+        if prog == "ssh" and len(out) >= 3:
             rest = [x for x in out[1:] if not x.startswith("-")]
             return ["<script>", " ".join(rest[1:])] if len(rest) > 1 else out
         return out
     return out
 
 
-def _segments(script: str) -> list[list[str]]:
-    parts = re.split(r"\|\||&&|;|\n|\|", script)
+def _segments(script: str) -> list[list[str]] | None:
+    """The simple commands of a script, or None when it has shell the
+    classifier does not follow (:data:`OPAQUE`)."""
+    if OPAQUE.search(script):
+        return None
     out = []
-    for p in parts:
+    for p in re.split(r"\|\||&&|;|\n|\|", script):
         p = p.strip()
         if not p:
             continue
         try:
             out.append(shlex.split(p, comments=True))
         except ValueError:
-            out.append(p.split())
+            return None
     return [s for s in out if s]
 
 
-def _writes_file(script: str) -> str:
-    """The file a redirect writes into ("" when none; /dev/null and 2>&1
-    are not files)."""
-    for m in re.finditer(r"(?<![0-9&<])(>>?)\s*([^\s&|;]+)", script):
-        if m.group(2) not in ("/dev/null", "/dev/stderr", "/dev/stdout") and \
-                not m.group(2).startswith("&"):
-            return m.group(2)
-    return ""
+def _writes_file(script: str) -> str | None:
+    """The file a redirect writes into (``None`` when there is none;
+    /dev/null and duplicating a stream, ``2>&1``, are not files)."""
+    for m in re.finditer(r"(\d*|&)>(>|\|)?\s*([^\s;|&]+|&\d)", script):
+        target = m.group(3)
+        if target in ("/dev/null", "/dev/stderr", "/dev/stdout") or re.fullmatch(r"&\d", target):
+            continue
+        return target
+    return None
 
 
-def _shell_segment(argv: list[str]) -> dict:
+def _has(rest: list[str], marks: tuple) -> bool:
+    """An argument equal to, or starting with, one of ``marks`` (``--vacuum``
+    matches ``--vacuum-time=1s``; ``-o`` matches ``-ofile``)."""
+    return any(a == m or a.startswith(m) for a in rest for m in marks)
+
+
+def _short_flags(rest: list[str]) -> set:
+    return {c for a in rest if a.startswith("-") and not a.startswith("--") for c in a[1:]}
+
+
+def _sqlite(rest: list[str]) -> dict:
+    words = [a for a in rest if not a.startswith("-")]
+    flags = [a for a in rest if a.startswith("-")]
+    db = next((w for w in words if "/" in w or w.endswith((".db", ".sqlite", ".sqlite3"))), "")
+    stmts = [s for w in words if w != db for s in re.split(r";", w) if s.strip()]
+    name = _base(db).rsplit(".", 1)[0] if db else ""
+    label = f"{name} database" if name else "a database"
+    ok_flags = all(f in SQLITE_FLAGS for f in flags)
+    ro = ok_flags and bool(stmts) and all(
+        (SQL_READ.match(s) or SQL_DOT_READ.match(s)) and not SQL_WRITE.search(s) for s in stmts)
+    if ro:
+        return {"kind": "read", "title": f"Read {label}",
+                "want": f"run a read-only query on the {label}"}
+    return {"kind": "change", "title": f"Change {label}",
+            "want": f"run a query that can change the {label}"}
+
+
+def _git(rest: list[str]) -> dict:
+    rest = list(rest)
+    while rest and rest[0] in ("-C", "-c", "--git-dir", "--work-tree", "--namespace") \
+            or rest and rest[0].startswith(("--git-dir=", "--work-tree=", "--no-pager",
+                                            "--paginate", "-P")):
+        rest = rest[2:] if rest[0] in ("-C", "-c", "--git-dir", "--work-tree",
+                                       "--namespace") else rest[1:]
+    sub = rest[0] if rest else ""
+    args = rest[1:]
+    if sub in GIT_READ:
+        read = not _has(args, ("--output",))
+    elif sub in ("branch", "tag"):
+        read = all(a in GIT_READ_WITH[sub] for a in args)
+    elif sub == "remote":
+        read = not args or args == ["-v"] or args[0] in ("show", "get-url")
+    elif sub == "config":
+        read = _has(args, GIT_READ_WITH["config"]) and not _has(args, (
+            "--add", "--unset", "--replace-all", "--rename-section", "--remove-section", "-e",
+            "--edit"))
+    elif sub in ("stash", "worktree"):
+        read = bool(args) and args[0] in GIT_READ_WITH[sub]
+    else:
+        read = False
+    if read:
+        return {"kind": "read", "title": "Look at a git checkout", "want": f"run git {sub}"}
+    if sub == "push":
+        return {"kind": "change", "title": "Push code", "want": "push commits to a git remote"}
+    if sub in ("reset", "clean", "checkout", "restore", "switch") and _has(
+            args, ("--hard", "-f", "--force", "-fd", "-fdx", "-x", ".", "--discard-changes")):
+        return {"kind": "destroy", "title": "Discard code changes",
+                "want": f"run git {sub}, which can throw away uncommitted work"}
+    return {"kind": "change", "title": "Change a git checkout", "want": f"run git {sub}".strip()}
+
+
+def _shell_segment(argv: list[str], depth: int = 0) -> dict:
     """``{kind: read|change|destroy, title, want}`` for one simple command."""
     argv = _unwrap(argv)
     if not argv:
         return {"kind": "change", "title": "Run a command", "want": "run a command"}
+    if argv[0] == "<script>":
+        if depth < 2:
+            return _script(argv[1], depth + 1)
+        return {"kind": "change", "title": "Run a script", "want": "run a shell script"}
     prog = _base(argv[0])
     rest = argv[1:]
     words = [a for a in rest if not a.startswith("-")]
+    sub = words[0] if words else ""
     if prog == "sqlite3":
-        db = next((w for w in words if not SQL_READ.match(w) and not SQL_DOT_READ.match(w)
-                   and ("/" in w or w.endswith((".db", ".sqlite", ".sqlite3")))), "")
-        sql = " ".join(w for w in words if w != db)
-        ro = "-readonly" in rest or (bool(sql) and all(
-            SQL_READ.match(s) or SQL_DOT_READ.match(s) for s in re.split(r";\s*(?=\S)", sql)))
-        name = _base(db).rsplit(".", 1)[0] if db else "a"
-        label = f"{name} database" if db else "a database"
-        if ro:
-            return {"kind": "read", "title": f"Read {label}",
-                    "want": f"run a read-only query on the {label}"}
-        return {"kind": "change", "title": f"Change {label}",
-                "want": f"run a query that can change the {label}"}
+        return _sqlite(rest)
+    if prog == "git":
+        return _git(rest)
     if prog in ("systemctl", "service"):
-        sub = words[0] if words else ""
-        unit = words[1] if len(words) > 1 else (words[0] if prog == "service" and words else "")
-        if prog == "service" and len(words) > 1:
-            unit, sub = words[0], words[1]
-        if sub in READ_SUBS["systemctl"] or sub == "":
+        unit = words[1] if len(words) > 1 else ""
+        if prog == "service":
+            unit, sub = (words[0], words[1]) if len(words) > 1 else (sub, "status")
+        if sub in READ_SUBS["systemctl"]:
             return {"kind": "read", "title": "Check a service" if unit else "Check services",
                     "want": f"check the status of {unit or 'services'}"}
         verb = SERVICE_VERBS.get(sub, sub)
         return {"kind": "change", "title": f"{verb.capitalize()} {unit or 'a service'}",
                 "want": f"{verb} the service {unit}".strip()}
-    if prog in READ_SUBS and prog != "systemctl":
-        sub = words[0] if words else ""
-        if prog == "git":
-            flags = GIT_WRITE_FLAGS.get(sub, ())
-            if sub in READ_SUBS["git"] and not any(a in flags for a in rest):
-                return {"kind": "read", "title": "Look at a git checkout",
-                        "want": f"run git {sub} (read-only)"}
-            if sub == "push":
-                return {"kind": "change", "title": "Push code",
-                        "want": "push commits to a git remote"}
-            if sub in ("reset", "clean", "checkout", "restore") and any(
-                    a in rest for a in ("--hard", "-f", "-fd", "-fdx", ".")):
-                return {"kind": "destroy", "title": "Discard code changes",
-                        "want": f"run git {sub} that can throw away uncommitted work"}
-            return {"kind": "change", "title": "Change a git checkout",
-                    "want": f"run git {sub}".strip()}
-        if prog == "gh" and sub in READ_SUBS["gh"] and len(words) > 1 and words[1] in (
-                "view", "list", "status", "diff", "checks"):
-            return {"kind": "read", "title": "Look at GitHub", "want": f"read GitHub ({sub})"}
-        if prog == "gh" and sub == "api" and not any(a in rest for a in ("-X", "--method", "-f",
-                                                                       "-F", "--field")):
-            return {"kind": "read", "title": "Look at GitHub", "want": "read the GitHub API"}
-        if sub in READ_SUBS.get(prog, ()) and prog != "gh":
-            return {"kind": "read", "title": f"Look at {prog}", "want": f"run {prog} {sub}"}
-        if prog in ("apt", "pacman", "pip", "npm"):
+    if prog in READ_SUBS:
+        if sub in READ_SUBS[prog] and len(words) <= (1 if prog in ("hostnamectl",) else 99):
+            return {"kind": "read", "title": f"Look at {prog}", "want": f"run {prog} {sub}".strip()}
+        if prog in ("apt", "pip", "npm"):
             return {"kind": "change", "title": "Install or change software",
                     "want": f"run {prog} {sub}".strip()}
         if prog in ("docker", "podman", "kubectl"):
-            kind = "destroy" if sub in ("rm", "rmi", "prune", "delete", "down") else "change"
-            return {"kind": kind, "title": f"Change containers ({sub})" if sub else "Run docker",
+            kind = "destroy" if sub in ("rm", "rmi", "prune", "delete", "down", "kill") else "change"
+            return {"kind": kind, "title": f"Change containers ({sub})" if sub else f"Run {prog}",
                     "want": f"run {prog} {sub}".strip()}
-        return {"kind": "change", "title": f"Run {prog}", "want": f"run {prog} {sub}".strip()}
-    if prog in ("find",) and any(a in rest for a in ("-delete", "-exec", "-execdir", "-ok")):
-        return {"kind": "destroy" if "-delete" in rest else "change", "title": "Find and change files",
-                "want": "find files and act on them"}
-    if prog == "sed" and any(a.startswith("-i") for a in rest):
-        return {"kind": "change", "title": "Edit a file", "want": "edit a file in place with sed"}
-    if prog in READ_PROGS:
-        target = next((w for w in words if "/" in w or "." in w), "")
+        return {"kind": "change", "title": f"Change {prog} settings" if sub else f"Run {prog}",
+                "want": f"run {prog} {sub}".strip()}
+    if prog == "pacman":
+        first = next((a for a in rest if a.startswith("-")), "")
+        if first.startswith("-Q") or first in ("-Ss", "-Si"):
+            return {"kind": "read", "title": "Look at packages", "want": "list or search packages"}
+        return {"kind": "change", "title": "Install or change software", "want": "run pacman"}
+    if prog == "gh":
+        if sub == "api" and not _has(rest, GH_WRITE) and not (_short_flags(rest) & set("XfF")):
+            return {"kind": "read", "title": "Look at GitHub", "want": "read the GitHub API"}
+        if sub in ("pr", "run", "issue", "repo", "release") and len(words) > 1 and words[1] in (
+                "view", "list", "status", "diff", "checks"):
+            return {"kind": "read", "title": "Look at GitHub", "want": f"read GitHub ({sub})"}
+        return {"kind": "change", "title": "Change something on GitHub", "want": f"run gh {sub}"}
+    if prog == "ip":
+        writes = {"add", "del", "delete", "set", "change", "replace", "flush", "append", "save",
+                  "restore", "monitor", "exec", "attach", "detach"}
+        if not (set(words) & writes):
+            return {"kind": "read", "title": "Look at the network", "want": "show network settings"}
+        return {"kind": "change", "title": "Change the network", "want": "change network settings"}
+    if prog == "hostname":
+        if not words and not _has(rest, ("-F", "--file", "-b", "--boot")):
+            return {"kind": "read", "title": "Check the machine", "want": "show the host name"}
+        return {"kind": "change", "title": "Change the host name", "want": "set the host name"}
+    if prog == "date":
+        if not _has(rest, ("-s", "--set")) and all(w.startswith("+") for w in words):
+            return {"kind": "read", "title": "Check the machine", "want": "show the date"}
+        return {"kind": "change", "title": "Set the clock", "want": "set the system clock"}
+    if prog == "nvidia-smi":
+        flags_ok = all(a.startswith(NVIDIA_READ) for a in rest if a.startswith("-"))
+        if flags_ok and all(w in ("dmon", "pmon") or w.isdigit() for w in words):
+            return {"kind": "read", "title": "Check the GPUs", "want": "show GPU status"}
+        return {"kind": "change", "title": "Change GPU settings", "want": "run nvidia-smi"}
+    if prog == "uniq" and len(words) <= 1:
+        return {"kind": "read", "title": "Check the machine", "want": "run uniq"}
+    if prog in READ_UNLESS:
+        if _has(rest, READ_UNLESS[prog]):
+            kind = "destroy" if prog == "find" and "-delete" in rest else "change"
+            return {"kind": kind, "title": "Find and change files" if prog == "find"
+                    else f"Run {prog}", "want": f"run {prog} with options that change things"}
         if prog in ("journalctl", "dmesg"):
             return {"kind": "read", "title": "Read logs", "want": "read the system logs"}
-        if prog in ("cat", "head", "tail", "less", "more", "zcat"):
+        if prog in ("find", "tree"):
+            return {"kind": "read", "title": "Look at files", "want": "list files"}
+        return {"kind": "read", "title": "Search files" if prog == "rg" else "Check the machine",
+                "want": f"run {prog}"}
+    if prog in READ_PROGS:
+        target = next((w for w in words if "/" in w or "." in w), "")
+        if prog in ("cat", "head", "tail", "less", "more", "zcat", "tac", "nl"):
             return {"kind": "read", "title": f"Read {_base(target)}" if target else "Read a file",
                     "want": f"read {target}" if target else "read a file"}
-        if prog in ("ls", "tree", "stat", "du", "df", "find", "fd"):
+        if prog in ("ls", "ll", "stat", "du", "df", "fd", "file"):
             return {"kind": "read", "title": "Look at files",
                     "want": f"list files{' in ' + target if target else ''}"}
-        if prog in ("grep", "egrep", "rg", "ag", "zgrep"):
+        if prog in ("grep", "egrep", "fgrep", "ag", "zgrep"):
             return {"kind": "read", "title": "Search files", "want": "search files for text"}
-        return {"kind": "read", "title": "Check the machine", "want": f"run {prog} (read-only)"}
+        return {"kind": "read", "title": "Check the machine", "want": f"run {prog}"}
     if prog in DESTROY_PROGS:
         what = {"reboot": "reboot the machine", "shutdown": "shut the machine down",
                 "poweroff": "power the machine off", "halt": "halt the machine"}.get(prog)
@@ -332,16 +454,19 @@ def _shell_segment(argv: list[str]) -> dict:
                     "want": what}
         if prog in ("kill", "pkill", "killall"):
             return {"kind": "destroy", "title": "Stop a process", "want": "stop a running process"}
-        target = next((w for w in words if w not in ("/",)), "")
         return {"kind": "destroy", "title": "Delete files" if prog in ("rm", "rmdir", "shred")
-                else "Erase a disk or file",
-                "want": f"run {prog} {target}".strip() + " (deletes data)"}
+                else "Erase a disk or file", "want": f"run {prog}, which deletes data"}
+    if prog == "curl":
+        if not _has(rest, ("-X",) + CURL_WRITE_LONG) and not (_short_flags(
+                [a for a in rest if not a.startswith("--")]) & CURL_WRITE_SHORT):
+            return {"kind": "read", "title": "Fetch a web page", "want": "fetch a URL"}
+        return {"kind": "change", "title": "Send or save a web request",
+                "want": "send a web request that can change or save things"}
     if prog in ("cp", "mv", "tee", "touch", "mkdir", "ln", "chmod", "chown", "install",
-                "rsync", "scp", "tar", "unzip", "curl", "wget"):
-        if prog in ("curl", "wget") and not any(a in rest for a in (
-                "-o", "-O", "--output", "-X", "--data", "-d", "-F", "--upload-file", "-T")):
-            return {"kind": "read", "title": "Fetch a web page", "want": "fetch a URL (read-only)"}
-        return {"kind": "change", "title": "Change files", "want": f"run {prog} (changes files)"}
+                "rsync", "scp", "tar", "unzip", "wget", "sed", "awk", "patch"):
+        if prog == "sed" and (_has(rest, ("--in-place",)) or "i" in _short_flags(rest)):
+            return {"kind": "change", "title": "Edit a file", "want": "edit a file in place"}
+        return {"kind": "change", "title": "Change files", "want": f"run {prog}, which can change files"}
     if "deploy" in " ".join(argv).lower():
         return {"kind": "change", "title": "Deploy", "want": "run a deploy script"}
     if prog in ("python", "python3", "node", "bash", "sh", "make", "cargo", "go", "pytest",
@@ -355,35 +480,42 @@ def _shell_segment(argv: list[str]) -> dict:
     return {"kind": "change", "title": f"Run {prog}", "want": f"run {prog}"}
 
 
-def shell_summary(args: Any) -> dict:
-    """``{kind, title, want, command}`` for a shell call: ``kind`` is read
-    when every part of the command only reads (a guess from the command
-    text, said as "looks read-only"), destroy when any part deletes."""
-    argv = _argv(args)
-    if not argv:
-        return {"kind": "change", "title": "Run a command", "want": "run a command", "command": ""}
-    command = " ".join(argv) if _unwrap(argv)[:1] != ["<script>"] else _unwrap(argv)[1]
-    inner = _unwrap(argv)
-    if inner[:1] == ["<script>"]:
-        script = inner[1]
-        segs = [_shell_segment(s) for s in _segments(script)]
-        if not segs:
-            segs = [{"kind": "change", "title": "Run a script", "want": "run a shell script"}]
-        path = _writes_file(script)
-        if path:
-            segs.append({"kind": "change", "title": f"Write {_base(path)}",
-                         "want": f"write {path}"})
-    else:
-        segs = [_shell_segment(inner)]
-        if any(a in (">", ">>") for a in inner):
-            segs.append({"kind": "change", "title": "Write a file", "want": "write a file"})
+def _script(script: str, depth: int = 0) -> dict:
+    segs_raw = _segments(script)
+    if segs_raw is None:
+        return {"kind": "change", "title": "Run a script",
+                "want": "run a shell script (not checked: it uses shell features the summary "
+                        "does not follow)", "steps": 1}
+    segs = [_shell_segment(s, depth) for s in segs_raw] or [
+        {"kind": "change", "title": "Run a script", "want": "run a shell script"}]
+    path = _writes_file(script)
+    if path is not None:
+        segs.append({"kind": "change", "title": f"Write {_base(path)}", "want": f"write {path}"})
     kinds = {s["kind"] for s in segs}
     kind = "destroy" if "destroy" in kinds else "change" if "change" in kinds else "read"
     main = next((s for s in segs if s["kind"] == kind), segs[0])
     if len(segs) > 1 and kind == "read":
         main = next((s for s in segs if s["title"] not in ("Check the machine",)), main)
-    return {"kind": kind, "title": main["title"], "want": main["want"],
-            "command": short(command, 300), "steps": len(segs)}
+    return {**main, "kind": kind, "steps": len(segs)}
+
+
+def shell_summary(args: Any) -> dict:
+    """``{kind, title, want, command}`` for a shell call: ``kind`` is read
+    only when every part of the command is understood and only reads (said as
+    "looks read-only"), destroy when any part deletes, else change."""
+    argv = _argv(args)
+    if not argv:
+        return {"kind": "change", "title": "Run a command", "want": "run a command", "command": ""}
+    inner = _unwrap(argv)
+    if inner[:1] == ["<script>"]:
+        out = _script(inner[1])
+        command = inner[1]
+    else:
+        out = _shell_segment(inner)
+        out.setdefault("steps", 1)
+        command = " ".join(argv)
+    return {"kind": out["kind"], "title": out["title"], "want": out["want"],
+            "command": short(command, 300), "steps": out.get("steps", 1)}
 
 
 # -- what a call does --------------------------------------------------------------
@@ -415,11 +547,10 @@ def call_summary(cap: str, args: Any, worker: str = "", *, hub: bool = False,
         want = s["want"] + where
         return {"title": s["title"], "want": want, "kind": s["kind"], "command": s["command"]}
     if cap in ("proc.write", "work.stream.write", "console.write"):
-        text = str(args.get("data") or "")
-        inner = shell_summary({"cmd": text}) if text.strip() else None
-        title = inner["title"] if inner else "Type into a console"
-        return {"title": title, "want": f"type `{short(text, 80)}` into a console{where}",
-                "kind": inner["kind"] if inner else "change", "command": short(text, 300)}
+        # Typed text can be an answer to a password prompt: it never goes into
+        # the title or the sentence, only under Explain.
+        return {"title": "Type into a console", "want": f"type a line into a console{where}",
+                "kind": "change", "command": short(str(args.get("data") or ""), 300)}
     if cap.startswith("file."):
         path = str(args.get("path") or args.get("dest") or "")
         verb = cap.split(".", 1)[1]
@@ -774,3 +905,33 @@ def card_item(card: dict, huddle_title: str = "") -> dict:
             "card_kind": card.get("kind"), "summary": card.get("summary") or "",
             "room": card.get("room"),
             "context": {"huddle": huddle_title or card.get("room") or ""}}
+
+
+def safe_title(cap: str, worker: str = "", *, hub: bool = False) -> str:
+    """A title from the cap and the machine only, never the arguments: what
+    leaves the dashboard and the phone (Telegram, notify, voice, the spoken
+    summary) uses this, so nothing an agent typed or passed travels there."""
+    cap = str(cap or "")
+    on = _on(worker, hub)
+    where = f" {on}" if on else ""
+    if cap in ("shell.exec", "proc.spawn", "work.stream.open"):
+        return f"Run a command{where}"
+    if cap in ("proc.write", "work.stream.write", "console.write"):
+        return f"Type into a console{where}"
+    if cap.startswith("file."):
+        verb = cap.split(".", 1)[1]
+        what = ("Read" if verb in ("read", "stat", "list", "ls", "exists", "hash") else
+                "Delete" if verb in ("delete", "remove", "rm", "rmdir") else "Write")
+        return f"{what} a file{where}"
+    title = call_summary(cap, {}, worker, hub=hub)["title"]
+    return title if " on " in title or not where or worker in title else f"{title}{where}"
+
+
+def outside(item: dict) -> dict:
+    """``{title, for, who, risk}`` with an argument-free title, for channels
+    that leave the dashboard and the phone (no why, no explain)."""
+    p = describe(item)
+    title = p["title"] if item.get("kind") in ("ask", "house") or (
+        item.get("kind") == "card" and not item.get("cap")) else safe_title(
+        item.get("cap") or "", str(item.get("worker") or ""), hub=bool(item.get("hub")))
+    return {"title": title, "for": p["for"], "who": p["who"], "risk": p["risk"]}
