@@ -330,7 +330,9 @@ emits `bye {mode: sleep, after_ms: until the sign-off is heard, quiet_ms}`; the 
 mic and ignores the wake word for quiet_ms. `home.voice_signoff` short|none.
 
 **Scribe** (`scribe.py`): mode `scribe` (VOICE_SWITCHABLE, no model). The hub allows it only
-when the owner was heard in the last 10 min, else switches to `listen` and records nothing; it
+when the owner was heard in the last 10 min, else switches to `listen` and records nothing,
+and re-checks on every line: once no line from the owner's label for 10 min it ends the
+conversation and switches the phone to `listen` (review of #189); it
 opens a conversation record and a knowledge page "Conversation <date time>". The voice server
 sends each utterance as client control `scribe {text, speaker, at}` (enrolled names, else
 per-conversation clustering "Speaker A/B", `SessionSpeakers`); the assistant's name or

@@ -99,7 +99,8 @@ as a guest; a very short "yes" that is too short to recognise counts as you.
 **Learning someone else's voice:** say "I want to enroll a new voice" or
 "learn Robin's voice". It asks their name and who they are to you. An adult
 then says "I agree to have my voice remembered" in their own voice; for a
-child it needs your own yes out loud ("yes, learn Sam's voice"). Then they
+child it asks you to confirm and needs your yes out loud. A bare "yes" can be
+too short for it to know it's you: say a few words. Then they
 read a few sentences. Only you, recognised by voice, can start this. It keeps
 a record of them on the hub (who they are, their consent in their words, their
 devices) and a note in its memory; the voiceprint stays on the voice server.
@@ -113,8 +114,9 @@ Sign-off: **Sign-off when it stops listening** (short or none).
 
 **Taking notes (scribe):** when people talk among themselves and not to it,
 it stops replying and writes down who said what (enrolled names, else
-"Speaker A", "Speaker B"), only if you are one of them. If you aren't, it just
-stops replying and waits for its name, and records nothing. The phone shows
+"Speaker A", "Speaker B"), only while you are one of them: if you aren't, or
+once it hasn't heard you for 10 minutes, it stops recording, just stops
+replying and waits for its name. The phone shows
 "taking notes" while it lasts. Now and then the agent reads the new lines and
 files tasks it implies (proposed as usual, never sent to anyone), takeaways
 and decisions with the time they were said, on a knowledge page "Conversation
