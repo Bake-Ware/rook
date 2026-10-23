@@ -4,7 +4,7 @@
 // how a change takes effect. Secret values are write-only.
 // Versioned like this module (?v=...), so a stale edge cache cannot pair it
 // with an old manage.js.
-const {el, ago, info, copyChip, seg} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
+const {el, ago, info, copyChip, seg, btn, dialog} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 const show=v=>v===null||v===undefined||v===''?'—':typeof v==='object'?JSON.stringify(v):String(v);
 const API='/account/settings/api';
 // Voice ids get a picker of the hub's voices (huddles.js), with what blank means.
@@ -43,6 +43,7 @@ const CSS=`
 .st-processes td .copy-chip{max-width:34ch}
 @media(max-width:640px){.st-processes td .copy-chip{max-width:58vw}}
 .st-foot{justify-content:space-between}
+.st-page .mg-bar .st-restart{margin-left:auto}
 @media(max-width:800px){
  .st-group{--cols:minmax(0,1fr) 110px}.st-group>.mg-head{display:none}.st-row .st-label,.st-row .st-ctl{grid-column:1/-1}.st-row{padding:8px 12px}
  .st-side{flex:1 1 100%!important}
@@ -81,6 +82,7 @@ export async function mountSettings(root){
     const pick=id=>{page.dataset.filter=id;if(id!=='all')page.querySelectorAll('.st-group details').forEach(d=>{d.open=true;});chipHost.replaceChildren(seg(FILTERS,id,pick,'Show'));};
     pick('all');
     if(intro)bar.insertBefore(info(intro,'About '+title),chipHost);
+    if(admin)bar.append(btn('Restart','st-restart',confirmRestart,{title:'Restart the hub'}));
     page.replaceChildren(bar);
     if(meta)page.append(el('p',meta,'mg-sub mg-mono'));
     page.append(status);
@@ -93,6 +95,24 @@ export async function mountSettings(root){
     if(pending.length){saveButton=el('button','','mg-btn primary');saveButton.type='button';saveButton.onclick=()=>saveAll().catch(e=>{status.textContent=e.message;});acts.append(saveButton);updateSave();}
     else page.querySelector('.st-filters').hidden=true;
     foot.append(acts);page.append(foot,hist);
+  }
+
+  // Restart (operator): the hub stops, its service manager starts it again,
+  // and this page waits until it has gone away and come back.
+  function confirmRestart(){
+    const err=el('p','','kn-error');
+    const go=btn('Restart','primary',async()=>{go.disabled=true;err.textContent='';try{const r=await post({action:'restart'});d.close();await rejoin(r.note);}catch(e){err.textContent=e.message;go.disabled=false;}});
+    const acts=el('div',undefined,'mg-actions end');acts.append(btn('Cancel','',()=>d.close()),go);
+    const d=dialog('Restart the hub?',el('p','It is away for a few seconds. Workers and agents reconnect on their own.'),err,acts);
+  }
+  async function rejoin(note){
+    status.textContent=note||'Restarting…';
+    const up=async()=>{try{const r=await fetch(API+'?view=user',{cache:'no-store'});return r.ok;}catch{return false;}};
+    const wait=ms=>new Promise(r=>setTimeout(r,ms));
+    const t0=Date.now();
+    while(Date.now()-t0<20000&&await up())await wait(700);   // until it has gone
+    while(Date.now()-t0<180000){if(await up()){location.reload();return;}await wait(1500);}
+    status.textContent='The hub has not come back after 3 minutes. Check its service.';
   }
 
   async function get(params){const r=await fetch(API+'?'+new URLSearchParams(params));const d=await r.json().catch(()=>({error:'Bad response'}));if(d.csrf)csrf=d.csrf;if(d.admin!==undefined)admin=d.admin;if(!r.ok||d.error)throw Error(d.error||'Request failed');return d;}

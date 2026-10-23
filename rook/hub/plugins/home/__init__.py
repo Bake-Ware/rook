@@ -1454,6 +1454,15 @@ class HomeAgent(Plugin):
             raise PermissionError(str(e)) from None
         return f"{said['who']} via {getattr(p, 'label', '') or p.id}"
 
+    def chat_brief(self) -> dict:
+        """What the dashboard's chat dock needs to know: whether a person can
+        chat with the agent now, and how long a reply may take."""
+        cfg = self.config()
+        timeout = cfg.get("agent_timeout_s") if self.use_agent_host(cfg) else cfg.get("timeout_s")
+        return {"enabled": self.enabled(), "identity": self.identity, "name": self.agent_name,
+                "missing": self.missing(cfg), "chat": self._store() is not None,
+                "timeout": float(timeout or 90)}
+
     @capability("status", risk="read")
     def status(self) -> dict:
         """Whether the home agent is on, its identity, endpoint host and model,

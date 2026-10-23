@@ -3598,15 +3598,22 @@ def _cli_main() -> None:
     server = server_from_args(args, sys.argv[1:])
 
     async def _run() -> None:
+        from ..core import restart
+        stop = asyncio.Event()
+        unregister_restart = restart.on_restart(stop.set)   # Settings > Restart
         await server.start()
         try:
-            await asyncio.Event().wait()
+            await stop.wait()
         except (KeyboardInterrupt, asyncio.CancelledError):
             pass
         finally:
+            unregister_restart()
             await server.stop()
 
     asyncio.run(_run())
+    from ..core import restart
+    if restart.requested():
+        sys.exit(restart.EXIT_CODE)
 
 
 if __name__ == "__main__":

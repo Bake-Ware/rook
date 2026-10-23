@@ -45,6 +45,8 @@ from typing import Any
 
 from aiohttp import web
 
+from ..core import restart
+
 log = logging.getLogger("rook.hub.serve")
 
 # What a public hub's reverse proxy sends to the MCP server rather than the
@@ -445,11 +447,13 @@ async def serve(args, argv: list[str], stop: asyncio.Event | None = None) -> Non
         except (NotImplementedError, RuntimeError, ValueError):
             pass   # Windows / not the main thread: Ctrl-C still cancels
     hub = Hub(args, argv)
+    unregister_restart = restart.on_restart(stop.set)   # Settings > Restart
     try:
         await hub.start()
         await stop.wait()
-        log.info("rook hub: stopping")
+        log.info("rook hub: %s", "restarting" if restart.requested() else "stopping")
     finally:
+        unregister_restart()
         await hub.stop()
         for sig in handled:
             loop.remove_signal_handler(sig)
@@ -473,6 +477,8 @@ def main(argv: list[str] | None = None) -> None:
         asyncio.run(serve(args, argv))
     except KeyboardInterrupt:
         pass
+    if restart.requested():
+        sys.exit(restart.EXIT_CODE)
 
 
 if __name__ == "__main__":

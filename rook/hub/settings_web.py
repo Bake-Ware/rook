@@ -12,6 +12,7 @@ import logging
 
 from starlette.routing import Route
 
+from ..core import restart
 from ..remote.account_api import account_api, json_reply
 from .settings_service import SettingsError
 
@@ -19,6 +20,18 @@ log = logging.getLogger("rook.hub.settings_web")
 
 
 _json = json_reply
+
+
+def _restart(actor: str) -> dict:
+    """Settings > Restart (operator): this process stops and its service
+    manager starts it again (rook/core/restart.py)."""
+    if not restart.available():
+        raise SettingsError("This hub can't restart itself from here: restart its service.")
+    why = restart.supervised()
+    if why:
+        raise SettingsError(f"Not restarted: {why}.")
+    restart.request(actor)
+    return {"ok": True, "note": "Restarting. The page reconnects when the hub is back."}
 
 
 def _persona(svc):
@@ -162,8 +175,10 @@ def routes(get_service, accounts):
                 res = await _llm(svc).page_action(svc, data, actor)
             elif str(action or "").startswith("memory_"):
                 res = await _memory(svc).page_action(data, actor)
+            elif action == "restart":
+                res = _restart(actor)
             else:
-                return _json({"error": "Use set, dry_run, reset, apply_worker, plugin or "
+                return _json({"error": "Use set, dry_run, reset, apply_worker, plugin, restart or "
                                        "persona_*, home_*, memory_*, voice_* or llm_*"}, 400)
             return _json(res)
         except PermissionError as e:

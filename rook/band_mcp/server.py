@@ -31,6 +31,7 @@ from pydantic import AnyHttpUrl
 
 from ..core.devices import is_device
 from ..core import names as _names
+from ..core import restart as _restart
 from .client import BandClient, MultiBandClient
 from .tokens import StoreTokenVerifier, TokenStore
 
@@ -2085,7 +2086,12 @@ async def _amain(args) -> None:
         server = uvicorn.Server(config)
         log.info("rook-band-mcp serving on http://%s:%d/mcp",
                  args.bind_host, args.bind_port)
-        await server.serve()
+        # Settings > Restart: stop like a SIGTERM, then exit for systemd to restart.
+        unregister_restart = _restart.on_restart(lambda: setattr(server, "should_exit", True))
+        try:
+            await server.serve()
+        finally:
+            unregister_restart()
     finally:
         enrollment_task.cancel()
         try:
@@ -2179,6 +2185,8 @@ def main() -> None:
     args.bind_port = int(bind_port or 8765)
 
     asyncio.run(_amain(args))
+    if _restart.requested():
+        sys.exit(_restart.EXIT_CODE)
 
 
 if __name__ == "__main__":
