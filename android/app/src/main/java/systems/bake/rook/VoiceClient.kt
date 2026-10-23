@@ -67,8 +67,8 @@ class VoiceClient(
     private var playThread: Thread? = null
     private var http: OkHttpClient? = null
     private val preroll = ArrayDeque<ByteArray>()
-    private var speechFrames = 0
-    private var quietFrames = 0
+    // Barge-in decisions; touched under audioLock. Confirm mode only once the session echoed it.
+    private val gate = BargeGate()
     @Volatile private var paused = false
     private var pausedAt = 0L
     val isRunning get() = running
@@ -108,6 +108,8 @@ class VoiceClient(
                     // (battery, location, calendar, mail). Other keys ignore it server-side.
                     .apply { prefs.getString("name", null)?.takeIf { it.isNotBlank() }?.let { put("device", it) } }
                     .put("conversation", conversation).put("aec", aec)
+                    // Confirmed barge-in: hold playback on local speech, the server resumes or interrupts.
+                    .put("barge", "confirm")
                     .put("mode", mode.id).apply { if (modePrompt.isNotBlank()) put("mode_prompt", modePrompt) }
                     .apply { if (thinking) put("thinking", true) }.toString())
                 webSocket.send(JSONObject().put("type", "voice")
@@ -130,6 +132,7 @@ class VoiceClient(
                     "decision" -> if (thinking) Decision.parse(m)?.let { listener.onDecision(it) }
                     "session" -> {
                         protocol = m.optInt("protocol", 1)
+                        gate.confirm = protocol >= 2 && m.optString("barge") == "confirm"
                         val echoed = if (m.has("mode")) m.optString("mode") else null
                         if (!VoiceModes.sessionModeMatches(mode.id, echoed)) {
                             refuse(VoiceModes.mismatchMessage(mode.id, echoed)); return
@@ -142,6 +145,8 @@ class VoiceClient(
                     "assistant_done" -> if (!waitingInterrupt) listener.onAssistantDone()
                     "audio_sr" -> { outSr = m.optInt("sr", 24000).coerceIn(8000,48000); outputTurn = m.optInt("turn", 0) }
                     "interrupt" -> { minimumTurn = m.optInt("turn", minimumTurn); flush(); waitingInterrupt = false; listener.onInterrupt() }
+                    // Held barge was not real speech (empty transcript): carry on where the reply paused.
+                    "resume" -> synchronized(audioLock) { if (gate.resume()) unpause() }
                     "bye" -> listener.onBye(m.optString("mode", "sleep"), m.optLong("after_ms", 0))
                     "tool" -> listener.onTool(m.optString("title"), m.optString("status"))
                     "error" -> if (m.optString("code") == "unknown_mode") { refuse(m.optString("msg")); return } else listener.onError(m.optString("msg"))
@@ -156,7 +161,10 @@ class VoiceClient(
                 if (turn < minimumTurn) return
                 val pcm = if (framed) raw.copyOfRange(8,raw.size) else raw
                 if (pcm.size > 19200 || pcm.size % 2 != 0) return
-                playingUntil = maxOf(playingUntil, SystemClock.elapsedRealtime()) + pcm.size * 1000L / (2*outSr)
+                // Queued even while held: the server pauses its stream, a resume plays the rest.
+                synchronized(audioLock) {
+                    playingUntil = BargeGate.extendedUntil(playingUntil, SystemClock.elapsedRealtime(), if (paused) pausedAt else null, pcm.size * 1000L / (2*outSr))
+                }
                 if (!queue.offer(Packet(turn,outSr,pcm))) { listener.onError("Voice playback fell behind; reconnecting"); close() }
             }
             override fun onFailure(webSocket: WebSocket, error: Throwable, response: Response?) {
@@ -181,29 +189,47 @@ class VoiceClient(
     fun pushFrame(buf: ByteArray, len: Int = buf.size, speech: Boolean = false) {
         if (!running || !connected || len != FRAME_BYTES) return
         preroll.addLast(buf.copyOf(len)); while (preroll.size > 25) preroll.removeFirst()
-        if (isPlaying || paused) {
-            if (!aec || protocol < 2) return
-            if (speech) { speechFrames++; quietFrames = 0 } else { quietFrames++; speechFrames = 0 }
-            if (speechFrames >= 8 && !paused) synchronized(audioLock) { paused = true; pausedAt = SystemClock.elapsedRealtime(); track?.pause() }
-            if (speechFrames >= 18) {
+        val now = SystemClock.elapsedRealtime()
+        val decision = synchronized(audioLock) {
+            // Held with neither resume nor interrupt: drop the reply locally, mic stays live.
+            if (gate.expired(now)) flush()
+            when (val d = gate.frame(speech, isPlaying, paused, aec && protocol >= 2, now)) {
+                BargeGate.Frame.PAUSE -> { paused = true; pausedAt = now; track?.pause(); d }
+                BargeGate.Frame.UNPAUSE -> { unpause(); d }
+                BargeGate.Frame.HOLD -> { if (!paused) { paused = true; pausedAt = now; track?.pause() }; d }
+                else -> d
+            }
+        }
+        when (decision) {
+            BargeGate.Frame.BARGE -> {
                 waitingInterrupt = true
                 flush()
                 ws?.send(JSONObject().put("type", "speech_start").toString())
                 while (preroll.isNotEmpty()) ws?.send(preroll.removeFirst().toByteString())
-                speechFrames = 0; quietFrames = 0
                 return
             }
-            if (paused && quietFrames >= 10) synchronized(audioLock) {
-                playingUntil += SystemClock.elapsedRealtime() - pausedAt
-                paused = false; track?.play()
+            // Playback stays paused with its queue; the server decides resume or interrupt.
+            BargeGate.Frame.HOLD -> {
+                ws?.send(JSONObject().put("type", "speech_start").put("hold", true).toString())
+                while (preroll.isNotEmpty()) ws?.send(preroll.removeFirst().toByteString())
+                return
             }
-            // Send no echo-bearing audio until the local speech gate confirms barge-in.
-            return
+            BargeGate.Frame.SEND -> {}
+            else -> return
         }
-        speechFrames = 0; quietFrames = 0
         val socket = ws ?: return
         if (socket.queueSize() > 640 * 100) { close(); return }
         socket.send(buf.toByteString(0,len))
+    }
+    /** Caller holds audioLock. Paused time does not count against the reply's remaining audio. */
+    private fun unpause() {
+        if (!paused) return
+        playingUntil = BargeGate.resumedUntil(playingUntil, pausedAt, SystemClock.elapsedRealtime())
+        paused = false; track?.play()
+    }
+    /** Hold safety when the mic stops feeding frames; runs on the player thread. */
+    private fun holdExpired() = synchronized(audioLock) {
+        gate.expired(SystemClock.elapsedRealtime()).also { if (it) flush() }
     }
     private fun enqueue(m: JSONObject) {
         if (connected) ws?.send(m.toString()) else if (!outbox.offer(m.toString())) listener.onError("Too many pending voice messages")
@@ -229,7 +255,7 @@ class VoiceClient(
         listener.onClosed()
     }
     private fun flush() = synchronized(audioLock) {
-        queue.clear(); playingUntil = 0; paused = false
+        queue.clear(); playingUntil = 0; paused = false; gate.clear()
         try { track?.pause(); track?.flush(); track?.play() } catch (_: Exception) {}
         trackTurn = -1
     }
@@ -237,12 +263,13 @@ class VoiceClient(
         playThread = thread(name="voice-play") {
             try {
                 while (running) {
-                    val packet = queue.poll(200,TimeUnit.MILLISECONDS) ?: continue
+                    val packet = queue.poll(200,TimeUnit.MILLISECONDS)
+                    if (packet == null) { holdExpired(); continue }
                     var offset = 0
                     while (running && offset < packet.bytes.size) {
                         val written = synchronized(audioLock) {
                             if (waitingInterrupt || packet.turn < minimumTurn) -1
-                            else if (paused) 0
+                            else if (paused) { if (gate.held && holdExpired()) -1 else 0 }
                             else {
                                 var t = track
                                 if (t == null || trackSr != packet.sr) {
