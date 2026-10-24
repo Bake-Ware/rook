@@ -590,6 +590,10 @@ async def test_strictness_is_judged_again_when_the_answer_comes(env):
     res = await e.route("card", turn, answer="yes")
     assert res.get("confirm") == prop["id"]
     assert "(read exactly)" in e.last_say()["text"]
+    # The read-back says the change as it now reads, not as it read before.
+    cur = e.cards.current("house")["cur"]
+    assert cur["readback"].startswith("Add a sacred trust entry called rook-hub")
+    assert cur["readback"] in e.last_say()["text"]
     await disconnect(task, e.host)
 
 

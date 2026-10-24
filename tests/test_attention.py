@@ -766,3 +766,12 @@ async def test_the_apps_own_busy_and_a_spoken_outcome_read_right(att):
     await att.att.service.tick()
     st = (await att.node.dispatch("attention.status", {}, "agent"))["result"]["reminders"]
     assert st["last_outcome"] == "spoken"
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_never_counts_as_spoken(att):
+    speaking(att)
+    att.phone.remind_reply = {"accepted": False, "reason": "spoken"}
+    hold(att.ap)
+    await att.att.service.tick()
+    assert att.att.service.state["remind"]["last_outcome"] == "busy"

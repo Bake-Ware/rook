@@ -391,7 +391,7 @@ class CardPass:
             # dashboard): judged again now, so a change that became a loosening is read back.
             d = self.describe(it)
             cur["strict"] = bool(d["loosens"] or d["sacred"])
-            cur["readback"] = cur.get("readback") or d["readback"]
+            cur["readback"] = d["readback"]       # the change as it reads against today's map
         if ans in ("yes", "choose") and cur["strict"] and cur["stage"] == "ask":
             cur.update(stage="confirm", word=secrets.choice(WORDS), tries=0,
                        first_yes=" ".join(str(heard.get("text") or "").split())[:300])
