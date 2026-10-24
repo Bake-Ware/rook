@@ -42,6 +42,10 @@ OPTIONS_MAX = 6
 # Answered questions stay listed (unpinned) this long, so the asker and the
 # person can see what was decided.
 ANSWERED_KEEP = 3 * 86400
+# Rows (aliased ``c``) whose huddle is not archived. A row with no huddle row
+# still counts: only an archive puts an item away, never a missing row.
+_NOT_ARCHIVED = ("NOT EXISTS (SELECT 1 FROM huddles h WHERE h.room=c.room "
+                 "AND h.archived IS NOT NULL)")
 
 
 def _text(value, what, limit=TEXT_MAX, required=False) -> str:
@@ -269,8 +273,11 @@ class HuddleStore:
         return names.with_name(self._card(rows[0]), self.name("card", cid)) if rows else None
 
     def pending_cards(self) -> list[dict]:
-        """Every card waiting for a person, in every huddle, oldest first."""
-        rows = self._q("SELECT * FROM huddle_cards WHERE state='proposed' ORDER BY created")
+        """Every card waiting for a person, oldest first, in every huddle
+        that is not archived (an archived one keeps its cards: unarchiving
+        brings them back)."""
+        rows = self._q("SELECT * FROM huddle_cards c WHERE state='proposed' AND "
+                       + _NOT_ARCHIVED + " ORDER BY created")
         named = self.names("card", [r["id"] for r in rows])
         return [names.with_name(self._card(r), named.get(r["id"])) for r in rows]
 
@@ -323,9 +330,11 @@ class HuddleStore:
         return names.with_name(self._question(rows[0]), self.name("ask", str(seq))) if rows else None
 
     def open_questions(self) -> list[dict]:
-        """Every question still pinned, in every huddle, oldest first."""
+        """Every question still pinned, oldest first, in every huddle that is
+        not archived (as :meth:`pending_cards`)."""
         rows = [self._question(r) for r in self._q(
-            "SELECT * FROM huddle_questions WHERE state='open' ORDER BY seq")]
+            "SELECT * FROM huddle_questions c WHERE state='open' AND " + _NOT_ARCHIVED
+            + " ORDER BY seq")]
         named = self.names("ask", [str(q["id"]) for q in rows])
         return [names.with_name(q, named.get(str(q["id"]))) for q in rows]
 
@@ -357,6 +366,12 @@ class HuddleStore:
     def withdraw(self, seq: int, asker: str) -> bool:
         return self._x("UPDATE huddle_questions SET state='withdrawn',answered=? WHERE seq=? AND asker=? "
                        "AND state='open'", (time.time(), int(seq), asker)) == 1
+
+    def waiting(self, room: str) -> int:
+        """Cards (not notes) and questions in ``room`` that wait on the person."""
+        return self._q("SELECT (SELECT count(*) FROM huddle_cards WHERE room=? AND state='proposed' "
+                       "AND kind<>'note') + (SELECT count(*) FROM huddle_questions WHERE room=? "
+                       "AND state='open') n", (room, room))[0]["n"]
 
     def set_wake(self, seq: int, info: dict) -> None:
         self._x("UPDATE huddle_questions SET wake=? WHERE seq=?", (json.dumps(info), int(seq)))
@@ -579,6 +594,9 @@ class HuddleService:
         task = _text(data.get("task"), "task", 200)
         extra = self._question_data(data, task)
         h = await self.resolve(identity, **where)
+        if h.get("archived"):
+            # Its questions do not reach the person: refuse, never pin unseen.
+            raise ValueError("that huddle is archived; unarchive it to ask there")
         opts = extra.get("options")
         sent = self._send(h["room"], identity, "Question: " + question
                           + (" (options: " + " / ".join(opts) + ")" if opts else ""), [PERSON], True)
@@ -690,11 +708,19 @@ class HuddleService:
         from ....core.text import clip
         return self._chair().on_report(h, room, owner, sender, clip(str(text or ""), 7900), word)
 
-    def archive(self, room: str, archived: bool = True) -> dict:
+    def archive(self, room: str, archived: bool = True, by: str = "") -> dict:
+        """Archive (or unarchive) a huddle. Archiving puts its waiting cards
+        and questions away from the person (kept, never expired), so while
+        anything waits only a person (``by`` user:/human:) archives it."""
         room = self.room_id(room)[0] if room else room
         h = self._live(self.store.get(room)) if room else None
         if h is None:
             raise ValueError(f"{room!r} is not a huddle")
+        waiting = self.store.waiting(room) if archived else 0
+        if waiting and str(by or "").split(":", 1)[0] not in ("user", "human"):
+            raise PermissionError(f"{waiting} card(s) or question(s) in that huddle wait on the "
+                                  "person: only they archive it (the Huddles page), or decide "
+                                  "them first")
         self.store.set_archived(room, bool(archived))
         return self._named({"room": room, "archived": bool(archived)}, room)
 

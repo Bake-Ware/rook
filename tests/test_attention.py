@@ -12,7 +12,8 @@ from starlette.testclient import TestClient as ASGIClient
 
 from rook.hub.plugins.attention.service import AttentionService
 from tests.test_huddle_chair import hub as chair_hub  # noqa: F401
-from tests.test_relay import FAST, hold, hub  # noqa: F401
+from tests.test_huddle_chair import GUEST, _call
+from tests.test_relay import FAST, card_and_ask, hold, hub  # noqa: F401
 
 PHONE = "w-phone"
 
@@ -128,6 +129,7 @@ async def test_new_items_are_posted_once_and_gone_items_are_withdrawn(att):
     card = att.phone.cards[plain["id"]]
     assert card["kind"] == "hold" and card["channel"] == "approvals"
     assert card["urgency"] == "normal" and card["actions"] == ["yes", "no", "explain"]
+    assert card["expires_at"] == 0                        # never expires on the phone
     # The plain ask: a title as the line, For/Who/I want to/Risk as the body, the
     # technical detail (cap, worker, hold id) only behind Explain.
     assert card["line"] == "Restart nginx"
@@ -148,7 +150,7 @@ async def test_new_items_are_posted_once_and_gone_items_are_withdrawn(att):
     assert len(att.phone.posts) == 2                      # never re-rung
     att.ap.decide(plain["id"], True, "human:bake", scope="call")
     await att.att.service.tick()
-    assert (plain["id"], "gone", "Decided or expired elsewhere.") in att.phone.updates
+    assert (plain["id"], "gone", "No longer waiting on you.") in att.phone.updates
     assert plain["id"] not in att.att.service.state["devices"][PHONE]["posted"]
     # A restart does not re-ring what the phone already has.
     fresh = AttentionService(att.att.service.path, att.att.service._settings,
@@ -389,3 +391,44 @@ async def test_a_phone_whose_log_restarted_is_read_from_the_start_and_reposted(a
     assert item["id"] in att.phone.cards and len(att.phone.posts) == 2
     sig = att.att.service.state["signals"][-1]
     assert sig["type"] == "seen" and sig["id"] == item["id"]
+
+
+@pytest.mark.asyncio
+async def test_archiving_a_huddle_withdraws_its_cards_and_unarchiving_posts_them_again(att):
+    att.configure()
+    h = await card_and_ask(att)
+    await att.att.service.tick()
+    ids = {i["id"] for i in att.relay.items()}
+    assert len(ids) == 2 and ids <= set(att.phone.cards)
+    await _call(att, "huddle.archive", {"huddle": h["room"]})
+    await att.att.service.tick()
+    assert {(i, s) for i, s, _ in att.phone.updates} == {(i, "gone") for i in ids}
+    assert not att.att.service.state["devices"][PHONE]["posted"]
+    await att.att.service.tick()
+    assert len(att.phone.posts) == 2                      # never re-rung while archived
+    await _call(att, "huddle.archive", {"huddle": h["room"], "archived": False}, GUEST)
+    await att.att.service.tick()
+    assert [p["id"] for p in att.phone.posts[2:]] and {p["id"] for p in att.phone.posts[2:]} == ids
+
+
+@pytest.mark.asyncio
+async def test_a_failed_card_is_withdrawn_from_the_phone_and_never_posted_again(att, monkeypatch):
+    att.configure()
+    h = await card_and_ask(att)
+    await att.att.service.tick()
+    card = next(i for i in att.relay.items() if i["kind"] == "card")
+    orig = att.band.call
+
+    async def call(cap, args=None, target=None, *a, **kw):
+        if cap == "info.ping":
+            return {"ok": False, "error": "box is unreachable"}
+        return await orig(cap, args, target, *a, **kw)
+    monkeypatch.setattr(att.band, "call", call)
+    out = await _call(att, "huddle.card", {"huddle": h["room"], "card": card["id"],
+                                           "action": "approve"})
+    assert out["state"] == "failed"
+    await att.att.service.tick()
+    await att.att.service.tick()
+    assert (card["id"], "gone") in {(i, s) for i, s, _ in att.phone.updates}
+    assert [p["id"] for p in att.phone.posts].count(card["id"]) == 1
+

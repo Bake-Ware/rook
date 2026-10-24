@@ -315,6 +315,67 @@ async def test_relayed_card_and_question_decisions_reach_the_role_and_the_asker(
 
 
 @pytest.mark.asyncio
+async def test_an_archived_huddles_cards_and_questions_are_put_away_never_expired(hub):
+    """Bake 2026-10-23: stale cards from archived huddles stay off his phone and
+    lists; nothing is deleted or expired, and unarchiving brings them back."""
+    h = await card_and_ask(hub)
+    other = await _call(hub, "huddle.write", {"action": "ask", "text": "Elsewhere?"}, GUEST)
+    assert other["room"] != h["room"]
+    hub.ap.queue.set_relayer(CLAUDE.id, True, "human:bake", "Claude web")
+    before = {i["id"] for i in hub.relay.items()}
+    assert len(before) == 3
+    # While they wait, an agent cannot put them away; a person can.
+    res = await hub.node.dispatch("huddle.archive", {"huddle": h["room"]}, GUEST)
+    assert not res["ok"] and "only they archive it" in res["error"]
+    assert {i["id"] for i in hub.relay.items()} == before
+    await _call(hub, "huddle.archive", {"huddle": h["room"]})
+    left = hub.relay.items()
+    assert [(i["kind"], i["room"]) for i in left] == [("ask", other["room"])]
+    res = await cap(hub, "approvals.list", {})
+    assert res["result"]["count"] == 1 and "Elsewhere?" in res["result"]["items"][0]["what"]
+    assert [c["state"] for c in hub.svc.store.cards(h["room"])] == ["proposed"]
+    assert [q["state"] for q in hub.svc.store.questions(h["room"])] == ["open"]
+    hidden = next(i for i in before if i not in {x["id"] for x in left} and i.startswith("c_"))
+    res = await cap(hub, "approvals.relay", {"item": hidden, "decision": "approve",
+                                             "relayed_by": SAID})
+    assert not res["ok"]
+    # Nothing new waits unseen in it: asking and proposing there are refused.
+    res = await hub.node.dispatch("huddle.write", {"action": "ask", "room": h["room"],
+                                                   "text": "Still there?"}, GUEST)
+    assert not res["ok"] and "archived" in res["error"]
+    res = await hub.node.dispatch("huddle.card", {"huddle": h["room"], "action": "propose", "data": {
+        "kind": "job.run", "summary": "Ping it", "worker": "box", "cap": "info.ping",
+        "args": {}}}, GUEST)
+    assert "archived" in json.dumps(res) and len(hub.svc.store.cards(h["room"])) == 1
+    # Retention never touches a huddle that is not archived, and nothing expires.
+    assert hub.node.plugin("huddle").sweep() == []
+    # Anyone may bring it back; the same items wait again.
+    await _call(hub, "huddle.archive", {"huddle": h["room"], "archived": False}, GUEST)
+    assert {i["id"] for i in hub.relay.items()} == before
+
+
+@pytest.mark.asyncio
+async def test_a_failed_card_never_reaches_the_person(hub, monkeypatch):
+    h = await card_and_ask(hub)
+    hub.ap.queue.set_relayer(CLAUDE.id, True, "human:bake", "Claude web")
+    card = next(i for i in hub.relay.items() if i["kind"] == "card")
+    orig = hub.band.call
+
+    async def call(c, args=None, target=None, *a, **kw):
+        if c == "info.ping":
+            return {"ok": False, "error": "box is unreachable"}
+        return await orig(c, args, target, *a, **kw)
+    monkeypatch.setattr(hub.band, "call", call)
+    out = await _call(hub, "huddle.card", {"huddle": h["room"], "card": card["id"],
+                                           "action": "approve"})
+    assert out["state"] == "failed" and hub.svc.store.card(card["id"])["state"] == "failed"
+    assert [i["kind"] for i in hub.relay.items()] == ["ask"]
+    assert not hub.svc.store.pending_cards()
+    res = await cap(hub, "approvals.list", {"kind": "card"})
+    assert res["ok"] and res["result"]["count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_an_approved_card_runs_as_the_relaying_agent_and_says_who_relayed_it(hub):
     """Never as a person: the agent's own policy, holds and admin gates apply."""
     h = await card_and_ask(hub)

@@ -1109,6 +1109,9 @@ class Chair:
         why = self.check_call(card)
         if why:
             return {"ok": False, "error": f"not proposed: {why}"}
+        if (self.store.get(room) or {}).get("archived"):
+            # Its cards do not reach the person: refuse, never wait unseen.
+            return {"ok": False, "error": "not proposed: that huddle is archived"}
         waiting = [c for c in self.store.cards(room) if c["state"] == "proposed"]
         target = str(raw.get("revise") or "").strip()
         if target:

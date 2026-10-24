@@ -466,7 +466,8 @@ def routes(get_node: Callable[[], Any], accounts):
                                         principal_for_user(user, True),
                                         reason=str(data.get("reason") or "")[:500])
             elif action == "archive":
-                result = svc.archive(str(data.get("room") or ""), bool(data.get("archived", True)))
+                result = svc.archive(str(data.get("room") or ""), bool(data.get("archived", True)),
+                                     "human:" + str(user.get("username") or user["id"]))
             elif action == "roles":
                 rp, home, hp = plugin("role"), plugin("home"), plugin("huddle")
                 defaults = list((hp.settings.get("default_roles") if hp is not None else None)
