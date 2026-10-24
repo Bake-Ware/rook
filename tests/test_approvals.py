@@ -607,11 +607,14 @@ def test_message_text_is_short_and_has_no_args(tmp_path):
     ap = A.Approvals(str(tmp_path / "a.db"), FAST)
     h = make_hold(ap)
     text = message([h], "https://hub.example.org/#approvals")
-    assert text == ("Rook: claude code wants to run worker.update on nas. Approve on the "
-                    "dashboard: https://hub.example.org/#approvals")
-    assert question(h) == "Rook: claude code wants to run worker update on nas. Approve?"
+    # The plain ask (rook/hub/plain.py): title, for, who, risk; never the args.
+    assert text == ("Rook: Update nas. For: no task. Who: claude code. Risk: High: it changes who "
+                    "can do what or band-wide settings. Approve on the dashboard: "
+                    "https://hub.example.org/#approvals")
+    assert question(h) == ("Rook: claude code asks to update nas. Risk: High: it changes who can "
+                           "do what or band-wide settings. Approve?")
     many = message([h] * 7)
-    assert many.startswith("Rook: 7 calls are waiting") and "and 2 more" in many
+    assert many.startswith("Rook: 7 asks are waiting") and "and 2 more" in many
 
 
 @pytest.mark.asyncio
@@ -623,12 +626,12 @@ async def test_notifications_are_coalesced(tmp_path):
         ap.contact.hold_created(make_hold(ap, target=t))
     await asyncio.sleep(0.05)
     sends = [c for c in client.calls if c["cap"] == "notify.send"]
-    assert len(sends) == 1 and "worker.update on nas" in sends[0]["args"]["text"]
+    assert len(sends) == 1 and "Rook: Update nas. For: no task" in sends[0]["args"]["text"]
     assert sends[0]["target"] == "hub1" and sends[0]["principal"] == "system:approvals"
     await asyncio.sleep(0.4)
     await settle(ap.contact)
     sends = [c for c in client.calls if c["cap"] == "notify.send"]
-    assert len(sends) == 2 and sends[1]["args"]["text"].startswith("Rook: 2 calls are waiting")
+    assert len(sends) == 2 and sends[1]["args"]["text"].startswith("Rook: 2 asks are waiting")
 
 
 @pytest.mark.asyncio
@@ -691,7 +694,8 @@ async def test_voice_yes_approves(tmp_path):
     ask = client.calls[0]
     assert ask["cap"] == "voice.speak" and ask["args"]["reply"] and ask["target"] == "p1"
     assert ask["principal"] == "system:approvals"
-    assert ask["args"]["text"] == "Rook: claude code wants to run worker update on nas. Approve?"
+    assert ask["args"]["text"] == ("Rook: claude code asks to update nas. Risk: High: it changes "
+                                   "who can do what or band-wide settings. Approve?")
     assert not [c for c in client.calls if c["cap"] == "notify.send"]
     row = next(r for r in rows if r["cap"] == "approval.decide")
     assert row["identity"] == "voice:phone" and row["reply"]["heard"] == "Yes, go ahead."

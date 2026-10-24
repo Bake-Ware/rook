@@ -87,6 +87,28 @@ gated_caps: contextvars.ContextVar[frozenset] = contextvars.ContextVar("rook_hol
 #: destructive hold (operator hold rules and the spread limit still apply).
 own_resource: contextvars.ContextVar[bool] = contextvars.ContextVar("rook_hold_own_resource",
                                                                     default=False)
+#: What a hold made in this call is for, in the caller's words and records
+#: (``{task, task_title, project, why, room, room_title, huddle, job}``, or a
+#: callable returning that, called only when a hold is made): ``rook_call``
+#: sets the caller's claimed task and its ``why``, a console write its room,
+#: a job run its job, a huddle card its huddle. Kept with the hold so the
+#: person sees "For:" and "Why:" (rook/hub/plain.py).
+hold_context: contextvars.ContextVar[Any] = contextvars.ContextVar("rook_hold_context",
+                                                                  default=None)
+CONTEXT_KEYS = ("task", "task_title", "project", "why", "room", "room_title", "huddle", "job")
+CONTEXT_MAX = 300
+
+
+def clean_context(ctx: Any) -> dict:
+    """The known keys of a hold context, as short strings (``{}`` for none)."""
+    if not isinstance(ctx, dict):
+        return {}
+    out = {}
+    for k in CONTEXT_KEYS:
+        v = ctx.get(k)
+        if isinstance(v, (str, int, float)) and str(v).strip():
+            out[k] = " ".join(str(v).split())[:CONTEXT_MAX]
+    return out
 
 
 class HoldError(ValueError):
@@ -453,6 +475,11 @@ def _row(r: Any) -> dict:
     raw = d.pop("args_json")
     d["args"] = json.loads(raw) if raw else {}
     d["is_hub"] = bool(d.get("is_hub"))
+    raw = d.pop("context_json", None)
+    try:
+        d["context"] = clean_context(json.loads(raw)) if raw else {}
+    except ValueError:
+        d["context"] = {}
     return d
 
 
@@ -475,6 +502,9 @@ class ApprovalQueue:
                     secure_file(self.path)
                     with transaction(self.path, begin=None, timeout=_DB_TIMEOUT, wal=True) as db:
                         db.executescript(_SCHEMA)
+                        cols = {r[1] for r in db.execute("PRAGMA table_info(holds)")}
+                        if "context_json" not in cols:
+                            db.execute("ALTER TABLE holds ADD COLUMN context_json TEXT")
                         names.ensure_table(db)
                     self._ready = True
         return transaction(self.path, begin="IMMEDIATE" if write else None,
@@ -503,7 +533,7 @@ class ApprovalQueue:
                via: tuple = (), tags: tuple = (), target_id: str | None = None,
                target_name: str = "", is_hub: bool = False, args: Any = None,
                reason: str = "", rule: str | None = None, kind: str = "default",
-               ttl: float = 600.0) -> tuple[dict, bool]:
+               ttl: float = 600.0, context: dict | None = None) -> tuple[dict, bool]:
         """A new pending hold, or the pending one for the identical call.
         Returns ``(hold, created)``."""
         self.sweep()
@@ -521,12 +551,13 @@ class ApprovalQueue:
             db.execute(
                 "INSERT INTO holds(id, state, kind, principal, principal_label, via_json, cap, "
                 "tier, tags_json, target_id, target_name, is_hub, args_json, args_hash, reason, "
-                "rule, created, expires) VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                "?, ?, ?, ?, ?)",
+                "rule, created, expires, context_json) VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, "
+                "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (hid, kind, principal, label or "", json.dumps(list(via)), cap, tier,
                  json.dumps(list(tags)), target_id, target_name or "", int(bool(is_hub)),
                  json.dumps(args, ensure_ascii=False, default=str), args_hash, reason, rule,
-                 now, now + ttl))
+                 now, now + ttl,
+                 json.dumps(clean_context(context), ensure_ascii=False) if context else None))
             names.assign(db, "hold", hid)
             r = db.execute("SELECT * FROM holds WHERE id=?", (hid,)).fetchone()
         return self._named([_row(r)])[0], True
@@ -1001,7 +1032,8 @@ class Approvals:
             label=label, via=tuple(d.via), tags=tuple(d.tags), target_id=d.target,
             target_name=d.target_name, is_hub=bool(d.target_is_hub),
             args=display_args(source, d.cap), reason=d.hold_reason, rule=d.rule,
-            kind=d.hold_kind or "default", ttl=cfg.approval_secs)
+            kind=d.hold_kind or "default", ttl=cfg.approval_secs,
+            context=_scrubbed(hold_context.get()))
         if created:
             self.journal_hold(hold)
             try:
@@ -1117,13 +1149,39 @@ class Approvals:
             log.exception("journaling %s failed", cap)
 
 
+def _scrubbed(ctx: Any) -> dict | None:
+    """A hold context with known vault values masked (an agent's ``why`` is
+    free text)."""
+    if callable(ctx):
+        try:
+            ctx = ctx()
+        except Exception:  # noqa: BLE001 - a lookup failing never stops the hold
+            log.exception("approvals: hold context lookup failed")
+            ctx = None
+    ctx = clean_context(ctx)
+    if not ctx:
+        return None
+    try:
+        from ..band_mcp.secret_mask import scrub
+        return scrub(ctx)
+    except Exception:  # noqa: BLE001 - masking is best effort, as for args
+        return ctx
+
+
 def public(hold: dict, cfg: Config | None = None) -> dict:
-    """A hold as the Approvals page shows it."""
+    """A hold as the Approvals page shows it: the plain ask (rook/hub/plain.py)
+    first, the technical fields for Explain."""
     from .approval_contact import voice_eligible
+    from .plain import for_hold
     out = {k: hold.get(k) for k in ("id", "name", "state", "kind", "principal", "principal_label", "via",
                                     "cap", "tier", "tags", "target_id", "target_name", "args",
                                     "reason", "rule", "created", "expires", "decided_by",
-                                    "decided_at", "scope", "valid_until", "consumed_at", "note")}
+                                    "decided_at", "scope", "valid_until", "consumed_at", "note",
+                                    "context")}
+    try:
+        out["plain"] = for_hold(hold)
+    except Exception:  # noqa: BLE001 - a describing bug never hides a hold
+        log.exception("approvals: describing hold %s", hold.get("id"))
     out["worker"] = hold.get("target_name") or hold.get("target_id") or ""
     if hold.get("relayed"):
         out["relayed"] = hold["relayed"]

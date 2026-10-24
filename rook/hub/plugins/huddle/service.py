@@ -16,6 +16,7 @@ notice on its next MCP call) and, when its worker can be woken
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import threading
@@ -748,6 +749,11 @@ class HuddleService:
             cards = self.store.cards(room)
             self._attribute("card", [c for c in cards if c["state"] != "proposed"],
                             lambda c: c["id"])
+            from ...plain import card_item, describe
+            for c in cards:
+                if c["state"] == "proposed":
+                    with contextlib.suppress(Exception):
+                        c["plain"] = describe(card_item(c, h["title"]))
             out.update(roles=json.loads(h["roles"]), archived=h.get("archived"),
                        chair=self.chair.chair_identity() if self.chair is not None else None,
                        rounds=self.store.rounds(room, 10), cards=cards)

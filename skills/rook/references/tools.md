@@ -20,7 +20,7 @@ The tables are generated from the code by `tools/gen_skill_reference.py`; don't 
 | Tool | Args | Does |
 |---|---|---|
 | `rook_approvals` | action='summary', item?, relayed_by?, reason?, answer?, kind? | What waits on the person (holds, job holds, huddle cards, questions). summary \| list (kind?). approve/deny it… |
-| `rook_call` | cap, args?, worker_id?, worker?, timeout?, hint?, text? | Run a cap on one worker. worker= (name or id) is required. |
+| `rook_call` | cap, args?, worker_id?, worker?, timeout?, hint?, text?, why? | Run a cap on one worker. worker= (name or id) is required. |
 | `rook_caps` | prefix?, worker? | Caps and their holders: "*" = every worker, {all_but:[…]}, or names. prefix filters (e.g. "shell."); worker=… |
 | `rook_chat_delete` | room | Delete a room and its messages (participants only; final). |
 | `rook_chat_read` | room, since_seq? | Messages after since_seq (0 = all), marked read. |
@@ -654,7 +654,7 @@ Native plugins of the Android app's embedded worker, in place of (or beside) the
 |---|---|---|---|
 | `attention.feed` | limit=50 | exec | The phone's quiet feed, newest first: summaries of notifications it sorted as urgent, family or normal (never… |
 | `attention.poll` | since=0 | admin | Events after seq `since`: {events, last}; pass `last` next time. |
-| `attention.post` | id, kind='card', line='', explain='', urgency='normal', channel='approvals', actions?, source='', expires_at=0 | admin | Put a decision card on the phone; re-posting the same id updates it without ringing again. |
+| `attention.post` | id, kind='card', line='', explain='', urgency='normal', channel='approvals', actions?, source='', expires_at=0, body='' | admin | Put a decision card on the phone; re-posting the same id updates it without ringing again. |
 | `attention.rules_get` | — | exec | The notification rules in use: source default\|override and the rules document. |
 | `attention.rules_set` | rules? | admin | Replace the phone's notification rules. |
 | `attention.update` | id, state, message='' | admin | Show what happened after a decision: state done (brief confirmation, then the card closes), failed (shows mes… |

@@ -29,12 +29,27 @@ CHANNELS = ("urgent", "family", "approvals", "digest", "jobs")
 ACTIONS = ("yes", "no", "explain", "ack")
 STATES = ("done", "failed", "gone")
 LINE_MAX, EXPLAIN_MAX, ID_MAX = 140, 600, 64
+BODY_MAX, BODY_LINES = 600, 6
 RULES_MAX_BYTES = 64 * 1024
 
 
 def _clip(text, limit: int) -> str:
     text = " ".join(str(text or "").split()) if limit <= LINE_MAX else str(text or "").strip()
     return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
+
+
+def _body(text) -> str:
+    """Up to BODY_LINES short lines, newlines kept: each line's whitespace collapsed, blank lines
+    dropped, BODY_MAX characters in all, an ellipsis where it was cut."""
+    lines = [" ".join(raw.split()) for raw in str(text or "").splitlines()]
+    lines = [ln for ln in lines if ln]
+    cut = len(lines) > BODY_LINES
+    out = "\n".join(lines[:BODY_LINES])
+    if len(out) > BODY_MAX:
+        out, cut = out[:BODY_MAX - 1], True
+    if cut:
+        out = out.rstrip() + "…"
+    return out
 
 
 def _actions(value) -> list[str]:
@@ -49,7 +64,7 @@ def _actions(value) -> list[str]:
 
 
 def clean_post(id, kind="card", line="", explain="", urgency="normal", channel="approvals",
-               actions=None, source="", expires_at=0) -> dict:
+               actions=None, source="", expires_at=0, body="") -> dict:
     """Validate and normalize attention.post args. Raises ValueError."""
     cid = str(id or "").strip()
     if not cid or len(cid) > ID_MAX:
@@ -73,8 +88,9 @@ def clean_post(id, kind="card", line="", explain="", urgency="normal", channel="
         raise ValueError("expires_at must be epoch seconds") from None
     if exp != exp or exp < 0:
         raise ValueError("expires_at must be epoch seconds")
-    return {"id": cid, "kind": kind, "line": text, "explain": _clip(explain, EXPLAIN_MAX), "urgency": urgency,
-            "channel": channel, "actions": acts or ["ack"], "source": _clip(source, 80), "expires_at": exp}
+    return {"id": cid, "kind": kind, "line": text, "body": _body(body), "explain": _clip(explain, EXPLAIN_MAX),
+            "urgency": urgency, "channel": channel, "actions": acts or ["ack"], "source": _clip(source, 80),
+            "expires_at": exp}
 
 
 def clean_rules(rules) -> str:
@@ -139,12 +155,15 @@ class AndroidAttentionPlugin(Plugin):
     @capability("post", risk="admin", tags=("physical",))
     def _post(self, id: str, kind: str = "card", line: str = "", explain: str = "", urgency: str = "normal",
               channel: str = "approvals", actions: list | str | None = None, source: str = "",
-              expires_at: float = 0) -> dict:
+              expires_at: float = 0, body: str = "") -> dict:
         """Put a decision card on the phone; re-posting the same id updates it without ringing again.
 
         id: up to 64 chars, your handle for attention.update and the events.
-        kind: hold|job|card|ask|alert. line: one line of context (140 chars).
-        explain: 2-3 sentences shown on Explain (600 chars). urgency: urgent rings
+        kind: hold|job|card|ask|alert. line: the plain title (140 chars).
+        body: optional short lines always shown under the title, e.g. "For: ...",
+        "Who: ...", "I want to: ...", "Risk: ..." one per line (newlines kept,
+        blank lines dropped, at most 6 lines / 600 chars).
+        explain: the technical detail shown on Explain (600 chars). urgency: urgent rings
         like an alarm and takes over the screen (also channel=urgent); normal is a
         heads-up that opens the card when the phone is next unlocked.
         channel: urgent|family|approvals|digest|jobs. actions: subset of
@@ -153,7 +172,7 @@ class AndroidAttentionPlugin(Plugin):
         The answer comes back through attention.poll as a "decision" event.
         """
         try:
-            card = clean_post(id, kind, line, explain, urgency, channel, actions, source, expires_at)
+            card = clean_post(id, kind, line, explain, urgency, channel, actions, source, expires_at, body)
         except ValueError as e:
             return {"ok": False, "error": str(e)}
         return _call("post", json.dumps(card, ensure_ascii=False))

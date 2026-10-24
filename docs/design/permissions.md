@@ -889,6 +889,51 @@ strict and enable only clients the person trusts.
 
 ---
 
+### 3.13 Asks in plain words
+
+Every ask that reaches the person (a held call on the Approvals page, a
+phone decision card, `rook_approvals`, a huddle card or question, a job,
+trust, hub-host or spread hold, a house agent ask, the operator's
+Telegram/notify/voice message) has one shape, built by
+`rook/hub/plain.py` from the item (Bake, 2026-10-23: "A simple title, for
+what task(project) and like I want to xyz, the risk is abc"):
+
+| Field | From |
+|---|---|
+| Title | the cap's phrasing (`shell.exec` reads the command: sqlite3 with only SELECT is "Read X database", `systemctl restart u` is "Restart u") |
+| For | the caller's claimed task and its project (kept with the hold), else the huddle, job or console room; "no task" |
+| Who | the principal's label; roles as "the qa (huddle role)", jobs as "job <name>" |
+| I want to | one sentence from the cap, args and worker |
+| Why | `rook_call(why=...)`, a job's description, a card's summary |
+| Risk | Low/Medium/High from the call (read, change, destroy, admin; shell commands are judged from their text and said as "looks read-only") plus the hold kind (the trust entry's level, hub-host, spread) |
+| Explain | the cap, command or args, the hold reason and rule, the ids and three-word name: on demand only |
+
+The context travels in the `hold_context` contextvar
+(`rook/hub/approvals.py`), set by `rook_call` (claimed task, project, why),
+console writes (room), job steps (job, description) and huddle card runs
+(huddle, card summary), and is stored in `holds.context_json` (a nullable
+column added in place; older code ignores it). The args shown are the
+redacted display args, so the summary never sees a secret value.
+
+Two rules from the review (votes high-inch-gallery and gifted-organ-marigold):
+**read-only is earned, not guessed**: a shell command "looks read-only" only
+when it is a known read-only program with flags from that program's
+allowlist (`READ_ANY`, `READ_FLAGS`, `READ_SUBS`, git read subcommands
+without global options or program-running flags, `ip ... show`, curl with
+read flags and http(s) URLs, `gh api` without write flags, sqlite3 with
+plain SELECT/EXPLAIN, read pragmas, read dot commands and allowlisted
+functions or `-safe`), with no `NAME=value` prefix, no `env`/`ssh`, no
+wrapper options, no redirect into a file and no shell the tokenizer does not
+follow (substitution, backticks, `&`, subshells, heredocs, comments).
+Everything else is a change, said as Medium, so an unusual read errs the
+safe way.
+**Nothing argument-derived leaves the dashboard and the phone**: Telegram,
+notify, voice and the spoken `rook_approvals` summary use a title made from
+the cap and machine only (`safe_title`), and `rook_approvals` items carry no
+Explain; a console write is "Type into a console", never the typed text.
+Phones whose app predates the card body (0.4.21 and older) refuse `body`;
+the hub then folds it into the line and Explain, remembered per app version.
+
 ## 4. Signed role grants
 
 ### 4.1 Key hierarchy

@@ -278,12 +278,12 @@ async def test_the_proposer_revises_its_waiting_card_instead_of_adding_one(hub):
     assert other["duplicate"] and other["card"] == first["card"]
     assert len(hub.svc.store.cards(room)) == 1
     # Explicit revise: only your own waiting card.
-    note = await chair._propose("r_3", room, "role:pm", {"kind": "note", "summary": "PM note"})
+    note = await chair._propose("r_3", room, "role:pm", {"kind": "ask_bake", "summary": "PM ask"})
     bad = await chair._propose("r_4", room, "agent:home",
-                               {"kind": "note", "summary": "x", "revise": note["card"]})
+                               {"kind": "ask_bake", "summary": "x", "revise": note["card"]})
     assert not bad["ok"] and "only its proposer" in bad["error"]
     ok = await chair._propose("r_4", room, "role:pm",
-                              {"kind": "note", "summary": "PM note, revised", "revise": note["card"]})
+                              {"kind": "ask_bake", "summary": "PM note, revised", "revise": note["card"]})
     assert ok["revised"] and hub.svc.store.card(note["card"])["summary"] == "PM note, revised"
     # The chair sees what is waiting, so it revises rather than re-proposes.
     text = chair.pending_text(room)
@@ -436,7 +436,7 @@ async def test_the_chairs_message_lists_the_cards_it_actually_made(hub):
     card, = hub.svc.store.cards(h["room"])
     sender, text = _texts(hub, h["room"])[-1]
     assert sender == "agent:home" and text.startswith("Here is where we are.")
-    assert f"- Card {card['name']} ({card['id']}, note, waiting for your approval): Decision: page the deck" in text
+    assert f"- Card {card['name']} ({card['id']}, note, noted): Decision: page the deck" in text
     assert "- Not proposed (job.run: Run a cap box lacks): not proposed: box has no cap" in text
     assert card["seq"] == hub.svc.chat.tail(h["room"], 1)[0]["seq"]
     chair = _turns(hub, "huddle-chair")[0]

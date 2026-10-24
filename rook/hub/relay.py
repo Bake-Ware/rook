@@ -50,6 +50,7 @@ from typing import Any, Callable
 from ..core import authz as core_authz
 from ..core import names
 from ..core.text import clip
+from . import plain as _plain
 
 log = logging.getLogger("rook.hub.relay")
 
@@ -186,15 +187,24 @@ def _role_of(*idents: Any) -> str | None:
 
 
 def summary(items: list[dict]) -> str:
-    """One line for voice: ``3 waiting: brave-otter-lamp, qa wants to ...;
-    ...``. Never any secret: sentences come from redacted args."""
+    """One line for voice: ``3 waiting: Restart nginx (Claude web, for Cert
+    renewal; brave-otter-lamp); ...``. Never any secret: sentences come from
+    redacted args."""
     if not items:
         return "Nothing is waiting for you."
     head = f"{len(items)} waiting" if len(items) > 1 else "1 waiting"
     parts = []
     for it in items[:SUMMARY_ITEMS]:
-        tag = "" if it.get("relayable", True) else " (dashboard only)"
-        parts.append(f"{it.get('name') or it['id']}: {it['who']} wants to {it['what']}{tag}")
+        tag = "" if it.get("relayable", True) else ", dashboard only"
+        p = it.get("plain")
+        if p:
+            # Spoken: a title from the cap and machine only, never the args.
+            title = p["title"] if it["kind"] in ("ask", "house") or not it.get("cap") else \
+                _plain.safe_title(it["cap"], str(it.get("worker") or ""), hub=bool(it.get("hub")))
+            parts.append(f"{title} ({p['who']}, for {p['for']}; "
+                         f"{it.get('name') or it['id']}{tag})")
+        else:
+            parts.append(f"{it.get('name') or it['id']}: {it['who']} wants to {it['what']}{tag}")
     more = f"; and {len(items) - SUMMARY_ITEMS} more" if len(items) > SUMMARY_ITEMS else ""
     return f"{head}: " + "; ".join(parts) + more + "."
 
@@ -274,6 +284,10 @@ class Relay:
             it["relayable"] = not why
             if why:
                 it["why_not"] = why
+            try:
+                it["plain"] = _plain.describe(it)
+            except Exception:  # noqa: BLE001 - a describing bug never hides an item
+                log.exception("relay: describing %s %s", it.get("kind"), it.get("id"))
         out.sort(key=lambda i: i["created"])
         return out
 
@@ -309,7 +323,11 @@ class Relay:
                 "age": _age(now - h["created"]),
                 "cap": h["cap"], "action": action, "tier": h.get("tier") or "exec",
                 "tags": list(h.get("tags") or []), "hub": bool(h.get("is_hub")),
-                "hold_kind": h.get("kind"), "worker": worker})
+                "hold_kind": h.get("kind"), "worker": worker,
+                # for the plain ask (rook/hub/plain.py); never in public()
+                "args": h.get("args") or {}, "reason": h.get("reason") or "",
+                "rule": h.get("rule"), "principal": h.get("principal"), "via": via,
+                "context": h.get("context") or {}})
         return out
 
     def _roster(self) -> dict:
@@ -337,6 +355,8 @@ class Relay:
         by_name = {str(w.get("name") or wid).lower(): w for wid, w in roster.items()}
         hosts = self._hub_hosts()
         for c in svc.store.pending_cards():
+            if c["kind"] == "note":
+                continue          # a note runs nothing: it never waits on the person
             h = titles.get(c["room"]) or {}
             call = c.get("call") or {}
             cap = str(call.get("cap") or "")
@@ -364,7 +384,8 @@ class Relay:
                 "tier": tier, "tags": list(core_authz.builtin_tags(cap)) if cap else [],
                 "hub": self._hub_worker(call.get("worker")) or hub_host, "card_kind": c["kind"],
                 "hold_kind": "hub-host" if hub_host else None,
-                "worker": call.get("worker")})
+                "worker": call.get("worker"), "summary": c["summary"], "args": args,
+                "context": {"huddle": h.get("title") or h.get("name") or c["room"]}})
         return out
 
     def _asks(self, svc: Any, titles: dict) -> list[dict]:
@@ -382,7 +403,8 @@ class Relay:
                                   + (f" (options: {' / '.join(opts)})" if opts else "")),
                 "risk": "question", "from": frm, "created": q["asked"],
                 "age_s": int(now - q["asked"]), "age": _age(now - q["asked"]),
-                "question": q["id"], "room": q["room"], "options": opts})
+                "question": q["id"], "room": q["room"], "options": opts,
+                "question_text": q["text"]})
         return out
 
     def _house(self) -> list[dict]:
@@ -402,10 +424,14 @@ class Relay:
     @staticmethod
     def public(item: dict) -> dict:
         """An item as agents and the voice summary see it (no internal facts)."""
-        keys = ("kind", "id", "name", "who", "what", "risk", "from", "age", "relayable", "why_not",
-                "options", "line", "explain")
-        return {k: item[k] for k in keys if item.get(k) not in (None, "", [], {})
-                or k == "relayable"}
+        keys = ("kind", "id", "name", "plain", "who", "what", "risk", "from", "age", "relayable",
+                "why_not", "options", "line", "explain")
+        out = {k: item[k] for k in keys if item.get(k) not in (None, "", [], {})
+               or k == "relayable"}
+        if isinstance(out.get("plain"), dict):
+            # Explain (cap, args, trust cite) stays on the dashboard and the phone.
+            out["plain"] = {k: v for k, v in out["plain"].items() if k != "explain"}
+        return out
 
     def find(self, ref: str) -> dict:
         """A waiting item by id or speakable name (any case, spaces or
@@ -444,8 +470,9 @@ class Relay:
                                   "decide it on the dashboard")
         reason = " ".join(str(reason or "").split())[:REASON_MAX]
         label = relayer_label or relayer
+        p = it.get("plain") or {}
         rel = {"relayer": relayer, "relayer_label": label, **said, "reason": reason,
-               "summary": it["what"]}
+               "summary": f"{p['title']}: {p['want']}" if p else it["what"]}
         by = f"{said['who']} via {label}"
         from .approvals import relay_text
         text = relay_text({**rel, "decision": decision})

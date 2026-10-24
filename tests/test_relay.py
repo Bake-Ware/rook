@@ -109,8 +109,9 @@ async def test_the_list_covers_every_kind_with_names_sentences_and_sources(hub):
     assert summary([]) == "Nothing is waiting for you."
     # Public items carry no internal facts.
     pub = Relay.public(first)
-    assert set(pub) <= {"kind", "id", "name", "who", "what", "risk", "from", "age",
+    assert set(pub) <= {"kind", "id", "name", "plain", "who", "what", "risk", "from", "age",
                         "relayable", "why_not", "options"}
+    assert set(pub["plain"]) <= {"title", "for", "who", "want", "why", "risk", "explain"}
 
 
 @pytest.mark.asyncio

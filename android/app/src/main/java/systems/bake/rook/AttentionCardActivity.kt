@@ -5,8 +5,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.StyleSpan
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -19,7 +23,8 @@ import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 
 /**
- * The decision card: one line in large text, big Yes / No / Explain (or Got it), source and age
+ * The decision card: a plain title in large text, an optional few lines of body under it ("For:",
+ * "Who:", "I want to:", "Risk:"), big Yes / No / Explain (or Got it), source and age
  * small, "1 of N" when several wait (oldest first). Urgent cards show over the lock screen and
  * turn the screen on; Yes/No on a locked phone asks for the unlock first. A decision shows
  * "Sent…" until the hub's attention.update says done (brief confirmation) or failed.
@@ -36,6 +41,7 @@ class AttentionCardActivity : AppCompatActivity() {
     private lateinit var meta: TextView
     private lateinit var count: TextView
     private lateinit var line: TextView
+    private lateinit var body: TextView
     private lateinit var explain: TextView
     private lateinit var status: TextView
     private lateinit var reason: EditText
@@ -59,6 +65,8 @@ class AttentionCardActivity : AppCompatActivity() {
         root.addView(top)
         line = TextView(this).apply { textSize = 28f; setTextColor(fg); setPadding(0, dp(20), 0, dp(12)); setLineSpacing(0f, 1.1f) }
         root.addView(line)
+        body = TextView(this).apply { textSize = 17f; setTextColor(fg); setPadding(0, 0, 0, dp(12)); setLineSpacing(0f, 1.15f); visibility = View.GONE }
+        root.addView(body)
         explain = TextView(this).apply { textSize = 17f; setTextColor(fg); setPadding(0, 0, 0, dp(12)); visibility = View.GONE }
         root.addView(explain)
         status = TextView(this).apply { textSize = 17f; setPadding(0, dp(8), 0, dp(8)); visibility = View.GONE }
@@ -131,6 +139,9 @@ class AttentionCardActivity : AppCompatActivity() {
         meta.text = listOf(c.source.ifBlank { "Rook" }, age(c.created)).joinToString(" · ")
         count.text = if (total > 1) "$index of $total" else ""
         line.text = c.line
+        line.textSize = if (c.body.isNotBlank()) 24f else 28f
+        body.text = labelled(c.body)
+        body.visibility = if (c.body.isNotBlank()) View.VISIBLE else View.GONE
         explain.text = c.explain
         explain.visibility = if (explainOpen && c.explain.isNotBlank()) View.VISIBLE else View.GONE
         reasonRow.visibility = if (reasonOpen && c.state == "pending") View.VISIBLE else View.GONE
@@ -191,6 +202,19 @@ class AttentionCardActivity : AppCompatActivity() {
         status.setTextColor(when { failed -> Color.rgb(239, 120, 120); ok -> Color.rgb(164, 188, 146); else -> getColor(R.color.rook_dim) })
     }
 
+    /** The body with a leading "For:" / "Who:" / "I want to:" / "Risk:" label on each line in bold. */
+    private fun labelled(text: String): CharSequence {
+        val s = SpannableString(text)
+        var start = 0
+        for (ln in text.split('\n')) {
+            BODY_LABELS.firstOrNull { ln.startsWith(it, ignoreCase = true) }?.let {
+                s.setSpan(StyleSpan(Typeface.BOLD), start, start + it.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            start += ln.length + 1
+        }
+        return s
+    }
+
     private fun weighted() = LinearLayout.LayoutParams(0, dp(64), 1f).apply { marginEnd = dp(8) }
 
     private fun bigButton(label: String, outlined: Boolean = false, onClick: () -> Unit): Button =
@@ -209,6 +233,7 @@ class AttentionCardActivity : AppCompatActivity() {
         const val EXTRA_OPENED = "attention_opened"
         /** True while a card is on screen: unlock takeovers don't stack a second one. */
         @Volatile var onScreen = false
+        private val BODY_LABELS = listOf("For:", "Who:", "I want to:", "Risk:")
     }
 }
 

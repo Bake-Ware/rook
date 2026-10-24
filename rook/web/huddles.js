@@ -528,11 +528,23 @@ export async function mountHuddles(root){
     top.append(el('span',KIND[c.kind]||c.kind,'hx-card-kind'),el('span',nameOf(c.by),'hx-dim'),el('span',CARD_STATE[c.state]||c.state,'hx-card-state'));
     if(c.name)top.append(copyChip(c.name,c.name,'hx-card-name'));
     if(String(c.summary||'').trim())top.append(speakButton(cur.room,{card:c.id}));
-    b.append(top,el('p',c.summary,'hx-card-sum'));
+    // A waiting card reads as the plain ask (rook/hub/plain.py); the call and its args are the Explain.
+    const p=c.state==='proposed'?c.plain:null;
+    if(p){
+      const rows=[['For',p.for],['Who',p.who],['I want to',p.want]].concat(p.why?[['Why',p.why]]:[]).concat([['Risk',p.risk]]);
+      const dl=el('div',undefined,'hx-plain');
+      for(const [k,v] of rows){const r=el('div',undefined,'hx-plain-row');r.append(el('span',k,'hx-plain-k'),el('span',v,'hx-plain-v'));dl.append(r);}
+      b.append(top,el('p',p.title,'hx-card-sum hx-plain-title'),dl);
+    }else b.append(top,el('p',c.summary,'hx-card-sum'));
     if(c.relayed_text)b.append(el('p',c.relayed_text,'hx-card-relay hx-dim'));
     else if(c.decided_by&&c.state!=='proposed')b.append(el('p',(c.state==='dismissed'?'Dismissed by ':'Approved by ')+nameOf(c.decided_by),'hx-card-relay hx-dim'));
     if(c.state==='dismissed'&&c.result&&c.result.dismissed)b.append(el('p','Reason: '+c.result.dismissed,'hx-card-relay hx-dim'));
-    if(c.call){
+    if(p){
+      const d=h('details',{class:'hx-card-call'});
+      d.append(h('summary',{text:'Explain'}),el('p',p.explain,'hx-dim'));
+      if(c.call&&c.call.args&&Object.keys(c.call.args).length)d.append(el('pre',JSON.stringify(c.call.args,null,2)));
+      b.append(d);
+    }else if(c.call){
       const call=el('div',undefined,'hx-card-call');const what=c.call.worker+' · '+c.call.cap;
       call.append(h('code',{text:what,title:what+' (tap to copy)','data-copy':what}));
       if(c.call.args&&Object.keys(c.call.args).length){const d=h('details');d.append(h('summary',{text:'Args'}),el('pre',JSON.stringify(c.call.args,null,2)));call.append(d);}

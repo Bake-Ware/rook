@@ -29,9 +29,23 @@ is not taken for "not seen".
 
 ## Decision cards
 
-Each card says who asked and what exactly would happen; Explain adds the
-risk, where it came from (a job, a role, a huddle) and how long it has
-waited. Tapping Yes or No decides it, exactly as if you clicked it on the
+Each card reads the same way, in plain words:
+
+- **Title**: a few words, such as "Read approvals database" or "Restart nginx".
+- **For**: the task, project, huddle or job it serves ("no task" when the agent
+  did not say).
+- **Who**: the agent, role or job asking.
+- **I want to**: one sentence of what will happen, such as "run a read-only
+  query on the approvals database on bakenetcanada".
+- **Why**: the agent's own reason, when it gave one.
+- **Risk**: Low, Medium or High and why, such as "Low: looks read-only, but
+  rook-hub is guarded, so changes there ask you".
+
+**Explain** shows the technical detail: the capability, the command or
+arguments, the trust map entry that held it, and the item's id and its
+three-word name. The dashboard's Approvals page shows the same. (An app
+older than 0.4.22 shows the title and what it is for, with the rest under
+Explain.) Tapping Yes or No decides it, exactly as if you clicked it on the
 Approvals page, and the item shows "approved by <you> via <phone> (phone)"
 with the time you tapped.
 

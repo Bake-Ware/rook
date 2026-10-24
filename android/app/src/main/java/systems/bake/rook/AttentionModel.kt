@@ -12,6 +12,8 @@ class AttentionCard(
     val id: String, var kind: String, var line: String, var explain: String, var urgency: String,
     var channel: String, var actions: List<String>, var source: String, var expiresAt: Double,
     val created: Double, val local: Boolean = false,
+    /** Short plain lines ("For: …", "Who: …", "I want to: …", "Risk: …") always shown under the title. */
+    var body: String = "",
 ) {
     /** pending -> sent (a decision went out) -> done | failed; "gone" removes the card. */
     var state = "pending"
@@ -27,7 +29,7 @@ class AttentionCard(
     val takeover get() = !urgent && channel in TAKEOVER_CHANNELS && actions.any { it == "yes" || it == "no" }
     fun expired(now: Double) = expiresAt > 0 && now >= expiresAt
 
-    fun toJson(): JSONObject = JSONObject().put("id", id).put("kind", kind).put("line", line).put("explain", explain)
+    fun toJson(): JSONObject = JSONObject().put("id", id).put("kind", kind).put("line", line).put("body", body).put("explain", explain)
         .put("urgency", urgency).put("channel", channel).put("actions", JSONArray(actions)).put("source", source)
         .put("expires_at", expiresAt).put("created", created).put("local", local).put("state", state)
         .put("message", message).put("decision", decision).put("dismissed", dismissed).put("seen", seen).put("opened", opened)
@@ -39,6 +41,17 @@ class AttentionCard(
         val TAKEOVER_CHANNELS = setOf("approvals", "family")
         const val LINE_MAX = 140
         const val EXPLAIN_MAX = 600
+        const val BODY_MAX = 600
+        const val BODY_LINES = 6
+
+        /** Newlines kept: each line's whitespace collapsed, blank lines dropped, at most BODY_LINES / BODY_MAX, "…" where cut. */
+        fun cleanBody(text: String): String {
+            val lines = text.lines().map { it.trim().split(Regex("\\s+")).joinToString(" ") }.filter { it.isNotEmpty() }
+            var cut = lines.size > BODY_LINES
+            var out = lines.take(BODY_LINES).joinToString("\n")
+            if (out.length > BODY_MAX) { out = out.take(BODY_MAX - 1); cut = true }
+            return if (cut) out.trimEnd() + "…" else out
+        }
 
         /** A card from attention.post args; clips text, rejects what the contract does not allow. */
         fun fromPost(o: JSONObject, now: Double, local: Boolean = false): AttentionCard {
@@ -58,13 +71,15 @@ class AttentionCard(
             require(actions.all { it in ACTIONS }) { "actions must be a subset of $ACTIONS" }
             return AttentionCard(id, kind, line.take(LINE_MAX), o.optString("explain").trim().take(EXPLAIN_MAX), urgency, channel,
                 ACTIONS.filter { it in actions }.ifEmpty { listOf("ack") }, o.optString("source").take(80),
-                o.optDouble("expires_at", 0.0).takeIf { it.isFinite() && it > 0 } ?: 0.0, now, local)
+                o.optDouble("expires_at", 0.0).takeIf { it.isFinite() && it > 0 } ?: 0.0, now, local,
+                cleanBody(o.optString("body")))
         }
 
         fun fromJson(o: JSONObject): AttentionCard = AttentionCard(o.getString("id"), o.optString("kind", "card"),
             o.optString("line"), o.optString("explain"), o.optString("urgency", "normal"), o.optString("channel", "approvals"),
             o.optJSONArray("actions")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: listOf("yes", "no"),
-            o.optString("source"), o.optDouble("expires_at", 0.0), o.optDouble("created", 0.0), o.optBoolean("local")).apply {
+            o.optString("source"), o.optDouble("expires_at", 0.0), o.optDouble("created", 0.0), o.optBoolean("local"),
+            o.optString("body")).apply {
             state = o.optString("state", "pending"); message = o.optString("message"); decision = o.optString("decision")
             dismissed = o.optBoolean("dismissed"); seen = o.optBoolean("seen"); opened = o.optBoolean("opened")
         }
@@ -86,7 +101,7 @@ class CardBook(private val cap: Int = 100) {
             while (cards.size > cap) cards.remove((cards.values.firstOrNull { it.state != "pending" } ?: cards.values.first()).id)
             return true
         }
-        old.kind = card.kind; old.line = card.line; old.explain = card.explain; old.urgency = card.urgency
+        old.kind = card.kind; old.line = card.line; old.body = card.body; old.explain = card.explain; old.urgency = card.urgency
         old.channel = card.channel; old.actions = card.actions; old.source = card.source; old.expiresAt = card.expiresAt
         if (old.state == "failed") { old.state = "pending"; old.message = "" }
         return false

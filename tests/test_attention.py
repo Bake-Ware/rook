@@ -28,6 +28,7 @@ class FakePhone:
         self.polls: list[int] = []
         self.rules: list = []
         self.seq = 0
+        self.body = True            # the app shows a card body (0.4.22 and later)
 
     def event(self, type_: str, **kw) -> dict:
         self.seq += 1
@@ -40,8 +41,9 @@ class FakePhone:
 
     def handle(self, cap: str, args: dict) -> dict:
         if cap == "attention.post":
-            assert set(args) == {"id", "kind", "line", "explain", "urgency", "channel",
-                                 "actions", "source", "expires_at"}
+            assert set(args) - {"body"} == {"id", "kind", "line", "explain", "urgency", "channel",
+                                            "actions", "source", "expires_at"}
+            assert len(args.get("body") or "") <= 600 and (args.get("body") or "").count("\n") <= 5
             assert len(args["id"]) <= 64 and len(args["line"]) <= 140
             assert len(args["explain"]) <= 600 and "\n" not in args["line"]
             assert args["urgency"] in ("urgent", "normal")
@@ -80,6 +82,10 @@ def att(hub, monkeypatch):  # noqa: F811
                                                principal=principal))
             if time.time() - hub.band.workers[PHONE]["last_seen"] > 90:
                 return {"ok": False, "error": "worker offline"}
+            if cap == "attention.post" and "body" in (args or {}) and not phone.body:
+                # An app older than the card body: the worker refuses the unknown arg.
+                return {"ok": False, "error": "bad args: _post() got an unexpected keyword "
+                                              "argument 'body'"}
             return {"ok": True, "result": phone.handle(cap, args or {})}
         return await orig(cap, args, target, timeout, identity, principal)
 
@@ -122,12 +128,19 @@ async def test_new_items_are_posted_once_and_gone_items_are_withdrawn(att):
     card = att.phone.cards[plain["id"]]
     assert card["kind"] == "hold" and card["channel"] == "approvals"
     assert card["urgency"] == "normal" and card["actions"] == ["yes", "no", "explain"]
-    assert card["line"].startswith("Claude web wants to run shell.exec on box")
-    assert "Claude web asked to run shell.exec on box" in card["explain"]
-    assert "Risk: exec" in card["explain"] and "waiting" in card["explain"]
+    # The plain ask: a title as the line, For/Who/I want to/Risk as the body, the
+    # technical detail (cap, worker, hold id) only behind Explain.
+    assert card["line"] == "Restart nginx"
+    assert card["body"].split("\n") == [
+        "For: no task", "Who: Claude web", "I want to: Restart the service nginx on box",
+        "Risk: Medium: it runs a command that can change things; this agent is reaching many "
+        "machines quickly."]
+    assert "shell.exec on box" in card["explain"] and plain["id"] in card["explain"]
+    assert "shell.exec" not in card["line"] + card["body"]
     # Dashboard-only: no Yes/No, and the explanation says where to decide.
     dash = att.phone.cards[secret["id"]]
     assert dash["actions"] == ["explain"] and "dashboard's Approvals page" in dash["explain"]
+    assert dash["line"] == "Read a secret"
     # Every call to the phone is the hub's own.
     assert {c.identity for c in att.phone_calls} == {"system:rook-hub-attention"}
     assert all(c.principal.kind == "system" for c in att.phone_calls)
@@ -143,6 +156,35 @@ async def test_new_items_are_posted_once_and_gone_items_are_withdrawn(att):
     att.att._service = fresh
     await fresh.tick()
     assert len(att.phone.posts) == 2
+
+
+@pytest.mark.asyncio
+async def test_an_older_app_gets_the_body_folded_into_line_and_explain(att):
+    """A phone whose app predates the card body refuses ``body``: the hub posts
+    the card again without it (what it is for in the line, the body ahead of
+    the detail under Explain) and remembers that for the app's version."""
+    att.configure()
+    att.phone.body = False
+    first = hold(att.ap)
+    await att.att.service.tick()
+    card = att.phone.cards[first["id"]]
+    assert "body" not in card and card["line"] == "Restart nginx"
+    assert card["explain"].startswith("For: no task Who: Claude web I want to: Restart the "
+                                      "service nginx on box Risk: Medium")
+    assert "Details: shell.exec on box" in card["explain"]
+    tries = [c for c in att.phone_calls if c.cap == "attention.post"]
+    assert len(tries) == 2                       # one refused, one folded
+    second = hold(att.ap, args={"argv": ["df", "-h"]})
+    await att.att.service.tick()
+    tries = [c for c in att.phone_calls if c.cap == "attention.post"]
+    assert len(tries) == 3 and "body" not in tries[-1].args   # remembered: no refused try
+    assert att.phone.cards[second["id"]]["line"] == "Look at files"
+    # The app updated (a new version): bodies again.
+    att.phone.body = True
+    att.band.workers[PHONE]["version"] = "0.4.22-beta.1"
+    third = hold(att.ap, args={"argv": ["uptime"]})
+    await att.att.service.tick()
+    assert att.phone.cards[third["id"]]["body"].startswith("For: no task\nWho: Claude web")
 
 
 @pytest.mark.asyncio

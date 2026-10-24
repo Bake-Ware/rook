@@ -81,7 +81,10 @@ object AttentionChannels {
         val b = NotificationCompat.Builder(ctx, channel)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(card.source.ifBlank { "Rook" }).setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setStyle(if (card.state == "pending" && card.body.isNotBlank())
+                // Expanded: the title on top, the body's few plain lines under it.
+                NotificationCompat.BigTextStyle().setBigContentTitle(card.line).bigText(card.body)
+                else NotificationCompat.BigTextStyle().bigText(text))
             .setContentIntent(content).setDeleteIntent(gone).setAutoCancel(false).setOnlyAlertOnce(!ring)
             .setPriority(when (channel) { URGENT -> NotificationCompat.PRIORITY_MAX; FAMILY, APPROVALS -> NotificationCompat.PRIORITY_HIGH
                 DIGEST -> NotificationCompat.PRIORITY_LOW; else -> NotificationCompat.PRIORITY_MIN })
