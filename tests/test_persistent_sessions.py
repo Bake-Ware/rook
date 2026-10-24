@@ -167,6 +167,17 @@ async def disconnect(task, host):
 
 # -- role directory files -------------------------------------------------------------
 
+def test_voice_rules_take_a_new_persons_consent_and_end_listening_without_quiet_time():
+    md = roledir.voice_files(name="Sojourn", owner="Bake")["voice/CLAUDE.md"]
+    flat = " ".join(md.split())
+    # The person being enrolled is unknown to the voice's ears by definition: their
+    # "I agree" comes marked "unknown guest" and is still the consent to route on
+    # (live 2026-10-23 the voice kept refusing it as "can't tell it's Quinn").
+    assert 'that turn is marked "unknown guest", as expected; it is their consent, so route enroll' in flat
+    # "That's all" is minutes 0: minutes mute the wake word, only on request.
+    assert "clearly ended (minutes: 0)" in flat and "the wake word is off that long" in flat
+
+
 def test_role_files_name_token_variables_never_tokens():
     files = roledir.main_files(claude_md="# x", model="opus", effort="", turn_url="https://h/x",
                                host_servers=["rea", "rook", "bad name"])
