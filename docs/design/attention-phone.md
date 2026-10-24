@@ -77,7 +77,10 @@ whether the room is quiet enough and speaks. The cap returns at once
 otherwise); the app's **Spoken reminders** switch off gives `accepted: false,
 reason: "off"` and an `off` event. Then, on its own thread:
 
-1. **Pre-checks**, in this order, each ending it unspoken: `call` (audio mode
+1. **Pre-checks**, in this order, each ending it unspoken: `dnd` (Do Not
+   Disturb or bedtime: the interruption filter is not "all"; the hub's quiet
+   hours are off by default, so this keeps reminders out of a sleeping room),
+   `call` (audio mode
    in call, ringing or in communication that is not Rook's own conversation;
    telephony call state below Android 12), `voice_session` (Rook's voice
    conversation is live or a session is open, or the voice is thinking or

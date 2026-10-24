@@ -16,6 +16,11 @@ class NativeSmokeInstrumentation : Instrumentation() {
             catch (error: Throwable) { finish(0, Bundle().apply { putString("stream", "FAIL: ${error.stackTraceToString()}") }) }
             return
         }
+        if (mode == "remind") {
+            try { finish(-1, RemindSmokeTest.run(targetContext)) }
+            catch (error: Throwable) { finish(0, Bundle().apply { putString("stream", "FAIL: ${error.stackTraceToString()}") }) }
+            return
+        }
         mode?.let { finish(-1, ApkUpdateSmokeTest.run(targetContext, it)); return }
         val report = Bundle()
         try {

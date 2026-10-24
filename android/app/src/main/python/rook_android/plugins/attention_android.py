@@ -226,7 +226,8 @@ class AndroidAttentionPlugin(Plugin):
 
         Returns at once: {ok, id, accepted}. accepted=false with busy (another
         reminder is running) or reason "off" (the app's Spoken reminders switch).
-        The phone then skips it during a call, its own voice session, another
+        The phone then skips it in Do Not Disturb or bedtime (outcome dnd),
+        during a call, its own voice session, another
         app recording, media playing or speech already playing; otherwise it
         listens sample_ms (1000-8000) and speaks text (at most 300 chars) in the
         app's voice only if nobody is talking. When Android silences the mic
@@ -262,8 +263,8 @@ class AndroidAttentionPlugin(Plugin):
         decision approve|deny, reason?}, seen {id, via card|heads_up}, opened {id},
         dismissed {id}, acked {id}, unlocked {}, notice {id, app, category,
         priority, summary} (an urgent/family notification, summary only),
-        reminded {id, outcome spoken|busy|call|voice_session|mic_in_use|media|
-        speaking|unchecked|off|error, via? server|device, level? {active_frac,
+        reminded {id, outcome spoken|dnd|busy|call|voice_session|mic_in_use|
+        media|speaking|unchecked|off|error, via? server|device, level? {active_frac,
         peak_dbfs}, checked? false (spoken without a quiet check)} (attention.remind).
         Kept on the phone until polled (last 1000). reset=true: the phone's log
         restarted, all of it is returned; more=true: call again; gap=true: older

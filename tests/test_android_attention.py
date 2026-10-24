@@ -265,6 +265,10 @@ def test_remind_is_admin_and_physical_like_post(mod):
     assert meta.risk == post.risk == "admin"
     assert "physical" in meta.tags
     assert "reminded" in mod.AndroidAttentionPlugin._poll.__doc__
+    for outcome in ("spoken", "dnd", "busy", "call", "voice_session", "mic_in_use", "media", "speaking",
+                    "unchecked", "off", "error"):
+        assert outcome in mod.AndroidAttentionPlugin._poll.__doc__
+    assert "dnd" in mod.AndroidAttentionPlugin._remind.__doc__
 
 
 def test_clean_rules(mod):

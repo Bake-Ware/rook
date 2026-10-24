@@ -11,7 +11,15 @@ class ReminderGateTest {
         assertNull(ReminderGate.precheck(quiet.copy(voiceState = "standby")))
     }
 
-    @Test fun callsComeFirst() {
+    @Test fun doNotDisturbComesBeforeEverything() {
+        val all = ReminderGate.Signals(dnd = true, audioMode = MicYieldPolicy.MODE_IN_CALL, telephonyCall = true,
+            voiceSession = true, othersRecording = true, musicActive = true, speaking = true)
+        assertEquals(ReminderGate.DND, ReminderGate.precheck(all))
+        assertEquals(ReminderGate.DND, ReminderGate.precheck(quiet.copy(dnd = true)))
+        assertEquals(ReminderGate.CALL, ReminderGate.precheck(all.copy(dnd = false)))
+    }
+
+    @Test fun callsComeNextAfterDnd() {
         for (mode in listOf(MicYieldPolicy.MODE_IN_CALL, MicYieldPolicy.MODE_RINGTONE, MicYieldPolicy.MODE_IN_COMMUNICATION)) {
             assertEquals(ReminderGate.CALL, ReminderGate.precheck(quiet.copy(audioMode = mode, othersRecording = true, musicActive = true)))
         }

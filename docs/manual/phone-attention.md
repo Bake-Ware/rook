@@ -64,7 +64,7 @@ reach, the alert waits and arrives when it is back (for up to a day).
 
 When decisions wait, the hub can have the phone say a short reminder, such as
 "Hey boss, you have 6 decisions pending." The phone only speaks when the room
-is quiet: not during a call, while you talk to Rook, while another app records
+is quiet: not in Do Not Disturb or bedtime mode, not during a call, while you talk to Rook, while another app records
 or plays media, and not when it hears talking or a TV. Before it speaks, the
 app listens for a few seconds. The sound stays on the phone: nothing is
 recorded, kept or sent; the hub only learns whether it spoke, and if not, why.

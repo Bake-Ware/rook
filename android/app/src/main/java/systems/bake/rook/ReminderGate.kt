@@ -7,6 +7,7 @@ package systems.bake.rook
  */
 object ReminderGate {
     const val SPOKEN = "spoken"
+    const val DND = "dnd"
     const val BUSY = "busy"
     const val CALL = "call"
     const val VOICE_SESSION = "voice_session"
@@ -48,6 +49,8 @@ object ReminderGate {
 
     /** Everything the pre-checks look at, read fresh before the sample and while it runs. */
     data class Signals(
+        /** Do Not Disturb or bedtime: NotificationManager.getCurrentInterruptionFilter() is not ALL. */
+        val dnd: Boolean = false,
         /** AudioManager.getMode(). */
         val audioMode: Int = 0,
         /** MODE_IN_COMMUNICATION was set by Rook's own voice conversation, not by a call. */
@@ -67,10 +70,11 @@ object ReminderGate {
     )
 
     /**
-     * The first reason not to speak, in the contract's order, or null when the pre-checks pass.
+     * The first reason not to speak, in the contract's order (dnd first), or null when the pre-checks pass.
      * Rook's own speech also makes the music stream active; that is reported as `speaking`.
      */
     fun precheck(s: Signals): String? = when {
+        s.dnd -> DND
         s.telephonyCall || MicYieldPolicy.callMode(s.audioMode, s.rookOwnsCallMode) -> CALL
         s.voiceSession || s.voiceState == "thinking" || s.voiceState == "speaking" -> VOICE_SESSION
         s.othersRecording -> MIC_IN_USE

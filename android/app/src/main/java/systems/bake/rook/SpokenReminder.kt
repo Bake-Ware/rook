@@ -1,6 +1,7 @@
 package systems.bake.rook
 
 import android.Manifest
+import android.app.NotificationManager
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
@@ -240,7 +241,13 @@ object SpokenReminder {
             (app.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager)?.callState
                 ?.let { it != TelephonyManager.CALL_STATE_IDLE } ?: false
         } catch (_: Exception) { false } else false
+        // Do Not Disturb / bedtime keeps reminders out of a sleeping room (no permission needed to read it).
+        val dnd = try {
+            (app.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager)?.currentInterruptionFilter
+                ?.let { it != NotificationManager.INTERRUPTION_FILTER_ALL } ?: false
+        } catch (_: Exception) { false }
         return ReminderGate.Signals(
+            dnd = dnd,
             audioMode = try { am.mode } catch (_: Exception) { AudioManager.MODE_NORMAL },
             rookOwnsCallMode = try { voice?.ownsCallMode() == true } catch (_: Exception) { false },
             telephonyCall = telephony || yielded == MicYieldPolicy.Reason.CALL,
