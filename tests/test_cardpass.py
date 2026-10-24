@@ -417,6 +417,45 @@ async def test_stop_explain_and_no_pass(env):
     await disconnect(task, e.host)
 
 
+def test_covering_more_with_a_lenient_entry_loosens():
+    """Review of #195 (all four voters): adding targets to an entry less strict than
+    the unlisted level loosens them (an unlisted machine, balanced, under a ship-it
+    entry would just go), and so does a new such entry or a changed kind."""
+    st = _trust_with_sacred_kaiju()
+    st.change("set_entry", {"id": "pianobar-super", "kind": "project", "level": "ship-it",
+                            "targets": ["worker:pianobar"]},
+              T.Actor("person", "Bake", words="toy"))
+    st.change("set_entry", {"id": "rook-hub", "kind": "host", "level": "guarded",
+                            "targets": ["worker:rook-hub"]},
+              T.Actor("person", "Bake", words="ask first"))
+    doc = st.current()
+    wider = T.describe_change(doc, {"op": "set_entry", "data": {
+        "id": "pianobar-super", "kind": "project", "level": "ship-it",
+        "targets": ["worker:pianobar", "worker:*"]}})
+    assert wider["loosens"] and wider["sentence"] == ("Also cover the machine * under "
+                                                      "pianobar-super (ship-it).")
+    assert T.describe_change(doc, {"op": "set_entry", "data": {
+        "id": "toys", "kind": "project", "level": "ship-it", "targets": ["worker:x"]}})["loosens"]
+    # Guarded covers more: stricter than unlisted (balanced), so not a loosening...
+    assert not T.describe_change(doc, {"op": "set_entry", "data": {
+        "id": "rook-hub", "kind": "host", "level": "guarded",
+        "targets": ["worker:rook-hub", "worker:box"]}})["loosens"]
+    assert not T.describe_change(doc, {"op": "set_entry", "data": {
+        "id": "new-guard", "kind": "host", "level": "guarded", "targets": ["worker:y"]}})["loosens"]
+    # ...unless the person made unlisted stricter than guarded.
+    st.change("set_unlisted", {"level": "sacred"}, T.Actor("person", "Bake", words="lock it"))
+    assert T.describe_change(st.current(), {"op": "set_entry", "data": {
+        "id": "new-guard", "kind": "host", "level": "guarded", "targets": ["worker:y"]}})["loosens"]
+    # A changed kind (devices entries rule private reads) counts as loosening.
+    assert T.describe_change(doc, {"op": "set_entry", "data": {
+        "id": "rook-hub", "kind": "devices", "level": "guarded",
+        "targets": ["worker:rook-hub"]}})["loosens"]
+    # Only a title or description change is not.
+    assert not T.describe_change(doc, {"op": "set_entry", "data": {
+        "id": "rook-hub", "kind": "host", "level": "guarded", "title": "The hub",
+        "targets": ["worker:rook-hub"]}})["loosens"]
+
+
 def test_describe_change_says_what_loosens():
     st = _trust_with_sacred_kaiju()
     doc = st.current()
@@ -425,7 +464,8 @@ def test_describe_change_says_what_loosens():
     assert d == {"sentence": "Change kaiju from sacred to guarded.", "loosens": True,
                  "sacred": True, "op": "set_entry"}
     assert not T.describe_change(doc, {"op": "set_entry", "data": {
-        "id": "kaiju", "level": "sacred", "targets": ["worker:kaiju", "worker:kaiju2"]}})["loosens"]
+        "id": "kaiju", "level": "sacred", "kind": "host",
+        "targets": ["worker:kaiju", "worker:kaiju2"]}})["loosens"]
     assert T.describe_change(doc, {"op": "delete_entry", "data": {"id": "kaiju"}})["loosens"]
     assert T.describe_change(doc, {"op": "grant_tool", "data": {"role": "qa", "server": "rea"}}) \
         ["sentence"] == "Give the qa role the rea tool."
