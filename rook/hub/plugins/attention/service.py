@@ -705,7 +705,8 @@ class AttentionService:
             # The app says why: reason "off" (its switch), or busy: another reminder of its
             # own is still running (the phone is speaking, not the room).
             why = str(res.get("reason") or ("speaking" if res.get("busy") else "busy"))
-            self._skipped(why if why in REMIND_OUTCOMES else "busy", {"text": text})
+            self._skipped(why if why in REMIND_OUTCOMES and why != "spoken" else "busy",
+                          {"text": text})
             return {"accepted": False}
         st["inflight"] = {"id": rid, "at": now, "text": text, "ids": [i["id"] for i in items],
                           "device": dev["name"]}
