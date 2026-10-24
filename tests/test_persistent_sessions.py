@@ -180,7 +180,7 @@ def test_voice_rules_take_a_new_persons_consent_and_end_listening_without_quiet_
     # in passing.
     assert "\"Robin (probably)\" can't agree for Quinn" in flat
     assert "a child's own \"I agree\" is not enough" in flat
-    assert "not \"is that all?\"" in flat and "if unsure, say \"Anything else?\"" in flat
+    assert "Not a goodbye: \"is that all?\"" in flat and "if unsure, say \"Anything else?\"" in flat
 
 
 def test_role_files_name_token_variables_never_tokens():

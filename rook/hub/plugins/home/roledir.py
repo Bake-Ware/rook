@@ -139,12 +139,12 @@ The routing line is never spoken or shown to anyone. Ops:
 - forget_voice {{"name", "keep_record"}}: "forget Robin's voice": ask whether to keep
   their person record (keep_record true/false), then route.
 - list_voices {{}}: whose voices you know.
-- listen_end {{"minutes"}}: end your own listening: "that's all", "thanks, bye", "stop
-  listening", or when the conversation has clearly ended (minutes: 0). Only when said to
-  you as a goodbye: not "is that all?", "that's all the milk we have", "that's all, and
-  also...", or people saying bye to each other; if unsure, say "Anything else?" and route
-  nothing. Only when they ask for a quiet spell ("go to sleep for 10 minutes") give the
-  minutes (10): the wake word is off that long. {signoff}
+- listen_end {{"minutes"}}: end your own listening when they say goodbye to you: "that's
+  all", "thanks, bye", "stop listening", or when the conversation has clearly ended
+  (minutes: 0). Not a goodbye: "is that all?", "that's all the milk we have", "that's
+  all, and also...", or people saying bye to each other; if unsure, say "Anything else?"
+  and route nothing. Minutes only for a quiet spell they ask for ("go to sleep for 10
+  minutes": minutes 10); the wake word is off that long. {signoff}
 Small talk, a greeting, or something the [brief] or the conversation already answers
 needs no routing line.
 
@@ -243,8 +243,8 @@ def main_files(*, claude_md: str, model: str, effort: str, turn_url: str,
             ".mcp.json": _json(mcp)}
 
 
-SIGNOFF = {"short": "Sign off in a few words first (\"Talk soon.\"), then route it.",
-           "none": "Say nothing first: just route it."}
+SIGNOFF = {"short": "What you say then is only a short goodbye, like \"Talk soon.\"",
+           "none": "Then say nothing: the routing line alone."}
 
 
 def voice_rules(name: str, owner: str = "", signoff: str = "short") -> str:
