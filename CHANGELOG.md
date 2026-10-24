@@ -49,6 +49,21 @@ version was `0.1.0`.
   proposed; anything else that is not a list of strings is refused then, not when the person taps
   Yes. (manual: huddles)
 
+### Fixed
+- House voice: a new person's "I agree to have my voice remembered" comes marked "unknown guest"
+  (their voice isn't known yet) and is now taken as their consent, so enrolling someone by
+  conversation routes `enroll` instead of asking "is that Quinn?" forever; the hub still checks
+  the voice isn't the owner's. "That's all" ends listening with minutes 0: minutes (which mute
+  the wake word) only when a quiet spell is asked for. (manual: persistent-agents)
+- Enrolling a voice (review of the fix above, which made the hub's checks the only gate):
+  the consenting voice must be unknown to speaker ID or already known as that person, so
+  someone else it knows can't agree for them and a turn with no voiceprint never counts;
+  a "no", a question or a hedge around "I agree ... voice" isn't consent; one yes enrolls
+  one person; the owner calling them a son, daughter or kid (or an earlier record saying
+  so) makes it the child path whatever the voice routed; the owner's request must say the
+  name as a word. Quiet minutes on `listen_end` are kept only when the words heard asked
+  for minutes or hours. (manual: persistent-agents)
+
 ## [0.3.0] - 2026-10-23
 
 The house agent release: about 180 builds since 0.2.0. The house agent as the front

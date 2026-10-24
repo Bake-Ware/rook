@@ -98,8 +98,12 @@ as a guest; a very short "yes" that is too short to recognise counts as you.
 
 **Learning someone else's voice:** say "I want to enroll a new voice" or
 "learn Robin's voice". It asks their name and who they are to you. An adult
-then says "I agree to have my voice remembered" in their own voice; for a
-child it asks you to confirm and needs your yes out loud. A bare "yes" can be
+then says "I agree to have my voice remembered" in their own voice. Only a
+voice it doesn't know yet (or already knows as that person) counts: not yours,
+not someone else it knows, and not a question or a "no". One yes enrolls one
+person. For a child (a kid, son or daughter, as the voice or you put it) it asks
+you to confirm and needs your yes out loud; the child's own yes isn't enough. A
+bare "yes" can be
 too short for it to know it's you: say a few words. Then they
 read a few sentences. Only you, recognised by voice, can start this. It keeps
 a record of them on the hub (who they are, their consent in their words, their
@@ -109,7 +113,8 @@ record). **Settings > Voice > People** in the app lists the voices it knows,
 with Forget.
 
 **Ending its own listening:** "that's all", "thanks, bye", "stop listening",
-or "go to sleep for 10 minutes" (it then ignores the wake word that long).
+said to it as a goodbye, or "go to sleep for 10 minutes" (it then ignores the
+wake word that long: only when you ask for minutes or hours).
 Sign-off: **Sign-off when it stops listening** (short or none).
 
 **Taking notes (scribe):** when people talk among themselves and not to it,

@@ -22,12 +22,23 @@ RESERVED = {"guest", "assistant", "unmapped", "unknown", "owner", "voice"}
 RELATIONS = ("household", "kid", "guest", "family", "friend")
 #: An adult's consent, as heard (the transcript, not the model's account of it).
 CONSENT = re.compile(r"\bi\s+(?:agree|consent)\b.{0,60}\bvoice\b", re.I | re.S)
+#: Words that make an "I agree ... voice" not a yes: a refusal ("I consent to nothing,
+#: keep my voice out of it"), a question ("do I agree to have my voice remembered?"),
+#: a hedge. Such a turn never counts; they can say it plainly again.
+NOT_CONSENT = re.compile(r"\?|\b(not|never|no|nope|don'?t|do not|won'?t|wouldn'?t|refuse|"
+                         r"rather not|unless|if|nothing|out of|stop|forget)\b", re.I)
 #: The owner's say-so for a kid ("yes, enroll Sam", "go ahead and learn Sam's voice").
 SAY_SO = re.compile(r"\b(yes|yeah|yep|go ahead|do it|okay|ok|sure|enrol+|learn|add|set up)\b", re.I)
 
 
 class PeopleError(ValueError):
     pass
+
+
+def consents(text: Any) -> bool:
+    """Whether a heard turn is a plain "I agree to have my voice remembered"."""
+    t = str(text or "")
+    return bool(CONSENT.search(t)) and not NOT_CONSENT.search(t)
 
 
 def check_name(name: Any) -> str:
