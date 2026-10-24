@@ -176,6 +176,11 @@ def test_voice_rules_take_a_new_persons_consent_and_end_listening_without_quiet_
     assert 'that turn is marked "unknown guest", as expected; it is their consent, so route enroll' in flat
     # "That's all" is minutes 0: minutes mute the wake word, only on request.
     assert "clearly ended (minutes: 0)" in flat and "the wake word is off that long" in flat
+    # Review of #193: whose yes isn't consent, a child's own yes, and "that's all" said
+    # in passing.
+    assert "\"Robin (probably)\" can't agree for Quinn" in flat
+    assert "a child's own \"I agree\" is not enough" in flat
+    assert "not \"is that all?\"" in flat and "if unsure, say \"Anything else?\"" in flat
 
 
 def test_role_files_name_token_variables_never_tokens():
@@ -835,10 +840,97 @@ async def test_enrolling_someone_by_voice_needs_the_owner_and_their_consent(penv
 
 
 @pytest.mark.asyncio
+async def test_only_the_new_persons_own_plain_yes_enrolls_them(penv):
+    """Review of #193: the voice now routes enroll on the first "unknown guest" yes, so
+    the hub's checks are the gate. Someone else it knows can't agree for them, a turn
+    with no voiceprint doesn't count, a no or a question isn't a yes, one yes enrolls
+    one person, and a child stays a child whatever the voice routed."""
+    host, task = await connect(penv)
+    sess = penv.sess
+    route = lambda ops: sess.route("house", ops)                      # noqa: E731
+    robin = {**OWNER_SURE, "speaker": {"label": "Robin", "score": 0.7, "sure": True}}
+    owner_probably = {**OWNER_SURE, "speaker": {"label": "Bake", "score": 0.5, "sure": False}}
+    n = iter(range(100))
+
+    async def hear(ident, text):
+        turn = f"c{next(n)}"
+        _heard(host, turn, ident, text)
+        await until(lambda: sess.voice.get("house", {}).get("turn") == turn)
+
+    async def enroll(name, relation="friend"):
+        return (await route([{"op": "enroll", "name": name, "relation": relation}]))[0]
+
+    await hear(OWNER_SURE, "please learn Quinn's voice, Quinn is my friend")
+    for ident, text in ((robin, "I agree to have my voice remembered"),             # Robin, not Quinn
+                        ({"owner": False, "name": "kid"}, "I agree to have my voice remembered"),
+                        (owner_probably, "I agree to have my voice remembered"),    # the owner
+                        (UNKNOWN, "I don't agree to have my voice remembered"),
+                        (UNKNOWN, "do I agree to have my voice remembered?"),
+                        (UNKNOWN, "I consent to nothing, keep my voice out of it")):
+        await hear(ident, text)
+        await hear(OWNER_SURE, "okay")                     # the owner's phone, talking again
+        out = await enroll("Quinn")
+        assert out["ok"] is False and "I agree to have my voice remembered" in out["error"], text
+    assert sess.people().get("quinn") is None
+    await hear(UNKNOWN, "I agree to have my voice remembered")
+    assert (await enroll("Quinn"))["ok"]
+    assert sess.people().get("quinn")["consent"]["heard_as"] == "guest"
+    # One yes, one person: asking for two at once needs two yeses.
+    await hear(OWNER_SURE, "learn Alex's voice too, Alex is my friend")
+    out = await enroll("Alex")
+    assert out["ok"] is False and "I agree" in out["error"]
+    # "Al" is not asked for by "also": the name must be said as a word.
+    await hear(OWNER_SURE, "also learn Jo's voice")
+    await hear(UNKNOWN, "I agree to have my voice remembered")
+    assert (await enroll("Al"))["ok"] is False
+    # Relearning someone it already knows: their own recognised voice may agree.
+    await hear(OWNER_SURE, "learn Robin's voice again")
+    await hear(robin, "I agree to have my voice remembered")
+    assert (await enroll("Robin", "my wife"))["ok"]
+    # The owner said "my daughter": a child, even routed as a friend; her own yes isn't it.
+    await hear(OWNER_SURE, "learn my daughter Mia's voice")
+    await hear(UNKNOWN, "I agree to have my voice remembered")
+    out = await enroll("Mia", "friend")
+    assert out["ok"] is False and "child" in out["error"]
+    await hear(OWNER_SURE, "yes go ahead")
+    assert (await enroll("Mia", "friend"))["ok"]
+    rec = sess.people().get("mia")
+    assert rec["kid"] and rec["consent"]["kind"] == "owner_say_so"
+    # A forgotten child's record keeps her a child when she is relearned.
+    assert (await route([{"op": "forget_voice", "name": "Mia"}]))[0]["ok"]
+    await hear(OWNER_SURE, "learn Mia's voice again")
+    await hear(UNKNOWN, "I agree to have my voice remembered")
+    out = await enroll("Mia", "friend")
+    assert out["ok"] is False and "child" in out["error"]
+    await disconnect(task, host)
+
+
+@pytest.mark.asyncio
+async def test_that_s_all_never_mutes_the_wake_word(penv):
+    """Review of #193: minutes mute the wake word, so the hub keeps them only when the
+    words heard asked for a quiet spell; the voice routing minutes isn't enough."""
+    host, task = await connect(penv)
+    sess = penv.sess
+    for i, (text, minutes, want) in enumerate((
+            ("That's all for now, thanks. You can stop listening.", 10, 0),
+            ("thanks, bye", 5, 0),
+            ("go to sleep for 20 minutes", 20, 20),
+            ("be quiet for an hour", 60, 60),
+            ("that's all", 0, 0))):
+        _heard(host, f"q{i}", UNKNOWN, text)
+        await until(lambda: sess.voice.get("house", {}).get("turn") == f"q{i}")
+        assert (await sess.route("house", [{"op": "listen_end", "minutes": minutes}]))[0]["ok"]
+        ev = host.sent("voice_event")[-1]
+        assert ev["event"] == "listen_end" and ev["fields"] == {"quiet_minutes": want}, text
+    await disconnect(task, host)
+
+
+@pytest.mark.asyncio
 async def test_listen_end_and_scribe_only_with_the_owner_among_the_speakers(penv):
     host, task = await connect(penv)
     sess = penv.sess
-    sess.voice["house"] = {"turn": "s0", "identity": UNKNOWN}
+    _heard(host, "s0", UNKNOWN, "go to sleep for 10 minutes")
+    await until(lambda: sess.voice.get("house", {}).get("turn") == "s0")
     assert (await sess.route("house", [{"op": "listen_end", "minutes": 10}]))[0]["ok"]
     ev = host.sent("voice_event")[-1]
     assert ev["event"] == "listen_end" and ev["fields"] == {"quiet_minutes": 10}

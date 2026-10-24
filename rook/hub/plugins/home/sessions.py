@@ -77,6 +77,8 @@ HEARD_WINDOW_S = 300.0
 #: The owner's yes to a change the voice asked about ("switch the agent to Sonnet?").
 YES = re.compile(r"\b(yes|yeah|yep|yup|sure|ok(ay)?|go ahead|do it|please do|correct|"
                  r"that's right|switch it|use it)\b", re.I)
+#: A quiet spell asked for in so many words ("go to sleep for 20 minutes", "for an hour").
+QUIET_ASKED = re.compile(r"\b(minutes?|mins?|hours?|hrs?|an? while|a bit)\b", re.I)
 #: The scribe: the agent reads new lines after this many, and at the end.
 SCRIBE_EXTRACT_LINES = 15
 #: The scribe records only while the owner was heard this recently (start and every line).
@@ -229,6 +231,8 @@ class Sessions:
         self._brief_sent: dict[str, str] = {}
         self._phone: dict = {"at": 0.0, "lines": []}
         self._people = None
+        #: Consent turns already used to enroll someone, per role: one yes, one person.
+        self._consents_used: dict[str, set] = {}
         self._convs = None
         self._state: dict | None = None
         self._trust_version = -1
@@ -1221,7 +1225,8 @@ class Sessions:
             if not self._owner_sure(t):
                 continue
             text = str(t.get("text") or "")
-            if pattern.search(text) and (not also or also.lower() in text.lower()):
+            if pattern.search(text) and (not also or re.search(
+                    rf"\b{re.escape(also)}\b", text, re.I)):
                 return t
         return None
 
@@ -1263,7 +1268,7 @@ class Sessions:
         voice) starts it; an adult agrees in their own words; a kid only with the owner's
         say-so. Creates their person record and a memory note, then the voice server reads
         the enrollment sentences with them. The voiceprint stays on the voice server."""
-        from .people import CONSENT, SAY_SO, PeopleError, check_name, relation_of
+        from .people import SAY_SO, PeopleError, check_name, consents, relation_of
         try:
             name = check_name(args.get("name"))
         except PeopleError as e:
@@ -1280,6 +1285,11 @@ class Sessions:
         if asked is None:
             raise ValueError(f"I need you to ask for it yourself, naming them: 'learn {name}'s "
                              "voice'")
+        # A child stays a child whatever the voice routed: the owner's own words ("my son
+        # Sam"), or a record that already says so (relearning Sam after a forget).
+        known = self.people().get(name.lower()) or {}
+        if not kid and (relation_of(asked.get("text"))[1] or known.get("kid")):
+            relation, kid = "kid", True
         if kid:
             # A child: a separate yes from the owner, after the voice asked, as well as the
             # request naming them.
@@ -1290,15 +1300,22 @@ class Sessions:
             consent = {"kind": "owner_say_so", "words": f"{asked['text']} / {said['text']}",
                        "at": said["at"], "turn": said.get("turn")}
         else:
-            # The adult's own words, in a voice that isn't the owner's, after the owner
-            # asked for this person.
-            agreed = [t for t in self.recent(role) if CONSENT.search(str(t.get("text") or ""))
-                      and self.heard_as(t.get("identity") or {}) != "owner"
-                      and t.get("at", 0) >= asked.get("at", 0)]
+            # The adult's own words, after the owner asked for this person, in a voice
+            # speaker ID heard and could not place ("unknown guest": nobody it knows), or
+            # already knows as this very person (relearning them). Never the owner's, never
+            # someone else it knows (Robin can't agree for Quinn), never a turn with no
+            # voiceprint (another key on this lane), and never a yes already used for
+            # someone else.
+            used = self._consents_used.setdefault(role, set())
+            agreed = [t for t in self.recent(role) if consents(t.get("text"))
+                      and self._consent_voice(t, name)
+                      and t.get("at", 0) >= asked.get("at", 0)
+                      and (t.get("turn"), t.get("at")) not in used]
             if not agreed:
                 raise ValueError(f"{name} needs to say 'I agree to have my voice remembered' "
                                  "first, in their own voice")
             t = agreed[-1]
+            used.add((t.get("turn"), t.get("at")))
             sp = (t.get("identity") or {}).get("speaker") or {}
             consent = {"kind": "own_words", "words": t["text"], "at": t["at"],
                        "turn": t.get("turn"), "heard_as": sp.get("label") or "unknown"}
@@ -1326,6 +1343,16 @@ class Sessions:
                           {"ok": True, "devices": devices})
         return {"ok": True, "person": {k: rec[k] for k in ("name", "relation", "kid")}}
 
+    def _consent_voice(self, turn: dict, name: str) -> bool:
+        """Whether a heard turn's voice may be ``name`` agreeing: unknown to speaker ID,
+        or already recognised as ``name`` (sure or not)."""
+        ident = turn.get("identity") or {}
+        who = self.heard_as(ident)
+        if who == "unknown":
+            return True
+        label = str(((ident.get("speaker") or {}).get("label")) or "").strip().lower()
+        return who == "other" and label == name.lower()
+
     async def forget_voice(self, role: str, args: dict, turn: Any = None) -> dict:
         from .people import PeopleError, check_name
         try:
@@ -1343,12 +1370,22 @@ class Sessions:
         self.home.journal("home.voice_forget", {"name": name, "keep_record": keep}, {"ok": True})
         return {"ok": True, "forgot": name, "record_kept": keep}
 
+    def _quiet_asked(self, role: str, turn: Any = None) -> bool:
+        """Whether the turn that ended listening (else the last one heard) asked for time."""
+        heard = self.recent(role)
+        mine = [t for t in heard if turn is not None and t.get("turn") == turn] or heard[-1:]
+        return any(QUIET_ASKED.search(str(t.get("text") or "")) for t in mine)
+
     async def listen_end(self, role: str, args: dict, turn: Any = None) -> dict:
         """The voice ends its own listening ("that's all", "go to sleep for 10 minutes"):
         the phone closes the mic once the sign-off has been said."""
         try:
             minutes = max(0, min(int(float(args.get("minutes") or 0)), 240))
         except (TypeError, ValueError):
+            minutes = 0
+        if minutes and not self._quiet_asked(role, turn):
+            # Minutes mute the wake word: only when the words heard asked for a quiet
+            # spell ("go to sleep for 20 minutes"), never on a plain "that's all for now".
             minutes = 0
         await self._event(role, "listen_end", {"quiet_minutes": minutes}, turn)
         return {"ok": True, "quiet_minutes": minutes}
