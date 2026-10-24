@@ -664,7 +664,7 @@ async def test_the_log_records_cards_and_taps_in_plain_lines(att):
     decided = next(r for r in res["rows"] if r["what"].startswith("Approved"))
     assert decided["how"] == "Bake tapped Yes on pixel" and decided["outcome"] == "decided"
     assert all("ref" not in r for r in res["rows"])      # internal pointers stay internal
-    assert any("Because: not an emergency" in line for line in res["lines"])
+    assert any("Because: a decision for you" in line for line in res["lines"])
     # Never a command's arguments in the log.
     assert not any("systemctl" in line for line in res["lines"])
 

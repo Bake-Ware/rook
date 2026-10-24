@@ -151,6 +151,14 @@ are set only in the environment or on the command line.
 | `attention.person` | Your name | hub | str | `the person` | `ROOK_ATTENTION_PERSON` | live |
 | `attention.poll_secs` | Check phones every (s) | hub | int | `10` | `ROOK_ATTENTION_POLL_SECS` | live |
 | `attention.push_rules` | Send notification rules to phones | hub | bool | off | `ROOK_ATTENTION_PUSH_RULES` | live |
+| `attention.queue` | Queue decisions | hub | bool | on | `ROOK_ATTENTION_QUEUE` | live |
+| `attention.remind` | Spoken reminders | hub | bool | on | `ROOK_ATTENTION_REMIND` | live |
+| `attention.remind_wait_s` | Wait before announcing a new card (s) | hub | int | `120` | `ROOK_ATTENTION_REMIND_WAIT_S` | live |
+| `attention.remind_gap_min` | At least this long between reminders (min) | hub | int | `15` | `ROOK_ATTENTION_REMIND_GAP_MIN` | live |
+| `attention.remind_again_min` | Remind again while cards wait (min) | hub | int | `60` | `ROOK_ATTENTION_REMIND_AGAIN_MIN` | live |
+| `attention.remind_retry_min` | Try again after a busy room (min) | hub | int | `5` | `ROOK_ATTENTION_REMIND_RETRY_MIN` | live |
+| `attention.quiet_hours` | No reminders between | hub | str |  | `ROOK_ATTENTION_QUIET_HOURS` | live |
+| `attention.remind_unchecked` | Remind even when the room can't be checked | hub | bool | off | `ROOK_ATTENTION_REMIND_UNCHECKED` | live |
 
 ## Chat (hub plugin, runs in mcp)
 
