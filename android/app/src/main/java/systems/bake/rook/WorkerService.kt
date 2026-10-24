@@ -55,7 +55,8 @@ class WorkerService : Service() {
     /** ACTION_USER_PRESENT is not a manifest broadcast: attention hears unlocks while the worker runs. */
     private val unlockReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
-            if (intent.action == Intent.ACTION_USER_PRESENT) runCatching { AttentionStore.unlocked(ctx) }
+            if (intent.action != Intent.ACTION_USER_PRESENT) return
+            try { AttentionStore.unlocked(ctx) } catch (t: Throwable) { Log.w(TAG, "attention unlock failed", t) }
         }
     }
 
@@ -63,8 +64,11 @@ class WorkerService : Service() {
         super.onCreate()
         createChannel()
         runCatching { AttentionChannels.ensure(this) }
+        // EXPORTED on purpose: SystemUI (its own app uid, not the system uid) sends USER_PRESENT,
+        // and a NOT_EXPORTED receiver never gets it on Android 13+. It is a protected broadcast,
+        // so no ordinary app can send it to us.
         androidx.core.content.ContextCompat.registerReceiver(this, unlockReceiver,
-            android.content.IntentFilter(Intent.ACTION_USER_PRESENT), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+            android.content.IntentFilter(Intent.ACTION_USER_PRESENT), androidx.core.content.ContextCompat.RECEIVER_EXPORTED)
         updateHandler.postDelayed(updateTick, 30_000)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             try { getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback) }
