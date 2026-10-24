@@ -15,7 +15,18 @@ online and announces ``attention.post``, the hub
    card; dashboard-only items get only an Explain button; an item that is no
    longer waiting gets ``attention.update`` gone;
 3. **delivers alerts** queued by ``attention.send`` that it has not
-   delivered yet (a phone that was offline gets them when it is back).
+   delivered yet (a phone that was offline gets them when it is back);
+4. **reminds** (``attention.remind`` on the phone): with ``attention.queue``
+   on, a decision card is not an emergency, so it lands quietly in the app
+   (the quiet digest channel: no heads-up, no takeover on unlock) and the
+   phone says one short line instead, when the room is quiet ("Need your
+   input: Deploy hub update?", or "Hey boss, you have 6 decisions pending."),
+   paced by the ``remind_*`` settings. The phone checks the room itself
+   before it speaks and reports back with a ``reminded`` event. Urgent
+   alerts still ring at once.
+
+Every card queued, reminder spoken or skipped, and decision seen here goes
+into the 30-day log (:mod:`rook.hub.eventlog`) as one plain line.
 
 State (what was posted where, the last event seq per phone, the alert queue
 and the rings) lives in ``state.json`` in the plugin's data dir, so a hub
@@ -52,6 +63,23 @@ CHANNELS = ("urgent", "family", "approvals", "digest", "jobs")
 SIGNALS = ("seen", "opened", "dismissed", "acked", "unlocked")
 PRIORITIES = ("urgent", "family", "normal")
 TAPPED = {"approve": "Tapped Yes", "deny": "Tapped No"}
+#: The quiet channel a queued decision card uses: the app shows it in its list
+#: and the notification shade without a heads-up, a sound or a takeover on
+#: unlock (every app since 0.4.20 knows it, so no app update is needed).
+QUEUE_CHANNEL = "digest"
+#: How long a reminder may stay unanswered by the phone before it counts as lost.
+REMIND_LOST_S = 180.0
+REMIND_TEXT_MAX = 300
+#: What the phone reports after attention.remind (the app's contract).
+REMIND_OUTCOMES = ("spoken", "busy", "call", "voice_session", "mic_in_use", "media",
+                   "speaking", "unchecked", "off", "dnd", "error")
+NOT_SPOKEN = {"busy": "someone was talking", "call": "you were on a call",
+              "voice_session": "you were talking to the voice", "mic_in_use":
+              "another app was using the microphone", "media": "something was playing",
+              "speaking": "the phone was already speaking", "unchecked":
+              "the phone couldn't check the room", "off": "spoken reminders are off in the app",
+              "dnd": "the phone was on Do Not Disturb",
+              "error": "the phone couldn't speak it", "lost": "the phone didn't answer"}
 
 
 def short(text: Any, limit: int) -> str:
@@ -124,6 +152,19 @@ def card_for(item: dict) -> dict:
             "expires_at": CARD_EXPIRES}
 
 
+def speakable(item: dict) -> str:
+    """A waiting item's title as it may be spoken or logged (rook/hub/relay.py
+    ``summary``): a held call's from its cap and machine only, never its
+    arguments; a question's or house ask's own plain title."""
+    from ...plain import safe_title
+    p = item.get("plain") or {}
+    if item.get("cap") and item.get("kind") not in ("ask", "house"):
+        title = safe_title(item["cap"], str(item.get("worker") or ""), hub=bool(item.get("hub")))
+    else:
+        title = p.get("title") or item.get("line") or "a question for you"
+    return short(title, 120)
+
+
 def without_body(card: dict) -> dict:
     """A card for a phone whose app predates ``body`` (0.4.21 and older): the
     title and what it is for as the line, the body ahead of the detail under
@@ -167,9 +208,15 @@ class AttentionService:
     :class:`rook.hub.relay.Relay` (or None)."""
 
     def __init__(self, path: Path, settings: Callable[[], dict], client: Callable[[], Any],
-                 relay: Callable[[], Any], clock: Callable[[], float] = time.time) -> None:
+                 relay: Callable[[], Any], clock: Callable[[], float] = time.time,
+                 trust: Callable[[], Any] | None = None, log: Any = None) -> None:
         self.path = Path(path)
         self._settings, self._client, self._relay, self.clock = settings, client, relay, clock
+        self._trust = trust or (lambda: None)
+        if log is None:
+            from ...eventlog import EventLog
+            log = EventLog(self.path.parent / "event_log.db", clock=clock)
+        self.eventlog = log
         self.lock = asyncio.Lock()
         self.state = self._load()
 
@@ -180,7 +227,8 @@ class AttentionService:
         except (OSError, ValueError):
             data = {}
         data = data if isinstance(data, dict) else {}
-        for key, empty in (("devices", {}), ("alerts", []), ("signals", []), ("notices", [])):
+        for key, empty in (("devices", {}), ("alerts", []), ("signals", []), ("notices", []),
+                           ("remind", {})):
             if not isinstance(data.get(key), type(empty)):
                 data[key] = empty
         return data
@@ -287,6 +335,9 @@ class AttentionService:
                     done[dev["name"]] = {"events": await self._poll(dev),
                                          **await self._sync_cards(dev),
                                          "alerts": await self._deliver(dev)}
+                    said = await self._remind(dev)
+                    if said:
+                        done[dev["name"]]["remind"] = said
                     if self.settings().get("push_rules") and dev["rules"]:
                         await self.push_rules(dev)
                 except Exception as e:     # one phone failing never stops the others
@@ -354,6 +405,8 @@ class AttentionService:
                 for a in self.state["alerts"]:
                     if a["id"] == ident:
                         a.setdefault("acked", {})[wid] = ts
+        elif kind == "reminded":
+            self._reminded(dev, ev, ts)
         elif kind == "notice":
             pri = ev.get("priority") if ev.get("priority") in PRIORITIES else "normal"
             self._ring("notices", {"worker_id": wid, "device": dev["name"],
@@ -400,6 +453,10 @@ class AttentionService:
                 msg = f"Not done: the hub could not record it ({type(e).__name__})."
             else:
                 posted.update(closed=True, state="done", decided=ts)
+                self.log("decided", f"{'Approved' if decision == 'approve' else 'Declined'}: "
+                         f"{out.get('name') or item}", "your answer on the decision card",
+                         how=f"{self.person()} tapped {'Yes' if decision == 'approve' else 'No'} "
+                             f"on {dev['name']}", ref=item)
                 await self._update(wid, item, "done", short(out.get("recorded") or "Done.",
                                                             EXPLAIN_MAX))
                 return
@@ -436,6 +493,9 @@ class AttentionService:
             if old is not None and not again:
                 continue
             card = card_for(it)
+            queued = self.queued_on(dev)
+            if queued:
+                card["channel"] = QUEUE_CHANNEL
             try:
                 await self._post_card(dev, card)
             except Exception as e:
@@ -444,10 +504,18 @@ class AttentionService:
             posted[ident] = {"kind": card["kind"], "at": self.clock(),
                              "actions": card["actions"]}
             n_new += 1
+            if not again:
+                self.log("ask", f"Card: {speakable(it)}",
+                         "not an emergency, so it waits quietly in the app" if queued
+                         else "a decision for you", how=f"on {dev['name']}", ref=ident)
         for ident in [i for i in posted if i not in items]:
             row = posted[ident]
             if row.get("closed") or await self._update(wid, ident, "gone",
                                                        "No longer waiting on you."):
+                if not row.get("closed"):
+                    self.log("decided", "A card is no longer waiting",
+                             "it was answered elsewhere or withdrawn", how="seen by the hub",
+                             ref=ident)
                 del posted[ident]
                 n_gone += 1
         return {"posted": n_new, "gone": n_gone}
@@ -470,6 +538,196 @@ class AttentionService:
                 raise
             d["no_body"] = version
             await self.call("attention.post", without_body(card), wid)
+
+    # -- the queue and spoken reminders ------------------------------------------------
+    def queueing(self) -> bool:
+        """Decision cards wait quietly (no heads-up or takeover) and reminders bring
+        them up: ``attention.queue`` (on by default)."""
+        return self.settings().get("queue", True) is not False
+
+    def reminding(self) -> bool:
+        return self.queueing() and self.settings().get("remind", True) is not False
+
+    def queued_on(self, dev: dict) -> bool:
+        """Whether a card for this phone queues quietly: the queue is on and the phone
+        can remind (its app has ``attention.remind``), or the person turned spoken
+        reminders off and wants the quiet queue alone. A phone whose app can't
+        remind yet still gets cards that pop up, so nothing goes unnoticed."""
+        if not self.queueing():
+            return False
+        if not self.reminding():
+            return True
+        caps = (self.roster().get(dev["worker_id"]) or {}).get("caps") or []
+        return "attention.remind" in caps
+
+    def log(self, outcome: str, what: str, why: str = "", how: str = "",
+            ref: str = "") -> None:
+        if self.eventlog is None:
+            return
+        with contextlib.suppress(Exception):
+            self.eventlog.add("attention", outcome, what, why, how, ref)
+
+    def waiting(self) -> list[dict]:
+        """Every decision waiting on the person, oldest first: ``{id, created,
+        title}``. The approvals list (held calls, job holds, huddle cards and
+        questions, house asks) plus pending trust-map proposals. Titles are the
+        speakable kind (rook/hub/relay.py ``summary``): a held call's title comes
+        from its cap and machine only, never its arguments."""
+        out: list[dict] = []
+        relay = self._relay()
+        if relay is not None:
+            with contextlib.suppress(Exception):
+                for it in relay.items():
+                    out.append({"id": str(it["id"]), "created": float(it.get("created") or 0),
+                                "title": speakable(it)})
+        trust = None
+        with contextlib.suppress(Exception):
+            trust = self._trust()
+        if trust is not None:
+            with contextlib.suppress(Exception):
+                for prop in trust.current().get("proposals") or []:
+                    if prop.get("state") == "pending":
+                        out.append({"id": str(prop["id"]), "created": float(prop.get("at") or 0),
+                                    "title": "a change to the trust map"})
+        out.sort(key=lambda i: i["created"])
+        return out
+
+    @staticmethod
+    def reminder_text(items: list[dict]) -> str:
+        """One card: "Need your input: <its title>"; several: "Hey boss, you have 6
+        decisions pending." (Bake's own words, 2026-10-23)."""
+        if len(items) == 1:
+            title = str(items[0]["title"]).strip().rstrip(".")
+            return short(f"Need your input: {title}" + ("" if title.endswith("?") else "."),
+                         REMIND_TEXT_MAX)
+        return f"Hey boss, you have {len(items)} decisions pending."
+
+    def _local(self, ts: float) -> datetime.datetime:
+        tz = str(self.settings().get("timezone") or "").strip()
+        if tz:
+            with contextlib.suppress(Exception):
+                from zoneinfo import ZoneInfo
+                return datetime.datetime.fromtimestamp(ts, ZoneInfo(tz))
+        return datetime.datetime.fromtimestamp(ts).astimezone()
+
+    def quiet_hours(self, ts: float | None = None) -> bool:
+        """Inside ``attention.quiet_hours`` ("22:00-07:00", local time; empty: never)."""
+        spec = str(self.settings().get("quiet_hours") or "").strip()
+        win = parse_hours(spec)
+        if win is None:
+            return False
+        now = self._local(self.clock() if ts is None else ts)
+        minute = now.hour * 60 + now.minute
+        start, end = win
+        return start <= minute < end if start <= end else (minute >= start or minute < end)
+
+    def speaker(self) -> dict | None:
+        """The one phone that speaks reminders: the first configured phone that is
+        reachable and has ``attention.remind`` (one voice, never a chorus)."""
+        roster = self.roster()
+        for dev in self.reachable():
+            if "attention.remind" in ((roster.get(dev["worker_id"]) or {}).get("caps") or []):
+                return dev
+        return None
+
+    def _minutes(self, key: str, default: float) -> float:
+        try:
+            return max(0.0, float(self.settings().get(key, default)))
+        except (TypeError, ValueError):
+            return default
+
+    async def _remind(self, dev: dict) -> dict | None:
+        """One reminder, when one is due, on the speaking phone. The phone checks
+        that the room is quiet first and reports a ``reminded`` event."""
+        st = self.state["remind"]
+        cfg = self.settings()
+        if not self.reminding():
+            return None
+        sp = self.speaker()
+        if sp is None or sp["worker_id"] != dev["worker_id"]:
+            return None
+        now = self.clock()
+        items = self.waiting()
+        if not items:
+            st.pop("announced", None)
+            st.pop("skipped", None)
+            return None
+        inflight = st.get("inflight")
+        if inflight:
+            if now - float(inflight.get("at") or 0) < REMIND_LOST_S:
+                return None
+            self._skipped("lost", inflight)     # the phone never answered
+            st.pop("inflight", None)
+        if self.quiet_hours(now):
+            return None
+        if now - float(st.get("spoken_at") or 0) < self._minutes("remind_gap_min", 15) * 60:
+            return None
+        if now - float(st.get("attempt_at") or 0) < self._minutes("remind_retry_min", 5) * 60:
+            return None
+        wait = self._minutes("remind_wait_s", 120)
+        ready = [i for i in items if now - i["created"] >= wait]
+        if not ready:
+            return None
+        announced = set(st.get("announced") or ())
+        again = self._minutes("remind_again_min", 60)
+        spoken_at = float(st.get("spoken_at") or 0)
+        # A repeat (nothing new) only once the phone was unlocked since the last one:
+        # never the same line again and again to an empty or sleeping room.
+        used = float((self._dev(dev["worker_id"]).get("signals") or {}).get("unlocked") or 0)
+        due = any(i["id"] not in announced for i in ready) or (
+            again > 0 and now - spoken_at >= again * 60 and used > spoken_at)
+        if not due:
+            return None
+        text = self.reminder_text(items)
+        rid = "r" + secrets.token_hex(5)
+        st["attempt_at"] = now
+        try:
+            res = await self.call("attention.remind", {
+                "id": rid, "text": text, "sample_ms": 3000,
+                "speak_unchecked": bool(cfg.get("remind_unchecked", False))}, dev["worker_id"])
+        except Exception as e:  # noqa: BLE001
+            log.info("attention: remind on %s: %s", dev["name"], e)
+            return {"error": str(e)[:200]}
+        if res.get("accepted") is False:
+            self._skipped(str(res.get("reason") or "busy"), {"text": text})
+            return {"accepted": False}
+        st["inflight"] = {"id": rid, "at": now, "text": text, "ids": [i["id"] for i in items],
+                          "device": dev["name"]}
+        return {"id": rid, "text": text}
+
+    def _reminded(self, dev: dict, ev: dict, ts: float) -> None:
+        st = self.state["remind"]
+        inflight = st.get("inflight") or {}
+        if not inflight or str(ev.get("id") or "") != inflight.get("id"):
+            return
+        st.pop("inflight", None)
+        outcome = ev.get("outcome") if ev.get("outcome") in REMIND_OUTCOMES else "error"
+        # Pacing runs on the hub's clock, never the phone's (it may be off).
+        now = self.clock()
+        if outcome == "spoken":
+            st["spoken_at"] = now
+            st["announced"] = list(inflight.get("ids") or ())
+            st.pop("skipped", None)
+            n = len(inflight.get("ids") or ())
+            via = {"server": "in the house voice", "device": "in the phone's own voice"}.get(
+                str(ev.get("via") or ""), "")
+            self.log("reminded", f"Reminded you out loud: {inflight.get('text')}",
+                     f"{n} decision{'s' if n != 1 else ''} waiting and the room was quiet",
+                     how=f"spoken on {dev['name']}" + (f" {via}" if via else ""))
+            return
+        st["attempt_at"] = now
+        self._skipped(outcome, inflight)
+
+    def _skipped(self, outcome: str, inflight: dict) -> None:
+        """A reminder that wasn't spoken: logged once per reason until one is spoken."""
+        st = self.state["remind"]
+        st["last_outcome"] = outcome
+        if st.get("skipped") == outcome:
+            return
+        st["skipped"] = outcome
+        retry = int(self._minutes("remind_retry_min", 5))
+        self.log("skipped", "Didn't remind you yet",
+                 f"{NOT_SPOKEN.get(outcome, outcome)}; trying again in {retry} min")
 
     # -- alerts ---------------------------------------------------------------------
     def _expire_alerts(self) -> None:
@@ -583,7 +841,20 @@ class AttentionService:
                       if a.get("acked") else {}),
                    **({"expired": True} if a.get("expired") else {})}
                   for a in self.state["alerts"][-10:]]
+        st = self.state.get("remind") or {}
+        sp = self.speaker()
+        reminders = {"queue": self.queueing(), "on": self.reminding(),
+                     "speaker": sp["name"] if sp else None,
+                     "last_spoken": _when(st.get("spoken_at")),
+                     "last_try": _when(st.get("attempt_at")),
+                     **({"last_outcome": st["last_outcome"]} if st.get("last_outcome") else {}),
+                     **({"waiting_on_phone": True} if st.get("inflight") else {}),
+                     "quiet_hours_now": self.quiet_hours()}
+        if not sp and reminders["on"]:
+            reminders["note"] = ("no reachable phone has attention.remind (app 0.4.22-beta.3 or "
+                                 "later): cards pop up as before and nothing is spoken")
         return {"person": self.person(), "devices": out, "recent_alerts": list(reversed(alerts)),
+                "reminders": reminders,
                 "note": "No answer does not mean unseen: last_seen and recent_signals say whether "
                         "the person saw, opened or unlocked the phone."}
 
@@ -599,6 +870,20 @@ class AttentionService:
         Tokens page's "May relay my approvals"."""
         return [(self.principal(d["worker_id"]), self.label(d)) for d in self.configured()
                 if d["worker_id"]]
+
+
+def parse_hours(spec: str) -> tuple[int, int] | None:
+    """``"22:00-07:00"`` as minutes after midnight ``(1320, 420)``; None when empty
+    or not that shape (an unreadable setting never silences anything)."""
+    import re
+    m = re.fullmatch(r"\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*", str(spec or ""))
+    if not m:
+        return None
+    h1, m1, h2, m2 = (int(x) for x in m.groups())
+    if h1 > 23 or h2 > 24 or m1 > 59 or m2 > 59:
+        return None
+    start, end = h1 * 60 + m1, min(h2 * 60 + m2, 1440)
+    return None if start == end else (start, end)
 
 
 def _when(ts: Any) -> dict | None:

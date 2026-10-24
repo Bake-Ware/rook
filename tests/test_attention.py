@@ -30,6 +30,8 @@ class FakePhone:
         self.rules: list = []
         self.seq = 0
         self.body = True            # the app shows a card body (0.4.22 and later)
+        self.reminds: list[dict] = []
+        self.remind_reply: dict = {"accepted": True}
 
     def event(self, type_: str, **kw) -> dict:
         self.seq += 1
@@ -66,6 +68,11 @@ class FakePhone:
         if cap == "attention.rules_set":
             self.rules.append(args["rules"])
             return {"ok": True}
+        if cap == "attention.remind":
+            assert set(args) == {"id", "text", "sample_ms", "speak_unchecked"}
+            assert 1 <= len(args["id"]) <= 64 and 0 < len(args["text"]) <= 300
+            self.reminds.append(dict(args))
+            return {"ok": True, "id": args["id"], **self.remind_reply}
         raise AssertionError(cap)
 
 
@@ -127,6 +134,7 @@ async def test_new_items_are_posted_once_and_gone_items_are_withdrawn(att):
     out = await att.att.service.tick()
     assert out["pixel"]["posted"] == 2
     card = att.phone.cards[plain["id"]]
+    # This phone's app can't speak reminders (no attention.remind): its cards still pop up.
     assert card["kind"] == "hold" and card["channel"] == "approvals"
     assert card["urgency"] == "normal" and card["actions"] == ["yes", "no", "explain"]
     assert card["expires_at"] == 0                        # never expires on the phone
@@ -432,3 +440,251 @@ async def test_a_failed_card_is_withdrawn_from_the_phone_and_never_posted_again(
     assert (card["id"], "gone") in {(i, s) for i, s, _ in att.phone.updates}
     assert [p["id"] for p in att.phone.posts].count(card["id"]) == 1
 
+
+
+# -- the queue and spoken reminders ------------------------------------------------------------
+
+def speaking(att, **kw):
+    """A phone whose app has attention.remind (0.4.22-beta.3), reminders right away."""
+    att.band.workers[PHONE]["caps"].append("attention.remind")
+    att.configure(**{"remind_wait_s": 0, **kw})
+
+
+def later(att, secs):
+    """The hub's clock moves on; the phone stays online (it heartbeats)."""
+    base = att.att.service.clock
+    att.att.service.clock = lambda: base() + secs
+    att.band.workers[PHONE]["last_seen"] = att.att.service.clock()
+
+
+def outcome(att, outcome, **kw):
+    rid = att.phone.reminds[-1]["id"]
+    return att.phone.event("reminded", id=rid, outcome=outcome, **kw)
+
+
+@pytest.mark.asyncio
+async def test_cards_queue_quietly_on_a_phone_that_can_remind(att):
+    speaking(att, remind_wait_s=600)
+    item = hold(att.ap)
+    await att.att.service.tick()
+    assert att.phone.cards[item["id"]]["channel"] == "digest"
+    # Spoken reminders off: the quiet queue alone, as the person chose.
+    att.band.workers[PHONE]["caps"].remove("attention.remind")
+    att.configure(remind=False)
+    other = hold(att.ap, args={"argv": ["uptime"]})
+    await att.att.service.tick()
+    assert att.phone.cards[other["id"]]["channel"] == "digest"
+    # The log names the card by its safe title, never the command.
+    assert any(r["what"] == "Card: Run a command on box" for r in att.att.service.eventlog.recent())
+
+
+@pytest.mark.asyncio
+async def test_queue_off_pops_cards_up_as_before(att):
+    att.configure(queue=False)
+    item = hold(att.ap)
+    await att.att.service.tick()
+    assert att.phone.cards[item["id"]]["channel"] == "approvals"
+    assert att.phone.reminds == []
+
+
+@pytest.mark.asyncio
+async def test_one_waiting_card_is_announced_by_its_plain_title(att):
+    speaking(att)
+    item = hold(att.ap)
+    await att.att.service.tick()
+    r, = att.phone.reminds
+    # A held call's spoken title comes from its cap and machine only.
+    assert r["text"] == "Need your input: Run a command on box."
+    assert r["sample_ms"] == 3000 and r["speak_unchecked"] is False
+    # Nothing from the call's arguments is ever spoken.
+    other = hold(att.ap, args={"argv": ["cat", "/etc/secret-plan.txt"]})
+    att.att.service.state["remind"].clear()
+    await att.att.service.tick()
+    assert "secret-plan" not in att.phone.reminds[-1]["text"]
+    assert att.phone.reminds[-1]["text"] == "Hey boss, you have 2 decisions pending."
+    assert item["id"] != other["id"]
+
+
+@pytest.mark.asyncio
+async def test_a_spoken_reminder_is_logged_and_paced(att):
+    speaking(att)
+    hold(att.ap)
+    await att.att.service.tick()
+    outcome(att, "spoken", via="server")
+    await att.att.service.tick()
+    rows = att.att.service.eventlog.recent()
+    said = [r for r in rows if r["outcome"] == "reminded"]
+    assert said and said[0]["what"] == "Reminded you out loud: Need your input: Run a command on box."
+    assert said[0]["why"] == "1 decision waiting and the room was quiet"
+    assert "in the house voice" in said[0]["how"]
+    assert len(att.phone.reminds) == 1                  # nothing new: no second reminder
+    # A new card inside the gap waits for the gap; after it, one line for both.
+    hold(att.ap, args={"argv": ["uptime"]})
+    later(att, 5 * 60)
+    await att.att.service.tick()
+    assert len(att.phone.reminds) == 1
+    later(att, 11 * 60)
+    await att.att.service.tick()
+    assert att.phone.reminds[-1]["text"] == "Hey boss, you have 2 decisions pending."
+    outcome(att, "spoken", via="device")
+    await att.att.service.tick()
+    # Nothing new: again after remind_again_min (60), not before, and only once the
+    # phone was unlocked since (never to an empty or sleeping room).
+    later(att, 30 * 60)
+    await att.att.service.tick()
+    assert len(att.phone.reminds) == 2
+    later(att, 31 * 60)
+    await att.att.service.tick()
+    assert len(att.phone.reminds) == 2
+    att.phone.event("unlocked")
+    await att.att.service.tick()          # the unlock is read (and stamped by the hub)
+    att.att.service._dev(PHONE)["signals"]["unlocked"] = att.att.service.clock()
+    later(att, 1)
+    await att.att.service.tick()
+    assert len(att.phone.reminds) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_busy_room_is_tried_again_later_and_logged_once(att):
+    speaking(att)
+    hold(att.ap)
+    await att.att.service.tick()
+    outcome(att, "busy", level={"active_frac": 0.4, "peak_dbfs": -20})
+    await att.att.service.tick()
+    assert len(att.phone.reminds) == 1                  # not again at once
+    later(att, 6 * 60)
+    await att.att.service.tick()
+    assert len(att.phone.reminds) == 2
+    outcome(att, "busy")
+    await att.att.service.tick()
+    skipped = [r for r in att.att.service.eventlog.recent() if r["outcome"] == "skipped"]
+    assert len(skipped) == 1 and skipped[0]["why"].startswith("someone was talking")
+    later(att, 12 * 60)
+    await att.att.service.tick()
+    outcome(att, "call")
+    await att.att.service.tick()
+    skipped = [r for r in att.att.service.eventlog.recent() if r["outcome"] == "skipped"]
+    assert len(skipped) == 2 and skipped[0]["why"].startswith("you were on a call")
+    st = (await att.node.dispatch("attention.status", {}, "agent"))["result"]["reminders"]
+    assert st["last_outcome"] == "call" and st["speaker"] == "pixel"
+
+
+@pytest.mark.asyncio
+async def test_a_reminder_the_phone_never_answers_counts_as_lost(att):
+    speaking(att)
+    hold(att.ap)
+    await att.att.service.tick()
+    later(att, 200)
+    await att.att.service.tick()
+    assert any(r["why"].startswith("the phone didn't answer")
+               for r in att.att.service.eventlog.recent())
+    # A late answer for the lost reminder changes nothing.
+    rid = att.phone.reminds[0]["id"]
+    att.phone.event("reminded", id=rid, outcome="spoken")
+    await att.att.service.tick()
+    assert not att.att.service.state["remind"].get("spoken_at")
+
+
+@pytest.mark.asyncio
+async def test_new_cards_wait_before_they_are_announced(att):
+    speaking(att, remind_wait_s=120)
+    item = hold(att.ap)
+    await att.att.service.tick()
+    assert att.phone.reminds == []
+    att.ap.decide(item["id"], True, "human:bake", scope="call")   # decided quickly elsewhere
+    later(att, 200)
+    await att.att.service.tick()
+    assert att.phone.reminds == []
+    gone = [r for r in att.att.service.eventlog.recent() if r["outcome"] == "decided"]
+    assert gone and gone[0]["why"] == "it was answered elsewhere or withdrawn"
+
+
+@pytest.mark.asyncio
+async def test_no_reminder_without_the_apps_remind_cap_or_with_reminders_off(att):
+    att.configure(remind_wait_s=0)
+    hold(att.ap)
+    await att.att.service.tick()
+    assert att.phone.reminds == []
+    st = (await att.node.dispatch("attention.status", {}, "agent"))["result"]["reminders"]
+    assert "0.4.22-beta.3" in st["note"]
+    att.band.workers[PHONE]["caps"].append("attention.remind")
+    att.configure(remind=False, remind_wait_s=0)
+    await att.att.service.tick()
+    assert att.phone.reminds == []
+
+
+@pytest.mark.asyncio
+async def test_quiet_hours_hold_reminders(att):
+    from rook.hub.plugins.attention.service import parse_hours
+    assert parse_hours("22:00-07:00") == (1320, 420)
+    assert parse_hours("") is None and parse_hours("soon") is None
+    assert parse_hours("25:00-07:00") is None and parse_hours("07:00-07:00") is None
+    speaking(att, quiet_hours="00:00-24:00")
+    hold(att.ap)
+    await att.att.service.tick()
+    assert att.phone.reminds == []
+    svc = att.att.service
+    import datetime as dt
+    noon = dt.datetime(2026, 10, 24, 12, 0).astimezone().timestamp()
+    att.configure(quiet_hours="22:00-07:00")
+    assert not svc.quiet_hours(noon)
+    assert svc.quiet_hours(noon + 11 * 3600) and svc.quiet_hours(noon - 6 * 3600)
+
+
+@pytest.mark.asyncio
+async def test_a_phone_that_refuses_the_reminder_is_tried_later(att):
+    speaking(att)
+    att.phone.remind_reply = {"accepted": False, "reason": "off"}
+    hold(att.ap)
+    await att.att.service.tick()
+    assert len(att.phone.reminds) == 1
+    await att.att.service.tick()
+    assert len(att.phone.reminds) == 1
+    assert any("spoken reminders are off in the app" in r["why"]
+               for r in att.att.service.eventlog.recent())
+
+
+@pytest.mark.asyncio
+async def test_pending_trust_proposals_count_as_decisions(att, tmp_path):
+    from rook.hub.trust import TrustStore
+    store = TrustStore(str(tmp_path / "trust.json"))
+    store.propose({"op": "set_unlisted", "data": {"level": "ship-it"}}, by="agent:x",
+                  why="it keeps asking for the same thing")
+    att.att.service._trust = lambda: store
+    speaking(att)
+    await att.att.service.tick()
+    assert att.phone.reminds[-1]["text"] == "Need your input: a change to the trust map."
+
+
+@pytest.mark.asyncio
+async def test_the_log_records_cards_and_taps_in_plain_lines(att):
+    att.configure()
+    item = hold(att.ap)
+    await att.att.service.tick()
+    att.ap.queue.set_relayer(f"device:{PHONE}", True, "human:bake", "pixel (phone)")
+    att.phone.tap(item["id"], "approve")
+    await att.att.service.tick()
+    res = (await att.node.dispatch("attention.log", {"limit": 10}, "agent"))["result"]
+    whats = [r["what"] for r in res["rows"]]
+    assert "Card: Run a command on box" in whats
+    assert any(w.startswith("Approved: ") for w in whats)
+    decided = next(r for r in res["rows"] if r["what"].startswith("Approved"))
+    assert decided["how"] == "Bake tapped Yes on pixel" and decided["outcome"] == "decided"
+    assert all("ref" not in r for r in res["rows"])      # internal pointers stay internal
+    assert any("Because: a decision for you" in line for line in res["lines"])
+    # Never a command's arguments in the log.
+    assert not any("systemctl" in line for line in res["lines"])
+
+
+def test_the_log_keeps_30_days(tmp_path):
+    from rook.hub.eventlog import EventLog
+    now = [1_800_000_000.0]
+    log_ = EventLog(tmp_path / "e.db", clock=lambda: now[0])
+    log_.add("attention", "ask", "Card: old one", "why")
+    now[0] += 31 * 86400
+    log_.add("attention", "ask", "Card: new one", "why")
+    assert [r["what"] for r in log_.recent()] == ["Card: new one"]
+    with pytest.raises(ValueError):
+        log_.add("attention", "nonsense", "x")
+    row = log_.add("voice", "decided", "x" * 500, "y" * 500)
+    assert len(row["what"]) == 140 and len(row["why"]) == 200

@@ -51,6 +51,9 @@
     "sensitive"
    ]
   },
+  "attention.log": {
+   "tier": "read"
+  },
   "attention.notices": {
    "tier": "read",
    "tags": [

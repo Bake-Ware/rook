@@ -64,6 +64,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 |---|---|---|---|
 | `approvals.list` | kind?, summary_only=false | read | What is waiting on the person: held calls, held job calls, huddle cards and pinned questions (kind: hold\|job\|… |
 | `approvals.relay` | item, decision, relayed_by?, reason='', answer='' | write | Approve or deny one waiting item on the person's behalf: relayed_by {who, quote, session} is their own decisi… |
+| `attention.log` | limit=30, since=0 | read | The last 30 days of decisions and reminders, newest first: one plain line each (what happened, the summarized… |
 | `attention.notices` | limit=20 | read | Recent short summaries (at most 140 characters) of urgent and family notifications the phones reported, newes… |
 | `attention.send` | text, title='', urgency='normal', channel='digest', explain='' | write | Put an alert on the person's phones (attention.devices): text, title?, urgency urgent\|normal (urgent rings on… |
 | `attention.status` | — | read | Per phone: online, last poll, last event, queued alerts, open cards, and when the person last saw, opened or… |
@@ -204,7 +205,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 `rook_approvals(action="summary")` says what is waiting on the person (held calls, held job calls, huddle cards, pinned questions); `action="list"` gives each item's name, who asked, what exactly would happen, risk, source and age. Read it back tersely: count, then name + one line each. Only when the person has enabled your client (Tokens > May relay my approvals) and tells you their decision, relay it: `rook_approvals(action="approve"|"deny", item=<name or id>, relayed_by={"who": <person>, "quote": <their exact words>, "session": <conversation URL or id>}, reason=<why, for a deny>)`. Never relay your own judgement, never decide items they did not name, and leave dashboard-only items (relayable: false) to them.
 
 ### attention (the person's phone)
-`attention.send {text, title?, urgency: urgent|normal, channel?, explain?}` on worker `rook` puts an alert on the person's phone (queued while it is offline). Use it sparingly: only what they must know now. `attention.status` says whether they saw, opened or unlocked the phone since (no answer is not unseen); `attention.notices {limit}` lists short summaries of their urgent and family notifications. Approvals reach the phone by themselves.
+`attention.send {text, title?, urgency: urgent|normal, channel?, explain?}` on worker `rook` puts an alert on the person's phone (queued while it is offline). Use it sparingly: only what they must know now. `attention.status` says whether they saw, opened or unlocked the phone since (no answer is not unseen); `attention.notices {limit}` lists short summaries of their urgent and family notifications. Approvals reach the phone by themselves: they queue quietly and the phone reminds the person out loud when the room is quiet. `attention.log {limit}` reads the 30-day log of decisions and reminders.
 
 ### Claude Code rules
 Hub-managed triggers and actions for Claude Code on the workers (dashboard: Manage > Claude Code). `rook_call(worker="rook", cap="ccmod.list")` lists them; `ccmod.status` shows what each worker holds. Changing or pushing rules writes people's Claude Code settings: ask the user first.
