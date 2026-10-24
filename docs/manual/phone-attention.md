@@ -67,7 +67,9 @@ It speaks only when the room is quiet: before each reminder the app listens
 for a few seconds to check nobody is talking. The sound stays on the phone:
 nothing is recorded, kept or sent. If someone is talking, you're on a call,
 music is playing or you're talking to the voice, it tries again a few minutes
-later. A card you answer quickly somewhere else is never announced.
+later. It stays quiet while the phone is on Do Not Disturb, and it repeats a
+reminder only after you have used the phone since the last one. A card you
+answer quickly somewhere else is never announced.
 
 You can tune it in Settings > Plugins > Attention: **Queue decisions** (off
 brings back a pop-up for every card), **Spoken reminders**, and under

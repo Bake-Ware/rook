@@ -528,11 +528,18 @@ async def test_a_spoken_reminder_is_logged_and_paced(att):
     assert att.phone.reminds[-1]["text"] == "Hey boss, you have 2 decisions pending."
     outcome(att, "spoken", via="device")
     await att.att.service.tick()
-    # Nothing new: again after remind_again_min (60), not before.
+    # Nothing new: again after remind_again_min (60), not before, and only once the
+    # phone was unlocked since (never to an empty or sleeping room).
     later(att, 30 * 60)
     await att.att.service.tick()
     assert len(att.phone.reminds) == 2
     later(att, 31 * 60)
+    await att.att.service.tick()
+    assert len(att.phone.reminds) == 2
+    att.phone.event("unlocked")
+    await att.att.service.tick()          # the unlock is read (and stamped by the hub)
+    att.att.service._dev(PHONE)["signals"]["unlocked"] = att.att.service.clock()
+    later(att, 1)
     await att.att.service.tick()
     assert len(att.phone.reminds) == 3
 

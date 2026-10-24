@@ -72,12 +72,13 @@ REMIND_LOST_S = 180.0
 REMIND_TEXT_MAX = 300
 #: What the phone reports after attention.remind (the app's contract).
 REMIND_OUTCOMES = ("spoken", "busy", "call", "voice_session", "mic_in_use", "media",
-                   "speaking", "unchecked", "off", "error")
+                   "speaking", "unchecked", "off", "dnd", "error")
 NOT_SPOKEN = {"busy": "someone was talking", "call": "you were on a call",
               "voice_session": "you were talking to the voice", "mic_in_use":
               "another app was using the microphone", "media": "something was playing",
               "speaking": "the phone was already speaking", "unchecked":
               "the phone couldn't check the room", "off": "spoken reminders are off in the app",
+              "dnd": "the phone was on Do Not Disturb",
               "error": "the phone couldn't speak it", "lost": "the phone didn't answer"}
 
 
@@ -669,8 +670,12 @@ class AttentionService:
             return None
         announced = set(st.get("announced") or ())
         again = self._minutes("remind_again_min", 60)
+        spoken_at = float(st.get("spoken_at") or 0)
+        # A repeat (nothing new) only once the phone was unlocked since the last one:
+        # never the same line again and again to an empty or sleeping room.
+        used = float((self._dev(dev["worker_id"]).get("signals") or {}).get("unlocked") or 0)
         due = any(i["id"] not in announced for i in ready) or (
-            again > 0 and now - float(st.get("spoken_at") or 0) >= again * 60)
+            again > 0 and now - spoken_at >= again * 60 and used > spoken_at)
         if not due:
             return None
         text = self.reminder_text(items)
@@ -847,7 +852,7 @@ class AttentionService:
                      "quiet_hours_now": self.quiet_hours()}
         if not sp and reminders["on"]:
             reminders["note"] = ("no reachable phone has attention.remind (app 0.4.22-beta.3 or "
-                                 "later): cards still queue, nothing is spoken")
+                                 "later): cards pop up as before and nothing is spoken")
         return {"person": self.person(), "devices": out, "recent_alerts": list(reversed(alerts)),
                 "reminders": reminders,
                 "note": "No answer does not mean unseen: last_seen and recent_signals say whether "

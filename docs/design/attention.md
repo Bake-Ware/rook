@@ -63,7 +63,8 @@ increasing), `ts` (epoch seconds) and `type`:
 
 - `reminded {id, outcome, via?, level?}` (0.4.22-beta.3): what became of an
   `attention.remind`; `outcome` is `spoken`, `busy`, `call`, `voice_session`,
-  `mic_in_use`, `media`, `speaking`, `unchecked`, `off` or `error`; `via`
+  `mic_in_use`, `media`, `speaking`, `unchecked`, `off`, `dnd` (the phone is
+  on Do Not Disturb) or `error`; `via`
   `server` (the house voice) or `device`; `level` only two rounded numbers.
 
 `last` is the newest seq on the phone; if it is below what the hub saw, the
@@ -121,7 +122,8 @@ Pacing (hub settings, all live): a new card waits `remind_wait_s` (120 s)
 first, so one answered quickly elsewhere is never announced and cards that
 arrive together are announced together; at least `remind_gap_min` (15) between
 reminders; again every `remind_again_min` (60; 0 = only for new cards) while
-cards wait; `remind_retry_min` (5) after a busy room; nothing during
+cards wait, but a repeat only once the phone was unlocked since the last
+reminder (never the same line to an empty or sleeping room); `remind_retry_min` (5) after a busy room; nothing during
 `quiet_hours` (local time, like `22:00-07:00`; empty by default, Bake will tune
 it). Only one phone speaks: the first configured phone that is online and has
 `attention.remind`. A reminder the phone doesn't answer within 3 minutes
