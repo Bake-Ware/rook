@@ -60,10 +60,26 @@ Agents send alerts with `attention.send` (on the worker `rook`). An urgent
 alert uses the phone's urgent channel. If your phone is off or out of
 reach, the alert waits and arrives when it is back (for up to a day).
 
+## Spoken reminders
+
+When decisions wait, the hub can have the phone say a short reminder, such as
+"Hey boss, you have 6 decisions pending." The phone only speaks when the room
+is quiet: not during a call, while you talk to Rook, while another app records
+or plays media, and not when it hears talking or a TV. Before it speaks, the
+app listens for a few seconds. The sound stays on the phone: nothing is
+recorded, kept or sent; the hub only learns whether it spoke, and if not, why.
+
+Turn it off in the app's **Attention** tab (**Spoken reminders**). The quiet
+check needs the microphone permission; the tab has a button when it is
+missing. With the wake word on, the check works with the screen off. Without
+it, Android may block the microphone while the app is in the background; the
+phone then reports that it could not check (and the hub decides whether to
+speak anyway).
+
 ## What the hub learns from your phone
 
 Only your taps and when you saw, opened, dismissed or acknowledged a card or
-unlocked the phone, plus a short summary (at most 140 characters) of urgent
+unlocked the phone, whether a spoken reminder was said, plus a short summary (at most 140 characters) of urgent
 and family notifications from other apps. The full text of a notification
 never leaves the phone. Agents can read these with `attention.status` (did
 you see it?) and `attention.notices` (recent summaries).

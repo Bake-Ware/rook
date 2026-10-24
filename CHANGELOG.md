@@ -39,6 +39,17 @@ version was `0.1.0`.
   restarts after the MCP side. Refused, with the reason, unless systemd would restart it
   (`Restart=always`/`on-failure`) or `ROOK_RESTART_SUPERVISED=1`. The page reloads when the hub
   is back. (manual: settings)
+- Spoken reminders on the phone (Android app 0.4.22-beta.3, code 29): `attention.remind {id,
+  text, sample_ms=3000, speak_unchecked=false}` (admin, physical; only the hub calls it) returns
+  at once, then the app skips the reminder during a call, its own voice session, another app
+  recording, media or speech playing, listens for `sample_ms` (1-8 s) and speaks `text` (at most
+  300 characters) in the app's voice only when nobody is talking. Each one ends with a `reminded`
+  event in `attention.poll` (outcome spoken, busy, call, voice_session, mic_in_use, media,
+  speaking, unchecked, off or error, plus two rounded level numbers). The sound stays in memory on
+  the phone: nothing is recorded, kept or sent. When wake-word standby is on, the check reads the
+  frames standby already reads instead of opening a second recorder. The Attention tab has a
+  **Spoken reminders** switch (on by default) and the microphone grant.
+  (manual: phone-attention)
 
 ### Changed
 - Huddle note cards never wait on the person: a note runs nothing, so it is recorded as noted when
