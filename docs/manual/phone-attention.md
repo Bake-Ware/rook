@@ -69,7 +69,8 @@ nothing is recorded, kept or sent. If someone is talking, you're on a call,
 music is playing or you're talking to the voice, it tries again a few minutes
 later. It stays quiet while the phone is on Do Not Disturb, and it repeats a
 reminder only after you have used the phone since the last one. A card you
-answer quickly somewhere else is never announced.
+answer quickly somewhere else is never announced. If the phone can't remind you (its switch is
+off, or it can't use the microphone), cards pop up the usual way again.
 
 You can tune it in Settings > Plugins > Attention: **Queue decisions** (off
 brings back a pop-up for every card), **Spoken reminders**, and under

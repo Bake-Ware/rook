@@ -129,6 +129,13 @@ it). Only one phone speaks: the first configured phone that is online and has
 `attention.remind`. A reminder the phone doesn't answer within 3 minutes
 counts as lost and is tried again.
 
+If the phone can't remind at all (its Spoken reminders switch is off, it
+can't check the room, it fails, or it never answers) two times in a row,
+cards pop up again: queued cards are posted again on the `approvals` channel
+(same id: no new ring, they take over on the next unlock) and new ones arrive
+that way, until a reminder is spoken. Repeat pacing uses the time the hub
+heard the phone's unlock, never the phone's clock.
+
 The voice is the app's selected voice: the house voice (Chatterbox on the
 voice server) when the app has a voice server, else Android's own speech.
 The quiet check needs the microphone; if the phone can't check (no
