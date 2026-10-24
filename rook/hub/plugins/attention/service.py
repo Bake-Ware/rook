@@ -702,7 +702,10 @@ class AttentionService:
             log.info("attention: remind on %s: %s", dev["name"], e)
             return {"error": str(e)[:200]}
         if res.get("accepted") is False:
-            self._skipped(str(res.get("reason") or "busy"), {"text": text})
+            # The app says why: reason "off" (its switch), or busy: another reminder of its
+            # own is still running (the phone is speaking, not the room).
+            why = str(res.get("reason") or ("speaking" if res.get("busy") else "busy"))
+            self._skipped(why if why in REMIND_OUTCOMES else "busy", {"text": text})
             return {"accepted": False}
         st["inflight"] = {"id": rid, "at": now, "text": text, "ids": [i["id"] for i in items],
                           "device": dev["name"]}
@@ -719,6 +722,7 @@ class AttentionService:
         now = self.clock()
         if outcome == "spoken":
             st["spoken_at"] = now
+            st["last_outcome"] = "spoken"
             st["announced"] = list(inflight.get("ids") or ())
             st.pop("skipped", None)
             st.pop("cant", None)

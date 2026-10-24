@@ -386,6 +386,12 @@ class CardPass:
             await self.say(role, "Answering cards by voice was turned off. Say so briefly.")
             self.passes.pop(role, None)
             return {"ok": False, "error": "voice decisions are off (Tokens page)"}
+        if ans in ("yes", "choose") and cur["stage"] == "ask" and not cur["strict"]:
+            # The map may have changed since the card was read (an entry deleted on the
+            # dashboard): judged again now, so a change that became a loosening is read back.
+            d = self.describe(it)
+            cur["strict"] = bool(d["loosens"] or d["sacred"])
+            cur["readback"] = cur.get("readback") or d["readback"]
         if ans in ("yes", "choose") and cur["strict"] and cur["stage"] == "ask":
             cur.update(stage="confirm", word=secrets.choice(WORDS), tries=0,
                        first_yes=" ".join(str(heard.get("text") or "").split())[:300])

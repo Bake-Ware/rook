@@ -747,3 +747,22 @@ async def test_a_repeat_waits_for_an_unlock_the_hub_heard(att):
     ev = att.phone.event("seen", id="x")         # not an unlock
     await att.att.service.tick()
     assert len(att.phone.reminds) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_apps_own_busy_and_a_spoken_outcome_read_right(att):
+    """Found end to end (scratch hub + emulator): the app's {accepted: false, busy: ...}
+    means its own reminder is running, and status shows the latest outcome."""
+    speaking(att)
+    att.phone.remind_reply = {"accepted": False, "busy": "another reminder is running"}
+    hold(att.ap)
+    await att.att.service.tick()
+    assert any(r["why"].startswith("the phone was already speaking")
+               for r in att.att.service.eventlog.recent())
+    att.phone.remind_reply = {"accepted": True}
+    later(att, 6 * 60)
+    await att.att.service.tick()
+    outcome(att, "spoken")
+    await att.att.service.tick()
+    st = (await att.node.dispatch("attention.status", {}, "agent"))["result"]["reminders"]
+    assert st["last_outcome"] == "spoken"
