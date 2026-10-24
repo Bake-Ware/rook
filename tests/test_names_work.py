@@ -283,7 +283,7 @@ async def test_huddle_room_refs(node):
     assert e.value.payload()["candidates"] == [{"id": h["room"], "name": h["name"]}]
     with pytest.raises(ValueError):
         svc.archive(near(h["name"]))
-    assert svc.archive(spoken(h["name"]))["room"] == h["room"]
+    assert svc.archive(spoken(h["name"]), by=PERSON)["room"] == h["room"]
     # Writes over the band: a near miss is refused, naming the candidate.
     bad = await node.dispatch("huddle.write", {"action": "say", "room": near(h["name"]), "text": "x"}, "agent:a")
     assert not bad["ok"] and h["name"] in bad["error"]
