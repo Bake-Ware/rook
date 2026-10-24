@@ -167,6 +167,110 @@ def test_store_errors_become_replies(mod, monkeypatch):
     assert p._poll() == {"ok": False, "error": "RuntimeError: boom"}
 
 
+class FakeRemind:
+    """Mimics SpokenReminder.start: returns at once, the work happens on the phone."""
+
+    def __init__(self, reply=None):
+        self.calls = []
+        self.reply = reply
+
+    def start(self, ctx, id, text, sample_ms, speak_unchecked):
+        self.calls.append((id, text, sample_ms, speak_unchecked))
+        return json.dumps(self.reply or {"ok": True, "id": id, "accepted": True})
+
+
+def test_clean_remind_defaults_and_collapses(mod):
+    r = mod.clean_remind("rem-1", "  Need your input:\n deploy   hub update?  ")
+    assert r == {"id": "rem-1", "text": "Need your input: deploy hub update?", "sample_ms": 3000,
+                 "speak_unchecked": False}
+    assert mod.clean_remind(" a ", "x" * 300)["text"] == "x" * 300
+    assert mod.clean_remind("a", "t", sample_ms=10)["sample_ms"] == 1000
+    assert mod.clean_remind("a", "t", sample_ms="99999")["sample_ms"] == 8000
+    assert mod.clean_remind("a", "t", sample_ms=2500.7)["sample_ms"] == 2500
+    assert mod.clean_remind("a", "t", sample_ms=None)["sample_ms"] == 3000
+    assert mod.clean_remind("x" * 64, "t")["id"] == "x" * 64
+
+
+@pytest.mark.parametrize("value, want", [
+    (False, False), (True, True), ("false", False), ("False", False), ("0", False), ("no", False),
+    ("", False), (None, False), (0, False), ("true", True), ("YES", True), ("1", True), (1, True),
+])
+def test_clean_remind_speak_unchecked_is_boolean_ish(mod, value, want):
+    assert mod.clean_remind("a", "t", speak_unchecked=value)["speak_unchecked"] is want
+
+
+@pytest.mark.parametrize("kwargs, msg", [
+    ({"id": "", "text": "t"}, "id"),
+    ({"id": "   ", "text": "t"}, "id"),
+    ({"id": None, "text": "t"}, "id"),
+    ({"id": "x" * 65, "text": "t"}, "id"),
+    ({"id": "a", "text": ""}, "text"),
+    ({"id": "a", "text": " \n\t "}, "text"),
+    ({"id": "a", "text": None}, "text"),
+    ({"id": "a", "text": "x" * 301}, "300"),
+    ({"id": "a", "text": "t", "sample_ms": "soon"}, "sample_ms"),
+    ({"id": "a", "text": "t", "sample_ms": float("nan")}, "sample_ms"),
+    ({"id": "a", "text": "t", "sample_ms": True}, "sample_ms"),
+    ({"id": "a", "text": "t", "speak_unchecked": "maybe"}, "speak_unchecked"),
+    ({"id": "a", "text": "t", "speak_unchecked": [1]}, "speak_unchecked"),
+])
+def test_clean_remind_rejects(mod, kwargs, msg):
+    with pytest.raises(ValueError, match=msg):
+        mod.clean_remind(**kwargs)
+
+
+def test_remind_reaches_the_phone_and_returns_at_once(mod, monkeypatch):
+    p, _ = plugin(mod, monkeypatch)
+    fake = FakeRemind()
+    monkeypatch.setattr(mod, "_Remind", fake)
+    r = p._remind(id="cardq-1", text="Hey boss,  you have 6 decisions pending.", sample_ms="4000",
+                  speak_unchecked="false")
+    assert r == {"ok": True, "id": "cardq-1", "accepted": True}
+    assert fake.calls == [("cardq-1", "Hey boss, you have 6 decisions pending.", 4000, False)]
+
+
+def test_remind_bad_args_do_nothing(mod, monkeypatch):
+    p, _ = plugin(mod, monkeypatch)
+    fake = FakeRemind()
+    monkeypatch.setattr(mod, "_Remind", fake)
+    assert p._remind(id="a", text="")["ok"] is False
+    assert p._remind(id="a", text="t", speak_unchecked="perhaps")["ok"] is False
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize("reply", [
+    {"ok": True, "id": "a", "accepted": False, "busy": "another reminder is running"},
+    {"ok": True, "id": "a", "accepted": False, "reason": "off"},
+])
+def test_remind_passes_the_phones_answer_through(mod, monkeypatch, reply):
+    p, _ = plugin(mod, monkeypatch)
+    monkeypatch.setattr(mod, "_Remind", FakeRemind(reply))
+    assert p._remind(id="a", text="t") == reply
+
+
+def test_remind_off_device_and_bridge_errors(mod, monkeypatch):
+    assert mod.AndroidAttentionPlugin()._remind(id="a", text="t") == {"ok": False, "error": "not an Android host"}
+    p, _ = plugin(mod, monkeypatch)
+
+    class Broken:
+        def start(self, *a):
+            raise RuntimeError("boom")
+    monkeypatch.setattr(mod, "_Remind", Broken())
+    assert p._remind(id="a", text="t") == {"ok": False, "error": "RuntimeError: boom"}
+
+
+def test_remind_is_admin_and_physical_like_post(mod):
+    meta = mod.AndroidAttentionPlugin._remind._rook_cap_meta
+    post = mod.AndroidAttentionPlugin._post._rook_cap_meta
+    assert meta.risk == post.risk == "admin"
+    assert "physical" in meta.tags
+    assert "reminded" in mod.AndroidAttentionPlugin._poll.__doc__
+    for outcome in ("spoken", "dnd", "busy", "call", "voice_session", "mic_in_use", "media", "speaking",
+                    "unchecked", "off", "error"):
+        assert outcome in mod.AndroidAttentionPlugin._poll.__doc__
+    assert "dnd" in mod.AndroidAttentionPlugin._remind.__doc__
+
+
 def test_clean_rules(mod):
     assert mod.clean_rules(None) == "" and mod.clean_rules([]) == ""
     rule = {"priority": "family", "category": "trusted", "match": {"senders": ["Coach Dana"]}, "note": "trust map"}

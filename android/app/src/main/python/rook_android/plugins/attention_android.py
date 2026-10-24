@@ -23,6 +23,10 @@ try:
     _Store = _jclass("systems.bake.rook.AttentionStore")
 except Exception:  # pragma: no cover - only importable on a Chaquopy host
     _Store = None
+try:
+    _Remind = _jclass("systems.bake.rook.SpokenReminder")
+except Exception:  # pragma: no cover - only importable on a Chaquopy host
+    _Remind = None
 
 KINDS = ("hold", "job", "card", "ask", "alert")
 CHANNELS = ("urgent", "family", "approvals", "digest", "jobs")
@@ -31,6 +35,10 @@ STATES = ("done", "failed", "gone")
 LINE_MAX, EXPLAIN_MAX, ID_MAX = 140, 600, 64
 BODY_MAX, BODY_LINES = 600, 6
 RULES_MAX_BYTES = 64 * 1024
+REMIND_TEXT_MAX = 300
+SAMPLE_MIN_MS, SAMPLE_MAX_MS, SAMPLE_DEFAULT_MS = 1000, 8000, 3000
+_TRUE = {"1", "true", "yes", "on", "y", "t"}
+_FALSE = {"0", "false", "no", "off", "n", "f", ""}
 
 
 def _clip(text, limit: int) -> str:
@@ -91,6 +99,41 @@ def clean_post(id, kind="card", line="", explain="", urgency="normal", channel="
     return {"id": cid, "kind": kind, "line": text, "body": _body(body), "explain": _clip(explain, EXPLAIN_MAX),
             "urgency": urgency, "channel": channel, "actions": acts or ["ack"], "source": _clip(source, 80),
             "expires_at": exp}
+
+
+def _flag(value, name: str) -> bool:
+    """A boolean-ish arg; ``"false"`` must not become True. Raises ValueError."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)) and value == value:
+        return bool(value)
+    if isinstance(value, str) and value.strip().lower() in _TRUE | _FALSE:
+        return value.strip().lower() in _TRUE
+    raise ValueError(f"{name} must be true or false, got {value!r}")
+
+
+def clean_remind(id, text, sample_ms=SAMPLE_DEFAULT_MS, speak_unchecked=False) -> dict:
+    """Validate and normalize attention.remind args. Raises ValueError."""
+    cid = str(id if id is not None else "").strip()
+    if not cid or len(cid) > ID_MAX:
+        raise ValueError(f"id must be 1-{ID_MAX} characters")
+    line = " ".join(str(text if text is not None else "").split())
+    if not line:
+        raise ValueError("text is required")
+    if len(line) > REMIND_TEXT_MAX:
+        raise ValueError(f"text must be at most {REMIND_TEXT_MAX} characters")
+    if isinstance(sample_ms, bool):
+        raise ValueError("sample_ms must be a number of milliseconds")
+    try:
+        ms = float(SAMPLE_DEFAULT_MS if sample_ms is None or sample_ms == "" else sample_ms)
+    except (TypeError, ValueError):
+        raise ValueError("sample_ms must be a number of milliseconds") from None
+    if ms != ms:
+        raise ValueError("sample_ms must be a number of milliseconds")
+    ms = int(max(SAMPLE_MIN_MS, min(SAMPLE_MAX_MS, ms)))
+    return {"id": cid, "text": line, "sample_ms": ms, "speak_unchecked": _flag(speak_unchecked, "speak_unchecked")}
 
 
 def clean_rules(rules) -> str:
@@ -177,6 +220,32 @@ class AndroidAttentionPlugin(Plugin):
             return {"ok": False, "error": str(e)}
         return _call("post", json.dumps(card, ensure_ascii=False))
 
+    @capability("remind", risk="admin", tags=("physical",))
+    def _remind(self, id: str, text: str, sample_ms: int = SAMPLE_DEFAULT_MS, speak_unchecked: bool = False) -> dict:
+        """Speak a short reminder on the phone, but only if the room is quiet.
+
+        Returns at once: {ok, id, accepted}. accepted=false with busy (another
+        reminder is running) or reason "off" (the app's Spoken reminders switch).
+        The phone then skips it in Do Not Disturb or bedtime (outcome dnd),
+        during a call, its own voice session, another
+        app recording, media playing or speech already playing; otherwise it
+        listens sample_ms (1000-8000) and speaks text (at most 300 chars) in the
+        app's voice only if nobody is talking. When Android silences the mic
+        (background, no permission) it speaks only if speak_unchecked is true.
+        The result arrives as a "reminded" event in attention.poll. The sound
+        never leaves the phone; the event carries two rounded level numbers.
+        """
+        try:
+            r = clean_remind(id, text, sample_ms, speak_unchecked)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        if _Remind is None or app_context() is None:
+            return {"ok": False, "error": "not an Android host"}
+        try:
+            return json.loads(str(_Remind.start(app_context(), r["id"], r["text"], r["sample_ms"], r["speak_unchecked"])))
+        except Exception as e:
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
     @capability("update", risk="admin")
     def _update(self, id: str, state: str, message: str = "") -> dict:
         """Show what happened after a decision: state done (brief confirmation,
@@ -193,7 +262,10 @@ class AndroidAttentionPlugin(Plugin):
         Each event has seq (monotonic), ts (epoch s) and type: decision {id,
         decision approve|deny, reason?}, seen {id, via card|heads_up}, opened {id},
         dismissed {id}, acked {id}, unlocked {}, notice {id, app, category,
-        priority, summary} (an urgent/family notification, summary only).
+        priority, summary} (an urgent/family notification, summary only),
+        reminded {id, outcome spoken|dnd|busy|call|voice_session|mic_in_use|
+        media|speaking|unchecked|off|error, via? server|device, level? {active_frac,
+        peak_dbfs}, checked? false (spoken without a quiet check)} (attention.remind).
         Kept on the phone until polled (last 1000). reset=true: the phone's log
         restarted, all of it is returned; more=true: call again; gap=true: older
         events were dropped before they were read.

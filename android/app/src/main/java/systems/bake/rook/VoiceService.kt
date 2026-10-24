@@ -406,6 +406,9 @@ class VoiceService : Service() {
                         off += n
                     }
                     if (off != buf.size) continue
+                    // A spoken reminder's quiet check reads levels from these same frames (no second
+                    // recorder); it keeps one number per 30 ms and never the audio.
+                    levelTap?.let { tap -> try { tap(buf) } catch (_: Throwable) {} }
                     val sp = speech.feed(buf)
                     val c = client
                     val active = c?.isRunning == true
@@ -468,6 +471,23 @@ class VoiceService : Service() {
 
     /** A live voice conversation owns the mic (voice.speak has no reply window then). */
     fun inConversation(): Boolean = liveSession()
+
+    // ---- read by SpokenReminder's quiet check (any thread; benign racy reads) ----
+
+    /** A voice session is open (spoken, or a typed chat still connected). */
+    fun sessionOpen(): Boolean = sessionWanted
+    /** Wake-word standby is reading the mic right now, outside a conversation: [levelTap] gets frames. */
+    fun standbyCapturing(): Boolean = micRunning && !speechHold && capture.wakeStandby && !liveSession() &&
+        synchronized(recorderLock) { recorder != null }
+    /** Session id of Rook's own live recorder, or 0. */
+    fun ownMicSession(): Int = if (::arbiter.isInitialized) arbiter.ownSessionId else 0
+    /**
+     * Rook holds MODE_IN_COMMUNICATION right now (its conversation's call mode). Strict on purpose:
+     * in the moments after Rook gives the mode back it reads as a call, which only delays a reminder.
+     */
+    fun ownsCallMode(): Boolean = callMode
+    /** Why standby gave the mic away (a call, another app), or null. */
+    internal fun micYieldReason(): MicYieldPolicy.Reason? = if (::arbiter.isInitialized) arbiter.pauseReason else null
 
     /** Any thread: put the phone in call mode (and speakerphone if nothing else is routed). */
     private fun enterCallMode() = synchronized(callLock) {
@@ -605,6 +625,8 @@ class VoiceService : Service() {
 
     companion object {
         @Volatile var inst: VoiceService? = null
+        /** Set only while a spoken reminder's quiet check runs: each 20 ms standby frame, on the mic thread. */
+        @Volatile var levelTap: ((ByteArray) -> Unit)? = null
         /** Pre-Rook audio routing; process-wide so a leftover survives a service restart. */
         private val audioRoute = AudioRouteKeeper()
         private const val TAG = "VoiceService"

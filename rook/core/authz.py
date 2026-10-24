@@ -137,7 +137,9 @@ _CORE_SPEC = {
     # summaries. A card's Yes is relayed as the person's decision, so an agent
     # that could post one could word the question; admin keeps agents' calls held.
     # The feed and the rules are summaries the phone keeps (like notify.list).
+    # attention.remind speaks on the phone after a quiet check (physical, like post).
     "attention.post": "A p", "attention.update": "A", "attention.poll": "A s",
+    "attention.remind": "A p",
     "attention.rules_set": "A", "attention.feed": "X s", "attention.rules_get": "X s",
 }
 

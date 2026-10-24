@@ -34,6 +34,7 @@ polls and posts against the contract below.
 | `attention.feed` | limit=50 | `{ok, entries, ignored_7d}` (summaries only) | exec, sensitive |
 | `attention.rules_get` | — | `{ok, source, extend_default, rules}` | exec, sensitive |
 | `attention.rules_set` | rules (list, document, or empty to reset) | `{ok, source}` | admin |
+| `attention.remind` | id (≤64), text (≤300, whitespace collapsed), sample_ms=3000 (clamped 1000-8000), speak_unchecked=false | `{ok, id, accepted}` (+ `busy` or `reason: "off"` when not accepted) | admin, physical |
 
 Tiers are the hub's floor (`rook/core/authz.py`): only the hub's attention
 plugin should post cards or read taps, because a card's Yes is relayed as the
@@ -56,6 +57,8 @@ Events: `{seq, ts, type, ...}`, seq monotonic across restarts.
 - `unlocked` {}: ACTION_USER_PRESENT (heard while the worker service runs)
 - `notice` {id, app, category, priority, summary}: an urgent or family
   notification from another app
+- `reminded` {id, outcome, via?, level?, checked?}: an `attention.remind`
+  finished (see Spoken reminders below)
 
 `last` is the seq to pass as `since` next time. `reset: true` means the
 phone's log is behind the caller's `since` (app data cleared) and everything
@@ -64,6 +67,58 @@ read; `more: true` means call again.
 
 `notify.post` gained an optional `channel` (the same five names);
 `device.update` an optional `channel` stable\|beta (see below).
+
+## Spoken reminders (attention.remind, app 0.4.22-beta.3+)
+
+The hub decides when to remind and what to say ("Need your input: deploy hub
+update?", "Hey boss, you have 6 decisions pending."); the phone decides
+whether the room is quiet enough and speaks. The cap returns at once
+(`accepted: true`); one reminder runs at a time (`accepted: false, busy`
+otherwise); the app's **Spoken reminders** switch off gives `accepted: false,
+reason: "off"` and an `off` event. Then, on its own thread:
+
+1. **Pre-checks**, in this order, each ending it unspoken: `dnd` (Do Not
+   Disturb or bedtime: the interruption filter is not "all"; the hub's quiet
+   hours are off by default, so this keeps reminders out of a sleeping room),
+   `call` (audio mode
+   in call, ringing or in communication that is not Rook's own conversation;
+   telephony call state below Android 12), `voice_session` (Rook's voice
+   conversation is live or a session is open, or the voice is thinking or
+   speaking), `mic_in_use` (another app records: recording configurations
+   without Rook's own and the system hotword, API 24+; or wake standby gave
+   the mic away), `media` (the music stream is active and Rook is not the one
+   speaking), `speaking` (Rook's voice.speak queue or reply window is busy).
+2. **Quiet sample** of `sample_ms`. With wake-word standby capturing, the
+   levels come from the frames standby already reads (an in-memory tap on
+   VoiceService); no second recorder. Otherwise a short AudioRecord of its own
+   (16 kHz mono, VOICE_RECOGNITION, not privacy-sensitive) that is released on
+   every path. The pre-checks are re-read every 100 ms meanwhile; another
+   recorder, a call or Rook's voice ends the sample at once. All-zero audio,
+   a silenced client (API 29+), a recorder that won't open or start, no
+   microphone permission, or standby letting go before 60% of the sample:
+   `unchecked`, spoken only with `speak_unchecked`.
+3. **Decision** (`QuietCheck`, pure Kotlin, unit-tested): 30 ms frames, RMS in
+   dBFS. Active frame: above -50 dBFS and 10 dB above the sample's 20th
+   percentile. Active frames count only in runs of at least 240 ms (one quiet
+   frame bridged); 300 ms counted is `busy` (a clap, a door or a cough is not).
+   Also `busy`: median at least -40 dBFS with p90 - p10 at least 6 dB (a TV or
+   a conversation that raised the floor itself), or median at least -25 dBFS
+   (too loud to be heard). A steady hum stays quiet. Under 0.9 s measured, or
+   90% of frames all-zero: `unchecked`.
+4. **Speak** through voice.speak's path with the app's selected voice (the
+   voice server's house voice when configured, Android TTS as fallback), no
+   interrupt, no reply window, no chat line, after one more pre-check.
+   `spoken` with `via` server or device; a failure or no end within 120 s is
+   `error`.
+
+`level` is `{active_frac: 0.0-1.0 (two decimals), peak_dbfs: int}` whenever a
+sample was measured; `checked: false` marks a reminder spoken without a quiet
+check (`speak_unchecked`). The audio is read into one 30 ms buffer, reduced to
+a level and overwritten; it is never written, kept, logged or sent.
+
+An app before 0.4.22-beta.3 has no `attention.remind`; the hub has to fall
+back (a card or nothing). Nothing about `post`/`poll` changed for older hubs:
+they see `reminded` events only if they call `remind`.
 
 ## What leaves the phone
 
@@ -82,6 +137,8 @@ What leaves, and only when a band caller polls:
 - `attention.rules_get` returns the rules, which may contain family names.
 - Card events carry only the card id, the decision, an optional typed
   reason for No, and timestamps.
+- `reminded` events carry the outcome, the speech route and two rounded
+  numbers about the room's loudness; never audio or anything heard.
 
 Normal and ignored notifications produce no event. Nothing is pushed: the
 hub has to poll.

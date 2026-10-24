@@ -177,6 +177,24 @@ object AttentionStore {
         return JSONObject().put("ok", true).put("source", if (doc == null) "default" else "override").put("effective_rules", rules.rules.size).toString()
     } }
 
+    /**
+     * attention.remind finished (SpokenReminder): one `reminded` event for the hub's poll. Only the
+     * outcome, the speech route and two rounded level numbers; never audio or anything heard.
+     */
+    fun reminded(ctx: Context, id: String, outcome: String, via: String?, level: QuietCheck.Result?, checked: Boolean?) {
+        try {
+            synchronized(lock) {
+                ensure(ctx.applicationContext)
+                val f = JSONObject().put("id", id).put("outcome", outcome)
+                if (via != null) f.put("via", via)
+                if (level != null) f.put("level", JSONObject().put("active_frac", level.activeFrac.coerceIn(0.0, 1.0))
+                    .put("peak_dbfs", level.peakDbfs))
+                if (checked != null) f.put("checked", checked)
+                event("reminded", f)
+            }
+        } catch (e: Exception) { Log.w(TAG, "reminded event failed", e) }
+    }
+
     // ---- the card screen and the app ----------------------------------------
 
     fun showing(ctx: Context): List<AttentionCard> = synchronized(lock) { ensure(ctx.applicationContext); book.showing(now()) }

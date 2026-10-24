@@ -14,6 +14,7 @@ import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 import androidx.core.app.NotificationManagerCompat
 import systems.bake.rook.databinding.ActivityMainBinding
 import java.text.SimpleDateFormat
@@ -25,7 +26,8 @@ import java.util.Locale
  * decision cards (tap to open), and the quiet feed of classified notifications.
  * Until the tab has been opened once, a one-line link above the chat points at missing grants.
  */
-class AttentionPanel(private val act: AppCompatActivity, private val b: ActivityMainBinding, private val askNotifications: () -> Unit) {
+class AttentionPanel(private val act: AppCompatActivity, private val b: ActivityMainBinding, private val askNotifications: () -> Unit,
+                     private val askMic: () -> Unit = {}) {
     private val prefs = act.getSharedPreferences("rook", Context.MODE_PRIVATE)
     private var shown = false
     /** Called after each render, so the tab badge follows pending cards. */
@@ -108,6 +110,23 @@ class AttentionPanel(private val act: AppCompatActivity, private val b: Activity
             text(f, "${fmt.format(Date((e.optDouble("ts") * 1000).toLong()))}  ${e.optString("summary")}", color)
         }
         if (ignored > 0) text(f, "$ignored ignored this week", act.getColor(R.color.rook_dim), 12f)
+        spokenReminders(list)
+    }
+
+    /** The "Spoken reminders" switch (attention.remind) and the microphone grant its quiet check needs. */
+    private fun spokenReminders(list: LinearLayout) {
+        val c = card(list)
+        val on = SpokenReminder.enabled(act)
+        c.addView(SwitchCompat(act).apply {
+            text = "Spoken reminders"; textSize = 15f; setTextColor(act.getColor(R.color.rook_fg))
+            isChecked = on
+            setOnCheckedChangeListener { _, checked -> SpokenReminder.setEnabled(act, checked); render() }
+        })
+        text(c, "Before it speaks a reminder, the app listens for a few seconds to check nobody is talking. " +
+            "The sound stays on the phone: nothing is recorded, kept or sent.", act.getColor(R.color.rook_dim), 12f)
+        if (!on) return
+        if (SpokenReminder.micGranted(act)) text(c, "Microphone: allowed", act.getColor(R.color.rook_dim), 12f)
+        else grantRow(c, Grant("Microphone", "Needed to check the room is quiet", false) { askMic() })
     }
 
     private fun grantRow(parent: LinearLayout, g: Grant) {

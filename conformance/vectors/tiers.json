@@ -72,6 +72,12 @@
     "physical"
    ]
   },
+  "attention.remind": {
+   "tier": "admin",
+   "tags": [
+    "physical"
+   ]
+  },
   "attention.rules_get": {
    "tier": "exec",
    "tags": [
