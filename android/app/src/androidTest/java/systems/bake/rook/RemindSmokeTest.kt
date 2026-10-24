@@ -18,7 +18,8 @@ object RemindSmokeTest {
         val before = streams.associateWith { audio.getStreamVolume(it) }
         val wasOn = SpokenReminder.enabled(target)
         try {
-            streams.forEach { audio.setStreamVolume(it, 0, 0) }
+            // In Do Not Disturb an app without policy access may not change volumes; nothing speaks then anyway.
+            streams.forEach { try { audio.setStreamVolume(it, 0, 0) } catch (_: SecurityException) {} }
             val py = PythonHost.ensureStarted(target)
             val json = py.getModule("json")
             val plugin = py.getModule("rook_android.plugins.attention_android").callAttr("AndroidAttentionPlugin")

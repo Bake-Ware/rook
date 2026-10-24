@@ -45,6 +45,11 @@ object SpokenReminder {
     private const val SPEAK_POLL_MS = 200L
 
     private val running = AtomicBoolean(false)
+    /**
+     * Session id of this reminder's own recorder, kept until the reminder ends: Android may still
+     * list a just-released recorder for a moment, and that must not read as another app.
+     */
+    @Volatile private var ownSession = 0
 
     fun enabled(ctx: Context): Boolean =
         ctx.getSharedPreferences("rook", Context.MODE_PRIVATE).getBoolean(PREF, true)
@@ -92,6 +97,7 @@ object SpokenReminder {
         var via: String? = null
         var level: QuietCheck.Result? = null
         var checked = true
+        ownSession = 0
         try {
             val pre = ReminderGate.precheck(signals(app))
             if (pre != null) { outcome = pre; return }
@@ -102,13 +108,14 @@ object SpokenReminder {
             if (stop != null) { outcome = stop; return }
             checked = sample.result?.outcome == QuietCheck.Outcome.QUIET
             // The sample took a few seconds: look again right before speaking.
-            ReminderGate.precheck(signals(app))?.let { outcome = it; return }
+            ReminderGate.precheck(signals(app))?.let { Log.i(TAG, "before speaking: $it ${describe(app, 0)}"); outcome = it; return }
             val spoke = speak(app, text)
             if (spoke != null) { outcome = ReminderGate.SPOKEN; via = spoke }
         } catch (e: Throwable) {
             Log.w(TAG, "reminder failed: ${e.javaClass.simpleName}")
             outcome = ReminderGate.ERROR
         } finally {
+            ownSession = 0
             Log.i(TAG, "reminder $id: $outcome${via?.let { " via $it" } ?: ""}")
             AttentionStore.reminded(app, id, outcome, via, level, if (outcome == ReminderGate.SPOKEN && !checked) false else null)
         }
@@ -187,6 +194,7 @@ object SpokenReminder {
             val r = rec ?: return Sample(null)
             if (r.state != AudioRecord.STATE_INITIALIZED) return Sample(null)
             val mine = r.audioSessionId
+            ownSession = mine
             try { r.startRecording() } catch (e: IllegalStateException) { return Sample(null) }
             if (r.recordingState != AudioRecord.RECORDSTATE_RECORDING) return Sample(null)
             val end = SystemClock.elapsedRealtime() + sampleMs
@@ -199,7 +207,7 @@ object SpokenReminder {
                     nextCheck = SystemClock.elapsedRealtime() + CHECK_EVERY_MS
                     val s = signals(app, mine)
                     // Another app wants the mic, or a call or Rook's voice started: let go now.
-                    ReminderGate.precheck(s)?.let { return Sample(qc.result(), it) }
+                    ReminderGate.precheck(s)?.let { Log.i(TAG, "sample ended: $it ${describe(app, mine)}"); return Sample(qc.result(), it) }
                     if (ownSilenced(app, mine)) return Sample(qc.result().copy(outcome = QuietCheck.Outcome.SILENCED))
                 }
             }
@@ -217,6 +225,14 @@ object SpokenReminder {
 
     private fun audio(app: Context) = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
+    /** For the log when a reminder ends unspoken: the platform signals, no audio, no content. */
+    private fun describe(app: Context, mine: Int): String {
+        val recs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) try {
+            audio(app).activeRecordingConfigurations.joinToString { "${it.clientAudioSessionId}/${it.clientAudioSource}" }
+        } catch (_: Exception) { "?" } else "-"
+        return "${signals(app, mine)} recorders=[$recs] mine=$mine standby=${VoiceService.inst?.ownMicSession() ?: 0}"
+    }
+
     private fun recorders(app: Context, mine: Int): ReminderGate.Recorders {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return ReminderGate.Recorders(false, false)
         val list = try {
@@ -225,7 +241,7 @@ object SpokenReminder {
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && it.isClientSilenced)
             }
         } catch (_: Exception) { return ReminderGate.Recorders(false, false) }
-        val own = setOf(VoiceService.inst?.ownMicSession() ?: 0, mine).filter { it != 0 }.toSet()
+        val own = setOf(VoiceService.inst?.ownMicSession() ?: 0, mine, ownSession).filter { it != 0 }.toSet()
         return ReminderGate.recorders(list, own, mine)
     }
 
