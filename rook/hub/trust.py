@@ -991,7 +991,7 @@ def describe_change(doc: dict, change: dict, now: float | None = None) -> dict:
         sacred_targets = {t for x in entries.values() if x.get("level") == "sacred"
                           for t in x.get("targets") or []}
         sacred = level == "sacred" or bool(old and old.get("level") == "sacred") or any(
-            fnmatch.fnmatchcase(a, t) or fnmatch.fnmatchcase(t, a)
+            fnmatch.fnmatchcase(a.lower(), t.lower()) or fnmatch.fnmatchcase(t.lower(), a.lower())
             for a in added for t in sacred_targets)
         # Stricter only when provably so: the same entry, the same targets and kind, and
         # the same or a higher level. Anything else may loosen something (a target an

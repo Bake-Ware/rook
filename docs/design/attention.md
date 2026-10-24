@@ -113,7 +113,8 @@ due and the room is quiet:
 
 - one card waiting: "Need your input: <its title>" (a held call's title comes
   from its cap and machine only, never its arguments, the same rule as the
-  voice summary);
+  voice summary; so the spoken line can be more general than the card's own
+  title, which may say what the command does);
 - several: "Hey boss, you have 6 decisions pending."
 
 What counts: everything the approvals list holds (held calls, job holds,
