@@ -980,6 +980,21 @@ def describe_change(doc: dict, change: dict, now: float | None = None) -> dict:
     data = (change or {}).get("data") or {}
     entries = {e["id"]: e for e in doc.get("entries") or []}
     sacred = False
+    # Judge the change exactly as the store will apply it: cleaned the same way
+    # (case, spaces, defaults). Anything that doesn't clean is read back as a loosening.
+    try:
+        if op == "set_entry":
+            data = {"entry": clean_entry(data.get("entry") if "entry" in data else data)}
+        elif op == "set_unlisted":
+            data = {"level": str(data.get("level") or "").strip().lower()}
+            if data["level"] not in UNLISTED_LEVELS:
+                raise TrustError("level")
+        elif op == "add_exception":
+            data = {"exception": clean_exception(data.get("exception") if "exception" in data
+                                                  else data)}
+    except (TrustError, ValueError, TypeError, AttributeError):
+        return {"sentence": f"Make a trust map change ({op or 'unknown'}) that I can't put in "
+                            "plain words.", "loosens": True, "sacred": False, "op": op}
     if op == "set_entry":
         e = data.get("entry") if isinstance(data.get("entry"), dict) else data
         ident = str(e.get("id") or "?")
@@ -998,7 +1013,7 @@ def describe_change(doc: dict, change: dict, now: float | None = None) -> dict:
         # entry starts covering leaves the unlisted level, and falls under every active
         # exception that names this entry's id; a kind changes how it rules), so it is
         # read back and needs the check word.
-        loosens = not (old is not None and level in LEVELS
+        loosens = not (old is not None and level in LEVELS and old.get("level") in LEVELS
                        and set(targets) == set(old.get("targets") or [])
                        and kind == str(old.get("kind") or "resource")
                        and rank(level) >= rank(str(old.get("level") or "ship-it")))

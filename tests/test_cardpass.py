@@ -626,3 +626,27 @@ def test_the_sacred_label_ignores_case():
         "id": "toys", "kind": "project", "level": "ship-it",
         "targets": ["worker:toy", "worker:KAIJU"]}})
     assert d["loosens"] and d["sacred"]
+
+
+def test_a_change_is_judged_as_the_store_will_apply_it():
+    """Review of #199 (qa, lead, skeptic): 'Ship-it' or ' ship-it' is applied as ship-it
+    by the store, so it must read as the loosening it is; what doesn't clean is strict."""
+    st = _trust_with_sacred_kaiju()
+    doc = st.current()
+    for level in ("Ship-it", " ship-it", "SHIP-IT "):
+        d = T.describe_change(doc, {"op": "set_unlisted", "data": {"level": level}})
+        assert d["loosens"], level
+    assert not T.describe_change(doc, {"op": "set_unlisted", "data": {"level": " Sacred "}})["loosens"]
+    assert T.describe_change(doc, {"op": "set_unlisted", "data": {"level": "nope"}})["loosens"]
+    # A raise written in another case is still just a raise, cleaned like the store.
+    st.change("set_entry", {"id": "toys", "kind": "project", "level": "ship-it",
+                            "targets": ["worker:toy"]}, T.Actor("person", "Bake", words="set it"))
+    doc = st.current()
+    assert not T.describe_change(doc, {"op": "set_entry", "data": {
+        "id": "Toys", "kind": "Project", "level": "Guarded", "targets": ["worker:toy"]}})["loosens"]
+    assert T.describe_change(doc, {"op": "set_entry", "data": {"level": "guarded"}})["loosens"]
+    assert T.describe_change(doc, {"op": "add_exception", "data": {"id": "!"}})["loosens"]
+    # An entry with no valid level (hand-edited) never counts as raised.
+    doc = {**doc, "entries": doc["entries"] + [{"id": "odd", "kind": "host", "targets": ["worker:o"]}]}
+    assert T.describe_change(doc, {"op": "set_entry", "data": {
+        "id": "odd", "kind": "host", "level": "guarded", "targets": ["worker:o"]}})["loosens"]
