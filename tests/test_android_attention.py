@@ -75,6 +75,18 @@ def test_clean_post_defaults_and_clips(mod):
     assert mod.clean_post("a", line="l", actions=[])["actions"] == ["ack"]
 
 
+def test_a_decision_card_from_the_hub_never_expires_on_the_phone(mod, monkeypatch):
+    """The hub sends decision cards with expires_at 0 (Bake: no expiry of any
+    kind); the app keeps 0 as "never" (the Kotlin side: AttentionModel.expired
+    and AttentionChannels only act on expires_at > 0, AttentionModelTest)."""
+    from rook.hub.plugins.attention.service import card_for
+    card = card_for({"id": "c_1", "kind": "card", "who": "qa", "what": "rerun", "created": 1.0})
+    assert card["expires_at"] == 0
+    assert mod.clean_post(**card)["expires_at"] == 0.0
+    p, store = plugin(mod, monkeypatch)
+    assert p._post(**card)["ok"] is True and store.calls[-1][1]["expires_at"] == 0.0
+
+
 def test_clean_post_body_keeps_lines(mod):
     # Old hubs send no body: the card is unchanged apart from an empty body.
     assert mod.clean_post("a", line="Read hub approvals database")["body"] == ""
