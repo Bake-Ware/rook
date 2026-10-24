@@ -569,31 +569,52 @@ async def test_a_spoken_yes_approves_a_real_hold_through_the_relay(penv, tmp_pat
 async def test_strictness_is_judged_again_when_the_answer_comes(env):
     """Review of #195 round 3 (lead): a raise read out as stricter becomes a loosening
     if the entry is deleted on the dashboard while the card is open; the yes then gets
-    the read-back."""
+    the read-back, worded as the change now reads (review of #198)."""
     e, task = await started(env)
     penv_, relay = env
     relay._items = []
     relay.enabled.add("voice:house")
     st = _trust_with_sacred_kaiju()
-    st.change("set_entry", {"id": "rook-hub", "kind": "host", "level": "guarded",
-                            "targets": ["worker:rook-hub"]}, T.Actor("person", "Bake", words="set it"))
+    st.change("set_entry", {"id": "toys", "kind": "project", "level": "ship-it",
+                            "targets": ["worker:toy"]}, T.Actor("person", "Bake", words="set it"))
     e.cards.trust = lambda: st
-    prop = st.propose({"op": "set_entry", "data": {"id": "rook-hub", "kind": "host",
-                                                   "level": "sacred",
-                                                   "targets": ["worker:rook-hub"]}},
-                      by="agent:a", why="protect the hub")
+    prop = st.propose({"op": "set_entry", "data": {"id": "toys", "kind": "project",
+                                                   "level": "guarded", "targets": ["worker:toy"]}},
+                      by="agent:a", why="careful with the toys")
     await e.ask_owner()
     assert "only makes the rules stricter" in e.last_say()["text"]
+    assert e.cards.current("house")["cur"]["strict"] is False
     await e.spoken()
-    st.change("delete_entry", {"id": "rook-hub"}, T.Actor("person", "Bake", words="drop it"))
+    st.change("delete_entry", {"id": "toys"}, T.Actor("person", "Bake", words="drop it"))
     turn = await e.hear(OWNER_SURE, "yes, approve it")
     res = await e.route("card", turn, answer="yes")
     assert res.get("confirm") == prop["id"]
-    assert "(read exactly)" in e.last_say()["text"]
-    # The read-back says the change as it now reads, not as it read before.
     cur = e.cards.current("house")["cur"]
-    assert cur["readback"].startswith("Add a sacred trust entry called rook-hub")
-    assert cur["readback"] in e.last_say()["text"]
+    assert cur["readback"] == "Add a guarded trust entry called toys covering the machine toy."
+    assert cur["readback"] in e.last_say()["text"] and "(read exactly)" in e.last_say()["text"]
+    await disconnect(task, e.host)
+
+
+@pytest.mark.asyncio
+async def test_tightening_a_sacred_entry_is_immediate(env):
+    """Bake: "Tightening stays immediate", sacred entries included."""
+    e, task = await started(env)
+    penv_, relay = env
+    relay._items = []
+    relay.enabled.add("voice:house")
+    st = _trust_with_sacred_kaiju()
+    e.cards.trust = lambda: st
+    st.change("add_exception", {"id": "k1", "title": "k", "applies_to": ["kaiju"],
+                                "expires": "2099-01-01T00:00:00Z"},
+              T.Actor("person", "Bake", words="for tonight"))
+    prop = st.propose({"op": "end_exception", "data": {"id": "k1"}}, by="agent:a",
+                      why="the work on kaiju is done")
+    await e.ask_owner()
+    await e.spoken()
+    turn = await e.hear(OWNER_SURE, "yes, end it")
+    res = await e.route("card", turn, answer="yes")
+    assert res.get("decided") == prop["id"]
+    assert st.current()["exceptions"][0].get("ended")
     await disconnect(task, e.host)
 
 

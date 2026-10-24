@@ -204,8 +204,10 @@ class CardPass:
                    + (f"Their reason: {why}. " if why else "")
                    + ("This loosens the rules" + (", on something sacred" if d["sacred"] else "")
                       + ". " if d["loosens"] else "This only makes the rules stricter. "))
+            # Only loosening is read back: tightening stays immediate, sacred or not
+            # (Bake: "Tightening stays immediate"); "sacred" only changes the wording.
             return {"title": "a change to the trust map", "ask": ask, "readback": d["sentence"],
-                    "loosens": d["loosens"], "sacred": d["sacred"]}
+                    "loosens": d["loosens"], "sacred": d["sacred"], "strict": d["loosens"]}
         p = it.get("plain") or {}
         title = speakable(it)
         bits = [f"{title}."] if not title.endswith(("?", ".")) else [title]
@@ -223,7 +225,7 @@ class CardPass:
             want = " ".join(str(p.get("want") or title).split()).rstrip(".")
             readback = f"Approve, just this once: {want}."
         return {"title": title, "ask": " ".join(bits), "readback": readback, "loosens": False,
-                "sacred": sacred}
+                "sacred": sacred, "strict": sacred}
 
     # -- the pass ------------------------------------------------------------------
     def current(self, role: str) -> dict | None:
@@ -283,7 +285,7 @@ class CardPass:
                 continue
             p["cur"] = cur = {"id": ident, "kind": it["kind"], "title": d["title"],
                               "stage": "ask", "readback": d["readback"],
-                              "strict": bool(d["loosens"] or d["sacred"]), "tries": 0,
+                              "strict": bool(d["strict"]), "tries": 0,
                               "word": None, "options": [str(o) for o in it.get("options") or []]}
             p["last"] = time.time()
             await self._ask(role, cur, f"{lead}{num}{d['ask']} {ASK_HOW}")
@@ -390,7 +392,7 @@ class CardPass:
             # The map may have changed since the card was read (an entry deleted on the
             # dashboard): judged again now, so a change that became a loosening is read back.
             d = self.describe(it)
-            cur["strict"] = bool(d["loosens"] or d["sacred"])
+            cur["strict"] = bool(d["strict"])
             cur["readback"] = d["readback"]       # the change as it reads against today's map
         if ans in ("yes", "choose") and cur["strict"] and cur["stage"] == "ask":
             cur.update(stage="confirm", word=secrets.choice(WORDS), tries=0,
