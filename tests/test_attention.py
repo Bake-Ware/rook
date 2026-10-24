@@ -537,8 +537,7 @@ async def test_a_spoken_reminder_is_logged_and_paced(att):
     await att.att.service.tick()
     assert len(att.phone.reminds) == 2
     att.phone.event("unlocked")
-    await att.att.service.tick()          # the unlock is read (and stamped by the hub)
-    att.att.service._dev(PHONE)["signals"]["unlocked"] = att.att.service.clock()
+    await att.att.service.tick()          # the unlock is read and stamped by the hub
     later(att, 1)
     await att.att.service.tick()
     assert len(att.phone.reminds) == 3
@@ -688,3 +687,63 @@ def test_the_log_keeps_30_days(tmp_path):
         log_.add("attention", "nonsense", "x")
     row = log_.add("voice", "decided", "x" * 500, "y" * 500)
     assert len(row["what"]) == 140 and len(row["why"]) == 200
+
+
+@pytest.mark.asyncio
+async def test_cards_pop_up_again_when_the_phone_cant_remind(att):
+    """Review of #194 (skeptic): the app's switch off, no mic or a phone that never
+    answers must not leave cards sitting quietly forever."""
+    speaking(att)
+    item = hold(att.ap)
+    await att.att.service.tick()
+    assert att.phone.cards[item["id"]]["channel"] == "digest"
+    outcome(att, "unchecked")
+    await att.att.service.tick()
+    assert att.phone.cards[item["id"]]["channel"] == "digest"      # one miss: still quiet
+    later(att, 6 * 60)
+    await att.att.service.tick()
+    outcome(att, "off")
+    await att.att.service.tick()
+    # Two in a row: the queued card is posted again on the approvals channel (same id).
+    assert att.phone.cards[item["id"]]["channel"] == "approvals"
+    other = hold(att.ap, args={"argv": ["uptime"]})
+    await att.att.service.tick()
+    assert att.phone.cards[other["id"]]["channel"] == "approvals"
+    whys = [r["why"] for r in att.att.service.eventlog.recent()]
+    assert any(w.startswith("the phone can't remind you") for w in whys)
+    assert any("turn Spoken reminders on in the app's Attention tab" in w for w in whys)
+    st = (await att.node.dispatch("attention.status", {}, "agent"))["result"]["reminders"]
+    assert st["popping_up"]
+    # A spoken reminder: new cards wait quietly again.
+    later(att, 6 * 60)
+    await att.att.service.tick()
+    outcome(att, "spoken")
+    await att.att.service.tick()
+    third = hold(att.ap, args={"argv": ["df"]})
+    await att.att.service.tick()
+    assert att.phone.cards[third["id"]]["channel"] == "digest"
+
+
+@pytest.mark.asyncio
+async def test_a_repeat_waits_for_an_unlock_the_hub_heard(att):
+    """Review of #194 (lead): the unlock that allows a repeat is timed by the hub, not
+    by the phone's clock."""
+    speaking(att)
+    hold(att.ap)
+    await att.att.service.tick()
+    outcome(att, "spoken")
+    await att.att.service.tick()
+    later(att, 61 * 60)
+    ev = att.phone.event("unlocked")
+    ev["ts"] = time.time() + 10 * 86400          # a phone clock far ahead
+    await att.att.service.tick()
+    later(att, 1)
+    # The hub heard this unlock after its own last reminder: the repeat may go.
+    await att.att.service.tick()
+    assert len(att.phone.reminds) == 2
+    outcome(att, "spoken")
+    await att.att.service.tick()
+    later(att, 61 * 60)
+    ev = att.phone.event("seen", id="x")         # not an unlock
+    await att.att.service.tick()
+    assert len(att.phone.reminds) == 2

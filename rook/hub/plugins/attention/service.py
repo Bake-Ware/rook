@@ -67,6 +67,11 @@ TAPPED = {"approve": "Tapped Yes", "deny": "Tapped No"}
 #: and the notification shade without a heads-up, a sound or a takeover on
 #: unlock (every app since 0.4.20 knows it, so no app update is needed).
 QUEUE_CHANNEL = "digest"
+#: Outcomes that mean the phone can't remind at all (its switch is off, it can't check
+#: the room, it fails or never answers): after FALLBACK_AFTER of them in a row, cards pop
+#: up again (approvals channel) until a reminder is spoken, so none sits unnoticed.
+CANT_REMIND = ("off", "unchecked", "error", "lost")
+FALLBACK_AFTER = 2
 #: How long a reminder may stay unanswered by the phone before it counts as lost.
 REMIND_LOST_S = 180.0
 REMIND_TEXT_MAX = 300
@@ -398,6 +403,8 @@ class AttentionService:
         elif kind in SIGNALS:
             ident = short(ev.get("id"), ID_MAX) if ev.get("id") else ""
             self._dev(wid)["signals"][kind] = ts
+            # When the hub heard it, on its own clock (reminder pacing compares these).
+            self._dev(wid).setdefault("heard", {})[kind] = self.clock()
             self._ring("signals", {"worker_id": wid, "device": dev["name"], "type": kind,
                                    **({"id": ident} if ident else {}), "ts": ts,
                                    "received": self.clock()})
@@ -490,6 +497,10 @@ class AttentionService:
             # again once the person turned relaying on for it.
             again = (old is not None and old.get("state") == "failed" and may
                      and not old.get("relayable_when_failed"))
+            # Reminders stopped working: a quietly queued card is posted again on the
+            # approvals channel (the same id: no new ring, it takes over on unlock).
+            again = again or (old is not None and old.get("queued") and not old.get("closed")
+                              and not self.queued_on(dev))
             if old is not None and not again:
                 continue
             card = card_for(it)
@@ -502,7 +513,7 @@ class AttentionService:
                 log.info("attention: post %s to %s: %s", ident, dev["name"], e)
                 continue
             posted[ident] = {"kind": card["kind"], "at": self.clock(),
-                             "actions": card["actions"]}
+                             "actions": card["actions"], **({"queued": True} if queued else {})}
             n_new += 1
             if not again:
                 self.log("ask", f"Card: {speakable(it)}",
@@ -557,6 +568,8 @@ class AttentionService:
             return False
         if not self.reminding():
             return True
+        if self.state["remind"].get("fallback"):
+            return False
         caps = (self.roster().get(dev["worker_id"]) or {}).get("caps") or []
         return "attention.remind" in caps
 
@@ -673,7 +686,7 @@ class AttentionService:
         spoken_at = float(st.get("spoken_at") or 0)
         # A repeat (nothing new) only once the phone was unlocked since the last one:
         # never the same line again and again to an empty or sleeping room.
-        used = float((self._dev(dev["worker_id"]).get("signals") or {}).get("unlocked") or 0)
+        used = float((self._dev(dev["worker_id"]).get("heard") or {}).get("unlocked") or 0)
         due = any(i["id"] not in announced for i in ready) or (
             again > 0 and now - spoken_at >= again * 60 and used > spoken_at)
         if not due:
@@ -708,6 +721,11 @@ class AttentionService:
             st["spoken_at"] = now
             st["announced"] = list(inflight.get("ids") or ())
             st.pop("skipped", None)
+            st.pop("cant", None)
+            if st.pop("fallback", None):
+                self.log("reminded", "Spoken reminders work again",
+                         "a reminder was spoken, so new cards wait quietly again",
+                         how=f"on {dev['name']}")
             n = len(inflight.get("ids") or ())
             via = {"server": "in the house voice", "device": "in the phone's own voice"}.get(
                 str(ev.get("via") or ""), "")
@@ -722,12 +740,20 @@ class AttentionService:
         """A reminder that wasn't spoken: logged once per reason until one is spoken."""
         st = self.state["remind"]
         st["last_outcome"] = outcome
+        st["cant"] = int(st.get("cant") or 0) + 1 if outcome in CANT_REMIND else 0
+        if st["cant"] >= FALLBACK_AFTER and not st.get("fallback"):
+            st["fallback"] = True
+            self.log("skipped", "Cards pop up again",
+                     f"the phone can't remind you ({NOT_SPOKEN.get(outcome, outcome)}), so "
+                     "waiting cards show the usual way until a reminder is spoken")
         if st.get("skipped") == outcome:
             return
         st["skipped"] = outcome
         retry = int(self._minutes("remind_retry_min", 5))
         self.log("skipped", "Didn't remind you yet",
-                 f"{NOT_SPOKEN.get(outcome, outcome)}; trying again in {retry} min")
+                 f"{NOT_SPOKEN.get(outcome, outcome)}; "
+                 + ("turn Spoken reminders on in the app's Attention tab" if outcome == "off"
+                    else f"trying again in {retry} min"))
 
     # -- alerts ---------------------------------------------------------------------
     def _expire_alerts(self) -> None:
@@ -849,6 +875,8 @@ class AttentionService:
                      "last_try": _when(st.get("attempt_at")),
                      **({"last_outcome": st["last_outcome"]} if st.get("last_outcome") else {}),
                      **({"waiting_on_phone": True} if st.get("inflight") else {}),
+                     **({"popping_up": "the phone can't remind, so cards pop up again"}
+                        if st.get("fallback") else {}),
                      "quiet_hours_now": self.quiet_hours()}
         if not sp and reminders["on"]:
             reminders["note"] = ("no reachable phone has attention.remind (app 0.4.22-beta.3 or "
