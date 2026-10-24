@@ -479,6 +479,15 @@ class HomeAgent(Plugin):
         n = self._voice_setting("owner")
         return n[:1].upper() + n[1:] if n else ""
 
+    def voice_relay_rows(self) -> list[tuple[str, str]]:
+        """``(voice:house, "Sojourn's voice (your voiceprint)")`` for the Tokens page's
+        "May relay my approvals" while the voice is set up: answers spoken to the voice
+        ("clear my cards", rook/hub/plugins/home/cardpass.py) count only once ticked."""
+        if not str(self.settings.get("voice_token_sha256") or "").strip():
+            return []
+        from .sessions import HOUSE
+        return [(f"voice:{HOUSE}", f"{self.display_name}'s voice (your voiceprint)")]
+
     def band_line(self) -> str:
         """One line for the voice's brief: how much of the band is online."""
         st = self.front.band_status()

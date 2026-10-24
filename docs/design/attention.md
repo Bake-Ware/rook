@@ -142,6 +142,50 @@ The quiet check needs the microphone; if the phone can't check (no
 permission, Android silenced background capture), it stays quiet unless
 `remind_unchecked` is on.
 
+## Clearing cards by voice
+
+`rook/hub/plugins/home/cardpass.py`. The voice (Haiku, tool-free) routes
+`cards` ("clear my cards") and `card {answer: yes|no|skip|explain|repeat|stop|
+choose, choice?}`; the hub judges everything:
+
+- **Start:** the routed turn must be the owner's key with a *sure* speaker
+  match (`Sessions._owner_sure`, 0.65), and the person must have ticked "May
+  relay my approvals" for `voice:house` (Tokens page, a row beside the
+  phones). The pass lists the approvals items plus pending trust proposals:
+  held calls first (they block someone), then cards, questions, house asks,
+  trust proposals; oldest first in each. Dashboard-only items (`relay.FLOOR`,
+  `approvals.relay_dashboard_only`) are named and left.
+- **Asking:** each card goes to the voice as a `[back end] (cards) ...` push
+  whose `for_turn` is a fresh marker; only the voice's reply to that marker
+  (not talked over) marks the card as asked.
+- **A decision** comes from the *heard transcript* of the person's turn (yes
+  and not no; the named choice), never from the voice's account; that turn
+  must be the sure owner, in the normal mode (not listen, brainstorm,
+  dictation or scribe: those don't decide), after the card was asked, within
+  2 minutes. Relayed with `Relay.decide` as `voice:house`, label `voice`,
+  `said = {who: owner, quote: their words, session: "voice:house turn <t>
+  <time> voiceprint <score> (sure)"}`: recorded like any relay.
+- **Strict items** (a trust proposal that isn't strictly stricter, per
+  `trust.describe_change`; a held call of kind `trust`): after the yes, the hub
+  writes the read-back ("To confirm: <one sentence>. If that's right, say yes,
+  <word>.") with a random word from a list of 40; the voice's spoken reply
+  must contain the sentence and the word (else asked once more, then the card
+  is left); the confirming turn must be the **first** heard turn after the
+  read-back, the sure owner, a yes with the word, and not an echo of the
+  read-back itself. A trust proposal is then decided with
+  `Actor("person", owner, via="voice", evidence=(voiceprint, readback,
+  challenge, turn, ...))`, so the trust history keeps the evidence (entries
+  set by voice show as unconfirmed on the Trust page until confirmed there).
+  A no and a tightening proposal apply on a plain sure answer.
+- Steps of one pass are serialized (two racing answers decide once). A hub
+  restart ends a pass; the cards are still waiting.
+- Residuals: a skip, stop, repeat or explain needs no voiceprint (they decide
+  nothing); a recording of the owner saying yes, played right after an
+  ordinary (non-strict) card, would count; card text written by agents (a
+  question, a proposal's reason) is read by the voice and could try to steer
+  how it describes the card, which is why strict items use a hub-written,
+  verified read-back.
+
 ## The log
 
 Every card queued, reminder spoken or skipped (once per reason until one is

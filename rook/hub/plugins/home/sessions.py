@@ -71,7 +71,7 @@ KEEP_METRICS = 200
 #: Routing ops the voice may use (``quiet``: nothing to do; ``ask``: same as queue).
 ROUTE_OPS = ("queue", "steer", "fork", "fold", "status", "btw", "pause", "resume", "cancel",
              "mode", "quiet", "ask", "models", "enroll", "forget_voice", "list_voices",
-             "listen_end")
+             "listen_end", "cards", "card")
 #: How far back "what was said" counts for consent, the owner's say-so and a spoken yes.
 HEARD_WINDOW_S = 300.0
 #: The owner's yes to a change the voice asked about ("switch the agent to Sonnet?").
@@ -234,6 +234,8 @@ class Sessions:
         #: Consent turns already used to enroll someone, per role: one yes, one person.
         self._consents_used: dict[str, set] = {}
         self._convs = None
+        from .cardpass import CardPass
+        self.cards = CardPass(self)              # "clear my cards" (cardpass.py)
         self._state: dict | None = None
         self._trust_version = -1
         self._sent_hash = ""                         # what the host was last configured with
@@ -634,7 +636,8 @@ class Sessions:
                 fut.set_result(msg)
         elif kind == "voice_turn":
             self.voice[role] = {"turn": msg.get("turn"), "text": str(msg.get("text") or "")[:300],
-                                "identity": msg.get("identity") or {}, "at": time.time()}
+                                "identity": msg.get("identity") or {}, "at": time.time(),
+                                "mode": str(msg.get("mode") or "")[:20]}
             # What was actually heard lately (the transcript, not the model's account of it):
             # consent and an owner's say-so are checked against these.
             self.heard.setdefault(role, collections.deque(maxlen=30)).append(
@@ -652,6 +655,9 @@ class Sessions:
             if msg.get("routing_bad"):
                 row["routing_bad"] = msg.get("routing_bad")
             self._metric(row)
+            if msg.get("push"):
+                # What the voice just said: a card question asked, a read-back read.
+                self._spawn(self.cards.spoken(role, msg))
             if isinstance(ops, list) and ops:
                 self._spawn(self.route(role, [o for o in ops if isinstance(o, dict)],
                                        turn=msg.get("for_turn") or msg.get("turn"),
@@ -994,6 +1000,10 @@ class Sessions:
                     res = await self._event(role, "voices_list", {}, turn)
                 elif name == "listen_end":
                     res = await self.listen_end(role, args, turn)
+                elif name == "cards":
+                    res = {**await self.cards.start(role, turn), "said": True}
+                elif name == "card":
+                    res = {**await self.cards.answer(role, args, turn), "said": True}
                 elif name == "models":
                     principal, _ = self.voice_principal(role)
                     if requester(principal, who)["kind"] != "person":
@@ -1025,6 +1035,8 @@ class Sessions:
         return out
 
     def _route_says(self, name: str, res: dict, ok: bool) -> str:
+        if res.get("said"):
+            return ""                         # the op said its own outcome
         if not ok:
             return (f"(that didn't go through: {name}) {res.get('error') or 'failed'}. Tell the "
                     "person briefly, in your own words, and offer to try again.")

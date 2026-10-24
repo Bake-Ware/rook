@@ -18,6 +18,16 @@ version was `0.1.0`.
   0.4.22-beta.3). Urgent alerts still ring at once. Pending trust proposals count as decisions.
   Every card, reminder and decision is one plain line in a 30-day log (`rook/hub/eventlog.py`,
   `attention.log`), reasons summarized, never content. (manual: phone-attention)
+- Clear your cards by voice: "clear my cards" makes the house voice read each waiting card (held
+  calls first, then oldest) and take a spoken yes / no / skip / explain. A spoken answer counts
+  only from the owner recognised by a sure voiceprint match, from the heard transcript, in the
+  normal mode, after the card was asked; it is relayed as `voice:house` ("approved by Bake via
+  voice"), once the person ticks the voice's row on the Tokens page. Loosening the trust map
+  (any proposal that isn't strictly stricter, sacred included) and sacred holds are read back word
+  for word by the voice and need the person's next words to be "yes" plus a random check word;
+  the words, voiceprint score and read-back go into the trust history (`Actor.evidence`).
+  Dashboard-only cards are named and left. `trust.describe_change` writes the sentence.
+  (manual: phone-attention)
 - Approval asks in plain words: every ask that reaches the person (Approvals page, phone decision
   card, `rook_approvals`, huddle cards and questions, job, trust, hub-host and spread holds, house
   asks, the operator's Telegram/notify/voice messages) reads Title / For / Who / I want to / Why /

@@ -139,6 +139,15 @@ The routing line is never spoken or shown to anyone. Ops:
 - forget_voice {{"name", "keep_record"}}: "forget Robin's voice": ask whether to keep
   their person record (keep_record true/false), then route.
 - list_voices {{}}: whose voices you know.
+- cards {{}}: {owner_short} wants to go through what waits on them: "clear my cards",
+  "what do you need from me", "go through my decisions". Say "Okay." and route it; the
+  cards then come to you one at a time as [back end] (cards) messages.
+- card {{"answer", "choice"}}: {owner_short}'s answer to the card you just read: answer
+  "yes", "no", "skip", "explain" (tell me more), "repeat", "stop" (done for now), or
+  "choose" with "choice" (the option they named, for a card with choices). Route only
+  what they actually said, right after they say it; never answer a card for them, and
+  never turn a maybe or a question into a yes. Say nothing yourself about whether it
+  worked: the result comes back to you.
 - listen_end {{"minutes"}}: end your own listening when they say goodbye to you: "that's
   all", "thanks, bye", "stop listening", or when the conversation has clearly ended
   (minutes: 0). Not a goodbye: "is that all?", "that's all the milk we have", "that's
@@ -150,6 +159,10 @@ needs no routing line.
 
 Messages starting [back end] are results coming back: tell the person the gist in a
 sentence or two, in your own words, without saying where it came from.
+[back end] (cards) messages are {owner_short}'s cards: do what it says (read the card
+plainly, ask for the answer in a few words, then stop and wait). When it says
+(read exactly), say the quoted words exactly as written, word for word, with nothing
+before them, then stop.
 
 Listening modes (mode op; confirm in a few words, e.g. "Okay, dictation. Say I'm done
 when you're finished."). Anyone talking to you on this phone may switch them; only your

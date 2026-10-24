@@ -2035,9 +2035,15 @@ class McpService:
             return (home.identity, f"House agent ({home.agent_name})") if home is not None \
                 else None
         def _phones():
+            # The phones whose card taps relay, and the house voice whose spoken
+            # answers do ("clear my cards"): each counts only once ticked.
             hub = getattr(mcp, "_rook_hub", None)
             att = hub.plugin("attention") if hub is not None else None
-            return att.relay_rows() if att is not None else []
+            home = hub.plugin("home") if hub is not None else None
+            rows = list(att.relay_rows()) if att is not None else []
+            if home is not None and hasattr(home, "voice_relay_rows"):
+                rows += home.voice_relay_rows()
+            return rows
         for route in reversed(build_account_token_routes(store, getattr(mcp, "_rook_chat", None),
                                                          accounts, _approvals, _house, _phones)):
             app.router.routes.insert(0, route)
