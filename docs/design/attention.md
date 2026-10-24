@@ -43,8 +43,9 @@ All calls to the phone are the hub's own (`system:rook-hub-attention`).
   `approvals`, `digest` or `jobs`.
 - `actions`: a subset of `yes`, `no`, `explain` (alerts: `ack`).
 - `source`: a short label (the item's speakable name, or who sent the alert).
-- `expires_at`: epoch seconds; the phone drops the card after it (the hub
-  sends `gone` sooner).
+- `expires_at`: epoch seconds; the phone drops the card after it; 0 is never.
+  Decision cards are sent with 0 (no expiry of any kind): the hub withdraws
+  them with `gone` once decided elsewhere or their huddle is archived.
 
 `attention.update {id, state, message}` returns `{ok}`. `state` is `done`,
 `failed` or `gone`: the outcome after a tap, or that the item was resolved

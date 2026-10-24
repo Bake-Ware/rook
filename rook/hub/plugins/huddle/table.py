@@ -1301,6 +1301,10 @@ class Table:
                          for b in rows) + f"\nWhy it reached you: {why}."
         front = getattr(self._plugin("home"), "front", None)
         if front is None:
+            if (self.svc.store.get(m["room"]) or {}).get("archived"):
+                # A vote that needs the person brings its huddle back: an
+                # archived huddle's questions never reach them.
+                self.svc.store.set_archived(m["room"], False)
             q = await self.svc.ask(self.chair.chair_identity(), _line(line, 300),
                                    {"options": ["Yes", "No"]}, room=m["room"])
             self._set(m["id"], state="asked", ask=f"q:{q.get('question') or q.get('seq') or ''}")

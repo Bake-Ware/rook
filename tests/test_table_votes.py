@@ -337,6 +337,22 @@ async def test_a_veto_gets_one_resolution_round_then_a_one_line_ask_to_the_perso
 
 
 @pytest.mark.asyncio
+async def test_a_vote_in_an_archived_huddle_brings_it_back_to_ask_the_person(table, monkeypatch):
+    """Without the front door the ask is a pinned question, and an archived
+    huddle's questions never reach the person: the vote unarchives it."""
+    monkeypatch.setattr(table.node.plugin("home"), "front", None)
+    room = await _huddle(table)
+    await _call(table, "huddle.archive", {"huddle": room})
+    _all_yes(table, vote_security=_no("A token is logged.", evidence=["diff line 3"]))
+    _script(table, vote_chair={"fail": "model down"})
+    _, m = await _pin_and_vote(table, room)
+    assert m["state"] == "asked" and m["ask"].startswith("q:")
+    assert not table.svc.store.get(room)["archived"]
+    relay = table.node.plugin("approvals").relay
+    assert [i["room"] for i in relay.items() if i["kind"] == "ask"] == [room]
+
+
+@pytest.mark.asyncio
 async def test_no_from_the_person_drops_it_and_a_chair_that_cannot_settle_escalates(table):
     room = await _huddle(table)
     _all_yes(table, vote_security=_no("A token is logged.", evidence=["diff line 3"]))

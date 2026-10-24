@@ -42,7 +42,9 @@ ONLINE_SECS = 90.0
 CALL_TIMEOUT = 10.0
 RING_MAX = 500
 ALERT_TTL = 24 * 3600          # an alert no phone took in a day is dropped
-CARD_TTL = 7 * 24 * 3600       # the phone's own safety net; the hub sends gone sooner
+# A decision card never expires on the phone (Bake, 2026-10-23: no expiry of
+# any kind): 0 is "never" to the app; the hub withdraws it with gone.
+CARD_EXPIRES = 0
 ALERTS_KEPT = 200
 ID_MAX, LINE_MAX, EXPLAIN_MAX, SUMMARY_MAX, BODY_MAX = 64, 140, 600, 140, 600
 URGENCIES = ("urgent", "normal")
@@ -89,7 +91,6 @@ def card_for(item: dict) -> dict:
             where = "Decisions" if item.get("kind") == "house" else "Approvals"
             explain = (f"{item.get('why_not') or 'Dashboard only'}: decide it on the "
                        f"dashboard's {where} page. " + explain)
-        created = float(item.get("created") or time.time())
         from ...plain import lines
         return {"id": str(item["id"]), "kind": item.get("kind") or "hold",
                 "line": short(p.get("title") or "A decision for you", LINE_MAX),
@@ -98,7 +99,7 @@ def card_for(item: dict) -> dict:
                 "channel": "approvals",
                 "actions": ["yes", "no", "explain"] if item.get("relayable", True) else ["explain"],
                 "source": short(item.get("name") or "approvals", 64),
-                "expires_at": int(created + CARD_TTL)}
+                "expires_at": CARD_EXPIRES}
     who, what = item.get("who") or "an agent", str(item.get("what") or "").rstrip(".")
     frm = _from_text(item.get("from"))
     explain = (f"{who} asked to {what}. "
@@ -114,14 +115,13 @@ def card_for(item: dict) -> dict:
         explain = str(item.get("explain") or item["line"])
         if not item.get("relayable", True):
             explain += " Answer it on the dashboard's Decisions page."
-    created = float(item.get("created") or time.time())
     return {"id": str(item["id"]), "kind": item.get("kind") or "hold",
             "line": short(item.get("line") or f"{who} wants to {what}", LINE_MAX),
             "explain": short(explain, EXPLAIN_MAX), "urgency": "normal",
             "channel": "approvals",
             "actions": ["yes", "no", "explain"] if item.get("relayable", True) else ["explain"],
             "source": short(item.get("name") or "approvals", 64),
-            "expires_at": int(created + CARD_TTL)}
+            "expires_at": CARD_EXPIRES}
 
 
 def without_body(card: dict) -> dict:
@@ -447,7 +447,7 @@ class AttentionService:
         for ident in [i for i in posted if i not in items]:
             row = posted[ident]
             if row.get("closed") or await self._update(wid, ident, "gone",
-                                                       "Decided or expired elsewhere."):
+                                                       "No longer waiting on you."):
                 del posted[ident]
                 n_gone += 1
         return {"posted": n_new, "gone": n_gone}

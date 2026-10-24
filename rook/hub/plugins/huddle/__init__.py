@@ -394,8 +394,8 @@ class Huddle(Plugin):
 
     @capability("archive", risk="write")
     def archive(self, huddle: str, archived: bool = True) -> dict:
-        """Archive a huddle (hidden from the list, kept; deleted after huddle.retention_days) or unarchive it."""
-        return self._svc().archive(huddle, archived)
+        """Archive a huddle (hidden from the list, kept; deleted after huddle.retention_days) or unarchive it. While cards or questions in it wait on the person, only they archive it."""
+        return self._svc().archive(huddle, archived, caller())
 
     # -- the conference table and votes (table.py) -------------------------------
     def _table(self) -> Table:
