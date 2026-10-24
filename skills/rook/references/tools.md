@@ -655,6 +655,7 @@ Native plugins of the Android app's embedded worker, in place of (or beside) the
 | `attention.feed` | limit=50 | exec | The phone's quiet feed, newest first: summaries of notifications it sorted as urgent, family or normal (never… |
 | `attention.poll` | since=0 | admin | Events after seq `since`: {events, last}; pass `last` next time. |
 | `attention.post` | id, kind='card', line='', explain='', urgency='normal', channel='approvals', actions?, source='', expires_at=0, body='' | admin | Put a decision card on the phone; re-posting the same id updates it without ringing again. |
+| `attention.remind` | id, text, sample_ms=3000, speak_unchecked=false | admin | Speak a short reminder on the phone, but only if the room is quiet. |
 | `attention.rules_get` | — | exec | The notification rules in use: source default\|override and the rules document. |
 | `attention.rules_set` | rules? | admin | Replace the phone's notification rules. |
 | `attention.update` | id, state, message='' | admin | Show what happened after a decision: state done (brief confirmation, then the card closes), failed (shows mes… |

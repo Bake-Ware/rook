@@ -68,13 +68,13 @@ object SpeakBridge {
 
     // Voice-server route: one utterance at a time (fetching or playing).
     private val fetcher = Executors.newSingleThreadExecutor()
-    private var current: SpeakQueue.Job? = null
+    @Volatile private var current: SpeakQueue.Job? = null
     private var player: MediaPlayer? = null
     private var playerFile: File? = null
     private val deviceWaiting = ArrayDeque<SpeakQueue.Job>()   // fell back while the engine was starting
 
     // Reply window (voice.speak reply=true): one at a time; nothing else is spoken meanwhile.
-    private var replying: SpeakQueue.Job? = null
+    @Volatile private var replying: SpeakQueue.Job? = null
     @Volatile private var replyCancel = false
     private val recentReplies = ArrayDeque<JSONObject>()       // newest last, for voice.replies
 
@@ -143,6 +143,9 @@ object SpeakBridge {
         }
         return out.toString()
     }
+
+    /** Any thread: something is queued, being spoken, or a reply window or voice reply is on. */
+    @JvmStatic fun busy(): Boolean = !queue.idle() || current != null || replying != null || replyPlaying()
 
     @JvmStatic fun stop(): String {
         val n = queue.stopAll()

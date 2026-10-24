@@ -62,7 +62,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
         chat = ChatAdapter { prefs.getBoolean("show_thinking", false) }
         b.chatList.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this).apply { stackFromEnd = true }
         b.chatList.adapter = chat
-        attention = AttentionPanel(this, b) { askNotifications() }
+        attention = AttentionPanel(this, b, { askNotifications() }) { askMicForReminders() }
         panels = ConversationPanels(this, b, lifecycleScope, attention)
         attention.onChanged = { panels.attentionChanged() }
         b.attentionSetup.setOnClickListener { panels.selectAttention() }
@@ -306,6 +306,14 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
     }
 
     private val notifPermLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { attention.render() }
+    private val reminderMicLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { attention.render() }
+    /** From the Attention tab's Spoken reminders: the runtime prompt, or the app's settings once Android stops asking. */
+    private fun askMicForReminders() {
+        if (prefs.getBoolean("reminder_mic_asked", false) &&
+            !shouldShowRequestPermissionRationale(android.Manifest.permission.RECORD_AUDIO))
+            startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName")))
+        else { prefs.edit().putBoolean("reminder_mic_asked", true).apply(); reminderMicLauncher.launch(android.Manifest.permission.RECORD_AUDIO) }
+    }
     /** From the Attention setup: the runtime prompt, or the app's notification settings once Android stops asking. */
     private fun askNotifications() {
         if (Build.VERSION.SDK_INT >= 33 && prefs.getBoolean("notif_asked", false) &&
