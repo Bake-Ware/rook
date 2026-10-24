@@ -986,21 +986,27 @@ def describe_change(doc: dict, change: dict, now: float | None = None) -> dict:
         old = entries.get(ident)
         level = str(e.get("level") or "?")
         targets = sorted(set(e.get("targets") or []))
-        sacred = level == "sacred" or bool(old and old.get("level") == "sacred")
-        # A target an entry starts covering takes the strictest covering entry; one that
-        # nothing covered took the unlisted level. So covering more is stricter only when
-        # this entry is at least as strict as unlisted (else an unlisted machine, balanced,
-        # under a ship-it entry would just go). Anything else that changes how the entry
-        # rules (its kind, an unknown level) counts as loosening; only the title and the
-        # description don't.
-        unlisted = str(doc.get("unlisted") or "balanced")
-        covers_looser = rank(level) < rank(unlisted) or level not in LEVELS
+        kind = str(e.get("kind") or "resource")
+        added = sorted(set(targets) - set((old or {}).get("targets") or []))
+        sacred_targets = {t for x in entries.values() if x.get("level") == "sacred"
+                          for t in x.get("targets") or []}
+        sacred = level == "sacred" or bool(old and old.get("level") == "sacred") or any(
+            fnmatch.fnmatchcase(a, t) or fnmatch.fnmatchcase(t, a)
+            for a in added for t in sacred_targets)
+        # Stricter only when provably so: the same entry, the same targets and kind, and
+        # the same or a higher level. Anything else may loosen something (a target an
+        # entry starts covering leaves the unlisted level, and falls under every active
+        # exception that names this entry's id; a kind changes how it rules), so it is
+        # read back and needs the check word.
+        loosens = not (old is not None and level in LEVELS
+                       and set(targets) == set(old.get("targets") or [])
+                       and kind == str(old.get("kind") or "resource")
+                       and rank(level) >= rank(str(old.get("level") or "ship-it")))
         if old is None:
-            sentence = f"Add a {level} trust entry called {ident} covering {_targets_words(targets)}"
-            loosens = covers_looser
+            sentence = (f"Add a {level} trust entry called {ident} covering "
+                        f"{_targets_words(targets)}")
         else:
             dropped = sorted(set(old.get("targets") or []) - set(targets))
-            added = sorted(set(targets) - set(old.get("targets") or []))
             parts = []
             if level != old.get("level"):
                 parts.append(f"change {ident} from {old.get('level')} to {level}")
@@ -1008,14 +1014,10 @@ def describe_change(doc: dict, change: dict, now: float | None = None) -> dict:
                 parts.append(f"stop covering {_targets_words(dropped)} under {ident}")
             if added:
                 parts.append(f"also cover {_targets_words(added)} under {ident} ({level})")
-            kind = str(e.get("kind") or "resource")
             if kind != str(old.get("kind") or "resource"):
                 parts.append(f"make {ident} a {kind} entry instead of {old.get('kind')}")
             sentence = (" and ".join(parts) or f"rewrite the description of {ident}")
             sentence = sentence[:1].upper() + sentence[1:]
-            loosens = (rank(level) < rank(old.get("level") or "ship-it") or bool(dropped)
-                       or (bool(added) and covers_looser) or kind != (old.get("kind") or "resource")
-                       or level not in LEVELS)
     elif op == "delete_entry":
         ident = str(data.get("id") or "?")
         old = entries.get(ident) or {}

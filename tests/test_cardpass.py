@@ -436,16 +436,24 @@ def test_covering_more_with_a_lenient_entry_loosens():
                                                       "pianobar-super (ship-it).")
     assert T.describe_change(doc, {"op": "set_entry", "data": {
         "id": "toys", "kind": "project", "level": "ship-it", "targets": ["worker:x"]}})["loosens"]
-    # Guarded covers more: stricter than unlisted (balanced), so not a loosening...
-    assert not T.describe_change(doc, {"op": "set_entry", "data": {
+    # Covering more is never taken as stricter, even with a guarded entry: an active
+    # exception naming the entry (round 2, all four voters) would reach the new targets.
+    st.change("add_exception", {"id": "hub-night", "title": "hub", "applies_to": ["rook-hub"],
+                                "tier": "go", "expires": "2099-01-01T00:00:00Z"},
+              T.Actor("person", "Bake", words="tonight"))
+    doc = st.current()
+    via_x = T.describe_change(doc, {"op": "set_entry", "data": {
         "id": "rook-hub", "kind": "host", "level": "guarded",
-        "targets": ["worker:rook-hub", "worker:box"]}})["loosens"]
-    assert not T.describe_change(doc, {"op": "set_entry", "data": {
+        "targets": ["worker:rook-hub", "worker:kaiju"]}})
+    assert via_x["loosens"] and via_x["sacred"]          # kaiju is a sacred entry's target
+    assert T.describe_change(doc, {"op": "set_entry", "data": {
         "id": "new-guard", "kind": "host", "level": "guarded", "targets": ["worker:y"]}})["loosens"]
-    # ...unless the person made unlisted stricter than guarded.
-    st.change("set_unlisted", {"level": "sacred"}, T.Actor("person", "Bake", words="lock it"))
-    assert T.describe_change(st.current(), {"op": "set_entry", "data": {
-        "id": "new-guard", "kind": "host", "level": "guarded", "targets": ["worker:y"]}})["loosens"]
+    assert T.describe_change(doc, {"op": "set_entry", "data": {
+        "id": "new-sacred", "kind": "host", "level": "sacred", "targets": ["worker:y"]}})["loosens"]
+    # Only a raise on the same targets and kind is stricter.
+    raise_ = T.describe_change(doc, {"op": "set_entry", "data": {
+        "id": "rook-hub", "kind": "host", "level": "sacred", "targets": ["worker:rook-hub"]}})
+    assert not raise_["loosens"] and raise_["sentence"] == "Change rook-hub from guarded to sacred."
     # A changed kind (devices entries rule private reads) counts as loosening.
     assert T.describe_change(doc, {"op": "set_entry", "data": {
         "id": "rook-hub", "kind": "devices", "level": "guarded",
@@ -463,7 +471,7 @@ def test_describe_change_says_what_loosens():
         "id": "kaiju", "level": "guarded", "targets": ["worker:kaiju"], "kind": "host"}})
     assert d == {"sentence": "Change kaiju from sacred to guarded.", "loosens": True,
                  "sacred": True, "op": "set_entry"}
-    assert not T.describe_change(doc, {"op": "set_entry", "data": {
+    assert T.describe_change(doc, {"op": "set_entry", "data": {
         "id": "kaiju", "level": "sacred", "kind": "host",
         "targets": ["worker:kaiju", "worker:kaiju2"]}})["loosens"]
     assert T.describe_change(doc, {"op": "delete_entry", "data": {"id": "kaiju"}})["loosens"]
