@@ -332,3 +332,12 @@ def test_device_update_channel(monkeypatch):
     assert p._update(channel="Beta")["channel"] == "beta" and Updater.channel == "beta"
     assert p._update(channel="nightly") == {"ok": False, "error": "channel must be stable or beta"}
     assert Updater.channel == "beta"
+
+
+def test_unlock_receiver_hears_systemui():
+    """SystemUI sends USER_PRESENT from its own app uid, so a NOT_EXPORTED receiver never
+    hears an unlock on Android 13+ (no takeover, no `unlocked` signal for reminder repeats)."""
+    src = (Path(__file__).parents[1] / "android/app/src/main/java/systems/bake/rook/WorkerService.kt").read_text()
+    call = src[src.index("registerReceiver(this, unlockReceiver"):]
+    call = call[:call.index(")\n")]
+    assert "RECEIVER_EXPORTED" in call and "NOT_EXPORTED" not in call
