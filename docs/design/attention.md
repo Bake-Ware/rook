@@ -61,8 +61,22 @@ increasing), `ts` (epoch seconds) and `type`:
   summary (at most 140 characters) of an important notification from another
   app.
 
+- `reminded {id, outcome, via?, level?}` (0.4.22-beta.3): what became of an
+  `attention.remind`; `outcome` is `spoken`, `busy`, `call`, `voice_session`,
+  `mic_in_use`, `media`, `speaking`, `unchecked`, `off` or `error`; `via`
+  `server` (the house voice) or `device`; `level` only two rounded numbers.
+
 `last` is the newest seq on the phone; if it is below what the hub saw, the
 app's counter restarted and the hub polls from 0 again.
+
+`attention.remind {id, text, sample_ms=3000, speak_unchecked=false}` (admin,
+physical; app 0.4.22-beta.3): returns `{ok, id, accepted}` at once (`accepted`
+false with `busy` or `reason` when another reminder runs or the app's switch is
+off). The phone then checks the room on the device (calls, its own voice
+session, another app recording, media playing, then a few seconds of the
+microphone level; nothing is recorded, kept or sent), speaks `text` in the
+app's selected voice only if nobody is talking, and reports a `reminded`
+event.
 
 `attention.rules_set {rules}`: classification preferences for the phone's
 notice filter. The hub calls it only with `attention.push_rules` on, and
@@ -77,10 +91,60 @@ question. Agents' admin calls are held for the person.
 ## Cards
 
 A waiting item becomes a card with `id` = the item id, `kind` = the item
-kind, `line` = "<who> wants to <what>", and `explain` = who asked, exactly
-what would happen, the risk tier, where it came from (job, role, huddle) and
-how long it has waited. `urgency` is `normal`, `channel` `approvals`,
-`actions` `yes`, `no`, `explain`.
+kind, `line` = its plain title, `body` = For / Who / I want to / Why / Risk
+(rook/hub/plain.py) and `explain` = the technical detail. `urgency` is
+`normal`, `actions` `yes`, `no`, `explain`.
+
+**The queue (Bake, 2026-10-23: "stack up these non emergency items").** A
+decision card is not an emergency. With `attention.queue` on (the default) it
+is posted on the `digest` channel: it shows in the app's list and quietly in
+the notification shade, with no heads-up, no sound and no takeover on unlock.
+Every app since 0.4.20 treats `digest` that way, so no app update is needed
+for the queue itself. Off: the `approvals` channel, which pops up and takes
+over on the next unlock, as before. Emergencies are alerts with
+`urgency=urgent` (`attention.send`, the phone's own urgent notices): they
+still ring at once on the `urgent` channel. Nothing expires.
+
+## Spoken reminders
+
+Instead of each card interrupting, the phone says one short line when it is
+due and the room is quiet:
+
+- one card waiting: "Need your input: <its title>" (a held call's title comes
+  from its cap and machine only, never its arguments, the same rule as the
+  voice summary);
+- several: "Hey boss, you have 6 decisions pending."
+
+What counts: everything the approvals list holds (held calls, job holds,
+huddle cards and questions, house asks) plus pending trust-map proposals.
+Pacing (hub settings, all live): a new card waits `remind_wait_s` (120 s)
+first, so one answered quickly elsewhere is never announced and cards that
+arrive together are announced together; at least `remind_gap_min` (15) between
+reminders; again every `remind_again_min` (60; 0 = only for new cards) while
+cards wait; `remind_retry_min` (5) after a busy room; nothing during
+`quiet_hours` (local time, like `22:00-07:00`; empty by default, Bake will tune
+it). Only one phone speaks: the first configured phone that is online and has
+`attention.remind`. A reminder the phone doesn't answer within 3 minutes
+counts as lost and is tried again.
+
+The voice is the app's selected voice: the house voice (Chatterbox on the
+voice server) when the app has a voice server, else Android's own speech.
+The quiet check needs the microphone; if the phone can't check (no
+permission, Android silenced background capture), it stays quiet unless
+`remind_unchecked` is on.
+
+## The log
+
+Every card queued, reminder spoken or skipped (once per reason until one is
+spoken), tap decided, card gone (answered elsewhere or withdrawn) and, with
+the voice clearing session, every spoken decision is one row in
+`event_log.db` (rook/hub/eventlog.py, in the plugin's data dir): what (a plain
+line), why (the summarized reason, never a message's or command's content),
+how (who decided, on what), and an internal pointer to the item. Kept 30 days
+(Bake: "30 days? Summarize justification for action from event not
+details"). `attention.log {limit, since}` reads it. This is stage 1's log of
+the events design (Rook knowledge events-consolidation-model-20261023), so the
+later event store can take it over.
 
 An item the person must decide on the dashboard (`relay.refusal`: secrets,
 tokens, policy, settings, job locks, and `approvals.relay_dashboard_only`) is
@@ -119,6 +183,12 @@ once the person does, the card is posted again so the next tap counts.
   or unlocked it, with the recent signals. No answer does not mean unseen.
 - `attention.notices {limit}` (read, sensitive): recent notice summaries,
   newest first.
+- `attention.log {limit=30, since}` (read): the 30-day log, newest first,
+  as readable lines and rows (no internal pointers).
+
+`attention.status` also reports `reminders`: queue and reminders on, the
+speaking phone, the last spoken reminder and try, the last reason one wasn't
+spoken, and whether quiet hours apply now.
 
 ## What leaves the phone
 
@@ -139,3 +209,8 @@ and the last 500 notices in the plugin's `state.json`.
 - `attention.person` ("the person"): the name recorded with each decision.
 - `attention.poll_secs` (10): how often the hub checks the phones.
 - `attention.push_rules` (off): send `attention.rules_set` (no rules yet).
+- `attention.queue` (on): decision cards wait quietly; off pops them up.
+- `attention.remind` (on): spoken reminders (needs app 0.4.22-beta.3).
+- `attention.remind_wait_s` (120), `remind_gap_min` (15), `remind_again_min`
+  (60), `remind_retry_min` (5), `quiet_hours` (""), `remind_unchecked` (off):
+  pacing, as above.

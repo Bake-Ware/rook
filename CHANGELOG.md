@@ -9,6 +9,15 @@ version was `0.1.0`.
 ## Unreleased
 
 ### Added
+- Decision cards queue, and the phone reminds you out loud: cards are no longer emergencies, so
+  they land quietly in the app (the digest channel: no pop-up, no takeover on unlock) and the hub
+  asks the phone to say "Need your input: <title>" for one card or "Hey boss, you have 6
+  decisions pending." for several, paced by `attention.remind_*` settings (wait 2 min before a new
+  card, 15 min between reminders, again hourly, retry 5 min after a busy room, optional quiet
+  hours). The phone speaks only after its own quiet check (`attention.remind`, app
+  0.4.22-beta.3). Urgent alerts still ring at once. Pending trust proposals count as decisions.
+  Every card, reminder and decision is one plain line in a 30-day log (`rook/hub/eventlog.py`,
+  `attention.log`), reasons summarized, never content. (manual: phone-attention)
 - Approval asks in plain words: every ask that reaches the person (Approvals page, phone decision
   card, `rook_approvals`, huddle cards and questions, job, trust, hub-host and spread holds, house
   asks, the operator's Telegram/notify/voice messages) reads Title / For / Who / I want to / Why /

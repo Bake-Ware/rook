@@ -54,6 +54,39 @@ settings, job locks and anything on the dashboard-only list (Settings >
 Approvals). Their cards only have Explain, which says to decide them on the
 dashboard. When something is decided elsewhere, its card disappears.
 
+## Waiting quietly, reminded out loud
+
+Decision cards aren't emergencies, so they don't pop up one by one. They wait
+quietly in the app's Attention tab (and in the notification shade, without a
+sound), and the phone tells you out loud when something is waiting:
+
+- one card: "Need your input: Deploy hub update?";
+- several: "Hey boss, you have 6 decisions pending."
+
+It speaks only when the room is quiet: before each reminder the app listens
+for a few seconds to check nobody is talking. The sound stays on the phone:
+nothing is recorded, kept or sent. If someone is talking, you're on a call,
+music is playing or you're talking to the voice, it tries again a few minutes
+later. A card you answer quickly somewhere else is never announced.
+
+You can tune it in Settings > Plugins > Attention: **Queue decisions** (off
+brings back a pop-up for every card), **Spoken reminders**, and under
+advanced the wait before a new card is announced (2 minutes), the time
+between reminders (15 minutes), how often to remind again while cards wait
+(every hour), and **No reminders between** (for example 22:00-07:00; empty
+means any time). The app's Attention tab has its own **Spoken reminders**
+switch and the microphone permission it needs. Spoken reminders need app
+0.4.22-beta.3 or later; with an older app cards still wait quietly.
+
+Urgent alerts are different: they still ring at once.
+
+## The log
+
+Every card, reminder and decision is written as one plain line (what
+happened, why, and how it was decided), kept for 30 days. Agents read it with
+`attention.log`. It keeps the reason, never the content: no message text and
+no command.
+
 ## Alerts
 
 Agents send alerts with `attention.send` (on the worker `rook`). An urgent
