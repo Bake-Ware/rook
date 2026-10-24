@@ -485,3 +485,33 @@ async def test_two_answers_racing_decide_once_and_skip_nothing(env):
     assert e.cards.current("house")["cur"]["id"] == "h2"     # the next card, not past it
     assert sum(1 for m in e.says() if "Card 2 of 2" in m["text"]) == 1
     await disconnect(task, e.host)
+
+
+@pytest.mark.asyncio
+async def test_a_spoken_yes_approves_a_real_hold_through_the_relay(penv, tmp_path):  # noqa: F811
+    """No fakes between the voice and the approval queue: the hold is approved as
+    "Bake via voice", recorded in the relays table with the words and voiceprint."""
+    from types import SimpleNamespace
+
+    from rook.hub import approvals as A
+    from tests.test_relay import hold
+    ap = A.Approvals(str(tmp_path / "approvals.db"), A.Config(wait_secs=0, contact=()))
+    penv.band.authz = SimpleNamespace(approvals=ap)
+    h = hold(ap)
+    host, task = await connect(penv)
+    e = Env(penv, host, None)
+    relay = penv.node.plugin("approvals").relay
+    ap.queue.set_relayer("voice:house", True, "human:bake", "voice")
+    out = await e.ask_owner()
+    assert out["ok"] and out["cards"] == 1
+    await e.spoken()
+    turn = await e.hear(OWNER_SURE, "yes, approve it")
+    res = await e.route("card", turn, answer="yes")
+    assert res["ok"] and res["decided"] == h["id"]
+    row = ap.queue.get(h["id"])
+    assert row["state"] == "approved" and row["decided_by"].endswith("via voice")
+    rel, = ap.queue.relays()
+    assert rel["relayer"] == "voice:house" and rel["quote"] == "yes, approve it"
+    assert "voiceprint 0.74 (sure)" in rel["session"]
+    assert relay.items() == []
+    await disconnect(task, host)
