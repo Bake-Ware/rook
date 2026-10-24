@@ -83,9 +83,42 @@ switch and the microphone permission it needs. Spoken reminders need app
 
 Urgent alerts are different: they still ring at once.
 
+## Clearing your cards by voice
+
+Say "clear my cards" (or "what do you need from me") to the voice. It reads
+the waiting cards one at a time, the ones blocking work first, then the
+oldest, and you answer each in a few words: "yes, approve it", "no, not now",
+"skip", "explain" (tell me more), "repeat" or "stop". Each answer is recorded
+exactly like a tap ("approved by Bake via voice"), and the card disappears
+from the phone, the Approvals page and its huddle. A card answered somewhere
+else meanwhile is passed over.
+
+- **Only you, recognised for sure.** A spoken answer counts only when the
+  voice is sure it is your voice (a strong voiceprint match, not "probably").
+  Otherwise it says it couldn't confirm it was you and leaves the card. A
+  guest, a child or a voice it doesn't know can't start this or answer.
+  Answer in a few words: a bare "yes" can be too short to recognise.
+- **Turn it on once:** on the **Tokens** page, tick **May relay my approvals**
+  on the row "<assistant>'s voice (your voiceprint)". Until then the voice
+  says it's off.
+- **Loosening the rules is read back.** For a trust-map change that loosens
+  the rules (accepting an exception, lowering a level, sacred entries
+  included) and for a held call on something sacred, after your yes the
+  voice reads the exact change back in one sentence and asks you to say "yes"
+  and a check word ("yes, mango"). Only your very next words count, and only
+  in your recognised voice: an old recording of a yes doesn't know the word.
+  Your words, the voiceprint score and the read-back go into the trust map's
+  history. A change it can't read back word for word stays on its card.
+  Making the rules stricter, and any "no", happen at once.
+- **Some things stay on the dashboard.** Cards about secrets, tokens,
+  settings or who may do what are named and left for the dashboard; the voice
+  says so.
+- Nothing is decided from active listening, dictation or the scribe: only in
+  the normal conversation.
+
 ## The log
 
-Every card, reminder and decision is written as one plain line (what
+Every card, reminder and decision (on the phone, by voice) is written as one plain line (what
 happened, why, and how it was decided), kept for 30 days. Agents read it with
 `attention.log`. It keeps the reason, never the content: no message text and
 no command.

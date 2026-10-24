@@ -243,6 +243,9 @@ class Actor:
     words: str = ""
     session: str = ""
     via: str = ""
+    #: How a spoken decision was checked (``via == "voice"``): the voiceprint
+    #: score, the read-back the person confirmed and the challenge word.
+    evidence: tuple = ()
 
     def stamp(self, now: float) -> dict:
         out = {"who": self.who[:WHO_MAX], "kind": self.kind, "when": _iso(now), "at": now,
@@ -251,6 +254,9 @@ class Actor:
             v = getattr(self, k)
             if v:
                 out[k] = str(v)[:TEXT_MAX]
+        if self.evidence:
+            out["evidence"] = {str(k)[:40]: (v if isinstance(v, (int, float, bool)) or v is None
+                                             else str(v)[:TEXT_MAX]) for k, v in self.evidence}
         return out
 
 
@@ -940,6 +946,131 @@ class TrustStore:
 
 _stores: dict[str, TrustStore] = {}
 _stores_lock = threading.Lock()
+
+
+# -- in plain words (the voice's read-back) ---------------------------------------------
+
+_KIND_WORDS = {"read": "read", "prepare": "prepare", "change": "make changes",
+               "admin": "do admin actions"}
+_TIER_SAY = {"go": "without asking", "ask": "after asking", "person": "only with you"}
+#: Changes that only make the map stricter: a plain sure yes applies them.
+TIGHTENING_OPS = ("end_exception", "revoke_tool", "close_lease")
+
+
+def _targets_words(targets: Any) -> str:
+    items = [str(t) for t in (targets or [])][:4]
+    words = []
+    for t in items:
+        kind, _, val = t.partition(":")
+        words.append({"worker": f"the machine {val}", "repo": f"the repo {val}",
+                      "project": f"the project {val}", "cap": f"{val} calls",
+                      "resource": f"{val}"}.get(kind, t))
+    more = len(targets or []) - len(items)
+    out = ", ".join(words) if len(words) < 3 else ", ".join(words[:-1]) + " and " + words[-1]
+    return out + (f" and {more} more" if more > 0 else "") if out else "nothing"
+
+
+def describe_change(doc: dict, change: dict, now: float | None = None) -> dict:
+    """One plain sentence for a change to the map (what the person hears before
+    saying yes), whether it **loosens** the map (anything that isn't strictly
+    stricter), and whether it touches a sacred entry. ``doc`` is the current
+    map. Read-back for voice decisions: the hub, never the voice, writes it."""
+    now = time.time() if now is None else now
+    op = str((change or {}).get("op") or "")
+    data = (change or {}).get("data") or {}
+    entries = {e["id"]: e for e in doc.get("entries") or []}
+    sacred = False
+    if op == "set_entry":
+        e = data.get("entry") if isinstance(data.get("entry"), dict) else data
+        ident = str(e.get("id") or "?")
+        old = entries.get(ident)
+        level = str(e.get("level") or "?")
+        targets = sorted(set(e.get("targets") or []))
+        kind = str(e.get("kind") or "resource")
+        added = sorted(set(targets) - set((old or {}).get("targets") or []))
+        sacred_targets = {t for x in entries.values() if x.get("level") == "sacred"
+                          for t in x.get("targets") or []}
+        sacred = level == "sacred" or bool(old and old.get("level") == "sacred") or any(
+            fnmatch.fnmatchcase(a, t) or fnmatch.fnmatchcase(t, a)
+            for a in added for t in sacred_targets)
+        # Stricter only when provably so: the same entry, the same targets and kind, and
+        # the same or a higher level. Anything else may loosen something (a target an
+        # entry starts covering leaves the unlisted level, and falls under every active
+        # exception that names this entry's id; a kind changes how it rules), so it is
+        # read back and needs the check word.
+        loosens = not (old is not None and level in LEVELS
+                       and set(targets) == set(old.get("targets") or [])
+                       and kind == str(old.get("kind") or "resource")
+                       and rank(level) >= rank(str(old.get("level") or "ship-it")))
+        if old is None:
+            sentence = (f"Add a {level} trust entry called {ident} covering "
+                        f"{_targets_words(targets)}")
+        else:
+            dropped = sorted(set(old.get("targets") or []) - set(targets))
+            parts = []
+            if level != old.get("level"):
+                parts.append(f"change {ident} from {old.get('level')} to {level}")
+            if dropped:
+                parts.append(f"stop covering {_targets_words(dropped)} under {ident}")
+            if added:
+                parts.append(f"also cover {_targets_words(added)} under {ident} ({level})")
+            if kind != str(old.get("kind") or "resource"):
+                parts.append(f"make {ident} a {kind} entry instead of {old.get('kind')}")
+            sentence = (" and ".join(parts) or f"rewrite the description of {ident}")
+            sentence = sentence[:1].upper() + sentence[1:]
+    elif op == "delete_entry":
+        ident = str(data.get("id") or "?")
+        old = entries.get(ident) or {}
+        sacred = old.get("level") == "sacred"
+        sentence = f"Remove the {old.get('level') or ''} trust entry {ident}".replace("  ", " ")
+        loosens = True
+    elif op == "set_unlisted":
+        level = str(data.get("level") or "?")
+        old = doc.get("unlisted") or "balanced"
+        sentence = f"Treat anything the map doesn't list as {level} instead of {old}"
+        loosens = rank(level) < rank(old)
+    elif op == "add_exception":
+        x = data.get("exception") if isinstance(data.get("exception"), dict) else data
+        applies = [str(a) for a in x.get("applies_to") or ["*"]]
+        who = "any agent" if applies in (["*"], []) else ", ".join(applies[:3])
+        kinds = " and ".join(_KIND_WORDS.get(k, k) for k in (x.get("kinds") or ["change", "admin"]))
+        over = [str(t) for t in x.get("targets") or []]
+        sacred = any(entries.get(i, {}).get("level") == "sacred" for i in applies) or any(
+            e.get("level") == "sacred" and set(e.get("targets") or ()) & set(over)
+            for e in entries.values())
+        until = str(x.get("expires") or "no end date")
+        sentence = (f"Let {who} {kinds} {_TIER_SAY.get(str(x.get('tier') or 'go'), 'freely')}"
+                    + (f" on {_targets_words(over)}" if over else "")
+                    + f" until {until}")
+        loosens = True
+    elif op == "end_exception":
+        sentence = f"End the exception {data.get('id') or '?'} now"
+        loosens = False
+    elif op == "grant_tool":
+        g = data.get("grant") if isinstance(data.get("grant"), dict) else data
+        sentence = f"Give the {g.get('role') or '?'} role the {g.get('server') or '?'} tool"
+        loosens = True
+    elif op == "revoke_tool":
+        g = data.get("grant") if isinstance(data.get("grant"), dict) else data
+        sentence = f"Take the {g.get('server') or '?'} tool away from the {g.get('role') or '?'} role"
+        loosens = False
+    elif op == "close_lease":
+        sentence = f"Close the borrowed-state lease {data.get('id') or '?'}"
+        loosens = False
+    elif op == "add_lease":
+        lease = data.get("lease") if isinstance(data.get("lease"), dict) else data
+        sentence = (f"Borrow {lease.get('resource') or '?'}: {lease.get('what') or 'a change'}"
+                    f" until {lease.get('until') or 'it is restored'}")
+        sacred = (entries.get(str(lease.get("resource") or "")) or {}).get("level") == "sacred"
+        loosens = True
+    elif op == "set_baseline":
+        b = data.get("baseline") if isinstance(data.get("baseline"), dict) else data
+        sentence = f"Record what normal looks like for {b.get('id') or '?'}"
+        loosens = True
+    else:
+        sentence, loosens = f"Make a trust map change ({op or 'unknown'})", True
+    sentence = " ".join(sentence.split()).rstrip(".")[:300] + "."
+    return {"sentence": sentence, "loosens": bool(loosens), "sacred": bool(sacred), "op": op}
 
 
 def store_for(path: str | None) -> TrustStore:

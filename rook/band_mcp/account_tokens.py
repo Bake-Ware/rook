@@ -132,10 +132,12 @@ def build_account_token_routes(provider, chat=None, accounts=None, approvals=Non
                     if not h:
                         raise ValueError('There is no house agent on this hub.')
                     principal, label = h
-                elif ident.startswith('device:'):
+                elif ident.startswith(('device:', 'voice:')):
                     hit = next((d for d in phones() if d[0] == ident), None)
                     if hit is None:
-                        return response({'error': 'That phone is not in attention.devices.'}, 404)
+                        return response({'error': 'That phone is not in attention.devices.'
+                                         if ident.startswith('device:') else
+                                         'The house voice is not set up on this hub.'}, 404)
                     principal, label = hit
                 else:
                     t = next((t for t in provider.list_api_tokens() if t.get('id') == ident), None)
