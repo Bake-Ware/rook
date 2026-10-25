@@ -107,7 +107,8 @@ class Runner:
                 await asyncio.sleep(self.poll_s)
                 seen = await self._exec(cr, step["worker"], f"test -f {base}.log", 30)
             if seen["rc"] is None:          # still unknown: never start it a second time
-                return seen
+                return {**seen, "gone": True, "error": f"{step['worker']} could not say whether "
+                                                       f"it had started ({_why(seen)})"}
             resumed = seen["rc"] == 0
         if not resumed:
             inner = f"bash -c {shlex.quote(cmd)} > {base}.log 2>&1; echo $? > {base}.rc.tmp " \
@@ -128,10 +129,9 @@ class Runner:
                 except (ValueError, IndexError):
                     rc = None
                 return {"ok": rc == 0, "rc": rc, "out": _tail(rest.strip()), "error": ""}
-            if got.get("gone"):
-                return got
             if self._clock() >= deadline:
-                return {"ok": False, "rc": None, "out": "", "error": "timed out"}
+                return got if got.get("gone") else {"ok": False, "rc": None, "out": "",
+                                                    "error": "timed out"}
             await asyncio.sleep(self.poll_s)
 
     async def step(self, cr: dict, phase: str, i: int, step: dict, cmd: str | None = None,
@@ -198,8 +198,8 @@ class Runner:
                 if got.get("gone") and rb.get("run") and rb.get("worker") == s["worker"]:
                     # Its rollback would wait for the same machine: say so, don't try.
                     row = self.store.set(ident, state="failed", phase="done")
-                    self._told(row, "failed", f"{where}: {got['error']}; how it ended is "
-                                              "unknown and its rollback there could not run")
+                    self._told(row, "failed", f"{where}: {got['error']}; its rollback there "
+                                              "could not run either")
                     return row
                 return await self._rollback(cr, f"{where} failed ({_why(got)})")
         row = self.store.set(ident, state="kept", phase="done")
@@ -214,7 +214,7 @@ class Runner:
             return row
         self.store.set(cr["id"], phase="rollback", step=0)
         got = await self.step(cr, "rollback", 0, rb, resumed=resumed and bool(rb.get("detach")))
-        for i, s in enumerate(cr["tests"]):
+        for i, s in enumerate(cr["tests"] if not got.get("gone") else []):
             await self.step(cr, "after", i, s)
         if not got["ok"]:
             row = self.store.set(cr["id"], state="failed", phase="done")

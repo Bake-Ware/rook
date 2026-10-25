@@ -300,6 +300,9 @@ async def test_a_worker_that_never_rejoins_is_a_clear_failure_without_a_blind_ro
                                        "run": "sleep 0.3; echo 7 > $HOME/volume"}]))
     await _restart_mid_step(ch, out)
     ch.client.workers.pop("w-cachy")
+    rec = ch.store.get(out["id"])["record"]
+    rec["scripts"][0]["timeout"] = 0.5                              # the step's own limit
+    ch.store.set(out["id"], record=rec)
     ch._runner().rejoin_s = 0.3
     ch._runner().resume()
     row = await _done(ch, out["id"])
@@ -308,8 +311,46 @@ async def test_a_worker_that_never_rejoins_is_a_clear_failure_without_a_blind_ro
     assert "rollback" not in [e["phase"] for e in row["log"]]       # nothing tried blind
     assert ch.att.lines[-1][0] == "ask_now"
     line = ch.att.lines[-1][2]
-    assert "cachyrig did not come back to the band" in line and "could not run" in line
+    assert "cachyrig" in line and "could not run" in line
     assert [u for u, *_ in ch.att.sent] == ["urgent"]               # left unknown: it needs Bake
+
+
+@pytest.mark.asyncio
+async def test_a_step_nobody_can_check_after_a_restart_is_never_rolled_back_blind(ch):
+    (ch.home / "volume.bak").write_text("3\n")
+    out = await ch.submit(cr(scripts=[{"worker": "cachyrig", "detach": True,
+                                       "run": "sleep 0.3; echo 7 > $HOME/volume"}]))
+    await _restart_mid_step(ch, out)
+    real = ch.client.call
+
+    async def call(cap, args, target, timeout, identity, principal):
+        if "test -f" in args["cmd"]:
+            raise asyncio.TimeoutError()                            # back, but never answers
+        return await real(cap, args, target, timeout, identity, principal)
+    ch.client.call = call
+    ch._runner().rejoin_s = 0.3
+    ch._runner().resume()
+    row = await _done(ch, out["id"])
+    assert row["state"] == "failed" and "rollback" not in [e["phase"] for e in row["log"]]
+    assert "could not say whether it had started" in ch.att.lines[-1][2]
+    assert len([c for c in ch.client.calls if "setsid" in c[1]]) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_worker_away_for_a_while_mid_step_is_polled_until_the_steps_own_limit(ch):
+    (ch.home / "volume.bak").write_text("3\n")
+    ch._runner().rejoin_s = 0.2
+    out = await ch.submit(cr(scripts=[{"worker": "cachyrig", "detach": True,
+                                       "run": "sleep 1; echo 7 > $HOME/volume"}]))
+    for _ in range(100):
+        if ch.store.get(out["id"])["phase"] == "scripts":
+            break
+        await asyncio.sleep(0.02)
+    cachy = ch.client.workers.pop("w-cachy")                        # longer than rejoin_s
+    await asyncio.sleep(0.6)
+    ch.client.workers["w-cachy"] = cachy
+    row = await _done(ch, out["id"])
+    assert row["state"] == "kept", row["log"]
 
 
 @pytest.mark.asyncio
