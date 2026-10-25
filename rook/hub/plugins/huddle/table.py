@@ -28,6 +28,13 @@ resolution round (one re-vote), then the person gets a one-line Yes / No /
 Explain ask with each side in two lines (the house agent's asks, so the
 phone's decision card and the relayed-approvals list carry it).
 
+**Without votes** (advanced security off, the default; rook/hub/plugins/
+security): no ballots and no seats. Any agent may call a merge or qa of a
+pinned pull request with its adversarial self-review of the full diff (posted
+in the room for the record); the gates run, and a pass goes ahead. A deploy
+goes after its gates, ship still asks the person, a sacred target needs the
+person. The ballots below apply with the plugin on.
+
 **Execution.** A passed vote (all gates, every required voter yes) is
 carried out by the hub itself, with a credential no session has (the vault
 secret ``huddle.vote_github_secret``): GitHub merges only at the voted SHA.
@@ -81,6 +88,8 @@ GATES = {"merge": ("version", "mergeable", "ci", "tests", "secrets"),
          "deploy": ("version", "ci", "tests", "secrets", "rollback"),
          "ship": ("version", "ci", "tests", "secrets", "rollback")}
 OPEN = ("gating", "voting", "resolving", "executing")
+#: The shortest self-review a merge without votes accepts.
+SELF_REVIEW_MIN = 80
 READ_CHARS = 12000
 DOC_MAX = 200_000
 LINK_MAX = 25 * 1024 * 1024
@@ -319,6 +328,12 @@ class Table:
     @property
     def chair(self):
         return self.svc.chair
+
+    def advanced(self) -> bool:
+        """Advanced security on: blind votes before merges, deploys and ships.
+        Off: the gates, the author's self-review for code, then the action."""
+        from ..security import for_node
+        return for_node(self._node())
 
     def _token(self) -> str | None:
         name = str(self.setting("vote_github_secret", "") or "").strip()
@@ -807,6 +822,8 @@ class Table:
             level = "sacred"
         auto = self.setting("vote_auto", AUTO)
         auto = auto if isinstance(auto, list) else AUTO
+        if not self.advanced():
+            auto = [k for k in MOTION_KINDS if k != "ship"]
         if level == "sacred":
             mode, why = "person", "sacred: only the person says go"
         elif kind in auto:
@@ -846,7 +863,16 @@ class Table:
                 raise TableError(f"vote {m['name'] or m['id']} on this is already {m['state']}")
         decision = self.ruling(kind, a, target)
         skip = bool(data.get("skip_vote"))
-        if skip and decision["vote"] != "optional":
+        review = " ".join(str(data.get("self_review") or "").split())
+        if not self.advanced():
+            # No votes: the gates and, for code, the author's adversarial
+            # self-review on the record (change-management-design-20261025).
+            if kind in ("merge", "qa") and len(review) < SELF_REVIEW_MIN:
+                raise TableError("self_review: the author's adversarial self-review of the full "
+                                 f"diff (at least {SELF_REVIEW_MIN} characters: what you checked, "
+                                 "what could break, why it is safe); it goes on the record")
+            skip = True
+        elif skip and decision["vote"] != "optional":
             raise TableError(f"a vote is required: {decision['entry']} is {decision['level']} "
                              f"({decision['cite']})")
         authors = self.authors(a)
@@ -865,11 +891,14 @@ class Table:
                  _line(data.get("reason"), 500), json.dumps(seats), json.dumps(excl),
                  json.dumps(decision), "[]", "gating", 1, "{}", now, now))
         name = self.store.assign("motion", mid)
+        if review:
+            self._post(room, f"Self-review for {kind} {a['title']} @ {short(a['version'])} "
+                             f"by {by}: {clip(review, 4000)}")
         who = ", ".join(f"@{s['role']}" if s["role"] else f"({s['seat']}: none)" for s in seats)
         self._post(room, f"Vote {name}: {kind} {a['title']} @ {short(a['version'])}. "
                          f"Trust: {decision['entry']} ({decision['level']}); after a pass: "
                          f"{decision['mode']}. "
-                         + ("No vote (ship-it); gates first." if skip else
+                         + ("No vote; gates first." if skip else
                             f"Gates first, then a blind vote: {who}.")
                          + (f" Not voting: {', '.join(x['role'] + ' (' + x['why'] + ')' for x in excl)}."
                             if excl else ""))

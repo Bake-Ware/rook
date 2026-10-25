@@ -87,14 +87,16 @@ def test_reaching_a_machine_over_ssh_and_the_hubs_own_files():
 @pytest.mark.parametrize("cmd", [
     'bash -lc "ssh kaiju sudo reboot"', "sh -c 'ssh kaiju sudo reboot'", "echo `ssh kaiju reboot`",
     "x=$(ssh kaiju reboot)", "/usr/bin/ssh kaiju sudo reboot", "ssh -tp 2222 kaiju reboot",
-    "ssh -o BatchMode=yes -i ~/.ssh/k bake@kaiju.local reboot"])
+    "ssh -o BatchMode=yes -i ~/.ssh/k bake@kaiju.local reboot", 'ssh cachyrig "ssh kaiju reboot"',
+    "ssh -t hop ssh kaiju reboot", "ssh -J kaiju other uptime", "\\ssh kaiju reboot",
+    "ssh -vvvvp 2222 kaiju reboot"])
 def test_quoted_wrapped_and_path_prefixed_ssh_still_reaches_kaiju(cmd):
     assert {"kaiju", "kaiju.local"} & H.remote_hosts(cmd), cmd
 
 
 @pytest.mark.parametrize("cmd", [
     'ssh cachyrig "rm -rf /home/bake"', "bash -c 'rm -rf ~'", "/bin/rm -rf /home/bake",
-    "echo `rm -rf /srv/media`", "sudo -n rm -rf /var/lib/rook-band-mcp"])
+    "echo `rm -rf /srv/media`", "sudo -n rm -rf /var/lib/rook-band-mcp", "\\rm -rf /home/bake"])
 def test_quoted_and_path_prefixed_rm_is_seen(cmd):
     assert H.destroys(cmd), cmd
 

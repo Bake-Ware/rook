@@ -72,9 +72,7 @@ DEFAULTS: dict[str, list[str]] = {
         "trust map lets agents do).",
     ],
     "ask": [
-        "Anything that deletes data, spends money, or sends a message to someone other "
-        "than me.",
-        "Anything on a family device.",
+        "Anything that spends money.",
     ],
     "dispatch": [
         "One clear code change in a repo with a code location (a bug fix, a small feature, "
@@ -89,6 +87,17 @@ DEFAULTS: dict[str, list[str]] = {
         "for me).",
     ],
     "rule": [],
+}
+
+
+#: Default rules the hub now enforces itself (the hard stops: erasing data,
+#: sending as the person; rook/hub/hardstops.py) or that contradict the trust
+#: map: an unedited default is read as its replacement (None: dropped). The file
+#: is left as it is until the next edit.
+RETIRED = {
+    "Anything that deletes data, spends money, or sends a message to someone other than me.":
+        "Anything that spends money.",
+    "Anything on a family device.": None,
 }
 
 
@@ -221,6 +230,9 @@ class Playbook:
             with open(self.path, encoding="utf-8") as f:
                 text = f.read(FILE_MAX + 1)
             rules, problems = parse(text[:FILE_MAX])
+            rules = [Rule(r.id, r.section, RETIRED[r.text], r.by) if r.by == "default" and
+                     r.text in RETIRED and RETIRED[r.text] else r for r in rules
+                     if not (r.by == "default" and r.text in RETIRED and not RETIRED[r.text])]
             self._cache = (st, rules, problems, text[:FILE_MAX])
             return rules, problems, text[:FILE_MAX]
 

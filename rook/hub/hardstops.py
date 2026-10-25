@@ -74,7 +74,7 @@ _DESTROY = [
 #: Where a program name may start: the text's start, a space, a shell operator,
 #: a quote, a backtick or $( (``bash -c "ssh kaiju ..."``), with or without a
 #: path (``/usr/bin/ssh``).
-_LEAD = r"(?:^|[\s;&|(`'\"=])(?:[^\s;&|(`'\"=]*/)?"
+_LEAD = r"(?:^|[\s;&|(`'\"=\\])(?:[^\s;&|(`'\"=\\]*/)?"
 _RM = re.compile(_LEAD + r"rm\s+([^;&|\n`]*)")
 _FIND_DELETE = re.compile(r"\bfind\s+(\S+)[^;&|\n]*\s-delete\b")
 #: Recursive deletes of these (and of anything one level under /) never go by
@@ -142,18 +142,22 @@ def remote_hosts(text: str) -> set[str]:
     out: set[str] = set()
     for m in _REMOTE.finditer(str(text or "")):
         prog, words = m.group(1), m.group(2).split()
+        out |= remote_hosts(m.group(2))          # a hop inside: ssh hop "ssh kaiju ..."
         words = [w.strip("'\"`()") for w in words]
         if prog in ("ssh", "mosh"):
-            skip = False
+            skip = jump = False
             for w in words:
                 if skip:
                     skip = False
+                    if jump:                         # -J kaiju,user@other:22
+                        out |= {h.split("@")[-1].split(":")[0].lower() for h in w.split(",")}
                     continue
                 if w.startswith("-") and not w.startswith("--"):
                     # -p 22, -tp 22 (grouped: the last letter takes the value), -p22 (glued)
                     letters = w[1:]
                     skip = bool(letters) and letters[-1] in _SSH_ARG and \
-                        all(c not in _SSH_ARG for c in letters[:-1]) and len(letters) <= 4
+                        all(c not in _SSH_ARG for c in letters[:-1])
+                    jump = skip and letters[-1] == "J"
                     continue
                 if w.startswith("--"):
                     continue
