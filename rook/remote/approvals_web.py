@@ -1,6 +1,7 @@
 """The dashboard's Approvals page API (``docs/design/permissions.md`` 3.11).
 
-* ``GET /api/approvals``: pending holds, recent decisions (a relayed one
+* ``GET /api/approvals``: pending holds, pending trust-map proposals (in plain
+  words; decided on Manage > Trust), recent decisions (a relayed one
   with who relayed it and the person's words), the latest relayed decisions
   of every kind (rook/hub/relay.py), who may relay, active spread grants and
   the approval settings. ``?count=1`` returns only
@@ -103,6 +104,23 @@ class ApprovalsWeb:
         return False
 
     @staticmethod
+    def _proposals(ap) -> list[dict]:
+        """Pending trust-map proposals, each in the words the person says yes to."""
+        st = getattr(ap, "trust", None)
+        if st is None:
+            return []
+        from ..hub.trust import describe_change
+        try:
+            doc = st.current()
+            return [{"id": p["id"], "by": p.get("by") or "", "why": p.get("why") or "",
+                     "at": p.get("at"), **{k: d[k] for k in ("sentence", "loosens", "sacred")}}
+                    for p in doc.get("proposals") or () if p.get("state") == "pending"
+                    for d in [describe_change(doc, p.get("change") or {})]]
+        except Exception:
+            log.exception("approvals: listing trust proposals failed")
+            return []
+
+    @staticmethod
     def _same_origin(request: web.Request) -> bool:
         origin = request.headers.get("Origin")
         if not origin:
@@ -141,6 +159,7 @@ class ApprovalsWeb:
             r["text"] = relay_text(r)
         return web.json_response({
             "pending": [public(h, cfg) for h in pending],
+            "trust": self._proposals(ap),
             "recent": [public(h, cfg) for h in recent],
             "relays": relays,
             "relayers": [{k: r[k] for k in ("principal", "label", "enabled_by", "enabled_at")}

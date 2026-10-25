@@ -2,12 +2,13 @@
 decisions (worker ``rook``; :mod:`rook.hub.relay`, permissions.md 3.12).
 
 * ``approvals.list`` (read): every held call, held job call, huddle card
-  waiting for approval and pinned huddle question, with a speakable name,
+  waiting for approval, pinned huddle question, house ask and trust-map
+  proposal, with a speakable name,
   who asked, what exactly would happen, the risk tier, where it came from and
   its age; ``summary`` is a line short enough to speak.
 * ``approvals.relay`` (write): record the person's own decision on one item
   with ``relayed_by {who, quote, session}``, by the rules in
-  :mod:`rook.hub.relay` (never a hard stop; with advanced security on, only
+  :mod:`rook.hub.relay` (never a hard stop or a trust proposal; with advanced security on, only
   clients they ticked list and relay). Recorded append-only beside the item.
 
 The ``rook_approvals`` MCP tool routes to both.
@@ -46,14 +47,14 @@ class Approvals(Plugin):
     }
     SKILL = ("### approvals (relayed)\n"
              "`rook_approvals(action=\"summary\")` says what is waiting on the person (held calls, "
-             "held job calls, huddle cards, pinned questions); `action=\"list\"` gives each item's "
+             "held job calls, huddle cards, pinned questions, trust proposals); `action=\"list\"` gives each item's "
              "name, who asked, what exactly would happen, risk, source and age. Read it back "
              "tersely: count, then name + one line each. When the person tells you their "
              "decision (also on something you did on their word), record it: "
              "`rook_approvals(action=\"approve\"|\"deny\", item=<name or id>, relayed_by={\"who\": "
              "<person>, \"quote\": <their exact words>, \"session\": <conversation URL or id>}, "
              "reason=<why, for a deny>)`. Never relay your own judgement, never decide items "
-             "they did not name, and leave held calls and dashboard-only items to them; withdraw "
+             "they did not name, and leave held calls, trust proposals and dashboard-only items to them; withdraw "
              "your own question that no longer needs them (rook_huddle withdraw).\n")
 
     def __init__(self) -> None:
@@ -74,7 +75,7 @@ class Approvals(Plugin):
     # -- caps ----------------------------------------------------------------
     @capability("list", risk="read")
     def list_(self, kind: str | None = None, summary_only: bool = False) -> dict:
-        """What is waiting on the person: held calls, held job calls, huddle cards and pinned questions (kind: hold|job|card|ask; summary_only: just the spoken line)."""
+        """What is waiting on the person: held calls, held job calls, huddle cards, pinned questions, house asks and trust proposals (kind: hold|job|card|ask|house|trust; summary_only: just the spoken line)."""
         p = _caller()
         if p is not None and tuple(p.via or ()):
             p = None                      # a job run never reads the person's queue
@@ -118,10 +119,10 @@ class Approvals(Plugin):
         async def rook_approvals(action: str = "summary", item: str | None = None,
                                  relayed_by: dict | None = None, reason: str | None = None,
                                  answer: str | None = None, kind: str | None = None) -> str:
-            """What waits on the person (holds, job holds, huddle cards, questions).
+            """What waits on the person (holds, cards, questions, trust proposals).
             summary | list (kind?). approve/deny item=<name|id> with relayed_by {who, quote:
-            their exact words, session}, reason?, answer?: only what they said (never held
-            calls); never your own judgement."""
+            their exact words, session}, reason?, answer?: only what they said (never holds
+            or trust); never your own judgement."""
             try:
                 if action in ("list", "summary"):
                     result = await invoke("approvals.list", {

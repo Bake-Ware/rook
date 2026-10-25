@@ -21,13 +21,17 @@ KID = {"owner": False, "name": "kid"}
 class FakeRelay:
     """The approvals relay as cardpass uses it."""
 
+    clock = staticmethod(time.time)
+
     def __init__(self, items):
         self._items = list(items)
         self.enabled: set[str] = set()
         self.decided: list[dict] = []
+        self.trust = lambda: None
 
     def items(self):
-        return [dict(i) for i in self._items]
+        from rook.hub.relay import Relay
+        return [dict(i) for i in self._items] + Relay._proposals(self)
 
     def may_relay(self, principal):
         return principal in self.enabled
@@ -109,6 +113,7 @@ def env(penv):  # noqa: F811
     relay = FakeRelay([hold_item("h1", created=1.0),
                        hold_item("h2", "Look at files", created=2.0)])
     penv.sess.cards.relay = lambda: relay
+    relay.trust = lambda: penv.sess.cards.trust()    # the one list carries trust proposals
     return penv, relay
 
 

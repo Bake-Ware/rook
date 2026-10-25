@@ -651,10 +651,10 @@ async def test_pending_trust_proposals_count_as_decisions(att, tmp_path):
     store = TrustStore(str(tmp_path / "trust.json"))
     store.propose({"op": "set_unlisted", "data": {"level": "ship-it"}}, by="agent:x",
                   why="it keeps asking for the same thing")
-    att.att.service._trust = lambda: store
+    att.relay.trust = lambda: store
     speaking(att)
     await att.att.service.tick()
-    assert att.phone.reminds[-1]["text"] == "Need your input: a change to the trust map."
+    assert att.phone.reminds[-1]["text"] == "Need your input: Change the trust map."
 
 
 @pytest.mark.asyncio

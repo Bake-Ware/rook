@@ -19,7 +19,7 @@ The tables are generated from the code by `tools/gen_skill_reference.py`; don't 
 <!-- BEGIN GENERATED: mcp-tools -->
 | Tool | Args | Does |
 |---|---|---|
-| `rook_approvals` | action='summary', item?, relayed_by?, reason?, answer?, kind? | What waits on the person (holds, job holds, huddle cards, questions). summary \| list (kind?). approve/deny it… |
+| `rook_approvals` | action='summary', item?, relayed_by?, reason?, answer?, kind? | What waits on the person (holds, cards, questions, trust proposals). summary \| list (kind?). approve/deny ite… |
 | `rook_call` | cap, args?, worker_id?, worker?, timeout?, hint?, text?, why? | Run a cap on one worker. worker= (name or id) is required. |
 | `rook_caps` | prefix?, worker? | Caps and their holders: "*" = every worker, {all_but:[…]}, or names. prefix filters (e.g. "shell."); worker=… |
 | `rook_chat_delete` | room | Delete a room and its messages (participants only; final). |
@@ -62,7 +62,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 <!-- BEGIN GENERATED: hub-caps -->
 | Cap | Args | Risk | Does |
 |---|---|---|---|
-| `approvals.list` | kind?, summary_only=false | read | What is waiting on the person: held calls, held job calls, huddle cards and pinned questions (kind: hold\|job\|… |
+| `approvals.list` | kind?, summary_only=false | read | What is waiting on the person: held calls, held job calls, huddle cards, pinned questions, house asks and tru… |
 | `approvals.relay` | item, decision, relayed_by?, reason='', answer='' | write | Approve or deny one waiting item on the person's behalf: relayed_by {who, quote, session} is their own decisi… |
 | `attention.log` | limit=30, since=0 | read | The last 30 days of decisions and reminders, newest first: one plain line each (what happened, the summarized… |
 | `attention.notices` | limit=20 | read | Recent short summaries (at most 140 characters) of urgent and family notifications the phones reported, newes… |
@@ -212,7 +212,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `updates.status` | — | read | Hub version against the newest release, how many workers are behind, the running rollout, and the mode/channe… |
 
 ### approvals (relayed)
-`rook_approvals(action="summary")` says what is waiting on the person (held calls, held job calls, huddle cards, pinned questions); `action="list"` gives each item's name, who asked, what exactly would happen, risk, source and age. Read it back tersely: count, then name + one line each. When the person tells you their decision (also on something you did on their word), record it: `rook_approvals(action="approve"|"deny", item=<name or id>, relayed_by={"who": <person>, "quote": <their exact words>, "session": <conversation URL or id>}, reason=<why, for a deny>)`. Never relay your own judgement, never decide items they did not name, and leave held calls and dashboard-only items to them; withdraw your own question that no longer needs them (rook_huddle withdraw).
+`rook_approvals(action="summary")` says what is waiting on the person (held calls, held job calls, huddle cards, pinned questions, trust proposals); `action="list"` gives each item's name, who asked, what exactly would happen, risk, source and age. Read it back tersely: count, then name + one line each. When the person tells you their decision (also on something you did on their word), record it: `rook_approvals(action="approve"|"deny", item=<name or id>, relayed_by={"who": <person>, "quote": <their exact words>, "session": <conversation URL or id>}, reason=<why, for a deny>)`. Never relay your own judgement, never decide items they did not name, and leave held calls, trust proposals and dashboard-only items to them; withdraw your own question that no longer needs them (rook_huddle withdraw).
 
 ### attention (the person's phone)
 `attention.send {text, title?, urgency: urgent|normal, channel?, explain?}` on worker `rook` puts an alert on the person's phone (queued while it is offline). Use it sparingly: only what they must know now. `attention.status` says whether they saw, opened or unlocked the phone since (no answer is not unseen); `attention.notices {limit}` lists short summaries of their urgent and family notifications. Approvals reach the phone by themselves: they queue quietly and the phone reminds the person out loud when the room is quiet. `attention.log {limit}` reads the 30-day log of decisions and reminders.

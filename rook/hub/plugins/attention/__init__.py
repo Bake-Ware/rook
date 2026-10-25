@@ -125,10 +125,6 @@ class Attention(Plugin):
                 break
         return out
 
-    def _trust(self) -> Any:
-        from ..trust import node_store
-        return node_store(self._node) if self._node is not None else None
-
     def log(self, source: str, outcome: str, what: str, why: str = "", how: str = "",
             ref: str = "") -> None:
         """One line in the 30-day log (other plugins: the voice's decisions)."""
@@ -140,8 +136,7 @@ class Attention(Plugin):
         if self._service is None:
             self._service = AttentionService(
                 self.data_dir / "state.json", settings=self._svc_settings,
-                client=lambda: getattr(self._node, "client", None), relay=self._relay,
-                trust=self._trust)
+                client=lambda: getattr(self._node, "client", None), relay=self._relay)
         return self._service
 
     async def start(self) -> None:

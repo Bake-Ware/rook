@@ -470,6 +470,13 @@ def describe(item: dict) -> dict:
                "risk": risk_text(call["kind"], item.get("tier") or "", hub=bool(item.get("hub")))
                if call else risk_text("question")}
         who = who_name("the house agent")
+    elif kind == "trust":
+        out = {"title": "Change the trust map",
+               "want": _sentence(str(item.get("sentence") or "change the trust map")),
+               "risk": ("High: it loosens the trust map" + (", on something sacred"
+                                                            if item.get("sacred") else "")
+                        + "; only you can say yes") if item.get("loosens", True) else
+               "Low: it only makes the trust map stricter"}
     elif kind == "card" and not item.get("cap"):
         summ = str(item.get("summary") or "").strip()
         if item.get("card_kind") == "ask_bake":
@@ -505,7 +512,7 @@ def describe(item: dict) -> dict:
     out["who"] = who
     if why:
         out["why"] = why
-    out["explain"] = explain_text(item, call) if kind not in ("house", "ask") else short(
+    out["explain"] = explain_text(item, call) if kind not in ("house", "ask", "trust") else short(
         (str(item.get("explain") or "") + ("; " if item.get("explain") else "")
          + f"id {item.get('id')}" + (f" ({item['name']})" if item.get("name") else "")),
         EXPLAIN_MAX)
