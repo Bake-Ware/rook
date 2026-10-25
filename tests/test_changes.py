@@ -46,6 +46,8 @@ class Attention:
         self.service = SimpleNamespace(send=self._send)
 
     def log(self, source, outcome, what, why="", how="", ref=""):
+        from rook.hub.eventlog import OUTCOMES
+        assert outcome in OUTCOMES                  # the real log drops anything else
         self.lines.append((outcome, what, how))
 
     async def _send(self, text, title="", urgency="normal", channel="digest", source=""):
@@ -109,7 +111,9 @@ async def test_a_standard_change_checks_runs_tests_and_is_kept(ch):
     assert row["state"] == "kept", row["log"]
     assert [e["phase"] for e in row["log"]] == ["point", "dry_run", "pre", "scripts", "post"]
     assert (ch.home / "volume").read_text() == "7\n"
-    assert ch.att.lines[-1][0] == "kept" and not ch.front.asks     # no person, no vote
+    assert ch.att.lines[-1][:2] == ("tell", f"Change kept: {out['id']}: "
+                                            "Turn the music player volume up")
+    assert not ch.front.asks                                        # no person, no vote
     assert all(i == f"change:{out['id']}" for *_, i in ch.client.calls)
 
 
@@ -120,7 +124,8 @@ async def test_a_failing_test_rolls_back_by_itself(ch):
                                      "expect": "11"}]))
     row = await _done(ch, out["id"])
     assert row["state"] == "rolled_back" and (ch.home / "volume").read_text() == "3\n"
-    assert ch.att.lines[-1][0] == "rolled_back" and not ch.att.sent   # the digest tells
+    assert ch.att.lines[-1][0] == "tell" and "rolled back" in ch.att.lines[-1][1]
+    assert not ch.att.sent                                          # the digest tells
 
 
 @pytest.mark.asyncio
@@ -247,6 +252,105 @@ async def test_a_detached_step_outlives_a_hub_restart(ch):
     assert row["state"] == "kept", row["log"]
     started = [c for c in ch.client.calls if "setsid" in c[1]]
     assert len(started) == 1                                        # never started twice
+
+
+async def _restart_mid_step(ch, out):
+    for _ in range(100):                                            # the deploy is under way
+        if ch.store.get(out["id"])["phase"] == "scripts":
+            break
+        await asyncio.sleep(0.02)
+    await asyncio.sleep(0.1)
+    await ch.runner.stop()                                          # the hub restarts
+    ch.runner = None
+    ch._runner().poll_s = 0.05
+
+
+@pytest.mark.asyncio
+async def test_after_a_hub_restart_a_step_waits_for_its_worker_to_rejoin(ch):
+    (ch.home / "volume.bak").write_text("3\n")
+    out = await ch.submit(cr(scripts=[{"worker": "cachyrig", "detach": True,
+                                       "run": "sleep 0.3; echo 7 > $HOME/volume"}]))
+    await _restart_mid_step(ch, out)
+    cachy = ch.client.workers.pop("w-cachy")                        # not back on the band yet
+    assert ch._runner().resume() == [out["id"]]
+    await asyncio.sleep(0.5)
+    assert ch.store.get(out["id"])["state"] == "running"
+    real, flaky = ch.client.call, [1]
+
+    async def call(cap, args, target, timeout, identity, principal):
+        if flaky and "test -f" in args["cmd"]:
+            flaky.pop()
+            raise ConnectionError("worker offline")                 # just back: one blip
+        return await real(cap, args, target, timeout, identity, principal)
+    ch.client.call = call
+    ch.client.workers["w-cachy"] = cachy                            # it rejoins
+    row = await _done(ch, out["id"])
+    assert not flaky
+    assert row["state"] == "kept", row["log"]
+    assert (ch.home / "volume").read_text() == "7\n"
+    assert len([c for c in ch.client.calls if "setsid" in c[1]]) == 1
+    await asyncio.sleep(0.05)
+    assert ch.att.lines[-1][1].startswith("Change kept") and not ch.att.sent   # quiet: a line
+
+
+@pytest.mark.asyncio
+async def test_a_worker_that_never_rejoins_is_a_clear_failure_without_a_blind_rollback(ch):
+    (ch.home / "volume.bak").write_text("3\n")
+    out = await ch.submit(cr(scripts=[{"worker": "cachyrig", "detach": True,
+                                       "run": "sleep 0.3; echo 7 > $HOME/volume"}]))
+    await _restart_mid_step(ch, out)
+    ch.client.workers.pop("w-cachy")
+    rec = ch.store.get(out["id"])["record"]
+    rec["scripts"][0]["timeout"] = 0.5                              # the step's own limit
+    ch.store.set(out["id"], record=rec)
+    ch._runner().rejoin_s = 0.3
+    ch._runner().resume()
+    row = await _done(ch, out["id"])
+    await asyncio.sleep(0.05)
+    assert row["state"] == "failed"
+    assert "rollback" not in [e["phase"] for e in row["log"]]       # nothing tried blind
+    assert ch.att.lines[-1][0] == "ask_now"
+    line = ch.att.lines[-1][2]
+    assert "cachyrig" in line and "could not run" in line
+    assert [u for u, *_ in ch.att.sent] == ["urgent"]               # left unknown: it needs Bake
+
+
+@pytest.mark.asyncio
+async def test_a_step_nobody_can_check_after_a_restart_is_never_rolled_back_blind(ch):
+    (ch.home / "volume.bak").write_text("3\n")
+    out = await ch.submit(cr(scripts=[{"worker": "cachyrig", "detach": True,
+                                       "run": "sleep 0.3; echo 7 > $HOME/volume"}]))
+    await _restart_mid_step(ch, out)
+    real = ch.client.call
+
+    async def call(cap, args, target, timeout, identity, principal):
+        if "test -f" in args["cmd"]:
+            raise asyncio.TimeoutError()                            # back, but never answers
+        return await real(cap, args, target, timeout, identity, principal)
+    ch.client.call = call
+    ch._runner().rejoin_s = 0.3
+    ch._runner().resume()
+    row = await _done(ch, out["id"])
+    assert row["state"] == "failed" and "rollback" not in [e["phase"] for e in row["log"]]
+    assert "could not say whether it had started" in ch.att.lines[-1][2]
+    assert len([c for c in ch.client.calls if "setsid" in c[1]]) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_worker_away_for_a_while_mid_step_is_polled_until_the_steps_own_limit(ch):
+    (ch.home / "volume.bak").write_text("3\n")
+    ch._runner().rejoin_s = 0.2
+    out = await ch.submit(cr(scripts=[{"worker": "cachyrig", "detach": True,
+                                       "run": "sleep 1; echo 7 > $HOME/volume"}]))
+    for _ in range(100):
+        if ch.store.get(out["id"])["phase"] == "scripts":
+            break
+        await asyncio.sleep(0.02)
+    cachy = ch.client.workers.pop("w-cachy")                        # longer than rejoin_s
+    await asyncio.sleep(0.6)
+    ch.client.workers["w-cachy"] = cachy
+    row = await _done(ch, out["id"])
+    assert row["state"] == "kept", row["log"]
 
 
 @pytest.mark.asyncio
