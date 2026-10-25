@@ -157,3 +157,27 @@ leave it. The **Attention** tab lists the grants it needs, waiting cards and
 the feed. Contract, privacy and rules: [docs/design/attention-phone.md](../docs/design/attention-phone.md).
 
 Settings → App → Stable / Beta picks the APK update channel (stable by default).
+
+## Wear OS: push-to-talk on a watch
+
+`:wear` is a small watch app: opening it (launcher, its tile, or a key you map to it) starts
+listening, and a tap ends the conversation or stops a reply. The watch is only a microphone
+and a speaker. It streams Opus (PCM where a device has no Opus codec) over a Wear Data Layer
+channel (`/rook/voice`) to this app on the paired phone; `WatchBridge` runs an ordinary voice
+session there (same voice server, key and conversation; the phone's own open session gives way)
+and sends the reply audio back to play on the watch's earbuds or glasses. Shared protocol and
+codec code is in `:wearlink`.
+
+The Data Layer only links apps with the same package name and signing key, so the watch APK
+keeps `applicationId systems.bake.rook` and must be signed with the phone app's key.
+
+```sh
+./gradlew :wear:assembleDebug :app:assembleDebug
+# Watch: Settings > About watch > Software > tap Software version until developer mode is on;
+# Developer options > ADB debugging + Wireless debugging > Pair new device.
+adb pair <watch-ip>:<pair-port>      # enter the code the watch shows
+adb connect <watch-ip>:<port>
+adb -s <watch-ip>:<port> install -r wear/build/outputs/apk/debug/wear-debug.apk
+```
+
+The phone needs a build with `WatchVoiceListener` (this one or later).

@@ -22,11 +22,24 @@ const val PREF_FAST_VOICE = "fast_voice"
 /** SharedPreferences key: sound tags ([laugh]) for voices that perform them (default on). */
 const val PREF_EXPRESSIVE = "expressive_voice"
 
+/**
+ * Plays a session's replies somewhere other than this phone's speaker (the watch, see
+ * [WatchBridge]). Called under the client's audio lock, so it must not block.
+ */
+interface AudioSink {
+    fun write(turn: Int, sampleRate: Int, pcm: ByteArray)
+    fun pause()
+    fun resume()
+    fun flush()
+}
+
 class VoiceClient(
     private val ctx: Context, private val url: String, private val insecureTls: Boolean,
     private val listener: Listener, private val ownMic: Boolean = false, private val token: String = "",
     /** A listening mode the voice switched to earlier (kept across a reconnect); null: the chosen one. */
     private val modeOverride: String? = null,
+    /** Replies go here instead of the local AudioTrack; null: play on this phone. */
+    private val sink: AudioSink? = null,
 ) {
     interface Listener {
         fun onState(state: String)
@@ -231,9 +244,9 @@ class VoiceClient(
             // Held with neither resume nor interrupt: drop the reply locally, mic stays live.
             if (gate.expired(now)) flush()
             when (val d = gate.frame(speech, isPlaying, paused, aec && protocol >= 2, now)) {
-                BargeGate.Frame.PAUSE -> { paused = true; pausedAt = now; track?.pause(); d }
+                BargeGate.Frame.PAUSE -> { paused = true; pausedAt = now; track?.pause(); sink?.pause(); d }
                 BargeGate.Frame.UNPAUSE -> { unpause(); d }
-                BargeGate.Frame.HOLD -> { if (!paused) { paused = true; pausedAt = now; track?.pause() }; d }
+                BargeGate.Frame.HOLD -> { if (!paused) { paused = true; pausedAt = now; track?.pause(); sink?.pause() }; d }
                 else -> d
             }
         }
@@ -262,7 +275,7 @@ class VoiceClient(
     private fun unpause() {
         if (!paused) return
         playingUntil = BargeGate.resumedUntil(playingUntil, pausedAt, SystemClock.elapsedRealtime())
-        paused = false; track?.play()
+        paused = false; track?.play(); sink?.resume()
     }
     /** Hold safety when the mic stops feeding frames; runs on the player thread. */
     private fun holdExpired() = synchronized(audioLock) {
@@ -278,6 +291,10 @@ class VoiceClient(
         val socket = ws
         if (!connected || socket == null) return false
         return socket.send(JSONObject().put("type", "timer").put("action", "cancel").put("id", id).toString())
+    }
+    /** A remote player's progress through [turn]'s reply, in frames at that reply's sample rate. */
+    fun reportPlayback(turn: Int, frames: Long) {
+        if (connected) ws?.send(JSONObject().put("type", "playback").put("turn", turn).put("frames", frames and 0xffffffffL).toString())
     }
     fun setVoice(voice: String) = enqueue(JSONObject().put("type", "voice").put("voice", voice))
     /** The Voice models screen: models_get, or models_set with the changed pickers. */
@@ -298,6 +315,7 @@ class VoiceClient(
     private fun flush() = synchronized(audioLock) {
         queue.clear(); playingUntil = 0; paused = false; gate.clear()
         try { track?.pause(); track?.flush(); track?.play() } catch (_: Exception) {}
+        sink?.flush()
         trackTurn = -1
     }
     private fun startPlayer() {
@@ -311,6 +329,8 @@ class VoiceClient(
                         val written = synchronized(audioLock) {
                             if (waitingInterrupt || packet.turn < minimumTurn) -1
                             else if (paused) { if (gate.held && holdExpired()) -1 else 0 }
+                            // A remote player reports its own progress (reportPlayback).
+                            else if (sink != null) { sink.write(packet.turn, packet.sr, packet.bytes.copyOfRange(offset, packet.bytes.size)); packet.bytes.size - offset }
                             else {
                                 var t = track
                                 if (t == null || trackSr != packet.sr) {

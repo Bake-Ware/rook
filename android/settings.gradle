@@ -18,3 +18,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "RookWorker"
 include ":app"
+// Wear OS push-to-talk for the voice assistant, and the watch <-> phone link both use.
+include ":wear", ":wearlink"

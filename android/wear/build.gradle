@@ -1,0 +1,62 @@
+plugins {
+    id "com.android.application"
+    id "org.jetbrains.kotlin.android"
+}
+
+// Rook for Wear OS: tap to talk to the voice assistant. The watch is only a microphone and a
+// speaker; the Rook app on the paired phone runs the voice session (see app's WatchBridge).
+android {
+    namespace "systems.bake.rook.wear"
+    compileSdk 34
+
+    defaultConfig {
+        // The Wear Data Layer only connects apps with the same package name and signing key,
+        // so this must stay the phone app's applicationId (and be signed with its key).
+        applicationId "systems.bake.rook"
+        minSdk 30          // Wear OS 3+
+        targetSdk 34
+        versionCode = (project.findProperty("ROOK_WEAR_VERSION_CODE") ?: "1").toInteger()
+        versionName = (project.findProperty("ROOK_WEAR_VERSION_NAME") ?: "0.1.0").toString()
+    }
+
+    buildFeatures {
+        compose true
+    }
+    composeOptions {
+        // Matches Kotlin 1.9.24 (root build.gradle).
+        kotlinCompilerExtensionVersion "1.5.14"
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}
+
+dependencies {
+    implementation project(":wearlink")
+    implementation "com.google.android.gms:play-services-wearable:18.2.0"
+    implementation "androidx.core:core-ktx:1.13.1"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
+
+    implementation platform("androidx.compose:compose-bom:2024.06.00")
+    implementation "androidx.compose.ui:ui"
+    implementation "androidx.compose.foundation:foundation"
+    implementation "androidx.activity:activity-compose:1.9.0"
+    implementation "androidx.wear.compose:compose-material:1.3.1"
+    implementation "androidx.wear.compose:compose-foundation:1.3.1"
+
+    implementation "androidx.wear.tiles:tiles:1.3.0"
+    implementation "androidx.wear.protolayout:protolayout:1.1.0"
+    implementation "androidx.wear.protolayout:protolayout-material:1.1.0"
+    implementation "com.google.guava:guava:33.2.1-android"
+}
