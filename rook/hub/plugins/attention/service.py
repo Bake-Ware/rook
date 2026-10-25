@@ -114,6 +114,16 @@ def _from_text(frm: Any) -> str:
     return ", ".join(parts)
 
 
+#: Card kinds the phone app takes (android attention_android.KINDS, minus alert): any
+#: other waiting kind (house asks, trust proposals) goes as a plain decision card.
+PHONE_KINDS = ("hold", "job", "card", "ask")
+
+
+def phone_kind(item: dict) -> str:
+    kind = str(item.get("kind") or "hold")
+    return kind if kind in PHONE_KINDS else "card"
+
+
 def card_for(item: dict) -> dict:
     """The ``attention.post`` args for one waiting item (rook/hub/relay.py):
     the plain title as the line, For / Who / I want to / Why / Risk as the
@@ -127,7 +137,7 @@ def card_for(item: dict) -> dict:
             explain = (f"{item.get('why_not') or 'Dashboard only'}: decide it on the "
                        f"dashboard's {where} page. " + explain)
         from ...plain import lines
-        return {"id": str(item["id"]), "kind": item.get("kind") or "hold",
+        return {"id": str(item["id"]), "kind": phone_kind(item),
                 "line": short(p.get("title") or "A decision for you", LINE_MAX),
                 "body": "\n".join(short(x, 200) for x in lines(p))[:BODY_MAX],
                 "explain": short(explain, EXPLAIN_MAX), "urgency": "normal",
@@ -150,7 +160,7 @@ def card_for(item: dict) -> dict:
         explain = str(item.get("explain") or item["line"])
         if not item.get("relayable", True):
             explain += " Answer it on the dashboard's Decisions page."
-    return {"id": str(item["id"]), "kind": item.get("kind") or "hold",
+    return {"id": str(item["id"]), "kind": phone_kind(item),
             "line": short(item.get("line") or f"{who} wants to {what}", LINE_MAX),
             "explain": short(explain, EXPLAIN_MAX), "urgency": "normal",
             "channel": "approvals",

@@ -49,6 +49,7 @@ class FakePhone:
             assert len(args.get("body") or "") <= 600 and (args.get("body") or "").count("\n") <= 5
             assert len(args["id"]) <= 64 and len(args["line"]) <= 140
             assert len(args["explain"]) <= 600 and "\n" not in args["line"]
+            assert args["kind"] in ("hold", "job", "card", "ask", "alert")   # the app's KINDS
             assert args["urgency"] in ("urgent", "normal")
             assert args["channel"] in ("urgent", "family", "approvals", "digest", "jobs")
             assert set(args["actions"]) <= {"yes", "no", "explain", "ack"}
