@@ -17,21 +17,13 @@ Four kinds of item wait on a person:
 exactly would happen (one plain sentence), the risk tier, where it came from
 and its age; :func:`summary` turns that into a line short enough to speak.
 
-**Relaying.** With advanced security off (the default) only the person's
-phone cards, voice and the house agent relay; agent clients (``rook_approvals``)
-and the huddle chair relay with it on. An identity may approve or deny an
-item only when
-
-1. its identity is one the person enabled ("May relay my approvals" on the
-   dashboard's Tokens page; :meth:`ApprovalQueue.set_relayer`). Nothing an
-   agent can reach writes that list: no cap, no MCP tool, no setting;
-2. it supplies ``relayed_by {who, quote, session}``: the person, their own
-   words, and the conversation they said them in (the ``closed_by`` pattern
-   on tasks). The words are the decision; an agent never relays its own
-   judgement;
-3. the item is not dashboard-only: :data:`FLOOR` (secrets and the vault,
-   tokens, policy, settings, the approvals themselves, job locks; fixed) and
-   the setting ``approvals.relay_dashboard_only`` (conservative by default).
+**Relaying** needs ``relayed_by {who, quote, session}`` (the person, their own
+words, the conversation; an agent never relays its own judgement) and an item
+that is not dashboard-only (:data:`FLOOR`, ``approvals.relay_dashboard_only``).
+Phones, voice and the chair relay once the person ticked "May relay my
+approvals" (Tokens page; :meth:`ApprovalQueue.set_relayer`, out of agents'
+reach). Agent clients need that tick only with advanced security on; off,
+their quote is the consent, never on a hard stop (:func:`own_tap`).
 
 Every relayed decision writes an append-only row in ``approvals.db``
 (``relays``): the relaying identity, the person, the quote and the session.
@@ -124,6 +116,20 @@ def refusal(item: dict, dashboard_only: tuple | list) -> str:
         if matches(sel, item):
             return f"dashboard only ({sel}, setting approvals.relay_dashboard_only)"
     return ""
+
+
+def own_tap(item: dict) -> str:
+    """Why only the person's own tap decides ``item`` ("": an agent may relay): core holds
+    are all hard stops; a house ask's Yes approves the holds its call or request meets."""
+    house = item.get("kind") == "house" and (item.get("cap") or item.get("request")
+                                             or item.get("hard_stop"))
+    return "a hard stop (their own tap)" if house or item.get("kind") in ("hold", "job") else ""
+
+
+def is_client(p: Any) -> bool:
+    """An MCP agent token talking with the person (not the house agent, a role or a job)."""
+    return getattr(p, "kind", "") == "token" and not getattr(p, "via", ()) \
+        and not str(getattr(p, "id", "")).startswith("home:")
 
 
 def relayed_by(raw: Any) -> dict:
@@ -247,8 +253,7 @@ class Relay:
         return ap.config().relay_dashboard_only
 
     def advanced(self) -> bool:
-        """Advanced security is on: agent clients and the huddle chair may relay
-        too. Off, only the phone's cards, voice and the house agent relay."""
+        """Advanced security is on (rook/hub/plugins/security): relaying needs the tick."""
         from .plugins.security import for_node
         return for_node(self._node())
 
@@ -460,20 +465,21 @@ class Relay:
     # -- deciding ------------------------------------------------------------------
     async def decide(self, ref: str, decision: str, said: Any, *, relayer: str,
                      relayer_label: str = "", reason: str = "", answer: str = "",
-                     principal: Any = None) -> dict:
+                     principal: Any = None, client: bool = False) -> dict:
         """Approve or deny one waiting item on the person's behalf.
         ``relayer`` is the verified principal id of the relaying identity
-        (``token:<agent_id>``, or the house agent's identity)."""
+        (``token:<agent_id>``, or the house agent's identity); ``client``: an agent client."""
         if decision not in DECISIONS:
             raise RelayError("decision: approve or deny")
         said = relayed_by(said)
-        if not self.may_relay(relayer):
+        client = client and not self.advanced()
+        if not client and not self.may_relay(relayer):
             raise PermissionError(
                 f"{relayer_label or relayer} may not relay approvals: the person turns this on "
                 "for a client on the dashboard (Tokens > May relay my approvals). Ask them to "
                 "decide on the dashboard's Approvals page instead")
         it = self.find(ref)
-        why = refusal(it, self.dashboard_only())
+        why = refusal(it, self.dashboard_only()) or (own_tap(it) if client else "")
         if why:
             raise PermissionError(f"{it.get('name') or it['id']} is {why}: ask the person to "
                                   "decide it on the dashboard")

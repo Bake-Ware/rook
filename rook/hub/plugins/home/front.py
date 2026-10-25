@@ -772,9 +772,19 @@ class FrontDoor:
                 if isinstance(act.get("args"), dict) else None,
                 "tier": act.get("tier") or "write", "tags": list(act.get("tags") or []),
                 "hub": bool(act.get("on_hub")) and bool(act.get("cap")),
-                "worker": act.get("worker")}
+                "worker": act.get("worker"), "request": a.get("request") or "",
+                "hard_stop": self._change_stops(act.get("change"))}
             out.append(item)
         return out
+
+    def _change_stops(self, ident: Any) -> bool:
+        """Whether a change request has a hard stop in it now (unknown: yes)."""
+        from ..changes.model import stops
+        changes = self.plugin("change")
+        try:
+            return bool(ident) and bool(stops(changes.store.get(ident)["record"], changes._sacred))
+        except Exception:  # noqa: BLE001 - it can't be checked: the person's own tap
+            return True
 
     def explain(self, ref: str, more: bool = False) -> dict:
         a = self.store.find_ask(ref)

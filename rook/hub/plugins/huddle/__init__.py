@@ -338,7 +338,7 @@ class Huddle(Plugin):
     async def write(self, action: str, room: str | None = None, project: str | None = None,
                     band: str | None = None, text: str | None = None, data: dict | None = None,
                     mention=None) -> dict:
-        """Post in a huddle: status (data {working_on, blocked_on?, needs_decision?, task?}), ask (text, data {options?, task?}), say (text, mention?), withdraw (data {question}).
+        """Post in a huddle: status (data {working_on, blocked_on?, needs_decision?, task?}), ask (text, data {options?, task?}), say (text, mention?), withdraw (data {question}, text: why it is moot).
 
         The huddle is room=, else project='s, else band='s (default: the
         primary band's); it is made on first use and you join it."""
@@ -353,7 +353,7 @@ class Huddle(Plugin):
                 mention = [m.strip() for m in mention.split(",") if m.strip()]
             return await svc.say(me, text or "", mention, **where)
         if action == "withdraw":
-            return svc.withdraw(me, int((data or {}).get("question") or 0))
+            return svc.withdraw(me, int((data or {}).get("question") or 0), text or "")
         raise ValueError("action must be one of " + ", ".join(WRITES))
 
     # -- chaired huddles ------------------------------------------------------
@@ -475,7 +475,8 @@ class Huddle(Plugin):
             """Huddle: a project's group room the person watches (project=; none: the band's).
             status data {working_on, blocked_on?, needs_decision?, task?}: when you start, stall or
             finish. ask text, data {options?}: a decision only the person can make; pinned until
-            answered; the answer comes back as chat and wakes you. say text. read (data.since_seq,
+            answered (withdraw data {question}, text=why: moot); the answer comes back as chat and
+            wakes you. say text. read (data.since_seq,
             data.room), mine, list. Chaired (person, house agent, roles): start data {title,
             roles}; post text data {room}; card data {room, card, action}; archive data {room}.
             table data {room, artifact?, what?}; pin, vote: the conference table."""

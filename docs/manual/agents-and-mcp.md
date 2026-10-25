@@ -76,9 +76,11 @@ phone, by voice or on the **Approvals** page
 
 An agent can also check in with you: `rook_approvals` (action `summary` or
 `list`) tells it everything waiting for you, each with a name you can say.
-With the advanced security plugin on, you can also let it approve or deny
-an item when you tell it to (**Relays** on the **Tokens** page); your words
-are recorded beside the decision.
+When you tell it your answer (or it already did the thing on your word),
+it records your exact words on the item, and the card leaves your phone,
+the reminders and every list. Held calls are hard stops: you answer those
+yourself. With advanced security on, only clients you tick (**Relays** on
+the **Tokens** page) may.
 
 ## The Rook skill
 

@@ -126,10 +126,9 @@ Also with the plugin on:
 - **Being told.** *How to contact you* (Settings > Approvals) messages you
   about each hold: `telegram`, `notify`, `voice` or `ask` (a spoken
   question you answer yes or no).
-- **Relaying.** A client you trust, such as Claude on claude.ai, or the
-  house agent chairing a huddle, can pass on your answer when you switch on
-  **Relays** for it on the **Tokens** page. It must send your own words and
-  the conversation, and those are recorded beside the decision.
+- **Relaying.** Only a client you switch **Relays** on for (Tokens page),
+  such as Claude on claude.ai or the house agent chairing a huddle, can pass
+  on your answer. Without the plugin any client can, except on hard stops.
 - **Turning it off.** Switch off *Hold risky agent calls* in Settings >
   Approvals (or set `ROOK_APPROVALS=0`) to stop these extra holds. The
   policy and the asks in [[manual-trust]] still apply.

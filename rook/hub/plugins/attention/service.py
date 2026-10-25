@@ -439,10 +439,6 @@ class AttentionService:
         principal = self.principal(wid)
         if relay is None:
             msg = "Not done: approvals are unavailable on the hub. Decide on the dashboard."
-        elif not relay.may_relay(principal):
-            msg = (f"Not done: {self.label(dev)} may not relay your approvals yet. Turn on "
-                   f"\"May relay my approvals\" for {self.label(dev)} on the dashboard's Tokens "
-                   "page, or decide on the Approvals page.")
         else:
             said = {"who": self.person(),
                     "quote": f"{TAPPED[decision]} on the decision card on {dev['name']}",
@@ -453,14 +449,11 @@ class AttentionService:
                                          reason=short(ev.get("reason"), 500))
             except (PermissionError, RelayError) as e:
                 msg = f"Not done: {e}"
-                if "may not relay" in str(e):
-                    msg += (f" Turn on \"May relay my approvals\" for {self.label(dev)} on the "
-                            "dashboard's Tokens page.")
             except Exception as e:  # noqa: BLE001
                 log.exception("attention: relaying %s from %s", item, dev["name"])
                 msg = f"Not done: the hub could not record it ({type(e).__name__})."
             else:
-                posted.update(closed=True, state="done", decided=ts)
+                posted.update(closed=True)
                 self.log("decided", f"{'Approved' if decision == 'approve' else 'Declined'}: "
                          f"{out.get('name') or item}", "your answer on the decision card",
                          how=f"{self.person()} tapped {'Yes' if decision == 'approve' else 'No'} "
@@ -468,7 +461,7 @@ class AttentionService:
                 await self._update(wid, item, "done", short(out.get("recorded") or "Done.",
                                                             EXPLAIN_MAX))
                 return
-        posted.update(state="failed", failed=ts, relayable_when_failed=bool(
+        posted.update(state="failed", relayable_when_failed=bool(
             relay is not None and relay.may_relay(principal)))
         await self._update(wid, item, "failed", short(msg, EXPLAIN_MAX))
 
@@ -513,8 +506,7 @@ class AttentionService:
             except Exception as e:
                 log.info("attention: post %s to %s: %s", ident, dev["name"], e)
                 continue
-            posted[ident] = {"kind": card["kind"], "at": self.clock(),
-                             "actions": card["actions"], **({"queued": True} if queued else {})}
+            posted[ident] = {"queued": True} if queued else {}
             n_new += 1
             if not again:
                 self.log("ask", f"Card: {speakable(it)}",
