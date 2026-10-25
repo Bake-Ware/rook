@@ -447,7 +447,7 @@ class Huddle(Plugin):
     async def vote(self, huddle: str, action: str = "call", kind: str = "", artifact: str = "",
                    reason: str = "", target: str = "", skip_vote: bool = False,
                    motion: str = "", self_review: str = "") -> dict:
-        """Votes on a chaired huddle's table: call (kind merge|qa|deploy|ship, artifact, reason?, target? for deploy/ship, skip_vote? only on ship-it, self_review: the author's adversarial self-review, needed for merge/qa when there are no votes), status (motion). With advanced security off there are no ballots: the gates, then the action; any agent may call a merge or qa of its own pull request. Otherwise people and the house agent call votes."""
+        """Votes on a chaired huddle's table: call (kind merge|qa|deploy|ship, artifact, reason?, target? for deploy/ship, skip_vote? only on ship-it, self_review: the author's adversarial self-review, needed for merge/qa when there are no votes), status (motion). With advanced security off there are no ballots: the gates, then the action; any agent may call a merge or qa of a pinned pull request with its self-review. Otherwise people and the house agent call votes."""
         from ...authz import current_principal
         me = caller()
         t = self._table()

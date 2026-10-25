@@ -43,6 +43,13 @@ OUTBOUND_CAPS = ("notify.post", "notify.send", "notify.act", "voice.speak", "att
                  "messages.send")
 #: Caps that send as the person to someone else (``notify.act`` only with a reply text).
 SEND_AS_CAPS = ("sms.send", "messages.send", "notify.act")
+#: Cap families that carry the person's own messages or calls to other people:
+#: anything in them but a read sends as the person.
+SEND_AS_FAMILIES = ("sms", "mms", "mail", "email", "gmail", "outlook", "signal", "slack",
+                    "whatsapp", "matrix", "messenger", "imessage", "teams", "call", "phone",
+                    "dialer")
+_READ_ACTION = re.compile(r"^(list|get|read|search|status|describe|info|history|threads?|"
+                          r"unread)(_\w+)?$")
 #: Shell and console caps whose command text is checked by :func:`destroys`.
 SHELL_CAPS = ("shell.exec", "proc.start", "proc.spawn", "work.stream.open",
               "terminals.stream.open")
@@ -136,13 +143,21 @@ def _rm_rootish(rest: str) -> bool:
     return any(_ROOTISH.match(w.strip("'\"")) for w in words if not w.startswith("-"))
 
 
-def remote_hosts(text: str) -> set[str]:
+_PROXY = re.compile(r"(?i)proxyjump[= ]\s*([^\s'\"`]+)")
+
+
+def remote_hosts(text: str, _depth: int = 0) -> set[str]:
     """Machines a command reaches over ssh, scp, rsync or sftp (lower-case,
     without the user): a change sent there is a change on that machine."""
     out: set[str] = set()
-    for m in _REMOTE.finditer(str(text or "")):
+    if _depth > 8:
+        return out                               # hops nested deeper than 8 are not followed
+    text = str(text or "")
+    for m in _PROXY.finditer(text):              # -o ProxyJump=kaiju, -oProxyJump kaiju
+        out |= {h.split("@")[-1].split(":")[0].lower() for h in m.group(1).split(",")}
+    for m in _REMOTE.finditer(text):
         prog, words = m.group(1), m.group(2).split()
-        out |= remote_hosts(m.group(2))          # a hop inside: ssh hop "ssh kaiju ..."
+        out |= remote_hosts(m.group(2), _depth + 1)   # a hop inside: ssh hop "ssh kaiju ..."
         words = [w.strip("'\"`()") for w in words]
         if prog in ("ssh", "mosh"):
             skip = jump = False
@@ -151,6 +166,9 @@ def remote_hosts(text: str) -> set[str]:
                     skip = False
                     if jump:                         # -J kaiju,user@other:22
                         out |= {h.split("@")[-1].split(":")[0].lower() for h in w.split(",")}
+                    continue
+                if w.startswith("-J") and len(w) > 2:    # glued -Jkaiju
+                    out |= {h.split("@")[-1].split(":")[0].lower() for h in w[2:].split(",")}
                     continue
                 if w.startswith("-") and not w.startswith("--"):
                     # -p 22, -tp 22 (grouped: the last letter takes the value), -p22 (glued)
@@ -222,7 +240,9 @@ def stop(cap: str, args: Any, tags: tuple | list = ()) -> str:
         return "hard stop: it reveals a secret's value"
     if cap in OUTBOUND_CAPS and _carries_secret(args):
         return "hard stop: the message would reveal a secret's value"
-    if cap in SEND_AS_CAPS and (cap != "notify.act" or str(args.get("text") or "").strip()):
+    family, _, verb = cap.partition(".")
+    if cap in SEND_AS_CAPS and (cap != "notify.act" or str(args.get("text") or "").strip()) \
+            or family in SEND_AS_FAMILIES and not _READ_ACTION.match(verb):
         return "hard stop: it sends a message as you to someone else"
     return ""
 
