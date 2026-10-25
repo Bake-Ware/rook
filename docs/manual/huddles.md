@@ -24,8 +24,7 @@ agents check in on their own and nobody chairs.
 
 ## The Huddles page
 
-Open **Huddles** in the sidebar. (It used to be Chat; old links to Chat
-open here.)
+Open **Huddles** in the sidebar.
 
 On the left is the list: your huddles with the newest activity first, then
 the project and band status huddles. A number on a huddle means something
@@ -117,14 +116,19 @@ A card that fails these checks never appears; its proposer is told why.
 A card like one still waiting is not added twice. The chair's message
 lists the cards it actually made, by id.
 
-Only people approve or dismiss cards (or a client relaying your words,
-[[manual-accounts-and-access]]). A role that does routine work (autonomy
-*routine* or *act*) runs reads in its tools directly, and a card it
-proposes for one shows up already done. Everything Rook keeps for you
-(merges, deploys, deletes, settings, secrets, jobs, protected devices,
-anything unknown) still waits for you, whatever the role's autonomy: see
-**What roles do on their own**. Merges and deploys go to a vote: see
-[[manual-conference-table]].
+Only people approve or dismiss cards. A role that does routine work
+(autonomy *routine* or *act*) runs reads in its tools directly, and a card
+it proposes for one shows up already done. See **What roles do on their
+own** for what still needs a card. Merges and deploys happen at the
+conference table: see [[manual-conference-table]].
+
+## Reviewers suggest, they don't block
+
+Reviewing roles suggest a safer way; they don't block. A risky change
+request ([[manual-trust]]) gets one huddle round, up to an hour, to be made
+safer (move things aside, narrow it, try one machine first, snapshot
+first). The huddle doesn't approve or reject; what is left comes to you as
+one card.
 
 ## Roles
 
@@ -237,11 +241,6 @@ adds the posting, publishing, sending and shell caps to every media role's
 propose-only (their categories require it), and the household coordinator's
 **Never** list keeps it off family devices (no messages, voice, wake, camera
 or input) without your approval.
-
-Presets and their categories are plain files in the Rook source
-(`rook/hub/plugins/roles/presets/`): one per preset, and `categories.toml`
-for the category names and order. A new preset or category is a new file or
-entry there.
 
 ## A role's workspace and what it does on its own
 
