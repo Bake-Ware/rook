@@ -44,7 +44,8 @@ OUTBOUND_CAPS = ("notify.post", "notify.send", "notify.act", "voice.speak", "att
 #: Caps that send as the person to someone else (``notify.act`` only with a reply text).
 SEND_AS_CAPS = ("sms.send", "messages.send", "notify.act")
 #: Shell and console caps whose command text is checked by :func:`destroys`.
-SHELL_CAPS = ("shell.exec", "proc.spawn", "work.stream.open")
+SHELL_CAPS = ("shell.exec", "proc.start", "proc.spawn", "work.stream.open",
+              "terminals.stream.open")
 TYPED_CAPS = ("proc.write", "work.stream.write", "console.write", "terminals.stream.write",
               "stream.write")
 
@@ -70,7 +71,11 @@ _DESTROY = [
      "deletes container volumes"),
     (re.compile(r"\brclone\s+(purge|delete)\b"), "deletes remote storage"),
 ]
-_RM = re.compile(r"(?:^|[\s;&|(])(?:sudo\s+(?:-\S+\s+)*)?rm\s+([^;&|\n]*)")
+#: Where a program name may start: the text's start, a space, a shell operator,
+#: a quote, a backtick or $( (``bash -c "ssh kaiju ..."``), with or without a
+#: path (``/usr/bin/ssh``).
+_LEAD = r"(?:^|[\s;&|(`'\"=])(?:[^\s;&|(`'\"=]*/)?"
+_RM = re.compile(_LEAD + r"rm\s+([^;&|\n`]*)")
 _FIND_DELETE = re.compile(r"\bfind\s+(\S+)[^;&|\n]*\s-delete\b")
 #: Recursive deletes of these (and of anything one level under /) never go by
 #: themselves: ``/``, a top-level directory, a home, a service's data.
@@ -83,7 +88,7 @@ _ROOTISH = re.compile(r"^(/[^/]*|/home/[^/]+|/root|/var/lib/[^/]+|/var/backups(/
 #: names one reads a secret or changes the guardrails behind the hub's back.
 _HUB_FILES = re.compile(r"(vault\.(key|db)|trust(-history)?\.json(l)?|policy\.json|approvals\.db|"
                         r"settings\.db)\b")
-_REMOTE = re.compile(r"(?:^|[\s;&|(])(ssh|scp|rsync|sftp|mosh)\s+([^;&|\n]*)")
+_REMOTE = re.compile(_LEAD + r"(ssh|scp|rsync|sftp|mosh)\s+([^;&|\n`]*)")
 #: ssh options that take a value.
 _SSH_ARG = set("bcDEeFIiJLlmOopQRSWw")
 
@@ -120,7 +125,7 @@ _DB_FILE = re.compile(r"\.(db|sqlite3?|kdbx)(-wal|-shm|-journal)?['\"]?$")
 
 
 def _rm_rootish(rest: str) -> bool:
-    words = rest.split()
+    words = [w.strip("'\"`()") for w in rest.split()]
     if any(_DB_FILE.search(w) and not w.strip("'\"").startswith(("/tmp/", "/var/tmp/"))
            for w in words if not w.startswith("-")):
         return True                                  # a database file, recursive or not
@@ -137,14 +142,20 @@ def remote_hosts(text: str) -> set[str]:
     out: set[str] = set()
     for m in _REMOTE.finditer(str(text or "")):
         prog, words = m.group(1), m.group(2).split()
+        words = [w.strip("'\"`()") for w in words]
         if prog in ("ssh", "mosh"):
             skip = False
             for w in words:
                 if skip:
                     skip = False
                     continue
-                if w.startswith("-"):
-                    skip = len(w) == 2 and w[1] in _SSH_ARG
+                if w.startswith("-") and not w.startswith("--"):
+                    # -p 22, -tp 22 (grouped: the last letter takes the value), -p22 (glued)
+                    letters = w[1:]
+                    skip = bool(letters) and letters[-1] in _SSH_ARG and \
+                        all(c not in _SSH_ARG for c in letters[:-1]) and len(letters) <= 4
+                    continue
+                if w.startswith("--"):
                     continue
                 out.add(w.split("@")[-1].lower())
                 break

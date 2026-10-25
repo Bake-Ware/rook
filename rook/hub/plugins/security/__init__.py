@@ -29,6 +29,8 @@ from typing import Any
 from ....core.plugin import Plugin, place, setting
 
 ENV = "ROOK_SECURITY_ADVANCED"
+#: Both names the Settings page lists for ``security.enabled``.
+ENVS = (ENV, "ROOK_SECURITY_ENABLED")
 MODULE = "security"
 KEY = "security.enabled"
 
@@ -44,8 +46,9 @@ def enabled(store: Any = None, environ: Any = None) -> bool:
     switch (``core.plugins.hub``) and its ``enabled`` setting. Off when
     nothing says otherwise, or the store can't be read."""
     environ = os.environ if environ is None else environ
-    if environ.get(ENV) is not None:
-        return _truthy(environ.get(ENV))
+    for var in ENVS:
+        if environ.get(var) is not None:
+            return _truthy(environ.get(var))
     if store is None:
         return False
     try:
@@ -67,8 +70,9 @@ def current() -> bool:
     """:func:`enabled` for code with no settings store at hand (the wording
     of asks), from the hub's default store, re-read at most every few seconds;
     a hub without a settings file is off."""
-    if os.environ.get(ENV) is not None:
-        return _truthy(os.environ.get(ENV))
+    for var in ENVS:
+        if os.environ.get(var) is not None:
+            return _truthy(os.environ.get(var))
     now = time.monotonic()
     with _lock:
         if now - _cache["at"] < TTL:

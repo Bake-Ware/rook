@@ -123,6 +123,8 @@ async def _hold_gate(node: Any, cap: str, args: Any) -> None:
         return
     d = authz.check(cap, node.worker_id, node.entry(), principal=p, local=True,
                     args=args if isinstance(args, dict) else {})
+    if d.rule == "hardstop:guardrail":
+        raise PermissionError(d.denial()["error"])      # no ratchet, also for a tool's inner caps
     if not d.held:
         return
     out = await authz.resolve(d, args if isinstance(args, dict) else {})

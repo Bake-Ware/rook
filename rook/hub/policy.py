@@ -221,6 +221,9 @@ class Decision:
                                "principal": self.principal, "via": list(self.via),
                                "hold": self.hold_id, "by": self.decided_by,
                                **({"reason": self.note} if self.note else {})}}
+        if self.rule == "hardstop:guardrail":
+            return {"ok": False, "error": f"denied: {self.reason}. Do not retry it.",
+                    "denied": {"tier": self.tier, "rule": self.rule, "principal": self.principal}}
         return {"ok": False,
                 "error": (f"denied: {self.principal} may not call {self.cap} "
                           f"({self.tier}) on {where}"),

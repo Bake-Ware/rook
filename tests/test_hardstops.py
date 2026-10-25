@@ -84,6 +84,28 @@ def test_reaching_a_machine_over_ssh_and_the_hubs_own_files():
     assert not H.stop("file.read", {"path": "/home/bake/notes.md"})
 
 
+@pytest.mark.parametrize("cmd", [
+    'bash -lc "ssh kaiju sudo reboot"', "sh -c 'ssh kaiju sudo reboot'", "echo `ssh kaiju reboot`",
+    "x=$(ssh kaiju reboot)", "/usr/bin/ssh kaiju sudo reboot", "ssh -tp 2222 kaiju reboot",
+    "ssh -o BatchMode=yes -i ~/.ssh/k bake@kaiju.local reboot"])
+def test_quoted_wrapped_and_path_prefixed_ssh_still_reaches_kaiju(cmd):
+    assert {"kaiju", "kaiju.local"} & H.remote_hosts(cmd), cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    'ssh cachyrig "rm -rf /home/bake"', "bash -c 'rm -rf ~'", "/bin/rm -rf /home/bake",
+    "echo `rm -rf /srv/media`", "sudo -n rm -rf /var/lib/rook-band-mcp"])
+def test_quoted_and_path_prefixed_rm_is_seen(cmd):
+    assert H.destroys(cmd), cmd
+
+
+def test_every_command_cap_is_checked():
+    for cap in ("shell.exec", "proc.start", "work.stream.open"):
+        assert "deletes" in H.stop(cap, {"cmd": "rm -rf /home/bake"}), cap
+        assert H.remote_hosts(H.command_text(cap, {"argv": ["ssh", "kaiju", "reboot"]})) == {"kaiju"}
+    assert H.stop("proc.write", {"data": "dropdb music\n"})
+
+
 def test_guardrails_are_named():
     assert H.guardrail("policy.set", {})
     assert H.guardrail("settings.set", {"key": "core.approvals.enabled", "value": True})
@@ -110,6 +132,8 @@ def test_core_asks_only_for_hard_stops_and_sacred_machines(tmp_path):
     assert not on(az, "notify.post", "bakephone", {"text": "done"}).held
     d = on(az, "shell.exec", "cachyrig", {"cmd": "ssh kaiju sudo systemctl restart strata"})
     assert d.held and d.hold_kind == "trust" and "over ssh" in d.hold_reason
+    d = on(az, "proc.start", "cachyrig", {"cmd": 'bash -lc "ssh kaiju sudo reboot"'})
+    assert d.held and d.hold_kind == "trust"                 # the console's way in too
     assert not on(az, "shell.exec", "cachyrig", {"cmd": "ssh pianobar uptime"}).held
     for p in (OWNER,):                                       # people are never held
         assert not on(az, "shell.exec", "kaiju", {"argv": ["reboot"]}, principal=p).held
@@ -147,6 +171,24 @@ def test_turning_the_plugin_on_brings_the_blanket_holds_back(tmp_path):
     assert d.held                                                              # and the stops
 
 
+@pytest.mark.asyncio
+async def test_a_plugin_tools_inner_guardrail_call_is_refused(tmp_path):
+    from types import SimpleNamespace
+
+    from rook.hub.authz import current_principal
+    from rook.hub.mcp_tools import _hold_gate
+    az = core(tmp_path)
+    node = SimpleNamespace(client=SimpleNamespace(authz=az), worker_id="rook",
+                           entry=lambda: {"name": "rook", "roles": ["is_hub"]})
+    tok = current_principal.set(OPERATOR)
+    try:
+        with pytest.raises(PermissionError, match="guardrail"):
+            await _hold_gate(node, "settings.set", {"key": "core.approvals.enabled", "value": 1})
+        await _hold_gate(node, "settings.set", {"key": "home.voice_model", "value": "x"})
+    finally:
+        current_principal.reset(tok)
+
+
 def test_the_switch_reads_env_then_the_plugin_switch_then_its_setting(tmp_path):
     from rook.hub.settings_store import SettingsStore
     st = SettingsStore(tmp_path / "settings.db")
@@ -156,6 +198,7 @@ def test_the_switch_reads_env_then_the_plugin_switch_then_its_setting(tmp_path):
     st.set("core.plugins.hub", "hub", "", value={"security": False}, actor="human:u1")
     assert not security.enabled(st, {})
     assert security.enabled(st, {"ROOK_SECURITY_ADVANCED": "1"})
+    assert security.enabled(st, {"ROOK_SECURITY_ENABLED": "true"})
     assert A.load_config(st, {"ROOK_SECURITY_ADVANCED": "1"}).advanced
     assert not A.load_config(st, {}).advanced
 
