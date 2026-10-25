@@ -60,9 +60,13 @@ the advanced security plugin is on ([[manual-accounts-and-access]]).
 
 ## Waiting quietly, reminded out loud
 
-Decision cards aren't emergencies, so they don't pop up one by one. They wait
-quietly in the app's Attention tab (and in the notification shade, without a
-sound), and the phone tells you out loud when something is waiting:
+Decision cards aren't emergencies, so they don't pop up one by one or take
+over the screen. Each one is a normal notification (in the status bar and the
+notification shade, with one sound when it arrives; the "Waiting decisions"
+channel in the app's notification settings) and a row in the app's Attention
+tab. If a waiting card's notification has gone from the shade without you
+swiping it away, the app puts it back the next time you unlock the phone. The
+phone also tells you out loud when something is waiting:
 
 - one card: "Need your input: Deploy hub update?";
 - several: "Hey boss, you have 6 decisions pending."
