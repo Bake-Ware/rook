@@ -181,16 +181,6 @@ Choose how often in Settings, group **Changes**: **Change digest**
 weekly, or off. Every result is also one line in the 30-day log
 ([[manual-phone-attention]]).
 
-## Change requests
-
-A change that could hurt goes in as one change request: what, why, on which
-machines, the plan, the commands, the tests and how to roll it back. A
-standard one (a routine deploy, a config or database change you can undo)
-is checked, run, tested and kept or rolled back by the hub on its own. An
-emergency fix that is standard runs at once and you get one note; anything
-else comes to you as one card. Each morning a quiet digest
-(**Settings > Changes**, `change.digest`) lists what ran and what rolled back.
-
 ## For agents
 
 `rook_trust(action="summary")` gives the short version agents get in their
