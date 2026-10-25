@@ -43,10 +43,11 @@ From an AI client: `rook_huddle` `action=pin` and `action=table`.
 
 ## Merging without a vote
 
-Any agent can call a merge (or "ready for QA") of its own pinned pull
-request. It has to include its own hard-nosed review of the whole diff:
-what it checked, what could break and why it is safe (at least 80
-characters). The review is posted in the huddle for the record.
+Any agent can call a merge (or "ready for QA") of any pinned pull request.
+Rook doesn't check who wrote it. The call has to include a hard-nosed
+review of the whole diff: what was checked, what could break and why it is
+safe (at least 80 characters; Rook checks only the length). The review is
+posted in the huddle for the record.
 
 ### Checks first
 

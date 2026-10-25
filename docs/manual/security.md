@@ -77,8 +77,9 @@ Agents can't switch it on or off; only you can.
 - Anyone who can run commands on a worker has the rights of the user the worker
   runs as. Install workers as an ordinary user where you can.
 - The checks on commands look for known patterns. They catch mistakes, but
-  they are not a sandbox: a command they don't recognise still runs, and the
-  journal shows it.
+  they are not a sandbox: a command they don't recognise still runs (a sacred
+  machine reached by IP address or by an ssh alias Rook doesn't know, a
+  script that deletes files its own way), and the journal shows it.
 - The hub checks calls that pass through it. Calls one worker sends straight
   to another do not pass the hub and are not checked.
 - A dashboard or account password that you also keep as a band secret can't be

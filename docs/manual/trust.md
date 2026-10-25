@@ -25,7 +25,9 @@ The hub asks you before an agent:
 
 - **Changes anything on a sacred machine** (kaiju, say). Reading there is
   fine. A command sent to a sacred machine over ssh, scp or rsync counts as
-  a change there.
+  a change there, when it names the machine by its name. An IP address or
+  an ssh alias Rook doesn't know is not recognised, and without a trust map
+  nothing is sacred.
 - **Erases data for good**: wiping a disk or file system, dropping a
   database or table, deleting a database file, deleting a top-level, home
   or service-data folder with everything in it, forgetting a memory,
@@ -35,8 +37,10 @@ The hub asks you before an agent:
   `{{secret:...}}` placeholder) in a message, notification or speech, or
   touching the hub's own vault and guardrail files (`vault.key`,
   `vault.db`, `trust.json`, `policy.json`, `approvals.db`, `settings.db`).
-- **Sends a message as you** to other people: a text, or a reply to a
-  notification on your phone.
+- **Sends a message as you** to other people: a text, a reply to a
+  notification on your phone, or anything other than reading in mail,
+  Gmail, Outlook, Signal, Slack, WhatsApp, Matrix, Messenger, iMessage,
+  Teams, or a phone call.
 
 Everything else just goes. People are never held. These stops hold even
 with **Hold risky agent calls** switched off (Settings > Approvals).
