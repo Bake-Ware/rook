@@ -50,6 +50,7 @@ from ....core import names
 from ....core.authz import is_status_read
 from ....core.db import open_db
 from ....core.text import clip
+from ... import hardstops
 from .onboard import OnboardError, Onboarding
 from .playbook import ACT, TITLES, Playbook, PlaybookError, direction
 
@@ -84,7 +85,7 @@ Rules:
 - When the person corrects how you route ("next time just do that", "ask me about X", "don't bother me with Y"), call playbook_edit with their exact words; tightening applies at once, loosening becomes a question for them.
 - When they overturn a decision you made ("no, undo that rule", "overturn brave-otter-lamp"), call overturn with their words.
 - When they answer one of your open asks in this message ("yes, do it", "no"), call answer_ask with their exact words.
-- Never act on a family device, never touch secrets, never loosen the trust map."""
+- Never touch secrets, never change the trust map or any guardrail (only the person does)."""
 
 
 class FrontError(ValueError):
@@ -251,70 +252,8 @@ _CLAIM = re.compile(
 _SET_CLAIM = re.compile(r"\b(?:i(?:'ve| have)?|it'?s|it is|that'?s|that is)\s+(?:now\s+|just\s+)?"
                         r"(?:set|marked|made|configured|created|saved|recorded)\b", re.I)
 
-_GONE = re.compile(r"(?:^|[._-])(delete|remove|rm|drop|purge|wipe|erase|format|destroy|reset|"
-                   r"uninstall|deauth|revoke|kill|truncate|prune|forget)(?:$|[._-])", re.I)
-_GONE_ARGV = re.compile(r"^(rm|rmdir|dd|mkfs\S*|shred|wipefs|fdisk|parted|shutdown|reboot|"
-                        r"poweroff|halt|kill|killall|pkill|truncate)$")
-
-
-#: Cap families that carry messages to other people: anything in them that is not a
-#: plain read speaks for the person (ask first, on any level). Review of #188.
-_MESSAGING = {"sms", "mms", "mail", "email", "gmail", "outlook", "msg", "message", "messages",
-              "signal", "discord", "slack", "telegram", "whatsapp", "matrix", "messenger",
-              "imessage", "teams", "chat_app", "call", "phone", "dialer"}
-_READS = re.compile(r"^(list|get|read|search|status|describe|info|history|threads?|unread)"
-                    r"(_\w+)?$")
-#: Any cap, any family, whose action sends, replies, forwards, calls or dials.
-_SPEAKS = re.compile(r"(^|[._])(send|reply|forward|respond|call|dial|post_to|message)"
-                     r"(_\w+)?$")
-#: A notification's own actions that change nothing for anyone else: these alone may run
-#: without asking, and only when named (an index can't be checked here).
-SAFE_NOTIFY_ACTIONS = {"mark as read", "mark read", "dismiss", "snooze"}
 #: Changes that may only happen on the owner's own phone (home.brief_phone).
 OWNER_PHONE_CAPS = {"calendar.create", "calendar.update", "calendar.delete", "notify.act"}
-
-
-def speaks_for(cap: str, args: Any) -> str:
-    """Why a call speaks or acts for the person towards others ("" when it doesn't)."""
-    family, _, action = str(cap or "").partition(".")
-    if cap == "notify.act":
-        title = " ".join(str((args or {}).get("action") or "").lower().split()) \
-            if isinstance(args, dict) else ""
-        text = str((args or {}).get("text") or "").strip() if isinstance(args, dict) else ""
-        if text or title not in SAFE_NOTIFY_ACTIONS:
-            return "a notification's own action can reply, delete, archive or call as you"
-        return ""
-    if family in _MESSAGING and not _READS.match(action):
-        return f"{cap} sends a message to someone as you"
-    if _SPEAKS.search(action) and family not in ("notify", "voice", "chat", "huddle", "attention"):
-        return f"{cap} sends a message to someone as you"
-    return ""
-
-
-def irreversible(cap: str, kind: str, tags: tuple | list, args: Any) -> str:
-    """Why an action is not easily undone ("" when it looks reversible): an
-    admin or destructive cap, a cap named for removing something, or a shell
-    command that deletes, wipes, kills or powers off."""
-    if kind == "admin":
-        return f"{cap} is {'destructive' if 'destructive' in (tags or ()) else 'admin'}"
-    spoken = speaks_for(cap, args)
-    if spoken:
-        # Texts, emails, calls, notification actions: they act for the person towards others.
-        return spoken
-    if _GONE.search(cap.split(".", 1)[-1]):
-        return f"{cap} removes something"
-    if isinstance(args, dict):
-        argv = args.get("argv") or args.get("cmd") or args.get("command")
-        words = argv if isinstance(argv, list) else str(argv or "").split()
-        words = [str(w).rsplit("/", 1)[-1] for w in words if str(w).strip()]
-        if words and words[0] == "sudo":
-            words = words[1:]
-        if words and _GONE_ARGV.match(words[0]):
-            return f"`{' '.join(words[:3])}` is not easily undone"
-        if words[:2] in (["git", "push"], ["git", "reset"]) and ("--force" in words or "-f" in words
-                                                                 or "--hard" in words):
-            return "a force push or hard reset is not easily undone"
-    return ""
 
 
 def compose(state: dict, content: str) -> tuple[str, str]:
@@ -1156,7 +1095,10 @@ class FrontDoor:
         * the action at stake is ``go`` under a named trust entry (ship-it),
           or the cited playbook rule is a ``rule``/``do`` rule and the trust
           map does not say ask for the action: ruled, cited, in the digest;
-        * a sacred or guarded action, or a gap: a one-line ask."""
+        * a sacred or guarded action, or a gap: a one-line ask.
+
+        With advanced security off it rules on anything not sacred when it
+        has a pick (the person can overturn it from the digest)."""
         question = _one_line(question, 300)
         if len(question) < 4:
             raise FrontError("question: what the agents disagree on")
@@ -1177,8 +1119,15 @@ class FrontDoor:
         cite = self.cite_of(r, pb)
         why = ""
         ruled = False
+        from ..security import for_node
+        advanced = for_node(self.node)
         if r is not None and r.tier == "person":
             why = "sacred"
+        elif not advanced:
+            # No votes, no ratchet: the house agent settles it (cited, in the
+            # digest) unless it is sacred or it has no pick.
+            ruled = bool(ruling)
+            why = "" if ruled else "gap"
         elif r is not None and r.tier == "ask" and not (r.unlisted and r.level == "balanced"):
             why = "guarded"
         elif r is not None and r.tier == "go" and not r.unlisted and r.entry is not None:
@@ -1443,13 +1392,19 @@ class FrontDoor:
             if not mine or w["name"].lower() != mine or w["name"].lower() in protected:
                 raise FrontError(f"{cap} runs only on the owner's own phone"
                                  + (f" ({mine})" if mine else " (none is set: home.brief_phone)"))
-        if w["name"].lower() in protected and not is_status_read(cap):
+        from ..security import for_node
+        advanced = for_node(self.node)
+        if advanced and w["name"].lower() in protected and not is_status_read(cap):
             # A family device: battery and status reads go; anything else (private
             # content included, like messages or the screen) asks the person.
             reasons.append(f"{w['name']} is a family device")
-        if r is not None and r.tier != "go":
+        if r is not None and (r.tier == "person" or advanced and r.tier != "go"):
             reasons.append(r.cite)
-        gone = irreversible(cap, kind, w["tags"], call_args)
+        # Core asks only for the hard stops (rook/hub/hardstops.py); the wider
+        # "not easily undone" test is advanced security's.
+        from ..security.actions import irreversible
+        gone = irreversible(cap, kind, w["tags"], call_args) if advanced else \
+            hardstops.stop(cap, call_args, w["tags"]).removeprefix("hard stop: ")
         yes = state.get("approved")
         if gone and not yes:
             reasons.append(gone)

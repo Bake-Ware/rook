@@ -446,8 +446,8 @@ class Huddle(Plugin):
     @capability("vote", risk="write")
     async def vote(self, huddle: str, action: str = "call", kind: str = "", artifact: str = "",
                    reason: str = "", target: str = "", skip_vote: bool = False,
-                   motion: str = "") -> dict:
-        """Votes on a chaired huddle's table: call (kind merge|qa|deploy|ship, artifact, reason?, target? for deploy/ship, skip_vote? only on ship-it), status (motion). People and the house agent call votes; roles vote only when the hub asks them."""
+                   motion: str = "", self_review: str = "") -> dict:
+        """Votes on a chaired huddle's table: call (kind merge|qa|deploy|ship, artifact, reason?, target? for deploy/ship, skip_vote? only on ship-it, self_review: the author's adversarial self-review, needed for merge/qa when there are no votes), status (motion). With advanced security off there are no ballots: the gates, then the action; any agent may call a merge or qa of its own pull request. Otherwise people and the house agent call votes."""
         from ...authz import current_principal
         me = caller()
         t = self._table()
@@ -458,11 +458,13 @@ class Huddle(Plugin):
                 return {**m, "ballots": t.ballots(m["id"])}
             if action != "call":
                 raise ValueError("action must be call or status")
-            if not self._person_or_chair(me, current_principal.get()):
+            if not self._person_or_chair(me, current_principal.get()) and not (
+                    kind in ("merge", "qa") and not t.advanced()):
                 raise PermissionError("only a person or the house agent (the chair) calls a "
                                       "vote; agents ask the chair in the huddle")
             return await t.call(room, me, {"kind": kind, "artifact": artifact, "reason": reason,
-                                           "target": target, "skip_vote": skip_vote})
+                                           "target": target, "skip_vote": skip_vote,
+                                           "self_review": self_review})
         except TableError as e:
             raise ValueError(str(e)) from None
 
@@ -500,7 +502,7 @@ class Huddle(Plugin):
                     cap, args = "huddle.vote", {"huddle": room, "action": d.get("action") or "call",
                                                 **{k: d.get(k) for k in (
                                                     "kind", "artifact", "reason", "target",
-                                                    "skip_vote", "motion")}}
+                                                    "skip_vote", "motion", "self_review")}}
                 try:
                     result = await invoke(cap, {k: v for k, v in args.items() if v is not None})
                     return json.dumps({"ok": True, "result": result}, separators=(",", ":"),

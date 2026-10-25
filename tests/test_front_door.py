@@ -23,6 +23,8 @@ from rook.hub.plugins.huddle.service import PERSON
 from tests.test_huddle_chair import _call, _roles, _settle, _texts, hub  # noqa: F401
 from tests.test_trust import BAKE_KAIJU, BAKE_PIANO, seeded
 
+pytestmark = pytest.mark.advanced
+
 ASKER = "agent:voice"
 
 
@@ -461,6 +463,7 @@ def test_the_relay_summary_speaks_house_asks(front):
 
 
 def test_irreversible_actions_are_recognised():
+    from rook.hub.plugins.security import actions as F   # advanced security's
     assert F.irreversible("file.delete", "change", (), {})
     assert F.irreversible("shell.exec", "change", (), {"argv": ["sudo", "rm", "-rf", "/x"]})
     assert F.irreversible("shell.exec", "change", (), {"argv": ["/usr/bin/reboot"]})
