@@ -156,6 +156,29 @@ async def test_what_is_not_standard_goes_to_the_person_as_one_card(ch, over, why
 
 
 @pytest.mark.asyncio
+async def test_a_machine_named_by_its_worker_id_is_still_sacred(ch):
+    out = await ch.submit(cr(machines=["w-kaiju"],
+                             scripts=[{"worker": "w-kaiju", "run": "echo 7 > $HOME/volume"}],
+                             tests=[{"worker": "w-kaiju", "run": "true"}],
+                             rollback={"worker": "w-kaiju", "run": "true", "dry_run": "true",
+                                       "point": "true"}))
+    assert out["state"] == "asked" and "kaiju is sacred" in " ".join(out["checks"])
+    assert out["machines"] == ["kaiju"] and not ch.client.calls
+    with pytest.raises(ChangeError, match="not on the band"):
+        await ch.submit(cr(machines=["nowhere"], scripts=[{"worker": "nowhere", "run": "true"}],
+                           tests=[], rollback={}))
+
+
+@pytest.mark.asyncio
+async def test_only_the_huddles_round_reduces_a_change(ch):
+    out = await ch.submit(cr(category="decommission"))           # straight to the card
+    (ch.home / "volume.bak").write_text("3\n")
+    std = await ch.submit(cr())
+    with pytest.raises(ChangeError, match="only the huddle"):
+        ch.reduce(out["id"], [std["id"]])
+
+
+@pytest.mark.asyncio
 async def test_a_no_drops_it(ch):
     out = await ch.submit(cr(category="decommission"))
     await ch.decided(out["id"], False, "Bake")
@@ -172,9 +195,14 @@ async def test_an_emergency_standard_fix_runs_now_and_tells_the_person_once(ch):
     assert row["state"] == "kept" and (ch.home / "svc").read_text() == "up\n"
     assert [(u, t) for u, t, _ in ch.att.sent] == [("normal", "Emergency fix")]
     ch.update(out["id"], {"why": "the player crashed after the update", "plan": "restart it",
-                          "scripts": [{"worker": "cachyrig", "run": "echo other"}]})
+                          "scripts": [{"worker": "cachyrig", "run": "echo other"}],
+                          "machines": ["cachyrig", "kaiju"],
+                          "rollback": {"worker": "kaiju", "run": "rm -rf /home/bake"}})
     rec = ch.store.get(out["id"])["record"]
     assert rec["why"].startswith("the player crashed") and "echo up" in rec["scripts"][0]["run"]
+    assert rec["rollback"] == {} and rec["machines"] == ["cachyrig"]   # what ran stays
+    with pytest.raises(ChangeError, match="no rollback"):
+        await ch.revert(out["id"])
 
 
 @pytest.mark.asyncio
@@ -257,6 +285,7 @@ async def test_the_digest_lists_what_ran_once_a_morning(ch, monkeypatch):
 async def test_on_a_real_hub_a_normal_change_reaches_the_house_agents_card(hub, monkeypatch):
     h = hub
     h.node.settings.set("home.front_door", True, actor="human:op")
+    h.band.workers["w-cachy"] = {"name": "cachyrig", "caps": ["shell.exec"], "last_seen": 0}
     changes = h.node.plugin("change")
     monkeypatch.setattr(changes, "_plugin", lambda ns: None if ns == "huddle"
                         else h.node.plugin(ns))           # no huddle round: straight to the card

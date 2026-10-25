@@ -10,7 +10,8 @@ journal is their record. A change that could hurt is one CR:
   one gets one huddle round to become standard changes, then one card.
 * ``change.reduce {id, into}`` / ``change.irreducible {id, why}`` (write): a
   normal CR's huddle round ends.
-* ``change.update {id, data}`` (write): the record written afterwards (emergencies).
+* ``change.update {id, data}`` (write): an emergency's what, why and plan, written
+  afterwards; what ran (scripts, tests, rollback, machines) never changes.
 * ``change.revert {id}`` (write): roll a kept change back ("revert that").
 * ``change.catalog {action: list|add, category, words}``: the kinds that go as
   standard. Only the person adds one ("that kind is fine"), by voice or chat
@@ -144,15 +145,46 @@ class Changes(Plugin):
         node = self._node
         return node.plugin(ns) if node is not None and hasattr(node, "plugin") else None
 
+    def _resolve(self, worker: str) -> tuple[str, str] | None:
+        """``(worker id, name)`` of a machine on the band, by name or id."""
+        from ..jobs.kinds import resolve_worker
+        client = getattr(self._node, "client", None)
+        try:
+            return resolve_worker(dict(getattr(client, "workers", {}) or {}), worker,
+                                  "shell.exec", getattr(self._node, "worker_id", ""))
+        except ValueError:
+            return None
+
     def _sacred(self, worker: str) -> bool:
+        """The trust map keeps ``worker`` for the person, by its name and id;
+        a machine that isn't on the band is unsure, so it counts as sacred.
+        A host name only reached over ssh is checked by name."""
         from ..trust import node_store
         st = node_store(self._node)
         if st is None:
             return False
+        found = self._resolve(worker)
         try:
-            return st.rule("shell.exec", "exec", (), worker=worker).tier == "person"
+            if found is None:
+                return st.rule("shell.exec", "exec", (), worker=worker).tier == "person"
+            return st.rule("shell.exec", "exec", (), worker=found[1],
+                           worker_id=found[0]).tier == "person"
         except Exception:  # noqa: BLE001 - unsure is sacred
             return True
+
+    def _canonical(self, cr: dict) -> dict:
+        """Machines and step workers by their band name (an id or another
+        spelling would slip past the trust map); refused when one isn't on the band."""
+        names = {}
+        for m in cr["machines"]:
+            found = self._resolve(m)
+            if found is None:
+                raise ChangeError(f"machines: {m} is not on the band")
+            names[m] = found[1]
+        cr["machines"] = list(dict.fromkeys(names.values()))
+        for s in cr["scripts"] + cr["tests"] + ([cr["rollback"]] if cr["rollback"] else []):
+            s["worker"] = names[s["worker"]]
+        return cr
 
     def _refusal(self, p: Any, machines: list[str]) -> str:
         """Why the author may not run commands on one of ``machines`` ("" when it may)."""
@@ -266,7 +298,7 @@ class Changes(Plugin):
     async def submit(self, data: dict | None = None) -> dict:
         """A change request: data {kind standard|emergency|normal, category, what, why, machines, plan, scripts [{worker, run, timeout?, detach?}], tests [{worker, run, expect_rc?, expect?}], rollback {worker, run, dry_run, point}, fix? (emergency: rollback|restart|failover), huddle?, task?}."""
         p = _caller()
-        cr = clean(data or {})
+        cr = self._canonical(clean(data or {}))
         refusal = self._refusal(p, cr["machines"])
         if refusal:
             raise PermissionError(refusal)
@@ -317,8 +349,9 @@ class Changes(Plugin):
     def reduce(self, id: str, into: list | None = None, note: str = "") -> dict:
         """A normal change made into standard change requests (their ids): it is closed."""
         row = self.store.get(id)
-        if row["state"] not in ("reducing", "asked"):
-            raise ChangeError(f"{row['id']} is {row['state']}")
+        if row["state"] != "reducing":
+            raise ChangeError(f"{row['id']} is {row['state']}: only the huddle's round reduces "
+                              "it (a card waiting for the person is theirs)")
         parts = [self.store.get(i) for i in into or []]
         if not parts or any(r["kind"] != "standard" for r in parts):
             raise ChangeError("into: the standard change requests that replace it")
@@ -338,7 +371,7 @@ class Changes(Plugin):
 
     @capability("update", risk="write")
     def update(self, id: str, data: dict | None = None) -> dict:
-        """Write the rest of a change request afterwards (an emergency's what, why, plan, tests, rollback)."""
+        """Write the words of a change request afterwards (an emergency's what, why, plan); what ran never changes."""
         row = self.store.get(id)
         p = _caller()
         if not _person(p) and _who(p) != row["author"]:
@@ -347,10 +380,11 @@ class Changes(Plugin):
             raise ChangeError(f"{row['id']} is {row['state']}: the record is completed after it "
                               "ran (what was checked or approved doesn't change)")
         cr = row["record"]
-        new = clean({**cr, **(data or {}), "kind": cr["kind"], "category": cr["category"]})
-        new.update({k: cr[k] for k in ("checks", "ask", "huddle", "deadline") if k in cr})
-        # The record is written afterwards; what ran stays what ran.
-        new.update({k: cr[k] for k in ("scripts", "rollback", "machines") if cr.get(k)})
+        data = {k: v for k, v in (data or {}).items() if k in ("what", "why", "plan")}
+        new = {**cr, **{k: v for k, v in clean({**cr, **data}).items()
+                        if k in ("what", "why", "plan")}}
+        # Only the words are written afterwards: what ran (scripts, tests,
+        # rollback, machines) stays exactly what was checked, empty included.
         return self._public(self.store.set(row["id"], record=new))
 
     @capability("revert", risk="write")
@@ -359,6 +393,15 @@ class Changes(Plugin):
         row = self.store.get(id)
         if row["state"] != "kept":
             raise ChangeError(f"{row['id']} is {row['state']}, not kept")
+        cr = row["record"]
+        if not (cr.get("rollback") or {}).get("run"):
+            raise ChangeError(f"{row['id']} has no rollback to run")
+        # The rollback runs as the hub: checked again, as at submit.
+        rb = {**cr, "scripts": [], "tests": []}
+        problems = [x for x in checklist(rb, catalog=self.store.catalog(), sacred=self._sacred)
+                    if not x.startswith(("missing", "category", "fix"))]
+        if problems:
+            raise ChangeError(f"{row['id']}'s rollback needs the person: " + "; ".join(problems))
         return self._public(await self._runner().revert(row["id"]))
 
     @capability("catalog", risk="write")
