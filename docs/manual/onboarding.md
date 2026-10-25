@@ -38,9 +38,9 @@ Say yes and it asks, one at a time:
 1. **Where do you want it to live?** A new folder or repo, or an existing
    one, and on which machine.
 2. **How do you feel about deployments for it?** A toy experiment agents
-   can just ship, guarded so they ask you first, or sacred so nothing
-   changes without you. Your own words are enough: "it's just a toy
-   experiment", "this is core infrastructure, protect it".
+   can just ship, guarded, or sacred so nothing changes without you. Your
+   own words are enough: "it's just a toy experiment", "this is core
+   infrastructure, protect it".
 3. **What will it touch** besides its own folder? Any shared machines,
    GPUs, services or data.
 
@@ -59,11 +59,10 @@ Each answer is recorded in your words. Then it reads the plan back and asks
 
 Then it tells you what it set.
 
-**Guarded** and **sacred** take effect at once, because they only make
-things stricter. **Toy (ship-it)** makes things looser, and only you loosen
-the trust map, so it waits for your tap on **Manage > Trust**. So do the
-exceptions below. Until you accept a ship-it entry, the project gets the
-default: changes go, admin actions ask.
+**Guarded** and **sacred** take effect at once. **Toy (ship-it)** waits
+for your tap on **Manage > Trust**, and so do the exceptions below. Until
+then the project's changes just go anyway; guarded only asks you first
+with the advanced security plugin on ([[manual-security]]).
 
 ## A toy on a sacred machine
 

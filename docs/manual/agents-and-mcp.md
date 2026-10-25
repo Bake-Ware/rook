@@ -42,6 +42,9 @@ save it there with `rook login --token`, then use `rook ask` or `rook chat`
 
 ## What agents can do
 
+Agents may do almost anything you could, and every call is recorded in the
+journal under the agent's name:
+
 - See the machines and their capabilities, and use them (`rook_workers`,
   `rook_caps`, `rook_call`).
 - Run long jobs in Rook terminals they can come back to (`rook_console_*`).
@@ -52,24 +55,30 @@ save it there with `rook login --token`, then use `rook ask` or `rook chat`
   [[manual-knowledge]]. The Rook manual is there too.
 - Create and run jobs (`rook_jobs`), see [[manual-jobs]].
 - Use secrets without seeing them (`rook_secret`), see [[manual-secrets]].
+- File a change request for a change that could hurt (`rook_call` on
+  worker `rook`, cap `change.submit`), so the hub can test it and roll it
+  back, see [[manual-trust]].
 - Look back at what happened (`rook_journal`, every call with its answer).
+
+Agents can never add or tighten guardrails, holds or trust entries, or
+change the policy or the approval and security settings. Only you do.
 
 ## When a call waits for you
 
-An agent's admin or destructive calls, and calls that reach many machines in a
-short time, wait for your approval on the **Approvals** page. If you don't
-answer within 45 seconds the agent gets a "held for approval" reply with an
-id; it should tell you, and repeat the same call once you have approved it.
-See [[manual-accounts-and-access]] for how approving works, exceptions for a
-trusted agent, and how to turn it off.
+A few calls always ask you first: a change on a sacred machine, erasing
+data for good, revealing a secret, and sending a message as you
+([[manual-trust]]). An agent should say why in plain words (`why=` on
+`rook_call`): you see it on the card. If you don't answer within 45
+seconds the agent gets a "held for approval" reply with the hold's name; it
+should tell you, and repeat the same call once you have answered on your
+phone, by voice or on the **Approvals** page
+([[manual-accounts-and-access]]).
 
 An agent can also check in with you: `rook_approvals` (action `summary` or
-`list`) tells it everything waiting for you (held calls, held job calls,
-huddle cards, pinned questions), each with a name you can say. If you
-switch on **Relays** for its token on the **Tokens** page, it can approve or
-deny an item when you tell it to, quoting your words; your words and the
-conversation are recorded beside the decision. Without that switch, it can
-only tell you to use the Approvals page.
+`list`) tells it everything waiting for you, each with a name you can say.
+With the advanced security plugin on, you can also let it approve or deny
+an item when you tell it to (**Relays** on the **Tokens** page); your words
+are recorded beside the decision.
 
 ## The Rook skill
 

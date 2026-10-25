@@ -34,14 +34,10 @@ Anyone who knows a band's key can join that band and control its machines.
 - **Tokens per agent.** Each agent has its own token, every call is recorded
   under its name, and you can revoke a token at any time
   ([[manual-agents-and-mcp]]).
-- **Risky agent calls wait for you.** When an agent wants to do something
-  admin-level or destructive (update or restart a machine, push config, change
-  secrets or settings), or starts reaching more than 5 machines in 10 minutes,
-  the call is held until you approve it on the **Approvals** page, where it
-  reads as a plain ask: a title, what it is for, who asks, what will happen
-  and the risk, with the technical detail under Explain. A
-  prompt-injected agent cannot run one bad command on every machine at once.
-  People are never held. See [[manual-accounts-and-access]].
+- **A few things always ask you.** Before an agent changes a sacred
+  machine, erases data for good, reveals a secret or sends a message as
+  you, the hub asks you first. Everything else goes and is recorded in the
+  journal. People are never held. See [[manual-trust]].
 - **Permissions and guardrails** limit what agents and jobs may do
   ([[manual-accounts-and-access]], [[manual-jobs]]).
 - **Secrets** keep passwords out of agents' sight and out of logs
@@ -53,13 +49,25 @@ Anyone who knows a band's key can join that band and control its machines.
 
 ## Advanced security
 
-Most agent calls just go, and the journal records them. Only the hard stops
-ask you: a change on a sacred machine, erasing data for good, revealing a
-secret, and sending a message as you ([[manual-trust]]). The **advanced
-security** plugin (Manage > Plugins, off by default) brings back the older,
-stricter holds: admin and destructive calls, workers on the hub's own
-machine, more than 5 machines in 10 minutes, guarded trust entries, relaying
-approvals through agent clients, and votes before merges.
+The **advanced security** plugin (Manage > Plugins, off by default) brings
+back the stricter rules Rook used to have:
+
+- every admin or destructive agent call waits for you, and so do your own
+  hold rules in the policy;
+- commands to a worker on the hub's own machine wait for you;
+- an agent reaching more than 5 machines in 10 minutes waits for you;
+- guarded trust entries ask first, and so do admin actions on anything not
+  on the map;
+- the house agent also asks about anything not easily undone and anything
+  on a family device;
+- agent clients and the huddle chair may relay your approvals
+  ([[manual-accounts-and-access]]);
+- every new hold sends you a message (Telegram, a notification or your
+  phone's voice);
+- merges, deploys and ships need a blind vote of the roles
+  ([[manual-conference-table]]).
+
+Agents can't switch it on or off; only you can.
 
 ## What Rook cannot do yet
 
@@ -68,20 +76,26 @@ approvals through agent clients, and votes before merges.
   Per-machine identity that can shut out a hostile machine is planned.
 - Anyone who can run commands on a worker has the rights of the user the worker
   runs as. Install workers as an ordinary user where you can.
-- Approval holds work at the hub. Calls one worker sends straight to another
-  do not pass the hub and are not held.
-- A worker on the hub machine itself can change the hub's files, approvals
-  included. Rook holds commands to such a worker by default, but it needs to
-  recognise the machine; if it can't (the Approvals page says so), name those
-  workers under Settings. A person with a login on the hub box is trusted
-  either way.
+- The checks on commands look for known patterns. They catch mistakes, but
+  they are not a sandbox: a command they don't recognise still runs (a sacred
+  machine reached by IP address or by an ssh alias Rook doesn't know, a
+  script that deletes files its own way), and the journal shows it.
+- The hub checks calls that pass through it. Calls one worker sends straight
+  to another do not pass the hub and are not checked.
 - A dashboard or account password that you also keep as a band secret can't be
   used to approve held calls, because an agent could sign in with it. The
   Approvals page warns you and disables the buttons.
-- Approving by voice is weaker than the dashboard: anyone near the phone can
-  answer. It is off unless you choose it.
-- A client you let relay your approvals is trusted to pass on your words
-  faithfully; Rook records what it says you said but can't check it (the
-  chair is the exception: it can only quote your own message). Turn it on
-  only for clients you trust, and keep the dashboard-only list strict.
-  Secrets, tokens, policy, settings and job locks are never relayed.
+- Approving by voice is weaker than the dashboard: a voiceprint is not a
+  password. It counts only when the voice is sure it is you, and it is off
+  until you turn it on ([[manual-phone-attention]]).
+- A worker on the hub machine itself can change the hub's files. Commands
+  that name the vault or guardrail files ask you, but that is a pattern
+  check. With advanced security on, every command to such a worker waits
+  for you, if Rook recognises the machine (if it can't, the Approvals page
+  says so; name those workers under Settings). A person with a login on the
+  hub box is trusted either way.
+- With advanced security on, a client you let relay your approvals is
+  trusted to pass on your words faithfully. Rook records what it says you
+  said but can't check it (the chair is the exception: it can only quote
+  your own message). Secrets, tokens, policy, settings and job locks are
+  never relayed.

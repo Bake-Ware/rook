@@ -31,12 +31,11 @@ Turn it on with **Front door** on **Manage > Home agent** (next to Enabled).
 
 ## When it asks you
 
-It protects your attention: it only asks when
+It protects your attention: it only asks you about
 
-- agents disagree and neither the trust map nor its playbook settles it,
-- something is sacred, or guarded (the trust map says ask first),
-- an action can't easily be undone (deleting, wiping, powering off), or
-- nothing covers it.
+- the few things that always ask you ([[manual-trust]]),
+- anything sacred on the trust map, and
+- your own playbook's **Ask me first** rules.
 
 An ask is one line with **Yes**, **No** and **Explain**. Explain gives two or
 three plain sentences; **More** gives the detail. Asks appear on your
@@ -44,9 +43,9 @@ phone's decision card, in `rook_approvals`, and on the dashboard's
 **Decisions** page. After you say yes it acts, then asks once whether to
 remember it ("Next time just restart pianobar without asking?").
 
-When agents disagree and an entry does settle it (for example, Pianobar is
-ship-it), the house agent rules, cites the entry, and logs it without
-asking you.
+When agents disagree, the house agent settles it itself and lists the
+ruling under **Decisions**, where you can overturn it. Only a disagreement
+about something sacred, or one it can't pick a side on, comes to you.
 
 ## What it decided for you
 
@@ -56,7 +55,7 @@ playbook rules it tightened. Each one shows the entry it relied on.
 
 **Overturn** only makes things stricter: the trust entry it cited goes one
 level up (ship-it to guarded, guarded to sacred), or the playbook gets an
-"Ask me first" rule. The action itself is not undone; ask the house agent
+"Ask me first" rule. Guarded only asks you with advanced security on. The action itself is not undone; ask the house agent
 to undo it if it should be.
 
 By voice or from any client: "what did you decide for me?"
@@ -67,6 +66,10 @@ The playbook is the house agent's routing rules, a plain text file you can
 read and edit at the bottom of **Decisions**. Its sections are **Just do
 it**, **Ask me first**, **Send to a coding session**, **Bring in the team**,
 **Just answer** and **Settling disagreements**.
+
+Out of the box, **Ask me first** has one rule: "Anything that spends
+money." The hub already asks about erasing data and sending messages as
+you, so the playbook doesn't need to.
 
 Correct it in conversation:
 

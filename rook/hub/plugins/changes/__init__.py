@@ -156,9 +156,9 @@ class Changes(Plugin):
             return None
 
     def _sacred(self, worker: str) -> bool:
-        """The trust map keeps ``worker`` for the person, by its name and id;
-        a machine that isn't on the band is unsure, so it counts as sacred.
-        A host name only reached over ssh is checked by name."""
+        """The trust map keeps ``worker`` for the person, by its band name and
+        id. A host only reached over ssh (not on the band) is checked by the
+        name used; an IP or an ssh alias Rook doesn't know is not recognised."""
         from ..trust import node_store
         st = node_store(self._node)
         if st is None:

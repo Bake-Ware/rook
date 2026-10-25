@@ -11,9 +11,11 @@ deprecated: false
 # Decisions and alerts on your phone
 
 The Rook app on your phone is the one app Rook may interrupt you with. When
-something waits on you (a held command, a held job step, a huddle card, a
-question an agent pinned), the hub puts a **decision card** on your phone
-with Yes, No and Explain. When an agent has to tell you something now, it
+something waits on you, the hub puts a **decision card** on your phone with
+Yes, No and Explain. Cards are rare: one of the few things that always ask
+you ([[manual-trust]]), a risky change request a huddle couldn't make
+safer, an "Ask me first" rule from your own playbook, or an action card a
+huddle role proposed. When an agent has to tell you something now, it
 sends an **alert**. The hub also notices whether you saw it, so "no answer"
 is not taken for "not seen".
 
@@ -38,8 +40,8 @@ Each card reads the same way, in plain words:
 - **I want to**: one sentence of what will happen, such as "run a read-only
   query on the approvals database on bakenetcanada".
 - **Why**: the agent's own reason, when it gave one.
-- **Risk**: Low, Medium or High and why, such as "Low: looks read-only, but
-  rook-hub is guarded, so changes there ask you".
+- **Risk**: Low, Medium or High and why, such as "Medium: it runs a
+  command", or "High" when it would destroy data.
 
 **Explain** shows the technical detail: the capability, the command or
 arguments, the trust map entry that held it, and the item's id and its
@@ -53,6 +55,8 @@ Some things are never decided from a phone: secrets, tokens, policy,
 settings, job locks and anything on the dashboard-only list (Settings >
 Approvals). Their cards only have Explain, which says to decide them on the
 dashboard. When something is decided elsewhere, its card disappears.
+Other agents (Claude on claude.ai, say) can't answer cards for you unless
+the advanced security plugin is on ([[manual-accounts-and-access]]).
 
 ## Waiting quietly, reminded out loud
 

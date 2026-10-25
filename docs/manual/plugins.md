@@ -48,6 +48,10 @@ Switching a hub plugin is remembered across restarts. Switching on a plugin
 that has an **Enabled** setting turns that on too, unless an environment
 variable decides it.
 
+**Advanced security** is a hub plugin, off by default. On, it brings back
+the stricter holds and the votes before merges and deploys
+([[manual-security]]). Only you can switch it; agents are refused.
+
 ## Marketplace (preview)
 
 The **Marketplace** tab lists plugins from plugin catalogs (an example catalog
