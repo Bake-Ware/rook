@@ -624,7 +624,9 @@ async def test_quiet_hours_hold_reminders(att):
     assert att.phone.reminds == []
     svc = att.att.service
     import datetime as dt
-    noon = dt.datetime(2026, 10, 24, 12, 0).astimezone().timestamp()
+    from zoneinfo import ZoneInfo
+    att.node.settings.set("home.timezone", "America/Chicago", actor="human:op")
+    noon = dt.datetime(2026, 10, 24, 12, 0, tzinfo=ZoneInfo("America/Chicago")).timestamp()
     att.configure(quiet_hours="22:00-07:00")
     assert not svc.quiet_hours(noon)
     assert svc.quiet_hours(noon + 11 * 3600) and svc.quiet_hours(noon - 6 * 3600)
@@ -673,6 +675,27 @@ async def test_the_log_records_cards_and_taps_in_plain_lines(att):
     assert any("Because: a decision for you" in line for line in res["lines"])
     # Never a command's arguments in the log.
     assert not any("systemctl" in line for line in res["lines"])
+
+
+@pytest.mark.asyncio
+async def test_the_log_says_the_persons_local_time(att):
+    import datetime as dt
+    from zoneinfo import ZoneInfo
+    att.att.log("change", "tell", "Change kept: Deploy the hub")
+
+    async def stamp():
+        res = (await att.node.dispatch("attention.log", {"limit": 1}, "agent"))["result"]
+        return res["lines"][0].split(". ", 1)[0], res["rows"][0]["at"]
+
+    def want(at, tz):
+        return dt.datetime.fromtimestamp(at, ZoneInfo(tz)).strftime("%b %-d %-I:%M %p")
+
+    att.node.settings.set("job.timezone", "America/Chicago", actor="human:op")
+    line, at = await stamp()                       # no house agent zone: the jobs' one
+    assert line == want(at, "America/Chicago")
+    att.node.settings.set("home.timezone", "Asia/Tokyo", actor="human:op")
+    line, at = await stamp()                       # the person's zone wins
+    assert line == want(at, "Asia/Tokyo")
 
 
 def test_the_log_keeps_30_days(tmp_path):

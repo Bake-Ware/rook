@@ -117,9 +117,12 @@ class Attention(Plugin):
 
     def _svc_settings(self) -> dict:
         out = dict(self.settings.as_dict())
-        svc = getattr(self._node, "settings", None)
-        with contextlib.suppress(Exception):
-            out["timezone"] = str(svc.get("home.timezone") or "") if svc is not None else ""
+        out["timezone"] = ""
+        for ns in ("home", "job"):      # the person's zone, else the jobs' one
+            with contextlib.suppress(Exception):
+                out["timezone"] = str(self._node.plugin(ns).settings.get("timezone") or "")
+            if out["timezone"].strip():
+                break
         return out
 
     def _trust(self) -> Any:

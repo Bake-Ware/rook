@@ -224,8 +224,9 @@ class Changes(Plugin):
         what = f"{row['id']}: {cr['what']}"
         att = self._plugin("attention")
         if att is not None:
-            att.log("change", outcome, what, cr.get("why") or "", f"{cr['kind']} change: {line}",
-                    row["id"])
+            att.log("change", "ask_now" if outcome == "failed" else "tell",
+                    f"Change {OUTCOME.get(outcome, outcome)}: {what}", cr.get("why") or "",
+                    f"{cr['kind']} change: {line}", row["id"])
         self._journal("change.run", {"id": row["id"], "kind": cr["kind"]},
                       {"ok": outcome in ("kept", "reverted"), "result": {"state": row["state"],
                                                                          "line": line}})
@@ -423,7 +424,7 @@ class Changes(Plugin):
         self.store.add_category(category, _who(p), words)
         att = self._plugin("attention")
         if att is not None:
-            att.log("change", "catalog", f"{category} changes now go as standard", words,
+            att.log("change", "decided", f"{category} changes now go as standard", words,
                     f"by {_who(p)}")
         return {"catalog": self.store.catalog()}
 
@@ -514,7 +515,7 @@ class Changes(Plugin):
                 await self._alert(text, "Change review" if kind == "weekly" else "Changes")
                 att = self._plugin("attention")
                 if att is not None:
-                    att.log("change", "digest", text.split("\n", 1)[0], "", kind)
+                    att.log("change", "tell", text.split("\n", 1)[0], "", kind)
 
     @capability("digest", risk="read")
     def digest(self, weekly: bool = False) -> dict:

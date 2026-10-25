@@ -9,7 +9,9 @@ standard change may do (no sacred machine, no hard stop) was checked by
 A step with ``detach`` runs in its own session on the worker
 (``~/.rook-changes/<cr>/<step>.log`` and ``.rc``) and is polled, so it
 outlives a hub restart: a hub deploy restarts the hub that runs it, and
-:meth:`Runner.resume` picks the CR up where it was.
+:meth:`Runner.resume` picks the CR up where it was. The machines rejoin the
+band after the hub does, so a command waits up to :data:`REJOIN_S` for its
+worker before it counts as failed.
 """
 from __future__ import annotations
 
@@ -23,6 +25,8 @@ log = logging.getLogger("rook.hub.plugins.changes.runner")
 
 DIR = ".rook-changes"
 POLL_S = 10.0
+#: How long a command waits for its worker to (re)join the band, e.g. after a hub restart.
+REJOIN_S = 300.0
 #: The phases in order; a failure in ``scripts`` or ``post`` rolls back.
 PHASES = ("point", "dry_run", "pre", "scripts", "post")
 
@@ -32,13 +36,18 @@ def _tail(text: Any, n: int = 600) -> str:
     return t if len(t) <= n else "…" + t[-n:]
 
 
+def _why(got: dict) -> str:
+    return got.get("error") or f"rc {got.get('rc')}"
+
+
 class Runner:
     def __init__(self, store: Any, node: Callable[[], Any], told: Callable[..., Any],
-                 poll_s: float = POLL_S, clock=time.time) -> None:
+                 poll_s: float = POLL_S, clock=time.time, rejoin_s: float = REJOIN_S) -> None:
         self.store = store
         self._node = node
         self._told = told          # told(cr, outcome, line): the log line, FYI, alert
         self.poll_s = poll_s
+        self.rejoin_s = rejoin_s
         self._clock = clock
         self._tasks: dict[str, asyncio.Task] = {}
 
@@ -53,11 +62,26 @@ class Runner:
             raise ConnectionError(f"{worker} is not on the band")
         return found[0]
 
+    async def _wait_for(self, worker: str) -> str | None:
+        """``worker``'s id once it is on the band; None if it doesn't come back in time."""
+        deadline = self._clock() + self.rejoin_s
+        while True:
+            try:
+                return self._target(worker)
+            except ConnectionError:
+                if self._clock() >= deadline:
+                    return None
+            await asyncio.sleep(self.poll_s)
+
     async def _exec(self, cr: dict, worker: str, cmd: str, timeout: float) -> dict:
         from ...authz import system
         node = self._node()
         try:
-            wid = self._target(worker)
+            wid = await self._wait_for(worker)
+            if wid is None:
+                return {"ok": False, "rc": None, "out": "", "gone": True,
+                        "error": f"{worker} did not come back to the band within "
+                                 f"{self.rejoin_s / 60:g} min"}
             reply = await node.client.call(
                 cap="shell.exec", args={"cmd": cmd, "timeout": timeout}, target=wid,
                 timeout=timeout + 15, identity=f"change:{cr['id']}",
@@ -76,8 +100,14 @@ class Runner:
                         resumed: bool) -> dict:
         base = f"~/{DIR}/{cr['id']}/{name}"
         if resumed:
-            # Cut off by a restart: start it only if it never started.
+            # Cut off by a restart: start it only if it never started (unknown: ask again).
+            until = self._clock() + self.rejoin_s
             seen = await self._exec(cr, step["worker"], f"test -f {base}.log", 30)
+            while seen["rc"] is None and not seen.get("gone") and self._clock() < until:
+                await asyncio.sleep(self.poll_s)
+                seen = await self._exec(cr, step["worker"], f"test -f {base}.log", 30)
+            if seen["rc"] is None:          # still unknown: never start it a second time
+                return seen
             resumed = seen["rc"] == 0
         if not resumed:
             inner = f"bash -c {shlex.quote(cmd)} > {base}.log 2>&1; echo $? > {base}.rc.tmp " \
@@ -98,6 +128,8 @@ class Runner:
                 except (ValueError, IndexError):
                     rc = None
                 return {"ok": rc == 0, "rc": rc, "out": _tail(rest.strip()), "error": ""}
+            if got.get("gone"):
+                return got
             if self._clock() >= deadline:
                 return {"ok": False, "rc": None, "out": "", "error": "timed out"}
             await asyncio.sleep(self.poll_s)
@@ -163,7 +195,13 @@ class Runner:
                     row = self.store.set(ident, state="refused")
                     self._told(row, "refused", f"nothing changed: {where} failed")
                     return row
-                return await self._rollback(cr, f"{where} failed (rc {got['rc']})")
+                if got.get("gone") and rb.get("run") and rb.get("worker") == s["worker"]:
+                    # Its rollback would wait for the same machine: say so, don't try.
+                    row = self.store.set(ident, state="failed", phase="done")
+                    self._told(row, "failed", f"{where}: {got['error']}; how it ended is "
+                                              "unknown and its rollback there could not run")
+                    return row
+                return await self._rollback(cr, f"{where} failed ({_why(got)})")
         row = self.store.set(ident, state="kept", phase="done")
         self._told(row, "kept", "tests passed")
         return row
@@ -180,7 +218,7 @@ class Runner:
             await self.step(cr, "after", i, s)
         if not got["ok"]:
             row = self.store.set(cr["id"], state="failed", phase="done")
-            self._told(row, "failed", f"{why}; the rollback failed too (rc {got['rc']})")
+            self._told(row, "failed", f"{why}; the rollback failed too ({_why(got)})")
             return row
         row = self.store.set(cr["id"], state="rolled_back", phase="done")
         self._told(row, "rolled_back", why)

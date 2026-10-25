@@ -129,7 +129,8 @@ else meanwhile is passed over.
 Every card, reminder and decision (on the phone, by voice) is written as one plain line (what
 happened, why, and how it was decided), kept for 30 days. Agents read it with
 `attention.log`. It keeps the reason, never the content: no message text and
-no command.
+no command. Times are in your time zone (Settings, **Home agent** > **Time
+zone**; if that is blank, the jobs' time zone).
 
 ## Alerts
 

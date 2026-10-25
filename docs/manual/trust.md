@@ -167,6 +167,8 @@ above, or isn't one of the standard kinds is treated as normal.
 Hub updates are standard changes. The hub takes a snapshot first, checks
 that the previous release is still there to go back to, deploys, then
 checks its health and version. If those fail, it rolls back on its own.
+The update restarts the hub, so the change waits up to 5 minutes for the
+machine running it to rejoin the band before it judges the result.
 
 ### The digest
 
