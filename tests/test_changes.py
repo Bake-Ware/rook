@@ -11,6 +11,7 @@ import subprocess
 from types import SimpleNamespace
 
 import pytest
+import pytest_asyncio
 
 from rook.hub.plugins.changes import Changes
 from rook.hub.plugins.changes.model import ChangeError
@@ -59,8 +60,8 @@ class Front:
         return {"id": f"a{len(self.asks)}", "name": f"ask-{len(self.asks)}"}
 
 
-@pytest.fixture
-def ch(tmp_path):
+@pytest_asyncio.fixture
+async def ch(tmp_path):
     client = Client(tmp_path)
     att, front = Attention(), Front()
     plugins = {"trust": SimpleNamespace(store=seeded()), "attention": att,
@@ -72,7 +73,9 @@ def ch(tmp_path):
     p.bind_host(node)
     p.client, p.att, p.front, p.home = client, att, front, tmp_path
     p._runner().poll_s = 0.05
-    return p
+    yield p
+    if p.runner is not None:              # nothing keeps running past the test
+        await p.runner.stop()
 
 
 def cr(**over):
@@ -174,6 +177,7 @@ async def test_only_the_huddles_round_reduces_a_change(ch):
     out = await ch.submit(cr(category="decommission"))           # straight to the card
     (ch.home / "volume.bak").write_text("3\n")
     std = await ch.submit(cr())
+    await _done(ch, std["id"])
     with pytest.raises(ChangeError, match="only the huddle"):
         ch.reduce(out["id"], [std["id"]])
 
