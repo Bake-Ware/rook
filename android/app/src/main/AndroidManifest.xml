@@ -108,6 +108,16 @@
             android:exported="false"
             android:foregroundServiceType="dataSync|mediaProjection|location" />
 
+        <!-- The Rook watch app streams its mic here (WatchBridge); replies go back to the watch. -->
+        <service
+            android:name=".WatchVoiceListener"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.CHANNEL_EVENT" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/rook/voice" />
+            </intent-filter>
+        </service>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
