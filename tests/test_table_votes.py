@@ -22,6 +22,8 @@ from rook.hub.plugins.huddle.service import PERSON
 from tests.test_huddle_chair import _call, _settle, _texts, hub  # noqa: F401
 from tests.test_trust import seeded
 
+pytestmark = pytest.mark.advanced
+
 REPO = "bake-ware/rook"
 BASE_SHA = "b" * 40
 SHA1 = "1" * 40

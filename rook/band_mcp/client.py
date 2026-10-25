@@ -53,12 +53,13 @@ def _denial(decision, target: str | None) -> dict:
 
 
 def _authorize(authz, cap: str, target: str | None, entry: dict | None,
-               identity: str | None, principal, local: bool = False):
+               identity: str | None, principal, local: bool = False, args: dict | None = None):
     """Run E1 (permissions 3.5). Returns the Decision, or None when this
     client has no authorizer (tests, tools that never enforce)."""
     if authz is None:
         return None
-    return authz.check(cap, target, entry, identity=identity, principal=principal, local=local)
+    return authz.check(cap, target, entry, identity=identity, principal=principal, local=local,
+                       args=args)
 
 
 async def _settle(authz, decision, args: dict | None, target: str | None):
@@ -241,7 +242,7 @@ class BandClient:
             from ..hub.authz import BAND_UNAUTHENTICATED
             decision = _authorize(self.authz, msg.get("cap") or "", node.worker_id,
                                   node.entry(), msg.get("identity"), BAND_UNAUTHENTICATED,
-                                  local=True)
+                                  local=True, args=msg.get("args"))
         refused = None
         if decision is not None and not decision.denied:
             decision, refused = await _settle(self.authz, decision, msg.get("args", {}),
@@ -529,7 +530,8 @@ class BandClient:
         decision = _decision
         if decision is None:
             entry = self._local.entry() if local else self.workers.get(target) if target else None
-            decision = _authorize(self.authz, cap, target, entry, identity, principal, local=local)
+            decision = _authorize(self.authz, cap, target, entry, identity, principal, local=local,
+                                  args=args)
         if decision is not None and decision.denied:
             return _denial(decision, target)
         decision, refused = await _settle(self.authz, decision, args, target)
@@ -935,7 +937,7 @@ class MultiBandClient:
         decision = _decision
         if decision is None:
             decision = _authorize(self._authz, cap, target, entry, identity, principal,
-                                  local=local)
+                                  local=local, args=args)
         if decision is not None and decision.denied:
             return _denial(decision, target)
         decision, refused = await _settle(self._authz, decision, args, target)

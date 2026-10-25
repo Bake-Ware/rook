@@ -498,7 +498,10 @@ def clean_lease(raw: Any) -> dict:
 
 OPS = ("set_entry", "delete_entry", "set_unlisted", "add_exception", "end_exception",
        "add_lease", "close_lease", "set_baseline", "decide_proposal", "ack", "confirm",
-       "grant_tool", "revoke_tool")
+       "grant_tool", "revoke_tool", "batch")
+#: Most changes one ``batch`` carries (one proposal that sets the map to a new
+#: model; the person accepts or rejects it whole).
+BATCH_MAX = 20
 #: ``Actor.via`` for a grant the house agent makes because the person asked for
 #: it in the request it is working on (docs/design/persistent-agents.md 3.6).
 PERSON_REQUEST = "person-request"
@@ -795,6 +798,22 @@ class TrustStore:
             before = dict(old)
             old["revoked"] = actor.stamp(now)
             return before, old, g["id"]
+        if op == "batch":
+            if actor.kind != "person":
+                raise TrustError("only the person applies a batch of changes (accept the proposal)")
+            changes = data.get("changes")
+            if not isinstance(changes, list) or not 1 <= len(changes) <= BATCH_MAX:
+                raise TrustError(f"batch: data {{changes: [{{op, data}}, ...]}}, 1 to {BATCH_MAX}")
+            befores, afters = [], []
+            for c in changes:
+                if not isinstance(c, dict) or c.get("op") not in OPS or c.get("op") in (
+                        "batch", "decide_proposal", "ack", "confirm"):
+                    raise TrustError("batch: each change is {op, data} with an op a proposal "
+                                     "may carry")
+                b, a, _ = self._apply(doc, c["op"], c.get("data") or {}, actor, now)
+                befores.append(b)
+                afters.append(a)
+            return befores, afters, "batch"
         if op == "decide_proposal":
             if actor.kind != "person":
                 raise TrustError("only the person accepts or rejects a proposal")
@@ -856,7 +875,7 @@ class TrustStore:
                 or change.get("op") in ("decide_proposal", "ack", "confirm"):
             raise TrustError("change: {op, data} with op one of set_entry, delete_entry, "
                              "set_unlisted, add_exception, end_exception, add_lease, close_lease, "
-                             "grant_tool, revoke_tool")
+                             "grant_tool, revoke_tool, batch (data {changes: [...]})")
         why = _clean_words(why)
         if len(why) < 4:
             raise TrustError("why is required: what you saw that makes this change right "
@@ -886,8 +905,9 @@ class TrustStore:
         return prop
 
     # -- reading for people and agents ---------------------------------------------
-    def summary(self, now: float | None = None) -> str:
-        """A few lines agents get in context."""
+    def summary(self, now: float | None = None, advanced: bool = False) -> str:
+        """A few lines agents get in context (``advanced``: the advanced
+        security plugin is on, so guarded entries ask)."""
         doc = self.current()
         now = self._clock() if now is None else now
         by_level: dict[str, list[str]] = {lv: [] for lv in LEVELS}
@@ -898,11 +918,13 @@ class TrustStore:
                  "its entry)."]
         words = {"sacred": "changes only on the person's direct instruction (you may read, "
                            "propose, prepare)",
-                 "guarded": "ask first (votes later)", "ship-it": "just go"}
+                 "guarded": "ask first" if advanced else "just go (advanced security is off)",
+                 "ship-it": "just go"}
         for lv in ("sacred", "guarded", "ship-it"):
             if by_level[lv]:
                 parts.append(f"{lv}: {', '.join(by_level[lv])}: {words[lv]}.")
-        parts.append(f"Unlisted: {doc.get('unlisted') or 'balanced'}.")
+        if advanced:
+            parts.append(f"Unlisted: {doc.get('unlisted') or 'balanced'}.")
         live = [x for x in doc.get("exceptions") or () if exception_active(x, now)]
         for x in live:
             scope = "everything" if "*" in (x.get("applies_to") or ["*"]) else \
@@ -920,8 +942,9 @@ class TrustStore:
             parts.append("Borrowed now: " + "; ".join(
                 f"{r['resource']}: {r['what']} ({r.get('project') or r['why'][:60]})"
                 for r in borrowed[:6]) + ".")
-        parts.append("Reads and the band's records are always free. Only the person loosens "
-                     "the map (dashboard); propose changes with rook_trust action=propose.")
+        parts.append("Reads and the band's records are always free. Only the person changes "
+                     "the map (dashboard or voice); propose changes with rook_trust "
+                     "action=propose.")
         return " ".join(parts)
 
     def grants(self, role: str = "") -> list[dict]:
@@ -978,6 +1001,15 @@ def describe_change(doc: dict, change: dict, now: float | None = None) -> dict:
     now = time.time() if now is None else now
     op = str((change or {}).get("op") or "")
     data = (change or {}).get("data") or {}
+    if op == "batch":
+        parts = [describe_change(doc, c, now) for c in (data.get("changes") or [])
+                 if isinstance(c, dict)] if isinstance(data.get("changes"), list) else []
+        if not parts:
+            return {"sentence": "Make an empty batch of trust map changes.", "loosens": True,
+                    "sacred": False, "op": op}
+        return {"sentence": " ".join(p["sentence"] for p in parts),
+                "loosens": any(p["loosens"] for p in parts),
+                "sacred": any(p["sacred"] for p in parts), "op": op}
     entries = {e["id"]: e for e in doc.get("entries") or []}
     sacred = False
     # Judge the change exactly as the store will apply it: cleaned the same way

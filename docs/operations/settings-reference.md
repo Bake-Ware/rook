@@ -480,6 +480,12 @@ are set only in the environment or on the command line.
 | `role.session_github_installation` | Session GitHub App installation | hub | str |  | `ROOK_ROLE_SESSION_GITHUB_INSTALLATION` | live |
 | `role.session_github_app_key` | Session GitHub App private key (secret) | hub | str |  | `ROOK_ROLE_SESSION_GITHUB_APP_KEY` | live |
 
+## Security (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `security.enabled` | Advanced security | hub | bool | off | `ROOK_SECURITY_ADVANCED`, `ROOK_SECURITY_ENABLED` | live |
+
 ## Tasks (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |

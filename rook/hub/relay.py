@@ -17,7 +17,10 @@ Four kinds of item wait on a person:
 exactly would happen (one plain sentence), the risk tier, where it came from
 and its age; :func:`summary` turns that into a line short enough to speak.
 
-**Relaying.** An agent may approve or deny an item only when
+**Relaying.** With advanced security off (the default) only the person's
+phone cards, voice and the house agent relay; agent clients (``rook_approvals``)
+and the huddle chair relay with it on. An identity may approve or deny an
+item only when
 
 1. its identity is one the person enabled ("May relay my approvals" on the
    dashboard's Tokens page; :meth:`ApprovalQueue.set_relayer`). Nothing an
@@ -242,6 +245,12 @@ class Relay:
             from .approvals import Config
             return Config().relay_dashboard_only
         return ap.config().relay_dashboard_only
+
+    def advanced(self) -> bool:
+        """Advanced security is on: agent clients and the huddle chair may relay
+        too. Off, only the phone's cards, voice and the house agent relay."""
+        from .plugins.security import for_node
+        return for_node(self._node())
 
     def may_relay(self, principal: str) -> bool:
         ap = self.approvals()

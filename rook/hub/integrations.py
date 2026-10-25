@@ -594,7 +594,7 @@ class ChatIntegration(Plugin):
         return None, None, False
 
     def authorize(self, cap: str, worker: str, user: Inbound | None = None, *,
-                  wait_ok: bool = False):
+                  wait_ok: bool = False, args: dict | None = None):
         """``(decision, target_id, error)``. Fails closed: anything but an
         ``allow`` (or ``off`` for read/write) is refused, so a ``would_deny``
         in audit mode is still a no for an integration."""
@@ -604,7 +604,7 @@ class ChatIntegration(Plugin):
         wid, entry, local = self._resolve(worker)
         if wid is None:
             return None, None, f"no live worker named {worker!r}"
-        d = authz.check(cap, wid, entry, principal=self.principal(user), local=local)
+        d = authz.check(cap, wid, entry, principal=self.principal(user), local=local, args=args)
         # A held call goes on to the band client, which waits for a person to
         # approve it (permissions 3.11) before sending anything.
         ok = d.decision == "allow" or (wait_ok and d.held) \
@@ -691,7 +691,7 @@ class ChatIntegration(Plugin):
             return "args must be a JSON object"
         if not isinstance(cargs, dict):
             return "args must be a JSON object"
-        d, wid, err = self.authorize(cap, worker, m, wait_ok=True)
+        d, wid, err = self.authorize(cap, worker, m, wait_ok=True, args=cargs)
         if err:
             return err
         client = self._node.client

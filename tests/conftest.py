@@ -52,6 +52,12 @@ def _approvals_off_unless_asked(request, monkeypatch):
         monkeypatch.setenv("ROOK_APPROVALS", "0")
     else:
         monkeypatch.delenv("ROOK_APPROVALS", raising=False)
+    # Advanced security (rook/hub/plugins/security) is off by default; tests of
+    # the guardrails it carries are marked ``advanced``.
+    if request.node.get_closest_marker("advanced") is None:
+        monkeypatch.delenv("ROOK_SECURITY_ADVANCED", raising=False)
+    else:
+        monkeypatch.setenv("ROOK_SECURITY_ADVANCED", "1")
 
 
 def pytest_configure(config):
@@ -59,6 +65,10 @@ def pytest_configure(config):
         "markers",
         "approvals: run with approval holds on (the shipped default); every other test "
         "runs with ROOK_APPROVALS=0")
+    config.addinivalue_line(
+        "markers",
+        "advanced: run with the advanced security plugin on (blanket holds, guarded trust, "
+        "votes, client relays, the shell read-only guess)")
     config.addinivalue_line(
         "markers",
         "integration: needs a running test hub (scripts/test-hub.sh); opt-in "

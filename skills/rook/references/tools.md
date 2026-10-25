@@ -50,7 +50,7 @@ The tables are generated from the code by `tools/gen_skill_reference.py`; don't 
 | `rook_project` | action='list', band?, id?, query?, data?, request_id? | Projects (outcomes) under concepts: list/search/get/create/update/link. create data {title, body, parent: con… |
 | `rook_secret` | action='list', name?, value?, description? | Vault: list (names only) \| get name (logged) \| set name value description \| delete name \| log name?. |
 | `rook_task` | action='deck', band?, id?, query?, data?, request_id? | Tasks. deck (id=project narrows): in progress with claimants and latest handoff, blocked, paused, todo, recen… |
-| `rook_trust` | action='summary', data? | Hub-enforced trust map: sacred (person only), guarded (ask), ship-it (go). summary\|get\|history\|check data {ca… |
+| `rook_trust` | action='summary', data? | Hub-enforced trust map: sacred asks the person first; the rest go. summary\|get\|history\|check data {cap, worke… |
 | `rook_whoami` | — | Your identity as this hub records it (agent_id, key_id, kind, identity). |
 | `rook_workers` | name?, cap_prefix?, online?, fields? | Workers on the band. |
 <!-- END GENERATED: mcp-tools -->
@@ -193,7 +193,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `trust.get` | section='' | read | The trust map: summary (what agents get in context) and the map; section: entries\|exceptions\|baseline\|ledger\|… |
 | `trust.history` | limit=30, entry='' | read | Changes to the trust map, newest first: who, when, the person's words, before and after (entry: one entry's). |
 | `trust.propose` | change?, why='' | write | Ask the person to change the trust map: change {op, data} (set_entry, delete_entry, set_unlisted, add_excepti… |
-| `trust.tighten` | op, data?, words='', session='' | write | Make the trust map stricter (house agent or a person): op set_entry (new guarded/sacred entry, or a higher le… |
+| `trust.tighten` | op, data?, words='', session='' | write | Make the trust map stricter (a person only; agents, roles and the house agent are refused): op set_entry (new… |
 | `updates.apply_hub` | tag | admin | Update the hub to release `tag` (restarts it). |
 | `updates.check` | — | admin | Check GitHub for new releases now. |
 | `updates.history` | n=30 | read | Recent update events: hub updates, rollouts, rollbacks, APK publishes. |
@@ -273,7 +273,7 @@ Tasks, projects and concepts. Use `rook_task(action="deck")` to see what is on; 
 When the Telegram integration is on: `telegram.send` (text) posts to the configured chat; `telegram.status` shows whether it is connected. Prefer `notify.send` to reach every configured channel.
 
 ### trust map
-The hub enforces a trust map: each project, host, repo or resource is `sacred` (changes only on the person's direct instruction; you may read, propose and prepare), `guarded` (ask first; votes later) or `ship-it` (just go). A held call cites its entry. `rook_trust(action="summary")` before acting on something you are unsure of; `action="check", data={"cap":…, "worker":…}` gives the ruling. Never try to get around a trust hold. To change the map, `action="propose", data={"change": {"op": "set_entry", "data": {...}}, "why": …}`: the person decides on the dashboard. Only the person loosens it.
+The hub enforces a trust map: a `sacred` host, project, repo or resource changes only after the person says so (you may read, propose and prepare); `guarded` and `ship-it` entries just go unless the advanced security plugin is on. A held call cites its entry. `rook_trust(action="summary")` before acting on something you are unsure of; `action="check", data={"cap":…, "worker":…}` gives the ruling. Never try to get around a trust hold. To change the map, `action="propose", data={"change": {"op": "set_entry", "data": {...}}, "why": …}`: the person decides on the dashboard. Only the person changes it; a proposal that only makes it stricter is refused.
 
 ### updates
 `updates.status` on worker `rook`: hub version vs the newest release, workers behind, the running rollout. Applying updates (`updates.apply_hub`, `updates.prepare_hub`, `updates.rollout`) is for operators: ask the person who runs the hub first.

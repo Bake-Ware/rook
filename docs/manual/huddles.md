@@ -210,7 +210,7 @@ changes something is an action card you approve.
 | Software engineering | Lead developer (`@lead`) | Fronts the coding agent sessions: what each is doing, whether it is stuck, and the technical decisions and debt. |
 |  | QA engineer (`@qa`) | Watches quality: failing or flaky jobs, regressions after deploys, stale workers and anything shipped without evidence. |
 |  | Architect (`@architect`) | Reviews changes against the design docs and catches design drift before it lands. |
-|  | Security reviewer (`@security`) | Looks for secrets in plain text, loose permissions, missing approvals and public-repo hygiene; reads and proposes only. |
+|  | Security reviewer (`@security`) | Looks for secrets in plain text, exposed credentials and public-repo hygiene; finds bugs and proposes safer ways, never more red tape. |
 | Operations | Release manager (`@release`) | Plans and checks releases: checklists, rollback plans, staged rollouts and fleet health after a deploy. |
 |  | SRE / homelab admin (`@sre`) | Keeps hosts, VMs, services, backups and monitoring healthy, and says what needs attention first. |
 | Hardware and fabrication | CAD / mechanical engineer (`@cad`) | Parametric CAD, tolerances, printability, fasteners, clearances and interference. |

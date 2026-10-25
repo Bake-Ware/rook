@@ -423,7 +423,7 @@ class RolesPlugin(Plugin):
                 return await self._needs_approval(role, need, approval, {
                     "kind": "call", "summary": why or f"@{role['id']} asks to run {cap} on {name}",
                     "worker": name, "cap": cap, "args": args})
-            refusal = self._policy(role, cap, wid, entry)
+            refusal = self._policy(role, cap, wid, entry, args)
         if refusal:
             reply = {"ok": False, "denied": refusal, "error": refusal}
             self.journal(role, cap, name, args, reply)
@@ -473,14 +473,15 @@ class RolesPlugin(Plugin):
         except Exception:  # noqa: BLE001 - only a hint
             return ""
 
-    def _policy(self, role: dict, cap: str, wid: str, entry: dict | None) -> str:
+    def _policy(self, role: dict, cap: str, wid: str, entry: dict | None,
+                args: dict | None = None) -> str:
         authz = getattr(getattr(self._node, "client", None), "authz", None)
         if authz is None:
             return ""
         try:
             d = authz.check(cap, wid, entry, identity=self.identity(role),
                             principal=self.principal(role),
-                            local=wid == getattr(self._node, "worker_id", None))
+                            local=wid == getattr(self._node, "worker_id", None), args=args)
         except Exception:  # noqa: BLE001 - when unsure, refuse
             log.exception("roles: policy check failed for %s", cap)
             return f"policy check failed for {cap}"
@@ -1118,6 +1119,7 @@ class RolesPlugin(Plugin):
                          "done, say exactly what (which cap on which worker, with what) so the "
                          "person can approve it.")
         lines.append(TIER_TEXT)
+        lines.append(NO_RATCHET_TEXT)
         from ..trust import summary_text
         trust = summary_text(self._node)
         if trust:
@@ -1534,6 +1536,13 @@ TIER_TEXT = (
     "The hub, not you, decides what needs a person: merges, deploys, deletes outside your "
     "workspace, settings, secrets, jobs and anything on a protected device always do. When you "
     "call one with rook_call it becomes an action card for the person; do not retry it.")
+
+#: Every role, whatever its charter (change-management-design-20261025).
+NO_RATCHET_TEXT = (
+    "No ratchet: never add or tighten guardrails, holds, trust entries, policy or approval "
+    "rules, and never ask for new ones; only the person does. Reviewing a change, find its bugs "
+    "and propose safer ways to do it (soft delete, narrow scope, stage it first, time-box it, "
+    "snapshot first); don't block it or add red tape.")
 
 
 def _mask(reply: dict) -> dict:

@@ -17,11 +17,11 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from rook.band_mcp.client import BandClient
 from rook.hub import approvals as A
-from rook.hub.approval_contact import Contact, message, question, voice_eligible, voice_verdict
+from rook.hub.plugins.security.contact import Contact, message, question, voice_eligible, voice_verdict
 from rook.hub.authz import Authorizer, current_principal, principal_for_user, system
 from rook.hub.policy import DEFAULT_POLICY, Policy, PolicyError, PolicyStore, Principal, Target
 
-pytestmark = pytest.mark.approvals
+pytestmark = [pytest.mark.approvals, pytest.mark.advanced]
 
 AGENT = Principal("token:agent-1", "token", "agent", label="claude code")
 OPERATOR_TOKEN = Principal("token:ops", "token", "operator", label="ops")
@@ -30,7 +30,7 @@ OWNER = principal_for_user({"id": "u1", "username": "alice"}, True)
 MEMBER = principal_for_user({"id": "u2", "username": "bob"}, False)
 TELEGRAM = Principal("integration:telegram", "integration", "integration")
 
-FAST = A.Config(wait_secs=0.6, contact=())
+FAST = A.Config(wait_secs=0.6, contact=(), advanced=True)
 
 
 def cfg(**kw):
@@ -162,11 +162,14 @@ def test_failing_open_on_a_policy_crash_still_holds(tmp_path, monkeypatch):
     assert check(az, "customcap.add", principal=OWNER).decision == "error_allow"
 
 
-def test_settings_and_policy_changes_by_agents_are_held(tmp_path):
+def test_settings_changes_by_agents_are_held_and_guardrails_refused(tmp_path):
     az = authorizer(tmp_path)
-    for cap in ("settings.set", "settings.reset", "policy.set", "secret.get", "token.admin"):
+    for cap in ("settings.set", "settings.reset", "secret.get"):
         d = check(az, cap, principal=OPERATOR_TOKEN, local=True)
         assert d.held, cap
+    for cap in ("policy.set", "token.admin"):                   # no ratchet: a person's alone
+        d = check(az, cap, principal=OPERATOR_TOKEN, local=True)
+        assert d.denied and d.rule == "hardstop:guardrail", cap
     assert not check(az, "settings.set", principal=OWNER, local=True).held
 
 

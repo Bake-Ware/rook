@@ -1,5 +1,5 @@
-"""``trust.*``: the trust map, read by agents, proposed to, tightened by the
-house agent (worker ``rook``; :mod:`rook.hub.trust`, docs/design/trust.md).
+"""``trust.*``: the trust map, read by agents and proposed to (worker
+``rook``; :mod:`rook.hub.trust`, docs/design/trust.md).
 
 * ``trust.get`` (read): the summary agents get in context, and the map
   itself (entries, exceptions, the borrowed-state ledger, pending proposals).
@@ -7,12 +7,12 @@ house agent (worker ``rook``; :mod:`rook.hub.trust`, docs/design/trust.md).
   repository and branch) with its citation, as the hub would rule it.
 * ``trust.history`` (read): who changed what, when, in whose words.
 * ``trust.propose`` (write): any agent asks the person for a change; it waits
-  on the dashboard's Trust page. Nothing changes until the person says so.
-* ``trust.tighten`` (write): the house agent (or a person) makes the map
-  stricter: raise a level, add a guarded or sacred entry, make unlisted
-  stricter, end an exception early. Logged, and shown on the Trust page until
-  the person acknowledges it. Loosening is refused: only the person loosens,
-  on the dashboard.
+  on the dashboard's Trust page. Nothing changes until the person says so. A
+  change that only makes the map stricter is refused (no ratchet: only the
+  person adds guardrails); ``batch`` carries several changes as one.
+* ``trust.tighten`` (write): a person makes the map stricter through a cap
+  (raise a level, add a guarded or sacred entry, make unlisted stricter, end
+  an exception early). Agents, roles and the house agent are refused.
 
 The ``rook_trust`` MCP tool routes to all five.
 """
@@ -26,22 +26,15 @@ from ...trust import Actor, TrustError, store_for
 ACTIONS = ("summary", "get", "check", "history", "propose", "tighten")
 ERRORS = (ValueError, KeyError, TypeError, PermissionError, LookupError)
 TIGHTEN_OPS = ("set_entry", "set_unlisted", "end_exception")
+#: No ratchet (change-management-design-20261025): agents and huddle roles
+#: never add or tighten guardrails; only the person does.
+NO_RATCHET = ("only the person adds or tightens guardrails (Manage > Trust, or by voice); "
+              "agents and roles never do. If you think one is needed, say so in your report")
 
 
 def _caller():
     from ...authz import current_principal
     return current_principal.get()
-
-
-def _house() -> bool:
-    """The house agent itself (its own in-process calls), never one of its roles."""
-    try:
-        from ....band_mcp import attribution
-        att = attribution.current.get()
-    except Exception:  # noqa: BLE001 - the bridge is optional
-        return False
-    aid = str(getattr(att, "agent_id", "") or "")
-    return getattr(att, "kind", "") == "home" and aid.startswith("home:") and "/role:" not in aid
 
 
 def node_store(node):
@@ -55,11 +48,16 @@ def node_store(node):
     return getattr(plugin, "store", None)
 
 
+def _advanced(node) -> bool:
+    from ..security import for_node
+    return for_node(node)
+
+
 def summary_text(node) -> str:
     """The trust summary for an agent's context, or "" without a map."""
     try:
         st = node_store(node)
-        return st.summary() if st is not None else ""
+        return st.summary(advanced=_advanced(node)) if st is not None else ""
     except Exception:  # noqa: BLE001 - context is best effort
         return ""
 
@@ -75,14 +73,15 @@ class Trust(Plugin):
                       "trust.propose {change {op, data}, why}, trust.tighten: see rook_trust.",
     }
     SKILL = ("### trust map\n"
-             "The hub enforces a trust map: each project, host, repo or resource is `sacred` "
-             "(changes only on the person's direct instruction; you may read, propose and "
-             "prepare), `guarded` (ask first; votes later) or `ship-it` (just go). A held call "
+             "The hub enforces a trust map: a `sacred` host, project, repo or resource changes "
+             "only after the person says so (you may read, propose and prepare); `guarded` and "
+             "`ship-it` entries just go unless the advanced security plugin is on. A held call "
              "cites its entry. `rook_trust(action=\"summary\")` before acting on something you "
              "are unsure of; `action=\"check\", data={\"cap\":…, \"worker\":…}` gives the ruling. "
              "Never try to get around a trust hold. To change the map, "
              "`action=\"propose\", data={\"change\": {\"op\": \"set_entry\", \"data\": {...}}, "
-             "\"why\": …}`: the person decides on the dashboard. Only the person loosens it.\n")
+             "\"why\": …}`: the person decides on the dashboard. Only the person changes it; a "
+             "proposal that only makes it stricter is refused.\n")
 
     def __init__(self) -> None:
         super().__init__()
@@ -113,7 +112,7 @@ class Trust(Plugin):
                 raise ValueError("section: entries, exceptions, baseline, ledger, proposals or "
                                  "notices")
             return {"version": doc["version"], section: doc.get(section) or []}
-        return {"summary": self.store.summary(), "map": doc}
+        return {"summary": self.store.summary(advanced=_advanced(self._node)), "map": doc}
 
     @capability("check", risk="read")
     def check(self, cap: str = "", worker: str = "", repo: str = "", branch: str = "",
@@ -126,7 +125,10 @@ class Trust(Plugin):
                                 if cap else "admin")
         r = self.store.rule(cap, t, (), worker=("rook" if on_hub else str((entry or {}).get(
             "name") or worker)), on_hub=on_hub, repo=repo, branch=branch, project=project)
-        return {**r.public(), "cap_tier": t}
+        out = {**r.public(), "cap_tier": t}
+        if out["tier"] == "ask" and not _advanced(self._node):
+            out.update(tier="go", note="guarded and unlisted ask only with advanced security on")
+        return out
 
     def _entry(self, worker: str) -> dict | None:
         roster = dict(getattr(getattr(self._node, "client", None), "workers", {}) or {})
@@ -144,9 +146,13 @@ class Trust(Plugin):
     # -- writes ----------------------------------------------------------------
     @capability("propose", risk="write")
     def propose(self, change: dict | None = None, why: str = "") -> dict:
-        """Ask the person to change the trust map: change {op, data} (set_entry, delete_entry, set_unlisted, add_exception, end_exception, add_lease, close_lease) and why. It waits on the dashboard's Trust page."""
+        """Ask the person to change the trust map: change {op, data} (set_entry, delete_entry, set_unlisted, add_exception, end_exception, add_lease, close_lease, or batch {changes: [...]}) and why. It waits on the dashboard's Trust page. A change that only makes the map stricter is refused: only the person adds guardrails."""
         p = _caller()
         who = (getattr(p, "label", "") or getattr(p, "id", "")) if p is not None else "unknown"
+        if getattr(p, "kind", "") != "human":
+            from ...trust import describe_change
+            if not describe_change(self.store.current(), change or {}).get("loosens", True):
+                raise PermissionError(NO_RATCHET)
         try:
             prop = self.store.propose(change or {}, by=who, principal=getattr(p, "id", "") or "",
                                       why=why)
@@ -158,21 +164,15 @@ class Trust(Plugin):
     @capability("tighten", risk="write")
     def tighten(self, op: str, data: dict | None = None, words: str = "",
                 session: str = "") -> dict:
-        """Make the trust map stricter (house agent or a person): op set_entry (new guarded/sacred entry, or a higher level), set_unlisted (stricter), end_exception; words: the person's own words that asked for it. Logged and shown to the person."""
+        """Make the trust map stricter (a person only; agents, roles and the house agent are refused): op set_entry (new guarded/sacred entry, or a higher level), set_unlisted (stricter), end_exception; words: the person's own words that asked for it. Logged and shown to the person."""
         p = _caller()
         if op not in TIGHTEN_OPS:
             raise ValueError("tighten: op one of " + ", ".join(TIGHTEN_OPS))
-        if _house():
-            kind = "house"
-        elif p is not None and getattr(p, "kind", "") == "human" and getattr(p, "verified", False):
+        if p is not None and getattr(p, "kind", "") == "human" and getattr(p, "verified", False):
             kind = "house"   # a person through a cap: tighten-only too; loosening is the dashboard's
         else:
-            raise PermissionError("only the house agent tightens the trust map directly; propose "
-                                  "the change (rook_trust action=propose) and the person decides")
-        who = (getattr(p, "label", "") or getattr(p, "id", "")) if p is not None else "house agent"
-        if _house():
-            from ....band_mcp import attribution
-            who = str(getattr(attribution.current.get(), "label", "") or "house agent")
+            raise PermissionError(NO_RATCHET)
+        who = getattr(p, "label", "") or getattr(p, "id", "")
         try:
             return self.store.change(op, data or {}, Actor(kind, who,
                                                            principal=getattr(p, "id", "") or "",
@@ -183,9 +183,9 @@ class Trust(Plugin):
     # -- MCP -------------------------------------------------------------------
     def mcp_tools(self, invoke):
         async def rook_trust(action: str = "summary", data: dict | None = None) -> str:
-            """Hub-enforced trust map: sacred (person only), guarded (ask), ship-it (go).
+            """Hub-enforced trust map: sacred asks the person first; the rest go.
             summary|get|history|check data {cap, worker}|{repo, branch}|propose data
-            {change {op, data}, why}|tighten (house agent)."""
+            {change {op, data}, why} (never stricter)."""
             d = data if isinstance(data, dict) else {}
             try:
                 if action == "summary":

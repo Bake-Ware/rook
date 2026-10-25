@@ -395,6 +395,7 @@ def leaked(tmp_path):
 @pytest.mark.asyncio
 async def test_forward_path_still_works_and_everything_else_is_masked(tmp_path, monkeypatch):
     monkeypatch.setenv("ROOK_CHAT_NEW_ROOMS", "1")
+    monkeypatch.setenv("ROOK_APPROVALS_WAIT_SECS", "0")
     async with mcp_session(tmp_path, monkeypatch) as env:
         assert (await env.tool('rook_secret', action='set', name='pw', value=PW))['ok']
         assert (await env.tool('rook_secret', action='set', name='tok', value=TOKEN))['ok']
@@ -420,8 +421,9 @@ async def test_forward_path_still_works_and_everything_else_is_masked(tmp_path, 
         jr = await env.tool('rook_journal', call_id=raw['id'])
         assert TOKEN not in json.dumps(jr) and '{{secret:tok}}' in json.dumps(jr)
 
-        # The audited raw read still returns the value.
-        assert (await env.tool('rook_secret', action='get', name='tok'))['value'] == TOKEN
+        # The audited raw read returns the value once a person approves it (a hard stop).
+        from tests.test_vault import get_secret
+        assert (await get_secret(env, 'tok'))['value'] == TOKEN
 
         # Chat, handoffs, knowledge and task attrs written by an agent.
         room = (await env.tool('rook_chat_start', title='ops'))['room']

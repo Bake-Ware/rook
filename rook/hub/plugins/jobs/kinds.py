@@ -348,7 +348,7 @@ def notify_call(via: str, text: str, title: str = "Rook",
     """``(cap, args)`` of a one-way message over ``via`` (:data:`VIAS`):
     ``telegram`` is the hub's ``notify.send`` (on worker ``rook``), the others
     run on a phone worker. Shared with the approval contact
-    (rook/hub/approval_contact.py)."""
+    (rook/hub/plugins/security/contact.py)."""
     cap = VIAS[via]
     if via == "telegram":
         return cap, {"text": text, "channel": channel}

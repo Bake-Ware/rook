@@ -4,6 +4,8 @@ title: Keeping your machines safe
 order: 22
 features:
   - features/security
+  - plugin/hub/security
+  - settings/security
 since: 0.1.0
 deprecated: false
 ---
@@ -48,6 +50,16 @@ Anyone who knows a band's key can join that band and control its machines.
   from one address, the hub refuses that address for a while ("Too many
   attempts, try again in N seconds"), longer each time. A hub you reach from
   the internet should still sit behind HTTPS (a reverse proxy or tunnel).
+
+## Advanced security
+
+Most agent calls just go, and the journal records them. Only the hard stops
+ask you: a change on a sacred machine, erasing data for good, revealing a
+secret, and sending a message as you ([[manual-trust]]). The **advanced
+security** plugin (Manage > Plugins, off by default) brings back the older,
+stricter holds: admin and destructive calls, workers on the hub's own
+machine, more than 5 machines in 10 minutes, guarded trust entries, relaying
+approvals through agent clients, and votes before merges.
 
 ## What Rook cannot do yet
 
