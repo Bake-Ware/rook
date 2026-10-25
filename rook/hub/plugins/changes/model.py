@@ -170,9 +170,13 @@ def checklist(cr: dict, *, catalog: tuple | list, sacred: Any) -> list[str]:
     if cr["kind"] == "emergency" and cr["fix"] not in STANDARD_FIXES:
         out.append(f"fix {cr['fix'] or '(none)'} is not a standard fix "
                    f"({', '.join(STANDARD_FIXES)})")
-    for m in cr["machines"]:
-        if sacred(m):
-            out.append(f"{m} is sacred: changes there ask the person first")
+    return out + stops(cr, sacred)
+
+
+def stops(cr: dict, sacred: Any) -> list[str]:
+    """The hard stops in a CR (rook/hub/hardstops.py): only the person's own Yes runs it."""
+    out = [f"{m} is sacred: changes there ask the person first" for m in cr["machines"]
+           if sacred(m)]
     for worker, cmd in commands(cr):
         why = hardstops.stop("shell.exec", {"cmd": cmd})
         if why:

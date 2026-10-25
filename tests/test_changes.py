@@ -13,8 +13,10 @@ from types import SimpleNamespace
 import pytest
 import pytest_asyncio
 
+from rook.hub.authz import current_principal
 from rook.hub.plugins.changes import Changes
 from rook.hub.plugins.changes.model import ChangeError
+from rook.hub.policy import Principal
 from tests.test_huddle_chair import hub  # noqa: F401
 from tests.test_trust import seeded
 
@@ -150,12 +152,21 @@ async def test_what_is_not_standard_goes_to_the_person_as_one_card(ch, over, why
     assert out["state"] == "asked" and out["kind"] == "normal"
     assert any(why in c for c in out["checks"])
     assert [a["kind"] for a in ch.front.asks] == ["change"]
+    assert not ch.att.sent                       # the card is the one copy (no alert)
     assert not ch.client.calls                                       # nothing ran
     (ch.home / "volume.bak").write_text("3\n")
     if over.get("category"):
         res = await ch.decided(out["id"], True, "Bake")
         assert res["ok"]
         assert (await _done(ch, out["id"]))["state"] == "kept"
+
+
+@pytest.mark.asyncio
+async def test_with_the_house_agent_off_the_person_still_hears_of_a_change(ch):
+    ch._plugin("home").enabled = lambda: False
+    out = await ch.submit(cr(category="decommission"))
+    assert out["state"] == "asked" and not ch.front.asks
+    assert [(u, t) for u, t, _ in ch.att.sent] == [("normal", "Change needs you")]
 
 
 @pytest.mark.asyncio
@@ -299,6 +310,26 @@ async def test_on_a_real_hub_a_normal_change_reaches_the_house_agents_card(hub, 
     front = h.node.plugin("home").front
     ask, = [a for a in front.store.asks("open") if a["kind"] == "change"]
     assert ask["action"] == {"change": out["result"]["id"]}
+    # A hard stop in it (erasing for good): the person's own tap, judged now (rook/hub/relay.py own_tap).
+    sacred = await h.node.dispatch("change.submit", {"data": cr(
+        scripts=[{"worker": "cachyrig", "run": "dropdb music"}])}, "token:claude")
+    items = {i["id"]: i for i in front.relay_items()}
+    assert items[ask["id"]]["hard_stop"] is False
+    hard, = [i for i in items.values() if i["id"] != ask["id"]]
+    assert hard["hard_stop"] is True and sacred["result"]["state"] == "asked"
     res = await front.answer(ask["id"], "no", by="Bake", quote="no, not now")
     assert "Dropped" in res["note"]
     assert changes.store.get(out["result"]["id"])["state"] == "declined"
+    # Decided on the dashboard instead: the same record, so the card closes too.
+    out = await h.node.dispatch("change.submit", {"data": cr(category="decommission")},
+                                "token:claude")
+    bake = Principal("human:bake", "human", "owner", ("human:owner",), label="user:bake")
+    tok = current_principal.set(bake)
+    try:
+        res = await h.node.dispatch("change.decide", {"id": out["result"]["id"], "yes": False},
+                                    "user:bake")
+    finally:
+        current_principal.reset(tok)
+    assert res["ok"] and res["result"]["answer"] == "no", res
+    row = changes.store.get(out["result"]["id"])
+    assert row["state"] == "declined" and front.store.find_ask(row["record"]["ask"])["state"] == "no"

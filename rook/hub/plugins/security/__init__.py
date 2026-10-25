@@ -11,8 +11,8 @@ setting ``security.enabled``). On, it restores that behaviour exactly:
 * the trust map's ``guarded`` level and the ``balanced`` unlisted default
   (core keeps only ``sacred``);
 * the shell read-only guess on an ask's Risk line (:mod:`.shell`);
-* relaying approvals from agent clients (``rook_approvals``) and from the
-  huddle chair;
+* relays from the huddle chair, and only from ticked agent clients (off:
+  any client may relay the person's quoted words, never on a hard stop);
 * blind merge, deploy and ship votes at the conference table.
 
 Off, the hub keeps only the hard stops (rook/hub/hardstops.py) and change
@@ -107,8 +107,8 @@ class AdvancedSecurity(Plugin):
                 label="Advanced security",
                 help="Off: only the hard stops ask you (changes on sacred machines, erasing data "
                      "for good, revealing a secret, sending as you). On: also admin/destructive, "
-                     "hub-machine and spread holds, guarded trust entries, relays from agent "
-                     "clients and blind votes before merges and deploys."),
+                     "hub-machine and spread holds, guarded trust entries, relays only from agent "
+                     "clients you tick and blind votes before merges and deploys."),
     )
 
 

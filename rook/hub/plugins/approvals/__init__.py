@@ -5,14 +5,10 @@ decisions (worker ``rook``; :mod:`rook.hub.relay`, permissions.md 3.12).
   waiting for approval and pinned huddle question, with a speakable name,
   who asked, what exactly would happen, the risk tier, where it came from and
   its age; ``summary`` is a line short enough to speak.
-* ``approvals.relay`` (write): approve or deny one item on the person's
-  behalf. Only an identity the person enabled on the dashboard (Tokens > May
-  relay my approvals) may, only with ``relayed_by {who, quote, session}``,
-  and never for a dashboard-only item. Every relayed decision is recorded
-  (append-only) and shown beside the item.
-
-Listing is for the same identities (and people): the list shows the
-commands agents are waiting to run.
+* ``approvals.relay`` (write): record the person's own decision on one item
+  with ``relayed_by {who, quote, session}``, by the rules in
+  :mod:`rook.hub.relay` (never a hard stop; with advanced security on, only
+  clients they ticked list and relay). Recorded append-only beside the item.
 
 The ``rook_approvals`` MCP tool routes to both.
 """
@@ -21,13 +17,12 @@ from __future__ import annotations
 import json
 
 from ....core.plugin import Plugin, capability, place
-from ...relay import KINDS, Relay, RelayError, summary
+from ...relay import KINDS, Relay, RelayError, is_client, summary
 
 ACTIONS = ("list", "summary", "approve", "deny")
 ERRORS = (ValueError, KeyError, TypeError, PermissionError, LookupError)
-NOT_ENABLED = ("{who} may not see or relay the person's approvals: they turn this on for a client "
-               "on the dashboard (Tokens > May relay my approvals). Until then they decide on the "
-               "dashboard's Approvals page")
+NOT_ENABLED = ("{who} may not see or relay the person's approvals: with advanced security on, "
+               "they turn this on for a client on the dashboard (Tokens > May relay my approvals)")
 
 
 def _caller():
@@ -53,12 +48,13 @@ class Approvals(Plugin):
              "`rook_approvals(action=\"summary\")` says what is waiting on the person (held calls, "
              "held job calls, huddle cards, pinned questions); `action=\"list\"` gives each item's "
              "name, who asked, what exactly would happen, risk, source and age. Read it back "
-             "tersely: count, then name + one line each. Only when the person has enabled your "
-             "client (Tokens > May relay my approvals) and tells you their decision, relay it: "
+             "tersely: count, then name + one line each. When the person tells you their "
+             "decision (also on something you did on their word), record it: "
              "`rook_approvals(action=\"approve\"|\"deny\", item=<name or id>, relayed_by={\"who\": "
              "<person>, \"quote\": <their exact words>, \"session\": <conversation URL or id>}, "
              "reason=<why, for a deny>)`. Never relay your own judgement, never decide items "
-             "they did not name, and leave dashboard-only items (relayable: false) to them.\n")
+             "they did not name, and leave held calls and dashboard-only items to them; withdraw "
+             "your own question that no longer needs them (rook_huddle withdraw).\n")
 
     def __init__(self) -> None:
         super().__init__()
@@ -71,7 +67,7 @@ class Approvals(Plugin):
     def _may_see(self, p) -> bool:
         if p is None:
             return False
-        if p.kind in ("human", "system"):
+        if p.kind in ("human", "system") or is_client(p) and not self.relay.advanced():
             return True
         return self.relay.may_relay(p.id)
 
@@ -110,14 +106,10 @@ class Approvals(Plugin):
             # the client in conversation with the person hears their words.
             raise PermissionError("approvals.relay is refused on behalf of " + ", ".join(
                 str(v) for v in p.via) + ": only a client talking with the person relays")
-        if not self.relay.advanced():
-            raise PermissionError("relaying from agent clients is part of advanced security, "
-                                  "which is off: the person answers on the phone's card, by "
-                                  "voice, or on the dashboard")
         try:
             return await self.relay.decide(item, decision, relayed_by, relayer=p.id,
                                            relayer_label=p.label or p.id, reason=reason,
-                                           answer=answer, principal=p)
+                                           answer=answer, principal=p, client=is_client(p))
         except RelayError as e:
             raise ValueError(str(e)) from None
 
@@ -128,8 +120,8 @@ class Approvals(Plugin):
                                  answer: str | None = None, kind: str | None = None) -> str:
             """What waits on the person (holds, job holds, huddle cards, questions).
             summary | list (kind?). approve/deny item=<name|id> with relayed_by {who, quote:
-            their exact words, session}, reason?, answer?: only if they enabled your client
-            and said so; never your own judgement."""
+            their exact words, session}, reason?, answer?: only what they said (never held
+            calls); never your own judgement."""
             try:
                 if action in ("list", "summary"):
                     result = await invoke("approvals.list", {

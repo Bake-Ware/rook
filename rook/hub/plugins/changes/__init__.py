@@ -35,7 +35,7 @@ import time
 from typing import Any
 
 from ....core.plugin import Plugin, capability, place, setting
-from .model import CATALOG, OPEN, ChangeError, Store, checklist, clean, missing
+from .model import CATALOG, OPEN, ChangeError, Store, checklist, clean, missing, stops
 from .runner import Runner
 
 log = logging.getLogger("rook.hub.plugins.changes")
@@ -251,7 +251,8 @@ class Changes(Plugin):
     async def _ask(self, row: dict, why: str, urgent: bool = False) -> dict:
         """One card to the person with the change request."""
         cr = row["record"]
-        front = getattr(self._plugin("home"), "front", None)
+        home = self._plugin("home")
+        front = getattr(home, "front", None) if getattr(home, "enabled", lambda: True)() else None
         line = f"Change {row['id']}: {cr['what']}?"
         explain = (f"{cr.get('why') or ''} {why}. Yes runs it"
                    + (" and rolls back by itself if its tests fail" if cr.get("rollback") else "")
@@ -262,8 +263,9 @@ class Changes(Plugin):
             a = front.make_ask("change", line, explain, more, action={"change": row["id"]})
             cr["ask"] = a.get("name") or a["id"]
         row = self.store.set(row["id"], state="asked", record=cr)
-        await self._alert(f"{line} {explain}", "Emergency: needs you" if urgent else
-                          "Change needs you", urgent=urgent)
+        if urgent or front is None:     # else the card is the one copy
+            await self._alert(f"{line} {explain}", "Emergency: needs you" if urgent else
+                              "Change needs you", urgent=urgent)
         return row
 
     async def _reduce(self, row: dict, problems: list[str]) -> dict:
@@ -398,8 +400,7 @@ class Changes(Plugin):
             raise ChangeError(f"{row['id']} has no rollback to run")
         # The rollback runs as the hub: checked again, as at submit.
         rb = {**cr, "scripts": [], "tests": []}
-        problems = [x for x in checklist(rb, catalog=self.store.catalog(), sacred=self._sacred)
-                    if not x.startswith(("missing", "category", "fix"))]
+        problems = stops(rb, self._sacred)
         if problems:
             raise ChangeError(f"{row['id']}'s rollback needs the person: " + "; ".join(problems))
         return self._public(await self._runner().revert(row["id"]))
@@ -443,6 +444,12 @@ class Changes(Plugin):
         p = _caller()
         if not _person(p):
             raise PermissionError("only the person decides; their card or the dashboard")
+        ask, front = self.store.get(id)["record"].get("ask"), getattr(self._plugin("home"), "front", None)
+        try:                                    # one record: the card closes, the change runs
+            if ask and front is not None:
+                return await front.answer(ask, "yes" if yes else "no", by=_who(p))
+        except Exception:  # noqa: BLE001 - the card is gone (expired): decide the change itself
+            log.info("changes: %s's card %s could not be answered", id, ask, exc_info=True)
         return await self.decided(id, bool(yes), _who(p))
 
     async def decided(self, ident: str, yes: bool, by: str) -> dict:

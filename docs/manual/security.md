@@ -60,8 +60,8 @@ back the stricter rules Rook used to have:
   on the map;
 - the house agent also asks about anything not easily undone and anything
   on a family device;
-- agent clients and the huddle chair may relay your approvals
-  ([[manual-accounts-and-access]]);
+- only agent clients you tick may pass on your answers, and the huddle
+  chair too ([[manual-accounts-and-access]]);
 - every new hold sends you a message (Telegram, a notification or your
   phone's voice);
 - merges, deploys and ships need a blind vote of the roles
@@ -94,8 +94,7 @@ Agents can't switch it on or off; only you can.
   for you, if Rook recognises the machine (if it can't, the Approvals page
   says so; name those workers under Settings). A person with a login on the
   hub box is trusted either way.
-- With advanced security on, a client you let relay your approvals is
-  trusted to pass on your words faithfully. Rook records what it says you
-  said but can't check it (the chair is the exception: it can only quote
-  your own message). Secrets, tokens, policy, settings and job locks are
-  never relayed.
+- A client that passes on your answer is trusted to quote you faithfully.
+  Rook records what it says you said but can't check it (the chair is the
+  exception: it can only quote your own message). Hard stops, secrets,
+  tokens, policy, settings and job locks are never passed on.

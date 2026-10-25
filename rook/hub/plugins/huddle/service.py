@@ -609,9 +609,14 @@ class HuddleService:
         sent = self._send(h["room"], identity, _text(text, "text", 8000, required=True), mention or [])
         return self._named({"room": h["room"], "seq": sent["seq"], "offline": sent.get("offline", [])}, h["room"])
 
-    def withdraw(self, identity: str, question: int) -> dict:
+    def withdraw(self, identity: str, question: int, why: str = "") -> dict:
+        """Moot (done, replaced): off the person's phone, reminders and lists."""
+        why = scrub(_text(why, "why", 500))
         if not self.store.withdraw(question, identity):
             raise ValueError("no open question of yours with that id")
+        with contextlib.suppress(ValueError):        # its room was deleted: withdrawn anyway
+            self._send(self.store.question(question)["room"], identity, f"Withdrew question "
+                       f"{question}: it no longer needs you" + (f" ({why})" if why else ""), quiet=True)
         return {"question": int(question), "state": "withdrawn"}
 
     # -- chaired huddles (docs/design/huddles.md 5) -------------------------
