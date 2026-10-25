@@ -196,7 +196,8 @@ else comes to you as one card. Each morning a quiet digest
 `rook_trust(action="summary")` gives the short version agents get in their
 context; `action="check"` with `{"cap": "shell.exec", "worker": "kaiju"}`
 gives the ruling and its citation; `action="propose"` asks you for a change.
-`rook_change` submits a change request (`submit`), writes up an emergency
-afterwards (`update`), and lists, reverts and shows the digest. The map
+Change requests are caps on worker `rook`: `change.submit`, `change.update`
+(an emergency's write-up afterwards), `change.list`, `change.get`,
+`change.revert` and `change.digest`. The map
 itself is `trust.json` in the hub's data folder, beside `policy.json`, with
 its history in `trust-history.jsonl`.

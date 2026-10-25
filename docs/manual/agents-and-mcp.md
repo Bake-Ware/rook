@@ -55,8 +55,9 @@ journal under the agent's name:
   [[manual-knowledge]]. The Rook manual is there too.
 - Create and run jobs (`rook_jobs`), see [[manual-jobs]].
 - Use secrets without seeing them (`rook_secret`), see [[manual-secrets]].
-- File a change request for a change that could hurt (`rook_change`), so
-  the hub can test it and roll it back, see [[manual-trust]].
+- File a change request for a change that could hurt (`rook_call` on
+  worker `rook`, cap `change.submit`), so the hub can test it and roll it
+  back, see [[manual-trust]].
 - Look back at what happened (`rook_journal`, every call with its answer).
 
 Agents can never add or tighten guardrails, holds or trust entries, or
