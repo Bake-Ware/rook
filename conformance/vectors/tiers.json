@@ -211,6 +211,36 @@
     "physical"
    ]
   },
+  "change.catalog": {
+   "tier": "write"
+  },
+  "change.decide": {
+   "tier": "write"
+  },
+  "change.digest": {
+   "tier": "read"
+  },
+  "change.get": {
+   "tier": "read"
+  },
+  "change.irreducible": {
+   "tier": "write"
+  },
+  "change.list": {
+   "tier": "read"
+  },
+  "change.reduce": {
+   "tier": "write"
+  },
+  "change.revert": {
+   "tier": "write"
+  },
+  "change.submit": {
+   "tier": "write"
+  },
+  "change.update": {
+   "tier": "write"
+  },
   "chat.delete": {
    "tier": "write",
    "tags": [
