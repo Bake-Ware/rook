@@ -273,16 +273,25 @@ object AttentionStore {
         changed()
     }
 
-    /** ACTION_USER_PRESENT: record it, and an ordinary decision still waiting takes over the screen now. */
+    /**
+     * ACTION_USER_PRESENT: record it, and an ordinary decision still waiting takes over the screen now.
+     * A pending card whose notification is no longer in the shade (and was not swiped away: that
+     * would be a dismissed event) is put back quietly, so a waiting decision is always visible.
+     */
     fun unlocked(ctx: Context) {
         val app = ctx.applicationContext
-        val next = synchronized(lock) {
+        val (next, pending) = synchronized(lock) {
             ensure(app); expire(app)
             event("unlocked")
-            book.takeovers(now()).firstOrNull()
+            book.takeovers(now()).firstOrNull() to book.showing(now()).filter { it.state == "pending" && !it.dismissed && !it.local }
         }
         changed()
         if (next != null && !AttentionCardActivity.onScreen) launchCard(app, next.id)
+        val active = AttentionChannels.active(app) ?: return
+        pending.filter { AttentionChannels.notificationId(it.id) !in active }.forEach {
+            Log.i(TAG, "card ${it.id}: notification missing, posted again")
+            AttentionChannels.postCard(app, it, ring = false, silent = true)
+        }
     }
 
     private fun expire(app: Context) {
@@ -301,7 +310,7 @@ object AttentionStore {
         else if (inUse && card.channel in setOf("approvals", "family", "urgent") && AttentionChannels.enabled(app, channelOf(card))) seen(app, card.id, "heads_up")
     }
 
-    private fun channelOf(card: AttentionCard) = if (card.urgent) AttentionChannels.URGENT else AttentionChannels.idFor(card.channel)
+    private fun channelOf(card: AttentionCard) = AttentionChannels.channelFor(card)
 
     fun screenInUse(ctx: Context): Boolean = try {
         (ctx.getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive &&

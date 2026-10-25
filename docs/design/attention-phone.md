@@ -193,8 +193,11 @@ update that changes nothing.
 
 Channels (stable ids): `rook_urgent` (high, alarm sound via USAGE_ALARM,
 vibration, bypass Do Not Disturb, public on the lock screen),
-`rook_family` and `rook_approvals` (high, heads-up), `rook_digest` (low),
-`rook_jobs` (min, silent).
+`rook_family` and `rook_approvals` (high, heads-up), `rook_waiting` (default:
+status bar and shade, one sound, no heads-up; a Yes/No card the hub queued on
+`digest` is posted here), `rook_digest` (low), `rook_jobs` (min, silent).
+On unlock the app posts again, silently, any pending card whose notification is
+no longer in the shade and that was not dismissed.
 
 Grants, listed with a button each in the app's **Attention** tab (shown only
 while one is missing; a one-line link above the chat points there until the

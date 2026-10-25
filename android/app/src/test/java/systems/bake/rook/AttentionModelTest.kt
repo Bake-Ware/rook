@@ -18,6 +18,11 @@ class AttentionModelTest {
         assertTrue(card("c", extra = ""","channel":"urgent"""").urgent)
         assertFalse(card("d", extra = ""","channel":"digest"""").takeover)
         assertFalse(card("e", extra = ""","actions":["ack"]""").takeover)
+        // A decision the hub queued is a normal notification (rook_waiting), not a takeover.
+        assertTrue(card("w", extra = ""","channel":"digest"""").waiting)
+        assertFalse(card("w2", extra = ""","channel":"digest","actions":["ack"]""").waiting)
+        assertFalse(card("w3").waiting)
+        assertFalse(card("w4", extra = ""","channel":"digest","urgency":"urgent"""").waiting)
         assertEquals(140, AttentionCard.fromPost(JSONObject().put("id", "f").put("line", "x".repeat(200)), 0.0).line.length)
         for (bad in listOf("""{"id":"","line":"l"}""", """{"id":"a"}""", """{"id":"a","line":"l","kind":"nope"}""",
                 """{"id":"a","line":"l","channel":"sms"}""", """{"id":"a","line":"l","actions":["maybe"]}""",

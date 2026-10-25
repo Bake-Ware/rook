@@ -27,6 +27,11 @@ class AttentionCard(
     val urgent get() = urgency == "urgent" || channel == "urgent"
     /** Ordinary decisions take over the screen when the phone is next unlocked. */
     val takeover get() = !urgent && channel in TAKEOVER_CHANNELS && actions.any { it == "yes" || it == "no" }
+    /**
+     * A decision the hub queued (digest channel, with Yes/No): no pop-up or takeover, but a normal
+     * notification in the shade and status bar, never the collapsed silent section.
+     */
+    val waiting get() = !urgent && channel == "digest" && actions.any { it == "yes" || it == "no" }
     fun expired(now: Double) = expiresAt > 0 && now >= expiresAt
 
     fun toJson(): JSONObject = JSONObject().put("id", id).put("kind", kind).put("line", line).put("body", body).put("explain", explain)

@@ -14,7 +14,8 @@ import androidx.core.app.NotificationCompat
 /**
  * Notification channels for attention (stable ids; Android keeps the user's per-channel choices).
  *  - rook_urgent: alarm sound, vibration, bypasses Do Not Disturb, full-screen card.
- *  - rook_family / rook_approvals: heads-up. rook_digest: low. rook_jobs: silent.
+ *  - rook_family / rook_approvals: heads-up. rook_waiting: a normal notification (status bar and
+ *    shade, one sound, no pop-up) for decisions the hub queued. rook_digest: low. rook_jobs: silent.
  * Do Not Disturb bypass only sticks when the app has Notification Policy access; [ensure]
  * re-submits the urgent channel so a later grant takes effect (Android 10+ lets an app with
  * that access update bypass on an existing channel).
@@ -23,6 +24,7 @@ object AttentionChannels {
     const val URGENT = "rook_urgent"
     const val FAMILY = "rook_family"
     const val APPROVALS = "rook_approvals"
+    const val WAITING = "rook_waiting"
     const val DIGEST = "rook_digest"
     const val JOBS = "rook_jobs"
     private val IDS = mapOf("urgent" to URGENT, "family" to FAMILY, "approvals" to APPROVALS, "digest" to DIGEST, "jobs" to JOBS)
@@ -48,6 +50,9 @@ object AttentionChannels {
             NotificationChannel(APPROVALS, "Decisions", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "Yes/No decisions from Rook"; enableVibration(true)
             },
+            NotificationChannel(WAITING, "Waiting decisions", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "Decisions that can wait: shown in the shade without popping up"
+            },
             NotificationChannel(DIGEST, "Digest", NotificationManager.IMPORTANCE_LOW).apply { description = "Summaries" },
             NotificationChannel(JOBS, "Jobs", NotificationManager.IMPORTANCE_MIN).apply {
                 description = "Background job updates"; setSound(null, null); enableVibration(false)
@@ -66,8 +71,20 @@ object AttentionChannels {
 
     private fun flags() = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
 
-    /** Post or refresh the notification for [card]; a known card refreshes silently. */
-    fun postCard(ctx: Context, card: AttentionCard, ring: Boolean) {
+    /** The channel [card] is posted on. */
+    fun channelFor(card: AttentionCard) = when {
+        card.urgent -> URGENT
+        card.waiting -> WAITING
+        else -> idFor(card.channel).ifEmpty { APPROVALS }
+    }
+
+    /** Ids of this app's notifications in the shade now (null when Android can't say). */
+    fun active(ctx: Context): Set<Int>? = try {
+        ctx.getSystemService(NotificationManager::class.java)?.activeNotifications?.map { it.id }?.toSet()
+    } catch (_: Exception) { null }
+
+    /** Post or refresh the notification for [card]; a known card refreshes silently, [silent] never alerts. */
+    fun postCard(ctx: Context, card: AttentionCard, ring: Boolean, silent: Boolean = false) {
         ensure(ctx)
         val nid = notificationId(card.id)
         val open = Intent(ctx, AttentionCardActivity::class.java).putExtra(AttentionCardActivity.EXTRA_ID, card.id)
@@ -76,7 +93,7 @@ object AttentionChannels {
         val content = PendingIntent.getActivity(ctx, nid, open, flags())
         val gone = PendingIntent.getBroadcast(ctx, nid, Intent(ctx, AttentionReceiver::class.java)
             .setAction(AttentionReceiver.ACTION_DISMISSED).putExtra(AttentionCardActivity.EXTRA_ID, card.id), flags())
-        val channel = if (card.urgent) URGENT else idFor(card.channel).ifEmpty { APPROVALS }
+        val channel = channelFor(card)
         val text = when (card.state) { "sent" -> "Sent… ${card.line}"; "failed" -> "Didn’t go through: ${card.message.ifBlank { card.line }}"; else -> card.line }
         val b = NotificationCompat.Builder(ctx, channel)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
@@ -85,8 +102,9 @@ object AttentionChannels {
                 // Expanded: the title on top, the body's few plain lines under it.
                 NotificationCompat.BigTextStyle().setBigContentTitle(card.line).bigText(card.body)
                 else NotificationCompat.BigTextStyle().bigText(text))
-            .setContentIntent(content).setDeleteIntent(gone).setAutoCancel(false).setOnlyAlertOnce(!ring)
+            .setContentIntent(content).setDeleteIntent(gone).setAutoCancel(false).setOnlyAlertOnce(!ring).setSilent(silent)
             .setPriority(when (channel) { URGENT -> NotificationCompat.PRIORITY_MAX; FAMILY, APPROVALS -> NotificationCompat.PRIORITY_HIGH
+                WAITING -> NotificationCompat.PRIORITY_DEFAULT
                 DIGEST -> NotificationCompat.PRIORITY_LOW; else -> NotificationCompat.PRIORITY_MIN })
             .setCategory(if (card.urgent) NotificationCompat.CATEGORY_ALARM else NotificationCompat.CATEGORY_REMINDER)
             .setVisibility(if (card.urgent) NotificationCompat.VISIBILITY_PUBLIC else NotificationCompat.VISIBILITY_PRIVATE)

@@ -61,9 +61,9 @@ class Attention(Plugin):
                 label="Send notification rules to phones",
                 help="Not used yet: the hub derives no rules so far."),
         setting("queue", bool, True, group="Attention", order=5, label="Queue decisions",
-                help="Decision cards aren't emergencies: they wait quietly in the app (no "
-                     "pop-up, no sound, no takeover on unlock) and the phone reminds you out "
-                     "loud instead. Off: every card pops up as it arrives. Urgent alerts always "
+                help="Decision cards aren't emergencies: each is a normal notification on the "
+                     "phone (no pop-up, no takeover on unlock) and the phone reminds you out "
+                     "loud as well. Off: every card pops up as it arrives. Urgent alerts always "
                      "ring at once."),
         setting("remind", bool, True, group="Attention", order=6, label="Spoken reminders",
                 help="The phone says \"Need your input: ...\" for one waiting card, or \"Hey "

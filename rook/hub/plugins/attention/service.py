@@ -18,7 +18,7 @@ online and announces ``attention.post``, the hub
    delivered yet (a phone that was offline gets them when it is back);
 4. **reminds** (``attention.remind`` on the phone): with ``attention.queue``
    on, a decision card is not an emergency, so it lands quietly in the app
-   (the quiet digest channel: no heads-up, no takeover on unlock) and the
+   (the digest channel: a normal notification, no heads-up or takeover on unlock) and the
    phone says one short line instead, when the room is quiet ("Need your
    input: Deploy hub update?", or "Hey boss, you have 6 decisions pending."),
    paced by the ``remind_*`` settings. The phone checks the room itself
@@ -63,9 +63,10 @@ CHANNELS = ("urgent", "family", "approvals", "digest", "jobs")
 SIGNALS = ("seen", "opened", "dismissed", "acked", "unlocked")
 PRIORITIES = ("urgent", "family", "normal")
 TAPPED = {"approve": "Tapped Yes", "deny": "Tapped No"}
-#: The quiet channel a queued decision card uses: the app shows it in its list
-#: and the notification shade without a heads-up, a sound or a takeover on
-#: unlock (every app since 0.4.20 knows it, so no app update is needed).
+#: The channel a queued decision card uses: no heads-up and no takeover on unlock.
+#: Since app 0.4.22-beta.6 a decision on it is a normal notification (the app's
+#: "Waiting decisions" channel: status bar, shade, one sound) and is posted again on
+#: unlock if it left the shade; older apps show it in the low, silent digest section.
 QUEUE_CHANNEL = "digest"
 #: Outcomes that mean the phone can't remind at all (its switch is off, it can't check
 #: the room, it fails or never answers): after FALLBACK_AFTER of them in a row, cards pop
