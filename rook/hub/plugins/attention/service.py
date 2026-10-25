@@ -11,7 +11,8 @@ online and announces ``attention.post``, the hub
    ``attention.update`` done/failed. Seen, opened, dismissed, acked and
    unlocked signals and notice summaries go into rings (last 500);
 2. **syncs cards**: every item the approvals plugin lists (held calls, held
-   job calls, huddle cards, pinned questions) is posted once as a decision
+   job calls, huddle cards, pinned questions, house asks, trust-map proposals)
+   is posted once as a decision
    card; dashboard-only items get only an Explain button; an item that is no
    longer waiting gets ``attention.update`` gone;
 3. **delivers alerts** queued by ``attention.send`` that it has not
@@ -215,10 +216,9 @@ class AttentionService:
 
     def __init__(self, path: Path, settings: Callable[[], dict], client: Callable[[], Any],
                  relay: Callable[[], Any], clock: Callable[[], float] = time.time,
-                 trust: Callable[[], Any] | None = None, log: Any = None) -> None:
+                 log: Any = None) -> None:
         self.path = Path(path)
         self._settings, self._client, self._relay, self.clock = settings, client, relay, clock
-        self._trust = trust or (lambda: None)
         if log is None:
             from ...eventlog import EventLog
             log = EventLog(self.path.parent / "event_log.db", clock=clock)
@@ -446,7 +446,7 @@ class AttentionService:
             try:
                 out = await relay.decide(item, decision, said, relayer=principal,
                                          relayer_label=self.label(dev),
-                                         reason=short(ev.get("reason"), 500))
+                                         reason=short(ev.get("reason"), 500), tap=True)
             except (PermissionError, RelayError) as e:
                 msg = f"Not done: {e}"
             except Exception as e:  # noqa: BLE001
@@ -576,7 +576,7 @@ class AttentionService:
     def waiting(self) -> list[dict]:
         """Every decision waiting on the person, oldest first: ``{id, created,
         title}``. The approvals list (held calls, job holds, huddle cards and
-        questions, house asks) plus pending trust-map proposals. Titles are the
+        questions, house asks, pending trust-map proposals). Titles are the
         speakable kind (rook/hub/relay.py ``summary``): a held call's title comes
         from its cap and machine only, never its arguments."""
         out: list[dict] = []
@@ -586,15 +586,6 @@ class AttentionService:
                 for it in relay.items():
                     out.append({"id": str(it["id"]), "created": float(it.get("created") or 0),
                                 "title": speakable(it)})
-        trust = None
-        with contextlib.suppress(Exception):
-            trust = self._trust()
-        if trust is not None:
-            with contextlib.suppress(Exception):
-                for prop in trust.current().get("proposals") or []:
-                    if prop.get("state") == "pending":
-                        out.append({"id": str(prop["id"]), "created": float(prop.get("at") or 0),
-                                    "title": "a change to the trust map"})
         out.sort(key=lambda i: i["created"])
         return out
 

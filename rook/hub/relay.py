@@ -2,7 +2,7 @@
 approving or denying it on their behalf through an agent they trust
 (docs/design/permissions.md 3.12).
 
-Four kinds of item wait on a person:
+These kinds of item wait on a person:
 
 * ``hold``: a held cap call (:mod:`rook.hub.approvals`);
 * ``job``: a held call a job run made (a hold whose on-behalf-of chain has
@@ -11,7 +11,10 @@ Four kinds of item wait on a person:
   (:mod:`rook.hub.plugins.huddle.chair`);
 * ``ask``: a question an agent pinned in a huddle;
 * ``house``: a one-line ask from the house agent's front door (Yes / No /
-  Explain; rook/hub/plugins/home/front.py), with ``line`` and ``explain``.
+  Explain; rook/hub/plugins/home/front.py), with ``line`` and ``explain``;
+* ``trust``: a pending trust-map proposal (rook/hub/trust.py). Only the person
+  decides one: a tap on its phone card, Manage > Trust, or their sure voice
+  with the read-back (rook/hub/plugins/home/cardpass.py). No relay does.
 
 :meth:`Relay.items` lists them, each with a speakable name, who asked, what
 exactly would happen (one plain sentence), the risk tier, where it came from
@@ -49,7 +52,7 @@ from . import plain as _plain
 
 log = logging.getLogger("rook.hub.relay")
 
-KINDS = ("hold", "job", "card", "ask", "house")
+KINDS = ("hold", "job", "card", "ask", "house", "trust")
 DECISIONS = ("approve", "deny")
 
 #: Never relayed, whatever ``approvals.relay_dashboard_only`` says: secret and
@@ -65,6 +68,10 @@ WHO_MAX, QUOTE_MAX, SESSION_MAX, REASON_MAX = 120, 1000, 500, 500
 SUMMARY_ITEMS = 5
 SENTENCE_MAX = 220
 _ROLE = re.compile(r"role:([a-z][a-z0-9_-]{0,31})")
+
+
+#: Why no relay decides a trust proposal (:func:`own_tap`).
+TRUST_OWN = "a trust change: trust changes need the person's own tap or voice"
 
 
 class RelayError(ValueError):
@@ -123,6 +130,8 @@ def own_tap(item: dict) -> str:
     are all hard stops; a house ask's Yes approves the holds its call or request meets."""
     house = item.get("kind") == "house" and (item.get("cap") or item.get("request")
                                              or item.get("hard_stop"))
+    if item.get("kind") == "trust":
+        return TRUST_OWN
     return "a hard stop (their own tap)" if house or item.get("kind") in ("hold", "job") else ""
 
 
@@ -292,6 +301,8 @@ class Relay:
                 out += self._asks(svc, titles)
         if "house" in want:
             out += self._house()
+        if "trust" in want:
+            out += self._proposals()
         rules = self.dashboard_only()
         for it in out:
             why = refusal(it, rules)
@@ -435,6 +446,38 @@ class Relay:
             it["age"] = _age(it["age_s"])
         return items
 
+    def trust(self) -> Any:
+        from .plugins.trust import node_store
+        return node_store(self._node())
+
+    def _proposals(self) -> list[dict]:
+        """Pending trust-map proposals, each with the plain sentence the person
+        hears before saying yes (rook/hub/trust.py ``describe_change``)."""
+        try:
+            st = self.trust()
+            doc = st.current() if st is not None else {}
+        except Exception:  # noqa: BLE001 - the map failing never sinks the others
+            log.exception("relay: reading the trust map's proposals failed")
+            return []
+        from .trust import describe_change
+        now = self.clock()
+        out = []
+        for prop in doc.get("proposals") or ():
+            if prop.get("state") != "pending":
+                continue
+            d = describe_change(doc, prop.get("change") or {}, now)
+            at = float(prop.get("at") or 0)
+            out.append({
+                "kind": "trust", "id": str(prop["id"]), "who": prop.get("by") or "an agent",
+                "principal": prop.get("principal"), "what": _sentence(d["sentence"]),
+                "risk": "loosens" if d["loosens"] else "stricter", "from": {},
+                "created": at, "age_s": int(now - at), "age": _age(now - at),
+                "sentence": d["sentence"], "loosens": d["loosens"], "sacred": d["sacred"],
+                "proposal": dict(prop), "context": {"why": str(prop.get("why") or "")},
+                "explain": "The change: " + json.dumps(prop.get("change") or {}, default=str,
+                                                       separators=(",", ":"))})
+        return out
+
     @staticmethod
     def public(item: dict) -> dict:
         """An item as agents and the voice summary see it (no internal facts)."""
@@ -442,6 +485,9 @@ class Relay:
                 "why_not", "options", "line", "explain")
         out = {k: item[k] for k in keys if item.get(k) not in (None, "", [], {})
                or k == "relayable"}
+        if item.get("kind") == "trust":
+            # Listed so agents can tell the person; never theirs to relay (own_tap).
+            out.update(relayable=False, why_not=TRUST_OWN)
         if isinstance(out.get("plain"), dict):
             # Explain (cap, args, trust cite) stays on the dashboard and the phone.
             out["plain"] = {k: v for k, v in out["plain"].items() if k != "explain"}
@@ -465,10 +511,12 @@ class Relay:
     # -- deciding ------------------------------------------------------------------
     async def decide(self, ref: str, decision: str, said: Any, *, relayer: str,
                      relayer_label: str = "", reason: str = "", answer: str = "",
-                     principal: Any = None, client: bool = False) -> dict:
+                     principal: Any = None, client: bool = False, tap: bool = False) -> dict:
         """Approve or deny one waiting item on the person's behalf.
         ``relayer`` is the verified principal id of the relaying identity
-        (``token:<agent_id>``, or the house agent's identity); ``client``: an agent client."""
+        (``token:<agent_id>``, or the house agent's identity); ``client``: an agent client;
+        ``tap``: the person's own tap on a phone card (the attention service, in process:
+        never set over the wire), the only relayed path that decides a trust proposal."""
         if decision not in DECISIONS:
             raise RelayError("decision: approve or deny")
         said = relayed_by(said)
@@ -479,6 +527,11 @@ class Relay:
                 "for a client on the dashboard (Tokens > May relay my approvals). Ask them to "
                 "decide on the dashboard's Approvals page instead")
         it = self.find(ref)
+        if it["kind"] == "trust" and not tap:
+            raise PermissionError(f"{it['id']} is a trust change: trust changes need "
+                                  f"{said['who']}'s own tap or voice (the phone card, the "
+                                  "dashboard's Manage > Trust, or \"clear my cards\" by voice). "
+                                  "Tell them it is waiting; don't relay it")
         why = refusal(it, self.dashboard_only()) or (own_tap(it) if client else "")
         if why:
             raise PermissionError(f"{it.get('name') or it['id']} is {why}: ask the person to "
@@ -516,6 +569,21 @@ class Relay:
                                  relay={**rel, "label": by, "text": text})
             out = {"state": res.get("state"), **({"error": res["error"]} if res.get("error")
                                                  else {})}
+        elif it["kind"] == "trust":
+            from .trust import Actor, TrustError
+            st = self.trust()
+            if st is None:
+                raise RelayError("the trust map is unavailable on this hub")
+            try:
+                st.change("decide_proposal", {"id": it["id"], "accept": decision == "approve"},
+                          Actor("person", said["who"], principal=relayer, words=said["quote"],
+                                session=said["session"], via=label))
+            except TrustError as e:
+                raise RelayError(str(e)) from None
+            if ap is not None:
+                ap.queue.relay_add({**rel, "kind": "trust", "item": it["id"],
+                                    "decision": decision})
+            out = {"state": "accepted" if decision == "approve" else "rejected"}
         elif it["kind"] == "house":
             front = getattr(self._plugin("home"), "front", None)
             if front is None:

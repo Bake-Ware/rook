@@ -6,7 +6,7 @@ const OUTCOME = {approved: 'approved, not used yet', consumed: 'approved', denie
 
 export async function mountApprovals(root, opts = {}){
   useCss();
-  let data = {pending: [], recent: [], grants: [], settings: {}}, timer = null, busy = false;
+  let data = {pending: [], trust: [], recent: [], grants: [], settings: {}}, timer = null, busy = false;
   const status = h('p', {class: 'mg-status', role: 'status'});
   const warn = h('p', {class: 'mg-box mg-pad mg-bad', role: 'alert', hidden: true});
   const note = h('p');
@@ -86,12 +86,26 @@ export async function mountApprovals(root, opts = {}){
       h('div', {class: 'mg-actions ap-acts', style: 'flex-wrap:wrap'}, no, more, ok));
   }
 
+  // A trust-map proposal: the person decides it on Manage > Trust (their words recorded there).
+  function trustCard(x){
+    const rows = [['Who', x.by], ['I want to', x.sentence]].concat(x.why ? [['Why', x.why]] : [])
+      .concat([['Risk', x.loosens ? 'High: it loosens the trust map' + (x.sacred ? ', on something sacred' : '') + '; only you can say yes' : 'Low: it only makes the trust map stricter']]);
+    return h('div', {class: 'mg-box mg-pad ap-card', style: 'gap:8px'},
+      h('div', {style: 'display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;justify-content:space-between'},
+        h('strong', {style: 'font-size:15px', text: 'Change the trust map'}),
+        h('span', {class: 'mg-dimtext', text: 'proposed ' + ago(x.at), title: new Date(x.at * 1000).toLocaleString()})),
+      h('div', {class: 'ap-plain', style: 'display:grid;grid-template-columns:84px minmax(0,1fr);gap:3px 10px;font-size:13.5px'},
+        ...rows.flatMap(([k, v]) => [h('span', {class: 'mg-dimtext', text: k}), h('span', {style: 'overflow-wrap:anywhere', text: v})])),
+      h('div', {class: 'mg-actions ap-acts'}, btn('Open Trust', 'primary', () => { if(window.showView) window.showView('trust'); else location.hash = '#trust'; })));
+  }
+
   function draw(){
     const s = data.settings || {};
     warn.hidden = !data.weak_message;
     warn.textContent = data.weak_message || '';
     const hh = data.hub_host || {};
-    count.textContent = String(data.pending.length); count.hidden = !data.pending.length;
+    const n = data.pending.length + (data.trust || []).length;
+    count.textContent = String(n); count.hidden = !n;
     if(hh.mode === 'off') hubhost.textContent = 'Holding calls to the hub’s own machine is off.';
     else if((hh.workers || []).length) hubhost.textContent = 'Treated as running on the hub’s machine (exec calls there are held): ' + hh.workers.map(w => w.worker).join(', ') + '.';
     else hubhost.textContent = hh.note ? 'Hub-machine workers: ' + hh.note + '.' : '';
@@ -99,7 +113,7 @@ export async function mountApprovals(root, opts = {}){
       ? 'Approval holds are off (Settings > Hub > Approvals). Only the permission policy and the trust map (Manage > Trust) apply.'
       : 'Agents wait up to ' + Math.round(s.wait_secs || 0) + ' s for your answer, then are told to ask you and retry. ' +
         'An approval covers one identical call for ' + Math.round((s.approval_secs || 600) / 60) + ' minutes.';
-    waiting.replaceChildren(...(data.pending.length ? data.pending.map(x => card(x, s))
+    waiting.replaceChildren(...(n ? data.pending.map(x => card(x, s)).concat((data.trust || []).map(trustCard))
       : [h('div', {class: 'mg-box mg-empty', text: 'Nothing waiting.'})]));
     grants.replaceChildren(...(data.grants || []).map(g => h('p', {class: 'mg-sub',
       text: g.principal + ': more machines until ' + new Date(g.until * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) + ' (by ' + g.created_by + ')'})));

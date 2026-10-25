@@ -98,6 +98,11 @@ when, and what they said.
   agent seeding the map, say). Tap **Confirm** if it's right, or change it.
 - **Proposals** show at the top of the page with **Accept** and **Reject**.
   One proposal can hold several changes; you accept or reject them together.
+  A proposal is also a card on your phone, a row on Approvals and one of the
+  cards the voice reads out when you say "clear my cards". Decide it in any
+  of those places and it's gone from all of them. Only you decide it: tap
+  the card, use this page, or answer by voice (the voice reads the change
+  back first). An agent can't pass on your answer for you.
 
 ## Borrowed state
 

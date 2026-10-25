@@ -171,20 +171,12 @@ class CardPass:
 
     # -- what waits ----------------------------------------------------------------
     def waiting(self) -> list[dict]:
-        """The relay's items plus pending trust proposals, most important first."""
+        """The relay's items (trust proposals among them), most important first."""
         out = []
         relay = self.relay()
         if relay is not None:
             with contextlib.suppress(Exception):
                 out += [dict(it) for it in relay.items()]
-        st = self.trust()
-        if st is not None:
-            with contextlib.suppress(Exception):
-                for prop in st.current().get("proposals") or []:
-                    if prop.get("state") == "pending":
-                        out.append({"kind": "trust", "id": str(prop["id"]),
-                                    "created": float(prop.get("at") or 0), "proposal": prop,
-                                    "relayable": True})
         out.sort(key=lambda i: (ORDER.get(i.get("kind"), 5), float(i.get("created") or 0)))
         return out
 
