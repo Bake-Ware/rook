@@ -662,8 +662,8 @@ class SessionSpeakers:
     def __init__(self, threshold=0.55, limit=8, sure=None):
         self.threshold, self.limit = threshold, limit
         # An enrolled name only for a sure match (VOICE_SPEAKER_SURE, as the house voice):
-        # a lookalike voice (a sibling) must not count as the owner and keep a scribe going.
-        self.sure = float(os.environ.get('VOICE_SPEAKER_SURE', '0.65')) if sure is None else sure
+        # a weaker match must not count as the owner and keep a scribe going.
+        self.sure = float(os.environ.get('VOICE_SPEAKER_SURE', '0.45')) if sure is None else sure
         self.centroids = []          # [(label, vector, count)]
 
     def label(self, result):

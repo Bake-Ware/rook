@@ -9,7 +9,7 @@ This module is the hub's half, and the only judge of what counts:
 
 * **Who.** Only the owner, on the owner's phone, recognised by speaker ID with
   a *sure* match (``Sessions._owner_sure``: the same rule as a spoken yes to a
-  model change). A guest, a child, a "probably", a turn too short for a
+  model change; any match the voice names counts). A guest, a child, a turn too short for a
   voiceprint, or a turn with no owner key never starts a pass or decides a
   card. The pass reads cards only to the sure owner (what waits is theirs).
 * **Consent.** Spoken decisions are relayed as ``voice:<role>``: they count

@@ -150,7 +150,7 @@ permission, Android silenced background capture), it stays quiet unless
 choose, choice?}`; the hub judges everything:
 
 - **Start:** the routed turn must be the owner's key with a *sure* speaker
-  match (`Sessions._owner_sure`, 0.65), and the person must have ticked "May
+  match (`Sessions._owner_sure`, cosine >= 0.45: any match the voice names), and the person must have ticked "May
   relay my approvals" for `voice:house` (Tokens page, a row beside the
   phones). The pass lists the approvals items plus pending trust proposals:
   held calls first (they block someone), then cards, questions, house asks,

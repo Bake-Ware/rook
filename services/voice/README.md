@@ -278,6 +278,11 @@ under the key's principal.
   load: the feature is off (logged once) and turns are untouched.
 * `VOICE_SPEAKER_THREADS` (2): ONNX threads; the GPU host's cores are shared.
 * `VOICE_SPEAKER_THRESHOLD` (0.45): cosine to an enrolled voiceprint to name the person.
+* `VOICE_SPEAKER_SURE` (0.45): cosine at which a named person counts as *sure*, i.e.
+  may decide for themselves by voice (cards, trust read-back, scribe). Equal to the
+  naming threshold since 2026-10-25 (Bake: "more than half sure that it's me is good
+  enough"; 0.45 is above every other voice measured, see below). Was 0.65, which left
+  17 of Bake's 21 recognised live turns (0.46-0.64) as "probably" and refused.
 * `VOICE_SPEAKER_ASSISTANT_THRESHOLD` (0.50): cosine to the assistant voice's
   reference to call a turn echo (and only when above the best person score).
 

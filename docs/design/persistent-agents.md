@@ -309,7 +309,8 @@ Read tools for the voice itself: measured, see persistent-agents-20261023; reads
 routed through the agent, with the brief answering the common ones.
 
 **Speaker ID live** (2026-10-23): the voice server sends `identity.speaker {label, score,
-sure}` (sure: cosine >= `VOICE_SPEAKER_SURE` 0.65; no voiceprint for a very short utterance:
+sure}` (sure: cosine >= `VOICE_SPEAKER_SURE` 0.45, the naming threshold, since 2026-10-25: Bake
+ruled "more than half sure that it's me is good enough"; was 0.65; no voiceprint for a very short utterance:
 no `speaker`). The host's turn marker says "Bake (sure)" / "Robin (probably)" / "unknown
 guest". `Sessions.heard_as`: on the owner's key, the owner's own label (or no voiceprint) is
 the owner; "guest" or another enrolled person is a guest principal. Identification only:

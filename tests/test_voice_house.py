@@ -249,9 +249,12 @@ def test_whole_reply_in_end_and_speaker_name(tmp_path, monkeypatch):
     engine = house_mod.HouseVoice.__new__(house_mod.HouseVoice)
     engine.conn = type('C', (), {'identity': OWNER})()
     # The key names its person; speaker ID says who was heard (the hub decides what it means).
-    timing = type('T', (), {'extra': {'speaker': 'Sam', 'speaker_score': 0.58}})()
+    timing = type('T', (), {'extra': {'speaker': 'Sam', 'speaker_score': 0.42}})()
     assert engine.identity(timing) == {'owner': True, 'name': 'Alex',
-                                       'speaker': {'label': 'Sam', 'score': 0.58, 'sure': False}}
+                                       'speaker': {'label': 'Sam', 'score': 0.42, 'sure': False}}
+    # Any match the server names (>= 0.45) is sure: "more than half sure" counts (Bake, 2026-10-25).
+    timing.extra.update(speaker='Alex', speaker_score=0.52)
+    assert engine.identity(timing)['speaker'] == {'label': 'Alex', 'score': 0.52, 'sure': True}
     timing.extra.update(speaker='Alex', speaker_score=0.731)
     assert engine.identity(timing)['speaker'] == {'label': 'Alex', 'score': 0.731, 'sure': True}
     timing.extra.update(speaker='guest', speaker_score=0.2)

@@ -91,8 +91,8 @@ Every change is recorded (`home.voice_models_set`, who and how).
 ## Who's talking
 
 With your voice enrolled ("enroll my voice"), the voice knows when it is you
-and when it is someone else: each turn says "Bake (sure)", "Robin
-(probably)" or "unknown guest". It is recognition, not a password: anything
+and when it is someone else: each turn says "Bake (sure)" or "unknown guest"
+(any voice it can put a name to counts as sure). It is recognition, not a password: anything
 risky still asks you. Someone it doesn't recognise on your phone is treated
 as a guest; a very short "yes" that is too short to recognise counts as you.
 

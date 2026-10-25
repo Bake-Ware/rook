@@ -338,3 +338,12 @@ def test_scribe_labels_use_an_enrolled_name_only_for_a_sure_match():
     assert s.label({"principal": "bake", "score": 0.52, "vector": v}) == "Speaker A"
     assert s.label({"principal": None, "score": 0.2, "vector": [0.0, 1.0, 0.0]}) == "Speaker B"
     assert s.label(None) == "Speaker"
+
+
+def test_a_named_match_is_sure_by_default(monkeypatch):
+    # Bake 2026-10-25: "more than half sure that it's me" is enough, so "probably" never blocks.
+    from services.voice import house, speaker
+    from services.voice.speaker import SessionSpeakers
+    monkeypatch.delenv('VOICE_SPEAKER_SURE', raising=False)
+    assert house.SPEAKER_SURE <= speaker.DEFAULT_THRESHOLD
+    assert SessionSpeakers().label({"principal": "bake", "score": 0.46, "vector": [1.0, 0.0]}) == "bake"
