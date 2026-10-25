@@ -7,15 +7,16 @@ reached.
 
 Why a call is held, for agent-like principals only (``approvals.principals``:
 API tokens, unverified callers, integrations, the house agent; never people,
-never hub code):
+never hub code), in core:
 
-* an operator ``hold`` rule or cell in the policy;
-* the built-in default, ``approvals.hold`` (``tier:admin``, ``tag:destructive``),
-  unless a policy ``allow`` rule at least as specific as the default matches
-  (an operator exception such as "token:ci may run worker.update on nas");
-* the spread limit: the call would be the agent's ``spread_max + 1``-th
-  distinct machine for exec/admin/destructive calls within the window, and no
-  spread grant is active for it.
+* a hard stop (rook/hub/hardstops.py): erasing data for good, revealing a
+  secret's value, sending as the person to someone else;
+* a change on something the trust map calls sacred (rook/hub/trust.py).
+
+An agent changing the guardrails themselves is refused outright (no
+ratchet). The advanced security plugin (rook/hub/plugins/security) adds the
+blanket holds: operator hold rules, ``approvals.hold``, hub-host workers, the
+spread limit and guarded trust entries.
 
 A deny always wins: a denied call is never held.
 
@@ -55,6 +56,7 @@ from typing import Any, Callable
 from ..core import authz as core_authz
 from ..core import names
 from ..core.db import secure_file, transaction
+from . import hardstops
 
 log = logging.getLogger("rook.hub.approvals")
 
@@ -134,6 +136,8 @@ class Config:
     notify_every_secs: float = 60.0
     hub_host_workers: tuple = ("auto",)
     dashboard_url: str = ""
+    #: The advanced security plugin (rook/hub/plugins/security) is on.
+    advanced: bool = False
     relay_dashboard_only: tuple = ("tier:admin", "hold:hub-host", "tag:physical", "worker.*",
                                    "band.*", "hub.plugin.*", "customcap.*", "role.set",
                                    "role.delete", "role.move", "job.write:delete")
@@ -188,6 +192,11 @@ def dashboard_url(store: Any = None, environ: Any = None) -> str:
     return _dashboard_url(store, os.environ if environ is None else environ)
 
 
+def _advanced(store: Any, environ: Any) -> bool:
+    from .plugins.security import enabled
+    return enabled(store, environ)
+
+
 def load_config(store: Any = None, environ: Any = None) -> Config:
     """Approval settings: environment > Settings page (hub scope) > default.
     A bad value is logged and skipped, never fatal."""
@@ -230,6 +239,7 @@ def load_config(store: Any = None, environ: Any = None) -> Config:
         hub_host_workers=tuple(str(x).strip() for x in values.get("hub_host_workers") or ()
                                if str(x).strip()),
         dashboard_url=_dashboard_url(store, environ),
+        advanced=_advanced(store, environ),
         relay_dashboard_only=tuple(str(x).strip() for x in values.get("relay_dashboard_only")
                                    or () if str(x).strip()))
 
@@ -361,46 +371,6 @@ def holdable(p: Any, selectors: tuple) -> bool:
     if p.kind in _NEVER or _kind_of(p.id) in _NEVER:
         return False
     return any(_sel_match(s, p.id, p.kind, p.role) for s in include)
-
-
-def default_score(selectors: tuple, cap: str, tier: str, tags: tuple) -> tuple[int, str] | None:
-    """``(cap specificity, selector)`` of the best ``approvals.hold``
-    selector matching the call, or None."""
-    from .policy import PolicyError, _CapSel
-    best = None
-    for spec in selectors:
-        try:
-            sel = _CapSel(spec)
-        except PolicyError:
-            log.warning("approvals.hold: bad selector %r ignored", spec)
-            continue
-        score = sel.match(cap, tier, tags)
-        if score is not None and (best is None or score > best[0]):
-            best = (score, spec)
-    return best
-
-
-def _reason(spec: str) -> str:
-    if spec.startswith("tier:"):
-        return f"tier {spec[5:]}"
-    if spec.startswith("tag:"):
-        return f"tag {spec[4:]}"
-    return f"cap {spec}"
-
-
-def _ordinal(n: int) -> str:
-    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
-    return f"{n}{suffix}"
-
-
-def countable(cap: str, tier: str, tags: tuple, target: Any) -> bool:
-    """Spread counts exec/admin and destructive calls to a worker other than
-    the hub itself."""
-    if target is None or not getattr(target, "id", None):
-        return False
-    if getattr(target, "is_rook", False) or str(getattr(target, "name", "")).lower() == "rook":
-        return False
-    return core_authz.tier_rank(tier) >= core_authz.tier_rank("exec") or "destructive" in tags
 
 
 # -- the queue ----------------------------------------------------------------
@@ -841,7 +811,7 @@ class Approvals:
         self.spread = SpreadTracker(clock=monotonic)
         self._record = record
         self._monotonic = monotonic
-        from .approval_contact import Contact
+        from .plugins.security.contact import Contact
         self.contact = Contact(self)
 
     def config(self) -> Config:
@@ -856,127 +826,77 @@ class Approvals:
     def _client(self) -> Any:
         return self.contact.client
 
-    def _hub_host_id(self) -> str | None:
-        """The host id fact of the hub's own node, so we can spot workers that
-        run on the hub's machine (they can edit approvals.db, policy.json and
-        settings directly, so their exec+ calls are held)."""
-        client = self._client()
-        node = getattr(client, "_local", None)
-        facts = getattr(getattr(node, "facts", None), "hw", None) or {}
-        hid = facts.get("host_id")
-        return str(hid) if hid else None
-
     def hub_host_workers(self, cfg: "Config | None" = None) -> dict:
-        """What the Approvals page shows: the live workers treated as running
-        on the hub's machine, how each was decided, and any detection gap."""
-        cfg = cfg or self.config()
-        sel = [s.lower() for s in cfg.hub_host_workers]
-        if "off" in sel:
-            return {"mode": "off", "workers": [], "note": "hub-host holds are off"}
-        explicit = {s for s in sel if s and s != "auto"}
-        auto = "auto" in sel or not explicit
-        client = self._client()
-        roster = getattr(client, "workers", {}) or {}
-        hub_id = self._hub_host_id() if auto else None
-        out = []
-        for wid, w in roster.items():
-            name = str(w.get("name") or wid)
-            if "is_hub" in (w.get("roles") or ()):
-                continue
-            why = None
-            if name.lower() in explicit or wid.lower() in explicit:
-                why = "named in approvals.hub_host_workers"
-            elif auto and hub_id and (w.get("facts") or {}).get("host_id") == hub_id:
-                why = "same machine id as the hub"
-            if why:
-                out.append({"worker": name, "id": wid, "why": why})
-        note = None
-        if auto and hub_id is None:
-            note = ("the hub announces no machine id, so co-located workers can't be "
-                    "detected; name them in approvals.hub_host_workers")
-        elif auto and hub_id and not out:
-            note = "no live worker runs on the hub's machine"
-        return {"mode": "auto" if auto else "list", "workers": out, "note": note,
-                "detected": hub_id is not None}
-
-    def _is_hub_host(self, target: Any, cfg: Config) -> bool:
-        sel = [s.lower() for s in cfg.hub_host_workers]
-        if "off" in sel or target is None or getattr(target, "is_rook", False):
-            return False
-        explicit = {s for s in sel if s and s != "auto"}
-        name = str(getattr(target, "name", "") or "").lower()
-        tid = str(getattr(target, "id", "") or "").lower()
-        if name in explicit or tid in explicit:
-            return True
-        if "auto" in sel or not explicit:
-            hub_id = self._hub_host_id()
-            return bool(hub_id and (getattr(target, "facts", {}) or {}).get("host_id") == hub_id)
-        return False
+        """The workers treated as running on the hub's machine (advanced security)."""
+        from .plugins.security.holds import hub_host_workers
+        return hub_host_workers(self, cfg)
 
     # -- deciding to hold (synchronous, on the call path) ------------------------
-    def apply(self, d: Any, p: Any, policy: Any, target: Any) -> Any:
+    def apply(self, d: Any, p: Any, policy: Any, target: Any, args: Any = None) -> Any:
         """Add the approval layer to a policy decision ``d`` for principal
-        ``p``. Returns ``d``, possibly turned into a hold (or a hold turned
-        into an allow where holds do not apply)."""
+        ``p`` and the call's ``args``. Returns ``d``, possibly turned into a
+        hold, or a deny for an agent changing the guardrails.
+
+        Core, for agent-like principals, whatever ``approvals.enabled`` says:
+        the hard stops (rook/hub/hardstops.py) and the trust map's sacred
+        entries. The advanced security plugin adds the blanket holds
+        (rook/hub/plugins/security/holds.py)."""
         cfg = self.config()
         d.target_is_hub = bool(getattr(target, "is_rook", False))
         if d.denied:
             return d  # a deny always beats a hold
         agent = holdable(p, cfg.principals)
-        # The trust map (rook/hub/trust.py): a change to something sacred waits
-        # for the person, one to something guarded asks first. It holds even
-        # with approvals.enabled off (that switch is for the blanket holds
-        # below: the person asked for this map by name). A gap (unlisted,
-        # balanced) falls through to the holds below, as before.
-        ruling = self.trust_ruling(d, target) if agent and not own_resource.get() else None
-        trust_hold = None
+        why = hardstops.guardrail(d.cap, args) if agent else ""
+        if why:
+            return dataclasses.replace(
+                d, decision="deny", rule="hardstop:guardrail",
+                reason=f"{why}: only a person changes the guardrails (the dashboard, or by "
+                       "voice); say what you would change in your report instead")
+        if cfg.advanced:
+            from .plugins.security.holds import apply as blanket
+            d = blanket(self, d, p, policy, target, cfg, agent)
+            if d.held:
+                return d
+        elif d.held:
+            d = self._unhold(d, "operator hold rules are part of advanced security")
+        if not agent or own_resource.get():
+            return d
+        if not cfg.advanced:
+            ruling = self.trust_ruling(d, target)
+            if ruling is not None:
+                d = dataclasses.replace(d, trust_rule=ruling.rule, trust=ruling.cite)
+                if ruling.tier == "person":
+                    return dataclasses.replace(d, decision="hold", hold_kind="trust",
+                                               hold_reason=ruling.cite, rule=ruling.rule)
+        ruling = self.remote_ruling(d, args)
         if ruling is not None:
-            d = dataclasses.replace(d, trust_rule=ruling.rule, trust=ruling.cite)
-            if ruling.tier in ("ask", "person") and not (ruling.unlisted
-                                                         and ruling.level == "balanced"):
-                trust_hold = dataclasses.replace(d, decision="hold", hold_kind="trust",
-                                                 hold_reason=ruling.cite, rule=ruling.rule)
-        if not cfg.enabled:
-            # Off: no blanket holds, operator hold rules included; the trust map still holds.
-            if trust_hold is not None:
-                return trust_hold
-            return self._unhold(d, "approvals off") if d.held else d
-        if not agent:
-            return self._unhold(d, "never held") if d.held else d
-        count = countable(d.cap, d.tier, d.tags, target)
-        if count:
-            d.spread_target = str(target.id)
-            if trust_hold is not None:
-                trust_hold.spread_target = d.spread_target
-        if d.held:
-            return d  # an operator hold rule or cell
-        if trust_hold is not None:
-            return trust_hold
-        best = default_score(cfg.hold, d.cap, d.tier, d.tags)
-        if best is not None and not own_resource.get():
-            rule = policy.best_rule(p, d.cap, d.tier, d.tags, target)
-            if not (rule is not None and rule[1].action == "allow" and rule[0] >= (0, best[0], 0)):
-                return dataclasses.replace(d, decision="hold", hold_kind="default",
-                                           hold_reason=_reason(best[1]))
-        # Exec and above on a worker that runs on the hub's own machine: that
-        # worker can rewrite the hub's files (approvals.db, policy.json,
-        # settings), so it is a hold unless an operator allow rule names it.
-        if core_authz.tier_rank(d.tier) >= core_authz.tier_rank("exec") \
-                and not own_resource.get() and self._is_hub_host(target, cfg):
-            rule = policy.best_rule(p, d.cap, d.tier, d.tags, target)
-            if not (rule is not None and rule[1].action == "allow" and rule[0] >= (4, 0, 0)):
-                return dataclasses.replace(d, decision="hold", hold_kind="hub-host",
-                                           hold_reason="runs on the hub's machine")
-        if count and cfg.spread_max > 0:
-            n = self.spread.count_with(p.id, str(target.id), cfg.spread_window_secs)
-            if n > cfg.spread_max and self.queue.active_grant(p.id) is None:
-                minutes = max(1, round(cfg.spread_window_secs / 60))
-                return dataclasses.replace(
-                    d, decision="hold", hold_kind="spread",
-                    hold_reason=f"spread: {_ordinal(n)} machine in {minutes} minutes")
-        if d.decision in _PROCEEDS:
-            self.proceeded(d)
+            return dataclasses.replace(d, decision="hold", hold_kind="trust", rule=ruling.rule,
+                                       hold_reason=f"{ruling.cite} (reached over ssh)")
+        why = hardstops.stop(d.cap, args, d.tags)
+        if why:
+            return dataclasses.replace(d, decision="hold", hold_kind="default", hold_reason=why,
+                                       rule="hardstop")
         return d
+
+    def remote_ruling(self, d: Any, args: Any) -> Any:
+        """The trust map's ruling when a command reaches a sacred machine over
+        ssh, scp or rsync from another one (None when it doesn't)."""
+        if self.trust is None:
+            return None
+        hosts = hardstops.remote_hosts(hardstops.command_text(d.cap, args))
+        if not hosts:
+            return None
+        roster = getattr(self._client(), "workers", {}) or {}
+        for host in hosts:
+            names = {host, host.split(".", 1)[0]} | {
+                str(e.get("name") or "") for e in roster.values()
+                if str((e.get("facts") or {}).get("hostname") or "").lower() in
+                (host, host.split(".", 1)[0])}
+            for name in sorted(n for n in names if n):
+                r = self.trust.rule(d.cap, d.tier, tuple(d.tags or ()), worker=name)
+                if r.tier == "person":
+                    return r
+        return None
 
     def trust_ruling(self, d: Any, target: Any) -> Any:
         """The trust map's ruling for a call (None without a map)."""
@@ -1037,7 +957,8 @@ class Approvals:
         if created:
             self.journal_hold(hold)
             try:
-                self.contact.hold_created(hold)
+                if cfg.advanced:      # off: the phone's card and the dashboard carry it
+                    self.contact.hold_created(hold)
             except Exception:  # noqa: BLE001 - contacting the operator never blocks a call
                 log.exception("approvals: contacting the operator failed")
         deadline = self._monotonic() + max(0.0, cfg.wait_secs)
@@ -1171,7 +1092,7 @@ def _scrubbed(ctx: Any) -> dict | None:
 def public(hold: dict, cfg: Config | None = None) -> dict:
     """A hold as the Approvals page shows it: the plain ask (rook/hub/plain.py)
     first, the technical fields for Explain."""
-    from .approval_contact import voice_eligible
+    from .plugins.security.contact import voice_eligible
     from .plain import for_hold
     out = {k: hold.get(k) for k in ("id", "name", "state", "kind", "principal", "principal_label", "via",
                                     "cap", "tier", "tags", "target_id", "target_name", "args",

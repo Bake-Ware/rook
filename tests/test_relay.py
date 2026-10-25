@@ -19,10 +19,12 @@ from rook.hub.relay import FLOOR, Relay, matches, refusal, summary
 from tests.test_huddle_chair import FakeBand, GUEST, _call, _roles, _settle, _texts  # noqa: F401
 from tests.test_huddle_chair import hub as chair_hub  # noqa: F401
 
+pytestmark = pytest.mark.advanced
+
 CLAUDE = Principal("token:agent_claude", "token", "agent", label="Claude web")
 OTHER = Principal("token:agent_other", "token", "agent", label="Some bot")
 SAID = {"who": "Bake", "quote": "yes, restart nginx on box", "session": "https://claude.ai/chat/1"}
-FAST = A.Config(wait_secs=0, contact=())
+FAST = A.Config(wait_secs=0, contact=(), advanced=True)
 
 
 @pytest.fixture

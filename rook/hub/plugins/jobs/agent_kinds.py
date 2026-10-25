@@ -333,7 +333,8 @@ class JobAgentBackend:
             return ""
         try:
             d = authz.check(cap, getattr(node, "worker_id", None), node.entry(),
-                            identity=self.identity.display, principal=self.identity.principal, local=True)
+                            identity=self.identity.display, principal=self.identity.principal, local=True,
+                            args=cargs or {})
             if d.held:
                 out = await authz.resolve(d, cargs or {})
                 if isinstance(out, dict):

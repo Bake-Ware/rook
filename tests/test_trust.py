@@ -20,12 +20,12 @@ from rook.hub import trust as T
 from rook.hub.authz import Authorizer, current_principal, principal_for_user
 from rook.hub.policy import PolicyStore, Principal
 
-pytestmark = pytest.mark.approvals
+pytestmark = [pytest.mark.approvals, pytest.mark.advanced]
 
 AGENT = Principal("token:claude", "token", "agent", label="claude code")
 ROLE = Principal("home:rook/role:lead", "token", "agent", label="agent:rook/role:lead")
 OWNER = principal_for_user({"id": "u1", "username": "bake"}, True)
-FAST = A.Config(wait_secs=0, contact=())
+FAST = A.Config(wait_secs=0, contact=(), advanced=True)
 
 BAKE_KAIJU = "kaiju changes are sacred, only ever under my direct direction"
 BAKE_PIANO = "just ship it, worst case the music stops"
@@ -211,8 +211,8 @@ def test_the_journal_row_carries_the_citation(tmp_path):
 
 
 def test_the_map_holds_even_with_blanket_approval_holds_off(tmp_path):
-    ap = A.Approvals(str(tmp_path / "approvals.db"), A.Config(enabled=False, contact=()),
-                     trust=seeded())
+    ap = A.Approvals(str(tmp_path / "approvals.db"),
+                     A.Config(enabled=False, contact=(), advanced=True), trust=seeded())
     az = Authorizer(PolicyStore(str(tmp_path / "policy.json")), None, approvals=ap)
     d = check(az, "shell.exec", "kaiju")
     assert d.held and d.hold_kind == "trust" and BAKE_KAIJU in d.hold_reason
@@ -368,8 +368,11 @@ def test_agents_read_check_and_propose_through_caps(plugin):
         r = plugin.check(cap="shell.exec", worker="kaiju", tier="exec")
         assert r["tier"] == "person" and BAKE_KAIJU in r["cite"]
         assert plugin.check(repo="Bake-Ware/rook", branch="master")["tier"] == "ask"
-        out = plugin.propose({"op": "set_unlisted", "data": {"level": "guarded"}},
-                             why="more care please")
+        with pytest.raises(PermissionError, match="only the person adds"):   # no ratchet
+            plugin.propose({"op": "set_unlisted", "data": {"level": "guarded"}},
+                           why="more care please")
+        out = plugin.propose({"op": "set_unlisted", "data": {"level": "ship-it"}},
+                             why="the person approved every change here this week")
         assert out["state"] == "pending"
         with pytest.raises(PermissionError):
             plugin.tighten("set_unlisted", {"level": "sacred"}, words="x y")
@@ -377,7 +380,7 @@ def test_agents_read_check_and_propose_through_caps(plugin):
         undo()
 
 
-def test_only_the_house_agent_itself_tightens_through_the_cap(plugin):
+def test_only_a_person_tightens_through_the_cap(plugin):
     from rook.band_mcp.attribution import Attribution
     role = Attribution(identity="agent:rook/role:lead", kind="home", agent_id="home:rook/role:lead")
     undo = _as(ROLE, role)
@@ -389,11 +392,17 @@ def test_only_the_house_agent_itself_tightens_through_the_cap(plugin):
     house = Attribution(identity="agent:rook", kind="home", label="rook", agent_id="home:rook")
     undo = _as(Principal("token:home:rook", "token", "agent"), house)
     try:
+        with pytest.raises(PermissionError, match="only the person"):    # no ratchet
+            plugin.tighten("set_unlisted", {"level": "guarded"}, words="Bake: be careful today")
+    finally:
+        undo()
+    undo = _as(Principal("human:u1", "human", "owner", label="bake"))
+    try:
         with pytest.raises(ValueError, match="person's alone"):
             plugin.tighten("set_entry", {"id": "kaiju", "level": "ship-it",
                                          "targets": ["worker:kaiju"]}, words="Bake: relax")
-        plugin.tighten("set_unlisted", {"level": "guarded"}, words="Bake: be careful today")
-        assert plugin.store.current()["notices"][-1]["who"] == "rook"
+        plugin.tighten("set_unlisted", {"level": "guarded"}, words="be careful today")
+        assert plugin.store.current()["unlisted"] == "guarded"
     finally:
         undo()
 

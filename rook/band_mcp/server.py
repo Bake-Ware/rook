@@ -285,7 +285,8 @@ def build_server(client: "BandClient | MultiBandClient",
         node = getattr(mcp, "_rook_hub", None)
         entry = node.entry() if node is not None else {"name": HUB_WORKER_NAME, "roles": ["is_hub"]}
         d = authz.check(cap, node.worker_id if node is not None else HUB_WORKER_NAME, entry,
-                        principal=principal, local=True)
+                        principal=principal, local=True,
+                        args=arguments if isinstance(arguments, dict) else {})
         if d.held:
             out = await authz.resolve(d, arguments if isinstance(arguments, dict) else {})
             if isinstance(out, dict):

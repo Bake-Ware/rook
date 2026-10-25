@@ -20,6 +20,8 @@ from tests.test_huddle_chair import _call, _settle
 from tests.test_huddle_chair import hub as chair_hub  # noqa: F401
 from tests.test_relay import CLAUDE, cap, card_and_ask, hold, hub  # noqa: F401
 
+pytestmark = pytest.mark.advanced
+
 TRUST = ('trust map v15, entry "rook-hub" (guarded), set by Bake 2026-10-23: "the Rook hub/live '
          'band = guarded". change -> ask: ask first (until votes exist, a person approves)')
 
@@ -181,7 +183,7 @@ def test_a_cmd_string_is_read_like_argv():
 
 
 def test_what_leaves_the_dashboard_never_carries_the_args():
-    from rook.hub.approval_contact import message, question
+    from rook.hub.plugins.security.contact import message, question
     typed = held(cap="proc.write", args={"data": "hunter2"}, name="calm-otter-lamp")
     run = held(args={"argv": ["sh", "-c", "PGPASSWORD=s3cret psql -c 'select 1'"]})
     for h in (typed, run):

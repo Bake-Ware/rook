@@ -110,14 +110,15 @@ class DashboardBand:
         from ..band_mcp.client import _authorize, _denial, _settle
         from .authz import BAND_UNAUTHENTICATED
         authz = getattr(self._client, "authz", None)
-        sent = _authorize(authz, cap, target, node.entry(), identity, principal, local=False)
+        sent = _authorize(authz, cap, target, node.entry(), identity, principal, local=False,
+                          args=args)
         if sent is not None and sent.denied:
             return _denial(sent, target)
         sent, refused = await _settle(authz, sent, args, target)
         if refused is not None:
             return refused
         got = _authorize(authz, cap or "", node.worker_id, node.entry(), identity,
-                         BAND_UNAUTHENTICATED, local=True)
+                         BAND_UNAUTHENTICATED, local=True, args=args)
         got, refused = await _settle(authz, got, args, target)
         if refused is not None:
             return refused

@@ -188,7 +188,9 @@ CHAIR_RULES = (
     "action card the person approves). Call call_on or answer at least once, then stop. Never "
     "invent what a role would say. Say you did something (asked a role, proposed a card) only "
     "after its tool call returned ok; the hub lists the cards you proposed under your message, "
-    "so do not list them yourself.")
+    "so do not list them yourself. No ratchet: never add or tighten guardrails, holds or "
+    "trust entries, and don't let the team turn a review into red tape; reduce the risk of a "
+    "change instead (soft delete, narrow scope, stage, time-box, snapshot first).")
 CLOSE_RULES = (
     "The roles have answered (below). Decide whether the thread is settled, then do one of:\n"
     "- A role failed, or a question is still open that a role in this huddle can answer: call "
@@ -857,7 +859,7 @@ class Chair:
         except Exception:  # noqa: BLE001 - the list failing never sinks a round
             log.exception("huddle: listing what is waiting failed")
             return [], ""
-        if relay.may_relay(self.chair_identity()):
+        if relay.advanced() and relay.may_relay(self.chair_identity()):
             return [WAITING, RELAY], WAITING_RULES + RELAY_RULES
         return [WAITING], WAITING_RULES
 
@@ -870,11 +872,14 @@ class Chair:
                                "items": [Relay.public(i) for i in items]})
         if not _is_person(asker):
             return json.dumps({"ok": False, "error": "only a person's own words are relayed"})
+        if not relay.advanced():
+            return json.dumps({"ok": False, "error": "the chair relays only with advanced "
+                                                     "security on; the person answers on the card"})
         quote = " ".join(str(args.get("quote") or "").split())
         if not quote or quote.lower() not in " ".join(str(said or "").split()).lower():
             return json.dumps({"ok": False, "error": "quote must be the person's exact words from "
                                                      "their newest message"})
-        from ...approval_contact import voice_verdict
+        from ..security.contact import voice_verdict
         decision = str(args.get("decision") or "")
         if voice_verdict(quote) != decision:
             return json.dumps({"ok": False, "error": f"the quoted words must clearly say "

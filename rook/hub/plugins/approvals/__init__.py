@@ -110,6 +110,10 @@ class Approvals(Plugin):
             # the client in conversation with the person hears their words.
             raise PermissionError("approvals.relay is refused on behalf of " + ", ".join(
                 str(v) for v in p.via) + ": only a client talking with the person relays")
+        if not self.relay.advanced():
+            raise PermissionError("relaying from agent clients is part of advanced security, "
+                                  "which is off: the person answers on the phone's card, by "
+                                  "voice, or on the dashboard")
         try:
             return await self.relay.decide(item, decision, relayed_by, relayer=p.id,
                                            relayer_label=p.label or p.id, reason=reason,

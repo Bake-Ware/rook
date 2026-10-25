@@ -92,8 +92,24 @@ def leaks(path):
     return [f for f in encoded_forms(SECRET) if f in text]
 
 
+async def get_secret(env, name):
+    """An agent's raw read of a secret is a hard stop (rook/hub/hardstops.py):
+    held until a person approves it, then the same call goes through."""
+    try:
+        first = await env.tool('rook_secret', action='get', name=name)
+    except ValueError:                             # the held reply is plain text here
+        first = {}
+    assert not (isinstance(first, dict) and 'value' in first), first
+    ap = env.band.authz.approvals
+    hold, = [h for h in ap.queue.pending() if h['cap'] == 'secret.get']
+    assert 'reveals a secret' in hold['reason']
+    ap.decide(hold['id'], True, 'human:u1')
+    return await env.tool('rook_secret', action='get', name=name)
+
+
 @pytest.mark.asyncio
 async def test_placeholders_never_reach_agent_or_journal(tmp_path, monkeypatch):
+    monkeypatch.setenv('ROOK_APPROVALS_WAIT_SECS', '0')
     async with mcp_session(tmp_path, monkeypatch) as env:
         # A call that leaked the value before it entered the vault…
         leaked = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'cmd': f'echo {SECRET}'})
@@ -122,11 +138,11 @@ async def test_placeholders_never_reach_agent_or_journal(tmp_path, monkeypatch):
         blob = json.dumps({'installed': {'client_id': 'x', 'client_secret': 'y-secret-value'}})
         stored = await env.tool('rook_secret', action='set', name='json-cred', value=blob, description='a JSON file')
         assert stored['ok'], stored
-        assert (await env.tool('rook_secret', action='get', name='json-cred'))['value'] == blob
+        assert (await get_secret(env, 'json-cred'))['value'] == blob
         numeric = await env.tool('rook_secret', action='set', name='123', value='12345678')
-        assert numeric['ok'] and (await env.tool('rook_secret', action='get', name='123'))['value'] == '12345678'
+        assert numeric['ok'] and (await get_secret(env, '123'))['value'] == '12345678'
 
-        got = await env.tool('rook_secret', action='get', name='pw')
+        got = await get_secret(env, 'pw')
         assert got['value'] == SECRET
         log = (await env.tool('rook_secret', action='log', name='pw'))['access']
         assert [a['action'] for a in log][:2] == ['get', 'use']

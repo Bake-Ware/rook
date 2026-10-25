@@ -97,7 +97,7 @@ PRESET_IDS = tuple(p["id"] for p in PRESETS)
 #: it against :func:`enabled_setting_keys`).
 HUB_ENABLED_SETTINGS = {"discord": "discord.enabled", "home": "home.enabled", "huddle": "huddle.enabled",
                         "jobs": "job.enabled", "knowledge": "knowledge.enabled",
-                        "memory": "memory.enabled",
+                        "memory": "memory.enabled", "security": "security.enabled",
                         "tasks": "task.enabled", "telegram": "telegram.enabled"}
 
 #: Risk tiers of the Android app's plugins, which the hub cannot import (they

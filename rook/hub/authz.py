@@ -152,7 +152,9 @@ class Authorizer:
     # -- decisions ---------------------------------------------------------
     def check(self, cap: str, target_id: str | None, entry: dict | None, *,
               identity: str | None = None, principal: Principal | None = None,
-              local: bool = False) -> Decision:
+              local: bool = False, args: Any = None) -> Decision:
+        """The policy's decision for one call, with the approval layer
+        (holds, hard stops: rook/hub/hardstops.py, which read ``args``)."""
         p = self.principal(principal, identity)
         chain = [p]
         target = None
@@ -161,7 +163,7 @@ class Authorizer:
             banned = bool(self._banned and self._banned((entry or {}).get("name"), target_id))
             target = target_from_entry(target_id, entry, local=local, banned=banned)
             d = policy.evaluate(chain, cap, target)
-            d = self._approvals(d, p, policy, target)
+            d = self._approvals(d, p, policy, target, args)
         except Exception as e:  # 3.8: owners never locked out; others fail closed
             policy = self.store.policy
             enforce = policy.mode_for(p) == "enforce"
@@ -173,21 +175,22 @@ class Authorizer:
             log.exception("ROOK AUTHZ ALERT: authorize() failed for %s %s", p.id, cap)
             if d.decision == "error_allow" and target is not None:
                 # Failing open for an operator token must not skip the holds.
-                d = self._approvals(d, p, policy, target)
+                d = self._approvals(d, p, policy, target, args)
         d.label = p.label
         last_decision.set(d)
         if d.decision not in ("allow", "off", "hold"):
             self._journal(d)  # holds are journaled when the hold is created
         return d
 
-    def _approvals(self, d: Decision, p: Principal, policy: Any, target: Any) -> Decision:
+    def _approvals(self, d: Decision, p: Principal, policy: Any, target: Any,
+                   args: Any = None) -> Decision:
         if self.approvals is None:
             if d.held:
                 return dataclasses.replace(d, decision="deny", rule=d.rule,
                                            reason="held, but this hub has no approval queue")
             return d
         try:
-            return self.approvals.apply(d, p, policy, target)
+            return self.approvals.apply(d, p, policy, target, args)
         except Exception as e:  # noqa: BLE001
             log.exception("ROOK AUTHZ ALERT: approval check failed for %s %s", p.id, d.cap)
             if p.kind in ("human", "system"):

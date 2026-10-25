@@ -1,5 +1,7 @@
 """Telling the operator about held calls, and approving by voice
-(``docs/design/permissions.md`` 3.11).
+(advanced security; ``docs/design/permissions.md`` 3.11). Moved here from
+rook/hub/approval_contact.py: with the plugin off a hold reaches the person
+only as a card on their phone (the attention plugin) and on the dashboard.
 
 ``approvals.contact`` lists channels, tried in order for each new hold:
 
@@ -39,7 +41,7 @@ import re
 import time
 from typing import Any
 
-from ..core import authz as core_authz
+from ....core import authz as core_authz
 
 log = logging.getLogger("rook.hub.approval_contact")
 
@@ -98,7 +100,7 @@ def _where(hold: dict) -> str:
 def _plain(hold: dict) -> dict:
     """The ask with a title made from the cap and machine only: this text
     goes to Telegram, notify and voice, so it never carries the args."""
-    from .plain import hold_item, outside
+    from ...plain import hold_item, outside
     try:
         return outside(hold_item(hold))
     except Exception:  # noqa: BLE001 - fall back to the bare facts
@@ -189,7 +191,7 @@ class Contact:
         return (hits[0], name) if len(hits) == 1 else (None, name)
 
     async def _call(self, cap: str, args: dict, target: str, timeout: float) -> dict:
-        from .authz import system
+        from ...authz import system
         reply = await self.client.call(cap=cap, args=args, target=target, timeout=timeout,
                                        identity="system:approvals",
                                        principal=system("approvals"))
@@ -202,7 +204,7 @@ class Contact:
 
     async def send(self, channel: str, text: str, cfg: Any) -> bool:
         """One message over one channel; True when it was taken."""
-        from .plugins.jobs.kinds import notify_call
+        from ..jobs.kinds import notify_call
         if channel == "telegram":
             target = self._hub_id()
             cap, args = notify_call("telegram", text, channel="all")
@@ -277,7 +279,7 @@ class Contact:
         """Ask about one hold on the phone. ``approved`` / ``denied`` (decided
         by voice), ``gone`` (no longer pending), ``unclear``, ``unanswered``
         or ``offline``. One question at a time."""
-        from .plugins.jobs.kinds import ask_args, heard
+        from ..jobs.kinds import ask_args, heard
         if self._ask_lock is None:
             self._ask_lock = asyncio.Lock()
         async with self._ask_lock:
@@ -307,7 +309,7 @@ class Contact:
                                         {"ok": True, "hold": current["id"], "decision": "unclear",
                                          "heard": text[:300]})
                 return "unclear"
-            from .approvals import HoldError
+            from ...approvals import HoldError
             try:
                 self.approvals.decide(current["id"], verdict == "approve", by, scope="call",
                                       note=f"heard: {text[:200]}", heard=text)
