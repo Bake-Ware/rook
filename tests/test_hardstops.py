@@ -89,7 +89,8 @@ def test_reaching_a_machine_over_ssh_and_the_hubs_own_files():
     "x=$(ssh kaiju reboot)", "/usr/bin/ssh kaiju sudo reboot", "ssh -tp 2222 kaiju reboot",
     "ssh -o BatchMode=yes -i ~/.ssh/k bake@kaiju.local reboot", 'ssh cachyrig "ssh kaiju reboot"',
     "ssh -t hop ssh kaiju reboot", "ssh -J kaiju other uptime", "\\ssh kaiju reboot",
-    "ssh -vvvvp 2222 kaiju reboot"])
+    "ssh -vvvvp 2222 kaiju reboot", "ssh -o ProxyJump=kaiju other uptime",
+    "ssh -oProxyJump=bake@kaiju:22 other uptime", "ssh -Jkaiju other uptime"])
 def test_quoted_wrapped_and_path_prefixed_ssh_still_reaches_kaiju(cmd):
     assert {"kaiju", "kaiju.local"} & H.remote_hosts(cmd), cmd
 
@@ -99,6 +100,18 @@ def test_quoted_wrapped_and_path_prefixed_ssh_still_reaches_kaiju(cmd):
     "echo `rm -rf /srv/media`", "sudo -n rm -rf /var/lib/rook-band-mcp", "\\rm -rf /home/bake"])
 def test_quoted_and_path_prefixed_rm_is_seen(cmd):
     assert H.destroys(cmd), cmd
+
+
+def test_sending_as_the_person_by_any_messaging_family():
+    for cap in ("mail.send", "gmail.reply", "slack.post", "whatsapp.forward", "call.dial"):
+        assert "sends a message as you" in H.stop(cap, {"to": "x"}), cap
+    for cap in ("mail.list", "gmail.read", "slack.search", "msg.send", "notify.post",
+                "voice.speak", "chat.send"):
+        assert not H.stop(cap, {"text": "hi"}), cap
+
+
+def test_deeply_nested_ssh_stops_without_crashing():
+    assert H.remote_hosts("ssh a " * 3000 + "ssh kaiju reboot") == {"a"}
 
 
 def test_every_command_cap_is_checked():

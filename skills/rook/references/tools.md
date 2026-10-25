@@ -78,6 +78,16 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `ccmod.push` | worker='', remove=false | admin | Send the rules to `worker` (default: every online worker). |
 | `ccmod.set` | rule, note='', dry_run=false, expect_rev? | admin | Create or replace a rule. |
 | `ccmod.status` | — | read | Each worker: whether it can take rules, what was last pushed and whether that is still current. |
+| `change.catalog` | action='list', category='', words='' | write | The kinds that go as standard changes: list, or add (the person's "that kind is fine", with their words). |
+| `change.decide` | id, yes=false | write | A person's answer to a change request that waits for them (the card does the same). |
+| `change.digest` | weekly=false | read | What the next digest would say (the last day, or the last 7 days). |
+| `change.get` | id | read | One change request with its checks and its step log. |
+| `change.irreducible` | id, why='' | write | A normal change the huddle can't make standard: one card to the person now. |
+| `change.list` | states?, days=7 | read | Change requests updated in the last `days`, newest first (states: filter). |
+| `change.reduce` | id, into?, note='' | write | A normal change made into standard change requests (their ids): it is closed. |
+| `change.revert` | id | write | Roll a kept change back with its own rollback (the person's "revert that"). |
+| `change.submit` | data? | write | A change request: data {kind standard\|emergency\|normal, category, what, why, machines, plan, scripts [{worker… |
+| `change.update` | id, data? | write | Write the words of a change request afterwards (an emergency's what, why, plan); what ran never changes. |
 | `chat.delete` | room | write | Delete a room and all its messages (participants only; final). |
 | `chat.presence` | — | read | Identities seen recently, newest first, with online flags. |
 | `chat.read` | action='rooms', room?, since_seq=0, limit=200, mark=true | read | Read chat rooms: action=rooms (yours, newest first, unread counts) or read (room, since_seq). |
@@ -209,6 +219,9 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 
 ### Claude Code rules
 Hub-managed triggers and actions for Claude Code on the workers (dashboard: Manage > Claude Code). `rook_call(worker="rook", cap="ccmod.list")` lists them; `ccmod.status` shows what each worker holds. Changing or pushing rules writes people's Claude Code settings: ask the user first.
+
+### change requests
+A change that could hurt is a change request: `rook_call(worker="rook", cap="change.submit", args={"data": {kind, category, what, why, machines, plan, scripts:[{worker, run, detach?}], tests:[{worker, run, expect_rc?, expect?}], rollback:{worker, run, dry_run, point}}})`. standard (routine deploys, reversible config or database changes): the hub checks it, runs it, tests it and rolls back by itself. emergency (a service is down): fix standard-ly (rollback, restart, failover) and it runs at once; write the rest with `change.update` afterwards. normal (risky or permanent): the huddle gets one round to reduce it to standard changes (soft delete, narrow scope, stage, time-box, snapshot first; `change.reduce` / `change.irreducible`), then the person gets one card. `change.get`, `change.list`. Reads and routine job runs need no change request.
 
 ### chat rooms
 Persistent rooms shared by agents, people and workers. MCP: `rook_chat_*`. Over the band, on worker `rook`: `chat.read` (action rooms|read), `chat.write` (action start|send), `chat.delete`, `chat.presence`. Band callers are recorded as `band:<identity>`; posting over the band needs `ROOK_HUB_BAND_MAX_RISK=write`.

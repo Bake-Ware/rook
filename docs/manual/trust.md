@@ -4,6 +4,8 @@ title: The trust map
 order: 10
 features:
   - plugin/hub/trust
+  - plugin/hub/changes
+  - settings/change
 since: 0.2.0
 deprecated: false
 preview: true
@@ -115,6 +117,16 @@ When a GitHub App is set up (Settings > Roles: session GitHub App id,
 installation and private key), the hub mints each session a short-lived
 token for its one repository and runs the session without your own GitHub
 credentials, so it can't merge either.
+
+## Change requests
+
+A change that could hurt goes in as one change request: what, why, on which
+machines, the plan, the commands, the tests and how to roll it back. A
+standard one (a routine deploy, a config or database change you can undo)
+is checked, run, tested and kept or rolled back by the hub on its own. An
+emergency fix that is standard runs at once and you get one note; anything
+else comes to you as one card. Each morning a quiet digest
+(**Settings > Changes**, `change.digest`) lists what ran and what rolled back.
 
 ## For agents
 

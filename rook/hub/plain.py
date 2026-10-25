@@ -133,6 +133,7 @@ HOUSE_FOR = {
     "restore": "putting a borrowed machine back",
     "review": "reviewing a new project's setup",
     "vote": "a huddle vote that did not pass on its own",
+    "change": "a change request the huddle could not make a standard change",
 }
 
 

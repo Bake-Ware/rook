@@ -59,7 +59,8 @@ log = logging.getLogger("rook.hub.plugins.home.front")
 MIGRATIONS = Path(__file__).resolve().parent / "migrations"
 NAMESPACE = "home"
 PATHS = ("answer", "do", "dispatch", "huddle", "ask", "onboard")
-ASK_KINDS = ("action", "dispute", "gap", "playbook", "remember", "restore", "review", "vote")
+ASK_KINDS = ("action", "change", "dispute", "gap", "playbook", "remember", "restore", "review",
+             "vote")
 ASK_STATES = ("open", "yes", "no", "expired", "cancelled")
 DECISION_KINDS = ("did", "dispatched", "huddle", "ruled", "tightened")
 LINE_MAX, EXPLAIN_MAX, MORE_MAX = 160, 600, 4000
@@ -85,6 +86,7 @@ Rules:
 - When the person corrects how you route ("next time just do that", "ask me about X", "don't bother me with Y"), call playbook_edit with their exact words; tightening applies at once, loosening becomes a question for them.
 - When they overturn a decision you made ("no, undo that rule", "overturn brave-otter-lamp"), call overturn with their words.
 - When they answer one of your open asks in this message ("yes, do it", "no"), call answer_ask with their exact words.
+- When the person answers the change digest ("revert <name>", "that kind is fine"), call do_action on worker rook: cap change.revert {id} or change.catalog {action: add, category, words: their exact words}.
 - Never touch secrets, never change the trust map or any guardrail (only the person does)."""
 
 
@@ -806,6 +808,8 @@ class FrontDoor:
             result.update(self.onboard.answer_review(a, False, by))
         elif a["kind"] == "vote":
             result.update(await self._vote_answer(a, False, by))
+        elif a["kind"] == "change":
+            result.update(await self._change_answer(a, False, by))
         else:
             result["note"] = "Nothing was done."
         self.store.set_result(a["id"], result)
@@ -830,10 +834,24 @@ class FrontDoor:
             return {"ok": False, "note": f"Not done: {str(e)[:300]}"}
         return {"ok": bool(out.get("ok")), "note": out.get("note") or ""}
 
+    async def _change_answer(self, a: dict, yes: bool, by: str) -> dict:
+        """A change request that reached the person (rook/hub/plugins/changes):
+        Yes runs it with its tests and rollback, No drops it."""
+        changes = self.plugin("change")
+        ident = (a.get("action") or {}).get("change")
+        if changes is None or not ident:
+            return {"ok": False, "note": "The change request is gone (changes are off)."}
+        try:
+            return await changes.decided(ident, yes, by)
+        except Exception as e:  # noqa: BLE001 - say why
+            return {"ok": False, "note": f"Not done: {str(e)[:300]}"}
+
     async def _carry_out(self, a: dict, by: str, relay: dict | None) -> dict:
         kind = a["kind"]
         if kind == "vote":
             return await self._vote_answer(a, True, by)
+        if kind == "change":
+            return await self._change_answer(a, True, by)
         if kind in ("action", "restore") and a.get("action"):
             act = a["action"]
             closing = (act.get("after") or {}).get("close_lease")

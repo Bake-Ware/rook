@@ -160,6 +160,12 @@ are set only in the environment or on the command line.
 | `attention.quiet_hours` | No reminders between | hub | str |  | `ROOK_ATTENTION_QUIET_HOURS` | live |
 | `attention.remind_unchecked` | Remind even when the room can't be checked | hub | bool | off | `ROOK_ATTENTION_REMIND_UNCHECKED` | live |
 
+## Change (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `change.digest` | Change digest | hub | str | `daily` | `ROOK_CHANGE_DIGEST` | live |
+
 ## Chat (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
