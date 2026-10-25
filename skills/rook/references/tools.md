@@ -87,7 +87,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `change.reduce` | id, into?, note='' | write | A normal change made into standard change requests (their ids): it is closed. |
 | `change.revert` | id | write | Roll a kept change back with its own rollback (the person's "revert that"). |
 | `change.submit` | data? | write | A change request: data {kind standard\|emergency\|normal, category, what, why, machines, plan, scripts [{worker… |
-| `change.update` | id, data? | write | Write the rest of a change request afterwards (an emergency's what, why, plan, tests, rollback). |
+| `change.update` | id, data? | write | Write the words of a change request afterwards (an emergency's what, why, plan); what ran never changes. |
 | `chat.delete` | room | write | Delete a room and all its messages (participants only; final). |
 | `chat.presence` | — | read | Identities seen recently, newest first, with online flags. |
 | `chat.read` | action='rooms', room?, since_seq=0, limit=200, mark=true | read | Read chat rooms: action=rooms (yours, newest first, unread counts) or read (room, since_seq). |
