@@ -101,8 +101,8 @@ exactly like a tap ("approved by Bake via voice"), and the card disappears
 from the phone, the Approvals page and its huddle. A card answered somewhere
 else meanwhile is passed over.
 
-- **Only you, recognised for sure.** A spoken answer counts only when the
-  voice is sure it is your voice (a strong voiceprint match, not "probably").
+- **Only you, recognised.** A spoken answer counts only when the voice
+  recognises your voice (a voiceprint match strong enough to name you).
   Otherwise it says it couldn't confirm it was you and leaves the card. A
   guest, a child or a voice it doesn't know can't start this or answer.
   Answer in a few words: a bare "yes" can be too short to recognise.

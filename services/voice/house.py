@@ -62,9 +62,11 @@ FILLER = 'One moment.'
 # Models overuse sounds they are merely allowed (Pianobar's DJ found the same), so the
 # server offers them on about one turn in this many, and the voice may still use none.
 SOUND_EVERY = int(os.environ.get('VOICE_HOUSE_SOUND_EVERY', '4'))
-# A speaker match at or above this cosine is "sure"; below (but above the label
-# threshold) it is "probably". Identification only, never authentication.
-SPEAKER_SURE = float(os.environ.get('VOICE_SPEAKER_SURE', '0.65'))
+# A speaker match at or above this cosine is "sure" (counts as that person for their
+# decisions); below it, if still named, it is "probably". Bake 2026-10-25: "if it's more
+# than half sure that it's me, that's good enough", so it equals the naming threshold
+# (speaker.DEFAULT_THRESHOLD 0.45, above every other voice measured). Identification only.
+SPEAKER_SURE = float(os.environ.get('VOICE_SPEAKER_SURE', '0.45'))
 # On the local models nothing routes, so this phrase is caught here: back to the house voice.
 BACK_TO_HOUSE = re.compile(r"\b(switch|go|change|come)\s+back\b.{0,30}\b(claude|haiku|sojourn|house|normal|"
                            r"usual)\b|\buse\s+claude\b|\bback\s+to\s+claude\b", re.I)
