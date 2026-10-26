@@ -52,18 +52,11 @@ Anyone who knows a band's key can join that band and control its machines.
 The **advanced security** plugin (Manage > Plugins, off by default) brings
 back the stricter rules Rook used to have:
 
-- every admin or destructive agent call waits for you, and so do your own
-  hold rules in the policy;
-- commands to a worker on the hub's own machine wait for you;
-- an agent reaching more than 5 machines in 10 minutes waits for you;
-- guarded trust entries ask first, and so do admin actions on anything not
-  on the map;
+- guarded trust entries ask first;
 - the house agent also asks about anything not easily undone and anything
   on a family device;
 - only agent clients you tick may pass on your answers, and the huddle
   chair too ([[manual-accounts-and-access]]);
-- every new hold sends you a message (Telegram, a notification or your
-  phone's voice);
 - merges, deploys and ships need a blind vote of the roles
   ([[manual-conference-table]]).
 

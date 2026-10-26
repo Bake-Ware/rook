@@ -252,9 +252,7 @@ def build_server(client: "BandClient | MultiBandClient",
 
     def _own_resource(name, arguments) -> bool:
         """True when the caller is tidying up a console room or chat room it
-        owns: cleaning up after yourself is not held by the built-in
-        destructive hold (permissions 3.11). Operator hold rules and the
-        spread limit still apply; secrets, memory and updates stay held."""
+        owns: cleaning up after yourself is never held (permissions 3.11)."""
         args = arguments if isinstance(arguments, dict) else {}
         try:
             who = _caller_identity()

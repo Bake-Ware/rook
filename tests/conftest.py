@@ -43,15 +43,7 @@ def _fresh_login_throttle():
 
 
 @pytest.fixture(autouse=True)
-def _approvals_off_unless_asked(request, monkeypatch):
-    """Approval holds (rook/hub/approvals.py) are on by default and make an
-    agent's admin or destructive call wait up to 45 s for a person. Tests
-    that are not about them run with them off, as the hub did before; tests
-    marked ``approvals`` (tests/test_approvals.py) get the shipped default."""
-    if request.node.get_closest_marker("approvals") is None:
-        monkeypatch.setenv("ROOK_APPROVALS", "0")
-    else:
-        monkeypatch.delenv("ROOK_APPROVALS", raising=False)
+def _advanced_security_only_when_asked(request, monkeypatch):
     # Advanced security (rook/hub/plugins/security) is off by default; tests of
     # the guardrails it carries are marked ``advanced``.
     if request.node.get_closest_marker("advanced") is None:
@@ -63,12 +55,11 @@ def _approvals_off_unless_asked(request, monkeypatch):
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
-        "approvals: run with approval holds on (the shipped default); every other test "
-        "runs with ROOK_APPROVALS=0")
+        "approvals: tests of the approval holds (rook/hub/approvals.py)")
     config.addinivalue_line(
         "markers",
-        "advanced: run with the advanced security plugin on (blanket holds, guarded trust, "
-        "votes, client relays, the shell read-only guess)")
+        "advanced: run with the advanced security plugin on (guarded trust, votes, client "
+        "relays, the shell read-only guess)")
     config.addinivalue_line(
         "markers",
         "integration: needs a running test hub (scripts/test-hub.sh); opt-in "

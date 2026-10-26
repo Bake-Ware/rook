@@ -16,6 +16,23 @@ version was `0.1.0`.
   note the first time a tool, an action or a held or timed-out call comes up in a session.
   (manual: agents-and-mcp)
 
+### Changed
+- Approvals, simplified (access v2, Bake's design decision 9): only the hard stops and the
+  trust map hold an agent's call. Nothing expires: an ask waits until you answer it, and an
+  approval covers the one identical call it was for with no time limit
+  (`approvals.approval_secs` is gone). The phone's cards, clearing cards by voice and relaying
+  your quoted words work as before. (manual: accounts-and-access, security)
+
+### Removed
+- The blanket holds, with the advanced security plugin on or off: admin and destructive calls
+  (`approvals.enabled`, `approvals.hold`, `ROOK_APPROVALS`), operator `hold` rules in the
+  policy (now ignored, and the policy lint says so), workers on the hub's own machine
+  (`approvals.hub_host_workers`) and the spread limit with its grants (`approvals.spread_*`,
+  *Approve + spread*). The operator contact channels for each hold (`approvals.contact`,
+  `contact_worker`, `voice_max_tier`, `notify_every_secs`: Telegram, notify, voice and the
+  per-hold spoken question); `rook/hub/plugins/security/holds.py` and `contact.py` are
+  deleted. (manual: accounts-and-access, security)
+
 ## [0.4.0] - 2026-10-25
 
 The integration release: everything in flight merged to one master, one hub build, one

@@ -879,7 +879,7 @@ class Chair:
         if not quote or quote.lower() not in " ".join(str(said or "").split()).lower():
             return json.dumps({"ok": False, "error": "quote must be the person's exact words from "
                                                      "their newest message"})
-        from ..security.contact import voice_verdict
+        from ...relay import voice_verdict
         decision = str(args.get("decision") or "")
         if voice_verdict(quote) != decision:
             return json.dumps({"ok": False, "error": f"the quoted words must clearly say "

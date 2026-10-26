@@ -548,7 +548,7 @@ async def test_a_spoken_yes_approves_a_real_hold_through_the_relay(penv, tmp_pat
 
     from rook.hub import approvals as A
     from tests.test_relay import hold
-    ap = A.Approvals(str(tmp_path / "approvals.db"), A.Config(wait_secs=0, contact=()))
+    ap = A.Approvals(str(tmp_path / "approvals.db"), A.Config(wait_secs=0))
     penv.band.authz = SimpleNamespace(approvals=ap)
     h = hold(ap)
     host, task = await connect(penv)

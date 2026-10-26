@@ -3,17 +3,20 @@
 The guardrails the hub had before the change-management reset
 (knowledge change-management-design-20261025), moved out of core so a band
 that wants them turns them back on in one place (Manage > Plugins, or the
-setting ``security.enabled``). On, it restores that behaviour exactly:
+setting ``security.enabled``). On, it adds:
 
-* the blanket holds: admin or destructive calls (``approvals.hold``, still
-  under ``approvals.enabled``), operator hold rules, calls from a worker on
-  the hub's own machine, and the spread limit (:mod:`.holds`);
 * the trust map's ``guarded`` level and the ``balanced`` unlisted default
   (core keeps only ``sacred``);
 * the shell read-only guess on an ask's Risk line (:mod:`.shell`);
 * relays from the huddle chair, and only from ticked agent clients (off:
   any client may relay the person's quoted words, never on a hard stop);
 * blind merge, deploy and ship votes at the conference table.
+
+The blanket holds it used to carry (admin or destructive calls, operator hold
+rules, workers on the hub's machine, the spread limit) and the operator
+contact channels (Telegram, notify, voice, ask) are gone, on or off
+(knowledge users-access-trust-map-and-agent-sessions-bake-s-design-decisions-2026-10-26-voi,
+item 9).
 
 Off, the hub keeps only the hard stops (rook/hub/hardstops.py) and change
 requests (rook/hub/plugins/changes); every call is journaled either way.
@@ -106,9 +109,9 @@ class AdvancedSecurity(Plugin):
         setting("enabled", bool, default=False, env=ENV, group="General",
                 label="Advanced security",
                 help="Off: only the hard stops ask you (changes on sacred machines, erasing data "
-                     "for good, revealing a secret, sending as you). On: also admin/destructive, "
-                     "hub-machine and spread holds, guarded trust entries, relays only from agent "
-                     "clients you tick and blind votes before merges and deploys."),
+                     "for good, revealing a secret, sending as you). On: also guarded trust "
+                     "entries, relays only from agent clients you tick and blind votes before "
+                     "merges and deploys."),
     )
 
 

@@ -1,7 +1,7 @@
 """Approval asks in plain words: the one shape every ask reaching the person
 takes, wherever it is shown (the dashboard's Approvals page, the phone's
 decision card, ``rook_approvals``, huddle cards and questions, job holds,
-trust and hub-host holds, the house agent's asks).
+trust holds, the house agent's asks).
 
 Bake (2026-10-23): "those need to be better formatted before sending to me.
 A simple title, for what task(project) and like I want to xyz, the risk is
@@ -468,13 +468,6 @@ def risk_text(kind: str, tier: str = "", *, hold_kind: str = "", reason: str = "
             extra = f"{name} is guarded, so changes there ask you"
         elif t["level"] == "balanced":
             extra = "admin actions ask you"
-    elif hold_kind == "hub-host":
-        extra = (f"{place or 'it'} runs on the hub's own machine, where a command could "
-                 "rewrite the hub's approvals and settings")
-    elif hold_kind == "spread":
-        m = re.search(r"(\d+\w*) machine in (\d+) minutes", str(reason))
-        extra = (f"it would be the {m.group(1)} machine this agent touched in {m.group(2)} "
-                 "minutes" if m else "this agent is reaching many machines quickly")
     elif str(reason).startswith("hard stop:"):
         extra = str(reason)[len("hard stop:"):].strip().rstrip(".") + ", which always asks you"
     elif hold_kind == "default" and level != "High":
@@ -731,8 +724,8 @@ def for_hold(hold: dict) -> dict:
 
 def card_item(card: dict, huddle_title: str = "") -> dict:
     """A huddle action card as the item :func:`describe` reads (the huddle
-    page; :meth:`rook.hub.relay.Relay._cards` adds the roster's tier and
-    hub-host facts for the phone and ``rook_approvals``)."""
+    page; :meth:`rook.hub.relay.Relay._cards` adds the roster's tier for the
+    phone and ``rook_approvals``)."""
     from ..core import authz as core_authz
     call = card.get("call") or {}
     cap = str(call.get("cap") or "")
@@ -766,12 +759,3 @@ def safe_title(cap: str, worker: str = "", *, hub: bool = False) -> str:
     title = call_summary(cap, {}, worker, hub=hub)["title"]
     return title if " on " in title or not where or worker in title else f"{title}{where}"
 
-
-def outside(item: dict) -> dict:
-    """``{title, for, who, risk}`` with an argument-free title, for channels
-    that leave the dashboard and the phone (no why, no explain)."""
-    p = describe(item)
-    title = p["title"] if item.get("kind") in ("ask", "house") or (
-        item.get("kind") == "card" and not item.get("cap")) else safe_title(
-        item.get("cap") or "", str(item.get("worker") or ""), hub=bool(item.get("hub")))
-    return {"title": title, "for": p["for"], "who": p["who"], "risk": p["risk"]}
