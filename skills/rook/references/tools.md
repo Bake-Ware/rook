@@ -22,7 +22,7 @@ Every tool also takes `receipt`: repeat the receipt from the session brief (`_br
 | Tool | Args | Does |
 |---|---|---|
 | `rook_approvals` | action='summary', item?, relayed_by?, reason?, answer?, kind? | What waits on the person (holds, cards, questions, trust proposals). summary \| list (kind?). approve/deny ite… |
-| `rook_call` | cap, args?, worker_id?, worker?, timeout?, hint?, text?, why? | Run a cap on one worker. worker= (name or id) is required. |
+| `rook_call` | cap, why, args?, worker_id?, worker?, timeout?, hint?, text? | Run a cap on one worker. worker= (name or id) is required. |
 | `rook_caps` | prefix?, worker? | Caps and their holders: "*" = every worker, {all_but:[…]}, or names. prefix filters (e.g. "shell."); worker=… |
 | `rook_chat_delete` | room | Delete a room and its messages (participants only; final). |
 | `rook_chat_read` | room, since_seq? | Messages after since_seq (0 = all), marked read. |
