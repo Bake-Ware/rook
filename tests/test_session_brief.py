@@ -119,10 +119,10 @@ async def test_brief_rides_the_first_reply_and_the_receipt_holds_it_back(tmp_pat
         assert "_brief" not in _j((await tool("rook_whoami"))[0])  # not echoed yet: not repeated
 
         assert "_brief" not in _j((await tool("rook_whoami", receipt=receipt))[0])
-        call = _j((await tool("rook_call", cap="info.host", worker="worker-a", receipt=receipt))[0])
+        call = _j((await tool("rook_call", why="test", cap="info.host", worker="worker-a", receipt=receipt))[0])
         assert call["ok"] and "_brief" not in call and env.band.sent[-1] == ("info.host", {})
 
-        again = _j((await tool("rook_call", cap="info.host", worker="worker-a"))[0])
+        again = _j((await tool("rook_call", why="test", cap="info.host", worker="worker-a"))[0])
         assert again["_brief"]["why"] == brief.MISSING and again["_brief"]["receipt"] == receipt
         assert "_brief" not in _j((await tool("rook_whoami"))[0])
 
@@ -139,7 +139,7 @@ async def test_text_mode_rook_call_carries_the_brief_on_its_rook_line(tmp_path, 
     async with hub(tmp_path, monkeypatch) as env:
         _, tool = await env.connect()
         env.band.stdout = "hello\n"
-        text, _ = await tool("rook_call", cap="shell.exec", worker="worker-a", text=True)
+        text, _ = await tool("rook_call", why="test", cap="shell.exec", worker="worker-a", text=True)
         body, _, line = text.rpartition("\n")
         assert body == "hello"
         notices = json.loads(line.removeprefix("[rook] "))
@@ -167,7 +167,7 @@ async def test_brief_replaces_the_start_of_session_round(tmp_path, monkeypatch):
         chat.send(room, "agent:other", "hi", [], False)
 
         # Compaction: the agent calls without its receipt.
-        r = _j((await tool("rook_call", cap="info.host", worker="worker-a"))[0])
+        r = _j((await tool("rook_call", why="test", cap="info.host", worker="worker-a"))[0])
         b = r["_brief"]
         assert b["why"] == brief.MISSING
         (claim,) = b["claimed"]
