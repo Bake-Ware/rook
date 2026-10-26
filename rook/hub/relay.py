@@ -623,14 +623,19 @@ class Relay:
         return {"item": it["id"], "name": it.get("name"), "kind": it["kind"],
                 "decision": decision, **out, "recorded": text}
 
-    @staticmethod
-    def _runner(principal: Any, relayer: str, label: str) -> Any:
+    def _runner(self, principal: Any, relayer: str, label: str) -> Any:
         """The principal a relayed card's call runs as: the relaying agent's
         own (verified) principal, else one built for it as an agent."""
         from dataclasses import replace
         from .policy import Principal
         if principal is not None and getattr(principal, "id", None) == relayer:
             return replace(principal, label=label)
+        if relayer.startswith("token:") and relayer != "token:static":
+            # An API key acts as its person (access v2 item 7).
+            from .authz import principal_for_agent
+            node = self._node()
+            access = getattr(getattr(getattr(node, "client", None), "authz", None), "access", None)
+            return principal_for_agent(relayer[6:], label, access)
         kind = relayer.split(":", 1)[0] if ":" in relayer else "agent"
         return Principal(relayer, kind if kind in ("token", "agent") else "agent", "agent",
                          label=label)

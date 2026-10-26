@@ -9,7 +9,7 @@ from rook.hub import access as A
 from rook.hub.authz import Authorizer, build_authorizer, current_principal, principal_for_token, \
     principal_for_user, target_from_entry
 from rook.hub.node import HubNode
-from rook.hub.policy import PolicyStore
+from rook.hub.policy import PolicyStore, Principal
 
 
 def member(uid="u_kid"):
@@ -176,7 +176,7 @@ def test_members_reach_only_what_grants_name_even_in_audit_mode(tmp_path):
     d = az.check("shell.exec", "w_pc", entry, principal=member())
     assert not d.denied and any(t.startswith("grant:g_") for t in d.tags)
     assert az.check("shell.exec", "w_nas", {"name": "nas"}, principal=member()).denied
-    # Owners, the shared dashboard password, tokens and hub code are not limited by grants.
+    # Owners, the shared dashboard password, keys with no access store and hub code are not limited.
     assert not az.check("shell.exec", "w_nas", {"name": "nas"}, principal=owner()).denied
     assert not az.check("file.read", "w_nas", {"name": "nas"},
                         principal=principal_for_user(None, True)).denied
@@ -438,3 +438,83 @@ def test_the_seed_runs_once_even_when_two_starts_race(tmp_path):
     stores[0].revoke(stores[0].grants("u_kid")[0]["id"], actor="o", words="no")
     assert A.AccessStore.for_dir(str(tmp_path)).seed(acc) is False
     assert stores[0].grants("u_kid") == []
+
+
+# -- API keys act as their person (item 7) -----------------------------------------
+
+def att_for(agent_id="a1", label="claude"):
+    return type("Att", (), {"verified": True, "kind": "agent", "agent_id": agent_id, "key_id": None,
+                            "label": label, "identity": label})()
+
+
+def test_a_key_is_its_person(tmp_path):
+    s = store(tmp_path)
+    # No owner yet (signed in by password only): a key is the hub's owner, and nothing is recorded.
+    p = principal_for_token(att_for(), s)
+    assert p.role == "owner" and p.fail_open() and p.user == "" and s.token_users() == {}
+    assert p.as_person().id == "human:dashboard"
+    s.set_role("u_bake", "owner", actor="o", words="first owner")
+    s.set_role("u_wife", "owner", actor="o", words="second owner")
+    # A key made before keys belonged to people goes to the first owner, once, with the words kept.
+    p = principal_for_token(att_for(), s)
+    assert (p.id, p.role, p.user, p.groups) == ("token:a1", "owner", "u_bake", ("human:owner",))
+    assert s.token_users() == {"a1": "u_bake"} and s.history("u_bake")[0]["words"] == A.CARRIED_OVER
+    assert A.user_of(p) == "u_bake" and not A.restricted(p)
+    # A member's key: their grants decide, exactly as for their dashboard session.
+    s.set_token_user("a2", "u_kid", actor="human:u_bake", words="Bake: this is my son's claude")
+    kid = principal_for_token(att_for("a2"), s)
+    assert (kid.role, kid.user) == ("member", "u_kid") and A.restricted(kid)
+    assert kid.as_person() == Principal("human:u_kid", "human", "member", ("human:member",),
+                                        label="claude")
+    # An operator account is an owner whatever access.db says.
+    assert principal_for_token(att_for("a2"), s, lambda uid: uid == "u_kid").role == "owner"
+    # The static key is the hub's own owner.
+    static = principal_for_token(type("Att", (), {"verified": True, "kind": "shared"})(), s)
+    assert static.id == "token:static" and static.fail_open() and static.as_person().id == "human:dashboard"
+    with pytest.raises(A.AccessError, match="words"):
+        s.set_token_user("a2", "u_bake", actor="x", words="")
+
+
+def test_member_keys_and_unreadable_keys_reach_only_grants(tmp_path):
+    az = authorizer(tmp_path)
+    az.access.set_role("u_bake", "owner", actor="o", words="first owner")
+    az.access.set_token_user("a2", "u_kid", actor="o", words="his claude")
+    az.access.grant("u_kid", "worker", "kids-pc", actor="o", words="his desktop")
+    kid = principal_for_token(att_for("a2"), az.access)
+    assert not az.check("shell.exec", "w_pc", {"name": "kids-pc"}, principal=kid).denied
+    d = az.check("shell.exec", "w_nas", {"name": "nas"}, principal=kid)
+    assert d.denied and d.principal == "token:a2" and d.rule == "access:no-grant"
+    assert az.check("policy.set", "hub", {"name": "rook"}, principal=kid, local=True).denied
+
+    class Broken:
+        def token_user(self, *a, **kw):
+            raise OSError("disk gone")
+    lost = principal_for_token(att_for("a3"), Broken())
+    assert lost.role == "member" and not lost.fail_open() and A.restricted(lost)
+    d = az.check("file.read", "w_pc", {"name": "kids-pc"}, principal=lost)
+    assert d.denied and "belongs to no one" in d.reason
+
+
+@pytest.mark.asyncio
+async def test_users_token_moves_a_key_and_lists_it(hub, tmp_path):
+    from rook.band_mcp.tokens import TokenStore
+    n, az = hub
+    n.tokens = TokenStore(persist_path=str(tmp_path / "tokens.json"))
+    key = n.tokens.mint_api_token("kids-claude")
+    with pytest.raises(PermissionError):
+        await as_(member(), lambda: n.invoke("users.token", {
+            "token": "kids-claude", "user": "u_kid", "words": "mine now"}, "human:u_kid"))
+    with pytest.raises(ValueError, match="no account"):
+        await as_(owner(), lambda: n.invoke("users.token", {
+            "token": "kids-claude", "user": "u_ghost", "words": "x"}, "human:u_bake"))
+    r = await as_(owner(), lambda: n.invoke("users.token", {
+        "token": "kids-claude", "user": "u_kid", "words": "Bake: that claude is my son's"},
+        "human:u_bake"))
+    assert r["user"] == "u_kid" and r["token"] == key["agent_id"]
+    listed = await as_(owner(), lambda: n.invoke("users.list", {}, "human:u_bake"))
+    by = {u["user"]: u for u in listed["users"]}
+    assert by["u_kid"]["keys"] == [{"agent_id": key["agent_id"], "label": "kids-claude"}]
+    kid_key = principal_for_token(att_for(key["agent_id"], "kids-claude"), az.access)
+    me = await as_(kid_key, lambda: n.invoke("users.me", {}, "agent:kids-claude"))
+    assert me["user"] == "u_kid" and me["key"] == f"token:{key['agent_id']}"
+    assert "belongs to u_kid" in me["plain"] and "band band1" in me["plain"]

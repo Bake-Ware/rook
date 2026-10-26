@@ -148,6 +148,18 @@ def build_server(client: "BandClient | MultiBandClient",
     from ..hub.node import HUB_WORKER_NAME
     _alert = _attr.Alerter()
     _run_tool = mcp._tool_manager.call_tool
+    _accounts_box: list = []
+
+    def _is_operator(uid: str) -> bool:
+        """An operator account is an owner whatever access.db says, as on
+        the dashboard."""
+        if enrollment is None:
+            return False
+        if not _accounts_box:
+            from ..remote.accounts import AccountStore
+            _accounts_box.append(AccountStore(enrollment))
+        u = _accounts_box[0].user(uid)
+        return bool(u and u.get("admin"))
 
     def _audit_row(kind: str, name: str, arguments: dict | None,
                    att: "_attr.Attribution | None", reason: str) -> None:
@@ -305,7 +317,8 @@ def build_server(client: "BandClient | MultiBandClient",
         reset = _attr.current.set(att)
         # The authenticated principal (permissions 1): from the verified token
         # only, never from X-Rook-Host or the envelope identity.
-        principal = _hub_authz.principal_for_token(att, att.role)
+        principal = _hub_authz.principal_for_token(
+            att, getattr(getattr(client, "authz", None), "access", None), _is_operator)
         preset = _hub_authz.current_principal.set(principal)
         gtok = _approvals.gated_caps.set(frozenset())
         rtok = _approvals.own_resource.set(_own_resource(name, arguments))
@@ -2184,8 +2197,12 @@ class McpService:
             if home is not None and hasattr(home, "voice_relay_rows"):
                 rows += home.voice_relay_rows()
             return rows
+        def _access():
+            return getattr(getattr(self.client, "authz", None), "access", None)
+
         for route in reversed(build_account_token_routes(store, getattr(mcp, "_rook_chat", None),
-                                                         accounts, _approvals, _house, _phones)):
+                                                         accounts, _approvals, _house, _phones,
+                                                         _access)):
             app.router.routes.insert(0, route)
 
         # Thin OAuth front-door for claude.ai's web connector (which won't take a

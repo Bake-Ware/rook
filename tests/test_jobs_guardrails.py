@@ -67,12 +67,12 @@ def test_creator_is_the_default_and_carries_the_job(tokens):
 
 
 def test_key_identity_by_name_id_and_principal(tokens):
-    bot = tokens.mint_api_token("nightly-bot", role="operator")
+    bot = tokens.mint_api_token("nightly-bot")
     d = Directory(tokens)
     for ref in ("nightly-bot", bot["id"], bot["agent_id"], f"token:{bot['agent_id']}"):
         ident = resolve_identity(jobdef({"mode": "key", "ref": ref}), OWNER, directory=d)
         assert ident.mode == "key" and ident.id == f"token:{bot['agent_id']}"
-        assert ident.principal.role == "operator" and ident.principal.label == "nightly-bot"
+        assert ident.principal.label == "nightly-bot"
 
 
 def test_key_identity_revoked_or_expired(tokens):

@@ -147,7 +147,8 @@ class PolicyWeb:
             return web.json_response({"error": "permissions unavailable"}, status=503)
         try:
             data = await request.json()
-            principal = _principal(str(data.get("principal") or ""), data.get("role"))
+            principal = _principal(str(data.get("principal") or ""), data.get("role"),
+                                   getattr(authz, "access", None))
             cap = str(data.get("cap") or "").strip()
             if not cap:
                 raise ValueError("cap is required")

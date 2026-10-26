@@ -1,7 +1,7 @@
 """People and what they may reach: hub roles and fine-grained grants (access v2).
 
 Design: knowledge page ``users-access-trust-map-and-agent-sessions-bake-s-
-design-decisions-2026-10-26-voi`` items 2, 3, 4 and 6.
+design-decisions-2026-10-26-voi`` items 2, 3, 4, 6 and 7.
 
 * Several people share one hub. **Owner** is a hub role and there may be
   several; everyone else is a **member**. Owners reach everything (they also
@@ -11,6 +11,10 @@ design-decisions-2026-10-26-voi`` items 2, 3, 4 and 6.
   one machine, the hub's own caps, a knowledge area, or anything; each grant
   may narrow to cap patterns and carries a tier ceiling (default ``exec``:
   ``admin`` caps need it said). A person with no grants reaches nothing.
+* An API key only says which person is calling (item 7): each key belongs
+  to one account (the ``tokens`` table), and a key reaches exactly what its
+  person reaches, from any client. A key made before keys belonged to people
+  is carried over to the hub's first owner the first time it is used.
 * Every change is attributed and kept in an append-only history with the
   words of whoever asked for it.
 * **Onboarding** (item 6): a new person asks for access in their own words
@@ -97,6 +101,14 @@ CREATE TABLE IF NOT EXISTS bands (
     psk_hash TEXT NOT NULL,
     name     TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS tokens (
+    agent_id TEXT PRIMARY KEY,
+    user_id  TEXT NOT NULL,
+    label    TEXT NOT NULL DEFAULT '',
+    created  REAL NOT NULL,
+    actor    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS tokens_user ON tokens(user_id);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS requests (
     id      TEXT PRIMARY KEY,
@@ -126,15 +138,21 @@ CREATE TABLE IF NOT EXISTS resources (
 );
 """
 
+#: Words kept for a key carried over to the first owner.
+CARRIED_OVER = ("carried over at the access v2 upgrade: this API key was made before keys "
+                "belonged to a person, so it belongs to the hub's first owner")
+
 
 class AccessError(ValueError):
     pass
 
 
 def user_of(principal: Any) -> str | None:
-    """The account behind a principal, or None (owners by password, tokens,
-    system code). Tokens map to people in the tokens task; until then only
-    signed-in dashboard accounts (``human:<user id>``) are people here."""
+    """The account behind a principal, or None (the owner by password, the
+    static key, system code): a signed-in dashboard account
+    (``human:<user id>``) or the person an API key belongs to."""
+    if getattr(principal, "kind", "") == "token":
+        return str(getattr(principal, "user", "") or "") or None
     pid = str(getattr(principal, "id", "") or "")
     if getattr(principal, "kind", "") != "human" or not pid.startswith("human:"):
         return None
@@ -154,9 +172,11 @@ def user_of_id(pid: Any) -> str | None:
 
 def restricted(principal: Any) -> bool:
     """Whether grants decide for this principal: a verified signed-in person
-    who is not an owner."""
-    return (principal is not None and getattr(principal, "verified", False)
-            and user_of(principal) is not None and not principal.fail_open())
+    who is not an owner, or an API key that is not an owner's (a key whose
+    person could not be read is limited too, and reaches nothing)."""
+    if principal is None or not getattr(principal, "verified", False) or principal.fail_open():
+        return False
+    return user_of(principal) is not None or getattr(principal, "kind", "") == "token"
 
 
 def _norm_caps(caps: Any) -> list[str]:
@@ -327,6 +347,64 @@ class AccessStore:
             else:
                 rows = db.execute("SELECT * FROM history ORDER BY seq DESC LIMIT ?", (limit,))
             return [{**dict(r), "doc": json.loads(r["doc"])} for r in rows]
+
+    # -- API keys (item 7) -----------------------------------------------------
+    def first_owner(self) -> str | None:
+        with self.db(False) as db:
+            r = db.execute("SELECT user_id FROM members WHERE role='owner' "
+                           "ORDER BY created, rowid LIMIT 1").fetchone()
+        return r["user_id"] if r else None
+
+    def token_user(self, agent_id: str, *, label: str = "", adopt: bool = True) -> str | None:
+        """The account an API key belongs to. A key with no row was made
+        before keys belonged to people (minting records one): with ``adopt``
+        it goes to the first owner, kept in the history. None when there is
+        no owner yet (a hub signed into by password only: its key is that
+        hub's owner)."""
+        if not agent_id:
+            return None
+        with self.db(False) as db:
+            r = db.execute("SELECT user_id FROM tokens WHERE agent_id=?", (agent_id,)).fetchone()
+        if r is not None or not adopt:
+            return r["user_id"] if r else None
+        owner = self.first_owner()
+        if owner is None:
+            return None
+        actor = "system:access-migration"
+        with self.db() as db:
+            r = db.execute("SELECT user_id FROM tokens WHERE agent_id=?", (agent_id,)).fetchone()
+            if r is not None:  # the other hub process got there first
+                return r["user_id"]
+            db.execute("INSERT INTO tokens(agent_id,user_id,label,created,actor) VALUES(?,?,?,?,?)",
+                       (agent_id, owner, label[:120], time.time(), actor))
+            self._log(db, actor, "token", owner, agent_id, {"label": label[:120], "from": None},
+                      CARRIED_OVER)
+        log.info("API key %s (%s) carried over to the first owner %s", agent_id, label, owner)
+        return owner
+
+    def set_token_user(self, agent_id: str, user_id: str, *, actor: str, words: str,
+                       label: str = "") -> dict:
+        """Say whose an API key is (at mint, or moving it to someone else)."""
+        if not agent_id:
+            raise AccessError("token: a key's agent id")
+        if not user_id:
+            raise AccessError("user: an account id")
+        words = _words(words)
+        with self.db() as db:
+            old = db.execute("SELECT user_id FROM tokens WHERE agent_id=?", (agent_id,)).fetchone()
+            db.execute("INSERT INTO tokens(agent_id,user_id,label,created,actor) VALUES(?,?,?,?,?) "
+                       "ON CONFLICT(agent_id) DO UPDATE SET user_id=excluded.user_id, "
+                       "label=CASE WHEN excluded.label='' THEN tokens.label ELSE excluded.label END, "
+                       "actor=excluded.actor",
+                       (agent_id, user_id, label[:120], time.time(), actor))
+            self._log(db, actor, "token", user_id, agent_id,
+                      {"label": label[:120], "from": old["user_id"] if old else None}, words)
+        return {"token": agent_id, "user": user_id, "was": old["user_id"] if old else None}
+
+    def token_users(self) -> dict[str, str]:
+        """Every recorded key: ``{agent_id: user_id}``."""
+        with self.db(False) as db:
+            return {r["agent_id"]: r["user_id"] for r in db.execute("SELECT * FROM tokens")}
 
     # -- bands -----------------------------------------------------------------
     def sync_bands(self, bands: Iterable[dict]) -> None:
@@ -539,11 +617,13 @@ class AccessStore:
         return True
 
     # -- decisions -------------------------------------------------------------
-    def evaluate(self, user_id: str, cap: str, tier: str, target: Any,
+    def evaluate(self, user_id: str | None, cap: str, tier: str, target: Any,
                  bands: Iterable[str] = ()) -> tuple[dict | None, str]:
         """``(grant, reason)``: the active grant that lets ``user_id`` make
         this call, or ``None`` and why not. ``bands`` are the key hashes of
         the bands the target was seen on; ``target`` a policy Target."""
+        if not user_id:
+            return None, "this API key belongs to no one this hub can read: an owner checks it on Tokens"
         is_hub = bool(getattr(target, "is_rook", False))
         if is_hub and cap in SELF_CAPS:
             return {"id": "self", "kind": "hub", "ref": "*"}, "about yourself"

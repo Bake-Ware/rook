@@ -8,9 +8,10 @@ dashboard's ``/api/policy`` endpoints use the same store.
   with the winning rule and the runner-up.
 * ``policy.get`` (read, sensitive): the current document, its revision,
   source, mode and lint.
-* ``policy.set`` (admin): replace the document. Band owners and operator
-  tokens only, whatever the policy mode; refuses a document that leaves no
-  principal with admin on ``rook``; journaled as ``audit.policy``.
+* ``policy.set`` (admin): replace the document. Hub owners only (an API key
+  counts as its person), whatever the policy mode; refuses a document that
+  leaves no principal with admin on ``rook`` or that names API keys;
+  journaled as ``audit.policy``.
 * ``grants.revocations`` (read): the hub's op-key id and grant status.
 """
 
@@ -19,21 +20,33 @@ from __future__ import annotations
 from ...core.plugin import Plugin, capability, place
 
 
-def _principal(spec: str, role: str | None):
-    from ..policy import Principal
+def _principal(spec: str, role: str | None, access=None):
+    """The principal the policy would see for ``spec``. An API key
+    (``token:<agent_id>``) is its person (access v2 item 7)."""
+    from ..authz import principal_for_agent
+    from ..policy import Principal, RETIRED_HELP, retired_selector
     spec = (spec or "").strip()
     if not spec:
-        raise ValueError("principal= is required (e.g. token:<agent_id>, human:owner, role:agent)")
+        raise ValueError("principal= is required (e.g. token:<agent_id>, human:<user_id>, "
+                         "human:member)")
+    if spec == "token:static":
+        return Principal(spec, "token", "owner", ("human:owner",), label="static").as_person()
+    if spec.startswith("token:"):
+        return principal_for_agent(spec[6:], "", access).as_person()
+    if retired_selector(spec):
+        raise ValueError(f"{spec} is retired: {RETIRED_HELP}")
     if spec.startswith("role:"):
         r = spec[5:]
-        return Principal(f"token:explain-{r}", "token", r)
+        if r in ("owner", "member"):
+            return Principal(f"human:explain-{r}", "human", r, (f"human:{r}",))
+        return Principal(f"home:explain-{r}", "token", r)  # an agent the hub runs
     if spec in ("human:owner", "human:member"):
         r = spec.split(":", 1)[1]
         return Principal(f"human:explain-{r}", "human", r, (spec,))
     if spec == "unverified":
         return Principal("unverified", "unverified", verified=False)
     kind = spec.split(":", 1)[0]
-    default_role = {"token": "agent", "system": "system", "integration": "integration"}.get(kind, "")
+    default_role = {"system": "system", "integration": "integration"}.get(kind, "")
     groups = (f"human:{role}",) if kind == "human" and role else ()
     return Principal(spec, kind, role or default_role, groups)
 
@@ -45,9 +58,10 @@ class PolicyPlugin(Plugin):
     PLACEMENT = place("is_hub", run="one")
     SKILL = ("### policy\n"
              "`rook_call(cap=\"policy.explain\", worker=\"rook\", args={\"principal\": "
-             "\"role:agent\", \"cap\": \"shell.exec\", \"worker\": \"<name>\"})` shows whether "
-             "a call would be allowed and which rule decides it. `policy.get` returns the "
-             "document; changing it (`policy.set`) is for band owners and operator tokens.\n")
+             "\"human:member\", \"cap\": \"shell.exec\", \"worker\": \"<name>\"})` shows whether "
+             "a call would be allowed and which rule decides it. An API key is its person "
+             "here. `policy.get` returns the document; changing it (`policy.set`) is for "
+             "hub owners.\n")
 
     def __init__(self) -> None:
         super().__init__()
@@ -84,12 +98,15 @@ class PolicyPlugin(Plugin):
                 role: str | None = None) -> dict:
         """Would this principal be allowed to call ``cap`` on ``worker``?
 
-        ``principal`` is ``token:<agent_id>``, ``human:<user_id>``,
-        ``integration:<name>``, ``unverified``, or a probe such as
-        ``role:agent`` / ``human:owner``. Returns the decision, tier, winning
-        rule, runner-up and policy revision."""
-        policy = self._authz().store.current()
-        d = policy.evaluate([_principal(principal, role)], cap, self._target(worker))
+        ``principal`` is ``token:<agent_id>`` (evaluated as the person the
+        key belongs to), ``human:<user_id>``, ``integration:<name>``,
+        ``unverified``, or a probe such as ``human:member`` / ``human:owner``
+        (``role:agent``: an agent the hub runs). Returns the decision, tier,
+        winning rule, runner-up and policy revision."""
+        authz = self._authz()
+        policy = authz.store.current()
+        d = policy.evaluate([_principal(principal, role, getattr(authz, "access", None))], cap,
+                            self._target(worker))
         return d.explain()
 
     @capability("get", risk="read", tags=("sensitive",), scope="multi-user")
@@ -103,7 +120,7 @@ class PolicyPlugin(Plugin):
 
     @capability("set", risk="admin", scope="multi-user")
     def set(self, policy: dict, note: str = "") -> dict:
-        """Replace the policy document (band owners and operator tokens only).
+        """Replace the policy document (hub owners only, from any client).
 
         The new revision is the old one + 1. Refused if it fails validation or
         would leave no principal holding admin on ``rook``. Journaled as

@@ -39,6 +39,44 @@ def test_token_account_auth_and_live_revocation(portal, tmp_path):
 
 
 
+def test_a_token_belongs_to_a_person(portal, tmp_path):
+    from rook.hub.access import AccessStore
+    p = portal
+    access = AccessStore(str(tmp_path/'access.db'))
+    provider = TokenStore(persist_path=str(tmp_path/'tokens.json'))
+    old = provider.mint_api_token('made before people')          # no row yet
+    kid = p.store.create_local('kid', 'a long enough test password')
+    app = Starlette(routes=build_account_token_routes(provider, accounts=p.store, access=lambda: access))
+    with ASGIClient(app) as client:
+        endpoint, h = '/tokens/account-api', p.headers
+        bad = client.post(endpoint, headers=h, json={'op':'create','name':'r','role':'readonly','csrf':p.csrf})
+        assert bad.status_code == 400 and 'no role' in bad.json()['error']
+        assert client.post(endpoint, headers=h, json={'op':'create','name':'x','user':'u_ghost','csrf':p.csrf}).status_code == 400
+        mine = client.post(endpoint, headers=h, json={'op':'create','name':'mine','csrf':p.csrf}).json()
+        assert mine['user'] == p.uid
+        theirs = client.post(endpoint, headers=h, json={'op':'create','name':'his','user':kid,'csrf':p.csrf}).json()
+        assert access.token_users()[provider.principal_for(theirs['token'])['agent_id']] == kid
+        assert access.history(kid)[0]['words'].startswith('made on the Tokens page by human:')
+        access.set_role(p.uid, 'owner', actor='test', words='the operator')
+        listed = client.get(endpoint, headers=h).json()
+        by = {t['name']: t for t in listed['tokens']}
+        assert by['mine']['user'] == p.uid and by['his']['user'] == kid
+        assert by['made before people']['user'] == p.uid               # carried to the first owner
+        assert {x['id'] for x in listed['people']} == {p.uid, kid}
+        moved = client.post(endpoint, headers=h, json={'op':'owner','id':theirs['id'],'user':p.uid,'csrf':p.csrf})
+        assert moved.status_code == 200 and access.token_user(old['agent_id']) == p.uid
+        assert access.token_users()[provider.principal_for(theirs['token'])['agent_id']] == p.uid
+    # Nothing is made when whose it is cannot be recorded.
+    class Broken:
+        def set_token_user(self, *a, **kw):
+            raise OSError('disk gone')
+    app = Starlette(routes=build_account_token_routes(provider, accounts=p.store, access=lambda: Broken()))
+    with ASGIClient(app) as client:
+        before = len(provider.list_api_tokens())
+        r = client.post('/tokens/account-api', headers=p.headers, json={'op':'create','name':'z','csrf':p.csrf})
+        assert r.status_code == 400 and len(provider.list_api_tokens()) == before
+
+
 def test_mcp_tokens_page_redirects_to_the_dashboard(portal, tmp_path):
     """The MCP port's old server-rendered /tokens page is gone; a bookmark
     lands on the dashboard's Tokens view instead of a second login."""

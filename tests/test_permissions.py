@@ -469,10 +469,41 @@ def test_policy_store_reload_last_good_and_save_guard(tmp_path):
     os.utime(path, (time.time() + 5, time.time() + 5))
     assert store.current().rev == 1 and store.error          # last good kept
     lockout = json.loads(json.dumps(DEFAULT_POLICY))
-    for k in ("role:operator", "human:owner", "human:dashboard", "token:static"):
+    for k in ("human:owner", "human:dashboard"):
         lockout["principals"][k] = {"admin": "deny"}
     with pytest.raises(PolicyError, match="no principal would hold admin"):
         store.save(lockout)
+    # API keys act as their person: a document naming keys is refused.
+    for bad in ({"principals": {**DEFAULT_POLICY["principals"], "token:*": {"exec": "deny"}}},
+                {"rules": [{"id": "r", "who": "token:agent_1", "deny": "shell.exec"}]},
+                {"rules": [{"id": "r", "who": "role:readonly", "deny": "tier:write"}]}):
+        with pytest.raises(PolicyError, match="retired"):
+            store.save({**DEFAULT_POLICY, **bad})
+
+
+def test_policy_naming_keys_is_migrated_on_load(tmp_path):
+    path = tmp_path / "policy.json"
+    old = {**DEFAULT_POLICY, "rev": 4, "mode": "enforce",
+           "principals": {**DEFAULT_POLICY["principals"], "token:static": {"admin": "allow"},
+                          "role:readonly": {"exec": "deny"}},
+           "principal_groups": {"bots": ["token:agent_1", "human:u2"]},
+           "rules": [{"id": "no-cam", "who": "token:*", "deny": "camera.*"},
+                     {"id": "bots", "who": "group:bots", "deny": "shell.exec"},
+                     *DEFAULT_POLICY["rules"]]}
+    path.write_text(json.dumps(old))
+    store = PolicyStore(str(path), check_every=0)
+    pol = store.current()
+    assert store.error is None and pol.mode == "enforce" and pol.rev == 5
+    assert "token:static" not in pol.doc["principals"] and "role:readonly" not in pol.doc["principals"]
+    assert [r["id"] for r in pol.doc["rules"]][:1] == ["bots"]
+    assert pol.doc["principal_groups"]["bots"] == ["human:u2"]
+    assert json.loads(path.read_text())["rev"] == 5                       # rewritten
+    assert json.loads((tmp_path / "policy.json.pre-tokens").read_text()) == old  # kept
+    assert PolicyStore(str(path)).current().rev == 5                      # once
+    # A key is its person to the policy: the person's rule covers their key.
+    key = Principal("token:agent_1", "token", "member", ("human:member",), user="u2")
+    assert key.as_person().id == "human:u2"
+    assert pol.evaluate([key.as_person()], "shell.exec", W_A).denied
 
 
 def test_policy_evaluation_budget():
@@ -604,22 +635,18 @@ def test_no_root_key_means_no_tickets(tmp_path):
     assert s.ready(now=time.time() + s.RETRY_SECS + 1) and s.kid
 
 
-def test_token_roles_at_mint(tmp_path):
+def test_tokens_carry_no_role(tmp_path):
     from rook.band_mcp.tokens import TokenStore
     store = TokenStore(persist_path=str(tmp_path / "t.json"), static_token="s" * 20)
-    ro = store.mint_api_token("reader", role="readonly")
-    assert store.principal_for(ro["token"])["role"] == "readonly"
-    legacy = store.mint_api_token("old")
-    assert store.principal_for(legacy["token"])["role"] == "agent"
-    assert store.principal_for("s" * 20)["role"] == "operator"
-    with pytest.raises(ValueError):
-        store.mint_api_token("x", role="root")
-    rotated = store.rotate_api_token(ro["id"])
-    assert store.principal_for(rotated["token"])["role"] == "readonly"
-    # Work-session tokens (scoped, 1-day) are agent tokens.
+    key = store.mint_api_token("old")
+    assert "role" not in store.principal_for(key["token"]) and "role" not in key
+    assert "role" not in store.principal_for("s" * 20)
+    with pytest.raises(TypeError):
+        store.mint_api_token("x", role="readonly")
+    rotated = store.rotate_api_token(key["id"])
+    assert store.principal_for(rotated["token"])["agent_id"] == key["agent_id"]
     work = store.mint_api_token("work:claude:0123abcd", ttl_seconds=86400,
                                 scopes=["rook", "work-session:" + "a" * 32])
-    assert store.principal_for(work["token"])["role"] == "agent"
     assert work["scopes"][1].startswith("work-session:") and work["expires_at"]
     assert authz.effective_tier("work.stream.open") == "exec"
     assert authz.effective_tier("work.export") == "read" and "sensitive" in authz.builtin_tags("work.export")
@@ -649,7 +676,9 @@ def test_policy_set_is_owner_or_operator_only(tmp_path):
         authz=Authorizer(store, None), workers={}), worker_id="hub", entry=lambda: {}))
     doc = {**DEFAULT_POLICY, "mode": "enforce"}
     for who, ok in ((AGENT, False), (None, False), (OWNER, True),
-                    (Principal("token:static", "token", "operator"), True)):
+                    (Principal("token:static", "token", "owner", ("human:owner",)), True),
+                    (Principal("token:a", "token", "owner", ("human:owner",), user="u1"), True),
+                    (Principal("token:b", "token", "member", ("human:member",), user="u2"), False)):
         tok = current_principal.set(who)
         try:
             assert plugin.set(doc)["ok"] is ok, who

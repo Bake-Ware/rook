@@ -50,39 +50,61 @@ def _text(res):
     return json.loads(res["content"][0]["text"])
 
 
+def _people(tmp_path):
+    """access.db with an owner (u_own) and a member (u_mem) who may only
+    read info on gpu-box."""
+    from rook.hub.access import AccessStore
+    a = AccessStore(str(tmp_path / "access.db"))
+    a.set_role("u_own", "owner", actor="test", words="the first owner")
+    a.grant("u_mem", "worker", "gpu-box", caps=["info.*"], actor="test", words="info only")
+    return a
+
+
 @pytest.mark.asyncio
-async def test_audit_mode_changes_nothing_but_journals_would_deny(tmp_path):
+async def test_a_key_reaches_what_its_person_reaches(tmp_path):
+    access = _people(tmp_path)
     async with mcp(tmp_path) as env:
-        ro = env.store.mint_api_token("reader", role="readonly")
-        s = await Session(env.http, ro["token"]).open()
+        mine, theirs = env.store.mint_api_token("mine"), env.store.mint_api_token("theirs")
+        access.set_token_user(theirs["agent_id"], "u_mem", actor="test", words="their key")
+        # A key made before keys belonged to people goes to the first owner.
+        s = await Session(env.http, mine["token"]).open()
         res = _text(await s.result("rook_call", {"why": "test", "cap": "shell.exec", "worker": "gpu-box",
                                                  "args": {"cmd": "id"}}))
         assert res["ok"] and env.sent[-1]["cap"] == "shell.exec"
         row = rows(env.journal, "cap='shell.exec'")[-1]
-        assert row["decision"] == "would_deny" and row["principal"] == f"token:{ro['agent_id']}"
-        assert row["tier"] == "exec" and row["rule"] == "default:role:readonly"
-        op = await Session(env.http, STATIC).open()
-        await op.result("rook_call", {"why": "test", "cap": "shell.exec", "worker": "gpu-box", "args": {"cmd": "id"}})
-        assert rows(env.journal, "cap='shell.exec'")[-1]["decision"] == "allow"
+        assert row["decision"] == "allow" and row["principal"] == f"token:{mine['agent_id']}"
+        assert access.token_user(mine["agent_id"], adopt=False) == "u_own"
+        assert access.history("u_own")[0]["action"] == "token"
+        # The member's key: their grant, in audit mode too (grants always hold).
+        t = await Session(env.http, theirs["token"]).open()
+        before = len(env.sent)
+        res = _text(await t.result("rook_call", {"why": "test", "cap": "shell.exec", "worker": "gpu-box"}))
+        assert not res["ok"] and "may not call shell.exec" in res["error"]
+        assert len(env.sent) == before                     # never reached the band
+        assert _text(await t.result("rook_call", {"why": "test", "cap": "info.host", "worker": "gpu-box"}))["ok"]
+        denied = await t.result("rook_secret", {"action": "get", "name": "x"})
+        assert denied.get("isError") and "denied" in denied["content"][0]["text"]
+        # Moved to the owner, the same key reaches everything.
+        access.set_token_user(theirs["agent_id"], "u_own", actor="test", words="give it to me")
+        assert _text(await t.result("rook_call", {"why": "test", "cap": "shell.exec", "worker": "gpu-box"}))["ok"]
 
 
 @pytest.mark.asyncio
-async def test_enforce_mode_denies_readonly_exec_and_admin_tools(tmp_path):
-    async with mcp(tmp_path, {**DEFAULT_POLICY, "mode": "enforce"}) as env:
-        ro = env.store.mint_api_token("reader", role="readonly")
-        s = await Session(env.http, ro["token"]).open()
-        before = len(env.sent)
+async def test_the_policy_sees_a_key_as_its_person(tmp_path):
+    access = _people(tmp_path)
+    access.grant("u_mem", "any", caps=["*"], actor="test", words="everything")
+    doc = {**DEFAULT_POLICY, "mode": "enforce",
+           "rules": [{"id": "no-shell-for-u_mem", "who": "human:u_mem", "deny": "shell.exec"},
+                     {"id": "old-key-rule", "who": "token:*", "deny": "info.host"}]}
+    async with mcp(tmp_path, doc) as env:
+        key = env.store.mint_api_token("theirs")
+        access.set_token_user(key["agent_id"], "u_mem", actor="test", words="their key")
+        s = await Session(env.http, key["token"]).open()
         res = _text(await s.result("rook_call", {"why": "test", "cap": "shell.exec", "worker": "gpu-box"}))
-        assert not res["ok"] and res["error"].startswith("denied: token:")
-        assert len(env.sent) == before                     # never reached the band
-        assert rows(env.journal, "cap='shell.exec'")[-1]["decision"] == "deny"
-        ok = _text(await s.result("rook_call", {"why": "test", "cap": "info.host", "worker": "gpu-box"}))
-        assert ok["ok"]
-        denied = await s.result("rook_secret", {"action": "get", "name": "x"})
-        assert denied.get("isError") and "denied" in denied["content"][0]["text"]
-        listed = await s.result("rook_secret", {"action": "list"})
-        assert not listed.get("isError")
-        # Agents keep exec; their admin calls stay allowed but are journaled.
-        agent = env.store.mint_api_token("worker-bot")
-        a = await Session(env.http, agent["token"]).open()
-        assert _text(await a.result("rook_call", {"why": "test", "cap": "shell.exec", "worker": "gpu-box"}))["ok"]
+        assert not res["ok"] and "no-shell-for-u_mem" in json.dumps(res)
+        # The key-only rule was retired when the policy loaded.
+        assert _text(await s.result("rook_call", {"why": "test", "cap": "info.host", "worker": "gpu-box"}))["ok"]
+        assert (tmp_path / "policy.json.pre-tokens").exists()
+        # The static key is the hub's own owner.
+        op = await Session(env.http, STATIC).open()
+        assert _text(await op.result("rook_call", {"why": "test", "cap": "shell.exec", "worker": "gpu-box"}))["ok"]
