@@ -1,27 +1,30 @@
-"""Approval holds and the spread limit (``docs/design/permissions.md`` 3.11).
+"""Approval holds (``docs/design/permissions.md`` 3.11).
 
 A *held* call waits until a person approves or denies it. The authorizer
 (:mod:`rook.hub.authz`) decides that a call is held; this module keeps the
-queue, waits for the decision and tracks how many machines each agent has
-reached.
+queue and waits for the decision.
 
 Why a call is held, for agent-like principals only (``approvals.principals``:
 API tokens, unverified callers, integrations, the house agent; never people,
-never hub code), in core:
+never hub code):
 
 * a hard stop (rook/hub/hardstops.py): erasing data for good, revealing a
   secret's value, sending as the person to someone else;
-* a change on something the trust map calls sacred (rook/hub/trust.py).
+* a change on something the trust map calls sacred (rook/hub/trust.py), and,
+  with the advanced security plugin on, something it calls guarded.
 
-An agent changing the guardrails themselves is refused outright (no
-ratchet). The advanced security plugin (rook/hub/plugins/security) adds the
-blanket holds: operator hold rules, ``approvals.hold``, hub-host workers, the
-spread limit and guarded trust entries.
+That is all. There are no blanket holds (operator hold rules in the policy are
+ignored), no spread limit and no hub-host holds. An agent changing the
+guardrails themselves is refused outright (no ratchet). A deny always wins: a
+denied call is never held.
 
-A deny always wins: a denied call is never held.
+Nothing here expires on a clock. A pending hold waits until a person decides
+it (the dashboard, the phone's card, clear-my-cards by voice, or an agent
+relaying the person's own words, rook/hub/relay.py); an approval waits until
+the call it approved is repeated, and is then used up.
 
 Waiting: the band client calls :meth:`Approvals.resolve` before it sends a
-held call. An unconsumed approval for an identical call (same principal, cap,
+held call. An unused approval for an identical call (same principal, cap,
 target and canonical args) lets it through at once and is used up. Otherwise
 the hold is created (or joined, when an identical one is pending) and the call
 waits up to ``approvals.wait_secs`` for a decision. Approved: it proceeds.
@@ -32,9 +35,7 @@ Nothing is ever run later on the hub's own initiative.
 Storage: one SQLite file, ``approvals.db``, in the hub data directory beside
 ``policy.json`` (WAL, short transactions). Both hub layouts share it: the MCP
 process and the dashboard open the same file, and ``rook hub serve`` is one
-process. Spread counters live in memory in the process that authorizes agent
-calls (the MCP side); spread grants are stored in the file so a grant made on
-the dashboard reaches the MCP side.
+process.
 """
 
 from __future__ import annotations
@@ -60,9 +61,8 @@ from . import hardstops
 
 log = logging.getLogger("rook.hub.approvals")
 
+#: ``expired`` only on holds recorded before approvals stopped expiring.
 STATES = ("pending", "approved", "denied", "expired", "consumed")
-SCOPES = ("call", "spread")
-CHANNELS = ("telegram", "notify", "voice", "ask")
 #: Decided holds kept for the "recent decisions" list.
 HISTORY_KEEP = 500
 POLL_SECS = 0.25
@@ -85,8 +85,7 @@ shown_args: contextvars.ContextVar[Any] = contextvars.ContextVar("rook_hold_show
 gated_caps: contextvars.ContextVar[frozenset] = contextvars.ContextVar("rook_hold_gated",
                                                                        default=frozenset())
 #: Set by a tool acting on a resource (a console room, a chat message) the
-#: caller owns, so tidying up after itself is not held by the built-in
-#: destructive hold (operator hold rules and the spread limit still apply).
+#: caller owns, so tidying up after itself is never held.
 own_resource: contextvars.ContextVar[bool] = contextvars.ContextVar("rook_hold_own_resource",
                                                                     default=False)
 #: What a hold made in this call is for, in the caller's words and records
@@ -121,24 +120,13 @@ class HoldError(ValueError):
 
 @dataclass(frozen=True)
 class Config:
-    enabled: bool = True
-    hold: tuple = ("tier:admin", "tag:destructive")
     principals: tuple = ("token:*", "unverified", "integration:*", "agent:*", "role:agent",
                          "role:integration")
     wait_secs: float = 45.0
-    approval_secs: float = 600.0
-    spread_max: int = 5
-    spread_window_secs: float = 600.0
-    spread_grant_secs: float = 900.0
-    contact: tuple = ("telegram",)
-    contact_worker: str = ""
-    voice_max_tier: str = "admin"
-    notify_every_secs: float = 60.0
-    hub_host_workers: tuple = ("auto",)
     dashboard_url: str = ""
     #: The advanced security plugin (rook/hub/plugins/security) is on.
     advanced: bool = False
-    relay_dashboard_only: tuple = ("tier:admin", "hold:hub-host", "tag:physical", "worker.*",
+    relay_dashboard_only: tuple = ("tier:admin", "tag:physical", "worker.*",
                                    "band.*", "hub.plugin.*", "customcap.*", "role.set",
                                    "role.delete", "role.move", "job.write:delete")
 
@@ -148,22 +136,6 @@ def _settings() -> dict:
     return {s.name[len("approvals."):]: s for s, _owner, _extra in _CORE
             if s.name.startswith("approvals.")}
 
-
-def _contact(values: Any) -> tuple:
-    out = []
-    for v in values or ():
-        c = str(v).strip().lower()
-        if c in ("off", "none", ""):
-            if c == "off":
-                return ()
-            continue
-        if c not in CHANNELS:
-            log.warning("approvals.contact: unknown channel %r ignored (use off, %s)", c,
-                        ", ".join(CHANNELS))
-            continue
-        if c not in out:
-            out.append(c)
-    return tuple(out)
 
 
 def _dashboard_url(store: Any, environ: Any) -> str:
@@ -223,21 +195,9 @@ def load_config(store: Any = None, environ: Any = None) -> Config:
                 break
         values[name] = val
     return Config(
-        enabled=bool(values.get("enabled", True)),
-        hold=tuple(str(x).strip() for x in values.get("hold") or () if str(x).strip()),
         principals=tuple(str(x).strip() for x in values.get("principals") or ()
                          if str(x).strip()),
         wait_secs=float(values.get("wait_secs", 45)),
-        approval_secs=float(values.get("approval_secs", 600)),
-        spread_max=int(values.get("spread_max", 5)),
-        spread_window_secs=float(values.get("spread_window_secs", 600)),
-        spread_grant_secs=float(values.get("spread_grant_secs", 900)),
-        contact=_contact(values.get("contact")),
-        contact_worker=str(values.get("contact_worker") or "").strip(),
-        voice_max_tier=str(values.get("voice_max_tier") or "admin"),
-        notify_every_secs=float(values.get("notify_every_secs", 60)),
-        hub_host_workers=tuple(str(x).strip() for x in values.get("hub_host_workers") or ()
-                               if str(x).strip()),
         dashboard_url=_dashboard_url(store, environ),
         advanced=_advanced(store, environ),
         relay_dashboard_only=tuple(str(x).strip() for x in values.get("relay_dashboard_only")
@@ -387,9 +347,6 @@ CREATE TABLE IF NOT EXISTS holds(
     note TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS holds_state ON holds(state, created);
 CREATE INDEX IF NOT EXISTS holds_match ON holds(principal, cap, target_id, args_hash, state);
-CREATE TABLE IF NOT EXISTS grants(
-    principal TEXT NOT NULL, kind TEXT NOT NULL, until REAL NOT NULL, created REAL NOT NULL,
-    created_by TEXT NOT NULL, hold_id TEXT, PRIMARY KEY(principal, kind));
 -- Relayed decisions (rook/hub/relay.py): an agent approved or denied an item
 -- on a person's behalf, with the person's own words. Append-only: never
 -- updated, never deleted (the triggers refuse), kept beyond the hold history.
@@ -482,18 +439,20 @@ class ApprovalQueue:
 
     # -- upkeep ------------------------------------------------------------
     def sweep(self, force: bool = False) -> None:
-        """Expire old pending holds and unused approvals, drop finished
-        grants, keep a bounded history."""
+        """Keep a bounded history of decided holds. Nothing made now expires:
+        a pending hold waits for a person, an approval for the call it
+        approved. Rows written before that (``expires`` > 0, a ``valid_until``)
+        keep the deadline they were given, so a stale approval or ask from
+        then never comes back."""
         now = self.clock()
         if not force and now - self._swept < 2.0:
             return
         self._swept = now
         with self._db(write=True) as db:
-            db.execute("UPDATE holds SET state='expired' WHERE state='pending' AND expires<?",
-                       (now,))
+            db.execute("UPDATE holds SET state='expired' WHERE state='pending' AND expires>0 "
+                       "AND expires<?", (now,))
             db.execute("UPDATE holds SET state='expired' WHERE state='approved' "
-                       "AND valid_until<?", (now,))
-            db.execute("DELETE FROM grants WHERE until<?", (now,))
+                       "AND valid_until IS NOT NULL AND valid_until<?", (now,))
             db.execute("DELETE FROM holds WHERE state!='pending' AND id NOT IN (SELECT id FROM "
                        "holds WHERE state!='pending' ORDER BY created DESC LIMIT ?)",
                        (HISTORY_KEEP,))
@@ -503,14 +462,14 @@ class ApprovalQueue:
                via: tuple = (), tags: tuple = (), target_id: str | None = None,
                target_name: str = "", is_hub: bool = False, args: Any = None,
                reason: str = "", rule: str | None = None, kind: str = "default",
-               ttl: float = 600.0, context: dict | None = None) -> tuple[dict, bool]:
+               context: dict | None = None) -> tuple[dict, bool]:
         """A new pending hold, or the pending one for the identical call.
         Returns ``(hold, created)``."""
         self.sweep()
         now = self.clock()
         with self._db(write=True) as db:
             r = db.execute("SELECT * FROM holds WHERE state='pending' AND principal=? AND cap=? "
-                           "AND target_id IS ? AND args_hash=? AND expires>=? "
+                           "AND target_id IS ? AND args_hash=? AND (expires=0 OR expires>=?) "
                            "ORDER BY created LIMIT 1",
                            (principal, cap, target_id, args_hash, now)).fetchone()
             if r is not None:
@@ -526,22 +485,20 @@ class ApprovalQueue:
                 (hid, kind, principal, label or "", json.dumps(list(via)), cap, tier,
                  json.dumps(list(tags)), target_id, target_name or "", int(bool(is_hub)),
                  json.dumps(args, ensure_ascii=False, default=str), args_hash, reason, rule,
-                 now, now + ttl,
+                 now, 0.0,
                  json.dumps(clean_context(context), ensure_ascii=False) if context else None))
             names.assign(db, "hold", hid)
             r = db.execute("SELECT * FROM holds WHERE id=?", (hid,)).fetchone()
         return self._named([_row(r)])[0], True
 
     def decide(self, hold_id: str, approve: bool, by: str, *, scope: str = "call",
-               note: str = "", approval_secs: float = 600.0,
-               grant_secs: float = 900.0, relay: dict | None = None) -> dict:
-        """Approve or deny a pending hold. ``scope="spread"`` (spread holds
-        only) also lets the principal reach more machines for
-        ``grant_secs``. Raises :class:`HoldError` unless the hold is pending.
-        ``relay`` (an agent relaying the person's decision, rook/hub/relay.py):
-        the audit row is written in the same transaction."""
-        if scope not in SCOPES:
-            raise HoldError(f"scope must be one of {', '.join(SCOPES)}")
+               note: str = "", relay: dict | None = None) -> dict:
+        """Approve or deny a pending hold; an approval stays until the call
+        it approved uses it. Raises :class:`HoldError` unless the hold is
+        pending. ``relay`` (an agent relaying the person's decision,
+        rook/hub/relay.py): the audit row is written in the same transaction."""
+        if scope != "call":
+            raise HoldError("scope must be call")
         self.sweep(force=True)
         now = self.clock()
         with self._db(write=True) as db:
@@ -550,17 +507,10 @@ class ApprovalQueue:
                 raise HoldError("no such hold")
             if r["state"] != "pending":
                 raise HoldError(f"hold {hold_id} is {r['state']}, not pending")
-            if scope == "spread" and (not approve or r["kind"] != "spread"):
-                raise HoldError("the spread scope is for approving spread holds")
             db.execute("UPDATE holds SET state=?, decided_by=?, decided_at=?, scope=?, "
-                       "valid_until=?, note=? WHERE id=? AND state='pending'",
+                       "valid_until=NULL, note=? WHERE id=? AND state='pending'",
                        ("approved" if approve else "denied", by, now, scope,
-                        now + approval_secs if approve else None, str(note or "")[:500],
-                        r["id"]))
-            if approve and scope == "spread":
-                db.execute("INSERT OR REPLACE INTO grants(principal, kind, until, created, "
-                           "created_by, hold_id) VALUES (?, 'spread', ?, ?, ?, ?)",
-                           (r["principal"], now + grant_secs, now, by, r["id"]))
+                        str(note or "")[:500], r["id"]))
             if relay is not None:
                 self._relay_insert(db, {**relay, "kind": relay.get("kind") or "hold",
                                         "item": r["id"],
@@ -571,11 +521,12 @@ class ApprovalQueue:
     def consume_match(self, principal: str, cap: str, target_id: str | None,
                       args_hash: str) -> dict | None:
         """Use up an approval for this identical call, if one is unused."""
+        self.sweep()
         now = self.clock()
         with self._db(write=True) as db:
             r = db.execute("SELECT * FROM holds WHERE state='approved' AND principal=? AND cap=? "
-                           "AND target_id IS ? AND args_hash=? AND valid_until>=? "
-                           "ORDER BY decided_at LIMIT 1",
+                           "AND target_id IS ? AND args_hash=? AND (valid_until IS NULL OR "
+                           "valid_until>=?) ORDER BY decided_at LIMIT 1",
                            (principal, cap, target_id, args_hash, now)).fetchone()
             if r is None:
                 return None
@@ -600,7 +551,8 @@ class ApprovalQueue:
         now = self.clock()
         with self._db(write=True) as db:
             cur = db.execute("UPDATE holds SET state='consumed', consumed_at=? WHERE id=? "
-                             "AND state='approved' AND valid_until>=?", (now, hold_id, now))
+                             "AND state='approved' AND (valid_until IS NULL OR valid_until>=?)",
+                             (now, hold_id, now))
             return cur.rowcount == 1
 
     # -- reads -------------------------------------------------------------
@@ -613,10 +565,7 @@ class ApprovalQueue:
                     r = db.execute("SELECT * FROM holds WHERE id=?", (hit[0],)).fetchone()
         if r is None:
             return None
-        d = self._named([_row(r)])[0]
-        if d["state"] == "pending" and d["expires"] < self.clock():
-            d["state"] = "expired"
-        return d
+        return self._named([_row(r)])[0]
 
     def pending(self, limit: int = 200) -> list[dict]:
         self.sweep()
@@ -633,23 +582,10 @@ class ApprovalQueue:
         return self._named([_row(r) for r in rows])
 
     def count_pending(self) -> int:
-        now = self.clock()
+        self.sweep()
         with self._db() as db:
-            return int(db.execute("SELECT count(*) FROM holds WHERE state='pending' "
-                                  "AND expires>=?", (now,)).fetchone()[0])
-
-    def active_grant(self, principal: str) -> float | None:
-        now = self.clock()
-        with self._db() as db:
-            r = db.execute("SELECT until FROM grants WHERE principal=? AND kind='spread' "
-                           "AND until>=?", (principal, now)).fetchone()
-        return float(r[0]) if r else None
-
-    def grants(self) -> list[dict]:
-        now = self.clock()
-        with self._db() as db:
-            return [dict(r) for r in db.execute(
-                "SELECT * FROM grants WHERE until>=? ORDER BY until", (now,)).fetchall()]
+            return int(db.execute("SELECT count(*) FROM holds WHERE state='pending'")
+                       .fetchone()[0])
 
     # -- speakable names ---------------------------------------------------
     def _named(self, rows: list[dict]) -> list[dict]:
@@ -752,52 +688,14 @@ class ApprovalQueue:
         return True
 
 
-# -- spread ---------------------------------------------------------------------
-
-class SpreadTracker:
-    """Distinct machines each principal reached recently (in memory)."""
-
-    MAX_PRINCIPALS = 10000
-
-    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
-        self.clock = clock
-        self._seen: dict[str, dict[str, float]] = {}
-        self._lock = threading.Lock()
-
-    def _fresh(self, key: str, window: float, now: float) -> dict[str, float]:
-        seen = self._seen.get(key) or {}
-        return {t: at for t, at in seen.items() if now - at <= window}
-
-    def count_with(self, key: str, target: str, window: float) -> int:
-        """How many distinct machines ``key`` will have reached in the window
-        if this call to ``target`` goes ahead."""
-        now = self.clock()
-        with self._lock:
-            seen = self._fresh(key, window, now)
-            self._seen[key] = seen
-        return len(seen) + (0 if target in seen else 1)
-
-    def record(self, key: str, target: str) -> None:
-        now = self.clock()
-        with self._lock:
-            self._seen.setdefault(key, {})[target] = now
-            if len(self._seen) > self.MAX_PRINCIPALS:
-                oldest = min(self._seen, key=lambda k: max(self._seen[k].values(), default=0))
-                self._seen.pop(oldest, None)
-
-    def clear(self) -> None:
-        with self._lock:
-            self._seen.clear()
-
-
 # -- the glue the authorizer uses ---------------------------------------------------
 
 _PROCEEDS = ("allow", "would_deny", "off", "error_allow")
 
 
 class Approvals:
-    """Queue + settings + spread tracker + operator contact for one hub
-    process (owned by its :class:`rook.hub.authz.Authorizer`)."""
+    """Queue + settings for one hub process (owned by its
+    :class:`rook.hub.authz.Authorizer`)."""
 
     def __init__(self, path: str, config: "ConfigSource | Config | None" = None,
                  record: Callable[..., Any] | None = None, clock: Callable[[], float] = time.time,
@@ -808,28 +706,20 @@ class Approvals:
             config = ConfigSource(fixed=config)
         self.config_source = config or ConfigSource()
         self.queue = ApprovalQueue(path, clock=clock)
-        self.spread = SpreadTracker(clock=monotonic)
         self._record = record
         self._monotonic = monotonic
-        from .plugins.security.contact import Contact
-        self.contact = Contact(self)
+        self.client: Any = None
 
     def config(self) -> Config:
         return self.config_source.get()
 
     def attach_client(self, client: Any) -> None:
-        """The band client the operator is contacted through, and the roster
-        the hub-host detection reads."""
-        self.contact.client = client
+        """The band client whose roster names the machines an ssh command
+        reaches (:meth:`remote_ruling`)."""
+        self.client = client
 
-    # -- hub-host workers (permissions 3.11) -------------------------------------
     def _client(self) -> Any:
-        return self.contact.client
-
-    def hub_host_workers(self, cfg: "Config | None" = None) -> dict:
-        """The workers treated as running on the hub's machine (advanced security)."""
-        from .plugins.security.holds import hub_host_workers
-        return hub_host_workers(self, cfg)
+        return self.client
 
     # -- deciding to hold (synchronous, on the call path) ------------------------
     def apply(self, d: Any, p: Any, policy: Any, target: Any, args: Any = None) -> Any:
@@ -837,10 +727,10 @@ class Approvals:
         ``p`` and the call's ``args``. Returns ``d``, possibly turned into a
         hold, or a deny for an agent changing the guardrails.
 
-        Core, for agent-like principals, whatever ``approvals.enabled`` says:
-        the hard stops (rook/hub/hardstops.py) and the trust map's sacred
-        entries. The advanced security plugin adds the blanket holds
-        (rook/hub/plugins/security/holds.py)."""
+        For agent-like principals only: the hard stops
+        (rook/hub/hardstops.py) and the trust map's sacred entries (guarded
+        ones too with advanced security on). A hold from an operator's policy
+        rule is ignored: there are no blanket holds."""
         cfg = self.config()
         d.target_is_hub = bool(getattr(target, "is_rook", False))
         if d.denied:
@@ -852,22 +742,16 @@ class Approvals:
                 d, decision="deny", rule="hardstop:guardrail",
                 reason=f"{why}: only a person changes the guardrails (the dashboard, or by "
                        "voice); say what you would change in your report instead")
-        if cfg.advanced:
-            from .plugins.security.holds import apply as blanket
-            d = blanket(self, d, p, policy, target, cfg, agent)
-            if d.held:
-                return d
-        elif d.held:
-            d = self._unhold(d, "operator hold rules are part of advanced security")
+        if d.held:
+            d = self._unhold(d, "operator hold rules are retired")
         if not agent or own_resource.get():
             return d
-        if not cfg.advanced:
-            ruling = self.trust_ruling(d, target)
-            if ruling is not None:
-                d = dataclasses.replace(d, trust_rule=ruling.rule, trust=ruling.cite)
-                if ruling.tier == "person":
-                    return dataclasses.replace(d, decision="hold", hold_kind="trust",
-                                               hold_reason=ruling.cite, rule=ruling.rule)
+        ruling = self.trust_ruling(d, target)
+        if ruling is not None:
+            d = dataclasses.replace(d, trust_rule=ruling.rule, trust=ruling.cite)
+            if _trust_holds(ruling, cfg.advanced):
+                return dataclasses.replace(d, decision="hold", hold_kind="trust",
+                                           hold_reason=ruling.cite, rule=ruling.rule)
         ruling = self.remote_ruling(d, args)
         if ruling is not None:
             return dataclasses.replace(d, decision="hold", hold_kind="trust", rule=ruling.rule,
@@ -925,11 +809,6 @@ class Approvals:
         return dataclasses.replace(d, decision="allow", hold_kind="", hold_reason="",
                                    reason=(d.reason + "; " if d.reason else "") + f"hold ignored: {why}")
 
-    def proceeded(self, d: Any) -> None:
-        """A call is going ahead: count its machine for the spread limit."""
-        if getattr(d, "spread_target", ""):
-            self.spread.record(d.principal, d.spread_target)
-
     # -- waiting (asynchronous, before the call is sent) --------------------------
     async def resolve(self, d: Any, args: Any, label: str = "", _retry: bool = True) -> Any:
         """Settle a held decision: an allow (approved, or an approval used up),
@@ -944,7 +823,7 @@ class Approvals:
         if hit is not None:
             return self._approved(d, hit)
         denied = await asyncio.to_thread(self.queue.recent_denial, d.principal, d.cap, d.target,
-                                         digest, min(cfg.approval_secs, DENIAL_ECHO_SECS))
+                                         digest, DENIAL_ECHO_SECS)
         if denied is not None:
             return self._denied(d, denied)
         hold, created = await asyncio.to_thread(
@@ -952,15 +831,9 @@ class Approvals:
             label=label, via=tuple(d.via), tags=tuple(d.tags), target_id=d.target,
             target_name=d.target_name, is_hub=bool(d.target_is_hub),
             args=display_args(source, d.cap), reason=d.hold_reason, rule=d.rule,
-            kind=d.hold_kind or "default", ttl=cfg.approval_secs,
-            context=_scrubbed(hold_context.get()))
+            kind=d.hold_kind or "default", context=_scrubbed(hold_context.get()))
         if created:
-            self.journal_hold(hold)
-            try:
-                if cfg.advanced:      # off: the phone's card and the dashboard carry it
-                    self.contact.hold_created(hold)
-            except Exception:  # noqa: BLE001 - contacting the operator never blocks a call
-                log.exception("approvals: contacting the operator failed")
+            self.journal_hold(hold)       # the phone's card and the dashboard carry it
         deadline = self._monotonic() + max(0.0, cfg.wait_secs)
         while True:
             row = await asyncio.to_thread(self.queue.get, hold["id"])
@@ -990,23 +863,22 @@ class Approvals:
             note=str(row.get("note") or ""),
             reason=f"denied by {row.get('decided_by')}")
 
-    def _approved(self, d: Any, row: dict) -> Any:
-        out = dataclasses.replace(d, decision="allow", rule=f"approval:{row['id']}",
-                                  hold_id=row["id"], decided_by=str(row.get("decided_by") or ""),
-                                  reason=f"approved by {row.get('decided_by')}")
-        self.proceeded(out)
-        return out
+    @staticmethod
+    def _approved(d: Any, row: dict) -> Any:
+        return dataclasses.replace(d, decision="allow", rule=f"approval:{row['id']}",
+                                   hold_id=row["id"], decided_by=str(row.get("decided_by") or ""),
+                                   reason=f"approved by {row.get('decided_by')}")
 
     def held_reply(self, d: Any, hold: dict, cfg: Config | None = None) -> dict:
         cfg = cfg or self.config()
         where = d.target_name or d.target or "the band"
-        minutes = max(1, round(cfg.approval_secs / 60))
         why = f" ({hold.get('reason')})" if hold.get("reason") else ""
         named = f", {hold['name']}" if hold.get("name") else ""
         msg = (f"Held for approval (hold {hold['id']}{named}): {d.cap} on {where}{why}. Ask the user "
-               f"to approve it on the dashboard's Approvals page, then repeat the same call; "
-               f"an approval covers one identical call (same cap, worker and args) for "
-               f"{minutes} minutes. Do not try to get around the hold another way.")
+               f"to approve it (their phone's card, the dashboard's Approvals page, or their own "
+               f"words relayed with rook_approvals), then repeat the same call; an approval "
+               f"covers one identical call (same cap, worker and args) and does not expire. "
+               f"Do not try to get around the hold another way.")
         out = {"ok": False, "held": True, "hold": hold["id"], "error": msg}
         if hold.get("name"):
             out["name"] = hold["name"]
@@ -1020,17 +892,12 @@ class Approvals:
         """A person's decision: from the dashboard, by voice (``heard``), or
         relayed by an agent the person enabled (``relay``: the relayer and
         the person's own words; checked by rook/hub/relay.py first)."""
-        cfg = self.config()
-        row = self.queue.decide(hold_id, approve, by, scope=scope, note=note,
-                                approval_secs=cfg.approval_secs,
-                                grant_secs=cfg.spread_grant_secs, relay=relay)
+        row = self.queue.decide(hold_id, approve, by, scope=scope, note=note, relay=relay)
         detail = {"hold": row["id"], "decision": row["state"], "scope": scope,
                   "cap": row["cap"], "principal": row["principal"],
                   "worker": row["target_name"] or row["target_id"]}
         if heard is not None:
             detail["heard"] = heard[:300]
-        if scope == "spread":
-            detail["grant_secs"] = cfg.spread_grant_secs
         if relay is not None:
             detail["relayed_by"] = {k: relay.get(k) for k in ("relayer", "relayer_label", "who",
                                                                "quote", "session")}
@@ -1070,6 +937,16 @@ class Approvals:
             log.exception("journaling %s failed", cap)
 
 
+def _trust_holds(ruling: Any, advanced: bool) -> bool:
+    """Whether a trust ruling holds the call: ``sacred`` (tier ``person``)
+    always; ``guarded`` (tier ``ask``) only with advanced security on, and
+    never the ``balanced`` default for an unlisted machine."""
+    if ruling.tier == "person":
+        return True
+    return advanced and ruling.tier == "ask" and not (ruling.unlisted
+                                                      and ruling.level == "balanced")
+
+
 def _scrubbed(ctx: Any) -> dict | None:
     """A hold context with known vault values masked (an agent's ``why`` is
     free text)."""
@@ -1089,10 +966,9 @@ def _scrubbed(ctx: Any) -> dict | None:
         return ctx
 
 
-def public(hold: dict, cfg: Config | None = None) -> dict:
+def public(hold: dict) -> dict:
     """A hold as the Approvals page shows it: the plain ask (rook/hub/plain.py)
     first, the technical fields for Explain."""
-    from .plugins.security.contact import voice_eligible
     from .plain import for_hold
     out = {k: hold.get(k) for k in ("id", "name", "state", "kind", "principal", "principal_label", "via",
                                     "cap", "tier", "tags", "target_id", "target_name", "args",
@@ -1107,6 +983,4 @@ def public(hold: dict, cfg: Config | None = None) -> dict:
     if hold.get("relayed"):
         out["relayed"] = hold["relayed"]
         out["relayed_text"] = relay_text(hold["relayed"])
-    if cfg is not None:
-        out["voice_ok"] = voice_eligible(hold, cfg)
     return out

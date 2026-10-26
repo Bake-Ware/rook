@@ -55,9 +55,9 @@
     }
   },
   "trust": {
-    "locked-down": {"description": "Everything asks: blanket approval holds on, targets not on the trust map are guarded.", "approvals_enabled": true, "default_level": "guarded"},
-    "balanced": {"description": "Shipped defaults: blanket holds on for agents' admin calls, unlisted targets balanced (changes go, admin asks).", "approvals_enabled": true, "default_level": "balanced"},
-    "yolo": {"description": "Agents just go: blanket holds off, unlisted targets ship-it.", "approvals_enabled": false, "default_level": "ship-it"}
+    "locked-down": {"description": "Targets not on the trust map are guarded (they ask first with advanced security on).", "default_level": "guarded"},
+    "balanced": {"description": "Shipped defaults: unlisted targets balanced; only the hard stops and the trust map hold.", "default_level": "balanced"},
+    "yolo": {"description": "Agents just go: unlisted targets ship-it.", "default_level": "ship-it"}
   },
   "scenarios": [
     {"id": "onboard-hub", "title": "Install the hub from zero with the one-command installer"},

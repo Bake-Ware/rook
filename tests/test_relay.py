@@ -24,7 +24,7 @@ pytestmark = pytest.mark.advanced
 CLAUDE = Principal("token:agent_claude", "token", "agent", label="Claude web")
 OTHER = Principal("token:agent_other", "token", "agent", label="Some bot")
 SAID = {"who": "Bake", "quote": "yes, restart nginx on box", "session": "https://claude.ai/chat/1"}
-FAST = A.Config(wait_secs=0, contact=(), advanced=True)
+FAST = A.Config(wait_secs=0, advanced=True)
 
 
 @pytest.fixture
@@ -38,7 +38,8 @@ def hub(chair_hub, tmp_path):
 
 
 def hold(ap, cap="shell.exec", tier="exec", args=None, principal="token:agent_claude",
-         label="Claude web", via=(), target="box", kind="spread", reason="spread: 6th machine",
+         label="Claude web", via=(), target="box", kind="default",
+         reason="hard stop: it erases data for good",
          is_hub=False, context=None):
     args = {"argv": ["systemctl", "restart", "nginx"]} if args is None else args
     h, _ = ap.queue.create(principal=principal, cap=cap, tier=tier, args_hash=A.args_hash(args),
@@ -85,9 +86,10 @@ async def test_the_list_covers_every_kind_with_names_sentences_and_sources(hub):
     h = await card_and_ask(hub)
     plain = hold(hub.ap)
     job = hold(hub.ap, target="nas", via=("job:j_nightly",), principal="token:agent_jobs",
-               label="jobs", kind="rule", reason="hold rule")
+               label="jobs", kind="trust", reason="nas is sacred")
     role = hold(hub.ap, cap="info.host", tier="exec", args={}, principal="home:home/role:qa",
-                label="role:qa", target="nas", kind="default", reason="tag destructive")
+                label="role:qa", target="nas", kind="default",
+                reason="hard stop: it erases data for good")
     items = hub.relay.items()
     by_kind = {}
     for it in items:
@@ -97,7 +99,7 @@ async def test_the_list_covers_every_kind_with_names_sentences_and_sources(hub):
     assert first["name"] == plain["name"] and first["name"].count("-") == 2
     assert first["who"] == "Claude web" and first["risk"] == "exec" and first["relayable"]
     assert first["what"].startswith("run shell.exec on box: `systemctl restart nginx`")
-    assert "spread" in first["what"] and first["age"].endswith("s")
+    assert "erases data for good" in first["what"] and first["age"].endswith("s")
     jobbed, = by_kind["job"]
     assert jobbed["id"] == job["id"] and jobbed["from"] == {"job": "j_nightly"}
     assert jobbed["who"] == "job j_nightly"
@@ -174,15 +176,12 @@ async def test_never_relayable_items_are_refused_even_when_enabled(hub):
     hub.ap.queue.set_relayer(CLAUDE.id, True, "human:bake", "Claude web")
     secret = hold(hub.ap, cap="secret.get", tier="admin", args={"name": "nas-admin"},
                   target="rook", kind="default", reason="tier admin", is_hub=True)
-    update = hold(hub.ap, cap="worker.update", tier="admin", args={"build": 9}, kind="default",
-                  reason="tag destructive")
-    hubhost = hold(hub.ap, cap="shell.exec", args={"argv": ["id"]}, target="hubbox",
-                   kind="hub-host", reason="runs on the hub's machine")
+    update = hold(hub.ap, cap="worker.update", tier="admin", args={"build": 9}, kind="trust",
+                  reason="box is sacred")
     items = {i["id"]: i for i in hub.relay.items()}
     assert not items[secret["id"]]["relayable"] and "never relayed" in items[secret["id"]]["why_not"]
     assert "tier:admin" in items[update["id"]]["why_not"]
-    assert "hold:hub-host" in items[hubhost["id"]]["why_not"]
-    for h in (secret, update, hubhost):
+    for h in (secret, update):
         res = await cap(hub, "approvals.relay", {"item": h["id"], "decision": "approve",
                                                  "relayed_by": SAID})
         assert not res["ok"] and "decide it on the dashboard" in res["error"]
@@ -220,16 +219,13 @@ async def test_a_job_run_never_lists_or_relays_even_as_an_enabled_token(hub):
 
 
 @pytest.mark.asyncio
-async def test_a_card_for_a_worker_on_the_hubs_machine_is_dashboard_only(hub, monkeypatch):
+async def test_a_card_is_relayable_by_its_tier_with_no_hub_host_floor(hub):
     await card_and_ask(hub)
-    monkeypatch.setattr(hub.ap, "hub_host_workers",
-                        lambda cfg=None: {"workers": [{"worker": "box", "id": "w-box"}]})
     card = next(i for i in hub.relay.items() if i["kind"] == "card")
-    assert card["tier"] == "read"                      # box declares info.ping read
-    assert card["relayable"]                           # below exec: fine
+    assert card["tier"] == "read" and card["relayable"]          # box declares info.ping read
     hub.band.workers["w-box"]["tiers"]["info.ping"] = "exec"
     card = next(i for i in hub.relay.items() if i["kind"] == "card")
-    assert not card["relayable"] and "hold:hub-host" in card["why_not"]
+    assert card["tier"] == "exec" and card["relayable"] and "hold_kind" not in card
 
 
 @pytest.mark.asyncio
@@ -237,15 +233,12 @@ async def test_a_relayed_hold_decision_is_audited_and_the_requester_sees_why(hub
     from rook.hub.authz import Authorizer
     from rook.hub.policy import DEFAULT_POLICY, PolicyStore
     rows = []
-    doc = {**DEFAULT_POLICY, "rules": [*DEFAULT_POLICY["rules"],
-                                       {"id": "hold-shell", "who": "token:*", "hold": "shell.exec",
-                                        "on": "nas"}]}
-    (tmp_path / "policy.json").write_text(json.dumps(doc))
+    (tmp_path / "policy.json").write_text(json.dumps(DEFAULT_POLICY))
     hub.ap._record = lambda **kw: rows.append(kw)
     az = Authorizer(PolicyStore(str(tmp_path / "policy.json")), None, approvals=hub.ap)
     entry = {"worker_id": "nas", "name": "nas", "caps": ["shell.exec"]}
-    args = {"argv": ["rm", "-rf", "/tmp/cache"]}
-    d = az.check("shell.exec", "nas", entry, principal=CLAUDE)
+    args = {"argv": ["rm", "-rf", "/srv/cache"]}                 # a hard stop: erases for good
+    d = az.check("shell.exec", "nas", entry, principal=CLAUDE, args=args)
     held = await az.resolve(d, args)
     assert held["held"]
     hub.ap.queue.set_relayer(CLAUDE.id, True, "human:bake", "Claude web")
@@ -272,7 +265,8 @@ async def test_a_relayed_hold_decision_is_audited_and_the_requester_sees_why(hub
     row = hub.ap.queue.get(held["hold"])
     assert row["decided_by"] == "Bake via Claude web" and row["note"] == "wrong box, use build-box"
     # The requester repeats the call: the person's denial, with their reason, not a new hold.
-    again = await az.resolve(az.check("shell.exec", "nas", entry, principal=CLAUDE), args)
+    again = await az.resolve(az.check("shell.exec", "nas", entry, principal=CLAUDE, args=args),
+                             args)
     denial = again.denial()
     assert "Bake via Claude web denied shell.exec" in denial["error"]
     assert "Their reason: wrong box, use build-box" in denial["error"]

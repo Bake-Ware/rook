@@ -13,12 +13,12 @@ plugins. It
    ``system:*`` principal. The envelope ``identity`` stays a display string;
 2. evaluates the policy (:mod:`rook.hub.policy`) - in ``audit`` mode (the
    shipped default) nothing is denied, would-be denials are journaled;
-3. adds **approval holds** (3.11, :mod:`rook.hub.approvals`): admin and
-   destructive calls by agents, operator ``hold`` rules and the spread limit
-   make a call wait for a person. :meth:`Authorizer.check` only decides that a
-   call is held (``decision == "hold"``); the band client then awaits
-   :meth:`Authorizer.resolve` before it sends anything. Holds apply whatever
-   the policy mode; ``approvals.enabled`` turns them off;
+3. adds **approval holds** (3.11, :mod:`rook.hub.approvals`): an agent's
+   hard stop or a change on something the trust map protects waits for a
+   person (operator ``hold`` rules are ignored). :meth:`Authorizer.check` only
+   decides that a call is held (``decision == "hold"``); the band client then
+   awaits :meth:`Authorizer.resolve` before it sends anything. Holds apply
+   whatever the policy mode;
 4. signs a **call ticket** (3.6) for targeted calls when this hub holds the
    root key, so ticket-verifying workers can check the decision themselves;
 5. journals non-allow decisions (coalesced) and exposes the last decision so

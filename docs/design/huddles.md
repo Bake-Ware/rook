@@ -790,7 +790,7 @@ It answers the proposal's action tiers:
   call from a holdable principal (agents, roles, integrations, the house
   agent itself) by cap kind (read, prepare, change, admin) and level; an
   `ask` or `person` ruling is a hold that cites the entry, its version and
-  Bake's words. The map holds even with `approvals.enabled` off.
+  Bake's words. The map and the hard stops are the only holds (access v2).
 - **Only the person loosens it.** The house agent may only tighten; other
   agents propose; changes are never relayed (`trust.*` is in the relay
   FLOOR). Exceptions are scoped and expire, and never cover what they

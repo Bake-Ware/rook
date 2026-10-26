@@ -1,8 +1,9 @@
-"""Approval holds and the spread limit (docs/design/permissions.md 3.11):
-which calls are held, waiting for a decision in the band client, approvals
-covering one identical retry, the spread limit and grants, the dashboard API,
-both hub layouts sharing one queue, contacting the operator, and approving
-by voice on a phone."""
+"""Approval holds (docs/design/permissions.md 3.11, access v2): only the hard
+stops and the trust map hold a call, nothing expires, operator hold rules are
+ignored; waiting for a decision in the band client, an approval covering one
+identical retry, the dashboard API and both hub layouts sharing one queue.
+Relaying a person's words is tests/test_relay.py; clearing cards by voice is
+tests/test_cardpass.py."""
 
 from __future__ import annotations
 
@@ -17,11 +18,10 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from rook.band_mcp.client import BandClient
 from rook.hub import approvals as A
-from rook.hub.plugins.security.contact import Contact, message, question, voice_eligible, voice_verdict
 from rook.hub.authz import Authorizer, current_principal, principal_for_user, system
-from rook.hub.policy import DEFAULT_POLICY, Policy, PolicyError, PolicyStore, Principal, Target
+from rook.hub.policy import DEFAULT_POLICY, Policy, PolicyError, PolicyStore, Principal
 
-pytestmark = [pytest.mark.approvals, pytest.mark.advanced]
+pytestmark = [pytest.mark.approvals]
 
 AGENT = Principal("token:agent-1", "token", "agent", label="claude code")
 OPERATOR_TOKEN = Principal("token:ops", "token", "operator", label="ops")
@@ -30,7 +30,11 @@ OWNER = principal_for_user({"id": "u1", "username": "alice"}, True)
 MEMBER = principal_for_user({"id": "u2", "username": "bob"}, False)
 TELEGRAM = Principal("integration:telegram", "integration", "integration")
 
-FAST = A.Config(wait_secs=0.6, contact=(), advanced=True)
+FAST = A.Config(wait_secs=0.6)
+#: A hard stop (erases a data directory for good), and another one.
+RM = {"argv": ["rm", "-rf", "/srv/data"]}
+RM2 = {"argv": ["rm", "-rf", "/srv/old"]}
+STOP_REASON = "hard stop: it deletes a database, or a top-level, home or data directory"
 
 
 def cfg(**kw):
@@ -46,28 +50,37 @@ def authorizer(tmp_path, doc=None, config=None, record=None, **kw):
 
 
 def entry(name, **kw):
-    return {"worker_id": name, "name": name, "caps": ["shell.exec", "worker.update"],
+    return {"worker_id": name, "name": name,
+            "caps": ["shell.exec", "worker.update", "proc.close", "customcap.add"],
             "last_seen": time.time(), **kw}
 
 
-def check(authz, cap, target="nas", principal=AGENT, local=False):
+def check(authz, cap, target="nas", principal=AGENT, local=False, args=None):
     e = {"name": "rook", "roles": ["is_hub"]} if local else entry(target)
-    return authz.check(cap, "rook" if local else target, e, principal=principal, local=local)
+    return authz.check(cap, "rook" if local else target, e, principal=principal, local=local,
+                       args=args)
+
+
+def stop(authz, target="nas", principal=AGENT, args=RM):
+    return check(authz, "shell.exec", target, principal, args=args)
 
 
 # -- which calls are held ------------------------------------------------------------
 
-def test_default_holds_agent_admin_and_destructive(tmp_path):
-    az = authorizer(tmp_path)
-    d = check(az, "worker.update")
-    assert d.held and d.hold_kind == "default" and d.hold_reason == "tag destructive"
-    assert check(az, "customcap.add").hold_reason == "tier admin"
-    assert check(az, "proc.close").held                      # exec, tagged destructive
-    assert not check(az, "shell.exec").held                  # exec, not held by default
-    assert not check(az, "info.ping").held
-    for p in (OPERATOR_TOKEN, TELEGRAM, Principal("unverified", "unverified", verified=False),
-              Principal("token:static", "token", "operator")):
-        assert check(az, "worker.update", principal=p).held, p.id
+def test_only_hard_stops_hold_and_no_blanket_admin_or_destructive_hold(tmp_path):
+    for advanced in (False, True):
+        (tmp_path / str(advanced)).mkdir()
+        az = authorizer(tmp_path / str(advanced), config=cfg(advanced=advanced))
+        d = stop(az)
+        assert d.held and d.hold_kind == "default" and d.hold_reason == STOP_REASON
+        assert d.rule == "hardstop"
+        for cap in ("worker.update", "customcap.add", "proc.close", "shell.exec", "info.ping"):
+            assert not check(az, cap).held, (advanced, cap)
+        assert not check(az, "settings.set", local=True,
+                         args={"key": "hub.motd", "value": "x"}).held
+        for p in (OPERATOR_TOKEN, TELEGRAM, Principal("unverified", "unverified", verified=False),
+                  Principal("token:static", "token", "operator")):
+            assert stop(az, principal=p).held, p.id
 
 
 def test_people_and_hub_code_are_never_held(tmp_path):
@@ -77,9 +90,9 @@ def test_people_and_hub_code_are_never_held(tmp_path):
     az = authorizer(tmp_path, doc)
     for p in (OWNER, MEMBER, system("ota"), Principal("human:dashboard", "human", "owner",
                                                        ("human:owner",))):
-        d = check(az, "worker.update", principal=p)
+        d = stop(az, principal=p)
         assert not d.held and not d.denied, (p.id, d)
-    assert any("never held" in m for m in Policy(doc).lint())
+    assert any("hold rules have no effect" in m for m in Policy(doc).lint())
 
 
 def test_an_agent_in_the_chain_is_held_even_behind_a_person(tmp_path):
@@ -88,61 +101,43 @@ def test_an_agent_in_the_chain_is_held_even_behind_a_person(tmp_path):
                              via=("job:j1", "token:agent-1"))
     house_agent = Principal("human:u1", "human", "owner", ("human:owner",),
                             via=("agent:home", "job:j2"))
-    assert check(az, "worker.update", principal=job_by_agent).held
-    assert check(az, "worker.update", principal=house_agent).held
-    assert not check(az, "worker.update", principal=Principal(
+    assert stop(az, principal=job_by_agent).held
+    assert stop(az, principal=house_agent).held
+    assert not stop(az, principal=Principal(
         "human:u1", "human", "owner", ("human:owner",), via=("job:j3",))).held
 
 
 def test_deny_beats_hold(tmp_path):
     doc = {**DEFAULT_POLICY, "mode": "enforce",
-           "rules": [{"id": "no-updates", "who": "token:agent-1", "deny": "worker.update",
+           "rules": [{"id": "no-shell", "who": "token:agent-1", "deny": "shell.exec",
                       "on": "*"}]}
     az = authorizer(tmp_path, doc)
-    d = check(az, "worker.update")
-    assert d.denied and not d.held and d.rule == "no-updates"
+    d = stop(az)
+    assert d.denied and not d.held and d.rule == "no-shell"
     ro = Principal("token:ro", "token", "readonly")
     assert check(az, "customcap.add", principal=ro).denied
 
 
-def test_operator_allow_exception_beats_the_default_hold(tmp_path):
+def test_an_allow_rule_never_lifts_a_hard_stop(tmp_path):
     doc = {**DEFAULT_POLICY, "rules": [
-        {"id": "ci-updates-nas", "who": "token:ci", "allow": "worker.update", "on": "nas"},
-        {"id": "agents-anything", "who": "role:agent", "allow": "*", "on": "*"}]}
+        {"id": "agents-anything", "who": "role:agent", "allow": "*", "on": "*"},
+        {"id": "ci-shell-nas", "who": "token:ci", "allow": "shell.exec", "on": "nas"}]}
     az = authorizer(tmp_path, doc)
-    assert not check(az, "worker.update", "nas", CI).held           # the exception
-    assert check(az, "worker.update", "build-box", CI).held         # other machines
-    # A broad allow (cap "*") is less specific than tier:admin / tag:destructive.
-    assert check(az, "worker.update", "nas", AGENT).held
-    # Same specificity as the default (tier selector, any target): the explicit rule wins.
-    doc2 = {**DEFAULT_POLICY, "rules": [{"id": "agents-admin", "who": "role:agent",
-                                          "allow": "tier:admin", "on": "*"}]}
-    (tmp_path / "b").mkdir()
-    az2 = authorizer(tmp_path / "b", doc2)
-    assert not check(az2, "customcap.add").held
-    assert check(az2, "worker.update").held                         # tag:destructive (2) > tier (1)
+    assert stop(az).held and stop(az, principal=CI).held
+    assert not check(az, "shell.exec", principal=CI, args={"argv": ["uptime"]}).held
 
 
-def test_explicit_hold_rule(tmp_path):
+def test_operator_hold_rules_are_ignored(tmp_path):
     doc = {**DEFAULT_POLICY, "rules": [{"id": "hold-shell-nas", "who": "role:agent",
                                         "hold": "shell.*", "on": "nas"}]}
-    az = authorizer(tmp_path, doc)
-    d = check(az, "shell.exec", "nas")
-    assert d.held and d.hold_kind == "rule" and d.rule == "hold-shell-nas"
-    assert not check(az, "shell.exec", "build-box").held
+    for mode in ("audit", "enforce"):
+        (tmp_path / mode).mkdir()
+        az = authorizer(tmp_path / mode, {**doc, "mode": mode})
+        d = check(az, "shell.exec", "nas", args={"argv": ["uptime"]})
+        assert not d.held and "hold rules are retired" in d.reason, mode
+        assert stop(az).hold_kind == "default"                     # the hard stop still holds
     with pytest.raises(PolicyError):
         Policy({**DEFAULT_POLICY, "rules": [{"who": "*", "hold": "*", "allow": "*"}]})
-    # Enforce mode: a hold still holds (it denies nothing).
-    az2 = authorizer(tmp_path, {**doc, "mode": "enforce"})
-    assert check(az2, "shell.exec", "nas").held
-
-
-def test_approvals_disabled_is_the_old_behaviour(tmp_path):
-    doc = {**DEFAULT_POLICY, "rules": [{"id": "hold-shell", "who": "role:agent",
-                                        "hold": "shell.*", "on": "*"}]}
-    az = authorizer(tmp_path, doc, config=cfg(enabled=False))
-    assert check(az, "worker.update").decision == "would_deny"      # role:agent admin: audit
-    assert check(az, "shell.exec").decision == "allow"
 
 
 def test_no_queue_means_hold_rules_refuse(tmp_path):
@@ -158,31 +153,37 @@ def test_failing_open_on_a_policy_crash_still_holds(tmp_path, monkeypatch):
     def boom(*a, **kw):
         raise RuntimeError("bug")
     monkeypatch.setattr(az.store.current(), "evaluate", boom)
-    assert check(az, "customcap.add", principal=OPERATOR_TOKEN).held
-    assert check(az, "customcap.add", principal=OWNER).decision == "error_allow"
+    assert stop(az, principal=OPERATOR_TOKEN).held
+    assert stop(az, principal=OWNER).decision == "error_allow"
 
 
-def test_settings_changes_by_agents_are_held_and_guardrails_refused(tmp_path):
+def test_secrets_are_held_and_guardrails_refused(tmp_path):
     az = authorizer(tmp_path)
-    for cap in ("settings.set", "settings.reset", "secret.get"):
-        d = check(az, cap, principal=OPERATOR_TOKEN, local=True)
-        assert d.held, cap
+    assert check(az, "secret.get", principal=OPERATOR_TOKEN, local=True,
+                 args={"name": "nas-admin"}).held
+    for cap in ("settings.set", "settings.reset"):               # ordinary settings just go
+        assert not check(az, cap, principal=OPERATOR_TOKEN, local=True,
+                         args={"key": "hub.motd"}).held, cap
     for cap in ("policy.set", "token.admin"):                   # no ratchet: a person's alone
         d = check(az, cap, principal=OPERATOR_TOKEN, local=True)
         assert d.denied and d.rule == "hardstop:guardrail", cap
-    assert not check(az, "settings.set", principal=OWNER, local=True).held
+    d = check(az, "settings.set", principal=OPERATOR_TOKEN, local=True,
+              args={"key": "core.approvals.wait_secs", "value": 0})
+    assert d.denied and d.rule == "hardstop:guardrail"
 
 
 def test_config_from_settings_store_and_env(tmp_path):
     from rook.hub.settings_store import SettingsStore
     store = SettingsStore(tmp_path / "settings.db")
-    store.set("core.approvals.spread_max", "hub", "", value=2, actor="human:u1")
-    store.set("core.approvals.contact", "hub", "", value=["ask", "telegram", "bogus"],
-              actor="human:u1")
+    store.set("core.approvals.wait_secs", "hub", "", value=20, actor="human:u1")
     c = A.load_config(store, {})
-    assert c.spread_max == 2 and c.contact == ("ask", "telegram") and c.enabled
-    c = A.load_config(store, {"ROOK_APPROVALS": "0", "ROOK_APPROVALS_CONTACT": "off"})
-    assert not c.enabled and c.contact == ()
+    assert c.wait_secs == 20 and not c.advanced
+    assert A.load_config(store, {"ROOK_APPROVALS_WAIT_SECS": "5"}).wait_secs == 5
+    retired = {"enabled", "hold", "approval_secs", "spread_max", "spread_window_secs",
+               "spread_grant_secs", "contact", "contact_worker", "voice_max_tier",
+               "notify_every_secs", "hub_host_workers"}
+    assert not retired & set(A._settings())
+    assert not retired & {f.name for f in A.Config.__dataclass_fields__.values()}
 
 
 # -- the band client waits for a decision ---------------------------------------------
@@ -228,18 +229,17 @@ async def pending_hold(queue, n=1, timeout=3.0):
 async def test_approved_within_the_wait_proceeds_and_is_sent(tmp_path):
     rows = []
     client, sent = band(tmp_path, config=cfg(wait_secs=5), record=lambda **kw: rows.append(kw))
-    call = asyncio.create_task(as_agent(client.call("worker.update", {"build": 9},
-                                                    target="nas", timeout=2)))
+    call = asyncio.create_task(as_agent(client.call("shell.exec", RM, target="nas", timeout=2)))
     # The dashboard (another process) opens the same file and approves.
     other = A.ApprovalQueue(str(tmp_path / "approvals.db"))
     hold = (await pending_hold(other))[0]
-    assert hold["principal"] == "token:agent-1" and hold["cap"] == "worker.update"
-    assert hold["target_name"] == "nas" and hold["args"] == {"build": 9}
-    assert hold["reason"] == "tag destructive" and hold["principal_label"] == "claude code"
+    assert hold["principal"] == "token:agent-1" and hold["cap"] == "shell.exec"
+    assert hold["target_name"] == "nas" and hold["args"] == RM
+    assert hold["reason"] == STOP_REASON and hold["principal_label"] == "claude code"
     assert not sent
     other.decide(hold["id"], True, "human:u1")
     reply = await call
-    assert reply["ok"] and sent[-1]["cap"] == "worker.update"
+    assert reply["ok"] and sent[-1]["cap"] == "shell.exec"
     assert client.authz.approvals.queue.get(hold["id"])["state"] == "consumed"
     assert any(r["cap"] == "approval.hold" and r["identity"] == "token:agent-1" for r in rows)
 
@@ -247,12 +247,12 @@ async def test_approved_within_the_wait_proceeds_and_is_sent(tmp_path):
 @pytest.mark.asyncio
 async def test_denied_is_a_denial_and_nothing_is_sent(tmp_path):
     client, sent = band(tmp_path, config=cfg(wait_secs=5))
-    call = asyncio.create_task(as_agent(client.call("worker.update", {}, target="nas", timeout=2)))
+    call = asyncio.create_task(as_agent(client.call("shell.exec", RM, target="nas", timeout=2)))
     hold = (await pending_hold(client.authz.approvals.queue))[0]
     client.authz.approvals.decide(hold["id"], False, "human:u1")
     reply = await call
     assert not reply["ok"] and reply["denied"]["hold"] == hold["id"]
-    assert reply["denied"]["by"] == "human:u1" and "human:u1 denied worker.update" in reply["error"]
+    assert reply["denied"]["by"] == "human:u1" and "human:u1 denied shell.exec" in reply["error"]
     assert not sent
 
 
@@ -261,68 +261,122 @@ async def test_timeout_returns_held_with_the_id_and_nothing_is_sent(tmp_path):
     rows = []
     client, sent = band(tmp_path, record=lambda **kw: rows.append(kw))
     t0 = time.monotonic()
-    reply = await as_agent(client.call("worker.update", {}, target="nas", timeout=0.1))
+    reply = await as_agent(client.call("shell.exec", RM, target="nas", timeout=0.1))
     assert time.monotonic() - t0 >= 0.5             # the wait comes before the call's timeout
     assert reply["ok"] is False and reply["held"] is True and reply["hold"].startswith("h")
     assert reply["hold"] in reply["error"] and "Approvals page" in reply["error"]
-    assert "repeat the same call" in reply["error"] and "10 minutes" in reply["error"]
+    assert "repeat the same call" in reply["error"] and "does not expire" in reply["error"]
+    assert "minutes" not in reply["error"]
     assert not sent
     assert [r["cap"] for r in rows].count("approval.hold") == 1
     # A retry before anyone decides joins the same hold instead of adding another.
-    again = await as_agent(client.call("worker.update", {}, target="nas", timeout=0.1))
+    again = await as_agent(client.call("shell.exec", RM, target="nas", timeout=0.1))
     assert again["hold"] == reply["hold"] and len(client.authz.approvals.queue.pending()) == 1
 
 
 @pytest.mark.asyncio
 async def test_an_approval_covers_one_identical_retry(tmp_path):
     client, sent = band(tmp_path)
-    first = await as_agent(client.call("worker.update", {"build": 9}, target="nas", timeout=1))
+    first = await as_agent(client.call("shell.exec", RM, target="nas", timeout=1))
     client.authz.approvals.decide(first["hold"], True, "human:u1")
     # Different args, another worker or another agent are not covered.
-    other_args = await as_agent(client.call("worker.update", {"build": 10}, target="nas", timeout=1))
+    other_args = await as_agent(client.call("shell.exec", RM2, target="nas", timeout=1))
     assert other_args["held"] and other_args["hold"] != first["hold"]
-    other_box = await as_agent(client.call("worker.update", {"build": 9}, target="build-box",
-                                           timeout=1))
+    other_box = await as_agent(client.call("shell.exec", RM, target="build-box", timeout=1))
     assert other_box["held"]
-    other_agent = await as_agent(client.call("worker.update", {"build": 9}, target="nas",
-                                             timeout=1), CI)
+    other_agent = await as_agent(client.call("shell.exec", RM, target="nas", timeout=1), CI)
     assert other_agent["held"]
     assert not sent
-    ok = await as_agent(client.call("worker.update", {"build": 9}, target="nas", timeout=1))
+    ok = await as_agent(client.call("shell.exec", RM, target="nas", timeout=1))
     assert ok["ok"] and len(sent) == 1
-    again = await as_agent(client.call("worker.update", {"build": 9}, target="nas", timeout=1))
+    again = await as_agent(client.call("shell.exec", RM, target="nas", timeout=1))
     assert again["held"] and len(sent) == 1
 
 
 @pytest.mark.asyncio
-async def test_approvals_and_pending_holds_expire(tmp_path):
+async def test_nothing_expires_approvals_or_pending_holds(tmp_path):
     now = [1000.0]
     client, sent = band(tmp_path)
     client.authz.approvals = A.Approvals(str(tmp_path / "approvals.db"), FAST,
                                          clock=lambda: now[0])
-    first = await as_agent(client.call("worker.update", {}, target="nas", timeout=1))
-    client.authz.approvals.decide(first["hold"], True, "human:u1")
-    now[0] += 601
-    late = await as_agent(client.call("worker.update", {}, target="nas", timeout=1))
-    assert late["held"] and not sent
-    assert client.authz.approvals.queue.get(first["hold"])["state"] in ("approved", "expired")
-    now[0] += 601
-    client.authz.approvals.queue.sweep(force=True)
-    assert client.authz.approvals.queue.get(late["hold"])["state"] == "expired"
-    assert client.authz.approvals.queue.get(first["hold"])["state"] == "expired"
+    ap = client.authz.approvals
+    first = await as_agent(client.call("shell.exec", RM, target="nas", timeout=1))
+    ap.decide(first["hold"], True, "human:u1")
+    assert ap.queue.get(first["hold"])["valid_until"] is None
+    now[0] += 365 * 86400                                   # a year later
+    ap.queue.sweep(force=True)
+    assert ap.queue.get(first["hold"])["state"] == "approved"
+    late = await as_agent(client.call("shell.exec", RM, target="nas", timeout=1))
+    assert late["ok"] and len(sent) == 1                    # the approval still covers it
+    # A pending hold nobody answered waits too, and the person can still decide it.
+    waiting = await as_agent(client.call("shell.exec", RM2, target="nas", timeout=1))
+    now[0] += 365 * 86400
+    ap.queue.sweep(force=True)
+    assert ap.queue.get(waiting["hold"])["state"] == "pending"
+    assert ap.queue.count_pending() == 1
+    assert waiting["hold"] in [i["id"] for i in ap.queue.pending()]
+    ap.decide(waiting["hold"], True, "human:u1")
+    assert (await as_agent(client.call("shell.exec", RM2, target="nas", timeout=1)))["ok"]
+
+
+def test_rows_from_before_no_expiry_keep_their_old_deadline(tmp_path):
+    """Removing expiry never revives an approval or an ask the old code had
+    already timed out, even one the sweep had not marked yet; a denial stays a
+    denial; an old approval still inside its window works once."""
+    import sqlite3
+    now = [10_000.0]
+    q = A.ApprovalQueue(str(tmp_path / "a.db"), clock=lambda: now[0])
+    q.count_pending()                                        # creates the file
+    cols = ("id, state, kind, principal, cap, tier, target_id, args_hash, created, expires, "
+            "decided_by, decided_at, valid_until")
+    rows = [("h_stale", "approved", "a1", 9_000.0, 9_600.0),      # window passed, unswept
+            ("h_fresh", "approved", "a2", 9_900.0, 10_500.0),     # still inside its window
+            ("h_denied", "denied", "a3", 9_900.0, None),
+            ("h_oldask", "pending", "a4", 9_000.0, None)]         # pending, expired at 9600
+    with sqlite3.connect(q.path) as db:
+        for hid, state, digest, created, until in rows:
+            db.execute(f"INSERT INTO holds({cols}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                       (hid, state, "default", "token:agent-1", "shell.exec", "exec", "nas",
+                        digest, created, created + 600, "human:u1" if state != "pending"
+                        else None, created if state != "pending" else None, until))
+    assert q.consume_match("token:agent-1", "shell.exec", "nas", "a1") is None
+    q.sweep(force=True)
+    assert q.get("h_stale")["state"] == "expired"
+    assert q.consume_match("token:agent-1", "shell.exec", "nas", "a3") is None
+    assert q.get("h_denied")["state"] == "denied"
+    assert q.consume_match("token:agent-1", "shell.exec", "nas", "a2")["id"] == "h_fresh"
+    assert q.get("h_oldask")["state"] == "expired" and q.count_pending() == 0
     with pytest.raises(A.HoldError):
-        client.authz.approvals.decide(late["hold"], True, "human:u1")
+        q.decide("h_oldask", True, "human:u1")
+    again, created = q.create(principal="token:agent-1", cap="shell.exec", tier="exec",
+                              args_hash="a4", target_id="nas")
+    assert created and again["id"] != "h_oldask" and again["expires"] == 0
+    now[0] += 365 * 86400                                    # the new ask never expires
+    assert q.get(again["id"])["state"] == "pending" and q.count_pending() == 1
+
+
+def test_decide_takes_only_the_call_scope(tmp_path):
+    ap = A.Approvals(str(tmp_path / "a.db"), FAST)
+    az = Authorizer(PolicyStore(None), None, approvals=ap)
+    h, _ = ap.queue.create(principal="token:agent-1", cap="shell.exec", tier="exec",
+                           args_hash=A.args_hash(RM), target_id="nas", args=RM,
+                           reason=STOP_REASON)
+    with pytest.raises(A.HoldError):
+        ap.decide(h["id"], True, "human:u1", scope="spread")
+    assert ap.queue.get(h["id"])["state"] == "pending"
+    assert not hasattr(ap.queue, "active_grant") and not hasattr(ap, "spread")
+    assert stop(az).held
 
 
 @pytest.mark.asyncio
 async def test_holds_show_placeholders_never_secret_values(tmp_path):
     client, _sent = band(tmp_path)
-    given = {"cmd": "login {{secret:nas-admin}}", "password": "hunter2",
+    given = {"cmd": "rm -rf /srv/data && login {{secret:nas-admin}}", "password": "hunter2",
              "note": "x" * 5000}
     tok = A.shown_args.set(given)
     try:
-        sent_args = {**given, "cmd": "login s3cr3t-value"}
-        reply = await as_agent(client.call("worker.update", sent_args, target="nas", timeout=1))
+        sent_args = {**given, "cmd": "rm -rf /srv/data && login s3cr3t-value"}
+        reply = await as_agent(client.call("shell.exec", sent_args, target="nas", timeout=1))
     finally:
         A.shown_args.reset(tok)
     hold = client.authz.approvals.queue.get(reply["hold"])
@@ -331,68 +385,14 @@ async def test_holds_show_placeholders_never_secret_values(tmp_path):
     assert "hunter2" not in shown and len(shown) < 1000
 
 
-# -- the spread limit --------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_spread_five_machines_then_the_sixth_is_held(tmp_path):
-    client, sent = band(tmp_path)
-    for name in ("nas", "build-box", "w3", "w4", "w5"):
-        r = await as_agent(client.call("shell.exec", {"cmd": "id"}, target=name, timeout=1))
-        assert r["ok"], name
-    # Machines already reached do not count again; read-tier calls never count.
-    assert (await as_agent(client.call("shell.exec", {}, target="nas", timeout=1)))["ok"]
-    assert (await as_agent(client.call("info.ping", {}, target="w6", timeout=1)))["ok"]
-    held = await as_agent(client.call("shell.exec", {"cmd": "id"}, target="w6", timeout=1))
-    assert held["held"] and "spread: 6th machine in 10 minutes" in held["error"]
-    hold = client.authz.approvals.queue.get(held["hold"])
-    assert hold["kind"] == "spread"
-    # Another agent has its own count; people are never counted.
-    assert (await as_agent(client.call("shell.exec", {}, target="w6", timeout=1), CI))["ok"]
-    assert (await as_agent(client.call("shell.exec", {}, target="w7", timeout=1), OWNER))["ok"]
-
-
-def test_calls_to_the_hub_do_not_count(tmp_path):
-    az = authorizer(tmp_path, config=cfg(spread_max=1))
-    assert not check(az, "shell.exec", "nas").held
-    for _ in range(3):
-        assert not check(az, "jobs.run", local=True).held
-    assert check(az, "shell.exec", "build-box").held
-
-
-@pytest.mark.asyncio
-async def test_spread_grant_lets_the_agent_continue(tmp_path):
-    client, sent = band(tmp_path, config=cfg(spread_max=1))
-    assert (await as_agent(client.call("shell.exec", {}, target="nas", timeout=1)))["ok"]
-    held = await as_agent(client.call("shell.exec", {}, target="build-box", timeout=1))
-    ap = client.authz.approvals
-    with pytest.raises(A.HoldError):
-        ap.decide(held["hold"], False, "human:u1", scope="spread")   # spread scope = approve only
-    ap.decide(held["hold"], True, "human:u1", scope="spread")
-    assert ap.queue.active_grant("token:agent-1")
-    assert (await as_agent(client.call("shell.exec", {}, target="build-box", timeout=1)))["ok"]
-    assert (await as_agent(client.call("shell.exec", {}, target="w3", timeout=1)))["ok"]
-    # Normal holds still apply during a spread grant.
-    assert (await as_agent(client.call("worker.update", {}, target="w4", timeout=1)))["held"]
-
-
-@pytest.mark.asyncio
-async def test_a_call_scope_spread_approval_grants_nothing_more(tmp_path):
-    client, sent = band(tmp_path, config=cfg(spread_max=1))
-    await as_agent(client.call("shell.exec", {}, target="nas", timeout=1))
-    held = await as_agent(client.call("shell.exec", {}, target="build-box", timeout=1))
-    client.authz.approvals.decide(held["hold"], True, "human:u1")
-    assert (await as_agent(client.call("shell.exec", {}, target="build-box", timeout=1)))["ok"]
-    assert (await as_agent(client.call("shell.exec", {}, target="w3", timeout=1)))["held"]
-
-
 # -- both layouts see the same holds -----------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_two_processes_share_one_queue(tmp_path):
     mcp_side = A.Approvals(str(tmp_path / "approvals.db"), cfg(wait_secs=5))
     dashboard_side = A.Approvals(str(tmp_path / "approvals.db"), cfg(wait_secs=5))
-    d = check(Authorizer(PolicyStore(None), None, approvals=mcp_side), "worker.update")
-    waiting = asyncio.create_task(mcp_side.resolve(d, {"build": 1}, label="claude code"))
+    d = stop(Authorizer(PolicyStore(None), None, approvals=mcp_side))
+    waiting = asyncio.create_task(mcp_side.resolve(d, RM, label="claude code"))
     hold = (await pending_hold(dashboard_side.queue))[0]
     assert dashboard_side.queue.count_pending() == 1
     dashboard_side.decide(hold["id"], True, "human:u1", scope="call")
@@ -457,12 +457,12 @@ async def test_mcp_tools_list_has_no_approval_tool_but_the_relay(tmp_path):
 
 @pytest.mark.asyncio
 async def test_agent_hub_tool_call_is_held_through_mcp(tmp_path, monkeypatch):
-    """An agent's admin hub tool (rook_secret get) and rook_call on worker rook
-    (settings.set) are held; a held MCP tool says so."""
+    """An agent's hard stop through a hub tool (rook_secret get) and rook_call
+    (a command that erases a data directory) is held; a hold rule in the
+    policy holds nothing."""
     from test_permissions_mcp import mcp, _text
     from test_audit_attribution import Session, STATIC
     monkeypatch.setenv("ROOK_APPROVALS_WAIT_SECS", "0")
-    monkeypatch.setenv("ROOK_APPROVALS_CONTACT", "off")
     doc = {**DEFAULT_POLICY, "rules": [*DEFAULT_POLICY["rules"],
                                        {"id": "hold-host", "who": "token:*", "hold": "info.host",
                                         "on": "gpu-box"}]}
@@ -471,15 +471,15 @@ async def test_agent_hub_tool_call_is_held_through_mcp(tmp_path, monkeypatch):
         res = await s.result("rook_secret", {"action": "get", "name": "nas-admin"})
         assert res.get("isError") and "Held for approval" in res["content"][0]["text"]
         before = len(env.sent)
-        held = _text(await s.result("rook_call", {"cap": "info.host", "worker": "gpu-box",
-                                                  "args": {"build": 1}}))
+        held = _text(await s.result("rook_call", {"cap": "shell.exec", "worker": "gpu-box",
+                                                  "args": {"cmd": "rm -rf /srv/data"}}))
         assert held["held"] and not held["ok"] and len(env.sent) == before
-        assert "rule hold-host" in held["error"]
-        ok = _text(await s.result("rook_call", {"cap": "shell.exec", "worker": "gpu-box",
-                                                "args": {"cmd": "id"}}))
-        assert ok["ok"]
+        assert "hard stop" in held["error"]
+        ok = _text(await s.result("rook_call", {"cap": "info.host", "worker": "gpu-box",
+                                                "args": {"build": 1}}))
+        assert ok["ok"]                                       # the hold rule holds nothing
         q = A.ApprovalQueue(str(tmp_path / "approvals.db"))
-        assert {h["cap"] for h in q.pending()} == {"secret.get", "info.host"}
+        assert {h["cap"] for h in q.pending()} == {"secret.get", "shell.exec"}
 
 
 # -- the dashboard API ------------------------------------------------------------------
@@ -515,16 +515,20 @@ async def test_dashboard_api_lists_approves_and_denies(tmp_path):
     app, az = dashboard(tmp_path, principal)
     az.approvals.config_source.fixed = cfg(wait_secs=0)
     async with TestClient(TestServer(app)) as http:
-        r1 = await az.resolve(check(az, "worker.update"), {"build": 1})
-        r2 = await az.resolve(check(az, "customcap.add", "build-box"), {})
+        r1 = await az.resolve(stop(az), RM)
+        r2 = await az.resolve(stop(az, "build-box", args=RM2), RM2)
         r = await http.get("/api/approvals?count=1")
         assert (await r.json()) == {"pending": 2}
         r = await http.get("/api/approvals")
         data = await r.json()
         assert [h["id"] for h in data["pending"]] == [r1["hold"], r2["hold"]]
-        assert data["pending"][0]["worker"] == "nas" and data["settings"]["enabled"]
+        assert data["pending"][0]["worker"] == "nas"
+        assert set(data["settings"]) == {"wait_secs", "relay_dashboard_only"}
+        assert "grants" not in data and "hub_host" not in data
+        assert "voice_ok" not in data["pending"][0]
         r = await http.post(f"/api/approvals/{r1['hold']}", json={"decision": "approve"})
         assert r.status == 200 and (await r.json())["hold"]["state"] == "approved"
+        assert (await r.json())["hold"]["valid_until"] is None        # never runs out
         r = await http.post(f"/api/approvals/{r2['hold']}", json={"decision": "deny"})
         assert (await r.json())["hold"]["decided_by"] == "human:u1"
         r = await http.post(f"/api/approvals/{r2['hold']}", json={"decision": "approve"})
@@ -546,7 +550,7 @@ async def test_dashboard_api_requires_a_person_with_admin(tmp_path):
     app, az = dashboard(tmp_path, principal)
     az.approvals.config_source.fixed = cfg(wait_secs=0)
     async with TestClient(TestServer(app)) as http:
-        held = await az.resolve(check(az, "worker.update"), {})
+        held = await az.resolve(stop(az), RM)
         for p in (AGENT, OPERATOR_TOKEN, MEMBER, system("x"), None):
             principal[0] = p
             assert (await http.get("/api/approvals")).status == 403, p
@@ -556,241 +560,6 @@ async def test_dashboard_api_requires_a_person_with_admin(tmp_path):
         principal[0] = OWNER
         r = await http.post(f"/api/approvals/{held['hold']}", json={"decision": "approve"})
         assert r.status == 200
-
-
-# -- contacting the operator ---------------------------------------------------------
-
-class FakeClient:
-    """A band client with a hub node and an optional phone worker."""
-
-    def __init__(self, phone=True, answers=(), fail=False):
-        self._local = SimpleNamespace(worker_id="hub1")
-        self.workers = {"hub1": {"name": "rook", "roles": ["is_hub"]}}
-        if phone:
-            self.workers["p1"] = {"name": "phone", "caps": ["voice.speak", "notify.post"]}
-        self.calls = []
-        self.answers = list(answers)
-        self.fail = fail
-
-    async def call(self, cap, args=None, target=None, timeout=15.0, identity=None,
-                   principal=None):
-        self.calls.append({"cap": cap, "args": args, "target": target,
-                           "principal": getattr(principal, "id", None)})
-        if self.fail:
-            raise ConnectionError("relay down")
-        if cap == "voice.speak" and args.get("reply"):
-            text = self.answers.pop(0) if self.answers else ""
-            res = {"ok": True, "spoken": True, "reply_state": "answered" if text else "none"}
-            if text:
-                res["reply"] = {"text": text, "via": "voice"}
-            return {"id": "x", "from": target, "ok": True, "result": res}
-        return {"id": "x", "from": target, "ok": True, "result": {"ok": True}}
-
-
-def make_hold(ap, cap="worker.update", target="nas", principal=AGENT, tier=None, is_hub=False):
-    d = check(Authorizer(PolicyStore(None), None, approvals=ap), cap,
-              "rook" if is_hub else target, principal, local=is_hub)
-    hold, _ = ap.queue.create(principal=d.principal, cap=d.cap, tier=tier or d.tier,
-                              args_hash=A.args_hash({"cap": cap, "t": target}),
-                              label=principal.label, target_id=d.target,
-                              target_name="rook" if is_hub else target, is_hub=is_hub,
-                              reason=d.hold_reason, kind=d.hold_kind)
-    return hold
-
-
-async def settle(contact):
-    for _ in range(100):
-        live = [t for t in contact._tasks if not t.done()]
-        if not live:
-            return
-        await asyncio.gather(*live, return_exceptions=True)
-
-
-def test_message_text_is_short_and_has_no_args(tmp_path):
-    ap = A.Approvals(str(tmp_path / "a.db"), FAST)
-    h = make_hold(ap)
-    text = message([h], "https://hub.example.org/#approvals")
-    # The plain ask (rook/hub/plain.py): title, for, who, risk; never the args.
-    assert text == ("Rook: Update nas. For: no task. Who: claude code. Risk: High: it changes who "
-                    "can do what or band-wide settings. Approve on the dashboard: "
-                    "https://hub.example.org/#approvals")
-    assert question(h) == ("Rook: claude code asks to update nas. Risk: High: it changes who can "
-                           "do what or band-wide settings. Approve?")
-    many = message([h] * 7)
-    assert many.startswith("Rook: 7 asks are waiting") and "and 2 more" in many
-
-
-@pytest.mark.asyncio
-async def test_notifications_are_coalesced(tmp_path):
-    ap = A.Approvals(str(tmp_path / "a.db"), cfg(contact=("telegram",), notify_every_secs=0.3))
-    client = FakeClient()
-    ap.attach_client(client)
-    for t in ("nas", "build-box", "w3"):
-        ap.contact.hold_created(make_hold(ap, target=t))
-    await asyncio.sleep(0.05)
-    sends = [c for c in client.calls if c["cap"] == "notify.send"]
-    assert len(sends) == 1 and "Rook: Update nas. For: no task" in sends[0]["args"]["text"]
-    assert sends[0]["target"] == "hub1" and sends[0]["principal"] == "system:approvals"
-    await asyncio.sleep(0.4)
-    await settle(ap.contact)
-    sends = [c for c in client.calls if c["cap"] == "notify.send"]
-    assert len(sends) == 2 and sends[1]["args"]["text"].startswith("Rook: 2 asks are waiting")
-
-
-@pytest.mark.asyncio
-async def test_contact_failure_never_reaches_the_call(tmp_path):
-    client, sent = band(tmp_path, config=cfg(contact=("telegram", "notify"),
-                                             contact_worker="phone"))
-    client.authz.approvals.attach_client(FakeClient(fail=True))
-    reply = await as_agent(client.call("worker.update", {}, target="nas", timeout=1))
-    assert reply["held"]
-    await settle(client.authz.approvals.contact)
-
-
-@pytest.mark.asyncio
-async def test_notify_and_voice_channels_use_the_phone(tmp_path):
-    ap = A.Approvals(str(tmp_path / "a.db"), cfg(contact=("notify",), contact_worker="Phone"))
-    client = FakeClient()
-    ap.attach_client(client)
-    ap.contact.hold_created(make_hold(ap))
-    await settle(ap.contact)
-    assert [(c["cap"], c["target"]) for c in client.calls] == [("notify.post", "p1")]
-    assert client.calls[0]["args"]["title"] == "Rook approval"
-    ap2 = A.Approvals(str(tmp_path / "b.db"), cfg(contact=("voice",), contact_worker="phone"))
-    client2 = FakeClient()
-    ap2.attach_client(client2)
-    ap2.contact.hold_created(make_hold(ap2))
-    await settle(ap2.contact)
-    assert client2.calls[0]["cap"] == "voice.speak" and client2.calls[0]["args"]["wait"] is False
-
-
-# -- approving by voice -------------------------------------------------------------------
-
-def test_voice_verdicts():
-    for t in ("yes", "Yes.", "approve", "approved!", "allow", "do it", "go ahead", "OK", "okay"):
-        assert voice_verdict(t) == "approve", t
-    for t in ("no", "No!", "deny", "don't", "do not", "stop", "cancel", "nope"):
-        assert voice_verdict(t) == "deny", t
-    for t in ("yes but no", "ok wait", "not now", "maybe", "", "know what, yes no", "wait",
-              "yes, don't"):
-        assert voice_verdict(t) == "unclear", t
-
-
-def voice_setup(tmp_path, answers=(), phone=True, **kw):
-    ap = A.Approvals(str(tmp_path / "a.db"),
-                     cfg(contact=("ask", "telegram"), contact_worker="phone", **kw))
-    client = FakeClient(phone=phone, answers=answers)
-    ap.attach_client(client)
-    return ap, client
-
-
-@pytest.mark.asyncio
-async def test_voice_yes_approves(tmp_path):
-    rows = []
-    ap, client = voice_setup(tmp_path, ["Yes, go ahead."])
-    ap._record = lambda **kw: rows.append(kw)
-    h = make_hold(ap)
-    ap.contact.hold_created(h)
-    await settle(ap.contact)
-    got = ap.queue.get(h["id"])
-    assert got["state"] == "approved" and got["decided_by"] == "voice:phone"
-    ask = client.calls[0]
-    assert ask["cap"] == "voice.speak" and ask["args"]["reply"] and ask["target"] == "p1"
-    assert ask["principal"] == "system:approvals"
-    assert ask["args"]["text"] == ("Rook: claude code asks to update nas. Risk: High: it changes "
-                                   "who can do what or band-wide settings. Approve?")
-    assert not [c for c in client.calls if c["cap"] == "notify.send"]
-    row = next(r for r in rows if r["cap"] == "approval.decide")
-    assert row["identity"] == "voice:phone" and row["reply"]["heard"] == "Yes, go ahead."
-
-
-@pytest.mark.asyncio
-async def test_voice_no_denies(tmp_path):
-    ap, client = voice_setup(tmp_path, ["no"])
-    h = make_hold(ap)
-    ap.contact.hold_created(h)
-    await settle(ap.contact)
-    assert ap.queue.get(h["id"])["state"] == "denied"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("answers", [["maybe later"], [], ["yes but no"]])
-async def test_unclear_or_no_answer_stays_pending_and_falls_back(tmp_path, answers):
-    ap, client = voice_setup(tmp_path, answers)
-    h = make_hold(ap)
-    ap.contact.hold_created(h)
-    await settle(ap.contact)
-    assert ap.queue.get(h["id"])["state"] == "pending"
-    assert [c["cap"] for c in client.calls] == ["voice.speak", "notify.send"]
-
-
-@pytest.mark.asyncio
-async def test_offline_phone_falls_back(tmp_path):
-    ap, client = voice_setup(tmp_path, ["yes"], phone=False)
-    h = make_hold(ap)
-    ap.contact.hold_created(h)
-    await settle(ap.contact)
-    assert ap.queue.get(h["id"])["state"] == "pending"
-    assert [c["cap"] for c in client.calls] == ["notify.send"]
-
-
-@pytest.mark.asyncio
-async def test_holds_above_voice_max_tier_are_not_voice_approvable(tmp_path):
-    ap, client = voice_setup(tmp_path, ["yes"], voice_max_tier="exec")
-    h = make_hold(ap)                                      # worker.update: admin
-    assert not voice_eligible(h, ap.config())
-    ap.contact.hold_created(h)
-    await settle(ap.contact)
-    assert ap.queue.get(h["id"])["state"] == "pending"
-    assert [c["cap"] for c in client.calls] == ["notify.send"]
-    # Admin calls to the hub itself always need the dashboard.
-    hub = make_hold(ap, cap="settings.set", principal=OPERATOR_TOKEN, is_hub=True)
-    assert hub["is_hub"] and not voice_eligible(hub, A.Config(voice_max_tier="admin"))
-    assert not voice_eligible(make_hold(ap, target="w3"), A.Config(voice_max_tier="off"))
-
-
-@pytest.mark.asyncio
-async def test_a_spoken_yes_only_approves_the_hold_it_named(tmp_path):
-    ap, client = voice_setup(tmp_path, ["yes", "maybe"])
-    a = make_hold(ap, target="nas")
-    b = make_hold(ap, target="build-box")
-    ap.contact.hold_created(a)
-    ap.contact.hold_created(b)
-    await settle(ap.contact)
-    assert ap.queue.get(a["id"])["state"] == "approved"
-    assert ap.queue.get(b["id"])["state"] == "pending"
-    asks = [c["args"]["text"] for c in client.calls if c["cap"] == "voice.speak"]
-    assert asks == [question(a), question(b)]               # one at a time, each named
-
-
-@pytest.mark.asyncio
-async def test_a_hold_decided_on_the_dashboard_is_not_asked(tmp_path):
-    ap, client = voice_setup(tmp_path, ["yes"])
-    h = make_hold(ap)
-    ap.decide(h["id"], False, "human:u1")
-    ap.contact.hold_created(h)
-    await settle(ap.contact)
-    assert not client.calls and ap.queue.get(h["id"])["state"] == "denied"
-
-
-@pytest.mark.asyncio
-async def test_the_agents_call_proceeds_once_the_voice_approval_lands(tmp_path):
-    def speak(msg):
-        if msg["args"].get("reply"):
-            return {"ok": True, "spoken": True, "reply_state": "answered",
-                    "reply": {"text": "yes", "via": "voice"}}
-        return {"ok": True}
-    client, sent = band(tmp_path, config=cfg(wait_secs=5, contact=("ask",),
-                                             contact_worker="phone"),
-                        replies={"voice.speak": speak})
-    client.workers["phone"] = entry("phone", caps=["voice.speak"])
-    client.authz.attach_client(client)
-    reply = await as_agent(client.call("worker.update", {"build": 3}, target="nas", timeout=2))
-    assert reply["ok"]
-    assert [m["cap"] for m in sent] == ["voice.speak", "worker.update"]
-    assert sent[0]["target"] == "phone" and sent[0]["identity"] == "system:approvals"
-    hold = client.authz.approvals.queue.recent()[0]
-    assert hold["state"] == "consumed" and hold["decided_by"] == "voice:phone"
 
 
 # -- no bypass through other paths ---------------------------------------------------------
@@ -808,11 +577,11 @@ def test_a_job_acting_as_someone_else_keeps_its_agent_owner_in_the_chain(tmp_pat
                              owner, directory=directory)
     assert ident.principal.id == "human:u1"
     assert ident.principal.via == ("job:j1", "token:agent-1")
-    assert check(authorizer(tmp_path), "worker.update", principal=ident.principal).held
+    assert stop(authorizer(tmp_path), principal=ident.principal).held
     mine = resolve_identity({"id": "j2", "identity": {"mode": "creator"}}, human,
                             directory=directory)
     assert mine.principal.via == ("job:j2",)
-    assert not check(authorizer(tmp_path), "worker.update", principal=mine.principal).held
+    assert not stop(authorizer(tmp_path), principal=mine.principal).held
 
 
 @pytest.mark.asyncio
@@ -822,7 +591,7 @@ async def test_hub_plugin_tools_cannot_carry_an_agent_past_a_hold(tmp_path):
     node = SimpleNamespace(worker_id="rook", entry=lambda: {"name": "rook", "roles": ["is_hub"]},
                            client=SimpleNamespace(authz=az))
     with pytest.raises(PermissionError, match="Held for approval"):
-        await as_agent(_hold_gate(node, "memory.forget", {"id": "m1"}))
+        await as_agent(_hold_gate(node, "memory.forget", {"id": "m1"}))   # erases for good
     await as_agent(_hold_gate(node, "memory.recall", {}))              # not held
     await as_agent(_hold_gate(node, "memory.forget", {"id": "m1"}), OWNER)
     tok = A.gated_caps.set(frozenset({"memory.forget"}))           # the tool's own cap, held already
@@ -842,14 +611,13 @@ async def test_integration_commands_are_held(tmp_path):
     node = make_node(tmp_path)
     node.client = client
     p = wire(Telegram(), tmp_path, TG_TOKEN, chat_id=CHAT, commands=["call"],
-             allowed_caps=["worker.*", "customcap.*"])
+             allowed_caps=["worker.*", "customcap.*", "shell.*"])
     p.bind_host(node)
     m = Inbound(chat_id=CHAT, user_id="42", username="a", text="")
+    out = await p.run_command('call nas shell.exec {"argv": ["rm", "-rf", "/srv/data"]}', m)
+    assert "Held for approval" in out and not sent             # a hard stop: held
     out = await p.run_command('call nas worker.restart {}', m)
-    assert "Held for approval" in out and not sent             # admin + destructive: held
-    out = await p.run_command('call nas customcap.add {"name": "x"}', m)
-    assert "Held for approval" not in out and sent[-1]["cap"] == "customcap.add"  # the rule
-
+    assert "Held for approval" not in out and sent[-1]["cap"] == "worker.restart"  # admin goes
 
 
 # -- an agent-usable sign-in can't approve (permissions 3.11, bypass 1) --------------------
@@ -903,7 +671,7 @@ async def test_basic_auth_with_a_vaulted_password_cannot_approve(tmp_path):
     app, az = dashboard(tmp_path, principal, vaulted=lambda *v: "s3cret-pass" in v)
     az.approvals.config_source.fixed = cfg(wait_secs=0)
     async with TestClient(TestServer(app)) as http:
-        held = await az.resolve(check(az, "worker.update"), {})
+        held = await az.resolve(stop(az), RM)
         good = {"Authorization": "Basic " + base64.b64encode(b"op:other-pass").decode()}
         bad = {"Authorization": "Basic " + base64.b64encode(b"op:s3cret-pass").decode()}
         d = await (await http.get("/api/approvals", headers=bad)).json()
@@ -922,7 +690,7 @@ async def test_a_flagged_session_cookie_cannot_approve(tmp_path):
     app, az = dashboard(tmp_path, principal, weak_sessions=["weaktok"])
     az.approvals.config_source.fixed = cfg(wait_secs=0)
     async with TestClient(TestServer(app)) as http:
-        held = await az.resolve(check(az, "worker.update"), {})
+        held = await az.resolve(stop(az), RM)
         http.session.cookie_jar.update_cookies({"rook_account": "weaktok"})
         r = await http.post(f"/api/approvals/{held['hold']}", json={"decision": "approve"})
         assert r.status == 403 and az.approvals.queue.get(held["hold"])["state"] == "pending"
@@ -935,7 +703,7 @@ async def test_approvals_fail_closed_when_the_vault_is_unreachable(tmp_path):
     app, az = dashboard(tmp_path, principal, vaulted=lambda *v: None)  # None = can't tell
     az.approvals.config_source.fixed = cfg(wait_secs=0)
     async with TestClient(TestServer(app)) as http:
-        held = await az.resolve(check(az, "worker.update"), {})
+        held = await az.resolve(stop(az), RM)
         hdr = {"Authorization": "Basic " + base64.b64encode(b"op:any").decode()}
         r = await http.post(f"/api/approvals/{held['hold']}", json={"decision": "approve"}, headers=hdr)
         assert r.status == 403
@@ -954,104 +722,53 @@ def test_weak_session_flag_round_trips(tmp_path, monkeypatch):
     assert not store.session_weak(tok)
 
 
-# -- shell on the hub's own machine (permissions 3.11, bypass 2) ---------------------------
-
-def _hub_host_band(tmp_path, host_id="hub-abc", worker_host=None, hub_host_workers=("auto",)):
-    client = BandClient("test-band")
-    sent = []
-
-    async def send(data, route=0):
-        msg = json.loads(data)
-        sent.append(msg)
-        if msg.get("cap"):
-            asyncio.get_running_loop().call_soon(client._handle_reply, {
-                "id": msg["id"], "from": msg.get("target"), "ok": True, "result": "done"})
-    client.transport.send = send
-    client._local = SimpleNamespace(
-        worker_id="hub1",
-        facts=SimpleNamespace(hw={"host_id": host_id} if host_id else {}))
-    client.workers["hub1"] = {"name": "rook", "roles": ["is_hub"], "facts": {"host_id": host_id}}
-    client.workers["nas"] = entry("nas", facts={"host_id": worker_host if worker_host is not None else host_id})
-    client.workers["remote"] = entry("remote", facts={"host_id": "elsewhere"})
-    client.authz = authorizer(tmp_path, config=cfg(hub_host_workers=hub_host_workers))
-    client.authz.attach_client(client)
-    return client, sent
-
-
-def test_hub_host_detection(tmp_path):
-    client, _ = _hub_host_band(tmp_path)
-    ap = client.authz.approvals
-    hh = ap.hub_host_workers()
-    assert hh["mode"] == "auto" and [w["worker"] for w in hh["workers"]] == ["nas"]
-    assert hh["detected"]
-    # No machine id announced: can't detect, says so.
-    client2, _ = _hub_host_band(tmp_path / "b" if (tmp_path / "b").mkdir() is None else tmp_path, host_id="")
-    assert client2.authz.approvals.hub_host_workers()["note"]
-
+# -- retired: hub-host holds, spread limit, operator contact -------------------------------
 
 @pytest.mark.asyncio
-async def test_exec_on_a_hub_host_worker_is_held(tmp_path):
-    client, sent = _hub_host_band(tmp_path)
-    held = await as_agent(client.call("shell.exec", {"cmd": "echo x"}, target="nas", timeout=0.5))
-    assert held["held"] and not sent
-    row = client.authz.approvals.queue.get(held["hold"])
-    assert row["kind"] == "hub-host" and row["reason"] == "runs on the hub's machine"
-    # A worker on another machine is not held for this reason.
-    ok = await as_agent(client.call("shell.exec", {"cmd": "echo x"}, target="remote", timeout=0.5))
-    assert ok["ok"]
-    # read tier on the hub-host worker is fine.
-    assert (await as_agent(client.call("info.ping", {}, target="nas", timeout=0.5)))["ok"]
-
-
-@pytest.mark.asyncio
-async def test_hub_host_hold_respects_an_operator_allow_and_off(tmp_path):
-    doc = {**DEFAULT_POLICY, "rules": [{"id": "nas-shell", "who": "role:agent",
-                                        "allow": "shell.exec", "on": "nas"}]}
-    client = BandClient("test-band")
-    sent = []
-
-    async def send(data, route=0):
-        msg = json.loads(data)
-        sent.append(msg)
-        asyncio.get_running_loop().call_soon(client._handle_reply,
-                                             {"id": msg["id"], "from": msg.get("target"), "ok": True, "result": "x"})
-    client.transport.send = send
-    client._local = SimpleNamespace(worker_id="hub1", facts=SimpleNamespace(hw={"host_id": "h"}))
-    client.workers["nas"] = entry("nas", facts={"host_id": "h"})
-    client.authz = authorizer(tmp_path, doc, config=cfg())
-    client.authz.attach_client(client)
-    assert (await as_agent(client.call("shell.exec", {}, target="nas", timeout=0.5)))["ok"]  # allow rule names it
-    # off: not held even without a rule.
-    client.authz.approvals.config_source.fixed = cfg(hub_host_workers=("off",))
-    client2, sent2 = _hub_host_band(tmp_path / "c" if (tmp_path / "c").mkdir() is None else tmp_path,
-                                    hub_host_workers=("off",))
-    assert (await as_agent(client2.call("shell.exec", {}, target="nas", timeout=0.5)))["ok"]
-
-
-# -- an agent's own console/chat is not held by the built-in hold (noise, item 3) ----------
-
-@pytest.mark.asyncio
-async def test_own_console_signal_is_not_held_but_anothers_is(tmp_path):
+async def test_no_hub_host_or_spread_hold_and_no_operator_contact(tmp_path):
     client, sent = band(tmp_path)
+    client._local = SimpleNamespace(worker_id="hub1", facts=SimpleNamespace(hw={"host_id": "h"}))
+    client.workers["nas"] = entry("nas", facts={"host_id": "h"})      # on the hub's machine
+    client.authz.attach_client(client)
+    ok = await as_agent(client.call("shell.exec", {"cmd": "echo x"}, target="nas", timeout=0.5))
+    assert ok["ok"]
+    for name in ("build-box", "w3", "w4", "w5", "w6", "w7"):          # many machines quickly
+        r = await as_agent(client.call("shell.exec", {"cmd": "id"}, target=name, timeout=0.5))
+        assert r["ok"], name
     ap = client.authz.approvals
-    # proc.close is exec + destructive, held by default for an agent.
-    assert (await as_agent(client.call("proc.close", {"handle": "h"}, target="nas", timeout=0.5)))["held"]
+    assert not hasattr(ap, "contact") and not hasattr(ap, "hub_host_workers")
+    held = await as_agent(client.call("shell.exec", RM, target="nas", timeout=0.5))
+    assert held["held"]
+    assert not [m for m in sent if m.get("cap") in ("notify.send", "notify.post", "voice.speak")]
+    import importlib.util
+    for mod in ("rook.hub.plugins.security.contact", "rook.hub.plugins.security.holds"):
+        assert importlib.util.find_spec(mod) is None, mod
+
+
+def test_the_voice_verdict_used_for_relayed_words_lives_in_the_relay():
+    from rook.hub.relay import voice_verdict
+    for t in ("yes", "Yes.", "approve", "approved!", "allow", "do it", "go ahead", "OK", "okay"):
+        assert voice_verdict(t) == "approve", t
+    for t in ("no", "No!", "deny", "don't", "do not", "stop", "cancel", "nope"):
+        assert voice_verdict(t) == "deny", t
+    for t in ("yes but no", "ok wait", "not now", "maybe", "", "know what, yes no", "wait",
+              "yes, don't"):
+        assert voice_verdict(t) == "unclear", t
+
+
+# -- an agent's own console/chat is never held (noise, item 3) ----------------------------
+
+@pytest.mark.asyncio
+async def test_tidying_up_your_own_resource_is_never_held(tmp_path):
+    client, sent = band(tmp_path)
+    assert (await as_agent(client.call("shell.exec", RM, target="nas", timeout=0.5)))["held"]
     # With own_resource set (the server sets it for the caller's own console), it proceeds.
     tok = A.own_resource.set(True)
     try:
-        ok = await as_agent(client.call("proc.close", {"handle": "h"}, target="nas", timeout=0.5))
+        ok = await as_agent(client.call("shell.exec", RM, target="nas", timeout=0.5))
     finally:
         A.own_resource.reset(tok)
     assert ok["ok"]
-    # Operator hold rules still apply even to your own console.
-    client2, sent2 = band(tmp_path / "d" if (tmp_path / "d").mkdir() is None else tmp_path,
-                          {**DEFAULT_POLICY, "rules": [{"id": "hold-proc", "who": "role:agent",
-                                                        "hold": "proc.close", "on": "*"}]})
-    tok = A.own_resource.set(True)
-    try:
-        assert (await as_agent(client2.call("proc.close", {"handle": "h"}, target="nas", timeout=0.5)))["held"]
-    finally:
-        A.own_resource.reset(tok)
 
 
 def test_own_resource_check_in_the_server(tmp_path, monkeypatch):

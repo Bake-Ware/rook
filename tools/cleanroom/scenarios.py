@@ -647,17 +647,12 @@ def apply_trust(ctx: Ctx):
     with ctx.run.step("trust", f"apply preset {ctx.run.trust}") as s:
         if ctx.run.trust != "balanced":
             s.touch("Settings/Trust: choose the preset")
-        r = hub.hub_cap("settings.set", {"key": "core.approvals.enabled", "value": bool(t["approvals_enabled"]),
-                                         "note": "cleanroom"})
-        if not r.get("ok"):
-            s.note("core.approvals.enabled: " + json.dumps(r)[:200])
         try:
             hub.trust("set_unlisted", {"level": t["default_level"]}, f"clean-room preset {ctx.run.trust}")
         except HubError as e:
             s.note(f"trust map: {e}"[:300])
         tr = hub.hub_cap("trust.get", {}).get("result") or {}
-        s.note(f"unlisted={tr.get('unlisted', (tr.get('map') or {}).get('unlisted'))}, "
-               f"approvals.enabled={t['approvals_enabled']}")
+        s.note(f"unlisted={tr.get('unlisted', (tr.get('map') or {}).get('unlisted'))}")
 
 
 def approval(ctx: Ctx):
@@ -669,9 +664,10 @@ def approval(ctx: Ctx):
         held = isinstance(r, dict) and (r.get("held") or (r.get("result") or {}).get("held"))
         hold_id = isinstance(r, dict) and (r.get("hold") or r.get("hold_id") or r.get("id"))
         s.note(f"first try: {'held' if held else 'ran'}: {json.dumps(r)[:200]}")
-        expect_held = ctx.run.trust != "yolo"
+        # Only the hard stops and the trust map hold (access v2): an unlisted
+        # admin call is held only when unlisted targets are sacred.
         if not held:
-            if expect_held and ctx.trust["approvals_enabled"]:
+            if ctx.trust["default_level"] == "sacred":
                 s.fail("expected a hold for an agent's admin call")
             return
         s.touch("approve the hold on the Approvals page")

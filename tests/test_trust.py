@@ -25,7 +25,7 @@ pytestmark = [pytest.mark.approvals, pytest.mark.advanced]
 AGENT = Principal("token:claude", "token", "agent", label="claude code")
 ROLE = Principal("home:rook/role:lead", "token", "agent", label="agent:rook/role:lead")
 OWNER = principal_for_user({"id": "u1", "username": "bake"}, True)
-FAST = A.Config(wait_secs=0, contact=(), advanced=True)
+FAST = A.Config(wait_secs=0, advanced=True)
 
 BAKE_KAIJU = "kaiju changes are sacred, only ever under my direct direction"
 BAKE_PIANO = "just ship it, worst case the music stops"
@@ -181,10 +181,10 @@ def test_ship_it_runs_and_still_cites_its_entry(tmp_path):
     assert BAKE_PIANO in d.trust and d.journal()["trust"]["rule"] == d.trust_rule
 
 
-def test_ship_it_never_lowers_the_bands_own_admin_hold(tmp_path):
+def test_ship_it_admin_just_goes_and_cites_the_entry(tmp_path):
     az = authorizer(tmp_path, seeded())
     d = check(az, "worker.update", "pianobar")
-    assert d.held and d.hold_kind == "default" and d.trust_rule.startswith("trust:pianobar")
+    assert not d.held and d.trust_rule.startswith("trust:pianobar")
 
 
 def test_guarded_asks_first_and_unlisted_is_unchanged(tmp_path):
@@ -194,8 +194,8 @@ def test_guarded_asks_first_and_unlisted_is_unchanged(tmp_path):
     assert check(az, "hub.plugin.disable", "rook").hold_kind == "trust"
     assert not check(az, "task.write", "rook").held               # preparing is free
     assert not check(az, "shell.exec", "cachyrig").held           # as before the map
-    gap = check(az, "worker.update", "cachyrig")
-    assert gap.held and gap.hold_kind == "default" and gap.trust_rule.startswith("trust:unlisted")
+    gap = check(az, "worker.update", "cachyrig")                  # no blanket admin hold
+    assert not gap.held and gap.trust_rule.startswith("trust:unlisted")
 
 
 def test_the_journal_row_carries_the_citation(tmp_path):
@@ -210,14 +210,14 @@ def test_the_journal_row_carries_the_citation(tmp_path):
     assert "trust:pianobar-super@v" in rule
 
 
-def test_the_map_holds_even_with_blanket_approval_holds_off(tmp_path):
+def test_the_map_holds_and_there_are_no_blanket_holds(tmp_path):
     ap = A.Approvals(str(tmp_path / "approvals.db"),
-                     A.Config(enabled=False, contact=(), advanced=True), trust=seeded())
+                     A.Config(wait_secs=0, advanced=True), trust=seeded())
     az = Authorizer(PolicyStore(str(tmp_path / "policy.json")), None, approvals=ap)
     d = check(az, "shell.exec", "kaiju")
     assert d.held and d.hold_kind == "trust" and BAKE_KAIJU in d.hold_reason
     assert check(az, "shell.exec", "bakenetcanada").hold_kind == "trust"
-    assert not check(az, "worker.update", "cachyrig").held           # blanket holds stay off
+    assert not check(az, "worker.update", "cachyrig").held           # no blanket holds
     ship = check(az, "worker.update", "pianobar")
     assert not ship.held and ship.trust_rule.startswith("trust:pianobar-super@v")
     assert not check(az, "shell.exec", "kaiju", principal=OWNER).held
@@ -226,7 +226,7 @@ def test_the_map_holds_even_with_blanket_approval_holds_off(tmp_path):
 def test_no_map_file_is_the_old_behaviour(tmp_path):
     az = authorizer(tmp_path, T.TrustStore(str(tmp_path / "trust.json")))
     assert not check(az, "shell.exec", "kaiju").held
-    assert check(az, "worker.update", "kaiju").hold_kind == "default"
+    assert not check(az, "worker.update", "kaiju").held
 
 
 def test_build_authorizer_reads_trust_json_beside_policy_json(tmp_path):

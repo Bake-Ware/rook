@@ -29,7 +29,7 @@ call `rook.hub.authz.require_hub_admin("settings.set")` the same way.
 | Signed hub announce, `rook` resolution, impostor quarantine | `BandClient._announce_local`, `_handle_announce`, `core.facts.roles_from_announce` | Replaces the reject-all stub. A remote announce naming `rook` without a held grant is listed as `rook~<id8>`, flagged `quarantined`, and journaled once as `audit.impostor`. |
 | E2: worker ticket checks | `rook/worker/authz_guard.py`, `Worker._on_message` | All five modes; default `audit` (`ROOK_AUTHZ_MODE`). Keys learned from signed hub announces or inlined in the ticket; `authz` readiness in the announce; `audit.jsonl` gains `ticket` and `decision`. |
 | Dashboard | `/permissions`, `/api/policy`, `/api/policy/explain` (`rook/remote/policy_web.py`); caps `policy.explain/get/set/status` on `rook` | A minimal page: mode, revision, lint, JSON editor, explain, recent non-allow decisions. The full editor (matrix, pickers, dry run, history) waits for the settings framework. |
-| Approval holds and the spread limit (3.11) | `rook/hub/approvals.py`, `rook/hub/plugins/security/contact.py`, `/api/approvals` (`rook/remote/approvals_web.py`), Approvals page (`rook/web/approvals.js`) | On by default, independent of the policy mode: agents' admin and destructive calls, operator `hold` rules and a 6th machine within 10 minutes wait for a person. Queue in `approvals.db` beside `policy.json`. Settings `core.approvals.*`. |
+| Approval holds (3.11) | `rook/hub/approvals.py`, `/api/approvals` (`rook/remote/approvals_web.py`), Approvals page (`rook/web/approvals.js`) | Since access v2 (2026-10-26): only an agent's hard stop (rook/hub/hardstops.py) or a change the trust map protects waits for a person; nothing expires. No blanket holds, operator `hold` rules, hub-host holds, spread limit or contact channels. Queue in `approvals.db` beside `policy.json`. Settings `core.approvals.*`. |
 | Relayed approvals (3.12) | `rook/hub/relay.py`, hub plugin `approvals` (`approvals.list`, `approvals.relay`, MCP `rook_approvals`), Tokens page *Relays* switch (`rook/band_mcp/account_tokens.py`), huddle chair `waiting`/`relay` | One list of held calls, held job calls, huddle cards and pinned questions. An agent the person enabled may approve or deny with `relayed_by {who, quote, session}`; never secrets, tokens, policy, settings, approvals, job locks or `approvals.relay_dashboard_only`. Append-only `relays` audit in `approvals.db`. |
 | `rook band` TUI | `rook/cli/band_tui.py` (`BandHTTP`), `GET /api/band/whoami` | The TUI has no band path of its own: every call is `POST /api/band/call` (and `/api/band/ban`, `/unban`) with the dashboard login, so the dashboard principal middleware, the band client's policy check, ticket signing and journaling all apply. The dashboard forwards `/api/band/call` to the bridge's `/internal/band-call` (the admitted `human:*` principal travels in `X-Rook-Principal`, internal token), so the call is authorized and journaled where agent calls are and the hub's own caps run in-process. `whoami` reports the principal, the hub policy mode for it and whether the hub signs tickets. On a hub without it (404) the TUI warns that the hub predates permissions, and it adds a `hint` to refusals from hub policy or from ticket-enforcing workers. |
 
@@ -606,6 +606,20 @@ A **Permissions** page, available to owners and operator accounts only:
   readonly, integration, custom), so new tokens start least-privileged.
 
 ### 3.11 Approval holds and the spread limit
+
+> **Superseded in part (access v2, 2026-10-26; Bake's design decision 9 in
+> knowledge users-access-trust-map-and-agent-sessions-bake-s-design-decisions-2026-10-26-voi).**
+> Only the hard stops and the trust map hold a call now. Gone, with the
+> advanced security plugin on or off: the built-in admin/destructive hold
+> (`approvals.enabled`, `approvals.hold`), operator `hold` rules, hub-host
+> holds (`approvals.hub_host_workers`), the spread limit and spread grants,
+> and the operator contact channels (`approvals.contact`, `contact_worker`,
+> `voice_max_tier`, `notify_every_secs`; `rook/hub/plugins/security/contact.py`
+> is deleted, `voice_verdict` lives in `rook/hub/relay.py`). Nothing expires:
+> `approvals.approval_secs` is gone, a pending hold waits until a person
+> decides it and an approval waits, unused, until the identical call uses it.
+> Relayed approvals (3.12) and clear-my-cards by voice are unchanged. The text
+> below is the earlier design, kept for the reasoning.
 
 Policy answers "may this principal call this cap here". It does not stop a
 prompt-injected agent that is allowed to do something from doing it, or from

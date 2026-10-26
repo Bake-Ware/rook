@@ -148,8 +148,8 @@ async def test_new_items_are_posted_once_and_gone_items_are_withdrawn(att):
     assert card["line"] == "Restart nginx on box"
     assert card["body"].split("\n") == [
         "For: no task", "Who: Claude web", "I want to: Restart the service nginx on box",
-        "Risk: Medium: it runs a command that can change things; this agent is reaching many "
-        "machines quickly."]
+        "Risk: Medium: it runs a command that can change things; it erases data for good, "
+        "which always asks you."]
     assert "shell.exec on box" in card["explain"] and plain["id"] in card["explain"]
     assert "shell.exec" not in card["line"] + card["body"]
     # Dashboard-only: no Yes/No, and the explanation says where to decide.

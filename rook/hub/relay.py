@@ -52,6 +52,32 @@ from . import plain as _plain
 
 log = logging.getLogger("rook.hub.relay")
 
+
+AFFIRMATIVE = ("yes", "approve", "approved", "allow", "do it", "go ahead", "ok", "okay")
+NEGATIVE = ("no", "nope", "deny", "denied", "reject", "dont", "do not", "stop", "cancel", "never")
+#: Words that keep a reply from approving (but do not deny on their own).
+HESITANT = NEGATIVE + ("not", "wait", "hold on", "later")
+
+
+def _verdict_norm(text: str) -> str:
+    t = str(text or "").lower().replace("\u2019", "").replace("'", "")
+    return " " + " ".join(re.sub(r"[^a-z0-9]+", " ", t).split()) + " "
+
+
+def voice_verdict(text: str) -> str:
+    """What the person's words decide: ``approve`` only for a clear
+    affirmative with no negation in it, ``deny`` for a clear negative, else
+    ``unclear``."""
+    t = _verdict_norm(text)
+    has = lambda phrase: f" {phrase} " in t  # noqa: E731
+    yes = any(has(p) for p in AFFIRMATIVE)
+    if yes and not any(has(p) for p in HESITANT):
+        return "approve"
+    if not yes and any(has(p) for p in NEGATIVE):
+        return "deny"
+    return "unclear"
+
+
 KINDS = ("hold", "job", "card", "ask", "house", "trust")
 DECISIONS = ("approve", "deny")
 
@@ -323,8 +349,6 @@ class Relay:
         now = self.clock()
         out = []
         for h in ap.queue.pending():
-            if h.get("expires") and h["expires"] < now:
-                continue
             via = [str(v) for v in h.get("via") or []]
             job = next((v[4:] for v in via if v.startswith("job:")), None)
             who = h.get("principal_label") or h.get("principal") or "an agent"
@@ -361,24 +385,11 @@ class Relay:
             return dict(getattr(getattr(node, "client", None), "workers", {}) or {})
         return {}
 
-    def _hub_hosts(self) -> set:
-        """Names and ids of workers on the hub's own machine (they can edit
-        approvals.db): a card's call there is treated like a hub-host hold."""
-        ap = self.approvals()
-        if ap is None:
-            return set()
-        with contextlib.suppress(Exception):
-            got = ap.hub_host_workers(ap.config())
-            return {str(x).lower() for w in got.get("workers") or []
-                    for x in (w.get("worker"), w.get("id")) if x}
-        return set()
-
     def _cards(self, svc: Any, titles: dict) -> list[dict]:
         now = self.clock()
         out = []
         roster = self._roster()
         by_name = {str(w.get("name") or wid).lower(): w for wid, w in roster.items()}
-        hosts = self._hub_hosts()
         for c in svc.store.pending_cards():
             if c["kind"] == "note":
                 continue          # a note runs nothing: it never waits on the person
@@ -390,8 +401,6 @@ class Relay:
             entry = roster.get(worker) or by_name.get(worker.lower()) or {}
             declared = (entry.get("tiers") or {}).get(cap)
             tier = core_authz.effective_tier(cap, declared) if cap else "write"
-            hub_host = bool(cap) and worker.lower() in hosts \
-                and core_authz.tier_rank(tier) >= core_authz.tier_rank("exec")
             if cap:
                 what = _sentence(f"{c['summary'].rstrip('.')}: runs {cap} on {call.get('worker')}"
                                  + (":" if _args_text(cap, args) else ""), _args_text(cap, args))
@@ -407,8 +416,7 @@ class Relay:
                 "age": _age(now - c["created"]), "room": c["room"],
                 "cap": cap, "action": args.get("action") if isinstance(args, dict) else None,
                 "tier": tier, "tags": list(core_authz.builtin_tags(cap)) if cap else [],
-                "hub": self._hub_worker(call.get("worker")) or hub_host, "card_kind": c["kind"],
-                "hold_kind": "hub-host" if hub_host else None,
+                "hub": self._hub_worker(call.get("worker")), "card_kind": c["kind"],
                 "worker": call.get("worker"), "summary": c["summary"], "args": args,
                 "context": {"huddle": h.get("title") or h.get("name") or c["room"]}})
         return out

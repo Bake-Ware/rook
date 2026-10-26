@@ -18,12 +18,10 @@ on-behalf-of chain the most specific matching rule by
 only), else the principal's tier default. The call is allowed only if every
 principal in the chain is.
 
-A rule or cell may also say ``hold``: the call waits for a person's approval
-(3.11, :mod:`rook.hub.approvals`). Across the chain, deny beats hold, hold
-beats audit, audit beats allow. The built-in approval holds (admin and
-destructive calls by agents, the spread limit) are added by the authorizer,
-not here; :meth:`Policy.best_rule` tells it whether an operator rule is more
-specific than them.
+A rule or cell may still say ``hold`` (across the chain, deny beats hold, hold
+beats audit, audit beats allow), but the approval layer (3.11,
+:mod:`rook.hub.approvals`) no longer honours it: only the hard stops and the
+trust map hold a call.
 """
 
 from __future__ import annotations
@@ -160,8 +158,8 @@ class Decision:
     runner_up: str | None = None
     tags: tuple = ()
     #: Set when the call is held for a person's approval (permissions 3.11):
-    #: ``hold_kind`` is ``rule`` (an operator hold rule or cell), ``default``
-    #: (approvals.hold) or ``spread``; ``hold_reason`` is shown to people.
+    #: ``hold_kind`` is ``default`` (a hard stop) or ``trust`` (the trust
+    #: map); ``hold_reason`` is shown to people.
     hold_kind: str = ""
     hold_reason: str = ""
     #: Set on a held call once a person decided it: the hold id and who.
@@ -169,9 +167,7 @@ class Decision:
     decided_by: str = ""
     #: The person's reason (or note) when they denied it, passed back to the caller.
     note: str = ""
-    #: The worker this call counts against the spread limit once it proceeds
-    #: (set by the approval layer), and whether the target is the hub itself.
-    spread_target: str = ""
+    #: Whether the target is the hub itself (set by the approval layer).
     target_is_hub: bool = False
     label: str = ""                 # the principal's display label (holds show it)
     #: The trust map's ruling for this call (rook/hub/trust.py): its rule
@@ -648,10 +644,9 @@ class Policy:
     def lint(self) -> list[str]:
         out = []
         for i, a in enumerate(self.rules):
-            if a.action == "hold" and a.who.kind in ("exact", "kind", "builtin") \
-                    and a.who.value.split(":", 1)[0] in ("human", "system"):
-                out.append(f"rule {a.id!r}: people and hub-internal code are never held; "
-                           f"this hold has no effect")
+            if a.action == "hold":
+                out.append(f"rule {a.id!r}: hold rules have no effect; only the hard stops and "
+                           f"the trust map hold a call")
             if a.action == "allow" and a.on.fact_only():
                 tier_sel = a.caps
                 risky = tier_sel.kind != "tier" or authz.tier_rank(tier_sel.value) > authz.tier_rank("write")

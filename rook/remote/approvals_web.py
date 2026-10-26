@@ -3,11 +3,10 @@
 * ``GET /api/approvals``: pending holds, pending trust-map proposals (in plain
   words; decided on Manage > Trust), recent decisions (a relayed one
   with who relayed it and the person's words), the latest relayed decisions
-  of every kind (rook/hub/relay.py), who may relay, active spread grants and
-  the approval settings. ``?count=1`` returns only
+  of every kind (rook/hub/relay.py), who may relay and the approval
+  settings. ``?count=1`` returns only
   ``{"pending": n}`` (the navigation badge polls it).
-* ``POST /api/approvals/<id>``: ``{"decision": "approve"|"deny",
-  "scope": "call"|"spread"?, "note"?}``.
+* ``POST /api/approvals/<id>``: ``{"decision": "approve"|"deny", "note"?}``.
 * ``GET /account/approvals/assets/approvals.js``: the page module (static).
 
 Both API routes sit behind the dashboard's own login (the auth middleware
@@ -158,26 +157,17 @@ class ApprovalsWeb:
         for r in relays:
             r["text"] = relay_text(r)
         return web.json_response({
-            "pending": [public(h, cfg) for h in pending],
+            "pending": [public(h) for h in pending],
             "trust": self._proposals(ap),
-            "recent": [public(h, cfg) for h in recent],
+            "recent": [public(h) for h in recent],
             "relays": relays,
             "relayers": [{k: r[k] for k in ("principal", "label", "enabled_by", "enabled_at")}
                          for r in ap.queue.relayers()],
-            "grants": ap.queue.grants(),
             "can_decide": not weak,
             "weak_credential": weak,
             "weak_message": self.WEAK_MSG if weak else None,
-            "hub_host": ap.hub_host_workers(cfg),
-            "settings": {"enabled": cfg.enabled, "hold": list(cfg.hold),
-                         "wait_secs": cfg.wait_secs, "approval_secs": cfg.approval_secs,
-                         "spread_max": cfg.spread_max,
-                         "spread_window_secs": cfg.spread_window_secs,
-                         "spread_grant_secs": cfg.spread_grant_secs,
-                         "contact": list(cfg.contact), "contact_worker": cfg.contact_worker,
-                         "voice_max_tier": cfg.voice_max_tier,
-                         "relay_dashboard_only": list(cfg.relay_dashboard_only),
-                         "hub_host_workers": list(cfg.hub_host_workers)},
+            "settings": {"wait_secs": cfg.wait_secs,
+                         "relay_dashboard_only": list(cfg.relay_dashboard_only)},
         }, headers=NO_STORE)
 
     async def decide(self, request: web.Request) -> web.Response:
@@ -209,11 +199,10 @@ class ApprovalsWeb:
         if decision not in ("approve", "deny"):
             return web.json_response({"error": "decision must be approve or deny"}, status=400,
                                      headers=NO_STORE)
-        scope = str(data.get("scope") or "call")
         try:
             row = ap.decide(request.match_info["id"], decision == "approve", person.id,
-                            scope=scope, note=str(data.get("note") or "")[:200])
+                            note=str(data.get("note") or "")[:200])
         except HoldError as e:
             return web.json_response({"error": str(e)}, status=409, headers=NO_STORE)
-        return web.json_response({"ok": True, "hold": public(row, ap.config())},
+        return web.json_response({"ok": True, "hold": public(row)},
                                  headers=NO_STORE)

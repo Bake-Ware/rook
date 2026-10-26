@@ -182,16 +182,6 @@ def test_a_cmd_string_is_read_like_argv():
         assert plain.shell_summary({"argv": argv})["kind"] == "read", argv
 
 
-def test_what_leaves_the_dashboard_never_carries_the_args():
-    from rook.hub.plugins.security.contact import message, question
-    typed = held(cap="proc.write", args={"data": "hunter2"}, name="calm-otter-lamp")
-    run = held(args={"argv": ["sh", "-c", "PGPASSWORD=s3cret psql -c 'select 1'"]})
-    for h in (typed, run):
-        for text in (message([h]), question(h), message([h, h])):
-            assert "hunter2" not in text and "s3cret" not in text and "psql" not in text
-    assert message([run]).startswith("Rook: Run a command on bakenetcanada. For: no task.")
-
-
 # -- each hold kind -----------------------------------------------------------------------
 
 def test_each_hold_kind_says_its_risk_plainly():
@@ -200,14 +190,6 @@ def test_each_hold_kind_says_its_risk_plainly():
     assert sacred["title"] == "Push code on bakenetcanada"
     assert sacred["risk"] == ("Medium: it runs a command that can change things; master is "
                               "sacred, so only you change it.")
-    hub_host = plain.for_hold(held(kind="hub-host", reason="runs on the hub's machine",
-                                   rule=None, args={"argv": ["systemctl", "restart", "nginx"]}))
-    assert hub_host["risk"].startswith("Medium: it runs a command that can change things; "
-                                       "bakenetcanada runs on the hub's own machine")
-    spread = plain.for_hold(held(kind="spread", reason="spread: 6th machine in 10 minutes",
-                                 rule=None, args={"argv": ["uptime"]}))
-    assert spread["risk"] == ("Low: looks read-only, but it would be the 6th machine this agent "
-                              "touched in 10 minutes.")
     admin = plain.for_hold(held(cap="worker.update", tier="admin", kind="default",
                                 reason="tier admin", rule=None, target_name="nas", args={}))
     assert (admin["title"], admin["want"]) == ("Update nas", "Install a new Rook build on nas")
@@ -309,7 +291,7 @@ def test_a_session_note_on_the_hub_is_prepare_not_a_change():
 
 @pytest.mark.asyncio
 async def test_the_callers_task_and_why_are_kept_with_the_hold(tmp_path):
-    ap = A.Approvals(str(tmp_path / "approvals.db"), A.Config(wait_secs=5, contact=()))
+    ap = A.Approvals(str(tmp_path / "approvals.db"), A.Config(wait_secs=5))
     d = check(Authorizer(PolicyStore(None), None, approvals=ap), "worker.update")
     tok = A.hold_context.set({"task": "t_1", "task_title": "Kernel upgrades", "project": "Fleet",
                               "why": "nas needs build 402 for the OTA fix", "bogus": "dropped"})
@@ -349,19 +331,15 @@ async def test_rook_call_why_reaches_the_hold(tmp_path, monkeypatch):
     from test_permissions_mcp import _text, mcp
     from rook.hub.policy import DEFAULT_POLICY
     monkeypatch.setenv("ROOK_APPROVALS_WAIT_SECS", "0")
-    monkeypatch.setenv("ROOK_APPROVALS_CONTACT", "off")
-    doc = {**DEFAULT_POLICY, "rules": [*DEFAULT_POLICY["rules"],
-                                       {"id": "hold-host", "who": "token:*", "hold": "info.host",
-                                        "on": "gpu-box"}]}
-    async with mcp(tmp_path, doc) as env:
+    async with mcp(tmp_path, DEFAULT_POLICY) as env:
         s = await Session(env.http, STATIC).open()
-        out = _text(await s.result("rook_call", {"cap": "info.host", "worker": "gpu-box",
-                                                 "args": {"build": 1},
-                                                 "why": "check the GPU box's build"}))
+        out = _text(await s.result("rook_call", {"cap": "shell.exec", "worker": "gpu-box",
+                                                 "args": {"cmd": "rm -rf /srv/scratch"},
+                                                 "why": "clear the GPU box's scratch"}))
         assert out.get("held"), out
         row, = A.ApprovalQueue(str(tmp_path / "approvals.db")).pending()
-        assert row["context"]["why"] == "check the GPU box's build"
-        assert A.public(row)["plain"]["why"] == "check the GPU box's build"
+        assert row["context"]["why"] == "clear the GPU box's scratch"
+        assert A.public(row)["plain"]["why"] == "clear the GPU box's scratch"
 
 
 def test_a_task_card_with_one_criterion_as_text_is_fixed_when_proposed():

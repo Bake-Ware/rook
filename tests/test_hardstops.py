@@ -21,9 +21,8 @@ OPERATOR = Principal("token:ops", "token", "operator", label="ops")
 OWNER = principal_for_user({"id": "u1", "username": "bake"}, True)
 
 
-def core(tmp_path, *, enabled=True, store=None):
-    ap = A.Approvals(str(tmp_path / "approvals.db"),
-                     A.Config(enabled=enabled, wait_secs=0, contact=()),
+def core(tmp_path, *, store=None):
+    ap = A.Approvals(str(tmp_path / "approvals.db"), A.Config(wait_secs=0),
                      trust=store if store is not None else seeded())
     return Authorizer(PolicyStore(str(tmp_path / "policy.json")), None, approvals=ap)
 
@@ -133,7 +132,7 @@ def test_guardrails_are_named():
 # -- the authorizer in core -------------------------------------------------------------
 
 def test_core_asks_only_for_hard_stops_and_sacred_machines(tmp_path):
-    az = core(tmp_path, enabled=False)                      # approvals.enabled has no say
+    az = core(tmp_path)
     d = on(az, "shell.exec", "kaiju", {"argv": ["systemctl", "restart", "strata"]})
     assert d.held and d.hold_kind == "trust" and BAKE_KAIJU in d.hold_reason
     assert not on(az, "file.read", "kaiju").held             # reads on kaiju go
@@ -169,21 +168,28 @@ def test_agents_never_change_the_guardrails(tmp_path):
                   principal=OPERATOR).denied
 
 
-def test_operator_hold_rules_wait_for_advanced_security(tmp_path):
+@pytest.mark.parametrize("advanced", [False, True])
+def test_operator_hold_rules_are_ignored(tmp_path, advanced):
     (tmp_path / "policy.json").write_text(
         '{"version": 1, "rules": [{"id": "h", "who": "*", "hold": "shell.*", "on": "*"}]}')
-    az = core(tmp_path)
-    assert not on(az, "shell.exec", "cachyrig", {"argv": ["uptime"]}).held
+    ap = A.Approvals(str(tmp_path / "approvals.db"), A.Config(wait_secs=0, advanced=advanced),
+                     trust=seeded())
+    az = Authorizer(PolicyStore(str(tmp_path / "policy.json")), None, approvals=ap)
+    d = on(az, "shell.exec", "cachyrig", {"argv": ["uptime"]})
+    assert not d.held and "hold rules are retired" in d.reason
 
 
-def test_turning_the_plugin_on_brings_the_blanket_holds_back(tmp_path):
+def test_the_plugin_adds_guarded_trust_asks_and_no_blanket_holds(tmp_path):
     ap = A.Approvals(str(tmp_path / "approvals.db"),
-                     A.Config(wait_secs=0, contact=(), advanced=True), trust=seeded())
+                     A.Config(wait_secs=0, advanced=True), trust=seeded())
     az = Authorizer(PolicyStore(str(tmp_path / "policy.json")), None, approvals=ap)
     assert check(az, "shell.exec", "bakenetcanada").hold_kind == "trust"      # guarded asks
-    assert check(az, "worker.update", "cachyrig").hold_kind == "default"       # admin asks
+    assert not check(az, "worker.update", "cachyrig").held                     # admin goes
+    assert not on(az, "proc.close", "cachyrig", {"pid": 1}).held                # destructive goes
+    for i in range(12):                                                        # no spread limit
+        assert not on(az, "shell.exec", f"w{i}", {"argv": ["uptime"]}).held
     d = on(az, "secret.get", "rook", {"name": "x"})
-    assert d.held                                                              # and the stops
+    assert d.held                                                              # the stops stay
 
 
 @pytest.mark.asyncio

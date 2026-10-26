@@ -15,8 +15,7 @@ A run is one cell of the matrix in `matrix.json`:
   on the laptop), `mixed` (the local model as the house agent, Claude Code for
   coding sessions).
 - **trust**: `locked-down`, `balanced`, `yolo`. These are mapped onto the
-  hub's real knobs: `core.approvals.enabled` and the trust map's level for
-  targets not on the map.
+  hub's real knob: the trust map's level for targets not on the map.
 
 Scenarios (`scenarios.py`, in order): install the hub with the one-command
 installer; pair the laptop with a dashboard pairing code; install the APK and

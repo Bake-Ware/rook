@@ -73,7 +73,8 @@ Telegram, and the house agent, whatever the policy mode. You and other
 people are never held. An agent that tries to change the guardrails
 themselves (the policy, approval settings, the trust map) is refused.
 
-A held call waits up to 45 seconds. It shows as a card on your phone
+A held call waits up to 45 seconds. Nothing expires after that: the ask
+stays until you answer it, however late. It shows as a card on your phone
 ([[manual-phone-attention]]) and on the **Approvals** page (under
 Workspace): who asked, the call, the machine, its arguments (**Args**) and
 why it was held. **Recent** lists past decisions. The number next to
@@ -81,7 +82,7 @@ why it was held. **Recent** lists past decisions. The number next to
 
 - **Approve**: the waiting call runs. If the agent already gave up waiting, it
   was told to ask you and try again: one approval covers the same call (same
-  capability, machine and arguments) once, for 10 minutes.
+  capability, machine and arguments) once, and it doesn't run out.
 - **Deny**: the agent is told that a person said no.
 
 Only the operator or a band owner can approve here, and secret values are
@@ -103,40 +104,21 @@ dashboard only.
 
 ## Advanced security
 
-With the advanced security plugin on ([[manual-security]]), more calls wait
-for you:
+With the advanced security plugin on ([[manual-security]]), guarded entries
+on the trust map ask you first too ([[manual-trust]]), and only a client you
+switch **Relays** on for (Tokens page), such as Claude on claude.ai or the
+house agent chairing a huddle, can pass on your answer. Without the plugin
+any client can, except on hard stops.
 
-- **Admin or destructive calls**: updating, restarting or reconfiguring a
-  machine, changing settings, closing a terminal, deleting chat.
-- **Reaching many machines**: an agent's sixth different machine within 10
-  minutes. **Approve + 15 min spread** lets that agent reach more machines
-  for 15 minutes.
-- **Workers on the hub's own machine**, which could edit the hub's files.
-  The Approvals page shows which workers Rook detected; name them under
-  *Workers on the hub's own machine* if it finds none, or set it to `off`.
-
-Also with the plugin on:
-
-- **Exceptions.** An `allow` rule in the policy lets one agent do one thing
-  without asking, for example
-  `{"who": "token:<agent id>", "allow": "worker.update", "on": "nas"}`. A
-  `hold` rule holds more, for example
-  `{"who": "role:agent", "hold": "shell.*", "on": "nas"}`. *Caps that are
-  held* and *Machines an agent may reach* change the defaults.
-- **Being told.** *How to contact you* (Settings > Approvals) messages you
-  about each hold: `telegram`, `notify`, `voice` or `ask` (a spoken
-  question you answer yes or no).
-- **Relaying.** Only a client you switch **Relays** on for (Tokens page),
-  such as Claude on claude.ai or the house agent chairing a huddle, can pass
-  on your answer. Without the plugin any client can, except on hard stops.
-- **Turning it off.** Switch off *Hold risky agent calls* in Settings >
-  Approvals (or set `ROOK_APPROVALS=0`) to stop these extra holds. The
-  policy and the asks in [[manual-trust]] still apply.
+Rook no longer holds admin or destructive calls as a blanket rule, limits
+how many machines an agent reaches, holds workers on the hub's own machine,
+or messages you about each hold, with the plugin on or off. A `hold` rule in
+the policy has no effect.
 
 ## Related settings
 
 - **Sign-in**: Google sign-in and session settings.
-- **Approvals**: how long a call waits, and what advanced security holds.
+- **Approvals**: how long a held call waits, and what is never relayed.
 - **Identity**: how the hub names itself and its workers.
 
 These groups are on the Settings page, see [[manual-settings]].
