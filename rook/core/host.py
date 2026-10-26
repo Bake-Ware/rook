@@ -32,7 +32,7 @@ from . import context
 from .facts import NodeFacts, evaluate_placement
 from .plugin import (CORE_API_VERSION, DEFAULT_PLACEMENT, Candidate, Plugin,
                      SettingsView, _UNSET, core_api_compatible, iter_entry_points,
-                     iter_package, valid_version)
+                     iter_package, valid_version, validate_caps)
 from .pluginkit import CapError
 from .registry import CapabilityRegistry, CapTimeout
 
@@ -255,6 +255,11 @@ class PluginHost:
         if not plugin.VERSION:
             plugin.VERSION = self.build_version
         caps = plugin.caps()
+        errors = validate_caps(caps)
+        if errors:
+            log.error("%s: %s; skipping plugin", name, "; ".join(errors))
+            self._mark(name, "failed", "; ".join(errors))
+            return False
         done: list[str] = []
         try:
             for dotpath, fn in caps.items():

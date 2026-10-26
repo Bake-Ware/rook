@@ -102,7 +102,7 @@ class Trust(Plugin):
         return self._store
 
     # -- reads -----------------------------------------------------------------
-    @capability("get", risk="read")
+    @capability("get", risk="read", scope="multi-user")
     def get(self, section: str = "") -> dict:
         """The trust map: summary (what agents get in context) and the map; section: entries|exceptions|baseline|ledger|proposals|notices for just that part."""
         doc = self.store.public()
@@ -114,7 +114,7 @@ class Trust(Plugin):
             return {"version": doc["version"], section: doc.get(section) or []}
         return {"summary": self.store.summary(advanced=_advanced(self._node)), "map": doc}
 
-    @capability("check", risk="read")
+    @capability("check", risk="read", scope="multi-user")
     def check(self, cap: str = "", worker: str = "", repo: str = "", branch: str = "",
               project: str = "", tier: str = "") -> dict:
         """The ruling for an action, with its citation: a cap on a worker (its tier is the band's), or repo + branch (a push or merge: tier admin) or project."""
@@ -138,13 +138,13 @@ class Trust(Plugin):
                 return e
         return None
 
-    @capability("history", risk="read")
+    @capability("history", risk="read", scope="multi-user")
     def history(self, limit: int = 30, entry: str = "") -> dict:
         """Changes to the trust map, newest first: who, when, the person's words, before and after (entry: one entry's)."""
         return {"history": self.store.history(max(1, min(int(limit or 30), 200)), entry)}
 
     # -- writes ----------------------------------------------------------------
-    @capability("propose", risk="write")
+    @capability("propose", risk="write", scope="multi-user")
     def propose(self, change: dict | None = None, why: str = "") -> dict:
         """Ask the person to change the trust map: change {op, data} (set_entry, delete_entry, set_unlisted, add_exception, end_exception, add_lease, close_lease, or batch {changes: [...]}) and why. It waits on the dashboard's Trust page. A change that only makes the map stricter is refused: only the person adds guardrails."""
         p = _caller()
@@ -161,7 +161,7 @@ class Trust(Plugin):
         return {"proposal": prop["id"], "state": prop["state"],
                 "note": "waiting for the person on the dashboard's Trust page"}
 
-    @capability("tighten", risk="write")
+    @capability("tighten", risk="write", scope="multi-user")
     def tighten(self, op: str, data: dict | None = None, words: str = "",
                 session: str = "") -> dict:
         """Make the trust map stricter (a person only; agents, roles and the house agent are refused): op set_entry (new guarded/sacred entry, or a higher level), set_unlisted (stricter), end_exception; words: the person's own words that asked for it. Logged and shown to the person."""

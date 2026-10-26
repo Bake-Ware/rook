@@ -433,7 +433,7 @@ class Memory(Plugin):
             raise PermissionError(f"denied: memory about {row['scope']} is the operator's to change")
 
     # -- read caps --------------------------------------------------------------------
-    @capability("recall", risk="read", tags=("sensitive",))
+    @capability("recall", risk="read", tags=("sensitive",), scope="multi-user")
     async def recall(self, query: str = "", kind: str | None = None, about: str | None = None,
                      limit: int = 5, include_archived: bool = False) -> dict:
         """Search memory (keywords, and meaning when embeddings are on).
@@ -446,7 +446,7 @@ class Memory(Plugin):
                                 include_archived=bool(include_archived))
         return _scrub({"results": rows, "about": scopes})
 
-    @capability("show", risk="read", tags=("sensitive",))
+    @capability("show", risk="read", tags=("sensitive",), scope="multi-user")
     def show(self, id: str) -> dict:
         """One memory in full: text, provenance, what it replaced and its history."""
         svc = self._svc()
@@ -457,7 +457,7 @@ class Memory(Plugin):
                 raise PermissionError("denied: forgotten memories are the operator's to read")
         return _scrub(row)
 
-    @capability("list", risk="read", tags=("sensitive",))
+    @capability("list", risk="read", tags=("sensitive",), scope="multi-user")
     def list_memories(self, kind: str | None = None, about: str | None = None,
                       state: str = "active", query: str = "", limit: int = 50,
                       offset: int = 0) -> dict:
@@ -482,13 +482,13 @@ class Memory(Plugin):
                        "total": svc.store.count(scopes, kinds, states,
                                                 query=str(query or "")[:200])})
 
-    @capability("status", risk="read")
+    @capability("status", risk="read", scope="multi-user")
     def status(self) -> dict:
         """Counts by kind and state, embeddings and the last tidy-up."""
         return self._svc().status()
 
     # -- write caps -------------------------------------------------------------------
-    @capability("remember", risk="write")
+    @capability("remember", risk="write", scope="multi-user")
     async def remember(self, text: str, kind: str = "fact", about: str | None = None,
                        pinned: bool = False, supersedes: list | None = None) -> dict:
         """Remember one statement (write rules apply: no secrets, dedupe, a
@@ -510,7 +510,7 @@ class Memory(Plugin):
                              pinned=bool(pinned), supersedes=as_list(supersedes),
                              approved=admin and kind == "procedure")
 
-    @capability("edit", risk="write")
+    @capability("edit", risk="write", scope="multi-user")
     async def edit(self, id: str, text: str | None = None, kind: str | None = None,
                    pinned: bool | None = None, about: str | None = None,
                    approved: bool | None = None) -> dict:
@@ -525,7 +525,7 @@ class Memory(Plugin):
         return await svc.edit(id, _actor(), text=text, kind=kind, pinned=pinned, about=about,
                               approved=approved)
 
-    @capability("forget", risk="write", tags=("destructive",))
+    @capability("forget", risk="write", tags=("destructive",), scope="multi-user")
     async def forget(self, id: str, purge: bool = False, reason: str = "") -> dict:
         """Forget a memory. purge=true also erases its text and every earlier
         version (kept otherwise, as forgotten)."""
@@ -533,7 +533,7 @@ class Memory(Plugin):
         self._may_change(svc.show(id))
         return await svc.forget(id, _actor(), purge=bool(purge), reason=reason)
 
-    @capability("consolidate", risk="write")
+    @capability("consolidate", risk="write", scope="multi-user")
     async def consolidate(self, force: bool = False) -> dict:
         """Tidy up now: summarise conversations, roll up old ones, merge, fade, re-embed."""
         return await self._svc().consolidate(self.summariser(), actor=_actor(),

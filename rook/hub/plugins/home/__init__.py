@@ -1307,7 +1307,7 @@ class HomeAgent(Plugin):
                 "worker": res.get("worker"), "complete": complete}
 
     # -- caps ----------------------------------------------------------------
-    @capability("ask", risk="write", timeout=None)
+    @capability("ask", risk="write", timeout=None, scope="multi-user")
     async def ask(self, question: str, context: str = "", source: str = "") -> dict:
         """Ask the hub's home agent a question or give it a request; returns its answer.
 
@@ -1404,17 +1404,17 @@ class HomeAgent(Plugin):
         return {"answer": res["content"]}
 
     # -- persistent sessions (sessions.py, docs/design/persistent-agents.md) ------------
-    @capability("sessions", risk="read")
+    @capability("sessions", risk="read", scope="multi-user")
     def sessions_status(self) -> dict:
         """The house agent's persistent sessions: the session host, each role's line ("house agent: busy, 2 waiting, 1 fork"), lanes, queue, side threads, recent latencies."""
         return self.sessions.overview()
 
-    @capability("session_ask", risk="write")
+    @capability("session_ask", risk="write", scope="multi-user")
     async def session_ask(self, text: str, role: str = "house") -> dict:
         """Send text to a persistent role's main session through its inbox, with no hub tools (tests, operators); for the house agent use home.ask, which routes."""
         return await self.sessions.ask_role(str(role or "house"), str(text or ""))
 
-    @capability("session_flow", risk="write")
+    @capability("session_flow", risk="write", scope="multi-user")
     async def session_flow(self, tool: str, args: dict | None = None,
                            role: str = "house") -> dict:
         """Run one of the voice conductor's flow tools (queue, steer, fork, fold, status, btw, pause, resume, cancel) as the voice would (tests, operators). The request is yours, not the voice's last speaker's: an agent asking is an agent."""
@@ -1428,12 +1428,12 @@ class HomeAgent(Plugin):
         finally:
             FLOW_AS.reset(tok)
 
-    @capability("voice_models", risk="read")
+    @capability("voice_models", risk="read", scope="multi-user")
     def voice_models(self) -> dict:
         """The house agent's models: the voice (front: Haiku 5.5, Haiku 4.5, Sonnet, or local on kaiju), the agent (back: Opus, Sonnet, Haiku), their efforts, and the choices with a one-line note each."""
         return {"ok": True, **self.sessions.models()}
 
-    @capability("voice_models_set", risk="admin")
+    @capability("voice_models_set", risk="admin", scope="multi-user")
     def voice_models_set(self, front: str = "", back: str = "", front_effort: str | None = None,
                          back_effort: str | None = None, words: str = "") -> dict:
         """Change the house agent's models (the person's call): front (the voice: claude-haiku-5-5, claude-haiku-4-5, sonnet, local), back (the agent: opus, sonnet, haiku), front_effort / back_effort (blank: default). Live, no restart; journaled as home.voice_models_set."""
@@ -1441,12 +1441,12 @@ class HomeAgent(Plugin):
                                         back_effort=back_effort, who=_actor(),
                                         words=str(words or ""), via="api")
 
-    @capability("session_compact", risk="write")
+    @capability("session_compact", risk="write", scope="multi-user")
     async def session_compact(self, lane: str = "main", role: str = "house") -> dict:
         """Compact a persistent session now (lane main or voice): the main lane saves durable facts to memory first; the voice lane is compacted straight away."""
         return await self.sessions.compact_now(str(role or "house"), str(lane or "main"))
 
-    @capability("session_note", risk="write")
+    @capability("session_note", risk="write", scope="multi-user")
     def session_note(self, text: str, via: str = "report", role: str = "house") -> dict:
         """A background note for a persistent role (a session report, a job result): batched into its next turn ("While you were busy: ...")."""
         if via not in ("report", "job", "note"):
@@ -1457,12 +1457,12 @@ class HomeAgent(Plugin):
                 "queued": self.sessions.inbox(role).counts()}
 
     # -- the front door's records (front.py, docs/design/front-door.md) -------------
-    @capability("digest", risk="read")
+    @capability("digest", risk="read", scope="multi-user")
     def digest(self, limit: int = 20, since: float = 0.0) -> dict:
         """What the house agent decided for the person without asking, newest first, each with the entry it cited (spoken: a line to read aloud), and its open asks."""
         return self.front.digest(limit, since)
 
-    @capability("explain", risk="read")
+    @capability("explain", risk="read", scope="multi-user")
     def explain(self, ask: str, more: bool = False) -> dict:
         """One of the house agent's asks explained: 2-3 plain sentences, and more detail with more=true."""
         try:
@@ -1470,7 +1470,7 @@ class HomeAgent(Plugin):
         except FrontError as e:
             raise HomeError(str(e)) from None
 
-    @capability("overturn", risk="write")
+    @capability("overturn", risk="write", scope="multi-user")
     def overturn(self, decision: str, words: str, relayed_by: dict | None = None) -> dict:
         """Overturn a decision the house agent made for the person (digest): it tightens the entry it cited (trust entry one level up, or an "Ask me first" playbook rule). A person, or a client the person enabled to relay (relayed_by {who, quote, session})."""
         p = self.ask_principal()
@@ -1481,12 +1481,12 @@ class HomeAgent(Plugin):
         except (FrontError, PlaybookError) as e:
             raise HomeError(str(e)) from None
 
-    @capability("playbook", risk="read")
+    @capability("playbook", risk="read", scope="multi-user")
     def playbook(self) -> dict:
         """The house agent's playbook: its routing rules by section (Just do it, Ask me first, coding sessions, huddles, Just answer, Settling disagreements), the file text and recent changes."""
         return self.front.playbook.public()
 
-    @capability("playbook_edit", risk="write")
+    @capability("playbook_edit", risk="write", scope="multi-user")
     def playbook_edit(self, op: str, words: str, section: str = "", text: str = "",
                       id: str = "") -> dict:
         """Change the house agent's playbook on the person's correction: op add (section, text) or remove (id); words: their exact words. Tightening applies now and is logged; loosening becomes a one-line ask the person answers."""
@@ -1496,7 +1496,7 @@ class HomeAgent(Plugin):
         except (FrontError, PlaybookError) as e:
             raise HomeError(str(e)) from None
 
-    @capability("settle", risk="write")
+    @capability("settle", risk="write", scope="multi-user")
     def settle(self, question: str, positions: list | None = None, cap: str = "",
                worker: str = "", repo: str = "", branch: str = "", project: str = "",
                ruling: str = "", rule: str = "", room: str = "") -> dict:
@@ -1508,12 +1508,12 @@ class HomeAgent(Plugin):
         except FrontError as e:
             raise HomeError(str(e)) from None
 
-    @capability("ledger", risk="read")
+    @capability("ledger", risk="read", scope="multi-user")
     def ledger(self, host: str = "") -> dict:
         """Borrowed state: what changed away from a host's normal state, why, whose words, how to restore it (spoken: a line to read aloud); and each host's recorded normal state. host: one machine."""
         return self.front.onboard.ledger(host)
 
-    @capability("projects", risk="read")
+    @capability("projects", risk="read", scope="multi-user")
     def projects(self) -> dict:
         """Projects the house agent set up from a conversation, and its brainstorm and intake threads (stage, plan read back, what setup did)."""
         rows = self.front.store._q("SELECT * FROM onboard_projects ORDER BY created DESC")
@@ -1522,7 +1522,7 @@ class HomeAgent(Plugin):
             r["exceptions"] = json.loads(r.get("exceptions") or "[]")
         return {"projects": rows, "threads": self.front.onboard_view()["onboarding"]}
 
-    @capability("restore", risk="write", timeout=None)
+    @capability("restore", risk="write", timeout=None, scope="multi-user")
     async def restore(self, what: str, words: str = "", relayed_by: dict | None = None) -> dict:
         """Bring borrowed state back (\"bring Strata back\"): what = the resource, project or lease; runs the recorded restore call and closes the lease. A person, or a client the person enabled to relay (relayed_by {who, quote, session})."""
         p = self.ask_principal()
@@ -1560,7 +1560,7 @@ class HomeAgent(Plugin):
                 "missing": self.missing(cfg), "chat": self._store() is not None,
                 "timeout": float(timeout or 90)}
 
-    @capability("status", risk="read")
+    @capability("status", risk="read", scope="multi-user")
     def status(self) -> dict:
         """Whether the home agent is on, its identity, endpoint host and model,
         and the last error (never the key)."""

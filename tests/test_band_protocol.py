@@ -106,14 +106,14 @@ async def _until(cond, timeout=10.0):
 class Big(Plugin):
     NAMESPACE = "big"
 
-    @capability("blob", risk="read")
+    @capability("blob", risk="read", scope="multi-user")
     def blob(self, n: int = 0, compressible: bool = False):
         """Return n bytes of payload (as a str)."""
         if compressible:
             return ("abcdefgh" * (n // 8 + 1))[:n]
         return os.urandom(n // 2).hex()[:n]
 
-    @capability("echo", risk="read")
+    @capability("echo", risk="read", scope="multi-user")
     def echo(self, value=None):
         """Echo."""
         return value

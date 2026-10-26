@@ -73,7 +73,7 @@ class Approvals(Plugin):
         return self.relay.may_relay(p.id)
 
     # -- caps ----------------------------------------------------------------
-    @capability("list", risk="read")
+    @capability("list", risk="read", scope="multi-user")
     def list_(self, kind: str | None = None, summary_only: bool = False) -> dict:
         """What is waiting on the person: held calls, held job calls, huddle cards, pinned questions, house asks and trust proposals (kind: hold|job|card|ask|house|trust; summary_only: just the spoken line)."""
         p = _caller()
@@ -94,7 +94,7 @@ class Approvals(Plugin):
             out["items"] = [Relay.public(i) for i in items]
         return out
 
-    @capability("relay", risk="write")
+    @capability("relay", risk="write", scope="multi-user")
     async def relay_(self, item: str, decision: str, relayed_by: dict | None = None,
                      reason: str = "", answer: str = "") -> dict:
         """Approve or deny one waiting item on the person's behalf: relayed_by {who, quote, session} is their own decision; reason (deny) goes back to the requester; answer: the reply to a question."""

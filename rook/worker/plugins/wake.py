@@ -86,7 +86,7 @@ class WakePlugin(Plugin):
     def _agent(self) -> str | None:
         return self.settings.get("wake_agent") or None
 
-    @capability("wake", risk="exec")
+    @capability("wake", risk="exec", scope="multi-machine")
     def _wake(self, room: str, thread_id: str = "", title: str = "",
               transcript: list | None = None, woken_by: str = "",
               note: str = "") -> dict:
@@ -157,7 +157,7 @@ class WakePlugin(Plugin):
                 "agent": self._agent(),
                 "room": room, "prompt_file": pf}
 
-    @capability("wake_info", risk="read")
+    @capability("wake_info", risk="read", scope="multi-machine")
     def _wake_info(self) -> dict:
         """Report whether this host can wake an agent and which one."""
         can = bool(self._command())

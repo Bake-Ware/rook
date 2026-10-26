@@ -108,7 +108,7 @@ class Serves(Plugin):
         return {k: entry[k] for k in KINDS if entry.get(k)} or None
 
     # -- caps ----------------------------------------------------------------
-    @capability("list", risk="read")
+    @capability("list", risk="read", scope="multi-machine")
     def list(self, worker: str = "") -> dict:
         """What workers host: ``{worker: {sites, services, updated, by}}``.
 
@@ -120,7 +120,7 @@ class Serves(Plugin):
             data = {key: data[key]} if key in data else {}
         return {"serves": data}
 
-    @capability("set", risk="write")
+    @capability("set", risk="write", scope="multi-machine")
     def set(self, worker: str, sites: list | None = None, services: list | None = None,
             by: str = "") -> dict:
         """Write what a worker hosts. ``sites`` and ``services`` are lists of
@@ -143,7 +143,7 @@ class Serves(Plugin):
             self._save()
         return {"worker": key, **entry}
 
-    @capability("clear", risk="write")
+    @capability("clear", risk="write", scope="multi-machine")
     def clear(self, worker: str) -> dict:
         """Remove a worker's hosting entry."""
         key = self._key(worker)

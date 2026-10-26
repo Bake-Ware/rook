@@ -169,7 +169,7 @@ class PiKvmPlugin(Plugin):
 
     # ---- screencap ------------------------------------------------------
 
-    @capability("snap", risk="read", tags=("sensitive", "physical"))
+    @capability("snap", risk="read", tags=("sensitive", "physical"), scope="local")
     async def _snap(self, preview: bool = True,
                     quality: int | None = None) -> dict:
         """Grab a still JPEG from the PiKVM streamer.
@@ -204,7 +204,7 @@ class PiKvmPlugin(Plugin):
 
     # ---- HID ------------------------------------------------------------
 
-    @capability("type", risk="exec", tags=("physical",))
+    @capability("type", risk="exec", tags=("physical",), scope="local")
     async def _type(self, text: str, slow: bool = False) -> dict:
         """Type a string. ``slow=True`` adds inter-key delay on the PiKVM side."""
         q = {"limit": "0"}
@@ -215,7 +215,7 @@ class PiKvmPlugin(Plugin):
                               body_type="text/plain; charset=utf-8")
         return _decode_body(resp)
 
-    @capability("key", risk="exec", tags=("physical",))
+    @capability("key", risk="exec", tags=("physical",), scope="local")
     async def _key(self, key: str, mods: list[str] | None = None) -> dict:
         """Press+release a key with optional modifier list (each is a key name)."""
         # PiKVM's /api/hid/events/send_key wants {key, state}.
@@ -237,7 +237,7 @@ class PiKvmPlugin(Plugin):
                         "step": {"key": k, "state": state}, "results": results}
         return {"ok": True, "steps": len(steps)}
 
-    @capability("mouse.move", risk="exec", tags=("physical",))
+    @capability("mouse.move", risk="exec", tags=("physical",), scope="local")
     async def _mouse_move(self, x: int, y: int) -> dict:
         """Absolute mouse position. ``x`` and ``y`` are in PiKVM units
         (-32768..32767 mapped across the captured frame)."""
@@ -247,7 +247,7 @@ class PiKvmPlugin(Plugin):
                               body=body, body_type="application/json")
         return _decode_body(resp)
 
-    @capability("mouse.click", risk="exec", tags=("physical",))
+    @capability("mouse.click", risk="exec", tags=("physical",), scope="local")
     async def _mouse_click(self, button: str = "left") -> dict:
         """Press and release a mouse button. button = left|right|middle."""
         import json
@@ -262,7 +262,7 @@ class PiKvmPlugin(Plugin):
 
     # ---- ATX power ------------------------------------------------------
 
-    @capability("power", risk="exec", tags=("destructive", "physical"))
+    @capability("power", risk="exec", tags=("destructive", "physical"), scope="local")
     async def _power(self, action: str) -> dict:
         """Trigger ATX power. action in {on, off, off_hard, reset, reset_hard}."""
         valid = {"on", "off", "off_hard", "reset", "reset_hard"}
@@ -272,7 +272,7 @@ class PiKvmPlugin(Plugin):
                               query={"action": action})
         return _decode_body(resp)
 
-    @capability("power.status", risk="read", tags=("physical",))
+    @capability("power.status", risk="read", tags=("physical",), scope="local")
     async def _power_status(self) -> dict:
         """Read ATX state (powered, online, etc)."""
         resp = await self._request("GET", "/api/atx")
@@ -280,13 +280,13 @@ class PiKvmPlugin(Plugin):
 
     # ---- generic passthrough --------------------------------------------
 
-    @capability("api.get", risk="read", tags=("sensitive", "physical"))
+    @capability("api.get", risk="read", tags=("sensitive", "physical"), scope="local")
     async def _api_get(self, path: str, query: dict | None = None) -> dict:
         """GET any /api/* endpoint on the PiKVM. Decodes JSON / text bodies."""
         resp = await self._request("GET", path, query=query)
         return _decode_body(resp)
 
-    @capability("api.post", risk="exec", tags=("destructive", "physical"))
+    @capability("api.post", risk="exec", tags=("destructive", "physical"), scope="local")
     async def _api_post(self, path: str, query: dict | None = None,
                         body: str | None = None,
                         body_b64: str | None = None,

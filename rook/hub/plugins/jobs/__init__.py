@@ -215,7 +215,7 @@ class Jobs(Plugin):
             raise ValueError("The jobs store is not open")
         return await self.service.dispatch(write, action, rid, query, data)
 
-    @capability("read", risk="read")
+    @capability("read", risk="read", scope="multi-user")
     async def read(self, action: str = "list", id: str | None = None, query: str = "",
                    data: dict | None = None) -> dict:
         """Read jobs and runs: list|get|runs|run_get|next|validate|guardrails_preview|describe_schema.
@@ -225,7 +225,7 @@ class Jobs(Plugin):
         schema; validate checks data (a job) without saving."""
         return await self.run(False, action, id, query, data)
 
-    @capability("write", risk="write")
+    @capability("write", risk="write", scope="multi-user")
     async def write(self, action: str, id: str | None = None, data: dict | None = None) -> dict:
         """Write jobs: create|update|delete|enable|disable|run|cancel|set_guardrails|settings|lock|unlock.
 

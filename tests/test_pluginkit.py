@@ -130,11 +130,11 @@ def test_failures_reach_the_caller_as_a_top_level_error():
     class P(Plugin):
         NAMESPACE = "kit"
 
-        @capability("boom")
+        @capability("boom", scope="multi-user")
         def boom(self) -> dict:
             kit.fail("disk is on fire")
 
-        @capability("arg")
+        @capability("arg", scope="multi-user")
         def arg(self, n=None) -> dict:
             return {"n": kit.require_int(n, "n")}
 

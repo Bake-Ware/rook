@@ -145,7 +145,7 @@ class CameraPlugin(Plugin):
             return bool(which("ffmpeg"))
         return False
 
-    @capability("list", risk="read")
+    @capability("list", risk="read", scope="local")
     async def _list(self) -> dict:
         """List the cameras on this worker (use one as the ``camera`` arg to snap)."""
         if is_termux():
@@ -178,7 +178,7 @@ class CameraPlugin(Plugin):
             return {"ok": True, "cameras": cams}
         return {"ok": True, "cameras": []}
 
-    @capability("snap", risk="read", tags=("sensitive", "physical"))
+    @capability("snap", risk="read", tags=("sensitive", "physical"), scope="local")
     async def _snap(self, camera=0, quality: int = 85,
                     resolution: str = "1280x720") -> dict:
         """Capture a still JPEG from a camera.

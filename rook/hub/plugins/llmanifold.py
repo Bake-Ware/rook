@@ -169,7 +169,7 @@ class Llmanifold(Plugin):
         st = await self.status()
         return {"flows": st.get("api", {}).get("flows", []), "admin": st.get("admin")}
 
-    @capability("status", risk="read", fields="*")
+    @capability("status", risk="read", fields="*", scope="multi-user")
     async def status_cap(self) -> dict:
         """llmanifold.status — whether the hub's llmanifold answers, its flows, and lanes/queue when the admin address is set."""
         # Band readers share one answer for a few seconds: each live one is

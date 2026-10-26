@@ -60,7 +60,7 @@ class Marketplace(Plugin):
         return admin_for(self._node)
 
     @capability("marketplace.list", risk="read", limit=50,
-                fields=["id", "name", "version", "risk", "namespace", "compatible"])
+                fields=["id", "name", "version", "risk", "namespace", "compatible"], scope="external")
     async def list_entries(self, refresh: bool = False) -> list[dict]:
         """Plugin catalog entries (preview): id, name, version, author, risk,
         caps, placement, package and whether this core can run it.
@@ -76,7 +76,7 @@ class Marketplace(Plugin):
                 out.append({**e, "catalog": cat["name"], "example": cat["example"]})
         return out
 
-    @capability("marketplace.install", risk="admin", tags=("destructive",))
+    @capability("marketplace.install", risk="admin", tags=("destructive",), scope="external")
     def install(self, id: str) -> dict:
         """Install a catalog plugin: NOT IMPLEMENTED (always refuses).
 

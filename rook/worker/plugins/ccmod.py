@@ -438,7 +438,7 @@ class ClaudeCodeRules(Plugin):
         return n
 
     # -- caps ------------------------------------------------------------------------------
-    @capability("apply", risk="admin")
+    @capability("apply", risk="admin", scope="local")
     async def apply(self, config: dict, dry_run: bool = False) -> dict:
         """Put the hub's Claude Code rules into effect here (the hub pushes them).
 
@@ -453,7 +453,7 @@ class ClaudeCodeRules(Plugin):
                 await self._ensure_socket()
             return await asyncio.to_thread(self._apply, cfg, bool(dry_run))
 
-    @capability("remove", risk="admin")
+    @capability("remove", risk="admin", scope="local")
     async def remove(self, dry_run: bool = False) -> dict:
         """Take Rook's managed hooks and status line out of every Claude Code
         installation here and delete the rules (the person's settings stay)."""
@@ -667,7 +667,7 @@ class ClaudeCodeRules(Plugin):
                 pass
         return str(dest)
 
-    @capability("status", risk="read")
+    @capability("status", risk="read", scope="local")
     def status(self) -> dict:
         """Which Claude Code installations here carry Rook's managed hooks, and
         the revision of the rules this worker holds."""
@@ -691,7 +691,7 @@ class ClaudeCodeRules(Plugin):
                 "installations": rows, "socket": bool(self._socket), "queued": len(self._events),
                 "sessions": len(self._sessions), "boot": self._boot}
 
-    @capability("events", risk="admin", tags=("sensitive",))
+    @capability("events", risk="admin", tags=("sensitive",), scope="local")
     async def events(self, after: int = 0, wait: float = 0, boot: str = "") -> dict:
         """Hook events for the hub's remote actions, those after ``after``
         (from this ``boot``; a different boot starts over). With ``wait`` the

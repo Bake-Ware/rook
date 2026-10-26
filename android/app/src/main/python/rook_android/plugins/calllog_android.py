@@ -13,7 +13,7 @@ class AndroidCallLogPlugin(Plugin):
     NAMESPACE = "calllog"
     PLACEMENT = place(ANDROID_APP)
 
-    @capability("list", risk="exec", tags=("sensitive",))
+    @capability("list", risk="exec", tags=("sensitive",), scope="self")
     def _list(self, limit: int = 30) -> dict:
         """Recent calls, newest first: number, name, direction, duration_s, ts."""
         ctx = app_context()

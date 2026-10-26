@@ -299,7 +299,7 @@ class WebOSTV(Device):
             fail(f"{self.name}: {e}")
 
     # -- caps --------------------------------------------------------------
-    @capability("status", risk="read", tags=("physical",))
+    @capability("status", risk="read", tags=("physical",), scope="multi-machine")
     async def _status(self) -> dict:
         """Live state: ``{on, power, app, app_id, volume, muted, screen, reachable, paired}``."""
         if not self.state.get("reachable"):
@@ -315,20 +315,20 @@ class WebOSTV(Device):
             s["mac"] = self.mac
         return s
 
-    @capability("apps", risk="read", tags=("physical",))
+    @capability("apps", risk="read", tags=("physical",), scope="multi-machine")
     async def _apps(self) -> dict:
         """Installed apps the TV can launch: ``{items: [{id, title}]}``."""
         await self._live()
         return {"items": [{"id": k, "title": v} for k, v in sorted(self.apps.items(),
                                                                 key=lambda kv: kv[1].lower())]}
 
-    @capability("inputs", risk="read", tags=("physical",))
+    @capability("inputs", risk="read", tags=("physical",), scope="multi-machine")
     async def _inputs(self) -> dict:
         """External inputs (HDMI…): ``{items: [{id, label, connected}]}``."""
         await self._live()
         return {"items": list(self.inputs)}
 
-    @capability("toast", risk="write", tags=("physical",))
+    @capability("toast", risk="write", tags=("physical",), scope="multi-machine")
     async def _toast(self, message: str) -> dict:
         """Show a short notification on the TV screen."""
         message = require_str(message, "message", max_len=500)
@@ -350,7 +350,7 @@ class WebOSTV(Device):
                  + ", ".join(f"{self.apps[k]} ({k})" for k in part[:8]))
         fail(f"no app matches {app!r}; tv.apps lists them")
 
-    @capability("launch", risk="write", tags=("physical",))
+    @capability("launch", risk="write", tags=("physical",), scope="multi-machine")
     async def _launch(self, app: str, params: dict | None = None) -> dict:
         """Launch an app by id or title (``"YouTube"``, ``"netflix"``), with
         optional launch ``params``. A YouTube video:
@@ -365,7 +365,7 @@ class WebOSTV(Device):
         await self._req(ssap.LAUNCH, payload)
         return {"ok": True, "app_id": app_id, "app": self.title(app_id)}
 
-    @capability("input", risk="write", tags=("physical",))
+    @capability("input", risk="write", tags=("physical",), scope="multi-machine")
     async def _input(self, input: str) -> dict:
         """Switch to an external input by id or label (``"HDMI 1"``, ``"HDMI_2"``)."""
         await self._live()
@@ -377,7 +377,7 @@ class WebOSTV(Device):
                     return {"ok": True, "input": d["id"], "label": d.get("label")}
         fail(f"no input matches {input!r}; tv.inputs lists them")
 
-    @capability("volume", risk="write", tags=("physical",))
+    @capability("volume", risk="write", tags=("physical",), scope="multi-machine")
     async def _volume(self, level: int | None = None, step: int | None = None) -> dict:
         """Set the volume to ``level`` (0-100), or move it by ``step`` (e.g. +3, -2)."""
         if (level is None) == (step is None):
@@ -395,13 +395,13 @@ class WebOSTV(Device):
         await asyncio.sleep(0.3)   # let the subscription report the new level
         return {"ok": True, "volume": self.state.get("volume"), "muted": self.state.get("muted")}
 
-    @capability("mute", risk="write", tags=("physical",))
+    @capability("mute", risk="write", tags=("physical",), scope="multi-machine")
     async def _mute(self, on: bool = True) -> dict:
         """Mute (``on=true``) or unmute (``on=false``)."""
         await self._req(ssap.SET_MUTE, {"mute": bool(on)})
         return {"ok": True, "muted": bool(on)}
 
-    @capability("media", risk="write", tags=("physical",))
+    @capability("media", risk="write", tags=("physical",), scope="multi-machine")
     async def _media(self, action: str) -> dict:
         """Playback control for the current app: play, pause, stop, rewind, fast_forward."""
         uri = ssap.MEDIA.get(str(action).lower())
@@ -410,7 +410,7 @@ class WebOSTV(Device):
         await self._req(uri)
         return {"ok": True, "action": action}
 
-    @capability("button", risk="write", tags=("physical",))
+    @capability("button", risk="write", tags=("physical",), scope="multi-machine")
     async def _button(self, name: str) -> dict:
         """Press a remote button: HOME, BACK, UP, DOWN, LEFT, RIGHT, ENTER, MENU, EXIT, digits…"""
         key = require_str(name, "name", max_len=20).upper()
@@ -423,7 +423,7 @@ class WebOSTV(Device):
             fail(f"{self.name}: {e}")
         return {"ok": True, "button": key}
 
-    @capability("open_url", risk="write", tags=("physical",))
+    @capability("open_url", risk="write", tags=("physical",), scope="multi-machine")
     async def _open_url(self, url: str) -> dict:
         """Open an http(s) URL in the TV's web browser."""
         url = require_str(url, "url", max_len=2000)
@@ -432,19 +432,19 @@ class WebOSTV(Device):
         await self._req(ssap.OPEN_URL, {"target": url})
         return {"ok": True}
 
-    @capability("screen", risk="write", tags=("physical",))
+    @capability("screen", risk="write", tags=("physical",), scope="multi-machine")
     async def _screen(self, on: bool) -> dict:
         """Turn just the screen off (sound keeps playing) or back on."""
         await self._req(ssap.SCREEN_ON if on else ssap.SCREEN_OFF, {"standbyMode": "active"})
         return {"ok": True, "screen": "on" if on else "off"}
 
-    @capability("power_off", risk="write", tags=("physical",))
+    @capability("power_off", risk="write", tags=("physical",), scope="multi-machine")
     async def _power_off(self) -> dict:
         """Turn the TV off."""
         await self._req(ssap.POWER_OFF)
         return {"ok": True}
 
-    @capability("power_on", risk="write", tags=("physical",))
+    @capability("power_on", risk="write", tags=("physical",), scope="multi-machine")
     async def _power_on(self) -> dict:
         """Turn the TV on with Wake-on-LAN. Needs the TV's MAC (learned while
         it was on, or given in webos.tvs) and the TV's "Turn on via Wi-Fi /
@@ -459,7 +459,7 @@ class WebOSTV(Device):
         self._wake.set()   # reconnect soon rather than at the next retry
         return {"ok": bool(sent), "mac": self.mac, "sent_to": sent}
 
-    @capability("pair", risk="admin", tags=("physical",), timeout=120)
+    @capability("pair", risk="admin", tags=("physical",), timeout=120, scope="multi-machine")
     async def _pair(self, key: str | None = None, timeout: int = 60) -> dict:
         """Pair with the TV. Without ``key`` the TV shows an "allow this
         device?" prompt that a person must accept with the remote within
@@ -571,7 +571,7 @@ class WebOSPlugin(Plugin):
         return list(self._tvs.values())
 
     # -- caps on the delegate -----------------------------------------------
-    @capability("list", risk="read")
+    @capability("list", risk="read", scope="multi-machine")
     async def _list(self) -> dict:
         """Every configured TV: ``{items: [{name, host, on, app, reachable, paired}]}``."""
         items = []
@@ -582,7 +582,7 @@ class WebOSPlugin(Plugin):
                           "paired": bool(s.get("paired")), "error": s.get("error")})
         return {"items": items}
 
-    @capability("discover", risk="read", timeout=20)
+    @capability("discover", risk="read", timeout=20, scope="multi-machine")
     async def _discover(self, timeout: float = 3.0) -> dict:
         """Find LG webOS TVs on this worker's network (SSDP), for adding to webos.tvs."""
         t = max(1.0, min(float(timeout), 10.0))

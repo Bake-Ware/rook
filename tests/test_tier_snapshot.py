@@ -3,7 +3,7 @@
 ``fixtures/master_tier_floor.json`` is master's (9f0d6df) hand-written
 ``BUILTIN`` table plus the effective tier master gave each Android native cap
 (undeclared caps resolved to exec). It is frozen on purpose: when the floor
-moved from one hand table to the plugins' own ``@capability(risk=...)``, a
+moved from one hand table to the plugins' own ``@capability(risk=..., scope="multi-user")``, a
 tier could quietly go down. Lowering one now means editing the fixture in the
 same change, which a reviewer sees.
 """

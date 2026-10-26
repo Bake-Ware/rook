@@ -206,7 +206,7 @@ class Decide(Plugin):
                               token=self.settings.get("token"),
                               timeout=float(self.settings["timeout_s"]), http=self._http)
 
-    @capability("run", risk="read")
+    @capability("run", risk="read", scope="multi-user")
     async def run(self, state: Any, questions: list, temperature: float | None = None) -> dict:
         """Answer a batch of typed questions about ``state`` in one pass.
 
@@ -220,7 +220,7 @@ class Decide(Plugin):
             temperature = self.settings.get("temperature")
         return await self.client().decide(state, questions, temperature)
 
-    @capability("health", risk="read")
+    @capability("health", risk="read", scope="multi-user")
     async def health(self) -> dict:
         """Is the configured decision model reachable and loaded?"""
         try:
@@ -229,7 +229,7 @@ class Decide(Plugin):
             return {"ok": False, "ready": False, "configured": False, "error": str(e)}
         return {"configured": True, **(await client.health())}
 
-    @capability("info", risk="read")
+    @capability("info", risk="read", scope="multi-user")
     async def info(self) -> dict:
         """The configured model: name, adapter, calibration status and limits."""
         return await self.client().info()
@@ -263,7 +263,7 @@ class Decide(Plugin):
             raise ValueError(f"decide.grid sides must be 2..{max_options} for this model")
         return rows, cols
 
-    @capability("drive", risk="exec", tags=("physical",), timeout=None)
+    @capability("drive", risk="exec", tags=("physical",), timeout=None, scope="multi-user")
     async def drive(self, goal: str, screen_worker: str, input_worker: str = "",
                     dry_run: bool | None = None, max_steps: int | None = None,
                     max_seconds: float | None = None, texts: list | None = None,
@@ -355,7 +355,7 @@ class Decide(Plugin):
         for rid in done[:-keep] if len(done) > keep else []:
             self.drives.pop(rid, None)
 
-    @capability("runs", risk="read", limit=20)
+    @capability("runs", risk="read", limit=20, scope="multi-user")
     def runs(self, run_id: str = "", steps: int = 5) -> dict:
         """Recent drives, or one drive with its last ``steps`` journaled frames
         (answers, decision, gates, executed calls) and any pending confirmation."""
@@ -376,7 +376,7 @@ class Decide(Plugin):
         row["recent_steps"] = journal.steps(run_id, max(0, min(int(steps), 100)))
         return row
 
-    @capability("confirm", risk="exec", tags=("physical",))
+    @capability("confirm", risk="exec", tags=("physical",), scope="multi-user")
     def confirm(self, run_id: str, approve: bool, note: str = "") -> dict:
         """Approve (``approve=true``) or refuse the action a drive is waiting on.
         Refusing stops the drive."""
@@ -387,7 +387,7 @@ class Decide(Plugin):
             raise PermissionError("decide.halt (kill switch) is on")
         return run.confirm(bool(approve), by=current_identity() or "", note=str(note or ""))
 
-    @capability("stop", risk="write")
+    @capability("stop", risk="write", scope="multi-user")
     def stop_drive(self, run_id: str = "") -> dict:
         """Kill switch: stop one drive (``run_id``) or every live drive. No
         further input is sent; a pending confirmation is refused."""

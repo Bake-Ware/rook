@@ -235,7 +235,7 @@ def _spawn_terminal(script: str, chatdir: str, me: str, room: str, title: str) -
 class ChatPlugin(Plugin):
     NAMESPACE = "chat"
 
-    @capability("open", risk="write")
+    @capability("open", risk="write", scope="multi-user")
     def _open(self, room: str, me: str | None = None, title: str = "rook chat") -> dict:
         """Pop a chat window on this worker for ``room`` and return whether one
         was spawned. The local human types there; the operator uses chat.send/poll."""
@@ -256,7 +256,7 @@ class ChatPlugin(Plugin):
                                         "messages still arrive via chat.poll/msg"
                                         if via is None else None)}
 
-    @capability("send", risk="write")
+    @capability("send", risk="write", scope="multi-user")
     def _send(self, room: str, text: str, sender: str = "operator") -> dict:
         """Append a message to the room transcript (the worker's window shows it)."""
         text = require_str(text, "text", strip=False)
@@ -269,7 +269,7 @@ class ChatPlugin(Plugin):
             fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
         return {"ok": True}
 
-    @capability("rooms", risk="read")
+    @capability("rooms", risk="read", scope="multi-user")
     def _rooms(self) -> dict:
         """List chat rooms on this worker with a last-message preview — the band
         CLI aggregates these across workers into its chat sidebar."""
@@ -299,7 +299,7 @@ class ChatPlugin(Plugin):
         out.sort(key=lambda r: r.get("last_ts", 0), reverse=True)
         return {"ok": True, "rooms": out}
 
-    @capability("poll", risk="read", tags=("sensitive",))
+    @capability("poll", risk="read", tags=("sensitive",), scope="multi-user")
     def _poll(self, room: str, since: float = 0.0) -> dict:
         """Return messages in ``room`` newer than ``since`` (unix ts). The
         operator polls this to receive the local human's replies."""

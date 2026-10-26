@@ -221,7 +221,7 @@ class PersonaFiles(Plugin):
         h = harness_name(harness)
         return check_path(path) if path else default_path(h)
 
-    @capability("apply", risk="write")
+    @capability("apply", risk="write", scope="multi-user")
     async def apply(self, harness: str, path: str = "", content: str | None = None,
                     profile: str = "", remove: bool = False, dry_run: bool = False) -> dict:
         """Write (or with ``remove=true`` take out) the persona's managed block
@@ -254,7 +254,7 @@ class PersonaFiles(Plugin):
             _write(target, p["new"])
         return out
 
-    @capability("status", risk="read")
+    @capability("status", risk="read", scope="multi-user")
     def status(self, harness: str = "", path: str = "") -> list[dict]:
         """Whether each harness file holds a persona block, with its profile,
         rev and hash. ``harness``/``path`` narrow it to one file."""

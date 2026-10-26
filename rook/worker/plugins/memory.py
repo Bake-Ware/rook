@@ -172,7 +172,7 @@ class MemoryPlugin(Plugin):
             fail("path escapes vault")
         return full
 
-    @capability("get", risk="read")
+    @capability("get", risk="read", scope="self")
     def _get(self, path: str) -> dict:
         """Read a markdown note from the vault (read-open across the band).
         ``path`` is vault-relative, e.g. ``entities/calendar`` or
@@ -183,7 +183,7 @@ class MemoryPlugin(Plugin):
         return {"ok": True, "path": str(full.relative_to(self._vault)),
                 "text": full.read_text(encoding="utf-8", errors="replace")}
 
-    @capability("put", risk="write")
+    @capability("put", risk="write", scope="self")
     def _put(self, path: str, text: str, append: bool = False) -> dict:
         """Write (or append to) a markdown note. Writes are forced into your own
         namespace, ``shared/``, or ``entities/`` — a path aimed elsewhere is
@@ -201,7 +201,7 @@ class MemoryPlugin(Plugin):
 
     # -- post-its ------------------------------------------------------------
 
-    @capability("note", risk="write")
+    @capability("note", risk="write", scope="self")
     def _note(self, claim: str, subjects: list | str | None = None,
               kind: str = "fact", supersedes: list | str | None = None,
               thread_id: str | None = None, provenance: str | None = None) -> dict:
@@ -231,7 +231,7 @@ class MemoryPlugin(Plugin):
         return {"ok": True, "id": pid, "kind": kind, "author": row[2],
                 "subjects": subj, "supersedes": sup}
 
-    @capability("search", risk="read")
+    @capability("search", risk="read", scope="self")
     def _search(self, query: str, limit: int = 20,
                 include_notes: bool = True) -> dict:
         """Search the vault and return a *pile* of relevant post-its in temporal
@@ -286,7 +286,7 @@ class MemoryPlugin(Plugin):
             out["notes"] = self._grep_notes(q, limit=8) if q else []
         return out
 
-    @capability("entities", risk="read")
+    @capability("entities", risk="read", scope="self")
     def _entities(self, name: str | None = None) -> dict:
         """List current-state entity notes (``entities/*.md``), or read one by
         name. Entity notes are the durable 'state of the world'; sessions and

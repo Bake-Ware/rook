@@ -169,7 +169,7 @@ class AndroidCalendarPlugin(Plugin):
         # Registered on every phone so a missing grant is a clear error, not a missing cap.
         return app_context() is not None
 
-    @capability("list", risk="read", tags=("personal", "sensitive"))
+    @capability("list", risk="read", tags=("personal", "sensitive"), scope="self")
     def _list(self, start: str | int | None = None, end: str | int | None = None,
               limit: int = 20) -> dict:
         """Calendar events on the phone (Google Calendar, Outlook if it syncs calendars, others).
@@ -272,7 +272,7 @@ class AndroidCalendarPlugin(Plugin):
             return {"ok": False, "error": NO_WRITE, "needs_permission": "WRITE_CALENDAR"}
         return None
 
-    @capability("create", risk="exec", tags=("personal",))
+    @capability("create", risk="exec", tags=("personal",), scope="self")
     def _create(self, title: str, start: str | int, end: str | int | None = None,
                 all_day: bool = False, location: str = "", description: str = "",
                 calendar: str = "") -> dict:
@@ -332,7 +332,7 @@ class AndroidCalendarPlugin(Plugin):
         finally:
             cur.close()
 
-    @capability("update", risk="exec", tags=("personal",))
+    @capability("update", risk="exec", tags=("personal",), scope="self")
     def _update(self, event_id: int, title: str | None = None, start: str | int | None = None,
                 end: str | int | None = None, all_day: bool | None = None,
                 location: str | None = None, description: str | None = None) -> dict:
@@ -364,7 +364,7 @@ class AndroidCalendarPlugin(Plugin):
         return {"ok": n > 0, "event_id": int(event_id), "title": title or old_title,
                 **({} if n > 0 else {"error": "the calendar refused the change"})}
 
-    @capability("delete", risk="exec", tags=("personal", "destructive"))
+    @capability("delete", risk="exec", tags=("personal", "destructive"), scope="self")
     def _delete(self, event_id: int) -> dict:
         """Delete an event on the phone by ``event_id`` (from calendar.list). Not undone."""
         ctx = app_context()

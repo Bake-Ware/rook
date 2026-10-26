@@ -466,11 +466,11 @@ def messages() -> dict:
     class Conf(Plugin):
         NAMESPACE = "conformance"
 
-        @capability("echo", risk="read")
+        @capability("echo", risk="read", scope="multi-user")
         def echo(self, value=None):
             return value
 
-        @capability("add", risk="read")
+        @capability("add", risk="read", scope="multi-user")
         def add(self, a: int, b: int):
             return a + b
 

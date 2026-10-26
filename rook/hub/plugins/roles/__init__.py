@@ -1312,24 +1312,24 @@ class RolesPlugin(Plugin):
         return res
 
     # -- read caps -------------------------------------------------------------------
-    @capability("list", risk="read")
+    @capability("list", risk="read", scope="multi-user")
     def list_(self) -> dict:
         """Every role (id, name, rev, enabled, host, backend, autonomy)."""
         return {"roles": self.store.list()}
 
-    @capability("get", risk="read")
+    @capability("get", risk="read", scope="multi-user")
     def get(self, id: str) -> dict:
         """A role document: name, description, category, charter, concerns,
         checklist, examples, seed_memory, sources, tools, builtin, autonomy,
         memory, backend, model, effort, host, persona, enabled, rev."""
         return {"role": self.role(id), "identity": f"role:{id}"}
 
-    @capability("history", risk="read", limit=20)
+    @capability("history", risk="read", limit=20, scope="multi-user")
     def history(self, id: str = "") -> list[dict]:
         """Attributed changes to one role (or all), newest first."""
         return self.store.history(id, limit=200)
 
-    @capability("presets", risk="read")
+    @capability("presets", risk="read", scope="multi-user")
     def presets(self, id: str = "", category: str = "", full: bool = False) -> dict:
         """The starting roles, grouped by category (product and planning,
         software engineering, operations, ...): ``categories`` in their sort
@@ -1353,7 +1353,7 @@ class RolesPlugin(Plugin):
             c["presets"] = [{**p, "saved": p["id"] in saved} for p in c["presets"]]
         return {"categories": cats}
 
-    @capability("memory", risk="read")
+    @capability("memory", risk="read", scope="multi-user")
     async def memory(self, id: str, query: str = "", limit: int = 50) -> dict:
         """A role's memory (scope role:<id>), read from its home on its agent
         host: the memories matching ``query``, or the newest."""
@@ -1363,7 +1363,7 @@ class RolesPlugin(Plugin):
         return {"role": role["id"], "host": role["host"], "memories": res.get("memories") or [],
                 "total": res.get("total")}
 
-    @capability("workspace", risk="read")
+    @capability("workspace", risk="read", scope="multi-user")
     async def workspace(self, id: str, path: str = "") -> dict:
         """A role's workspace, read-only (its drafts, notes and working
         documents, in its home on its agent host): the file list, or with
@@ -1378,7 +1378,7 @@ class RolesPlugin(Plugin):
         except ws.WorkspaceError as e:
             raise RoleError(str(e)) from None
 
-    @capability("sessions", risk="read")
+    @capability("sessions", risk="read", scope="multi-user")
     def sessions_(self, role: str = "", id: str = "", live: bool = False, limit: int = 20) -> dict:
         """The coding sessions roles started: state, newest status, branch,
         worktree, pull request (``role`` narrows, ``live`` only running ones;
@@ -1393,7 +1393,7 @@ class RolesPlugin(Plugin):
                              self.sessions.list(role=role, live=bool(live), limit=int(limit))]}
 
     # -- write caps ------------------------------------------------------------------
-    @capability("session_start", risk="write", timeout=120)
+    @capability("session_start", risk="write", timeout=120, scope="multi-user")
     async def session_start(self, role: str, branch: str, instructions: str, location: str = "",
                             title: str = "", room: str = "") -> dict:
         """Start a coding session for a role (on a branch, in a worktree of a
@@ -1404,13 +1404,13 @@ class RolesPlugin(Plugin):
                                         instructions=instructions, title=title, room=room,
                                         actor=_actor())
 
-    @capability("session_send", risk="write", timeout=120)
+    @capability("session_send", risk="write", timeout=120, scope="multi-user")
     async def session_send(self, id: str, text: str) -> dict:
         """More work for a stopped role session (it resumes on its branch)."""
         rec = self._session(id)
         return await self.resume_session(self.role(rec["role"]), rec["id"], text)
 
-    @capability("session_stop", risk="write")
+    @capability("session_stop", risk="write", scope="multi-user")
     async def session_stop(self, id: str) -> dict:
         """Stop a role's running coding session (its terminal is closed; its
         worktree and branch stay)."""
@@ -1424,7 +1424,7 @@ class RolesPlugin(Plugin):
                 task.cancel()
         return {"ok": True, **self._named(self.sessions.get(rec["id"]) or rec)}
 
-    @capability("ask", risk="write", timeout=None)
+    @capability("ask", risk="write", timeout=None, scope="multi-user")
     async def ask(self, id: str, question: str, context: str = "") -> dict:
         """One turn of a role: it answers ``question`` (with ``context``) on its
         agent host, in its home directory, with its tools and its memory.
@@ -1436,7 +1436,7 @@ class RolesPlugin(Plugin):
         return await self.turn(self.role(id), question, str(context or ""), _actor())
 
     # -- admin caps ------------------------------------------------------------------
-    @capability("set", risk="admin")
+    @capability("set", risk="admin", scope="multi-user")
     def set(self, role: dict, note: str = "", dry_run: bool = False,
             expect_rev: int | None = None) -> dict:
         """Create or replace a role (band owners and operator tokens). ``role``:
@@ -1454,14 +1454,14 @@ class RolesPlugin(Plugin):
             role = {**role, "host": old.get("host", "")}
         return self.store.save(role, _actor(), note, expect_rev, dry_run)
 
-    @capability("delete", risk="admin")
+    @capability("delete", risk="admin", scope="multi-user")
     def delete(self, id: str, note: str = "") -> dict:
         """Delete a role (its history stays; its home on the agent host is left
         in place)."""
         _admin_gate(f"role.delete {id}")
         return self.store.delete(id, _actor(), note)
 
-    @capability("memory_edit", risk="admin")
+    @capability("memory_edit", risk="admin", scope="multi-user")
     async def memory_edit(self, id: str, action: str, text: str = "", kind: str = "fact",
                           memory_id: str = "") -> dict:
         """Change a role's memory on its host: ``action`` remember (``text``,
@@ -1475,7 +1475,7 @@ class RolesPlugin(Plugin):
                                     {"role": role["id"], "action": action, "text": text,
                                      "kind": kind, "id": memory_id, "by": _actor()})
 
-    @capability("move", risk="admin", timeout=None)
+    @capability("move", risk="admin", timeout=None, scope="multi-user")
     async def move(self, id: str, host: str, note: str = "") -> dict:
         """Move a role to another agent host: its home directory (memory and
         config) is packed on the old host, unpacked on ``host``, and the old

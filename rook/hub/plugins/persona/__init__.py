@@ -151,7 +151,7 @@ class PersonaPlugin(Plugin):
                 mine["owner"] = udoc["owner"]
 
     # -- read caps ---------------------------------------------------------------
-    @capability("get", risk="read")
+    @capability("get", risk="read", scope="multi-user")
     def get(self, id: str = "", family: str = "", user: str = "", band: str = "",
             harness: str = "") -> dict:
         """A persona profile with its rendered ``text``.
@@ -173,7 +173,7 @@ class PersonaPlugin(Plugin):
             return {"profile": None, "text": "", "note": "No persona assigned."}
         return {"profile": doc, "source": src, "text": model.render(doc, harness or fam)}
 
-    @capability("render", risk="read")
+    @capability("render", risk="read", scope="multi-user")
     def render(self, harness: str = "", profile: str = "", user: str = "", band: str = "") -> dict:
         """Just the rendered persona for a harness: ``{text, profile, rev, sha}``.
 
@@ -193,13 +193,13 @@ class PersonaPlugin(Plugin):
         return {"text": text, "profile": doc["id"], "rev": doc["rev"],
                 "sha": model.fingerprint(text), "source": src}
 
-    @capability("list", risk="read")
+    @capability("list", risk="read", scope="multi-user")
     def list_(self) -> dict:
         """Every profile (id, name, rev) and every scoped assignment."""
         return {"profiles": self.store.profiles(), "assignments": self.store.assignments(),
                 "scopes": list(model.SCOPES), "families": list(model.KNOWN_FAMILIES)}
 
-    @capability("history", risk="read", limit=20)
+    @capability("history", risk="read", limit=20, scope="multi-user")
     def history(self, id: str = "", scope: str = "", target: str = "") -> list[dict]:
         """Attributed changes, newest first. ``id`` for a profile's revisions;
         ``scope``/``target`` for an assignment (``scope="default"``)."""
@@ -207,7 +207,7 @@ class PersonaPlugin(Plugin):
         return self.store.history(ref, limit=200)
 
     # -- admin caps -----------------------------------------------------------------
-    @capability("set", risk="admin")
+    @capability("set", risk="admin", scope="multi-user")
     def set(self, profile: dict, note: str = "", dry_run: bool = False,
             expect_rev: int | None = None) -> dict:
         """Create or replace a profile (band owners and operator tokens).
@@ -220,7 +220,7 @@ class PersonaPlugin(Plugin):
             _admin_gate(f"persona.set {profile.get('id') if isinstance(profile, dict) else ''}")
         return self.store.save(profile, _actor(), note, expect_rev, dry_run)
 
-    @capability("assign", risk="admin")
+    @capability("assign", risk="admin", scope="multi-user")
     def assign(self, scope: str, profile: str = "", target: str = "", note: str = "") -> dict:
         """Assign a profile at a scope: ``default`` (everyone), ``band``
         (band id), ``family`` (claude-code, codex, hermes, voice, mcp, ...) or
@@ -229,7 +229,7 @@ class PersonaPlugin(Plugin):
         _admin_gate(f"persona.assign {scope}:{target}")
         return self.store.assign(scope, target, profile, _actor(), note)
 
-    @capability("delete", risk="admin")
+    @capability("delete", risk="admin", scope="multi-user")
     def delete(self, id: str, note: str = "") -> dict:
         """Delete an unassigned profile (its history stays)."""
         _admin_gate(f"persona.delete {id}")

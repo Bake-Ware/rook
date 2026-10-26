@@ -3,7 +3,7 @@
 Capabilities live in a flat registry keyed by dotted strings ("shell.exec",
 "files.read", "screen.capture"). A plugin is one Python file under
 `rook.worker.plugins` that subclasses :class:`Plugin`, claims a top-level
-namespace via `NAMESPACE`, and marks its methods with `@capability("sub")`.
+namespace via `NAMESPACE`, and marks its methods with `@capability("sub", scope="multi-user")`.
 Sub-namespaces may themselves be dotted ("env.get").
 
 Transports are the same shape but live under `rook.worker.transports`. A

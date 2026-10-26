@@ -70,7 +70,7 @@ class SessionMirrorPlugin(Plugin):
             reader = self._readers[key] = spool.SpoolReader(*key)
         return reader
 
-    @capability("mirror", risk="read", tags=("sensitive",))
+    @capability("mirror", risk="read", tags=("sensitive",), scope="multi-user")
     async def mirror(self, agent: str, native_id: str, cursor: int = 0, wait: float = 0,
                      max_events: int = spool.MAX_EVENTS) -> dict:
         """Live events of a session the Rook Claude Code mod mirrors on this host,

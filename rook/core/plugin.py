@@ -9,7 +9,7 @@ Minimal plugin (unchanged from the original worker API)::
     class Clock(Plugin):
         NAMESPACE = "clock"
 
-        @capability("now")
+        @capability("now", scope="self")
         def now(self) -> float:
             return time.time()
 
@@ -30,7 +30,7 @@ Everything else is optional::
         GUIDANCE = {"hub.info": "Call this first to learn what the hub runs."}
         SKILL = "## hub\\nhub.info returns ..."
 
-        @capability("info", risk="read", tool=True, fields="*")
+        @capability("info", risk="read", tool=True, fields="*", scope="multi-user")
         def info(self) -> dict: ...
 
 This module is stdlib-only: it ships inside the worker bundle.
@@ -54,11 +54,13 @@ log = logging.getLogger("rook.core.plugin")
 
 #: The plugin API version this core implements. Plugins declare the range they
 #: support in ``CORE_API``; minor bumps are additive, a major bump breaks.
-CORE_API_VERSION = "1.1"  # 1.1: DEPENDS, Plugin.dependency(); settings wired before available()
+CORE_API_VERSION = "1.2"  # 1.2: capability scope field (self/local/multi-machine/multi-user/external)
 
 #: Risk tiers, lowest first (the one definition is :data:`rook.core.authz.TIERS`).
 RISKS = TIERS
-SCOPES = ("hub", "band", "worker", "user")
+#: Capability impact scope: the reach of a capability's effects.
+CAP_SCOPES = ("self", "local", "multi-machine", "multi-user", "external")
+SCOPES = ("hub", "band", "worker", "user")  # settings scopes
 RUN_MODES = ("all", "one")
 VERSION_RE = re.compile(r"^\d+\.[a-z]+\.[a-z]+$")
 
@@ -94,11 +96,12 @@ def default_cap_timeout() -> float | None:
 @dataclass(frozen=True)
 class CapMeta:
     """Declared contract of one capability. Enforced by the core registry
-    (``limit``/``fields``/``timeout``), the permissions layer (``risk``) and
+    (``limit``/``fields``/``timeout``), the permissions layer (``risk``/``scope``) and
     the hub MCP bridge (``tool``)."""
 
     suffix: str = ""
     risk: str | None = None          # read|write|exec|admin; None = undeclared (treated as exec)
+    scope: str | None = None         # self|local|multi-machine|multi-user|external; required
     tags: tuple = ()                 # sensitive|destructive|physical (permissions 2.1)
     limit: int | None = None         # default page size, enforced by core
     fields: Any = None               # None = no projection, "*" = all by default, [..] = default keys
@@ -110,6 +113,8 @@ class CapMeta:
         out: dict[str, Any] = {}
         if self.risk:
             out["risk"] = self.risk
+        if self.scope:
+            out["scope"] = self.scope
         if self.tags:
             out["tags"] = list(self.tags)
         if self.limit:
@@ -125,8 +130,8 @@ class CapMeta:
         return out
 
 
-def capability(suffix: str = "", *, risk: str | None = None, limit: int | None = None,
-               fields: Any = None, tool: bool = False,
+def capability(suffix: str = "", *, risk: str | None = None, scope: str | None = None,
+               limit: int | None = None, fields: Any = None, tool: bool = False,
                description: str | None = None, tier: str | None = None,
                tags: Iterable[str] = (),
                timeout: Any = DEFAULT_TIMEOUT) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
@@ -136,10 +141,19 @@ def capability(suffix: str = "", *, risk: str | None = None, limit: int | None =
     ``Plugin.NAMESPACE`` when suffix is empty. Sub-namespaces in `suffix` are
     fine (``"env.get"`` → ``"shell.env.get"``).
 
-    Keyword metadata is optional and additive (see :class:`CapMeta`); a bare
-    ``@capability("x")`` behaves exactly as it always has. ``tier`` is an
-    alias of ``risk`` (the permissions spec's name for it). Every built-in
-    cap declares ``risk`` (tests/test_plugin_contract.py).
+    ``scope`` is required: a plugin with a cap that has none fails to load
+    (:func:`validate_caps`). Other keyword metadata is optional and additive
+    (see :class:`CapMeta`). ``tier`` is an alias of ``risk`` (the permissions
+    spec's name for it). Every built-in cap declares ``risk`` and ``scope``
+    (tests/test_plugin_contract.py).
+
+    ``scope`` is the widest reach of the cap's effects, judged by the worst
+    case:
+    - ``self``: caller's own data/session only
+    - ``local``: this machine only
+    - ``multi-machine``: affects multiple machines or a band
+    - ``multi-user``: affects other people or the hub
+    - ``external``: outside the network (messages, purchases, public posts)
 
     ``timeout`` bounds one call (seconds). Omitted, the host default applies
     (:func:`default_cap_timeout`, 300 s); ``None`` means never cut off, for
@@ -154,6 +168,8 @@ def capability(suffix: str = "", *, risk: str | None = None, limit: int | None =
     tags = tuple(tags)
     if risk is not None and risk not in RISKS:
         raise ValueError(f"risk must be one of {RISKS}, got {risk!r}")
+    if scope is not None and scope not in CAP_SCOPES:
+        raise ValueError(f"scope must be one of {CAP_SCOPES}, got {scope!r}")
     if limit is not None and (not isinstance(limit, int) or limit <= 0):
         raise ValueError("limit must be a positive int")
     if fields is not None and fields != "*" and not (
@@ -162,9 +178,9 @@ def capability(suffix: str = "", *, risk: str | None = None, limit: int | None =
     if timeout != DEFAULT_TIMEOUT and timeout is not None and (
             isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0):
         raise ValueError("timeout must be a positive number of seconds or None")
-    has_meta = any(v not in (None, False, ()) for v in (risk, limit, fields, tool, description, tags)) \
+    has_meta = any(v not in (None, False, ()) for v in (risk, scope, limit, fields, tool, description, tags)) \
         or timeout != DEFAULT_TIMEOUT
-    meta = CapMeta(suffix=suffix, risk=risk, tags=tags, limit=limit,
+    meta = CapMeta(suffix=suffix, risk=risk, scope=scope, tags=tags, limit=limit,
                    fields=tuple(fields) if isinstance(fields, list) else fields,
                    tool=tool, description=description,
                    timeout=float(timeout) if isinstance(timeout, (int, float)) else timeout)
@@ -176,6 +192,14 @@ def capability(suffix: str = "", *, risk: str | None = None, limit: int | None =
         return fn
 
     return deco
+
+
+def validate_caps(caps: dict[str, Callable[..., Any]]) -> list[str]:
+    """One error per cap in ``caps`` (``{dotpath: fn}``, as from ``caps()``)
+    that declares no ``scope``. The host refuses to load a plugin with any."""
+    return [f"{dotpath}: missing scope (declare @capability(..., scope=...))"
+            for dotpath, fn in caps.items()
+            if getattr(getattr(fn, "_rook_cap_meta", None), "scope", None) is None]
 
 
 # -- placement ---------------------------------------------------------------

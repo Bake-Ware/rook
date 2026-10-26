@@ -342,7 +342,7 @@ class WorkerAdmin:
         handler = self._make_handler(name, spec)
         # The command's own timeout bounds it; core's cut-off sits just past
         # that, so a long-running custom cap is not killed at the default.
-        meta = CapMeta(risk="exec", timeout=float(spec.get("timeout", 30.0)) + TIMEOUT_MARGIN)
+        meta = CapMeta(risk="exec", scope="local", timeout=float(spec.get("timeout", 30.0)) + TIMEOUT_MARGIN)
         self.registry.register(dotpath, handler, replace=True, meta=meta)
 
     def _make_handler(self, name: str, spec: dict):

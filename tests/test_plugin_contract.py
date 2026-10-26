@@ -102,10 +102,11 @@ def _android_stubs(monkeypatch):
 
 
 def _plugin_caps(packages):
-    """[(cap, fn, module)] for every Plugin class under ``packages``."""
+    """[(cap, fn, module)] for every Plugin and Device class under ``packages``."""
     import importlib
     import inspect
     import pkgutil
+    from rook.core.devices import Device
     from rook.core.plugin import Plugin
     out = []
     for package in packages:
@@ -113,8 +114,8 @@ def _plugin_caps(packages):
         for info in pkgutil.walk_packages(pkg.__path__, package + "."):
             mod = importlib.import_module(info.name)
             for _, cls in inspect.getmembers(mod, inspect.isclass):
-                if (issubclass(cls, Plugin) and cls is not Plugin and cls.NAMESPACE
-                        and cls.__module__ == mod.__name__):
+                if (issubclass(cls, (Plugin, Device)) and cls not in (Plugin, Device)
+                        and cls.NAMESPACE and cls.__module__ == mod.__name__):
                     out += [(cap, fn, info.name) for cap, fn in cls.declared_caps().items()]
     return out
 
@@ -132,18 +133,21 @@ def _core_caps():
             {c: w.registry.handler(c) for c in w.registry.list()}
 
 
-def test_every_plugin_cap_declares_risk_and_has_a_docstring(monkeypatch):
-    """One source of truth for tiers: each cap's own @capability(risk=...).
-    Undeclared caps silently resolved to exec; undocumented ones gave an
-    empty caps.describe row and an empty skill-reference line."""
+def test_every_plugin_cap_declares_risk_scope_and_has_a_docstring(monkeypatch):
+    """One source of truth for tiers and impact scope: each cap's own
+    @capability(risk=..., scope=...). Undeclared caps silently resolved to exec;
+    undocumented ones gave an empty caps.describe row and an empty skill-reference line."""
     import inspect
     _android_stubs(monkeypatch)
     caps = _plugin_caps(["rook.worker.plugins", "rook.hub.plugins", "rook_android.plugins"])
     assert len(caps) > 200
     no_risk = sorted({f"{m}:{c}" for c, fn, m in caps
                       if not getattr(getattr(fn, "_rook_cap_meta", None), "risk", None)})
+    no_scope = sorted({f"{m}:{c}" for c, fn, m in caps
+                       if not getattr(getattr(fn, "_rook_cap_meta", None), "scope", None)})
     no_doc = sorted({f"{m}:{c}" for c, fn, m in caps if not (inspect.getdoc(fn) or "").strip()})
     assert no_risk == [], "declare @capability(..., risk=...): " + ", ".join(no_risk)
+    assert no_scope == [], "declare @capability(..., scope=...): " + ", ".join(no_scope)
     assert no_doc == [], "add a docstring: " + ", ".join(no_doc)
 
 
@@ -221,7 +225,7 @@ class Bound(Plugin):
     async def stop(self):
         EVENTS.append(("stop", id(self)))
 
-    @capability("hello", risk="read")
+    @capability("hello", risk="read", scope="self")
     def hello(self):
         """Say the configured greeting."""
         return self.greeting
@@ -231,10 +235,20 @@ class Needs(Plugin):
     NAMESPACE = "needs"
     DEPENDS = ("bound",)
 
-    @capability("x", risk="read")
+    @capability("x", risk="read", scope="self")
     def x(self):
         """Uses bound."""
         return self.dependency("bound").greeting
+
+
+class NoScope(Plugin):
+    """A plugin with a cap that lacks scope declaration: used to test rejection."""
+    NAMESPACE = "noscope"
+
+    @capability("bad")
+    def bad(self):
+        """This cap is missing scope."""
+        return None
 
 
 def _host(stored):
@@ -389,29 +403,29 @@ async def test_hub_plugin_enable_disable_and_band_ceiling(tmp_path):
 class Slow(Plugin):
     NAMESPACE = "slow"
 
-    @capability("hang", risk="read", timeout=0.05)
+    @capability("hang", risk="read", timeout=0.05, scope="self")
     async def hang(self):
         """Never returns."""
         await asyncio.sleep(30)
 
-    @capability("own", risk="read", timeout=0.05)
+    @capability("own", risk="read", timeout=0.05, scope="self")
     async def own(self, timeout: float = 0.0):
         """Bounded by its caller's timeout."""
         await asyncio.sleep(0.2)
         return "done"
 
-    @capability("forever", risk="read", timeout=None)
+    @capability("forever", risk="read", timeout=None, scope="self")
     async def forever(self):
         """Opted out."""
         await asyncio.sleep(0.1)
         return "late"
 
-    @capability("raises", risk="read")
+    @capability("raises", risk="read", scope="self")
     async def raises(self):
         """Its own TimeoutError is not core's."""
         raise TimeoutError("backend")
 
-    @capability("blocking", risk="read", timeout=0.05)
+    @capability("blocking", risk="read", timeout=0.05, scope="self")
     def blocking(self):
         """A sync handler past its timeout."""
         import time
@@ -601,6 +615,30 @@ async def test_bind_hooks_follow_reload_and_disable():
     assert (await host.disable("needs"))["ok"]
     assert log == [("unbind", "needs", id(needs))]
 
+
+@pytest.mark.asyncio
+async def test_plugin_with_cap_missing_scope_is_rejected():
+    """A capability without a scope declaration fails to load during _activate,
+    before any caps are registered."""
+    host = PluginHost(facts=NodeFacts(node_id="w"))
+    cands = [Candidate("noscope", "test", lambda: NoScope)]
+    host.load(cands)
+    status = host.status.get("noscope", {})
+    assert status.get("state") == "failed"
+    assert "missing" in status.get("reason", "").lower() and "scope" in status.get("reason", "").lower()
+    assert not host.registry.has("noscope.bad")
+
+
+
+def test_custom_command_caps_declare_local_scope():
+    """Agent-built cmd.* caps are parameterised shell.exec on this machine."""
+    from rook.core.registry import CapabilityRegistry
+    from rook.worker.admin import WorkerAdmin
+    admin = WorkerAdmin.__new__(WorkerAdmin)   # skips reading the real custom_caps.json
+    admin.registry = CapabilityRegistry()
+    admin._register_custom("hello", {"command": "echo hi", "args": []})
+    meta = admin.registry.meta("cmd.hello")
+    assert (meta.risk, meta.scope) == ("exec", "local")
 
 def test_plugin_reload_and_disable_are_destructive():
     from rook.core import authz
