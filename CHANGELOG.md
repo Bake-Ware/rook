@@ -26,10 +26,10 @@ watch push-to-talk app.
 - Change requests: hub plugin `changes`, caps `change.*` on worker `rook`. Standard changes
   (routine deploys, reversible config) are checked, run, tested and rolled back by the hub; the
   runner waits for a step's worker after a hub restart and logs results in the home timezone.
-  (manual: change-requests)
+  (manual: trust)
 - Wear OS push-to-talk app (`android/wear`, `android/wearlink`): tap on the watch to talk; the
   phone app runs the watch's voice session over the Wear Data Layer. Ships as `rook-wear.apk`,
-  same package and signer as the phone app.
+  same package and signer as the phone app. (manual: phones-and-tablets)
 - Decision cards queue, and the phone reminds you out loud: cards are no longer emergencies, so
   they land quietly in the app (the digest channel: no pop-up, no takeover on unlock) and the hub
   asks the phone to say "Need your input: <title>" for one card or "Hey boss, you have 6

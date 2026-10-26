@@ -57,3 +57,21 @@ The app is also a front end for your agents: chat or talk to them, use a
 hands-free wake word, pick a voice, and follow what the agent is doing in the
 Chat, Activity and Decisions tabs. You can make it Android's default assistant.
 It needs the voice service on your hub, see [[manual-voice]].
+
+## A watch (Wear OS)
+
+The Rook watch app (`rook-wear.apk` in each release, version 0.1.0 and up)
+puts the voice assistant on a Wear OS watch paired with a phone that runs the
+Rook app. Open Rook on the watch (from the app list, its tile or a key you map
+to it) and it starts listening; tap to end the conversation or stop a reply.
+
+The watch is only a microphone and a speaker. It sends your voice to the Rook
+app on the paired phone, which holds the voice session with the phone's own
+voice settings and account, and plays the reply on the watch or its earbuds.
+Nothing new is trusted: the voice still checks who is speaking, as it does on
+the phone. The watch app must come from the same release as the phone app
+(same package and signature), or the two can't talk.
+
+To install it, turn on ADB debugging and Wireless debugging in the watch's
+Developer options, pair a computer with the code the watch shows, and run
+`adb install rook-wear.apk`. Allow the microphone the first time you open it.
