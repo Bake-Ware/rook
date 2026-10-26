@@ -43,7 +43,7 @@ class Rows(Plugin):
     def paged(self, limit: int = 100) -> dict:
         return {"got": limit}
 
-    @capability("one", tier="write", tags=("destructive", scope="self"), fields="*")
+    @capability("one", risk="write", tags=("destructive",), fields="*", scope="self")
     def one(self) -> dict:
         return {"a": 1, "b": 2, "items": [{"a": 1, "b": 2}]}
 
