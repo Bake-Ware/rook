@@ -12,6 +12,7 @@ costs a full prefill (about 600 tokens a second there, 2026-10-23).
 import contextlib
 import json
 import os
+import re
 
 import httpx
 
@@ -21,6 +22,7 @@ from .policy import capability_summary
 
 SPOKEN_MARK = '[Spoken response generated; playback may be interrupted]'
 SILENT_RECORD = '[Stayed silent: speech was not addressed to the assistant]'
+CUT_OFF = '[cut off]'            # Connection.heard_text marks an interrupted reply with it
 BOARD_HEADER = '\n\nKnown facts (current; you may state these):\n'
 
 RULES = (
@@ -62,9 +64,45 @@ def fixed_block(mode, tools, name=None, owner=None, sound_tags=()):
     return text.rstrip()
 
 
+_NOTE = re.compile(r'\[[^\]]*\]')
+
+
+class FragmentReply(Exception):
+    """Front stopped after a word or two with no sentence end, and nothing was spoken yet."""
+
+
+def tidy_reply(text):
+    """A Front reply as it goes back into the model's history ('' leaves it out).
+
+    The small Front model sometimes stops after a word or two ("I", "Have", "I can
+    only talk"). Fed back verbatim, one such reply makes the next ones single words
+    too, and the conversation collapses into "I" after every line (2026-10-25,
+    thirty turns in a row). So a reply of fewer than two words without a sentence
+    end is left out, a word or two after the last full sentence is dropped, and a
+    longer unfinished sentence gets its full stop; a lone letter ("I.") is left out
+    too. Square-bracket notes ([laugh], [cut off]) are kept and count as no words;
+    an interrupted reply stays as heard unless it is under two words."""
+    text = (text or '').strip()
+    words = _NOTE.sub(' ', text).split()
+    if not words:
+        return text                                  # empty, or only a sound tag
+    if len(words) == 1 and len(re.sub(r'\W', '', words[0])) < 2:
+        return ''                                    # "I." is no answer either
+    if text.endswith(CUT_OFF):
+        return text if len(words) >= 2 else ''
+    if _NOTE.sub('', text).strip().rstrip('"\')').endswith(('.', '!', '?')):
+        return text
+    ends = [m.end() for m in re.finditer(r'[.!?]["\')]*(?=\s)', text)]
+    head, tail = (text[:ends[-1]], text[ends[-1]:]) if ends else ('', text)
+    if len(_NOTE.sub(' ', tail).split()) >= 2:
+        return text.rstrip(' ,;:-') + '.'
+    return head.strip()
+
+
 def history(messages, turns):
     """The last ``turns`` user/assistant exchanges as plain text, marker-free and
-    with same-role neighbours merged (tool records and silences dropped)."""
+    with same-role neighbours merged (tool records and silences dropped, assistant
+    replies tidied by :func:`tidy_reply`)."""
     out = []
     for message in messages:
         role, content = message.get('role'), message.get('content')
@@ -73,6 +111,10 @@ def history(messages, turns):
         content = content.replace(SPOKEN_MARK, '').strip()
         if not content or content == SILENT_RECORD:
             continue
+        if role == 'assistant':
+            content = tidy_reply(content)
+            if not content:
+                continue
         if out and out[-1]['role'] == role:
             out[-1]['content'] += ' ' + content
         else:
@@ -205,10 +247,16 @@ class Transcript:
         else:
             self.messages.append({'role': 'assistant', 'content': text})
 
+    def restart(self):
+        """Rebuild from the stored history at the next request (after a fragment reply)."""
+        self.fixed = None
+
     def commit(self, reply):
-        """After the completion: ``reply`` exactly as generated (or as heard)."""
+        """After the completion: ``reply`` as generated (or as heard), tidied by
+        :func:`tidy_reply`; a well-formed reply is unchanged, so the cache holds."""
         if self.pending is None:
             return
+        reply = tidy_reply(reply)
         self.messages = self.pending + ([{'role': 'assistant', 'content': reply}] if reply else [])
         self.pending = None
 
@@ -222,9 +270,11 @@ def payload(messages):
 async def stream(messages, on_clause, on_token=None, transport=None, url=None, client=None):
     """Stream one Front reply. Calls ``on_token()`` at the first content token
     and ``on_clause(text)`` per complete clause. Returns the full text.
-    ``client``: a caller-owned httpx.AsyncClient to reuse (kept open)."""
+    ``client``: a caller-owned httpx.AsyncClient to reuse (kept open).
+    A last word or two without a sentence end is not spoken (see :func:`tidy_reply`);
+    when it is the whole reply, :class:`FragmentReply` is raised instead."""
     body = payload(messages)
-    content, first, clauses = '', True, Clauses()
+    content, first, clauses, spoke = '', True, Clauses(), False
     async with contextlib.AsyncExitStack() as stack:
         if client is None:
             kwargs = {'timeout': float(os.environ.get('VOICE_FRONT_TIMEOUT_S', '30')), 'trust_env': False}
@@ -251,7 +301,12 @@ async def stream(messages, on_clause, on_token=None, transport=None, url=None, c
                 first = False
                 content += piece
                 for clause in clauses.feed(piece):
+                    spoke = True
                     await on_clause(clause)
     for clause in clauses.flush():
+        if not tidy_reply(clause):
+            if not spoke:
+                raise FragmentReply(clause)
+            continue
         await on_clause(clause)
     return content.strip()

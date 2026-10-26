@@ -459,9 +459,17 @@ class FrontBackground:
             spoken.append(clause)
             await conn.say(clause, epoch, record=False)
         try:
-            content = await asyncio.wait_for(
-                self.front(messages, on_clause, lambda: timing.mark('front_first_token_ms')),
-                float(os.environ.get('VOICE_FRONT_TIMEOUT_S', '30')))
+            try:
+                content = await asyncio.wait_for(
+                    self.front(messages, on_clause, lambda: timing.mark('front_first_token_ms')),
+                    float(os.environ.get('VOICE_FRONT_TIMEOUT_S', '30')))
+            except front_mod.FragmentReply as fragment:
+                # A word and a stop ("I"): ask once more from the stored history, tidied.
+                logging.info('Front reply was a fragment (%d chars); asking again', len(str(fragment)))
+                self.transcript.restart()
+                messages = self.transcript.request(self.fixed(), past, self.board.facts(), text, self.house_context)
+                content = await asyncio.wait_for(self.front(messages, on_clause, None),
+                                                 float(os.environ.get('VOICE_FRONT_TIMEOUT_S', '30')))
             completed = True
         except asyncio.CancelledError:
             self.interrupted[epoch] = True
@@ -470,7 +478,8 @@ class FrontBackground:
         except Exception as error:
             logging.warning('Front reply failed: %s', type(error).__name__)
             if not spoken:
-                fallback = 'Give me a moment.'
+                fallback = ('Sorry, could you say that again?' if isinstance(error, front_mod.FragmentReply)
+                            else 'Give me a moment.')
                 spoken.append(fallback)
                 await conn.say(fallback, epoch, record=False)
         finally:

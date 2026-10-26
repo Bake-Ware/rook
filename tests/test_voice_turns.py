@@ -367,11 +367,11 @@ def test_transcript_requests_extend_each_other():
 def test_transcript_restarts_when_fixed_changes_or_it_grows():
     t = front_mod.Transcript(max_chars=200, keep_turns=6)
     t.request('A', [], [], 'x' * 150)
-    t.commit('y' * 100)
+    t.commit('Yes. ' * 20)
     assert t.resets == 1
-    t.request('A', [{'role': 'user', 'content': 'q'}, {'role': 'assistant', 'content': 'r'}], [], 'next')
-    assert t.resets == 2 and t.messages == [{'role': 'user', 'content': 'q'}, {'role': 'assistant', 'content': 'r'}]
-    t.commit('ok')
+    t.request('A', [{'role': 'user', 'content': 'q'}, {'role': 'assistant', 'content': 'Right.'}], [], 'next')
+    assert t.resets == 2 and t.messages == [{'role': 'user', 'content': 'q'}, {'role': 'assistant', 'content': 'Right.'}]
+    t.commit('Okay.')
     t.request('B', [], [], 'again')
     assert t.resets == 3
 
