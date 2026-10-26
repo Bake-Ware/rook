@@ -334,6 +334,20 @@ async def test_one_broken_device_does_not_stop_the_delegate_announcing(worker):
     assert {m["name"] for m in _announces(worker)} >= {"desk", "porch"}
 
 
+
+@pytest.mark.asyncio
+async def test_a_device_with_a_cap_missing_scope_is_left_out(worker):
+    class Unscoped(Lamp):
+        @capability("blink", risk="write")
+        def _blink(self) -> dict:
+            """Blink."""
+            return {}
+    worker.lamps.lamps.append(Unscoped("bad", "bad"))
+    await worker.announce()
+    own = [m for m in _announces(worker) if m["worker_id"] == worker.worker_id][-1]
+    assert len(own["devices"]) == 2
+    assert "bad" not in {m["name"] for m in _announces(worker)}
+
 @pytest.mark.asyncio
 async def test_devices_leave_with_their_delegate(worker):
     from rook.band_mcp import client as client_mod

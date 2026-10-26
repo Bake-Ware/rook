@@ -55,9 +55,8 @@ def _registry(plugin: Plugin) -> CapabilityRegistry:
     return reg
 
 
-def test_bare_capability_is_unchanged():
+def test_a_cap_declaring_only_scope_keeps_legacy_behaviour():
     reg = _registry(Rows())
-    # Legacy caps now declare scope but no risk
     meta = reg.meta("rows.legacy")
     assert meta is not None and meta.risk is None and meta.scope == "self"
     assert "risk" not in reg.describe()["rows.legacy"]

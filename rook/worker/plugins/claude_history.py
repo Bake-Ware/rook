@@ -508,7 +508,7 @@ class ClaudeHistoryPlugin(Plugin):
         paths, ids = processes if processes is not None else active_sessions(self.NAMESPACE.split('-')[0])
         return str(path.resolve()) in paths or self._session_id(path).lower() in ids
 
-    @capability("send", risk="exec", scope="self")
+    @capability("send", risk="exec", scope="local")
     async def _send(self, session_id: str, text: str, command_id: str) -> dict:
         """Send to this exact existing session (deprecated: use `sessions.send`).
 
@@ -522,7 +522,7 @@ class ClaudeHistoryPlugin(Plugin):
             return {"ok": False, "error": "Session is no longer active. Refresh and resume it on the host first."}
         return await deliver(agent, session_id, command_id, text)
 
-    @capability("resume", risk="exec", scope="self")
+    @capability("resume", risk="exec", scope="local")
     async def _resume(self, session_id: str, path: str | None = None,
                       name: str | None = None, cwd: str | None = None,
                       remote_control: bool = True,

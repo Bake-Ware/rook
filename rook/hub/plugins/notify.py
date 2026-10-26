@@ -41,7 +41,7 @@ class Notify(Plugin):
             return {}
         return {p.NAMESPACE: p for p in node.host.plugins if isinstance(p, ChatIntegration)}
 
-    @capability("send", risk="write", scope="self")
+    @capability("send", risk="write", scope="external")
     async def send(self, text: str, channel: str = "all") -> dict:
         """Send a notification to the chat integrations.
 
@@ -69,7 +69,7 @@ class Notify(Plugin):
             out["errors"] = errors
         return out
 
-    @capability("channels", risk="read", scope="self")
+    @capability("channels", risk="read", scope="multi-user")
     def channels(self) -> dict:
         """Which notification channels are running on this hub."""
         return {"channels": sorted(self._channels())}

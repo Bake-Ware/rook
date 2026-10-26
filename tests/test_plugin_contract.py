@@ -102,10 +102,11 @@ def _android_stubs(monkeypatch):
 
 
 def _plugin_caps(packages):
-    """[(cap, fn, module)] for every Plugin class under ``packages``."""
+    """[(cap, fn, module)] for every Plugin and Device class under ``packages``."""
     import importlib
     import inspect
     import pkgutil
+    from rook.core.devices import Device
     from rook.core.plugin import Plugin
     out = []
     for package in packages:
@@ -113,8 +114,8 @@ def _plugin_caps(packages):
         for info in pkgutil.walk_packages(pkg.__path__, package + "."):
             mod = importlib.import_module(info.name)
             for _, cls in inspect.getmembers(mod, inspect.isclass):
-                if (issubclass(cls, Plugin) and cls is not Plugin and cls.NAMESPACE
-                        and cls.__module__ == mod.__name__):
+                if (issubclass(cls, (Plugin, Device)) and cls not in (Plugin, Device)
+                        and cls.NAMESPACE and cls.__module__ == mod.__name__):
                     out += [(cap, fn, info.name) for cap, fn in cls.declared_caps().items()]
     return out
 
@@ -627,6 +628,17 @@ async def test_plugin_with_cap_missing_scope_is_rejected():
     assert "missing" in status.get("reason", "").lower() and "scope" in status.get("reason", "").lower()
     assert not host.registry.has("noscope.bad")
 
+
+
+def test_custom_command_caps_declare_local_scope():
+    """Agent-built cmd.* caps are parameterised shell.exec on this machine."""
+    from rook.core.registry import CapabilityRegistry
+    from rook.worker.admin import WorkerAdmin
+    admin = WorkerAdmin.__new__(WorkerAdmin)   # skips reading the real custom_caps.json
+    admin.registry = CapabilityRegistry()
+    admin._register_custom("hello", {"command": "echo hi", "args": []})
+    meta = admin.registry.meta("cmd.hello")
+    assert (meta.risk, meta.scope) == ("exec", "local")
 
 def test_plugin_reload_and_disable_are_destructive():
     from rook.core import authz

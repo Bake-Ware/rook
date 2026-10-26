@@ -569,7 +569,7 @@ class SessionsPlugin(Plugin):
 
     # -- caps --------------------------------------------------------------------
 
-    @capability("list", risk="read", limit=20, scope="multi-user")
+    @capability("list", risk="read", limit=20, scope="local")
     async def list(self, limit: int = 20, offset: int = 0, query: str = "",
                    live_only: bool = False) -> dict:
         """This host's agent sessions, live and idle first, then closed,
@@ -598,7 +598,7 @@ class SessionsPlugin(Plugin):
                 "items": items[offset:offset + limit], "total": total,
                 "next_offset": offset + limit if offset + limit < total else None}
 
-    @capability("follow", risk="read", tags=("sensitive",), scope="multi-user")
+    @capability("follow", risk="read", tags=("sensitive",), scope="local")
     async def follow(self, agent: str, native_id: str, offset: int = 0, version: str = "",
                      tail: int = 0) -> dict:
         """The transcript tail of a Claude or Codex session: pages from
@@ -617,7 +617,7 @@ class SessionsPlugin(Plugin):
         out = await self._call(cap, **args)
         return {**out, "agent": agent, "native_id": native_id}
 
-    @capability("send", risk="exec", scope="multi-user")
+    @capability("send", risk="exec", scope="local")
     async def send(self, agent: str, native_id: str, text: str, command_id: str = "") -> dict:
         """Put ``text`` in front of the agent as the user. Through the
         session's inbox when it has one (Claude peer messaging, Codex control
@@ -666,7 +666,7 @@ class SessionsPlugin(Plugin):
                                           f"still be running on its host ({why}). Type there."}
         return {"ok": False, "error": "This session is closed. Resume it first."}
 
-    @capability("stop", risk="exec", tags=("destructive",), scope="multi-user")
+    @capability("stop", risk="exec", tags=("destructive",), scope="local")
     async def stop_session(self, agent: str, native_id: str) -> dict:
         """End a session Rook started: close its Rook terminal (or the
         ``proc.*`` process an older resume started). A session started in

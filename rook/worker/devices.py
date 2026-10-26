@@ -15,6 +15,7 @@ import time
 from dataclasses import dataclass, field
 
 from ..core.devices import Device, device_worker_id
+from ..core.plugin import validate_caps
 from ..core.registry import CapabilityRegistry
 
 log = logging.getLogger("rook.worker.devices")
@@ -89,7 +90,11 @@ class DeviceTable:
     def _build(self, wid: str, namespace: str, dev: Device) -> DeviceEntry:
         entry = DeviceEntry(worker_id=wid, namespace=namespace, device=dev)
         reg = entry.registry
-        for dotpath, fn in dev.caps().items():
+        caps = dev.caps()
+        errors = validate_caps(caps)
+        if errors:
+            raise ValueError("; ".join(errors))
+        for dotpath, fn in caps.items():
             reg.register(dotpath, fn)
 
         def _caps_describe(prefix: str = "") -> dict:

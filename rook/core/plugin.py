@@ -9,7 +9,7 @@ Minimal plugin (unchanged from the original worker API)::
     class Clock(Plugin):
         NAMESPACE = "clock"
 
-        @capability("now", scope="multi-user")
+        @capability("now", scope="self")
         def now(self) -> float:
             return time.time()
 
@@ -141,12 +141,14 @@ def capability(suffix: str = "", *, risk: str | None = None, scope: str | None =
     ``Plugin.NAMESPACE`` when suffix is empty. Sub-namespaces in `suffix` are
     fine (``"env.get"`` → ``"shell.env.get"``).
 
-    Keyword metadata is optional and additive (see :class:`CapMeta`); a bare
-    ``@capability("x", scope="multi-user")`` behaves exactly as it always has. ``tier`` is an
-    alias of ``risk`` (the permissions spec's name for it). Every built-in
-    cap declares ``risk`` and ``scope`` (tests/test_plugin_contract.py).
+    ``scope`` is required: a plugin with a cap that has none fails to load
+    (:func:`validate_caps`). Other keyword metadata is optional and additive
+    (see :class:`CapMeta`). ``tier`` is an alias of ``risk`` (the permissions
+    spec's name for it). Every built-in cap declares ``risk`` and ``scope``
+    (tests/test_plugin_contract.py).
 
-    ``scope`` describes the capability's impact reach:
+    ``scope`` is the widest reach of the cap's effects, judged by the worst
+    case:
     - ``self``: caller's own data/session only
     - ``local``: this machine only
     - ``multi-machine``: affects multiple machines or a band
@@ -192,28 +194,12 @@ def capability(suffix: str = "", *, risk: str | None = None, scope: str | None =
     return deco
 
 
-def validate_caps(obj: Any, namespace: str = "") -> list[str]:
-    """Validate every capability on a Plugin class or instance.
-
-    Returns a list of error messages for caps missing required scope.
-    Pass a Plugin class for declared_caps validation; an instance for caps() validation."""
-    errors = []
-    cls = obj if isinstance(obj, type) else type(obj)
-    ns = namespace or (cls.NAMESPACE if hasattr(cls, "NAMESPACE") else "")
-    for name in dir(obj):
-        if isinstance(getattr(cls, name, None), property):
-            continue
-        attr = getattr(obj, name, None)
-        if attr is None or not callable(attr):
-            continue
-        suffix = getattr(attr, "_rook_cap_suffix", None)
-        if suffix is None:
-            continue
-        dotpath = ns if not suffix else f"{ns}.{suffix}"
-        meta = getattr(attr, "_rook_cap_meta", None)
-        if meta is None or meta.scope is None:
-            errors.append(f"{dotpath}: missing @capability(..., scope=...) declaration")
-    return errors
+def validate_caps(caps: dict[str, Callable[..., Any]]) -> list[str]:
+    """One error per cap in ``caps`` (``{dotpath: fn}``, as from ``caps()``)
+    that declares no ``scope``. The host refuses to load a plugin with any."""
+    return [f"{dotpath}: missing scope (declare @capability(..., scope=...))"
+            for dotpath, fn in caps.items()
+            if getattr(getattr(fn, "_rook_cap_meta", None), "scope", None) is None]
 
 
 # -- placement ---------------------------------------------------------------

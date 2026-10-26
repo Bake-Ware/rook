@@ -106,7 +106,7 @@ class AndroidSpeakPlugin(Plugin):
         except Exception:
             return False
 
-    @capability("speak", risk="write", tags=("physical",), scope="self")
+    @capability("speak", risk="write", tags=("physical",), scope="local")
     async def _speak(self, text: str, voice: str = "", rate: float = 1.0, pitch: float = 1.0,
                      interrupt: bool = False, chat: bool = True, wait: bool = True,
                      timeout: int = 60, reply: bool = False, reply_timeout: int = 8) -> dict:
@@ -232,14 +232,14 @@ class AndroidSpeakPlugin(Plugin):
                 return res
             await asyncio.sleep(POLL_S)
 
-    @capability("speak_status", risk="read", scope="self")
+    @capability("speak_status", risk="read", scope="local")
     def _status(self, id: str) -> dict:
         """State of a voice.speak id: queued, submitted, speaking, done, stopped or error."""
         if not _bridge_ready():
             return {"ok": False, "error": "not an Android host"}
         return json.loads(str(_Bridge.status(str(id))))
 
-    @capability("replies", risk="read", scope="self")
+    @capability("replies", risk="read", scope="local")
     def _replies(self, since: float = 0) -> dict:
         """Recent answers to voice.speak(reply=true), newest last: id (the speech
         id), text, via (voice/text), at_ms, line. since: epoch seconds."""
@@ -251,14 +251,14 @@ class AndroidSpeakPlugin(Plugin):
             return {"ok": False, "error": "since must be epoch seconds"}
         return json.loads(str(_Bridge.replies(since_ms)))
 
-    @capability("speak_stop", risk="write", scope="self")
+    @capability("speak_stop", risk="write", scope="local")
     def _stop(self) -> dict:
         """Stop speaking now and drop everything queued by voice.speak."""
         if not _bridge_ready():
             return {"ok": False, "error": "not an Android host"}
         return json.loads(str(_Bridge.stop()))
 
-    @capability("speak_voices", risk="read", scope="self")
+    @capability("speak_voices", risk="read", scope="local")
     async def _voices(self, locale: str = "") -> dict:
         """On-device TTS voices: name, locale, quality, network, installed.
 

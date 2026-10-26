@@ -62,7 +62,7 @@ class AndroidDevicePlugin(Plugin):
         return {"keep_awake_auto": bool(ka.autoEnabled(ctx)),
                 "keep_awake_idle_minutes": int(ka.idleMinutes(ctx))}
 
-    @capability("update", risk="admin", tags=("destructive",), scope="self")
+    @capability("update", risk="admin", tags=("destructive",), scope="local")
     def _update(self, channel: str = "") -> dict:
         """Queue an APK update from the official Rook feed. Nonblocking.
 
@@ -81,12 +81,12 @@ class AndroidDevicePlugin(Plugin):
             updater.setChannel(app_context(), chosen)
         return json.loads(str(updater.request(app_context(), False)))
 
-    @capability("update_status", risk="read", scope="self")
+    @capability("update_status", risk="read", scope="local")
     def _update_status(self) -> dict:
         """APK updater progress, installed/target versions, update channel, and required action."""
         return json.loads(str(jclass("systems.bake.rook.ApkUpdater").status(app_context())))
 
-    @capability("find", risk="exec", tags=("physical",), scope="self")
+    @capability("find", risk="exec", tags=("physical",), scope="local")
     def _find(self, seconds: int = 30) -> dict:
         """Ring at maximum alarm volume for 1–120 seconds; restores volume after.
 
@@ -97,12 +97,12 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-    @capability("find_stop", risk="exec", tags=("physical",), scope="self")
+    @capability("find_stop", risk="exec", tags=("physical",), scope="local")
     def _find_stop(self) -> dict:
         """Stop the find-device ring and restore the previous alarm volume."""
         return json.loads(str(jclass("systems.bake.rook.FindDeviceBridge").stop()))
 
-    @capability("info", risk="read", scope="self")
+    @capability("info", risk="read", scope="local")
     def _info(self) -> dict:
         """Model, Android version, screen, uptime, and battery-independent bits."""
         ctx = app_context()
@@ -135,7 +135,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("wake", risk="exec", tags=("physical",), scope="self")
+    @capability("wake", risk="exec", tags=("physical",), scope="local")
     def _wake(self, dismiss_keyguard: bool = False, hold_ms: int = 1200) -> dict:
         """Turn the screen ON (and show over the keyguard) so the accessibility
         service can interact with the lock screen. Needs 'Display over other
@@ -162,7 +162,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("unlock", risk="exec", tags=("sensitive", "physical"), scope="self")
+    @capability("unlock", risk="exec", tags=("sensitive", "physical"), scope="local")
     async def _unlock(self, pin: str = "", hold_ms: int = 9000, pre_swipe: bool = True) -> dict:
         """Unlock a PIN-secured screen: wake, surface the PIN bouncer, and tap
         the digits at keypad positions computed from the live screen size.
@@ -179,7 +179,7 @@ class AndroidDevicePlugin(Plugin):
         given = None if pin is None or not str(pin).strip() else str(pin)
         return await unlock(given, hold_ms=int(hold_ms), pre_swipe=_flag(pre_swipe))
 
-    @capability("unlock_status", risk="read", scope="self")
+    @capability("unlock_status", risk="read", scope="local")
     def _unlock_status(self) -> dict:
         """Whether an unlock PIN is saved in the app (never the PIN itself), and
         whether passive keep-awake may use it (paused after a failed automatic try)."""
@@ -188,7 +188,7 @@ class AndroidDevicePlugin(Plugin):
             return {"ok": False, "error": "not an Android host"}
         return json.loads(str(_ka("UnlockPin").status(ctx)))
 
-    @capability("keep_awake", risk="exec", tags=("physical",), scope="self")
+    @capability("keep_awake", risk="exec", tags=("physical",), scope="local")
     def _keep_awake(self, on: bool, minutes: int = 30) -> dict:
         """Keep the screen on (so it never locks) for ``minutes`` (1–1440), then
         release; on=false releases now. Wakes the screen if it is off. Holds an
@@ -205,7 +205,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("keep_awake_status", risk="read", scope="self")
+    @capability("keep_awake_status", risk="read", scope="local")
     def _keep_awake_status(self) -> dict:
         """Keep-awake state: on, mode (manual|auto), until (epoch s), remaining_s,
         overlay/wake_lock in use, screen_on, locked, the passive setting, whether
@@ -218,7 +218,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("keep_awake_settings", risk="exec", scope="self")
+    @capability("keep_awake_settings", risk="exec", scope="local")
     def _keep_awake_settings(self, auto: bool | None = None, idle_minutes: int | None = None) -> dict:
         """Change the passive setting now (same as the app's Settings screen):
         auto = "Keep phone awake while agent is working" (screen-driving caps wake
@@ -236,7 +236,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("vibrate", risk="exec", tags=("physical",), scope="self")
+    @capability("vibrate", risk="exec", tags=("physical",), scope="local")
     def _vibrate(self, ms: int = 300) -> dict:
         """Buzz the phone for ``ms`` milliseconds."""
         ctx = app_context()
@@ -264,7 +264,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("torch", risk="exec", tags=("physical",), scope="self")
+    @capability("torch", risk="exec", tags=("physical",), scope="local")
     def _torch(self, on: bool = True) -> dict:
         """Flashlight on/off (no permission needed via CameraManager)."""
         ctx = app_context()
@@ -289,7 +289,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("clipboard_set", risk="exec", scope="self")
+    @capability("clipboard_set", risk="exec", scope="local")
     def _clip_set(self, text: str) -> dict:
         """Put text on the clipboard."""
         ctx = app_context()
@@ -305,7 +305,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("clipboard_get", risk="exec", tags=("sensitive",), scope="self")
+    @capability("clipboard_get", risk="exec", tags=("sensitive",), scope="local")
     def _clip_get(self) -> dict:
         """Read the clipboard. Android 10+ blocks background reads → may be empty."""
         ctx = app_context()
@@ -325,7 +325,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("open_url", risk="exec", scope="self")
+    @capability("open_url", risk="exec", scope="local")
     def _open_url(self, url: str) -> dict:
         """Open a URL (or any Uri) in the default handler app."""
         return self._start_view(url)
@@ -344,7 +344,7 @@ class AndroidDevicePlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("launch", risk="exec", scope="self")
+    @capability("launch", risk="exec", scope="local")
     def _launch(self, package: str) -> dict:
         """Launch an installed app by package name (e.g. com.android.settings)."""
         ctx = app_context()

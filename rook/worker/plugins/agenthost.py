@@ -588,7 +588,7 @@ class AgentHost(Plugin):
                 # workspace tools to Claude Code roles on this host.
                 "workspace": "native"}
 
-    @capability("status", risk="read", scope="self")
+    @capability("status", risk="read", scope="local")
     async def _status(self) -> dict:
         """The agent harnesses on this host (claude, codex, opencode): version and
         login, re-read now; and the running turns.
@@ -596,7 +596,7 @@ class AgentHost(Plugin):
         return {"ok": True, "harnesses": await self.refresh(), "running": sorted(self._running),
                 "max_parallel": MAX_PARALLEL}
 
-    @capability("models", risk="read", scope="self")
+    @capability("models", risk="read", scope="local")
     async def _models(self, harness: str = "claude") -> dict:
         """Models a harness here can use (claude: aliases; codex: its catalog;
         opencode: ``opencode models``). Returns {ok, harness, models}."""
@@ -605,7 +605,7 @@ class AgentHost(Plugin):
             fail(f"harness {harness!r} is not installed here")
         return {"ok": True, "harness": h.name, "models": await h.models(self._run_cmd)}
 
-    @capability("turn", risk="exec", timeout=None, scope="self")
+    @capability("turn", risk="exec", timeout=None, scope="local")
     async def _turn(self, turn_id: str, prompt: str, system: str, mcp_url: str,
                     mcp_token: str, harness: str = "claude", model: str = "",
                     timeout_s: float = 180.0, max_tool_calls: int = 20,
@@ -798,7 +798,7 @@ class AgentHost(Plugin):
         out.pop("is_error", None)
         return {"ok": True, **out}
 
-    @capability("cancel", risk="exec", scope="self")
+    @capability("cancel", risk="exec", scope="local")
     async def _cancel(self, turn_id: str) -> dict:
         """Stop a running turn. Returns {ok, stopped}."""
         proc = self._running.get(str(turn_id or ""))
@@ -819,13 +819,13 @@ class AgentHost(Plugin):
             fail(f"no home for role {role!r} on this host")
         return home
 
-    @capability("roles", risk="read", scope="self")
+    @capability("roles", risk="read", scope="local")
     async def _roles(self) -> dict:
         """The role homes on this host: {ok, base, roles: [{role, path, rev,
         tools, memory_mode, memories, bytes}]}."""
         return {"ok": True, "base": str(self.roles_base), "roles": rolehome.homes(self.roles_base)}
 
-    @capability("role_memory", risk="read", scope="self")
+    @capability("role_memory", risk="read", scope="local")
     async def _role_memory(self, role: str, query: str = "", limit: int = 50) -> dict:
         """A role's memory (scope role:<id>, in its home): the memories that
         match ``query``, or the newest. Returns {ok, role, memories: [{id, kind,
@@ -834,7 +834,7 @@ class AgentHost(Plugin):
         return {"ok": True, "role": role, "memories": mem.recall(query, limit),
                 "total": len(mem.items())}
 
-    @capability("role_memory_edit", risk="write", scope="self")
+    @capability("role_memory_edit", risk="write", scope="local")
     async def _role_memory_edit(self, role: str, action: str, text: str = "",
                                 kind: str = "fact", id: str = "", by: str = "") -> dict:
         """Change a role's memory: ``action`` remember (``text``, ``kind`` fact,
@@ -850,7 +850,7 @@ class AgentHost(Plugin):
             fail(str(e))
         fail("action: remember or forget")
 
-    @capability("role_export", risk="admin", scope="self")
+    @capability("role_export", risk="admin", scope="local")
     async def _role_export(self, role: str) -> dict:
         """Pack a role's home (memory and config, not host-local scratch) to
         move it to another host. Returns {ok, role, archive (base64 tar.gz),
@@ -860,7 +860,7 @@ class AgentHost(Plugin):
         except rolehome.RoleHomeError as e:
             fail(str(e))
 
-    @capability("role_import", risk="admin", scope="self")
+    @capability("role_import", risk="admin", scope="local")
     async def _role_import(self, role: str, archive: str, sha256: str,
                            replace: bool = False) -> dict:
         """Unpack a role's home exported from another host. An existing home is
@@ -872,7 +872,7 @@ class AgentHost(Plugin):
         except rolehome.RoleHomeError as e:
             fail(str(e))
 
-    @capability("role_set_aside", risk="admin", scope="self")
+    @capability("role_set_aside", risk="admin", scope="local")
     async def _role_set_aside(self, role: str) -> dict:
         """Move a role's home out of the way on this host (after a move to
         another host); it is renamed, never deleted. Returns {ok, set_aside}."""
