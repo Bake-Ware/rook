@@ -3,10 +3,14 @@
 The store and the rules are :mod:`rook.hub.access`; the band client's
 authorizer enforces them on every call. These caps read and change it:
 
-* ``users.me`` / ``users.explain``: anyone, about themselves (no grant needed);
+* ``users.me`` / ``users.explain`` / ``users.request``: anyone, about
+  themselves (no grant needed); a request is a new person asking for access
+  in their own words;
 * ``users.list``, ``users.history``, ``users.role``, ``users.grant``,
-  ``users.revoke``: owners (and operator tokens, in-process hub code) only,
-  whatever the policy mode. Every change keeps the asker's words.
+  ``users.revoke``, ``users.settle``: owners (and operator tokens, in-process
+  hub code) only, whatever the policy mode. Every change keeps the asker's
+  words. ``users.list`` also says what waits on the owners: requests, people
+  with no access yet, and new machines and bands nobody has said who gets.
 """
 from __future__ import annotations
 
@@ -25,8 +29,11 @@ log = logging.getLogger("rook.hub.plugins.access")
 def _actor() -> str:
     p = current_principal.get()
     if p is None:
-        return "system:hub"
-    return f"{p.id} ({p.label})" if p.label and p.label != p.id else p.id
+        who = "system:hub"
+    else:
+        who = f"{p.id} ({p.label})" if p.label and p.label != p.id else p.id
+    carried = _access.via.get()
+    return f"{who} via {carried}" if carried else who
 
 
 def _gate(what: str) -> None:
@@ -47,7 +54,10 @@ class Access(Plugin):
              "nothing. `users.me` shows your own access; `users.explain` whether a call would "
              "be allowed. Owners change access with `users.grant` / `users.revoke` / "
              "`users.role`, always passing `words`: the person's own words asking for it. "
-             "Change access only when a person asks you to in conversation.\n")
+             "Change access only when a person asks you to in conversation. A new person "
+             "asks for access with `users.request` (their words); owners see what waits in "
+             "`users.list` and close a new machine or band as owners-only with "
+             "`users.settle`.\n")
 
     def __init__(self) -> None:
         super().__init__()
@@ -172,7 +182,23 @@ class Access(Plugin):
             if a.get("admin"):
                 row["operator"] = True
             out.append(row)
-        return {"users": out, "owners": sum(1 for r in out if r["role"] == "owner")}
+        return {"users": out, "owners": sum(1 for r in out if r["role"] == "owner"),
+                "waiting": self._waiting(store, {r["user"]: r for r in out})}
+
+    def _waiting(self, store: _access.AccessStore, people: dict) -> dict:
+        """What waits on the owners, in plain words."""
+        def name(uid: str, label: str = "") -> str:
+            return str((people.get(uid) or {}).get("name") or label or uid)
+        reqs = [{"id": r["id"], "user": r["user_id"], "name": name(r["user_id"], r["label"]),
+                 "words": r["words"], "state": r["state"], "ask": r["ask"],
+                 "created": r["created"]} for r in store.requests()]
+        asked = {r["user"] for r in reqs}
+        new = [{"user": uid, "name": p["name"]} for uid, p in people.items()
+               if p["role"] in ("new", "member") and not p["grants"] and uid not in asked]
+        res = [{"key": f"{r['kind']}:{r['ref']}", "kind": r["kind"], "ref": r["ref"],
+                "label": r["label"] or r["ref"], "state": r["state"], "ask": r["ask"],
+                "seen": r["seen"]} for r in store.resources()]
+        return {"requests": reqs, "no_access": new, "resources": res}
 
     @capability("history", risk="read", scope="multi-user")
     def history(self, user: str | None = None, limit: int = 50) -> dict:
@@ -205,6 +231,40 @@ class Access(Plugin):
         """Take a grant away (kept in the history with ``words``). Owners only."""
         _gate("users.revoke")
         return {"grant": self._store().revoke(grant, actor=_actor(), words=words)}
+
+    @capability("request", risk="write", scope="self")
+    def request(self, words: str) -> dict:
+        """Ask the hub's owners for access, in your own words ("the living
+        room PC and the recipes folder"). New people reach nothing until an
+        owner says what they get; the house agent puts your words to them."""
+        uid = self._me()
+        if uid is None:
+            raise PermissionError("users.request is for a signed-in person asking for themselves")
+        store = self._store()
+        if store.is_owner(uid) or (current_principal.get() is not None
+                                   and current_principal.get().fail_open()):
+            return {"user": uid, "plain": "You are an owner: you already reach everything."}
+        p = current_principal.get()
+        row = store.request(uid, words, label=str(getattr(p, "label", "") or ""))
+        return {"request": row["id"], "user": uid, "state": row["state"],
+                "plain": "Asked. An owner decides what you get; until then you reach "
+                         + ("only what you have now." if store.grants(uid) else "nothing.")}
+
+    @capability("settle", risk="admin", scope="multi-user")
+    def settle(self, what: str, words: str) -> dict:
+        """Close what waits on you, with your words: a new machine or band
+        (``worker:<id>`` / ``band:<id>``, from ``users.list`` waiting) stays
+        with the owners (and whoever grants already reach); a request
+        (``r_...``) is declined. Owners only."""
+        _gate("users.settle")
+        store = self._store()
+        what = str(what or "").strip()
+        if what.startswith("r_"):
+            return {"request": store.decline(what, actor=_actor(), words=words)}
+        kind, _, ref = what.partition(":")
+        if kind not in _access.RESOURCE_KINDS or not ref:
+            raise ValueError("what: worker:<id>, band:<id> or a request id (users.list waiting)")
+        return {"resource": store.settle(kind, ref, actor=_actor(), words=words)}
 
 
 def _plain(g: dict) -> str:

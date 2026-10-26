@@ -218,8 +218,10 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `users.history` | user?, limit=50 | read | Who changed whose access, when, and in whose words (newest first). |
 | `users.list` | — | read | Everyone with an account or access: role, grants, in plain words. |
 | `users.me` | — | read | Your own role and grants, in plain words. |
+| `users.request` | words | write | Ask the hub's owners for access, in your own words ("the living room PC and the recipes folder"). |
 | `users.revoke` | grant, words | admin | Take a grant away (kept in the history with `words`). |
 | `users.role` | user, role, words | admin | Make someone an `owner` or a `member`. |
+| `users.settle` | what, words | admin | Close what waits on you, with your words: a new machine or band (`worker:<id>` / `band:<id>`, from `users.lis… |
 
 ### approvals (relayed)
 `rook_approvals(action="summary")` says what is waiting on the person (held calls, held job calls, huddle cards, pinned questions, trust proposals); `action="list"` gives each item's name, who asked, what exactly would happen, risk, source and age. Read it back tersely: count, then name + one line each. When the person tells you their decision (also on something you did on their word), record it: `rook_approvals(action="approve"|"deny", item=<name or id>, relayed_by={"who": <person>, "quote": <their exact words>, "session": <conversation URL or id>}, reason=<why, for a deny>)`. Never relay your own judgement, never decide items they did not name, and leave held calls, trust proposals and dashboard-only items to them; withdraw your own question that no longer needs them (rook_huddle withdraw).
@@ -305,7 +307,7 @@ The hub enforces a trust map: a `sacred` host, project, repo or resource changes
 `updates.status` on worker `rook`: hub version vs the newest release, workers behind, the running rollout. Applying updates (`updates.apply_hub`, `updates.prepare_hub`, `updates.rollout`) is for operators: ask the person who runs the hub first.
 
 ### users
-People on this hub are owners (reach everything) or members (reach only what a grant names: a band, a machine, the hub's caps, a knowledge folder, or anything; optional cap patterns and a tier ceiling, default exec). New people reach nothing. `users.me` shows your own access; `users.explain` whether a call would be allowed. Owners change access with `users.grant` / `users.revoke` / `users.role`, always passing `words`: the person's own words asking for it. Change access only when a person asks you to in conversation.
+People on this hub are owners (reach everything) or members (reach only what a grant names: a band, a machine, the hub's caps, a knowledge folder, or anything; optional cap patterns and a tier ceiling, default exec). New people reach nothing. `users.me` shows your own access; `users.explain` whether a call would be allowed. Owners change access with `users.grant` / `users.revoke` / `users.role`, always passing `words`: the person's own words asking for it. Change access only when a person asks you to in conversation. A new person asks for access with `users.request` (their words); owners see what waits in `users.list` and close a new machine or band as owners-only with `users.settle`.
 <!-- END GENERATED: hub-caps -->
 
 ## Worker capabilities
