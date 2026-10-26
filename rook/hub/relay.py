@@ -489,8 +489,8 @@ class Relay:
             # Listed so agents can tell the person; never theirs to relay (own_tap).
             out.update(relayable=False, why_not=TRUST_OWN)
         if isinstance(out.get("plain"), dict):
-            # Explain (cap, args, trust cite) stays on the dashboard and the phone.
-            out["plain"] = {k: v for k, v in out["plain"].items() if k != "explain"}
+            # Explain and the command (cap, args, trust cite) stay on the dashboard and the phone.
+            out["plain"] = {k: v for k, v in out["plain"].items() if k not in ("explain", "command")}
         return out
 
     def find(self, ref: str) -> dict:

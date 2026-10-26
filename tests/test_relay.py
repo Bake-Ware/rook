@@ -39,11 +39,11 @@ def hub(chair_hub, tmp_path):
 
 def hold(ap, cap="shell.exec", tier="exec", args=None, principal="token:agent_claude",
          label="Claude web", via=(), target="box", kind="spread", reason="spread: 6th machine",
-         is_hub=False):
+         is_hub=False, context=None):
     args = {"argv": ["systemctl", "restart", "nginx"]} if args is None else args
     h, _ = ap.queue.create(principal=principal, cap=cap, tier=tier, args_hash=A.args_hash(args),
                            label=label, via=via, target_id=target, target_name=target,
-                           args=args, reason=reason, kind=kind, is_hub=is_hub)
+                           args=args, reason=reason, kind=kind, is_hub=is_hub, context=context)
     return h
 
 
@@ -69,9 +69,13 @@ async def card_and_ask(hub):
     await _call(hub, "huddle.post", {"huddle": h["room"], "text": "@qa ideas?"})
     await _settle(hub)
     await _call(hub, "huddle.write", {"action": "ask", "room": h["room"],
-                                      "text": "Ship on Friday?", "data": {"options": ["yes", "no"]}},
+                                      "text": SHIP, "data": {"options": ["yes", "no"]}},
                 GUEST)
     return h
+
+
+#: A yes/no decision says why and how to take it back (rook/hub/plain.py unready).
+SHIP = "Ship on Friday?\nWhy: the release is ready.\nUndo: ship the old build again."
 
 
 # -- the list ---------------------------------------------------------------------------
@@ -103,7 +107,7 @@ async def test_the_list_covers_every_kind_with_names_sentences_and_sources(hub):
     assert card["what"].startswith("Rerun the nightly: runs info.ping on box")
     ask, = by_kind["ask"]
     assert ask["name"] and ask["who"] == GUEST and ask["options"] == ["yes", "no"]
-    assert ask["what"] == 'get an answer: "Ship on Friday?" (options: yes / no)'
+    assert ask["what"] == f'get an answer: "{SHIP}" (options: yes / no)'
     assert ask["from"]["huddle"] == h["name"]
     # Spoken: a count, then name + one line each.
     line = summary(items)
@@ -113,7 +117,8 @@ async def test_the_list_covers_every_kind_with_names_sentences_and_sources(hub):
     pub = Relay.public(first)
     assert set(pub) <= {"kind", "id", "name", "plain", "who", "what", "risk", "from", "age",
                         "relayable", "why_not", "options"}
-    assert set(pub["plain"]) <= {"title", "for", "who", "want", "why", "risk", "explain"}
+    assert set(pub["plain"]) <= {"title", "for", "who", "want", "why", "why_full", "undo", "more",
+                                 "asked_in", "links", "risk"}
 
 
 @pytest.mark.asyncio

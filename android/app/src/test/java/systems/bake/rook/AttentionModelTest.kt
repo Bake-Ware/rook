@@ -122,6 +122,37 @@ class AttentionModelTest {
         assertEquals(1, copy.size)
     }
 
+    @Test fun answeredCardsLeaveTheStackAndComeBackWhenRefused() {
+        val book = CardBook()
+        listOf("a" to 1.0, "b" to 2.0, "c" to 3.0).forEach { (id, t) -> book.post(card(id, now = t)) }
+        assertEquals(listOf("a", "b", "c"), book.stack(10.0).map { it.id })
+        // Yes on "a": out of the card screen's stack at once, still in the book (and the app list).
+        book["a"]!!.apply { state = "sent"; decision = "approve"; sentAt = 10.0 }
+        assertEquals(listOf("b", "c"), book.stack(11.0).map { it.id })
+        assertEquals(listOf("a", "b", "c"), book.showing(11.0).map { it.id })
+        // The hub refused it: back, in its place, with the message.
+        book.update("a", "failed", "Not done: approvals are unavailable")
+        assertEquals(listOf("a", "b", "c"), book.stack(12.0).map { it.id })
+        // Confirmed: gone for good.
+        book["b"]!!.apply { state = "sent"; sentAt = 12.0 }
+        book.update("b", "done", "Approved")
+        assertEquals(listOf("a", "c"), book.stack(13.0).map { it.id })
+        // Never confirmed: offered again after a few minutes, and the sent time survives a restart.
+        book["c"]!!.apply { state = "sent"; sentAt = 20.0 }
+        assertFalse(book["c"]!!.unconfirmed(20.0 + AttentionCard.SENT_STALE_SECS - 1))
+        assertEquals(listOf("a"), book.stack(20.0 + AttentionCard.SENT_STALE_SECS - 1).map { it.id })
+        assertEquals(listOf("a", "c"), book.stack(20.0 + AttentionCard.SENT_STALE_SECS).map { it.id })
+        assertEquals(20.0, CardBook().apply { load(book.toJson()) }["c"]!!.sentAt, 0.0)
+    }
+
+    @Test fun detailsKeepTheirLinesUpToTheLongerLimit() {
+        val text = "Why: the cards fix\nUndo: roll back to 1038\nLinks: https://example.com/pull/211"
+        val c = AttentionCard.fromPost(JSONObject().put("id", "d").put("line", "Deploy hub build 1038").put("explain", text), 0.0)
+        assertEquals(text, c.explain)
+        val long = AttentionCard.fromPost(JSONObject().put("id", "e").put("line", "l").put("explain", "w ".repeat(1500)), 0.0)
+        assertEquals(AttentionCard.EXPLAIN_MAX, long.explain.length)
+    }
+
     @Test fun updateChannelUrls() {
         assertEquals("https://r.example/apk.json", UpdateChannel.url("https://r.example/", "apk.json", null))
         assertEquals("https://r.example/apk.json", UpdateChannel.url("https://r.example", "apk.json", "stable"))

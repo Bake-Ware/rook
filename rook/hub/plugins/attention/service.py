@@ -59,6 +59,9 @@ ALERT_TTL = 24 * 3600          # an alert no phone took in a day is dropped
 CARD_EXPIRES = 0
 ALERTS_KEPT = 200
 ID_MAX, LINE_MAX, EXPLAIN_MAX, SUMMARY_MAX, BODY_MAX = 64, 140, 600, 140, 600
+#: A decision card's "More details" (rook/hub/plain.py details); apps before
+#: 0.4.23 keep the first 600 characters.
+DETAILS_MAX = 2000
 URGENCIES = ("urgent", "normal")
 CHANNELS = ("urgent", "family", "approvals", "digest", "jobs")
 SIGNALS = ("seen", "opened", "dismissed", "acked", "unlocked")
@@ -127,20 +130,20 @@ def phone_kind(item: dict) -> str:
 def card_for(item: dict) -> dict:
     """The ``attention.post`` args for one waiting item (rook/hub/relay.py):
     the plain title as the line, For / Who / I want to / Why / Risk as the
-    body (always shown), the technical detail behind Explain
-    (rook/hub/plain.py)."""
+    body (always shown), and behind "More details" the full reason, the way
+    back, the exact call, where it was asked and links (rook/hub/plain.py)."""
     p = item.get("plain")
     if p:
-        explain = str(p.get("explain") or "")
+        from ...plain import clip, details, lines, short as words
+        explain = details(p)
         if not item.get("relayable", True):
             where = "Decisions" if item.get("kind") == "house" else "Approvals"
             explain = (f"{item.get('why_not') or 'Dashboard only'}: decide it on the "
-                       f"dashboard's {where} page. " + explain)
-        from ...plain import lines
+                       f"dashboard's {where} page.\n" + explain)
         return {"id": str(item["id"]), "kind": phone_kind(item),
                 "line": short(p.get("title") or "A decision for you", LINE_MAX),
-                "body": "\n".join(short(x, 200) for x in lines(p))[:BODY_MAX],
-                "explain": short(explain, EXPLAIN_MAX), "urgency": "normal",
+                "body": clip("\n".join(words(x, 200) for x in lines(p)), BODY_MAX),
+                "explain": clip(explain, DETAILS_MAX), "urgency": "normal",
                 "channel": "approvals",
                 "actions": ["yes", "no", "explain"] if item.get("relayable", True) else ["explain"],
                 "source": short(item.get("name") or "approvals", 64),
@@ -468,8 +471,10 @@ class AttentionService:
                          f"{out.get('name') or item}", "your answer on the decision card",
                          how=f"{self.person()} tapped {'Yes' if decision == 'approve' else 'No'} "
                              f"on {dev['name']}", ref=item)
-                await self._update(wid, item, "done", short(out.get("recorded") or "Done.",
-                                                            EXPLAIN_MAX))
+                # Not heard by the phone (offline, a slow band): the next sync says
+                # gone, so its card never stays on "sent".
+                posted.update(told=await self._update(
+                    wid, item, "done", short(out.get("recorded") or "Done.", EXPLAIN_MAX)))
                 return
         posted.update(state="failed", relayable_when_failed=bool(
             relay is not None and relay.may_relay(principal)))
@@ -524,8 +529,8 @@ class AttentionService:
                          else "a decision for you", how=f"on {dev['name']}", ref=ident)
         for ident in [i for i in posted if i not in items]:
             row = posted[ident]
-            if row.get("closed") or await self._update(wid, ident, "gone",
-                                                       "No longer waiting on you."):
+            if (row.get("closed") and row.get("told", True)) or await self._update(
+                    wid, ident, "gone", "No longer waiting on you."):
                 if not row.get("closed"):
                     self.log("decided", "A card is no longer waiting",
                              "it was answered elsewhere or withdrawn", how="seen by the hub",

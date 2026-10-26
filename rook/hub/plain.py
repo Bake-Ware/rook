@@ -31,6 +31,8 @@ import shlex
 from typing import Any
 
 TITLE_MAX, QUESTION_MAX, LINE_MAX, EXPLAIN_MAX = 60, 100, 220, 900
+#: "More details" on a card: the full reason, the way back, the exact call, links.
+DETAILS_MAX, WHY_MAX = 1800, 800
 #: Words for a tier, when nothing more specific is known.
 TIER_RISK = {
     "read": ("Low", "it only reads"),
@@ -57,6 +59,100 @@ def short(text: Any, limit: int) -> str:
 def _sentence(text: str) -> str:
     text = short(text, LINE_MAX)
     return text[:1].upper() + text[1:] if text else text
+
+
+def clip(text: Any, limit: int) -> str:
+    """Like :func:`short` but keeps line breaks (blank lines dropped): for
+    the multi-line "More details" text."""
+    rows = [" ".join(ln.split()) for ln in str(text or "").splitlines()]
+    text = "\n".join(r for r in rows if r)
+    if len(text) <= limit:
+        return text
+    cut = text[:limit - 1]
+    sp = max(cut.rfind(" "), cut.rfind("\n"))
+    if sp > limit // 2:
+        cut = cut[:sp]
+    return cut.rstrip(" ,;:.\n") + "…"
+
+
+# -- an asker's own labelled lines -------------------------------------------------
+#
+# Agents write asks in the same shape the person reads ("Title: …", "Why: …",
+# "Risk: …", "Undo: …"), on their own lines or run together ("Deploy? For: x.
+# Who: y."). :func:`sections` takes them apart so the title stays short and the
+# reason and the way back reach "More details" in full.
+
+_LABELS = {"Title": "title", "For": "for", "Who": "who", "I want to": "want", "Why": "why",
+           "Risk": "risk", "Undo": "undo", "Rollback": "undo"}
+_LABEL = re.compile(r"(?:^|(?<=[.?!)] ))(" + "|".join(_LABELS) + r"):\s*", re.M)
+_UNDO = re.compile(r"(?:^|(?<=[.?!)] ))(?:Undo|Rollback):", re.M)
+_URL = re.compile(r"https?://[^\s<>\"')\]]+")
+_PR = re.compile(r"(?<![\w#&/])#(\d{2,6})\b")
+
+
+def sections(text: Any) -> dict:
+    """``{lead, title?, for?, who?, want?, why?, risk?, undo?}`` from an ask's
+    text: ``lead`` is what comes before the first label (an "Undo:" inside
+    the Risk sentence counts as its own label; "Rollback:" is "Undo:")."""
+    text = str(text or "").strip()
+    out: dict = {}
+    marks = list(_LABEL.finditer(text))
+    out["lead"] = (text[:marks[0].start()] if marks else text).strip()
+    for i, m in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        key = _LABELS[m.group(1)]
+        val = " ".join(text[m.end():end].split())
+        if val and key not in out:
+            out[key] = val
+    return out
+
+
+def unready(text: Any, options: Any) -> str:
+    """Why a yes/no question can't go to the person yet ("" when it can): a
+    decision says why, in a few words of its own, and how to take it back
+    (Bake, 2026-10-25: "More details" must say more than the title)."""
+    opts = {str(o).strip().lower().rstrip(".!") for o in options or ()} \
+        if isinstance(options, list) else set()
+    if not {"yes", "no"} <= opts:
+        return ""
+    s = sections(text)
+    missing = [label for label, key in (("Why:", "why"), ("Undo:", "undo"))
+               if len(str(s.get(key) or "").split()) < 2]
+    if not missing:
+        return ""
+    return (f"a yes/no decision needs {' and '.join(missing)} lines: Why: the reason in plain "
+            "words; Undo: how to take it back (or why it can't be). Shape: \"Deploy hub build "
+            "1038 (cards fix)?\\nI want to: ...\\nWhy: ...\\nRisk: ...\\nUndo: ...\"")
+
+
+def title_of(text: Any, limit: int = TITLE_MAX) -> str:
+    """A short title from a sentence or two: the first sentence (a question
+    keeps its "?"), without parentheses when that is too long, cut at a
+    word only as a last resort."""
+    text = " ".join(str(text or "").split())
+    m = re.search(r"[.?!](?=\s|$)", text)
+    first = text[:m.end()] if m else text
+    first = first.rstrip(".") if not first.endswith("?") else first
+    if len(first) > limit:
+        bare = " ".join(re.sub(r"\s*\([^()]*\)", "", first).split())
+        first = bare if bare else first
+    return short(first, limit)
+
+
+def links(*texts: Any) -> list[str]:
+    """URLs and pull request numbers ("#151" as "PR #151") named in the
+    texts, in order, each once."""
+    seen: list[str] = []
+    for t in texts:
+        for u in _URL.findall(str(t or "")):
+            u = u.rstrip(".,;:")
+            if u not in seen:
+                seen.append(u)
+        for n in _PR.findall(str(t or "")):
+            ref = f"PR #{n}"
+            if ref not in seen and not any(f"/pull/{n}" in s for s in seen):
+                seen.append(ref)
+    return seen[:6]
 
 
 def _base(path: str) -> str:
@@ -448,15 +544,27 @@ def describe(item: dict) -> dict:
     ctx = item.get("context") if isinstance(item.get("context"), dict) else {}
     who = who_name(item.get("who_label") or item.get("who"), principal=item.get("principal"),
                    role=frm.get("role"), job=frm.get("job"))
-    why = short(ctx.get("why") or "", 200)
+    said = sections(ctx.get("why"))
+    # rook_call why=: the whole reason, less an "Undo:" it ends with.
+    why_full = said.get("why") or _UNDO.split(str(ctx.get("why") or ""), 1)[0]
+    undo = said.get("undo") or ""
+    more = ""
     call = None
     if kind == "ask":
         q = str(item.get("question_text") or "").strip()
         opts = item.get("options") or []
-        out = {"title": short(q or "A question for you", QUESTION_MAX),
-               "want": _sentence(f'get your answer to: "{short(q, 160)}"'
-                                 + (f" ({' / '.join(opts)})" if opts else "")),
-               "risk": risk_text("question")}
+        s = sections(q)
+        title = s.get("title") or title_of(s["lead"] or q, TITLE_MAX + 20) or "A question for you"
+        rest = s["lead"][len(title.rstrip("…")):].strip() if s["lead"].startswith(
+            title.rstrip("…")) else s["lead"]
+        out = {"title": short(title, QUESTION_MAX),
+               "want": _sentence(s["want"] + (f" ({' / '.join(opts)})" if opts else "")) if
+               s.get("want") else _sentence(f'get your answer to: "{short(q, 160)}"'
+                                            + (f" ({' / '.join(opts)})" if opts else "")),
+               "risk": s.get("risk") or risk_text("question")}
+        why_full = s.get("why") or why_full
+        undo = s.get("undo") or undo
+        more = rest if rest != title else ""
     elif kind == "house":
         line = str(item.get("line") or "").strip()
         cap = item.get("cap")
@@ -464,12 +572,14 @@ def describe(item: dict) -> dict:
             call = call_summary(cap, item.get("args") or {}, str(item.get("worker") or ""),
                                 hub=bool(item.get("hub")), tier=item.get("tier") or "",
                                 tags=item.get("tags") or ())
-        out = {"title": short(line or (call or {}).get("title") or "A decision for you",
-                              QUESTION_MAX),
+        out = {"title": short(title_of(line, TITLE_MAX + 20) or (call or {}).get("title")
+                              or "A decision for you", QUESTION_MAX),
                "want": _sentence(call["want"] if call else f"ask you: {line}"),
                "risk": risk_text(call["kind"], item.get("tier") or "", hub=bool(item.get("hub")))
                if call else risk_text("question")}
         who = who_name("the house agent")
+        if len(line) > len(out["title"]):
+            more = line
     elif kind == "trust":
         out = {"title": "Change the trust map",
                "want": _sentence(str(item.get("sentence") or "change the trust map")),
@@ -479,8 +589,9 @@ def describe(item: dict) -> dict:
                "Low: it only makes the trust map stricter"}
     elif kind == "card" and not item.get("cap"):
         summ = str(item.get("summary") or "").strip()
+        more = summ if len(summ) > QUESTION_MAX else ""
         if item.get("card_kind") == "ask_bake":
-            out = {"title": short(summ.rstrip("."), QUESTION_MAX) or "A question for you",
+            out = {"title": title_of(summ, QUESTION_MAX) or "A question for you",
                    "want": _sentence(f'get your answer to: "{short(summ, 160)}"'),
                    "risk": risk_text("question")}
         else:
@@ -498,25 +609,87 @@ def describe(item: dict) -> dict:
         elif kind == "card" and item.get("card_kind") == "task.create":
             title = "Create a task"
         rk = call["kind"]
+        where = str(item.get("worker") or "")
         if rk == "change" and item.get("cap") in ("task.write", "knowledge.write") or \
                 item.get("cap") == "home.session_note":
             rk = "record"
-        where = str(item.get("worker") or "")
+        # A command or a file: the title says on which machine.
+        on = _on("" if where == "the band" else where, bool(item.get("hub")))
+        machine = "command" in call or str(item.get("cap") or "").startswith("file.")
+        if machine and on and " on " not in title and where.lower() not in title.lower() \
+                and len(f"{title} {on}") <= TITLE_MAX:
+            title = f"{title} {on}"
         out = {"title": short(title, TITLE_MAX), "want": _sentence(call["want"]),
                "risk": risk_text(rk, item.get("tier") or "", hold_kind=item.get("hold_kind") or "",
                                  reason=item.get("reason") or "", where=where,
                                  hub=bool(item.get("hub")))}
-        if kind == "card" and item.get("summary") and not why:
-            why = short(item["summary"], 200)
+        if kind == "card" and item.get("summary") and not why_full:
+            why_full = str(item["summary"])
+        if call.get("command"):
+            out["command"] = short(call["command"], 400)
     out["for"] = for_text(ctx, frm)
     out["who"] = who
-    if why:
-        out["why"] = why
+    why_full = " ".join(str(why_full or "").split())
+    if why_full:
+        out["why"] = short(why_full, 200)
+        if len(why_full) > len(out["why"]):
+            out["why_full"] = short(why_full, WHY_MAX)
+    if undo:
+        out["undo"] = short(undo, 300)
+    if more:
+        out["more"] = short(more, WHY_MAX)
+    where = asked_in(item, ctx, frm)
+    if where:
+        out["asked_in"] = where
+    found = links(ctx.get("why"), item.get("question_text"), item.get("summary"),
+                  item.get("line"), item.get("explain"))
+    if found:
+        out["links"] = found
     out["explain"] = explain_text(item, call) if kind not in ("house", "ask", "trust") else short(
         (str(item.get("explain") or "") + ("; " if item.get("explain") else "")
          + f"id {item.get('id')}" + (f" ({item['name']})" if item.get("name") else "")),
         EXPLAIN_MAX)
     return out
+
+
+def asked_in(item: dict, ctx: dict, frm: dict) -> str:
+    """Where the ask came from, with the ids to find it: the task, the huddle
+    (title and three-word name), the console, the job."""
+    parts = []
+    if ctx.get("task_title") or ctx.get("task"):
+        t = str(ctx.get("task_title") or "")
+        parts.append(f"task {t} ({ctx['task']})" if t and ctx.get("task") else
+                     f"task {t or ctx['task']}")
+    huddle = str(frm.get("huddle_title") or ctx.get("huddle") or "")
+    huddle = re.sub(r"^huddle:\s*", "", huddle, flags=re.I)
+    if huddle or frm.get("huddle"):
+        name = str(frm.get("huddle") or "")
+        parts.append(f"huddle {huddle or name}" + (f" ({name})" if name and huddle and
+                                                   name != huddle else ""))
+    if ctx.get("room_title") or ctx.get("room"):
+        parts.append(f"console {ctx.get('room_title') or ctx['room']}")
+    if frm.get("job"):
+        parts.append(f"job {frm['job']}")
+    return short(", ".join(parts), 240)
+
+
+def details(p: dict) -> str:
+    """"More details" on the phone card: what the title and the always-shown
+    lines leave out, one labelled line each: the reason in full, the way
+    back, the rest of the ask, the exact command, where it was asked, links,
+    then the technical detail (cap, args, hold, ids)."""
+    rows = [f"Why: {p.get('why_full') or p.get('why') or 'the asker gave no reason'}",
+            f"Undo: {p.get('undo') or 'the asker did not say'}"]
+    if p.get("more"):
+        rows.append(f"More: {p['more']}")
+    if p.get("command"):
+        rows.append(f"Command: {p['command']}")
+    rows.append(f"Asked by: {p['who']}" + (f", in {p['asked_in']}" if p.get("asked_in") else ""))
+    if p.get("links"):
+        rows.append("Links: " + " ".join(p["links"]))
+    if p.get("explain"):
+        rows.append(f"Technical: {p['explain']}")
+    return clip("\n".join(rows), DETAILS_MAX)
 
 
 def lines(p: dict, *, explain: bool = False) -> list[str]:

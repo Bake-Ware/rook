@@ -32,6 +32,7 @@ class FakePhone:
         self.body = True            # the app shows a card body (0.4.22 and later)
         self.reminds: list[dict] = []
         self.remind_reply: dict = {"accepted": True}
+        self.unreachable_updates = 0   # attention.update calls that fail (offline, a slow band)
 
     def event(self, type_: str, **kw) -> dict:
         self.seq += 1
@@ -48,7 +49,7 @@ class FakePhone:
                                             "actions", "source", "expires_at"}
             assert len(args.get("body") or "") <= 600 and (args.get("body") or "").count("\n") <= 5
             assert len(args["id"]) <= 64 and len(args["line"]) <= 140
-            assert len(args["explain"]) <= 600 and "\n" not in args["line"]
+            assert len(args["explain"]) <= 2000 and "\n" not in args["line"]
             assert args["kind"] in ("hold", "job", "card", "ask", "alert")   # the app's KINDS
             assert args["urgency"] in ("urgent", "normal")
             assert args["channel"] in ("urgent", "family", "approvals", "digest", "jobs")
@@ -58,6 +59,9 @@ class FakePhone:
             return {"ok": True, "id": args["id"]}
         if cap == "attention.update":
             assert args["state"] in ("done", "failed", "gone")
+            if self.unreachable_updates:
+                self.unreachable_updates -= 1
+                raise RuntimeError("the phone did not answer")
             self.updates.append((args["id"], args["state"], args["message"]))
             return {"ok": True}
         if cap == "attention.poll":
@@ -141,7 +145,7 @@ async def test_new_items_are_posted_once_and_gone_items_are_withdrawn(att):
     assert card["expires_at"] == 0                        # never expires on the phone
     # The plain ask: a title as the line, For/Who/I want to/Risk as the body, the
     # technical detail (cap, worker, hold id) only behind Explain.
-    assert card["line"] == "Restart nginx"
+    assert card["line"] == "Restart nginx on box"
     assert card["body"].split("\n") == [
         "For: no task", "Who: Claude web", "I want to: Restart the service nginx on box",
         "Risk: Medium: it runs a command that can change things; this agent is reaching many "
@@ -179,17 +183,17 @@ async def test_an_older_app_gets_the_body_folded_into_line_and_explain(att):
     first = hold(att.ap)
     await att.att.service.tick()
     card = att.phone.cards[first["id"]]
-    assert "body" not in card and card["line"] == "Restart nginx"
+    assert "body" not in card and card["line"] == "Restart nginx on box"
     assert card["explain"].startswith("For: no task Who: Claude web I want to: Restart the "
                                       "service nginx on box Risk: Medium")
-    assert "Details: shell.exec on box" in card["explain"]
+    assert "Details: Why: " in card["explain"] and "Technical: shell.exec on box" in card["explain"]
     tries = [c for c in att.phone_calls if c.cap == "attention.post"]
     assert len(tries) == 2                       # one refused, one folded
     second = hold(att.ap, args={"argv": ["df", "-h"]})
     await att.att.service.tick()
     tries = [c for c in att.phone_calls if c.cap == "attention.post"]
     assert len(tries) == 3 and "body" not in tries[-1].args   # remembered: no refused try
-    assert att.phone.cards[second["id"]]["line"] == "Look at files"
+    assert att.phone.cards[second["id"]]["line"] == "Look at files on box"
     # The app updated (a new version): bodies again.
     att.phone.body = True
     att.band.workers[PHONE]["version"] = "0.4.22-beta.1"
@@ -222,6 +226,43 @@ async def test_a_tap_is_relayed_with_exact_attribution(att):
     assert [u for u in att.phone.updates if u[0] == item["id"]] == done
     # The same tap is never replayed.
     assert att.phone.polls[-1] == ev["seq"]
+
+
+@pytest.mark.asyncio
+async def test_a_done_the_phone_missed_is_sent_again_as_gone(att):
+    """The phone moved on at once (its card left the stack on the tap); if the
+    hub's "done" never reaches it, the card sync says gone, so its copy never
+    stays on "sent"."""
+    att.configure()
+    item = hold(att.ap)
+    await att.att.service.tick()
+    att.ap.queue.set_relayer(f"device:{PHONE}", True, "human:bake", "pixel (phone)")
+    att.phone.tap(item["id"], "approve")
+    att.phone.unreachable_updates = 1
+    await att.att.service.tick()
+    assert att.ap.queue.get(item["id"])["state"] == "approved"
+    # The same round's card sync tries again.
+    assert [u[:2] for u in att.phone.updates if u[0] == item["id"]] == [(item["id"], "gone")]
+    assert item["id"] not in att.att.service.state["devices"][PHONE]["posted"]
+    await att.att.service.tick()
+    assert len([u for u in att.phone.updates if u[0] == item["id"]]) == 1
+
+
+@pytest.mark.asyncio
+async def test_more_details_carry_the_why_the_undo_and_the_exact_call(att):
+    att.configure()
+    item = hold(att.ap, context={"why": "Free the GPU for the voice (PR #151). "
+                                        "Undo: systemctl start nginx on box"})
+    await att.att.service.tick()
+    card = att.phone.cards[item["id"]]
+    rows = card["explain"].split("\n")
+    assert rows[0] == "Why: Free the GPU for the voice (PR #151)."
+    assert rows[1] == "Undo: systemctl start nginx on box"
+    assert "Command: systemctl restart nginx" in rows
+    assert any(r.startswith("Asked by: Claude web") for r in rows)
+    assert "Links: PR #151" in rows and rows[-1].startswith("Technical: shell.exec on box")
+    # The always-shown lines stay short: the reason without its undo.
+    assert "Why: Free the GPU for the voice (PR #151)." in card["body"].split("\n")
 
 
 @pytest.mark.asyncio

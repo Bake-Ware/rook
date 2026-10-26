@@ -32,7 +32,7 @@ KINDS = ("hold", "job", "card", "ask", "alert")
 CHANNELS = ("urgent", "family", "approvals", "digest", "jobs")
 ACTIONS = ("yes", "no", "explain", "ack")
 STATES = ("done", "failed", "gone")
-LINE_MAX, EXPLAIN_MAX, ID_MAX = 140, 600, 64
+LINE_MAX, EXPLAIN_MAX, ID_MAX = 140, 2000, 64
 BODY_MAX, BODY_LINES = 600, 6
 RULES_MAX_BYTES = 64 * 1024
 REMIND_TEXT_MAX = 300
@@ -206,7 +206,7 @@ class AndroidAttentionPlugin(Plugin):
         body: optional short lines always shown under the title, e.g. "For: ...",
         "Who: ...", "I want to: ...", "Risk: ..." one per line (newlines kept,
         blank lines dropped, at most 6 lines / 600 chars).
-        explain: the technical detail shown on Explain (600 chars). urgency: urgent rings
+        explain: shown under More details (2000 chars, newlines kept). urgency: urgent rings
         like an alarm and takes over the screen (also channel=urgent); normal is a
         heads-up that opens the card when the phone is next unlocked.
         channel: urgent|family|approvals|digest|jobs. actions: subset of

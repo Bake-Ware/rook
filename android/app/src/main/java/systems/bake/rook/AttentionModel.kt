@@ -19,6 +19,8 @@ class AttentionCard(
     var state = "pending"
     var message = ""
     var decision = ""
+    /** When the decision went out (state sent): the card screen moves on at once, and brings it back if the hub never confirms. */
+    var sentAt = 0.0
     /** Put away without a decision (swiped or Later): no more takeovers on unlock. */
     var dismissed = false
     var seen = false
@@ -33,11 +35,13 @@ class AttentionCard(
      */
     val waiting get() = !urgent && channel == "digest" && actions.any { it == "yes" || it == "no" }
     fun expired(now: Double) = expiresAt > 0 && now >= expiresAt
+    /** Sent long ago and never confirmed or refused by the hub: offered again. */
+    fun unconfirmed(now: Double) = state == "sent" && now - sentAt >= SENT_STALE_SECS
 
     fun toJson(): JSONObject = JSONObject().put("id", id).put("kind", kind).put("line", line).put("body", body).put("explain", explain)
         .put("urgency", urgency).put("channel", channel).put("actions", JSONArray(actions)).put("source", source)
         .put("expires_at", expiresAt).put("created", created).put("local", local).put("state", state)
-        .put("message", message).put("decision", decision).put("dismissed", dismissed).put("seen", seen).put("opened", opened)
+        .put("message", message).put("decision", decision).put("sent_at", sentAt).put("dismissed", dismissed).put("seen", seen).put("opened", opened)
 
     companion object {
         val KINDS = setOf("hold", "job", "card", "ask", "alert")
@@ -45,7 +49,10 @@ class AttentionCard(
         val ACTIONS = listOf("yes", "no", "explain", "ack")
         val TAKEOVER_CHANNELS = setOf("approvals", "family")
         const val LINE_MAX = 140
-        const val EXPLAIN_MAX = 600
+        /** "More details": the full why, the undo, the exact call, where it was asked, links. */
+        const val EXPLAIN_MAX = 2000
+        /** A decision the hub has not confirmed in this long comes back to the card screen. */
+        const val SENT_STALE_SECS = 300.0
         const val BODY_MAX = 600
         const val BODY_LINES = 6
 
@@ -86,6 +93,7 @@ class AttentionCard(
             o.optString("source"), o.optDouble("expires_at", 0.0), o.optDouble("created", 0.0), o.optBoolean("local"),
             o.optString("body")).apply {
             state = o.optString("state", "pending"); message = o.optString("message"); decision = o.optString("decision")
+            sentAt = o.optDouble("sent_at", 0.0)
             dismissed = o.optBoolean("dismissed"); seen = o.optBoolean("seen"); opened = o.optBoolean("opened")
         }
     }
@@ -127,6 +135,12 @@ class CardBook(private val cap: Int = 100) {
 
     /** What the card screen and the app list show, oldest first. */
     fun showing(now: Double): List<AttentionCard> = cards.values.filter { !it.expired(now) }.sortedBy { it.created }
+
+    /**
+     * The card screen's stack: what [showing] lists less the decisions already sent, so an answer
+     * moves on at once. A failed one is back (with its message), and so is one the hub never confirmed.
+     */
+    fun stack(now: Double): List<AttentionCard> = showing(now).filter { it.state != "sent" || it.unconfirmed(now) }
 
     /** Cards that may take over the screen on unlock. */
     fun takeovers(now: Double): List<AttentionCard> = showing(now).filter { it.takeover && it.state == "pending" && !it.dismissed }

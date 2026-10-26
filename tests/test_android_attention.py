@@ -63,11 +63,11 @@ def plugin(mod, monkeypatch, store=None):
 
 
 def test_clean_post_defaults_and_clips(mod):
-    c = mod.clean_post("hold-1", line="Restart the hub?  \n now", explain="x" * 700)
+    c = mod.clean_post("hold-1", line="Restart the hub?  \n now", explain="x" * 2100)
     assert c["kind"] == "card" and c["channel"] == "approvals" and c["urgency"] == "normal"
     assert c["actions"] == ["yes", "no", "explain"]
     assert c["line"] == "Restart the hub? now"
-    assert len(c["explain"]) == 600 and c["explain"].endswith("…")
+    assert len(c["explain"]) == 2000 and c["explain"].endswith("…")
     assert len(mod.clean_post("a", line="y" * 300)["line"]) == 140
     assert mod.clean_post("a", kind="alert", line="Fire drill")["actions"] == ["ack"]
     # Order follows the contract, duplicates and case collapse.

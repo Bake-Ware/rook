@@ -170,7 +170,9 @@ async def test_a_sacred_action_becomes_a_one_line_ask_in_the_approvals_list(fron
     assert item["options"] == ["Yes", "No", "Explain"]
     assert BAKE_KAIJU in item["explain"] and len(item["explain"]) <= F.EXPLAIN_MAX
     card = card_for(item)
-    assert card["line"] == item["line"] and card["actions"] == ["yes", "no", "explain"]
+    # The title is the ask's first sentence; the whole line is under More details.
+    assert card["line"] == "Restart strata on kaiju?" and card["actions"] == ["yes", "no", "explain"]
+    assert item["line"] in card["explain"]
     assert BAKE_KAIJU in card["explain"]
     more = front.front.explain(item["name"], more=True)
     assert "systemctl" in more["more"] and "kaiju" in more["cite"]
