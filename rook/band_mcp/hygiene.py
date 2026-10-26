@@ -108,9 +108,17 @@ class Hygiene:
                 continue  # already handled this idle period
             if not self._dirty(c):
                 continue
+            idle_min = int((now - c["last_active"]) // 60)
+            # The claim's whiteboard is the handoff (knowledge/whiteboard.py):
+            # saved from its board, nobody needs asking.
+            board = getattr(self.knowledge, "board_handoffs", None)
+            if board is not None and board(c["actor"], tasks=[c["task"]], reason=f"idle {idle_min} min"):
+                outcome = {"action": "whiteboard_handoff"}
+                store.mark_claim(c["id"], nudged=now, actor=SYSTEM, note="whiteboard_handoff", data=outcome)
+                done.append({"claim": c["id"], "task": c["task"], **outcome})
+                continue
             if self._already_told(c):
                 continue  # its idle_claim finding already rode a reply this idle period
-            idle_min = int((now - c["last_active"]) // 60)
             outcome = await self._nudge(c, idle_min)
             if outcome["action"] == "marked_dirty":
                 store.mark_claim(c["id"], nudged=now, dirty=now, actor=SYSTEM,

@@ -2,8 +2,10 @@
 needs to start work, once, and knows when to tell it again.
 
 The first reply of an MCP session carries ``_brief``: who the caller acts as,
-the tasks it has claimed with each one's latest handoff, unread chat, and a few
-working rules. It replaces the start-of-session round of ``rook_whoami``, the
+the tasks it has claimed with each one's latest handoff and whiteboard
+(rook/hub/plugins/knowledge/whiteboard.py: the work its calls did, its
+decisions and open items), unread chat, and a few working rules. So an agent
+whose context was compacted gets its working state back without asking. It replaces the start-of-session round of ``rook_whoami``, the
 deck, ``rook_handoff_list`` and ``rook_chat_rooms`` calls.
 
 The brief carries a short ``receipt`` and every Rook tool accepts
@@ -27,6 +29,8 @@ import json
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass
+
+from ..hub.plugins.knowledge import whiteboard as _wb
 
 log = logging.getLogger("rook.band_mcp.brief")
 
@@ -119,6 +123,9 @@ def standing(actor: str, kind: str) -> list[str]:
         "it lists your claimed work with its latest handoff, and unread chat, when there are any.",
         "Pass this brief's receipt as receipt= on every Rook tool call. A reply that carries _brief "
         "again means the hub thinks you lost it: read it again.",
+        "Each claim has a whiteboard the hub keeps from your calls and their why: "
+        'rook_task(action="whiteboard") reads it; add decisions and open items with '
+        'rook_task(action="jot", data={"decision": …, "open": …}). It becomes the handoff when you stop.',
         "Continuing a claim: check its handoff's freshness (STALE or SUPERSEDED: verify before acting). "
         'New work: rook_task(action="deck", data={"states": ["in_progress", "blocked"]}), narrowed '
         "by project, then claim it.",
@@ -138,15 +145,16 @@ def _clip(text, limit: int = MAX_TEXT):
     return text[:limit - 1] + "…"
 
 
-def claimed(knowledge, sessions, actor: str) -> list[dict]:
-    """The caller's open claims, newest first, each with its latest handoff."""
+def claimed(knowledge, sessions, actor: str, first: str | None = None) -> list[dict]:
+    """The caller's open claims, newest first (``first``, this session's
+    task, leads), each with its latest handoff and its whiteboard."""
     store = knowledge.store
     out = []
     with store.db(False) as db:
         rows = db.execute(
-            "SELECT r.id, r.slug, r.title, r.state FROM claims c JOIN records r ON r.id = c.task "
-            "WHERE c.actor = ? AND c.released IS NULL ORDER BY c.started DESC LIMIT ?",
-            (actor, MAX_CLAIMS)).fetchall()
+            "SELECT r.id, r.slug, r.title, r.state, c.id claim FROM claims c JOIN records r ON r.id = c.task "
+            "WHERE c.actor = ? AND c.released IS NULL ORDER BY r.id = ? DESC, c.started DESC LIMIT ?",
+            (actor, first or "", MAX_CLAIMS)).fetchall()
         named = store._names(db, [r["id"] for r in rows])
         refs = {}
         for r in rows:
@@ -157,8 +165,22 @@ def claimed(knowledge, sessions, actor: str) -> list[dict]:
                 "slug": r["slug"], "title": r["title"], "state": r["state"]}
         if refs[r["id"]]:
             item["handoff"] = _handoff(sessions.get(refs[r["id"]], history=False))
+        board = _whiteboard(store, r["claim"])
+        if board:
+            item["whiteboard"] = board
         out.append(item)
     return out
+
+
+def _whiteboard(store, claim: str) -> dict | None:
+    if not hasattr(store, "board_of"):
+        return None
+    try:
+        board = store.board_of(claim, _wb.BRIEF_WORK)
+    except Exception:  # noqa: BLE001 — the brief goes out without it
+        log.exception("whiteboard for the session brief failed")
+        return None
+    return _wb.brief(board) if board else None
 
 
 def _handoff(got: dict) -> dict | None:

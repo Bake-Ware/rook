@@ -16,13 +16,14 @@ import asyncio
 import logging
 import time
 from ....band_mcp.secret_mask import scrub
+from . import whiteboard
 from .store import KnowledgeStore, Unresolved
 from .search import RELATED_MAX, Search
 
 log = logging.getLogger(__name__)
 
-WRITES = ('create', 'update', 'link', 'retract', 'claim', 'release', 'review', 'note', 'batch')
-BATCH_OPS = ('create', 'update', 'link', 'retract', 'claim', 'release', 'note')
+WRITES = ('create', 'update', 'link', 'retract', 'claim', 'release', 'review', 'note', 'jot', 'batch')
+BATCH_OPS = ('create', 'update', 'link', 'retract', 'claim', 'release', 'note', 'jot')
 BATCH_MAX = 50
 CLOSED_TASK = ('done', 'closed', 'cancelled', 'archived')
 
@@ -94,10 +95,11 @@ class KnowledgeService:
             log.exception('hygiene hook %s failed', name)
             return None
 
-    def auto_link(self, actor, kind, ref, relation='touched', note='', task=None):
-        """The store's auto_link plus its hygiene trigger (a handoff on
-        in-progress work asks for a state). Returns the task id or None."""
-        linked = self.store.auto_link(actor, kind, ref, relation=relation, note=note, task=task)
+    def auto_link(self, actor, kind, ref, relation='touched', note='', task=None, board=None):
+        """The store's auto_link (which also writes the claim's whiteboard
+        line; ``board`` adds {text, worker, cap, ok}) plus its hygiene trigger
+        (a handoff on in-progress work asks for a state). Returns the task id or None."""
+        linked = self.store.auto_link(actor, kind, ref, relation=relation, note=note, task=task, board=board)
         if linked:
             self._hook('on_link', actor, linked, kind, ref, relation, True)
         return linked
@@ -158,7 +160,7 @@ class KnowledgeService:
         except ValueError:
             return ref, None
 
-    def _inline_handoff(self, band, actor, rid, data):
+    def _inline_handoff(self, band, actor, rid, data, note='inline handoff'):
         """Save data.handoff via the handoff store and link it to the task."""
         h = data.pop('handoff', None)
         if not h:
@@ -177,7 +179,39 @@ class KnowledgeService:
         thread = self.handoffs(actor['id'], h)
         return self.store.mutate(band, actor, f'handoff:{thread}:{time.time_ns()}', 'link',
                                  {'id': rid, 'kind': 'handoff', 'ref': thread, 'relation': 'produced',
-                                  'note': 'inline handoff'})
+                                  'note': note})
+
+    def _task_thread(self, rid):
+        with self.store.db(False) as db:
+            mine = [l for l in self.store._live_links(db, rid) if l['kind'] == 'handoff']
+        return mine[-1]['ref'] if mine else None
+
+    def board_handoffs(self, actor_id, tasks=None, reason='session ended'):
+        """The automatic handoff (whiteboard.py): for each of ``actor_id``'s
+        open claims (only ``tasks`` when given) whose whiteboard has work since
+        the task's last handoff, save the board as the task's handoff and link
+        it. Returns the task ids handed off. Bookkeeping: never raises."""
+        done = []
+        if not self.handoffs or not actor_id:
+            return done
+        try:
+            claims = [c for c in self.store.active_claims() if c['actor'] == actor_id
+                      and (tasks is None or c['task'] in tasks)]
+        except Exception:
+            log.exception('whiteboard handoff: claims lookup failed')
+            return done
+        for c in claims:
+            try:
+                h = self.store.board_handoff(c['task'], actor_id, reason)
+                if h is None:
+                    continue
+                thread = self._task_thread(c['task'])
+                tid = self.handoffs(actor_id, {**h, **({'thread_id': thread} if thread else {})})
+                self.store.link_board_handoff(c['task'], actor_id, tid)
+                done.append(c['task'])
+            except Exception:
+                log.exception('whiteboard handoff for %s failed', c['task'])
+        return done
 
     def _deck(self, band, rid, data, fields, lean):
         """The deck, led by its totals: ``total_projects`` / ``total_tasks``
@@ -356,6 +390,21 @@ class KnowledgeService:
         actor = actor or self.actor()
         if action == 'batch':
             return await self._batch(band, kind, data, request_id, actor, lean)
+        if action in ('whiteboard', 'jot') and not rid:
+            # Your own board: this session's claim, else your newest.
+            claim = self.store.current_claim(actor['id'])
+            if claim is None:
+                if action == 'jot':
+                    raise ValueError('No claimed task: claim one (rook_task action=claim), then jot; '
+                                     'or pass id=<task>')
+                return {'boards': [], 'hint': 'No claimed task. Claim one: the hub keeps its whiteboard '
+                                              'from your calls and their why.'}
+            band, rid = claim['band'], claim['task']
+        if action == 'whiteboard':
+            b, rid, resolved = self.resolve(band, rid)
+            got = self.store.whiteboards(b, rid, actor['id'], data.get('claims', 3),
+                                         data.get('limit', whiteboard.WORK_SHOWN))
+            return {**got, **({'resolved': resolved} if resolved else {})}
         if action in ('get', 'update', 'link', 'retract', 'claim', 'release', 'review', 'note') and not rid:
             raise ValueError(f'{action} needs id (a record id or slug; for retract, the link id)')
         resolved = None
@@ -413,12 +462,28 @@ class KnowledgeService:
                     'maintenance_error': self.last_error}
         if action not in WRITES:
             raise ValueError('Actions: bands, deck, board, hygiene, list, get, search, context, status, '
-                             'create, update, link, retract, claim, release, note, batch')
+                             'whiteboard, create, update, link, retract, claim, release, note, jot, batch')
         if action == 'review':
             data = {k: data.get(k) for k in ('revision', 'verdict', 'note')}
         if action in ('update', 'release'):
             record = self.store.get(b, rid)
-            self._inline_handoff(b, actor, record['id'], data)
+            note = 'inline handoff'
+            to = (data.get('patch') or {}).get('state') if isinstance(data.get('patch'), dict) else None
+            stopping = action == 'release' or (record['state'] == 'in_progress' and to in ('paused', 'blocked', 'todo'))
+            if stopping and not data.get('handoff'):
+                # No handoff given: the whiteboard of the claim being stopped
+                # is the handoff, when it has work since the last one. A
+                # release's own claim; a state change's caller's, else the
+                # claim active most recently (a person stopping an agent's work).
+                if action == 'release':
+                    h = self.store.board_handoff(record['id'], str(data.get('actor') or '').strip()[:200]
+                                                 or actor['id'], 'claim released')
+                else:
+                    h = (self.store.board_handoff(record['id'], actor['id'], f'set {to}')
+                         or self.store.board_handoff(record['id'], None, f'set {to}'))
+                if h:
+                    data['handoff'], note = h, 'automatic handoff from the whiteboard'
+            self._inline_handoff(b, actor, record['id'], data, note)
         if rid:
             data['id'] = rid
         if kind and action == 'create':
@@ -426,6 +491,12 @@ class KnowledgeService:
         if action == 'retract':
             data.setdefault('link', rid)
         result = self.store.mutate(b, actor, request_id, action, data)
+        if action == 'claim' or (action in ('jot', 'note') and self.store.claimed_by(actor['id'], rid)):
+            # This session's calls now go to that claim (a session that
+            # reconnected after its idle timeout points itself again this way).
+            whiteboard.bind(result.get('task') or rid)
+        elif action == 'release' and not data.get('actor'):
+            whiteboard.bind(None, unless=result['task'])
         if action == 'update' and result.get('kind') == 'task' and result.get('state') in CLOSED_TASK \
                 and record['state'] not in CLOSED_TASK:
             closed = self._close_handoffs(b, actor, result)

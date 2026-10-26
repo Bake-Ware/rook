@@ -211,6 +211,22 @@ def build_server(client: "BandClient | MultiBandClient",
     # accepts; a missing or stale receipt brings the brief back.
     from . import brief as _brief
     _briefs = _brief.Briefs()
+    # Whiteboard (rook/hub/plugins/knowledge/whiteboard.py): per MCP session,
+    # the task it claimed, so its calls fill that claim's board even when the
+    # same actor (one token) has other sessions on other tasks.
+    from ..hub.plugins.knowledge import whiteboard as _wb
+    _wb_sessions: "OrderedDict[str, dict]" = OrderedDict()
+
+    def _wb_session(sid) -> dict | None:
+        if not sid:
+            return None
+        s = _wb_sessions.get(sid)
+        if s is None:
+            s = _wb_sessions[sid] = {}
+            while len(_wb_sessions) > 5000:
+                _wb_sessions.popitem(last=False)
+        _wb_sessions.move_to_end(sid)
+        return s
     _receipt_tools: set[str] = set()  # tools advertised with receipt= (end of build_server)
     _native_receipt: set[str] = set()  # tools with an argument of their own by that name
 
@@ -245,7 +261,7 @@ def build_server(client: "BandClient | MultiBandClient",
     def _with_brief(name, arguments, result, due):
         session, reason, actor, ident, kind = due
         k = getattr(mcp, "_rook_knowledge", None)
-        claims = _brief.claimed(k, sessions, actor) if k is not None else []
+        claims = _brief.claimed(k, sessions, actor, first=_wb.session_task()) if k is not None else []
         body = _brief.build(reason, actor, kind, claims=claims,
                             handoffs=[] if claims else _brief.own_handoffs(sessions, actor),
                             unread=chat.unread_summary(ident))
@@ -293,6 +309,7 @@ def build_server(client: "BandClient | MultiBandClient",
         preset = _hub_authz.current_principal.set(principal)
         gtok = _approvals.gated_caps.set(frozenset())
         rtok = _approvals.own_resource.set(_own_resource(name, arguments))
+        wtok = _wb.SESSION.set(_wb_session(_sid(context)))
         try:
             await _authorize_tool(name, arguments, principal)
             try:
@@ -315,6 +332,7 @@ def build_server(client: "BandClient | MultiBandClient",
                     _briefs.held(due[0], due[1])
             return _with_hygiene(name, result, context)
         finally:
+            _wb.SESSION.reset(wtok)
             _approvals.own_resource.reset(rtok)
             _approvals.gated_caps.reset(gtok)
             _hub_authz.current_principal.reset(preset)
@@ -430,12 +448,25 @@ def build_server(client: "BandClient | MultiBandClient",
             return result
 
     def _session_gone(sid: str) -> None:
-        """Any end of an MCP session (BoundedSessionManager.on_session_gone)."""
+        """Any end of an MCP session (BoundedSessionManager.on_session_gone).
+        An idle timeout (5 min) is not the agent stopping: its whiteboard
+        waits for the idle-claim check (band_mcp/hygiene.py)."""
         _session_actor.pop(sid, None)
         _briefs.forget(sid)
+        _wb_sessions.pop(sid, None)
 
     def _session_ended(sid: str) -> None:
+        """The client closed its session: the whiteboard is the handoff
+        (whiteboard.py) for the claim it was on, or for all the actor's
+        open claims when this was its last session."""
         actor = _session_actor.pop(sid, None)
+        bound = (_wb_sessions.pop(sid, None) or {}).get("task")
+        live = getattr(mcp._session_manager, "_server_instances", None)
+        last = not any(who == actor and (live is None or other in live)
+                       for other, who in _session_actor.items())
+        k = getattr(mcp, "_rook_knowledge", None)
+        if actor and k is not None and (bound or last):
+            k.board_handoffs(actor, tasks=None if last else [bound])
         k, engine = _hygiene_engine()
         if not actor or engine is None:
             return
@@ -776,16 +807,19 @@ def build_server(client: "BandClient | MultiBandClient",
         except Exception:
             return ""
 
-    def _auto_link(kind: str, ref, note: str = "", task: str | None = None) -> str | None:
+    def _auto_link(kind: str, ref, note: str = "", task: str | None = None,
+                   board: dict | None = None) -> str | None:
         """Attach an artifact to the caller's claimed task, if any (design §3),
-        or to ``task`` when the caller names one. Bookkeeping only; never
-        affects the call."""
+        or to ``task`` when the caller names one; it also becomes a line on
+        that claim's whiteboard (``board``: {text, worker, cap, ok}).
+        Bookkeeping only; never affects the call."""
         k = getattr(mcp, "_rook_knowledge", None)
         if k is None or not ref:
             return None
         try:
             link = getattr(k, "auto_link", None) or k.store.auto_link
-            return link(k.actor(), kind, ref, note=note, task=task)
+            return link(k.actor(), kind, ref, note=note, task=task,
+                        **({"board": board} if board else {}))
         except Exception:
             log.exception("auto-link failed")
             return None
@@ -1100,7 +1134,8 @@ def build_server(client: "BandClient | MultiBandClient",
             cid = journal.record(cap=cap, worker=worker_name, identity=identity,
                                  args=args, reply=timeout_reply,
                                  audit=_caller_audit(), authz=_decision_row(), why=why)
-            _auto_link("journal", cid, f"{cap} on {worker_name} (timed out)")
+            _auto_link("journal", cid, f"{cap} on {worker_name} (timed out)",
+                       board={"text": why or cap, "worker": worker_name, "cap": cap, "ok": False})
             basis = (f"the call's own {own:.0f}s timeout + {_WAIT_MARGIN:.0f}s" if own
                      else f"the {_DEFAULT_WAIT:.0f}s default; {cap!r} declares no timeout")
             return _fail(f"no reply from {where} within {wait:.0f}s ({basis}; "
@@ -1140,7 +1175,9 @@ def build_server(client: "BandClient | MultiBandClient",
         cid = journal.record(cap=cap, worker=worker_name, identity=identity,
                              args=args, reply=journal_reply, audit=_caller_audit(),
                              authz=_decision_row(), why=why)
-        linked = _auto_link("journal", cid, f"{cap} on {worker_name}")
+        linked = _auto_link("journal", cid, f"{cap} on {worker_name}",
+                            board={"text": why or cap, "worker": worker_name, "cap": cap,
+                                   "ok": bool(isinstance(reply, dict) and reply.get("ok"))})
         task_error = None
         if (cap == "work.stream.open" and isinstance(args, dict) and args.get("task")
                 and isinstance(reply, dict) and reply.get("ok")
@@ -1657,7 +1694,9 @@ def build_server(client: "BandClient | MultiBandClient",
         opened["pid"] = result.get("pid")
         if transport == "term":
             opened["terminal"] = result["handle"]
-        task_id = linked_task or _auto_link("console", opened.get("room") or opened.get("id"), task[:200])
+        task_id = linked_task or _auto_link("console", opened.get("room") or opened.get("id"), task[:200],
+                                            board={"text": f"opened console: {task}",
+                                                   "worker": w.get("name") or target})
         if task_id:
             opened["task"] = task_id
         opened["note"] = ("Session is live. Output is pumped into this room — "
@@ -1804,6 +1843,12 @@ def build_server(client: "BandClient | MultiBandClient",
                          f"later; the raw transcript is not.")
         frozen = console.freeze(room, summary=summary, by=ident)
         _hygiene("on_console_closed", room)
+        k = getattr(mcp, "_rook_knowledge", None)
+        if k is not None:
+            try:
+                k.store.board_console(room, f"closed console {r.get('title') or label}: {summary}")
+            except Exception:  # noqa: BLE001 — bookkeeping
+                log.exception("whiteboard console line failed")
         return json.dumps(frozen, indent=2)
 
     @mcp.tool()

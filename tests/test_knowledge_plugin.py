@@ -62,7 +62,7 @@ async def test_pre_plugin_database_upgrades_losslessly_in_place(tmp_path, monkey
     assert dump(db) == before
     raw = sqlite3.connect(db)
     assert raw.execute("SELECT namespace, version FROM _rook_migrations ORDER BY version").fetchall() \
-        == [("knowledge", 1), ("knowledge", 2), ("knowledge", 3)]  # 002 hygiene, 003 blocks: new tables only
+        == [("knowledge", 1), ("knowledge", 2), ("knowledge", 3), ("knowledge", 4)]  # 002 hygiene, 003 blocks, 004 whiteboard: new tables only
     assert raw.execute("PRAGMA user_version").fetchone()[0] == 2  # an older release can still open it
     raw.close()
     # Reads behave as before: slugs, backlinks, links with retraction, claims, FTS, deck.
