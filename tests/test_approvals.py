@@ -471,11 +471,11 @@ async def test_agent_hub_tool_call_is_held_through_mcp(tmp_path, monkeypatch):
         res = await s.result("rook_secret", {"action": "get", "name": "nas-admin"})
         assert res.get("isError") and "Held for approval" in res["content"][0]["text"]
         before = len(env.sent)
-        held = _text(await s.result("rook_call", {"cap": "shell.exec", "worker": "gpu-box",
+        held = _text(await s.result("rook_call", {"why": "test", "cap": "shell.exec", "worker": "gpu-box",
                                                   "args": {"cmd": "rm -rf /srv/data"}}))
         assert held["held"] and not held["ok"] and len(env.sent) == before
         assert "hard stop" in held["error"]
-        ok = _text(await s.result("rook_call", {"cap": "info.host", "worker": "gpu-box",
+        ok = _text(await s.result("rook_call", {"why": "test", "cap": "info.host", "worker": "gpu-box",
                                                 "args": {"build": 1}}))
         assert ok["ok"]                                       # the hold rule holds nothing
         q = A.ApprovalQueue(str(tmp_path / "approvals.db"))

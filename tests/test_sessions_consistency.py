@@ -379,7 +379,7 @@ async def test_rook_call_terminal_for_a_task_claims_links_and_notes_its_end(term
     band = TermBand(terms)
     async with mcp_session(tmp_path, monkeypatch, band) as env:
         task = await env.new_task("Review the branch")
-        reply = await env.tool("rook_call", cap="work.stream.open", worker="gpu-box",
+        reply = await env.tool("rook_call", why="test", cap="work.stream.open", worker="gpu-box",
                                args={"harness": "shell", "cwd": str(tmp_path), "task": task["slug"],
                                      "title": "review"})
         tid = reply["result"]["id"]
@@ -394,7 +394,7 @@ async def test_rook_call_terminal_for_a_task_claims_links_and_notes_its_end(term
         noted = notes(env, task["id"])
         assert noted[-1]["session"] == {"kind": "session", "ref": ref} and "ended" in noted[-1]["text"]
         # An unknown task is reported on the reply, and the terminal still runs.
-        bad = await env.tool("rook_call", cap="work.stream.open", worker="gpu-box",
+        bad = await env.tool("rook_call", why="test", cap="work.stream.open", worker="gpu-box",
                              args={"harness": "shell", "cwd": str(tmp_path), "task": "no-such-task"})
         assert bad["ok"] and "could not claim" in bad["_task_error"]
 

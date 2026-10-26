@@ -211,7 +211,7 @@ async def tool_rook_read(args):
                 raise ValueError(f"Missing arguments for {cap}: {', '.join(missing)}")
     except Exception as e:
         raise Handoff(str(e)) from e
-    payload = {"cap": cap, "worker": worker}
+    payload = {"cap": cap, "worker": worker, "why": f"Voice: {cap} for the owner"}
     extra = args.get("args")
     if isinstance(extra, dict) and extra:
         payload["args"] = extra

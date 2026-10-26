@@ -224,6 +224,7 @@ def hub_notify(text, channel='all', timeout=15):
         http(url, 'POST', {'jsonrpc': '2.0', 'method': 'notifications/initialized'}, hdr, timeout)
         st, _, txt = http(url, 'POST', {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {
             'name': 'rook_call', 'arguments': {'cap': 'notify.send', 'worker': 'rook',
+                                               'why': 'Watchdog: tell the owner the MCP service needed attention',
                                                'args': {'text': text, 'channel': channel}}}},
             hdr, timeout)
     finally:

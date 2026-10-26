@@ -929,6 +929,7 @@ def build_server(client: "BandClient | MultiBandClient",
     # ``timeout`` arg, else that cap's declared default on that worker (learned
     # from caps.describe, fetched once per worker), plus a margin for transport.
     _DEFAULT_WAIT = 15.0
+    WHY_MAX = 300
     _WAIT_MARGIN = 5.0
     _MAX_WAIT = 3600.0
     _cap_timeouts: dict[str, dict[str, float]] = {}
@@ -964,17 +965,20 @@ def build_server(client: "BandClient | MultiBandClient",
         return _cap_timeouts.get(target, {}).get(cap)
 
     @mcp.tool()
-    async def rook_call(cap: str, args: dict | None = None,
+    async def rook_call(cap: str, why: str, args: dict | None = None,
                         worker_id: str | None = None,
                         worker: str | None = None,
                         timeout: float | None = None,
                         hint: bool = False,
-                        text: bool = False,
-                        why: str | None = None) -> str:
+                        text: bool = False) -> str:
         """Invoke a capability on the band and return the reply.
 
         Args:
             cap: dot-namespaced capability name (e.g. ``"shell.exec"``).
+            why: REQUIRED one plain sentence explaining why you make this call
+                ("check which asks were about notes"). Shown to the person if the
+                call is held for approval, and recorded in the journal and
+                whiteboard for all calls.
             args: keyword arguments passed to the handler.
             worker_id: REQUIRED target worker — the hex id from ``rook_workers``
                 OR the worker name (e.g. ``"gpu-01"``); names are resolved
@@ -994,10 +998,6 @@ def build_server(client: "BandClient | MultiBandClient",
                 again. Tips are sent once per MCP session.
             text: return a successful result as plain text (shell.exec:
                 stdout, then stderr / exit code only when non-empty/non-zero).
-            why: one plain sentence saying why you make this call ("check which
-                asks were about notes"). If the call is held for the person's
-                approval, it is shown to them as "Why:" next to your task, so
-                give one for anything that may be held (changes, admin, the hub).
 
         Returns compact JSON (envelope.call_reply): ``{"ok","id","from",
         "result"|"error"}`` where ``id`` is the journal id and ``from`` the
@@ -1005,6 +1005,11 @@ def build_server(client: "BandClient | MultiBandClient",
         changed for this MCP session. Targeting mistakes (unknown worker,
         missing capability, no reply) come back as ``{"ok": false, "error"}``.
         """
+        why = " ".join(why.split())[:WHY_MAX] if isinstance(why, str) else ""
+        if not why:
+            return _fail('why is required: one plain line saying why you make this call '
+                         '(e.g. why="check which asks were about notes")')
+
         roster = client.workers
         spec = worker_id or worker
         if worker_id and worker and worker_id.strip() != worker.strip():
@@ -1094,7 +1099,7 @@ def build_server(client: "BandClient | MultiBandClient",
                              "error": f"no reply within {wait:.0f}s"}
             cid = journal.record(cap=cap, worker=worker_name, identity=identity,
                                  args=args, reply=timeout_reply,
-                                 audit=_caller_audit(), authz=_decision_row())
+                                 audit=_caller_audit(), authz=_decision_row(), why=why)
             _auto_link("journal", cid, f"{cap} on {worker_name} (timed out)")
             basis = (f"the call's own {own:.0f}s timeout + {_WAIT_MARGIN:.0f}s" if own
                      else f"the {_DEFAULT_WAIT:.0f}s default; {cap!r} declares no timeout")
@@ -1134,7 +1139,7 @@ def build_server(client: "BandClient | MultiBandClient",
                 if reply.get("ok") else _secret_mask.scrub(reply, extra=used)
         cid = journal.record(cap=cap, worker=worker_name, identity=identity,
                              args=args, reply=journal_reply, audit=_caller_audit(),
-                             authz=_decision_row())
+                             authz=_decision_row(), why=why)
         linked = _auto_link("journal", cid, f"{cap} on {worker_name}")
         task_error = None
         if (cap == "work.stream.open" and isinstance(args, dict) and args.get("task")
@@ -1891,7 +1896,8 @@ def build_server(client: "BandClient | MultiBandClient",
     if mcp._rook_hub is not None and mcp._rook_hub.attached:
         from ..hub.mcp_tools import register_cap_tools
         register_cap_tools(mcp, mcp._rook_hub,
-                           lambda cap, a: rook_call(cap=cap, args=a, worker=HUB_WORKER_NAME))
+                           lambda cap, a: rook_call(cap=cap, why=f"{cap} through its own MCP tool",
+                                                    args=a, worker=HUB_WORKER_NAME))
 
     mcp._rook_chat = chat  # the /tokens page edits avatars in this store
     mcp._rook_console = console  # _amain starts the pump against this store

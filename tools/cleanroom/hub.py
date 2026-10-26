@@ -221,4 +221,5 @@ class Hub:
             return joined
 
     def mcp_call(self, cap, args=None, *, worker="rook", timeout=300):
-        return self.mcp("rook_call", {"cap": cap, "worker": worker, "args": args or {}}, timeout=timeout)
+        return self.mcp("rook_call", {"cap": cap, "worker": worker, "why": f"Cleanroom check: {cap}",
+                                      "args": args or {}}, timeout=timeout)

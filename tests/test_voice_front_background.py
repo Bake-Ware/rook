@@ -961,7 +961,8 @@ def test_music_uses_configured_worker(monkeypatch):
         mcp = Calls()
         box, *_ = toolbox(mcp=mcp)
         assert await box.run('music', {'action': 'pause'}) == 'Music pause: paused'
-        assert mcp.calls == [('rook_call', {'worker': 'musicbox', 'cap': 'cmd.pianobar-songpause'})]
+        assert mcp.calls == [('rook_call', {'worker': 'musicbox', 'cap': 'cmd.pianobar-songpause',
+                                             'why': 'Voice: music pause'})]
     asyncio.run(scenario())
 
 

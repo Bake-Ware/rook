@@ -76,6 +76,8 @@ class Hub:
                     yield s
 
     async def acall(self, session, tool: str, **args):
+        if tool == "rook_call":
+            args.setdefault("why", f"integration test: {args.get('cap')}")
         res = await session.call_tool(tool, args)
         text = "".join(getattr(c, "text", "") for c in res.content)
         try:

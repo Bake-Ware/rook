@@ -18,7 +18,7 @@ TOOLS: dict[str, str] = {
 
     "rook_caps": "Caps and their holders: \"*\" = every worker, {all_but:[…]}, or names. prefix filters (e.g. \"shell.\"); worker= lists that worker's caps. Cap names are singular (file.read).",
 
-    "rook_call": "Run a cap on one worker. worker= (name or id) is required. Exact args: cap=\"caps.describe\" args={\"prefix\":\"shell.\"}.\nWaits for the call's own timeout (args.timeout, else the cap's default) +5s: raise args.timeout for slow commands; rook_console_open for long jobs. A timed-out call may still be running.\nReply {ok,id,from,result|error}; id is the journal id. _task, _unread_chat, _tips appear only when new; hint=true re-shows the tip. text=true: plain text (shell.exec: stdout; stderr, exit code only if set). why=: plain reason, shown if held.",
+    "rook_call": "Run a cap on one worker. worker= (name or id) is required. Exact args: cap=\"caps.describe\" args={\"prefix\":\"shell.\"}.\nWaits for the call's own timeout (args.timeout, else the cap's default) +5s: raise args.timeout for slow commands; rook_console_open for long jobs. A timed-out call may still be running.\nReply {ok,id,from,result|error}; id is the journal id. _task, _unread_chat, _tips appear only when new; hint=true re-shows the tip. text=true: plain text (shell.exec: stdout; stderr, exit code only if set). why= (required): one plain line, journaled, shown if held.",
 
     "rook_secret": "Vault: list (names only) | get name (logged) | set name value description | delete name | log name?. Prefer {{secret:name}} in rook_call args: filled in on the way, masked in replies. Never paste values into knowledge, chat or handoffs.",
 

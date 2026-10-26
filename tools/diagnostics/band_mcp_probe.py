@@ -53,7 +53,7 @@ def run(seconds, output):
                 decode(r);sid=r.headers['mcp-session-id']
                 http.post('/mcp',headers={'mcp-session-id':sid},json={'jsonrpc':'2.0','method':'notifications/initialized'})
             name='rook_call' if seq%2 else 'rook_workers'
-            args={'cap':'shell.exec','worker':PROBE_WORKER,'args':{'cmd':'printf memory-probe'},'timeout':10} if seq%2 else {}
+            args={'cap':'shell.exec','why':'probe','worker':PROBE_WORKER,'args':{'cmd':'printf memory-probe'},'timeout':10} if seq%2 else {}
             t=time.perf_counter();ok=False
             try:
                 result=decode(http.post('/mcp',headers={'mcp-session-id':sid},json={'jsonrpc':'2.0','id':seq+2,'method':'tools/call','params':{'name':name,'arguments':args}}))

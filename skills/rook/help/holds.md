@@ -24,7 +24,7 @@ Everything else just goes and is journaled.
 
 ## Held and denied
 
-- **Say why.** Pass `why="<one plain sentence>"` on `rook_call` and claim the task first; the person sees *Title / For (your task) / Who / I want to / Why / Risk*.
+- **Say why.** Every `rook_call` needs `why="<one plain sentence>"`; claim the task first; the person sees *Title / For (your task) / Who / I want to / Why / Risk*.
 - A held call waits about 45 s; then the reply is `{"ok": false, "held": true, "hold": "<id>", …}` and nothing ran. Tell the user the hold's name and repeat the **same** call once they answer. Neither the ask nor their yes expires; a yes covers that one call.
 - A `denied:` reply is final: don't retry it, ask.
 - **Never work around a hold**: no other tool, worker, job, console or ssh for the same action.

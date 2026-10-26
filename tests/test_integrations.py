@@ -650,8 +650,10 @@ def test_watchdog_alerts_through_the_hub_then_falls_back(monkeypatch):
 
     assert watchdog.alert("hub down?") is True and direct == []
     tool = next(b for m, b in calls if b and b.get("method") == "tools/call")
-    assert tool["params"]["arguments"] == {"cap": "notify.send", "worker": "rook",
-                                           "args": {"text": "hub down?", "channel": "all"}}
+    assert tool["params"]["arguments"] == {
+        "cap": "notify.send", "worker": "rook",
+        "why": "Watchdog: tell the owner the MCP service needed attention",
+        "args": {"text": "hub down?", "channel": "all"}}
     reply = {"ok": True, "result": {"ok": False, "error": "no chat integration is running"}}
     assert watchdog.alert("again") is True and direct == ["again"]
     monkeypatch.setenv("ROOK_WATCHDOG_VIA_HUB", "0")

@@ -618,7 +618,7 @@ async def test_mcp_claimed_work_builds_its_own_audit_trail(tmp_path, monkeypatch
         p = (await env.tool('rook_project', action='create', request_id='p1', data={'title': 'Proj', 'parent': c['slug']}))['result']
         t = (await env.tool('rook_task', action='create', request_id='t1', data={'title': 'Do it', 'parent': p['slug']}))['result']
         assert (await env.tool('rook_task', action='claim', id=t['slug'], request_id='cl1'))['ok']
-        reply = await env.tool('rook_call', cap='shell.exec', worker='gpubox')
+        reply = await env.tool('rook_call', why='test', cap='shell.exec', worker='gpubox')
         assert reply['_task'] == t['id']
         await env.tool('rook_handoff_save', goal='Do it', state='half', next_steps=['rest'])
         lean = (await env.tool('rook_task', action='get', id=t['id']))['result']
@@ -647,8 +647,8 @@ async def test_mcp_claimed_work_builds_its_own_audit_trail(tmp_path, monkeypatch
 async def test_knowledge_off_by_default_and_broken_store_never_blocks(tmp_path, monkeypatch):
     async with session(tmp_path, monkeypatch, enabled=False) as env:
         assert 'rook_knowledge' not in {t['name'] for t in (await env.rpc('tools/list', {}))['tools']}
-        assert '_task' not in await env.tool('rook_call', cap='shell.exec', worker='gpubox')
+        assert '_task' not in await env.tool('rook_call', why='test', cap='shell.exec', worker='gpubox')
     bad = tmp_path / 'is-a-directory'; bad.mkdir()
     async with session(tmp_path, monkeypatch, db=str(bad)) as env:
         assert 'rook_knowledge' not in {t['name'] for t in (await env.rpc('tools/list', {}))['tools']}
-        assert (await env.tool('rook_call', cap='shell.exec', worker='gpubox'))['ok']
+        assert (await env.tool('rook_call', why='test', cap='shell.exec', worker='gpubox'))['ok']

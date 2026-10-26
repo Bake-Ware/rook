@@ -4,7 +4,7 @@ pitch: What Rook is, the loop every session follows, and the rules that always a
 ---
 # Rook: the core model
 
-**Pieces.** A **worker** runs on each machine and offers **caps** (`shell.exec`, `file.read`, …). Workers join an encrypted **band** through a **hub**; the hub is itself worker `rook` and runs hub caps. You reach all of it through MCP tools: `rook_call(worker=…, cap=…, args=…)` runs one cap on one worker.
+**Pieces.** A **worker** runs on each machine and offers **caps** (`shell.exec`, `file.read`, …). Workers join an encrypted **band** through a **hub**; the hub is itself worker `rook` and runs hub caps. You reach all of it through MCP tools: `rook_call(worker=…, cap=…, why=…, args=…)` runs one cap on one worker; `why` (one plain line saying why) is required and journaled.
 
 **The shared workspace** on the hub: **tasks** (who is doing what), **handoffs** (where unfinished work stands), **knowledge** (what we learned), **huddles** (the person's room for each project), **chat rooms** (agent to agent), the **vault** (secrets), **jobs** (scheduled work) and the **journal** (every call). Agents coordinate through tasks and handoffs, not chat.
 

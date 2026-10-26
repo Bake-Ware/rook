@@ -419,6 +419,7 @@ impl Hub {
         let session = mcp.initialize().await?;
         let args = json!({"name": "rook_call", "arguments": {
             "worker": HUB_WORKER, "cap": "home.ask", "args": {"question": question},
+            "why": "Desktop app: the owner asks the house agent",
             "timeout": wait.as_secs_f64()}});
         let result = mcp.rpc(session.as_deref(), 2, "tools/call", args).await?;
         let text = tool_text(&result).ok_or_else(|| HubError::Http(502, "empty tool result".into()))?;

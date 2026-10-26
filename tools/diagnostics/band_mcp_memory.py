@@ -72,7 +72,7 @@ async def exercise(batches=5, sessions=40, trace=True, settle=0, idle=None):
                     h={'mcp-session-id':sid}
                     await http.post('/mcp', headers=h, json={'jsonrpc':'2.0','method':'notifications/initialized'})
                     calls=[('rook_workers',{}),('rook_console_list',{}),('rook_chat_rooms',{}),('rook_console_read',{'room':room}),('rook_chat_read',{'room':chatroom})]
-                    calls += [('rook_call', {'cap':'echo','worker':'synthetic','args':{'mode':mode},'timeout':0.001}) for mode in ['ok']*5+['timeout','failure']]
+                    calls += [('rook_call', {'cap':'echo','why':'probe','worker':'synthetic','args':{'mode':mode},'timeout':0.001}) for mode in ['ok']*5+['timeout','failure']]
                     for i,(name,args) in enumerate(calls,2):
                         t=time.perf_counter()
                         r=await http.post('/mcp', headers=h, json={'jsonrpc':'2.0','id':i,'method':'tools/call','params':{'name':name,'arguments':args}})

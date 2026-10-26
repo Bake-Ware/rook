@@ -55,14 +55,14 @@ async def test_audit_mode_changes_nothing_but_journals_would_deny(tmp_path):
     async with mcp(tmp_path) as env:
         ro = env.store.mint_api_token("reader", role="readonly")
         s = await Session(env.http, ro["token"]).open()
-        res = _text(await s.result("rook_call", {"cap": "shell.exec", "worker": "gpu-box",
+        res = _text(await s.result("rook_call", {"why": "test", "cap": "shell.exec", "worker": "gpu-box",
                                                  "args": {"cmd": "id"}}))
         assert res["ok"] and env.sent[-1]["cap"] == "shell.exec"
         row = rows(env.journal, "cap='shell.exec'")[-1]
         assert row["decision"] == "would_deny" and row["principal"] == f"token:{ro['agent_id']}"
         assert row["tier"] == "exec" and row["rule"] == "default:role:readonly"
         op = await Session(env.http, STATIC).open()
-        await op.result("rook_call", {"cap": "shell.exec", "worker": "gpu-box", "args": {"cmd": "id"}})
+        await op.result("rook_call", {"why": "test", "cap": "shell.exec", "worker": "gpu-box", "args": {"cmd": "id"}})
         assert rows(env.journal, "cap='shell.exec'")[-1]["decision"] == "allow"
 
 
@@ -72,11 +72,11 @@ async def test_enforce_mode_denies_readonly_exec_and_admin_tools(tmp_path):
         ro = env.store.mint_api_token("reader", role="readonly")
         s = await Session(env.http, ro["token"]).open()
         before = len(env.sent)
-        res = _text(await s.result("rook_call", {"cap": "shell.exec", "worker": "gpu-box"}))
+        res = _text(await s.result("rook_call", {"why": "test", "cap": "shell.exec", "worker": "gpu-box"}))
         assert not res["ok"] and res["error"].startswith("denied: token:")
         assert len(env.sent) == before                     # never reached the band
         assert rows(env.journal, "cap='shell.exec'")[-1]["decision"] == "deny"
-        ok = _text(await s.result("rook_call", {"cap": "info.host", "worker": "gpu-box"}))
+        ok = _text(await s.result("rook_call", {"why": "test", "cap": "info.host", "worker": "gpu-box"}))
         assert ok["ok"]
         denied = await s.result("rook_secret", {"action": "get", "name": "x"})
         assert denied.get("isError") and "denied" in denied["content"][0]["text"]
@@ -85,4 +85,4 @@ async def test_enforce_mode_denies_readonly_exec_and_admin_tools(tmp_path):
         # Agents keep exec; their admin calls stay allowed but are journaled.
         agent = env.store.mint_api_token("worker-bot")
         a = await Session(env.http, agent["token"]).open()
-        assert _text(await a.result("rook_call", {"cap": "shell.exec", "worker": "gpu-box"}))["ok"]
+        assert _text(await a.result("rook_call", {"why": "test", "cap": "shell.exec", "worker": "gpu-box"}))["ok"]

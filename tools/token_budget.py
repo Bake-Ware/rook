@@ -141,20 +141,20 @@ async def measure() -> dict:
 
             async def call(name, arguments):
                 return await rpc("tools/call", {"name": name, "arguments": arguments})
-            first = await call("rook_call", {"cap": "shell.exec", "worker": "worker-a", "args": {"cmd": "true"}})
+            first = await call("rook_call", {"cap": "shell.exec", "worker": "worker-a", "why": "token budget", "args": {"cmd": "true"}})
             out["rook_call shell.exec empty (1st)"] = _sizes(first)
-            again = await call("rook_call", {"cap": "shell.exec", "worker": "worker-a", "args": {"cmd": "true"}})
+            again = await call("rook_call", {"cap": "shell.exec", "worker": "worker-a", "why": "token budget", "args": {"cmd": "true"}})
             out["rook_call shell.exec empty (repeat)"] = _sizes(again)
             out["rook_call shell.exec empty (repeat).text"] = again["content"][0]["text"]
             out["rook_call shell.exec text=true"] = _sizes(await call(
-                "rook_call", {"cap": "shell.exec", "worker": "worker-a", "args": {"cmd": "true"}, "text": True}))
+                "rook_call", {"cap": "shell.exec", "worker": "worker-a", "why": "token budget", "args": {"cmd": "true"}, "text": True}))
             out["rook_workers()"] = _sizes(await call("rook_workers", {}))
             out["rook_workers(name=worker-a)"] = _sizes(await call("rook_workers", {"name": "worker-a"}))
             out["rook_caps()"] = _sizes(await call("rook_caps", {}))
             out["rook_caps(prefix=shell.)"] = _sizes(await call("rook_caps", {"prefix": "shell."}))
-            out["rook_call caps.describe"] = _sizes(await call("rook_call", {"cap": "caps.describe", "worker": "worker-a"}))
+            out["rook_call caps.describe"] = _sizes(await call("rook_call", {"cap": "caps.describe", "worker": "worker-a", "why": "token budget"}))
             out["rook_call caps.describe prefix=shell."] = _sizes(await call(
-                "rook_call", {"cap": "caps.describe", "worker": "worker-a", "args": {"prefix": "shell."}}))
+                "rook_call", {"cap": "caps.describe", "worker": "worker-a", "why": "token budget", "args": {"prefix": "shell."}}))
             out["rook_knowledge search"] = _sizes(await call("rook_knowledge", {"action": "search", "query": "deploy"}))
             return out
 

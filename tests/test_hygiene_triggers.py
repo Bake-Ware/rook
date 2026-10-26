@@ -456,10 +456,10 @@ async def test_mcp_replies_carry_hygiene_and_a_closed_session_asks_for_a_handoff
         t = (await env.tool('rook_task', action='create', request_id='t1',
                             data={'title': 'Do it', 'parent': p['slug']}))['result']
         assert '_hygiene' not in await env.tool('rook_task', action='claim', id=t['slug'], request_id='cl1')
-        reply = await env.tool('rook_call', cap='shell.exec', worker='gpubox', args={'cmd': 'git commit -am fix'})
+        reply = await env.tool('rook_call', why='test', cap='shell.exec', worker='gpubox', args={'cmd': 'git commit -am fix'})
         assert reply['_task'] == t['id']
         assert reply['_hygiene'][0]['kind'] == 'work_signal' and '9f8e7d6' in reply['_hygiene'][0]['say']
-        text = await env.tool('rook_call', cap='shell.exec', worker='gpubox', args={'cmd': 'ls'}, text=True)
+        text = await env.tool('rook_call', why='test', cap='shell.exec', worker='gpubox', args={'cmd': 'ls'}, text=True)
         assert '_hygiene' not in text  # delivered once
         got = (await env.tool('rook_task', action='get', id=t['id'], data={'links': 'all'}))['result']
         assert ('commit', '9f8e7d6', 'produced') in [(l['kind'], l['ref'], l['relation']) for l in got['links']]
@@ -499,7 +499,7 @@ async def test_hygiene_never_edits_worker_output_and_shares_the_rook_line(tmp_pa
         pkg = '{"name": "pkg", "version": "1.0.0", "scripts": {"test": "jest"}}'
         env.band.stdout = pkg + '\n'
         _finding(env, me, 'first')
-        text = await env.tool('rook_call', raw=True, cap='shell.exec', worker='gpubox',
+        text = await env.tool('rook_call', why='test', raw=True, cap='shell.exec', worker='gpubox',
                               args={'cmd': 'cat package.json'}, text=True)
         lines = text.split('\n')
         assert lines[0] == pkg and json.loads(lines[0]) == json.loads(pkg)
@@ -509,7 +509,7 @@ async def test_hygiene_never_edits_worker_output_and_shares_the_rook_line(tmp_pa
         # The same with a reply that already has notices (_tips/_unread_chat...):
         # still one [rook] line, carrying both.
         _finding(env, me, 'second')
-        text = await env.tool('rook_call', raw=True, cap='shell.exec', worker='gpubox',
+        text = await env.tool('rook_call', why='test', raw=True, cap='shell.exec', worker='gpubox',
                               args={'cmd': 'cat package.json'}, text=True, hint=True)
         rook_lines = [l for l in text.split('\n') if l.startswith('[rook] ')]
         assert len(rook_lines) == 1
@@ -519,9 +519,9 @@ async def test_hygiene_never_edits_worker_output_and_shares_the_rook_line(tmp_pa
         # envelope, the array is the worker's result unchanged.
         env.band.stdout = '[1, 2, {"a": 3}]'
         _finding(env, me, 'third')
-        reply = await env.tool('rook_call', cap='shell.exec', worker='gpubox', args={'cmd': 'jq .'})
+        reply = await env.tool('rook_call', why='test', cap='shell.exec', worker='gpubox', args={'cmd': 'jq .'})
         assert reply['result']['stdout'] == '[1, 2, {"a": 3}]' and reply['_hygiene'][0]['say'] == 'third'
-        text = await env.tool('rook_call', raw=True, cap='shell.exec', worker='gpubox', args={'cmd': 'jq .'},
+        text = await env.tool('rook_call', why='test', raw=True, cap='shell.exec', worker='gpubox', args={'cmd': 'jq .'},
                               text=True)
         assert text == '[1, 2, {"a": 3}]'  # nothing due: no [rook] line at all
 
@@ -563,7 +563,7 @@ async def test_session_end_still_fires_after_another_session_timed_out(tmp_path,
         t = (await env.tool('rook_task', action='create', request_id='t1',
                             data={'title': 'Do it', 'parent': p['slug']}))['result']
         await env.tool('rook_task', action='claim', id=t['slug'], request_id='cl1')
-        await env.tool('rook_call', cap='shell.exec', worker='gpubox', args={'cmd': 'ls'})
+        await env.tool('rook_call', why='test', cap='shell.exec', worker='gpubox', args={'cmd': 'ls'})
         # This session is abandoned (no DELETE) and times out.
         old = env.http.headers['mcp-session-id']
         await env.connect()

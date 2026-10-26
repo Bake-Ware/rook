@@ -111,15 +111,15 @@ async def test_token_revoked_mid_session_denies_only_that_call(tmp_path):
     async with mcp_http(tmp_path) as env:
         minted = env.store.mint_api_token("codex")
         s = await Session(env.http, minted["token"]).open()
-        ok = await s.result("rook_call", {"cap": "info.host", "worker": "gpu-box"})
+        ok = await s.result("rook_call", {"why": "test", "cap": "info.host", "worker": "gpu-box"})
         assert not ok.get("isError")
         # Revoke; the HTTP layer rejects the next request outright...
         env.store.revoke_api_token(minted["id"])
-        assert (await s.tool("rook_call", {"cap": "info.host", "worker": "gpu-box"})).status_code == 401
+        assert (await s.tool("rook_call", {"why": "test", "cap": "info.host", "worker": "gpu-box"})).status_code == 401
         assert len(env.band.calls) == 1
         # ...and another caller on the same server is unaffected.
         other = await Session(env.http, STATIC).open()
-        res = await other.result("rook_call", {"cap": "shell.exec", "worker": "hypervisor"})
+        res = await other.result("rook_call", {"why": "test", "cap": "shell.exec", "worker": "hypervisor"})
         assert not res.get("isError")
         assert len(env.band.calls) == 2
 
@@ -132,7 +132,7 @@ async def test_tool_level_recheck_denies_invalid_token_and_journals_it(tmp_path,
     async with mcp_http(tmp_path) as env:
         s = await Session(env.http, STATIC).open()
         monkeypatch.setattr(env.store, "principal_for", lambda raw: None)
-        res = await s.result("rook_call", {"cap": "shell.exec", "worker": "gpu-box"})
+        res = await s.result("rook_call", {"why": "test", "cap": "shell.exec", "worker": "gpu-box"})
         assert res["isError"]
         assert "unauthenticated" in res["content"][0]["text"]
         assert env.band.calls == []
@@ -153,7 +153,7 @@ async def test_token_store_failure_lets_call_through_and_alerts(tmp_path, monkey
         monkeypatch.setattr(env.store, "principal_for", boom)
         with caplog.at_level(logging.ERROR, logger="rook.band_mcp.attribution"):
             for _ in range(3):
-                res = await s.result("rook_call", {"cap": "shell.exec", "worker": "gpu-box"})
+                res = await s.result("rook_call", {"why": "test", "cap": "shell.exec", "worker": "gpu-box"})
                 assert not res.get("isError")
         assert len(env.band.calls) == 3
         assert env.band.calls[0]["identity"] == "unverified"
@@ -171,7 +171,7 @@ async def test_attribution_crash_never_denies(tmp_path, monkeypatch):
         def explode(*a, **k):
             raise AssertionError("bug in resolve")
         monkeypatch.setattr(attribution, "resolve", explode)
-        res = await s.result("rook_call", {"cap": "info.host", "worker": "gpu-box"})
+        res = await s.result("rook_call", {"why": "test", "cap": "info.host", "worker": "gpu-box"})
         assert not res.get("isError")
         assert len(env.band.calls) == 1
 
@@ -193,7 +193,7 @@ async def test_named_key_attribution_reaches_journal_worker_and_whoami(tmp_path)
                        "token": "claudecode", "client": "t", "host": "workstation",
                        "actor": "claudecode.t.workstation"}
         assert minted["token"] not in json.dumps(who)
-        await s.result("rook_call", {"cap": "shell.exec", "worker": "gpu-box"})
+        await s.result("rook_call", {"why": "test", "cap": "shell.exec", "worker": "gpu-box"})
         assert env.band.calls[-1]["identity"] == "agent:claude code_workstation"
         row = rows(env.journal, "cap='shell.exec'")[-1]
         assert (row["agent_id"], row["key_id"], row["auth"]) == (minted["agent_id"], minted["id"], "agent")
@@ -227,7 +227,7 @@ async def test_no_attempt_gate_reads_and_writes_dispatch_on_any_band(tmp_path):
         s = await Session(env.http, STATIC).open()
         for cap, worker in [("info.host", "gpu-box"), ("file.list", "gpu-box"),
                             ("shell.exec", "gpu-box"), ("shell.exec", "hypervisor")]:
-            res = await s.result("rook_call", {"cap": cap, "worker": worker})
+            res = await s.result("rook_call", {"why": "test", "cap": cap, "worker": worker})
             assert not res.get("isError"), res
             assert "attempt_id" not in res["content"][0]["text"]
         assert [c["cap"] for c in env.band.calls] == ["info.host", "file.list", "shell.exec", "shell.exec"]
@@ -278,16 +278,36 @@ def test_resolve_infra_failures_are_unverified_not_denied():
 async def test_rook_call_without_worker_is_refused_with_holders_listed(tmp_path):
     async with mcp_http(tmp_path) as env:
         s = await Session(env.http, STATIC).open()
-        res = await s.result("rook_call", {"cap": "shell.exec"})
+        res = await s.result("rook_call", {"why": "test", "cap": "shell.exec"})
         body = json.loads(res["content"][0]["text"])
         assert body["ok"] is False
         assert "specify the target worker" in body["error"]
         assert "gpu-box, hypervisor" in body["error"]
         assert env.band.calls == []  # nothing dispatched
-        unknown = json.loads((await s.result("rook_call", {"cap": "nope.cap"}))["content"][0]["text"])
+        unknown = json.loads((await s.result("rook_call", {"why": "test", "cap": "nope.cap"}))["content"][0]["text"])
         assert "no live worker has capability" in unknown["error"]
-        ok = json.loads((await s.result("rook_call", {"cap": "shell.exec", "worker": "gpu-box"}))["content"][0]["text"])
+        ok = json.loads((await s.result("rook_call", {"why": "test", "cap": "shell.exec", "worker": "gpu-box"}))["content"][0]["text"])
         assert ok["ok"] is True and len(env.band.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_rook_call_needs_a_one_line_why_and_journals_it(tmp_path):
+    async with mcp_http(tmp_path) as env:
+        s = await Session(env.http, STATIC).open()
+        for args in ({}, {"why": ""}, {"why": "  \n "}):
+            res = await s.result("rook_call", {"cap": "info.host", "worker": "gpu-box", **args})
+            assert res.get("isError") or "why is required" in res["content"][0]["text"], args
+        assert env.band.calls == []
+        long = "x" * 400
+        for why in ("check the\n  host's   uptime", long):
+            res = json.loads((await s.result("rook_call", {"why": why, "cap": "info.host",
+                                                           "worker": "gpu-box"}))["content"][0]["text"])
+            assert res["ok"] is True
+        assert [r["why"] for r in rows(env.journal, "cap='info.host'")] == [
+            "check the host's uptime", long[:300]]
+        from rook.band_mcp.journal import Journal
+        listed = Journal(env.journal).query(cap_prefix="info.host")
+        assert [e["why"] for e in listed] == [long[:300], "check the host's uptime"]
 
 
 class TimingBand(FakeBand):
@@ -317,7 +337,7 @@ async def test_wait_follows_the_calls_own_timeout(tmp_path, monkeypatch):
     mcp, store = srv.build_server(band, public_url="https://mcp.example.com",
                                   persist_path=str(tmp_path / "tokens.json"), static_token=STATIC,
                                   journal_path=str(tmp_path / "journal.db"))
-    call = lambda **a: mcp._tool_manager._tools["rook_call"].fn(**a)
+    call = lambda **a: mcp._tool_manager._tools["rook_call"].fn(**{"why": "test", **a})
     await call(cap="shell.exec", worker="gpu-box")
     assert band.waits[:2] == [("caps.describe", 10.0), ("shell.exec", 35.0)]  # learned default + 5s
     await call(cap="shell.exec", worker="gpu-box", args={"timeout": 120})

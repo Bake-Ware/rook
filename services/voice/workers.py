@@ -58,7 +58,8 @@ class WorkerInventory:
         async def describe(row):
             try:
                 raw = await asyncio.wait_for(RookMCP().call('rook_call',
-                    {'worker': row['name'], 'cap': 'caps.describe', 'timeout': 10}), 15)
+                    {'worker': row['name'], 'cap': 'caps.describe', 'timeout': 10,
+                     'why': 'Voice: list read capabilities'}), 15)
                 data = json.loads(raw)
                 if isinstance(data, str):
                     data = json.loads(data)
