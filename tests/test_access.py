@@ -375,3 +375,11 @@ def test_dashboard_owners_come_from_the_access_store(tmp_path):
     assert who("u_kid").role == "member"
     az.access.set_role("u_kid", "owner", actor="human:u_bake", words="Bake: he's an owner now")
     assert who("u_kid").role == "owner"
+
+
+def test_a_broken_store_never_breaks_dashboard_sign_in(tmp_path):
+    from types import SimpleNamespace
+    from rook.hub.authz import _NoAccess
+    from rook.remote.bootstrap import CombinedServer
+    srv = SimpleNamespace(_authz=SimpleNamespace(access=_NoAccess()))
+    assert CombinedServer._access_store(srv) is None

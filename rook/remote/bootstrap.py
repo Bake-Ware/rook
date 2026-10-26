@@ -2908,8 +2908,9 @@ class CombinedServer:
     def _access_store(self):
         """The hub's access store (rook/hub/access.py), shared with the MCP
         side through the authorizer; None before the band client is up."""
+        from ..hub.access import AccessStore
         access = getattr(getattr(self, "_authz", None), "access", None)
-        return access if hasattr(access, "is_owner") else None
+        return access if isinstance(access, AccessStore) else None
 
     def _seed_access(self) -> None:
         """Carry today's owners and band members over once (access v2)."""
