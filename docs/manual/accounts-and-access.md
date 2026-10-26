@@ -78,6 +78,44 @@ On the hub (worker `rook`):
 When the hub was upgraded to this, the operator account and every band owner
 became owners, and each band member got a grant on the bands they were in.
 
+## Giving access by talking, and the People page
+
+You don't fill in forms to give people access. With the house agent on
+([[manual-front-door]]), just say it: "Robin gets the living room PC and the
+recipes folder", "Sam can use kaiju read only", "take Sam off the attic box".
+It changes exactly that, keeps your words with the change, and tells you
+what Robin now reaches. If it can't tell that it is you (an owner) talking,
+it asks you once instead, and so does anyone else who asks it for access:
+one question, "Give Robin machine living-room-pc?", that you answer Yes or
+No on the **Decisions** page or the phone card, or by telling it. An agent
+passing on your words never gives access; only you do.
+
+- **New people** reach nothing until you say what they get. They can ask in
+  their own words on the **People** page ("the living room PC and the
+  recipes"); the house agent works out what they mean and asks you once.
+- **New machines and bands.** When a machine or band joins that some members
+  don't reach yet, the house agent asks once, for everything new at that
+  moment: "Let Robin and Sam use the new machine attic-pc?" Yes gives each of
+  them that machine (up to running commands, not changing Rook); No keeps it
+  with the owners. If every member already reaches it (a band they have), or
+  there are no members, nothing is asked. Turn the question off with
+  **Ask who gets new machines and bands** (Home agent settings, People).
+- Nothing expires and nothing is asked twice. What is still open waits on the
+  **People** page.
+
+**Manage > People** shows owners everyone and what they reach, in plain
+words, what waits on you (requests, people with no access yet, new machines
+and bands), and the history. **Give access**, **Remove**, **Make an owner**,
+**Share…** and **Owners only** change it there; the history records "<your
+name> on the People page" and any note. Everyone else sees their own access
+on the same page and a box to ask for more. A sign-in agents can also use
+(the shared dashboard password) can look but not change.
+
+On the hub (worker `rook`), `users.request` (`words`) asks for access for
+yourself, and owners close what waits with `users.settle` (`what`: a new
+machine `worker:<id>`, a band `band:<id>`, or a request id; `words`).
+`users.list` lists what waits under `waiting`.
+
 Bands themselves still have owners and members: a band **owner** can invite
 people, start pairing, move machines and change the band's key
 ([[manual-bands-and-keys]]). Being a band's owner no longer makes you an
