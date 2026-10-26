@@ -14,17 +14,20 @@ CURRENT = "abcd1234"
 def test_first_call_is_briefed_once_for_a_client_that_never_echoes():
     b = brief.Briefs()
     assert b.due("s", CURRENT) == brief.FIRST
-    b.sent("s", brief.FIRST)
     for _ in range(5):
         assert b.due("s", CURRENT) is None  # no receipt ever: told once, not on every reply
 
 
+def test_parallel_first_calls_carry_it_once():
+    b = brief.Briefs()
+    assert [b.due("s", CURRENT), b.due("s", CURRENT), b.due("s", CURRENT)] == [brief.FIRST, None, None]
+
+
 def test_missing_receipt_after_an_echo_resends_once():
     b = brief.Briefs()
-    b.sent("s", b.due("s", CURRENT))
+    assert b.due("s", CURRENT) == brief.FIRST
     assert b.due("s", CURRENT, CURRENT) is None
     assert b.due("s", CURRENT) == brief.MISSING  # compaction: the agent forgot it
-    b.sent("s", brief.MISSING)
     assert b.due("s", CURRENT) is None  # one resend per lapse
     assert b.due("s", CURRENT, CURRENT) is None
     assert b.due("s", CURRENT) == brief.MISSING
@@ -33,7 +36,6 @@ def test_missing_receipt_after_an_echo_resends_once():
 def test_stale_receipt_gets_the_new_one_once():
     b = brief.Briefs()
     assert b.due("s", CURRENT, "old00000") == brief.STALE
-    b.sent("s", brief.STALE, "old00000")
     assert b.due("s", CURRENT, "old00000") is None
     assert b.due("s", CURRENT, "other000") == brief.STALE
     assert b.due("s", CURRENT, CURRENT) is None
@@ -47,28 +49,19 @@ def test_reconnect_with_a_valid_receipt_is_not_briefed():
 
 def test_tool_without_receipt_param_never_counts_as_missing():
     b = brief.Briefs()
-    b.sent("s", b.due("s", CURRENT, carries=False))
+    assert b.due("s", CURRENT, carries=False) == brief.FIRST
     assert b.due("s", CURRENT, CURRENT) is None
     assert b.due("s", CURRENT, carries=False) is None
 
 
 def test_undelivered_brief_waits_for_a_reply_that_can_carry_it():
     b = brief.Briefs()
-    reason = b.due("s", CURRENT)
-    b.held("s", reason)
+    b.held("s", b.due("s", CURRENT))  # e.g. a JSON array reply, or the call failed
     assert b.due("s", CURRENT) == brief.FIRST
-    b.sent("s", brief.FIRST)
     assert b.due("s", CURRENT) is None
-    b.held("s", brief.MISSING)
-    assert b.due("s", CURRENT, CURRENT) is None  # it holds the brief after all
-
-
-def test_a_failed_call_does_not_use_up_the_brief():
-    b = brief.Briefs()
-    assert b.due("s", CURRENT) == brief.FIRST  # the tool raised: neither sent nor held
-    assert b.due("s", CURRENT) == brief.FIRST
-    assert b.due("s", CURRENT, "old00000") == brief.STALE
-    assert b.due("s", CURRENT, "old00000") == brief.STALE
+    b.held("s", brief.STALE)
+    assert b.due("s", CURRENT, CURRENT) is None  # it holds the current one after all
+    assert b.due("s", CURRENT, CURRENT) is None
 
 
 def test_receipt_is_short_stable_and_per_caller():
@@ -183,3 +176,12 @@ async def test_brief_replaces_the_start_of_session_round(tmp_path, monkeypatch):
         assert claim["handoff"]["next_steps"] == ["write tests", "open PR"]
         assert b["unread_chat"][0]["room"] == room
         assert "_unread_chat" not in r  # the brief already says it: not twice in one reply
+
+
+@pytest.mark.asyncio
+async def test_a_failed_call_does_not_use_up_the_brief(tmp_path, monkeypatch):
+    async with hub(tmp_path, monkeypatch) as env:
+        rpc, tool = await env.connect()
+        bad = await rpc("tools/call", {"name": "rook_call", "arguments": {}})  # no cap: invalid
+        assert bad.get("isError")
+        assert _j((await tool("rook_whoami"))[0])["_brief"]["why"] == brief.FIRST

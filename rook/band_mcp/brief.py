@@ -75,32 +75,33 @@ class Briefs:
             carries: bool = True) -> str | None:
         """Why this call's reply should carry the brief, or None.
 
-        ``carries`` is False for a tool that cannot take a receipt: a call to
-        it says nothing about whether the agent still holds the brief."""
+        A returned reason is taken at once, so parallel calls don't all carry
+        it; when the reply can't carry it after all, :meth:`held` puts it
+        back. ``carries`` is False for a call to a tool that doesn't advertise
+        the receipt: it says nothing about whether the agent still holds it."""
         s = self._get(session)
         if receipt == current:
             s.briefed = s.echoed = True
             s.pending = s.stale = None
             return None
         if s.pending:
-            return s.pending
+            reason, s.pending = s.pending, None
+            return reason
         if receipt:
-            return None if receipt == s.stale else STALE
+            if receipt == s.stale:
+                return None  # already answered with the current one
+            s.briefed, s.echoed, s.stale = True, False, receipt
+            return STALE
         if not s.briefed:
+            s.briefed = True
             return FIRST
         if carries and s.echoed:
+            s.echoed = False  # once per lapse, not on every later call
             return MISSING
         return None
 
-    def sent(self, session: str, reason: str, receipt: str | None = None) -> None:
-        s = self._get(session)
-        s.briefed, s.pending = True, None
-        if reason == STALE:
-            s.stale = receipt  # answered: the same old receipt again gets nothing
-        if reason in (MISSING, STALE):
-            s.echoed = False  # resend once per lapse, not on every later call
-
     def held(self, session: str, reason: str) -> None:
+        """The reply couldn't carry the brief (or the call failed): the next one will."""
         self._get(session).pending = reason
 
     def forget(self, session: str) -> None:

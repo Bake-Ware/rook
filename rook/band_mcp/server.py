@@ -222,8 +222,8 @@ def build_server(client: "BandClient | MultiBandClient",
             return None
 
     def _brief_due(name, receipt, sid, att):
-        """(session, reason, receipt, actor, identity, kind) when this call's
-        reply should carry ``_brief``, else None."""
+        """(session, reason, actor, identity, kind) when this call's reply
+        should carry ``_brief``, else None."""
         if att is None or not att.verified or _env.legacy() or name == "rook_secret":
             return None
         ident = att.identity
@@ -235,12 +235,15 @@ def build_server(client: "BandClient | MultiBandClient",
                              receipt, carries=receipt is not None or name in _receipt_tools)
         if reason is None:
             return None
-        # The brief lists unread chat: the same rooms don't ride again as _unread_chat.
-        _notices.fresh(session, "chat", chat.unread_summary(ident))
-        return session, reason, receipt, actor, ident, att.kind
+        try:
+            # The brief lists unread chat: the same rooms don't ride again as _unread_chat.
+            _notices.fresh(session, "chat", chat.unread_summary(ident))
+        except Exception:  # noqa: BLE001
+            log.exception("unread chat for the session brief failed")
+        return session, reason, actor, ident, att.kind
 
     def _with_brief(name, arguments, result, due):
-        session, reason, receipt, actor, ident, kind = due
+        session, reason, actor, ident, kind = due
         k = getattr(mcp, "_rook_knowledge", None)
         claims = _brief.claimed(k, sessions, actor) if k is not None else []
         body = _brief.build(reason, actor, kind, claims=claims,
@@ -248,9 +251,7 @@ def build_server(client: "BandClient | MultiBandClient",
                             unread=chat.unread_summary(ident))
         text_line = name == "rook_call" and bool((arguments or {}).get("text"))
         result, attached = _env.add_notice(result, "_brief", body, text_line=text_line)
-        if attached:
-            _briefs.sent(session, reason, receipt)
-        else:
+        if not attached:
             _briefs.held(session, reason)  # rides the next reply that can carry it
         return result
 
@@ -299,13 +300,19 @@ def build_server(client: "BandClient | MultiBandClient",
             except Exception:  # noqa: BLE001 — a brief never breaks a call
                 log.exception("session brief check failed")
                 due = None
-            result = await _run_tool(name, arguments, context=context,
-                                     convert_result=convert_result)
+            try:
+                result = await _run_tool(name, arguments, context=context,
+                                         convert_result=convert_result)
+            except BaseException:
+                if due is not None:
+                    _briefs.held(due[0], due[1])  # a failed call doesn't use up the brief
+                raise
             if due is not None:
                 try:
                     result = _with_brief(name, arguments, result, due)
                 except Exception:  # noqa: BLE001
                     log.exception("session brief failed")
+                    _briefs.held(due[0], due[1])
             return _with_hygiene(name, result, context)
         finally:
             _approvals.own_resource.reset(rtok)
