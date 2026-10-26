@@ -31,7 +31,7 @@ PHONE = NodeFacts(node_id="p", name="worker-b", hw={"os": "android", "embedded":
 class Rows(Plugin):
     NAMESPACE = "rows"
 
-    @capability("legacy")
+    @capability("legacy", scope="self")
     def legacy(self, fields=None):
         return {"fields": fields}
 
@@ -57,7 +57,9 @@ def _registry(plugin: Plugin) -> CapabilityRegistry:
 
 def test_bare_capability_is_unchanged():
     reg = _registry(Rows())
-    assert reg.meta("rows.legacy") is None
+    # Legacy caps now declare scope but no risk
+    meta = reg.meta("rows.legacy")
+    assert meta is not None and meta.risk is None and meta.scope == "self"
     assert "risk" not in reg.describe()["rows.legacy"]
 
 

@@ -211,7 +211,7 @@ def validate_caps(obj: Any, namespace: str = "") -> list[str]:
             continue
         dotpath = ns if not suffix else f"{ns}.{suffix}"
         meta = getattr(attr, "_rook_cap_meta", None)
-        if meta is not None and meta.scope is None:
+        if meta is None or meta.scope is None:
             errors.append(f"{dotpath}: missing @capability(..., scope=...) declaration")
     return errors
 
