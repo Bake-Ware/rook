@@ -38,7 +38,8 @@ def hub(chair_hub, tmp_path):
 
 
 def hold(ap, cap="shell.exec", tier="exec", args=None, principal="token:agent_claude",
-         label="Claude web", via=(), target="box", kind="trust", reason="box is sacred",
+         label="Claude web", via=(), target="box", kind="default",
+         reason="hard stop: it erases data for good",
          is_hub=False, context=None):
     args = {"argv": ["systemctl", "restart", "nginx"]} if args is None else args
     h, _ = ap.queue.create(principal=principal, cap=cap, tier=tier, args_hash=A.args_hash(args),
@@ -98,7 +99,7 @@ async def test_the_list_covers_every_kind_with_names_sentences_and_sources(hub):
     assert first["name"] == plain["name"] and first["name"].count("-") == 2
     assert first["who"] == "Claude web" and first["risk"] == "exec" and first["relayable"]
     assert first["what"].startswith("run shell.exec on box: `systemctl restart nginx`")
-    assert "sacred" in first["what"] and first["age"].endswith("s")
+    assert "erases data for good" in first["what"] and first["age"].endswith("s")
     jobbed, = by_kind["job"]
     assert jobbed["id"] == job["id"] and jobbed["from"] == {"job": "j_nightly"}
     assert jobbed["who"] == "job j_nightly"

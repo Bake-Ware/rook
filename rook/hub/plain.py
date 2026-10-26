@@ -470,8 +470,6 @@ def risk_text(kind: str, tier: str = "", *, hold_kind: str = "", reason: str = "
             extra = "admin actions ask you"
     elif str(reason).startswith("hard stop:"):
         extra = str(reason)[len("hard stop:"):].strip().rstrip(".") + ", which always asks you"
-    elif hold_kind == "default" and level != "High":
-        extra = "it is an admin or destructive action, which always asks you"
     if kind == "read" and extra:
         return f"{level}: {why}, but {extra}."
     return f"{level}: {why}" + (f"; {extra}." if extra else ".")
