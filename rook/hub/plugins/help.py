@@ -55,7 +55,7 @@ class Help(Plugin):
                     out.setdefault(p.NAME, p)
         return out
 
-    @capability("", risk="read")
+    @capability("", risk="read", scope="self")
     def help(self, topic: str = "", detail: bool = False) -> dict:
         """Rook help for agents: no topic gives the core model and the topic
         menu; ``topic`` (a name, a tool, a cap, a hub plugin or a few words)
