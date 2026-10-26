@@ -384,8 +384,10 @@ def build_server(client: "BandClient | MultiBandClient",
     # Compact replies and per-session notices (see envelope.py).
     from . import envelope as _env
     from . import roster as _roster
+    from ..hub import session_context as _session_context_mod
     _env.install(mcp)
     _notices = _env.Notices()
+    _session_echo_states = _env.SessionContextEchoStates()
 
     from .guidance import Guidance, apply as _apply_guidance
     guidance = Guidance(os.path.join(_store_dir, "guidance.db"))
@@ -899,7 +901,8 @@ def build_server(client: "BandClient | MultiBandClient",
                         timeout: float | None = None,
                         hint: bool = False,
                         text: bool = False,
-                        why: str | None = None) -> str:
+                        why: str | None = None,
+                        _session_context_receipt: str | None = None) -> str:
         """Invoke a capability on the band and return the reply.
 
         Args:
@@ -927,12 +930,16 @@ def build_server(client: "BandClient | MultiBandClient",
                 asks were about notes"). If the call is held for the person's
                 approval, it is shown to them as "Why:" next to your task, so
                 give one for anything that may be held (changes, admin, the hub).
+            _session_context_receipt: internal; echo back a prior session brief's
+                receipt to skip resending the brief. If your last call included
+                ``_session_context`` in the reply, send its ``receipt`` here.
 
         Returns compact JSON (envelope.call_reply): ``{"ok","id","from",
         "result"|"error"}`` where ``id`` is the journal id and ``from`` the
-        worker's name; ``_task``/``_unread_chat`` notices only when new or
-        changed for this MCP session. Targeting mistakes (unknown worker,
-        missing capability, no reply) come back as ``{"ok": false, "error"}``.
+        worker's name; ``_task``/``_unread_chat``/``_session_context`` notices
+        only when new or changed for this MCP session. Targeting mistakes
+        (unknown worker, missing capability, no reply) come back as
+        ``{"ok": false, "error"}``.
         """
         roster = client.workers
         spec = worker_id or worker
@@ -1112,6 +1119,36 @@ def build_server(client: "BandClient | MultiBandClient",
             h_engine, h_due = None, []
         if h_due:
             notices["_hygiene"] = h_engine.public(h_due)
+
+        # Session context brief: send once per session, resend if context changes
+        # (hub version, user, band access, etc.). Receipt allows agents to echo
+        # back so we don't resend identical briefs.
+        try:
+            hub_version = (mcp._rook_hub.build_version if mcp._rook_hub else None)
+            brief = _session_context_mod.SessionBrief(
+                session_id=session,
+                user=identity,
+                timestamp=time.time(),
+                band_id=None,  # TODO: resolve from worker's band if available
+                hub_version=hub_version,
+            )
+            echo_state = _session_echo_states.get_state(session)
+
+            # Track if client is echoing back the receipt
+            if _session_context_receipt:
+                echo_state.mark_echoed(_session_context_receipt)
+
+            # Check if this brief is new for this session (via signature)
+            brief_value = brief.to_dict()
+            if _notices.fresh(session, "session_context", brief_value):
+                # Brief is new/changed. Check if client is echoing back.
+                if echo_state.should_send_brief(brief):
+                    notices["_session_context"] = _session_context_mod.make_notice(brief)
+                elif echo_state.state == "never_echoed" and not _session_context_receipt:
+                    # Called before without brief, now on second call with no echo
+                    echo_state.mark_silent()
+        except Exception:
+            log.exception("session context brief failed")
 
         def _hygiene_sent(out):
             if h_due:

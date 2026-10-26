@@ -136,6 +136,34 @@ class Notices:
         return True
 
 
+class SessionContextEchoStates:
+    """Track per-MCP-session whether clients echo back session context receipts.
+
+    Each MCP session's echo behavior is tracked independently. When a client
+    is marked silent (never echoed), we stop sending the context brief to avoid
+    spam on non-responsive clients (phone apps, browsers).
+    """
+
+    def __init__(self, cap: int = 5000) -> None:
+        from ..hub.session_context import EchoState
+        self._states: OrderedDict[str, EchoState] = OrderedDict()
+        self._cap = cap
+        self._EchoState = EchoState
+
+    def get_state(self, session: str) -> "EchoState":
+        """Get or create the EchoState for this MCP session."""
+        if legacy() or not session:
+            # Legacy mode or no session: always send
+            return self._EchoState()
+        if session not in self._states:
+            self._states[session] = self._EchoState()
+            self._states.move_to_end(session)
+            while len(self._states) > self._cap:
+                self._states.popitem(last=False)
+        self._states.move_to_end(session)
+        return self._states[session]
+
+
 def add_notice(result, key: str, value):
     """Add ``key: value`` to a tool result after the tool ran (the hygiene
     piggyback). Returns ``(result, attached)``.
