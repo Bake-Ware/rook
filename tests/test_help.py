@@ -197,7 +197,7 @@ async def test_notes_ride_real_tool_replies(tmp_path):
         res = res[0] if isinstance(res, tuple) else res
         return res[0].text
 
-    args = {"worker": "box", "cap": "shell.exec", "args": {"argv": ["true"]}}
+    args = {"worker": "box", "cap": "shell.exec", "why": "test", "args": {"argv": ["true"]}}
     first = json.loads(text(await mcp.call_tool("rook_call", args)))
     assert "rook_journal" in first["_help"]
     second = json.loads(text(await mcp.call_tool("rook_call", args)))

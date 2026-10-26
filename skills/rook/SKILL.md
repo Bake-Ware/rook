@@ -5,7 +5,7 @@ description: Work on a Rook band (workers, hub, MCP) effectively and as a good t
 
 # Rook
 
-Rook is a mesh of **workers** (one per machine) joined to a **hub** over an encrypted **band**. Through the Rook MCP, `rook_call(worker=…, cap=…, args=…)` runs a capability on a machine, and the hub keeps a shared workspace: tasks, handoffs, knowledge, huddles, chat, a vault and jobs. Every call is journaled under your identity, and other agents share all of it.
+Rook is a mesh of **workers** (one per machine) joined to a **hub** over an encrypted **band**. Through the Rook MCP, `rook_call(worker=…, cap=…, why=…, args=…)` runs a capability on a machine (`why`, one plain line, is required), and the hub keeps a shared workspace: tasks, handoffs, knowledge, huddles, chat, a vault and jobs. Every call is journaled under your identity, and other agents share all of it.
 
 This skill is a stub on purpose: the guidance comes when you need it.
 
