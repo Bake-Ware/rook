@@ -1492,6 +1492,9 @@
   "users.settle": {
    "tier": "admin"
   },
+  "users.token": {
+   "tier": "admin"
+  },
   "voice.replies": {
    "tier": "read"
   },

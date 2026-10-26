@@ -169,7 +169,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `plugin.marketplace.list` | refresh=false, limit=50, fields? | read | Plugin catalog entries (preview): id, name, version, author, risk, caps, placement, package and whether this… |
 | `policy.explain` | principal, cap, worker?, role? | read | Would this principal be allowed to call `cap` on `worker`? |
 | `policy.get` | — | read | The current policy document with its revision, source, mode, lint and last load error (if the file on disk is… |
-| `policy.set` | policy, note='' | admin | Replace the policy document (band owners and operator tokens only). |
+| `policy.set` | policy, note='' | admin | Replace the policy document (hub owners only, from any client). |
 | `policy.status` | — | read | Hub permission status: policy mode/revision, whether calls carry tickets (root key present), the op-key id an… |
 | `role.ask` | id, question, context='' | write | One turn of a role: it answers `question` (with `context`) on its agent host, in its home directory, with its… |
 | `role.delete` | id, note='' | admin | Delete a role (its history stays; its home on the agent host is left in place). |
@@ -222,6 +222,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `users.revoke` | grant, words | admin | Take a grant away (kept in the history with `words`). |
 | `users.role` | user, role, words | admin | Make someone an `owner` or a `member`. |
 | `users.settle` | what, words | admin | Close what waits on you, with your words: a new machine or band (`worker:<id>` / `band:<id>`, from `users.lis… |
+| `users.token` | token, user, words | admin | Say whose an API key is: it then reaches exactly what that person reaches, from any client. |
 
 ### approvals (relayed)
 `rook_approvals(action="summary")` says what is waiting on the person (held calls, held job calls, huddle cards, pinned questions, trust proposals); `action="list"` gives each item's name, who asked, what exactly would happen, risk, source and age. Read it back tersely: count, then name + one line each. When the person tells you their decision (also on something you did on their word), record it: `rook_approvals(action="approve"|"deny", item=<name or id>, relayed_by={"who": <person>, "quote": <their exact words>, "session": <conversation URL or id>}, reason=<why, for a deny>)`. Never relay your own judgement, never decide items they did not name, and leave held calls, trust proposals and dashboard-only items to them; withdraw your own question that no longer needs them (rook_huddle withdraw).
@@ -283,7 +284,7 @@ One persona for every harness. `rook_call(cap="persona.get", worker="rook", args
 `plugin.marketplace.list` on worker `rook` lists catalog entries (name, risk, caps, package). Installing is not implemented yet: `plugin.marketplace.install` always refuses. Switch installed plugins with `worker.plugin.enable/disable` on a worker or `hub.plugin.enable/disable`.
 
 ### policy
-`rook_call(cap="policy.explain", worker="rook", args={"principal": "role:agent", "cap": "shell.exec", "worker": "<name>"})` shows whether a call would be allowed and which rule decides it. `policy.get` returns the document; changing it (`policy.set`) is for band owners and operator tokens.
+`rook_call(cap="policy.explain", worker="rook", args={"principal": "human:member", "cap": "shell.exec", "worker": "<name>"})` shows whether a call would be allowed and which rule decides it. An API key is its person here. `policy.get` returns the document; changing it (`policy.set`) is for hub owners.
 
 ### roles
 Huddle roles (project manager, QA, lead developer, ...) each have a charter, a tool scope and their own memory, kept in the role's home directory on its agent host. `rook_call(worker="rook", cap="role.list")` lists them; `role.ask` with `{"id": "qa", "question": ...}` runs one turn of a role. `role.set`, `role.move` and `role.memory_edit` are admin: ask the user first.
@@ -307,7 +308,7 @@ The hub enforces a trust map: a `sacred` host, project, repo or resource changes
 `updates.status` on worker `rook`: hub version vs the newest release, workers behind, the running rollout. Applying updates (`updates.apply_hub`, `updates.prepare_hub`, `updates.rollout`) is for operators: ask the person who runs the hub first.
 
 ### users
-People on this hub are owners (reach everything) or members (reach only what a grant names: a band, a machine, the hub's caps, a knowledge folder, or anything; optional cap patterns and a tier ceiling, default exec). New people reach nothing. `users.me` shows your own access; `users.explain` whether a call would be allowed. Owners change access with `users.grant` / `users.revoke` / `users.role`, always passing `words`: the person's own words asking for it. Change access only when a person asks you to in conversation. A new person asks for access with `users.request` (their words); owners see what waits in `users.list` and close a new machine or band as owners-only with `users.settle`.
+People on this hub are owners (reach everything) or members (reach only what a grant names: a band, a machine, the hub's caps, a knowledge folder, or anything; optional cap patterns and a tier ceiling, default exec). New people reach nothing. `users.me` shows your own access; `users.explain` whether a call would be allowed. Owners change access with `users.grant` / `users.revoke` / `users.role`, always passing `words`: the person's own words asking for it. An API key reaches exactly what the person it belongs to reaches, from any client; owners move a key with `users.token`. Change access only when a person asks you to in conversation. A new person asks for access with `users.request` (their words); owners see what waits in `users.list` and close a new machine or band as owners-only with `users.settle`.
 <!-- END GENERATED: hub-caps -->
 
 ## Worker capabilities

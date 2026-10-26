@@ -11,9 +11,9 @@ decisions are computed and journaled, nothing is denied until the operator
 sets `"mode": "enforce"`. The default policy reproduces today's behaviour.
 Denying exec/admin to `unverified` callers is implemented but off by default
 (one edit: `"unverified": {"exec": "deny", "admin": "deny"}`). Band settings
-changes (`settings.set`/`settings.reset`) and `policy.set` are for band owners
-and operator-role tokens: default rules deny them to `role:agent` and
-`human:member` (in enforce mode), and `policy.set` also hard-gates on the
+changes (`settings.set`/`settings.reset`) and `policy.set` are for hub owners
+(signed in, or by an API key that belongs to one): a default rule denies them
+to `human:member` (in enforce mode), and `policy.set` also hard-gates on the
 principal in its handler whatever the mode. The settings framework should
 call `rook.hub.authz.require_hub_admin("settings.set")` the same way.
 
@@ -24,7 +24,7 @@ call `rook.hub.authz.require_hub_admin("settings.set")` the same way.
 | E1: principal resolution, `authorize()`, tickets, journaling | `rook/hub/authz.py`, `BandClient.authz` / `MultiBandClient.authz` | The authorizer sits inside the band client, so every hub path is covered. Principals come from a context variable set by the MCP attribution wrapper (`token:<agent_id>`, `token:static`, `unverified`) and the dashboard principal middleware (`human:<user_id>`, `human:dashboard`); in-process hub code without one is `system:*`. `call(principal=…)` overrides. |
 | Hub tools as caps on `rook` | `server._authorize_tool`, `hub_cap_for_tool` | Checked right after attribution. Tools that only forward to worker caps are authorized in the band client. |
 | Journal | `calls.principal/decision/rule/policy_rev/tier` | `rook_call` puts the decision on its own row; other paths journal non-allow decisions (coalesced over 10 s). `rook_journal` shows the columns on non-allow rows only. |
-| Token roles | `TokenStore.mint_api_token(role=…)`, `/tokens` and account token pages | Existing tokens are `agent`; the static token is `operator`. Only operator accounts may mint operator tokens from the account page. |
+| API keys are their person (access v2 item 7) | `rook/hub/access.py` (`tokens` table), `authz.principal_for_token`, `Principal.as_person`, Tokens page | Token roles are gone. Each key belongs to one account; the policy sees a key as its person and grants limit it as they limit that person's dashboard session. See "Access v2: keys" below. |
 | Keys and grants | `rook/hub/keys.py` | `hub-op-key` beside the root key (mode 0600), rotated after 30 days with a 24 h overlap. Grants are issued in memory by each hub process (7 days, renewed daily, scoped to every band that process serves). |
 | Signed hub announce, `rook` resolution, impostor quarantine | `BandClient._announce_local`, `_handle_announce`, `core.facts.roles_from_announce` | Replaces the reject-all stub. A remote announce naming `rook` without a held grant is listed as `rook~<id8>`, flagged `quarantined`, and journaled once as `audit.impostor`. |
 | E2: worker ticket checks | `rook/worker/authz_guard.py`, `Worker._on_message` | All five modes; default `audit` (`ROOK_AUTHZ_MODE`). Keys learned from signed hub announces or inlined in the ticket; `authz` readiness in the announce; `audit.jsonl` gains `ticket` and `decision`. |
@@ -100,9 +100,35 @@ Design: knowledge page `users-access-trust-map-and-agent-sessions-bake-s-design-
   policy mode: a refusal is `deny` with rule `access:no-grant`. An access error, a store that
   would not open, or a policy crash denies members (`error_deny`); owners are unaffected.
   `users.me` and `users.explain` on the hub need no grant.
-- **Who is limited.** Signed-in dashboard members only, for now. MCP tokens still resolve to
-  `token:*` principals and are not limited by grants until the tokens-identify-a-person task
-  maps them to an account (`access.user_of` is the one place to extend).
+- **Who is limited.** Every member, from any client: signed in on the dashboard, or through an
+  API key that belongs to them (below).
+
+### Access v2: keys only say who is calling (item 7)
+
+- **Whose a key is.** `access.db` table `tokens` (`agent_id` -> account). Minting on the Tokens
+  page records the signed-in operator, or the person they pick ("Belongs to"); a key whose
+  person cannot be recorded is not made. Owners move a key with the Tokens page or
+  `users.token(token, user, words)`; `users.list` shows each person's keys. Every change is in
+  the access history.
+- **Keys made before this.** A key with no row goes to the hub's first owner (earliest in
+  `members`) the first time it is used or listed, with the words in `access.CARRIED_OVER`. On a
+  hub with no owner yet (password sign-in only) a key is that hub's owner and nothing is
+  recorded. The static key is always the hub's owner.
+- **One set of permissions.** `principal_for_token` gives the key its person's role and groups
+  (`owner`/`human:owner` or `member`/`human:member`, an operator account is an owner) and
+  `Principal.user`. The id stays `token:<agent_id>`: the journal names the key that called, and
+  the agent hard stops (`approvals.principals`, `token:*`) still apply to it. The authorizer
+  evaluates the policy as `Principal.as_person()` (`human:<account>`, or `human:dashboard` for
+  the hub's owner), so a rule for a person covers all their keys, and `Authorizer._grants`
+  limits a member's key by their grants. A key whose person cannot be read is a member with no
+  account: it reaches nothing.
+- **Retired policy targets.** `token:*`, `token:<id>` and `role:operator|readonly|custom` can
+  only name keys. `PolicyStore` drops them from a document when it loads it (principal tables,
+  rules, principal-group members), keeps the old file as `policy.json.pre-tokens`, rewrites a
+  JSON file with `rev + 1` and logs what went; `Policy` refuses them afterwards. `role:agent`
+  stays: it now covers only agents the hub runs itself (house agent, roles), and the lint says
+  so for rules that name it. Jobs that run as a key resolve it the same way
+  (`principal_for_agent`).
 - **Knowledge areas.** A `knowledge` grant (folder slug or `*`) lets a member call
   `knowledge.read`/`knowledge.write`; inside, they may only search, list, get, create and
   update knowledge pages under a granted folder (ancestry by `parent`), stub lists in a get are
