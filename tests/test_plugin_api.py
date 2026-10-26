@@ -626,7 +626,7 @@ async def test_mcp_reaches_hub_caps(tmp_path, monkeypatch):
 
     plugins = _text(await mcp.call_tool("rook_call", {"cap": "hub.plugins", "worker": "rook",
                                                       "args": {"fields": ["name"]}}))
-    assert plugins["result"] == [{"name": "approvals"}, {"name": "attention"}, {"name": "ccmod"}, {"name": "changes"}, {"name": "decide"}, {"name": "help"}, {"name": "home"}, {"name": "hub-info"},
+    assert plugins["result"] == [{"name": "access"}, {"name": "approvals"}, {"name": "attention"}, {"name": "ccmod"}, {"name": "changes"}, {"name": "decide"}, {"name": "help"}, {"name": "home"}, {"name": "hub-info"},
                                  {"name": "jobs"}, {"name": "llm"}, {"name": "manual"},
                                  {"name": "marketplace"},
                                  {"name": "memory"},
