@@ -198,6 +198,8 @@ object AttentionStore {
     // ---- the card screen and the app ----------------------------------------
 
     fun showing(ctx: Context): List<AttentionCard> = synchronized(lock) { ensure(ctx.applicationContext); book.showing(now()) }
+    /** The card screen's stack: sent decisions are out of it until the hub refuses them (see [CardBook.stack]). */
+    fun stack(ctx: Context): List<AttentionCard> = synchronized(lock) { ensure(ctx.applicationContext); book.stack(now()) }
     fun card(ctx: Context, id: String): AttentionCard? = synchronized(lock) { ensure(ctx.applicationContext); book[id] }
     fun outcome(id: String): AttentionCard? = synchronized(lock) { outcomes[id] }
     fun target(id: String): PendingIntent? = synchronized(lock) { targets[id] }
@@ -205,13 +207,17 @@ object AttentionStore {
         ensure(ctx.applicationContext); quiet.prune(now()); quiet.recent(limit) to quiet.ignoredCount()
     }
 
-    /** Yes / No on a card: a "decision" event; the card shows "Sent…" until attention.update. */
+    /**
+     * Yes / No on a card: a "decision" event, saved at once; the hub reads it on its next poll (an
+     * unread event is read on the one after, so nothing is lost offline) and answers with attention.update.
+     * The card screen does not wait for that: the card leaves its stack now.
+     */
     fun decide(ctx: Context, id: String, approve: Boolean, reason: String = "") {
         val app = ctx.applicationContext
         val card = synchronized(lock) {
             ensure(app)
             val c = book[id] ?: return
-            c.state = "sent"; c.decision = if (approve) "approve" else "deny"; c.message = ""
+            c.state = "sent"; c.decision = if (approve) "approve" else "deny"; c.message = ""; c.sentAt = now()
             val f = JSONObject().put("id", id).put("decision", c.decision)
             if (!approve && reason.isNotBlank()) f.put("reason", reason.trim().take(200))
             event("decision", f); saveCards(); c

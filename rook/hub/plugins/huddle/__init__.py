@@ -338,7 +338,7 @@ class Huddle(Plugin):
     async def write(self, action: str, room: str | None = None, project: str | None = None,
                     band: str | None = None, text: str | None = None, data: dict | None = None,
                     mention=None) -> dict:
-        """Post in a huddle: status (data {working_on, blocked_on?, needs_decision?, task?}), ask (text, data {options?, task?}), say (text, mention?), withdraw (data {question}, text: why it is moot).
+        """Post in a huddle: status (data {working_on, blocked_on?, needs_decision?, task?}), ask (text, data {options?, task?}; a yes/no ask needs "Why:" and "Undo:" lines), say (text, mention?), withdraw (data {question}, text: why it is moot).
 
         The huddle is room=, else project='s, else band='s (default: the
         primary band's); it is made on first use and you join it."""
@@ -347,7 +347,12 @@ class Huddle(Plugin):
         if action == "status":
             return await svc.status(me, data or {}, **where)
         if action == "ask":
-            return await svc.ask(me, text or (data or {}).get("text"), data, **where)
+            from ...plain import unready
+            q = text or (data or {}).get("text")
+            why = unready(q, (data or {}).get("options"))
+            if why:
+                raise ValueError(why)
+            return await svc.ask(me, q, data, **where)
         if action == "say":
             if isinstance(mention, str):
                 mention = [m.strip() for m in mention.split(",") if m.strip()]
@@ -474,8 +479,8 @@ class Huddle(Plugin):
                               data: dict | None = None) -> str:
             """Huddle: a project's group room the person watches (project=; none: the band's).
             status data {working_on, blocked_on?, needs_decision?, task?}: when you start, stall or
-            finish. ask text, data {options?}: a decision only the person can make; pinned until
-            answered (withdraw data {question}, text=why: moot); the answer comes back as chat and
+            finish. ask text, data {options?}: a decision only the person can make (Yes/No: add
+            Why: and Undo: lines); pinned until answered (withdraw data {question}, text=why: moot); the answer comes back as chat and
             wakes you. say text. read (data.since_seq,
             data.room), mine, list. Chaired (person, house agent, roles): start data {title,
             roles}; post text data {room}; card data {room, card, action}; archive data {room}.

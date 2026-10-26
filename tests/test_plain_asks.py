@@ -16,7 +16,7 @@ from rook.hub.authz import Authorizer
 from rook.hub.policy import PolicyStore
 from rook.hub.trust import classify
 from tests.test_approvals import AGENT, check, pending_hold  # noqa: F401
-from tests.test_huddle_chair import _call, _settle
+from tests.test_huddle_chair import GUEST, _call, _settle
 from tests.test_huddle_chair import hub as chair_hub  # noqa: F401
 from tests.test_relay import CLAUDE, cap, card_and_ask, hold, hub  # noqa: F401
 
@@ -45,7 +45,7 @@ def test_a_read_only_query_on_the_guarded_hub_reads_plainly():
     p = plain.for_hold(held(context={"task": "t_1", "task_title": "Approval cards in plain words",
                                      "project": "Rook", "why": "find which asks were notes"}))
     assert {k: p[k] for k in ("title", "for", "who", "want", "why", "risk")} == {
-        "title": "Read approvals database",
+        "title": "Read approvals database on bakenetcanada",
         "for": "Approval cards in plain words (Rook)",
         "who": "Claude web",
         "want": "Run a read-only query on the approvals database on bakenetcanada",
@@ -197,7 +197,7 @@ def test_what_leaves_the_dashboard_never_carries_the_args():
 def test_each_hold_kind_says_its_risk_plainly():
     sacred = plain.for_hold(held(reason=TRUST.replace("(guarded)", "(sacred)").replace(
         "rook-hub", "master"), args={"argv": ["git", "push", "origin", "master"]}))
-    assert sacred["title"] == "Push code"
+    assert sacred["title"] == "Push code on bakenetcanada"
     assert sacred["risk"] == ("Medium: it runs a command that can change things; master is "
                               "sacred, so only you change it.")
     hub_host = plain.for_hold(held(kind="hub-host", reason="runs on the hub's machine",
@@ -218,12 +218,12 @@ def test_each_hold_kind_says_its_risk_plainly():
                               args={"path": "/srv/backup/today.tar"}))
     assert (job["who"], job["for"], job["why"]) == ("job nightly-backup", "job nightly-backup",
                                                     "keep a nightly copy")
-    assert job["title"] == "Write today.tar" and job["risk"].startswith("Medium")
+    assert job["title"] == "Write today.tar on bakenetcanada" and job["risk"].startswith("Medium")
     console = plain.for_hold(held(cap="proc.write", args={"data": "hunter2", "newline": True},
                                   context={"room": "r1", "room_title": "Kernel upgrade on nas"}))
     # Typed text may answer a password prompt: never in the title or sentence.
     assert console["for"] == "console Kernel upgrade on nas"
-    assert (console["title"], console["want"]) == ("Type into a console",
+    assert (console["title"], console["want"]) == ("Type into a console on bakenetcanada",
                                                    "Type a line into a console on bakenetcanada")
     assert "hunter2" not in console["title"] + console["want"] + console["risk"]
     role = plain.for_hold(held(principal="home:home/role:qa", principal_label="role:qa"))
@@ -243,7 +243,7 @@ async def test_the_relay_list_carries_the_plain_ask_for_every_kind(hub):  # noqa
     items = {i["kind"]: i for i in hub.relay.items()}
     assert items["hold"]["id"] == h["id"]
     assert {k: items["hold"]["plain"][k] for k in ("title", "for", "who")} == {
-        "title": "Restart nginx", "for": "no task", "who": "Claude web"}
+        "title": "Restart nginx on box", "for": "no task", "who": "Claude web"}
     assert items["job"]["id"] == job["id"] and items["job"]["plain"]["who"] == "job j_nightly"
     card = items["card"]["plain"]
     assert (card["for"], card["who"], card["why"]) == ("huddle Ops", "qa (huddle role)",
@@ -380,3 +380,70 @@ def test_a_task_card_with_one_criterion_as_text_is_fixed_when_proposed():
         validate_card({"kind": "task.create", "summary": "x", "worker": "rook",
                        "cap": "task.write", "args": {"data": {"title": "t", "parent": "rook",
                                                               "attrs": {"criteria": [1, 2]}}}})
+
+
+# -- titles, "More details" and a decision's why and undo (Bake, 2026-10-25) ------------------
+
+def test_an_ask_written_with_labels_gets_a_short_title_and_full_details():
+    q = ("Deploy hub update + phone beta? For: plain approval cards. Who: Claude web. "
+         "I want to: deploy master d87934a to the hub. Why: you could not read the cards "
+         "(PR #190). Risk: Medium: the hub restarts for a minute. Undo: one command back to 982.")
+    p = plain.describe({"kind": "ask", "id": "q498", "name": "a-b-c", "who": "agent:Claude web",
+                        "question_text": q, "options": ["Yes", "No"],
+                        "from": {"huddle": "jolly-sandal-overall", "huddle_title": "Huddle: bakenet"}})
+    assert p["title"] == "Deploy hub update + phone beta?"
+    assert p["want"] == "Deploy master d87934a to the hub. (Yes / No)"
+    assert p["risk"] == "Medium: the hub restarts for a minute."
+    assert (p["why"], p["undo"]) == ("you could not read the cards (PR #190).",
+                                     "one command back to 982.")
+    rows = plain.details(p).split("\n")
+    assert rows[:2] == ["Why: you could not read the cards (PR #190).",
+                        "Undo: one command back to 982."]
+    assert "Asked by: Claude web, in huddle bakenet (jolly-sandal-overall)" in rows
+    assert "Links: PR #190" in rows
+
+
+def test_a_long_question_keeps_a_whole_word_title_and_the_rest_goes_to_details():
+    q = ("Deploy the hub (Sojourn voice on Haiku 5.5, web search, battery reads without "
+         "approval) and beta APK 0.4.21 to bakephone? It also moves the voice to kaiju.")
+    p = plain.describe({"kind": "ask", "id": "q1", "question_text": q, "who": "Claude web"})
+    assert p["title"] == "Deploy the hub and beta APK 0.4.21 to bakephone?"
+    assert "It also moves the voice to kaiju." in p["more"]
+    assert "More: " in plain.details(p)
+    assert plain.title_of("word " * 40, 30).endswith("…")
+    assert not plain.title_of("word " * 40, 30)[:-1].endswith(" wor")
+
+
+def test_details_say_when_the_asker_gave_no_why_or_undo():
+    p = plain.for_hold(held())
+    rows = plain.details(p).split("\n")
+    assert rows[:2] == ["Why: the asker gave no reason", "Undo: the asker did not say"]
+    assert any(r.startswith("Technical: ") for r in rows)
+    assert len(plain.details({**p, "why_full": "x " * 3000})) <= plain.DETAILS_MAX
+
+
+@pytest.mark.parametrize("text,options,ok", [
+    ("Deploy?", ["Yes", "No"], False),
+    ("Deploy?\nWhy: the cards fix.", ["yes", "no"], False),
+    ("Deploy?\nWhy: the cards fix.\nUndo: roll back to 1038.", ["Yes", "No"], True),
+    ("Deploy? Why: the cards fix. Rollback: the old release.", ["Yes", "No"], True),
+    ("Deploy?\nWhy: ok\nUndo: x", ["Yes", "No"], False),        # a word each is not a reason
+    ("Which colour?", ["red", "blue"], True),                     # not a yes/no decision
+    ("Anything else?", [], True),
+])
+def test_a_yes_no_decision_needs_a_why_and_an_undo(text, options, ok):
+    assert (plain.unready(text, options) == "") is ok
+
+
+@pytest.mark.asyncio
+async def test_the_huddle_refuses_a_yes_no_ask_without_why_and_undo(hub):  # noqa: F811
+    h = await card_and_ask(hub)
+    bad = await hub.node.dispatch("huddle.write", {"action": "ask", "room": h["room"],
+                                                   "text": "Ship it?",
+                                                   "data": {"options": ["Yes", "No"]}}, GUEST)
+    assert not bad["ok"] and "Why:" in bad["error"] and "Undo:" in bad["error"]
+    ok = await hub.node.dispatch("huddle.write", {
+        "action": "ask", "room": h["room"],
+        "text": "Ship it?\nWhy: the fix is merged.\nUndo: ship the old build.",
+        "data": {"options": ["Yes", "No"]}}, GUEST)
+    assert ok["ok"], ok
