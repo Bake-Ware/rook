@@ -902,7 +902,7 @@ def build_server(client: "BandClient | MultiBandClient",
                         hint: bool = False,
                         text: bool = False,
                         why: str | None = None,
-                        _session_context_receipt: str | None = None) -> str:
+                        session_receipt: str | None = None) -> str:
         """Invoke a capability on the band and return the reply.
 
         Args:
@@ -930,7 +930,7 @@ def build_server(client: "BandClient | MultiBandClient",
                 asks were about notes"). If the call is held for the person's
                 approval, it is shown to them as "Why:" next to your task, so
                 give one for anything that may be held (changes, admin, the hub).
-            _session_context_receipt: internal; echo back a prior session brief's
+            session_receipt: optional; echo back a prior session brief's
                 receipt to skip resending the brief. If your last call included
                 ``_session_context`` in the reply, send its ``receipt`` here.
 
@@ -1135,8 +1135,8 @@ def build_server(client: "BandClient | MultiBandClient",
             echo_state = _session_echo_states.get_state(session)
 
             # Track if client is echoing back the receipt
-            if _session_context_receipt:
-                echo_state.mark_echoed(_session_context_receipt)
+            if session_receipt:
+                echo_state.mark_echoed(session_receipt)
 
             # Check if this brief is new for this session (via signature)
             brief_value = brief.to_dict()
@@ -1144,7 +1144,7 @@ def build_server(client: "BandClient | MultiBandClient",
                 # Brief is new/changed. Check if client is echoing back.
                 if echo_state.should_send_brief(brief):
                     notices["_session_context"] = _session_context_mod.make_notice(brief)
-                elif echo_state.state == "never_echoed" and not _session_context_receipt:
+                elif echo_state.state == "never_echoed" and not session_receipt:
                     # Called before without brief, now on second call with no echo
                     echo_state.mark_silent()
         except Exception:
