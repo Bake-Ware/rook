@@ -31,7 +31,7 @@ PHONE = NodeFacts(node_id="p", name="worker-b", hw={"os": "android", "embedded":
 class Rows(Plugin):
     NAMESPACE = "rows"
 
-    @capability("legacy", scope="self")
+    @capability("legacy")
     def legacy(self, fields=None):
         return {"fields": fields}
 
