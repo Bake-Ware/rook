@@ -15,6 +15,12 @@ version was `0.1.0`.
   layers (core and menu, a topic, its reference pages). Tool replies carry a one-line `_help`
   note the first time a tool, an action or a held or timed-out call comes up in a session.
   (manual: agents-and-mcp)
+- People and access (access v2): several owners per hub, everyone else a member who reaches
+  only what a grant names (a band, a machine, the hub's tools, a knowledge folder, or anything;
+  narrowed by caps and a tier ceiling). New people reach nothing; enforced hub-side in every
+  policy mode. Caps `users.me/explain/list/grant/revoke/role/history` on worker `rook`;
+  `access.db` beside `policy.json`; existing owners and band members carried over once.
+  (manual: accounts-and-access)
 
 ### Changed
 - Approvals, simplified (access v2, Bake's design decision 9): only the hard stops and the

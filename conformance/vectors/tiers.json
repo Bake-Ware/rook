@@ -1468,14 +1468,23 @@
   "users.explain": {
    "tier": "read"
   },
-  "users.grant.add": {
-   "tier": "write"
+  "users.grant": {
+   "tier": "admin"
   },
-  "users.grant.revoke": {
-   "tier": "write"
+  "users.history": {
+   "tier": "read"
   },
   "users.list": {
    "tier": "read"
+  },
+  "users.me": {
+   "tier": "read"
+  },
+  "users.revoke": {
+   "tier": "admin"
+  },
+  "users.role": {
+   "tier": "admin"
   },
   "voice.replies": {
    "tier": "read"

@@ -38,11 +38,50 @@ Open **Account & access** to manage your account.
 The **operator** is the hub's administrator account. Some pages, such as
 Plugins, Secrets and Agent instructions, are only for the operator.
 
-## Owners and members
+## People on the hub: owners and members
 
-- An **owner** of a band can invite people, start pairing, move machines and
-  change the band's key.
-- A **member** can use the band's machines but not change the band.
+Several people can share one hub. Each person is an **owner** or a
+**member** of the hub.
+
+- **Owners** reach everything, and only owners change hub settings
+  (including sign-in), the policy and who may do what. There can be several
+  owners; the last one can't be made a member.
+- **Members** reach only what an owner has given them. Someone new reaches
+  nothing until an owner gives them access.
+
+An owner gives access as **grants**. A grant names one thing:
+
+- a **band**: every machine on it (`kind: band`, the band's id);
+- a **machine** (`kind: worker`, its name or id);
+- the **hub's own tools** (`kind: hub`), such as chat;
+- a **knowledge folder** (`kind: knowledge`, the folder's slug, or `*` for
+  all of it): the person can search, read, add and edit pages under that
+  folder and sees nothing outside it;
+- **anything** (`kind: any`).
+
+A grant can be narrowed to some tools (`caps`, for example `shell.*`) and
+has a ceiling on risk (`tier`: read, write, exec or admin; exec unless you
+say otherwise, so changing Rook itself on a machine needs `admin` said).
+Grants never open hub settings: those stay with owners. The access rules
+apply to every call a person makes, whatever the policy mode.
+
+On the hub (worker `rook`):
+
+- `users.me` shows your own access in plain words, and `users.explain`
+  (`cap`, `worker`) says whether a call would be allowed and which grant
+  allows it. Anyone can ask about themselves.
+- Owners use `users.list` (everyone, with their access), `users.grant`,
+  `users.revoke`, `users.role` (owner or member) and `users.history`. Each
+  change needs `words`: who asked for it, in their words. Words are kept in
+  the history with who made the change and when.
+
+When the hub was upgraded to this, the operator account and every band owner
+became owners, and each band member got a grant on the bands they were in.
+
+Bands themselves still have owners and members: a band **owner** can invite
+people, start pairing, move machines and change the band's key
+([[manual-bands-and-keys]]). Being a band's owner no longer makes you an
+owner of the hub.
 
 ## Devices
 
