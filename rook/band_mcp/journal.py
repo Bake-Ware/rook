@@ -75,6 +75,8 @@ class Journal:
             # winning rule, the policy revision and the cap's tier.
             add_columns(self._db, "calls", {"principal": "TEXT", "decision": "TEXT", "rule": "TEXT",
                                             "policy_rev": "INTEGER", "tier": "TEXT"})
+            # Agent sessions: one-line justification for the call (users-access-trust-map item 14).
+            add_columns(self._db, "calls", {"why": "TEXT"})
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_decision ON calls(decision)")
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_worker ON calls(worker)")
@@ -93,11 +95,11 @@ class Journal:
     def record(self, *, cap: str, worker: str | None, identity: str | None,
                args: dict | None, reply: dict | None, thread_id: str | None = None,
                call_id: str | None = None, audit: dict | None = None,
-               authz: dict | None = None) -> str:
+               authz: dict | None = None, why: str | None = None) -> str:
         """Store one call + its reply. Returns the journal call id (generated if
         not supplied). ``audit`` is the caller's attribution
-        (``agent_id``/``key_id``/``kind``/``verified``). Best-effort — never
-        raises into the call path."""
+        (``agent_id``/``key_id``/``kind``/``verified``). ``why`` is a one-line
+        justification for the call. Best-effort — never raises into the call path."""
         cid = call_id or (reply or {}).get("id") or uuid.uuid4().hex
         if self._db is None:
             return cid
@@ -128,14 +130,14 @@ class Journal:
                worker, thread_id, ok, error, blob,
                audit.get("agent_id"), audit.get("key_id"), auth, audit.get("actor"),
                az.get("principal"), az.get("decision"), rule,
-               az.get("policy_rev"), az.get("tier"))
+               az.get("policy_rev"), az.get("tier"), why)
         try:
             with self._lock:
                 self._db.execute(
                     "INSERT INTO calls (call_id, ts, identity, cap, worker, "
                     "thread_id, ok, error, reply, agent_id, key_id, auth, actor, "
-                    "principal, decision, rule, policy_rev, tier) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", row)
+                    "principal, decision, rule, policy_rev, tier, why) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", row)
                 self._writes_since_prune += 1
                 if self._writes_since_prune >= _PRUNE_EVERY:
                     self._prune_locked()
