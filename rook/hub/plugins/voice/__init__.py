@@ -487,7 +487,7 @@ class Voice(Plugin):
                         "hits": self._audio.hits}
         return out
 
-    @capability("status", risk="read", fields="*")
+    @capability("status", risk="read", fields="*", scope="self")
     def status_cap(self) -> dict:
         """voice.status — whether this hub serves voice (/voice/ws), where speech runs and whether it is ready."""
         s = self.status()

@@ -9,7 +9,7 @@ Minimal plugin (unchanged from the original worker API)::
     class Clock(Plugin):
         NAMESPACE = "clock"
 
-        @capability("now")
+        @capability("now", scope="multi-user")
         def now(self) -> float:
             return time.time()
 
@@ -30,7 +30,7 @@ Everything else is optional::
         GUIDANCE = {"hub.info": "Call this first to learn what the hub runs."}
         SKILL = "## hub\\nhub.info returns ..."
 
-        @capability("info", risk="read", tool=True, fields="*")
+        @capability("info", risk="read", tool=True, fields="*", scope="multi-user")
         def info(self) -> dict: ...
 
 This module is stdlib-only: it ships inside the worker bundle.
@@ -142,7 +142,7 @@ def capability(suffix: str = "", *, risk: str | None = None, scope: str | None =
     fine (``"env.get"`` → ``"shell.env.get"``).
 
     Keyword metadata is optional and additive (see :class:`CapMeta`); a bare
-    ``@capability("x")`` behaves exactly as it always has. ``tier`` is an
+    ``@capability("x", scope="multi-user")`` behaves exactly as it always has. ``tier`` is an
     alias of ``risk`` (the permissions spec's name for it). Every built-in
     cap declares ``risk`` and ``scope`` (tests/test_plugin_contract.py).
 

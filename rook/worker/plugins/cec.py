@@ -80,7 +80,7 @@ class CecPlugin(Plugin):
         return await asyncio.to_thread(_exchange, line, s.get("host", ""),
                                        s.get("port", 9526), s.get("timeout", 5.0))
 
-    @capability("send", risk="write", tags=("physical",))
+    @capability("send", risk="write", tags=("physical",), scope="local")
     async def _send(self, addr, opcode, operands=None, **_) -> dict:
         """Transmit a CEC frame: ``addr`` destination (0-f, 0 = TV), ``opcode`` byte, optional ``operands`` (ints or hex strings)."""
         line = f"send {_hex(addr)} {_hex(opcode)}"
@@ -91,14 +91,14 @@ class CecPlugin(Plugin):
         reply = await self._exchange(line)
         return {"ok": reply.startswith("OK"), "sent": line, "reply": reply}
 
-    @capability("raw", risk="write", tags=("physical",))
+    @capability("raw", risk="write", tags=("physical",), scope="local")
     async def _raw(self, cmd, **_) -> dict:
         """Send one literal Pico-CEC firmware command line (e.g. ``"send 0 36"``) and return its reply."""
         line = require_str(cmd, "cmd", max_len=200)
         reply = await self._exchange(line)
         return {"ok": not reply.startswith("ERR"), "sent": line, "reply": reply}
 
-    @capability("ping", risk="read", tags=("physical",))
+    @capability("ping", risk="read", tags=("physical",), scope="local")
     async def _ping(self, **_) -> dict:
         """Check the Pico-CEC bridge answers; returns its reply (logical/physical address)."""
         reply = await self._exchange("ping")

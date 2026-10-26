@@ -192,7 +192,7 @@ class HubSettings(Plugin):
         return self.svc
 
     @capability("describe", risk="read", limit=100,
-                fields=["key", "label", "scope", "type", "default", "env", "apply"])
+                fields=["key", "label", "scope", "type", "default", "env", "apply"], scope="multi-user")
     def describe(self, prefix: str = "") -> list[dict]:
         """The settings schema: key, type, scope, default, env names, apply mode.
 
@@ -200,7 +200,7 @@ class HubSettings(Plugin):
         return [e.describe() for e in self._svc().schema if e.key.startswith(prefix or "")]
 
     @capability("get", risk="read", limit=100,
-                fields=["key", "value", "source", "locked", "env", "pending", "conflict"])
+                fields=["key", "value", "source", "locked", "env", "pending", "conflict"], scope="multi-user")
     def get(self, key: str = "", prefix: str = "", scope: str = "hub",
             target: str = "") -> Any:
         """Effective value of a setting, where it came from and what it hides.
@@ -219,7 +219,7 @@ class HubSettings(Plugin):
                 out.append(svc._resolve(e, ctx))
         return out
 
-    @capability("set", risk="admin")
+    @capability("set", risk="admin", scope="multi-user")
     def set(self, key: str, value: Any, scope: str = "", target: str = "", note: str = "",
             dry_run: bool = False) -> dict:
         """Store a setting (validated, attributed, in history). Secrets go to the vault.
@@ -232,14 +232,14 @@ class HubSettings(Plugin):
         return self._svc().set(key, value, scope=scope or None, target=target, actor=_actor(),
                                note=note, source="mcp", dry_run=dry_run)
 
-    @capability("reset", risk="admin")
+    @capability("reset", risk="admin", scope="multi-user")
     def reset(self, key: str, scope: str = "", target: str = "", note: str = "") -> dict:
         """Remove a stored value so the key inherits again (in history)."""
         _admin_gate(f"settings.reset {key}")
         return self._svc().reset(key, scope=scope or None, target=target, actor=_actor(),
                                  note=note, source="mcp")
 
-    @capability("history", risk="read", limit=20)
+    @capability("history", risk="read", limit=20, scope="multi-user")
     def history(self, key: str = "", scope: str = "", target: str = "") -> list[dict]:
         """Attributed changes, newest first (secrets as fingerprints).
 
@@ -247,7 +247,7 @@ class HubSettings(Plugin):
         return self._svc().store.history(key=key or None, scope=scope or None,
                                          target=target if (target or scope) else None, limit=200)
 
-    @capability("apply_worker", risk="admin")
+    @capability("apply_worker", risk="admin", scope="multi-user")
     async def apply_worker(self, worker: str, confirm_within: float = 120.0) -> dict:
         """Push a worker's stored settings to it (commit-confirmed restart).
 
@@ -257,7 +257,7 @@ class HubSettings(Plugin):
         _admin_gate(f"settings.apply_worker {worker}")
         return await self._svc().apply_worker(worker, _actor(), confirm_within=confirm_within)
 
-    @capability("fetch", risk="read", tags=("sensitive",))
+    @capability("fetch", risk="read", tags=("sensitive",), scope="multi-user")
     def fetch(self, namespace: str) -> dict:
         """A service's own settings, secrets included, for its scoped token.
 
@@ -265,14 +265,14 @@ class HubSettings(Plugin):
         call it; the reply is not journaled."""
         return self._svc().fetch(namespace, _principal())
 
-    @capability("report", risk="write")
+    @capability("report", risk="write", scope="multi-user")
     def report(self, namespace: str, env: dict | None = None) -> dict:
         """A service reports which of its settings its environment sets.
 
         ``env`` maps setting name to the variable that set it (no values)."""
         return self._svc().report_service(namespace, _principal(), env or {})
 
-    @capability("worker_secret", risk="read", tags=("sensitive",))
+    @capability("worker_secret", risk="read", tags=("sensitive",), scope="multi-user")
     def worker_secret(self, worker_id: str, names: list) -> dict:
         """Vault secrets a stored setting assigns to this worker (fetch at use)."""
         return self._svc().worker_secrets(worker_id, list(names or []))

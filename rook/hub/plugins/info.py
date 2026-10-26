@@ -43,7 +43,7 @@ class HubInfo(Plugin):
     def _plugins(self) -> list[dict]:
         return self._node.host.manifests() if self._node is not None else []
 
-    @capability("info", risk="read")
+    @capability("info", risk="read", scope="self")
     def info(self) -> dict:
         """What the hub runs: version, core API, roles, facts and plugins.
 
@@ -74,7 +74,7 @@ class HubInfo(Plugin):
         }
 
     @capability("plugins", risk="read", limit=50,
-                fields=["name", "namespace", "version", "state", "caps"])
+                fields=["name", "namespace", "version", "state", "caps"], scope="self")
     def plugins(self) -> list[dict]:
         """Full manifests of the hub's loaded plugins (placement, settings
         schema, guidance slots, source). Default fields are compact; pass

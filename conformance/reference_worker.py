@@ -91,23 +91,23 @@ class Conformance(Plugin):
             raise RuntimeError(reply.get("error") or f"{cap} failed")
         return reply.get("result")
 
-    @capability("echo", risk="read")
+    @capability("echo", risk="read", scope="local")
     def echo(self, value=None):
         """Return value unchanged."""
         return value
 
-    @capability("add", risk="read")
+    @capability("add", risk="read", scope="local")
     def add(self, a: int, b: int) -> int:
         """Return a + b."""
         return a + b
 
-    @capability("chat_post", risk="write")
+    @capability("chat_post", risk="write", scope="local")
     async def chat_post(self, room: str, text: str) -> dict:
         """Post text to a hub chat room (chat.write on worker rook)."""
         hub = await self._call_rook("chat.write", {"action": "send", "room": room, "text": text})
         return {"hub": hub, "rook": self.rook}
 
-    @capability("chat_read", risk="read")
+    @capability("chat_read", risk="read", scope="local")
     async def chat_read(self, room: str, since_seq: int = 0) -> dict:
         """Read a hub chat room (chat.read on worker rook)."""
         hub = await self._call_rook("chat.read", {"action": "read", "room": room,
