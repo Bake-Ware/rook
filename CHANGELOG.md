@@ -8,7 +8,28 @@ version was `0.1.0`.
 
 ## Unreleased
 
+## [0.4.0] - 2026-10-25
+
+The integration release: everything in flight merged to one master, one hub build, one
+stable Android app (0.4.23, code 40) for every phone and tablet, and the first Wear OS app.
+Since 0.3.0: the always-on house agent and its voice, plain-words decision cards that queue
+and are cleared by voice, the Rook reset (four hard stops in core, change requests, the old
+guardrails moved to the advanced security plugin, off), trust proposals as cards, and a
+watch push-to-talk app.
+
 ### Added
+- Hard stops (`rook/hub/hardstops.py`): only four things ask the person first: a change on a
+  sacred machine, erasing data for good, revealing a secret's value, sending as the person.
+  Everything else goes and is journaled. The blanket holds, guarded tier, spread limits and
+  votes moved verbatim into the `security` hub plugin (`security.enabled`, off).
+  (manual: security)
+- Change requests: hub plugin `changes`, caps `change.*` on worker `rook`. Standard changes
+  (routine deploys, reversible config) are checked, run, tested and rolled back by the hub; the
+  runner waits for a step's worker after a hub restart and logs results in the home timezone.
+  (manual: change-requests)
+- Wear OS push-to-talk app (`android/wear`, `android/wearlink`): tap on the watch to talk; the
+  phone app runs the watch's voice session over the Wear Data Layer. Ships as `rook-wear.apk`,
+  same package and signer as the phone app.
 - Decision cards queue, and the phone reminds you out loud: cards are no longer emergencies, so
   they land quietly in the app (the digest channel: no pop-up, no takeover on unlock) and the hub
   asks the phone to say "Need your input: <title>" for one card or "Hey boss, you have 6
@@ -79,7 +100,19 @@ version was `0.1.0`.
   proposed; anything else that is not a list of strings is refused then, not when the person taps
   Yes. (manual: huddles)
 
+- A decision card is the one decision record: decided anywhere (phone, voice, dashboard, an
+  agent relaying the person's quoted words) clears it everywhere; a moot card is gone. Trust
+  proposals are cards too, and only the person decides them. Waiting cards post as a normal
+  notification and come back on unlock (app 0.4.22-beta.6).
+- Phone decision cards: swipe between them, answers apply at once (sent in the background, put
+  back with a short error if the hub refuses), short titles, and More details shows the full why,
+  target, who asked and the undo.
+- Voice: a named speaker match counts as the owner when more than half sure
+  (`VOICE_SPEAKER_SURE` 0.45).
+
 ### Fixed
+- Phone cards are only sent in kinds the app takes (trust proposals and house asks were never
+  posted).
 - House voice: a new person's "I agree to have my voice remembered" comes marked "unknown guest"
   (their voice isn't known yet) and is now taken as their consent, so enrolling someone by
   conversation routes `enroll` instead of asking "is that Quinn?" forever; the hub still checks
