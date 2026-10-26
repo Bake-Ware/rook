@@ -150,6 +150,19 @@ def _role_args(action: str, data: dict) -> dict:
     return {}
 
 
+def _account_principal(node: Any, user: dict) -> Any:
+    """This dashboard account as a policy principal: an owner when it is the
+    operator or access.db says so (access v2), else a member."""
+    from ...access import AccessStore
+    from ...authz import principal_for_user
+    owner = bool(user.get("admin"))
+    store = getattr(getattr(getattr(node, "client", None), "authz", None), "access", None)
+    if not owner and isinstance(store, AccessStore):
+        with contextlib.suppress(Exception):
+            owner = store.is_owner(str(user.get("id") or ""))
+    return principal_for_user(user, owner)
+
+
 def routes(get_node: Callable[[], Any], accounts):
     """``get_node()`` returns the live hub node (or None)."""
 
@@ -220,7 +233,8 @@ def routes(get_node: Callable[[], Any], accounts):
             return await front.answer(str(data.get("ask") or ""), decision, by=who,
                                       quote=f"{'Yes' if decision == 'yes' else 'No'} on the "
                                             "dashboard's Decisions page",
-                                      reason=str(data.get("reason") or "")[:500])
+                                      reason=str(data.get("reason") or "")[:500],
+                                      principal=_account_principal(get_node(), user))
         if action == "front_overturn":
             return front.overturn(str(data.get("decision") or ""), by=who,
                                   words=str(data.get("words") or "Overturned on the dashboard"),

@@ -300,8 +300,9 @@ class Sessions:
     def main_tools(self) -> list[dict]:
         """Every tool the main lane offers (by name): the front door's, knowledge
         search and memory. Each request may use only its own subset."""
-        from . import BAND_TOOL, front
+        from . import BAND_TOOL, access_talk, front
         out = {(t.get("function") or t)["name"]: t for t in front.TOOLS.values()}
+        out.update(access_talk.TOOLS)
         out.setdefault("knowledge_search", front.KNOWLEDGE)
         out.setdefault("band_status", BAND_TOOL)
         mem = self.home._memory()

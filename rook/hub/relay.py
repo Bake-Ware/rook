@@ -599,9 +599,11 @@ class Relay:
             if ap is not None:
                 ap.queue.relay_add({**rel, "kind": "house", "item": it["id"],
                                     "decision": decision})
+            # The person's own tap on their card counts as the owner's word;
+            # an agent carrying their words never gives access (front.answer).
             res = await front.answer(it["id"], "yes" if decision == "approve" else "no", by=by,
                                      quote=said["quote"], relay={**rel, "kind": "house"},
-                                     reason=reason)
+                                     reason=reason, owner=tap)
             out = {"state": res.get("answer"), **({"note": res["note"]} if res.get("note")
                                                   else {}),
                    **({"remember": res["remember"]} if res.get("remember") else {})}

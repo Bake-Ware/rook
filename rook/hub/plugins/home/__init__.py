@@ -273,6 +273,12 @@ class HomeAgent(Plugin):
                 order=4, advanced=True, label="Check borrowed state every (minutes)",
                 help="How often it looks for borrowed state to offer back and projects to "
                      "review. 0: never."),
+        setting("access_prompts", bool, True, group="People", order=1,
+                label="Ask who gets new machines and bands",
+                help="When a machine or band appears that some members don't reach yet, ask "
+                     "the owners once who gets it, and hand a new person's request for "
+                     "access to you as one question. Off: they wait on the People page. "
+                     "Checked as often as borrowed state."),
         setting("persistent", bool, False, group="Persistent sessions", order=1,
                 label="Always-on sessions",
                 help="On: the house agent runs as always-on Claude Code sessions on the session "
@@ -425,7 +431,8 @@ class HomeAgent(Plugin):
 
     async def _sweep_loop(self) -> None:
         """Borrowed state and new projects (onboard.py): offer to restore and
-        ask "still a toy?" when their time comes."""
+        ask "still a toy?" when their time comes; and who gets new machines
+        and bands, and new people's requests (access_talk.py)."""
         await asyncio.sleep(60)
         while True:
             every = int(self.settings.get("onboard_sweep_minutes") or 0)
@@ -438,6 +445,15 @@ class HomeAgent(Plugin):
                     raise
                 except Exception:  # noqa: BLE001 - try again next time
                     log.exception("home agent: borrowed-state sweep failed")
+                if self.settings.get("access_prompts", True):
+                    try:
+                        made = await self.front.access.sweep()
+                        if made:
+                            log.info("home agent: asked who gets access: %s", ", ".join(made))
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:  # noqa: BLE001 - try again next time
+                        log.exception("home agent: access sweep failed")
             await asyncio.sleep(max(1, every or 10) * 60)
 
     async def stop(self) -> None:

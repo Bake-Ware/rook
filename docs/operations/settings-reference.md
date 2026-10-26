@@ -291,6 +291,7 @@ are set only in the environment or on the command line.
 | `home.onboard_quiet_days` | Offer to restore after quiet (days) | hub | int | `14` | `ROOK_HOME_ONBOARD_QUIET_DAYS` | live |
 | `home.onboard_concept` | Concept for new projects | hub | str |  | `ROOK_HOME_ONBOARD_CONCEPT` | live |
 | `home.onboard_sweep_minutes` | Check borrowed state every (minutes) | hub | int | `10` | `ROOK_HOME_ONBOARD_SWEEP_MINUTES` | live |
+| `home.access_prompts` | Ask who gets new machines and bands | hub | bool | on | `ROOK_HOME_ACCESS_PROMPTS` | live |
 | `home.persistent` | Always-on sessions | hub | bool | off | `ROOK_HOME_PERSISTENT` | live |
 | `home.voice_lane` | Voice session | hub | bool | on | `ROOK_HOME_VOICE_LANE` | live |
 | `home.persistent_model` | Agent model | hub | str | `opus` | `ROOK_HOME_PERSISTENT_MODEL` | live |
