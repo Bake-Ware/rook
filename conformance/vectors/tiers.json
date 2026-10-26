@@ -1465,6 +1465,18 @@
   "updates.status": {
    "tier": "read"
   },
+  "users.explain": {
+   "tier": "read"
+  },
+  "users.grant.add": {
+   "tier": "write"
+  },
+  "users.grant.revoke": {
+   "tier": "write"
+  },
+  "users.list": {
+   "tier": "read"
+  },
   "voice.replies": {
    "tier": "read"
   },

@@ -9,6 +9,7 @@ features:
   - settings/core/identity
   - plugin/hub/policy
   - plugin/hub/approvals
+  - plugin/hub/access
 since: 0.1.0
 deprecated: false
 ---
