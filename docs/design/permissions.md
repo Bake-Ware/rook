@@ -79,6 +79,48 @@ announces. The hub node keeps its persisted `hub_node_id` as `worker_id`
 instead of the op-key `kid`, so rosters and journals keep a stable id across
 op-key rotations; the grant does not bind `sub.worker_id`.
 
+## Access v2: people and grants (2026-10-26)
+
+Design: knowledge page `users-access-trust-map-and-agent-sessions-bake-s-design-decisions-2026-10-26-voi`
+(items 2, 3, 4, 6). Code: `rook/hub/access.py`, `Authorizer._grants`, hub plugin `access`
+(`users.*`), `KnowledgePlugin._in_areas`.
+
+- **Store.** `access.db` beside `policy.json`, opened by `build_authorizer` in both hub
+  processes: `members` (hub role owner|member per account id), `grants`, append-only
+  `history` (actor, action, words), `bands` (enrollment band id -> current `psk_hash`, synced
+  by the dashboard every enrollment sync so band grants survive a key change). Accounts stay in
+  `enrollment.db`.
+- **Owners.** The dashboard's principal is an owner when the account is an operator (`admin`)
+  or `access.db` says owner. Band ownership no longer implies it (bands are groupings, not
+  tenants). The last owner can't be demoted. Owners pass `require_hub_admin`, which keeps hub
+  settings, sign-in and policy owner-only whatever a grant says.
+- **Enforcement.** For a verified `human:<account>` principal that is not an owner,
+  `Authorizer.check` requires an active grant covering the call (kind matches the target, a
+  cap pattern matches, the cap's tier is at or under the grant's ceiling). Independent of the
+  policy mode: a refusal is `deny` with rule `access:no-grant`. An access error, a store that
+  would not open, or a policy crash denies members (`error_deny`); owners are unaffected.
+  `users.me` and `users.explain` on the hub need no grant.
+- **Who is limited.** Signed-in dashboard members only, for now. MCP tokens still resolve to
+  `token:*` principals and are not limited by grants until the tokens-identify-a-person task
+  maps them to an account (`access.user_of` is the one place to extend).
+- **Knowledge areas.** A `knowledge` grant (folder slug or `*`) lets a member call
+  `knowledge.read`/`knowledge.write`; inside, they may only search, list, get, create and
+  update knowledge pages under a granted folder (ancestry by `parent`), stub lists in a get are
+  filtered, and every other action (deck, board, batch, links, ...) is refused. A `hub` or
+  `any` grant covering the knowledge caps lifts the area limit.
+- **Migration.** `AccessStore.seed` runs once at dashboard start: operator accounts and band
+  owners become owners, band members get a `band` grant per membership (tier exec), accounts
+  with neither are left for onboarding (they reach nothing). The `seeded` marker is checked
+  inside the write transaction, so racing starts seed once. If `access.db` goes missing while
+  the hub runs, members are denied and the dashboard counts band owners as owners again until
+  the store is back (owners are never locked out); the next start recreates it and seeds again
+  from accounts, so roles and grants given since the last seed are lost: back it up with
+  `policy.json`.
+- **Open.** Operator-only dashboard pages (Secrets, Plugins, Tokens) still check the
+  operator account, not hub ownership; whether every owner should see them is asked in the
+  rook-beta huddle. Workers seen only on a band's pending new key (mid key change) match the
+  band grant once the change completes.
+
 This spec covers who may call which capability on which worker, how the
 decision is made and recorded, and how a node proves that it holds a role such
 as `is_hub`. It is written against the code on `beta` (cut from master

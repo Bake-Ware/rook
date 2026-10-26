@@ -1465,6 +1465,27 @@
   "updates.status": {
    "tier": "read"
   },
+  "users.explain": {
+   "tier": "read"
+  },
+  "users.grant": {
+   "tier": "admin"
+  },
+  "users.history": {
+   "tier": "read"
+  },
+  "users.list": {
+   "tier": "read"
+  },
+  "users.me": {
+   "tier": "read"
+  },
+  "users.revoke": {
+   "tier": "admin"
+  },
+  "users.role": {
+   "tier": "admin"
+  },
   "voice.replies": {
    "tier": "read"
   },

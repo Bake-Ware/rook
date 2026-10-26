@@ -8,6 +8,7 @@ same JSON wire format and reuses the worker's hub transport for I/O.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -127,6 +128,9 @@ class BandClient:
         self.transport = TelestheteHubTransport(
             psk=psk, hub_host=hub_host, hub_port=hub_port, use_ws=use_ws,
         )
+        # The band's enrollment key hash (enrollment.db ``bands.psk_hash``):
+        # how grants on a band find the workers seen on it.
+        self.psk_hash = hashlib.sha256(psk.encode("utf-8")).hexdigest()
         # Our route identity (telesthete SPEC §10.1): replies to our calls
         # carry ``rr`` = route_id_for(this) and a routing hub delivers them to
         # us alone. Stable for the process; attach_local() replaces it with

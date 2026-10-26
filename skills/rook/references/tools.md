@@ -213,6 +213,13 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `updates.prepare_hub` | tag | admin | For a `rook hub` install the hub cannot switch itself: download and verify release `tag`, leave a signed hub… |
 | `updates.rollout` | workers?, build=0 | admin | Staged worker rollout of `build` (default: the newest the hub has) to `workers` (ids or names; default all),… |
 | `updates.status` | — | read | Hub version against the newest release, how many workers are behind, the running rollout, and the mode/channe… |
+| `users.explain` | cap, worker?, user? | read | Whether a person (default: you) may call `cap` on `worker`, and which grant decides. |
+| `users.grant` | user, kind, words, ref='', caps?, tier? | admin | Give a member access. |
+| `users.history` | user?, limit=50 | read | Who changed whose access, when, and in whose words (newest first). |
+| `users.list` | — | read | Everyone with an account or access: role, grants, in plain words. |
+| `users.me` | — | read | Your own role and grants, in plain words. |
+| `users.revoke` | grant, words | admin | Take a grant away (kept in the history with `words`). |
+| `users.role` | user, role, words | admin | Make someone an `owner` or a `member`. |
 
 ### approvals (relayed)
 `rook_approvals(action="summary")` says what is waiting on the person (held calls, held job calls, huddle cards, pinned questions, trust proposals); `action="list"` gives each item's name, who asked, what exactly would happen, risk, source and age. Read it back tersely: count, then name + one line each. When the person tells you their decision (also on something you did on their word), record it: `rook_approvals(action="approve"|"deny", item=<name or id>, relayed_by={"who": <person>, "quote": <their exact words>, "session": <conversation URL or id>}, reason=<why, for a deny>)`. Never relay your own judgement, never decide items they did not name, and leave held calls, trust proposals and dashboard-only items to them; withdraw your own question that no longer needs them (rook_huddle withdraw).
@@ -296,6 +303,9 @@ The hub enforces a trust map: a `sacred` host, project, repo or resource changes
 
 ### updates
 `updates.status` on worker `rook`: hub version vs the newest release, workers behind, the running rollout. Applying updates (`updates.apply_hub`, `updates.prepare_hub`, `updates.rollout`) is for operators: ask the person who runs the hub first.
+
+### users
+People on this hub are owners (reach everything) or members (reach only what a grant names: a band, a machine, the hub's caps, a knowledge folder, or anything; optional cap patterns and a tier ceiling, default exec). New people reach nothing. `users.me` shows your own access; `users.explain` whether a call would be allowed. Owners change access with `users.grant` / `users.revoke` / `users.role`, always passing `words`: the person's own words asking for it. Change access only when a person asks you to in conversation.
 <!-- END GENERATED: hub-caps -->
 
 ## Worker capabilities

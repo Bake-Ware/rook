@@ -78,7 +78,16 @@ def routes(get_node: Callable[[], Any], accounts, internal_token: str | None = N
     def who(request) -> tuple[Principal | None, dict | None]:
         user = accounts.session(request.cookies.get("rook_account", ""))
         if user:
-            return principal_for_user(user, bool(user.get("admin"))), user
+            owner = bool(user.get("admin"))
+            if not owner:  # access v2: owners are a hub role in access.db
+                store = getattr(getattr(getattr(get_node(), "client", None), "authz", None),
+                                "access", None)
+                try:
+                    from ...access import AccessStore
+                    owner = isinstance(store, AccessStore) and store.is_owner(user["id"])
+                except Exception:  # noqa: BLE001 - unreadable: a member
+                    owner = False
+            return principal_for_user(user, owner), user
         auth = request.headers.get("authorization", "")
         if internal_token and hmac.compare_digest(auth.encode(), f"Bearer {internal_token}".encode()):
             return internal_principal(request.headers.get("x-rook-principal", "")), None
