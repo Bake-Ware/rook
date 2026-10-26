@@ -119,7 +119,7 @@ class Authorizer:
     def __init__(self, store: PolicyStore, signer: Any = None,
                  record: Callable[..., Any] | None = None,
                  banned: Callable[[str | None, str | None], bool] | None = None,
-                 approvals: Any = None) -> None:
+                 approvals: Any = None, access: Any = None) -> None:
         self.store = store
         self.signer = signer
         self._record = record
@@ -128,10 +128,16 @@ class Authorizer:
         #: :class:`rook.hub.approvals.Approvals`, or None (no data dir): then
         #: an operator hold rule refuses the call, since nobody could approve it.
         self.approvals = approvals
+        #: :class:`rook.hub.access.AccessStore`: what members may reach. None
+        #: (no data dir: tests, tools) means nobody is limited by grants.
+        self.access = access
+        self._client: Any = None
 
     def attach_client(self, client: Any) -> None:
         """The band client this authorizer guards (the approval contact
-        reaches the operator through it)."""
+        reaches the operator through it; grants ask it which bands a worker
+        is on)."""
+        self._client = client
         if self.approvals is not None:
             self.approvals.attach_client(client)
 
@@ -163,11 +169,16 @@ class Authorizer:
             banned = bool(self._banned and self._banned((entry or {}).get("name"), target_id))
             target = target_from_entry(target_id, entry, local=local, banned=banned)
             d = policy.evaluate(chain, cap, target)
+            d = self._grants(d, p, target)
             d = self._approvals(d, p, policy, target, args)
         except Exception as e:  # 3.8: owners never locked out; others fail closed
             policy = self.store.policy
             enforce = policy.mode_for(p) == "enforce"
             fail_open = p.fail_open() or not enforce
+            if self.access is not None:
+                from . import access as _access
+                if _access.restricted(p):
+                    fail_open = False  # a member's reach is never decided by a crash
             d = Decision(decision="error_allow" if fail_open else "error_deny", cap=cap,
                          tier=core_authz.effective_tier(cap), principal=p.id, rev=policy.rev,
                          target=target_id, target_name=str((entry or {}).get("name") or ""),
@@ -181,6 +192,34 @@ class Authorizer:
         if d.decision not in ("allow", "off", "hold"):
             self._journal(d)  # holds are journaled when the hold is created
         return d
+
+    def bands_of(self, target_id: str | None) -> set[str]:
+        """Key hashes of the bands ``target_id`` was seen on."""
+        c = self._client
+        if c is None or not target_id:
+            return set()
+        clients = getattr(c, "_clients", None)
+        if clients is None:
+            clients = [c]
+        return {h for x in clients if target_id in (getattr(x, "workers", None) or {})
+                for h in [getattr(x, "psk_hash", "")] if h}
+
+    def _grants(self, d: Decision, p: Principal, target: Target) -> Decision:
+        """Access v2: a signed-in member reaches only what a grant names,
+        in every policy mode; an error denies (owners are never limited)."""
+        from . import access as _access
+        if self.access is None or d.denied or not _access.restricted(p):
+            return d
+        try:
+            grant, why = self.access.evaluate(_access.user_of(p), d.cap, d.tier, target,
+                                              self.bands_of(target.id))
+        except Exception as e:  # noqa: BLE001 - fail closed for members
+            log.exception("ROOK AUTHZ ALERT: access check failed for %s %s", p.id, d.cap)
+            return dataclasses.replace(d, decision="error_deny", rule="access",
+                                       reason=f"access check failed: {type(e).__name__}")
+        if grant is None:
+            return dataclasses.replace(d, decision="deny", rule="access:no-grant", reason=why)
+        return dataclasses.replace(d, tags=tuple(d.tags) + (f"grant:{grant['id']}",))
 
     def _approvals(self, d: Decision, p: Principal, policy: Any, target: Any,
                    args: Any = None) -> Decision:
@@ -375,4 +414,24 @@ def build_authorizer(data_dir: str | None, *, record: Callable[..., Any] | None 
         except Exception:
             log.exception("ROOK AUTHZ ALERT: hub signer unavailable; no tickets")
             signer = None
-    return Authorizer(store, signer, record=record, banned=banned, approvals=approvals)
+    access = None
+    if data_dir:
+        try:
+            from .access import AccessStore
+            access = AccessStore.for_dir(data_dir)
+        except Exception:
+            log.exception("ROOK AUTHZ ALERT: access store unavailable; members reach nothing")
+            access = _NoAccess()
+    return Authorizer(store, signer, record=record, banned=banned, approvals=approvals,
+                      access=access)
+
+
+class _NoAccess:
+    """Stands in for an access store that would not open: every member call
+    is denied (owners are not affected)."""
+
+    def evaluate(self, *a: Any, **kw: Any):
+        raise RuntimeError("the access store is unavailable")
+
+    def __getattr__(self, name: str):
+        raise RuntimeError("the access store is unavailable")

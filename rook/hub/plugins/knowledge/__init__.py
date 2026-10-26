@@ -273,7 +273,105 @@ class Knowledge(Plugin):
         if self.service is None:
             raise ValueError('The knowledge store is not open')
         check_action(namespace, action, write)
+        if namespace == 'knowledge':
+            areas = self._member_areas(write)
+            if areas is not None:
+                return await self._in_areas(areas, write, action, band, rid, query, data, request_id)
         return await self.service.dispatch(action, band, kind, rid, query, data, request_id, lean=True)
+
+    # -- access v2: knowledge areas for members ----------------------------
+    _AREA_READS = ('search', 'list', 'get')
+    _AREA_WRITES = ('create', 'update')
+    _AREA_DROP = ('links', 'auto_links', 'events', 'claims', 'hygiene', 'mentions')
+
+    def _member_areas(self, write: bool):
+        """Folder slugs a signed-in member may use (``{'*'}`` = all areas), or
+        None when no knowledge grant limits the caller (owners, tokens, hub
+        code, members with a hub or any grant). Errors limit to nothing."""
+        from ... import access as _access
+        from ...authz import current_principal
+        p = current_principal.get()
+        if not _access.restricted(p):
+            return None
+        store = getattr(getattr(getattr(self._node, 'client', None), 'authz', None), 'access', None)
+        if store is None:
+            return None
+        try:
+            return store.knowledge_areas(_access.user_of(p), write)
+        except Exception:  # noqa: BLE001 - fail closed
+            log.exception('ROOK AUTHZ ALERT: knowledge areas unreadable for %s', p.id)
+            return set()
+
+    async def _in_areas(self, areas, write, action, band, rid, query, data, request_id):
+        svc = self.service
+        allowed = self._AREA_WRITES if write else self._AREA_READS
+        if action not in allowed:
+            raise PermissionError(f"denied: knowledge-area access may {'/'.join(allowed)} pages "
+                                  "in your areas only")
+        if not areas:
+            raise PermissionError('denied: no knowledge area is granted to you')
+        every = '*' in areas
+        b = svc.band(band)
+        memo: dict = {}
+
+        def inside(ref) -> bool:
+            if every or not ref:
+                return every
+            key = str(ref)
+            if key in memo:
+                return memo[key]
+            ok, seen, cur = False, set(), key
+            try:
+                for _ in range(32):
+                    rec = svc.store.get(b, cur, auto_links=False, events=0)
+                    if rec.get('id') in seen:
+                        break
+                    seen.add(rec.get('id'))
+                    if rec.get('slug') in areas:
+                        ok = True
+                        break
+                    cur = rec.get('parent')
+                    if not cur:
+                        break
+            except Exception:  # noqa: BLE001 - not found / other band: outside
+                ok = False
+            memo[key] = ok
+            return ok
+
+        data = dict(data or {})
+        if action == 'search':
+            found = await svc.dispatch('search', b, 'knowledge', None, query, data, None, lean=True)
+            found['results'] = [r for r in found.get('results') or ()
+                                if r.get('kind', 'knowledge') == 'knowledge' and inside(r.get('id'))]
+            return found
+        if action == 'list':
+            got = await svc.dispatch('list', b, 'knowledge', None, '', data, None, lean=True)
+            got['records'] = [r for r in got.get('records') or () if inside(r.get('id') or r.get('slug'))]
+            return got
+        if action in ('get', 'update'):
+            if not rid:
+                raise ValueError(f'{action} needs id')
+            rec = svc.store.get(b, svc.resolve(b, rid, write=write)[1], auto_links=False, events=0)
+            if rec.get('kind') != 'knowledge' or not inside(rec.get('id')):
+                raise LookupError('no such page in your knowledge areas')
+            if action == 'get':
+                got = await svc.dispatch('get', b, None, rec['id'], '', data, None, lean=True)
+                for k in self._AREA_DROP:
+                    got.pop(k, None)
+                for k, v in list(got.items()):
+                    if isinstance(v, list) and v and all(isinstance(x, dict) and ('slug' in x or 'id' in x)
+                                                         for x in v):
+                        got[k] = [x for x in v if inside(x.get('id') or x.get('slug'))]
+                return got
+            parent = ((data.get('patch') or {}) if isinstance(data.get('patch'), dict) else {}).get('parent')
+            if parent and not inside(parent):
+                raise PermissionError('denied: you can move pages only within your knowledge areas')
+            return await svc.dispatch('update', b, None, rec['id'], '', data, request_id, lean=True)
+        # create
+        if not inside(data.get('parent')):
+            raise PermissionError('denied: create pages under a folder in your knowledge areas '
+                                  '(data.parent)')
+        return await svc.dispatch('create', b, 'knowledge', None, '', data, request_id, lean=True)
 
     @capability("read", risk="read", scope="multi-user")
     async def read(self, action: str = 'search', band: str | None = None, id: str | None = None,

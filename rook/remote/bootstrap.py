@@ -2167,6 +2167,7 @@ class CombinedServer:
                 await self._band.start()
                 log.info("band client joined hub %s:%d (%d band(s))",
                          self.hub_host, self.hub_port, len(psks))
+            self._seed_access()
             self._enrollment_task = asyncio.create_task(self._watch_enrollment())
             if os.environ.get("ROOK_PUSH_UPDATES", "1") != "0":
                 self._push_task = asyncio.create_task(self._push_loop())
@@ -2222,6 +2223,12 @@ class CombinedServer:
         primary = next((b for b in bands if b["is_primary"]), None)
         self._primary_label = primary["label"] if primary else ""
         self.band_psk = primary["psk"] if primary else ""
+        access = self._access_store()
+        if access is not None:
+            try:
+                access.sync_bands(bands)
+            except Exception:
+                log.warning("recording band keys for grants failed", exc_info=True)
         if self._band is not None:
             await self._band.sync_bands(self._enrollment.transport_psks())
 
@@ -2881,13 +2888,39 @@ class CombinedServer:
                 return None  # account routes enforce their own sessions
             return principal_for_user(None, True)
         owner = bool(user.get("admin"))
-        if not owner:
+        access = self._access_store()
+        if not owner and access is not None:
+            # Access v2: owner is a hub role (access.db); grants decide the rest.
+            try:
+                owner = access.is_owner(user["id"])
+            except Exception:
+                log.exception("ROOK AUTHZ ALERT: access store unreadable; %s is a member",
+                              user.get("id"))
+                owner = False
+        elif not owner:
             try:
                 owner = any(b.get("role") == "owner"
                             for b in self._accounts.store.bands(user["id"]))
             except Exception:
                 owner = False
         return principal_for_user(user, owner)
+
+    def _access_store(self):
+        """The hub's access store (rook/hub/access.py), shared with the MCP
+        side through the authorizer; None before the band client is up."""
+        access = getattr(getattr(self, "_authz", None), "access", None)
+        return access if hasattr(access, "is_owner") else None
+
+    def _seed_access(self) -> None:
+        """Carry today's owners and band members over once (access v2)."""
+        access = self._access_store()
+        if access is None:
+            return
+        try:
+            if access.seed(self._accounts.store):
+                log.info("access v2: carried accounts over to access.db")
+        except Exception:
+            log.exception("ROOK AUTHZ ALERT: carrying accounts over to access.db failed")
 
     @web.middleware
     async def _principal_middleware(self, request: web.Request, handler):
