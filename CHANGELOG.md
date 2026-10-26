@@ -38,6 +38,15 @@ version was `0.1.0`.
   People: everyone's access in plain words, what waits on the owners, the history, and the
   changes; members see their own access and ask there. `users.settle` closes what waits.
   (manual: accounts-and-access)
+- Telegram and Discord per person (access v2, design item 5): each person links their own
+  account with a one-time code (`users.link_code`, then `/link CODE` or `!link CODE` to the
+  bot); a linked account acts as its person (their grants apply to commands, bridged messages
+  and the house agent) and unlinked accounts are ignored. Direct messages, and the hub chat
+  with no bridged room, go to the house agent and its answer comes back. The hub's bot is the
+  default; `users.chat_bot` names a vault secret holding a person's own bot token. Shared
+  Discord servers and Telegram groups are hub resources (`users.space`) granted like machines
+  (`users.grant kind=space`). `notify.send user=` messages a person directly.
+  (manual: integrations, accounts-and-access)
 
 ### Changed
 - Approvals, simplified (access v2, Bake's design decision 9): only the hard stops and the

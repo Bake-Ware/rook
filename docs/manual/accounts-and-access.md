@@ -57,7 +57,10 @@ An owner gives access as **grants**. A grant names one thing:
 - a **knowledge folder** (`kind: knowledge`, the folder's slug, or `*` for
   all of it): the person can search, read, add and edit pages under that
   folder and sees nothing outside it;
-- **anything** (`kind: any`).
+- **anything** (`kind: any`);
+- a **shared chat space** (`kind: space`, `discord:<server id>` or
+  `telegram:<group id>`), once an owner has added it with `users.space`: the
+  person can talk to Rook there ([[manual-integrations]]).
 
 A grant can be narrowed to some tools (`caps`, for example `shell.*`) and
 has a ceiling on risk (`tier`: read, write, exec or admin; exec unless you

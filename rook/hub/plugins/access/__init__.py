@@ -14,6 +14,11 @@ authorizer enforces them on every call. These caps read and change it:
   said who gets.
 * ``users.token``: whose an API key is. A key reaches exactly what its
   person reaches, from any client (item 7).
+* Chat accounts (design item 5): ``users.link_code`` / ``users.links`` /
+  ``users.unlink`` / ``users.chat_bot`` for your own Telegram and Discord
+  accounts (owners may act for someone else); ``users.space`` /
+  ``users.spaces`` make a shared Discord server or Telegram group a hub
+  resource that ``users.grant kind=space`` gives people.
 """
 from __future__ import annotations
 
@@ -62,7 +67,12 @@ class Access(Plugin):
              "Change access only when a person asks you to in conversation. A new person "
              "asks for access with `users.request` (their words); owners see what waits in "
              "`users.list` and close a new machine or band as owners-only with "
-             "`users.settle`.\n")
+             "`users.settle`. "
+             "Telegram/Discord: `users.link_code platform=telegram` gives a one-time code the "
+             "person sends to the bot (`/link CODE`, Discord `!link CODE`); only linked accounts "
+             "are heard, each as its person. `users.chat_bot` names a vault secret with the "
+             "person's own bot token (never the token). Shared servers/groups: `users.space`, "
+             "then `users.grant kind=space ref=<platform>:<id>`.\n")
 
     def __init__(self) -> None:
         super().__init__()
@@ -313,12 +323,120 @@ class Access(Plugin):
         return self._store().set_token_user(aid, user, actor=_actor(), words=words,
                                             label=hits[0].get("name") or "" if hits else "")
 
+    # -- chat accounts ---------------------------------------------------------
+    def _person(self, user: str | None, what: str) -> str:
+        """``user`` when an owner names someone, else the caller (a person)."""
+        me = self._me()
+        if user and user != me:
+            _gate(f"{what} for someone else")
+            return user
+        if me is None:
+            raise ValueError("this is about a signed-in person: sign in on the dashboard, "
+                             "or an owner passes user=")
+        return me
+
+    def _chat_plugins(self) -> list:
+        from ...integrations import ChatIntegration
+        host = getattr(self._node, "host", None)
+        return [p for p in (getattr(host, "plugins", None) or []) if isinstance(p, ChatIntegration)]
+
+    def _bot_name(self, platform: str, user_id: str) -> str:
+        for p in self._chat_plugins():
+            if p.PLATFORM == platform:
+                return p.bot_label(user_id)
+        return ""
+
+    @capability("link_code", risk="write", scope="multi-user")
+    def link_code(self, platform: str, user: str | None = None) -> dict:
+        """A one-time code that links your Telegram or Discord account.
+
+        Send ``/link CODE`` (Discord: ``!link CODE``) to the hub's bot, or to
+        your own bot if you set one (``users.chat_bot``), within ten minutes.
+        Afterwards messages from that account act as you; unlinked accounts
+        are ignored. ``user``: an owner making a code for someone else."""
+        uid = self._person(user, "users.link_code")
+        out = self._store().link_code(uid, platform, actor=_actor())
+        prefix = "!" if out["platform"] == "discord" else "/"
+        bot = self._bot_name(out["platform"], uid)
+        out["send"] = f"{prefix}link {out['code']}"
+        out["plain"] = (f"Send {out['send']} to {bot or 'the ' + out['platform'] + ' bot'} "
+                        f"within 10 minutes (a direct message is best). It works once.")
+        if not self._chat_plugins() or not any(p.PLATFORM == out["platform"]
+                                               for p in self._chat_plugins()):
+            out["note"] = f"the {out['platform']} integration is not running on this hub yet"
+        return out
+
+    @capability("links", risk="read", scope="multi-user")
+    def links(self, user: str | None = None) -> dict:
+        """Your linked chat accounts and which bot speaks for you on each
+        platform (the hub's, or your own). Owners may ask about someone else
+        (``user``) or everyone (``user="*"``)."""
+        store = self._store()
+        if user == "*":
+            _gate("users.links for everyone")
+            return {"links": store.links(), "bots": store.bots()}
+        uid = self._person(user, "users.links")
+        return {"user": uid, "links": store.links(uid),
+                "bots": {b["platform"]: b["secret"] for b in store.bots(user_id=uid)}}
+
+    @capability("unlink", risk="write", scope="multi-user")
+    def unlink(self, platform: str, words: str, user: str | None = None) -> dict:
+        """Forget your linked Telegram or Discord account: its messages are
+        ignored again. ``words``: who asked, in their words (kept)."""
+        uid = self._person(user, "users.unlink")
+        return {"user": uid, "platform": platform,
+                "unlinked": self._store().unlink(uid, platform, actor=_actor(), words=words)}
+
+    @capability("chat_bot", risk="write", scope="self")
+    def chat_bot(self, platform: str, words: str, secret: str = "") -> dict:
+        """Use your own Telegram/Discord bot instead of the hub's.
+
+        ``secret`` is the NAME of the vault secret holding the bot token
+        (members: under ``user.<your id>.``); the token itself never goes
+        through this cap. Empty ``secret``: back to the hub's bot. Your
+        linked account then talks to your bot, and your notifications come
+        from it. ``words``: your words asking for it (kept)."""
+        uid = self._person(None, "users.chat_bot")
+        p = current_principal.get()
+        out = self._store().set_bot(uid, platform, secret, actor=_actor(), words=words,
+                                    owner=bool(p is not None and p.fail_open()))
+        for plugin in self._chat_plugins():
+            if plugin.PLATFORM == out["platform"]:
+                plugin.reload_bots()
+        return out
+
+    @capability("spaces", risk="read", scope="multi-user")
+    def spaces(self) -> dict:
+        """Shared chat spaces (Discord servers, Telegram groups) this hub
+        treats as resources, and who holds a grant on each."""
+        store = self._store()
+        held: dict[str, list[str]] = {}
+        for g in store.grants():
+            if g["kind"] == "space":
+                held.setdefault(g["ref"], []).append(g["user_id"])
+        return {"spaces": [{**s, "ref": f"{s['platform']}:{s['space_id']}",
+                            "granted": held.get(f"{s['platform']}:{s['space_id']}", [])}
+                           for s in store.spaces()]}
+
+    @capability("space", risk="admin", scope="multi-user")
+    def space(self, platform: str, space: str, words: str, name: str = "",
+              remove: bool = False) -> dict:
+        """Add (or ``remove``) a shared space: a Discord server id or a
+        Telegram group chat id. People then need ``users.grant kind=space
+        ref=<platform>:<id>`` to be heard there; removing revokes those
+        grants. Owners only; ``words`` kept."""
+        _gate("users.space")
+        store = self._store()
+        if remove:
+            return store.remove_space(platform, space, actor=_actor(), words=words)
+        return store.add_space(platform, space, name, actor=_actor(), words=words)
+
 
 def _plain(g: dict) -> str:
     caps = "" if g["caps"] == ["*"] else f" ({', '.join(g['caps'])})"
     what = {"band": f"band {g['ref']}", "worker": f"machine {g['ref']}", "hub": "the hub",
             "knowledge": "all knowledge" if g["ref"] == "*" else f"knowledge folder {g['ref']}",
-            "any": "everything"}[g["kind"]]
+            "any": "everything", "space": f"chat space {g['ref']}"}[g["kind"]]
     return f"{what}{caps} up to {g['tier']}"
 
 

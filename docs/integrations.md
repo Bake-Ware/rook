@@ -20,7 +20,65 @@ already depends on. If `aiohttp` can't be imported, the plugin's
 | Send | `sendMessage`, plain text (no parse mode) | `POST /channels/{id}/messages`, `allowed_mentions` restricted |
 | Command prefix | `/` (also `/cmd@yourbot`) | `!` |
 | Message limit | 4096 characters, split on paragraph, line or sentence | 2000 characters, split the same way |
-| Principal | `integration:telegram` | `integration:discord` |
+| Principal | the linked person (`integration:telegram` on a hub without people) | the linked person (`integration:discord`) |
+| Link command | `/link CODE`, or `/start CODE` from a `t.me/<bot>?start=CODE` link | `!link CODE` |
+
+## People: linked accounts
+
+Several people share a hub (access v2), so the bot must know who is writing.
+Each person links their own Telegram or Discord account once:
+
+1. They (or an owner, for them) ask the hub for a code:
+   `rook_call(worker="rook", cap="users.link_code", args={"platform": "telegram"}, why=...)`.
+   The code looks like `K7QM-4XPA`, works once and expires after 10 minutes.
+   Only its hash is stored.
+2. They send `/link K7QM-4XPA` (Discord: `!link K7QM-4XPA`) to the bot,
+   best as a direct message. The bot answers "Linked: messages from this
+   account now act as <name>."
+
+From then on:
+
+- **A linked account acts as its person.** Commands, bridged room messages
+  and requests to the house agent run as `human:<account id>` (an owner or a
+  member), so that person's grants decide what they may do, exactly as on
+  the dashboard. Bridged messages are signed `user:<name>`. The journal
+  identity is `human:<id>/<platform>`.
+- **Everyone else is ignored.** Messages from accounts nobody linked are
+  dropped (`unknown` in `status`). A stranger who writes to the bot directly
+  is told how to link, at most once an hour; in groups the bot stays silent.
+  Five wrong codes in ten minutes stop one account from trying again for a
+  while.
+- **Direct messages go to the house agent.** A linked person's direct
+  message, or a message in the hub's chat when no room is bridged, goes to
+  `home.ask` as that person; the answer comes back as a reply. The house
+  agent must be on, and a member needs a grant that covers it.
+- **The hub's bot is the default; a person may use their own.** They put
+  their bot's token in the vault (members under `user.<their id>.<name>`) and
+  name it: `users.chat_bot platform=telegram secret=user.u_kid.mybot`. The
+  hub then runs that bot too. It hears only its owner's direct messages and
+  carries their notifications. The token never passes through the cap or
+  the journal; an empty `secret` goes back to the hub's bot.
+- **Shared spaces are hub resources.** An owner adds a household Discord
+  server or a family Telegram group with
+  `users.space platform=discord space=<server id> name=Household`, then
+  grants it like a machine:
+  `users.grant user=<id> kind=space ref=discord:<server id>`. In a shared
+  space the bot hears linked people who hold that grant (owners always), and
+  only commands, replies to the bot or mentions of it; other chatter is left
+  alone. Removing the space revokes its grants.
+
+| Cap (worker `rook`) | Who | What it does |
+|---|---|---|
+| `users.link_code(platform, user=None)` | yourself; owners for anyone | A one-time code and the exact text to send. |
+| `users.links(user=None)` | yourself; owners for anyone (`user="*"`: everyone) | Linked accounts and own bots. |
+| `users.unlink(platform, words, user=None)` | yourself; owners for anyone | Forget a linked account. |
+| `users.chat_bot(platform, words, secret="")` | yourself | Use your own bot (a vault secret's name), or the hub's again. |
+| `users.space(platform, space, words, name="", remove=False)` | owners | Add or remove a shared space. |
+| `users.spaces()` | anyone | Shared spaces and who holds a grant on each. |
+
+A hub without an access store (no data directory) keeps the older behaviour
+described below: anyone in the configured chat is heard, and commands run as
+`integration:<platform>`.
 
 ### Room bridge
 
@@ -37,14 +95,16 @@ configured `chat_id`. It uses the same `chat.db` as the MCP chat tools
   resend messages or skip them. When more than 20 new messages arrive in one
   room between checks, only the last 20 are sent, after a line saying how
   many were skipped.
-- **Platform to Rook.** A message from the configured chat is posted into
-  the first bridged room as sender `telegram:<username>` or
-  `discord:<username>`. A reply to a relayed message goes to that message's
+- **Platform to Rook.** A message from a linked person in the configured
+  chat is posted into the first bridged room as sender `user:<name>` (on a
+  hub without people: anyone, as `telegram:<username>` or
+  `discord:<username>`). A reply to a relayed message goes to that message's
   room instead.
 - **Loop prevention.**
-  - A message whose sender starts with `<platform>:` is never relayed back
-    to that platform. A Telegram message can still reach Discord when both
-    plugins bridge the same room.
+  - A message whose sender starts with `<platform>:`, or that the bridge
+    itself wrote for a linked person, is never relayed back to that
+    platform. A Telegram message can still reach Discord when both plugins
+    bridge the same room.
   - Messages from bots are ignored on the way in, and so are this bot's own
     messages.
   - Notifications and command replies are never written into a room.
@@ -68,9 +128,9 @@ configured `chat_id`. It uses the same `chat.db` as the MCP chat tools
 
 | Cap (worker `rook`) | Risk | What it does |
 |---|---|---|
-| `notify.send(text, channel="all")` | write | Posts to every running integration, or only to `telegram` or `discord`. `ok` is true if at least one of them accepted it. |
+| `notify.send(text, channel="all", user=None)` | write | Posts to every running integration, or only to `telegram` or `discord`. With `user`, it is a direct message to that person's linked accounts instead, from their own bot if they run one (yourself; owners may message anyone). `ok` is true if at least one of them accepted it. |
 | `notify.channels()` | read | Lists the integrations that are running. |
-| `telegram.send(text, chat=None)` / `discord.send(...)` | write | Posts to the configured chat. `chat` can only name that same chat. |
+| `telegram.send(text, chat=None, user=None)` / `discord.send(...)` | write | Posts to the configured chat, or to a shared space (`users.space`) you hold a grant on (owners and hub code: any). `user`: a direct message, as for `notify.send`. |
 | `telegram.status()` / `discord.status()` | read | Reports whether the bot is connected, whether a token and chat are set (as booleans only), the bridged room count, counters and the last error. |
 
 From an agent:
@@ -93,8 +153,10 @@ alerts.
 
 ### Commands
 
-Commands are accepted only from the configured chat. If `command_users` is
-set, only those platform user ids can use them. The platform user must type
+Commands are accepted from linked people in the configured chat, in a
+direct message, or in a shared space they hold a grant on (on a hub without
+people: from anyone in the configured chat). If `command_users` is set, only
+those platform user ids can use them. The platform user must type
 the command explicitly, and the set is fixed:
 
 | Command | Authorized as | Result |
@@ -109,11 +171,14 @@ to `commands` and list the caps it may run in `allowed_caps`.
 
 ## Permissions
 
-Every command, and the bridge's own chat reads and writes, runs under the
-integration's principal, `integration:telegram` or `integration:discord`.
-The hub authorizer (`rook/hub/authz.py`) evaluates each call and journals it.
-Command calls carry the display identity `integration:<platform>/user:<id>`,
-so the journal shows which chat user asked.
+Every command, and every bridged message, runs as the linked person
+(`human:<account id>`, reached through the integration). The hub authorizer
+(`rook/hub/authz.py`) evaluates each call against their role and grants and
+journals it with the display identity `human:<id>/<platform>`. The bridge's
+own room reads run under the integration's principal,
+`integration:telegram` or `integration:discord`; on a hub without people,
+commands do too, with the display identity
+`integration:<platform>/user:<id>`.
 
 The shipped policy (`DEFAULT_POLICY` in `rook/hub/policy.py`) gives
 integrations these defaults:
@@ -221,16 +286,19 @@ Don't paste it into a `rook_call`, because call arguments are journaled.
 
 ## Limits and non-goals
 
-- One chat per plugin. Every bridged room goes to that chat.
+- One hub chat per plugin. Every bridged room goes to that chat; shared
+  spaces take commands, replies and mentions, not bridged rooms.
 - The Discord client reconnects with a fresh identify after any disconnect.
   It does not resume, so events sent while it is disconnected are lost. Room
   messages are not affected, because the bridge's saved positions cover
   them.
-- Chat users are not linked to Rook accounts. The integration's own policy
-  always applies. On-behalf-of chains (`docs/design/permissions.md` §1.1)
-  are a later step.
-- There is no free-form agent: the command set is fixed. A chat message is
-  never run as an instruction, only relayed.
+- A person links one account per platform. Linking an account that
+  belonged to someone else moves it (the history keeps both).
+- A person's own bot only hears direct messages from them; it does not
+  bridge rooms or join shared spaces.
+- Free-form messages go to the house agent, never to a shell: the command
+  set is fixed, and the house agent acts within the person's grants and the
+  trust map.
 
 ## Tests
 
@@ -249,3 +317,9 @@ server, and a fake Discord REST and Gateway server, both built with
 - secret masking in logs, replies and status
 - `notify.send`
 - the watchdog's hub path and its fallback
+
+`tests/test_chat_linking.py` covers people: link codes (one use, expiry,
+hashing, throttled guessing), strangers ignored, commands and bridged
+messages as the linked person, direct messages to the house agent, a
+person's own bot, shared spaces and their grants, sending to a space, and
+the `users.*` caps.
