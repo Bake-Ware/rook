@@ -316,7 +316,7 @@ class Huddle(Plugin):
         return self.service
 
     # -- caps ----------------------------------------------------------------
-    @capability("read", risk="read")
+    @capability("read", risk="read", scope="multi-user")
     async def read(self, action: str = "read", room: str | None = None, project: str | None = None,
                    band: str | None = None, since_seq: int = 0, limit: int = 30) -> dict:
         """Read huddles: read (room|project|band: statuses, questions, messages after since_seq), list, mine.
@@ -334,7 +334,7 @@ class Huddle(Plugin):
                                   create=False, room=room, project=project, band=band)
         raise ValueError("action must be one of " + ", ".join(READS))
 
-    @capability("write", risk="write")
+    @capability("write", risk="write", scope="multi-user")
     async def write(self, action: str, room: str | None = None, project: str | None = None,
                     band: str | None = None, text: str | None = None, data: dict | None = None,
                     mention=None) -> dict:
@@ -362,17 +362,17 @@ class Huddle(Plugin):
         raise ValueError("action must be one of " + ", ".join(WRITES))
 
     # -- chaired huddles ------------------------------------------------------
-    @capability("list", risk="read")
+    @capability("list", risk="read", scope="multi-user")
     def list_(self, archived: bool = False) -> dict:
         """Every huddle: chaired ones (roles, open cards) and project/band status huddles; archived ones with archived=true."""
         return {"huddles": self._svc().huddles(archived=bool(archived))}
 
-    @capability("start", risk="write")
+    @capability("start", risk="write", scope="multi-user")
     async def start_(self, title: str = "", roles=None, band: str | None = None) -> dict:
         """Start a chaired huddle: you, the house agent in the chair and roles (ids; default huddle.default_roles; [] for a 1:1 with the chair). Returns {room, title, roles}."""
         return await self._svc().start(caller(), title, roles, band)
 
-    @capability("post", risk="write")
+    @capability("post", risk="write", scope="multi-user")
     async def post(self, huddle: str, text: str, mention=None, wait: bool = False) -> dict:
         """Post in a chaired huddle. A person's post starts a round (the chair calls on roles; @role calls one directly); an agent's only when it mentions @<role> or the chair. wait: return when the round ends."""
         if isinstance(mention, str):
@@ -386,7 +386,7 @@ class Huddle(Plugin):
             out["cards"] = svc.store.cards(out["room"], out["round"])
         return out
 
-    @capability("card", risk="write")
+    @capability("card", risk="write", scope="multi-user")
     async def card(self, huddle: str, card: str = "", action: str = "approve",
                    data: dict | None = None) -> dict:
         """An action card: approve (runs its call as you, under the band's policy) or dismiss; people only. propose (data {kind, summary, worker?, cap?, args?}) adds one."""
@@ -397,7 +397,7 @@ class Huddle(Plugin):
         except CardError as e:
             raise ValueError(str(e)) from None
 
-    @capability("archive", risk="write")
+    @capability("archive", risk="write", scope="multi-user")
     def archive(self, huddle: str, archived: bool = True) -> dict:
         """Archive a huddle (hidden from the list, kept; deleted after huddle.retention_days) or unarchive it. While cards or questions in it wait on the person, only they archive it."""
         return self._svc().archive(huddle, archived, caller())
@@ -415,7 +415,7 @@ class Huddle(Plugin):
             getattr(p, "kind", "") in ("user", "person", "operator")
         return person or (home is not None and me == home.identity)
 
-    @capability("table", risk="read")
+    @capability("table", risk="read", scope="multi-user")
     async def table(self, huddle: str, action: str = "list", artifact: str = "",
                     what: str = "summary", path: str = "", offset: int = 0) -> dict:
         """A chaired huddle's conference table: list (pinned artifacts, and votes with ballots sealed until all are in), read (artifact, what: summary|diff|files|file|checks|comments|content, path, offset: always at the pinned version)."""
@@ -430,7 +430,7 @@ class Huddle(Plugin):
             raise ValueError(str(e)) from None
         raise ValueError("action must be list or read")
 
-    @capability("pin", risk="write")
+    @capability("pin", risk="write", scope="multi-user")
     async def pin(self, huddle: str, kind: str, repo: str = "", number: int = 0, sha: str = "",
                   path: str = "", url: str = "", text: str = "", title: str = "",
                   note: str = "", sha256: str = "") -> dict:
@@ -448,7 +448,7 @@ class Huddle(Plugin):
         except TableError as e:
             raise ValueError(str(e)) from None
 
-    @capability("vote", risk="write")
+    @capability("vote", risk="write", scope="multi-user")
     async def vote(self, huddle: str, action: str = "call", kind: str = "", artifact: str = "",
                    reason: str = "", target: str = "", skip_vote: bool = False,
                    motion: str = "", self_review: str = "") -> dict:

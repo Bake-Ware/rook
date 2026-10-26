@@ -94,7 +94,7 @@ class ConfigPlugin(Plugin):
                     out.update(s.env_names())
         return out
 
-    @capability("config_get", risk="read")
+    @capability("config_get", risk="read", scope="self")
     def _get(self) -> dict:
         """Return this worker's active config overrides + pending/confirm state.
 
@@ -102,7 +102,7 @@ class ConfigPlugin(Plugin):
         plugin settings excepted); ``{{secret:…}}`` references are shown."""
         return {"ok": True, **wconfig.current(self._public_env())}
 
-    @capability("config_apply", risk="admin", tags=("destructive",))
+    @capability("config_apply", risk="admin", tags=("destructive",), scope="self")
     async def _apply(self, settings: dict, epoch: int,
                      confirm_within: float = 120.0, restart: bool = True) -> dict:
         """Apply config overrides and restart under them (commit-confirmed).
@@ -139,7 +139,7 @@ class ConfigPlugin(Plugin):
             result["applied"] = self._worker.apply_settings(merged)
         return result
 
-    @capability("config_confirm", risk="admin")
+    @capability("config_confirm", risk="admin", scope="self")
     def _confirm(self, epoch: int) -> dict:
         """Confirm a pending config so it commits (the auto-revert watchdog is
         cancelled on the next boot since nothing stays pending). The site calls
@@ -149,7 +149,7 @@ class ConfigPlugin(Plugin):
             self._watchdog.cancel()
         return res
 
-    @capability("config_revert", risk="admin", tags=("destructive",))
+    @capability("config_revert", risk="admin", tags=("destructive",), scope="self")
     async def _revert(self, restart: bool = True) -> dict:
         """Force a revert to the previous config and restart."""
         res = wconfig.revert()

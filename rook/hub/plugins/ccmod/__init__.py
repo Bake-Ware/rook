@@ -501,13 +501,13 @@ class ClaudeCodeRules(Plugin):
         raise ValueError(f"not a remote action: {kind}")
 
     # -- caps ------------------------------------------------------------------------------------
-    @capability("list", risk="read")
+    @capability("list", risk="read", scope="multi-user")
     def list_(self) -> dict:
         """Every Claude Code rule, with a one-line summary and its risk tier."""
         return {"rev": self.store.rev,
                 "rules": [{**r, "summary": model.describe(r)} for r in self.store.rules()]}
 
-    @capability("get", risk="read")
+    @capability("get", risk="read", scope="multi-user")
     def get(self, id: str) -> dict:
         """One rule."""
         r = self.store.get(id)
@@ -515,23 +515,23 @@ class ClaudeCodeRules(Plugin):
             raise KeyError(f"no rule {id!r}")
         return {**r, "summary": model.describe(r)}
 
-    @capability("history", risk="read", limit=20)
+    @capability("history", risk="read", limit=20, scope="multi-user")
     def history(self, id: str = "") -> list[dict]:
         """Attributed changes to the rules, newest first (``id``: one rule)."""
         return self.store.history(id, limit=200)
 
-    @capability("activity", risk="read", limit=50)
+    @capability("activity", risk="read", limit=50, scope="multi-user")
     def activity(self) -> list[dict]:
         """What the rules did recently: posts, notifications, capability runs."""
         return self.store.activity(limit=300)
 
-    @capability("status", risk="read")
+    @capability("status", risk="read", scope="multi-user")
     def status(self) -> dict:
         """Each worker: whether it can take rules, what was last pushed and
         whether that is still current."""
         return {"rev": self.store.rev, "workers": self.status_rows()}
 
-    @capability("preview", risk="admin")
+    @capability("preview", risk="admin", scope="multi-user")
     async def preview_cap(self, worker: str, remove: bool = False) -> dict:
         """What a push would write on ``worker``: per settings file, the action
         and a unified diff (nothing is written). Admin, like the push: the
@@ -539,7 +539,7 @@ class ClaudeCodeRules(Plugin):
         _admin_gate(f"ccmod.preview {worker}")
         return await self.preview(worker, remove)
 
-    @capability("set", risk="admin")
+    @capability("set", risk="admin", scope="multi-user")
     def set(self, rule: dict, note: str = "", dry_run: bool = False,
             expect_rev: int | None = None) -> dict:
         """Create or replace a rule. ``rule``: {id?, name, enabled, trigger {event,
@@ -552,14 +552,14 @@ class ClaudeCodeRules(Plugin):
             _admin_gate(f"ccmod.set {checked['id']}")
         return self.save_rule(rule, _actor(), note, expect_rev, dry_run)
 
-    @capability("delete", risk="admin")
+    @capability("delete", risk="admin", scope="multi-user")
     def delete(self, id: str, note: str = "") -> dict:
         """Delete a rule (push afterwards to take it off the workers). Hub
         administrators only."""
         _admin_gate(f"ccmod.delete {id}")
         return self.delete_rule(id, _actor(), note=note)
 
-    @capability("push", risk="admin")
+    @capability("push", risk="admin", scope="multi-user")
     async def push_cap(self, worker: str = "", remove: bool = False) -> dict:
         """Send the rules to ``worker`` (default: every online worker).
         ``remove=true`` takes Rook's hooks off instead. Workers that cannot take

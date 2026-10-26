@@ -401,7 +401,7 @@ class TerminalsPlugin(Plugin):
 
     # -- lifecycle ---------------------------------------------------------
 
-    @capability("stream.open", risk="exec")
+    @capability("stream.open", risk="exec", scope="local")
     async def open(self, harness: str = "shell", cwd: str = "", title: str = "",
                    model: str = "", resume: str = "", persona: str = "",
                    mcp_url: str = "", mcp_token: str = "", session: str = "",
@@ -827,7 +827,7 @@ class TerminalsPlugin(Plugin):
 
     # -- io ----------------------------------------------------------------
 
-    @capability("stream.read", risk="read")
+    @capability("stream.read", risk="read", scope="local")
     async def read(self, id: str, cursor: int = 0, max_bytes: int = DEFAULT_READ,
                    wait: float = 0, accept: str = "tbz") -> dict:
         """Output from byte ``cursor`` on. With ``wait`` > 0 the call holds (up
@@ -854,7 +854,7 @@ class TerminalsPlugin(Plugin):
             out["fixed"] = True     # the local terminal owns the size
         return out
 
-    @capability("stream.write", risk="exec")
+    @capability("stream.write", risk="exec", scope="local")
     async def write(self, id: str, data: str, enc: str = "t") -> dict:
         """Write raw input to the terminal (keystrokes, pastes; send "\\r" for
         Enter, "\\x03" for Ctrl-C). ``enc`` is t (text) or b (base64)."""
@@ -891,7 +891,7 @@ class TerminalsPlugin(Plugin):
         t.last_input = time.time()
         return {"ok": True, "id": t.id, "written": len(payload)}
 
-    @capability("stream.resize", risk="write")
+    @capability("stream.resize", risk="write", scope="local")
     def resize(self, id: str, cols: int, rows: int) -> dict:
         """Set the terminal size in character cells (sends SIGWINCH). A local
         terminal (the session shim) keeps the size of the terminal it runs
@@ -909,7 +909,7 @@ class TerminalsPlugin(Plugin):
         t.cols, t.rows = cols, rows
         return {"ok": True, "id": t.id, "cols": cols, "rows": rows}
 
-    @capability("stream.signal", risk="exec")
+    @capability("stream.signal", risk="exec", scope="local")
     def signal(self, id: str, sig: str = "INT") -> dict:
         """Signal the terminal's process group: INT, TERM, HUP, KILL. On
         Windows INT is Ctrl-C (0x03 to the console), HUP closes the console
@@ -942,7 +942,7 @@ class TerminalsPlugin(Plugin):
                 pass
         return {"ok": True, "id": t.id, "sent": "SIG" + name}
 
-    @capability("stream.close", risk="exec")
+    @capability("stream.close", risk="exec", scope="local")
     async def close(self, id: str) -> dict:
         """Stop the terminal's process (SIGHUP, then SIGKILL) and drop it."""
         t = self._get(id)
@@ -951,7 +951,7 @@ class TerminalsPlugin(Plugin):
         self.terms.pop(t.id, None)
         return {"ok": True, "id": t.id, "exit_code": t.exit_code, "bytes": t.total}
 
-    @capability("stream.list", risk="read")
+    @capability("stream.list", risk="read", scope="local")
     def list_terms(self) -> dict:
         """Live and recently finished terminals on this worker."""
         self._reap()
@@ -960,7 +960,7 @@ class TerminalsPlugin(Plugin):
 
     # -- catalog -----------------------------------------------------------
 
-    @capability("sessions", risk="read", limit=20)
+    @capability("sessions", risk="read", limit=20, scope="local")
     async def sessions(self, limit: int = 20, offset: int = 0, history: bool = True,
                        query: str = "") -> dict:
         """One catalog of this host's work: live terminals plus Claude/Codex
@@ -1007,7 +1007,7 @@ class TerminalsPlugin(Plugin):
                 "items": items[offset:offset + limit], "total": total,
                 "next_offset": offset + limit if offset + limit < total else None}
 
-    @capability("export", risk="read", tags=("sensitive",))
+    @capability("export", risk="read", tags=("sensitive",), scope="local")
     async def export(self, agent: str, session_id: str, offset: int = 0,
                      max_chars: int = 6000) -> dict:
         """A page of a historical Claude/Codex transcript in the stable

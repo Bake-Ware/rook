@@ -186,21 +186,21 @@ class Manual(Plugin):
         return {**result, "status": self.status_view()}
 
     # -- caps ----------------------------------------------------------------------
-    @capability("status", risk="read")
+    @capability("status", risk="read", scope="multi-user")
     def status(self) -> dict:
         """The bundled manual and its knowledge copy: version, page count,
         what an update would add, change and remove (``diff``), and whether
         the dashboard should ask about it (``prompt``)."""
         return self.status_view()
 
-    @capability("list", risk="read")
+    @capability("list", risk="read", scope="multi-user")
     def list_pages(self, source: str = "auto") -> dict:
         """The manual's table of contents: id, title, since, deprecated,
         preview, and whether the page is read from the knowledge copy
         (``source`` auto, or bundle for the pages shipped with Rook)."""
         return self._sync().pages(self.knowledge() if source != "bundle" else None)
 
-    @capability("get", risk="read")
+    @capability("get", risk="read", scope="multi-user")
     def get(self, id: str, source: str = "auto") -> dict:
         """One manual page by id (``getting-started``; ``manual-`` prefix
         optional): title and Markdown body. ``source`` auto (the knowledge
@@ -211,7 +211,7 @@ class Manual(Plugin):
         except ValueError as e:
             raise CapError(str(e)) from None
 
-    @capability("update", risk="admin")
+    @capability("update", risk="admin", scope="multi-user")
     async def update(self, action: str = "update", overwrite: list | None = None) -> dict:
         """Update the knowledge copy (``action`` update; ``overwrite`` = page
         ids whose local edits may be replaced), put the question off for a day

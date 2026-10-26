@@ -217,7 +217,7 @@ class HidPlugin(Plugin):
 
     # ---- typing --------------------------------------------------------
 
-    @capability("type", risk="exec", tags=("physical",))
+    @capability("type", risk="exec", tags=("physical",), scope="local")
     async def _type(self, text: str) -> dict:
         """Type ``text`` as if on a real keyboard."""
         be = self._be()
@@ -253,7 +253,7 @@ class HidPlugin(Plugin):
 
     # ---- key combos ----------------------------------------------------
 
-    @capability("key_combo", risk="exec", tags=("physical",))
+    @capability("key_combo", risk="exec", tags=("physical",), scope="local")
     async def _key_combo(self, key: str, modifiers: list[str] | None = None) -> dict:
         """Press a key with optional modifier list (e.g. ``["ctrl","shift"]``)."""
         mods = list(modifiers or [])
@@ -312,7 +312,7 @@ class HidPlugin(Plugin):
 
     # ---- mouse ---------------------------------------------------------
 
-    @capability("mouse.move", risk="exec", tags=("physical",))
+    @capability("mouse.move", risk="exec", tags=("physical",), scope="local")
     async def _mouse_move(self, x: int, y: int) -> dict:
         """Move pointer to absolute pixel (x, y) — top-left origin."""
         x, y = int(x), int(y)
@@ -338,7 +338,7 @@ class HidPlugin(Plugin):
             return {"ok": False, "error": "android does not support raw pointer-move; use mouse.click"}
         return {"ok": False, "error": f"no hid backend (detected: {be})"}
 
-    @capability("mouse.click", risk="exec", tags=("physical",))
+    @capability("mouse.click", risk="exec", tags=("physical",), scope="local")
     async def _mouse_click(self, button: int = 1, x: int | None = None,
                            y: int | None = None) -> dict:
         """Click ``button`` (1=left, 2=middle, 3=right). If x/y given, move first."""
@@ -377,7 +377,7 @@ class HidPlugin(Plugin):
             return {"ok": True, "button": int(button), "x": int(x), "y": int(y)}
         return {"ok": False, "error": f"no hid backend (detected: {be})"}
 
-    @capability("mouse.drag", risk="exec", tags=("physical",))
+    @capability("mouse.drag", risk="exec", tags=("physical",), scope="local")
     async def _mouse_drag(self, start_x: int, start_y: int,
                           end_x: int, end_y: int, button: int = 1,
                           duration_ms: int = 200) -> dict:
@@ -429,7 +429,7 @@ class HidPlugin(Plugin):
 
     # ---- diagnostics ---------------------------------------------------
 
-    @capability("backend", risk="read")
+    @capability("backend", risk="read", scope="local")
     def _backend_info(self) -> dict[str, Any]:
         """Report which input backend was selected."""
         return {"backend": self._be(), "platform": sys.platform}

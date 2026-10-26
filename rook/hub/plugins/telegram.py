@@ -144,14 +144,14 @@ class Telegram(ChatIntegration):
         return str((res or {}).get("message_id", ""))
 
     # -- caps --------------------------------------------------------------
-    @capability("send", risk="write")
+    @capability("send", risk="write", scope="external")
     async def send(self, text: str, chat: str | None = None) -> dict:
         """Post a message to the configured Telegram chat.
 
         ``chat`` may only name the configured chat (default)."""
         return await self.notify(text, chat)
 
-    @capability("status", risk="read")
+    @capability("status", risk="read", scope="external")
     def status(self) -> dict:
         """Telegram integration status: connected, chat and token configured
         (never the token), bridged rooms, counters and the last error."""

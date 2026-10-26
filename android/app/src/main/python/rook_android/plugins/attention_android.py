@@ -195,7 +195,7 @@ class AndroidAttentionPlugin(Plugin):
     def available(self) -> bool:
         return _ready()
 
-    @capability("post", risk="admin", tags=("physical",))
+    @capability("post", risk="admin", tags=("physical",), scope="self")
     def _post(self, id: str, kind: str = "card", line: str = "", explain: str = "", urgency: str = "normal",
               channel: str = "approvals", actions: list | str | None = None, source: str = "",
               expires_at: float = 0, body: str = "") -> dict:
@@ -220,7 +220,7 @@ class AndroidAttentionPlugin(Plugin):
             return {"ok": False, "error": str(e)}
         return _call("post", json.dumps(card, ensure_ascii=False))
 
-    @capability("remind", risk="admin", tags=("physical",))
+    @capability("remind", risk="admin", tags=("physical",), scope="self")
     def _remind(self, id: str, text: str, sample_ms: int = SAMPLE_DEFAULT_MS, speak_unchecked: bool = False) -> dict:
         """Speak a short reminder on the phone, but only if the room is quiet.
 
@@ -246,7 +246,7 @@ class AndroidAttentionPlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("update", risk="admin")
+    @capability("update", risk="admin", scope="self")
     def _update(self, id: str, state: str, message: str = "") -> dict:
         """Show what happened after a decision: state done (brief confirmation,
         then the card closes), failed (shows message) or gone (removed silently)."""
@@ -255,7 +255,7 @@ class AndroidAttentionPlugin(Plugin):
             return {"ok": False, "error": f"state must be one of {list(STATES)}"}
         return _call("update", str(id), state, _clip(message, 300))
 
-    @capability("poll", risk="admin", tags=("sensitive",))
+    @capability("poll", risk="admin", tags=("sensitive",), scope="self")
     def _poll(self, since: int = 0) -> dict:
         """Events after seq ``since``: {events, last}; pass ``last`` next time.
 
@@ -276,7 +276,7 @@ class AndroidAttentionPlugin(Plugin):
             return {"ok": False, "error": "since must be an integer"}
         return _call("poll", n)
 
-    @capability("feed", risk="exec", tags=("sensitive",))
+    @capability("feed", risk="exec", tags=("sensitive",), scope="self")
     def _feed(self, limit: int = 50) -> dict:
         """The phone's quiet feed, newest first: summaries of notifications it
         sorted as urgent, family or normal (never full content), plus ignored_7d."""
@@ -286,12 +286,12 @@ class AndroidAttentionPlugin(Plugin):
             return {"ok": False, "error": "limit must be an integer"}
         return _call("feed", n)
 
-    @capability("rules_get", risk="exec", tags=("sensitive",))
+    @capability("rules_get", risk="exec", tags=("sensitive",), scope="self")
     def _rules_get(self) -> dict:
         """The notification rules in use: source default|override and the rules document."""
         return _call("rulesGet")
 
-    @capability("rules_set", risk="admin")
+    @capability("rules_set", risk="admin", scope="self")
     def _rules_set(self, rules: list | dict | str | None = None) -> dict:
         """Replace the phone's notification rules. Empty resets to the shipped defaults.
 

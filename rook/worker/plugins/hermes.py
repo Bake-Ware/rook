@@ -47,7 +47,7 @@ class HermesPlugin(Plugin):
 
     # ---- interaction -----------------------------------------------------
 
-    @capability("chat", risk="exec")
+    @capability("chat", risk="exec", scope="external")
     async def _chat(self, message: str, session_id: str | None = None,
                     timeout: float = 120.0) -> dict:
         """Send a conversational message to Hermes and return its response.
@@ -67,7 +67,7 @@ class HermesPlugin(Plugin):
             res["answer"] = res.get("stdout", "").strip()
         return res
 
-    @capability("run", risk="exec")
+    @capability("run", risk="exec", scope="external")
     async def _run(self, prompt: str, model: str | None = None,
                    provider: str | None = None, timeout: float = 120.0) -> dict:
         """Run a one-shot prompt through Hermes (clean, final-answer-only).
@@ -90,7 +90,7 @@ class HermesPlugin(Plugin):
 
     # ---- memory ----------------------------------------------------------
 
-    @capability("memory.read", risk="read", tags=("sensitive",))
+    @capability("memory.read", risk="read", tags=("sensitive",), scope="external")
     async def _memory_read(self, entry: str = "MEMORY.md") -> dict:
         """Read a built-in memory file (MEMORY.md or USER.md).
 
@@ -103,14 +103,14 @@ class HermesPlugin(Plugin):
         with open(path, encoding="utf-8", errors="replace") as f:
             return {"ok": True, "content": f.read(), "path": path}
 
-    @capability("memory.status", risk="read")
+    @capability("memory.status", risk="read", scope="external")
     async def _memory_status(self) -> dict:
         """Report persistent-memory provider status."""
         return await self._cli(["memory", "status"], timeout=30.0)
 
     # ---- skills ----------------------------------------------------------
 
-    @capability("skills.list", risk="read")
+    @capability("skills.list", risk="read", scope="external")
     async def _skills_list(self) -> dict:
         """List installed skills. Returns {ok, skills} with structured entries.
 
@@ -143,19 +143,19 @@ class HermesPlugin(Plugin):
             res["skills"] = skills
         return res
 
-    @capability("skills.search", risk="read")
+    @capability("skills.search", risk="read", scope="external")
     async def _skills_search(self, query: str) -> dict:
         """Search skill registries."""
         return await self._cli(["skills", "search", require_str(query, "query")], timeout=60.0)
 
     # ---- sessions --------------------------------------------------------
 
-    @capability("sessions.list", risk="read")
+    @capability("sessions.list", risk="read", scope="external")
     async def _sessions_list(self) -> dict:
         """List recent conversation sessions."""
         return await self._cli(["sessions", "list"], timeout=30.0)
 
-    @capability("sessions.read", risk="read", tags=("sensitive",))
+    @capability("sessions.read", risk="read", tags=("sensitive",), scope="external")
     async def _sessions_read(self, session_id: str = "",
                              limit: int = 50) -> dict:
         """Read a session transcript.
@@ -176,7 +176,7 @@ class HermesPlugin(Plugin):
 
     # ---- system ----------------------------------------------------------
 
-    @capability("status", risk="read")
+    @capability("status", risk="read", scope="external")
     async def _status(self) -> dict:
         """Report Hermes install status: config, binary, version."""
         ver = await self._cli(["version"], timeout=20.0)
@@ -188,7 +188,7 @@ class HermesPlugin(Plugin):
             "error": None if ver.get("ok") else (ver.get("stderr") or ver.get("error")),
         }
 
-    @capability("mcp.list", risk="read")
+    @capability("mcp.list", risk="read", scope="external")
     async def _mcp_list(self) -> dict:
         """List configured MCP servers."""
         return await self._cli(["mcp", "list"], timeout=30.0)

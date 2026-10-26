@@ -2,7 +2,7 @@
 
 Handlers are registered under a dotpath (``shell.exec``, ``hub.info``). A
 handler may carry capability metadata (:class:`rook.core.plugin.CapMeta`, set
-by ``@capability(...)``); when it does, the registry enforces the declared
+by ``@capability(..., scope="multi-user")``); when it does, the registry enforces the declared
 output contract at dispatch time:
 
 * ``limit``: a default page size. If the handler takes a ``limit`` parameter

@@ -165,7 +165,7 @@ class Attention(Plugin):
         return self.service.relay_rows()
 
     # -- caps --------------------------------------------------------------------
-    @capability("send", risk="write")
+    @capability("send", risk="write", scope="multi-user")
     async def send(self, text: str, title: str = "", urgency: str = "normal",
                    channel: str = "digest", explain: str = "") -> dict:
         """Put an alert on the person's phones (attention.devices): text, title?, urgency urgent|normal (urgent rings on the urgent channel), channel digest|family|jobs|urgent, explain? (2-3 sentences). Queued for a phone that is offline; returns its id and whether it was delivered now."""
@@ -184,18 +184,18 @@ class Attention(Plugin):
         except ValueError as e:
             raise CapError(str(e)) from None
 
-    @capability("status", risk="read")
+    @capability("status", risk="read", scope="multi-user")
     def status(self) -> dict:
         """Per phone: online, last poll, last event, queued alerts, open cards, and when the person last saw, opened or unlocked it (no answer is not the same as unseen)."""
         return self.service.status()
 
-    @capability("notices", risk="read", tags=("sensitive",))
+    @capability("notices", risk="read", tags=("sensitive",), scope="multi-user")
     def notices(self, limit: int = 20) -> dict:
         """Recent short summaries (at most 140 characters) of urgent and family notifications the phones reported, newest first."""
         rows = self.service.notices(limit)
         return {"count": len(rows), "notices": rows}
 
-    @capability("log", risk="read")
+    @capability("log", risk="read", scope="multi-user")
     def log_read(self, limit: int = 30, since: float = 0) -> dict:
         """The last 30 days of decisions and reminders, newest first: one plain line each (what happened, the summarized reason, how it was decided). limit 1-500; since: epoch seconds."""
         try:

@@ -62,7 +62,7 @@ class AndroidUiPlugin(Plugin):
     NAMESPACE = "ui"
     PLACEMENT = place(ANDROID_APP)
 
-    @capability("text", risk="exec", tags=("sensitive",))
+    @capability("text", risk="exec", tags=("sensitive",), scope="self")
     def _text(self) -> dict:
         """All visible text on the current screen (top-to-bottom)."""
         if _Hid is None:
@@ -83,7 +83,7 @@ class AndroidUiPlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("nodes", risk="exec", tags=("sensitive",))
+    @capability("nodes", risk="exec", tags=("sensitive",), scope="self")
     def _nodes(self, all: bool = False, contains: str = "", limit: int = 300) -> dict:
         """Visible nodes on screen, top-to-bottom: text, desc, id, class, clickable,
         scrollable, checked, bounds [l,t,r,b]. By default only nodes with a label or
@@ -104,7 +104,7 @@ class AndroidUiPlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("click", risk="exec")
+    @capability("click", risk="exec", scope="self")
     def _click(self, text: str = "", desc: str = "", id: str = "", contains: bool = False,
                index: int = 0, long: bool = False) -> dict:
         """Click the node whose text, desc (content description) or id (view id, with or
@@ -122,7 +122,7 @@ class AndroidUiPlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("scroll", risk="exec")
+    @capability("scroll", risk="exec", scope="self")
     def _scroll(self, direction: str = "down", text: str = "", id: str = "",
                 contains: bool = False) -> dict:
         """Scroll one page down (forward) or up (backward). Scrolls the scrollable node
@@ -140,7 +140,7 @@ class AndroidUiPlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("back", risk="exec")
+    @capability("back", risk="exec", scope="self")
     def _back(self) -> dict:
         """Press Back (the global accessibility action)."""
         if (err := _guard()):

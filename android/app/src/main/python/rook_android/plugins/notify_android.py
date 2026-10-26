@@ -49,7 +49,7 @@ class AndroidNotifyPlugin(Plugin):
     NAMESPACE = "notify"
     PLACEMENT = place(ANDROID_APP)
 
-    @capability("list", risk="exec", tags=("sensitive",))
+    @capability("list", risk="exec", tags=("sensitive",), scope="self")
     def _list(self, limit: int = 40, packages: str | list | None = None) -> dict:
         """Recent notifications, newest first.
 
@@ -82,7 +82,7 @@ class AndroidNotifyPlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("dismiss", risk="exec")
+    @capability("dismiss", risk="exec", scope="self")
     def _dismiss(self, key: str) -> dict:
         """Dismiss a notification by its ``key`` (from notify.list)."""
         if _Listener is None:
@@ -93,7 +93,7 @@ class AndroidNotifyPlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("actions", risk="read", tags=("sensitive",))
+    @capability("actions", risk="read", tags=("sensitive",), scope="self")
     def _actions(self, key: str) -> dict:
         """The actions a notification offers (by ``key`` from notify.list): index, title
         ("Reply", "Mark as read"), and whether it takes text."""
@@ -104,7 +104,7 @@ class AndroidNotifyPlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("act", risk="exec")
+    @capability("act", risk="exec", scope="self")
     def _act(self, key: str, action: int | str = 0, text: str = "") -> dict:
         """Run one of a notification's own actions (by ``key`` from notify.list; ``action``:
         its index or title from notify.actions). ``text`` fills a reply action: that sends a
@@ -136,7 +136,7 @@ class AndroidNotifyPlugin(Plugin):
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    @capability("post", risk="exec")
+    @capability("post", risk="exec", scope="self")
     def _post(self, title: str = "rook", text: str = "", channel: str = "") -> dict:
         """Post a local notification on the phone (needs POST_NOTIFICATIONS).
 

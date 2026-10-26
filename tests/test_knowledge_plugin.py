@@ -230,7 +230,7 @@ async def test_mcp_tools_keep_their_names_arguments_and_replies(tmp_path, monkey
 class _Base(Plugin):
     NAMESPACE = "base"
 
-    @capability("x")
+    @capability("x", scope="multi-user")
     def x(self):
         return 1
 
@@ -242,7 +242,7 @@ class _Child(Plugin):
     def available(self):
         return self.dependency("base") is not None
 
-    @capability("y")
+    @capability("y", scope="multi-user")
     def y(self):
         return self.dependency("base").x() + 1
 

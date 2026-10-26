@@ -275,7 +275,7 @@ class Knowledge(Plugin):
         check_action(namespace, action, write)
         return await self.service.dispatch(action, band, kind, rid, query, data, request_id, lean=True)
 
-    @capability("read", risk="read")
+    @capability("read", risk="read", scope="multi-user")
     async def read(self, action: str = 'search', band: str | None = None, id: str | None = None,
                    query: str = '', data: dict | None = None) -> dict:
         """Read the shared wiki: search|get|list|context|status|bands|deck.
@@ -285,7 +285,7 @@ class Knowledge(Plugin):
         lists linked and related pages as {slug, title, gist} stubs."""
         return await self.run('knowledge', False, action, None, band, id, query, data, None)
 
-    @capability("write", risk="write")
+    @capability("write", risk="write", scope="multi-user")
     async def write(self, action: str, band: str | None = None, id: str | None = None,
                     data: dict | None = None, request_id: str | None = None) -> dict:
         """Write the shared wiki: create|update|link|retract (needs request_id).

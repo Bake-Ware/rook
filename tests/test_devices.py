@@ -22,18 +22,18 @@ class Lamp(Device):
     def heartbeat(self):
         return {"on": self.on}
 
-    @capability("set", risk="write", tags=("physical",))
+    @capability("set", risk="write", tags=("physical",), scope="multi-user")
     async def _set(self, on: bool) -> dict:
         """Switch the lamp."""
         self.on = bool(on)
         return {"on": self.on}
 
-    @capability("status", risk="read")
+    @capability("status", risk="read", scope="multi-user")
     def _status(self) -> dict:
         """Lamp state."""
         return {"on": self.on, "name": self.name}
 
-    @capability("opts", risk="read")
+    @capability("opts", risk="read", scope="multi-user")
     async def _opts(self) -> dict:
         """The reply options this call runs under."""
         from rook.worker.wire import envelope

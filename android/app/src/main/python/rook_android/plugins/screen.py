@@ -37,12 +37,12 @@ class AndroidScreenPlugin(Plugin):
     NAMESPACE = "screenshot"
     PLACEMENT = place(ANDROID_APP)
 
-    @capability("capture", risk="read", tags=("sensitive",))
+    @capability("capture", risk="read", tags=("sensitive",), scope="local")
     def _capture(self, quality: int = 85) -> dict:
         """Capture the full screen as a JPEG via MediaProjection."""
         return _capture(int(quality))
 
-    @capability("capture_preview", risk="read", tags=("sensitive",))
+    @capability("capture_preview", risk="read", tags=("sensitive",), scope="local")
     def _preview(self) -> dict:
         """Low-quality grab for quick visual checks."""
         return _capture(40)

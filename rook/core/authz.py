@@ -77,7 +77,7 @@ def _t(spec: str) -> tuple[str, tuple[str, ...]]:
 #   themselves (caps.describe, worker.plugin.*, customcap.*) and the hub's
 #   own MCP tools authorized as caps on `rook` (secret.*, band.*, token.admin),
 #   plus the Android app's native caps, whose plugin source only the app has.
-# * every built-in plugin's ``@capability(risk=..., tags=...)``, read from the
+# * every built-in plugin's ``@capability(risk=..., tags=..., scope="multi-user")``, read from the
 #   plugin source shipped with this node (:func:`builtin_table`). The
 #   decorator is the one place a plugin cap's tier is written; this node's
 #   copy of it is still a floor, so a peer running modified code cannot

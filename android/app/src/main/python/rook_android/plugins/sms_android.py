@@ -63,12 +63,12 @@ class AndroidSmsPlugin(Plugin):
     NAMESPACE = "sms"
     PLACEMENT = place(ANDROID_APP)
 
-    @capability("list", risk="exec", tags=("sensitive",))
+    @capability("list", risk="exec", tags=("sensitive",), scope="external")
     def _list(self, box: str = "inbox", limit: int = 30, since_ts: float = 0.0) -> dict:
         """Recent SMS. ``box`` = inbox|sent|all; newest first."""
         return _list(str(box), int(limit), float(since_ts or 0))
 
-    @capability("send", risk="exec")
+    @capability("send", risk="exec", scope="external")
     def _send(self, to: str, text: str) -> dict:
         """Send an SMS to ``to``. Long messages are split into parts."""
         ctx = app_context()

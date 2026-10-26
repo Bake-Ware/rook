@@ -144,7 +144,7 @@ class ChatRooms(Plugin):
             raise ValueError(reply.get("error") or "chat operation failed")
         return {k: v for k, v in reply.items() if k != "ok"}
 
-    @capability("read", risk="read")
+    @capability("read", risk="read", scope="multi-user")
     def read(self, action: str = "rooms", room: str | None = None, since_seq: int = 0,
              limit: int = 200, mark: bool = True) -> dict:
         """Read chat rooms: action=rooms (yours, newest first, unread counts) or read (room, since_seq).
@@ -166,7 +166,7 @@ class ChatRooms(Plugin):
                                                mark=bool(mark), limit=int(limit))), **extra}
         raise ValueError("action must be rooms or read")
 
-    @capability("write", risk="write")
+    @capability("write", risk="write", scope="multi-user")
     def write(self, action: str, room: str | None = None, text: str | None = None,
               title: str | None = None, invite=None, mentions=None,
               expects_reply: bool = False) -> dict:
@@ -190,7 +190,7 @@ class ChatRooms(Plugin):
                                             bool(expects_reply)))
         raise ValueError("action must be start or send")
 
-    @capability("delete", risk="write", tags=("destructive",))
+    @capability("delete", risk="write", tags=("destructive",), scope="multi-user")
     def delete(self, room: str) -> dict:
         """Delete a room and all its messages (participants only; final)."""
         store, me = self._chat(), caller()
@@ -199,7 +199,7 @@ class ChatRooms(Plugin):
             return err
         return self._checked(store.delete(rid, me))
 
-    @capability("presence", risk="read")
+    @capability("presence", risk="read", scope="multi-user")
     def presence(self) -> dict:
         """Identities seen recently, newest first, with online flags."""
         store = self._chat()

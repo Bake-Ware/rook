@@ -132,7 +132,7 @@ class DelugePlugin(Plugin):
         # daemon is down. deluged alone (headless box) also counts.
         return bool(which("deluge-console", "deluged", "deluge"))
 
-    @capability("status", risk="read")
+    @capability("status", risk="read", scope="local")
     async def _status(self) -> dict:
         """Whether the daemon is running, plus a session summary if reachable."""
         running = False
@@ -154,7 +154,7 @@ class DelugePlugin(Plugin):
         return {"ok": True, "daemon_running": running, "reachable": reachable,
                 "summary": summary, "console": bool(_which_console())}
 
-    @capability("list", risk="read")
+    @capability("list", risk="read", scope="local")
     async def _list(self) -> dict:
         """Current torrents: name, state, progress, size, ratio (+ raw output)."""
         code, out, err = await _console("info")
@@ -166,7 +166,7 @@ class DelugePlugin(Plugin):
         return {"ok": True, "count": len(torrents), "torrents": torrents,
                 "raw": out[:8000]}
 
-    @capability("files", risk="read")
+    @capability("files", risk="read", scope="local")
     async def _files(self, torrent_id: str) -> dict:
         """A torrent's save path + files — pull them over the band with file.read.
 
@@ -188,7 +188,7 @@ class DelugePlugin(Plugin):
                 "raw": out[:8000],
                 "note": "read files with file.read(save_path + '/' + name, encoding='base64')"}
 
-    @capability("add", risk="write")
+    @capability("add", risk="write", scope="local")
     async def _add(self, torrent: str) -> dict:
         """Add a torrent by magnet link, .torrent URL, or local path."""
         torrent = require_str(torrent, "torrent (magnet/url/path)")
@@ -202,17 +202,17 @@ class DelugePlugin(Plugin):
             fail(output or f"deluge-console exit {code}")
         return {"ok": True, "output": output}
 
-    @capability("pause", risk="write")
+    @capability("pause", risk="write", scope="local")
     async def _pause(self, torrent_id: str = "*") -> dict:
         """Pause a torrent by id or name, or all with ``*``."""
         return await _simple(f"pause {_torrent_id(torrent_id)}")
 
-    @capability("resume", risk="write")
+    @capability("resume", risk="write", scope="local")
     async def _resume(self, torrent_id: str = "*") -> dict:
         """Resume a torrent by id or name, or all with ``*``."""
         return await _simple(f"resume {_torrent_id(torrent_id)}")
 
-    @capability("remove", risk="write", tags=("destructive",))
+    @capability("remove", risk="write", tags=("destructive",), scope="local")
     async def _remove(self, torrent_id: str, data: bool = False) -> dict:
         """Remove a torrent by id or name. ``data=True`` also deletes the downloaded files."""
         torrent_id = _torrent_id(torrent_id)

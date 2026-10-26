@@ -49,7 +49,7 @@ def test_home_ask_is_still_refused_over_the_band():
 
 def test_installer_flags_and_summary_lines():
     script = (ROOT / "scripts/install-hub.sh").read_text(encoding="utf-8")
-    for flag in ("--user)", "--yes)", "--bind)", "--no-systemd)"):
+    for flag in ("--user)", "--yes, scope="multi-user")", "--bind)", "--no-systemd)"):
         assert flag in script, flag
     # installer::parse_summary reads these two lines of the closing banner.
     assert re.search(r"^  Dashboard   \$DOMAIN$", script, re.M)

@@ -53,7 +53,7 @@ class WorkPlugin(Plugin):
                     'running': s.get('running', bool(s.get('handle'))), 'needs_input': s.get('needs_input', bool(s.get('pending'))),
                     'has_error': s.get('has_error', bool(s.get('error')))}
 
-    @capability('create', risk='exec')
+    @capability('create', risk='exec', scope="self")
     async def create(self, session_id: str, command_id: str, cwd: str, title: str = '', model: str = ''):
         """Create (or reopen) a host-owned Codex work session in ``cwd`` (absolute) and open it.
 
@@ -71,7 +71,7 @@ class WorkPlugin(Plugin):
         # Both process creation and subsequent commands are deduplicated on the host.
         return await self.command(sid, dict(op='open', id=command_id))
 
-    @capability('command', risk='exec')
+    @capability('command', risk='exec', scope="self")
     async def command(self, session_id: str, command: dict):
         """Send one command (``{id, op, ...}``) to a work session; deduplicated by ``command.id``."""
         sid = self.session_id(session_id)
@@ -85,7 +85,7 @@ class WorkPlugin(Plugin):
         return {'ok': True, 'session': self.metadata(self.runtime.store.get(sid)),
                 'result': {'status': result['status']}}
 
-    @capability('status', risk='read')
+    @capability('status', risk='read', scope="self")
     def status(self, sessions: list[str]):
         """Metadata (title, status, running, needs_input, has_error) of up to 20 work sessions."""
         if len(sessions) > 20:
@@ -97,7 +97,7 @@ class WorkPlugin(Plugin):
         out = [found.get(sid, {'id': sid, 'missing': True}) for sid in ids]
         return {'ok': True, 'sessions': out}
 
-    @capability('view_page', risk='read', tags=('sensitive',))
+    @capability('view_page', risk='read', tags=('sensitive',), scope="self")
     def view_page(self, session_id: str, since: int = 0, token: str = '', offset: int = 0):
         """A stable, bounded page of a view delta; content never enters web storage."""
         with self.view_lock:
@@ -134,7 +134,7 @@ class WorkPlugin(Plugin):
         return dict(ok=True, token=token, data=chunk, next_offset=end,
                     truncated=end < len(text), revision=snapshot['revision'])
 
-    @capability('adopt_page', risk='write')
+    @capability('adopt_page', risk='write', scope="self")
     def adopt_page(self, session_id: str, digest: str, offset: int, data: str, final: bool = False):
         """Archive and adopt legacy web state before the web removes its copy."""
         with self.adopt_lock:

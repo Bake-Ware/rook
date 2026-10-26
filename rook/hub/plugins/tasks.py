@@ -73,7 +73,7 @@ class Tasks(Plugin):
             raise ValueError('kind must be one of ' + ', '.join(KINDS))
         return kind
 
-    @capability("read", risk="read")
+    @capability("read", risk="read", scope="multi-user")
     async def read(self, action: str = 'deck', kind: str = 'task', band: str | None = None,
                    id: str | None = None, query: str = '', data: dict | None = None) -> dict:
         """Read tasks/projects/concepts: deck|search|list|get|context|status|hygiene.
@@ -84,7 +84,7 @@ class Tasks(Plugin):
         return await self._knowledge().run('task', False, action, self._kind(kind), band, id, query,
                                            data, None)
 
-    @capability("write", risk="write")
+    @capability("write", risk="write", scope="multi-user")
     async def write(self, action: str, kind: str = 'task', band: str | None = None,
                     id: str | None = None, data: dict | None = None,
                     request_id: str | None = None) -> dict:

@@ -273,7 +273,7 @@ class ModelProviders(Plugin):
             self._running = asyncio.Semaphore(CALLS_AT_ONCE)
         return self._running
 
-    @capability("providers", risk="read", fields="*")
+    @capability("providers", risk="read", fields="*", scope="multi-user")
     def providers_cap(self) -> dict:
         """llm.providers — the model providers this hub can use: id, kind, host, offered models, last check."""
         rows = []
@@ -286,7 +286,7 @@ class ModelProviders(Plugin):
             rows.append(row)
         return {"providers": rows}
 
-    @capability("models", risk="read")
+    @capability("models", risk="read", scope="multi-user")
     async def models_cap(self, provider: str, live: bool = False) -> dict:
         """llm.models — model ids one provider offers (live=true asks its /models)."""
         who = self._caller()
@@ -298,7 +298,7 @@ class ModelProviders(Plugin):
         except (LLMError, ProviderError) as e:
             return {"provider": provider, "error": str(e)[:300]}
 
-    @capability("check", risk="read")
+    @capability("check", risk="read", scope="multi-user")
     async def check_cap(self, provider: str = "") -> dict:
         """llm.check — whether a provider (or every one) answers, with latency."""
         who = self._caller()

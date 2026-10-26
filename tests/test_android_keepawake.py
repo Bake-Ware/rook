@@ -216,12 +216,12 @@ class Caps(Plugin):
 
     def __init__(self): self.seen = []
 
-    @capability("sync")
+    @capability("sync", scope="multi-user")
     def sync(self, text: str = "") -> dict:
         self.seen.append(text)
         return {"ok": True, "text": text}
 
-    @capability("async_")
+    @capability("async_", scope="multi-user")
     async def async_(self, n: int = 1) -> dict:
         return {"ok": True, "n": n}
 

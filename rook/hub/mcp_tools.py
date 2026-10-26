@@ -1,6 +1,6 @@
 """MCP tools generated from hub caps.
 
-Caps are the single interface; a cap declared ``@capability(..., tool=True)``
+Caps are the single interface; a cap declared ``@capability(..., tool=True, scope="multi-user")``
 on a hub-placed plugin also gets a dedicated MCP tool named
 ``rook_<cap with dots as underscores>`` (``hub.info`` -> ``rook_hub_info``).
 The tool's parameters mirror the handler's signature (plus ``limit`` /

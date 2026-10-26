@@ -297,7 +297,7 @@ class Changes(Plugin):
         return self.store.set(row["id"], state="reducing", record=cr)
 
     # -- caps ----------------------------------------------------------------------
-    @capability("submit", risk="write")
+    @capability("submit", risk="write", scope="multi-user")
     async def submit(self, data: dict | None = None) -> dict:
         """A change request: data {kind standard|emergency|normal, category, what, why, machines, plan, scripts [{worker, run, timeout?, detach?}], tests [{worker, run, expect_rc?, expect?}], rollback {worker, run, dry_run, point}, fix? (emergency: rollback|restart|failover), huddle?, task?}."""
         p = _caller()
@@ -336,19 +336,19 @@ class Changes(Plugin):
                          "asked": "It waits for the person's card."}.get(
                     self.store.get(row["id"])["state"], "")}
 
-    @capability("get", risk="read")
+    @capability("get", risk="read", scope="multi-user")
     def get(self, id: str) -> dict:
         """One change request with its checks and its step log."""
         return self._public(self.store.get(id))
 
-    @capability("list", risk="read")
+    @capability("list", risk="read", scope="multi-user")
     def list_(self, states: list | None = None, days: float = 7) -> dict:
         """Change requests updated in the last ``days``, newest first (states: filter)."""
         rows = self.store.list(tuple(states or ()), since=time.time() - float(days) * 86400)
         return {"count": len(rows), "changes": [
             {k: v for k, v in self._public(r).items() if k != "log"} for r in rows]}
 
-    @capability("reduce", risk="write")
+    @capability("reduce", risk="write", scope="multi-user")
     def reduce(self, id: str, into: list | None = None, note: str = "") -> dict:
         """A normal change made into standard change requests (their ids): it is closed."""
         row = self.store.get(id)
@@ -363,7 +363,7 @@ class Changes(Plugin):
         cr["reduced_note"] = " ".join(str(note or "").split())[:500]
         return self._public(self.store.set(row["id"], state="reduced", record=cr))
 
-    @capability("irreducible", risk="write")
+    @capability("irreducible", risk="write", scope="multi-user")
     async def irreducible(self, id: str, why: str = "") -> dict:
         """A normal change the huddle can't make standard: one card to the person now."""
         row = self.store.get(id)
@@ -372,7 +372,7 @@ class Changes(Plugin):
         return self._public(await self._ask(row, " ".join(str(why or "").split())[:300]
                                             or "it can't be made standard"))
 
-    @capability("update", risk="write")
+    @capability("update", risk="write", scope="multi-user")
     def update(self, id: str, data: dict | None = None) -> dict:
         """Write the words of a change request afterwards (an emergency's what, why, plan); what ran never changes."""
         row = self.store.get(id)
@@ -390,7 +390,7 @@ class Changes(Plugin):
         # rollback, machines) stays exactly what was checked, empty included.
         return self._public(self.store.set(row["id"], record=new))
 
-    @capability("revert", risk="write")
+    @capability("revert", risk="write", scope="multi-user")
     async def revert(self, id: str) -> dict:
         """Roll a kept change back with its own rollback (the person's "revert that")."""
         row = self.store.get(id)
@@ -406,7 +406,7 @@ class Changes(Plugin):
             raise ChangeError(f"{row['id']}'s rollback needs the person: " + "; ".join(problems))
         return self._public(await self._runner().revert(row["id"]))
 
-    @capability("catalog", risk="write")
+    @capability("catalog", risk="write", scope="multi-user")
     def catalog(self, action: str = "list", category: str = "", words: str = "") -> dict:
         """The kinds that go as standard changes: list, or add (the person's "that kind is fine", with their words)."""
         if action == "list":
@@ -439,7 +439,7 @@ class Changes(Plugin):
         return getattr(att, "kind", "") == "home" and aid.startswith("home:") and \
             "/role:" not in aid
 
-    @capability("decide", risk="write")
+    @capability("decide", risk="write", scope="multi-user")
     async def decide(self, id: str, yes: bool = False) -> dict:
         """A person's answer to a change request that waits for them (the card does the same)."""
         p = _caller()
@@ -517,7 +517,7 @@ class Changes(Plugin):
                 if att is not None:
                     att.log("change", "tell", text.split("\n", 1)[0], "", kind)
 
-    @capability("digest", risk="read")
+    @capability("digest", risk="read", scope="multi-user")
     def digest(self, weekly: bool = False) -> dict:
         """What the next digest would say (the last day, or the last 7 days)."""
         return {"text": self.digest_text(time.time() - (7 if weekly else 1) * 86400, weekly)}

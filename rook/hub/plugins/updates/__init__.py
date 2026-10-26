@@ -174,7 +174,7 @@ class Updates(Plugin):
             raise CapError(refusal)
         return str(caller_identity.get() or "system:rook-hub")
 
-    @capability("status", risk="read")
+    @capability("status", risk="read", scope="multi-user")
     def status(self) -> dict:
         """Hub version against the newest release, how many workers are
         behind, the running rollout, and the mode/channel."""
@@ -189,18 +189,18 @@ class Updates(Plugin):
                 "rollout": {k: ro.get(k) for k in ("id", "status", "build", "reason")} if ro else None,
                 "check_error": o["check"]["error"] or None}
 
-    @capability("history", risk="read")
+    @capability("history", risk="read", scope="multi-user")
     def history(self, n: int = 30) -> list:
         """Recent update events: hub updates, rollouts, rollbacks, APK publishes."""
         return self._svc().history(max(1, min(int(n), 200)))
 
-    @capability("check", risk="admin")
+    @capability("check", risk="admin", scope="multi-user")
     async def check(self) -> dict:
         """Check GitHub for new releases now."""
         self._admin("updates.check")
         return await self._svc().check(force=True)
 
-    @capability("apply_hub", risk="admin", tags=("destructive",))
+    @capability("apply_hub", risk="admin", tags=("destructive",), scope="multi-user")
     async def apply_hub(self, tag: str) -> dict:
         """Update the hub to release ``tag`` (restarts it). Refused for a
         breaking release until the devices it cuts off are updated or the
@@ -212,7 +212,7 @@ class Updates(Plugin):
         except Refused as e:
             raise CapError(str(e)) from None
 
-    @capability("prepare_hub", risk="admin")
+    @capability("prepare_hub", risk="admin", scope="multi-user")
     async def prepare_hub(self, tag: str) -> dict:
         """For a `rook hub` install the hub cannot switch itself: download
         and verify release ``tag``, leave a signed hub release in the updates
@@ -226,7 +226,7 @@ class Updates(Plugin):
         except Refused as e:
             raise CapError(str(e)) from None
 
-    @capability("rollout", risk="admin", tags=("destructive",))
+    @capability("rollout", risk="admin", tags=("destructive",), scope="multi-user")
     async def rollout(self, workers: list | None = None, build: int = 0) -> dict:
         """Staged worker rollout of ``build`` (default: the newest the hub has)
         to ``workers`` (ids or names; default all), canary first."""

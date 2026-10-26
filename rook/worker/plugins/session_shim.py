@@ -107,7 +107,7 @@ class SessionShimPlugin(Plugin):
 
     # -- caps --------------------------------------------------------------------
 
-    @capability("shim.install", risk="write")
+    @capability("shim.install", risk="write", scope="multi-user")
     async def install(self, agents: list | None = None, shells: list | None = None) -> dict:
         """Install the session shim on this host (opt-in; off by default).
         ``agents``: claude and/or codex (default: those installed here).
@@ -122,7 +122,7 @@ class SessionShimPlugin(Plugin):
         log.info("session shim installed for %s", ", ".join(result["agents"]))
         return result
 
-    @capability("shim.uninstall", risk="write")
+    @capability("shim.uninstall", risk="write", scope="multi-user")
     async def uninstall(self) -> dict:
         """Remove the session shim: its rc blocks, its fish file and its
         folder. Sessions running through it keep running."""
@@ -134,7 +134,7 @@ class SessionShimPlugin(Plugin):
         log.info("session shim uninstalled")
         return result
 
-    @capability("shim.status", risk="read")
+    @capability("shim.status", risk="read", scope="multi-user")
     async def status(self) -> dict:
         """Whether the session shim is installed here, for which agents and
         shells, where the real binaries are, and how many sessions run

@@ -79,7 +79,7 @@ class PolicyPlugin(Plugin):
         # Not live: evaluate against the name alone.
         return target_from_entry(worker, {"name": worker})
 
-    @capability("explain", risk="read")
+    @capability("explain", risk="read", scope="multi-user")
     def explain(self, principal: str, cap: str, worker: str | None = None,
                 role: str | None = None) -> dict:
         """Would this principal be allowed to call ``cap`` on ``worker``?
@@ -92,7 +92,7 @@ class PolicyPlugin(Plugin):
         d = policy.evaluate([_principal(principal, role)], cap, self._target(worker))
         return d.explain()
 
-    @capability("get", risk="read", tags=("sensitive",))
+    @capability("get", risk="read", tags=("sensitive",), scope="multi-user")
     def get(self) -> dict:
         """The current policy document with its revision, source, mode, lint
         and last load error (if the file on disk is invalid)."""
@@ -101,7 +101,7 @@ class PolicyPlugin(Plugin):
         return {"rev": policy.rev, "mode": policy.mode, "source": store.source,
                 "error": store.error, "lint": policy.lint(), "policy": policy.doc}
 
-    @capability("set", risk="admin")
+    @capability("set", risk="admin", scope="multi-user")
     def set(self, policy: dict, note: str = "") -> dict:
         """Replace the policy document (band owners and operator tokens only).
 
@@ -122,7 +122,7 @@ class PolicyPlugin(Plugin):
             "diff": summarize_diff(old.doc, new.doc), "note": note[:200]})
         return {"ok": True, "rev": new.rev, "mode": new.mode, "lint": new.lint()}
 
-    @capability("status", risk="read")
+    @capability("status", risk="read", scope="multi-user")
     def status(self) -> dict:
         """Hub permission status: policy mode/revision, whether calls carry
         tickets (root key present), the op-key id and the trust anchor id."""

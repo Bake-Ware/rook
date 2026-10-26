@@ -16,7 +16,7 @@ _BOOT = time.time()
 class InfoPlugin(Plugin):
     NAMESPACE = "info"
 
-    @capability("host", risk="read")
+    @capability("host", risk="read", scope="self")
     def _host(self) -> dict:
         """Hostname, OS, release, machine, Python version and process id of this worker."""
         return {
@@ -28,12 +28,12 @@ class InfoPlugin(Plugin):
             "pid": os.getpid(),
         }
 
-    @capability("uptime", risk="read")
+    @capability("uptime", risk="read", scope="self")
     def _uptime(self) -> float:
         """Seconds since this worker process started."""
         return time.time() - _BOOT
 
-    @capability("ping", risk="read")
+    @capability("ping", risk="read", scope="self")
     def _ping(self) -> str:
         """Liveness check; returns ``"pong"``."""
         return "pong"

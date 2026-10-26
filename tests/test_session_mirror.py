@@ -136,7 +136,7 @@ def test_two_plugins_may_share_the_sessions_namespace():
     class Catalog(Plugin):
         NAMESPACE = "sessions"
 
-        @capability("list")
+        @capability("list", scope="multi-user")
         def list_(self):
             return {"ok": True, "items": []}
 
