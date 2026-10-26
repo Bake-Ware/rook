@@ -135,10 +135,10 @@ class McpClient:
 
 
 def rook_call(url: str, token: str, cap: str, args: dict, worker: str = "rook",
-              timeout: float = 30.0) -> dict:
+              timeout: float = 30.0, why: str = "API call") -> dict:
     """``rook_call`` through MCP; returns its reply ``{"ok", "result"|"error"}``."""
     text = McpClient(url, token, timeout=timeout + 10).call_tool(
-        "rook_call", {"cap": cap, "args": args, "worker": worker, "timeout": timeout},
+        "rook_call", {"cap": cap, "why": why, "args": args, "worker": worker, "timeout": timeout},
         timeout=timeout + 10)
     try:
         reply = json.loads(text)

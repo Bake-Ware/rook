@@ -112,7 +112,7 @@ async def test_placeholders_never_reach_agent_or_journal(tmp_path, monkeypatch):
     monkeypatch.setenv('ROOK_APPROVALS_WAIT_SECS', '0')
     async with mcp_session(tmp_path, monkeypatch) as env:
         # A call that leaked the value before it entered the vault…
-        leaked = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'cmd': f'echo {SECRET}'})
+        leaked = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', why='test', args={'cmd': f'echo {SECRET}'})
         assert leaks(env.journal)
         # …is masked in the journal once the secret is stored.
         res = await env.tool('rook_secret', action='set', name='pw', value=SECRET, description='test')
@@ -125,13 +125,13 @@ async def test_placeholders_never_reach_agent_or_journal(tmp_path, monkeypatch):
         t = (await env.tool('rook_task', action='create', request_id='t', data={'title': 'T', 'parent': p['id']}))['result']
         await env.tool('rook_task', action='claim', id=t['id'], request_id='cl')
 
-        out = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'argv': ['login', '{{secret:pw}}']})
+        out = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', why='test', args={'argv': ['login', '{{secret:pw}}']})
         assert env.band.sent[-1] == {'argv': ['login', SECRET]}  # worker got the real value
         # The agent got the stub (tagged: inside the echoed JSON the value is escaped).
         assert SECRET not in json.dumps(out) and '{{secret:pw|json}}' in out['result']['stdout']
         assert not leaks(env.journal)
 
-        bad = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'cmd': '{{secret:nope}}'})
+        bad = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', why='test', args={'cmd': '{{secret:nope}}'})
         assert not bad['ok'] and 'unknown secret' in bad['error']
         assert len(env.band.sent) == 2  # refused before dispatch
 
