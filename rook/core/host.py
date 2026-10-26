@@ -255,6 +255,13 @@ class PluginHost:
         if not plugin.VERSION:
             plugin.VERSION = self.build_version
         caps = plugin.caps()
+        # Validate that every cap declares required scope
+        from .plugin import validate_caps
+        errors = validate_caps(plugin)
+        if errors:
+            log.error("%s: %s; skipping plugin", name, "; ".join(errors))
+            self._mark(name, "failed", "; ".join(errors))
+            return False
         done: list[str] = []
         try:
             for dotpath, fn in caps.items():
