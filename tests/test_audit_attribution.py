@@ -305,6 +305,9 @@ async def test_rook_call_needs_a_one_line_why_and_journals_it(tmp_path):
             assert res["ok"] is True
         assert [r["why"] for r in rows(env.journal, "cap='info.host'")] == [
             "check the host's uptime", long[:300]]
+        from rook.band_mcp.journal import Journal
+        listed = Journal(env.journal).query(cap_prefix="info.host")
+        assert [e["why"] for e in listed] == [long[:300], "check the host's uptime"]
 
 
 class TimingBand(FakeBand):

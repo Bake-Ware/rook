@@ -84,7 +84,7 @@ async def mcp_session(tmp_path, monkeypatch):
 
 def journal_text(path):
     with sqlite3.connect(path) as db:
-        return '\n'.join(f'{r} {e}' for r, e in db.execute('SELECT reply, error FROM calls'))
+        return '\n'.join(f'{r} {e} {w}' for r, e, w in db.execute('SELECT reply, error, why FROM calls'))
 
 
 def leaks(path):
@@ -112,13 +112,16 @@ async def test_placeholders_never_reach_agent_or_journal(tmp_path, monkeypatch):
     monkeypatch.setenv('ROOK_APPROVALS_WAIT_SECS', '0')
     async with mcp_session(tmp_path, monkeypatch) as env:
         # A call that leaked the value before it entered the vault…
-        leaked = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', why='test', args={'cmd': f'echo {SECRET}'})
+        leaked = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', why=f'log in with {SECRET}',
+                                args={'cmd': f'echo {SECRET}'})
         assert leaks(env.journal)
         # …is masked in the journal once the secret is stored.
         res = await env.tool('rook_secret', action='set', name='pw', value=SECRET, description='test')
         assert res['ok'] and res['journal_rows_masked'] >= 1
         assert not leaks(env.journal)
         assert SECRET not in json.dumps(await env.tool('rook_secret'))  # list shows no values
+        await env.tool('rook_call', cap='shell.exec', worker='gpu-box', why=f'again with {SECRET}', args={'cmd': 'id'})
+        assert not leaks(env.journal)  # a why naming the value is masked when stored
 
         c = (await env.tool('rook_concept', action='create', request_id='c', data={'title': 'C'}))['result']
         p = (await env.tool('rook_project', action='create', request_id='p', data={'title': 'P', 'parent': c['id']}))['result']
@@ -133,7 +136,7 @@ async def test_placeholders_never_reach_agent_or_journal(tmp_path, monkeypatch):
 
         bad = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', why='test', args={'cmd': '{{secret:nope}}'})
         assert not bad['ok'] and 'unknown secret' in bad['error']
-        assert len(env.band.sent) == 2  # refused before dispatch
+        assert len(env.band.sent) == 3  # refused before dispatch
 
         blob = json.dumps({'installed': {'client_id': 'x', 'client_secret': 'y-secret-value'}})
         stored = await env.tool('rook_secret', action='set', name='json-cred', value=blob, description='a JSON file')

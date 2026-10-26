@@ -75,7 +75,6 @@ class Journal:
             # winning rule, the policy revision and the cap's tier.
             add_columns(self._db, "calls", {"principal": "TEXT", "decision": "TEXT", "rule": "TEXT",
                                             "policy_rev": "INTEGER", "tier": "TEXT"})
-            # Agent sessions: one-line justification for the call (users-access-trust-map item 14).
             add_columns(self._db, "calls", {"why": "TEXT"})
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_decision ON calls(decision)")
             self._db.execute("CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)")
@@ -130,7 +129,7 @@ class Journal:
                worker, thread_id, ok, error, blob,
                audit.get("agent_id"), audit.get("key_id"), auth, audit.get("actor"),
                az.get("principal"), az.get("decision"), rule,
-               az.get("policy_rev"), az.get("tier"), why)
+               az.get("policy_rev"), az.get("tier"), scrub(why) if why else None)
         try:
             with self._lock:
                 self._db.execute(
@@ -160,14 +159,15 @@ class Journal:
         if not m:
             return 0
         forms = forms_for(value)
-        where = " OR ".join(["instr(coalesce(reply,''), ?) > 0 OR instr(coalesce(error,''), ?) > 0"] * len(forms))
-        params = [f for f in forms for _ in (0, 1)]
+        where = " OR ".join(["instr(coalesce(reply,''), ?) > 0 OR instr(coalesce(error,''), ?) > 0 "
+                             "OR instr(coalesce(why,''), ?) > 0"] * len(forms))
+        params = [f for f in forms for _ in (0, 1, 2)]
         changed = 0
         try:
             with self._lock:
                 rows = self._db.execute(
-                    f"SELECT seq, reply, error FROM calls WHERE {where}", params).fetchall()
-                for seq, reply, error in rows:
+                    f"SELECT seq, reply, error, why FROM calls WHERE {where}", params).fetchall()
+                for seq, reply, error, why in rows:
                     new_reply = reply
                     if reply:
                         try:
@@ -175,9 +175,10 @@ class Journal:
                         except ValueError:  # truncated or unserializable blob
                             new_reply = m.sub(reply)
                     new_error = m.sub(error) if error else error
-                    if (new_reply, new_error) != (reply, error):
-                        self._db.execute("UPDATE calls SET reply=?, error=? WHERE seq=?",
-                                         (new_reply, new_error, seq))
+                    new_why = m.sub(why) if why else why
+                    if (new_reply, new_error, new_why) != (reply, error, why):
+                        self._db.execute("UPDATE calls SET reply=?, error=?, why=? WHERE seq=?",
+                                         (new_reply, new_error, new_why, seq))
                         changed += 1
                 self._db.commit()
         except Exception:
@@ -230,7 +231,7 @@ class Journal:
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         sql = (f"SELECT call_id, ts, identity, cap, worker, thread_id, ok, "
                f"error, reply, agent_id, key_id, auth, actor, principal, decision, "
-               f"rule, policy_rev, tier FROM calls {where} "
+               f"rule, policy_rev, tier, why FROM calls {where} "
                f"ORDER BY seq DESC LIMIT ?")
         params.append(max(1, min(int(limit), 500)))
         try:
@@ -241,10 +242,11 @@ class Journal:
             return []
         out = []
         for (cid, ts, ident, cap, worker_, thread, ok_, error, reply,
-             agent, key, auth, actor, principal, dec, rule, rev, tier) in rows:
+             agent, key, auth, actor, principal, dec, rule, rev, tier, why) in rows:
             e = {"call_id": cid, "ts": ts, "identity": ident, "cap": cap,
                  "worker": worker_, "thread_id": thread, "ok": bool(ok_)}
-            for k, v in (("agent_id", agent), ("key_id", key), ("auth", auth), ("actor", actor)):
+            for k, v in (("agent_id", agent), ("key_id", key), ("auth", auth), ("actor", actor),
+                         ("why", why)):
                 if v:
                     e[k] = v
             if dec and dec != "allow":
