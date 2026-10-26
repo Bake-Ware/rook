@@ -1841,6 +1841,10 @@ def build_server(client: "BandClient | MultiBandClient",
     # rook_call replies. Edited from the site via guidance_web.
     _guidance_apply()
 
+    # Just-in-time help: a _help note the first time a tool or moment comes up.
+    from . import helpnotes
+    helpnotes.install(mcp, lambda: _caller_session() or (_caller_identity() or ""))
+
     # Persona (hub plugin "persona"): the caller's resolved persona rides
     # after the server guidance in each session's initialize instructions.
     from . import persona_connect

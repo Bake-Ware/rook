@@ -8,6 +8,14 @@ version was `0.1.0`.
 
 ## Unreleased
 
+### Added
+- Agent help on demand: hub plugin `help`, cap `help` on worker `rook`. The skill shrinks to a
+  stub; the core model and one topic per subsystem (machines, tasks, handoffs, knowledge, the
+  person, chat, secrets, jobs, holds, admin) live in `skills/rook/help/` and are served in
+  layers (core and menu, a topic, its reference pages). Tool replies carry a one-line `_help`
+  note the first time a tool, an action or a held or timed-out call comes up in a session.
+  (manual: agents-and-mcp)
+
 ## [0.4.0] - 2026-10-25
 
 The integration release: everything in flight merged to one master, one hub build, one
