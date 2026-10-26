@@ -31,19 +31,19 @@ PHONE = NodeFacts(node_id="p", name="worker-b", hw={"os": "android", "embedded":
 class Rows(Plugin):
     NAMESPACE = "rows"
 
-    @capability("legacy")
+    @capability("legacy", scope="self")
     def legacy(self, fields=None):
         return {"fields": fields}
 
-    @capability("list", risk="read", limit=3, fields=["id", "name"])
+    @capability("list", risk="read", limit=3, fields=["id", "name"], scope="self")
     def list_(self) -> list:
         return [{"id": i, "name": f"n{i}", "secret": "x"} for i in range(10)]
 
-    @capability("paged", risk="read", limit=5)
+    @capability("paged", risk="read", limit=5, scope="self")
     def paged(self, limit: int = 100) -> dict:
         return {"got": limit}
 
-    @capability("one", tier="write", tags=("destructive",), fields="*")
+    @capability("one", tier="write", tags=("destructive", scope="self"), fields="*")
     def one(self) -> dict:
         return {"a": 1, "b": 2, "items": [{"a": 1, "b": 2}]}
 
@@ -259,7 +259,7 @@ class HubOnly(Plugin):
     NAMESPACE = "hubonly"
     PLACEMENT = place("is_hub")
 
-    @capability("x", risk="read")
+    @capability("x", risk="read", scope="self")
     def x(self):
         return 1
 
@@ -291,11 +291,11 @@ class Exploding(Plugin):
 class Clash(Plugin):
     NAMESPACE = "rows"   # collides with Rows' caps
 
-    @capability("list")
+    @capability("list", scope="self")
     def other(self):
         return None
 
-    @capability("unique")
+    @capability("unique", scope="self")
     def unique(self):
         return None
 
@@ -338,11 +338,11 @@ async def test_host_dispatch_shapes_and_identity():
     class Who(Plugin):
         NAMESPACE = "who"
 
-        @capability("", risk="read")
+        @capability("", risk="read", scope="self")
         async def who(self):
             return context.current_identity()
 
-        @capability("fail")
+        @capability("fail", scope="self")
         def fail(self):
             raise RuntimeError("bad")
 
@@ -365,7 +365,7 @@ def test_package_and_entry_point_discovery(tmp_path, monkeypatch):
         from rook.worker.plugin import Plugin, capability
         class Clock(Plugin):
             NAMESPACE = "clock"
-            @capability("now")
+            @capability("now", scope="self")
             def now(self):
                 return 1
         PLUGIN = Clock
@@ -462,10 +462,10 @@ async def test_band_calls_to_the_hub_are_read_only_and_journaled(tmp_path):
         class Danger(Plugin):
             NAMESPACE = "danger"
             PLACEMENT = place("is_hub")
-            @capability("run", risk="exec")
+            @capability("run", risk="exec", scope="self")
             def run(self):
                 return "ran"
-            @capability("peek", risk="read")
+            @capability("peek", risk="read", scope="self")
             def peek(self):
                 return "peeked"
         PLUGIN = Danger
@@ -593,7 +593,7 @@ class Notes(Plugin):
     PLACEMENT = place("is_hub")
 
     @capability("search", risk="read", limit=2, fields="*", tool=True,
-                description="Search notes.")
+                description="Search notes.", scope="self")
     def search(self, q: str, exact: bool = False) -> list:
         """Long developer docstring that must not reach tools/list."""
         return [{"q": q, "exact": exact, "n": i} for i in range(5)]
@@ -676,7 +676,7 @@ async def test_generated_tools_never_shadow_existing_ones(tmp_path, monkeypatch)
         NAMESPACE = "rook"   # would generate rook_call from cap "rook.call"
         PLACEMENT = place("is_hub")
 
-        @capability("call", risk="read", tool=True)
+        @capability("call", risk="read", tool=True, scope="self")
         def call(self):
             """Not the real rook_call."""
             return 1
@@ -706,7 +706,7 @@ def test_generated_tool_signature_mirrors_the_cap():
     class Sig(Plugin):
         NAMESPACE = "sig"
 
-        @capability("q", risk="read", limit=10, fields="*", tool=True)
+        @capability("q", risk="read", limit=10, fields="*", tool=True, scope="self")
         def q(self, query: str, depth: int = 2) -> list:
             """Search things."""
             return []
@@ -797,7 +797,7 @@ def test_listing_caps_has_no_side_effects(tmp_path, monkeypatch):
     class P(Plugin):
         NAMESPACE = "probe"
 
-        @capability("ping")
+        @capability("ping", scope="self")
         async def ping(self):
             return "pong"
 

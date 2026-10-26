@@ -402,29 +402,29 @@ async def test_hub_plugin_enable_disable_and_band_ceiling(tmp_path):
 class Slow(Plugin):
     NAMESPACE = "slow"
 
-    @capability("hang", risk="read", timeout=0.05)
+    @capability("hang", risk="read", timeout=0.05, scope="self")
     async def hang(self):
         """Never returns."""
         await asyncio.sleep(30)
 
-    @capability("own", risk="read", timeout=0.05)
+    @capability("own", risk="read", timeout=0.05, scope="self")
     async def own(self, timeout: float = 0.0):
         """Bounded by its caller's timeout."""
         await asyncio.sleep(0.2)
         return "done"
 
-    @capability("forever", risk="read", timeout=None)
+    @capability("forever", risk="read", timeout=None, scope="self")
     async def forever(self):
         """Opted out."""
         await asyncio.sleep(0.1)
         return "late"
 
-    @capability("raises", risk="read")
+    @capability("raises", risk="read", scope="self")
     async def raises(self):
         """Its own TimeoutError is not core's."""
         raise TimeoutError("backend")
 
-    @capability("blocking", risk="read", timeout=0.05)
+    @capability("blocking", risk="read", timeout=0.05, scope="self")
     def blocking(self):
         """A sync handler past its timeout."""
         import time
