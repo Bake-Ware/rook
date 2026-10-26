@@ -37,6 +37,7 @@ Never add or tighten guardrails, holds or trust entries: only the person does. r
 Checking in: rook_approvals(action="summary") lists what waits on the person; read it back tersely.
 Discover: rook_workers (who), rook_caps (what), rook_call cap=caps.describe args={"prefix":…} on one worker (exact args). rook_call needs worker=.
 A timed-out call may still be running: check rook_journal(call_id=<id>) before retrying anything with side effects. Long or interactive jobs: rook_console_open.
+Your first reply carries _brief: who you act as, your claimed work with its handoff, unread chat, and a receipt. Pass receipt=<it> on every Rook tool call; without it the brief comes again.
 Replies are compact; _task, _unread_chat, _tips and _help appear only when new. hint=true re-shows a cap's tip.
 Help when you need it: rook_call worker=rook cap=help gives the core model and topics; args={"topic": "tasks"} (or a tool, a cap, a few words) gives one.
 Work: rook_task(action="deck"). Claim before working; finish with attrs.outcome and an evidence link, or leave a handoff.

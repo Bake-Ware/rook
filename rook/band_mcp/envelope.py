@@ -136,52 +136,28 @@ class Notices:
         return True
 
 
-class SessionContextEchoStates:
-    """Track per-MCP-session whether clients echo back session context receipts.
-
-    Each MCP session's echo behavior is tracked independently. When a client
-    is marked silent (never echoed), we stop sending the context brief to avoid
-    spam on non-responsive clients (phone apps, browsers).
-    """
-
-    def __init__(self, cap: int = 5000) -> None:
-        from ..hub.session_context import EchoState
-        self._states: OrderedDict[str, EchoState] = OrderedDict()
-        self._cap = cap
-        self._EchoState = EchoState
-
-    def get_state(self, session: str) -> "EchoState":
-        """Get or create the EchoState for this MCP session."""
-        if legacy() or not session:
-            # Legacy mode or no session: always send
-            return self._EchoState()
-        if session not in self._states:
-            self._states[session] = self._EchoState()
-            self._states.move_to_end(session)
-            while len(self._states) > self._cap:
-                self._states.popitem(last=False)
-        self._states.move_to_end(session)
-        return self._states[session]
-
-
-def add_notice(result, key: str, value):
+def add_notice(result, key: str, value, text_line: bool = False):
     """Add ``key: value`` to a tool result after the tool ran (the hygiene
-    piggyback). Returns ``(result, attached)``.
+    and brief piggybacks). Returns ``(result, attached)``.
 
     Only for replies Rook builds itself as one JSON object (the caller picks
     the tools; see server._HYGIENE_TOOLS): the key is merged into that
     object. Anything else (a JSON array, plain text, a worker's output) is
     left untouched and ``attached`` is False, so the caller keeps the notice
     for a later reply instead of editing data it does not own. ``rook_call``
-    adds its notices itself (``call_reply`` / ``call_text``). Accepts the raw
-    string a tool returns or FastMCP's converted content list / tuple."""
+    adds its notices itself (``call_reply`` / ``call_text``); ``text_line``
+    is for its plain-text form, whose notices ride a last ``[rook] {...}``
+    line. Accepts the raw string a tool returns or FastMCP's converted
+    content list / tuple."""
     def edit(text: str):
-        if text[:1] != "{":
-            return None
-        try:
-            obj = json.loads(text)
-        except ValueError:
-            return None
+        obj = None
+        if text[:1] == "{":
+            try:
+                obj = json.loads(text)
+            except ValueError:
+                pass
+        if text_line and not (isinstance(obj, dict) and {"ok", "id"} <= obj.keys()):
+            return _text_notice(text, key, value)  # stdout that looks like JSON is still output
         if not isinstance(obj, dict) or key in obj:
             return None
         obj[key] = value
@@ -198,6 +174,22 @@ def add_notice(result, key: str, value):
                 texts[0].text = out
                 return result, True
     return result, False
+
+
+def _text_notice(text: str, key: str, value) -> str | None:
+    head, sep, last = text.rpartition("\n")
+    if last.startswith("[rook] {"):
+        try:
+            notices = json.loads(last[len("[rook] "):])
+        except ValueError:
+            notices = None
+        if isinstance(notices, dict) and key not in notices:
+            notices[key] = value
+            return head + sep + "[rook] " + json.dumps(notices, separators=(",", ":"),
+                                                       ensure_ascii=False, default=str)
+        return None
+    return text + "\n[rook] " + json.dumps({key: value}, separators=(",", ":"),
+                                           ensure_ascii=False, default=str)
 
 
 # -- rook_call replies -------------------------------------------------------

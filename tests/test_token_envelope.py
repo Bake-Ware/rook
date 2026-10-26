@@ -160,10 +160,11 @@ async def test_notices_only_when_new_for_the_session(tmp_path, monkeypatch):
         chat.send(room, "agent:other", "again", [], False)
         r3 = json.loads((await tool("rook_call", cap="info.host", worker="worker-a"))[0])
         assert r3["_unread_chat"][0]["unread"] == 2
-        # A new MCP session is told again.
+        # A new MCP session is told again, the unread chat inside its session brief.
         _, tool2 = await env.connect()
         fresh = json.loads((await tool2("rook_call", cap="info.host", worker="worker-a"))[0])
-        assert fresh["_unread_chat"] and fresh["_task"] == task["id"]
+        assert fresh["_brief"]["unread_chat"] and fresh["_task"] == task["id"]
+        assert "_unread_chat" not in fresh
 
 
 @pytest.mark.asyncio
@@ -248,6 +249,7 @@ async def test_roster_tools_take_filters(tmp_path, monkeypatch):
         rows = json.loads((await tool("rook_workers", cap_prefix="camera."))[0])
         assert [r["name"] for r in rows] == ["worker-b"]
         caps = json.loads((await tool("rook_caps", prefix="info."))[0])
+        assert caps.pop("_brief")  # the session brief waits for the first object reply
         assert caps == {"workers": 3, "caps": {"info.host": "*"}}
         err = json.loads((await tool("rook_workers", fields="bogus"))[0])
         assert err["ok"] is False and "unknown fields" in err["error"]
@@ -262,7 +264,7 @@ async def test_tools_list_fits_the_budget(tmp_path, monkeypatch):
         tools = (await rpc("tools/list", {}))["tools"]
         assert len(tools) >= 29
         size = len(json.dumps({"tools": tools}, separators=(",", ":"), ensure_ascii=False))
-        assert size <= 15530, size  # +40 rook_huddle yes/no asks need Why: and Undo:; +40 rook_call why= (plain approval asks); +60 rook_huddle conference table (table, pin, vote); +340 rook_trust (trust map); +550 rook_approvals (relayed approvals); +80 rook_workers device workers (device, delegate); +20 rook_task speakable names; +60 rook_task deck paging (project_fields, project, offset, limit); +200 rook_huddle chaired actions, rook_chat_start retired; +120 rook_knowledge's pointer to the user manual; +560 rook_huddle, +30 rook_task dates; +550 rook_jobs; +300 task note/batch/deck options and handoff close; +300 rook_install_claude_code; +100 console_write literal/secrets; +50 console_open task_id, link kind session; +50 rook_call session_receipt (session context echo receipt)
+        assert size <= 15720, size  # +240 receipt= on the 8 most used tools (session brief); +40 rook_huddle yes/no asks need Why: and Undo:; +40 rook_call why= (plain approval asks); +60 rook_huddle conference table (table, pin, vote); +340 rook_trust (trust map); +550 rook_approvals (relayed approvals); +80 rook_workers device workers (device, delegate); +20 rook_task speakable names; +60 rook_task deck paging (project_fields, project, offset, limit); +200 rook_huddle chaired actions, rook_chat_start retired; +120 rook_knowledge's pointer to the user manual; +560 rook_huddle, +30 rook_task dates; +550 rook_jobs; +300 task note/batch/deck options and handoff close; +300 rook_install_claude_code; +100 console_write literal/secrets; +50 console_open task_id, link kind session
         by = {t["name"]: t for t in tools}
         assert all("outputSchema" not in t for t in tools)
         # Schema slimming keeps a property literally named "title" and required args.

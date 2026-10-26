@@ -121,6 +121,8 @@ def mcp_tools() -> list[tuple[str, str, str]]:
         req = set(schema.get("required") or [])
         params = []
         for name, prop in (schema.get("properties") or {}).items():
+            if name == "receipt":
+                continue  # every tool takes the session brief's receipt (see the intro)
             params.append(_fmt_param(name, name in req, prop.get("default"), "default" in prop))
         rows.append((t.name, ", ".join(params), _first_sentence(t.description or "")))
     return rows

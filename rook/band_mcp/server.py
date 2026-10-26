@@ -206,8 +206,61 @@ def build_server(client: "BandClient | MultiBandClient",
             _session_facts_cache[sid] = (client_name, cwd)
         return client_name, cwd
 
+    # Session brief (brief.py): the first reply of a session says who the
+    # caller is, its claimed work and unread chat, with a receipt every tool
+    # accepts; a missing or stale receipt brings the brief back.
+    from . import brief as _brief
+    _briefs = _brief.Briefs()
+    _receipt_tools: set[str] = set()  # tools advertised with receipt= (end of build_server)
+    _native_receipt: set[str] = set()  # tools with an argument of their own by that name
+
+    def _sid(context) -> str | None:
+        try:
+            req = context.request_context.request if context is not None else None
+            return req.headers.get("mcp-session-id") if req is not None else None
+        except Exception:
+            return None
+
+    def _brief_due(name, receipt, sid, att):
+        """(session, reason, receipt, actor, identity, kind) when this call's
+        reply should carry ``_brief``, else None."""
+        if att is None or not att.verified or _env.legacy() or name == "rook_secret":
+            return None
+        ident = att.identity
+        if not ident or ident == "anonymous":
+            return None
+        actor = att.actor or ident
+        session = sid or ident
+        reason = _briefs.due(session, _brief.receipt_for(_brief.standing(actor, att.kind)),
+                             receipt, carries=receipt is not None or name in _receipt_tools)
+        if reason is None:
+            return None
+        # The brief lists unread chat: the same rooms don't ride again as _unread_chat.
+        _notices.fresh(session, "chat", chat.unread_summary(ident))
+        return session, reason, receipt, actor, ident, att.kind
+
+    def _with_brief(name, arguments, result, due):
+        session, reason, receipt, actor, ident, kind = due
+        k = getattr(mcp, "_rook_knowledge", None)
+        claims = _brief.claimed(k, sessions, actor) if k is not None else []
+        body = _brief.build(reason, actor, kind, claims=claims,
+                            handoffs=[] if claims else _brief.own_handoffs(sessions, actor),
+                            unread=chat.unread_summary(ident))
+        text_line = name == "rook_call" and bool((arguments or {}).get("text"))
+        result, attached = _env.add_notice(result, "_brief", body, text_line=text_line)
+        if attached:
+            _briefs.sent(session, reason, receipt)
+        else:
+            _briefs.held(session, reason)  # rides the next reply that can carry it
+        return result
+
     async def _attributed_call_tool(name, arguments, context=None,
                                     convert_result=False):
+        receipt = None
+        if (isinstance(arguments, dict) and _brief.PARAM in arguments
+                and name not in _native_receipt):
+            arguments = dict(arguments)
+            receipt = str(arguments.pop(_brief.PARAM) or "").strip() or None
         def token():
             from mcp.server.auth.middleware.auth_context import get_access_token
             tok = get_access_token()
@@ -241,8 +294,18 @@ def build_server(client: "BandClient | MultiBandClient",
         rtok = _approvals.own_resource.set(_own_resource(name, arguments))
         try:
             await _authorize_tool(name, arguments, principal)
+            try:
+                due = _brief_due(name, receipt, _sid(context), att)
+            except Exception:  # noqa: BLE001 — a brief never breaks a call
+                log.exception("session brief check failed")
+                due = None
             result = await _run_tool(name, arguments, context=context,
                                      convert_result=convert_result)
+            if due is not None:
+                try:
+                    result = _with_brief(name, arguments, result, due)
+                except Exception:  # noqa: BLE001
+                    log.exception("session brief failed")
             return _with_hygiene(name, result, context)
         finally:
             _approvals.own_resource.reset(rtok)
@@ -362,6 +425,7 @@ def build_server(client: "BandClient | MultiBandClient",
     def _session_gone(sid: str) -> None:
         """Any end of an MCP session (BoundedSessionManager.on_session_gone)."""
         _session_actor.pop(sid, None)
+        _briefs.forget(sid)
 
     def _session_ended(sid: str) -> None:
         actor = _session_actor.pop(sid, None)
@@ -384,10 +448,8 @@ def build_server(client: "BandClient | MultiBandClient",
     # Compact replies and per-session notices (see envelope.py).
     from . import envelope as _env
     from . import roster as _roster
-    from ..hub import session_context as _session_context_mod
     _env.install(mcp)
     _notices = _env.Notices()
-    _session_echo_states = _env.SessionContextEchoStates()
 
     from .guidance import Guidance, apply as _apply_guidance
     guidance = Guidance(os.path.join(_store_dir, "guidance.db"))
@@ -901,8 +963,7 @@ def build_server(client: "BandClient | MultiBandClient",
                         timeout: float | None = None,
                         hint: bool = False,
                         text: bool = False,
-                        why: str | None = None,
-                        session_receipt: str | None = None) -> str:
+                        why: str | None = None) -> str:
         """Invoke a capability on the band and return the reply.
 
         Args:
@@ -930,16 +991,12 @@ def build_server(client: "BandClient | MultiBandClient",
                 asks were about notes"). If the call is held for the person's
                 approval, it is shown to them as "Why:" next to your task, so
                 give one for anything that may be held (changes, admin, the hub).
-            session_receipt: optional; echo back a prior session brief's
-                receipt to skip resending the brief. If your last call included
-                ``_session_context`` in the reply, send its ``receipt`` here.
 
         Returns compact JSON (envelope.call_reply): ``{"ok","id","from",
         "result"|"error"}`` where ``id`` is the journal id and ``from`` the
-        worker's name; ``_task``/``_unread_chat``/``_session_context`` notices
-        only when new or changed for this MCP session. Targeting mistakes
-        (unknown worker, missing capability, no reply) come back as
-        ``{"ok": false, "error"}``.
+        worker's name; ``_task``/``_unread_chat`` notices only when new or
+        changed for this MCP session. Targeting mistakes (unknown worker,
+        missing capability, no reply) come back as ``{"ok": false, "error"}``.
         """
         roster = client.workers
         spec = worker_id or worker
@@ -1119,36 +1176,6 @@ def build_server(client: "BandClient | MultiBandClient",
             h_engine, h_due = None, []
         if h_due:
             notices["_hygiene"] = h_engine.public(h_due)
-
-        # Session context brief: send once per session, resend if context changes
-        # (hub version, user, band access, etc.). Receipt allows agents to echo
-        # back so we don't resend identical briefs.
-        try:
-            hub_version = (mcp._rook_hub.build_version if mcp._rook_hub else None)
-            brief = _session_context_mod.SessionBrief(
-                session_id=session,
-                user=identity,
-                timestamp=time.time(),
-                band_id=None,  # TODO: resolve from worker's band if available
-                hub_version=hub_version,
-            )
-            echo_state = _session_echo_states.get_state(session)
-
-            # Track if client is echoing back the receipt
-            if session_receipt:
-                echo_state.mark_echoed(session_receipt)
-
-            # Check if this brief is new for this session (via signature)
-            brief_value = brief.to_dict()
-            if _notices.fresh(session, "session_context", brief_value):
-                # Brief is new/changed. Check if client is echoing back.
-                if echo_state.should_send_brief(brief):
-                    notices["_session_context"] = _session_context_mod.make_notice(brief)
-                elif echo_state.state == "never_echoed" and not session_receipt:
-                    # Called before without brief, now on second call with no echo
-                    echo_state.mark_silent()
-        except Exception:
-            log.exception("session context brief failed")
 
         def _hygiene_sent(out):
             if h_due:
@@ -1879,6 +1906,17 @@ def build_server(client: "BandClient | MultiBandClient",
     # Just-in-time help: a _help note the first time a tool or moment comes up.
     from . import helpnotes
     helpnotes.install(mcp, lambda: _caller_session() or (_caller_identity() or ""))
+
+    # The session brief's receipt (brief.py): every tool accepts it (the
+    # dispatch wrapper removes it before the tool runs); only the tools
+    # agents call most advertise it, to keep the tool listing small.
+    for tname, tool in mcp._tool_manager._tools.items():
+        props = tool.parameters.setdefault("properties", {})
+        if _brief.PARAM in props:
+            _native_receipt.add(tname)
+        elif tname in _brief.ADVERTISED:
+            props[_brief.PARAM] = {"type": "string"}
+            _receipt_tools.add(tname)
 
     # Persona (hub plugin "persona"): the caller's resolved persona rides
     # after the server guidance in each session's initialize instructions.
