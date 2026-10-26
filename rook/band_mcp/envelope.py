@@ -136,24 +136,28 @@ class Notices:
         return True
 
 
-def add_notice(result, key: str, value):
+def add_notice(result, key: str, value, text_line: bool = False):
     """Add ``key: value`` to a tool result after the tool ran (the hygiene
-    piggyback). Returns ``(result, attached)``.
+    and brief piggybacks). Returns ``(result, attached)``.
 
     Only for replies Rook builds itself as one JSON object (the caller picks
     the tools; see server._HYGIENE_TOOLS): the key is merged into that
     object. Anything else (a JSON array, plain text, a worker's output) is
     left untouched and ``attached`` is False, so the caller keeps the notice
     for a later reply instead of editing data it does not own. ``rook_call``
-    adds its notices itself (``call_reply`` / ``call_text``). Accepts the raw
-    string a tool returns or FastMCP's converted content list / tuple."""
+    adds its notices itself (``call_reply`` / ``call_text``); ``text_line``
+    is for its plain-text form, whose notices ride a last ``[rook] {...}``
+    line. Accepts the raw string a tool returns or FastMCP's converted
+    content list / tuple."""
     def edit(text: str):
-        if text[:1] != "{":
-            return None
-        try:
-            obj = json.loads(text)
-        except ValueError:
-            return None
+        obj = None
+        if text[:1] == "{":
+            try:
+                obj = json.loads(text)
+            except ValueError:
+                pass
+        if text_line and not (isinstance(obj, dict) and {"ok", "id"} <= obj.keys()):
+            return _text_notice(text, key, value)  # stdout that looks like JSON is still output
         if not isinstance(obj, dict) or key in obj:
             return None
         obj[key] = value
@@ -170,6 +174,22 @@ def add_notice(result, key: str, value):
                 texts[0].text = out
                 return result, True
     return result, False
+
+
+def _text_notice(text: str, key: str, value) -> str | None:
+    head, sep, last = text.rpartition("\n")
+    if last.startswith("[rook] {"):
+        try:
+            notices = json.loads(last[len("[rook] "):])
+        except ValueError:
+            notices = None
+        if isinstance(notices, dict) and key not in notices:
+            notices[key] = value
+            return head + sep + "[rook] " + json.dumps(notices, separators=(",", ":"),
+                                                       ensure_ascii=False, default=str)
+        return None
+    return text + "\n[rook] " + json.dumps({key: value}, separators=(",", ":"),
+                                           ensure_ascii=False, default=str)
 
 
 # -- rook_call replies -------------------------------------------------------

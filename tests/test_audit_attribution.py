@@ -186,6 +186,7 @@ async def test_named_key_attribution_reaches_journal_worker_and_whoami(tmp_path)
         s.token = minted["token"]
         env.http.headers["X-Rook-Host"] = "workstation"
         who = json.loads((await s.result("rook_whoami"))["content"][0]["text"])
+        assert who.pop("_brief")["you"] == {"actor": "claudecode.t.workstation", "kind": "agent"}
         assert who == {"identity": "agent:claude code_workstation", "kind": "agent",
                        "label": "claude code", "agent_id": minted["agent_id"],
                        "key_id": minted["id"], "verified": True, "role": "agent",

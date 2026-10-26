@@ -206,8 +206,62 @@ def build_server(client: "BandClient | MultiBandClient",
             _session_facts_cache[sid] = (client_name, cwd)
         return client_name, cwd
 
+    # Session brief (brief.py): the first reply of a session says who the
+    # caller is, its claimed work and unread chat, with a receipt every tool
+    # accepts; a missing or stale receipt brings the brief back.
+    from . import brief as _brief
+    _briefs = _brief.Briefs()
+    _receipt_tools: set[str] = set()  # tools advertised with receipt= (end of build_server)
+    _native_receipt: set[str] = set()  # tools with an argument of their own by that name
+
+    def _sid(context) -> str | None:
+        try:
+            req = context.request_context.request if context is not None else None
+            return req.headers.get("mcp-session-id") if req is not None else None
+        except Exception:
+            return None
+
+    def _brief_due(name, receipt, sid, att):
+        """(session, reason, actor, identity, kind) when this call's reply
+        should carry ``_brief``, else None."""
+        if att is None or not att.verified or _env.legacy() or name == "rook_secret":
+            return None
+        ident = att.identity
+        if not ident or ident == "anonymous":
+            return None
+        actor = att.actor or ident
+        session = sid or ident
+        reason = _briefs.due(session, _brief.receipt_for(_brief.standing(actor, att.kind)),
+                             receipt, carries=receipt is not None or name in _receipt_tools)
+        if reason is None:
+            return None
+        try:
+            # The brief lists unread chat: the same rooms don't ride again as _unread_chat.
+            _notices.fresh(session, "chat", chat.unread_summary(ident))
+        except Exception:  # noqa: BLE001
+            log.exception("unread chat for the session brief failed")
+        return session, reason, actor, ident, att.kind
+
+    def _with_brief(name, arguments, result, due):
+        session, reason, actor, ident, kind = due
+        k = getattr(mcp, "_rook_knowledge", None)
+        claims = _brief.claimed(k, sessions, actor) if k is not None else []
+        body = _brief.build(reason, actor, kind, claims=claims,
+                            handoffs=[] if claims else _brief.own_handoffs(sessions, actor),
+                            unread=chat.unread_summary(ident))
+        text_line = name == "rook_call" and bool((arguments or {}).get("text"))
+        result, attached = _env.add_notice(result, "_brief", body, text_line=text_line)
+        if not attached:
+            _briefs.held(session, reason)  # rides the next reply that can carry it
+        return result
+
     async def _attributed_call_tool(name, arguments, context=None,
                                     convert_result=False):
+        receipt = None
+        if (isinstance(arguments, dict) and _brief.PARAM in arguments
+                and name not in _native_receipt):
+            arguments = dict(arguments)
+            receipt = str(arguments.pop(_brief.PARAM) or "").strip() or None
         def token():
             from mcp.server.auth.middleware.auth_context import get_access_token
             tok = get_access_token()
@@ -241,8 +295,24 @@ def build_server(client: "BandClient | MultiBandClient",
         rtok = _approvals.own_resource.set(_own_resource(name, arguments))
         try:
             await _authorize_tool(name, arguments, principal)
-            result = await _run_tool(name, arguments, context=context,
-                                     convert_result=convert_result)
+            try:
+                due = _brief_due(name, receipt, _sid(context), att)
+            except Exception:  # noqa: BLE001 — a brief never breaks a call
+                log.exception("session brief check failed")
+                due = None
+            try:
+                result = await _run_tool(name, arguments, context=context,
+                                         convert_result=convert_result)
+            except BaseException:
+                if due is not None:
+                    _briefs.held(due[0], due[1])  # a failed call doesn't use up the brief
+                raise
+            if due is not None:
+                try:
+                    result = _with_brief(name, arguments, result, due)
+                except Exception:  # noqa: BLE001
+                    log.exception("session brief failed")
+                    _briefs.held(due[0], due[1])
             return _with_hygiene(name, result, context)
         finally:
             _approvals.own_resource.reset(rtok)
@@ -362,6 +432,7 @@ def build_server(client: "BandClient | MultiBandClient",
     def _session_gone(sid: str) -> None:
         """Any end of an MCP session (BoundedSessionManager.on_session_gone)."""
         _session_actor.pop(sid, None)
+        _briefs.forget(sid)
 
     def _session_ended(sid: str) -> None:
         actor = _session_actor.pop(sid, None)
@@ -1842,6 +1913,17 @@ def build_server(client: "BandClient | MultiBandClient",
     # Just-in-time help: a _help note the first time a tool or moment comes up.
     from . import helpnotes
     helpnotes.install(mcp, lambda: _caller_session() or (_caller_identity() or ""))
+
+    # The session brief's receipt (brief.py): every tool accepts it (the
+    # dispatch wrapper removes it before the tool runs); only the tools
+    # agents call most advertise it, to keep the tool listing small.
+    for tname, tool in mcp._tool_manager._tools.items():
+        props = tool.parameters.setdefault("properties", {})
+        if _brief.PARAM in props:
+            _native_receipt.add(tname)
+        elif tname in _brief.ADVERTISED:
+            props[_brief.PARAM] = {"type": "string"}
+            _receipt_tools.add(tname)
 
     # Persona (hub plugin "persona"): the caller's resolved persona rides
     # after the server guidance in each session's initialize instructions.

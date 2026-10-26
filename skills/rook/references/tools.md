@@ -16,6 +16,8 @@ The tables are generated from the code by `tools/gen_skill_reference.py`; don't 
 
 ## MCP tools
 
+Every tool also takes `receipt`: repeat the receipt from the session brief (`_brief`, on your first reply) so the hub knows you still hold it.
+
 <!-- BEGIN GENERATED: mcp-tools -->
 | Tool | Args | Does |
 |---|---|---|

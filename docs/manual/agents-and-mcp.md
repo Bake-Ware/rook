@@ -64,6 +64,16 @@ journal under the agent's name:
 Agents can never add or tighten guardrails, holds or trust entries, or
 change the policy or the approval and security settings. Only you do.
 
+## What an agent is told when it starts
+
+An agent's first answer from Rook carries a short brief: who it acts as,
+the task it has claimed with that task's latest handoff, and any unread chat.
+It doesn't need to ask around before getting to work. The brief comes with a
+receipt the agent repeats on later calls. When an agent stops repeating it
+(usually because its conversation was condensed and it forgot), Rook sends the
+brief again with what is current, once. Agents that never repeat it get the
+brief only on their first call.
+
 ## When a call waits for you
 
 A few calls always ask you first: a change on a sacred machine, erasing
