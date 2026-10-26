@@ -119,7 +119,7 @@ class Access(Plugin):
         return {"user": user_id, "role": role, "grants": grants, "plain": plain}
 
     # -- caps ----------------------------------------------------------------
-    @capability("me", risk="read")
+    @capability("me", risk="read", scope="self")
     def me(self) -> dict:
         """Your own role and grants, in plain words.
 
@@ -132,7 +132,7 @@ class Access(Plugin):
                     "plain": "Not a signed-in person: grants do not apply to this caller."}
         return self._describe(self._store(), uid, admin=p.fail_open())
 
-    @capability("explain", risk="read")
+    @capability("explain", risk="read", scope="multi-user")
     def explain(self, cap: str, worker: str | None = None, user: str | None = None) -> dict:
         """Whether a person (default: you) may call ``cap`` on ``worker``, and
         which grant decides. Asking about someone else is for owners."""
@@ -154,7 +154,7 @@ class Access(Plugin):
                 "allowed": grant is not None, "why": why,
                 "grant": grant if grant and grant.get("id") != "self" else None}
 
-    @capability("list", risk="read")
+    @capability("list", risk="read", scope="multi-user")
     def list(self) -> dict:
         """Everyone with an account or access: role, grants, in plain words.
         People with no row yet are ``new`` (they reach nothing). Owners only."""
@@ -174,20 +174,20 @@ class Access(Plugin):
             out.append(row)
         return {"users": out, "owners": sum(1 for r in out if r["role"] == "owner")}
 
-    @capability("history", risk="read")
+    @capability("history", risk="read", scope="multi-user")
     def history(self, user: str | None = None, limit: int = 50) -> dict:
         """Who changed whose access, when, and in whose words (newest first). Owners only."""
         _gate("users.history")
         return {"history": self._store().history(user, limit)}
 
-    @capability("role", risk="admin")
+    @capability("role", risk="admin", scope="multi-user")
     def role(self, user: str, role: str, words: str) -> dict:
         """Make someone an ``owner`` or a ``member``. ``words``: the person's
         own words asking for it (kept). The last owner stays an owner. Owners only."""
         _gate("users.role")
         return self._store().set_role(user, role, actor=_actor(), words=words)
 
-    @capability("grant", risk="admin")
+    @capability("grant", risk="admin", scope="multi-user")
     def grant(self, user: str, kind: str, words: str, ref: str = "", caps: Any = None,
               tier: str | None = None) -> dict:
         """Give a member access. ``kind`` band (``ref`` = band id) | worker
@@ -200,7 +200,7 @@ class Access(Plugin):
         return {"grant": self._store().grant(user, kind, ref, caps=caps, tier=tier,
                                              actor=_actor(), words=words)}
 
-    @capability("revoke", risk="admin")
+    @capability("revoke", risk="admin", scope="multi-user")
     def revoke(self, grant: str, words: str) -> dict:
         """Take a grant away (kept in the history with ``words``). Owners only."""
         _gate("users.revoke")
