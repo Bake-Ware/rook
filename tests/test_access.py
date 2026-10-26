@@ -383,3 +383,58 @@ def test_a_broken_store_never_breaks_dashboard_sign_in(tmp_path):
     from rook.remote.bootstrap import CombinedServer
     srv = SimpleNamespace(_authz=SimpleNamespace(access=_NoAccess()))
     assert CombinedServer._access_store(srv) is None
+
+
+def test_a_missing_access_db_denies_members_and_never_locks_owners_out(tmp_path):
+    import os
+    from types import SimpleNamespace
+    from rook.remote.bootstrap import CombinedServer
+    accounts_db(tmp_path / "enrollment.db")
+    acc = Accounts(str(tmp_path / "enrollment.db"))
+    az = authorizer(tmp_path)
+    az.access.seed(acc)
+    az.access.grant("u_kid", "worker", "kids-pc", actor="o", words="his desktop")
+    assert not az.check("shell.exec", "w_pc", {"name": "kids-pc"}, principal=member()).denied
+    os.remove(tmp_path / "access.db")              # gone while the hub runs
+    d = az.check("shell.exec", "w_pc", {"name": "kids-pc"}, principal=member())
+    assert d.decision == "error_deny"              # members: nothing
+    assert not az.check("shell.exec", "w_pc", {"name": "kids-pc"}, principal=owner()).denied
+    current = {}
+    srv = SimpleNamespace(_auth_exempt=lambda p: False, _authz=az,
+                          _accounts=SimpleNamespace(current=lambda r: current["user"],
+                                                    handles=lambda p: False, store=acc))
+    srv._access_store = lambda: CombinedServer._access_store(srv)
+    srv._accounts.store = SimpleNamespace(bands=lambda uid: [{"role": "owner"}] if uid == "u_bake" else [],
+                                          db=acc.db)
+    req = SimpleNamespace(path="/api/call")
+    for uid, role in (("u_op", "owner"), ("u_bake", "owner"), ("u_kid", "member")):
+        current["user"] = {"id": uid, "name": uid, "admin": int(uid == "u_op")}
+        assert CombinedServer._principal_for(srv, req).role == role
+    # Next start: a fresh store, carried over again from accounts.
+    fresh = A.AccessStore.for_dir(str(tmp_path))
+    assert fresh.seed(acc) is True and fresh.role("u_bake") == "owner"
+    assert [g["kind"] for g in fresh.grants("u_kid")] == ["band"]   # later grants are gone
+
+
+def test_the_seed_runs_once_even_when_two_starts_race(tmp_path):
+    import threading
+    accounts_db(tmp_path / "enrollment.db")
+    acc = Accounts(str(tmp_path / "enrollment.db"))
+    stores = [A.AccessStore.for_dir(str(tmp_path)) for _ in range(4)]
+    results, gate = [], threading.Barrier(4)
+
+    def go(s):
+        gate.wait()
+        results.append(s.seed(acc))
+    threads = [threading.Thread(target=go, args=(s,)) for s in stores]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(results) == [False, False, False, True]
+    assert len(stores[0].grants("u_kid")) == 1
+    assert len([h for h in stores[0].history() if h["action"] == "role"]) == 3
+    # A restart after people were changed by hand does not seed again.
+    stores[0].revoke(stores[0].grants("u_kid")[0]["id"], actor="o", words="no")
+    assert A.AccessStore.for_dir(str(tmp_path)).seed(acc) is False
+    assert stores[0].grants("u_kid") == []

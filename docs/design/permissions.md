@@ -110,7 +110,12 @@ Design: knowledge page `users-access-trust-map-and-agent-sessions-bake-s-design-
   `any` grant covering the knowledge caps lifts the area limit.
 - **Migration.** `AccessStore.seed` runs once at dashboard start: operator accounts and band
   owners become owners, band members get a `band` grant per membership (tier exec), accounts
-  with neither are left for onboarding (they reach nothing).
+  with neither are left for onboarding (they reach nothing). The `seeded` marker is checked
+  inside the write transaction, so racing starts seed once. If `access.db` goes missing while
+  the hub runs, members are denied and the dashboard counts band owners as owners again until
+  the store is back (owners are never locked out); the next start recreates it and seeds again
+  from accounts, so roles and grants given since the last seed are lost: back it up with
+  `policy.json`.
 - **Open.** Operator-only dashboard pages (Secrets, Plugins, Tokens) still check the
   operator account, not hub ownership; whether every owner should see them is asked in the
   rook-beta huddle. Workers seen only on a band's pending new key (mid key change) match the

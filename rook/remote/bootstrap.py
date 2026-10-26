@@ -2889,15 +2889,18 @@ class CombinedServer:
             return principal_for_user(None, True)
         owner = bool(user.get("admin"))
         access = self._access_store()
+        legacy = access is None
         if not owner and access is not None:
             # Access v2: owner is a hub role (access.db); grants decide the rest.
             try:
                 owner = access.is_owner(user["id"])
             except Exception:
-                log.exception("ROOK AUTHZ ALERT: access store unreadable; %s is a member",
-                              user.get("id"))
-                owner = False
-        elif not owner:
+                # Owners are never locked out (permissions 3.8): while the
+                # store is unreadable, band owners count as before. Members
+                # are denied by the authorizer meanwhile.
+                log.exception("ROOK AUTHZ ALERT: access store unreadable for %s", user.get("id"))
+                legacy = True
+        if not owner and legacy:
             try:
                 owner = any(b.get("role") == "owner"
                             for b in self._accounts.store.bands(user["id"]))
