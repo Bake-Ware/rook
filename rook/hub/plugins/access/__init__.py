@@ -12,9 +12,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from ...core.plugin import Plugin, capability, place
-from ...hub.authz import require_hub_admin, current_principal
-from ...remote.accounts import AccountStore
+from rook.core.plugin import Plugin, capability, place
+from rook.hub.authz import require_hub_admin, current_principal
+from rook.remote.accounts import AccountStore
 from .model import AccessGrantStore
 
 log = logging.getLogger("rook.hub.plugins.access")
