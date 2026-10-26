@@ -30,7 +30,7 @@ from typing import Any, Callable
 
 from .cron import Cron, parse_duration, parse_instant
 from .executor import Executor
-from .identity import PAUSE_REASON, IdentityRevoked, resolve_identity
+from .identity import PAUSE_REASON, IdentityRevoked, acting_for, resolve_identity
 from .model import complete_matches
 from .store import AFTER_STATES, JobStore, grace_seconds
 
@@ -279,7 +279,7 @@ class Scheduler:
                               error=f"the job expired (limits.until {job['limits']['until']})")
             return {"state": "cancelled"}
         try:
-            identity = self.resolve(job, row["owner_info"])
+            identity = acting_for(self.resolve(job, row["owner_info"]), run.get("run_by"))
         except PermissionError as e:
             self.store.finish(rid, self.owner, "blocked", self.clock(), error=str(e))
             if isinstance(e, IdentityRevoked):

@@ -6,7 +6,10 @@ Nothing new on the wire. Calls go through the hub's band client
 use, so the authorizer evaluates them for the run's principal and a call to
 the hub itself short-circuits in process. Hub MCP tools (``tool`` steps) are
 the hub plugins' own ``mcp_tools(invoke)`` functions, with ``invoke`` running
-the cap in process as the run's identity. ``{{secret:name}}`` resolves through
+the cap in process as the run's identity; the hub's authorizer checks the
+tool (as its hub cap) and every cap it calls for the run's principal, as the
+MCP bridge does for an agent, so grants and holds bind a job like anyone
+else. ``{{secret:name}}`` resolves through
 the vault's ``substitute`` at the last moment; every call is journaled with
 the placeholders, never the values.
 
@@ -69,17 +72,49 @@ class Runtime:
             current_principal.reset(tok)
         raise ConnectionError("the hub has no band client")
 
+    async def authorize(self, cap: str, args: Any, identity) -> str:
+        """``""`` when the hub's authorizer lets ``identity`` call hub cap
+        ``cap`` now (a hold waits for its person), else why not. No band
+        client (tests, tools): nothing to ask."""
+        node = self.node
+        authz = getattr(getattr(node, "client", None), "authz", None)
+        if authz is None or not hasattr(node, "entry"):
+            return ""
+        cargs = args if isinstance(args, dict) else {}
+        try:
+            d = authz.check(cap, getattr(node, "worker_id", None), node.entry(),
+                            identity=identity.display, principal=identity.principal,
+                            local=True, args=cargs)
+            if d.held:
+                out = await authz.resolve(d, cargs)
+                if isinstance(out, dict):
+                    return str(out.get("error") or "held for approval")
+                d = out
+        except Exception:  # noqa: BLE001 - when the check fails, refuse
+            log.exception("jobs: authorizing %s failed", cap)
+            return f"authorizing {cap} failed"
+        if not d.denied:
+            return ""
+        if d.hold_id:
+            return d.denial()["error"]
+        return f"denied: {d.reason or d.rule} ({cap})"
+
     async def tool(self, name: str, args: dict, identity) -> Any:
         """Call a hub MCP tool (``rook_task`` …) as ``identity``; returns its
         reply (the ``tool`` step parses JSON)."""
         node = self.node
         if node is None:
             raise LookupError("no hub node")
-        from ...authz import current_principal
+        from ...authz import current_principal, hub_cap_for_tool
 
-        from .guardrails import Blocked
+        from .guardrails import Blocked, Verdict
         guard = getattr(identity, "guard", None)
         refused: list = []
+        own = hub_cap_for_tool(name, args)
+        if own is not None:
+            why = await self.authorize(own, args, identity)
+            if why:
+                raise Blocked(Verdict(False, why, "authz"))
 
         async def invoke(cap: str, cargs: dict) -> Any:
             if guard is not None:  # every cap the tool calls passes the job's guardrails
@@ -87,6 +122,11 @@ class Runtime:
                 if not verdict.allow:
                     refused.append(verdict)
                     raise Blocked(verdict)
+            if cap != own:  # and the authorizer, as the run's principal
+                why = await self.authorize(cap, cargs, identity)
+                if why:
+                    refused.append(Verdict(False, why, "authz"))
+                    raise Blocked(refused[-1])
             tok = current_principal.set(identity.principal)
             try:
                 return await node.invoke(cap, cargs, identity.display)

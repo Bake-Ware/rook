@@ -470,13 +470,35 @@ Built in J2 (`identity.py`, `principals.py`, `guardrails.py`, `service.py`).
   `{mode, ref}` object. A job that names none uses the hub setting
   `job.default_fallback` (empty by default).
 - Revocation is checked at every run against the hub's live stores: the MCP
-  token store (revoked or expired keys) and the dashboard accounts (deleted
-  users). If the primary is unusable and a fallback works, the run uses it
+  token store (revoked or expired keys), the dashboard accounts (deleted or
+  disabled users) and the access store (members with no access left). If the primary is unusable and a fallback works, the run uses it
   (`identity_used` ends in ` (fallback)`). If nothing usable is left, the run
   is recorded `blocked` and the job is paused (`enabled: false`,
   `paused_reason: identity_revoked`, with a history row). A hub that cannot
   check a key at all (no token store, no vault) blocks the run without
   pausing the job.
+- A job never exceeds its person (access v2 item 8, design page
+  `users-access-trust-map-and-agent-sessions-bake-s-design-decisions-2026-10-26-voi`):
+  - Each run re-reads the identity as it is now: a person's role comes from
+    the access store (`access.db` owner/member, or an `admin` account), a
+    key's from the token store. The role saved in `owner_info` is not
+    trusted. The authorizer (`Authorizer._grants`) then checks every call
+    the run makes, hub caps included, against that person's grants.
+  - A member with no active grant left, or no membership, counts as revoked.
+    When the job's *owner* is a person who was revoked (no access, account
+    deleted or disabled) the run is blocked and the job paused
+    (`identity_revoked`) whatever its `identity` or `fallback` names, and
+    `job.default_fallback` does not apply.
+  - The authorizer also checks each person in the call's on-behalf-of chain
+    (`Principal.via`) whom the access store records as a member: a call
+    needs a grant for every one of them. Owners, and accounts the store does
+    not know, are not limited by this check.
+  - `run` by someone other than the owner stores them as the run's `run_by`
+    and adds them to the run's chain, so the run does only what both the
+    job's identity and the caller may.
+  - `tool` steps are authorized like an agent's tool call: the tool as its
+    hub cap (`hub_cap_for_tool`) and every cap it calls, for the run's
+    principal, holds included.
 - Who may give a job a `key` or `vault` identity (or fallback): the
   operator, or the principal that key *is* (or owns). Creating a job with
   someone else's key needs the operator. An identity that is unchanged by an

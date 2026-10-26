@@ -104,6 +104,16 @@ def user_of(principal: Any) -> str | None:
     return None if uid in ("", "dashboard") else uid
 
 
+def user_of_id(pid: Any) -> str | None:
+    """The account behind a principal id string, as an on-behalf-of chain
+    (``Principal.via``) carries it: ``human:<id>`` -> ``<id>``, else None."""
+    pid = str(pid or "")
+    if not pid.startswith("human:"):
+        return None
+    uid = pid.split(":", 1)[1]
+    return None if uid in ("", "dashboard") else uid
+
+
 def restricted(principal: Any) -> bool:
     """Whether grants decide for this principal: a verified signed-in person
     who is not an owner."""

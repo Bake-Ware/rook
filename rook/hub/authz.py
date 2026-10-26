@@ -206,20 +206,55 @@ class Authorizer:
 
     def _grants(self, d: Decision, p: Principal, target: Target) -> Decision:
         """Access v2: a signed-in member reaches only what a grant names,
-        in every policy mode; an error denies (owners are never limited)."""
-        from . import access as _access
-        if self.access is None or d.denied or not _access.restricted(p):
+        in every policy mode; an error denies (owners are never limited).
+        A call made on someone's behalf (a job run, an agent inside one)
+        never exceeds any member in its on-behalf-of chain either: each
+        needs a grant for it too."""
+        if self.access is None or d.denied:
             return d
         try:
-            grant, why = self.access.evaluate(_access.user_of(p), d.cap, d.tier, target,
-                                              self.bands_of(target.id))
+            people = self._limited(p)
         except Exception as e:  # noqa: BLE001 - fail closed for members
             log.exception("ROOK AUTHZ ALERT: access check failed for %s %s", p.id, d.cap)
             return dataclasses.replace(d, decision="error_deny", rule="access",
                                        reason=f"access check failed: {type(e).__name__}")
-        if grant is None:
-            return dataclasses.replace(d, decision="deny", rule="access:no-grant", reason=why)
-        return dataclasses.replace(d, tags=tuple(d.tags) + (f"grant:{grant['id']}",))
+        if not people:
+            return d
+        tags = list(d.tags)
+        for uid, who in people:
+            try:
+                grant, why = self.access.evaluate(uid, d.cap, d.tier, target, self.bands_of(target.id))
+            except Exception as e:  # noqa: BLE001 - fail closed for members
+                log.exception("ROOK AUTHZ ALERT: access check failed for %s %s", who, d.cap)
+                return dataclasses.replace(d, decision="error_deny", rule="access",
+                                           reason=f"access check failed: {type(e).__name__}")
+            if grant is None:
+                if who != p.id:
+                    why = f"acting for {who}: {why}"
+                return dataclasses.replace(d, decision="deny", rule="access:no-grant", reason=why)
+            tags.append(f"grant:{grant['id']}")
+        return dataclasses.replace(d, tags=tuple(tags))
+
+    def _limited(self, p: Principal) -> list[tuple[str, str]]:
+        """``(user id, principal id)`` of every person whose grants bound
+        this call: the caller when :func:`access.restricted`, and each person
+        in ``p.via`` whom the access store records as a member (owners, and
+        accounts it does not know, are not limited here; the jobs plugin
+        refuses to run as a person with no access)."""
+        from . import access as _access
+        out: list[tuple[str, str]] = []
+        me = _access.user_of(p)
+        if _access.restricted(p):
+            out.append((me, p.id))
+        seen = {me}
+        for v in p.via or ():
+            uid = _access.user_of_id(v)
+            if uid is None or uid in seen:
+                continue
+            seen.add(uid)
+            if self.access.role(uid) == "member":
+                out.append((uid, str(v)))
+        return out
 
     def _approvals(self, d: Decision, p: Principal, policy: Any, target: Any,
                    args: Any = None) -> Decision:
