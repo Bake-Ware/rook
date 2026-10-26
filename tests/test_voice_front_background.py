@@ -352,12 +352,108 @@ def test_front_request_has_no_tools_and_thinking_disabled():
 
 def test_front_history_merges_roles_and_drops_tool_records():
     messages = [{'role': 'user', 'content': 'a'}, {'role': 'assistant', 'content': None, 'tool_calls': []},
-                {'role': 'tool', 'content': 'x'}, {'role': 'assistant', 'content': 'b'},
-                {'role': 'assistant', 'content': '[Spoken response generated; playback may be interrupted] c'},
-                {'role': 'user', 'content': 'd'}, {'role': 'assistant', 'content': 'e'}]
-    assert front_mod.history(messages, 6) == [{'role': 'user', 'content': 'a'}, {'role': 'assistant', 'content': 'b c'},
-                                              {'role': 'user', 'content': 'd'}, {'role': 'assistant', 'content': 'e'}]
-    assert front_mod.history(messages, 1) == [{'role': 'user', 'content': 'd'}, {'role': 'assistant', 'content': 'e'}]
+                {'role': 'tool', 'content': 'x'}, {'role': 'assistant', 'content': 'Bee.'},
+                {'role': 'assistant', 'content': '[Spoken response generated; playback may be interrupted] Cee.'},
+                {'role': 'user', 'content': 'd'}, {'role': 'assistant', 'content': 'Eee.'}]
+    assert front_mod.history(messages, 6) == [{'role': 'user', 'content': 'a'}, {'role': 'assistant', 'content': 'Bee. Cee.'},
+                                              {'role': 'user', 'content': 'd'}, {'role': 'assistant', 'content': 'Eee.'}]
+    assert front_mod.history(messages, 1) == [{'role': 'user', 'content': 'd'}, {'role': 'assistant', 'content': 'Eee.'}]
+
+
+# --- one-word replies (2026-10-25: thirty replies of just "I") ----------------
+@pytest.mark.parametrize('reply,tidy', [
+    ('Fire alarms can be scary.', 'Fire alarms can be scary.'),
+    ('Yes!', 'Yes!'),
+    ('Okay, I will stop. [sigh]', 'Okay, I will stop. [sigh]'),
+    ('[laugh]', '[laugh]'),
+    ('Is that "fun?"', 'Is that "fun?"'),
+    ('I can only talk', 'I can only talk.'),
+    ('I can only talk,', 'I can only talk.'),
+    ('I', ''), ('I.', ''), ('Have', ''), ('Going', ''), ('', ''),
+    ('Sure thing. I', 'Sure thing.'),
+    ('Sure thing. I [chuckle]', 'Sure thing.'),
+    ('I am ready to chat! [cut off]', 'I am ready to chat! [cut off]'),
+    ('Going to school [cut off]', 'Going to school [cut off]'),
+    ('I [cut off]', ''),
+])
+def test_tidy_reply(reply, tidy):
+    assert front_mod.tidy_reply(reply) == tidy
+
+
+def test_history_leaves_out_one_word_replies():
+    """Logan's session: once a few one-word replies are in the prompt, the model answers every line with "I"."""
+    stored = [{'role': 'user', 'content': 'Fire alarms!'}, {'role': 'assistant', 'content': 'Fire alarms can be scary.'},
+              {'role': 'user', 'content': 'Mom!'}, {'role': 'assistant', 'content': 'I can only talk'}]
+    for line in ('Then I go to school.', 'We relax.', 'Thank you.', 'Are you there?'):
+        stored += [{'role': 'user', 'content': line}, {'role': 'assistant', 'content': 'I'}]
+    past = front_mod.history(stored, 6)
+    assert [m['content'] for m in past if m['role'] == 'assistant'] == ['Fire alarms can be scary.', 'I can only talk.']
+    assert past[-1] == {'role': 'user', 'content': 'Then I go to school. We relax. Thank you. Are you there?'}
+
+
+def test_transcript_commit_tidies_the_reply():
+    t = front_mod.Transcript()
+    t.request('fixed', [], {}, 'hello')
+    t.commit('I can only talk')
+    t.request('fixed', [], {}, 'and?')
+    t.commit('I')
+    assert t.messages == [{'role': 'user', 'content': 'hello'}, {'role': 'assistant', 'content': 'I can only talk.'},
+                          {'role': 'user', 'content': 'and?'}]
+
+
+def test_front_stream_never_speaks_a_fragment():
+    async def run(*pieces):
+        clauses = []
+        async def on_clause(c):
+            clauses.append(c)
+        text = await Model(reply=pieces).front()([{'role': 'user', 'content': 'hi'}], on_clause)
+        return clauses, text
+    with pytest.raises(front_mod.FragmentReply):
+        asyncio.run(run('I'))
+    assert asyncio.run(run('Sure thing. ', 'I')) == (['Sure thing.'], 'Sure thing. I')
+    assert asyncio.run(run('[laugh]')) == (['[laugh]'], '[laugh]')
+
+
+class Replies(Model):
+    """Front replies in order (the last one repeats)."""
+    def __init__(self, *replies):
+        super().__init__()
+        self.replies = list(replies)
+
+    async def handler(self, request):
+        self.requests.append(json.loads(request.content))
+        reply = self.replies.pop(0) if len(self.replies) > 1 else self.replies[0]
+        return httpx.Response(200, text=sse(*reply), headers={'content-type': 'text/event-stream'})
+
+
+def spoken_text(events):
+    return [e['text'] for e in events if e.get('type') == 'assistant_delta']
+
+
+@pytest.mark.parametrize('replies,said', [
+    ((('I',), ('I am ', 'here.')), ['I am here.']),
+    ((('I',),), ['Sorry, could you say that again?']),
+])
+def test_fragment_reply_asks_again_from_tidy_history(tmp_path, replies, said):
+    model = Replies(*replies)
+    async def scenario():
+        conn, store, jobs, events, _ = connection(tmp_path, front=model.front(),
+                                                  complete=Script(call('no_action'), call('no_action')))
+        try:
+            store.append('session', 'user', {'text': 'Thank you.'})
+            store.append('session', 'assistant', {'text': 'I'})
+            await conn.start(text='Are you there?', speak=False)
+            await settle(conn)
+            return events, store.messages('session'), conn.fb.transcript.messages
+        finally:
+            await shutdown(conn, store, jobs)
+    events, stored, transcript = asyncio.run(scenario())
+    assert spoken_text(events) == said and len(model.requests) == 2
+    retry = model.requests[1]['messages']
+    assert not any(m['role'] == 'assistant' and m['content'] == 'I' for m in retry)
+    assert retry[-1]['content'].endswith('Are you there?')
+    assert stored[-1] == {'role': 'assistant', 'content': said[0]}
+    assert [m['content'] for m in transcript if m['role'] == 'assistant'] == said
 
 
 # --- policy -----------------------------------------------------------------
