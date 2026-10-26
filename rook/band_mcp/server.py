@@ -2043,6 +2043,10 @@ class McpService:
             _jt = None
         for route in job_routes(lambda: mcp._rook_hub, accounts, _jt):
             app.router.routes.insert(0, route)
+        # People page API (Manage > People; proxied by the dashboard): access v2.
+        from ..hub.plugins.access.web import routes as people_routes
+        for route in people_routes(lambda: mcp._rook_hub, accounts):
+            app.router.routes.insert(0, route)
         # Huddle view API (Work > Huddle; proxied by the dashboard).
         from ..hub.plugins.huddle.web import routes as huddle_routes
         for route in huddle_routes(lambda: mcp._rook_hub, accounts):
