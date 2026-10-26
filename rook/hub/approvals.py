@@ -439,13 +439,20 @@ class ApprovalQueue:
 
     # -- upkeep ------------------------------------------------------------
     def sweep(self, force: bool = False) -> None:
-        """Keep a bounded history of decided holds. Nothing expires: a pending
-        hold waits for a person, an approval for the call it approved."""
+        """Keep a bounded history of decided holds. Nothing made now expires:
+        a pending hold waits for a person, an approval for the call it
+        approved. Rows written before that (``expires`` > 0, a ``valid_until``)
+        keep the deadline they were given, so a stale approval or ask from
+        then never comes back."""
         now = self.clock()
         if not force and now - self._swept < 2.0:
             return
         self._swept = now
         with self._db(write=True) as db:
+            db.execute("UPDATE holds SET state='expired' WHERE state='pending' AND expires>0 "
+                       "AND expires<?", (now,))
+            db.execute("UPDATE holds SET state='expired' WHERE state='approved' "
+                       "AND valid_until IS NOT NULL AND valid_until<?", (now,))
             db.execute("DELETE FROM holds WHERE state!='pending' AND id NOT IN (SELECT id FROM "
                        "holds WHERE state!='pending' ORDER BY created DESC LIMIT ?)",
                        (HISTORY_KEEP,))
@@ -462,8 +469,9 @@ class ApprovalQueue:
         now = self.clock()
         with self._db(write=True) as db:
             r = db.execute("SELECT * FROM holds WHERE state='pending' AND principal=? AND cap=? "
-                           "AND target_id IS ? AND args_hash=? ORDER BY created LIMIT 1",
-                           (principal, cap, target_id, args_hash)).fetchone()
+                           "AND target_id IS ? AND args_hash=? AND (expires=0 OR expires>=?) "
+                           "ORDER BY created LIMIT 1",
+                           (principal, cap, target_id, args_hash, now)).fetchone()
             if r is not None:
                 found = _row(r)
                 found["name"] = names.name_of(db, "hold", found["id"])
@@ -513,11 +521,13 @@ class ApprovalQueue:
     def consume_match(self, principal: str, cap: str, target_id: str | None,
                       args_hash: str) -> dict | None:
         """Use up an approval for this identical call, if one is unused."""
+        self.sweep()
         now = self.clock()
         with self._db(write=True) as db:
             r = db.execute("SELECT * FROM holds WHERE state='approved' AND principal=? AND cap=? "
-                           "AND target_id IS ? AND args_hash=? ORDER BY decided_at LIMIT 1",
-                           (principal, cap, target_id, args_hash)).fetchone()
+                           "AND target_id IS ? AND args_hash=? AND (valid_until IS NULL OR "
+                           "valid_until>=?) ORDER BY decided_at LIMIT 1",
+                           (principal, cap, target_id, args_hash, now)).fetchone()
             if r is None:
                 return None
             db.execute("UPDATE holds SET state='consumed', consumed_at=? WHERE id=?",
@@ -541,7 +551,8 @@ class ApprovalQueue:
         now = self.clock()
         with self._db(write=True) as db:
             cur = db.execute("UPDATE holds SET state='consumed', consumed_at=? WHERE id=? "
-                             "AND state='approved'", (now, hold_id))
+                             "AND state='approved' AND (valid_until IS NULL OR valid_until>=?)",
+                             (now, hold_id, now))
             return cur.rowcount == 1
 
     # -- reads -------------------------------------------------------------
@@ -571,6 +582,7 @@ class ApprovalQueue:
         return self._named([_row(r) for r in rows])
 
     def count_pending(self) -> int:
+        self.sweep()
         with self._db() as db:
             return int(db.execute("SELECT count(*) FROM holds WHERE state='pending'")
                        .fetchone()[0])

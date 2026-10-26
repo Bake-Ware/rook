@@ -319,6 +319,42 @@ async def test_nothing_expires_approvals_or_pending_holds(tmp_path):
     assert (await as_agent(client.call("shell.exec", RM2, target="nas", timeout=1)))["ok"]
 
 
+def test_rows_from_before_no_expiry_keep_their_old_deadline(tmp_path):
+    """Removing expiry never revives an approval or an ask the old code had
+    already timed out, even one the sweep had not marked yet; a denial stays a
+    denial; an old approval still inside its window works once."""
+    import sqlite3
+    now = [10_000.0]
+    q = A.ApprovalQueue(str(tmp_path / "a.db"), clock=lambda: now[0])
+    q.count_pending()                                        # creates the file
+    cols = ("id, state, kind, principal, cap, tier, target_id, args_hash, created, expires, "
+            "decided_by, decided_at, valid_until")
+    rows = [("h_stale", "approved", "a1", 9_000.0, 9_600.0),      # window passed, unswept
+            ("h_fresh", "approved", "a2", 9_900.0, 10_500.0),     # still inside its window
+            ("h_denied", "denied", "a3", 9_900.0, None),
+            ("h_oldask", "pending", "a4", 9_000.0, None)]         # pending, expired at 9600
+    with sqlite3.connect(q.path) as db:
+        for hid, state, digest, created, until in rows:
+            db.execute(f"INSERT INTO holds({cols}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                       (hid, state, "default", "token:agent-1", "shell.exec", "exec", "nas",
+                        digest, created, created + 600, "human:u1" if state != "pending"
+                        else None, created if state != "pending" else None, until))
+    assert q.consume_match("token:agent-1", "shell.exec", "nas", "a1") is None
+    q.sweep(force=True)
+    assert q.get("h_stale")["state"] == "expired"
+    assert q.consume_match("token:agent-1", "shell.exec", "nas", "a3") is None
+    assert q.get("h_denied")["state"] == "denied"
+    assert q.consume_match("token:agent-1", "shell.exec", "nas", "a2")["id"] == "h_fresh"
+    assert q.get("h_oldask")["state"] == "expired" and q.count_pending() == 0
+    with pytest.raises(A.HoldError):
+        q.decide("h_oldask", True, "human:u1")
+    again, created = q.create(principal="token:agent-1", cap="shell.exec", tier="exec",
+                              args_hash="a4", target_id="nas")
+    assert created and again["id"] != "h_oldask" and again["expires"] == 0
+    now[0] += 365 * 86400                                    # the new ask never expires
+    assert q.get(again["id"])["state"] == "pending" and q.count_pending() == 1
+
+
 def test_decide_takes_only_the_call_scope(tmp_path):
     ap = A.Approvals(str(tmp_path / "a.db"), FAST)
     az = Authorizer(PolicyStore(None), None, approvals=ap)
