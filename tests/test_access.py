@@ -493,6 +493,10 @@ def test_member_keys_and_unreadable_keys_reach_only_grants(tmp_path):
     assert lost.role == "member" and not lost.fail_open() and A.restricted(lost)
     d = az.check("file.read", "w_pc", {"name": "kids-pc"}, principal=lost)
     assert d.denied and "belongs to no one" in d.reason
+    # Agents the hub runs itself (house agent, roles) are not keys and not limited by grants.
+    house = Principal("home:house", "token", "agent", label="house")
+    assert not A.restricted(house) and house.as_person() is house
+    assert not az.check("shell.exec", "w_nas", {"name": "nas"}, principal=house).denied
 
 
 @pytest.mark.asyncio

@@ -78,7 +78,10 @@ def build_account_token_routes(provider, chat=None, accounts=None, approvals=Non
             return []
 
     def person_of(data, user):
-        uid = str(data.get('user') or user.get('id') or '')
+        """The signed-in operator, or the account they picked."""
+        uid = str(data.get('user') or '')
+        if not uid or uid == user.get('id'):
+            return str(user.get('id') or '')
         if not accounts.user(uid):
             raise ValueError('Choose a person with an account.')
         return uid

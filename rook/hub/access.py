@@ -172,11 +172,14 @@ def user_of_id(pid: Any) -> str | None:
 
 def restricted(principal: Any) -> bool:
     """Whether grants decide for this principal: a verified signed-in person
-    who is not an owner, or an API key that is not an owner's (a key whose
-    person could not be read is limited too, and reaches nothing)."""
+    who is not an owner, or a member's API key (a key whose person could not
+    be read is a member with no account, and reaches nothing). Agents the hub
+    runs itself (role ``agent``) are not people and are not limited here."""
     if principal is None or not getattr(principal, "verified", False) or principal.fail_open():
         return False
-    return user_of(principal) is not None or getattr(principal, "kind", "") == "token"
+    if user_of(principal) is not None:
+        return True
+    return getattr(principal, "kind", "") == "token" and getattr(principal, "role", "") == "member"
 
 
 def _norm_caps(caps: Any) -> list[str]:
