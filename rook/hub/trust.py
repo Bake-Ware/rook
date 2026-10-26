@@ -401,9 +401,15 @@ def clean_entry(raw: Any) -> dict:
     targets = [check_selector(t) for t in targets]
     if not targets:
         raise TrustError("targets: at least one (worker:kaiju, repo:Bake-Ware/rook#master, ...)")
-    return {"id": _check_id(raw.get("id"), "id"), "title": str(raw.get("title") or raw.get("id"))
+    out = {"id": _check_id(raw.get("id"), "id"), "title": str(raw.get("title") or raw.get("id"))
             .strip()[:120], "kind": kind, "level": level, "targets": sorted(set(targets)),
             "description": str(raw.get("description") or "").strip()[:TEXT_MAX]}
+    if raw.get("for_users"):
+        users = raw.get("for_users")
+        if isinstance(users, str):
+            users = [u.strip() for u in users.split(",") if u.strip()]
+        out["for_users"] = sorted(set(users))
+    return out
 
 
 def clean_exception(raw: Any) -> dict:
@@ -691,6 +697,12 @@ class TrustStore:
             old = next((e for e in doc["entries"] if e["id"] == entry["id"]), None)
             if house:
                 self._house_entry(old, entry)
+            # Sacred entries: only the owner or someone with write permission can modify
+            if old and old.get("level") == "sacred" and actor.kind == "person":
+                old_owner = (old.get("set_by") or {}).get("who", "")
+                if old_owner and old_owner.lower() != actor.who.lower():
+                    raise TrustError(
+                        f"sacred entry {old['id']!r} is owned by {old_owner}; only they can change it")
             entry["set_by"] = actor.stamp(now)
             if actor.via:
                 entry["confirmed"] = False
@@ -945,6 +957,78 @@ class TrustStore:
         parts.append("Reads and the band's records are always free. Only the person changes "
                      "the map (dashboard or voice); propose changes with rook_trust "
                      "action=propose.")
+        return " ".join(parts)
+
+    def relevant_entries(self, cap: str = "", worker: str = "", repo: str = "", branch: str = "",
+                         project: str = "", principal: str = "") -> list[dict]:
+        """Entries matching what an agent might touch, with plain-language context.
+
+        Returns entries that match the given context (cap, worker, repo, project),
+        filtered and formatted with the owner's plain-language words for just-in-time
+        presentation to agents. Sacred entries are included: agents may read them and
+        propose changes, but cannot act on them without explicit instruction.
+        """
+        doc = self.current()
+        ctx = Ctx(cap=cap, worker=worker, repo=repo, branch=branch, project=project)
+        matched = []
+
+        for e in doc.get("entries") or ():
+            if e.get("level") not in LEVELS:
+                continue
+            # Skip entries scoped to other users
+            if e.get("for_users") and principal:
+                if principal not in e.get("for_users", []):
+                    continue
+            if any(selector_matches(s, ctx) for s in e.get("targets") or ()):
+                brief = dict(e)
+                by = e.get("set_by") or {}
+                brief["_owner"] = by.get("who", "?")
+                brief["_wishes"] = by.get("words", "")
+                brief["_when"] = by.get("when", "")[:10]
+                matched.append(brief)
+
+        # Sort by strictness (most restrictive first)
+        matched.sort(key=lambda e: -rank(e.get("level", "ship-it")))
+        return matched
+
+    def summary_for_context(self, cap: str = "", worker: str = "", repo: str = "",
+                           project: str = "", principal: str = "", advanced: bool = False) -> str:
+        """Context-aware summary with plain-language owner wishes (just-in-time delivery).
+
+        Instead of listing all entries, this shows only the ones relevant to what the
+        agent is about to do, along with the owner's plain-language words that explain
+        the wishes behind the rules.
+        """
+        entries = self.relevant_entries(cap=cap, worker=worker, repo=repo, project=project,
+                                       principal=principal)
+        if not entries:
+            return ("No trust map entries cover this action. Only the person can change "
+                   "the map (dashboard or voice); propose changes with rook_trust action=propose.")
+
+        parts = []
+        for e in entries:
+            owner = e.get("_owner", "?")
+            level = e.get("level", "?")
+            wishes = e.get("_wishes", "")
+            title = e.get("title", e.get("id", "?"))
+
+            # Explain what this level means
+            if level == "sacred":
+                tier_desc = "only on the person's direct instruction"
+            elif level == "guarded":
+                tier_desc = "ask first" if advanced else "just go (advanced security is off)"
+            else:
+                tier_desc = "just go"
+
+            if wishes:
+                parts.append(f"{title} ({level}, set by {owner}): \"{wishes}\" -> {tier_desc}.")
+            else:
+                parts.append(f"{title} ({level}, set by {owner}): {tier_desc}.")
+
+        parts.append("Reads and preparing (planning, proposing) are always free.")
+        if entries and any(e.get("level") == "sacred" for e in entries):
+            parts.append("For sacred entries, you may read and propose, but changes need explicit approval.")
+        parts.append("If these rules are unclear, propose a change or ask the owner.")
         return " ".join(parts)
 
     def grants(self, role: str = "") -> list[dict]:

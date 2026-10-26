@@ -552,6 +552,104 @@ def _bwrap_works() -> bool:
                            "true"], capture_output=True).returncode == 0
 
 
+def test_sacred_entries_can_only_be_modified_by_their_owner():
+    """Sacred entries are owned by who created them; only the owner can modify."""
+    st = seeded()
+    kaiju_entry = next(e for e in st.current()["entries"] if e["id"] == "kaiju")
+    assert kaiju_entry["set_by"]["who"] == "Bake"
+
+    # Bake can modify their own sacred entry
+    st.change("set_entry", {"id": "kaiju", "level": "sacred", "targets": ["worker:kaiju"]},
+              T.Actor("person", "Bake", words="still sacred"))
+    assert st.current()["version"] >= 1
+
+    # Someone else cannot modify Bake's sacred entry
+    with pytest.raises(T.TrustError, match="sacred entry 'kaiju' is owned by Bake"):
+        st.change("set_entry", {"id": "kaiju", "level": "sacred", "targets": ["worker:kaiju"]},
+                  T.Actor("person", "Logan", words="I want to change this"))
+
+    # Non-sacred entries can be modified by anyone
+    st.change("set_entry", {"id": "pianobar-super", "level": "guarded", "targets": ["worker:pianobar"]},
+              T.Actor("person", "Logan", words="Logan changed this"))
+    assert st.current()["entries"][2]["set_by"]["who"] == "Logan"
+
+
+def test_entries_can_be_scoped_to_specific_users():
+    """Entries with for_users only apply to those users."""
+    st = T.TrustStore(None)
+
+    # Create an entry for Bake only
+    st.change("set_entry", {
+        "id": "bakenetca-only",
+        "level": "sacred",
+        "targets": ["worker:bakenetca"],
+        "for_users": ["u_bake"]
+    }, T.Actor("person", "Bake", words="this machine is mine only"))
+
+    # Create an entry for all users
+    st.change("set_entry", {
+        "id": "shared-laptop",
+        "level": "guarded",
+        "targets": ["worker:shared-laptop"]
+    }, T.Actor("person", "Bake", words="shared machine, be careful"))
+
+    # Bake sees both entries
+    entries_for_bake = st.relevant_entries(worker="bakenetca", principal="u_bake")
+    assert len(entries_for_bake) == 1
+    assert entries_for_bake[0]["id"] == "bakenetca-only"
+
+    # Logan doesn't see the user-scoped entry
+    entries_for_logan = st.relevant_entries(worker="bakenetca", principal="u_logan")
+    assert len(entries_for_logan) == 0
+
+    # Both see the shared entry
+    entries_bake_shared = st.relevant_entries(worker="shared-laptop", principal="u_bake")
+    entries_logan_shared = st.relevant_entries(worker="shared-laptop", principal="u_logan")
+    assert len(entries_bake_shared) == 1 and len(entries_logan_shared) == 1
+
+
+def test_context_aware_summary_shows_owners_plain_language_wishes():
+    """Agents get a context-aware summary with the owner's plain-language wishes."""
+    st = seeded()
+
+    # Get summary for kaiju - should include Bake's exact words
+    summary = st.summary_for_context(worker="kaiju")
+    assert "kaiju changes are sacred" in summary
+    assert "only ever under my direct direction" in summary
+    assert "set by Bake" in summary
+
+    # Get summary for family-devices
+    summary = st.summary_for_context(worker="living-room-tv")
+    assert "family devices are sacred" in summary
+
+    # Get summary for unrelated worker - should say no entries cover it
+    summary = st.summary_for_context(worker="unknown-worker")
+    assert "No trust map entries cover this action" in summary
+
+
+def test_relevant_entries_filtered_by_context():
+    """relevant_entries returns only entries matching the action context."""
+    st = seeded()
+
+    # Query for kaiju
+    kaiju_entries = st.relevant_entries(worker="kaiju")
+    assert len(kaiju_entries) >= 1
+    assert kaiju_entries[0]["id"] == "kaiju"
+
+    # Query for pianobar
+    piano_entries = st.relevant_entries(worker="pianobar")
+    assert len(piano_entries) >= 1
+    assert piano_entries[0]["id"] == "pianobar-super"
+
+    # Query for repo
+    master_entries = st.relevant_entries(repo="bake-ware/rook", branch="master")
+    assert any(e["id"] == "rook-master" for e in master_entries)
+
+    # Query for cap on the hub
+    hub_entries = st.relevant_entries(cap="hub.plugin.config", worker="bakenetcanada")
+    assert any(e["id"] == "rook-hub" for e in hub_entries)
+
+
 @pytest.mark.skipif(not _bwrap_works(), reason="bwrap cannot make namespaces here")
 def test_a_session_with_a_minted_token_cannot_see_the_hosts_credentials(session_repo):
     out = _launch(session_repo, token="ghs_minted")
