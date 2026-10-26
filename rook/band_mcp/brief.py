@@ -122,8 +122,8 @@ def standing(actor: str, kind: str) -> list[str]:
         "Continuing a claim: check its handoff's freshness (STALE or SUPERSEDED: verify before acting). "
         'New work: rook_task(action="deck", data={"states": ["in_progress", "blocked"]}), narrowed '
         "by project, then claim it.",
-        "Before starting, search rook_knowledge on the job's words.",
-        "_task, _unread_chat, _hygiene and _tips notices ride later replies, each once: answer them.",
+        "Before starting, search rook_knowledge on the job's words. "
+        'Help on anything: rook_call(worker="rook", cap="help").',
     ]
     return lines
 

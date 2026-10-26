@@ -16,12 +16,11 @@ pitch: What Rook is, the loop every session follows, and the rules that always a
 
 ## The session loop
 
-1. `rook_whoami`. If `kind` is `shared`, your work is attributed to "static": tell the user and ask for an own token.
-2. The deck, narrowed: `rook_task(action="deck", data={"states": ["in_progress", "blocked"], "done_days": 1})`. Look for your claims and hygiene findings.
-3. Resuming? `rook_handoff_list`, then `rook_handoff_get` the thread you continue.
-4. `rook_knowledge(action="search", query=…)` on the job's words before starting.
-5. Unread chat: `rook_chat_rooms`; read only rooms with `unread > 0` and answer what mentions you.
-6. Claim the task, do the work, link evidence, set it done, or leave a handoff.
+1. Read `_brief` on your first reply: who you act as (if `kind` is `shared`, your work is attributed to "static": tell the user and ask for an own token), your claimed tasks with their latest handoff, unread chat, and a `receipt`. Pass `receipt=` on later calls; if `_brief` comes again, you lost it: read it again.
+2. No claim yet? The deck, narrowed: `rook_task(action="deck", data={"states": ["in_progress", "blocked"], "done_days": 1})`. Resuming someone else's thread: `rook_handoff_list`, then `rook_handoff_get`.
+3. `rook_knowledge(action="search", query=…)` on the job's words before starting.
+4. Unread chat the brief lists: `rook_chat_read` those rooms and answer what mentions you.
+5. Claim the task, do the work, link evidence, set it done, or leave a handoff.
 
 Notices ride later replies once each: `_task`, `_unread_chat`, `_hygiene`, `_tips`, `_help`. Answer them as they come.
 
