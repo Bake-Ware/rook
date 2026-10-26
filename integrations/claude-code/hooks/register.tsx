@@ -180,7 +180,7 @@ async function rookCall(
   cap: string,
   args: Record<string, unknown> = {},
 ): Promise<Raw> {
-  return parseReply(await rookTool($, 'rook_call', { cap, worker, args }))
+  return parseReply(await rookTool($, 'rook_call', { cap, worker, args, why: `Claude Code mod: ${cap}` }))
 }
 
 const historyCall = (

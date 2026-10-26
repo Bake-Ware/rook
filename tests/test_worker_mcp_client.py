@@ -12,6 +12,7 @@ from rook.worker import mcp_client
 
 class Endpoint(BaseHTTPRequestHandler):
     seen: list = []
+    last: dict = {}
     sse = True
 
     def log_message(self, *a):
@@ -36,7 +37,7 @@ class Endpoint(BaseHTTPRequestHandler):
         if body["method"] == "initialize":
             result = {"protocolVersion": mcp_client.PROTOCOL, "capabilities": {}}
         else:
-            args = body["params"]["arguments"]
+            args = Endpoint.last = body["params"]["arguments"]
             text = json.dumps({"ok": True, "from": args["worker"],
                                "result": {"answer": f"you asked {args['args']['question']}"}})
             result = {"content": [{"type": "text", "text": text}], "isError": False}
@@ -68,6 +69,7 @@ def test_rook_call_through_mcp(endpoint, sse):
     Endpoint.sse = sse
     reply = mcp_client.rook_call(endpoint, "good", "home.ask", {"question": "lunch?"})
     assert reply == {"ok": True, "from": "rook", "result": {"answer": "you asked lunch?"}}
+    assert Endpoint.last["why"] == "rook command on this machine: home.ask"
     # One short session: initialize, initialized, the call, then closed.
     assert Endpoint.seen == [("initialize", None), ("notifications/initialized", "s-1"),
                              ("tools/call", "s-1"), ("DELETE", "s-1")]

@@ -929,6 +929,7 @@ def build_server(client: "BandClient | MultiBandClient",
     # ``timeout`` arg, else that cap's declared default on that worker (learned
     # from caps.describe, fetched once per worker), plus a margin for transport.
     _DEFAULT_WAIT = 15.0
+    WHY_MAX = 300
     _WAIT_MARGIN = 5.0
     _MAX_WAIT = 3600.0
     _cap_timeouts: dict[str, dict[str, float]] = {}
@@ -1004,16 +1005,10 @@ def build_server(client: "BandClient | MultiBandClient",
         changed for this MCP session. Targeting mistakes (unknown worker,
         missing capability, no reply) come back as ``{"ok": false, "error"}``.
         """
-        # Validate why: required one-line string
-        if not why or not isinstance(why, str):
-            return _fail("why is required: pass a one-line reason for this call "
-                        "(e.g., why=\"check which asks were about notes\")")
-        why_stripped = why.strip()
-        if not why_stripped:
-            return _fail("why must not be empty")
-        if "\n" in why_stripped:
-            return _fail("why must be one line only")
-        why = why_stripped
+        why = " ".join(why.split())[:WHY_MAX] if isinstance(why, str) else ""
+        if not why:
+            return _fail('why is required: one plain line saying why you make this call '
+                         '(e.g. why="check which asks were about notes")')
 
         roster = client.workers
         spec = worker_id or worker
@@ -1901,7 +1896,8 @@ def build_server(client: "BandClient | MultiBandClient",
     if mcp._rook_hub is not None and mcp._rook_hub.attached:
         from ..hub.mcp_tools import register_cap_tools
         register_cap_tools(mcp, mcp._rook_hub,
-                           lambda cap, a: rook_call(cap=cap, args=a, worker=HUB_WORKER_NAME))
+                           lambda cap, a: rook_call(cap=cap, why=f"{cap} through its own MCP tool",
+                                                    args=a, worker=HUB_WORKER_NAME))
 
     mcp._rook_chat = chat  # the /tokens page edits avatars in this store
     mcp._rook_console = console  # _amain starts the pump against this store

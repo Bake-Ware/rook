@@ -359,6 +359,7 @@ class FrontBackground:
         try:
             reply = decode(await asyncio.wait_for(self.toolbox.mcp.call('rook_call', {
                 'worker': os.environ.get('VOICE_HOUSE_WORKER', 'rook'), 'cap': 'memory.list',
+                'why': 'Voice: load house memory for the conversation',
                 'args': {'kind': 'profile,fact', 'limit': 12}}), float(os.environ.get('VOICE_PREFETCH_TIMEOUT_S', '4'))))
             items = ((reply or {}).get('result') or {}).get('items') or []
         except Exception as error:

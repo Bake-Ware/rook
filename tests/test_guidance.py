@@ -74,18 +74,18 @@ async def test_defaults_reach_agents_at_each_placement(tmp_path):
         tools = {t["name"]: t["description"] for t in (await rpc("tools/list", {}))["tools"]}
         assert "worker= (name or id) is required" in tools["rook_call"] and "hint=true" in tools["rook_call"]
         assert "Tip:" not in tools["rook_call"]  # default tool tips are empty; essentials are in the description
-        first = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-DESKTOP"}}))
+        first = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"why": "test", "cap": "shell.exec", "worker": "WIN11-DESKTOP"}}))
         assert first["_tips"] == [guidance_mod.DEFAULTS["cap:shell.exec"]]  # cap tip only, no host tips
-        again = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-DESKTOP"}}))
+        again = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"why": "test", "cap": "shell.exec", "worker": "WIN11-DESKTOP"}}))
         assert "_tips" not in again and "_hint" not in again  # once per session, no repeat line
-        forced = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-DESKTOP", "hint": True}}))
+        forced = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"why": "test", "cap": "shell.exec", "worker": "WIN11-DESKTOP", "hint": True}}))
         assert forced["_tips"] == [guidance_mod.DEFAULTS["cap:shell.exec"]] and "_hint" not in forced
-        plain = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "info.host", "worker": "gpu-box"}}))
+        plain = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"why": "test", "cap": "info.host", "worker": "gpu-box"}}))
         assert "_tips" not in plain and "_hint" not in plain  # caps without a tip get neither
-        proc = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "proc.start", "worker": "gpu-box"}}))
+        proc = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"why": "test", "cap": "proc.start", "worker": "gpu-box"}}))
         assert proc["_tips"] == [guidance_mod.DEFAULTS["cap:proc."]]
         _, rpc2 = await env.connect()
-        fresh = reply(await rpc2("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "WIN11-DESKTOP"}}))
+        fresh = reply(await rpc2("tools/call", {"name": "rook_call", "arguments": {"why": "test", "cap": "shell.exec", "worker": "WIN11-DESKTOP"}}))
         assert len(fresh["_tips"]) == 1  # new session sees it again
 
 
@@ -113,7 +113,7 @@ async def test_operator_edits_apply_live_with_history_and_reset(tmp_path):
         assert init["instructions"] == "Be brief.\n\n" + guidance_mod.DEFAULTS["contact"]
         tools = {t["name"]: t["description"] for t in (await rpc("tools/list", {}))["tools"]}
         assert "Tip:" not in tools["rook_caps"]  # empty text disables the tip
-        res = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "info.host", "worker": "gpu-box"}}))
+        res = reply(await rpc("tools/call", {"name": "rook_call", "arguments": {"why": "test", "cap": "info.host", "worker": "gpu-box"}}))
         assert res["_tips"] == ["Cheap; safe to call first."]
         hist = (await env.http.get(api + "?history=server", headers=admin)).json()["history"]
         assert hist[0] == {"text": "Be brief.", "ts": hist[0]["ts"], "actor": "human:operator"}
@@ -135,7 +135,7 @@ async def test_broken_store_serves_defaults_and_tip_failure_never_breaks_calls(t
             raise RuntimeError("tips broke")
         monkeypatch.setattr(env.guidance, "tips", boom)
         _, rpc = await env.connect()
-        res = await rpc("tools/call", {"name": "rook_call", "arguments": {"cap": "shell.exec", "worker": "gpu-box"}})
+        res = await rpc("tools/call", {"name": "rook_call", "arguments": {"why": "test", "cap": "shell.exec", "worker": "gpu-box"}})
         assert not res.get("isError") and "_tips" not in reply(res)
 
 

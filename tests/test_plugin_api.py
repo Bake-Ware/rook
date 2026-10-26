@@ -620,11 +620,11 @@ async def test_mcp_reaches_hub_caps(tmp_path, monkeypatch):
     # The built-in hub plugin adds no tool: tools/list is unchanged.
     assert not [n for n in await _tools(mcp) if n.startswith("rook_hub")]
 
-    via_call = _text(await mcp.call_tool("rook_call", {"cap": "hub.info", "worker": "rook"}))
+    via_call = _text(await mcp.call_tool("rook_call", {"why": "test", "cap": "hub.info", "worker": "rook"}))
     assert via_call["ok"] and via_call["result"]["name"] == "rook"
     assert via_call["result"]["roles"] == ["is_hub"]
 
-    plugins = _text(await mcp.call_tool("rook_call", {"cap": "hub.plugins", "worker": "rook",
+    plugins = _text(await mcp.call_tool("rook_call", {"why": "test", "cap": "hub.plugins", "worker": "rook",
                                                       "args": {"fields": ["name"]}}))
     assert plugins["result"] == [{"name": "access"}, {"name": "approvals"}, {"name": "attention"}, {"name": "ccmod"}, {"name": "changes"}, {"name": "decide"}, {"name": "help"}, {"name": "home"}, {"name": "hub-info"},
                                  {"name": "jobs"}, {"name": "llm"}, {"name": "manual"},
@@ -663,7 +663,7 @@ async def test_mcp_tool_generated_from_a_hub_cap(tmp_path, monkeypatch):
                                                            "fields": ["n"]}))
     assert got["result"] == [{"n": 0}]
     # Same reply as rook_call on worker "rook".
-    same = _text(await mcp.call_tool("rook_call", {"cap": "notes.search", "worker": "rook",
+    same = _text(await mcp.call_tool("rook_call", {"why": "test", "cap": "notes.search", "worker": "rook",
                                                    "args": {"q": "y", "limit": 1, "fields": ["n"]}}))
     assert same["result"] == got["result"]
 

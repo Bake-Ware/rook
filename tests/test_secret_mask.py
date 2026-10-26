@@ -401,21 +401,21 @@ async def test_forward_path_still_works_and_everything_else_is_masked(tmp_path, 
         assert (await env.tool('rook_secret', action='set', name='tok', value=TOKEN))['ok']
 
         # Forward: the placeholder resolves for the worker...
-        out = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'argv': ['login', '{{secret:pw}}']})
+        out = await env.tool('rook_call', why='test', cap='shell.exec', worker='gpu-box', args={'argv': ['login', '{{secret:pw}}']})
         assert env.band.sent[-1] == ('shell.exec', {'argv': ['login', PW]})
         # ...and the reply comes back with stubs, including a base64 leak of another secret.
         assert out['result']['file'] == '{{secret:tok|b64}}' and '{{secret:pw|json}}' in out['result']['stdout']
         assert PW not in json.dumps(out) and TOKEN not in json.dumps(out)
 
         # A stub the agent got back is usable as-is and re-encodes: round trip.
-        await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'cmd': out['result']['file']})
+        await env.tool('rook_call', why='test', cap='shell.exec', worker='gpu-box', args={'cmd': out['result']['file']})
         assert env.band.sent[-1] == ('shell.exec', {'cmd': base64.b64encode(TOKEN.encode()).decode()})
-        await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'cmd': '{{secret:tok}}'})
+        await env.tool('rook_call', why='test', cap='shell.exec', worker='gpu-box', args={'cmd': '{{secret:tok}}'})
         assert env.band.sent[-1] == ('shell.exec', {'cmd': TOKEN})
 
         # An agent that pasted a raw value: the call is not broken (the worker
         # gets what was sent), the reply and the journal are masked.
-        raw = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'cmd': f'echo {TOKEN}'})
+        raw = await env.tool('rook_call', why='test', cap='shell.exec', worker='gpu-box', args={'cmd': f'echo {TOKEN}'})
         assert env.band.sent[-1] == ('shell.exec', {'cmd': f'echo {TOKEN}'})
         assert TOKEN not in json.dumps(raw)
         jr = await env.tool('rook_journal', call_id=raw['id'])
@@ -466,11 +466,11 @@ async def test_sensitive_hub_cap_replies_are_not_masked(tmp_path, monkeypatch):
         tags = {'settings.fetch': ('sensitive',)}
         env.mcp._rook_hub = SimpleNamespace(worker_id='w1', host=SimpleNamespace(registry=SimpleNamespace(
             meta=lambda cap: SimpleNamespace(tags=tags.get(cap, ())))))
-        got = await env.tool('rook_call', cap='settings.fetch', worker='gpu-box', args={'namespace': 'svc'})
+        got = await env.tool('rook_call', why='test', cap='settings.fetch', worker='gpu-box', args={'namespace': 'svc'})
         assert got['result']['password'] == PW
         assert got['result']['note'] == 'b64 ' + base64.b64encode(TOKEN.encode()).decode()
         # Everything else is still masked, in the same session.
-        other = await env.tool('rook_call', cap='shell.exec', worker='gpu-box', args={'cmd': 'x'})
+        other = await env.tool('rook_call', why='test', cap='shell.exec', worker='gpu-box', args={'cmd': 'x'})
         assert other['result']['file'] == '{{secret:tok|b64}}'
         row = env.mcp._rook_journal.query(cap_prefix='settings.fetch', include_reply=True)[0]
         assert row['reply']['result'] == '[sensitive: not journaled]'

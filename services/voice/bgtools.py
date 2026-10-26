@@ -129,7 +129,7 @@ def duration_words(seconds):
 
 async def device_read(worker, cap, args):
     """rook_call of one read capability on one device; returns its result object."""
-    payload = {'worker': worker, 'cap': cap}
+    payload = {'worker': worker, 'cap': cap, 'why': f'Voice: read {cap} for the owner'}
     if args:
         payload['args'] = args
     reply = decode(await RookMCP(timeout=30).call('rook_call', payload))
@@ -589,7 +589,8 @@ class Toolbox:
         cap = MUSIC_CAPS.get(args.get('action'))
         if cap is None:
             raise ValueError('Unknown music action')
-        reply = decode(await self.mcp.call('rook_call', {'worker': worker, 'cap': cap}))
+        reply = decode(await self.mcp.call('rook_call', {'worker': worker, 'cap': cap,
+                                                           'why': f"Voice: music {args['action']}"}))
         if isinstance(reply, dict) and reply.get('ok') is False:
             raise ValueError(str(reply.get('error'))[:200])
         result = reply.get('result') if isinstance(reply, dict) else reply
@@ -610,6 +611,7 @@ class Toolbox:
                    'you did or found, and whether anything is still in progress.')
         reply = decode(await asyncio.wait_for(mcp.call('rook_call', {
             'worker': os.environ.get('VOICE_HOUSE_WORKER', 'rook'), 'cap': 'home.ask',
+            'why': 'Voice: pass the owner\'s request to the house agent',
             'args': {'question': request, 'context': context}, 'timeout': timeout}), timeout + 10))
         if not isinstance(reply, dict) or reply.get('ok') is False:
             raise ValueError(str((reply or {}).get('error') if isinstance(reply, dict) else reply)[:300]

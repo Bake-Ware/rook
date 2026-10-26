@@ -96,8 +96,8 @@ async def hub(tmp_path, monkeypatch, knowledge=False):
 async def test_empty_shell_exec_reply_is_compact_and_single_copy(tmp_path, monkeypatch):
     async with hub(tmp_path, monkeypatch) as env:
         _, tool = await env.connect()
-        await tool("rook_call", cap="shell.exec", worker="worker-a")  # first call carries the cap tip
-        text, res = await tool("rook_call", cap="shell.exec", worker="worker-a")
+        await tool("rook_call", why="test", cap="shell.exec", worker="worker-a")  # first call carries the cap tip
+        text, res = await tool("rook_call", why="test", cap="shell.exec", worker="worker-a")
         assert "structuredContent" not in res  # no second, escaped copy of the payload
         assert len(text) <= 120, text
         assert json.loads(text) == {"ok": True, "id": HEX, "from": "worker-a", "result": {"code": 0}}
@@ -120,11 +120,11 @@ async def test_text_mode_returns_stdout_only(tmp_path, monkeypatch):
     async with hub(tmp_path, monkeypatch) as env:
         _, tool = await env.connect()
         env.band.stdout = "hello\n"
-        await tool("rook_call", cap="shell.exec", worker="worker-a")
-        text, _ = await tool("rook_call", cap="shell.exec", worker="worker-a", text=True)
+        await tool("rook_call", why="test", cap="shell.exec", worker="worker-a")
+        text, _ = await tool("rook_call", why="test", cap="shell.exec", worker="worker-a", text=True)
         assert text == "hello"
         env.band.stdout = ""
-        text, _ = await tool("rook_call", cap="shell.exec", worker="worker-a", text=True)
+        text, _ = await tool("rook_call", why="test", cap="shell.exec", worker="worker-a", text=True)
         assert text == "[exit 0, no output]"
     fail = {"ok": True, "result": {"ok": False, "code": 1, "stdout": "partial\n", "stderr": "nope\n"}}
     assert envelope.call_text(fail, "shell.exec", {}) == "partial\n[stderr]\nnope\n[exit 1]"
@@ -143,9 +143,9 @@ async def test_notices_only_when_new_for_the_session(tmp_path, monkeypatch):
         task = await k.dispatch("create", kind="task", data={"title": "T", "parent": p["id"]}, request_id="t", actor=me)
         text, _ = await tool("rook_task", action="claim", id=task["id"], request_id="c1")
         assert json.loads(text)["ok"]
-        first = json.loads((await tool("rook_call", cap="info.host", worker="worker-a"))[0])
+        first = json.loads((await tool("rook_call", why="test", cap="info.host", worker="worker-a"))[0])
         assert first["_task"] == task["id"]
-        again = json.loads((await tool("rook_call", cap="info.host", worker="worker-a"))[0])
+        again = json.loads((await tool("rook_call", why="test", cap="info.host", worker="worker-a"))[0])
         assert "_task" not in again
 
         # Unread chat: shown when it appears, not repeated, shown again when it changes.
@@ -153,16 +153,16 @@ async def test_notices_only_when_new_for_the_session(tmp_path, monkeypatch):
         identity = json.loads((await tool("rook_whoami"))[0])["identity"]
         room = chat.start("ops", "agent:other", [identity])["room"]
         chat.send(room, "agent:other", "hi", [], False)
-        r1 = json.loads((await tool("rook_call", cap="info.host", worker="worker-a"))[0])
+        r1 = json.loads((await tool("rook_call", why="test", cap="info.host", worker="worker-a"))[0])
         assert r1["_unread_chat"][0]["unread"] == 1
-        r2 = json.loads((await tool("rook_call", cap="info.host", worker="worker-a"))[0])
+        r2 = json.loads((await tool("rook_call", why="test", cap="info.host", worker="worker-a"))[0])
         assert "_unread_chat" not in r2
         chat.send(room, "agent:other", "again", [], False)
-        r3 = json.loads((await tool("rook_call", cap="info.host", worker="worker-a"))[0])
+        r3 = json.loads((await tool("rook_call", why="test", cap="info.host", worker="worker-a"))[0])
         assert r3["_unread_chat"][0]["unread"] == 2
         # A new MCP session is told again, the unread chat inside its session brief.
         _, tool2 = await env.connect()
-        fresh = json.loads((await tool2("rook_call", cap="info.host", worker="worker-a"))[0])
+        fresh = json.loads((await tool2("rook_call", why="test", cap="info.host", worker="worker-a"))[0])
         assert fresh["_brief"]["unread_chat"] and fresh["_task"] == task["id"]
         assert "_unread_chat" not in fresh
 
@@ -172,7 +172,7 @@ async def test_legacy_envelope_restores_the_old_shape(tmp_path, monkeypatch):
     monkeypatch.setenv("ROOK_MCP_ENVELOPE", "legacy")
     async with hub(tmp_path, monkeypatch) as env:
         _, tool = await env.connect()
-        text, _ = await tool("rook_call", cap="shell.exec", worker="worker-a")
+        text, _ = await tool("rook_call", why="test", cap="shell.exec", worker="worker-a")
         reply = json.loads(text)
         assert text.startswith("{\n  ")
         assert reply["_journal_id"] == reply["id"] == HEX and reply["from"] == "a" * 32
@@ -189,7 +189,7 @@ async def test_legacy_envelope_restores_the_old_shape(tmp_path, monkeypatch):
 async def test_caps_describe_prefix_filters_on_the_hub_for_old_workers(tmp_path, monkeypatch):
     async with hub(tmp_path, monkeypatch) as env:
         _, tool = await env.connect()
-        text, _ = await tool("rook_call", cap="caps.describe", worker="worker-a", args={"prefix": "shell."})
+        text, _ = await tool("rook_call", why="test", cap="caps.describe", worker="worker-a", args={"prefix": "shell."})
         reply = json.loads(text)
         assert reply["ok"], reply
         assert reply["result"] == {"shell.exec": "(cmd: str = None, timeout: float = 30.0) — Run a command."}
@@ -264,7 +264,7 @@ async def test_tools_list_fits_the_budget(tmp_path, monkeypatch):
         tools = (await rpc("tools/list", {}))["tools"]
         assert len(tools) >= 29
         size = len(json.dumps({"tools": tools}, separators=(",", ":"), ensure_ascii=False))
-        assert size <= 15720, size  # +240 receipt= on the 8 most used tools (session brief); +40 rook_huddle yes/no asks need Why: and Undo:; +40 rook_call why= (plain approval asks); +60 rook_huddle conference table (table, pin, vote); +340 rook_trust (trust map); +550 rook_approvals (relayed approvals); +80 rook_workers device workers (device, delegate); +20 rook_task speakable names; +60 rook_task deck paging (project_fields, project, offset, limit); +200 rook_huddle chaired actions, rook_chat_start retired; +120 rook_knowledge's pointer to the user manual; +560 rook_huddle, +30 rook_task dates; +550 rook_jobs; +300 task note/batch/deck options and handoff close; +300 rook_install_claude_code; +100 console_write literal/secrets; +50 console_open task_id, link kind session
+        assert size <= 15750, size  # +30 rook_call why= required; +240 receipt= on the 8 most used tools (session brief); +40 rook_huddle yes/no asks need Why: and Undo:; +40 rook_call why= (plain approval asks); +60 rook_huddle conference table (table, pin, vote); +340 rook_trust (trust map); +550 rook_approvals (relayed approvals); +80 rook_workers device workers (device, delegate); +20 rook_task speakable names; +60 rook_task deck paging (project_fields, project, offset, limit); +200 rook_huddle chaired actions, rook_chat_start retired; +120 rook_knowledge's pointer to the user manual; +560 rook_huddle, +30 rook_task dates; +550 rook_jobs; +300 task note/batch/deck options and handoff close; +300 rook_install_claude_code; +100 console_write literal/secrets; +50 console_open task_id, link kind session
         by = {t["name"]: t for t in tools}
         assert all("outputSchema" not in t for t in tools)
         # Schema slimming keeps a property literally named "title" and required args.
@@ -280,7 +280,7 @@ async def test_slimmed_schema_still_validates_like_before(tmp_path, monkeypatch)
     async with hub(tmp_path, monkeypatch) as env:
         _, tool = await env.connect()
         # null for an optional arg and JSON-in-a-string still go through the real arg model
-        text, _ = await tool("rook_call", cap="info.host", worker="worker-a", args=None, timeout=None)
+        text, _ = await tool("rook_call", why="test", cap="info.host", worker="worker-a", args=None, timeout=None)
         assert json.loads(text)["ok"]
         text, _ = await tool("rook_chat_start", title="t", invite='["agent:x"]')
         assert json.loads(text)["ok"]

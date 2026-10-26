@@ -29,8 +29,8 @@ TOOLS = [
     function('rook_devices', 'Discover the exact live worker names and capabilities.', {}),
     function('rook_describe', 'Get the exact arguments of a capability before calling it.',
              {'worker': {'type': 'string'}, 'cap': {'type': 'string'}}, ('worker', 'cap')),
-    function('rook_call', 'Execute one capability on one live worker. Reads, writes and shell commands are supported. Only do work requested by the user. Never replay an uncertain change.',
-             {'worker': {'type': 'string'}, 'cap': {'type': 'string'}, 'args': {'type': 'object'}}, ('worker', 'cap')),
+    function('rook_call', 'Execute one capability on one live worker. Reads, writes and shell commands are supported. Only do work requested by the user. Never replay an uncertain change. why: one short line saying why, for the owner\'s record.',
+             {'worker': {'type': 'string'}, 'cap': {'type': 'string'}, 'args': {'type': 'object'}, 'why': {'type': 'string'}}, ('worker', 'cap')),
     function('rook_mcp_describe', 'Discover Rook hub tools, or get the input schema of one tool. Use these for knowledge, tasks, console sessions and other hub functions.',
              {'tool': {'type': 'string'}}),
     function('rook_mcp', 'Call a Rook hub tool after inspecting its schema. Do not invent arguments. Use secret placeholders instead of exposing credentials.',
@@ -117,7 +117,8 @@ class ThinkingAgent:
             old = cache.schemas.get(worker)
             caps = tuple(sorted(row.get('caps', [])))
             if old is None or old[0] != caps or time.monotonic() - old[1] >= 3600:
-                reply = decode(await self.mcp.call('rook_call', {'worker': worker, 'cap': 'caps.describe'}))
+                reply = decode(await self.mcp.call('rook_call', {'worker': worker, 'cap': 'caps.describe',
+                                                            'why': f'Voice: look up the arguments of {cap}'}))
                 if not isinstance(reply, dict) or not reply.get('ok') or not isinstance(reply.get('result'), dict):
                     raise ValueError('Cannot get capability schemas: ' + str(reply)[:1000])
                 old = cache.schemas[worker] = (caps, time.monotonic(), reply['result'])
@@ -170,7 +171,8 @@ class ThinkingAgent:
             missing = [k for k, p in params.items() if p.get('required') and k not in given]
             if missing:
                 raise ValueError('Missing capability arguments: ' + ', '.join(missing))
-            rpc, payload = 'rook_call', {'worker': worker, 'cap': cap, 'args': given}
+            why = ' '.join(str(args.get('why') or '').split())[:200] or f'Voice: {cap} on {worker} for the owner'
+            rpc, payload = 'rook_call', {'worker': worker, 'cap': cap, 'args': given, 'why': why}
             # The MCP transport waits for the worker's requested timeout.
             if isinstance(given.get('timeout'), (int, float)) and not isinstance(given['timeout'], bool):
                 payload['timeout'] = min(max(given['timeout'] + 5, 15), 180)
@@ -180,7 +182,8 @@ class ThinkingAgent:
             rpc, payload = args['tool'], args['args']
             if rpc == 'rook_call':
                 worker = payload.get('worker') or payload.get('worker_id')
-                return await self.dispatch('rook_call', {'worker': worker, 'cap': payload.get('cap'), 'args': payload.get('args') or {}}, trace, writes, on_event)
+                return await self.dispatch('rook_call', {'worker': worker, 'cap': payload.get('cap'), 'args': payload.get('args') or {},
+                                                          'why': payload.get('why')}, trace, writes, on_event)
             if rpc in ('rook_chat_start', 'rook_chat_wake'):
                 raise ValueError('Agent handoffs are disabled; use your own tools.')
             catalog = await self.hub_catalog()

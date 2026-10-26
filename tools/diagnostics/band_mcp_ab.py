@@ -67,7 +67,7 @@ async def run(output):
                     order=['old','fixed'];rng.shuffle(order)
                     for variant in order:
                         t=time.perf_counter();ok=False
-                        r=await clients[variant].post('/mcp',json={'jsonrpc':'2.0','id':pair+2,'method':'tools/call','params':{'name':'rook_call','arguments':{'cap':'shell.exec','worker':PROBE_WORKER,'args':{'cmd':'printf controlled-probe'},'timeout':10}}})
+                        r=await clients[variant].post('/mcp',json={'jsonrpc':'2.0','id':pair+2,'method':'tools/call','params':{'name':'rook_call','arguments':{'cap':'shell.exec','why':'probe','worker':PROBE_WORKER,'args':{'cmd':'printf controlled-probe'},'timeout':10}}})
                         ms=(time.perf_counter()-t)*1000
                         if r.status_code==200:
                             body=json.loads([s[6:] for s in r.text.splitlines() if s.startswith('data: ')][-1])['result']
