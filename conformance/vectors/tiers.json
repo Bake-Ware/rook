@@ -621,6 +621,9 @@
   "handoff.write": {
    "tier": "write"
   },
+  "help": {
+   "tier": "read"
+  },
   "hermes.chat": {
    "tier": "exec"
   },

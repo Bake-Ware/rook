@@ -101,6 +101,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `decide.stop` | run_id='' | write | Kill switch: stop one drive (`run_id`) or every live drive. |
 | `discord.send` | text, chat? | write | Post a message to the configured Discord channel. |
 | `discord.status` | — | read | Discord integration status: connected, channel and token configured (never the token), bridged rooms, counter… |
+| `help` | topic='', detail=false | read | Rook help for agents: no topic gives the core model and the topic menu; `topic` (a name, a tool, a cap, a hub… |
 | `home.ask` | question, context='', source='' | write | Ask the hub's home agent a question or give it a request; returns its answer. |
 | `home.digest` | limit=20, since=0.0 | read | What the house agent decided for the person without asking, newest first, each with the entry it cited (spoke… |
 | `home.explain` | ask, more=false | read | One of the house agent's asks explained: 2-3 plain sentences, and more detail with more=true. |
@@ -231,6 +232,9 @@ One-pass decision model (worker `rook`). `decide.run(state, questions)` answers 
 
 ### discord
 When the Discord integration is on: `discord.send` (text) posts to the configured channel; `discord.status` shows whether it is connected. Prefer `notify.send` to reach every configured channel.
+
+### help
+`rook_call(worker="rook", cap="help")` returns the core model and the topic menu; `args={"topic": …}` one topic (a name, a tool, a cap, a hub plugin or a few words); `"detail": true` adds its reference pages.
 
 ### home agent
 The hub's own LLM (when the operator has set one up). Ask it with `rook_call(worker="rook", cap="home.ask", args={"question": "..."})` (or `rook_home_ask`); `home.status` says whether it is on. People reach it in chat as `@home` (or its configured name).

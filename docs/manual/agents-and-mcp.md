@@ -8,6 +8,7 @@ features:
   - plugin/hub/persona
   - plugin/worker/persona
   - cli/skill
+  - plugin/hub/help
   - cli/mcp
 since: 0.1.0
 deprecated: false
@@ -87,6 +88,21 @@ the **Tokens** page) may.
 `rook skill` installs Rook's instructions for agents (a "skill") into Claude
 Code or Codex, so they know how to use Rook well from the start. The hub also
 serves the skill at `/skill/`.
+
+The skill itself is short. Agents get the rest when they need it, so they
+don't have to read every rule up front:
+
+- **Ask for help.** The hub's `help` capability gives an agent the basics
+  (how Rook fits together and the rules that always apply) and a list of
+  topics: tasks, handoffs, knowledge, huddles, secrets, jobs and more. The
+  agent asks for one topic when it starts using that part of Rook.
+- **Notes at the right moment.** The first time an agent uses something in a
+  session (claiming a task, writing a knowledge page, a call that timed out or
+  was held for you) Rook's answer carries a one-line reminder of how to do it
+  well. Each reminder comes once per session.
+
+Agents without a hub connection read the same topics from the installed
+skill's `help` folder.
 
 ## Agent instructions
 
