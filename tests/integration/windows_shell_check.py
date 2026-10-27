@@ -94,7 +94,8 @@ async def shell_exec_checks(tmp: str) -> None:
 
     if shells._git_sh("sh"):
         r = await run(cmd="uname -s; echo $((6*7))", shell="sh")
-        check("shell=sh runs Git for Windows' sh", r["code"] == 0 and "42" in r["stdout"], repr(r)[:200])
+        check("shell=sh runs Git for Windows' sh", r["code"] == 0 and "42" in r["stdout"]
+              and r.get("shell") == "sh", repr(r)[:200])
     else:
         skip("shell=sh", "Git for Windows not installed")
 
@@ -121,6 +122,18 @@ async def proc_checks(tmp: str) -> None:
             await asyncio.sleep(0.1)
         check("proc.start cmd output and exit code", "proc-42" in out and got["exit_code"] == 4,
               repr(got)[:200])
+
+        if shells._git_sh("sh"):
+            r = await p._start(cmd="echo sh-$((6*7))", shell="sh", cwd=tmp)
+            for _ in range(100):
+                got = await p._read(r["handle"], 0, 8192)
+                if got["eof"]:
+                    break
+                await asyncio.sleep(0.1)
+            check("proc.start shell=sh runs Git's sh, named in the reply",
+                  r.get("shell") == "sh" and "sh-42" in got["chunk"], repr(got)[:200])
+        else:
+            skip("proc.start shell=sh", "Git for Windows not installed")
 
         ps = shells.powershell()
         r = await p._start(argv=[ps, "-NoLogo", "-NoProfile"], cwd=tmp, pty=True, label="repl")
