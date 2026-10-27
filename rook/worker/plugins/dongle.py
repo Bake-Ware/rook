@@ -17,6 +17,20 @@ from ...core.pluginkit import ArgError, fail, require_str
 from ..plugin import Plugin, capability, setting
 
 _LOCK = threading.Lock()
+PRODUCT = "Rook RP2040 Zero"
+
+
+def _usb_product(device: str) -> str | None:
+    """The USB product name the OS reports for a serial device, if it knows."""
+    try:
+        from serial.tools import list_ports
+    except ImportError:
+        return None
+    real = os.path.realpath(device)
+    for port in list_ports.comports():
+        if port.device in (device, real):
+            return port.product
+    return None
 
 
 def _exchange(command: dict, device: str | None = None) -> dict:
@@ -25,6 +39,12 @@ def _exchange(command: dict, device: str | None = None) -> dict:
     device = device or os.environ.get("ROOK_DONGLE_PORT", "")
     if not device:
         fail("dongle.port (ROOK_DONGLE_PORT) is not set")
+    # Even the status probe is bytes on the wire, and some RP2040 serial ports
+    # (HID bridges) type what they receive on another machine: refuse a port
+    # whose USB product is known and isn't ours before writing anything.
+    product = _usb_product(device)
+    if product and product != PRODUCT:
+        raise RuntimeError(f"{device} is a {product!r}, not a {PRODUCT}; nothing was sent")
     with _LOCK:
         with serial.Serial(device, 115200,
                            timeout=0.2, write_timeout=2, exclusive=True) as port:

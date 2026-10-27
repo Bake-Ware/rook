@@ -91,3 +91,17 @@ def test_port_comes_from_settings_not_only_env(monkeypatch):
     assert p.available()
     asyncio.run(p.status())
     assert seen == ["/dev/ttyACM7"]
+
+
+def test_refuse_a_known_other_usb_product_before_writing(monkeypatch):
+    """A twin-Pico HID bridge shares the RP2040 VID:PID; even `status` would be typed."""
+    port = setup_port(monkeypatch)
+    listed = [SimpleNamespace(device="/test/rook", product="HID Bridge")]
+    tools = SimpleNamespace(list_ports=SimpleNamespace(comports=lambda: listed))
+    monkeypatch.setitem(sys.modules, "serial.tools", tools)
+    monkeypatch.setitem(sys.modules, "serial.tools.list_ports", tools.list_ports)
+    with pytest.raises(CapError, match="nothing was sent"):
+        asyncio.run(dongle.DonglePlugin().status())
+    assert port.commands == []
+    listed[0].product = "Rook RP2040 Zero"
+    assert asyncio.run(dongle.DonglePlugin().status())["device"] == "rook-rp2040-zero"

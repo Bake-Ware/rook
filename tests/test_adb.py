@@ -87,7 +87,7 @@ def _plugin(fake, spec="playground-tablet=R52N30ABCDE"):
 
 @pytest.fixture
 def fake(tmp_path):
-    return Fake(tmp_path, {"R52N30ABCDE": "device", "BAKEPHONE01": "device"})
+    return Fake(tmp_path, {"R52N30ABCDE": "device", "OTHERPHONE01": "device"})
 
 
 async def _started(p):
@@ -178,7 +178,7 @@ async def test_poll_heartbeat_and_only_listed_serials(fake):
         assert [i["name"] for i in listed["items"]] == ["playground-tablet"]
         scan = await p._scan()
         assert {i["serial"]: i["configured_as"] for i in scan["items"]} == {
-            "BAKEPHONE01": None, "R52N30ABCDE": "playground-tablet"}
+            "OTHERPHONE01": None, "R52N30ABCDE": "playground-tablet"}
         await dev.shell_exec(cmd="true")
         # Every device call names the listed serial; the other phone is never addressed.
         for call in fake.calls():
@@ -216,7 +216,7 @@ async def test_shell_exec_timeout_and_output_cap(fake, monkeypatch):
     assert r["ok"] is False and r["error"] == "timeout"
     monkeypatch.setattr(adb, "OUTPUT_CAP", 4)
     r = await dev.shell_exec(argv=["cat"], stdin="123456789" * 100000)
-    assert r["stdout"] == "1234" and r["truncated"] and r["ok"]
+    assert r["stdout"] == "1234" and r["truncated"] and not r["ok"] and r["code"] is None
 
 
 @pytest.mark.asyncio
