@@ -32,6 +32,7 @@ This module is stdlib-only: it ships inside the worker bundle.
 from __future__ import annotations
 
 import asyncio
+import difflib
 import inspect
 import logging
 from typing import Any, Callable
@@ -181,6 +182,42 @@ class CapabilityRegistry:
                 entry.update(meta.describe())
             out[name] = entry
         return out
+
+    def arg_hint(self, dotpath: str, kwargs: dict) -> str:
+        """For a call whose ``kwargs`` do not fit the handler: `` (cap takes:
+        a, b?, ...; did you mean 'b' for 'x'?)``. Empty when they fit (the
+        TypeError came from inside the cap) or the signature is unknown.
+        Callers guess argument names; this turns a guess into one retry."""
+        fn = self._caps.get(dotpath)
+        if fn is None:
+            return ""
+        try:
+            sig = inspect.signature(fn)
+        except (TypeError, ValueError):
+            return ""
+        params = [p for p in sig.parameters.values()
+                  if p.name != "self" and p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)]
+        names = [p.name for p in params]
+        open_kw = any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
+        # call() strips limit/fields for caps that declare them.
+        given = {k: v for k, v in (kwargs or {}).items()
+                 if k in names or open_kw or k not in ("limit", "fields")}
+        try:
+            sig.bind(**given)
+            return ""
+        except TypeError:
+            pass
+        takes = ", ".join(p.name + ("" if p.default is inspect.Parameter.empty else "?")
+                          for p in params if p.kind != p.POSITIONAL_ONLY)
+        tips = []
+        if not open_kw:
+            for k in given:
+                if k not in names:
+                    close = difflib.get_close_matches(str(k), names, 1, 0.5)
+                    if close:
+                        tips.append(f"{close[0]!r} for {k!r}")
+        return (f" ({dotpath} takes: {takes or 'no arguments'}"
+                + ("; did you mean " + ", ".join(tips) + "?" if tips else "") + ")")
 
     def _handler_timeout_default(self, dotpath: str, fn: Handler) -> Any:
         """``_UNSET`` if the handler takes no ``timeout`` argument, else its

@@ -202,7 +202,8 @@ class GitHub:
                 "head": p["head"]["sha"], "head_ref": p["head"].get("ref") or "",
                 "base": p["base"].get("ref") or "", "base_sha": p["base"].get("sha") or "",
                 "author": (p.get("user") or {}).get("login") or "",
-                "url": p.get("html_url") or ""}
+                "url": p.get("html_url") or "",
+                "merge_sha": (p.get("merge_commit_sha") or "") if p.get("merged") else ""}
 
     def commit(self, repo: str, ref: str) -> dict:
         c = self.get(f"/repos/{repo}/commits/{urllib.parse.quote(ref, safe='')}")
@@ -402,11 +403,36 @@ class Table:
             # "A3": the third thing pinned in this huddle
             rows = self._q("SELECT * FROM huddle_artifacts WHERE room=? ORDER BY pinned "
                            "LIMIT 1 OFFSET ?", (room, int(n) - 1))
+        if not rows and room:
+            rows = self._pr_pin(room, ref)
         if not rows or (room and rows[0]["room"] != room):
             raise TableError(f"no artifact {ref!r} on this huddle's table (table lists them)")
         out = self._art(rows[0])
         out["name"] = self.store.name("artifact", out["id"])
         return out
+
+    def _pr_pin(self, room: str, ref: str) -> list[dict]:
+        """The newest live pin of a pull request named by its URL,
+        ``owner/repo#N`` or ``#N`` (agents pass the PR they asked the chair to
+        pin, not the A<k> it got). Empty when none or ambiguous."""
+        m = PR_URL.search(ref)
+        repo, number = (m.group(1), m.group(2)) if m else (None, None)
+        if not m:
+            m = re.fullmatch(r"(?:([\w.-]+/[\w.-]+))?#(\d+)", ref)
+            if not m:
+                return []
+            repo, number = m.group(1), m.group(2)
+        found = []
+        for r in self._q("SELECT * FROM huddle_artifacts WHERE room=? AND kind='pr' AND "
+                         "state='pinned' ORDER BY pinned DESC", (room,)):
+            got = json.loads(r.get("ref") or "{}")
+            if int(got.get("number") or 0) != int(number):
+                continue
+            if repo and str(got.get("repo") or "").lower() != repo.lower():
+                continue
+            found.append(r)
+        repos = {json.loads(r.get("ref") or "{}").get("repo", "").lower() for r in found}
+        return found[:1] if len(repos) == 1 else []
 
     def _content(self, aid: str) -> str:
         rows = self._q("SELECT content FROM huddle_artifacts WHERE id=?", (aid,))
@@ -522,6 +548,7 @@ class Table:
         note = _line(data.get("note"), 500)
         ref: dict = {}
         content = None
+        ci = ""
         try:
             if kind == "pr":
                 repo, number = data.get("repo"), data.get("number")
@@ -537,6 +564,7 @@ class Table:
                        "base_sha": p["base_sha"], "head_ref": p["head_ref"],
                        "author": p["author"], "url": p["url"]}
                 title = title or f"{repo}#{p['number']}: {p['title']}"
+                ci = await self._ci_line(repo, version)
             elif kind == "commit":
                 repo = _norm_repo(data.get("repo"))
                 c = await self._gh(self.github.commit, repo, str(data.get("sha") or "").strip()
@@ -597,7 +625,7 @@ class Table:
             if old["version"] == version and (old["ref"] or {}).get("base") == ref.get("base"):
                 return {"artifact": old["id"], "name": old["name"], "n": old["n"], "kind": kind,
                         "title": old["title"], "version": version, "ref": old["ref"],
-                        "already": True}
+                        "already": True, **({"ci": ci} if ci else {})}
         aid = "a_" + uuid.uuid4().hex[:10]
         now = _now()
         self._x("INSERT INTO huddle_artifacts(id, room, kind, title, ref, version, pinned_by, "
@@ -614,11 +642,33 @@ class Table:
         n = len(self._q("SELECT id FROM huddle_artifacts WHERE room=?", (room,)))
         self._post(room, f"Pinned A{n} [{kind}] {title} @ "
                          f"{short(version) if kind in ('pr', 'commit', 'file') else version[:12]}"
-                   + (f" ({note})" if note else ""), quiet=True)
+                   + (f" ({note})" if note else "") + (f"; {ci}" if ci else ""), quiet=True)
         self._journal("huddle.pin", {"room": room, "kind": kind, "ref": ref},
                       {"ok": True, "result": {"artifact": aid, "version": version}}, room)
         return {"artifact": aid, "name": name, "n": n, "kind": kind, "title": title,
-                "version": version, "ref": ref}
+                "version": version, "ref": ref, **({"ci": ci} if ci else {})}
+
+    async def _ci_line(self, repo: str, sha: str) -> str:
+        """CI at a pinned head, in a few words, so whoever pins or calls the
+        vote sees red or still-running checks before the gates do. Never
+        fails the pin."""
+        try:
+            c = await self._gh(self.github.checks, repo, sha)
+        except Exception as e:  # noqa: BLE001 - informational only
+            return f"CI not read ({_line(e, 80)})"
+        runs, statuses = c.get("runs") or [], c.get("statuses") or []
+        bad = [f"{r['name']}: {r['conclusion']}" for r in runs if r["status"] == "completed"
+               and r["conclusion"] not in ("success", "neutral", "skipped")]
+        bad += [f"{s['context']}: {s['state']}" for s in statuses if s["state"] in ("failure", "error")]
+        running = [r["name"] for r in runs if r["status"] != "completed"] + \
+            [s["context"] for s in statuses if s["state"] == "pending"]
+        if bad:
+            return "CI failing: " + "; ".join(bad[:3]) + " (the ci gate will refuse this head)"
+        if running:
+            return f"CI still running: {', '.join(str(x) for x in running[:3])} (wait for green before the vote)"
+        if not runs and not statuses:
+            return "no CI checks yet"
+        return f"CI green ({len(runs) + len(statuses)} checks)"
 
     @staticmethod
     def _same(a: dict, ref: dict) -> bool:
@@ -1411,6 +1461,16 @@ class Table:
                     raise TableError(r.get("message") or "GitHub did not merge it")
                 result = {"merged": True, "merge_sha": r.get("sha")}
                 did = f"Merged {ref['repo']}#{ref['number']} at {short(m['version'])}"
+                # Tasks that link this PR hear at once (merge commit linked as
+                # evidence, a pr_merged finding to the claimants).
+                kb = self._plugin("knowledge")
+                if kb is not None and hasattr(kb, "pr_merged"):
+                    with contextlib.suppress(Exception):
+                        tasks = await asyncio.to_thread(kb.pr_merged, ref["repo"], ref["number"],
+                                                        r.get("sha") or "", m["version"],
+                                                        f"merged by the hub, vote {m['name']}")
+                        if tasks:
+                            result["tasks"] = tasks
             elif m["kind"] == "qa":
                 await self._gh(self.github.label, ref["repo"], ref["number"], ["ready-for-qa"])
                 await self._gh(self.github.comment, ref["repo"], ref["number"],

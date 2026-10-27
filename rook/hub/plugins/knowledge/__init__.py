@@ -30,6 +30,7 @@ from pathlib import Path
 from ....core.context import current_identity
 from ....core.plugin import Plugin, capability, place, resource, setting
 from .hygiene import NOTIFY_KINDS, HygieneEngine
+from .prs import PullRequests
 from .search import DEFAULT_MODEL, Search
 from .service import WRITES, KnowledgeService
 from .store import LINK_KINDS, RELATIONS
@@ -134,6 +135,12 @@ class Knowledge(Plugin):
                 label="Also notify people",
                 help="Post release proposals, ended sessions and finished projects through notify.send "
                      "(Telegram/Discord)."),
+        setting("hygiene_github_minutes", float, default=10.0, min=0, max=1440, group="Hygiene", order=12,
+                label="Check tasks' pull requests on GitHub (minutes)",
+                help="How often in-progress and recently done tasks' linked pull requests are read: "
+                     "merged PR on in-progress work, red CI, open PR on a done task. Uses the hub's "
+                     "GitHub credential (huddle.vote_github_secret) when set. 0 = off (marking a task "
+                     "done still checks its PRs)."),
     )
     GUIDANCE = {
         "tool:rook_knowledge": "",
@@ -193,6 +200,7 @@ class Knowledge(Plugin):
         try:
             self.service = KnowledgeService(self.db_path(), self._principal, search=self._search)
             self.service.hygiene = HygieneEngine(self.service.store, conf=self._hygiene_conf)
+            self.service.prs = PullRequests(self.service.store, self.service.hygiene, github=self._github)
         except Exception:
             log.exception("knowledge store unavailable; knowledge and task caps disabled")
             return False
@@ -219,12 +227,48 @@ class Knowledge(Plugin):
     def _hygiene_conf(self) -> dict:
         return {s.name: self.settings.get(s.name) for s in self.SETTINGS if s.name.startswith('hygiene_')}
 
+    def _github(self):
+        """A GitHub client for one PR sweep or done check (prs.py): the hub's
+        credential (the vault secret ``huddle.vote_github_secret`` names), read
+        once here, else anonymous reads."""
+        from ..huddle.table import GitHub
+        token = None
+        node = self._node
+        huddle = node.plugin("huddle") if node is not None else None
+        name = str((huddle.settings.get("vote_github_secret") if huddle is not None else "") or "").strip()
+        vault = getattr(node, "_vault", None)
+        if name and vault is not None:
+            try:
+                token = vault.get(name, "system:hygiene", via="hygiene: tasks' pull requests")
+            except KeyError:
+                log.warning("knowledge: no vault secret %r (huddle.vote_github_secret)", name)
+        return GitHub(lambda: token)
+
+    def pr_merged(self, repo, number, merge_sha="", head="", how="merged by the hub") -> list:
+        """The hub merged a pull request (the huddle merge vote): tell the
+        tasks that link it (prs.py). Bookkeeping: never raises."""
+        prs = self.service.prs if self.service is not None else None
+        if prs is None:
+            return []
+        try:
+            return prs.on_merged(repo, number, merge_sha, head, how)
+        except Exception:
+            log.exception("hygiene: merged PR hook failed")
+            return []
+
     async def hygiene_tick(self, now=None) -> list:
-        """One scan, then notify people of the new findings that warrant it."""
+        """One scan (and, when due, the PR sweep), then notify people of the
+        new findings that warrant it."""
         engine = self.service.hygiene if self.service is not None else None
         if engine is None:
             return []
         raised = await asyncio.to_thread(engine.scan, now)
+        prs = self.service.prs
+        if prs is not None and prs.due(now):
+            try:
+                raised = raised + await asyncio.to_thread(prs.sweep, now)
+            except Exception:
+                log.exception("hygiene PR sweep failed")
         if raised and engine.cfg('hygiene_notify_people') and self._node is not None:
             notify = self._node.plugin('notify')
             for f in raised:
