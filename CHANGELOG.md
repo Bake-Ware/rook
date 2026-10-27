@@ -21,6 +21,14 @@ version was `0.1.0`.
   policy mode. Caps `users.me/explain/list/grant/revoke/role/history` on worker `rook`;
   `access.db` beside `policy.json`; existing owners and band members carried over once.
   (manual: accounts-and-access)
+- Access set in conversation (access v2, item 6): tell the house agent who gets what and it
+  writes the grants with your words; anyone else's ask, and a new person's request in their
+  own words (`users.request`), becomes one question only an owner answers (never a relayed
+  answer). When a machine or band joins that some members don't reach, it asks once "Let
+  Robin and Sam use the new machine attic-pc?" (setting `home.access_prompts`). Manage >
+  People: everyone's access in plain words, what waits on the owners, the history, and the
+  changes; members see their own access and ask there. `users.settle` closes what waits.
+  (manual: accounts-and-access)
 
 ### Changed
 - Approvals, simplified (access v2, Bake's design decision 9): only the hard stops and the

@@ -1480,10 +1480,16 @@
   "users.me": {
    "tier": "read"
   },
+  "users.request": {
+   "tier": "write"
+  },
   "users.revoke": {
    "tier": "admin"
   },
   "users.role": {
+   "tier": "admin"
+  },
+  "users.settle": {
    "tier": "admin"
   },
   "voice.replies": {

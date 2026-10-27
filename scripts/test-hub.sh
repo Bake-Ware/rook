@@ -274,6 +274,7 @@ cmd_start() {
                ROOK_HUDDLE_ADMIN_URL="http://127.0.0.1:$MCP_PORT/huddle/account-api"
                ROOK_JOBS_ADMIN_URL="http://127.0.0.1:$MCP_PORT/jobs/account-api"
                ROOK_CCMOD_ADMIN_URL="http://127.0.0.1:$MCP_PORT/ccmod/account-api"
+               ROOK_PEOPLE_ADMIN_URL="http://127.0.0.1:$MCP_PORT/people/account-api"
                ROOK_PLUGINS_ADMIN_URL="http://127.0.0.1:$MCP_PORT/plugins/account-api"
                ROOK_UPDATES_ADMIN_URL="http://127.0.0.1:$MCP_PORT/updates/account-api"
                ROOK_MASK_URL="http://127.0.0.1:$MCP_PORT/internal/mask")

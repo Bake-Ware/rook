@@ -51,6 +51,8 @@ from ....core.authz import is_status_read
 from ....core.db import open_db
 from ....core.text import clip
 from ... import hardstops
+from .access_talk import TOOL_NAMES as ACCESS_TOOL_NAMES, TOOLS as ACCESS_TOOLS
+from .access_talk import AccessError, AccessTalk
 from .onboard import OnboardError, Onboarding
 from .playbook import ACT, TITLES, Playbook, PlaybookError, direction
 
@@ -59,8 +61,8 @@ log = logging.getLogger("rook.hub.plugins.home.front")
 MIGRATIONS = Path(__file__).resolve().parent / "migrations"
 NAMESPACE = "home"
 PATHS = ("answer", "do", "dispatch", "huddle", "ask", "onboard")
-ASK_KINDS = ("action", "change", "dispute", "gap", "playbook", "remember", "restore", "review",
-             "vote")
+ASK_KINDS = ("access", "action", "change", "dispute", "gap", "playbook", "remember", "restore",
+             "review", "vote")
 ASK_STATES = ("open", "yes", "no", "expired", "cancelled")
 DECISION_KINDS = ("did", "dispatched", "huddle", "ruled", "tightened")
 LINE_MAX, EXPLAIN_MAX, MORE_MAX = 160, 600, 4000
@@ -258,6 +260,11 @@ _SET_CLAIM = re.compile(r"\b(?:i(?:'ve| have)?|it'?s|it is|that'?s|that is)\s+(?
 OWNER_PHONE_CAPS = {"calendar.create", "calendar.update", "calendar.delete", "notify.act"}
 
 
+def _access_user(principal: Any) -> str:
+    from ...access import user_of
+    return user_of(principal) or ""
+
+
 def compose(state: dict, content: str) -> tuple[str, str]:
     """The reply and the path, from what the tools actually did (``state``),
     never from the model's own claims."""
@@ -278,7 +285,11 @@ def compose(state: dict, content: str) -> tuple[str, str]:
         if path == "answer":
             path = "ask"
         a = asked[0]
-        heads.append(f"I need you for one thing: {a['line']} (Yes / No / Explain: {a['name']})")
+        if a.get("kind") == "access":
+            # Access is an owner's to give: the asker hears it went to one.
+            heads.append(f"I've asked an owner: {a['line']} ({a['name']})")
+        else:
+            heads.append(f"I need you for one thing: {a['line']} (Yes / No / Explain: {a['name']})")
     ask_last = ""
     if said:
         # The onboarding line is the hub's, word for word: what setup did
@@ -490,6 +501,7 @@ class FrontDoor:
         self._playbook: Playbook | None = None
         self._tasks: set[asyncio.Task] = set()
         self.onboard = Onboarding(self)
+        self.access = AccessTalk(self)
 
     # -- plumbing --------------------------------------------------------------
     @property
@@ -797,9 +809,12 @@ class FrontDoor:
         return out
 
     async def answer(self, ref: str, decision: str, *, by: str, quote: str = "",
-                     relay: dict | None = None, reason: str = "") -> dict:
+                     relay: dict | None = None, reason: str = "", owner: bool = False,
+                     principal: Any = None) -> dict:
         """The person's Yes or No to an ask (the dashboard, a relayed client,
-        the phone's card). It acts on a Yes and offers to remember it."""
+        the phone's card). It acts on a Yes and offers to remember it.
+        ``owner``/``principal``: who answered, for asks only an owner may
+        say yes to (access: never a relayed answer)."""
         a = self.store.find_ask(ref)
         if a is None:
             raise FrontError(f"no ask {ref!r} (it may be answered or expired)")
@@ -808,11 +823,18 @@ class FrontDoor:
         yes = decision in ("yes", "approve")
         if a["state"] != "open":
             raise FrontError(f"{a.get('name') or a['id']} is already {a['state']}")
+        if a["kind"] == "access" and yes and not (owner or self.access.is_owner(principal)):
+            raise FrontError(f"{a.get('name') or a['id']} gives access, which only an owner "
+                             "does: Yes on the dashboard's Decisions page, the phone card, or "
+                             "tell the house agent while signed in as an owner")
         if not self.store.close_ask(a["id"], "yes" if yes else "no", by, quote,
                                     reason if not yes else ""):
             raise FrontError(f"{a.get('name') or a['id']} was answered a moment ago")
         result: dict = {"ask": a["id"], "name": a.get("name"), "answer": "yes" if yes else "no"}
-        if yes:
+        if a["kind"] == "access":
+            result.update(await self.access.carry_out(a, by, principal) if yes
+                          else self.access.answer_no(a, by))
+        elif yes:
             result.update(await self._carry_out(a, by, relay))
         elif a["kind"] == "review":
             result.update(self.onboard.answer_review(a, False, by))
@@ -1191,9 +1213,11 @@ class FrontDoor:
                      context: str = "", room: str = "", history: list[dict] | None = None,
                      extra_tools: list | None = None,
                      extra_handler: Callable[[str, dict], Awaitable[str]] | None = None,
-                     person: str | None = None, approved: tuple | None = None) -> dict:
+                     person: str | None = None, approved: tuple | None = None,
+                     only_tools: tuple | None = None) -> dict:
         """Route one request. Returns ``{answer, path, refs, request, done,
-        asks, model}``; raises HomeError/LLMError when the model fails."""
+        asks, model}``; raises HomeError/LLMError when the model fails.
+        ``only_tools``: the only tools this turn gets (for untrusted text)."""
         home = self.home
         text = str(text or "").strip()
         if not text:
@@ -1207,7 +1231,8 @@ class FrontDoor:
                     if use_memory else {"text": "", "ids": []})
         tools, handler = self.toolkit(text, source=source, asker=asker, principal=principal,
                                       room=room, request=rid, state=state,
-                                      extra_tools=extra_tools, extra_handler=extra_handler)
+                                      extra_tools=extra_tools, extra_handler=extra_handler,
+                                      only=only_tools)
 
         where = ROUTER_WHERE + f" This request came from {source} (asked by {asker})."
         system = home.system_prompt(cfg, where, recalled["text"])
@@ -1215,6 +1240,9 @@ class FrontDoor:
         with contextlib.suppress(Exception):
             system += "\n\n" + self.onboard.prompt_text(self.onboard.key(source, asker, room),
                                                          text)
+        if self.access.store() is not None:
+            with contextlib.suppress(Exception):
+                system += "\n\n" + self.access.prompt_text(principal)
         roles = self._role_line()
         if roles:
             system += "\n\n" + roles
@@ -1242,7 +1270,8 @@ class FrontDoor:
     def toolkit(self, text: str, *, source: str, asker: str, principal: Any = None,
                 room: str = "", request: str = "", state: dict | None = None,
                 extra_tools: list | None = None,
-                extra_handler: Callable[[str, dict], Awaitable[str]] | None = None
+                extra_handler: Callable[[str, dict], Awaitable[str]] | None = None,
+                only: tuple | None = None
                 ) -> tuple[list[dict], Callable[[str, dict], Awaitable[str]]]:
         """The front door's tools for one request and the handler that runs them
         as the house agent for ``principal`` (a request, or a side thread forked
@@ -1253,13 +1282,20 @@ class FrontDoor:
             state = {"did": [], "started": [], "asked": [], "edits": [], "tools": [],
                      "approved": None, "onboard": [], "acted": False}
         tools = [TOOLS[n] for n in TOOLS]
+        if self.access.store() is not None and source != "scribe":
+            # Overheard talk never changes who may do what.
+            tools += [ACCESS_TOOLS[n] for n in ACCESS_TOOL_NAMES]
         if cfg.get("tools") and home.may_read_knowledge(principal) and home._has_knowledge():
             tools.append(KNOWLEDGE)
         tools += list(extra_tools or [])
         extra_names = {(t.get("function") or t)["name"] for t in extra_tools or []}
+        if only is not None:
+            tools = [t for t in tools if (t.get("function") or t)["name"] in only]
 
         async def handler(name: str, args: dict) -> str:
             state["tools"].append(name)
+            if only is not None and name not in only:
+                return json.dumps({"ok": False, "error": f"{name} is not available here"})
             try:
                 if name in extra_names and extra_handler is not None:
                     return await extra_handler(name, args)
@@ -1268,8 +1304,8 @@ class FrontDoor:
                 out = await self._tool(name, args, state, source=source, asker=asker,
                                        principal=principal, room=room, request=request,
                                        said=text)
-            except (FrontError, OnboardError, PlaybookError, ValueError, PermissionError,
-                    LookupError) as e:
+            except (FrontError, OnboardError, AccessError, PlaybookError, ValueError,
+                    PermissionError, LookupError) as e:
                 out = {"ok": False, "error": str(e)[:400]}
             return json.dumps(out, default=str)
 
@@ -1312,6 +1348,11 @@ class FrontDoor:
         if name in ONBOARD_TOOLS:
             return await self._onboard_tool(name, args, state, asker=asker, said=said,
                                             principal=principal, **where)
+        if name == "access_people":
+            return self.access.overview()
+        if name == "access_change":
+            return await self.access.change(args, said, asker=asker, principal=principal,
+                                            state=state, **where)
         if name == "playbook_edit":
             out = self.edit_playbook(str(args.get("op") or ""), str(args.get("section") or ""),
                                      str(args.get("text") or ""), str(args.get("id") or ""),
@@ -1584,6 +1625,11 @@ class FrontDoor:
         a = self.store.find_ask(str(args.get("ask") or ""))
         if a is None:
             raise FrontError(f"no open ask {args.get('ask')!r}")
+        if a["kind"] == "access" and self.access.is_owner(principal):
+            # An owner, verified, answering themselves: no relay in between.
+            return {"ok": True, **await self.answer(a["id"], decision, by=self.access.people().get(
+                _access_user(principal), getattr(principal, "label", "") or asker),
+                quote=words, principal=principal)}
         relay = self.relay()
         pid = getattr(principal, "id", "") or ""
         label = getattr(principal, "label", "") or pid

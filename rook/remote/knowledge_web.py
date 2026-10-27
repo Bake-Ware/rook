@@ -67,6 +67,17 @@ class KnowledgeWeb:
         return web.json_response(body, status=status, headers=NO_STORE)
 
 
+class PeopleWeb(KnowledgeWeb):
+    """Manage > People: who may use what (access v2). Any signed-in account:
+    the upstream shows owners everyone and lets them change it, and shows
+    anyone else their own access and a box to ask for more."""
+    PATH = '/account/people'
+    UPSTREAM = ('ROOK_PEOPLE_ADMIN_URL', 'http://127.0.0.1:8765/people/account-api')
+    ASSETS = ('people.js',)
+    UNAVAILABLE = 'The people service is unavailable (is the MCP server running?).'
+    ADMIN_ONLY = False
+
+
 class GuidanceWeb(KnowledgeWeb):
     """Agent instructions editor: same session/CSRF proxy, different upstream."""
     PATH = '/account/guidance'

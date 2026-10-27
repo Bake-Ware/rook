@@ -116,6 +116,20 @@ Design: knowledge page `users-access-trust-map-and-agent-sessions-bake-s-design-
   the store is back (owners are never locked out); the next start recreates it and seeds again
   from accounts, so roles and grants given since the last seed are lost: back it up with
   `policy.json`.
+- **Onboarding (item 6).** Code: `access.py` (`requests`, `resources`, `reaches`),
+  `users.request` (a self cap: no grant needed) and `users.settle`, the house agent's
+  `access_people` / `access_change` tools and sweep in `rook/hub/plugins/home/access_talk.py`,
+  the People page (`rook/hub/plugins/access/web.py`, `rook/web/people.js`). An owner's change
+  in conversation runs the `users.*` cap as that owner (`access.via` records the house agent as
+  carrier); the words must be in the message. Anyone else's (and a conversation that can't show
+  an owner: today every token) becomes one front-door ask of kind `access`, whose Yes needs an
+  owner: the dashboard's Decisions page (the account is an owner), the person's own phone tap
+  (`relay.decide(tap=True)`), or a verified owner telling the house agent. Relayed words never
+  give access. A machine or band first seen after the first look (which records everything as
+  settled) is `new`; the sweep (`home.access_prompts`, every `onboard_sweep_minutes`) settles it
+  silently when no member lacks it, else makes one ask for all new ones (Yes: each lacking
+  member gets it up to exec). Any grant on a resource settles it; any grant to a person answers
+  their request. Nothing expires and nothing is asked twice.
 - **Open.** Operator-only dashboard pages (Secrets, Plugins, Tokens) still check the
   operator account, not hub ownership; whether every owner should see them is asked in the
   rook-beta huddle. Workers seen only on a band's pending new key (mid key change) match the

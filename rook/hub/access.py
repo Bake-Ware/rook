@@ -13,6 +13,12 @@ design-decisions-2026-10-26-voi`` items 2, 3, 4 and 6.
   ``admin`` caps need it said). A person with no grants reaches nothing.
 * Every change is attributed and kept in an append-only history with the
   words of whoever asked for it.
+* **Onboarding** (item 6): a new person asks for access in their own words
+  (``requests``), and machines and bands that appear after the first look are
+  **new resources** until an owner says who besides the owners gets them
+  (``resources``). The house agent turns both into conversation
+  (rook/hub/plugins/home/access_talk.py); owners also see them on the People
+  page.
 
 The store is ``access.db`` beside ``policy.json`` (both hub processes open
 it, as they share ``approvals.db``). :class:`rook.hub.authz.Authorizer`
@@ -24,6 +30,7 @@ band members get a grant on each band they were in).
 
 from __future__ import annotations
 
+import contextvars
 import fnmatch
 import json
 import logging
@@ -41,9 +48,14 @@ ROLES = ("owner", "member")
 KINDS = ("band", "worker", "hub", "knowledge", "any")
 DEFAULT_TIER = "exec"
 #: Hub caps a person may always call about themselves (no grant needed).
-SELF_CAPS = frozenset({"users.me", "users.explain"})
+SELF_CAPS = frozenset({"users.me", "users.explain", "users.request"})
 KNOWLEDGE_CAPS = ("knowledge.read", "knowledge.write")
 WORDS_MAX = 1000
+REQUEST_STATES = ("open", "asked", "done", "declined")
+RESOURCE_KINDS = ("worker", "band")
+RESOURCE_STATES = ("new", "asked", "settled")
+#: Who carried a person's change in (the house agent), for the history's actor.
+via: contextvars.ContextVar[str] = contextvars.ContextVar("rook_access_via", default="")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS members (
@@ -86,6 +98,32 @@ CREATE TABLE IF NOT EXISTS bands (
     name     TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS requests (
+    id      TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    words   TEXT NOT NULL,
+    label   TEXT NOT NULL DEFAULT '',
+    created REAL NOT NULL,
+    updated REAL NOT NULL,
+    state   TEXT NOT NULL DEFAULT 'open'
+            CHECK(state IN ('open','asked','done','declined')),
+    ask     TEXT NOT NULL DEFAULT '',
+    decided_by TEXT,
+    decided_words TEXT
+);
+CREATE INDEX IF NOT EXISTS requests_user ON requests(user_id, state);
+CREATE TABLE IF NOT EXISTS resources (
+    kind    TEXT NOT NULL CHECK(kind IN ('worker','band')),
+    ref     TEXT NOT NULL,
+    label   TEXT NOT NULL DEFAULT '',
+    seen    REAL NOT NULL,
+    state   TEXT NOT NULL DEFAULT 'new' CHECK(state IN ('new','asked','settled')),
+    ask     TEXT NOT NULL DEFAULT '',
+    settled REAL,
+    settled_by TEXT,
+    words   TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY(kind, ref)
+);
 """
 
 
@@ -255,6 +293,15 @@ class AccessStore:
                        (gid, user_id, kind, ref, json.dumps(caps_l), t, now, actor, words))
             row = _grant_row(db.execute("SELECT * FROM grants WHERE id=?", (gid,)).fetchone())
             self._log(db, actor, "grant", user_id, gid, row, words)
+            # Access given answers the person's request, and settles "who gets
+            # this?" for the resource it names.
+            db.execute("UPDATE requests SET state='done', decided_by=?, decided_words=?, "
+                       "updated=? WHERE user_id=? AND state IN ('open','asked')",
+                       (actor, words, now, user_id))
+            if kind in RESOURCE_KINDS:
+                db.execute("UPDATE resources SET state='settled', settled=?, settled_by=?, "
+                           "words=? WHERE kind=? AND ref=? AND state!='settled'",
+                           (now, actor, words, kind, ref))
         return row
 
     def revoke(self, grant_id: str, *, actor: str, words: str) -> dict:
@@ -300,6 +347,156 @@ class AccessStore:
     def band_hashes(self) -> dict[str, str]:
         with self.db(False) as db:
             return {r["id"]: r["psk_hash"] for r in db.execute("SELECT id, psk_hash FROM bands")}
+
+    # -- onboarding: requests in a person's own words ---------------------------
+    def request(self, user_id: str, words: Any, label: str = "") -> dict:
+        """A person asks for access, in their own words. One open request per
+        person: asking again replaces the words (and asks the owners again)."""
+        if not user_id:
+            raise AccessError("user: an account id")
+        words = _words(words)
+        now = time.time()
+        with self.db() as db:
+            old = db.execute("SELECT * FROM requests WHERE user_id=? AND state IN ('open','asked')",
+                             (user_id,)).fetchone()
+            if old is not None:
+                db.execute("UPDATE requests SET words=?, label=CASE WHEN ?='' THEN label ELSE ? "
+                           "END, updated=?, state='open', ask='' WHERE id=?",
+                           (words, label, label[:120], now, old["id"]))
+                rid = old["id"]
+            else:
+                rid = "r_" + uuid.uuid4().hex[:12]
+                db.execute("INSERT INTO requests(id,user_id,words,label,created,updated) "
+                           "VALUES(?,?,?,?,?,?)", (rid, user_id, words, label[:120], now, now))
+            self._log(db, f"human:{user_id}", "request", user_id, rid, {}, words)
+            return dict(db.execute("SELECT * FROM requests WHERE id=?", (rid,)).fetchone())
+
+    def requests(self, states: Iterable[str] = ("open", "asked"), user_id: str | None = None
+                 ) -> list[dict]:
+        states = [s for s in states if s in REQUEST_STATES]
+        if not states:
+            return []
+        q = f"SELECT * FROM requests WHERE state IN ({','.join('?' * len(states))})"
+        args: list = list(states)
+        if user_id:
+            q += " AND user_id=?"
+            args.append(user_id)
+        with self.db(False) as db:
+            return [dict(r) for r in db.execute(q + " ORDER BY created", args)]
+
+    def get_request(self, rid: str) -> dict | None:
+        with self.db(False) as db:
+            r = db.execute("SELECT * FROM requests WHERE id=?", (rid,)).fetchone()
+        return dict(r) if r else None
+
+    def request_asked(self, rid: str, ask: str) -> None:
+        """The house agent put this request to the owners as ``ask``."""
+        with self.db() as db:
+            db.execute("UPDATE requests SET state='asked', ask=?, updated=? WHERE id=? AND "
+                       "state='open'", (ask, time.time(), rid))
+
+    def decline(self, rid: str, *, actor: str, words: str) -> dict:
+        """An owner says no to a request (kept, with their words)."""
+        words = _words(words)
+        with self.db() as db:
+            r = db.execute("SELECT * FROM requests WHERE id=?", (rid,)).fetchone()
+            if r is None:
+                raise AccessError(f"no request {rid!r}")
+            if r["state"] in ("open", "asked"):
+                db.execute("UPDATE requests SET state='declined', decided_by=?, decided_words=?, "
+                           "updated=? WHERE id=?", (actor, words, time.time(), rid))
+                self._log(db, actor, "decline", r["user_id"], rid, {}, words)
+            return dict(db.execute("SELECT * FROM requests WHERE id=?", (rid,)).fetchone())
+
+    # -- onboarding: "who gets this?" for new machines and bands ----------------
+    def note_resources(self, found: Iterable[dict]) -> list[dict]:
+        """Record the machines and bands there are now (``kind``, ``ref``,
+        ``label``) and return the ones never seen before. The first look
+        takes everything as it is (nobody is asked about what was already
+        there); after that each new one waits for an owner's word."""
+        rows = [(str(f["kind"]), str(f["ref"]), str(f.get("label") or "")[:120])
+                for f in found if f.get("kind") in RESOURCE_KINDS and f.get("ref")]
+        now = time.time()
+        new: list[dict] = []
+        with self.db() as db:
+            first = db.execute("SELECT 1 FROM meta WHERE key='resources_seen'").fetchone() is None
+            for kind, ref, label in rows:
+                old = db.execute("SELECT label FROM resources WHERE kind=? AND ref=?",
+                                 (kind, ref)).fetchone()
+                if old is not None:
+                    if label and old["label"] != label:
+                        db.execute("UPDATE resources SET label=? WHERE kind=? AND ref=?",
+                                   (label, kind, ref))
+                    continue
+                if first:
+                    db.execute("INSERT INTO resources(kind,ref,label,seen,state,settled,settled_by,"
+                               "words) VALUES(?,?,?,?,'settled',?,?,?)",
+                               (kind, ref, label, now, now, "system:access",
+                                "there before access prompts"))
+                    continue
+                db.execute("INSERT INTO resources(kind,ref,label,seen) VALUES(?,?,?,?)",
+                           (kind, ref, label, now))
+                new.append({"kind": kind, "ref": ref, "label": label, "seen": now,
+                            "state": "new"})
+            if first:
+                db.execute("INSERT INTO meta(key,value) VALUES('resources_seen',?)", (str(now),))
+        return new
+
+    def resources(self, states: Iterable[str] = ("new", "asked")) -> list[dict]:
+        states = [s for s in states if s in RESOURCE_STATES]
+        if not states:
+            return []
+        with self.db(False) as db:
+            return [dict(r) for r in db.execute(
+                f"SELECT * FROM resources WHERE state IN ({','.join('?' * len(states))}) "
+                "ORDER BY seen", states)]
+
+    def resource(self, kind: str, ref: str) -> dict | None:
+        with self.db(False) as db:
+            r = db.execute("SELECT * FROM resources WHERE kind=? AND ref=?", (kind, ref)).fetchone()
+        return dict(r) if r else None
+
+    def resources_asked(self, keys: Iterable[tuple[str, str]], ask: str) -> None:
+        with self.db() as db:
+            for kind, ref in keys:
+                db.execute("UPDATE resources SET state='asked', ask=? WHERE kind=? AND ref=? AND "
+                           "state='new'", (ask, kind, ref))
+
+    def settle(self, kind: str, ref: str, *, actor: str, words: str) -> dict:
+        """An owner's word on a new resource: who gets it is decided (owners
+        only, unless grants said otherwise). Kept in the history."""
+        words = _words(words)
+        now = time.time()
+        with self.db() as db:
+            r = db.execute("SELECT * FROM resources WHERE kind=? AND ref=?", (kind, ref)).fetchone()
+            if r is None:
+                raise AccessError(f"no new {kind} {ref!r}")
+            if r["state"] != "settled":
+                db.execute("UPDATE resources SET state='settled', settled=?, settled_by=?, words=? "
+                           "WHERE kind=? AND ref=?", (now, actor, words, kind, ref))
+                self._log(db, actor, "settle", "", f"{kind}:{ref}", {"label": r["label"]}, words)
+            return dict(db.execute("SELECT * FROM resources WHERE kind=? AND ref=?",
+                                   (kind, ref)).fetchone())
+
+    def reaches(self, user_id: str, kind: str, ref: str, bands: Iterable[str] = (),
+                name: str = "") -> dict | None:
+        """The active grant that already gives ``user_id`` this machine
+        (``bands``: the key hashes of the bands it is on) or band, whatever
+        caps it narrows to; None when nothing does."""
+        hashes = self.band_hashes()
+        band_set = set(bands or ())
+        for g in self.grants(user_id):
+            if g["kind"] == "any":
+                return g
+            if kind == "worker":
+                if g["kind"] == "worker" and (g["ref"] == ref or (
+                        name and g["ref"].casefold() == name.casefold())):
+                    return g
+                if g["kind"] == "band" and hashes.get(g["ref"]) in band_set:
+                    return g
+            elif kind == "band" and g["kind"] == "band" and g["ref"] == ref:
+                return g
+        return None
 
     # -- migration -------------------------------------------------------------
     def seed(self, accounts: Any) -> bool:
