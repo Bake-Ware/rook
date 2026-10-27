@@ -713,10 +713,12 @@ function battHTML(hb){ const b=hb&&hb.battery; if(!b||b.percent==null)return '';
   return `<span class="batt ${cls}" title="battery ${p}%${b.charging?' · charging':''}">`+
     `<span class="ico"><i style="width:${w}px"></i></span>`+
     (b.charging?'<span class="bolt">⚡</span>':'')+`<span>${p}%</span></span>`; }
-/* A device worker's live state (its hb under its type, e.g. hb.tv): "on · YouTube · vol 10" or "off". */
+/* A device worker's live state (its hb under its type, e.g. hb.tv): "on · YouTube · vol 10" or "off".
+   A driver whose devices vary (Home Assistant) sends its own summary in hb.text. */
 function devStatus(w){
   const hb=(w.hb||{})[w.device?.type]||Object.values(w.hb||{})[0]||{};
   if(hb.paired===false)return {on:false,text:'not paired'};
+  if(hb.text!=null)return {on:!!hb.on,text:String(hb.text)};
   if(!hb.on)return {on:false,text:'off'};
   const vol=hb.volume!=null?'vol '+hb.volume+(hb.muted?' (muted)':''):hb.muted?'muted':'';
   return {on:true,text:['on',hb.screen==='off'?'screen off':'',hb.app||'',vol].filter(Boolean).join(' · ')};

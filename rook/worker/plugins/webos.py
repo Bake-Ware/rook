@@ -10,8 +10,9 @@ It talks to each TV over the TV's own control API (SSAP, ``ws://<tv>:3000``),
 keeping one connection open per TV and subscribing to the foreground app,
 power state and volume, so the heartbeat is current without polling. A TV
 that is off simply has ``on: false``; its row stays, because the delegate is
-still there to wake it (``tv.power_on`` sends Wake-on-LAN to the MAC address
-learned while it was on).
+still there to wake it (``tv.power_on`` sends Wake-on-LAN to the MAC addresses
+learned while it was on: Wi-Fi and wired both, since a TV reports both and
+only wakes on the one it is connected by, and waits for it to come up).
 
 Pairing: the first connection needs a person to accept an "allow this
 device?" prompt on the TV (``tv.pair``). The key the TV returns is kept in
@@ -27,8 +28,8 @@ Config (settings, or env):
 Capabilities (on each TV device):
     tv.status, tv.apps, tv.inputs                      read
     tv.toast, tv.launch, tv.input, tv.volume, tv.mute,
-    tv.media, tv.button, tv.open_url, tv.screen,
-    tv.power_off, tv.power_on                          write (physical)
+    tv.media, tv.button, tv.type, tv.open_url, tv.screen,
+    tv.sleep, tv.power_off, tv.power_on                write (physical)
     tv.pair                                            admin
 And on this worker: ``webos.list`` (every TV and its state) and
 ``webos.discover`` (find LG TVs on the local network).
@@ -47,7 +48,7 @@ from typing import Any
 from ...core.aiocompat import timeout as aio_timeout
 from ...core.db import atomic_write_json
 from ...core.devices import Device, valid_device_name
-from ...core.pluginkit import ArgError, fail, require_str
+from ...core.pluginkit import ArgError, CapError, fail, require_str
 from ..plugin import Plugin, capability, setting
 from . import _webos_ssap as ssap
 
@@ -61,6 +62,9 @@ BUTTONS = ("HOME", "BACK", "UP", "DOWN", "LEFT", "RIGHT", "ENTER", "MENU", "EXIT
            "6", "7", "8", "9", "0")
 RETRY_MIN, RETRY_MAX = 5.0, 30.0
 STABLE_SECS = 60.0   # a connection that lasted this long resets the backoff
+WAKE_EVERY = 2.0     # tv.power_on resends Wake-on-LAN and retries this often while it waits
+SLEEP_TICK = 15.0    # how often the sleep timer looks at the wall clock
+SLEEP_LATE = 600.0   # a sleep timer this late (the delegate was down) is dropped, not acted on
 
 
 def parse_tvs(spec: str) -> list[tuple[str, str, str | None]]:
@@ -93,6 +97,36 @@ def magic_packet(mac: str) -> bytes:
     return b"\xff" * 6 + raw * 16
 
 
+def _mac(value) -> str | None:
+    """A MAC address in ``aa:bb:…`` form, or None for anything else."""
+    if isinstance(value, str) and _MAC.match(value.strip()):
+        return value.strip().lower().replace("-", ":")
+    return None
+
+
+def arp_mac(host: str, table: str = "/proc/net/arp") -> str | None:
+    """The MAC this machine reaches ``host`` at, from the kernel's ARP table
+    (Linux; None elsewhere or when it isn't there). It names the interface
+    the TV is actually connected by, which ``getinfo`` can't tell."""
+    try:
+        with open(table, encoding="ascii") as f:
+            next(f, None)
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 4 and parts[0] == host and parts[2] != "0x0":
+                    mac = _mac(parts[3])
+                    return mac if mac and mac != "00:00:00:00:00:00" else None
+    except OSError:
+        pass
+    return None
+
+
+def _norm(text: str) -> str:
+    """App names as people say them: case, spaces and punctuation don't
+    count, and ``+`` is "plus" (``disney plus`` finds ``Disney+``)."""
+    return re.sub(r"[^a-z0-9]", "", str(text).lower().replace("+", "plus"))
+
+
 class WebOSTV(Device):
     """One LG webOS TV, driven over its control API."""
 
@@ -101,11 +135,14 @@ class WebOSTV(Device):
     DRIVER = "webos"
 
     def __init__(self, plugin: "WebOSPlugin", name: str, host: str,
-                 mac: str | None = None) -> None:
+                 macs: list[str] | str | None = None) -> None:
         super().__init__(key=name.lower(), name=name, description=f"LG webOS TV at {host}")
         self.plugin = plugin
         self.host = host
-        self.mac = mac
+        # Every MAC Wake-on-LAN goes to, the one the TV is reached by first.
+        if isinstance(macs, str):
+            macs = [macs]
+        self.macs: list[str] = list(dict.fromkeys(m for m in map(_mac, macs or ()) if m))
         self.client: ssap.SSAPClient | None = None
         self._lock = asyncio.Lock()
         self._wake = asyncio.Event()
@@ -171,6 +208,11 @@ class WebOSTV(Device):
             if client is not None:
                 since = time.monotonic()
                 await client.closed.wait()
+                if self.client is not None and self.client is not client \
+                        and self.client.connected:
+                    # A cap already reconnected (tv.power_on, a retried
+                    # request): follow that connection instead.
+                    continue
                 self._down(error="connection closed")
                 if time.monotonic() - since >= STABLE_SECS:
                     delay = RETRY_MIN
@@ -217,17 +259,13 @@ class WebOSTV(Device):
         """Subscribe first, so on/off, the app and the volume are live even if
         a catalogue request fails; then fill the catalogues, each on its own."""
         for uri, cb in ((ssap.POWER_STATE, self._on_power), (ssap.FOREGROUND_APP, self._on_app),
-                        ("audio/getVolume", self._on_volume)):
+                        ("audio/getVolume", self._on_volume),
+                        (ssap.SOUND_OUTPUT, self._on_sound_output)):
             try:
                 await c.subscribe(uri, cb)
             except Exception:
                 log.debug("%s: subscribing to %s failed", self.name, uri, exc_info=True)
-        try:
-            points = await c.request(ssap.LAUNCH_POINTS)
-            self.apps = {p["id"]: p.get("title") or p["id"]
-                         for p in points.get("launchPoints") or [] if p.get("id")}
-        except Exception:
-            log.debug("%s: listing apps failed", self.name, exc_info=True)
+        await self._list_apps(c)
         try:
             self.inputs = [
                 {"id": d.get("id"), "label": d.get("label"), "app": d.get("appId"),
@@ -237,19 +275,46 @@ class WebOSTV(Device):
             self.inputs = []
         try:
             info = await c.request(ssap.CONNECTION_INFO)
-            mac = ((info.get("wiredInfo") or {}).get("macAddress")
-                   or (info.get("wifiInfo") or {}).get("macAddress"))
-            if mac and _MAC.match(mac) and mac.lower() != (self.mac or ""):
-                self.mac = mac.lower()
-                self.plugin.save_mac(self, self.mac)
         except Exception:
-            pass
+            info = {}
+        self._learn_macs(info)
         try:
             self.model = (await c.request(ssap.SYSTEM_INFO)).get("modelName") or self.model
         except Exception:
             pass
+        try:
+            # The TV's own "Turn on via Wi-Fi" switch: without it tv.power_on can't work.
+            got = await c.request(ssap.GET_SETTINGS, {"category": "network",
+                                                      "keys": ["wolwowlOnOff"]})
+            wol = (got.get("settings") or {}).get("wolwowlOnOff")
+            if wol is not None:
+                self.state["wake_on_lan"] = str(wol).lower() in ("true", "on", "1")
+        except Exception:
+            pass
         if self.state.get("app_id"):   # name it now that the catalogues are in
             self.state["app"] = self.title(self.state["app_id"])
+
+    def _learn_macs(self, info: dict) -> None:
+        """Keep every MAC the TV has for Wake-on-LAN. A TV reports its wired
+        and its Wi-Fi MAC whichever it uses, and only wakes on the one it is
+        connected by; the delegate's ARP table says which that is, so it goes
+        first. (The first version kept only the wired one, so ``tv.power_on``
+        never reached a TV on Wi-Fi.)"""
+        seen = [arp_mac(self.host)]
+        for k in ("wifiInfo", "wiredInfo"):
+            seen.append(_mac((info.get(k) or {}).get("macAddress")))
+        macs = list(dict.fromkeys([m for m in seen if m] + self.macs))
+        if macs != self.macs:
+            self.macs = macs
+            self.plugin.save_macs(self, macs)
+
+    async def _list_apps(self, c: ssap.SSAPClient) -> None:
+        try:
+            points = await c.request(ssap.LAUNCH_POINTS)
+            self.apps = {p["id"]: p.get("title") or p["id"]
+                         for p in points.get("launchPoints") or [] if p.get("id")}
+        except Exception:
+            log.debug("%s: listing apps failed", self.name, exc_info=True)
 
     def title(self, app_id: str) -> str:
         """An app's title; external inputs (``com.webos.app.hdmi1``) are not
@@ -282,6 +347,10 @@ class WebOSTV(Device):
         if muted is not None:
             self.state["muted"] = bool(muted)
 
+    def _on_sound_output(self, p: dict) -> None:
+        if p.get("soundOutput"):
+            self.state["sound_output"] = str(p["soundOutput"])
+
     async def _live(self) -> ssap.SSAPClient:
         """A connected client for a cap, or a clear failure."""
         try:
@@ -289,19 +358,40 @@ class WebOSTV(Device):
         except ssap.NotPaired:
             fail(f"{self.name} is not paired: run tv.pair while someone is at the TV")
         except Exception as e:
-            fail(f"{self.name} is off or unreachable ({type(e).__name__}: {e})")
+            fail(f"{self.name} is off or unreachable ({type(e).__name__}: {e}); "
+                 "tv.power_on switches it on")
 
     async def _req(self, uri: str, payload: dict | None = None) -> dict:
-        c = await self._live()
-        try:
-            return await c.request(uri, payload)
-        except ssap.SSAPError as e:
-            fail(f"{self.name}: {e}")
+        for attempt in (1, 2):
+            c = await self._live()
+            try:
+                return await c.request(uri, payload)
+            except ssap.SSAPError as e:
+                if attempt == 1 and not c.connected and not self._stopped:
+                    # The connection died under us (standby, a Wi-Fi blip) before
+                    # the TV answered: once more on a fresh one.
+                    continue
+                fail(f"{self.name}: {e}")
+            except (TimeoutError, asyncio.TimeoutError):
+                # A socket that stops answering without closing: drop it, so the
+                # next call reconnects instead of waiting on it again.
+                await c.close()
+                fail(f"{self.name} did not answer within {c.request_timeout:g} s; "
+                     "it may be going to standby. Try again, or check tv.status")
+            except Exception as e:   # the socket failed under the send
+                if attempt == 1 and not self._stopped:
+                    await c.close()
+                    continue
+                fail(f"{self.name}: lost the connection ({type(e).__name__}: {e})")
+        fail(f"{self.name}: lost the connection")
 
     # -- caps --------------------------------------------------------------
     @capability("status", risk="read", tags=("physical",), scope="multi-machine")
     async def _status(self) -> dict:
-        """Live state: ``{on, power, app, app_id, volume, muted, screen, reachable, paired}``."""
+        """Live state: ``{on, power, app, app_id, volume, muted, screen,
+        sound_output, reachable, paired, wake_on_lan, macs, sleep_at}``.
+        A ``sound_output`` not starting ``tv_`` means the sound goes only to a
+        soundbar or receiver, whose own volume the TV may not control."""
         if not self.state.get("reachable"):
             try:
                 await self._connect()
@@ -311,8 +401,12 @@ class WebOSTV(Device):
         s.update(name=self.name, host=self.host)
         if self.model:
             s["model"] = self.model
-        if self.mac:
-            s["mac"] = self.mac
+        if self.macs:
+            s["macs"] = list(self.macs)
+        at = self.plugin.sleep_at(self)
+        if at:
+            s["sleep_at"] = at
+            s["sleep_in_minutes"] = max(0, round((at - time.time()) / 60))
         return s
 
     @capability("apps", risk="read", tags=("physical",), scope="multi-machine")
@@ -335,28 +429,46 @@ class WebOSTV(Device):
         await self._req(ssap.TOAST, {"message": message})
         return {"ok": True}
 
-    def _resolve_app(self, app: str) -> str:
+    def _match_app(self, app: str) -> list[str]:
+        """App ids for ``app``: its id, else the best tier of title matches
+        (same name, then starts with it, then contains it), ignoring case,
+        spaces and punctuation."""
         if app in self.apps:
-            return app
-        low = app.lower()
-        exact = [k for k, v in self.apps.items() if v.lower() == low]
-        if exact:
-            return exact[0]
-        part = [k for k, v in self.apps.items() if low in v.lower() or low in k.lower()]
-        if len(part) == 1:
-            return part[0]
-        if part:
+            return [app]
+        want = _norm(app)
+        if not want:
+            return []
+        names = {k: (_norm(v), _norm(k)) for k, v in self.apps.items()}
+        for test in (lambda t, i: want in (t, i),
+                     lambda t, i: t.startswith(want),
+                     lambda t, i: want in t or want in i):
+            hits = [k for k, (t, i) in names.items() if test(t, i)]
+            if hits:
+                return hits
+        return []
+
+    async def _resolve_app(self, app: str, c: ssap.SSAPClient) -> str:
+        hits = self._match_app(app)
+        if not hits:
+            await self._list_apps(c)   # installed since we connected?
+            hits = self._match_app(app)
+        if len(hits) == 1:
+            return hits[0]
+        if hits:
             fail(f"{app!r} matches several apps: "
-                 + ", ".join(f"{self.apps[k]} ({k})" for k in part[:8]))
+                 + ", ".join(f"{self.apps[k]} ({k})" for k in hits[:8]))
+        if any(_norm(app) in (_norm(d.get("label") or ""), _norm(d.get("id") or ""))
+               for d in self.inputs):
+            fail(f"{app!r} is an input, not an app: use tv.input")
         fail(f"no app matches {app!r}; tv.apps lists them")
 
     @capability("launch", risk="write", tags=("physical",), scope="multi-machine")
     async def _launch(self, app: str, params: dict | None = None) -> dict:
-        """Launch an app by id or title (``"YouTube"``, ``"netflix"``), with
-        optional launch ``params``. A YouTube video:
+        """Launch an app by id or title (``"YouTube"``, ``"netflix"``,
+        ``"disney plus"``), with optional launch ``params``. A YouTube video:
         ``params={"contentTarget": "https://www.youtube.com/tv?v=<id>"}``."""
-        await self._live()
-        app_id = self._resolve_app(require_str(app, "app", max_len=200))
+        c = await self._live()
+        app_id = await self._resolve_app(require_str(app, "app", max_len=200), c)
         payload: dict[str, Any] = {"id": app_id}
         if params is not None:
             if not isinstance(params, dict):
@@ -393,7 +505,12 @@ class WebOSTV(Device):
             for _ in range(abs(step)):
                 await self._req(uri)
         await asyncio.sleep(0.3)   # let the subscription report the new level
-        return {"ok": True, "volume": self.state.get("volume"), "muted": self.state.get("muted")}
+        out = {"ok": True, "volume": self.state.get("volume"), "muted": self.state.get("muted")}
+        sound = self.state.get("sound_output")
+        if sound and not sound.startswith("tv_"):   # tv_external_speaker: both play
+            out["note"] = (f"sound goes to {sound}: the TV's volume may not change what "
+                           "you hear; that device has its own")
+        return out
 
     @capability("mute", risk="write", tags=("physical",), scope="multi-machine")
     async def _mute(self, on: bool = True) -> dict:
@@ -423,6 +540,25 @@ class WebOSTV(Device):
             fail(f"{self.name}: {e}")
         return {"ok": True, "button": key}
 
+    @capability("type", risk="write", tags=("physical",), scope="multi-machine")
+    async def _type(self, text: str = "", enter: bool = False, replace: bool = False) -> dict:
+        """Type ``text`` into the text field open on the TV (a search box,
+        a login form), as the on-screen keyboard would. ``replace`` clears
+        the field first; ``enter`` presses Enter after it (search, submit)."""
+        text = require_str(text, "text", max_len=500, strip=False, empty=True)
+        if not text and not enter and not replace:
+            raise ArgError("pass text, enter or replace")
+        await self._live()   # off or unpaired: say so plainly, not as a text-field problem
+        try:
+            if text or replace:
+                await self._req(ssap.INSERT_TEXT, {"text": text, "replace": bool(replace)})
+            if enter:
+                await self._req(ssap.ENTER_KEY)
+        except CapError as e:
+            fail(f"{e}. A text field must be open on the TV: open the app's search "
+                 "first (tv.button, or the app's own search screen)")
+        return {"ok": True, "typed": len(text), "enter": bool(enter)}
+
     @capability("open_url", risk="write", tags=("physical",), scope="multi-machine")
     async def _open_url(self, url: str) -> dict:
         """Open an http(s) URL in the TV's web browser."""
@@ -440,24 +576,97 @@ class WebOSTV(Device):
 
     @capability("power_off", risk="write", tags=("physical",), scope="multi-machine")
     async def _power_off(self) -> dict:
-        """Turn the TV off."""
-        await self._req(ssap.POWER_OFF)
+        """Turn the TV off. A TV that is already off is not an error."""
+        try:
+            c = await self._connect()
+        except ssap.NotPaired:
+            fail(f"{self.name} is not paired: run tv.pair while someone is at the TV")
+        except Exception:
+            return {"ok": True, "already_off": True}
+        if self.state.get("power") is not None and not self.state.get("on"):
+            # Answering from network standby: already off. Never send it then;
+            # what a TV does with a second "off" in standby is its own business.
+            return {"ok": True, "already_off": True}
+        try:
+            await c.request(ssap.POWER_OFF)
+        except ssap.SSAPError as e:
+            # The TV often drops the connection as it goes off, before it answers.
+            if c.connected:
+                fail(f"{self.name}: {e}")
+        except (TimeoutError, asyncio.TimeoutError):
+            await c.close()
         return {"ok": True}
 
-    @capability("power_on", risk="write", tags=("physical",), scope="multi-machine")
-    async def _power_on(self) -> dict:
-        """Turn the TV on with Wake-on-LAN. Needs the TV's MAC (learned while
-        it was on, or given in webos.tvs) and the TV's "Turn on via Wi-Fi /
-        network" setting; the delegate must be on the TV's network."""
+    @capability("power_on", risk="write", tags=("physical",), timeout=90,
+                scope="multi-machine")
+    async def _power_on(self, wait: int = 20) -> dict:
+        """Turn the TV on with Wake-on-LAN and wait up to ``wait`` seconds
+        (0-60) for it to answer, resending meanwhile; ``wait=0`` only sends.
+        Needs the TV's MAC (learned while it was on, or given in webos.tvs),
+        its "Turn on via Wi-Fi" setting (tv.status ``wake_on_lan``), and the
+        delegate on the TV's network."""
+        if isinstance(wait, bool) or not isinstance(wait, int) or not 0 <= wait <= 60:
+            raise ArgError("wait must be an integer from 0 to 60")
         if self.state.get("on") and self.state.get("reachable"):
-            return {"ok": True, "already_on": True}
-        if not self.mac:
+            return {"ok": True, "on": True, "already_on": True}
+        live = arp_mac(self.host)   # the kernel remembers it a while after the TV went off
+        if live and live not in self.macs:
+            self.macs.insert(0, live)
+            self.plugin.save_macs(self, self.macs)
+        if not self.macs:
             fail(f"{self.name}: MAC address unknown; turn it on once by hand while the "
                  "delegate is running, or add @<mac> to its webos.tvs entry")
-        pkt = magic_packet(self.mac)
-        sent = await asyncio.to_thread(_send_wol, pkt, self.host)
+        sent = await asyncio.to_thread(_send_wol, self.macs, self.host)
         self._wake.set()   # reconnect soon rather than at the next retry
-        return {"ok": bool(sent), "mac": self.mac, "sent_to": sent}
+        out: dict[str, Any] = {"macs": list(self.macs), "sent_to": sent}
+        if not wait:
+            return {"ok": bool(sent), **out}
+        start = time.monotonic()
+        end = start + wait
+        while True:
+            left = end - time.monotonic()
+            if left <= 0:
+                break
+            try:
+                async with aio_timeout(left):
+                    await self._connect()
+                    # The power state arrives right after the subscription.
+                    while self.state.get("power") is None and self.client is not None \
+                            and self.client.connected:
+                        await asyncio.sleep(0.1)
+            except ssap.NotPaired:
+                fail(f"{self.name} came on but is not paired: run tv.pair")
+            except Exception:
+                pass
+            if self.state.get("on") and self.state.get("reachable"):
+                self._wake.set()
+                return {"ok": True, "on": True,
+                        "waited": round(time.monotonic() - start, 1), **out}
+            await asyncio.sleep(min(WAKE_EVERY, max(0.0, end - time.monotonic())))
+            if time.monotonic() < end:
+                await asyncio.to_thread(_send_wol, self.macs, self.host)
+        why = ("its Turn on via Wi-Fi setting is off: switch it on at the TV under "
+               "Settings > General > Devices > TV Management"
+               if self.state.get("wake_on_lan") is False else
+               "check the TV's Turn on via Wi-Fi (Mobile TV On) setting; some TVs only "
+               "wake from a short standby")
+        fail(f"{self.name} did not come on within {wait} s (Wake-on-LAN sent to "
+             f"{', '.join(self.macs)}): {why}")
+
+    @capability("sleep", risk="write", tags=("physical",), scope="multi-machine")
+    async def _sleep(self, minutes: int) -> dict:
+        """Switch the TV off in ``minutes`` (1-720), like the remote's sleep
+        timer; ``minutes=0`` cancels it. The delegate keeps the time by the
+        wall clock, across its own restarts; a timer it missed by more than
+        10 minutes (it was down) is dropped rather than acted on late."""
+        if isinstance(minutes, bool) or not isinstance(minutes, int) or not 0 <= minutes <= 720:
+            raise ArgError("minutes must be an integer from 0 (cancel) to 720")
+        if not minutes:
+            had = self.plugin.set_sleep(self, None)
+            return {"ok": True, "cancelled": bool(had)}
+        at = round(time.time() + minutes * 60)
+        self.plugin.set_sleep(self, at)
+        return {"ok": True, "sleep_at": at, "in_minutes": minutes}
 
     @capability("pair", risk="admin", tags=("physical",), timeout=120, scope="multi-machine")
     async def _pair(self, key: str | None = None, timeout: int = 60) -> dict:
@@ -488,16 +697,20 @@ class WebOSTV(Device):
         return {"ok": True, "paired": True}
 
 
-def _send_wol(pkt: bytes, host: str) -> list[str]:
+def _send_wol(macs: list[str], host: str) -> list[str]:
+    """One magic packet per MAC, broadcast and to the TV's address; the
+    addresses at least one packet left for."""
     sent = []
     for addr in ("255.255.255.255", host):
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-                s.sendto(pkt, (addr, 9))
-            sent.append(addr)
-        except OSError as e:
-            log.debug("wake-on-lan to %s failed: %s", addr, e)
+        for mac in macs:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                    s.sendto(magic_packet(mac), (addr, 9))
+                if addr not in sent:
+                    sent.append(addr)
+            except OSError as e:
+                log.debug("wake-on-lan for %s to %s failed: %s", mac, addr, e)
     return sent
 
 
@@ -514,6 +727,8 @@ class WebOSPlugin(Plugin):
     def __init__(self) -> None:
         super().__init__()
         self._tvs: dict[str, WebOSTV] = {}
+        self._sleep_task: asyncio.Task | None = None
+        self._sleep_wake = asyncio.Event()
 
     def _spec(self) -> list[tuple[str, str, str | None]]:
         try:
@@ -550,20 +765,68 @@ class WebOSPlugin(Plugin):
         keys[tv.key] = key
         self._save("keys.json", keys)
 
-    def save_mac(self, tv: WebOSTV, mac: str) -> None:
-        macs = self._load("macs.json")
-        macs[tv.key] = mac
-        self._save("macs.json", macs)
+    def save_macs(self, tv: WebOSTV, macs: list[str]) -> None:
+        stored = self._load("macs.json")
+        stored[tv.key] = list(macs)
+        self._save("macs.json", stored)
+
+    # -- sleep timers ------------------------------------------------------
+    def sleep_at(self, tv: WebOSTV) -> int | None:
+        at = self._load("sleep.json").get(tv.key)
+        return at if isinstance(at, (int, float)) and not isinstance(at, bool) else None
+
+    def set_sleep(self, tv: WebOSTV, at: int | None) -> bool:
+        """Set (or with ``None`` clear) ``tv``'s sleep time; whether one was set."""
+        timers = self._load("sleep.json")
+        had = timers.pop(tv.key, None) is not None
+        if at is not None:
+            timers[tv.key] = at
+        self._save("sleep.json", timers)
+        self._sleep_wake.set()
+        return had
+
+    async def _sleeper(self) -> None:
+        """Switch TVs off when their sleep time comes. Asleep on a short
+        monotonic tick but judged by the wall clock, so a delegate that was
+        suspended or restarted neither fires early nor late by much."""
+        while True:
+            self._sleep_wake.clear()
+            try:
+                async with aio_timeout(SLEEP_TICK):
+                    await self._sleep_wake.wait()
+            except (TimeoutError, asyncio.TimeoutError):
+                pass
+            now = time.time()
+            for key, at in list(self._load("sleep.json").items()):
+                tv = self._tvs.get(key)
+                if tv is None or not isinstance(at, (int, float)) or at > now:
+                    continue
+                self.set_sleep(tv, None)
+                if now - at > SLEEP_LATE:
+                    log.info("%s: sleep timer missed by %d s; not acting on it", tv.name, now - at)
+                    continue
+                try:
+                    await tv._power_off()
+                    log.info("%s: switched off by its sleep timer", tv.name)
+                except Exception as e:
+                    log.warning("%s: sleep timer could not switch it off: %s", tv.name, e)
 
     # -- lifecycle ---------------------------------------------------------
     async def start(self) -> None:
         macs = self._load("macs.json")
         for name, host, mac in self._spec():
-            tv = WebOSTV(self, name, host, mac or macs.get(name.lower()))
+            stored = macs.get(name.lower())
+            stored = [stored] if isinstance(stored, str) else list(stored or ())
+            tv = WebOSTV(self, name, host, ([mac] if mac else []) + stored)
             self._tvs[tv.key] = tv
             tv.start()
+        self._sleep_task = asyncio.get_running_loop().create_task(self._sleeper())
 
     async def stop(self) -> None:
+        task, self._sleep_task = self._sleep_task, None
+        if task is not None:
+            task.cancel()
+            await asyncio.wait({task}, timeout=5)
         tvs, self._tvs = list(self._tvs.values()), {}
         await asyncio.gather(*(tv.stop() for tv in tvs), return_exceptions=True)
 
@@ -573,13 +836,15 @@ class WebOSPlugin(Plugin):
     # -- caps on the delegate -----------------------------------------------
     @capability("list", risk="read", scope="multi-machine")
     async def _list(self) -> dict:
-        """Every configured TV: ``{items: [{name, host, on, app, reachable, paired}]}``."""
+        """Every configured TV: ``{items: [{name, host, on, app, reachable, paired,
+        wake_on_lan, macs, error}]}``."""
         items = []
         for tv in self._tvs.values():
             s = tv.state
             items.append({"name": tv.name, "host": tv.host, "on": bool(s.get("on")),
                           "app": s.get("app"), "reachable": bool(s.get("reachable")),
-                          "paired": bool(s.get("paired")), "error": s.get("error")})
+                          "paired": bool(s.get("paired")), "wake_on_lan": s.get("wake_on_lan"),
+                          "macs": list(tv.macs), "error": s.get("error")})
         return {"items": items}
 
     @capability("discover", risk="read", timeout=20, scope="multi-machine")

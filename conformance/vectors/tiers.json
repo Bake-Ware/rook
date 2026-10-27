@@ -615,6 +615,36 @@
   "guidance.write": {
    "tier": "admin"
   },
+  "ha.off": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "ha.on": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "ha.service": {
+   "tier": "admin",
+   "tags": [
+    "physical"
+   ]
+  },
+  "ha.set": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "ha.status": {
+   "tier": "read",
+   "tags": [
+    "physical"
+   ]
+  },
   "handoff.read": {
    "tier": "read"
   },
@@ -746,6 +776,18 @@
   },
   "home.voice_models_set": {
    "tier": "admin"
+  },
+  "homeassistant.devices": {
+   "tier": "read"
+  },
+  "homeassistant.scene": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "homeassistant.scenes": {
+   "tier": "read"
   },
   "hub.info": {
    "tier": "read"
@@ -1417,6 +1459,12 @@
     "physical"
    ]
   },
+  "tv.sleep": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
   "tv.status": {
    "tier": "read",
    "tags": [
@@ -1424,6 +1472,12 @@
    ]
   },
   "tv.toast": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "tv.type": {
    "tier": "write",
    "tags": [
     "physical"

@@ -1,6 +1,7 @@
 # Device workers: things a delegate answers for
 
-Status: implemented (worker framework, hub roster, dashboard, `webos` driver).
+Status: implemented (worker framework, hub roster, dashboard, `webos` and
+`homeassistant` drivers).
 Wire format: core spec 14.6. User manual: `docs/manual/devices.md`.
 
 ## 1. Goals
@@ -14,9 +15,8 @@ Wire format: core spec 14.6. User manual: `docs/manual/devices.md`.
 - Make adding a new kind of device a plugin's job: a driver declares devices
   with `@capability` methods, the same way plugins declare caps.
 
-Non-goals for now: devices that run their own (dormant) worker, a separate
-credential per device, and drivers other than LG webOS. Section 6 says how
-each fits later.
+Non-goals for now: devices that run their own (dormant) worker and a
+separate credential per device. Section 8 says how each fits later.
 
 ## 2. Model
 
@@ -87,10 +87,74 @@ All additive (core spec 14.6):
 The worker list shows a device with a type icon (TV, generic device), a
 **via <delegate>** tag, its driver in place of the version, and its status
 (`on · YouTube · vol 12` / `off` / `not paired`) in the battery slot, built
-from `hb[device.type]`. The 3D view draws devices as chips. `/api/band/workers`
+from `hb[device.type]` (else the device's only `hb` entry). A driver whose
+devices vary (Home Assistant) puts a ready summary in `hb.<ns>.text`, which
+the dashboard shows as is. The 3D view draws devices as chips. `/api/band/workers`
 rows carry `delegate`, `delegate_name` and `device`.
 
-## 6. Later
+## 6. webOS driver notes (round two, 2026-10-27)
+
+- **Wake-on-LAN goes to every MAC the TV has.** A TV's `getinfo` reports its
+  wired and its Wi-Fi MAC whichever it uses, and it only wakes on the one it
+  is connected by. The first version kept the wired one, so `tv.power_on`
+  never woke the house TVs (both on Wi-Fi; checked live: the wired MAC did
+  nothing in 15 s, the Wi-Fi one woke the living-room TV in 4 s). The driver
+  now keeps every MAC (`macs.json` holds a list; a string from the first
+  version still loads), puts the one the delegate's ARP table shows first,
+  and also reads the ARP table at `tv.power_on`, so a TV last seen on before
+  the upgrade wakes too.
+- **`tv.power_on` waits** (default 20 s, `wait=0` for fire-and-forget),
+  resending every 2 s, and fails with the reason, including the TV's own
+  "Turn on via Wi-Fi" setting (`settings/getSystemSettings` network
+  `wolwowlOnOff`, read once per connection; `tv.status` `wake_on_lan`).
+- **A request on a connection that died under it is retried once** on a
+  fresh one; a request that times out drops the connection so the next call
+  reconnects instead of waiting on a half-dead socket. `tv.power_off` treats
+  the TV dropping the connection as success and never sends twice.
+- **App names as people say them**: case, spaces and punctuation ignored,
+  `+` read as "plus"; same name, then prefix, then substring; a miss re-reads
+  the app list once; an input name gets "use tv.input".
+- **New caps**: `tv.type` (IME `insertText`/`sendEnterKey` into the open
+  field) and `tv.sleep` (a wall-clock timer kept in `sleep.json`, ticked
+  every 15 s; one missed by more than 10 min while the delegate was down is
+  dropped, not acted on late). `tv.status` adds `sound_output` (`tv.volume`
+  notes when sound goes to an external device) and `wake_on_lan`.
+
+## 7. Home Assistant driver
+
+- **One device worker per HA device**, chosen in `homeassistant.devices`
+  (HA name or id, optionally `band-name=`). Opt-in, not "everything": a real
+  house's HA has dozens of devices, many duplicates and dead ones (the one
+  this was built against: 64 devices, half of them unavailable, three named
+  "Jr's room speaker"), and names that would collide with other band workers
+  (an HA "Office TV" next to the webOS `office-tv`). `homeassistant.devices`
+  lists the candidates, working ones first, to pick from.
+- **Kind** (`device.type`): from the first of climate, light, fan, cover,
+  lock, vacuum, media player, humidifier, water heater, camera, alarm, valve
+  among its main (uncategorised) entities; `switch` only when all it has are
+  switches and power meters (a plug or strip); else `device` (a fridge whose
+  only main controls are ice-maker switches).
+- **Caps are the same on every device**, small and generic: `ha.status`,
+  `ha.on`/`ha.off` (lights take brightness, colour, kelvin), `ha.set` (one
+  value, meaning by domain), and `ha.service` for anything else. With no
+  `entity`, on/off/set act only when there is exactly one candidate; never a
+  guess across a power strip's sockets. Sirens, covers and valves switch only
+  when named. Locks and alarm panels only through `ha.service`, which is
+  `admin` because it can unlock a door; the rest are `write`, physical.
+  `ha.service` always targets the device's own entities (a `data` naming a
+  target is refused).
+- **Live state**: one WebSocket to HA; registries and states read once per
+  connection, then `state_changed` events; registry events re-read the
+  registries (debounced). The configured devices' registry entries are saved
+  (`devices.json`), so after a restart with HA down they are listed as
+  unavailable rather than missing.
+- **Scenes** belong to no device, so they are delegate caps:
+  `homeassistant.scenes` and `homeassistant.scene`.
+- Tested live (read-only, plus one no-op service call) against the house's
+  HA 2026.7.2; unit-tested against a fake HA WebSocket API with its real
+  message shapes.
+
+## 8. Later
 
 - **Dormant devices that run their own worker** (e.g. a JS worker inside a
   TV app): the device worker takes over the same derived id, the delegate
@@ -100,5 +164,4 @@ rows carry `delegate`, `delegate_name` and `device`.
   lists, like `facts`; anyone with the band PSK can run a delegate. When
   per-device identities land, the hub can accept `devices` only from workers
   allowed to delegate.
-- **More drivers**: Home Assistant (one device per HA *device*, not per
-  entity: a thermostat is one worker with a few caps), HDMI-CEC, PiKVM.
+- **More drivers**: HDMI-CEC and PiKVM as devices.

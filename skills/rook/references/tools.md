@@ -511,6 +511,24 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `hid.mouse.move` | x, y | Move pointer to absolute pixel (x, y) — top-left origin. |
 | `hid.type` | text | Type `text` as if on a real keyboard. |
 
+**homeassistant**
+
+| Cap | Args | Does |
+|---|---|---|
+| `homeassistant.devices` | query='', all=false | Home Assistant's devices, for picking which go on the band (homeassistant.devices setting): `{connected, vers… |
+| `homeassistant.scene` | name | Turn on a scene by id or name (`"office lights full"`). |
+| `homeassistant.scenes` | — | Home Assistant's scenes: `{items: [{scene, name}]}`. |
+
+**homeassistant devices**
+
+| Cap | Args | Does |
+|---|---|---|
+| `ha.off` | entity? | Switch off. |
+| `ha.on` | entity?, brightness?, color?, kelvin? | Switch on (a light, plug, fan, media player…). |
+| `ha.service` | service, entity?, data? | Call any Home Assistant service on this device's entities, e.g. `service="button.press", entity="reset water… |
+| `ha.set` | value, entity? | Set a value on one entity; what it means depends on the entity: a number or text field its value, a select it… |
+| `ha.status` | — | The device and every entity's state: `{name, kind, area, model, available, entities: [{entity, name, state, …… |
+
 **info**
 
 | Cap | Args | Does |
@@ -656,7 +674,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | Cap | Args | Does |
 |---|---|---|
 | `webos.discover` | timeout=3.0 | Find LG webOS TVs on this worker's network (SSDP), for adding to webos.tvs. |
-| `webos.list` | — | Every configured TV: `{items: [{name, host, on, app, reachable, paired}]}`. |
+| `webos.list` | — | Every configured TV: `{items: [{name, host, on, app, reachable, paired, wake_on_lan, macs, error}]}`. |
 
 **webos devices**
 
@@ -666,16 +684,18 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `tv.button` | name | Press a remote button: HOME, BACK, UP, DOWN, LEFT, RIGHT, ENTER, MENU, EXIT, digits… |
 | `tv.input` | input | Switch to an external input by id or label (`"HDMI 1"`, `"HDMI_2"`). |
 | `tv.inputs` | — | External inputs (HDMI…): `{items: [{id, label, connected}]}`. |
-| `tv.launch` | app, params? | Launch an app by id or title (`"YouTube"`, `"netflix"`), with optional launch `params`. |
+| `tv.launch` | app, params? | Launch an app by id or title (`"YouTube"`, `"netflix"`, `"disney plus"`), with optional launch `params`. |
 | `tv.media` | action | Playback control for the current app: play, pause, stop, rewind, fast_forward. |
 | `tv.mute` | on=true | Mute (`on=true`) or unmute (`on=false`). |
 | `tv.open_url` | url | Open an http(s) URL in the TV's web browser. |
 | `tv.pair` | key?, timeout=60 | Pair with the TV. |
 | `tv.power_off` | — | Turn the TV off. |
-| `tv.power_on` | — | Turn the TV on with Wake-on-LAN. |
+| `tv.power_on` | wait=20 | Turn the TV on with Wake-on-LAN and wait up to `wait` seconds (0-60) for it to answer, resending meanwhile; `… |
 | `tv.screen` | on | Turn just the screen off (sound keeps playing) or back on. |
-| `tv.status` | — | Live state: `{on, power, app, app_id, volume, muted, screen, reachable, paired}`. |
+| `tv.sleep` | minutes | Switch the TV off in `minutes` (1-720), like the remote's sleep timer; `minutes=0` cancels it. |
+| `tv.status` | — | Live state: `{on, power, app, app_id, volume, muted, screen, sound_output, reachable, paired, wake_on_lan, ma… |
 | `tv.toast` | message | Show a short notification on the TV screen. |
+| `tv.type` | text='', enter=false, replace=false | Type `text` into the text field open on the TV (a search box, a login form), as the on-screen keyboard would. |
 | `tv.volume` | level?, step? | Set the volume to `level` (0-100), or move it by `step` (e.g. +3, -2). |
 
 **work**

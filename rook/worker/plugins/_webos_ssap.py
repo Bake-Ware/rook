@@ -67,6 +67,10 @@ POWER_OFF = "system/turnOff"
 CONNECTION_INFO = "com.webos.service.connectionmanager/getinfo"
 SYSTEM_INFO = "system/getSystemInfo"
 POINTER_SOCKET = "com.webos.service.networkinput/getPointerInputSocket"
+SOUND_OUTPUT = "com.webos.service.apiadapter/audio/getSoundOutput"
+GET_SETTINGS = "settings/getSystemSettings"   # read-only here; SSAP allows a few keys
+INSERT_TEXT = "com.webos.service.ime/insertText"
+ENTER_KEY = "com.webos.service.ime/sendEnterKey"
 MEDIA = {
     "play": "media.controls/play",
     "pause": "media.controls/pause",

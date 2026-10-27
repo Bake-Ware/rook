@@ -316,6 +316,15 @@ are set only in the environment or on the command line.
 | `home.job_steps` | Work job agent steps | hub | bool | on | `ROOK_HOME_JOB_STEPS` | live |
 | `home.job_max_tool_calls` | Tool calls per job step | hub | int | `20` | `ROOK_HOME_JOB_MAX_TOOL_CALLS` | live |
 
+## Homeassistant (worker plugin, runs in worker)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `homeassistant.url` | Home Assistant URL | worker | str |  | `HASS_URL` | reload |
+| `homeassistant.token` | Access token (secret) | worker | str |  | `HASS_TOKEN` | reload |
+| `homeassistant.insecure` | Skip TLS verification | worker | bool | off | `HASS_INSECURE` | reload |
+| `homeassistant.devices` | Devices | worker | str |  | `HASS_DEVICES` | reload |
+
 ## Hub info (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
