@@ -70,8 +70,8 @@ def test_settings_pages(mods):
                    "data": "package:com.example"}
     n = mods.dev.intent_spec("settings", page="notifications", package="com.example")
     assert n["extras"] == {"android.provider.extra.APP_PACKAGE": "com.example"}
-    raw = mods.dev.intent_spec("settings", page="android.settings.CAST_SETTINGS")
-    assert raw["action"] == "android.settings.CAST_SETTINGS"
+    with pytest.raises(ValueError, match="page is one of"):     # only the named pages
+        mods.dev.intent_spec("settings", page="android.settings.MANAGE_UNKNOWN_APP_SOURCES")
     with pytest.raises(ValueError, match="page is one of"):
         mods.dev.intent_spec("settings", page="hyperdrive")
     with pytest.raises(ValueError):

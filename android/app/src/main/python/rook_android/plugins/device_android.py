@@ -23,8 +23,8 @@ ENV_KEEP_AWAKE_AUTO = "ROOK_KEEP_AWAKE_AUTO"
 ENV_KEEP_AWAKE_IDLE = "ROOK_KEEP_AWAKE_IDLE_MINUTES"
 
 
-#: device.intent kind=settings: page name -> Settings action. A raw
-#: "android.settings.*" action is also accepted.
+#: device.intent kind=settings: page name -> Settings action. Only these pages
+#: (review of #250: a raw action could open any settings screen).
 SETTINGS_PAGES = {
     "main": "android.settings.SETTINGS",
     "wifi": "android.settings.WIFI_SETTINGS",
@@ -110,7 +110,7 @@ def intent_spec(kind: str, text: str = "", to: str = "", subject: str = "", mode
         return {"action": "android.intent.action.SHOW_ALARMS"}
     if k == "settings":
         name = str(page or "main").strip()
-        action = name if name.startswith("android.settings.") else SETTINGS_PAGES.get(name.lower())
+        action = SETTINGS_PAGES.get(name.lower())
         if action is None:
             raise ValueError("page is one of " + ", ".join(sorted(SETTINGS_PAGES)))
         if name.lower() == "app":
@@ -581,7 +581,7 @@ class AndroidDevicePlugin(Plugin):
         (the alarm list), settings (page: wifi, bluetooth, display, sound, volume,
         dnd, battery, location, apps, app+package, notifications+package,
         accessibility, internet, airplane, network, nfc, date, storage, security,
-        developer, main, or a raw android.settings.* action), search (text: web
+        developer or main), search (text: web
         search), email (to, subject, text: opens a draft), sms (to, text: opens a
         draft, never sends), camera. app names the app that took it when Android
         says (not for share's chooser); screen=true returns the screen after it opens."""
