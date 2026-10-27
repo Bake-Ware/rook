@@ -63,8 +63,8 @@ async def shell_exec_checks(tmp: str) -> None:
           str(r["code"]))
     r = await run(cmd="exit 5")
     check("exit N", r["code"] == 5, str(r["code"]))
-    r = await run(cmd="Get-Item C:\\rook-no-such-path-xyz; Write-Progress -Activity a -Status b")
-    check("cmdlet failure exits non-zero", r["code"] != 0, str(r["code"]))
+    r = await run(cmd="Write-Progress -Activity a -Status b; Get-Item C:\\rook-no-such-path-xyz")
+    check("a failing last cmdlet exits non-zero", r["code"] == 1, str(r["code"]))
     check("errors are plain text, never CLIXML", "CLIXML" not in r["stderr"] and "rook-no-such-path-xyz" in r["stderr"],
           repr(r["stderr"])[:200])
     r = await run(cmd="Write-Output 'oops")
