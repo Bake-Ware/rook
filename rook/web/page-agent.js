@@ -19,6 +19,8 @@ function names(el) {
 }
 // One id per open tab: the hub hands a page action only to the tab it was asked from.
 export const TAB = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)).replace(/-/g, '').slice(0, 16);
+// Huddle action cards and questions waiting for the person (huddles.js, huddle.js).
+const CARDS = '[data-card], .hx-card, .hd-q, .hd-opts, [data-question], [data-ask]';
 const CONTROLS = 'a[href], button, input, select, textarea, [role=button], [role=tab], summary';
 // [data-secret]: shown-once tokens, invite links and pairing codes (manage.js, tokens.js).
 const SKIP = '.hd, .app-sidebar, .tabbar, .rook-art, script, style, [data-secret], .token-secret, .pairing-code, .pairing-commands, [aria-hidden=true]';
@@ -203,7 +205,8 @@ async function act(a) {
   if (a.label !== undefined && squash(a.label) !== label)
     throw Error(a.ref + ' now reads "' + label + '", not "' + a.label + '": look again (page_read)');
   const c = rules.describeControl({view: view(), kind: kindOf(el), type: el.type, names: names(el), label,
-    href: el.getAttribute('href') || '', inDialog: !!el.closest('dialog'), readOnly: el.readOnly,
+    href: el.getAttribute('href') || '', inDialog: !!el.closest('dialog'), inCard: !!el.closest(CARDS),
+    readOnly: el.readOnly,
     disabled: el.disabled});
   if (a.do === 'fill') {
     const no = rules.fillRefusal(c);

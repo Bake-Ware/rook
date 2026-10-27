@@ -35,6 +35,8 @@ def test_presses_only_show_or_find_things_on_everyday_pages():
     allowed = [press(label="Refresh list"), press(label="Show details"), press(label="Next"),
                press(kind="tab", label="Editor"), press(kind="tab", label="Runs"),
                press(kind="summary", label="More"), press(kind="link", label="Jobs", href="#jobs"),
+               press(kind="link", label="Open room", href="#huddles?room=abc"),
+               press(kind="link", label="Home", href="#"),
                press("knowledge", label="Search"), press("huddles", label="Open")]
     refused = [
         press(label="Run now"), press(label="Save"), press(label="Start session"),
@@ -46,6 +48,10 @@ def test_presses_only_show_or_find_things_on_everyday_pages():
         press("jobs", label="Show details"),                     # Jobs is open-and-point only
         press(label="Next", disabled=True),
         press(kind="tab", label="Editor", inDialog=True),
+        press("huddles", label="Show me later", inCard=True),     # a card's choice, agent-written
+        press("huddles", kind="tab", label="Next", inCard=True),
+        press(kind="link", label="Show", href="#account?invite=abc"),   # where it goes counts
+        press(kind="link", label="Show", href="#bands?worker=w1"),
     ] + [press(v, label="Show details") for v in (
         "trust", "approvals", "decisions", "vault", "tokens", "people", "account", "bands",
         "settings", "plugins", "updates", "workers", "install", "ccmod", "sessions", "guidance",

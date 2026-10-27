@@ -204,17 +204,24 @@ def test_the_dock_follows_the_operator_across_pages(browser, hub):
     phone.context.close()
 
 
+def _tool_said(llm):
+    """What the page tool answered the model (for a failing assert)."""
+    return [m.get("content") for b in llm.bodies for m in b["messages"] if m.get("role") == "tool"]
+
+
 class _PageLLM:
-    """A model that uses the page tools: it opens Jobs, then answers."""
-    def __init__(self):
+    """A model that uses the page tools: it opens Jobs, then answers ``reply``
+    (each test its own: the 1:1 room keeps earlier tests' messages)."""
+    def __init__(self, reply="I opened Jobs for you."):
         self.bodies = []
+        self.reply = reply
 
     async def __call__(self, method, url, body, headers, timeout):
         if url.endswith("/models"):
             return 200, {"data": [{"id": "small-model"}]}
         self.bodies.append(body)
         if any(m.get("role") == "tool" for m in body["messages"]):
-            msg = {"role": "assistant", "content": "I opened Jobs for you."}
+            msg = {"role": "assistant", "content": self.reply}
         else:
             msg = {"role": "assistant", "content": None, "tool_calls": [{
                 "id": "call_1", "type": "function",
@@ -241,7 +248,7 @@ def test_the_house_agent_sees_the_page_and_acts_on_it(browser, hub):
     page.fill(".hd-panel textarea", "open my jobs")
     page.press(".hd-panel textarea", "Enter")
     page.locator(".hd-panel .hc-text", has_text="I opened Jobs for you.").wait_for()
-    assert page.evaluate("document.body.dataset.view") == "jobs"
+    assert page.evaluate("document.body.dataset.view") == "jobs", _tool_said(llm)
     assert page.locator(".hd-panel").is_visible()       # the chat stayed open
 
     first = llm.bodies[0]
@@ -262,7 +269,7 @@ def test_the_front_door_gets_the_page_too(browser, hub):
     """Live hubs route the dock through the front door (home.front_door on): the
     same page context and page tools reach that turn."""
     base, configure = hub
-    llm = _PageLLM()
+    llm = _PageLLM(reply="Jobs is open now (front door).")
     node = configure.box["node"]
     configure.loop.call_soon_threadsafe(setattr, node.plugin("home"), "_http", llm)
     configure(enabled=True, base_url="http://llm.example:1234/v1", model="small-model",
@@ -273,8 +280,8 @@ def test_the_front_door_gets_the_page_too(browser, hub):
         page.locator(".hd-launch").click()
         page.fill(".hd-panel textarea", "show me my jobs")
         page.press(".hd-panel textarea", "Enter")
-        page.locator(".hd-panel .hc-text", has_text="I opened Jobs for you.").wait_for()
-        assert page.evaluate("document.body.dataset.view") == "jobs"
+        page.locator(".hd-panel .hc-text", has_text="Jobs is open now (front door).").wait_for()
+        assert page.evaluate("document.body.dataset.view") == "jobs", _tool_said(llm)
         first = llm.bodies[0]
         names = {t["function"]["name"] for t in first.get("tools") or []}
         assert {"page_go", "page_click", "do_action"} <= names     # the front door's own tools too
@@ -303,6 +310,9 @@ def test_the_page_refuses_what_the_person_must_do(browser, hub):
         add('<button type="button" id="send-btn">Send</button>').onclick = () => pressed += 1000;
         add('<button type="button" aria-label="Delete this job">🗑</button>').onclick = () => pressed += 10000;
         add('<button type="button">Approve</button>').onclick = () => pressed += 100000;
+        add('<article class="hd-q"><button type="button">Show me later</button></article>')
+            .querySelector('button').onclick = () => pressed += 10000000;
+        add('<a href="#account?invite=abc">Show invite</a>');
         add('<a id="off-link" href="/logout">Leave</a>');
         add('<label>Name <input id="name-in"></label>');
         add('<input id="pw-in" type="password" value="hunter2" aria-label="Password">');
@@ -318,6 +328,9 @@ def test_the_page_refuses_what_the_person_must_do(browser, hub):
         r.send = await m.run({do: 'click', ref: snap.items.find(i => i.label === 'Send').ref});
         r.icon = await m.run({do: 'click', ref: snap.items.find(i => i.label === '🗑').ref});
         r.approve = await m.run({do: 'click', ref: snap.items.find(i => i.label === 'Approve').ref});
+        r.card = await m.run({do: 'click', ref: snap.items.find(i => i.label === 'Show me later').ref});
+        r.invite = await m.run({do: 'click', ref: snap.items.find(i => i.label === 'Show invite').ref});
+        r.hashAfter = location.hash;
         r.off = await m.run({do: 'click', ref: ref('off-link')});
         r.fill = await m.run({do: 'fill', ref: ref('name-in'), value: 'Ada'});
         r.pw = await m.run({do: 'fill', ref: ref('pw-in'), value: 'x'});
@@ -363,6 +376,8 @@ def test_the_page_refuses_what_the_person_must_do(browser, hub):
     assert not out["send"]["ok"] and "for the person" in out["send"]["result"]   # never as them
     assert not out["icon"]["ok"] and "for the person" in out["icon"]["result"]   # by its aria-label
     assert not out["approve"]["ok"] and "for the person" in out["approve"]["result"]
+    assert not out["card"]["ok"] and "card" in out["card"]["result"]       # agent-written choices
+    assert not out["invite"]["ok"] and out["hashAfter"] == "#overview"   # page_go's rule applies
     assert not out["dialog"]["ok"] and "dialog" in out["dialog"]["result"]
     assert not out["stale"]["ok"] and "nothing with ref" in out["stale"]["result"], out["stale"]
     assert all(out["lockedPages"].values()), out["lockedPages"]

@@ -23,7 +23,8 @@ const squash = s => String(s || '').replace(/\s+/g, ' ').trim();
 /** One control as the rules see it. */
 export function describeControl(c) {
   return {view: c.view, kind: c.kind, type: c.type || '', names: squash(c.names), label: squash(c.label),
-    href: c.href || '', inDialog: !!c.inDialog, readOnly: !!c.readOnly, disabled: !!c.disabled};
+    href: c.href || '', inDialog: !!c.inDialog, inCard: !!c.inCard, readOnly: !!c.readOnly,
+    disabled: !!c.disabled};
 }
 
 /** null when the agent may press it, else why not (said to the agent). */
@@ -31,9 +32,16 @@ export function pressRefusal(c) {
   if (!ACTS.has(c.view)) return 'only opening and pointing here: ask the person to do it';
   if (c.disabled) return (c.label || 'that') + ' is disabled';
   if (c.inDialog) return 'answering a dialog is for the person';
+  // Cards and questions carry choices agents wrote ("Show me later"): the person's.
+  if (c.inCard) return 'answering a card or a question is for the person';
   if (c.kind === 'tab' || c.kind === 'summary') return null;   // they only switch what is shown
   if (RISKY.test(c.names)) return '"' + (c.label || c.names) + '" is for the person to press';
-  if (c.kind === 'link') return c.href.startsWith('#') ? null : 'that link leaves the dashboard: ask the person to open it';
+  if (c.kind === 'link') {
+    if (!c.href.startsWith('#')) return 'that link leaves the dashboard: ask the person to open it';
+    // Where it goes passes the same rule as page_go (#account?invite=... opens a dialog).
+    const [page, query] = c.href.slice(1).split('?');
+    return goRefusal(page || 'overview', query || '');
+  }
   if (c.kind === 'button' && SAFE.test(c.label || c.names)) return null;
   return '"' + (c.label || c.names) + '" is for the person to press (it only presses what shows or finds things)';
 }
