@@ -619,7 +619,7 @@ class AndroidDevicePlugin(Plugin):
     @capability("sound", risk="exec", tags=("physical",), scope="local")
     def _sound(self, stream: str = "media", level: int | None = None, step: str = "",
                ringer: str = "", dnd: str = "") -> dict:
-        """Volume, ringer and Do Not Disturb. With no change asked, returns the state:
+        """Read or set the volume, ringer and Do Not Disturb. With no change asked, returns the state:
         each stream's level (percent and steps), ringer normal|vibrate|silent, dnd
         off|priority|alarms|total, and whether Rook has Do Not Disturb access.
         level=0-100 sets stream (media, ring, alarm, notification, call, system) to

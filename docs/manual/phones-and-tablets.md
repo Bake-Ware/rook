@@ -48,8 +48,21 @@ Besides running commands and handling files like any worker, a phone can:
 - **ring at full volume** to find it, even on silent;
 - **speak** a message out loud, so any agent or job can talk to you, and listen
   for your spoken reply;
-- wake the screen, unlock a PIN lock screen, open an app or a link;
+- wake the screen, unlock a PIN lock screen, open an app (by its name) or a link;
+- start common actions in one step: share text, open the dialer with a number,
+  start directions in Maps, set a timer or an alarm, open a settings page, or
+  open a draft email or text (it never sends or calls by itself);
+- show what is playing and play, pause or skip it (with notification access);
+- read and set the volume, the ringer and Do Not Disturb (silent and Do Not
+  Disturb need Do Not Disturb access);
 - switch the torch on, vibrate, and read or set the clipboard.
+
+Agents drive the screen by its labels rather than pixels. They can read a short
+summary of the screen, wait until something appears or the screen settles, type
+into a field by its name, and get the new screen back with the tap that
+changed it. Menus and drop-down lists that open over an app count as part of
+the screen. Phone actions turn the screen on and keep it awake while an agent
+works (see the app's settings).
 
 ## The voice assistant
 

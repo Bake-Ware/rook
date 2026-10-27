@@ -511,6 +511,12 @@
   "deluge.status": {
    "tier": "read"
   },
+  "device.apps": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
   "device.clipboard_get": {
    "tier": "exec",
    "tags": [
@@ -535,6 +541,9 @@
   "device.info": {
    "tier": "read"
   },
+  "device.intent": {
+   "tier": "exec"
+  },
   "device.keep_awake": {
    "tier": "exec",
    "tags": [
@@ -552,6 +561,12 @@
   },
   "device.open_url": {
    "tier": "exec"
+  },
+  "device.sound": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
   },
   "device.torch": {
    "tier": "exec",
@@ -986,6 +1001,18 @@
   },
   "manual.update": {
    "tier": "admin"
+  },
+  "media.control": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "media.now": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
   },
   "member.admin": {
    "tier": "admin"
@@ -1594,10 +1621,25 @@
     "sensitive"
    ]
   },
+  "ui.screen": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
   "ui.scroll": {
    "tier": "exec"
   },
   "ui.text": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "ui.type": {
+   "tier": "exec"
+  },
+  "ui.wait": {
    "tier": "exec",
    "tags": [
     "sensitive"
