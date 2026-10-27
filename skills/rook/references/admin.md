@@ -34,7 +34,7 @@ Flow: build bundle → hub signs manifest `{build, sha256, url, sig}` → the co
 
 ## Permissions
 
-The hub evaluates a policy for every call (`docs/design/permissions.md`). It ships in **audit** mode: nothing is denied, would-be denials are journaled (`decision=would_deny`). `rook_call(worker="rook", cap="policy.explain", args={"principal": "role:agent", "cap": "…", "worker": "…"})` shows the rule that decides a call; `policy.status` shows the mode and whether calls carry tickets. A denial comes back as `{"ok": false, "error": "denied: …", "denied": {"rule", "rev", …}}`: don't retry it, ask the user. Changing the policy (`policy.set`, dashboard **/permissions**) is for band owners and operator tokens.
+The hub evaluates a policy for every call (`docs/design/permissions.md`). It ships in **audit** mode: nothing is denied, would-be denials are journaled (`decision=would_deny`). `rook_call(worker="rook", cap="policy.explain", args={"principal": "token:<agent_id>", "cap": "…", "worker": "…"})` shows the rule that decides a call (an API key is evaluated as the person it belongs to); `policy.status` shows the mode and whether calls carry tickets. A denial comes back as `{"ok": false, "error": "denied: …", "denied": {"rule", "rev", …}}`: don't retry it, ask the user. Changing the policy (`policy.set`, dashboard **/permissions**) is for hub owners.
 - Android updates come from a rebuilt APK (hub feed checked on start and every 6 h; SHA-256 + same signing cert required), not the zipapp feed. The ESP32 dongle has its own flash path.
 
 ## Custom caps (fleet-wide patterns)

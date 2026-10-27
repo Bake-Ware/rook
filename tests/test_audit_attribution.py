@@ -189,7 +189,7 @@ async def test_named_key_attribution_reaches_journal_worker_and_whoami(tmp_path)
         assert who.pop("_brief")["you"] == {"actor": "claudecode.t.workstation", "kind": "agent"}
         assert who == {"identity": "agent:claude code_workstation", "kind": "agent",
                        "label": "claude code", "agent_id": minted["agent_id"],
-                       "key_id": minted["id"], "verified": True, "role": "agent",
+                       "key_id": minted["id"], "verified": True,
                        "token": "claudecode", "client": "t", "host": "workstation",
                        "actor": "claudecode.t.workstation"}
         assert minted["token"] not in json.dumps(who)

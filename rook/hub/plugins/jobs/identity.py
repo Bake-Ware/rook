@@ -78,8 +78,11 @@ def caller() -> dict:
     from ...authz import current_principal
     p = current_principal.get()
     if p is not None:
-        return {"id": p.id, "kind": p.kind, "role": p.role, "groups": list(p.groups),
-                "label": p.label, "verified": bool(p.verified)}
+        out = {"id": p.id, "kind": p.kind, "role": p.role, "groups": list(p.groups),
+               "label": p.label, "verified": bool(p.verified)}
+        if getattr(p, "user", ""):
+            out["user"] = p.user  # an API key's person (access v2 item 7)
+        return out
     ident = current_identity()
     if ident:
         system = ident.startswith("system:")
@@ -118,7 +121,8 @@ def is_admin(info: dict | None) -> bool:
 def principal_of(info: dict, via: tuple = ()) -> Principal:
     return Principal(str(info.get("id") or SYSTEM_OWNER["id"]), str(info.get("kind") or "unknown"),
                      str(info.get("role") or ""), tuple(info.get("groups") or ()), via=via,
-                     verified=bool(info.get("verified", True)), label=str(info.get("label") or ""))
+                     verified=bool(info.get("verified", True)), label=str(info.get("label") or ""),
+                     user=str(info.get("user") or ""))
 
 
 # -- specs -------------------------------------------------------------------------

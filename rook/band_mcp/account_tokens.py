@@ -51,14 +51,56 @@ def dashboard_tokens_url() -> str:
 
 
 def build_account_token_routes(provider, chat=None, accounts=None, approvals=None, house=None,
-                                devices=None):
+                                devices=None, access=None):
     """``approvals()``: the hub's approval queue holder (or None);
     ``house()``: ``(identity, label)`` of the house agent (or None);
     ``devices()``: ``[(device:<worker_id>, label)]`` of the phones the
-    attention plugin puts decision cards on (their taps relay)."""
+    attention plugin puts decision cards on (their taps relay);
+    ``access()``: the hub's :class:`rook.hub.access.AccessStore` (or None):
+    each key belongs to one person and reaches what they reach (access v2
+    item 7), so a key carries no role of its own."""
     accounts = accounts or AccountStore()
 
     response = json_reply
+
+    def store():
+        try:
+            return access() if access is not None else None
+        except Exception:
+            return None
+
+    def people():
+        try:
+            with accounts.db() as db:
+                return [{'id': r['id'], 'name': r['name'] or r['username'] or r['id']}
+                        for r in db.execute('SELECT id, username, name FROM users ORDER BY created')]
+        except Exception:
+            return []
+
+    def person_of(data, user):
+        """The signed-in operator, or the account they picked."""
+        uid = str(data.get('user') or '')
+        if not uid or uid == user.get('id'):
+            return str(user.get('id') or '')
+        if not accounts.user(uid):
+            raise ValueError('Choose a person with an account.')
+        return uid
+
+    def who(user):
+        return 'human:' + str(user.get('username') or user.get('id'))
+
+    def owners_view(tokens):
+        """Each token's person (a key made before keys belonged to people
+        goes to the first owner now, as on its first use)."""
+        a = store()
+        if a is None:
+            return
+        for t in tokens:
+            if t.get('agent_id'):
+                try:
+                    t['user'] = a.token_user(t['agent_id'], label=t.get('name') or '')
+                except Exception:
+                    t['user'] = None
 
     def queue():
         ap = approvals() if approvals is not None else None
@@ -108,7 +150,8 @@ def build_account_token_routes(provider, chat=None, accounts=None, approvals=Non
         if data is None:
             tokens = provider.list_api_tokens()
             relay = relay_view(tokens)
-            return response({'tokens': tokens, 'relay': relay,
+            owners_view(tokens)
+            return response({'tokens': tokens, 'relay': relay, 'people': people(),
                              'avatars': chat.avatar_index() if chat and chat.enabled else {}})
         try:
             op = data.get('op')
@@ -163,20 +206,32 @@ def build_account_token_routes(provider, chat=None, accounts=None, approvals=Non
                             or not all(isinstance(x, str) and re.fullmatch(r'work-session:[a-f0-9]{32}', x)
                                        for x in scopes[1:])):
                         raise ValueError('Unsupported token scope.')
-                # Token role (permissions.md 1), chosen at mint; work-session
-                # tokens and the default are "agent".
-                role = data.get('role') or 'agent'
-                from .tokens import TOKEN_ROLES
-                if role not in TOKEN_ROLES:
-                    raise ValueError('Choose a supported role.')
-                if role == 'operator' and not user.get('admin'):
-                    raise ValueError('Only an operator account can mint operator tokens.')
-                if role != 'agent' and scopes is not None:
-                    raise ValueError('Work session tokens are agent tokens.')
-                entry = (provider.mint_api_token(name.strip(), ttl_seconds=ttl, scopes=scopes, role=role)
-                         if role != 'agent' else
-                         provider.mint_api_token(name.strip(), ttl_seconds=ttl, scopes=scopes))
-                return response({'id': entry['id'], 'name': entry['name'], 'token': entry['token']})
+                # A key acts as its person (access v2 item 7): no role of its own.
+                if data.get('role') not in (None, 'agent'):
+                    raise ValueError('Tokens have no role: a token reaches what its person reaches.')
+                uid = person_of(data, user)
+                a = store()
+                entry = provider.mint_api_token(name.strip(), ttl_seconds=ttl, scopes=scopes)
+                if a is not None:
+                    try:
+                        a.set_token_user(entry['agent_id'], uid, actor=who(user), label=entry['name'],
+                                         words=f"made on the Tokens page by {who(user)}")
+                    except Exception:
+                        provider.revoke_api_token(entry['id'])  # never a key with no person
+                        raise ValueError('Could not record whose token this is; nothing was made.')
+                return response({'id': entry['id'], 'name': entry['name'], 'token': entry['token'],
+                                 'user': uid})
+            if op == 'owner':
+                t = next((t for t in provider.list_api_tokens() if t.get('id') == str(data.get('id', ''))), None)
+                if t is None or not t.get('agent_id'):
+                    return response({'error': 'Token no longer exists.'}, 404)
+                a = store()
+                if a is None:
+                    return response({'error': 'People and access are unavailable on this hub.'}, 503)
+                uid = person_of(data, user)
+                a.set_token_user(t['agent_id'], uid, actor=who(user), label=t.get('name') or '',
+                                 words=f"moved on the Tokens page by {who(user)}")
+                return response({'ok': True, 'user': uid})
             if op == 'revoke':
                 if data.get('confirm') is not True:
                     raise ValueError('Confirm revoking this token.')

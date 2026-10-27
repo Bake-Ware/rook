@@ -109,7 +109,7 @@ def test_an_agent_in_the_chain_is_held_even_behind_a_person(tmp_path):
 
 def test_deny_beats_hold(tmp_path):
     doc = {**DEFAULT_POLICY, "mode": "enforce",
-           "rules": [{"id": "no-shell", "who": "token:agent-1", "deny": "shell.exec",
+           "rules": [{"id": "no-shell", "who": "role:agent", "deny": "shell.exec",
                       "on": "*"}]}
     az = authorizer(tmp_path, doc)
     d = stop(az)

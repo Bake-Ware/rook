@@ -12,6 +12,15 @@ every existing principal keeps what it can do today, and only principal
 kinds that do not exist yet (integrations, plugins) get restrictive
 defaults. Nothing is denied until the operator sets ``mode: enforce``.
 
+An API key only says which person is calling (access v2 item 7): the policy
+sees a key as its person (:meth:`Principal.as_person`), so a person's rules,
+defaults and grants are the same from every client. Selectors that could only
+ever name keys (``token:*``, ``token:<id>``, ``role:operator|readonly|custom``)
+are retired: a document that still has them is migrated on load (the old file
+is kept as ``policy.json.pre-tokens``) and :meth:`PolicyStore.save` refuses
+them. ``role:agent`` now covers only agents the hub itself runs (the house
+agent, roles).
+
 Evaluation (3.3): hard invariants, then for each principal in the
 on-behalf-of chain the most specific matching rule by
 ``(target, cap, principal)`` specificity (file order breaks exact ties
@@ -60,15 +69,13 @@ DEFAULT_POLICY: dict = {
     "mode": "audit",
     "defaults": {"read": "allow", "write": "allow", "exec": "deny", "admin": "deny"},
     "principals": {
-        "role:operator": dict(_ALL),
         "role:system": dict(_ALL),
+        # Agents the hub runs itself (house agent, roles). API keys are their person.
         "role:agent": {"read": "allow", "write": "allow", "exec": "allow", "admin": "audit"},
-        "role:readonly": {"read": "allow", "write": "deny", "exec": "deny", "admin": "deny"},
         "role:integration": {"read": "allow", "write": "allow", "exec": "deny", "admin": "deny"},
         "human:owner": dict(_ALL),
         "human:member": {"read": "allow", "write": "allow", "exec": "allow", "admin": "audit"},
         "human:dashboard": dict(_ALL),
-        "token:static": dict(_ALL),
         "integration:*": {"read": "allow", "write": "allow", "exec": "deny", "admin": "deny"},
         "plugin:*": {"read": "deny", "write": "deny", "exec": "deny", "admin": "deny"},
         "band:unauthenticated": {"read": "allow", "write": "deny", "exec": "deny", "admin": "deny"},
@@ -78,7 +85,7 @@ DEFAULT_POLICY: dict = {
     "principal_groups": {},
     "tiers": {},
     # Hub administration that did not exist before permissions: band settings
-    # and policy changes are for band owners and operator-role tokens only
+    # and policy changes are for hub owners only
     # (maintainer decision). These caps also hard-gate on the principal in
     # their handlers, whatever the mode.
     "rules": [
@@ -93,6 +100,20 @@ DEFAULT_POLICY: dict = {
 # locked out by a bug.
 _FAIL_OPEN_ROLES = frozenset({"operator", "owner", "system"})
 _FAIL_OPEN_IDS = frozenset({"token:static", "human:dashboard"})
+
+#: Roles an API key had before keys acted as their person. ``operator`` is
+#: still how stored job identities name the static key (an owner).
+RETIRED_ROLES = frozenset({"operator", "readonly", "custom"})
+#: The roles a person has (rook.hub.access).
+PERSON_ROLES = frozenset({"owner", "member"})
+RETIRED_HELP = ("API keys act as their person (access v2): write the rule for the person "
+                "(human:<account id>, human:member or human:owner) instead")
+
+
+def retired_selector(sel: Any) -> bool:
+    """Whether a principal selector could only ever name an API key."""
+    s = str(sel or "").strip()
+    return s.startswith("token:") or (s.startswith("role:") and s[5:] in RETIRED_ROLES)
 
 
 class PolicyError(ValueError):
@@ -114,13 +135,27 @@ class Principal:
     via: tuple = ()
     verified: bool = True
     label: str = ""
+    #: The account an API key belongs to (``""``: none, or not a key).
+    user: str = ""
 
     def key(self) -> tuple:
-        return (self.id, self.role, self.groups, self.verified)
+        return (self.id, self.role, self.groups, self.verified, self.user)
 
     def fail_open(self) -> bool:
         return (self.role in _FAIL_OPEN_ROLES or self.id in _FAIL_OPEN_IDS
                 or any(g == "human:owner" for g in self.groups))
+
+    def as_person(self) -> "Principal":
+        """The principal the policy sees: an API key is its person
+        (``human:<account id>``, or ``human:dashboard`` for a key with no
+        account, the hub's own owner), so nothing in the policy can differ by
+        client. Anything else is itself."""
+        if self.kind != "token" or (self.role not in PERSON_ROLES and self.role != "operator"):
+            return self
+        role = "member" if self.role == "member" else "owner"
+        pid = f"human:{self.user or ('nobody' if role == 'member' else 'dashboard')}"
+        return Principal(pid, "human", role, (f"human:{role}",), self.via, self.verified,
+                         self.label)
 
 
 @dataclass(frozen=True)
@@ -360,6 +395,8 @@ class _CapSel:
             raise PolicyError(f"bad cap selector {spec!r}")
         s = spec.strip()
         self.value = s
+        if retired_selector(s):
+            raise PolicyError(f"principal {s!r} is retired: {RETIRED_HELP}")
         if s == "*":
             self.kind, self.score = "any", 0
         elif s.startswith("tier:"):
@@ -392,6 +429,8 @@ class _WhoSel:
             raise PolicyError(f"bad principal selector {spec!r}")
         s = spec.strip()
         self.value = s
+        if retired_selector(s):
+            raise PolicyError(f"principal {s!r} is retired: {RETIRED_HELP}")
         if s == "*":
             self.kind, self.score = "any", 0
         elif s.startswith("role:"):
@@ -450,6 +489,8 @@ class Policy:
         for pid, table in (doc.get("principals") or {}).items():
             if not isinstance(table, dict):
                 raise PolicyError(f"principals.{pid} must be an object")
+            if retired_selector(pid):
+                raise PolicyError(f"principals.{pid} is retired: {RETIRED_HELP}")
             m = table.get("mode")
             if m is not None:
                 if m not in MODES:
@@ -644,6 +685,9 @@ class Policy:
     def lint(self) -> list[str]:
         out = []
         for i, a in enumerate(self.rules):
+            if a.who.kind == "role" and a.who.value == "agent":
+                out.append(f"rule {a.id!r}: role:agent covers only agents the hub runs (house "
+                           f"agent, roles); API keys act as their person")
             if a.action == "hold":
                 out.append(f"rule {a.id!r}: hold rules have no effect; only the hard stops and "
                            f"the trust map hold a call")
@@ -669,6 +713,37 @@ def _score(sel) -> int:
 
 
 # -- store -------------------------------------------------------------------
+
+def retire_token_targets(doc: Any) -> tuple[Any, list[str]]:
+    """``(doc, retired)``: the document without anything that could only
+    name an API key (:func:`retired_selector`): principal tables, rules and
+    principal-group members. ``retired`` says what went, for the log and the
+    audit event; the document is returned unchanged when it is empty."""
+    if not isinstance(doc, dict):
+        return doc, []
+    out, retired = copy.deepcopy(doc), []
+    principals = out.get("principals")
+    if isinstance(principals, dict):
+        for pid in [k for k in principals if retired_selector(k)]:
+            del principals[pid]
+            retired.append(f"principals.{pid}")
+    rules = out.get("rules")
+    if isinstance(rules, list):
+        keep = []
+        for i, r in enumerate(rules):
+            if isinstance(r, dict) and retired_selector(r.get("who")):
+                retired.append(f"rule {r.get('id') or f'rule-{i + 1}'} (who {r.get('who')})")
+            else:
+                keep.append(r)
+        out["rules"] = keep
+    pgroups = out.get("principal_groups")
+    if isinstance(pgroups, dict):
+        for name, members in pgroups.items():
+            if isinstance(members, list) and any(retired_selector(m) for m in members):
+                pgroups[name] = [m for m in members if not retired_selector(m)]
+                retired.append(f"principal_groups.{name} key members")
+    return (out, retired) if retired else (doc, [])
+
 
 def _load_doc(path: str) -> dict:
     with open(path, encoding="utf-8") as f:
@@ -721,7 +796,8 @@ class PolicyStore:
             return
         self._mtime = mtime
         try:
-            self.policy = Policy(_load_doc(self.path))
+            doc = self._retire(_load_doc(self.path))
+            self.policy = Policy(doc)
             self.source, self.error = self.path, None
             log.info("policy rev %s loaded from %s (mode %s)", self.policy.rev, self.path,
                      self.policy.mode)
@@ -729,6 +805,31 @@ class PolicyStore:
             self.error = f"{type(e).__name__}: {e}"
             log.error("ROOK AUTHZ ALERT: policy %s invalid (%s); keeping rev %s",
                       self.path, self.error, self.policy.rev)
+
+    def _retire(self, doc: Any) -> Any:
+        """One-time migration to person-only keys (access v2 item 7): drop the
+        key-only targets, keep the old file as ``<file>.pre-tokens`` and
+        rewrite a JSON file (a YAML one is migrated in memory and logged; edit
+        it by hand). Both hub processes may do this at once: the result is
+        the same document, and the backup is written only once."""
+        new, retired = retire_token_targets(doc)
+        if not retired:
+            return doc
+        log.warning("ROOK AUTHZ: policy %s named API keys, which now act as their person; "
+                    "retired %s", self.path, "; ".join(retired))
+        if not self.path or not self.path.endswith(".json"):
+            return new
+        backup = self.path + ".pre-tokens"
+        try:
+            if not os.path.exists(backup):
+                atomic_write_json(backup, doc, 0o600, indent=2, sort_keys=True)
+            new["rev"] = int(doc.get("rev", 0) or 0) + 1
+            atomic_write_json(self.path, new, 0o600, indent=2, sort_keys=True)
+            self._mtime = os.stat(self.path).st_mtime
+        except Exception:  # still enforce the migrated document from memory
+            log.exception("ROOK AUTHZ ALERT: could not rewrite %s after retiring key targets",
+                          self.path)
+        return new
 
     def current(self) -> Policy:
         self._maybe_reload()
@@ -758,9 +859,7 @@ class PolicyStore:
 def has_admin_holder(policy: Policy) -> bool:
     rook = Target(id="rook", name="rook", is_rook=True)
     probes = [Principal("human:dashboard", "human", "owner", ("human:owner",)),
-              Principal("token:static", "token", "operator"),
-              Principal("human:x", "human", "owner", ("human:owner",)),
-              Principal("token:x", "token", "operator")]
+              Principal("human:x", "human", "owner", ("human:owner",))]
     for p in probes:
         cell, _, _ = policy._one(p, "policy.set", "admin", (), rook)
         if cell != "deny":

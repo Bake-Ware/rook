@@ -46,7 +46,6 @@ class Attribution:
     key_id: str | None = None
     verified: bool = True
     reason: str | None = None  # why attribution is unverified
-    role: str | None = None    # token role chosen at mint (permissions 1)
     # Compound agent identity (docs/DESIGN-agent-work-system.md §1):
     # <token>.<client>.<host>@<dir with / as .>, all observed, never supplied.
     token: str | None = None
@@ -131,8 +130,7 @@ def resolve(store: Any,
     return Attribution(
         identity=f"agent:{label}_{host}" if host else f"agent:{label}",
         kind=principal.get("kind") or "agent", label=label,
-        agent_id=principal.get("agent_id"), key_id=principal.get("key_id"),
-        role=principal.get("role"))
+        agent_id=principal.get("agent_id"), key_id=principal.get("key_id"))
 
 
 class Alerter:

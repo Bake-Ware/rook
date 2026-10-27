@@ -158,6 +158,41 @@ def test_a_person_with_no_access_left_stops_their_jobs_whatever_the_fallback(tmp
         resolve_identity(plain, GUEST, directory=gone)
 
 
+def test_a_key_runs_jobs_as_its_person(tmp_path):
+    """Access v2 item 7 meets item 8: a job made with a key runs as the
+    key's person, a key in the chain is its person, and a key whose person
+    has no access left stops its jobs."""
+    az = authorizer(tmp_path)
+
+    class Keys:
+        def list_api_tokens(self):
+            return [{"id": "k1", "agent_id": "agent_g", "name": "guest laptop"},
+                    {"id": "k2", "agent_id": "agent_b", "name": "bake laptop"}]
+    az.access.set_token_user("agent_g", "u_guest", actor="test", words="the guest's key")
+    az.access.set_token_user("agent_b", "u_bake", actor="test", words="Bake's key")
+    d = Directory(tokens=Keys(), accounts=accounts(), access=az.access)
+    key = {"id": "token:agent_g", "kind": "token", "role": "agent", "groups": [], "label": "guest laptop",
+           "verified": True}
+    job = {**job_on("kids-pc"), "id": "j_1"}
+    ident = resolve_identity(job, key, directory=d)
+    assert ident.id == "token:agent_g" and ident.principal.role == "member"
+    assert ident.principal.user == "u_guest" and A.restricted(ident.principal)
+    assert az.check("shell.exec", "w_nas", {"name": "nas"}, principal=ident.principal).denied
+    assert not az.check("shell.exec", "w_pc", {"name": "kids-pc"}, principal=ident.principal).denied
+    # Bake's key is an owner's.
+    mine = resolve_identity(job, {**key, "id": "token:agent_b", "label": "bake laptop"}, directory=d)
+    assert mine.principal.role == "owner" and not A.restricted(mine.principal)
+    # An owner acting for the guest's key is bounded by the guest's grants.
+    bake = principal_for_user({"id": "u_bake", "name": "bake"}, True)
+    for_key = bake.__class__(**{**bake.__dict__, "via": ("job:j_1", "token:agent_g")})
+    d2 = az.check("shell.exec", "w_nas", {"name": "nas"}, principal=for_key)
+    assert d2.denied and d2.reason.startswith("acting for token:agent_g")
+    # The guest's access goes: the key's jobs stop.
+    az.access.revoke(az.access.grants("u_guest")[0]["id"], actor="test", words="guest left")
+    with pytest.raises(IdentityRevoked, match="no access"):
+        resolve_identity(job, key, directory=d)
+
+
 def test_acting_for_adds_the_starter_once():
     job = {**job_on("alpha"), "id": "j_1"}
     ident = resolve_identity(job, BAKE)

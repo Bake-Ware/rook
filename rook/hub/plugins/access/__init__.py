@@ -7,10 +7,13 @@ authorizer enforces them on every call. These caps read and change it:
   themselves (no grant needed); a request is a new person asking for access
   in their own words;
 * ``users.list``, ``users.history``, ``users.role``, ``users.grant``,
-  ``users.revoke``, ``users.settle``: owners (and operator tokens, in-process
-  hub code) only, whatever the policy mode. Every change keeps the asker's
-  words. ``users.list`` also says what waits on the owners: requests, people
-  with no access yet, and new machines and bands nobody has said who gets.
+  ``users.revoke``, ``users.settle``: owners (signed in or by their API keys,
+  and in-process hub code) only, whatever the policy mode. Every change keeps
+  the asker's words. ``users.list`` also says what waits on the owners:
+  requests, people with no access yet, and new machines and bands nobody has
+  said who gets.
+* ``users.token``: whose an API key is. A key reaches exactly what its
+  person reaches, from any client (item 7).
 """
 from __future__ import annotations
 
@@ -54,6 +57,8 @@ class Access(Plugin):
              "nothing. `users.me` shows your own access; `users.explain` whether a call would "
              "be allowed. Owners change access with `users.grant` / `users.revoke` / "
              "`users.role`, always passing `words`: the person's own words asking for it. "
+             "An API key reaches exactly what the person it belongs to reaches, from any "
+             "client; owners move a key with `users.token`. "
              "Change access only when a person asks you to in conversation. A new person "
              "asks for access with `users.request` (their words); owners see what waits in "
              "`users.list` and close a new machine or band as owners-only with "
@@ -131,16 +136,22 @@ class Access(Plugin):
     # -- caps ----------------------------------------------------------------
     @capability("me", risk="read", scope="self")
     def me(self) -> dict:
-        """Your own role and grants, in plain words.
-
-        For a signed-in person; an agent token is not a person here yet."""
+        """Your own role and grants, in plain words. Through an API key: the
+        person the key belongs to (a key reaches what they reach)."""
         p = current_principal.get()
         uid = _access.user_of(p)
         if uid is None:
             who = p.id if p is not None else "in-process hub code"
+            if p is not None and p.fail_open():
+                return {"user": None, "principal": who, "role": "owner",
+                        "plain": "The hub's own owner: reaches everything on this hub."}
             return {"user": None, "principal": who,
-                    "plain": "Not a signed-in person: grants do not apply to this caller."}
-        return self._describe(self._store(), uid, admin=p.fail_open())
+                    "plain": "Not a person this hub knows: grants do not apply to this caller."}
+        out = self._describe(self._store(), uid, admin=p.fail_open())
+        if getattr(p, "kind", "") == "token":
+            out["key"] = p.id
+            out["plain"] = f"This API key belongs to {uid}. " + out["plain"]
+        return out
 
     @capability("explain", risk="read", scope="multi-user")
     def explain(self, cap: str, worker: str | None = None, user: str | None = None) -> dict:
@@ -172,6 +183,8 @@ class Access(Plugin):
         store = self._store()
         accounts = {a["id"]: a for a in self._accounts()}
         members = {m["user_id"]: m for m in store.members()}
+        keys = store.token_users()
+        labels = {k.get("agent_id"): k.get("name") or "" for k in self._keys()}
         out = []
         for uid in list(dict.fromkeys([*members, *accounts])):
             a, m = accounts.get(uid, {}), members.get(uid, {})
@@ -181,6 +194,9 @@ class Access(Plugin):
                 row["email"] = a["email"]
             if a.get("admin"):
                 row["operator"] = True
+            mine = [k for k, u in keys.items() if u == uid]
+            if mine:
+                row["keys"] = [{"agent_id": k, "label": labels.get(k, "")} for k in mine]
             out.append(row)
         return {"users": out, "owners": sum(1 for r in out if r["role"] == "owner"),
                 "waiting": self._waiting(store, {r["user"]: r for r in out})}
@@ -265,6 +281,37 @@ class Access(Plugin):
         if kind not in _access.RESOURCE_KINDS or not ref:
             raise ValueError("what: worker:<id>, band:<id> or a request id (users.list waiting)")
         return {"resource": store.settle(kind, ref, actor=_actor(), words=words)}
+
+    def _keys(self) -> list[dict]:
+        tokens = getattr(self._node, "tokens", None)
+        try:
+            return list(tokens.list_api_tokens()) if tokens is not None else []
+        except Exception:  # noqa: BLE001
+            log.warning("could not list API keys", exc_info=True)
+            return []
+
+    @capability("token", risk="admin", scope="multi-user")
+    def token(self, token: str, user: str, words: str) -> dict:
+        """Say whose an API key is: it then reaches exactly what that person
+        reaches, from any client. ``token``: the key's agent id
+        (``agent_…``) or its label; ``user``: an account id; ``words``: the
+        person's own words asking for it (kept). Owners only."""
+        _gate("users.token")
+        ref = str(token or "").strip()
+        ref = ref[6:] if ref.startswith("token:") else ref
+        hits = [k for k in self._keys() if ref and ref in (k.get("agent_id"), k.get("id"))]
+        if not hits:
+            hits = [k for k in self._keys() if ref and (k.get("name") or "").casefold() == ref.casefold()]
+        if len({k.get("agent_id") for k in hits}) > 1:
+            raise ValueError(f"token: {len(hits)} keys are labelled {ref!r}; pass the agent id")
+        if not hits and not ref.startswith("agent_"):
+            raise ValueError(f"token: no API key {ref!r}")
+        aid = hits[0]["agent_id"] if hits else ref
+        accounts = {a["id"] for a in self._accounts()}
+        if accounts and user not in accounts:
+            raise ValueError(f"user: no account {user!r} (users.list lists them)")
+        return self._store().set_token_user(aid, user, actor=_actor(), words=words,
+                                            label=hits[0].get("name") or "" if hits else "")
 
 
 def _plain(g: dict) -> str:

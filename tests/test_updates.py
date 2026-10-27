@@ -803,7 +803,7 @@ async def test_prepare_is_for_owners_and_operators(make_svc, gh, band, monkeypat
     for who in (Principal("token:agent_1", "token", "agent"), None):
         tok = current_principal.set(who)
         try:
-            with pytest.raises(CapError, match="updates.prepare_hub is for band owners"):
+            with pytest.raises(CapError, match="updates.prepare_hub is for hub owners"):
                 await plugin.prepare_hub("v0.3.0")
         finally:
             current_principal.reset(tok)

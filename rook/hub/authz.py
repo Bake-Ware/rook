@@ -59,15 +59,56 @@ _COALESCE_SECS = 10.0
 
 # -- principals from verified credentials -----------------------------------
 
-def principal_for_token(att: Any, role: str | None = None) -> Principal:
-    """From an MCP :class:`rook.band_mcp.attribution.Attribution`."""
+def principal_for_token(att: Any, access: Any = None,
+                        is_admin: Callable[[str], bool] | None = None) -> Principal:
+    """From an MCP :class:`rook.band_mcp.attribution.Attribution`.
+
+    An API key only says which person is calling (access v2 item 7): its
+    role and groups are its person's (``owner`` or ``member``, from
+    ``access``, an :class:`rook.hub.access.AccessStore`; ``is_admin(user)``
+    says whether an account is an operator, an owner whatever access.db
+    says), and ``user`` is the account, so grants and the policy treat the
+    key exactly as the person's dashboard session. The id stays
+    ``token:<agent_id>`` for attribution and the agent hard stops. The
+    static key, and any key on a hub with no access store or no owner yet,
+    is the hub's own owner."""
     if att is None or not getattr(att, "verified", False) or att.kind == "unverified":
         return Principal("unverified", "unverified", verified=False,
                          label=getattr(att, "identity", "") or "")
     if att.kind == "shared":
-        return Principal("token:static", "token", role or "operator", label="static")
+        return Principal("token:static", "token", "owner", ("human:owner",), label="static")
     aid = att.agent_id or att.key_id or "unknown"
-    return Principal(f"token:{aid}", "token", role or "agent", label=att.label or "")
+    return principal_for_agent(aid, att.label or "", access, is_admin)
+
+
+def principal_for_agent(agent_id: str, label: str = "", access: Any = None,
+                        is_admin: Callable[[str], bool] | None = None) -> Principal:
+    """The principal of the API key ``agent_id`` (see :func:`principal_for_token`).
+    A store that cannot be read makes a member with no account: grants then
+    deny everything (members fail closed); owners by account are kept by
+    ``is_admin``."""
+    pid = f"token:{agent_id}"
+    if access is None:
+        return Principal(pid, "token", "owner", ("human:owner",), label=label)
+    try:
+        uid = access.token_user(agent_id, label=label)
+    except Exception:  # noqa: BLE001 - unreadable: not an owner by this route
+        log.exception("ROOK AUTHZ ALERT: whose key %s is could not be read", agent_id)
+        return Principal(pid, "token", "member", ("human:member",), label=label, user="")
+    if uid is None:
+        return Principal(pid, "token", "owner", ("human:owner",), label=label)
+    owner = False
+    try:
+        owner = access.is_owner(uid)
+    except Exception:  # noqa: BLE001 - a member until it can be read
+        log.exception("ROOK AUTHZ ALERT: access store unreadable for %s", uid)
+    if not owner and is_admin is not None:
+        try:
+            owner = bool(is_admin(uid))
+        except Exception:  # noqa: BLE001
+            log.exception("operator check for %s failed", uid)
+    role = "owner" if owner else "member"
+    return Principal(pid, "token", role, (f"human:{role}",), label=label, user=uid)
 
 
 def principal_for_user(user: dict | None, owner: bool) -> Principal:
@@ -90,14 +131,15 @@ BAND_UNAUTHENTICATED = Principal("band:unauthenticated", "band", "", verified=Fa
 
 def require_hub_admin(what: str) -> str | None:
     """Hard gate for hub administration caps (``policy.set``, band settings):
-    ``None`` when the caller is a band owner, an operator-role token or
-    in-process hub code, else the refusal text. Independent of the policy
-    mode, so shipping in audit mode never opens these."""
+    ``None`` when the caller is a hub owner (signed in, or an API key that
+    belongs to one) or in-process hub code, else the refusal text.
+    Independent of the policy mode, so shipping in audit mode never opens
+    these."""
     p = current_principal.get()
     if p is not None and p.verified and p.fail_open():
         return None
     who = p.id if p is not None else "an unauthenticated band caller"
-    return f"denied: {what} is for band owners and operator tokens ({who} is neither)"
+    return f"denied: {what} is for hub owners ({who} is not one, or acts for someone who is not)"
 
 
 def target_from_entry(target_id: str | None, entry: dict | None, *,
@@ -162,18 +204,22 @@ class Authorizer:
         """The policy's decision for one call, with the approval layer
         (holds, hard stops: rook/hub/hardstops.py, which read ``args``)."""
         p = self.principal(principal, identity)
-        chain = [p]
+        # An API key is its person to the policy (access v2 item 7); the
+        # decision still names the key, which made the call.
+        person = p.as_person()
         target = None
         try:
             policy = self.store.current()
             banned = bool(self._banned and self._banned((entry or {}).get("name"), target_id))
             target = target_from_entry(target_id, entry, local=local, banned=banned)
-            d = policy.evaluate(chain, cap, target)
+            d = policy.evaluate([person], cap, target)
+            if person is not p:
+                d.principal, d.via = p.id, tuple(p.via)
             d = self._grants(d, p, target)
             d = self._approvals(d, p, policy, target, args)
         except Exception as e:  # 3.8: owners never locked out; others fail closed
             policy = self.store.policy
-            enforce = policy.mode_for(p) == "enforce"
+            enforce = policy.mode_for(person) == "enforce"
             fail_open = p.fail_open() or not enforce
             if self.access is not None:
                 from . import access as _access
@@ -238,9 +284,10 @@ class Authorizer:
     def _limited(self, p: Principal) -> list[tuple[str, str]]:
         """``(user id, principal id)`` of every person whose grants bound
         this call: the caller when :func:`access.restricted`, and each person
-        in ``p.via`` whom the access store records as a member (owners, and
-        accounts it does not know, are not limited here; the jobs plugin
-        refuses to run as a person with no access)."""
+        in ``p.via`` (an API key there is its person) whom the access store
+        records as a member (owners, and accounts it does not know, are not
+        limited here; the jobs plugin refuses to run as a person with no
+        access)."""
         from . import access as _access
         out: list[tuple[str, str]] = []
         me = _access.user_of(p)
@@ -249,6 +296,8 @@ class Authorizer:
         seen = {me}
         for v in p.via or ():
             uid = _access.user_of_id(v)
+            if uid is None and str(v).startswith("token:"):  # a key: its person
+                uid = self.access.token_user(str(v)[6:], adopt=False)
             if uid is None or uid in seen:
                 continue
             seen.add(uid)

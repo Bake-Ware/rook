@@ -13,14 +13,15 @@ export async function mountTokens(root){
   const chipHost=h('span',{class:'mg-actions'}),list=h('div',{class:'mg-box mg-cards-sm'}),summary=h('span');
   const file=h('input',{type:'file',class:'avatar-file',accept:'image/png,image/jpeg,image/webp',hidden:true});
   const label=h('input',{name:'name',maxlength:'64',placeholder:'claude, codex, ci-runner',required:true,style:'font-family:var(--mono)'});
+  const person=h('select',{name:'user','aria-label':'Belongs to'});
   const ttl=h('select',{name:'ttl'},[['2592000','30 days'],['86400','1 day'],['604800','7 days'],['7776000','90 days'],['31536000','1 year'],['','Never']].map(([v,t])=>h('option',{value:v,text:t})));
   const formError=h('small',{class:'mg-error dialog-error',role:'alert'});
   const create=h('form',{class:'mg-box callout mg-pad token-create',hidden:true,onsubmit:e=>{e.preventDefault();perform(async()=>{
-      const made=await api({op:'create',name:label.value,ttl:ttl.value?Number(ttl.value):null});
+      const made=await api({op:'create',name:label.value,ttl:ttl.value?Number(ttl.value):null,user:person.value||null});
       label.value='';create.hidden=true;showSecret(made.token);await refresh();},formError);}},
     h('div',{class:'mg-bar',style:'align-items:flex-end'},
-      h('label',{class:'mg-field',style:'flex:2 1 220px'},'Label',label),h('label',{class:'mg-field',style:'flex:1 1 140px'},'Expires',ttl),
-      h('button',{class:'mg-btn soft',text:'Create',title:'Create and show once'}),info('The label is the identity this token’s work is recorded under. It grants access to the operator’s MCP service. The secret is shown once.','About tokens')),
+      h('label',{class:'mg-field',style:'flex:2 1 220px'},'Label',label),h('label',{class:'mg-field',style:'flex:1 1 160px'},'Belongs to',person),h('label',{class:'mg-field',style:'flex:1 1 140px'},'Expires',ttl),
+      h('button',{class:'mg-btn soft',text:'Create',title:'Create and show once'}),info('The label is the identity this token’s work is recorded under. A token reaches exactly what the person it belongs to reaches, from any client. The secret is shown once.','About tokens')),
     formError);
   const otherPicture=()=>{const id=h('input',{placeholder:'agent:claude_laptop',maxlength:'200',required:true});const d=dialog('Picture for another identity',h('form',{onsubmit:e=>{e.preventDefault();identity=id.value.trim();d.close();file.click();}},h('label',{class:'mg-field'},'Identity',id),h('div',{class:'mg-actions end'},h('button',{class:'mg-btn primary',text:'Choose picture…'}))));id.focus();};
   root.replaceChildren(h('div',{class:'mg'},
@@ -40,8 +41,11 @@ export async function mountTokens(root){
   }
   async function refresh(){
     const session=await fetch('/account/session');if(!session.ok)throw Error('Sign in to your operator account.');
-    csrf=(await session.json()).user.csrf;data=await api();draw();
+    const me=(await session.json()).user;csrf=me.csrf;data=await api();
+    const keep=person.value||me.id;person.replaceChildren(...(data.people||[]).map(p=>h('option',{value:p.id,text:p.name})));person.value=keep;person.disabled=!(data.people||[]).length;
+    draw();
   }
+  const nameOf=uid=>((data.people||[]).find(p=>p.id===uid)||{}).name||uid||'—';
   function showSecret(token){
     const c=btn('Copy token','soft',()=>copy(token,c),{'data-copy-token':''});
     dialog('Copy your new token',h('p',{text:'This secret is shown once. Copy it before closing.'}),h('pre',{class:'token-secret',tabindex:'0',text:token}),h('div',{class:'mg-actions end'},c));
@@ -62,13 +66,15 @@ export async function mountTokens(root){
     chipHost.replaceChildren(...chips([['all','All '+tokens.length],['soon','Expiring '+tokens.filter(r=>r.soon).length],['idle','Unused '+tokens.filter(r=>r.idle).length]],filter,id=>{filter=id;draw();}));
     const shown=rows.filter(r=>(filter==='all'||(r.token&&r[filter]))&&(!query||(r.label+' '+r.id).toLowerCase().includes(query)));
     const expires=t=>{if(!t.expires_at)return 'never';const d=Math.ceil((t.expires_at-now)/86400);return d<=0?'expired':d===1?'in 1 day':'in '+d+' days';};
-    list.replaceChildren(table('44px minmax(0,1.5fr) 100px 110px 110px 96px 44px',['','Label · identity','Created','Expires','Last used',h('span',null,'Relays',info('May relay my approvals: this client may approve or deny waiting items for you when you tell it your decision (your own words are recorded). Secrets, tokens, policy, settings, job locks and the dashboard-only list always need you here. Off for everyone until you turn it on.','About relaying')),''],shown.length?shown.map(r=>{
+    list.replaceChildren(table('44px minmax(0,1.5fr) minmax(0,1fr) 100px 110px 110px 96px 44px',['','Label · identity','Belongs to','Created','Expires','Last used',h('span',null,'Relays',info('May relay my approvals: this client may approve or deny waiting items for you when you tell it your decision (your own words are recorded). Secrets, tokens, policy, settings, job locks and the dashboard-only list always need you here. Off for everyone until you turn it on.','About relaying')),''],shown.length?shown.map(r=>{
       const t=r.token,more=btn('⋯','icon',()=>menu(more,[
         {label:(data.avatars[r.id]?'Change':'Set')+' picture',run:()=>{identity=r.id;file.click();}},
         data.avatars[r.id]&&{label:'Clear picture',run:()=>perform(async()=>{await api({op:'avatar_clear',identity:r.id});await refresh();})},
+        t&&(data.people||[]).length&&{label:'Belongs to…',run:()=>belongs(t)},
         t&&{label:'Revoke…',danger:true,run:()=>revoke(t)}]),{'aria-label':'More actions for '+r.label,'data-more':r.id});
       return h('div',{class:'mg-row'+(t?' token-row':'')},picture(r.id),
         two(r.label,t?r.id+' · '+t.preview:r.id+' · no token'),
+        h('span',{class:'mg-dimtext','data-person':t?t.id:''},t?h('span',{class:'sm-only',text:'belongs to '}):null,t?nameOf(t.user):'—'),
         h('span',{class:'mg-dimtext'},t?h('span',{class:'sm-only',text:'created '}):null,t?day(t.created_at):'—'),
         h('span',{class:'mg-mono '+(t&&r.soon?'mg-warn':'mg-dimtext')},t?h('span',{class:'sm-only',text:'expires '}):null,t?expires(t):'—'),
         h('span',{class:t&&!t.last_used_at?'mg-warn':'mg-dimtext'},t?h('span',{class:'sm-only',text:'used '}):null,t?ago(t.last_used_at):'—'),
@@ -91,6 +97,12 @@ export async function mountTokens(root){
         h('p',{class:'mg-dimtext',text:'Secrets, tokens, policy, settings, job locks and the dashboard-only list (Settings > Approvals) still need you here.'}),
         err,h('div',{class:'mg-actions end'},h('button',{class:'mg-btn primary',text:'Allow relaying'}))));};
     return h('label',{class:'mg-dimtext token-relay'},box,h('span',{class:'sm-only',text:' relays approvals'}));
+  }
+  function belongs(t){
+    const err=h('small',{class:'mg-error dialog-error',role:'alert'});
+    const pick=h('select',{'aria-label':'Belongs to'},(data.people||[]).map(p=>h('option',{value:p.id,text:p.name})));pick.value=t.user||'';
+    const d=dialog('Whose token is this?',h('form',{onsubmit:e=>{e.preventDefault();perform(async()=>{await api({op:'owner',id:t.id,user:pick.value});d.close();await refresh();},err);}},
+      h('p',null,h('strong',{text:t.name}),' reaches exactly what this person reaches.'),h('label',{class:'mg-field'},'Belongs to',pick),err,h('div',{class:'mg-actions end'},h('button',{class:'mg-btn primary',text:'Save'}))));
   }
   function revoke(t){
     const err=h('small',{class:'mg-error dialog-error',role:'alert'});
