@@ -439,7 +439,7 @@ class MemoryService:
         """A job step the home agent finished successfully with tools becomes a
         skill: what it was asked and which tools did it. Never the result
         text: that is tool output, and a skill is read back into prompts that
-        call tools. Learned skills wait for the operator's approval (Manage >
+        call tools. Learned skills wait for the operator's approval (Work >
         Memory) before any prompt sees them. The same job step re-learned
         supersedes its earlier version (slot ``job <id>/<step>``)."""
         seq = list(dict.fromkeys(t for t in tools if t and t != "finish"))

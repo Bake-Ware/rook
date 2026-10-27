@@ -10,7 +10,7 @@ deprecated: false
 ---
 # The Plugins page
 
-Everything Rook can do comes from plugins. **Plugins** (under Manage, operator
+Everything Rook can do comes from plugins. **Plugins** (under Settings, operator
 only) shows which plugins are on, on the hub and on every online machine, and
 lets you switch them.
 

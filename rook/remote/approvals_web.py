@@ -1,7 +1,7 @@
 """The dashboard's Approvals page API (``docs/design/permissions.md`` 3.11).
 
 * ``GET /api/approvals``: pending holds, pending trust-map proposals (in plain
-  words; decided on Manage > Trust), recent decisions (a relayed one
+  words; decided on Trust > Trust map), recent decisions (a relayed one
   with who relayed it and the person's words), the latest relayed decisions
   of every kind (rook/hub/relay.py), who may relay and the approval
   settings. ``?count=1`` returns only

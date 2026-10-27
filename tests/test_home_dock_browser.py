@@ -164,7 +164,7 @@ def test_the_dock_follows_the_operator_across_pages(browser, hub):
     page.wait_for_timeout(300)
     assert page.locator(".hd-panel").is_visible()
     assert page.locator(".hd-panel .hc-msg").count() == 2
-    # Manage > Home agent has this chat itself: the dock steps aside.
+    # Intelligence sources > Home agent has this chat itself: the dock steps aside.
     page.evaluate("showView('home')")
     page.wait_for_timeout(300)
     assert page.locator(".hd").is_hidden()

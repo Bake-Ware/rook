@@ -16,9 +16,9 @@ deprecated: false
 ---
 # Updates and keeping Rook healthy
 
-## Manage > Updates
+## Settings > Updates
 
-**Manage > Updates** on the dashboard (operator account) is where you keep
+**Settings > Updates** on the dashboard (operator account) is where you keep
 the whole band up to date: the hub, your workers, the Android app and
 firmware devices. It shows what each one runs, what the newest Rook release
 is, its release notes, and a history of every update.
@@ -162,7 +162,7 @@ has its own firmware updates ([[manual-hardware]]).
 
 ## Updating the hub
 
-The easiest way is **Manage > Updates** (above). By hand, how to update the
+The easiest way is **Settings > Updates** (above). By hand, how to update the
 hub depends on how it was installed; see [[manual-running-a-hub]]. After the
 hub updates, it may tell you that this
 manual changed and offer to update the copy in your knowledge base

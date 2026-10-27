@@ -1,6 +1,6 @@
 """The home agent hub plugin (rook/hub/plugins/home): settings, the
 OpenAI-compatible client against a fake endpoint, chat replies, home.ask,
-read-only tools and the Manage > Home agent page actions."""
+read-only tools and the Intelligence sources > Home agent page actions."""
 
 from __future__ import annotations
 
@@ -323,7 +323,7 @@ async def test_renamed_agent(env):
 
 @pytest.mark.asyncio
 async def test_the_home_page_chat_contract(env):
-    """What the chat panel on Manage > Home agent relies on: its conversation
+    """What the chat panel on Intelligence sources > Home agent relies on: its conversation
     is the 1:1 huddle with the agent (a chaired huddle with no roles, titled
     with the agent's name, listed like every huddle), a message starts a round
     the agent answers once (its chat loop leaves the room alone), and a failed
@@ -452,7 +452,7 @@ async def test_tools_off_sends_no_tools(env):
     assert "tools" not in env.llm.chats()[-1][2]
 
 
-# -- the Manage > Home agent page ------------------------------------------------------------
+# -- the Intelligence sources > Home agent page ---------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_page_actions(env):

@@ -585,9 +585,27 @@ def test_index_lands_on_the_overview_and_loads_the_theme_early():
         assert "/account/ui/assets/theme-boot.js" in (WEB / page).read_text(encoding="utf-8"), page
 
 
+def test_every_old_page_link_still_opens_a_page():
+    """The site rework regrouped the sidebar but kept every page's #link; section
+    names and Chat (now Huddles) are aliases that keep their query."""
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    old = {"overview", "approvals", "decisions", "start", "workers", "bands", "huddles", "work",
+           "knowledge", "jobs", "sessions", "install", "settings", "plugins", "ccmod", "updates",
+           "trust", "people", "account", "tokens", "guidance", "vault", "home", "roles", "voice",
+           "models", "memory", "help"}
+    info = re.search(r"const viewInfo=\{(.*?)\n\};", html, re.S).group(1)
+    assert set(re.findall(r"^ (\w+):\[", info, re.M)) == old
+    for view in old:
+        assert f'id="tab-{view}" href="#{view}"' in html and f'id="view-{view}"' in html
+    assert "const viewAlias={chat:'huddles',feed:'overview',intelligence:'home'};" in html
+    assert "v=viewAlias[v]||v;" in html
+    assert "history.replaceState(null,'','#'+viewAlias[old]+location.hash.slice(1+old.length));" in html
+
+
 def test_sidebar_groups_fold_and_the_nav_scrolls():
-    """The Workspace and Manage labels are toggle buttons for their nav; the groups
-    sit in one scrolling area between the brand and the footer."""
+    """The five section labels (Feed, Work, Intelligence sources, Trust, Settings)
+    are toggle buttons for their nav; the groups sit in one scrolling area between
+    the brand and the footer."""
     from html.parser import HTMLParser
 
     html = (WEB / "index.html").read_text(encoding="utf-8")
@@ -612,16 +630,21 @@ def test_sidebar_groups_fold_and_the_nav_scrolls():
     tags.feed(aside)
     buttons = {a["id"]: (a, outer) for t, a, outer in tags.found if t == "button" and "nav-label" in a.get("class", "")}
     navs = {a.get("id"): (a, outer) for t, a, outer in tags.found if t == "nav"}
-    assert set(buttons) == {"nav-label-workspace", "nav-label-manage"}
-    for name, label in (("workspace", "Workspace"), ("manage", "Management")):
+    sections = (("feed", "Feed"), ("work", "Work"), ("intelligence", "Intelligence sources"),
+                ("trust", "Trust"), ("settings", "Settings"))
+    assert list(buttons) == ["nav-label-" + name for name, _ in sections]
+    for name, label in sections:
         button, outer = buttons["nav-label-" + name]
         assert button["type"] == "button" and button["aria-expanded"] == "true"
         nav, nav_outer = navs[button["aria-controls"]]
         assert nav["aria-label"] == label and button["aria-controls"] == "nav-" + name
         assert outer[-1] == "nav-group" and nav_outer[-1] == "nav-group" and "sidebar-nav" in outer
-    # Help stays a plain nav, still inside the scrolling area; the footer is outside it.
-    help_nav = next(outer for t, a, outer in tags.found if t == "nav" and a.get("aria-label") == "Help")
-    assert help_nav[-1] == "sidebar-nav"
+    # Every page sits in exactly one section; Help is the last page under Settings.
+    tabs = [(a["id"][4:], outer) for t, a, outer in tags.found if t == "a" and a.get("id", "").startswith("tab-")]
+    assert len(tabs) == len({v for v, _ in tabs}) == 28
+    assert all(outer[-2:] == ["nav-group", ""] for _, outer in tabs)
+    assert tabs[-1][0] == "help"
+    # The footer is outside the scrolling area.
     footer = next(outer for t, a, outer in tags.found if a.get("class") == "sidebar-footer")
     assert "sidebar-nav" not in footer
     # The state is kept per browser, and storage errors are tolerated.

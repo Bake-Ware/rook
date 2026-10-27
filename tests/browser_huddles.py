@@ -1,4 +1,4 @@
-"""Drive the dashboard's Huddles view, Manage > Roles and the Memory page's
+"""Drive the dashboard's Huddles view, Intelligence sources > Roles and the Memory page's
 role filter in a real browser, against the real huddle and roles plugins
 (their dashboard API through the same proxy path), a real ChatStore and a
 fake model endpoint for the chair.
@@ -213,7 +213,7 @@ async def main():
         await page.wait_for_selector('.hx-head h2:has-text("agents only")')
         assert page.url.endswith('#huddles?room=' + agents)
 
-        # Manage > Roles: edit a role, add one from the presets.
+        # Intelligence sources > Roles: edit a role, add one from the presets.
         await page.goto(base + '#roles')
         await page.wait_for_selector('#view-roles .mg-row:has-text("QA engineer")')
         await page.click('#view-roles .mg-row:has-text("QA engineer")')

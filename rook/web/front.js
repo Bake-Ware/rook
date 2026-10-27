@@ -169,7 +169,7 @@ export async function mountFront(root, opts = {}){
 
   function draw(){
     off.hidden = data.front_door !== false;
-    off.textContent = 'The front door is off: the house agent only answers. Turn it on under Manage > Home agent (Front door).';
+    off.textContent = 'The front door is off: the house agent only answers. Turn it on under Intelligence sources > Home agent (Front door).';
     const a = data.asks || [];
     asksHead.hidden = !a.length; count.hidden = !a.length; count.textContent = String(a.length);
     asks.replaceChildren(...a.map(askCard));

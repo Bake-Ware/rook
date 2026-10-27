@@ -62,7 +62,7 @@ INTRO = (
     "How the house agent routes what you ask, and when it asks you. Edit freely: one rule "
     "per line starting with \"- \" under a heading. The [pb-...] tag keeps a rule's history "
     "(new lines get one when saved); who set it and their words follow \" -- \".\n"
-    "The trust map (Manage > Trust) always wins: a rule here can make the house agent ask "
+    "The trust map (Trust > Trust map) always wins: a rule here can make the house agent ask "
     "more than the map, never act where the map says to ask.")
 
 DEFAULTS: dict[str, list[str]] = {

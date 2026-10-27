@@ -246,7 +246,7 @@ class RolesPlugin(Plugin):
     def _home(self):
         home = self._node.plugin("home") if self._node is not None else None
         if home is None:
-            raise RoleError("roles need the home agent plugin (Manage > Home agent)")
+            raise RoleError("roles need the home agent plugin (Intelligence sources > Home agent)")
         return home
 
     def _lock(self, rid: str) -> asyncio.Lock:

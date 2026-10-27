@@ -1,7 +1,7 @@
 # Plugin marketplace (design; preview)
 
 Status: **stub.** The catalog format, the hub setting that lists catalogs,
-the Marketplace tab on Manage > Plugins and the `plugin.marketplace.*` caps
+the Marketplace tab on Settings > Plugins and the `plugin.marketplace.*` caps
 exist. Installing from a catalog does not: the Install button says "Coming
 soon" and `plugin.marketplace.install` always refuses with a not-implemented
 error. This document fixes the format so catalogs can be written and reviewed
@@ -27,7 +27,7 @@ Plugins already load from installed Python distributions
    a worker's virtualenv for a worker plugin. A worker started from the
    single-file bundle (`band-worker.pyz`) has no distribution metadata and
    only sees built-ins; run it from a virtualenv with the package installed.
-3. Restart that process. The plugin shows up on Manage > Plugins with origin
+3. Restart that process. The plugin shows up on Settings > Plugins with origin
    `entry-point`, where it can be switched on and off like any other.
 
 Placement still decides where it loads, its caps declare risk tiers like

@@ -35,7 +35,7 @@ appended to the system prompt. Caps for the homes: ``agenthost.roles``,
 ``role_memory``, ``role_memory_edit``, ``role_export``, ``role_import``.
 
 The plugin is on wherever one of the harnesses is installed (the hub offers
-the host in Manage > Home agent; nothing runs here until someone picks it).
+the host in Intelligence sources > Home agent; nothing runs here until someone picks it).
 Switch it off for a worker with ``agenthost.enabled`` or ``ROOK_AGENTHOST=0``.
 """
 
@@ -481,8 +481,8 @@ class AgentHost(Plugin):
         setting("enabled", bool, default=True, scope="worker", env="ROOK_AGENTHOST",
                 apply="restart", label="House agent host",
                 help="On (default): when Claude Code, Codex or OpenCode is installed, this "
-                     "worker offers to run the hub's home agent turns with it (picked on Manage "
-                     "> Home agent; nothing runs here until someone picks it). Off: never."),
+                     "worker offers to run the hub's home agent turns with it (picked on Intelligence "
+                     "sources > Home agent; nothing runs here until someone picks it). Off: never."),
         setting("roles_dir", str, default="", scope="worker", env="ROOK_AGENTHOST_ROLES_DIR",
                 label="Role homes directory",
                 help="Where the home directories of huddle roles live on this host (one folder "
@@ -580,7 +580,7 @@ class AgentHost(Plugin):
             await asyncio.sleep(PROBE_S)
 
     def heartbeat(self) -> dict | None:
-        # hb.agenthost: what the hub's host picker shows (Manage > Home agent).
+        # hb.agenthost: what the hub's host picker shows (Intelligence sources > Home agent).
         return {"harnesses": self._found or {n: {} for n in self.installed()},
                 "running": len(self._running), "max_parallel": MAX_PARALLEL,
                 # Role workspaces run natively here (Claude Code's file tools,

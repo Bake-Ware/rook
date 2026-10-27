@@ -2101,7 +2101,7 @@ class McpService:
             _jt = None
         for route in job_routes(lambda: mcp._rook_hub, accounts, _jt):
             app.router.routes.insert(0, route)
-        # People page API (Manage > People; proxied by the dashboard): access v2.
+        # People page API (Trust > People; proxied by the dashboard): access v2.
         from ..hub.plugins.access.web import routes as people_routes
         for route in people_routes(lambda: mcp._rook_hub, accounts):
             app.router.routes.insert(0, route)

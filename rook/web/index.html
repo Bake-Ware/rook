@@ -268,46 +268,59 @@
   <aside class="app-sidebar" id="app-sidebar" aria-label="Application navigation">
     <a class="brand" href="#overview" onclick="showView('overview');return false">♜ ROOK</a>
     <div class="sidebar-nav">
-    <div class="nav-group" data-nav-group="workspace">
-    <button type="button" class="nav-label" id="nav-label-workspace" aria-expanded="true" aria-controls="nav-workspace">WORKSPACE<span class="nav-chevron" aria-hidden="true"></span></button>
-    <nav id="nav-workspace" aria-label="Workspace">
+    <div class="nav-group" data-nav-group="feed">
+    <button type="button" class="nav-label" id="nav-label-feed" aria-expanded="true" aria-controls="nav-feed">FEED<span class="nav-chevron" aria-hidden="true"></span></button>
+    <nav id="nav-feed" aria-label="Feed">
       <a id="tab-overview" href="#overview" onclick="showView('overview');return false">Overview</a>
-      <a id="tab-approvals" href="#approvals" onclick="showView('approvals');return false">Approvals<span class="nav-badge" id="approvals-badge" hidden></span></a>
-      <a id="tab-decisions" href="#decisions" onclick="showView('decisions');return false">Decisions<span class="nav-badge" id="decisions-badge" hidden></span></a>
       <a id="tab-start" href="#start" onclick="showView('start');return false">Start page</a>
-      <a id="tab-workers" href="#workers" onclick="showView('workers');return false">Workers</a>
-      <a id="tab-bands" href="#bands" onclick="showView('bands');return false">Bands</a>
-      <a id="tab-huddles" href="#huddles" onclick="showView('huddles');return false">Huddles</a>
-      <a id="tab-work" href="#work" onclick="showView('work');return false">Work</a>
-      <a id="tab-knowledge" href="#knowledge" onclick="showView('knowledge');return false">Knowledge</a>
-      <a id="tab-jobs" href="#jobs" onclick="showView('jobs');return false">Jobs</a>
-      <a id="tab-sessions" href="#sessions" onclick="showView('sessions');return false">Sessions</a>
     </nav>
     </div>
-    <div class="nav-group" data-nav-group="manage">
-    <button type="button" class="nav-label" id="nav-label-manage" aria-expanded="true" aria-controls="nav-manage">MANAGE<span class="nav-chevron" aria-hidden="true"></span></button>
-    <nav id="nav-manage" aria-label="Management">
-      <a id="tab-install" href="#install" onclick="showView('install');return false">Install a worker</a>
-      <a id="tab-settings" href="#settings" onclick="showView('settings');return false">Settings</a>
-      <a id="tab-plugins" href="#plugins" onclick="showView('plugins');return false">Plugins</a>
-      <a id="tab-ccmod" href="#ccmod" onclick="showView('ccmod');return false">Claude Code</a>
-      <a id="tab-updates" href="#updates" onclick="showView('updates');return false">Updates</a>
-      <a id="tab-trust" href="#trust" onclick="showView('trust');return false">Trust<span class="nav-badge" id="trust-badge" hidden></span></a>
-      <a id="tab-people" href="#people" onclick="showView('people');return false">People</a>
-      <a id="tab-account" href="#account" onclick="showView('account');return false">Account & access</a>
-      <a id="tab-tokens" href="#tokens" onclick="showView('tokens');return false">API tokens</a>
-      <a id="tab-guidance" href="#guidance" onclick="showView('guidance');return false">Agent instructions</a>
-      <a id="tab-vault" href="#vault" onclick="showView('vault');return false">Secrets</a>
-      <a id="tab-home" href="#home" onclick="showView('home');return false">Home agent</a>
-      <a id="tab-roles" href="#roles" onclick="showView('roles');return false">Roles</a>
-      <a id="tab-voice" href="#voice" onclick="showView('voice');return false">Voice</a>
-      <a id="tab-models" href="#models" onclick="showView('models');return false">Model providers</a>
+    <div class="nav-group" data-nav-group="work">
+    <button type="button" class="nav-label" id="nav-label-work" aria-expanded="true" aria-controls="nav-work">WORK<span class="nav-chevron" aria-hidden="true"></span></button>
+    <nav id="nav-work" aria-label="Work">
+      <a id="tab-work" href="#work" onclick="showView('work');return false">Work</a>
+      <a id="tab-huddles" href="#huddles" onclick="showView('huddles');return false">Huddles</a>
+      <a id="tab-sessions" href="#sessions" onclick="showView('sessions');return false">Sessions</a>
+      <a id="tab-knowledge" href="#knowledge" onclick="showView('knowledge');return false">Knowledge</a>
+      <a id="tab-jobs" href="#jobs" onclick="showView('jobs');return false">Jobs</a>
       <a id="tab-memory" href="#memory" onclick="showView('memory');return false">Memory</a>
     </nav>
     </div>
-    <nav aria-label="Help" class="nav-help">
+    <div class="nav-group" data-nav-group="intelligence">
+    <button type="button" class="nav-label" id="nav-label-intelligence" aria-expanded="true" aria-controls="nav-intelligence">INTELLIGENCE SOURCES<span class="nav-chevron" aria-hidden="true"></span></button>
+    <nav id="nav-intelligence" aria-label="Intelligence sources">
+      <a id="tab-home" href="#home" onclick="showView('home');return false">Home agent</a>
+      <a id="tab-roles" href="#roles" onclick="showView('roles');return false">Roles</a>
+      <a id="tab-models" href="#models" onclick="showView('models');return false">Model providers</a>
+      <a id="tab-voice" href="#voice" onclick="showView('voice');return false">Voice</a>
+      <a id="tab-guidance" href="#guidance" onclick="showView('guidance');return false">Agent instructions</a>
+    </nav>
+    </div>
+    <div class="nav-group" data-nav-group="trust">
+    <button type="button" class="nav-label" id="nav-label-trust" aria-expanded="true" aria-controls="nav-trust">TRUST<span class="nav-chevron" aria-hidden="true"></span></button>
+    <nav id="nav-trust" aria-label="Trust">
+      <a id="tab-trust" href="#trust" onclick="showView('trust');return false">Trust map<span class="nav-badge" id="trust-badge" hidden></span></a>
+      <a id="tab-approvals" href="#approvals" onclick="showView('approvals');return false">Approvals<span class="nav-badge" id="approvals-badge" hidden></span></a>
+      <a id="tab-decisions" href="#decisions" onclick="showView('decisions');return false">Decisions<span class="nav-badge" id="decisions-badge" hidden></span></a>
+      <a id="tab-people" href="#people" onclick="showView('people');return false">People</a>
+      <a id="tab-account" href="#account" onclick="showView('account');return false">Account &amp; access</a>
+      <a id="tab-tokens" href="#tokens" onclick="showView('tokens');return false">API tokens</a>
+      <a id="tab-vault" href="#vault" onclick="showView('vault');return false">Secrets</a>
+      <a id="tab-bands" href="#bands" onclick="showView('bands');return false">Bands</a>
+    </nav>
+    </div>
+    <div class="nav-group" data-nav-group="settings">
+    <button type="button" class="nav-label" id="nav-label-settings" aria-expanded="true" aria-controls="nav-settings">SETTINGS<span class="nav-chevron" aria-hidden="true"></span></button>
+    <nav id="nav-settings" aria-label="Settings">
+      <a id="tab-settings" href="#settings" onclick="showView('settings');return false">Settings</a>
+      <a id="tab-workers" href="#workers" onclick="showView('workers');return false">Workers</a>
+      <a id="tab-install" href="#install" onclick="showView('install');return false">Install a worker</a>
+      <a id="tab-plugins" href="#plugins" onclick="showView('plugins');return false">Plugins</a>
+      <a id="tab-updates" href="#updates" onclick="showView('updates');return false">Updates</a>
+      <a id="tab-ccmod" href="#ccmod" onclick="showView('ccmod');return false">Claude Code</a>
       <a id="tab-help" href="#help" onclick="showView('help');return false">Help</a>
     </nav>
+    </div>
     </div>
     <div class="sidebar-footer"><button class="art-toggle" id="art-toggle" type="button" hidden>Pause artwork</button><span class="live"><span class="dot" id="dot"></span><span id="count">Connecting…</span></span><a class="signout" href="/logout">Sign out</a></div>
   </aside>
@@ -747,7 +760,7 @@ function updateMeta(m,w){
     m.wrap.classList.toggle('too-old',!!w.update_note);
     let n=m.banrow.parentNode.querySelector('.update-note');
     if(w.update_note){ if(!n){n=document.createElement('div');n.className='update-note';m.banrow.before(n);}
-      n.innerHTML=esc(w.update_note).replace('Manage &gt; Updates','<a href="#updates" onclick="event.stopPropagation();showView(\'updates\');return false">Manage &gt; Updates</a>'); }
+      n.innerHTML=esc(w.update_note).replace('Settings &gt; Updates','<a href="#updates" onclick="event.stopPropagation();showView(\'updates\');return false">Settings &gt; Updates</a>'); }
     else if(n) n.remove();
   }
   m.bar.title=w.name||w.worker_id;
@@ -1049,7 +1062,7 @@ function renderCapResult(out,cap,reply){
 const viewInfo={
  overview:['Overview','What is running, what is waiting on you, and the work in progress.'],
  approvals:['Approvals','Agent calls waiting for your yes or no: risky actions, and reaching many machines at once.'],
- trust:['Trust','What agents may change on their own: sacred, guarded or ship-it, in your words.'],
+ trust:['Trust map','What agents may change on their own: sacred, guarded or ship-it, in your words.'],
  decisions:['Decisions','What the house agent asks you, what it decided for you (with what it relied on), and its playbook.'],
  start:['Start page','Your own page: links, news and your band at a glance.'],
  workers:['Workers','Your connected machines, across every band.'],
@@ -1064,7 +1077,7 @@ const viewInfo={
  guidance:['Agent instructions','What Rook tells agents when they connect, list tools, and call capabilities.'],
  home:['Home agent','The hub\'s own LLM: who it is, which model it runs, and what it has been asked.'],
  voice:['Voice','Talk to your agents from phones, the desktop app and a browser, through this hub.'],
- models:['Model providers','The language models this hub can use: for the home agent, memory and voice.'],
+ models:['Model providers','The language models this hub can use (for the home agent, memory and voice), and its other engines: voice and decisions.'],
  memory:['Memory','What the home agent remembers about people, your home, past conversations and how to do things.'],
  settings:['Settings','Hub, band, worker, plugin and personal settings, with where each value comes from.'],
  plugins:['Plugins','What Rook can do on the hub and on each worker: switch plugins live, set defaults for new workers.'],
@@ -1283,7 +1296,7 @@ async function ensureSettings(view){
  try{return await settingsLoading[view];}catch(error){host.innerHTML='<p class="empty">'+esc(error.message)+' <a href="/account/login">Sign in</a></p>';throw error;}
  finally{delete settingsLoading[view];}
 }
-/* Sidebar groups (Workspace, Manage) fold; each group's state is kept. A folded
+/* Sidebar sections (Feed, Work, Intelligence sources, Trust, Settings) fold; each group's state is kept. A folded
    group still shows the current view's tab (shell.css), so the page is never hidden. */
 function setNavGroup(group,folded){
   group.classList.toggle('collapsed',folded);
@@ -1311,8 +1324,11 @@ function revealNavTab(tab){
   const box=document.querySelector('.app-sidebar .sidebar-nav');
   if(box&&window.ResizeObserver)new ResizeObserver(()=>revealNavTab(box.querySelector('a.active'))).observe(box);
 })();
+/* Old and section-level links land on a page: Chat became Huddles, and #feed or
+   #intelligence (a section's name) opens that section's first page. */
+const viewAlias={chat:'huddles',feed:'overview',intelligence:'home'};
 function showView(v,updateHistory=true){
- if(v==='chat')v='huddles';   // Chat became Huddles (old #chat links still land here)
+ v=viewAlias[v]||v;
  if(!viewInfo[v])v='overview';
  if(updateHistory&&location.hash.split('?')[0]!=='#'+v)history.pushState(null,'','#'+v);
  if(activeView===v){if(v==='help'&&manualUI)manualUI.activate().catch(()=>{});if(v==='account'&&settingsUI.account)settingsUI.account.refresh().catch(()=>{});if(v==='settings'&&settingsAreaUI&&settingsQuery())settingsAreaUI.activate(settingsQuery()).catch(()=>{});if(v==='huddles'&&huddlesUI&&hashQuery('huddles'))huddlesUI.activate(hashQuery('huddles')).catch(()=>{});if(v==='memory'&&memoryUI&&hashQuery('memory'))memoryUI.activate();return;}
@@ -1375,8 +1391,9 @@ async function openWorkerMove(wid){
  try{const ui=await ensureBands();await ui.openWorker(wid);}catch(error){console.warn(error.message);}
 }
 function routeFromHash(){
- // Chat became Huddles: #chat and #chat?room=<id> (old links) open the same room there.
- if(location.hash.split('?')[0]==='#chat')history.replaceState(null,'','#huddles'+location.hash.slice(5));
+ // An alias keeps its query: #chat?room=<id> (old links) opens the same room under Huddles.
+ const old=location.hash.slice(1).split('?')[0];
+ if(viewAlias[old])history.replaceState(null,'','#'+viewAlias[old]+location.hash.slice(1+old.length));
  const [view,query]=location.hash.slice(1).split('?');showView(view||'overview',false);
  const params=new URLSearchParams(query||'');
  const wid=params.get('worker');if(view==='bands'&&wid)openWorkerMove(wid);

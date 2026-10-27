@@ -1,4 +1,4 @@
-// Manage > Updates: what the hub, every worker, app and firmware device runs
+// Settings > Updates: what the hub, every worker, app and firmware device runs
 // against what is available; release notes; the hub update; staged worker
 // rollouts; the breaking-update gate; history and rollback. Everything goes
 // through /account/updates/api (operator only; rook/hub/plugins/updates/web.py).

@@ -22,7 +22,7 @@ task.
 
 ## Adding a secret
 
-1. Open **Secrets** (under Manage).
+1. Open **Secrets** (under Trust).
 2. Give the secret a short name, such as `nas-password`, and paste its value.
 3. Save. The value is write-only: the page never shows it again.
 

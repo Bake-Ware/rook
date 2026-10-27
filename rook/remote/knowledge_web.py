@@ -68,7 +68,7 @@ class KnowledgeWeb:
 
 
 class PeopleWeb(KnowledgeWeb):
-    """Manage > People: who may use what (access v2). Any signed-in account:
+    """Trust > People: who may use what (access v2). Any signed-in account:
     the upstream shows owners everyone and lets them change it, and shows
     anyone else their own access and a box to ask for more."""
     PATH = '/account/people'
@@ -129,7 +129,7 @@ class SettingsWeb(KnowledgeWeb):
 
 
 class PluginsWeb(KnowledgeWeb):
-    """Manage > Plugins: the band-wide plugin grid, presets and the
+    """Settings > Plugins: the band-wide plugin grid, presets and the
     marketplace preview. Operator account only, like the upstream."""
     PATH = '/account/plugins'
     UPSTREAM = ('ROOK_PLUGINS_ADMIN_URL', 'http://127.0.0.1:8765/plugins/account-api')
@@ -139,7 +139,7 @@ class PluginsWeb(KnowledgeWeb):
 
 
 class UpdatesWeb(KnowledgeWeb):
-    """Manage > Updates: versions across the band, release notes, staged
+    """Settings > Updates: versions across the band, release notes, staged
     rollouts and history. Operator account only, like the upstream."""
     PATH = '/account/updates'
     UPSTREAM = ('ROOK_UPDATES_ADMIN_URL', 'http://127.0.0.1:8765/updates/account-api')
@@ -160,7 +160,7 @@ class ManualWeb(KnowledgeWeb):
 
 class HuddleWeb(KnowledgeWeb):
     """Huddles (chaired huddles, old chat rooms read-only), Work > Huddle
-    (agents' status strip, pinned questions and answers) and Manage > Roles.
+    (agents' status strip, pinned questions and answers) and Intelligence sources > Roles.
     Operator account only, like the upstream (rook/hub/plugins/huddle/web.py)."""
     PATH = '/account/huddle'
     UPSTREAM = ('ROOK_HUDDLE_ADMIN_URL', 'http://127.0.0.1:8765/huddle/account-api')
@@ -208,7 +208,7 @@ class UiWeb(KnowledgeWeb):
 
 
 class CcmodWeb(KnowledgeWeb):
-    """Manage > Claude Code: rules for Claude Code on the workers, their
+    """Settings > Claude Code: rules for Claude Code on the workers, their
     pushes and previews. Operator account only, like the upstream."""
     PATH = '/account/ccmod'
     UPSTREAM = ('ROOK_CCMOD_ADMIN_URL', 'http://127.0.0.1:8765/ccmod/account-api')

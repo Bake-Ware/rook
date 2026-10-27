@@ -27,7 +27,7 @@ apps `wss://<your hub>/voice/ws`. A browser can talk to it at
 `https://<your hub>/voice/admin`. These paths use voice keys, not the
 dashboard sign-in.
 
-Open **Manage > Voice** (operator account). It shows whether voice is ready,
+Open **Intelligence sources > Voice** (operator account). It shows whether voice is ready,
 the **Voice address** to give your devices, and **Where speech runs**:
 
 - **On this hub**: speech runs inside the hub. The hub needs the voice extras
@@ -120,12 +120,12 @@ Every message and action card in a huddle ([[manual-huddles]]) has a small
 using; tap it again (■) to stop. Only one message speaks at a time.
 
 - **Which voice.** A role's messages are read in that role's **Speaking
-  voice** (Manage > Roles, in each role's form), and the chair's in the house
-  agent's **Speaking voice** (Manage > Home agent). Each picker lists the
+  voice** (Intelligence sources > Roles, in each role's form), and the chair's in the house
+  agent's **Speaking voice** (Intelligence sources > Home agent). Each picker lists the
   voice engine's voices, the natural Chatterbox voices first and the quicker
   Kokoro voices after, and has a **Preview** button. Left on **Band
   default**, a message is read in the band's default voice: **Band default
-  voice** on Manage > Voice (also `voice.tts_default` in Settings), or the
+  voice** on Intelligence sources > Voice (also `voice.tts_default` in Settings), or the
   voice engine's own when that is blank. If a role's voice fails, the default
   reads it instead. If a picker shows only **Band default**, the hub could
   not get the voice list; a note under the picker says why, and the next

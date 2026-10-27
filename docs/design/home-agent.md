@@ -1,7 +1,7 @@
 # Home agent: an LLM that lives at the hub
 
 Status: groundwork. This is the hub plugin `home` (`rook/hub/plugins/home/`), the
-Manage > Home agent page (`rook/web/home.js`), and this design. Over time the
+Intelligence sources > Home agent page (`rook/web/home.js`), and this design. Over time the
 home agent is meant to take over what a separately hosted general assistant
 (today a NousResearch Hermes Agent on its own box) does for the operator:
 conversation, tools, skills, memory, scheduled work and messaging. This
@@ -11,7 +11,7 @@ document says what exists now and the path from here to there.
 
 ### 1.1 Configuration
 
-The operator sets up one home agent per hub on **Manage > Home agent**. The
+The operator sets up one home agent per hub on **Intelligence sources > Home agent**. The
 page is a table (the agent, its model and endpoint, its state, recent
 activity) with a detail panel holding the form. Every field is a hub-scope
 setting in the settings store under `home.*`, so it also shows on the
@@ -84,7 +84,7 @@ plugin reads its settings on every use.
 
 ### 1.3 Chat on the page
 
-Manage > Home agent has a chat panel under the agent table (`homeChat` in
+Intelligence sources > Home agent has a chat panel under the agent table (`homeChat` in
 `rook/web/home.js`). Since huddles H4 it is the **1:1 huddle with the house
 agent** ([huddles.md](huddles.md) 5, 7): a chaired huddle with roles `[]`,
 through the huddle account API (`/account/huddle/api`: `list`, `start`,

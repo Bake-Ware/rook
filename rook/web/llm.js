@@ -1,4 +1,4 @@
-// Manage > Model providers: the language models this hub can use, by name
+// Intelligence sources > Model providers: the language models this hub can use, by name
 // (the "llm" hub plugin, rook/hub/plugins/llm). Providers added here are any
 // OpenAI-compatible server; plugins contribute their own (llmanifold). The home
 // agent picks one on its page. API keys are vault references only; this page
@@ -43,7 +43,17 @@ export async function mountModels(root){
         all.length?all:[h('div',{class:'mg-empty',text:'No providers yet.'})],'640px'),
       h('div',{class:'mg-actions'},btn('+ Add','primary',()=>{sel='new';drawList();drawPanel();if(innerWidth<900)panel.scrollIntoView({behavior:'smooth',block:'start'});},{'aria-label':'Add a provider',title:'Add a provider'}),
         h('span',{class:'mg-sub',text:d.locked?'Set by '+d.env+' in the hub\'s environment.':''}),
-        info('Language models this hub can talk to: a model server on your network, a front door like llmanifold, or a paid API. Add one, check it answers, then pick it for the home agent. Keys stay in Secrets.','About model providers')));
+        info('Language models this hub can talk to: a model server on your network, a front door like llmanifold, or a paid API. Add one, check it answers, then pick it for the home agent. Keys stay in Secrets.','About model providers')),
+      ...engines());
+  }
+  // The other intelligence sources (voice server, decision engine): state and where each is set up.
+  function engines(){
+    const rows=(d.engines||[]).map(e=>h('div',{class:'mg-row'},two(e.label,e.what,false),
+      h('span',{class:'mg-mono mg-dimtext',text:e.detail}),
+      h('span',{class:e.state==='on'?'mg-good':'mg-dimtext',text:e.state==='on'?'On':e.state==='unset'?'Not set up':'Off'}),
+      h('a',{href:'#'+e.link,text:e.state==='on'?'Open':'Set it up'})));
+    return rows.length?[h('div',{class:'mg-label',style:'margin:18px 0 6px',text:'Other engines'}),
+      table('minmax(0,1.6fr) minmax(0,1fr) 90px 80px',['Engine','Using','State',''],rows,560)]:[];
   }
   function field(label,ctl,note){return h('label',{class:'mg-field'},note?h('span',{class:'mg-flabel'},label,info(note,'About '+label)):label,ctl);}
   function checkView(p){

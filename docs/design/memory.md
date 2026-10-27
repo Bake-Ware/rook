@@ -2,7 +2,7 @@
 
 Status: implemented in `rook/hub/plugins/memory/` (store, rules, embedder,
 service, plugin), wired into the home agent (`rook/hub/plugins/home`), with the
-Manage > Memory page in `rook/web/memory.js`. Tests:
+Work > Memory page in `rook/web/memory.js`. Tests:
 `tests/test_memory_plugin.py`.
 
 Related: [home-agent.md](home-agent.md) (the agent that uses it),
@@ -130,7 +130,7 @@ policy (the same check the knowledge tool uses), and not at all with
 `home.memory` off.
 
 **Skills need approval.** Procedures steer which tools the agent calls, so
-only the ones the operator approved (Approve on Manage > Memory, `memory.edit
+only the ones the operator approved (Approve on Work > Memory, `memory.edit
 approved=true`) or pinned are read into any prompt. A learned procedure keeps
 the job prompt and the tool names, never the result text (that is tool
 output). Procedures the operator adds are approved.
@@ -215,7 +215,7 @@ when `memory.agent_tool` is on when the MCP server starts (tools/list budget);
 it is authorized as the matching cap (`rook.hub.authz.hub_cap_for_tool`).
 Band callers reach only read caps by default (the hub's band risk ceiling).
 
-**Manage > Memory** (`rook/web/memory.js`, through `/settings/account-api`
+**Work > Memory** (`rook/web/memory.js`, through `/settings/account-api`
 `view=memory` and `memory_*` actions, operator account only): kind filters with
 counts, search, state filter, a table of memories, and a panel to edit the
 text, kind and person, keep (pin), forget, or forget and erase, with

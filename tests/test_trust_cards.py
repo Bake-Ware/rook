@@ -1,7 +1,7 @@
 """A trust-map proposal is one waiting decision like the rest (rook/hub/relay.py):
 listed by rook_approvals, a card on the phone, in the reminders and the voice pass,
 and decided anywhere clears everywhere. Only the person decides it: their tap on
-the card, Manage > Trust or their sure voice; an agent's relay never does."""
+the card, Trust > Trust map or their sure voice; an agent's relay never does."""
 from __future__ import annotations
 
 import dataclasses

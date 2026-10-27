@@ -1,4 +1,4 @@
-// Manage > Claude Code: rules for Claude Code on your workers (when something
+// Settings > Claude Code: rules for Claude Code on your workers (when something
 // happens in a session, do something), pushed to each worker's Claude Code
 // settings. Everything goes through /account/ccmod/api (operator only;
 // rook/hub/plugins/ccmod/web.py). Stored text is rendered as text.

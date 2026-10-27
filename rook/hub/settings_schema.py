@@ -226,7 +226,7 @@ _CORE: list[tuple[Setting, str, dict]] = [
         group="Plugins",
         help='{"voice": ["<token label or agent_id>"]}: tokens allowed to call '
              'settings.fetch for that plugin, secrets included.'), "mcp", {}),
-    # Written by Manage > Plugins (rook/hub/plugin_profiles.py); shown here so
+    # Written by Settings > Plugins (rook/hub/plugin_profiles.py); shown here so
     # the history and the stored value stay visible.
     (_s("plugins.hub", dict, {}, apply="restart", label="Hub plugins switched on or off",
         group="Plugins", advanced=True,

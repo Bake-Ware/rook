@@ -322,7 +322,7 @@ def model_setup(ctx: Ctx):
             s.note(f"{info['model']}: {info['tokens_per_s']} tok/s, {info['server_rss_mb']} MB")
             ctx.local_base = info["base_url"]
     with run.step("model-setup", "turn on the house agent") as s:
-        s.touch("Manage > Home agent: enable it and pick the backend")
+        s.touch("Intelligence sources > Home agent: enable it and pick the backend")
         sets = [("home.enabled", True), ("home.tools", True)]
         if ha["backend"] == "claude-code":
             s.touch("pick the agent host and model")
@@ -561,7 +561,7 @@ def fix_bug(ctx: Ctx):
             s.touch("Settings > Roles: allow the repo's test command")
         else:
             s.note("this hub has no role.session_test_commands: sessions can only run rook-pytest")
-        s.touch("Manage > Roles: add a lead role from the presets")
+        s.touch("Intelligence sources > Roles: add a lead role from the presets")
         pre = (hub.hub_cap("role.presets", {"id": "lead", "full": True}).get("result") or {})
         role = dict(pre.get("preset") or pre.get("role") or {})
         if not role:

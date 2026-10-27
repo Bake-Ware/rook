@@ -3,7 +3,7 @@
 Implemented as the hub plugin `ccmod` (`rook/hub/plugins/ccmod/`), the worker
 plugin `ccmod` (`rook/worker/plugins/ccmod.py`), the hook command
 `rook/worker/ccmod_hook.py` and the settings merge
-`rook/worker/ccmod_settings.py`. Dashboard: **Manage > Claude Code**
+`rook/worker/ccmod_settings.py`. Dashboard: **Settings > Claude Code**
 (`rook/web/ccmod.js`, API `/ccmod/account-api`). User guide:
 [docs/web/claude-code-rules.md](../web/claude-code-rules.md).
 

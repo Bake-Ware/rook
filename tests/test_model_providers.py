@@ -103,6 +103,22 @@ async def test_add_check_and_remove_a_provider_from_the_page(env):
 
 
 @pytest.mark.asyncio
+async def test_the_page_lists_the_other_engines_with_their_state(env):
+    """Intelligence sources in one place: the page also shows the voice server and
+    the decision engine, with where each is set up, and never an address's secrets."""
+    llm, svc, node = env.llm, env.svc, env.node
+    engines = {e["id"]: e for e in (await llm.page(svc))["engines"]}
+    assert set(engines) == {"voice", "decide"}
+    assert engines["voice"]["link"] == "voice"
+    assert engines["decide"]["link"] == "settings?view=plugin&target=decide"
+    assert node.plugin("decide") is not None and engines["decide"]["state"] == "unset"
+    svc.set("decide.endpoint", "http://user:pw@192.0.2.9:7100/v1", actor="human:op")
+    row = {e["id"]: e for e in (await llm.page(svc))["engines"]}["decide"]
+    assert row["state"] == "on" and row["detail"] == "endpoint 192.0.2.9:7100"
+    assert "pw" not in str(row)
+
+
+@pytest.mark.asyncio
 async def test_unreachable_provider_is_reported_not_raised(env):
     env.fake.status = 401
     await env.llm.page_action(env.svc, {"action": "llm_save", "provider": {

@@ -24,7 +24,7 @@ at home.
 
 ## Setting it up
 
-Open **Home agent** (under Manage).
+Open **Home agent** (under Intelligence sources).
 
 1. Switch it on (**Enabled**).
 2. Give it a **Name**. People write `@name` to address it.
@@ -102,7 +102,7 @@ say exactly which tools it may use. Every answer the role gives runs inside
 that folder. To move a role to another machine, Rook moves the folder; the old
 copy is renamed and kept, never deleted.
 
-Manage roles on the **Roles** page (under Manage): add them from the presets
+Manage roles on the **Roles** page (under Intelligence sources): add them from the presets
 (grouped by category) or from scratch, change what each watches and may use, move one to
 another host, and see its history; **Memory** in a role's **⋯** menu shows its memory on
 the Memory page ([[manual-huddles]] has the details). Agents and scripts use
@@ -129,7 +129,7 @@ watch without acting. Its settings are on the Settings page under
 
 ## The front door
 
-With **Front door** on (Manage > Home agent), the home agent routes every
+With **Front door** on (Intelligence sources > Home agent), the home agent routes every
 request: it answers, does quick things the trust map allows, starts coding
 sessions or brings in the team, and asks you only when it must. See
 [[manual-front-door]].

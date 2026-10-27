@@ -28,7 +28,7 @@ ERRORS = (ValueError, KeyError, TypeError, PermissionError, LookupError)
 TIGHTEN_OPS = ("set_entry", "set_unlisted", "end_exception")
 #: No ratchet (change-management-design-20261025): agents and huddle roles
 #: never add or tighten guardrails; only the person does.
-NO_RATCHET = ("only the person adds or tightens guardrails (Manage > Trust, or by voice); "
+NO_RATCHET = ("only the person adds or tightens guardrails (Trust > Trust map, or by voice); "
               "agents and roles never do. If you think one is needed, say so in your report")
 
 

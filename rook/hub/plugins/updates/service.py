@@ -1,6 +1,6 @@
 """The update service: what is installed, what is available, and applying it.
 
-Owned by the hub (worker ``rook``), driven by Manage > Updates and the
+Owned by the hub (worker ``rook``), driven by Settings > Updates and the
 ``updates.*`` caps. State lives in the updates directory
 (rook/hub/update_feed.py ``updates_dir``):
 
@@ -230,7 +230,7 @@ class UpdateService:
                 f"{hub['version'] or hub['name'] or 'an older build'}). "
                 + ("It is a BREAKING update: some devices must be updated first. "
                    if meta.get("breaking") else "")
-                + "Open Manage > Updates on the dashboard to review it.")
+                + "Open Settings > Updates on the dashboard to review it.")
         try:
             r = await self._notify(text)
             ok = not isinstance(r, dict) or bool(r.get("ok", True))
@@ -238,7 +238,7 @@ class UpdateService:
                          "result": "ok" if ok else "skipped",
                          "detail": "posted to chat" if ok else
                          f"not posted to chat ({(r or {}).get('error') or 'no channel'}); "
-                         "shown on Manage > Updates"})
+                         "shown on Settings > Updates"})
         except Exception:
             log.debug("could not announce %s", latest["tag"], exc_info=True)
 
@@ -259,7 +259,7 @@ class UpdateService:
         text = (f"Worker build {newest} is ready on the hub; your workers run build {released}. "
                 + ("Auto mode rolls it out in the maintenance window, test worker first. "
                    if self.mode == "auto" else
-                   "Open Manage > Updates on the dashboard to roll it out (test worker first). ")
+                   "Open Settings > Updates on the dashboard to roll it out (test worker first). ")
                 + "Workers do not get it until then.")
         try:
             await self._notify(text)
@@ -459,7 +459,7 @@ class UpdateService:
                 if apk.get("version_name") and not version_lt(apk["version_name"],
                                                               floors.get("min_android_app") or "0"):
                     fix, how = "app", (f"install Rook app {apk['version_name']} on it "
-                                       "(Manage > Updates > Phones and tablets)")
+                                       "(Settings > Updates > Phones and tablets)")
                 else:
                     fix, how = "app", "install a newer Rook app on it by hand: the app does not update itself"
             out.append({"worker_id": m["worker_id"], "name": m["name"], "kind": m["kind"],

@@ -360,7 +360,7 @@ async def test_engine_remote_end_to_end_through_the_hub(hub_env, monkeypatch):  
                 assert msg.type == aiohttp.WSMsgType.CLOSE and ws.close_code == 4401
             assert ("ws", "abc") in seen
 
-            # Manage > Voice, through the dashboard's account API.
+            # Intelligence sources > Voice, through the dashboard's account API.
             store = hub.server._accounts.store
             tok = store.new_session(hub.server._accounts.bootstrap_id)
             hdr = {"Cookie": "rook_account=" + tok, "Origin": base}

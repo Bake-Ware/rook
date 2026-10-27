@@ -1,11 +1,11 @@
-# Updates (Manage > Updates)
+# Updates (Settings > Updates)
 
 The hub keeps Rook up to date for the whole band: itself, the workers, the
 Android app and (by hand) firmware devices. It checks Rook's GitHub releases,
 tells you when a new one comes out, and updates things in a safe order when
 you ask it to, or on its own during a maintenance window.
 
-Open **Manage > Updates** on the dashboard (operator account).
+Open **Settings > Updates** on the dashboard (operator account).
 
 ## What you see
 

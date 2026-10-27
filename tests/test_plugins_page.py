@@ -1,4 +1,4 @@
-"""Manage > Plugins: the band-wide matrix, switches, presets and band
+"""Settings > Plugins: the band-wide matrix, switches, presets and band
 defaults (rook/hub/plugin_admin.py), the account API's gates and the
 dashboard proxy."""
 

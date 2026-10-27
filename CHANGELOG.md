@@ -8,6 +8,19 @@ version was `0.1.0`.
 
 ## Unreleased
 
+### Changed
+- Dashboard sidebar in five sections (site rework from Bake's 2026-10-26 roadmap): **Feed**
+  (Overview, Start page), **Work** (Work, Huddles, Sessions, Knowledge, Jobs, Memory),
+  **Intelligence sources** (Home agent, Roles, Model providers, Voice, Agent instructions),
+  **Trust** (Trust map, Approvals, Decisions, People, Account & access, API tokens, Secrets,
+  Bands) and **Settings** (Settings, Workers, Install a worker, Plugins, Updates, Claude Code,
+  Help). Every page keeps its link; `#feed` and `#intelligence` open a section's first page.
+  The Trust page is labelled Trust map. Page references in the dashboard, hub messages and
+  docs say the new section ("Intelligence sources > Home agent", "Settings > Updates").
+  Model providers also lists the hub's other engines, the voice server and the decision
+  engine, with their state and where each is set up. (manual: overview-and-start-page,
+  model-providers)
+
 ### Added
 - Phone app home-screen widgets: **Talk to <assistant>** (push-to-talk to the house agent; a
   tap while it speaks stops it) and **Waiting on you** (the cards waiting on you, urgent and

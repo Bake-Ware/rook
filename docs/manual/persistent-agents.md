@@ -26,7 +26,7 @@ talks for it:
   what it says with a short hidden line that tells the hub what to do, and that
   line is never spoken or shown.
 
-To you they are one assistant, under the name in **Manage > Voice > Speech >
+To you they are one assistant, under the name in **Intelligence sources > Voice > Speech >
 Assistant name** (for example Sojourn; **Whose assistant** there is your name). It
 doesn't talk about how it works inside, and it doesn't say it can't find
 something out: it says it's checking and gets the answer. The voice also gets a
@@ -153,8 +153,8 @@ screen shows it as "(laughs)". Off, or with another voice, it never does.
 
 ## Web search
 
-The agent can search the web and read pages (**Web search** in **Manage > Home
-agent > Persistent sessions**, on by default). Ask the voice anything current
+The agent can search the web and read pages (**Web search** in **Intelligence sources >
+Home agent > Persistent sessions**, on by default). Ask the voice anything current
 ("are any coffee shops open at midnight near me?", "what's the weather this
 weekend"): it says it's looking, the agent searches, and the voice tells you
 the answer. The voice itself never searches. Another role gets web search only
@@ -170,7 +170,7 @@ it waits for you on the Trust page.
 
 ## Turning it on and off
 
-Turn on **Always-on sessions** in **Manage > Home agent > Persistent
+Turn on **Always-on sessions** in **Intelligence sources > Home agent > Persistent
 sessions**. It needs the session host running on the machine with the Claude
 login. Turn it off and every request is a one-off run again. If the session
 host is not connected, requests use one-off runs automatically. The voice

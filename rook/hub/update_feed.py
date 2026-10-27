@@ -321,12 +321,12 @@ def worker_note(row: dict, floors: dict | None = None, pending: dict | None = No
     target = member_kind(row)
     why = below_floor(target, floors)
     if why:
-        return f"Too old for this hub ({why}). Update it from Manage > Updates."
+        return f"Too old for this hub ({why}). Update it from Settings > Updates."
     if pending:
         why = below_floor(target, pending)
         if why:
             return (f"Will stop working after update {pending.get('version') or ''} "
-                    f"({why}). Update it first: Manage > Updates.").replace("  ", " ")
+                    f"({why}). Update it first: Settings > Updates.").replace("  ", " ")
     return ""
 
 

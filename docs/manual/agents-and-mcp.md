@@ -22,7 +22,7 @@ programs. Everything an agent does through Rook is recorded under its own name.
 
 ## Give an agent its own token
 
-1. Open **API tokens** (under Manage).
+1. Open **API tokens** (under Trust).
 2. Create a token for the agent and give it a clear name, such as
    `claude-laptop`. Add a picture if you like; it shows in chat.
 3. Copy the token now: it is shown only once.
@@ -131,7 +131,7 @@ skill's `help` folder.
 
 ## Agent instructions
 
-**Agent instructions** (under Manage, operator only) lets you change what Rook
+**Agent instructions** (under Intelligence sources, operator only) lets you change what Rook
 tells agents without installing anything: the message every agent gets when it
 connects, the reminder sent when a claimed task goes quiet, and short tips
 attached to a tool or to a capability's answers. Every entry keeps its history

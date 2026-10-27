@@ -55,7 +55,7 @@ Desktop worker update artifacts are independent and need not change for APK-only
 releases.
 
 When a Rook release carries the APK (`rook-worker.apk` and
-`rook-worker-apk.json`), Manage > Updates > Phones and apps can publish it
+`rook-worker-apk.json`), Settings > Updates > Phones and apps can publish it
 instead: the hub checks both against the release's `SHA256SUMS`, serves them
 at `/apk` and `/apk.json`, and asks phones that are behind to check now
 (docs/operations/updates.md).
@@ -76,7 +76,7 @@ otherwise they answer exactly as `/apk.json` and `/apk` do, so a beta phone
 rejoins stable once stable passes it. Any other or missing `channel` gets the
 stable answer unchanged. With only the beta hash set, `?channel=beta` is
 public for the beta alone (no stable fallback; plain `/apk` stays behind the
-login). The update service (Manage > Updates, `device.update` pushes) never
+login). The update service (Settings > Updates, `device.update` pushes) never
 reads the beta.
 
 ## Verification

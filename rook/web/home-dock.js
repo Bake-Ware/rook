@@ -1,5 +1,5 @@
 // The house agent's chat dock: a launcher at the bottom right of every page
-// that opens the same conversation as Manage > Home agent (the operator's 1:1
+// that opens the same conversation as Intelligence sources > Home agent (the operator's 1:1
 // huddle, see homeChat in home.js). index.html mounts it once, only when the
 // UI state says the agent is set up, so it survives page switches; whether it
 // is open is remembered per browser. It polls only while open, and hides on

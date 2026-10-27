@@ -286,7 +286,7 @@ result, so the conductor tells the person. Forks: the fork ends with a short sum
 as a background item; the main lane reconciles it or asks the person one line (Yes / No /
 Explain) through its `ask_person` tool.
 
-**Status** (`home.status`, Manage > Home agent): per role `"house agent: busy, 2 waiting,
+**Status** (`home.status`, Intelligence sources > Home agent): per role `"house agent: busy, 2 waiting,
 1 fork"`, lane states, session ids, context size, last compaction.
 
 **Web.** The house agent's main lane gets Claude Code's WebSearch and WebFetch
@@ -372,7 +372,7 @@ role's directory and reloads its session.
 ## 4. Enabling it for another role
 
 1. The role must run on the session host's machine (its home is there).
-2. `role_config` (or Manage > Home agent > Sessions) with `persistent: true`, and
+2. `role_config` (or Intelligence sources > Home agent > Sessions) with `persistent: true`, and
    `voice: true` if it should get a voice lane.
 3. The role's huddle turns keep their one-shot path for now (they carry the chair's
    tools); its own inbox items (reports, asks addressed to it) use its main lane.

@@ -1,6 +1,6 @@
 """Rook's Claude Code hook: the command Rook puts in Claude Code's settings.
 
-The hub's Claude Code rules (Manage > Claude Code, docs/design/ccmod.md) are
+The hub's Claude Code rules (Settings > Claude Code, docs/design/ccmod.md) are
 pushed to each worker, which writes them to ``<worker state>/ccmod/rules.json``
 and adds one hook entry per event to each Claude Code installation's
 ``settings.json``. Each entry runs this file with the worker's Python

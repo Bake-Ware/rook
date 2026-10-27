@@ -98,7 +98,7 @@ export async function mountHome(root){
     const vModel=h('input',{value:val('voice_model')||'claude-haiku-4-5',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)'});
     const name=h('input',{value:val('name')||'home',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)'});
     const provider=h('select',null,d.providers.map(p=>h('option',{value:p,text:p==='openai'?'OpenAI-compatible':p,selected:p===val('provider')})));
-    // A named model provider (Manage > Model providers) replaces the endpoint fields.
+    // A named model provider (Intelligence sources > Model providers) replaces the endpoint fields.
     const lp=val('llm_provider')||'',lps=d.llm_providers||[];
     const llmProvider=h('select',null,h('option',{value:'',text:'None: use the endpoint below'}),lps.map(p=>h('option',{value:p.id,text:(p.label||p.id)+(p.host?' · '+p.host:''),selected:p.id===lp})),lp&&!lps.some(p=>p.id===lp)?h('option',{value:lp,text:lp+' (not available now)',selected:true}):null);
     const base=h('input',{value:val('base_url')||'',placeholder:'http://llm.example:1234/v1',autocomplete:'off',spellcheck:'false',style:'font-family:var(--mono)'});
@@ -207,7 +207,7 @@ export async function mountHome(root){
         field('Backend',backend,'backend'),
         cc,oaiHead,oai,
         field('Persona',persona,'persona'),
-        field('Speaking voice',h('div',{style:'display:flex;flex-direction:column;gap:6px'},vp.el,vp.note),'voice','The voice its huddle messages are read aloud in (the Speak button). Band default: Manage > Voice.'),
+        field('Speaking voice',h('div',{style:'display:flex;flex-direction:column;gap:6px'},vp.el,vp.note),'voice','The voice its huddle messages are read aloud in (the Speak button). Band default: Intelligence sources > Voice.'),
         field('System prompt addition',prompt,'system_prompt'),
         h('div',{class:'mg-actions'},h('label',{class:'mg-actions',title:'Remember people, facts and past conversations'},memory,'Memory'),h('a',{href:'#memory',text:'View'})),
         h('div',{class:'mg-actions'},h('label',{class:'mg-actions'},tools,'Tools'),info('Search the knowledge wiki, and save and search its memory. Each call is journaled as '+d.status.identity+'.','About tools')),

@@ -16,7 +16,7 @@ deprecated: false
 ---
 # The Settings page
 
-**Settings** (under Manage) holds every setting Rook has, for the hub, your
+**Settings** (in the Settings section) holds every setting Rook has, for the hub, your
 bands, each machine, each plugin and you personally, in one place.
 
 ## Reading a setting

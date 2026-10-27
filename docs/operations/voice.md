@@ -22,7 +22,7 @@ never handed to the plugin.
 
 In the older two-process layout (`rook-dashboard` + `rook-mcp`) nothing
 serves these paths. With `voice.engine = here` the plugin does not load (no
-models are loaded) and Manage > Plugins and Manage > Voice say "needs the
+models are loaded) and Settings > Plugins and Intelligence sources > Voice say "needs the
 single-process hub: run it with `rook hub serve`". With `remote` it loads but
 mounts nothing: the hub reads huddle messages aloud for the dashboard through
 the voice server, and phones and apps keep the voice server's own address.
@@ -90,7 +90,7 @@ voice server with `FORWARDED_ALLOW_IPS=<the hub's address>` (uvicorn trusts
 only loopback by default).
 
 Without what the chosen engine needs the plugin does not load, and
-Manage > Plugins shows the reason ("Needs the voice extras ...", "Speech model
+Settings > Plugins shows the reason ("Needs the voice extras ...", "Speech model
 files are missing from ...", "its address is not set"). A small hub that
 forwards to a GPU box never imports any of the speech stack.
 
@@ -142,7 +142,7 @@ the Voice page's microphone check, so the voice server must accept it.
 
 ## The Voice page
 
-Manage > Voice shows whether voice is ready, where speech runs, the address to
+Intelligence sources > Voice shows whether voice is ready, where speech runs, the address to
 give the apps (`wss://<hub>/voice/ws`), a choice between "On this hub" and "On
 another machine", and a microphone check: it records a few seconds in the
 browser (16 kHz mono) and shows what the hub transcribed. The recording goes
@@ -157,7 +157,7 @@ services.voice.server`, the GPU host's `release.sh` / `voice-select` flow in
 
 To put it behind the hub's address:
 
-1. On the hub: Manage > Voice > "On another machine", the voice server's
+1. On the hub: Intelligence sources > Voice > "On another machine", the voice server's
    address, Save (or `ROOK_VOICE_ENGINE=remote` and
    `ROOK_VOICE_REMOTE_URL=...`). Use **Check** on the Voice page.
 2. In the Rook app: set the voice server to `wss://<hub>/voice/ws`. Keys are

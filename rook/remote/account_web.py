@@ -483,7 +483,7 @@ class AccountWeb:
 
     def plugin_profile(self,band_id,explicit=None):
         """The plugin profile for a worker enrolling on ``band_id``: ``explicit``
-        (normalized) or the band's defaults for new workers (Manage > Plugins).
+        (normalized) or the band's defaults for new workers (Settings > Plugins).
         Never fails enrollment: a store problem means no profile."""
         from ..hub import plugin_profiles
         if explicit not in (None,''):

@@ -1,4 +1,4 @@
-// Manage > Voice: the voice hub plugin (rook/hub/plugins/voice). Where speech
+// Intelligence sources > Voice: the voice hub plugin (rook/hub/plugins/voice). Where speech
 // runs (this hub or another machine), whether
 // it is ready, the band's default voice (with a preview), the address phones
 // and the desktop app use, and a microphone check that records a few seconds

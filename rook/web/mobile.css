@@ -61,8 +61,7 @@
  .nav-group.collapsed nav a:not(.active){display:none}
  .app-sidebar nav{flex-direction:column!important;overflow:visible!important;white-space:normal!important;gap:2px!important}
  .app-sidebar nav a{min-height:44px;padding:0 12px!important;font-size:15px!important}
- .app-sidebar nav[aria-label="Management"],.app-sidebar nav.nav-help{margin-top:0!important}
- .app-sidebar nav.nav-help{margin-top:10px!important;padding-top:10px!important;border-top:1px solid var(--line)!important}
+ .app-sidebar .nav-group+.nav-group nav{margin-top:0!important}
  .sidebar-footer{position:static!important;flex-direction:row!important;flex-wrap:wrap;align-items:center;gap:8px 16px!important;padding:12px 8px 0!important;border-top:1px solid var(--line)!important;margin-top:auto!important}
  .sidebar-footer .art-toggle{position:static!important;display:inline-block;min-height:44px;padding:0!important;background:none!important;border:0!important;font-size:11px!important}
  .sidebar-footer .signout{min-height:44px;display:inline-flex;align-items:center;font-size:12px!important}

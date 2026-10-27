@@ -155,7 +155,7 @@ async def test_a_toy_on_cachyrig_is_asked_read_back_and_set_up(ob):
     assert out["answer"].startswith("Here's the plan for Photo renamer: a new folder at "
                                     "~/photo-renamer on cachyrig")
     assert 'in your words "it\'s just a toy experiment"' in out["answer"]
-    assert "waits for your tap on Manage > Trust" in out["answer"]
+    assert "waits for your tap on Trust > Trust map" in out["answer"]
     assert out["answer"].rstrip().endswith("Set it up?") or "Set it up?" in out["answer"]
     assert not [c for c in _ran(ob, "shell.exec")]
     out = await turn(ob, "yes go for it", ("project_setup", {"words": "yes go for it"}),
