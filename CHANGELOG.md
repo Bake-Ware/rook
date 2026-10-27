@@ -65,6 +65,16 @@ version was `0.1.0`.
   sessions belong to their opener, only http(s) loads, local-network addresses are refused
   unless `browser.allow_private` is on, downloads are refused and Chromium's sandbox is on. A
   default agent tip for `browser.*`. (manual: browser)
+- Devices by asking (Bake's roadmap, 2026-10-26: "add my front door lock" and the house agent
+  builds the caps itself): the `devkit` worker plugin turns an agent-written definition (name,
+  type, caps as http/tcp/udp/argv recipes with typed args and `extract`, a state check) into a
+  device worker on that delegate, with honest risk floors (only a GET/HEAD named as a reading is a read, actions
+  are physical, programs are exec, any action on a lock, alarm, valve, garage, gate or door is
+  admin). `devkit.define` · `devkit.test` · `devkit.list` ·
+  `devkit.remove` · `devkit.discover` (SSDP + mDNS). Credentials stay in the vault as
+  `{secret:name}`, fetched at use only when granted in the delegate's `devkit.secrets` setting
+  (the hub's `settings.worker_secret` honours it). Help topic `devices`; the house agent's
+  instructions point to it. (manual: devices)
 - Phone app **Chat with <assistant>** widget (Bake, 2026-10-27: "push to talk, but it shows
   the conversation, like it does in the app"): a resizable widget with a Talk bar under the
   recent conversation, drawn like the app's Chat tab (bubbles, interrupted replies faded, newest

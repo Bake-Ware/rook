@@ -492,6 +492,16 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `deluge.resume` | torrent_id='*' | Resume a torrent by id or name, or all with `*`. |
 | `deluge.status` | — | Whether the daemon is running, plus a session summary if reachable. |
 
+**devkit**
+
+| Cap | Args | Does |
+|---|---|---|
+| `devkit.define` | definition | Add or replace a device this worker answers for, from a definition: name, type, vars, caps (each one http, tc… |
+| `devkit.discover` | timeout=3.0 | Find devices on this worker's network (SSDP/UPnP and mDNS), grouped by address: what each announces about its… |
+| `devkit.list` | full=false | Devices defined on this worker: name, key, type, worker_id, caps with their risk, reachable and last state, s… |
+| `devkit.remove` | device | Take a defined device off the band (by name or key). |
+| `devkit.test` | cap, definition?, device='', args? | Run one cap's recipe once and show the raw reply (status, body, extracted value), from a draft definition (no… |
+
 **dongle**
 
 | Cap | Args | Does |

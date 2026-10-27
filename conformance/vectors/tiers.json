@@ -590,6 +590,30 @@
     "physical"
    ]
   },
+  "devkit.define": {
+   "tier": "admin",
+   "tags": [
+    "physical"
+   ]
+  },
+  "devkit.discover": {
+   "tier": "read"
+  },
+  "devkit.list": {
+   "tier": "read"
+  },
+  "devkit.remove": {
+   "tier": "admin",
+   "tags": [
+    "physical"
+   ]
+  },
+  "devkit.test": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
   "discord.send": {
    "tier": "write"
   },

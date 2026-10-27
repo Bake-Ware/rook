@@ -34,6 +34,9 @@ log = logging.getLogger("rook.hub.settings")
 #: Worker caps that mean "this worker understands typed settings": it can
 #: resolve ``{{secret:…}}`` references at use and masks its config reads.
 WORKER_SETTINGS_CAP = "worker.settings_report"
+#: Worker settings that list vault *names* the worker may fetch at use
+#: (``worker_secrets``), stored by an admin like any other setting.
+SECRET_GRANT_KEYS = ("devkit.secrets",)
 
 
 class SettingsError(ValueError):
@@ -811,6 +814,15 @@ class SettingsService:
                 row = self.store.get(e.key, scope, target)
                 if row and row.get("secret_ref"):
                     allowed.add(row["secret_ref"])
+        # Grants: vault names an admin listed for the worker, for secrets
+        # that are not one setting each (a delegate's devices defined by
+        # asking, rook/worker/plugins/devkit.py).
+        for key in SECRET_GRANT_KEYS:
+            for scope, target in (("worker", name), ("band", band_id)):
+                row = self.store.get(key, scope, target) if target else None
+                value = (row or {}).get("value")
+                if isinstance(value, list):
+                    allowed.update(v for v in value if isinstance(v, str))
         out, missing = {}, []
         for n in names or []:
             n = str(n)

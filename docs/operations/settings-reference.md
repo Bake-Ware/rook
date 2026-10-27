@@ -236,6 +236,12 @@ are set only in the environment or on the command line.
 | `decision.silence_seconds` | Silence window (s) | hub | int | `15` | `DECISION_SILENCE_SECONDS` | live |
 | `decision.raw_retention_days` | Keep raw inputs (days) | hub | int | `30` | `DECISION_RAW_RETENTION_DAYS` | live |
 
+## Devkit (worker plugin, runs in worker)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `devkit.secrets` | Secrets its devices may use | worker | list |  |  | live |
+
 ## Discord (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |

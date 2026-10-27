@@ -176,3 +176,4 @@ rows carry `delegate`, `delegate_name` and `device`.
   per-device identities land, the hub can accept `devices` only from workers
   allowed to delegate.
 - **More drivers**: HDMI-CEC and PiKVM as devices.
+- **Devices by asking** (agent-written recipes, no driver): [devices-by-asking.md](devices-by-asking.md).

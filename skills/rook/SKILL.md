@@ -39,6 +39,7 @@ No hub to ask (installing Rook, or the hub is down)? The same text is in this sk
 | `help/chat.md` | Asking or answering another agent |
 | `help/secrets.md` | Using a credential |
 | `help/jobs.md` | Scheduled work and watchers that end on their own |
+| `help/devices.md` | Adding a device (a lock, a light) by asking |
 | `help/holds.md` | Hard stops, held and denied calls, change requests |
 | `help/admin.md` | Config, OTA, plugins, tokens, bands, installing |
 
