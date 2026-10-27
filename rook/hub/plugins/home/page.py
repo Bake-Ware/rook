@@ -262,6 +262,10 @@ class PageBridge:
         if name == "page_go" and action.get("query") and action["page"] not in QUERY_OK:
             return json.dumps({"ok": False, "error": f"opening {action['page']} with a query is "
                                                      "for the person"})
+        if name == "page_go" and action["page"] == "work" and \
+                re.search(r"(^|&)v=huddle(&|$)", action.get("query", "")):
+            return json.dumps({"ok": False, "error": "opening a huddle from Work can start one: "
+                                                     "ask the person (or open huddles)"})
         if name in ("page_fill", "page_click") and not REF.match(action.get("ref", "")):
             return json.dumps({"ok": False, "error": "ref: a control's ref from the page, "
                                                      "e.g. b3"})

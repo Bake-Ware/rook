@@ -19,7 +19,8 @@ version was `0.1.0`.
   length). Typing and pressing work only on Overview, Start page, Work, Huddles, Knowledge,
   Memory and Help (elsewhere it opens and points); a press only shows or finds things (tabs,
   # links, details, Open/Show/Filter/Search/Next buttons), typing goes only into text fields
-  and never fires the change that saves, dialogs are the person's, and a control must be on
+  and never fires the change that saves, dialogs, cards and waiting questions are the
+  person's, a # link must lead where page_go may go, and a control must be on
   screen and still read as the agent saw it (rules in `rook/web/page-rules.js`, tested with
   node in CI). It never reads password fields or shown-once secrets (now marked
   `data-secret`: new tokens, invite links, pairing codes). Setting `home.page_tools` (on). Works on the front door, the

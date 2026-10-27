@@ -37,6 +37,7 @@ def test_presses_only_show_or_find_things_on_everyday_pages():
                press(kind="summary", label="More"), press(kind="link", label="Jobs", href="#jobs"),
                press(kind="link", label="Open room", href="#huddles?room=abc"),
                press(kind="link", label="Home", href="#"),
+               press(kind="link", label="Board", href="#work?v=board&project=p1"),
                press("knowledge", label="Search"), press("huddles", label="Open")]
     refused = [
         press(label="Run now"), press(label="Save"), press(label="Start session"),
@@ -52,6 +53,7 @@ def test_presses_only_show_or_find_things_on_everyday_pages():
         press("huddles", kind="tab", label="Next", inCard=True),
         press(kind="link", label="Show", href="#account?invite=abc"),   # where it goes counts
         press(kind="link", label="Show", href="#bands?worker=w1"),
+        press(kind="link", label="Show", href="#work?v=huddle&hp=p1"),
     ] + [press(v, label="Show details") for v in (
         "trust", "approvals", "decisions", "vault", "tokens", "people", "account", "bands",
         "settings", "plugins", "updates", "workers", "install", "ccmod", "sessions", "guidance",
@@ -75,6 +77,7 @@ def test_typing_only_into_text_fields_and_never_one_that_saves_on_change():
                fill(kind="input", type="text", label="Delete confirmation"),
                fill(kind="button", label="Show"),
                fill(view="settings", kind="input", type="text", label="Hub name"),
+               fill(view="huddles", kind="textarea", label="Your reply", inCard=True),
                fill(view="jobs", kind="textarea", label="Job JSON")]
     got = _judge(allowed + refused)
     assert got[:len(allowed)] == [None] * len(allowed), list(zip(allowed, got))
@@ -87,6 +90,7 @@ def test_page_go_queries_only_pick_what_to_show():
                   {"go": True, "page": "trust"},
                   {"go": True, "page": "account", "query": "invite=x"},
                   {"go": True, "page": "bands", "query": "worker=w1"},
+                  {"go": True, "page": "work", "query": "v=huddle&hb=_"},
                   {"go": True, "page": "../etc"}])
     assert got[0] is None and got[1] is None
     assert all(got[2:]), got

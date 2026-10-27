@@ -55,7 +55,9 @@ it can also type into a text field (it never saves or submits) and press things
 that only show or find: tabs, links within the dashboard, and buttons like
 Open, Show, Filter, Search or Next. Everything that changes something (Save,
 Run, Send, Approve, Delete, a switch or a choice list that saves at once, a
-dialog) stays yours: it points at it and tells you to press it. Elsewhere
+dialog, a card or a question waiting for you) stays yours: it points at it and
+tells you to press it. A link it presses must lead where the agent may go
+itself. Elsewhere
 (jobs, settings, plugins, updates, trust, secrets, people, machines, sessions,
 its own instructions) it only opens the page and points. It never presses
 anything that is not on screen right now or that has changed since it looked,

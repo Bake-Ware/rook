@@ -50,6 +50,7 @@ export function pressRefusal(c) {
 export function fillRefusal(c) {
   if (!ACTS.has(c.view)) return 'only opening and pointing here: ask the person to do it';
   if (c.inDialog) return 'answering a dialog is for the person';
+  if (c.inCard) return 'answering a card or a question is for the person';
   if (c.kind !== 'input' && c.kind !== 'textarea') return (c.label || 'that') + ' saves when it changes: ask the person';
   if (c.kind === 'input' && !TEXT_TYPES.has(c.type)) return 'the person types that field themselves';
   if (c.disabled || c.readOnly) return (c.label || 'that') + ' is read-only';
@@ -61,5 +62,8 @@ export function fillRefusal(c) {
 export function goRefusal(page, query) {
   if (!/^[a-z][a-z0-9_-]{0,31}$/.test(String(page || ''))) return 'no dashboard page called ' + page;
   if (query && !QUERY_OK.has(page)) return 'opening ' + page + ' with a query is for the person';
+  // Work's huddle view opens (and so may start) a project's or band's huddle.
+  if (page === 'work' && /(^|&)v=huddle(&|$)/.test(String(query || '')))
+    return 'opening a huddle from Work can start one: ask the person (or open #huddles)';
   return null;
 }
