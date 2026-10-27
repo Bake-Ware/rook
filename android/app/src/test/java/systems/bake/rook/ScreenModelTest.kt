@@ -87,10 +87,10 @@ class ScreenModelTest {
     @Test fun popupWindowsAboveTheActiveOneAreRead() {
         val wins = listOf(
             SWindow(type = 3, layer = 30, active = false),                         // status bar (system)
-            SWindow(type = ScreenModel.TYPE_APPLICATION, layer = 21, active = false), // the dropdown
+            SWindow(type = ScreenModel.TYPE_APPLICATION, layer = 21, active = false, pkg = "com.app"), // the dropdown
             SWindow(type = 2, layer = 25, active = false),                         // keyboard
-            SWindow(type = ScreenModel.TYPE_APPLICATION, layer = 20, active = true),  // the activity
-            SWindow(type = ScreenModel.TYPE_APPLICATION, layer = 10, active = false), // an app below
+            SWindow(type = ScreenModel.TYPE_APPLICATION, layer = 20, active = true, pkg = "com.app"),  // the activity
+            SWindow(type = ScreenModel.TYPE_APPLICATION, layer = 10, active = false, pkg = "com.app"), // below
         )
         assertEquals(listOf(1, 3), ScreenModel.pickWindows(wins))       // top first
         // Another app's window above (split screen, an overlay) is left out.
