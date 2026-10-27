@@ -20,7 +20,7 @@ SNAP = {"view": "jobs", "title": "Jobs", "hash": "#jobs", "selection": "nightly 
                   {"ref": "i2", "kind": "input", "label": "Filter", "value": "back"},
                   {"ref": "x", "kind": "button", "label": "bad ref"},
                   {"ref": "b3", "kind": "rocket", "label": "bad kind"}],
-        "pages": [{"id": "jobs", "title": "Jobs", "section": "Work"}]}
+        "pages": [{"id": "jobs", "title": "Jobs", "section": "Work"}], "tab": "tabA1234567"}
 
 
 class Clock:
@@ -52,7 +52,9 @@ def test_a_snapshot_is_bounded_and_typed():
     text = page.describe(ctx)
     assert "Page: Jobs (#jobs)" in text and "Selected text: nightly backup" in text
     assert '[b1] button "Run now"' in text and "[i2] input \"Filter\" = 'back'" in text
-    assert "jobs (Jobs)" in text
+    assert "jobs (Jobs)" in text and ctx["tab"] == "tabA1234567"
+    assert page.clean({**SNAP, "tab": "x y"})["tab"] == ""   # not an id: no tab gets actions
+    assert "open and point only" in page.describe({**ctx, "locked": True})
 
 
 def test_tools_only_while_the_page_is_known_and_fresh():
@@ -81,13 +83,14 @@ async def test_an_action_goes_to_the_browser_and_its_answer_comes_back():
 
     async def browser():
         for _ in range(100):
-            todo = bridge.take("r1")
+            assert bridge.take("r1", "otherTab999") == []    # another tab never gets it
+            todo = bridge.take("r1", "tabA1234567")
             if todo:
                 break
             await asyncio.sleep(0.01)
         assert todo == [{"id": todo[0]["id"], "do": "fill", "ref": "i2", "value": "s3cret plan"}]
-        assert bridge.take("r1") == []                   # handed out once
-        after = {**SNAP, "items": [{"ref": "i2", "kind": "input", "label": "Filter",
+        assert bridge.take("r1", "tabA1234567") == []    # handed out once
+        after = {**SNAP, "tab": "tabA1234567", "items": [{"ref": "i2", "kind": "input", "label": "Filter",
                                     "value": "s3cret plan"}]}
         assert bridge.done("r1", todo[0]["id"], True, "filled Filter", after)
         assert not bridge.done("r1", todo[0]["id"], True, "again")
@@ -108,7 +111,7 @@ async def test_a_page_that_does_not_answer_times_out_and_leaves_nothing_queued()
     bridge.note("r1", SNAP)
     out = json.loads(await bridge.act("r1", "page_click", {"ref": "b1"}, timeout=0.05))
     assert not out["ok"] and "did not answer" in out["error"]
-    assert bridge.take("r1") == [] and bridge._waiting == {}
+    assert bridge.take("r1", "tabA1234567") == [] and bridge._waiting == {}
 
 
 @pytest.mark.asyncio
@@ -124,7 +127,7 @@ async def test_bad_page_tool_calls_are_refused_before_the_browser():
                             ("page_explode", {}, "unknown tool")):
         out = json.loads(await bridge.act("r1", name, args, timeout=0.05))
         assert not out["ok"] and why in out["error"], (name, out)
-    assert bridge.take("r1") == []
+    assert bridge.take("r1", "tabA1234567") == []
 
 
 def test_the_persistent_lane_offers_the_page_tools():

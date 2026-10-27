@@ -499,7 +499,7 @@ def routes(get_node: Callable[[], Any], accounts):
                 bridge = getattr(plugin("home"), "page_bridge", None)
                 if bridge is not None and data.get("page") and isinstance(result, dict) \
                         and result.get("room"):
-                    actions = bridge.take(result["room"])
+                    actions = bridge.take(result["room"], str(data.get("page"))[:32])
                     if actions:
                         result["page_actions"] = actions
             elif action == "page":

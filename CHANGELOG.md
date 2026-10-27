@@ -14,12 +14,13 @@ version was `0.1.0`.
   the house agent gets page tools that run in your browser with your own sign-in: `page_go`
   (open a page), `page_point` (scroll to and highlight), `page_fill` (fill a field, never
   submit), `page_click` (press a button) and `page_read`. Actions ride the chat's poll and
-  answer with a fresh snapshot; each is journaled as `home.page` (typed values only by
-  length). The page refuses clicks and typing on Approvals, Trust map, Decisions, Secrets,
-  API tokens, People and Account & access, delete/revoke/approve-style buttons and links off
-  the dashboard, and never reads password fields or revealed secrets. Setting
-  `home.page_tools` (on). Works on the front door, the plain chair and the persistent
-  session. (manual: home-agent)
+  answer with a fresh snapshot, only in the tab the message came from; each is journaled as
+  `home.page` (typed values only by length). Filling and pressing work only on Overview,
+  Start page, Work, Huddles, Knowledge, Jobs, Memory and Help (elsewhere it opens and
+  points), never on delete/approve/send/update-style buttons or links off the dashboard; it
+  never reads password fields or shown-once secrets (now marked `data-secret`: new tokens,
+  invite links, pairing codes). Setting `home.page_tools` (on). Works on the front door, the
+  plain chair and the persistent session. (manual: home-agent)
 
 ### Changed
 - LG webOS TVs: `tv.power_on` now wakes TVs on Wi-Fi (it sent Wake-on-LAN only to the wired

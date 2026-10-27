@@ -303,7 +303,7 @@ export function homeChat({toForm,status}){
       await hapi('page',{room,id:a.id,ok:r.ok,result:r.result,page:r.page}).catch(()=>{});}}
     finally{acting=false;}
   }
-  const read=()=>hapi('view',{room,since_seq:seq,limit:100,page:true}).then(v=>{actOnPage(v);return v;});
+  const read=()=>hapi('view',{room,since_seq:seq,limit:100,page:pageAgent.TAB}).then(v=>{actOnPage(v);return v;});
   // The round a message of ours started: done ends the wait, failed says why.
   function settle(v){
     if(!waiting)return;

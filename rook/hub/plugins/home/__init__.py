@@ -241,10 +241,10 @@ class HomeAgent(Plugin):
         setting("page_tools", bool, True, group="Behaviour", order=7,
                 label="Act on the page you chat from",
                 help="On: a message from the dashboard's chat carries the page you are on, "
-                     "what you selected and what is on screen, and the agent can open pages, "
-                     "point at things, fill fields and press buttons there, in your browser "
-                     "(never on Approvals, Trust map, Decisions, Secrets, API tokens, People or "
-                     "Account & access, and never delete or approve-style buttons). Off: it only "
+                     "what you selected and what is on screen, and the agent can open pages and "
+                     "point at things there, in your browser; on Overview, Start page, Work, "
+                     "Huddles, Knowledge, Jobs, Memory and Help it can also fill fields and press "
+                     "buttons (never delete, approve, send or update-style ones). Off: it only "
                      "reads your message."),
         setting("front_door", bool, False, group="Front door", order=1,
                 label="Route requests (front door)",

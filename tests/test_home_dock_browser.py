@@ -300,6 +300,7 @@ def test_the_page_refuses_what_the_person_must_do(browser, hub):
         let pressed = 0;
         add('<button type="button" id="ok-btn">Refresh list</button>').onclick = () => pressed++;
         add('<button type="button" id="bad-btn">Delete everything</button>').onclick = () => pressed += 100;
+        add('<button type="button" id="send-btn">Send</button>').onclick = () => pressed += 1000;
         add('<a id="off-link" href="/logout">Leave</a>');
         add('<label>Name <input id="name-in"></label>');
         add('<input id="pw-in" type="password" value="hunter2" aria-label="Password">');
@@ -312,6 +313,7 @@ def test_the_page_refuses_what_the_person_must_do(browser, hub):
         const r = {};
         r.ok = await m.run({do: 'click', ref: ref('ok-btn')});
         r.bad = await m.run({do: 'click', ref: ref('bad-btn')});
+        r.send = await m.run({do: 'click', ref: snap.items.find(i => i.label === 'Send').ref});
         r.off = await m.run({do: 'click', ref: ref('off-link')});
         r.fill = await m.run({do: 'fill', ref: ref('name-in'), value: 'Ada'});
         r.pw = await m.run({do: 'fill', ref: ref('pw-in'), value: 'x'});
@@ -319,18 +321,25 @@ def test_the_page_refuses_what_the_person_must_do(browser, hub):
         r.pressed = pressed; r.name = document.getElementById('name-in').value;
         r.pwShown = JSON.stringify(snap).includes('hunter2');
         r.secretShown = /rk_SHOWN_ONCE_123|PAIR-CODE-9/.test(JSON.stringify(snap));
-        location.hash = '#vault'; await new Promise(res => setTimeout(res, 800));
-        const v = m.snapshot();
-        r.locked = v.locked;
-        r.vault = v.items.length ? await m.run({do: 'click', ref: v.items[0].ref}) : {ok: false, result: 'gates things'};
+        for (const id of ['settings', 'vault']) {
+            location.hash = '#' + id; await new Promise(res => setTimeout(res, 800));
+            const v = m.snapshot();
+            r[id] = {locked: v.locked, run: v.items.length ? await m.run({do: 'click', ref: v.items[0].ref})
+                                                           : {ok: false, result: 'only opening and pointing'}};
+        }
+        r.tab = m.snapshot().tab;
         return r; }""")
     assert out["ok"]["ok"] and out["pressed"] == 1, out
     assert not out["bad"]["ok"] and "for the person" in out["bad"]["result"]
+    assert not out["send"]["ok"] and "for the person" in out["send"]["result"]   # never as them
     assert not out["off"]["ok"] and "leaves the dashboard" in out["off"]["result"]
     assert out["fill"]["ok"] and out["name"] == "Ada"
     assert not out["pw"]["ok"] and not out["pwShown"] and not out["secretShown"]
     assert out["point"]["ok"]
-    assert out["locked"] and not out["vault"]["ok"] and "gates things" in out["vault"]["result"]
+    for gated in ("settings", "vault"):          # open and point only, off the everyday pages
+        assert out[gated]["locked"] and not out[gated]["run"]["ok"], out[gated]
+        assert "only opening and pointing" in out[gated]["run"]["result"]
+    assert len(out["tab"]) == 16
     assert page.errors == []
     page.context.close()
 

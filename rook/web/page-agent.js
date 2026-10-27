@@ -4,11 +4,17 @@
 // while the control is on the page. run(action): the agent's page_go,
 // page_point, page_fill, page_click or page_read, done here in your browser
 // with your own session, then a fresh snapshot.
-// It never clicks or types on the pages that gate things, never presses a
-// delete, revoke, approve-style button, never follows a link off the
-// dashboard, and never reads password fields or revealed secrets.
-const LOCKED = new Set(['approvals', 'trust', 'decisions', 'vault', 'tokens', 'people', 'account']);
-const RISKY = /\b(delete|remove|revoke|erase|wipe|destroy|deauth|sign ?out|log ?out|disconnect|reset|rotate|uninstall|restart|approve|deny|reject|forget|purge|drop)\b/i;
+// It opens and points anywhere, but only fills and presses on the everyday
+// pages (ACTS: Feed, Work but Sessions, Help), so it never changes through
+// your sign-in what it could not change itself (trust, settings, plugins,
+// updates, its own instructions, machines, terminals). It never presses a
+// button that deletes, approves, sends or ships something, never follows a
+// link off the dashboard, and never reads password fields or shown-once
+// secrets.
+const ACTS = new Set(['overview', 'start', 'work', 'huddles', 'knowledge', 'jobs', 'memory', 'help']);
+const RISKY = /\b(delete|remove|revoke|erase|wipe|destroy|deauth|sign ?out|log ?out|disconnect|reset|rotate|uninstall|restart|approve|deny|reject|forget|purge|drop|send|post|reply|answer|share|invite|vote|merge|publish|update|upgrade|deploy|roll ?out|install)\b/i;
+// One id per open tab: the hub hands a page action only to the tab it was asked from.
+export const TAB = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)).replace(/-/g, '').slice(0, 16);
 const CONTROLS = 'a[href], button, input, select, textarea, [role=button], [role=tab], summary';
 // [data-secret]: shown-once tokens, invite links and pairing codes (manage.js, tokens.js).
 const SKIP = '.hd, .app-sidebar, .tabbar, .rook-art, script, style, [data-secret], .token-secret, .pairing-code, .pairing-commands, [aria-hidden=true]';
@@ -19,7 +25,7 @@ const byRef = new Map();          // ref -> WeakRef(element)
 const refOf = new WeakMap();      // element -> ref
 
 const view = () => document.body.dataset.view || '';
-const locked = () => LOCKED.has(view());
+const locked = () => !ACTS.has(view());
 const say = text => { try { window.rookToast?.(text); } catch {} };
 
 function shown(el) {
@@ -128,7 +134,7 @@ export function snapshot() {
   }
   const title = document.getElementById('view-title')?.textContent || '';
   return {view: view(), title, hash: location.hash, selection: selection(), visible: visibleText(),
-    items, pages: pages(), locked: locked()};
+    items, pages: pages(), locked: locked(), tab: TAB};
 }
 
 function find(r) {
@@ -182,8 +188,8 @@ async function act(a) {
   }
   const el = find(a.ref);
   if (!el) throw Error('nothing with ref ' + a.ref + ' on the page now (page_read for fresh refs)');
-  if (locked()) throw Error('this page gates things: ask the person to do it');
-  if (el.closest('.hd')) throw Error('not the chat itself');
+  if (locked()) throw Error('only opening and pointing here: ask the person to do it');
+  if (el.closest('.hd, .xterm, .terminal')) throw Error('not the chat or a terminal');
   const label = labelOf(el);
   if (a.do === 'fill') {
     if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) throw Error(a.ref + ' is not a field');
