@@ -44,11 +44,18 @@
          and their channel may ring through Do Not Disturb once policy access is granted. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!-- device.intent kind=timer|alarm: the clock app's AlarmClock intents (normal permission). -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
 
     <!-- voice.speak: Android 11+ package visibility hides TTS engines without this -->
     <queries>
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <!-- device.apps / device.launch label=: the launcher's app list -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
         </intent>
     </queries>
 

@@ -130,6 +130,12 @@ _CORE_SPEC = {
     "device.unlock_status": "R", "device.keep_awake": "X p",
     "device.keep_awake_status": "R", "device.keep_awake_settings": "X",
     "ui.nodes": "X s", "ui.click": "X", "ui.scroll": "X", "ui.back": "X",
+    # Driving the phone in fewer calls (2026-10-27): ui.screen/ui.wait return
+    # the screen like ui.nodes; ui.type types like hid.type. device.apps lists
+    # the launcher; media.now what is playing (both reads of private content).
+    "ui.screen": "X s", "ui.wait": "X s", "ui.type": "X",
+    "device.apps": "R s", "device.intent": "X", "device.sound": "X p",
+    "media.now": "R s", "media.control": "X p",
     "voice.speak": "W p", "voice.speak_status": "R", "voice.replies": "R",
     "voice.speak_stop": "W", "voice.speak_voices": "R",
     # The app's attention surface (docs/design/attention.md, attention-phone.md):

@@ -22,7 +22,7 @@ log = logging.getLogger("rook.android.keepawake")
 
 #: Cap namespaces / exact caps that need the screen on and awake.
 SCREEN_PREFIXES = ("ui.", "hid.", "screenshot.")
-SCREEN_CAPS = frozenset({"device.launch", "device.open_url"})
+SCREEN_CAPS = frozenset({"device.launch", "device.open_url", "device.intent"})
 #: Status reads inside those namespaces that must not wake anything.
 NOT_SCREEN = frozenset({"hid.backend"})
 #: These manage the screen themselves; they only reset the idle timer.
