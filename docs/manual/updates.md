@@ -3,7 +3,7 @@ id: updates
 title: Updates and keeping Rook healthy
 order: 21
 features:
-  - features/hub-owned-updates-manage-updates
+  - features/hub-owned-updates-settings-updates
   - plugin/hub/updates
   - settings/updates
   - features/ota-self-update
