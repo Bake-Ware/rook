@@ -758,7 +758,8 @@ mod tests {
             band_result(json!({"ok": true, "result": {"answer": "hi"}})).unwrap()["answer"],
             "hi"
         );
-        let off = band_result(json!({"ok": false, "error": "the home agent is off (Intelligence sources > Home agent)"}));
+        let off =
+            band_result(json!({"ok": false, "error": "the home agent is off (Intelligence sources > Home agent)"}));
         assert!(matches!(off, Err(HubError::Agent(m)) if m.contains("Turn it on")));
         let other = band_result(json!({"ok": false, "error": "worker said no"}));
         assert_eq!(other, Err(HubError::Agent("Worker said no".into())));
