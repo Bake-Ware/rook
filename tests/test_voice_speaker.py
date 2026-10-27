@@ -464,7 +464,7 @@ def test_learned_clips_roll_back_and_end_on_re_enrollment(tmp_path):
     assert s.forget("bake") and s.bank("bake") == []
 
 
-def test_cohort_normalization_names_a_clear_match_under_the_threshold(tmp_path):
+def test_cohort_norm_is_reported_but_never_names_under_the_threshold(tmp_path):
     s = enrolled(tmp_path, ("bake", 500))
     bake = s._prints["bake"]
     turn = toward(bake, 0.38, seed=80)                               # a noisy line of his: under 0.45
@@ -555,7 +555,7 @@ def test_cohort_norm_does_not_name_below_threshold(tmp_path):
     assert result["label"] == "guest"
 
 
-def test_bystander_drift_across_reconnects(tmp_path, monkeypatch):
+def test_bystander_drift_across_reconnects(tmp_path):
     """Bystander drift fix: anchor clears on score<0.30 OR non-owner label.
     On owner's phone, bystander at 0.15-0.45 was previously banked; now all paths blocked.
     Uses real audio to prove learn_sample is never called (not just rejected for quality)."""
