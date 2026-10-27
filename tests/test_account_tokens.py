@@ -122,7 +122,7 @@ async def test_proxy_checks_origin_and_preserves_account_boundary(portal):
             member = p.store.create_local('member', 'a long enough test password')
             response = await client.get('/account/tokens/api',headers={'Cookie':'rook_account='+p.store.new_session(member)})
             assert response.status == 403
-            assert (await response.json())['error'] == 'API tokens require an operator account.'
+            assert (await response.json())['error'] == 'API tokens require an owner account.'
             assert (await client.get('/account/tokens/api')).status == 401
             assert (await client.post('/account/tokens/api',headers=p.headers,json=['x'])).status == 400
             response = await client.post('/account/tokens/api',headers=p.headers,json=data)

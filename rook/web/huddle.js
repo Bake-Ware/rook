@@ -18,7 +18,7 @@ function loadCss(){if(document.querySelector('link[data-hd]'))return;const l=doc
 
 let csrf='';
 async function api(action,body={}){
-  if(!csrf){const r=await fetch(API);const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Sign in with your operator account to see huddles.');csrf=d.csrf;}
+  if(!csrf){const r=await fetch(API);const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Sign in with an owner account to see huddles.');csrf=d.csrf;}
   const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,action,...body})});
   const d=await r.json().catch(()=>({}));if(r.status===403&&/expired/i.test(d.error||'')){csrf='';return api(action,body);}
   if(!r.ok||d.error)throw Error(d.error||'Request failed');return d.result;}

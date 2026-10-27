@@ -10,7 +10,7 @@ def routes(service, accounts):
     current = service if callable(service) and not hasattr(service, 'dispatch') else (lambda: service)
 
     @account_api(accounts, sign_in='Sign in to use Knowledge.',
-                 operator_only='Knowledge administration requires the operator account.')
+                 operator_only='Knowledge administration requires an owner account.')
     async def api(request, user, data):
         actor = {'id': 'human:' + user['id'], 'kind': 'human', 'label': user['name']}
         service = current()

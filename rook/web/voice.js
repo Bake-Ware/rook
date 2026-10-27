@@ -25,7 +25,7 @@ export async function mountVoice(root){
   root.replaceChildren(h('div',{class:'mg'},status,
     h('div',{class:'mg-split'},h('div',{class:'mg-main'},stateBox,defaultBox,micBox,connectBox),panel)));
 
-  async function get(){const r=await fetch(API+'?view=voice');const j=await r.json().catch(()=>({error:'Bad response'}));if(j.csrf)csrf=j.csrf;if(!r.ok||j.error)throw Error(j.error||'Sign in with your operator account to set up voice.');return j;}
+  async function get(){const r=await fetch(API+'?view=voice');const j=await r.json().catch(()=>({error:'Bad response'}));if(j.csrf)csrf=j.csrf;if(!r.ok||j.error)throw Error(j.error||'Sign in with an owner account to set up voice.');return j;}
   async function post(body){const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,...body})});const j=await r.json().catch(()=>({error:'Bad response'}));if(!r.ok||j.error)throw Error(j.error||'Request failed');return j;}
   async function refresh(){d=await get();draw();}
   const run=async(b,work,err)=>{if(busy)return;busy=true;if(b)b.disabled=true;if(err)err.textContent='';try{await work();}catch(e){if(err)err.textContent=e.message;else status.textContent=e.message;}finally{busy=false;if(b)b.disabled=false;}};

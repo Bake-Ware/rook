@@ -38,7 +38,7 @@ Nothing changes on the hub to use it.
    password instead** and type your account's user name and password.
 4. Press `Ctrl+Alt+Space` and ask something.
 
-Only the hub's operator account (or the dashboard password) can use the app,
+Only the hub's owners (or the dashboard password) can use the app,
 the same as the dashboard.
 
 ## Quick ask

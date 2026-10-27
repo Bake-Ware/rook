@@ -100,6 +100,6 @@ export async function mountGuidance(root){
       h('div',{class:'mg-pad'},h('div',{class:'mg-bar'},k,cap,tool),ta,h('div',{class:'mg-actions end'},err,btn('Cancel','',()=>{adding=false;draw();}),save)));
     cap.focus();
   }
-  async function load(){const r=await fetch('/account/guidance/api');const d=await r.json();if(!r.ok||d.error)throw Error(d.error||'Sign in with your operator account to edit agent instructions.');csrf=d.csrf;tools=d.tools;editable=d.editable;slots=d.slots;draw();}
+  async function load(){const r=await fetch('/account/guidance/api');const d=await r.json();if(!r.ok||d.error)throw Error(d.error||'Sign in with an owner account to edit agent instructions.');csrf=d.csrf;tools=d.tools;editable=d.editable;slots=d.slots;draw();}
   return {activate(){load().catch(e=>{editor.replaceChildren(h('p',{class:'mg-empty mg-bad',text:e.message}));});},deactivate(){}};
 }

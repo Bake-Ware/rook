@@ -116,7 +116,7 @@ function recent(j, d) {
 const verb = a => ({created: 'created', updated: 'edited', linked: 'linked', reviewed: 'reviewed', retracted: 'retracted'}[a] || a || 'changed');
 function knowledgeNote(d) {
   if (d.knowledge.error) return 'Knowledge could not be loaded: ' + d.knowledge.error;
-  return d.knowledge.value?.reason === 'off' ? 'Knowledge and tasks are off on this hub (Settings > Knowledge).' : 'Knowledge and tasks are for the operator account.';
+  return d.knowledge.value?.reason === 'off' ? 'Knowledge and tasks are off on this hub (Settings > Knowledge).' : 'Knowledge and tasks are for owners.';
 }
 
 function projects(j, d) {

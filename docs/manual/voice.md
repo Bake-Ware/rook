@@ -27,7 +27,7 @@ apps `wss://<your hub>/voice/ws`. A browser can talk to it at
 `https://<your hub>/voice/admin`. These paths use voice keys, not the
 dashboard sign-in.
 
-Open **Intelligence sources > Voice** (operator account). It shows whether voice is ready,
+Open **Intelligence sources > Voice** (an owner account). It shows whether voice is ready,
 the **Voice address** to give your devices, and **Where speech runs**:
 
 - **On this hub**: speech runs inside the hub. The hub needs the voice extras

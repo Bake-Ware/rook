@@ -3,7 +3,7 @@
 ``/jobs`` ``/account-api``; the dashboard proxies ``/account/*/api`` to them).
 
 Each used to repeat the same steps: look up the ``rook_account`` session
-(401), require the operator account (403), parse the JSON object (400) and
+(401), require a hub owner (403), parse the JSON object (400) and
 compare the session CSRF token in constant time (403). ``account_api`` does
 those steps once, in that order, and hands the handler ``(request, user,
 data)``; ``data`` is ``None`` on GET, which never needs CSRF.
@@ -41,12 +41,14 @@ async def read_object(request):
 
 
 def account_api(accounts, *, admin=True, csrf=True,
-                sign_in='Sign in with your operator account.',
-                operator_only='This requires the operator account.'):
+                sign_in='Sign in with an owner account.',
+                operator_only='This requires an owner account.'):
     """Decorate ``async handler(request, user, data)``.
 
-    ``admin``: refuse non-operator accounts (403). ``csrf``: a non-GET body
-    must be a JSON object whose ``csrf`` matches the session (400 / 403).
+    ``admin``: refuse accounts that are not hub owners (403; the operator
+    account and every access.db owner pass, see ``AccountStore.session``).
+    ``csrf``: a non-GET body must be a JSON object whose ``csrf`` matches the
+    session (400 / 403).
     """
     def wrap(handler):
         @wraps(handler)

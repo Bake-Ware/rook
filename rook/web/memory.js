@@ -56,7 +56,7 @@ export async function mountMemory(root){
   const main=h('div',{class:'mg-main'},kinds,bar,list,more,h('div',{class:'mg-actions mem-footrow'},summary,foot));
   root.replaceChildren(h('div',{class:'mg'},note,status,h('div',{class:'mg-split'},main,panel)));
 
-  async function get(){const r=await fetch(API+'?view=memory');const j=await r.json().catch(()=>({error:'Bad response'}));if(j.csrf)csrf=j.csrf;if(!r.ok||j.error)throw Error(j.error||'Sign in with your operator account to see what the home agent remembers.');return j;}
+  async function get(){const r=await fetch(API+'?view=memory');const j=await r.json().catch(()=>({error:'Bad response'}));if(j.csrf)csrf=j.csrf;if(!r.ok||j.error)throw Error(j.error||'Sign in with an owner account to see what the home agent remembers.');return j;}
   async function post(body){const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,...body})});const j=await r.json().catch(()=>({error:'Bad response'}));if(!r.ok||j.error||j.ok===false)throw Error(j.error||'Request failed');return j;}
   async function run(b,work){if(busy)return;busy=true;if(b)b.disabled=true;status.classList.remove('bad');try{await work();}catch(e){status.textContent=e.message;status.classList.add('bad');}finally{busy=false;if(b)b.disabled=false;}}
   async function refresh(){

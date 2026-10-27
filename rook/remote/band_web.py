@@ -78,7 +78,10 @@ class BandWeb:
                 band['members'] = self.store.members(uid, band['id'])
                 band['devices'] = self.account.devices.list(uid, band['id'])
         with self.store.db() as db:
-            rows = db.execute("SELECT m.id FROM band_migrations m JOIN memberships a ON a.band_id=m.band_id WHERE a.user_id=? AND a.role='owner' ORDER BY m.created DESC LIMIT 30", (uid,)).fetchall()
+            if self.store.is_owner(uid):   # a hub owner owns every band
+                rows = db.execute("SELECT m.id FROM band_migrations m ORDER BY m.created DESC LIMIT 30").fetchall()
+            else:
+                rows = db.execute("SELECT m.id FROM band_migrations m JOIN memberships a ON a.band_id=m.band_id WHERE a.user_id=? AND a.role='owner' ORDER BY m.created DESC LIMIT 30", (uid,)).fetchall()
         migrations = []
         for row in rows:
             try:

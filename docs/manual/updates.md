@@ -18,7 +18,7 @@ deprecated: false
 
 ## Settings > Updates
 
-**Settings > Updates** on the dashboard (operator account) is where you keep
+**Settings > Updates** on the dashboard (an owner account) is where you keep
 the whole band up to date: the hub, your workers, the Android app and
 firmware devices. It shows what each one runs, what the newest Rook release
 is, its release notes, and a history of every update.

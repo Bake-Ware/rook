@@ -39,7 +39,7 @@ value.
 
 ## Restarting the hub
 
-**Restart** (top right, operator only) restarts the hub so *restart* settings
+**Restart** (top right, owners only) restarts the hub so *restart* settings
 take effect. The page waits and reloads itself when the hub is back, usually
 within a few seconds; machines and agents reconnect on their own.
 

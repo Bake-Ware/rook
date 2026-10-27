@@ -2020,6 +2020,9 @@ class McpService:
             # One account store for every account-api route (it was one each).
             from ..remote.accounts import AccountStore
             accounts = AccountStore(enrollment)
+        if accounts.owner_check is None:
+            # Owners (access.db) pass the operator gates of every account API.
+            accounts.owner_check = self._owner_check
         self.accounts = accounts
         self.startup_conflicts = list(startup_conflicts)
         self.banned = banned
@@ -2032,6 +2035,11 @@ class McpService:
         self.ws_bridge = None
         self._hygiene_task = None
         self._pump = None
+
+    def _owner_check(self, uid: str) -> bool:
+        from ..hub.access import AccessStore
+        access = getattr(getattr(self.client, "authz", None), "access", None)
+        return isinstance(access, AccessStore) and access.is_owner(uid)
 
     async def start(self) -> None:
         args, client, accounts = self.args, self.client, self.accounts

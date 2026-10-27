@@ -145,7 +145,7 @@ def build_account_token_routes(provider, chat=None, accounts=None, approvals=Non
     # The dashboard proxy also verifies Origin. CSRF remains mandatory here
     # (account_api), including when this endpoint is reached directly on MCP.
     @account_api(accounts, sign_in='Sign in to manage API tokens.',
-                 operator_only='API tokens require an operator account.')
+                 operator_only='API tokens require an owner account.')
     async def api(request, user, data):
         if data is None:
             tokens = provider.list_api_tokens()

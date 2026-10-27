@@ -41,7 +41,7 @@ first message you send starts it, and it is also listed on the Huddles page
 (**In Huddles ↗** opens it there).
 Once the agent is set up, the same chat is also one tap away on every page:
 the **@home** button at the bottom right opens it, and it stays open as you move
-between pages until you close it. Only the operator account sees it.
+between pages until you close it. Only owners see it.
 While the agent works the panel says it is thinking; if it cannot answer, the
 panel says why and points at the form.
 

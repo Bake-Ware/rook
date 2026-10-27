@@ -13,7 +13,7 @@ function loadCss(){useCss();if(document.querySelector('link[data-kn]'))return;co
 
 function client(){
   let csrf='',bands=[],actor={};
-  async function boot(){if(csrf)return;const r=await fetch('/account/knowledge/api');if(!r.ok)throw Error('Sign in with your operator account to view this.');const d=await r.json();csrf=d.csrf;bands=d.bands;actor=d.actor||{};}
+  async function boot(){if(csrf)return;const r=await fetch('/account/knowledge/api');if(!r.ok)throw Error('Sign in with an owner account to view this.');const d=await r.json();csrf=d.csrf;bands=d.bands;actor=d.actor||{};}
   async function api(action,body={}){await boot();const r=await fetch('/account/knowledge/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,action,...body})});const d=await r.json();if(!r.ok||d.error||d.ok===false)throw Error(d.error||'Request failed');return d.result;}
   async function listAll(kind){await boot();const out=[];for(const b of bands){const r=await api('list',{band:b.id,kind,data:{limit:200}});for(const x of r.records)out.push({...x,band:x.band||b.id});}return out;}
   async function searchAll(query,kind){await boot();const out=[];let semantic=false;for(const b of bands){const r=await api('search',{band:b.id,query,kind});semantic=semantic||r.semantic;for(const x of r.results)out.push({...x,band:x.band||b.id,excerpt:x.body});}return {results:out,semantic};}

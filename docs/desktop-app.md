@@ -130,7 +130,7 @@ Tray > **Install a hub on this computer** opens a short wizard.
 - The dashboard window shows your hub's own pages and nothing else: a link
   to another site opens in your usual browser. Hub pages can't use the app's
   features (microphone, hotkeys, files); only the app's built-in pages can.
-- Only the hub's operator account (or the dashboard password) can use the
+- Only the hub's owners (or the dashboard password) can use the
   app, the same as the dashboard.
 
 ## For developers: the attention list

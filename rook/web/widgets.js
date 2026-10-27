@@ -151,7 +151,7 @@ register('tasks', {
     const {knowledge} = await ctx.band();
     if (knowledge.error) return body.append(failed('Tasks: ' + knowledge.error));
     const k = knowledge.value?.knowledge;
-    if (!k) return body.append(empty(knowledge.value?.reason === 'off' ? 'Knowledge and tasks are off on this hub.' : 'Tasks are for the operator account.'));
+    if (!k) return body.append(empty(knowledge.value?.reason === 'off' ? 'Knowledge and tasks are off on this hub.' : 'Tasks are for owners.'));
     const rows = [];
     for (const p of k.projects) for (const key of ['blocked', 'in_progress']) for (const t of p[key]) rows.push({t, p, key});
     if (!rows.length) return body.append(empty('Nothing in progress.'));
@@ -182,7 +182,7 @@ register('knowledge', {
     const {knowledge} = await ctx.band();
     if (knowledge.error) return body.append(failed('Knowledge: ' + knowledge.error));
     const k = knowledge.value?.knowledge;
-    if (!k) return body.append(empty('Knowledge is for the operator account.'));
+    if (!k) return body.append(empty('Knowledge is for owners.'));
     if (!k.recent.length) return body.append(empty('No pages yet.'));
     body.append(h('ul', {class: 'w-rows'}, k.recent.slice(0, limitOf(w)).map(p => h('li', null,
       a(link.page(p), p.title), h('small', {text: shortName(p.actor) + ' ' + (p.action || 'changed') + ' · ' + ago(p.ts)})))));

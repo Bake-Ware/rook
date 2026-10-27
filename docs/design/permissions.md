@@ -160,9 +160,14 @@ Design: knowledge page `users-access-trust-map-and-agent-sessions-bake-s-design-
   silently when no member lacks it, else makes one ask for all new ones (Yes: each lacking
   member gets it up to exec). Any grant on a resource settles it; any grant to a person answers
   their request. Nothing expires and nothing is asked twice.
-- **Open.** Operator-only dashboard pages (Secrets, Plugins, Tokens) still check the
-  operator account, not hub ownership; whether every owner should see them is asked in the
-  rook-beta huddle. Workers seen only on a band's pending new key (mid key change) match the
+- **Owners are operators** (Bake, 2026-10-27). Every page and API that was the operator
+  account's (Secrets, Plugins, Tokens, Agent instructions, Knowledge, Updates, Claude Code
+  rules, Huddles, Sessions, the whole dashboard) is every owner's: `AccountStore.session`
+  reports `admin` for an access.db owner (`operator` keeps the account flag), so the MCP
+  account APIs (`account_api`) and the dashboard's proxies and admission all pass them, and
+  their principal is an owner's for `require_hub_admin` and holds. A hub owner also owns
+  every band (`AccountStore.bands`/`require_band`), as the operator does. Hard stops are unchanged;
+  any owner answers the card. Workers seen only on a band's pending new key (mid key change) match the
   band grant once the change completes.
 
 This spec covers who may call which capability on which worker, how the

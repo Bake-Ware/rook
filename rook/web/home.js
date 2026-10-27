@@ -25,7 +25,7 @@ export async function mountHome(root){
   const list=h('div',{class:'mg-main'},top,chat.el,acts);
   root.replaceChildren(h('div',{class:'mg'},status,h('div',{class:'mg-split'},list,panel)));
 
-  async function get(){const r=await fetch(API+'?view=home');const j=await r.json().catch(()=>({error:'Bad response'}));if(j.csrf)csrf=j.csrf;if(!r.ok||j.error)throw Error(j.error||'Sign in with your operator account to set up the home agent.');return j;}
+  async function get(){const r=await fetch(API+'?view=home');const j=await r.json().catch(()=>({error:'Bad response'}));if(j.csrf)csrf=j.csrf;if(!r.ok||j.error)throw Error(j.error||'Sign in with an owner account to set up the home agent.');return j;}
   async function post(body){const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,...body})});const j=await r.json().catch(()=>({error:'Bad response'}));if(!r.ok||j.error)throw Error(j.error||'Request failed');return j;}
   async function refresh(){d=await get();draw();}
 

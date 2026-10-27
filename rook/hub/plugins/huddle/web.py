@@ -176,7 +176,7 @@ def routes(get_node: Callable[[], Any], accounts):
         return node.plugin(ns) if node is not None else None
 
     async def role_action(action: str, data: dict, user: dict) -> Any:
-        """A ``role.*`` cap as this operator account: its principal for the
+        """A ``role.*`` cap as this owner account: its principal for the
         admin gate and the policy, its name as the actor in the role's history."""
         from ...authz import current_principal, principal_for_user
         node = get_node()
@@ -426,7 +426,7 @@ def routes(get_node: Callable[[], Any], accounts):
         return {**out, "audio": base64.b64encode(audio).decode(), "mime": "audio/wav"}
 
     @account_api(accounts, sign_in="Sign in to see huddles.",
-                 operator_only="Huddles need the operator account.")
+                 operator_only="Huddles need an owner account.")
     async def api(request, user, data):
         if data is None:
             return json_reply({"csrf": user["csrf"], "you": PERSON,
