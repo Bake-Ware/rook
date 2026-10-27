@@ -30,6 +30,7 @@ class FakePhone:
         self.rules: list = []
         self.seq = 0
         self.body = True            # the app shows a card body (0.4.22 and later)
+        self.options = True         # the app shows a question's choices as buttons
         self.reminds: list[dict] = []
         self.remind_reply: dict = {"accepted": True}
         self.unreachable_updates = 0   # attention.update calls that fail (offline, a slow band)
@@ -45,15 +46,19 @@ class FakePhone:
 
     def handle(self, cap: str, args: dict) -> dict:
         if cap == "attention.post":
-            assert set(args) - {"body"} == {"id", "kind", "line", "explain", "urgency", "channel",
-                                            "actions", "source", "expires_at"}
+            assert set(args) - {"body", "options"} == {"id", "kind", "line", "explain", "urgency",
+                                                       "channel", "actions", "source", "expires_at"}
+            # The app's contract: the choose action and 1-6 options of 1-200 characters go together.
+            opts = args.get("options") or []
+            assert ("choose" in args["actions"]) == bool(opts)
+            assert len(opts) <= 6 and all(0 < len(o) <= 200 for o in opts)
             assert len(args.get("body") or "") <= 600 and (args.get("body") or "").count("\n") <= 5
             assert len(args["id"]) <= 64 and len(args["line"]) <= 140
             assert len(args["explain"]) <= 2000 and "\n" not in args["line"]
             assert args["kind"] in ("hold", "job", "card", "ask", "alert")   # the app's KINDS
             assert args["urgency"] in ("urgent", "normal")
             assert args["channel"] in ("urgent", "family", "approvals", "digest", "jobs")
-            assert set(args["actions"]) <= {"yes", "no", "explain", "ack"}
+            assert set(args["actions"]) <= {"yes", "no", "choose", "explain", "ack"}
             self.cards[args["id"]] = dict(args)
             self.posts.append(dict(args))
             return {"ok": True, "id": args["id"]}
@@ -95,6 +100,10 @@ def att(hub, monkeypatch):  # noqa: F811
                                                principal=principal))
             if time.time() - hub.band.workers[PHONE]["last_seen"] > 90:
                 return {"ok": False, "error": "worker offline"}
+            if cap == "attention.post" and "options" in (args or {}) and not phone.options:
+                # An app older than choice buttons: the worker refuses the unknown arg.
+                return {"ok": False, "error": "bad args: _post() got an unexpected keyword "
+                                              "argument 'options'"}
             if cap == "attention.post" and "body" in (args or {}) and not phone.body:
                 # An app older than the card body: the worker refuses the unknown arg.
                 return {"ok": False, "error": "bad args: _post() got an unexpected keyword "
@@ -840,3 +849,112 @@ async def test_a_refusal_never_counts_as_spoken(att):
     hold(att.ap)
     await att.att.service.tick()
     assert att.att.service.state["remind"]["last_outcome"] == "busy"
+
+
+# -- a question with choices ----------------------------------------------------------
+
+#: Bug 2026-10-26 (huddle q849): these reached the phone as Yes / No and came back as "Yes".
+CHOICES = ["(A) No-expiry only", "(B) A + remove plugin features",
+           "(C) A + B + remove agent relays/voice"]
+
+
+async def _choice_ask(hub, options=CHOICES):
+    h = await _call(hub, "huddle.start", {"title": "Approvals"})
+    await _call(hub, "huddle.write", {"action": "ask", "room": h["room"],
+                                      "text": "How much to simplify the approval system?",
+                                      "data": {"options": list(options)}}, GUEST)
+    return h, next(i for i in hub.relay.items() if i["kind"] == "ask")
+
+
+@pytest.mark.asyncio
+async def test_a_choice_shows_each_option_and_the_tapped_one_comes_back_verbatim(att):
+    att.configure()
+    h, ask = await _choice_ask(att)
+    await att.att.service.tick()
+    card = att.phone.cards[ask["id"]]
+    assert card["options"] == CHOICES
+    assert card["actions"] == ["choose", "explain"]           # no Yes / No to tap
+    att.ap.queue.set_relayer(f"device:{PHONE}", True, "human:bake", "pixel (phone)")
+    att.phone.tap(ask["id"], "choose", choice=CHOICES[1])
+    await att.att.service.tick()
+    q = att.svc.store.question(ask["question"])
+    assert q["state"] == "answered" and q["answer"] == CHOICES[1]
+    assert q["answered_by"] == "Bake via pixel (phone)"
+    last = att.svc.chat.tail(h["room"], 1)[0]
+    assert last["text"].startswith(f"Answer for {GUEST}: {CHOICES[1]} (")
+    assert f'Chose "{CHOICES[1]}" on the decision card on pixel' in last["text"]
+    rel, = att.ap.queue.relays()
+    assert rel["quote"] == f'Chose "{CHOICES[1]}" on the decision card on pixel'
+    assert [u[1] for u in att.phone.updates if u[0] == ask["id"]] == ["done"]
+
+
+@pytest.mark.asyncio
+async def test_a_bare_yes_or_a_made_up_choice_never_answers_a_choice(att):
+    att.configure()
+    _, ask = await _choice_ask(att)
+    await att.att.service.tick()
+    att.ap.queue.set_relayer(f"device:{PHONE}", True, "human:bake", "pixel (phone)")
+    att.phone.tap(ask["id"], "approve")                       # an older card's Yes
+    await att.att.service.tick()
+    failed = [u for u in att.phone.updates if u[0] == ask["id"]]
+    assert [u[1] for u in failed] == ["failed"] and "is a choice, not a yes or no" in failed[0][2]
+    att.phone.tap(ask["id"], "choose", choice="(D) Something else")
+    await att.att.service.tick()
+    failed = [u for u in att.phone.updates if u[0] == ask["id"]]
+    assert [u[1] for u in failed] == ["failed", "failed"]
+    assert "not one of this question's options" in failed[1][2]
+    assert att.svc.store.question(ask["question"])["state"] == "open"
+    assert att.ap.queue.relays() == []
+
+
+@pytest.mark.asyncio
+async def test_a_choose_tap_never_decides_anything_but_a_question(att):
+    att.configure()
+    item = hold(att.ap)
+    await att.att.service.tick()
+    att.ap.queue.set_relayer(f"device:{PHONE}", True, "human:bake", "pixel (phone)")
+    att.phone.tap(item["id"], "choose", choice="yes")
+    await att.att.service.tick()
+    assert att.ap.queue.get(item["id"])["state"] == "pending"
+    assert [u[1] for u in att.phone.updates if u[0] == item["id"]] == ["failed"]
+
+
+@pytest.mark.asyncio
+async def test_a_yes_no_question_keeps_its_yes_and_no(att):
+    att.configure()
+    await card_and_ask(att)
+    await att.att.service.tick()
+    ask = next(i for i in att.relay.items() if i["kind"] == "ask")
+    card = att.phone.cards[ask["id"]]
+    assert "options" not in card and card["actions"] == ["yes", "no", "explain"]
+
+
+@pytest.mark.asyncio
+async def test_an_app_without_choice_buttons_points_to_voice_or_the_dashboard(att):
+    """An app that predates choices refuses ``options``: the card goes again
+    without any answer buttons (a bare Yes would say nothing), the choices
+    and where to answer in the body, remembered for the app's version."""
+    att.configure()
+    att.phone.options = False
+    _, ask = await _choice_ask(att)
+    await att.att.service.tick()
+    card = att.phone.cards[ask["id"]]
+    assert "options" not in card and card["actions"] == ["explain"]
+    assert card["body"].startswith("Choices: " + " / ".join(CHOICES))
+    assert "answer by voice or on the dashboard" in card["body"]
+    assert card["explain"].startswith("Choices: ")
+    tries = [c for c in att.phone_calls if c.cap == "attention.post"]
+    assert len(tries) == 2
+    await _choice_ask(att, ["red", "green"])
+    await att.att.service.tick()
+    tries = [c for c in att.phone_calls if c.cap == "attention.post"]
+    assert len(tries) == 3 and "options" not in tries[-1].args   # remembered: no refused try
+    # The app updated: both choice cards go again, with their buttons.
+    att.phone.options = True
+    att.band.workers[PHONE]["version"] = "0.4.24-beta.1"
+    await att.att.service.tick()
+    card = att.phone.cards[ask["id"]]
+    assert card["options"] == CHOICES and card["actions"] == ["choose", "explain"]
+    assert len([c for c in att.phone_calls if c.cap == "attention.post"]) == 5
+    await att.att.service.tick()
+    assert len([c for c in att.phone_calls if c.cap == "attention.post"]) == 5   # once

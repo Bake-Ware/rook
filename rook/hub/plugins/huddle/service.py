@@ -868,8 +868,12 @@ class HuddleService:
             raise ValueError(f"that question is already {q['state']}")
         if self._live(self.store.get(q["room"])) is None:
             raise ValueError("that huddle's chat room was deleted")
-        answer = scrub(_text(text, "answer", TEXT_MAX, required=True))
-        tail = f" ({relayed})" if relayed else ""
+        from ...plain import choice_answer
+        # A real choice gets its option back verbatim; a bare yes or no to it is refused.
+        answer, note = choice_answer(_text(text, "answer", TEXT_MAX, required=True),
+                                     q.get("options"))
+        answer = scrub(answer)
+        tail = "".join(f" ({t})" for t in (note, relayed) if t)
         sent = self._send(q["room"], PERSON, f"Answer for {q['asker']}: {answer}{tail}",
                           [q["asker"]])
         if not self.store.answer(q["id"], answer, by, label, sent["seq"]):
@@ -878,7 +882,8 @@ class HuddleService:
                         {"question": q["id"], **({"relayed": relayed} if relayed else {})})
         wake_state = self._start_wake(q, answer)
         self.store.set_wake(q["id"], wake_state)
-        return {"question": q["id"], "seq": sent["seq"], "wake": wake_state}
+        return {"question": q["id"], "seq": sent["seq"], "wake": wake_state, "answer": answer,
+                **({"note": note} if note else {})}
 
     def wake_target(self, question: int) -> dict:
         """Which worker answering ``question`` would wake, and whether it

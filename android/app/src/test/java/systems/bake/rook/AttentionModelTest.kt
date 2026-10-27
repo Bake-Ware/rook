@@ -31,6 +31,40 @@ class AttentionModelTest {
         }
     }
 
+    @Test fun aChoiceShowsEachOptionAndSendsBackOnlyOneOfThemVerbatim() {
+        // Bug 2026-10-26: q849's (A) / (B) / (C) reached the phone as Yes / No and came back as "Yes".
+        val opts = listOf("(A) No-expiry only", "(B) A + remove plugin features", "(C) A + B + remove agent relays/voice")
+        val c = AttentionCard.fromPost(JSONObject().put("id", "q849").put("kind", "ask").put("line", "How much to simplify approvals?")
+            .put("actions", org.json.JSONArray(listOf("choose", "explain"))).put("options", org.json.JSONArray(opts)), 0.0)
+        assertEquals(opts, c.options)
+        assertEquals(listOf("choose", "explain"), c.actions)
+        assertTrue(c.choosing); assertTrue(c.answerable); assertTrue(c.takeover)
+        assertFalse("yes" in c.actions || "no" in c.actions)
+        assertEquals("(B) A + remove plugin features", c.chosen("(B) A + remove plugin features"))
+        for (bad in listOf("Yes", "B", "(b) a + remove plugin features", "")) assertNull(bad, c.chosen(bad))
+        // Queued quietly, a choice still counts as waiting on the person.
+        assertTrue(AttentionCard.fromPost(JSONObject().put("id", "q2").put("line", "Which?").put("channel", "digest")
+            .put("actions", org.json.JSONArray(listOf("choose"))).put("options", org.json.JSONArray(listOf("one", "two"))), 0.0).waiting)
+        // Kept across restarts and re-posts; a Yes/No card is never a choice.
+        c.choice = opts[2]; c.decision = "choose"
+        val back = AttentionCard.fromJson(c.toJson())
+        assertEquals(opts, back.options); assertEquals(opts[2], back.choice); assertEquals("choose", back.decision)
+        assertEquals(emptyList<String>(), AttentionCard.fromJson(card("old").toJson().apply { remove("options") }).options)
+        assertFalse(card("yn").choosing); assertNull(card("yn").chosen("Yes"))
+        val book = CardBook(); book.post(card("q849"))
+        book.post(AttentionCard.fromPost(c.toJson().put("state", "pending"), 1.0))
+        assertEquals(opts, book["q849"]!!.options); assertTrue(book["q849"]!!.choosing)
+        // The choose action and options come together, within the ask limits.
+        for (bad in listOf("""{"id":"a","line":"l","actions":["choose"]}""",
+                """{"id":"a","line":"l","options":["x","y"]}""",
+                """{"id":"a","line":"l","actions":["choose"],"options":["x","x"]}""",
+                """{"id":"a","line":"l","actions":["choose"],"options":["x",""]}""",
+                """{"id":"a","line":"l","actions":["choose"],"options":["${"o".repeat(201)}"]}""",
+                """{"id":"a","line":"l","actions":["choose"],"options":["1","2","3","4","5","6","7"]}""")) {
+            try { AttentionCard.fromPost(JSONObject(bad), 0.0); fail(bad) } catch (_: IllegalArgumentException) {}
+        }
+    }
+
     @Test fun bodyKeepsShortLines() {
         assertEquals("", card("a").body)
         val c = AttentionCard.fromPost(JSONObject().put("id", "b").put("line", "Read hub approvals database")

@@ -59,6 +59,8 @@ ALERT_TTL = 24 * 3600          # an alert no phone took in a day is dropped
 CARD_EXPIRES = 0
 ALERTS_KEPT = 200
 ID_MAX, LINE_MAX, EXPLAIN_MAX, SUMMARY_MAX, BODY_MAX = 64, 140, 600, 140, 600
+#: The app shows at most this many body lines.
+BODY_LINES = 6
 #: A decision card's "More details" (rook/hub/plain.py details); apps before
 #: 0.4.23 keep the first 600 characters.
 DETAILS_MAX = 2000
@@ -66,7 +68,9 @@ URGENCIES = ("urgent", "normal")
 CHANNELS = ("urgent", "family", "approvals", "digest", "jobs")
 SIGNALS = ("seen", "opened", "dismissed", "acked", "unlocked")
 PRIORITIES = ("urgent", "family", "normal")
-TAPPED = {"approve": "Tapped Yes", "deny": "Tapped No"}
+TAPPED = {"approve": "Tapped Yes", "deny": "Tapped No", "choose": "Chose"}
+#: A choice's own text on the card, verbatim: the longest option a huddle ask takes.
+OPTION_MAX = 200
 #: The channel a queued decision card uses: no heads-up and no takeover on unlock.
 #: Since app 0.4.22-beta.6 a decision on it is a normal notification (the app's
 #: "Waiting decisions" channel: status bar, shade, one sound) and is posted again on
@@ -140,14 +144,15 @@ def card_for(item: dict) -> dict:
             where = "Decisions" if item.get("kind") == "house" else "Approvals"
             explain = (f"{item.get('why_not') or 'Dashboard only'}: decide it on the "
                        f"dashboard's {where} page.\n" + explain)
-        return {"id": str(item["id"]), "kind": phone_kind(item),
-                "line": short(p.get("title") or "A decision for you", LINE_MAX),
-                "body": clip("\n".join(words(x, 200) for x in lines(p)), BODY_MAX),
-                "explain": clip(explain, DETAILS_MAX), "urgency": "normal",
-                "channel": "approvals",
-                "actions": ["yes", "no", "explain"] if item.get("relayable", True) else ["explain"],
-                "source": short(item.get("name") or "approvals", 64),
-                "expires_at": CARD_EXPIRES}
+        return _with_choices(item, {
+            "id": str(item["id"]), "kind": phone_kind(item),
+            "line": short(p.get("title") or "A decision for you", LINE_MAX),
+            "body": clip("\n".join(words(x, 200) for x in lines(p)), BODY_MAX),
+            "explain": clip(explain, DETAILS_MAX), "urgency": "normal",
+            "channel": "approvals",
+            "actions": ["yes", "no", "explain"] if item.get("relayable", True) else ["explain"],
+            "source": short(item.get("name") or "approvals", 64),
+            "expires_at": CARD_EXPIRES})
     who, what = item.get("who") or "an agent", str(item.get("what") or "").rstrip(".")
     frm = _from_text(item.get("from"))
     explain = (f"{who} asked to {what}. "
@@ -163,13 +168,53 @@ def card_for(item: dict) -> dict:
         explain = str(item.get("explain") or item["line"])
         if not item.get("relayable", True):
             explain += " Answer it on the dashboard's Decisions page."
-    return {"id": str(item["id"]), "kind": phone_kind(item),
-            "line": short(item.get("line") or f"{who} wants to {what}", LINE_MAX),
-            "explain": short(explain, EXPLAIN_MAX), "urgency": "normal",
-            "channel": "approvals",
-            "actions": ["yes", "no", "explain"] if item.get("relayable", True) else ["explain"],
-            "source": short(item.get("name") or "approvals", 64),
-            "expires_at": CARD_EXPIRES}
+    return _with_choices(item, {
+        "id": str(item["id"]), "kind": phone_kind(item),
+        "line": short(item.get("line") or f"{who} wants to {what}", LINE_MAX),
+        "explain": short(explain, EXPLAIN_MAX), "urgency": "normal",
+        "channel": "approvals",
+        "actions": ["yes", "no", "explain"] if item.get("relayable", True) else ["explain"],
+        "source": short(item.get("name") or "approvals", 64),
+        "expires_at": CARD_EXPIRES})
+
+
+def _with_choices(item: dict, card: dict) -> dict:
+    """A question with real options (not just yes and no) offers each one
+    as its own button instead of Yes / No: ``options`` verbatim, the
+    ``choose`` action, and the tapped option comes back as the answer."""
+    from ...plain import choices
+    opts = choices(item.get("options")) if item.get("kind") == "ask" else []
+    if not opts:
+        return card
+    acts = [a for a in card["actions"] if a not in ("yes", "no")]
+    return {**card, "options": [str(o)[:OPTION_MAX] for o in opts],
+            "actions": (["choose"] if item.get("relayable", True) else []) + acts}
+
+
+def without_options(card: dict) -> dict:
+    """A choice card for a phone whose app predates ``options`` (0.4.23 and
+    older): no buttons, since a bare Yes would not say which option was
+    meant; the choices in the body and a pointer to voice or the dashboard."""
+    opts = card.get("options") or []
+    out = {k: v for k, v in card.items() if k != "options"}
+    out["actions"] = ["explain"]
+    if not opts:
+        return out
+    note = (f"Choices: {' / '.join(opts)}. This app can't show them as buttons: answer by "
+            "voice or on the dashboard's Huddle page.")
+    from ...plain import clip
+    if "body" in card:
+        rows = [note] + [r for r in str(card.get("body") or "").split("\n") if r]
+        out["body"] = clip("\n".join(rows[:BODY_LINES]), BODY_MAX)
+    out["explain"] = clip(note + "\n" + str(card.get("explain") or ""), DETAILS_MAX)
+    return out
+
+
+def no_options(error: Exception) -> bool:
+    """An older app refusing the ``options`` argument or the ``choose`` action."""
+    text = str(error)
+    return ("options" in text and ("unexpected" in text or "bad args" in text)) or (
+        "choose" in text and "actions must be" in text)
 
 
 def speakable(item: dict) -> str:
@@ -450,16 +495,27 @@ class AttentionService:
             return
         relay = self._relay()
         principal = self.principal(wid)
+        choice = " ".join(str(ev.get("choice") or "").split())[:OPTION_MAX] \
+            if decision == "choose" else ""
+        tapped = f'{TAPPED[decision]} "{choice}"' if decision == "choose" else TAPPED[decision]
         if relay is None:
             msg = "Not done: approvals are unavailable on the hub. Decide on the dashboard."
         else:
             said = {"who": self.person(),
-                    "quote": f"{TAPPED[decision]} on the decision card on {dev['name']}",
+                    "quote": f"{tapped} on the decision card on {dev['name']}",
                     "session": f"{principal} card {item} {iso(ts)}"}
             try:
-                out = await relay.decide(item, decision, said, relayer=principal,
-                                         relayer_label=self.label(dev),
-                                         reason=short(ev.get("reason"), 500), tap=True)
+                if decision == "choose":
+                    # Only an option of the question itself: never a way to approve anything else.
+                    from ...plain import choices, pick
+                    it = relay.find(item)
+                    opts = choices(it.get("options")) if it.get("kind") == "ask" else []
+                    if not opts or " ".join(pick(choice, opts).split()) != choice:
+                        raise RelayError(f"{choice!r} is not one of this question's options")
+                out = await relay.decide(item, "deny" if decision == "deny" else "approve", said,
+                                         relayer=principal, relayer_label=self.label(dev),
+                                         reason=short(ev.get("reason"), 500), answer=choice,
+                                         tap=True)
             except (PermissionError, RelayError) as e:
                 msg = f"Not done: {e}"
             except Exception as e:  # noqa: BLE001
@@ -467,10 +523,11 @@ class AttentionService:
                 msg = f"Not done: the hub could not record it ({type(e).__name__})."
             else:
                 posted.update(closed=True)
-                self.log("decided", f"{'Approved' if decision == 'approve' else 'Declined'}: "
-                         f"{out.get('name') or item}", "your answer on the decision card",
-                         how=f"{self.person()} tapped {'Yes' if decision == 'approve' else 'No'} "
-                             f"on {dev['name']}", ref=item)
+                verb = {"approve": "Approved", "deny": "Declined"}.get(decision, f'Answered "{choice}"')
+                self.log("decided", f"{verb}: {out.get('name') or item}",
+                         "your answer on the decision card",
+                         how=f"{self.person()} {tapped[0].lower() + tapped[1:]} on {dev['name']}",
+                         ref=item)
                 # Not heard by the phone (offline, a slow band): the next sync says
                 # gone, so its card never stays on "sent".
                 posted.update(told=await self._update(
@@ -510,6 +567,9 @@ class AttentionService:
             # approvals channel (the same id: no new ring, it takes over on unlock).
             again = again or (old is not None and old.get("queued") and not old.get("closed")
                               and not self.queued_on(dev))
+            # Posted without its choices to an older app, and the app has updated since.
+            again = again or (old is not None and old.get("folded") is not None
+                              and not old.get("closed") and old["folded"] != self._version(wid))
             if old is not None and not again:
                 continue
             card = card_for(it)
@@ -517,11 +577,13 @@ class AttentionService:
             if queued:
                 card["channel"] = QUEUE_CHANNEL
             try:
-                await self._post_card(dev, card)
+                sent = await self._post_card(dev, card)
             except Exception as e:
                 log.info("attention: post %s to %s: %s", ident, dev["name"], e)
                 continue
             posted[ident] = {"queued": True} if queued else {}
+            if "options" in card and "options" not in sent:
+                posted[ident]["folded"] = self._version(wid)
             n_new += 1
             if not again:
                 self.log("ask", f"Card: {speakable(it)}",
@@ -539,24 +601,36 @@ class AttentionService:
                 n_gone += 1
         return {"posted": n_new, "gone": n_gone}
 
-    async def _post_card(self, dev: dict, card: dict) -> None:
-        """``attention.post`` with the body; a phone whose app predates it
-        gets the card folded into line + Explain (remembered per app
-        version, so an updated app gets bodies again)."""
+    def _version(self, wid: str) -> str:
+        w = self.roster().get(wid) or {}
+        return str(w.get("version") or w.get("build") or "")
+
+    async def _post_card(self, dev: dict, card: dict) -> dict:
+        """``attention.post`` with the body and a question's choices; a phone
+        whose app predates one gets the card folded without it (the body into
+        line + Explain, choices into the body with no answer buttons),
+        remembered per app version, so an updated app gets them again.
+        Returns the card as posted."""
         wid = dev["worker_id"]
         d = self._dev(wid)
-        w = self.roster().get(wid) or {}
-        version = str(w.get("version") or w.get("build") or "")
-        if "body" in card and d.get("no_body") is not None and d.get("no_body") == version:
-            await self.call("attention.post", without_body(card), wid)
-            return
-        try:
-            await self.call("attention.post", card, wid)
-        except Exception as e:  # noqa: BLE001
-            if "body" not in card or not no_body(e):
-                raise
-            d["no_body"] = version
-            await self.call("attention.post", without_body(card), wid)
+        version = self._version(wid)
+        # Each newer field an app refused is folded away (choices first, then the body).
+        folds = (("options", "no_options", no_options, without_options),
+                 ("body", "no_body", no_body, without_body))
+        for key, mark, _, fold in folds:
+            if key in card and d.get(mark) is not None and d.get(mark) == version:
+                card = fold(card)
+        while True:
+            try:
+                await self.call("attention.post", card, wid)
+                return card
+            except Exception as e:  # noqa: BLE001
+                hit = next(((mark, fold) for key, mark, refused, fold in folds
+                            if key in card and refused(e)), None)
+                if hit is None:
+                    raise
+                d[hit[0]] = version
+                card = hit[1](card)
 
     # -- the queue and spoken reminders ------------------------------------------------
     def queueing(self) -> bool:

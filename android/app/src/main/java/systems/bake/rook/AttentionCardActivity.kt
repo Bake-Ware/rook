@@ -35,7 +35,8 @@ import androidx.viewpager2.widget.ViewPager2
  * The decision cards: one page per card, swiped left and right freely (a swipe never answers),
  * "2 of 5" at the top. Each page: source and age small, a plain title, the always-shown lines
  * ("For:", "Who:", "I want to:", "Why:", "Risk:"), "More details" (the full why, the undo, the
- * exact call, where it was asked, links) and big Yes / No (or Got it). An answer is instant: the
+ * exact call, where it was asked, links) and big Yes / No (or Got it; or, for a question with
+ * choices, one button per option, the tapped option sent back word for word). An answer is instant: the
  * page says so, the card leaves the stack and the next one shows; the hub reads the decision on
  * its next poll in the background. If the hub refuses it, the card comes back with the reason;
  * if it never answers, the card comes back after a few minutes. Urgent cards show over the lock
@@ -179,6 +180,20 @@ class AttentionCardActivity : AppCompatActivity() {
         }
     }
 
+    /** One of a question's options: sent back verbatim, confirmed on the page, then the next card. */
+    private fun choose(c: AttentionCard, option: String) {
+        if (!steady() || cards.none { it.id == c.id } || c.chosen(option) == null) return
+        whenUnlocked {
+            AttentionStore.choose(this, c.id, option)
+            reasonFor = null
+            holdUntil = SystemClock.uptimeMillis() + CONFIRM_MS
+            adapter.answered[c.id] = "“$option” ✓"
+            adapter.notifyItemChanged(cards.indexOfFirst { it.id == c.id }.coerceAtLeast(0))
+            showFlash("Sent “$option”: ${c.line}")
+            pager.removeCallbacks(refresh); pager.postDelayed(refresh, CONFIRM_MS)
+        }
+    }
+
     private fun later() {
         cards.firstOrNull { it.id == currentId }?.let { if (it.state == "pending") AttentionStore.dismissed(this, it.id) }
         finish()
@@ -218,6 +233,8 @@ class AttentionCardActivity : AppCompatActivity() {
         val reason = EditText(this@AttentionCardActivity).apply { hint = "Why not? (optional)"; isSingleLine = true; maxLines = 1 }
         val reasonRow = LinearLayout(this@AttentionCardActivity).apply { orientation = LinearLayout.VERTICAL }
         val reasonButtons = row()
+        /** A question's choices, one full-width button each, above the other buttons. */
+        val choices = LinearLayout(this@AttentionCardActivity).apply { orientation = LinearLayout.VERTICAL }
         val buttons = row()
 
         init {
@@ -230,6 +247,7 @@ class AttentionCardActivity : AppCompatActivity() {
             reasonRow.addView(reason, LinearLayout.LayoutParams(-1, -2))
             reasonRow.addView(reasonButtons, LinearLayout.LayoutParams(-1, -2))
             view.addView(reasonRow, LinearLayout.LayoutParams(-1, -2))
+            view.addView(choices, LinearLayout.LayoutParams(-1, -2))
             view.addView(buttons, LinearLayout.LayoutParams(-1, -2))
         }
 
@@ -247,7 +265,7 @@ class AttentionCardActivity : AppCompatActivity() {
             more.setOnClickListener { if (!detailsOpen.remove(c.id)) detailsOpen.add(c.id); bind(c) }
             details.text = labelled(c.explain)
             details.visibility = if (open && hasDetails) View.VISIBLE else View.GONE
-            buttons.removeAllViews(); reasonButtons.removeAllViews()
+            buttons.removeAllViews(); reasonButtons.removeAllViews(); choices.removeAllViews()
             val done = adapter.answered[c.id]
             reasonRow.visibility = if (reasonFor == c.id && done == null) View.VISIBLE else View.GONE
             when {
@@ -263,6 +281,10 @@ class AttentionCardActivity : AppCompatActivity() {
                 return
             }
             reason.text.clear()
+            if (c.choosing) c.options.forEach { option ->
+                choices.addView(choiceButton(option) { choose(c, option) },
+                    LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6); marginStart = dp(4); marginEnd = dp(4) })
+            }
             if ("yes" in c.actions) buttons.addView(bigButton("Yes") { answer(c, true) }, weighted())
             if ("no" in c.actions) buttons.addView(bigButton("No", outlined = true) {
                 if (steady()) { reasonFor = c.id; bind(c); reason.requestFocus() }
@@ -324,6 +346,14 @@ class AttentionCardActivity : AppCompatActivity() {
          else com.google.android.material.button.MaterialButton(this)).apply {
             text = label; textSize = 19f; isAllCaps = false; maxLines = 1; minHeight = dp(60)
             TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(this, 12, 19, 1, TypedValue.COMPLEX_UNIT_SP)
+            setOnClickListener { onClick() }
+        }
+
+    /** A choice's whole text, wrapped over a few lines rather than shrunk or cut: it is what gets sent. */
+    private fun choiceButton(label: String, onClick: () -> Unit): Button =
+        com.google.android.material.button.MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            text = label; textSize = 17f; isAllCaps = false; maxLines = 4; minHeight = dp(56)
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
             setOnClickListener { onClick() }
         }
 

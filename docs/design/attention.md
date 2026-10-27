@@ -41,7 +41,12 @@ All calls to the phone are the hub's own (`system:rook-hub-attention`).
 - `explain`: two or three plain sentences, at most 600 characters.
 - `urgency`: `urgent` or `normal`. `channel`: `urgent`, `family`,
   `approvals`, `digest` or `jobs`.
-- `actions`: a subset of `yes`, `no`, `explain` (alerts: `ack`).
+- `actions`: a subset of `yes`, `no`, `choose`, `explain` (alerts: `ack`).
+- `options`: a huddle question's choices when they are more than yes and no
+  (with `choose`, instead of Yes / No): one button each. An app that predates
+  them refuses the argument; the hub then posts the card with Explain only and
+  the choices in the body, pointing to voice or the dashboard, since a bare Yes
+  would not say which option was meant.
 - `source`: a short label (the item's speakable name, or who sent the alert).
 - `expires_at`: epoch seconds; the phone drops the card after it; 0 is never.
   Decision cards are sent with 0 (no expiry of any kind): the hub withdraws
@@ -54,7 +59,8 @@ elsewhere.
 `attention.poll {since}` returns `{events, last}`. Each event has `seq` (int,
 increasing), `ts` (epoch seconds) and `type`:
 
-- `decision {id, decision: approve|deny, reason?}`: Yes or No tapped;
+- `decision {id, decision: approve|deny|choose, reason?, choice?}`: Yes, No or an
+  option tapped (`choice`: its text, verbatim; the hub refuses one the question lacks);
 - `seen {id}`, `opened {id}`, `dismissed {id}`, `acked {id}`;
 - `unlocked {}`: the person unlocked the phone;
 - `notice {app, category, priority: urgent|family|normal, summary}`: a short

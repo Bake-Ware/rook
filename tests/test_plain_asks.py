@@ -425,3 +425,71 @@ async def test_the_huddle_refuses_a_yes_no_ask_without_why_and_undo(hub):  # noq
         "text": "Ship it?\nWhy: the fix is merged.\nUndo: ship the old build.",
         "data": {"options": ["Yes", "No"]}}, GUEST)
     assert ok["ok"], ok
+
+
+# -- questions with choices (bug 2026-10-26: q849's A / B / C came back as "Yes") -------
+
+CHOICES = ["(A) No-expiry only", "(B) A + remove plugin features",
+           "(C) A + B + remove agent relays/voice"]
+
+
+def test_a_choice_is_more_than_yes_and_no():
+    assert plain.choices(CHOICES) == CHOICES
+    assert plain.choices(["Yes", "No."]) == [] and plain.choices([]) == [] and \
+        plain.choices(None) == []
+    assert plain.choices(["Yes", "No", "Later"]) == ["Yes", "No", "Later"]
+
+
+@pytest.mark.parametrize("said, picked", [
+    ("(B) A + remove plugin features", CHOICES[1]),
+    ("b a remove plugin features", CHOICES[1]),
+    ("B", CHOICES[1]),
+    ("(c)", CHOICES[2]),
+    ("Yes", ""), ("", ""), ("D", ""), ("plugin", ""),
+])
+def test_pick_names_one_option_by_its_text_or_label(said, picked):
+    assert plain.pick(said, CHOICES) == picked
+
+
+def test_an_answer_to_a_choice_is_the_option_or_the_persons_own_words():
+    assert plain.choice_answer("b", CHOICES) == (CHOICES[1], "")
+    # Their own words go through, marked as none of the options.
+    text, note = plain.choice_answer("A, but keep the spread limits", CHOICES)
+    assert text == "A, but keep the spread limits" and note.startswith("not one of the options")
+    assert plain.choice_answer("Yes, B please", CHOICES)[0] == "Yes, B please"
+    for bare in ("Yes", "yes!", "OK", "No", "Yes: do it", "approve"):
+        with pytest.raises(ValueError, match="doesn't say which option"):
+            plain.choice_answer(bare, CHOICES)
+    # A yes/no question, or one with Yes among its options, takes yes as ever.
+    assert plain.choice_answer("Yes", ["yes", "no"]) == ("Yes", "")
+    assert plain.choice_answer("yes", ["Yes", "No", "Later"]) == ("Yes", "")
+
+
+@pytest.mark.asyncio
+async def test_the_huddle_refuses_a_bare_yes_to_a_choice_and_sends_the_option_verbatim(hub):
+    h = await _call(hub, "huddle.start", {"title": "Approvals"})
+    await _call(hub, "huddle.write", {"action": "ask", "room": h["room"],
+                                      "text": "How much to simplify approvals?",
+                                      "data": {"options": CHOICES}}, GUEST)
+    q, = hub.svc.store.open_questions()
+    with pytest.raises(ValueError, match="doesn't say which option"):
+        await hub.svc.answer(q["id"], "Yes", "human:bake", "Bake")
+    assert hub.svc.store.question(q["id"])["state"] == "open"
+    res = await hub.svc.answer(q["id"], "c", "human:bake", "Bake")
+    assert res["answer"] == CHOICES[2]
+    assert hub.svc.store.question(q["id"])["answer"] == CHOICES[2]
+    last = hub.svc.chat.tail(h["room"], 1)[0]
+    assert last["text"] == f"Answer for {GUEST}: {CHOICES[2]}"
+
+
+@pytest.mark.asyncio
+async def test_own_words_to_a_choice_reach_the_asker_flagged(hub):
+    h = await _call(hub, "huddle.start", {"title": "Approvals"})
+    await _call(hub, "huddle.write", {"action": "ask", "room": h["room"],
+                                      "text": "Which scope?", "data": {"options": CHOICES}}, GUEST)
+    q, = hub.svc.store.open_questions()
+    res = await hub.svc.answer(q["id"], "A for now, B next week", "human:bake", "Bake")
+    assert res["answer"] == "A for now, B next week" and "not one of the options" in res["note"]
+    last = hub.svc.chat.tail(h["room"], 1)[0]
+    assert last["text"].startswith(f"Answer for {GUEST}: A for now, B next week (not one of the "
+                                   "options: (A) No-expiry only / ")
