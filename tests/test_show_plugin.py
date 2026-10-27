@@ -328,6 +328,9 @@ def test_house_agent_show_tool_runs_as_the_house_agent_for_the_asker(tmp_path, m
         def may_call(self, principal, cap):
             return cap == "show.present" and principal is not None and principal.id != "human:nobody"
 
+        def may_read_knowledge(self, principal):
+            return False
+
         def _as_self(self):
             import contextlib
             return contextlib.nullcontext()
@@ -346,6 +349,18 @@ def test_house_agent_show_tool_runs_as_the_house_agent_for_the_asker(tmp_path, m
     assert out["shown"] and state["did"] == [{"summary": "showed X on bakephone", "ok": True}]
     assert client.calls[0][3] is house                       # device calls as the house agent
     assert front.compose(state, "")[0].startswith("Done: showed X on bakephone.")
+    with pytest.raises(front.FrontError, match="may not read the knowledge"):
+        run(door._show({"knowledge": "secret-page"}, state, asker="Bake", principal=asker))
     with pytest.raises(front.FrontError, match="may not show"):
         run(door._show({"text": "x"}, state, asker="nobody",
                        principal=Principal("human:nobody", "human", "member")))
+
+
+def test_unknown_public_address_never_opens_a_relative_link(tmp_path, monkeypatch):
+    p, client = make(tmp_path, monkeypatch, {"p1": worker("bakephone", *PHONE)},
+                     brief_phone="bakephone")
+    monkeypatch.setattr(Show, "_base_url", lambda self: "")
+    out = run(p.present(say="Here.", text="x"))
+    assert out["url"].startswith("/show/") and not out["shown"] and out["spoken"]
+    assert [c[0] for c in client.calls] == ["voice.speak"]
+    assert "public address is unknown" in out["notes"][0] and len(out["notes"]) == 1

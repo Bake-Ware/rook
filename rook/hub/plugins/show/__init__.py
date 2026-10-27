@@ -451,7 +451,7 @@ class Show(Plugin):
                 rec["shown_on"] = screen["name"]
             else:
                 notes.append(f"not shown on {screen['name']}: {res['error']}")
-        else:
+        elif place["screen"] is None:
             notes.append(place["why"])
         if say and voice is not None and where.strip().lower() != "none":
             res = await self._call(VOICE_CAP, {"text": say, "wait": False}, voice)

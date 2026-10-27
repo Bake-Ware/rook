@@ -1539,6 +1539,9 @@ class FrontDoor:
         if not self.home.may_call(principal, "show.present"):
             raise FrontError(f"{asker} may not show things on screens themselves, so I won't "
                              "for them")
+        if args.get("knowledge") and not self.home.may_read_knowledge(principal):
+            raise FrontError(f"{asker} may not read the knowledge wiki, so I won't show a page "
+                             "from it")
         from ... import access
         from ...authz import current_principal
         who = {"id": str(getattr(principal, "id", "") or asker),
