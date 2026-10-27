@@ -7,6 +7,7 @@ features:
   - plugin/hub/voice
   - settings/voice
   - settings/decision
+  - cli/voice
 since: 0.1.0
 deprecated: false
 ---
@@ -32,8 +33,12 @@ the **Voice address** to give your devices, and **Where speech runs**:
 
 - **On this hub**: speech runs inside the hub. The hub needs the voice extras
   (`pip install 'rook[voice]'`, about a gigabyte) and three speech model files
-  in its model folder; the page lists what is missing. The models take a
-  little while to load after a start; until then voice answers "starting".
+  in its model folder; the page lists what is missing. When only the model
+  files are missing, **Download** fetches them (about 360 MB, each checked
+  before use) and voice starts as soon as they are in, without a restart.
+  `rook voice setup` on the hub does both the extras and the files, and the
+  hub installer does it for you with `--voice`. The models take a little
+  while to load after a start; until then voice answers "starting".
 - **On another machine**: the hub passes everything on to a voice server on a
   machine with more power, such as one with a graphics card. Enter its
   **Voice server** address (without a user name or password in it) and use
@@ -75,6 +80,14 @@ Everything is on the Settings page, under **Voice**:
   and a folder of voice recordings: each `<name>.wav` (5 to 20 seconds of
   clean speech) becomes a voice called `<name>`. Left blank, Chatterbox stays
   off and the standard voices speak.
+- **Hosted voices**: off by default. Choose **elevenlabs** and save an
+  **ElevenLabs API key** (it goes to the vault) to also offer your ElevenLabs
+  voices, listed as `eleven_<name>` in every voice picker. Only text read in
+  one of those voices goes to ElevenLabs; the default voice stays on your own
+  machines unless you pick a hosted one. **ElevenLabs voices** narrows the
+  list (`Rachel=21m00Tcm4TlvDq8ntWcQ, ...`); blank offers the voices in your
+  account. If ElevenLabs refuses or is slow, that line is spoken in the local
+  default voice instead.
 - **Agent**: the language model and the Rook agent token the voice agent
   uses (advanced: how hard it thinks and how long it may work).
 - **Models**: for Front/Background conversations, a separate model for the

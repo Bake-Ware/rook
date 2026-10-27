@@ -377,6 +377,11 @@ async def test_engine_remote_end_to_end_through_the_hub(hub_env, monkeypatch):  
             async with http.post(base + "/account/settings/api", headers=hdr,
                                  json={"action": "voice_check", "csrf": page["csrf"]}) as r:
                 assert (await r.json())["check"]["ok"] is True
+            # Model files are the voice server's own business here.
+            assert page["download"]["state"] == "idle"
+            async with http.post(base + "/account/settings/api", headers=hdr,
+                                 json={"action": "voice_models", "csrf": page["csrf"]}) as r:
+                assert r.status == 400 and "another machine" in (await r.json())["error"]
 
             # Switched off on the Plugins page: the paths go away at once.
             off = await node.set_plugin_enabled("voice", False, "human:op")
@@ -752,9 +757,16 @@ GPU_SETTINGS = {
     "weather_units": ("VOICE_WEATHER_UNITS", "fahrenheit", "fahrenheit"),
     "weather_url": ("VOICE_WEATHER_URL", "https://weather.example.com/v1/forecast",
                     "https://weather.example.com/v1/forecast"),
+    "tts_hosted": ("VOICE_TTS_HOSTED", "elevenlabs", "elevenlabs"),
+    "elevenlabs_voices": ("VOICE_ELEVENLABS_VOICES", "Rachel=21m00Tcm4TlvDq8ntWcQ",
+                          "Rachel=21m00Tcm4TlvDq8ntWcQ"),
+    "elevenlabs_model": ("VOICE_ELEVENLABS_MODEL", "eleven_multilingual_v2", "eleven_multilingual_v2"),
+    "elevenlabs_url": ("VOICE_ELEVENLABS_URL", "https://el.example.com", "https://el.example.com"),
+    "elevenlabs_timeout_s": ("VOICE_ELEVENLABS_TIMEOUT_S", 5, "5.0"),
 }
 #: Secrets: from the vault, never the settings database.
-GPU_SECRETS = {"hass_token": "VOICE_HASS_TOKEN", "primary_api_key": "LLM_PRIMARY_API_KEY"}
+GPU_SECRETS = {"hass_token": "VOICE_HASS_TOKEN", "primary_api_key": "LLM_PRIMARY_API_KEY",
+               "elevenlabs_api_key": "VOICE_ELEVENLABS_API_KEY"}
 
 
 class DictVault:

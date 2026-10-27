@@ -38,7 +38,8 @@ REQUIRED = {"fastapi": "fastapi", "numpy": "numpy", "webrtcvad": "webrtcvad",
             "faster_whisper": "faster-whisper", "kokoro_onnx": "kokoro-onnx",
             "onnxruntime": "onnxruntime", "httpx": "httpx"}
 #: Model weights the engine loads from its model folder (never in Git, never
-#: in the wheel: services/voice/models.json has the Smart Turn URL and digest).
+#: in the wheel): the ``required`` files of services/voice/models.json, which
+#: has their URLs and digests; services/voice/fetch_models.py downloads them.
 MODEL_FILES = ("kokoro-v1.0.onnx", "voices-v1.0.bin", "smart-turn-v3.2-cpu.onnx")
 #: 16 kHz mono 16-bit PCM, at most 30 s: the voice service's /api/transcribe limit.
 MAX_PCM = 30 * 16000 * 2

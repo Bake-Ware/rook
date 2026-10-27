@@ -13,6 +13,7 @@ SUBCOMMANDS = {
     "sessions":  "Browse Claude Code session history",
     "history":   "Browse Claude Code session history",
     "skill":     "Install or package the Rook agent skill (Claude Code, Codex)",
+    "voice":     "Set up speech on this hub: the voice extras and model files (`rook voice setup`)",
     "hub":       "Run the hub (`rook hub serve`: dashboard + MCP in one process); "
                  "build, deploy, inspect and roll back signed hub releases",
 }
@@ -105,6 +106,10 @@ def main() -> None:
     if sys.argv[1] == "skill":
         from .cli.skill import main as skill_main
         sys.exit(skill_main(sys.argv[2:]))
+
+    if sys.argv[1] == "voice":
+        from .cli.voice import main as voice_main
+        sys.exit(voice_main(sys.argv[2:]))
 
     print(f"Unknown command: {sys.argv[1]}")
     print("Run 'rook --help' for available commands.")

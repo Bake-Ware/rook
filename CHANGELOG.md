@@ -45,6 +45,15 @@ version was `0.1.0`.
   model-providers)
 
 ### Added
+- **Voice without hand setup, and hosted voices** (Bake's 2026-10-26 roadmap: "package it ...
+  add a hosted voice option"). A hub running speech itself downloads its missing model files
+  with **Download** on Intelligence sources > Voice (checked against the SHA-256 digests in
+  `services/voice/models.json`, Kokoro's now pinned beside Smart Turn's) and starts voice when
+  they are in, no restart; `rook voice setup` installs the voice extras and the files, and the
+  hub installer's `--voice` runs it. **Hosted voices** (Settings > Voice, off by default):
+  ElevenLabs voices join the voice pickers as `eleven_<name>` with the API key in the vault;
+  text goes to ElevenLabs only when one of those voices speaks, the default stays local, and
+  any failure speaks the line in the local default voice. (manual: voice)
 - **Ready-made jobs** (Bake's 2026-10-26 roadmap: "Canned jobs: 5-minute security scan (open
   sessions, logs); attention aggregation (email, phone notifications, chats); security camera
   review (Ring, others)"). `rook_jobs action=templates` lists them and `install` makes one an

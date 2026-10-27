@@ -60,10 +60,12 @@ MAX_CHECK_SECONDS = 15
 #: Where speech runs (voice.engine).
 ENGINES = ("here", "remote")
 #: Voice engines in the order the voice pickers list them (the natural,
-#: cloned Chatterbox voices before the quick Kokoro ones; others after).
-ENGINE_ORDER = {"chatterbox": 0, "kokoro": 1}
+#: cloned Chatterbox voices before the quick Kokoro ones, then hosted ones).
+ENGINE_ORDER = {"chatterbox": 0, "kokoro": 1, "elevenlabs": 2}
 #: What a voice preview says (the Preview buttons beside each voice picker).
 PREVIEW_TEXT = "Hello. This is how I sound when I read your huddle messages aloud."
+#: Hosted text to speech services (services/voice/tts.py HOSTED), or off.
+HOSTED_TTS = ("off", "elevenlabs")
 #: Thinking efforts the voice service accepts (services/voice/thinking.py).
 EFFORTS = ("low", "medium", "high", "xhigh")
 
@@ -176,6 +178,31 @@ SETTINGS = (
        advanced=True,
        help="How long Chatterbox may take to load before voice goes on with the Kokoro "
             "voices alone."),
+    # Hosted voices (opt-in: text read in one of their voices goes to that service)
+    _s("tts_hosted", "str", "off", env="VOICE_TTS_HOSTED", choices=HOSTED_TTS, apply="reload",
+       label="Hosted voices", group="Hosted voices",
+       help="off: only the voices on your own machines (Kokoro, Chatterbox). elevenlabs: also "
+            "offer your ElevenLabs voices. Only text read in one of those voices goes to "
+            "ElevenLabs; the default voice stays local unless you pick a hosted one."),
+    _s("elevenlabs_api_key", "str", secret=True, env="VOICE_ELEVENLABS_API_KEY", apply="reload",
+       label="ElevenLabs API key", group="Hosted voices",
+       help="Kept in the vault. An ElevenLabs key with text to speech (and, to list your "
+            "voices, voices read) access."),
+    _s("elevenlabs_voices", "str", "", env="VOICE_ELEVENLABS_VOICES", apply="reload",
+       label="ElevenLabs voices", group="Hosted voices",
+       help="name=voice_id pairs, comma separated (e.g. Rachel=21m00Tcm4TlvDq8ntWcQ): each is "
+            "offered as eleven_<name>. Blank: the voices in your ElevenLabs account (up to 40), "
+            "read when voice starts."),
+    _s("elevenlabs_model", "str", "eleven_flash_v2_5", env="VOICE_ELEVENLABS_MODEL",
+       pattern=r"^[A-Za-z0-9_.-]{1,64}$", apply="reload", label="ElevenLabs model",
+       group="Hosted voices", advanced=True,
+       help="eleven_flash_v2_5 answers quickest; eleven_multilingual_v2 sounds richer, slower."),
+    _s("elevenlabs_url", "url", "https://api.elevenlabs.io", env="VOICE_ELEVENLABS_URL",
+       apply="reload", label="ElevenLabs address", group="Hosted voices", advanced=True,
+       help="The API's address. https only (http only on the voice machine itself, for tests)."),
+    _s("elevenlabs_timeout_s", float, 10.0, env="VOICE_ELEVENLABS_TIMEOUT_S", min=1.0, max=60.0,
+       apply="reload", label="ElevenLabs timeout (s)", group="Hosted voices", advanced=True,
+       help="After this long a line is spoken in the local default voice instead."),
     # Agent
     _s("llm_url", "url", "http://127.0.0.1:1234/v1/chat/completions", env="VLLM_URL",
        apply="reload", label="Language model URL", group="Agent"),
@@ -331,7 +358,8 @@ def requirements(engine: str, remote_url: str, model_dir: str,
         out["models_missing"] = eng.missing_models(model_dir)
         if out["models_missing"]:
             out["reason"] = (f"Speech model files are missing from {model_dir}: "
-                             f"{', '.join(out['models_missing'])} (see services/voice/README.md).")
+                             f"{', '.join(out['models_missing'])}. Download them on "
+                             "Intelligence sources > Voice, or run `rook voice setup` on the hub.")
     return out
 
 
@@ -656,14 +684,11 @@ def page_data(svc, node, plugin: "Voice | None") -> dict:
             continue
         settings[k] = {"value": r.get("value"), "locked": bool(r.get("locked")),
                        "env": r.get("env"), "source": r.get("source")}
+    model_dir = _model_dir(svc, node, plugin)
     if plugin is not None:
-        model_dir = plugin.model_dir()
         status = plugin.status()
         packages = plugin.ENGINE_PACKAGES
     else:
-        base = getattr(node, "_state_dir", None)
-        model_dir = str(val("model_dir") or "") or (
-            str(Path(base) / "plugins" / "voice") if base else "")
         st = (getattr(getattr(node, "host", None), "status", {}) or {}).get("voice") or {}
         status = {"loaded": False, "state": st.get("state") or "unavailable",
                   "reason": st.get("reason") or "", "served": False, "paths": [],
@@ -679,7 +704,104 @@ def page_data(svc, node, plugin: "Voice | None") -> dict:
     return {"status": status, "requirements": req, "settings": settings,
             "token_set": token_set, "prefix": PREFIX, "aliases": list(ALIASES),
             "extras_hint": eng.EXTRAS_HINT, "model_files": list(eng.MODEL_FILES),
-            "max_check_seconds": MAX_CHECK_SECONDS}
+            "max_check_seconds": MAX_CHECK_SECONDS, "download": DOWNLOAD.snapshot()}
+
+
+def _model_dir(svc, node, plugin: "Voice | None") -> str:
+    """The model folder: ``voice.model_dir``, else the plugin's data folder."""
+    if plugin is not None:
+        return plugin.model_dir()
+    try:
+        value = svc.resolve("voice.model_dir").get("value")
+    except Exception:  # noqa: BLE001
+        value = None
+    base = getattr(node, "_state_dir", None)
+    return str(value or "") or (str(Path(base) / "plugins" / "voice") if base else "")
+
+
+class ModelDownload:
+    """The speech model files downloading into the model folder (Intelligence
+    sources > Voice > Download): one download at a time per hub, in a thread,
+    with services/voice/fetch_models.py (checked against models.json). When it
+    finishes, the voice plugin, held back only for want of them, loads."""
+
+    def __init__(self) -> None:
+        self.state = "idle"           # idle | running | done | error
+        self.error = ""
+        self.model_dir = ""
+        self.file = ""
+        self.done = 0
+        self.total = 0
+        self.finished_at = 0.0
+        self._base = 0                # bytes of the files already finished
+        self._task: "asyncio.Task | None" = None
+
+    def snapshot(self) -> dict:
+        return {"state": self.state, "error": self.error, "model_dir": self.model_dir,
+                "file": self.file, "done": self.done, "total": self.total,
+                "finished_at": self.finished_at or None}
+
+    def running(self) -> bool:
+        return self._task is not None and not self._task.done()
+
+    def start(self, model_dir: str, package: str, on_done) -> dict:
+        if self.running():
+            return self.snapshot()
+        import importlib
+        fm = importlib.import_module(package + ".fetch_models")
+        entries = fm.manifest()
+        todo = fm.missing(model_dir)
+        self.state, self.error, self.model_dir, self.file = "running", "", model_dir, ""
+        self.done, self._base, self.finished_at = 0, 0, 0.0
+        self.total = sum(int(entries[n].get("size") or 0) for n in todo)
+        self._task = asyncio.get_running_loop().create_task(self._run(fm, model_dir, on_done))
+        return self.snapshot()
+
+    def _progress(self, name: str, done: int, total: int) -> None:
+        if name != self.file:
+            if self.file:
+                self._base = self.done
+            self.file = name
+        self.done = self._base + done
+
+    async def _run(self, fm, model_dir: str, on_done) -> None:
+        try:
+            got = await asyncio.to_thread(fm.fetch, model_dir, None, self._progress)
+            self.state, self.file = "done", ""
+            log.info("voice: downloaded %s into %s", ", ".join(got) or "nothing", model_dir)
+        except Exception as e:  # noqa: BLE001 - the page shows one line
+            self.state, self.error = "error", str(e)[:300] or type(e).__name__
+            log.warning("voice: model download failed: %s", e)
+        finally:
+            self.finished_at = time.time()
+        if self.state == "done":
+            on_done()
+
+
+DOWNLOAD = ModelDownload()
+
+
+def download_models(svc, node, plugin: "Voice | None") -> dict:
+    """Start downloading the speech model files this hub's engine lacks (an
+    owner, from Intelligence sources > Voice). Returns the download's state."""
+    try:
+        engine = svc.resolve("voice.engine").get("value") or "here"
+    except Exception:  # noqa: BLE001
+        engine = "here"
+    if engine != "here":
+        raise ValueError("Speech runs on another machine: its model files are that machine's.")
+    model_dir = _model_dir(svc, node, plugin)
+    if not model_dir:
+        raise ValueError("No model folder: set Settings > Voice > Model folder.")
+    package = eng.find_engine((plugin or Voice).ENGINE_PACKAGES)
+    if package is None:
+        raise ValueError("The voice service code is not installed with this hub.")
+
+    def loaded() -> None:
+        host = getattr(node, "host", None)
+        if host is not None and (plugin is None or node.plugin("voice") is None):
+            host.retry_unavailable("voice")
+    return DOWNLOAD.start(model_dir, package, loaded)
 
 
 PLUGIN = Voice

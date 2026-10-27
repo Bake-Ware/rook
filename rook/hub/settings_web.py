@@ -164,6 +164,11 @@ def routes(get_service, accounts):
                 res = _persona(svc).page_action(data, actor)
             elif action in ("home_save", "home_models", "home_test"):
                 res = await _home(svc).page_action(svc, data, actor)
+            elif action == "voice_models":
+                # Works before voice loads: missing models are why it has not.
+                from .plugins.voice import download_models
+                node, plugin = _voice(svc)
+                res = {"ok": True, "download": download_models(svc, node, plugin)}
             elif action in ("voice_check", "voice_transcribe"):
                 node, plugin = _voice(svc)
                 if plugin is None:
