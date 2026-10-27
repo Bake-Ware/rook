@@ -344,6 +344,20 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `worker.plugin.list` | — | List every plugin module and whether it's currently loaded, with the caps each loaded plugin provides. |
 | `worker.plugin.reload` | module | Restart one loaded plugin with its current settings. |
 
+**adb**
+
+| Cap | Args | Does |
+|---|---|---|
+| `adb.list` | — | Every configured Android device: `{items: [{name, serial, adb, model, battery}]}`. |
+| `adb.scan` | — | Every device adb sees on this worker (attached or emulated), for adding to adb.devices. |
+
+**adb devices**
+
+| Cap | Args | Does |
+|---|---|---|
+| `device.info` | — | Model, Android version, screen size, whether it is awake, uptime, adb state. |
+| `ui.text` | — | All visible text on the current screen (top-to-bottom), with the centre of each element to tap: `{text, items… |
+
 **agenthost**
 
 | Cap | Args | Does |
