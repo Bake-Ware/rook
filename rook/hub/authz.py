@@ -284,9 +284,10 @@ class Authorizer:
     def _limited(self, p: Principal) -> list[tuple[str, str]]:
         """``(user id, principal id)`` of every person whose grants bound
         this call: the caller when :func:`access.restricted`, and each person
-        in ``p.via`` whom the access store records as a member (owners, and
-        accounts it does not know, are not limited here; the jobs plugin
-        refuses to run as a person with no access)."""
+        in ``p.via`` (an API key there is its person) whom the access store
+        records as a member (owners, and accounts it does not know, are not
+        limited here; the jobs plugin refuses to run as a person with no
+        access)."""
         from . import access as _access
         out: list[tuple[str, str]] = []
         me = _access.user_of(p)
@@ -295,6 +296,8 @@ class Authorizer:
         seen = {me}
         for v in p.via or ():
             uid = _access.user_of_id(v)
+            if uid is None and str(v).startswith("token:"):  # a key: its person
+                uid = self.access.token_user(str(v)[6:], adopt=False)
             if uid is None or uid in seen:
                 continue
             seen.add(uid)

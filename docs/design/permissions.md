@@ -127,8 +127,12 @@ Design: knowledge page `users-access-trust-map-and-agent-sessions-bake-s-design-
   rules, principal-group members), keeps the old file as `policy.json.pre-tokens`, rewrites a
   JSON file with `rev + 1` and logs what went; `Policy` refuses them afterwards. `role:agent`
   stays: it now covers only agents the hub runs itself (house agent, roles), and the lint says
-  so for rules that name it. Jobs that run as a key resolve it the same way
-  (`principal_for_agent`).
+  so for rules that name it.
+- **Jobs (item 8).** A job made with a key, or running as one, resolves it the same way
+  (`principal_for_agent`, in `jobs/principals.Directory`), read again at every run: a key whose
+  person is deleted, disabled or has no access left stops its jobs. A key in an on-behalf-of
+  chain (`Principal.via`) is its person: `Authorizer._limited` bounds the call by that person's
+  grants when they are a member.
 - **Knowledge areas.** A `knowledge` grant (folder slug or `*`) lets a member call
   `knowledge.read`/`knowledge.write`; inside, they may only search, list, get, create and
   update knowledge pages under a granted folder (ancestry by `parent`), stub lists in a get are

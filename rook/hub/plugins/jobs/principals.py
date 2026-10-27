@@ -4,7 +4,8 @@ A :class:`Directory` answers from the hub's live credential stores:
 
 * API keys: the MCP bridge's token store (``rook.band_mcp.tokens.TokenStore``,
   ``node.tokens``). A key's principal is ``token:<agent_id>`` (stable across
-  rotation). A key that was revoked or has expired is *revoked*.
+  rotation) with its person's role (access v2 item 7). A key that was
+  revoked or has expired, or whose person is revoked, is *revoked*.
 * Users: the dashboard account store (``node.accounts``, a callable or an
   ``AccountStore``). A user is ``human:<id>``; a deleted or disabled account
   is revoked. Their role is read live from the access store (access v2,
@@ -57,8 +58,7 @@ def secret_name(ref: Any) -> str | None:
 
 
 def _token_info(meta: dict) -> dict:
-    role = meta.get("role") or "agent"
-    return {"id": f"token:{meta.get('agent_id')}", "kind": "token", "role": role, "groups": [],
+    return {"id": f"token:{meta.get('agent_id')}", "kind": "token", "role": "agent", "groups": [],
             "label": str(meta.get("name") or meta.get("id") or "api"), "verified": True}
 
 
@@ -135,10 +135,31 @@ class Directory:
             return None
         live = [t for t in hits if not self._expired(t)]
         meta = (live or hits)[0]
-        info = _token_info(meta)
+        info = self._key(meta)
         if not live:
             return Found(info, active=False, reason=f"API key {info['label']!r} expired")
+        person = self._user(info["user"]) if info.get("user") else None
+        if person is not None and not person.active:
+            return Found(info, active=False, reason=f"API key {info['label']!r}: {person.reason}")
         return Found(info, owner=meta.get("owner"), extra={"key_id": meta.get("id")})
+
+    def _key(self, meta: dict) -> dict:
+        """A key's principal: the person it belongs to (access v2 item 7),
+        read live from the access store like the bridge does."""
+        info = _token_info(meta)
+        if self.access is None or not meta.get("agent_id"):
+            return info
+        from ...authz import principal_for_agent
+        acc = self.accounts
+        is_admin = None
+        if acc is not None and hasattr(acc, "user"):
+            def is_admin(uid: str) -> bool:
+                return bool((acc.user(uid) or {}).get("admin"))
+        p = principal_for_agent(str(meta["agent_id"]), info["label"], self.access, is_admin)
+        info.update(role=p.role, groups=list(p.groups))
+        if p.user:
+            info["user"] = p.user
+        return info
 
     def _user(self, uid: str) -> Found | None:
         acc = self.accounts
@@ -231,6 +252,5 @@ class Directory:
             info = {"id": "token:static", "kind": "token", "role": "operator", "groups": [],
                     "label": "static", "verified": True}
         else:
-            info = {"id": f"token:{p.get('agent_id')}", "kind": "token", "role": p.get("role") or "agent",
-                    "groups": [], "label": str(p.get("label") or "api"), "verified": True}
+            info = self._key({"agent_id": p.get("agent_id"), "name": p.get("label") or "api"})
         return Found(info, extra={"secret": name})
