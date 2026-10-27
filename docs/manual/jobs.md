@@ -109,6 +109,13 @@ identity is revoked, the job pauses until you give it a new one (or uses the
 fallback identity you set). Someone who edits another person's job takes it
 over and it runs as them from then on.
 
+A job never does more than the person it belongs to. Their permissions are
+checked again at every run and on every step, so a change to someone's access
+applies to their jobs straight away. If a person loses all their access, or
+their account is removed, their jobs pause; a fallback identity does not keep
+them going. When someone runs another person's job, it can only do what both
+of them may do.
+
 ## Guardrails
 
 Guardrails stop a job from doing something dangerous even if its identity

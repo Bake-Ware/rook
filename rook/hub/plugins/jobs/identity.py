@@ -21,13 +21,22 @@ A job's ``identity`` block::
 identity is revoked or disabled. Without one, the hub setting
 ``job.default_fallback`` applies. When nothing usable is left the run ends
 ``blocked`` and the scheduler pauses the job (``enabled: false``, reason
-``identity_revoked``).
+``identity_revoked``). A job whose owner is a person who was revoked (account
+deleted or disabled, or no access left on the hub) is paused the same way,
+whatever its identity or fallback: a job never outlives its person.
+
+Each run re-reads the identity's role (the access store's owner/member, a
+key's role) instead of trusting the copy saved with the job, and the
+authorizer checks every call it makes, so permissions are those of the
+moment the run acts. A manual run started by someone else carries them in
+the on-behalf-of chain too (:func:`acting_for`).
 
 Every run acts with the job in its on-behalf-of chain (``job:<id>``) and
 carries the job's guardrails (:class:`.guardrails.JobGuard`).
 """
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -184,6 +193,7 @@ def _one(mode: str, ref: str | None, job: dict, owner_info: dict | None,
             st = directory.status(info)
             if not st.active:
                 raise IdentityRevoked(st.reason or f"{info.get('id')} was revoked")
+            info = st.info or info  # the creator as they are now (role, groups)
         return info
     if directory is None:
         raise IdentityUnavailable(f"{mode} identities cannot be checked on this hub")
@@ -206,6 +216,31 @@ def _one(mode: str, ref: str | None, job: dict, owner_info: dict | None,
     return found.info
 
 
+def _owner_standing(owner_info: dict | None, directory: Directory | None) -> None:
+    """A job is its owner's: once the person who owns it is revoked (account
+    deleted or disabled, no access left on the hub) it stops, whatever
+    identity or fallback it names (access v2 item 8)."""
+    if directory is None or not owner_info or owner_info.get("kind") != "human":
+        return
+    st = directory.status(owner_info)
+    if not st.active:
+        raise IdentityRevoked(f"the job's owner {owner_info.get('id')} was revoked "
+                              f"({st.reason or 'no access'})")
+
+
+def acting_for(identity: RunIdentity, who: dict | None) -> RunIdentity:
+    """``identity`` for a run someone else started (a manual ``run`` by a
+    principal with run access who is not the job's identity): the starter
+    joins the on-behalf-of chain, so the authorizer holds every call to their
+    grants as well, and the run never does more than the person who asked."""
+    pid = str((who or {}).get("id") or "")
+    p = identity.principal
+    if not pid or pid == identity.id or pid in (p.via or ()):
+        return identity
+    principal = dataclasses.replace(p, via=tuple(p.via or ()) + (pid,))
+    return dataclasses.replace(identity, principal=principal)
+
+
 def resolve_identity(job: dict, owner_info: dict | None, *, directory: Directory | None = None,
                      settings: Callable[[str], Any] | None = None, guardrails: Any = None) -> RunIdentity:
     """The identity a run of ``job`` acts as. Raises :class:`IdentityRevoked`
@@ -218,6 +253,7 @@ def resolve_identity(job: dict, owner_info: dict | None, *, directory: Directory
     fb = ident.get("fallback")
     if fb is None and settings is not None:
         fb = settings("default_fallback") or None
+    _owner_standing(owner_info, directory)
     note = ""
     used = mode
     try:

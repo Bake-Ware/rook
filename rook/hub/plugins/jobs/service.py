@@ -11,6 +11,10 @@ Access (jobs.md 7): a job's ``access.read/edit/run`` hold principal patterns
 access. ``list`` leaves out jobs the caller cannot read; ``runs`` /
 ``run_get`` follow read access.
 
+Running a job someone else owns acts as the job's identity *and* for the
+caller (``run_by`` on the run): the authorizer holds each call to both, so
+run access never lends anyone more than they have (access v2 item 8).
+
 Editing (update, enable) a job someone else owns hands it to the editor:
 its owner becomes the editor and its identity resets to ``creator``, unless
 the editor is the owner or the operator. The history row says so.
@@ -255,6 +259,8 @@ class JobService:
         for k in ("scheduled", "created", "started", "finished"):
             if run.get(k) is not None:
                 out[k] = iso(run[k], tz)
+        if isinstance(run.get("run_by"), dict) and run["run_by"].get("id"):
+            out["run_by"] = run["run_by"]["id"]
         for k in ("identity_used", "error"):
             if run.get(k):
                 out[k] = run[k]
@@ -642,8 +648,9 @@ class JobService:
                                                     reason=reason), who=who)
 
     def a_run(self, rid, query, data) -> dict:
+        who = caller()
         row = self._job(rid)
-        self.need(row, "run")
+        self.need(row, "run", who)
         if not row["enabled"]:
             raise ValueError(f"job {row['name']!r} is disabled; enable it first")
         if Scheduler.expired(row["definition"], self.clock()) is not None:
@@ -651,7 +658,9 @@ class JobService:
         vars_ = data.get("vars") or {}
         if not isinstance(vars_, dict):
             raise TypeError("data.vars must be an object")
-        run = self.store.enqueue(row, "manual", self.clock(), vars=vars_)
+        # Someone other than the owner: the run acts for them too (identity.acting_for).
+        run_by = who if who.get("id") != row["owner"] else None
+        run = self.store.enqueue(row, "manual", self.clock(), vars=vars_, run_by=run_by)
         self.scheduler.wake()
         return self.run_view(run, steps=False)
 

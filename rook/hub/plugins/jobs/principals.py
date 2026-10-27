@@ -6,7 +6,11 @@ A :class:`Directory` answers from the hub's live credential stores:
   ``node.tokens``). A key's principal is ``token:<agent_id>`` (stable across
   rotation). A key that was revoked or has expired is *revoked*.
 * Users: the dashboard account store (``node.accounts``, a callable or an
-  ``AccountStore``). A user is ``human:<id>``; a deleted account is revoked.
+  ``AccountStore``). A user is ``human:<id>``; a deleted or disabled account
+  is revoked. Their role is read live from the access store (access v2,
+  ``rook/hub/access.py``): an owner there (or an ``admin`` account) is an
+  owner, anyone else a member, and a member with no active grant left has
+  no access, so counts as revoked.
 * The vault (``node._vault``): a vault identity is a secret holding a Rook API
   key. Its value is read at run time to find the key's principal and is never
   stored or returned.
@@ -60,18 +64,21 @@ def _token_info(meta: dict) -> dict:
 
 class Directory:
     def __init__(self, tokens: Any = None, accounts: Any = None, vault: Any = None,
-                 clock=time.time) -> None:
+                 clock=time.time, access: Any = None) -> None:
         self.tokens = tokens
         self._accounts = accounts
         self.vault = vault
         self.clock = clock
+        #: :class:`rook.hub.access.AccessStore`, or None (nothing to check).
+        self.access = access
 
     @classmethod
     def for_node(cls, node: Any) -> "Directory":
         if node is None:
             return cls()
+        access = getattr(getattr(getattr(node, "client", None), "authz", None), "access", None)
         return cls(getattr(node, "tokens", None), getattr(node, "accounts", None),
-                   getattr(node, "_vault", None))
+                   getattr(node, "_vault", None), access=access)
 
     @property
     def accounts(self) -> Any:
@@ -135,23 +142,43 @@ class Directory:
 
     def _user(self, uid: str) -> Found | None:
         acc = self.accounts
-        if acc is None:
+        user = None
+        if acc is not None:
+            try:
+                user = acc.user(uid)
+            except Exception:  # noqa: BLE001
+                log.exception("jobs: reading account %s failed", uid)
+                return None
+            gone = ("no longer exists" if not user else "is disabled" if user.get("disabled") else "")
+            if gone:
+                return Found({"id": f"human:{uid}", "kind": "human", "role": "member", "groups": [],
+                              "label": uid}, active=False, reason=f"user human:{uid} {gone}")
+        standing = self._standing(uid, bool(user and user.get("admin")))
+        if user is None and standing is None:
+            return None
+        role, why = standing or ("owner" if user.get("admin") else "member", "")
+        info = {"id": f"human:{uid}", "kind": "human", "role": role, "groups": [f"human:{role}"],
+                "label": str((user or {}).get("username") or (user or {}).get("name") or uid),
+                "verified": True}
+        if why:
+            return Found(info, active=False, reason=why)
+        return Found(info, owner=f"human:{uid}")
+
+    def _standing(self, uid: str, admin: bool) -> tuple[str, str] | None:
+        """``(role, why revoked or "")`` from the access store, or None when
+        there is none. A store error counts as a member who still has access:
+        the authorizer checks every call and fails closed for members."""
+        store = self.access
+        if store is None or not hasattr(store, "role"):
             return None
         try:
-            user = acc.user(uid)
+            if admin or store.role(uid) == "owner":
+                return "owner", ""
+            if not store.grants(uid):
+                return "member", f"user human:{uid} has no access on this hub (no active grant)"
         except Exception:  # noqa: BLE001
-            log.exception("jobs: reading account %s failed", uid)
-            return None
-        if not user:
-            return Found({"id": f"human:{uid}", "kind": "human", "role": "member", "groups": [],
-                          "label": uid}, active=False, reason=f"user human:{uid} no longer exists")
-        if user.get("disabled"):
-            return Found({"id": f"human:{uid}", "kind": "human", "role": "member", "groups": [],
-                          "label": uid}, active=False, reason=f"user human:{uid} is disabled")
-        role = "owner" if user.get("admin") else "member"
-        return Found({"id": f"human:{uid}", "kind": "human", "role": role, "groups": [f"human:{role}"],
-                      "label": str(user.get("username") or user.get("name") or uid), "verified": True},
-                     owner=f"human:{uid}")
+            log.exception("jobs: reading access for %s failed", uid)
+        return "member", ""
 
     def status(self, info: dict | None) -> Found:
         """Whether a stored principal (a job's ``owner_info``) still works."""
@@ -171,7 +198,13 @@ class Directory:
             return Found(info)  # nothing to check against here
         if not found.active:
             return Found(info, active=False, reason=found.reason)
-        return Found(info)
+        # Live: a role changed since the job was saved applies to this run.
+        # Without an access store a person's saved role stands (the
+        # dashboard decided it, band ownership included).
+        live = dict(found.info or info)
+        if live.get("id") != pid or (kind == "human" and self.access is None):
+            return Found(info)
+        return Found(live)
 
     # -- vault -------------------------------------------------------------------
     def from_vault(self, ref: Any, actor: str) -> Found:

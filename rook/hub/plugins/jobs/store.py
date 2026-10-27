@@ -36,7 +36,7 @@ FINAL = ("success", "failure", "hang", "interrupted", "dropped", "blocked", "can
 AFTER_STATES = {"success": ("success",),
                 "failure": ("failure", "hang", "interrupted", "blocked"),
                 "finish": ("success", "failure", "hang", "interrupted", "blocked")}
-_JSON_COLS = ("owner_info", "definition", "vars", "steps", "alerts", "detail")
+_JSON_COLS = ("owner_info", "definition", "vars", "steps", "alerts", "detail", "run_by")
 
 
 def _new_id(prefix: str) -> str:
@@ -366,15 +366,15 @@ class JobStore:
     # -- runs: create ---------------------------------------------------------------
     def enqueue(self, job: dict, trigger: str, now: float, *, missed: bool = False,
                 scheduled: float | None = None, vars: dict | None = None,
-                state: str | None = None, error: str | None = None) -> dict:
+                state: str | None = None, error: str | None = None, run_by: dict | None = None) -> dict:
         with self._tx() as db:
             return self._enqueue(db, job, trigger, missed, scheduled if scheduled is not None else now, now,
-                                 vars=vars, state=state, error=error)
+                                 vars=vars, state=state, error=error, run_by=run_by)
 
     @staticmethod
     def _enqueue(db: sqlite3.Connection, job: dict, trigger: str, missed: bool, scheduled: float,
                  now: float, *, vars: dict | None = None, state: str | None = None,
-                 error: str | None = None) -> dict:
+                 error: str | None = None, run_by: dict | None = None) -> dict:
         """Overlap rules (docs/design/jobs.md 4): ``parallel`` always runs;
         ``skip`` drops a trigger while a run is waiting or active; ``queue``
         waits behind the active run, without limit unless ``max_queue`` is
@@ -401,9 +401,10 @@ class JobStore:
         rid = _new_id("r")
         finished = now if state in FINAL else None
         db.execute("INSERT INTO runs(id, job_id, job_name, job_revision, trigger, missed, state, scheduled,"
-                   " created, finished, vars, error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                   " created, finished, vars, error, run_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                    (rid, job["id"], job["name"], job.get("revision"), trigger, int(bool(missed)), state,
-                    scheduled, now, finished, _dumps(vars or {}), error))
+                    scheduled, now, finished, _dumps(vars or {}), error,
+                    _dumps(run_by) if run_by else None))
         names.assign(db, "run", rid)
         return _row(db.execute("SELECT * FROM runs WHERE id=?", (rid,)).fetchone())
 
