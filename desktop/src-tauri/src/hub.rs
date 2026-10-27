@@ -1198,7 +1198,7 @@ mod tests {
     #[test]
     fn sessions_link_by_key() {
         let v = json!({"sessions": [
-            {"key": "w1/claude/abc", "agent": "claude", "worker": "cachyrig", "title": "Voice replies",
+            {"key": "w1/claude/abc", "agent": "claude", "worker": "laptop", "title": "Voice replies",
              "state": "live", "cwd": "/srv/rook", "updated": 1.5},
             {"key": "w1/shell/t1", "agent": "shell", "state": "idle"},
             {"agent": "claude"}]});
