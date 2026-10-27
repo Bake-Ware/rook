@@ -20,6 +20,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from typing import Any, Callable
@@ -37,6 +38,7 @@ WORKER_SETTINGS_CAP = "worker.settings_report"
 #: Worker settings that list vault *names* the worker may fetch at use
 #: (``worker_secrets``), stored by an admin like any other setting.
 SECRET_GRANT_KEYS = ("devkit.secrets",)
+_VAULT_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 
 class SettingsError(ValueError):
@@ -514,6 +516,8 @@ class SettingsService:
                 coerced = e.setting.coerce(value)
             except (ValueError, TypeError) as err:
                 raise SettingsError(str(err)) from None
+            if key in SECRET_GRANT_KEYS:
+                self._check_grant(key, coerced)
             if dry_run:
                 after = cs.resolve(e.setting, key, self._layers(e, ctx) + [(scope, coerced)],
                                    env=self._env_for(e) if e.owner != "worker" else None)
@@ -792,6 +796,19 @@ class SettingsService:
                           w.get("name") or worker, old=not enable, new=enable, actor=actor,
                           note="" if ok else f"failed: {(res or {}).get('error')}", source="ui")
         return {"ok": ok, "result": res}
+
+    def _check_grant(self, key: str, value: Any) -> None:
+        """A grant lists vault *names* that exist. A value is refused: a
+        ``{{secret:…}}`` written into the call's args reaches here already
+        filled in, and must not be stored in plain text in the settings."""
+        known = None
+        if self.vault is not None and hasattr(self.vault, "list"):
+            known = {str(r.get("name")) for r in self.vault.list() if isinstance(r, dict)}
+        for name in value or []:
+            if not isinstance(name, str) or not _VAULT_NAME.match(name) \
+                    or (known is not None and name not in known):
+                raise SettingsError(f"{key} lists vault names that exist (store the secret "
+                                    "under Secrets first, then list its name, never its value)")
 
     def worker_secrets(self, worker_id: str, names: list[str]) -> dict:
         """Secrets a worker may fetch at use: only vault entries referenced by

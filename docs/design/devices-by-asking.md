@@ -36,8 +36,12 @@ driver, like `webos`), and arbitrary code from agents.
 - **Placeholders.** `{arg}` and `{var}` in any string; a JSON body string that
   is exactly `{arg}` takes the arg's typed value. Caller args are
   URL-quoted in the url (they can't change where a request goes); vars go in
-  as written (they are the address). An argv value from a caller may not
-  start with `-`.
+  as written (they are the address). Where a recipe goes (the url's host
+  and port, a tcp/udp host and port) comes from `vars` only: a caller can't
+  point a cap, and the credential it carries, at another host. An argv value
+  from a caller may not start with `-`, and the program gets a small
+  environment (PATH, HOME, locale, temp dirs) plus its own `env`, never the
+  worker's.
 - **A device per definition.** `RecipeDevice` is a `rook.core.devices.Device`
   whose namespace and type are the definition's `type`, so "front-door"
   shows on the band with `lock.state`, `lock.lock`, `lock.unlock`, a
@@ -65,6 +69,7 @@ A definition can't make a cap look safer than what it does:
 | Recipe | Lowest risk |
 |---|---|
 | http GET / HEAD | read |
+| a GET/HEAD cap named for an action (`turn_on`, `disarm`, `set_level`, `lock`) | write |
 | any other HTTP method, tcp, udp | write |
 | argv (runs a program) | exec |
 
@@ -100,7 +105,9 @@ The hub answers only for names **granted** to that worker: today
 `worker_secrets` allows vault entries referenced by a secret worker setting;
 it now also allows the names listed in the worker setting `devkit.secrets`
 (`SECRET_GRANT_KEYS` in `rook/hub/settings_service.py`, the one hub change).
-That setting is written with `settings.set` (admin) like any other, so a
+That setting is written with `settings.set` (admin) like any other, and the
+hub accepts only names of vault entries that exist (a `{{secret:…}}` written
+into that call would arrive filled in, and is refused rather than stored), so a
 person (or an agent the trust map lets) decides which delegate may use which
 credential, and a worker still can't fetch a secret nobody granted it. Any
 value a device echoes back is masked as `{secret:name}` in replies, and the

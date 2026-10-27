@@ -48,6 +48,8 @@ refs: [references/tools.md]
 
 ## Risk, honestly
 
+- A GET that switches something (many plugs and relays: Shelly, Tasmota) is an action, not a read: name the cap for what it does (`turn_on`, `unlock`) and it is at least `write`; never declare such a cap `read`.
+- The host and port come from `vars` only; a cap's args can't pick where it goes.
 - Reads are `read` (only GET/HEAD can be). Everyday reversible actions (a light, a volume) stay `write`. An action that matters if it happens at the wrong time (unlock, open the garage, disarm an alarm, turn off a freezer) is `"risk": "exec"`; add `"tags": ["destructive"]` if it can't be undone, `["sensitive"]` for a camera snapshot. The plugin never lets a cap go below its recipe's floor and tags every action `physical`; the trust map and approvals do the rest. Don't try to route around them.
 
 ## Changing or removing

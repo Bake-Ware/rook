@@ -508,3 +508,95 @@ def test_query_packets_ask_for_ptr_records():
 
 def test_errors_are_cap_errors():
     assert issubclass(ArgError, CapError)
+
+
+# -- review round 1 (A70): more edges ----------------------------------------------
+
+def test_get_caps_named_for_an_action_are_actions():
+    caps = normalize({"name": "relay", "type": "plug", "caps": {
+        "turn_on": {"risk": "read", "http": {"url": "http://h/relay/0?turn=on"}},
+        "lock": {"http": {"url": "http://h/lock"}},
+        "set_level": {"http": {"url": "http://h/level"}},
+        "lock_state": {"http": {"url": "http://h/lock/state"}},
+        "power_usage": {"http": {"method": "HEAD", "url": "http://h/meter"}},
+        "ping": {"tcp": {"host": "h", "port": 1, "send": "x"}},
+        "cli": {"argv": {"argv": ["true"]}},
+    }})["caps"]
+    for name in ("turn_on", "lock", "set_level"):
+        assert caps[name]["risk"] == "write" and caps[name]["tags"] == ["physical"], name
+    assert caps["lock_state"]["risk"] == "read" and caps["power_usage"]["risk"] == "read"
+    assert caps["ping"]["tags"] == ["physical"] and caps["cli"]["tags"] == ["physical"]
+
+
+@pytest.mark.parametrize("cap", [
+    {"args": {"ip": "str"}, "http": {"url": "http://{ip}/x"}},
+    {"args": {"port": "int"}, "http": {"url": "http://h:{port}/x"}},
+    {"args": {"ip": "str"}, "tcp": {"host": "{ip}", "port": 23, "send": "x"}},
+    {"args": {"p": "int"}, "udp": {"host": "h", "port": "{p}", "send": "x"}},
+    {"http": {"url": "http://{secret:h}/x"}},
+])
+def test_a_caller_never_picks_the_host(cap):
+    with pytest.raises(DefinitionError, match="vars only"):
+        normalize({"name": "x", "type": "plug", "caps": {"go": cap}})
+
+
+@pytest.mark.parametrize("typ", sorted(devkit.RESERVED_TYPES))
+def test_reserved_types_are_refused(typ):
+    with pytest.raises(DefinitionError, match="type:"):
+        normalize({"name": "x", "type": typ, "caps": {"s": {"http": {"url": "http://h/"}}}})
+
+
+def test_more_credential_refusals():
+    for cap in ({"argv": {"argv": ["tool"], "env": {"TOOL_PASSWORD": "hunter22"}}},
+                {"http": {"url": "http://h/", "body": "{{secret:t}}"}}):
+        with pytest.raises(DefinitionError):
+            normalize({"name": "x", "type": "plug", "caps": {"s": cap}})
+
+
+@pytest.mark.asyncio
+async def test_a_secret_spanning_lines_never_reaches_a_header(lock):
+    spec = normalize(lock_def(lock))
+    with pytest.raises(CapError, match="span lines"):
+        await devkit.run_cap(spec, "lock", {}, {"front-door.token": "a\r\nX-Evil: 1"})
+
+
+@pytest.mark.asyncio
+async def test_long_replies_are_capped(monkeypatch):
+    big = b"x" * (devkit.MAX_REPLY + 10)
+    monkeypatch.setattr(devkit, "_http_blocking", lambda *a: (200, "OK", {}, big))
+    spec = normalize({"name": "x", "type": "plug", "caps": {"s": {"http": {"url": "http://h/"}}}})
+    res = await devkit.run_cap(spec, "s", {}, {})
+    assert res["truncated"] is True and len(res["body"]) == devkit.MAX_TEXT + 1
+
+
+@pytest.mark.asyncio
+async def test_argv_programs_get_a_small_environment(monkeypatch):
+    monkeypatch.setenv("ROOK_PSK", "band-key-do-not-leak")
+    spec = normalize({"name": "cli", "type": "plug", "caps": {"env": {"argv": {"argv": [
+        sys.executable, "-c", "import json,os; print(json.dumps(sorted(os.environ)))"],
+        "env": {"MINE": "1"}}}}})
+    res = await devkit.run_cap(spec, "env", {}, {})
+    assert "ROOK_PSK" not in res["stdout"] and "MINE" in res["stdout"]
+
+
+def test_masking_covers_url_encoded_copies():
+    out = devkit.mask({"a": "k=ab%2Fcd%3D", "b": "ab/cd="}, {"t": "ab/cd="})
+    assert out == {"a": "k={secret:t}", "b": "{secret:t}"}
+
+
+@pytest.mark.asyncio
+async def test_files_are_private_and_management_tiers_hold(worker, lock, tmp_path):
+    import stat
+    await worker.host.start()
+    try:
+        await _call(worker, "devkit.define", definition=lock_def(lock))
+        await _call(worker, "devkit.remove", device="front-door")
+        for f in ("devices.json", "retired.json"):
+            mode = stat.S_IMODE((tmp_path / "plugins" / "devkit" / f).stat().st_mode)
+            assert mode == 0o600, (f, oct(mode))
+        described = (await _call(worker, "caps.describe", prefix="devkit."))["result"]
+        assert {c: described[c]["risk"] for c in described} == {
+            "devkit.define": "admin", "devkit.remove": "admin", "devkit.test": "exec",
+            "devkit.list": "read", "devkit.discover": "read"}
+    finally:
+        await worker.host.stop()

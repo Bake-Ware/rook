@@ -36,6 +36,9 @@ class FakeVault:
     def delete(self, name, actor):
         return self.data.pop(name, None) is not None
 
+    def list(self):
+        return [{"name": n} for n in sorted(self.data)]
+
 
 class FakeClient:
     """Band client double: a roster and scripted replies."""
@@ -298,6 +301,10 @@ def test_worker_secret_grants_name_vault_entries_for_a_worker(tmp_path):
     got = svc.worker_secrets("w1", ["front-door.token", "garage.token"])
     assert got["secrets"] == {"front-door.token": "tok-123456"}
     assert got["missing"] == ["garage.token"]
+    # Names that exist, never values: a {{secret:…}} the hub filled in is refused.
+    for bad in (["tok-123456"], ["not-in-vault"], ["Bad Name"]):
+        with pytest.raises(SettingsError, match="vault names"):
+            svc.set("devkit.secrets", bad, scope="worker", target="box")
     svc.set("devkit.secrets", ["front-door.token"], scope="worker", target="other-box")
     svc.reset("devkit.secrets", scope="worker", target="box")
     assert svc.worker_secrets("w1", ["front-door.token"])["missing"] == ["front-door.token"]
