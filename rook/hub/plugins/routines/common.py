@@ -52,12 +52,23 @@ class StateFile:
     def __init__(self, root: Path, key: str) -> None:
         self.path = Path(root) / "state" / f"{key}.json"
 
+    damaged = False
+
     def load(self) -> dict:
+        """The saved state; ``{}`` when there is none. A file that exists but
+        can't be read sets ``damaged`` (the routine says so)."""
+        self.damaged = False
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except FileNotFoundError:
             return {}
-        return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            self.damaged = True
+            return {}
+        if not isinstance(data, dict):
+            self.damaged = True
+            return {}
+        return data
 
     def save(self, data: dict) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

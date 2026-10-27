@@ -64,6 +64,39 @@ class FakeChat:
                                       if include_all or identity in r["participants"]]}
 
 
+class FakeAccounts:
+    """The dashboard account store's tables the scan reads."""
+
+    def __init__(self, path):
+        import sqlite3
+        self.path = str(path)
+        with self.db() as db:
+            db.executescript("CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT, name TEXT);"
+                             "CREATE TABLE user_sessions (hash TEXT, user_id TEXT, authenticated REAL);"
+                             "CREATE TABLE account_audit (ts REAL, actor TEXT, action TEXT, target TEXT);"
+                             "INSERT INTO users VALUES ('u1', 'bake', 'Bake');")
+        self._sqlite = sqlite3
+
+    def db(self):
+        import contextlib
+        import sqlite3
+
+        @contextlib.contextmanager
+        def conn():
+            c = sqlite3.connect(self.path)
+            c.row_factory = sqlite3.Row
+            try:
+                yield c
+                c.commit()
+            finally:
+                c.close()
+        return conn()
+
+    def sign_in(self, uid="u1"):
+        with self.db() as db:
+            db.execute("INSERT INTO user_sessions VALUES ('h', ?, ?)", (uid, time.time()))
+
+
 class FakeConsoles:
     def __init__(self):
         self.live = []
@@ -113,6 +146,7 @@ def hub(tmp_path):
     n.tokens = FakeTokens()
     n.chat = FakeChat()
     n.consoles = FakeConsoles()
+    n.accounts = FakeAccounts(tmp_path / "accounts.db")
     n.settings.set("attention.devices", ["pixel"], actor="human:op")
     tok = current_principal.set(OPERATOR)
     yield SimpleNamespace(node=n, band=band, plugin=n.plugin("routine"), tmp=tmp_path)
@@ -210,13 +244,15 @@ async def test_the_first_scan_is_a_silent_baseline_then_only_changes_are_told(hu
     hub.node.tokens.tokens.append({"id": "k2", "agent_id": "agent_b", "name": "new-laptop"})
     hub.node.chat.presence["agent:unknown"] = time.time()
     hub.node.consoles.live.append({"room": "c1", "title": "build the hub", "worker": "cachyrig"})
+    hub.node.accounts.sign_in()
     hub.node.journal.record(cap="shell.exec", worker="kaiju", identity="agent:x", args=None,
                             reply={"ok": False, "error": "denied"}, authz={"decision": "deny"})
     hub.band.authz.access.rows.append({"ts": time.time(), "action": "grant", "actor": "human:bake",
                                        "user_id": "u2", "ref": "g1"})
     out = await p.security_scan()
     kinds = {f["kind"] for f in out["findings"]}
-    assert kinds == {"workers", "keys", "agents", "consoles", "denied", "access"}, out["findings"]
+    assert kinds == {"workers", "keys", "agents", "consoles", "denied", "access", "logins"}, out["findings"]
+    assert {"kind": "logins", "level": "info", "text": "Dashboard sign-in: bake"} in out["findings"]
     assert not out["urgent"] and out["delivered"]["phone"] and out["delivered"]["logged"]
     post, = hub.band.posted
     assert post["channel"] == "digest" and post["urgency"] == "normal" and post["kind"] == "alert"
@@ -293,6 +329,8 @@ async def test_dry_run_saves_and_sends_nothing_and_missing_sources_are_skipped(h
     out = await hub.plugin.security_scan(dry_run=True)
     assert out["dry_run"] and out["baseline"]
     assert set(out["skipped"]) == {"consoles", "logins"}
+    # The scan never goes blind silently: what it can't watch is said.
+    assert out["findings"][0]["kind"] == "blind" and "consoles" in out["findings"][0]["text"]
     assert (await hub.plugin.security_scan(dry_run=True))["baseline"]   # nothing was saved
     assert hub.band.posted == []
 
@@ -580,3 +618,22 @@ async def test_an_installed_camera_job_never_rings_unless_asked(hub):
     job = (await jobs(hub, action="install", id="camera-review", data={"config": config}))["result"]
     assert "may_ring" not in job["definition"]["steps"]["run"]["args"]
     assert inspect.signature(hub.plugin.camera_review).parameters["may_ring"].default is False
+
+
+@pytest.mark.asyncio
+async def test_the_scan_says_when_it_goes_blind_or_loses_its_state(hub):
+    p = hub.plugin
+    assert not (await p.security_scan())["changed"]          # every source readable: a silent baseline
+    consoles = hub.node.consoles
+    hub.node.consoles = None
+    lost = await p.security_scan()
+    assert lost["findings"] == [{"kind": "blind", "level": "warn",
+                                 "text": "Not watching: consoles (no console store on this hub)"}]
+    assert not (await p.security_scan())["changed"]          # said once
+    hub.node.consoles = consoles
+    back = await p.security_scan()
+    assert back["findings"] == [{"kind": "blind", "level": "info", "text": "Watching again: consoles"}]
+    (p.data_dir / "state" / "security-scan.json").write_text("{not json", encoding="utf-8")
+    reset = await p.security_scan()
+    assert reset["baseline"] and reset["findings"][0]["text"].startswith("The scan's saved state could not")
+    assert hub.band.posted[-1]["channel"] == "digest"

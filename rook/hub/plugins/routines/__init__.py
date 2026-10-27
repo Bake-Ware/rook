@@ -40,7 +40,7 @@ from ....core.pluginkit import CapError
 from . import cameras as cams
 from .common import StateFile, caller_id, clip, deliver, plural, state_key
 from .digest import FIRST_WINDOW, Digest, compose
-from .security import Scan, report_text, summary_line
+from .security import Scan, blind_spots, report_text, summary_line
 
 log = logging.getLogger("rook.hub.plugins.routines")
 
@@ -127,6 +127,8 @@ class Routines(Plugin):
                                      window_s=60 * max(1, int(refusal_window_min or 10)),
                                      cooldown_s=60 * max(0, int(urgent_cooldown_min or 0)), now=now)
         nxt["at"] = now
+        findings = blind_spots(prev, scan.skipped, damaged=sf.damaged) + findings
+        nxt["skipped"] = dict(scan.skipped)
         out: dict = {"baseline": not prev.get("at"), "changed": bool(findings), "findings": findings,
                      "urgent": any(f["level"] == "alert" for f in findings), "skipped": scan.skipped}
         if dry_run:

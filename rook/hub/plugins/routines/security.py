@@ -295,13 +295,33 @@ class Scan:
         return out, state
 
 
+def blind_spots(prev: dict, skipped: dict, *, damaged: bool = False) -> list[dict]:
+    """The scan never goes blind silently: a source it can no longer read
+    (or never could: said once, on the first scan), one it reads again, and a
+    saved state that was damaged (so this scan starts over)."""
+    out = []
+    if damaged:
+        out.append({"kind": "blind", "level": "warn",
+                    "text": "The scan's saved state could not be read, so it starts over: "
+                            "this scan compares nothing"})
+    before = prev.get("skipped") if isinstance(prev.get("skipped"), dict) else {}
+    new = {k: v for k, v in skipped.items() if k not in before}
+    back = [k for k in before if k not in skipped]
+    if new:
+        out.append({"kind": "blind", "level": "warn" if prev.get("at") else "info",
+                    "text": "Not watching: " + "; ".join(f"{k} ({v})" for k, v in sorted(new.items()))})
+    if back and prev.get("at"):
+        out.append({"kind": "blind", "level": "info", "text": "Watching again: " + ", ".join(sorted(back))})
+    return out
+
+
 def summary_line(findings: list[dict]) -> str:
     """Counts only, for the log: "Security scan: 1 new API key, 3 denied calls"."""
     c = collections.Counter(f["kind"] for f in findings)
     words = {"workers": "new worker", "consoles": "console opened", "agents": "new identity",
              "logins": "sign-in or account change", "refused": "refused-key burst",
              "denied": "denied calls", "unverified": "unverified calls", "keys": "API key change",
-             "access": "access change"}
+             "access": "access change", "blind": "blind spot"}
     parts = [f"{n} {words.get(k, k)}" if k not in ("denied", "unverified") else words[k]
              for k, n in c.most_common()]
     return "Security scan: " + ", ".join(parts)

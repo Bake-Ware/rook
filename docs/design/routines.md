@@ -85,6 +85,11 @@ urgent, and it rings at most once per `urgent_cooldown_min` (60 minutes), so
 an ongoing burst rings once. 0 never rings. Denied calls, however many, are
 warnings.
 
+The scan never goes blind silently: a source it cannot read is reported
+once ("Not watching: consoles (...)"; on the first scan too, as info), one
+it reads again is reported ("Watching again"), and a saved state that exists
+but can't be read is reported as a restart (that scan compares nothing).
+
 Not covered: failed dashboard password sign-ins (the dashboard's throttle
 keeps them in memory in another process), terminal sessions that are not
 console rooms (listing them means a call to every worker every 5 minutes).
