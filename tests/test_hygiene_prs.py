@@ -374,3 +374,21 @@ def test_bad_args_say_what_the_cap_takes_and_the_closest_name():
 
 def test_hint_text_is_plain_json():
     assert json.dumps(CapabilityRegistry().arg_hint('nope', {})) == '""'
+
+
+def test_linking_a_pr_says_keep_it_in_progress_until_it_merges(w):
+    assert w.h.on_link(AGENT, w.task['id'], 'url', PR.format(242), 'produced')
+    say = w.h.take(AGENT['id'])[0]['say']
+    assert 'Keep the task in_progress until the PR merges' in say and 'If the work is finished' not in say
+
+
+def test_a_pr_on_a_done_task_and_an_in_progress_one_still_gets_its_checks(w):
+    other = w.create('task', 'Second task', w.project['id'])
+    w.s.mutate('default', AGENT, rid(), 'claim', {'id': other['id']})
+    w.gh.add(242)
+    w.gh.checks_[HEAD] = [('pytest', 'failure')]
+    link(w, PR.format(242))
+    link(w, PR.format(242), task=other)
+    done(w, actor=PERSON)
+    raised = w.prs.sweep()
+    assert {f['kind'] for f in raised} == {'pr_open_done', 'pr_ci_failed'}

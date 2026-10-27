@@ -383,6 +383,12 @@ class HygieneEngine:
                 say = (f'{what} on [[{t["slug"]}]] while it is still in_progress. Stopping? '
                        f'rook_task release id={t["slug"]} (the handoff counts) or update state '
                        f'paused/blocked/done. Still working? Ignore this.')
+            elif what.startswith('PR '):
+                # A pull request is not finished work until it merges (prs.py
+                # refuses done while it is open, and says when it merged).
+                say = (f'{what} on [[{t["slug"]}]] ({t["state"]}). Keep the task in_progress until the '
+                       f'PR merges: CI green, then the huddle merge vote. Rook tells you when it '
+                       f'merged; then update state done with attrs.outcome.')
             else:
                 say = (f'{what} on [[{t["slug"]}]] ({t["state"]}). If the work is finished: rook_task update '
                        f'state done with attrs.outcome (link evidence first); if not, carry on.')

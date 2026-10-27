@@ -275,6 +275,9 @@ class PullRequests:
         unread: set = set()
         reads = 0
         self.last_error = None
+        # A PR's checks matter only for in-progress work.
+        checks = {pr_key(p['repo'], p['number']) for t in tasks if t['state'] == 'in_progress'
+                  for p in t['prs']}
         for t in tasks:
             for p in t['prs']:
                 key = pr_key(p['repo'], p['number'])
@@ -288,7 +291,7 @@ class PullRequests:
                 try:
                     reads += 0 if fresh else 1
                     infos[key] = self.read(client, p['repo'], p['number'], max_age,
-                                           checks=t['state'] == 'in_progress')
+                                           checks=key in checks)
                 except Exception as e:  # noqa: BLE001 - fail open for this PR
                     self.last_error = f'{label(p["repo"], p["number"])}: {clip(str(e), 160)}'
                     unread.add(key)
