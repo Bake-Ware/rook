@@ -86,6 +86,7 @@ TEMPLATES: dict[str, dict] = {
     },
 }
 
+OWNERS_ONLY = {"read": "human:owner", "edit": "human:owner", "run": "human:owner"}
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 
@@ -135,6 +136,9 @@ def build(name: str, data: dict) -> dict:
         "overlap": {"mode": "skip"},
         "missed": {"mode": "skip"},
         "retention_days": t["retention_days"],
+        # Their runs hold the band's security picture and the person's messages:
+        # only owners (and the operator, who always may) read or run them.
+        "access": dict(OWNERS_ONLY),
         "entry": "run",
         "steps": {"run": {"kind": "cap", "worker": "rook", "cap": t["cap"], "args": copy.deepcopy(config),
                           "timeout": t["timeout"]}},

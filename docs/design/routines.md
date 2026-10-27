@@ -33,6 +33,10 @@ engine already ran scheduled, templated jobs; none shipped ready-made.
   person's phone notifications, chats and cameras. Every `routine.*` cap
   calls `require_hub_admin`, and `install` refuses non-owners up front (a
   member's job would otherwise fail every run).
+- **Owners read the runs.** A run's output holds the band's security picture
+  or the person's messages, so an installed job's `access` is
+  `human:owner` for read, edit and run (owners and the operator always
+  have full access) instead of the `*` default.
 - **Quiet delivery.** A report is one row in the attention log
   (`attention.log`, outcome `tell`) plus one alert on the phone's `digest`
   channel through `attention.send`: a normal notification, no pop-up, no

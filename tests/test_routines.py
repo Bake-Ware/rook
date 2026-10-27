@@ -158,6 +158,9 @@ async def test_install_makes_an_ordinary_job_the_caller_owns(hub):
     assert d["steps"]["run"] == {**d["steps"]["run"], "kind": "cap", "worker": "rook",
                                  "cap": "routine.security_scan", "args": {}}
     assert d["overlap"]["mode"] == "skip" and d["vars"]["template"] == "security-scan"
+    assert d["access"] == {"read": "human:owner", "edit": "human:owner", "run": "human:owner"}
+    peek = await jobs(hub, principal=AGENT, action="get", id="security-scan")
+    assert not peek["ok"] and peek["code"] == "PermissionError"   # its runs are owners' only
     assert not job["blocked_by_guardrail"]          # the default guardrails let it run
     again = await jobs(hub, action="install", id="security-scan")
     assert not again["ok"] and "already exists" in again["error"]
