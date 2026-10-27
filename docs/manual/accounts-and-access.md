@@ -81,6 +81,11 @@ On the hub (worker `rook`):
 When the hub was upgraded to this, the operator account and every band owner
 became owners, and each band member got a grant on the bands they were in.
 
+Every owner sees and does everything the operator account does: the whole
+dashboard, Secrets, Plugins, Tokens, Agent instructions, Updates and the
+rest. A hard stop (an agent wanting a secret's value, say) still waits for a
+person, and any owner can answer it.
+
 ## Giving access by talking, and the People page
 
 You don't fill in forms to give people access. With the house agent on

@@ -17,7 +17,7 @@ export const YOU='user:operator';
 let csrf='';
 /** One action on the huddle account API: its result, or an Error with the reason. */
 export async function hapi(action,body={},retry=true,signal){
-  if(!csrf){const r=await fetch(API);const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Sign in with your operator account.');csrf=d.csrf;}
+  if(!csrf){const r=await fetch(API);const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'Sign in with an owner account.');csrf=d.csrf;}
   const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,action,...body}),signal});
   const d=await r.json().catch(()=>({}));
   if(r.status===403&&retry&&/expired/i.test(d.error||'')){csrf='';return hapi(action,body,false,signal);}

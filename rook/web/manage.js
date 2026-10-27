@@ -156,7 +156,7 @@ export function pairingPanel(data){
 export async function mintPairing(preferLabel){
   const r=await fetch('/account/session',{headers:{Accept:'application/json'}});
   const d=r.headers.get('content-type')?.includes('application/json')?await r.json():{};
-  if(!r.ok||!d.user)throw Error(d.error||'Sign in with your operator account first.');
+  if(!r.ok||!d.user)throw Error(d.error||'Sign in with an owner account first.');
   const owned=(d.bands||[]).filter(b=>b.active&&b.role==='owner');
   const band=owned.find(b=>b.label===preferLabel)||owned[0];
   if(!band)throw Error('You do not own a band to pair with. Create one on the Bands page.');

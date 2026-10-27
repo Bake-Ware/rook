@@ -77,7 +77,7 @@ page) runs it at once.
 
 ## The Memory page
 
-Open **Work > Memory** (operator account). Filter by kind (about a person,
+Open **Work > Memory** (an owner account). Filter by kind (about a person,
 fact, conversation, skill), search, and pick a memory to see where it came
 from, the versions it replaced and its history. You can:
 

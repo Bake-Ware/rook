@@ -86,7 +86,7 @@ def routes(get_plugin: Callable[[], Any], accounts):
     """``get_plugin()`` returns the live ccmod hub plugin (or None)."""
 
     @account_api(accounts, sign_in="Sign in to manage Claude Code rules.",
-                 operator_only="Only the operator account can manage Claude Code rules.")
+                 operator_only="Only an owner can manage Claude Code rules.")
     async def api(request, user, body):
         plugin = get_plugin()
         if plugin is None:

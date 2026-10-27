@@ -2,10 +2,10 @@
 ``/manual/account-api`` (proxied from ``/account/manual/api``).
 
 GET ``?view=status`` | ``pages[&full=1]`` | ``page&id=<page id>[&source=bundle]``: any
-signed-in account. Other accounts read the manual as Rook ships it; only the
-operator sees the knowledge base copy (it may hold the operator's notes) and
-is offered the update prompt. POST ``{"action": "update" | "snooze" |
-"decline", "overwrite": [page ids]}``: operator account only, with the
+signed-in account. Other accounts read the manual as Rook ships it; only
+owners see the knowledge base copy (it may hold the operator's notes) and are
+offered the update prompt. POST ``{"action": "update" | "snooze" |
+"decline", "overwrite": [page ids]}``: owner accounts only, with the
 session's CSRF token.
 """
 from __future__ import annotations
@@ -51,7 +51,7 @@ def routes(get_plugin: Callable[[], Any], accounts):
                     return json_error(f"unknown view {view!r}", 400)
                 return json_reply({"csrf": user["csrf"], "admin": admin, **data})
             if not admin:
-                return json_error("Only the operator account can update the manual copy.", 403)
+                return json_error("Only an owner can update the manual copy.", 403)
             who = "human:" + str(user.get("username") or user["id"])
             overwrite = body.get("overwrite")
             result = await plugin.do_update(str(body.get("action") or ""),

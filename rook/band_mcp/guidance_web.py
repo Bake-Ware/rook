@@ -7,7 +7,7 @@ from ..remote.account_api import account_api, json_error, json_reply
 
 def routes(guidance, reapply, tool_names, accounts):
     @account_api(accounts, sign_in='Sign in to edit agent instructions.',
-                 operator_only='Agent instructions require the operator account.')
+                 operator_only='Agent instructions require an owner account.')
     async def api(request, user, data):
         if data is None:
             key = request.query_params.get('history')

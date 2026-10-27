@@ -14,7 +14,7 @@ class TokenWeb(KnowledgeWeb):
     UPSTREAM = ('ROOK_TOKEN_ADMIN_URL', 'http://127.0.0.1:8765/tokens/account-api')
     ASSETS = ()
     UNAVAILABLE = 'Token service is unavailable. Try again shortly.'
-    FORBIDDEN = 'API tokens require an operator account.'
+    FORBIDDEN = 'API tokens require an owner account.'
     TIMEOUT = 15
 
     def install(self, app):

@@ -32,7 +32,7 @@ export async function mountTokens(root){
 
   async function api(body){
     const r=await fetch('/account/tokens/api',body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,csrf})}:{});
-    if(!r.headers.get('content-type')?.includes('application/json'))throw Error('Sign in to your operator account to manage tokens.');
+    if(!r.headers.get('content-type')?.includes('application/json'))throw Error('Sign in to an owner account to manage tokens.');
     const d=await r.json();if(!r.ok)throw Error(d.error||'Token request failed.');return d;
   }
   async function perform(work,target){
@@ -40,7 +40,7 @@ export async function mountTokens(root){
     try{await work();}catch(e){(target||status).textContent=e.message;if(!target)status.classList.add('bad');}finally{busy=false;}
   }
   async function refresh(){
-    const session=await fetch('/account/session');if(!session.ok)throw Error('Sign in to your operator account.');
+    const session=await fetch('/account/session');if(!session.ok)throw Error('Sign in to an owner account.');
     const me=(await session.json()).user;csrf=me.csrf;data=await api();
     const keep=person.value||me.id;person.replaceChildren(...(data.people||[]).map(p=>h('option',{value:p.id,text:p.name})));person.value=keep;person.disabled=!(data.people||[]).length;
     draw();

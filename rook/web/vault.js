@@ -17,7 +17,7 @@ export async function mountVault(root){
   async function api(body){const r=await fetch('/account/vault/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,...body})});const d=await r.json();if(!r.ok||d.error)throw Error(d.error||'Request failed');return d;}
   async function refresh(){
     const r=await fetch('/account/vault/api');const d=await r.json();
-    if(!r.ok||d.error)throw Error(d.error||'Sign in with your operator account to manage secrets.');
+    if(!r.ok||d.error)throw Error(d.error||'Sign in with an owner account to manage secrets.');
     csrf=d.csrf;data=d;if(!data.secrets.some(s=>s.name===picked))picked=data.secrets[0]?.name||'';draw();
   }
   const placeholder=name=>'{{secret:'+name+'}}';

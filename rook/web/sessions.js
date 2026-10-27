@@ -122,7 +122,7 @@ export async function mountSessions(root, boot, toClassic) {
   }
   async function getList(q) {
     const r = await fetch('/account/work/sessions?' + q, {cache: 'no-store'});
-    if (r.status === 401 || r.status === 403) throw Error('Sign in with your operator account to see sessions.');
+    if (r.status === 401 || r.status === 403) throw Error('Sign in with an owner account to see sessions.');
     if (!r.ok) throw Error('Could not load sessions (' + r.status + ').');
     return r.json();
   }

@@ -20,7 +20,7 @@ class KnowledgeWeb:
     ASSETS = ('knowledge.js', 'knowledge.css', 'workviews.js', 'workviews.css')
     UNAVAILABLE = 'Knowledge service is unavailable.'
     ADMIN_ONLY = True
-    FORBIDDEN = 'This requires the operator account.'
+    FORBIDDEN = 'This requires an owner account.'
     TIMEOUT = 20
 
     def __init__(self, account):
@@ -172,7 +172,7 @@ class HuddleWeb(KnowledgeWeb):
 class UiWeb(KnowledgeWeb):
     """Overview, start page and themes (the ``ui`` hub plugin). Any signed-in
     account: each has its own theme and start page; the upstream keeps the
-    knowledge half of the Overview to the operator account."""
+    knowledge half of the Overview to owners."""
     PATH = '/account/ui'
     UPSTREAM = ('ROOK_UI_ADMIN_URL', 'http://127.0.0.1:8765/ui/account-api')
     ASSETS = ('overview.js', 'startpage.js', 'widgets.js', 'themes.js', 'theme-boot.js', 'ui.css', 'mobile.css')

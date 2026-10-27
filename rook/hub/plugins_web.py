@@ -35,7 +35,7 @@ def routes(get_node: Callable[[], Any], accounts):
     from .plugin_admin import admin_for
 
     @account_api(accounts, sign_in="Sign in to manage plugins.",
-                 operator_only="Only the operator account can manage plugins.")
+                 operator_only="Only an owner can manage plugins.")
     async def api(request, user, body):
         node = get_node()
         if node is None:

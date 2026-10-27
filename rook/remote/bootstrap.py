@@ -1736,6 +1736,7 @@ class CombinedServer:
         self._app.router.add_get("/health", self._health)
         from .account_web import AccountWeb
         self._accounts = AccountWeb(self)
+        self._accounts.store.owner_check = self._owner_check
         self._accounts.install(self._app)
         # Permissions page + policy API (docs/design/permissions.md 3.10).
         self._authz = None
@@ -2914,6 +2915,12 @@ class CombinedServer:
         from ..hub.access import AccessStore
         access = getattr(getattr(self, "_authz", None), "access", None)
         return access if isinstance(access, AccessStore) else None
+
+    def _owner_check(self, uid: str) -> bool:
+        """Whether access.db makes this account an owner (AccountStore
+        sessions ask, so owners pass every operator page gate)."""
+        access = self._access_store()
+        return access is not None and access.is_owner(uid)
 
     def _seed_access(self) -> None:
         """Carry today's owners and band members over once (access v2)."""

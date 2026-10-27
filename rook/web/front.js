@@ -61,7 +61,7 @@ export async function mountFront(root, opts = {}){
     if(!csrf){
       const r = await fetch(API, {headers: {Accept: 'application/json'}});
       const d = await r.json().catch(() => ({}));
-      if(!r.ok || d.error) throw Error(d.error || 'Sign in with the operator account.');
+      if(!r.ok || d.error) throw Error(d.error || 'Sign in with an owner account.');
       csrf = d.csrf;
     }
     const r = await fetch(API, {method: 'POST', headers: {'Content-Type': 'application/json', Accept: 'application/json'},

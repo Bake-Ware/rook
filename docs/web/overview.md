@@ -49,7 +49,7 @@ The page joins four sources in the browser and refreshes every 20 seconds:
 | Tasks and knowledge | `/account/ui/api?view=overview` (the `ui` hub plugin; rook/hub/plugins/ui/overview.py) | operator; needs the knowledge plugin |
 
 Each source fails on its own: if one cannot be read, the page shows the
-others and says which one is missing. Knowledge and tasks are for the
-operator account and need **Settings > Knowledge > Knowledge and tasks** on.
+others and says which one is missing. Knowledge and tasks are for
+owners and need **Settings > Knowledge > Knowledge and tasks** on.
 
 The Overview only reads. It changes nothing on the band.

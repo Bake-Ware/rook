@@ -5,7 +5,7 @@ Android app and (by hand) firmware devices. It checks Rook's GitHub releases,
 tells you when a new one comes out, and updates things in a safe order when
 you ask it to, or on its own during a maintenance window.
 
-Open **Settings > Updates** on the dashboard (operator account).
+Open **Settings > Updates** on the dashboard (an owner account).
 
 ## What you see
 
@@ -95,7 +95,7 @@ installer again with the previous version.
 The usual production layout runs the hub's system units as an unprivileged
 user. That hub cannot restart its own units, and it is never given a way to
 (no sudoers rule, root helper unit, polkit rule or setuid program). Instead,
-**Prepare the hub update to vX** (`updates.prepare_hub`, operator only) does
+**Prepare the hub update to vX** (`updates.prepare_hub`, owners only) does
 everything up to the switch:
 
 1. the same checks as an update the hub runs itself: every download against

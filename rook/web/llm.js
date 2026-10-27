@@ -16,7 +16,7 @@ export async function mountModels(root){
   const list=h('div',{class:'mg-main'}),panel=h('section',{class:'mg-box strong mg-side'});
   root.replaceChildren(h('div',{class:'mg'},status,h('div',{class:'mg-split'},list,panel)));
 
-  async function get(){const r=await fetch(API+'?view=llm');const j=await r.json().catch(()=>({error:'Bad response'}));if(j.csrf)csrf=j.csrf;if(!r.ok||j.error)throw Error(j.error||'Sign in with your operator account to manage model providers.');return j;}
+  async function get(){const r=await fetch(API+'?view=llm');const j=await r.json().catch(()=>({error:'Bad response'}));if(j.csrf)csrf=j.csrf;if(!r.ok||j.error)throw Error(j.error||'Sign in with an owner account to manage model providers.');return j;}
   async function post(body){const r=await fetch(API,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf,...body})});const j=await r.json().catch(()=>({error:'Bad response'}));if(!r.ok||j.error)throw Error(j.error||'Request failed');return j;}
   async function refresh(){d=await get();if(sel&&sel!=='new'&&!d.providers.some(p=>p.id===sel))sel=null;if(!sel&&d.providers.length)sel=d.providers[0].id;draw();}
   const run=async(b,work,err)=>{if(busy)return;busy=true;b.disabled=true;err.textContent='';try{await work();}catch(e){err.textContent=e.message;}finally{busy=false;b.disabled=false;}};

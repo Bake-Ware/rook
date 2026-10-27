@@ -131,7 +131,7 @@ skill's `help` folder.
 
 ## Agent instructions
 
-**Agent instructions** (under Intelligence sources, operator only) lets you change what Rook
+**Agent instructions** (under Intelligence sources, owners only) lets you change what Rook
 tells agents without installing anything: the message every agent gets when it
 connects, the reminder sent when a claimed task goes quiet, and short tips
 attached to a tool or to a capability's answers. Every entry keeps its history

@@ -158,7 +158,7 @@ class AccountWeb:
             # the redirect and get HTML where it expects JSON.
             if request.headers.get('Sec-Fetch-Mode')=='navigate' or 'text/html' in request.headers.get('Accept',''):
                 raise web.HTTPFound('/account/login',headers=NO_STORE)
-            raise web.HTTPUnauthorized(text='{"error":"Sign in with your operator account."}',
+            raise web.HTTPUnauthorized(text='{"error":"Sign in with an owner account."}',
                                        content_type='application/json',headers=NO_STORE)
         if fresh and time.time()-user['authenticated']>600:
             raise ValueError('Sign in again before changing connected logins.')
@@ -687,7 +687,7 @@ class AccountWeb:
                     # after the code was shown still reach it.
                     explicit=data.get('profile')
                     if explicit not in (None,'') and not user.get('admin'):
-                        raise ValueError('Only the operator account can attach a plugin profile.')
+                        raise ValueError('Only an owner can attach a plugin profile.')
                     grant=self.server._enrollment.issue(bid,profile=self.plugin_profile(bid,explicit) if explicit not in (None,'') else None,keep_profile=False)
                     url=self.origin+'/worker?band='+grant['code']
                     if request.headers.get('X-Rook-View') == 'account':

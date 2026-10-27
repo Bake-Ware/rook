@@ -11,7 +11,7 @@ export async function mountWork(root) {
     const link=document.createElement('link');link.rel='stylesheet';link.href='/account/work/assets/work.css'+new URL(import.meta.url).search;link.dataset.workStyle='1';document.head.append(link);
   }
   const response=await fetch('/account/work/bootstrap');
-  if(!response.ok)throw Error('Sign in with your operator account to use Sessions.');
+  if(!response.ok)throw Error('Sign in with an owner account to use Sessions.');
   const boot=await response.json();
   if(!boot.v2)return mountClassic(root,boot,null);
   let current=null, active=true;

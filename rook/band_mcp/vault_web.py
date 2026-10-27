@@ -8,7 +8,7 @@ from ..remote.account_api import account_api, json_error, json_reply
 
 def routes(vault, on_set, accounts):
     @account_api(accounts, sign_in='Sign in to manage secrets.',
-                 operator_only='Secrets require the operator account.')
+                 operator_only='Secrets require an owner account.')
     async def api(request, user, data):
         if vault is None:
             return json_error('The vault is unavailable on this hub.', 503)

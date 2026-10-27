@@ -42,7 +42,7 @@ def routes(get_node: Callable[[], Any], accounts):
     from .service import Refused
 
     @account_api(accounts, sign_in="Sign in to manage updates.",
-                 operator_only="Only the operator account can manage updates.")
+                 operator_only="Only an owner can manage updates.")
     async def api(request, user, body):
         node = get_node()
         plugin = _plugin(node)

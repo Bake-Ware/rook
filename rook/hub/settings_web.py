@@ -98,7 +98,7 @@ def routes(get_service, accounts):
                 view = q.get("view") or ("overview" if admin else "user")
                 target = q.get("target") or ""
                 if not admin and view != "user":
-                    return _json({"error": "Only the operator account can open this page; "
+                    return _json({"error": "Only an owner can open this page; "
                                            "My preferences is yours.", "csrf": user["csrf"]}, 403)
                 if view == "overview":
                     data = svc.overview()
@@ -142,7 +142,7 @@ def routes(get_service, accounts):
             if not admin:
                 # Your own preferences only.
                 if action not in ("set", "reset", "dry_run") or scope != "user":
-                    return _json({"error": "Only the operator account can change this."}, 403)
+                    return _json({"error": "Only an owner can change this."}, 403)
                 target = uid
             elif scope == "user" and not target:
                 target = uid

@@ -6,6 +6,7 @@ transaction. External identities are keyed by issuer/subject, never by email.
 import hashlib
 import hmac
 import json
+import logging
 import re
 import secrets
 import sqlite3
@@ -15,6 +16,8 @@ from ..core.db import transaction
 from .enrollment import EnrollmentStore
 
 GOOGLE = 'https://accounts.google.com'
+
+log = logging.getLogger('rook.remote.accounts')
 
 
 def digest(value):
@@ -54,6 +57,12 @@ def password_ok(password, encoded):
 
 
 class AccountStore:
+    #: ``owner_check(user_id) -> bool``: whether access.db makes this account
+    #: a hub owner (access v2). The process that holds the hub's access store
+    #: sets it (rook/remote/bootstrap.py, rook/band_mcp/server.py); None means
+    #: only the operator account counts as an owner.
+    owner_check = None
+
     def __init__(self, enrollment=None):
         self.enrollment = enrollment or EnrollmentStore()
         self.path = self.enrollment.path
@@ -189,7 +198,24 @@ class AccountStore:
         user = self.user(row['user_id'])
         if user:
             user.update(csrf=row['csrf'],authenticated=row['authenticated'])
+            # Every owner sees and does what the operator does (Bake,
+            # 2026-10-27): a session's ``admin`` is "an owner", which every
+            # page and API gate reads; ``operator`` keeps the account flag.
+            user['operator'] = bool(user['admin'])
+            user['admin'] = user['operator'] or self.is_owner(user['id'])
         return user
+
+    def is_owner(self, uid):
+        """Whether access.db makes ``uid`` a hub owner. Unreadable counts as
+        no (the operator account is an owner without it)."""
+        check = self.owner_check
+        if check is None:
+            return False
+        try:
+            return bool(check(uid))
+        except Exception:  # noqa: BLE001 - a member until it can be read
+            log.exception('ROOK AUTHZ ALERT: owner check for %s failed', uid)
+            return False
 
     def new_session(self, uid):
         token = secrets.token_urlsafe(32)
