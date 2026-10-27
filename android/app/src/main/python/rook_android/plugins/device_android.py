@@ -702,9 +702,12 @@ async def _then_screen(go, screen) -> dict:
     from rook_android import screenwait
     bridge = screenwait.hid()
     before = await screenwait.rev(bridge) if bridge is not None else None
+    app = (await screenwait.front(bridge) or "") if bridge is not None else ""
     out = run()
     if out.get("ok") and bridge is not None:
-        await screenwait.with_screen(out, before, bridge)
+        # Wait for another app in front; opening a link in the app already in
+        # front (or the launcher's own page) falls back to any change after 2 s.
+        await screenwait.with_screen(out, before, bridge, before_app=app)
     elif out.get("ok"):
         out["screen"] = {"error": "accessibility service not enabled (grant it in the app)"}
     return out

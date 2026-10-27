@@ -39,8 +39,8 @@ class ScreenModelTest {
         assertEquals("toggle", items.getJSONObject(5).getString("kind"))
         val text = s.getJSONArray("text")
         val lines = (0 until text.length()).map { text.getString(it) }
-        // A row's own texts are not repeated; "Voice" (not clickable) stays text.
-        assertEquals(listOf("SETTINGS", "Voice", "Voice", "CONVERSATION MODE"), lines)
+        // A row's own texts are not repeated; "Voice" (not clickable) stays text, once.
+        assertEquals(listOf("SETTINGS", "Voice", "CONVERSATION MODE"), lines)
         assertTrue(s.getString("rev").length == 12)
     }
 

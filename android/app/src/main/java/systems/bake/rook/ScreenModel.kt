@@ -122,6 +122,7 @@ object ScreenModel {
         var moreItems = 0
         var moreText = 0
         var focus: String? = null
+        var lastText: String? = null
         fun walk(n: SNode, depth: Int) {
             if (depth > 60) return
             if (n.visible && n.actionable) {
@@ -162,8 +163,10 @@ object ScreenModel {
                 if (n.focused && n.editable) focus = label.ifEmpty { id ?: "field" }
             } else if (n.visible && n !in used) {
                 val l = n.ownLabel()
-                if (l.isNotEmpty()) {
+                // A labelled container and its own text say the same thing once.
+                if (l.isNotEmpty() && l != lastText) {
                     if (text.length() < maxText) text.put(cut(l, TEXT_MAX)) else moreText++
+                    lastText = l
                 }
             }
             for (c in n.children) walk(c, depth + 1)

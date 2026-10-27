@@ -29,6 +29,9 @@ POLL_S = 0.15
 CHANGE_WAIT_S = 2.0
 SETTLE_MS = 500
 AFTER_MAX_S = 4.0
+#: Accessibility events arrive up to ~100 ms late (notificationTimeout): quiet
+#: is not trusted before this long after the action.
+AFTER_MIN_S = 0.3
 #: The longest any wait may run (ui.wait timeout, ui.click wait).
 WAIT_MAX_S = 60.0
 
@@ -54,6 +57,25 @@ async def rev(bridge=None) -> str | None:
         return str(r) if r is not None else None
     except Exception:
         return None
+
+
+async def front(bridge=None) -> str | None:
+    """Package of the app in front, or None (no window for a moment while an app starts)."""
+    b = bridge or _Hid
+    try:
+        app = await _call(b.screenApp)
+        return str(app[0]) if app is not None and len(app) == 2 else None
+    except Exception:
+        return None
+
+
+async def shown(bridge=None) -> bool:
+    """A window is in front (none for a moment while an app is starting)."""
+    b = bridge or _Hid
+    try:
+        return await _call(b.screenApp) is not None
+    except Exception:
+        return True
 
 
 async def quiet_ms(bridge=None) -> int:
@@ -101,22 +123,30 @@ async def summary(bridge=None, max_items: int = 60, max_text: int = 40) -> dict:
 
 
 async def settle_after(before: str | None, bridge=None, max_s: float = AFTER_MAX_S,
-                       settle_ms: int = SETTLE_MS) -> dict:
+                       settle_ms: int = SETTLE_MS, before_app: str | None = None) -> dict:
     """After an action: wait until the screen differs from ``before`` (up to
     CHANGE_WAIT_S), then until it has been quiet for ``settle_ms``; never
-    longer than ``max_s`` in all. Returns {changed, waited_ms}."""
+    longer than ``max_s`` in all. With ``before_app`` (an action that opens
+    an app) the change awaited is another app in front, since a ticking
+    clock on the old screen changes it too. Returns {changed, waited_ms}."""
     b = bridge or _Hid
     start = _clock()
     changed = False
     while _clock() - start < min(CHANGE_WAIT_S, max_s):
-        now = await rev(b)
-        if now is not None and now != before:
-            changed = True
-            break
+        if before_app is not None:
+            pkg = await front(b)
+            if pkg is not None and pkg != before_app:
+                changed = True
+                break
+        else:
+            now = await rev(b)
+            if now is not None and now != before and await shown(b):
+                changed = True
+                break
         await asyncio.sleep(POLL_S)
     while _clock() - start < max_s:
         q = await quiet_ms(b)
-        if q < 0 or q >= settle_ms:
+        if q < 0 or (q >= settle_ms and _clock() - start >= AFTER_MIN_S and await shown(b)):
             break
         await asyncio.sleep(POLL_S)
     if not changed:
@@ -125,10 +155,11 @@ async def settle_after(before: str | None, bridge=None, max_s: float = AFTER_MAX
     return {"changed": changed, "waited_ms": int((_clock() - start) * 1000)}
 
 
-async def with_screen(out: dict, before: str | None, bridge=None) -> dict:
+async def with_screen(out: dict, before: str | None, bridge=None,
+                      before_app: str | None = None) -> dict:
     """Add ``screen`` (the summary after the screen settles) to an action's reply."""
     try:
-        state = await settle_after(before, bridge)
+        state = await settle_after(before, bridge, before_app=before_app)
         shot = await summary(bridge)
         shot.pop("ok", None)
         out["screen"] = {**shot, **state}
