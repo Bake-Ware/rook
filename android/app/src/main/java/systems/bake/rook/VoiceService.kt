@@ -203,6 +203,7 @@ class VoiceService : Service() {
                 wakeQuietUntil = SystemClock.elapsedRealtime() + ms.coerceIn(0L, 4 * 3600_000L)
                 Log.i(TAG, "wake word quiet for ${ms / 60000} min")
             }
+            override fun onSpeaker(line: String) = current { VoiceBus.emit(conn) { it.onSpeaker(line) } }
             override fun onVoiceModels(json: String) = current {
                 getSharedPreferences("rook", MODE_PRIVATE).edit().putString(VoiceModels.PREF, json).apply()
             }
@@ -686,6 +687,8 @@ object VoiceBus {
         fun onBye(mode: String) {}
         /** The voice switched its listening mode ([label]: "Dictate", "Active listening"). */
         fun onMode(label: String) {}
+        /** Settings > Debug: show speaker ID; who the voice took the last utterance for. */
+        fun onSpeaker(line: String) {}
         fun onTool(title: String, status: String) {}
         fun onTranscript(text: String, turn: Int?) = onTranscript(text)
         fun onAssistantDelta(text: String, turn: Int?) = onAssistantDelta(text)

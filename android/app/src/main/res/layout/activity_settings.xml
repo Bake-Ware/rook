@@ -53,6 +53,7 @@
           <TextView style="@style/RookSectionLabel" android:text="BEHAVIOUR" />
           <CheckBox android:id="@+id/fastVoice" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="false" android:text="@string/fast_voice" />
           <CheckBox android:id="@+id/showThinking" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="false" android:text="@string/show_thinking" />
+          <CheckBox android:id="@+id/debugSpeaker" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="false" android:text="@string/debug_speaker" />
           <CheckBox android:id="@+id/expressiveVoice" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="true" android:text="@string/expressive_voice" />
           <CheckBox android:id="@+id/wakeEnabled" android:layout_width="match_parent" android:layout_height="wrap_content" android:checked="true" android:text="@string/wake_enabled" />
           <Button android:id="@+id/btnDefaultAssistant" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Use Rook as default assistant" style="@style/RookOutlinedButton" />

@@ -150,6 +150,11 @@ class SettingsActivity : AppCompatActivity() {
             prefs.edit().putBoolean("show_thinking", enabled).apply()
             VoiceService.inst?.thinkingChanged()
         }
+        b.debugSpeaker.isChecked = prefs.getBoolean(SpeakerDebug.PREF, false)
+        b.debugSpeaker.setOnCheckedChangeListener { _, enabled ->
+            prefs.edit().putBoolean(SpeakerDebug.PREF, enabled).apply()
+            VoiceService.inst?.thinkingChanged()      // reopens the session with the new hello
+        }
         b.expressiveVoice.isChecked = prefs.getBoolean(PREF_EXPRESSIVE, true)
         b.expressiveVoice.setOnCheckedChangeListener { _, enabled ->
             prefs.edit().putBoolean(PREF_EXPRESSIVE, enabled).apply()
