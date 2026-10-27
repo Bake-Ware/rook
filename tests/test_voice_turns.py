@@ -4,6 +4,7 @@ Front's append-only transcript."""
 import asyncio
 import json
 import logging
+import re
 import time
 
 import pytest
@@ -418,7 +419,10 @@ def test_warm_start_then_first_turn_extends_it(tmp_path):
         finally:
             await shutdown(conn, store, jobs)
         warm, first = front.requests[0], front.requests[1]
-        assert 'Bake prefers short answers' in warm[-1]['content'] and 'Reply with just: Ready.' in warm[-1]['content']
+        assert 'Bake prefers short answers' in warm[-1]['content'] and 'has not spoken yet' in warm[-1]['content']
+        # The warm-up stays in the transcript: it must not tell the model how to reply,
+        # or later turns obey it too ("I am here." to every line, 2026-10-27).
+        assert not re.search(r'(?i)\b(reply|say|answer)\b', FrontBackground.WARM_NOTE)
         assert first[:len(warm)] == warm and first[len(warm)] == {'role': 'assistant', 'content': 'Ready.'}
         assert first[-1]['content'].endswith('hello')
     asyncio.run(scenario())

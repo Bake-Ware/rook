@@ -313,7 +313,10 @@ class FrontBackground:
         return task
 
     # --- warm start --------------------------------------------------------------
-    WARM_NOTE = '[The user opened a voice session and is about to speak. Reply with just: Ready.]'
+    # No instruction in it: the warm-up stays in Front's transcript, and "Reply with just:
+    # Ready." was obeyed on later turns too, so a session answered "Ready" or "I am here"
+    # to every line (2026-10-27: 8 of 30 replies canned in a replay, 0 of 30 with this note).
+    WARM_NOTE = '[Internal note, not from the user: a voice session just opened; the user has not spoken yet.]'
 
     def warm(self):
         """Session start: open Front's transcript with one tiny unspoken exchange, so
@@ -459,15 +462,21 @@ class FrontBackground:
         async def on_clause(clause):
             spoken.append(clause)
             await conn.say(clause, epoch, record=False)
+        guard = front_mod.RepeatGuard(messages)
+        async def guarded(clause):
+            await guard.clause(clause, on_clause)
         try:
             try:
                 content = await asyncio.wait_for(
-                    self.front(messages, on_clause, lambda: timing.mark('front_first_token_ms')),
+                    self.front(messages, guarded, lambda: timing.mark('front_first_token_ms')),
                     float(os.environ.get('VOICE_FRONT_TIMEOUT_S', '30')))
-            except front_mod.FragmentReply as fragment:
-                # A word and a stop ("I"): ask once more from the stored history, tidied.
-                logging.info('Front reply was a fragment (%d chars); asking again', len(str(fragment)))
-                self.transcript.restart()
+                await guard.finish(on_clause)
+            except (front_mod.FragmentReply, front_mod.RepeatReply) as again:
+                # A word and a stop ("I"), or a word-for-word repeat of a recent reply ("I am
+                # here." to every line): ask once more from the stored history, tidied.
+                logging.info('Front reply was a %s (%d chars); asking again',
+                             'repeat' if isinstance(again, front_mod.RepeatReply) else 'fragment', len(str(again)))
+                self.transcript.restart(str(again) if isinstance(again, front_mod.RepeatReply) else '')
                 messages = self.transcript.request(self.fixed(), past, self.board.facts(), text, self.house_context)
                 content = await asyncio.wait_for(self.front(messages, on_clause, None),
                                                  float(os.environ.get('VOICE_FRONT_TIMEOUT_S', '30')))
