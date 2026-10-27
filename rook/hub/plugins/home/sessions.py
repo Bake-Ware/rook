@@ -367,9 +367,7 @@ class Sessions:
         if old is not None:
             with contextlib.suppress(Exception):
                 await old.ws.close(code=1000)
-        for key, st in (hello.get("lanes") or {}).items():
-            if isinstance(st, dict):
-                self.lanes[key] = {**self.lanes.get(key, {}), **st, "updated": time.time()}
+        self._apply_hello_lanes(hello, wake=False)     # woken below, once configured
         log.info("session host %s connected", link.host)
         self.home._note("sessions", True, worker=link.host, event="connected")
         watcher = asyncio.get_running_loop().create_task(self._watch(link))
@@ -400,6 +398,26 @@ class Sessions:
                 log.info("session host %s disconnected", link.host)
                 self.home._note("sessions", False, worker=link.host,
                                 error="the session host disconnected")
+
+    def _apply_hello_lanes(self, hello: dict, wake: bool = True) -> None:
+        """Lane states from the session host's hello, ``{"house/main": "idle"}`` (a
+        dict per lane is taken too). A disconnect marks every lane offline and an idle
+        lane sends no further state event, so without this the house agent stayed
+        offline after every reconnect and its queued turns never ran."""
+        lanes = hello.get("lanes")
+        if not isinstance(lanes, dict):
+            return
+        roles = set(self.roles())
+        for key, st in lanes.items():
+            if isinstance(st, str):
+                st = {"state": st}
+            if not isinstance(key, str) or not isinstance(st, dict):
+                continue
+            self.lanes[key] = {**self.lanes.get(key, {}), **st, "updated": time.time()}
+            role = key.split("/", 1)[0]
+            if wake and st.get("state") in ("idle", "sleeping", "stopped") and role in roles:
+                self._ensure_pump(role)
+                self.inbox(role).wake.set()
 
     async def send(self, msg: dict) -> None:
         link = self.link
@@ -566,6 +584,7 @@ class Sessions:
             if self.link is not None:
                 self.link.hello = msg
             await self._configure_safely()
+            self._apply_hello_lanes(msg)
             return
         if t != "ev":
             return
