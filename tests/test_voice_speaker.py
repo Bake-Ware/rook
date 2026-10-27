@@ -775,5 +775,6 @@ def test_learned_clips_cannot_pull_a_bystander_in(tmp_path):
                                                      * normalize_np(0.95 * u + 0.31 * w)))["ok"]
     bystander = normalize_np(0.38 * bake + np.sqrt(1 - 0.38 ** 2) * u)         # near those clips, not him
     assert s._score("bake", bystander)[0] >= s.threshold                         # the bank lifts it ...
-    assert s.learn_sample("bake", bystander)["reason"] == "too_far"             # ... but it is never banked
+    result = s.learn_sample("bake", bystander)
+    assert not result["ok"] and result.get("reason") == "too_far"                # ... but it is never banked
     assert float(edge.dot(bake)) == pytest.approx(0.46, abs=1e-4)
