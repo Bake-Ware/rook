@@ -54,8 +54,8 @@ class SNode(
     }
 }
 
-/** An accessibility window: its type (AccessibilityWindowInfo.TYPE_*), z-layer and whether it is active. */
-class SWindow(val type: Int, val layer: Int, val active: Boolean)
+/** An accessibility window: its type (AccessibilityWindowInfo.TYPE_*), z-layer, whether it is active, and its app. */
+class SWindow(val type: Int, val layer: Int, val active: Boolean, val pkg: String? = null)
 
 object ScreenModel {
     /** AccessibilityWindowInfo.TYPE_APPLICATION (activities, dialogs, popups and sub-windows). */
@@ -66,21 +66,25 @@ object ScreenModel {
     const val TEXT_MAX = 160
 
     /**
-     * Which windows the ui.* caps read, in order: the active window first (so
-     * indices into it stay what they were), then application windows above it,
-     * lowest first. A dropdown or popup menu is a separate, non-focusable window
-     * on top of the activity; reading only the active window missed it, and
-     * agents fell back to tapping pixels. The keyboard, the status and
-     * navigation bars and accessibility overlays are left out.
+     * Which windows the ui.* caps read, top first: the same app's windows above
+     * the active one (highest first), then the active window. A dropdown or
+     * popup menu is a separate, non-focusable window on top of the activity;
+     * reading only the active window missed it, and agents fell back to tapping
+     * pixels. Top first, so a label in both (OK, Delete) matches the one in
+     * front. Another app's window (the other half of a split screen, an
+     * overlay), the keyboard, the status and navigation bars and accessibility
+     * overlays are left out. With no popup this is the active window alone.
      */
     fun pickWindows(wins: List<SWindow>): List<Int> {
         val active = wins.indexOfFirst { it.active }
         if (active < 0) return emptyList()
         val floor = wins[active].layer
+        val app = wins[active].pkg
         val above = wins.indices.filter { i ->
-            i != active && wins[i].type == TYPE_APPLICATION && wins[i].layer > floor
-        }.sortedBy { wins[it].layer }
-        return listOf(active) + above
+            i != active && wins[i].type == TYPE_APPLICATION && wins[i].layer > floor &&
+                (app == null || wins[i].pkg == app)
+        }.sortedByDescending { wins[it].layer }
+        return above + active
     }
 
     private fun cut(s: String, max: Int): String {
@@ -115,7 +119,7 @@ object ScreenModel {
      * changes when what is shown changes. A clickable row with no label of its
      * own takes its inner texts as label and detail, so they are not repeated.
      */
-    fun summary(roots: List<SNode>, maxItems: Int = 60, maxText: Int = 40): JSONObject {
+    fun summary(roots: List<SNode>, maxItems: Int = 60, maxText: Int = 40, pkg: String? = null): JSONObject {
         val items = JSONArray()
         val text = JSONArray()
         val used = HashSet<SNode>()
@@ -173,6 +177,7 @@ object ScreenModel {
         }
         roots.forEach { walk(it, 0) }
         return JSONObject().apply {
+            pkg?.let { put("package", it) }
             focus?.let { put("focus", it) }
             put("items", items)
             put("text", text)
@@ -245,7 +250,8 @@ object ScreenModel {
 
     /**
      * Fields named by [label] (its hint, content description, labelFor view,
-     * current text, or a text just above it or to its left on the same row)
+     * or a text just above it or to its left on the same row; never what is
+     * typed in it)
      * and/or [id]. With neither: the focused field, else the only one on screen.
      */
     fun findFields(roots: List<SNode>, label: String?, id: String?, contains: Boolean): List<SNode> {
@@ -257,18 +263,18 @@ object ScreenModel {
         val direct = all.filter { f ->
             (id == null || idSame(f.id, id, contains)) &&
                 (label == null || same(f.hint, label, contains) || same(f.desc, label, contains) ||
-                    same(f.labeledBy, label, contains) || (!f.password && same(f.value(), label, contains)))
+                    same(f.labeledBy, label, contains))
         }
         if (direct.isNotEmpty() || label == null) return direct
         // A caption next to the field: the nearest field below it (within
-        // 400 px, overlapping horizontally) or to its right on the same row.
+        // 300 px, overlapping horizontally) or to its right on the same row.
         val out = LinkedHashSet<SNode>()
         for (t in flatten(roots)) {
             if (!t.visible || t.editable || !same(t.ownLabel(), label, contains)) continue
             val b = t.bounds
             val near = all.filter { f ->
                 val fb = f.bounds
-                val below = fb[1] >= b[1] && fb[1] - b[3] <= 400 && fb[0] < b[2] && fb[2] > b[0]
+                val below = fb[1] >= b[1] && fb[1] - b[3] <= 300 && fb[0] < b[2] && fb[2] > b[0]
                 val right = fb[0] >= b[2] - 4 && fb[1] < b[3] && fb[3] > b[1]
                 (id == null || idSame(f.id, id, contains)) && (below || right)
             }.minByOrNull { f -> Math.abs(f.bounds[1] - b[1]) + Math.abs(f.bounds[0] - b[0]) }

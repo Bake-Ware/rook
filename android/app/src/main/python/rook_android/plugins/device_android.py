@@ -581,7 +581,8 @@ class AndroidDevicePlugin(Plugin):
         accessibility, internet, airplane, network, nfc, date, storage, security,
         developer, main, or a raw android.settings.* action), search (text: web
         search), email (to, subject, text: opens a draft), sms (to, text: opens a
-        draft, never sends), camera. screen=true returns the screen after it opens."""
+        draft, never sends), camera. app names the app that took it when Android
+        says (not for share's chooser); screen=true returns the screen after it opens."""
         try:
             spec = intent_spec(kind, text=text, to=to, subject=subject, mode=mode,
                                seconds=seconds, hour=hour, minute=minute, label=label,
@@ -604,8 +605,15 @@ class AndroidDevicePlugin(Plugin):
             from java import jint   # AlarmClock reads getIntExtra: an int, not a long
             for name, value in (spec.get("extras") or {}).items():
                 i.putExtra(name, value if isinstance(value, (bool, str)) else jint(int(value)))
+            handler = None
             if spec.get("chooser"):
                 i = Intent.createChooser(i, spec["chooser"])
+            else:
+                try:   # which app takes it (None when Android hides it or asks)
+                    ri = ctx.getPackageManager().resolveActivity(i, 0)
+                    handler = str(ri.activityInfo.packageName) if ri is not None else None
+                except Exception:
+                    handler = None
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             try:
                 ctx.startActivity(i)
@@ -613,7 +621,10 @@ class AndroidDevicePlugin(Plugin):
                 if "ActivityNotFound" in type(e).__name__ or "No Activity" in str(e):
                     return {"ok": False, "error": f"no app on this phone handles {kind}"}
                 raise
-            return {"ok": True, "kind": str(kind).strip().lower(), "action": spec["action"]}
+            out = {"ok": True, "kind": str(kind).strip().lower(), "action": spec["action"]}
+            if handler and handler != "android":
+                out["app"] = handler
+            return out
         return await _then_screen(go, screen)
 
     @capability("sound", risk="exec", tags=("physical",), scope="local")

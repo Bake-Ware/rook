@@ -112,15 +112,17 @@ class HidAccessibilityService : AccessibilityService() {
         val active = rootInActiveWindow
         val wins: List<AccessibilityWindowInfo> = try { windows ?: emptyList() } catch (_: Exception) { emptyList() }
         if (wins.isEmpty()) return listOfNotNull(active)
-        val picked = ScreenModel.pickWindows(wins.map { SWindow(it.type, it.layer, it.isActive) })
-        if (picked.isEmpty()) return listOfNotNull(active)
-        val out = ArrayList<AccessibilityNodeInfo>()
-        for ((k, i) in picked.withIndex()) {
-            val root = (if (k == 0) active else null) ?: wins[i].root ?: continue
-            if (k > 0 && active != null && root == active) continue
-            out.add(root)
+        // Roots of app windows only (popups, dialogs, the activity): their package
+        // keeps another app's window out (ScreenModel.pickWindows).
+        val roots = wins.map { w ->
+            if (w.isActive) active ?: w.root
+            else if (w.type == AccessibilityWindowInfo.TYPE_APPLICATION) w.root else null
         }
-        return out
+        val picked = ScreenModel.pickWindows(wins.mapIndexed { i, w ->
+            SWindow(w.type, w.layer, w.isActive, roots[i]?.packageName?.toString())
+        })
+        if (picked.isEmpty()) return listOfNotNull(active)
+        return picked.mapNotNull { roots[it] }.distinct()
     }
 
     /** Visible nodes of the screen's windows in tree (top-to-bottom) order. */
@@ -167,8 +169,12 @@ class HidAccessibilityService : AccessibilityService() {
         return screenRoots().map { copy(it, 0) }
     }
 
-    private fun summaryInternal(maxItems: Int, maxText: Int): String =
-        ScreenModel.summary(snapshot(), maxItems, maxText).toString()
+    private fun summaryInternal(maxItems: Int, maxText: Int): String {
+        // The package from the same read as the items, so they never mix two moments.
+        val roots = snapshot()
+        val pkg = (roots.lastOrNull()?.ref as? AccessibilityNodeInfo)?.packageName?.toString()
+        return ScreenModel.summary(roots, maxItems, maxText, pkg).toString()
+    }
 
     private fun revInternal(): String = ScreenModel.rev(snapshot())
 
@@ -178,19 +184,28 @@ class HidAccessibilityService : AccessibilityService() {
         val roots = snapshot()
         val hits = ScreenModel.findFields(roots, label, id, contains)
         val out = JSONObject()
-        if (index < 0 || index >= hits.size) {
+        if (index < 0 && hits.size > 1) {
+            // Never pick one of several silently: name them and ask for index.
+            val names = JSONArray()
+            hits.take(10).forEach { names.put(JSONObject().put("label", ScreenModel.fieldName(it))
+                .put("bounds", JSONArray(it.bounds.toList()))) }
+            return out.put("ok", false).put("error", "${hits.size} fields match; pass index (0 = top)")
+                .put("matches", hits.size).put("fields", names).toString()
+        }
+        val pick = if (index < 0) 0 else index
+        if (pick >= hits.size) {
             val names = JSONArray()
             ScreenModel.fields(roots).take(10).forEach { names.put(ScreenModel.fieldName(it)) }
             return out.put("ok", false)
                 .put("error", when {
-                    hits.isNotEmpty() -> "only ${hits.size} matching field(s), index $index out of range"
+                    hits.isNotEmpty() -> "only ${hits.size} matching field(s), index $pick out of range"
                     label == null && id == null -> if (names.length() == 0) "no text field on screen"
                         else "no focused field; name one with label or id"
                     else -> "no field matches"
                 })
                 .put("matches", hits.size).put("fields", names).toString()
         }
-        val f = hits[index]
+        val f = hits[pick]
         val node = f.ref as? AccessibilityNodeInfo ?: return out.put("ok", false).put("error", "field went away").toString()
         node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
         val now = if (append) (f.value() ?: "") + text else text
@@ -361,7 +376,7 @@ class HidAccessibilityService : AccessibilityService() {
             // Breadth-first, so the outermost (main) list wins over nested carousels.
             target = null
             val queue = ArrayDeque<AccessibilityNodeInfo>()
-            queue.addAll(screenRoots().asReversed())   // the top window's list first (an open dropdown)
+            queue.addAll(screenRoots())   // top window first: an open dropdown's list
             while (queue.isNotEmpty()) {
                 val n = queue.removeFirst()
                 if (n.isScrollable && n.isVisibleToUser) { target = n; break }

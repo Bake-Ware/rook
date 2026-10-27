@@ -118,7 +118,12 @@ async def summary(bridge=None, max_items: int = 60, max_text: int = 40) -> dict:
     locked = _locked()
     if locked:
         out["locked"] = True
-    out.update(json.loads(str(raw)))
+    shot = json.loads(str(raw))
+    # The summary names its own package (same read as its items); an app label
+    # read a moment apart from another app is dropped rather than mixed in.
+    if shot.get("package") and out.get("package") not in (None, shot["package"]):
+        out.pop("app", None)
+    out.update(shot)
     return out
 
 
@@ -126,12 +131,12 @@ async def settle_after(before: str | None, bridge=None, max_s: float = AFTER_MAX
                        settle_ms: int = SETTLE_MS, before_app: str | None = None) -> dict:
     """After an action: wait until the screen differs from ``before`` (up to
     CHANGE_WAIT_S), then until it has been quiet for ``settle_ms``; never
-    longer than ``max_s`` in all. With ``before_app`` (an action that opens
+    longer than ``max_s`` in all (then settled is false). With ``before_app`` (an action that opens
     an app) the change awaited is another app in front, since a ticking
     clock on the old screen changes it too. Returns {changed, waited_ms}."""
     b = bridge or _Hid
     start = _clock()
-    changed = False
+    changed = settled = False
     while _clock() - start < min(CHANGE_WAIT_S, max_s):
         if before_app is not None:
             pkg = await front(b)
@@ -147,12 +152,14 @@ async def settle_after(before: str | None, bridge=None, max_s: float = AFTER_MAX
     while _clock() - start < max_s:
         q = await quiet_ms(b)
         if q < 0 or (q >= settle_ms and _clock() - start >= AFTER_MIN_S and await shown(b)):
+            settled = True
             break
         await asyncio.sleep(POLL_S)
     if not changed:
         now = await rev(b)
         changed = now is not None and now != before
-    return {"changed": changed, "waited_ms": int((_clock() - start) * 1000)}
+    # settled false: still changing at the cap (a spinner, a ticking clock).
+    return {"changed": changed, "settled": settled, "waited_ms": int((_clock() - start) * 1000)}
 
 
 async def with_screen(out: dict, before: str | None, bridge=None,

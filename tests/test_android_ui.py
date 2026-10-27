@@ -152,7 +152,7 @@ def test_click_waits_for_the_node_then_returns_the_new_screen(load):
     counts = [c for c in hid.calls if c[0] == "count"]
     assert len(counts) == 3                      # polled until it appeared
     assert hid.calls.index(counts[-1]) < hid.calls.index(("click", "Settings", None, None, False, 0, False))
-    assert out["ok"] and out["screen"]["changed"] is True
+    assert out["ok"] and out["screen"]["changed"] is True and out["screen"]["settled"] is True
     assert out["screen"]["items"][0]["label"] == "Settings" and out["screen"]["app"] == "USAA"
 
 
@@ -214,14 +214,46 @@ def test_type_into_a_named_field_never_echoes_the_text(load):
     hid = FakeHid()
     m, p = load(hid)
     out = run(p._type(text="hunter2", label="Password", submit="yes"))
-    assert hid.calls[-1] == ("type", "Password", None, False, 0, "hunter2", False, True)
+    assert hid.calls[-1] == ("type", "Password", None, False, -1, "hunter2", False, True)
     assert out["ok"] and "hunter2" not in json.dumps(out) and out["app"] == "USAA"
     run(p._type(text="more", append=True, label="", id="", wait=1))
     assert ("fields", None, None, False) in hid.calls
-    assert hid.calls[-1] == ("type", None, None, False, 0, "more", True, False)
+    assert hid.calls[-1] == ("type", None, None, False, -1, "more", True, False)
+    run(p._type(text="y", label="Name", index="1"))
+    assert hid.calls[-1] == ("type", "Name", None, False, 1, "y", False, False)
 
 
 def test_new_caps_need_the_service(load):
     m, p = load(FakeHid(enabled=False))
     for out in (run(p._screen()), run(p._wait()), run(p._type(text="x"))):
         assert out["ok"] is False and "accessibility" in out["error"]
+
+
+def test_wait_needs_a_window_in_front(load):
+    hid = FakeHid()
+    hid.present = 0
+    apps = [None, None, ["com.x", "X"]]
+    hid.screenApp = lambda: apps.pop(0) if len(apps) > 1 else apps[0]
+    m, p = load(hid)
+    out = run(p._wait(text="Loading", gone=True, screen=False, timeout=5))
+    assert out["ok"] and len(apps) == 1        # it waited past the gap with no window
+
+
+def test_screen_never_mixes_another_apps_label(load):
+    hid = FakeHid()
+    hid.screenSummary = lambda a, b: json.dumps({"package": "com.next", "items": [], "text": [],
+                                                 "rev": "r9"})
+    m, p = load(hid)
+    out = run(p._screen())
+    assert out["package"] == "com.next" and "app" not in out
+
+
+def test_screen_after_an_action_says_when_it_never_settled(load):
+    hid = FakeHid()
+    hid.quiet = 10                                   # a spinner: always changing
+    hid.revs = ["a", "b"]
+    m, p = load(hid)
+    clock = iter(range(0, 1000))
+    m._sw._clock = lambda: next(clock) * 0.5
+    out = run(p._click(text="Settings", screen=True))
+    assert out["screen"]["settled"] is False and out["screen"]["changed"] is True

@@ -92,7 +92,15 @@ class ScreenModelTest {
             SWindow(type = ScreenModel.TYPE_APPLICATION, layer = 20, active = true),  // the activity
             SWindow(type = ScreenModel.TYPE_APPLICATION, layer = 10, active = false), // an app below
         )
-        assertEquals(listOf(3, 1), ScreenModel.pickWindows(wins))
+        assertEquals(listOf(1, 3), ScreenModel.pickWindows(wins))       // top first
+        // Another app's window above (split screen, an overlay) is left out.
+        val apps = listOf(
+            SWindow(ScreenModel.TYPE_APPLICATION, 22, false, "com.other"),
+            SWindow(ScreenModel.TYPE_APPLICATION, 21, false, "com.app"),
+            SWindow(ScreenModel.TYPE_APPLICATION, 23, false, "com.app"),
+            SWindow(ScreenModel.TYPE_APPLICATION, 20, true, "com.app"),
+        )
+        assertEquals(listOf(2, 1, 3), ScreenModel.pickWindows(apps))
         assertEquals(emptyList<Int>(), ScreenModel.pickWindows(wins.map { SWindow(it.type, it.layer, false) }))
         assertEquals(listOf(0), ScreenModel.pickWindows(listOf(SWindow(ScreenModel.TYPE_APPLICATION, 1, true))))
     }
@@ -115,6 +123,9 @@ class ScreenModelTest {
         assertEquals("app:id/q", ScreenModel.findFields(roots, null, "q", false).single().id)
         assertEquals("app:id/q", ScreenModel.findFields(roots, "sea", null, true).single().id)
         assertTrue(ScreenModel.findFields(roots, "Address", null, false).isEmpty())
+        // What is typed in a field never names it.
+        val typed = listOf(SNode(children = listOf(SNode(text = "Search", editable = true, id = "a"))))
+        assertTrue(ScreenModel.findFields(typed, "search", null, false).isEmpty())
         // No label: the focused one, else the only one, else none.
         assertTrue(ScreenModel.findFields(roots, null, null, false).isEmpty())
         val one = listOf(SNode(children = listOf(SNode(editable = true, id = "x"))))

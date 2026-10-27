@@ -228,6 +228,10 @@ class AndroidUiPlugin(Plugin):
         state = {}
 
         async def met() -> bool:
+            # No window for a moment while apps switch: nothing matches then,
+            # which must not count as gone (or as settled).
+            if not await _sw.shown(_Hid):
+                return False
             if t or d or i:
                 n = await asyncio.to_thread(_Hid.matchCount, t, d, i, c)
                 state["matches"] = max(n, 0)
@@ -263,12 +267,14 @@ class AndroidUiPlugin(Plugin):
 
     @capability("type", risk="exec", scope="local")
     async def _type(self, text: str, label: str = "", id: str = "", contains: bool = False,
-                    index: int = 0, append: bool = False, submit: bool = False,
+                    index: int = -1, append: bool = False, submit: bool = False,
                     wait: float = 0, screen: bool = False) -> dict:
         """Type text into a field in one call (no click first). label names the
-        field: its hint, description, label view, current text, or the caption
-        just above it or to its left; id matches its view id. With neither, the
-        focused field, else the only field on screen. Replaces the field's text
+        field: its hint, description, label view, or the caption just above it
+        or to its left (never what is typed in it); id matches its view id. With
+        neither, the focused field, else the only field on screen. Several
+        matches and no index -> ok false listing them; index picks one (0 = top).
+        Replaces the field's text
         unless append=true; submit=true then presses the keyboard's enter/send
         (Android 11+). wait=<seconds> (up to 8) first waits for the field;
         screen=true returns the screen after it settles. Not found -> ok false
@@ -276,7 +282,7 @@ class AndroidUiPlugin(Plugin):
         if (err := _guard()):
             return err
         lab, i, c = _opt(label), _opt(id), _flag(contains)
-        want = int(index)
+        want = -1 if index is None or index == "" else int(index)
         try:
             secs = _num(wait, 0, 0, 8)
             if secs > 0:
