@@ -440,6 +440,9 @@ def test_bank_is_capped_and_never_evicts_the_enrollment(tmp_path, monkeypatch):
     weakest = [c for c in s.bank("bake") if c["score"] == pytest.approx(0.46, abs=1e-3) and c["source"] == "learned"][0]
     stronger = s.learn_sample("bake", toward(bake, 0.52, seed=50))    # stronger: evicts weakest since bank is full
     assert stronger["ok"] and stronger["evicted"] == weakest["version"]
+    oldest_learned = [c for c in s.bank("bake") if c["source"] == "learned"][1]  # second learned is oldest after eviction
+    weaker = s.learn_sample("bake", toward(bake, 0.47, seed=51))     # weaker than all current: evicts oldest learned
+    assert weaker["ok"] and weaker["evicted"] == oldest_learned["version"]
     active = [c for c in s.bank("bake") if c["active"]]
     assert len(active) == 6 and sum(c["pinned"] for c in active) == 3
 
