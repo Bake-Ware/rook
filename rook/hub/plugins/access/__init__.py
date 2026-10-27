@@ -191,7 +191,7 @@ class Access(Plugin):
         """Whether a person (default: you) may call ``cap`` on ``worker``, and
         which grant decides. Asking about someone else is for owners."""
         store = self._store()
-        uid = self._account(user) if user else self._me()
+        uid = self._person(user, "users.explain") if user else self._me()
         if not uid:
             raise ValueError("user: an account id (users.list lists them)")
         if uid != self._me():

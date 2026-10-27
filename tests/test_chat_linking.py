@@ -734,6 +734,8 @@ async def test_users_caps_refuse_an_account_that_does_not_exist(tmp_path, monkey
     for user in ("nobody", "bake"):
         with pytest.raises(PermissionError):
             await call("users.link_code", {"platform": "telegram", "user": user}, member())
+        with pytest.raises(PermissionError):
+            await call("users.explain", {"cap": "shell.exec", "user": user}, member())
     mine = await call("users.link_code", {"platform": "telegram", "user": "kid"}, member())
     assert store.redeem("telegram", mine["code"], "43") == "u_kid"
 
