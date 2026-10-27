@@ -14,6 +14,7 @@ notes:
 ## How
 
 - `rook_jobs(action="describe_schema")`, then `validate` your draft, then `create`. You own it and its runs act as you.
+- Ready-made jobs first: `rook_jobs(action="templates")` lists them (security scan, attention digest, camera review) and what each needs; `install` with `id=<template>` and `data={"config": {...}}` makes one for an owner. Nothing is installed by default.
 - Check the condition with a cap the hub can run (`shell.exec` on the worker: a file, a process, `git log`, a task's state). An agent step can call caps and hub tools such as `rook_task` and `rook_knowledge`, plus `notify_bake`, `ask_bake` and `finish`. It cannot read console rooms.
 
 ## Hygiene

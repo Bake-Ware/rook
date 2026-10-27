@@ -5,6 +5,7 @@ order: 11
 features:
   - features/jobs
   - plugin/hub/jobs
+  - plugin/hub/routines
   - settings/job
 since: 0.1.0
 deprecated: false
@@ -87,9 +88,42 @@ you locked it. The hub's *Switch off after failures* setting doesn't apply to
 it, and an agent step can end it only if that step says `"complete":
 "agent"`. Every lock and unlock is in the job's history.
 
+## Ready-made jobs
+
+Rook ships a few jobs ready to install. None is installed until you (or an
+agent for you) install one, and only a hub owner can. Open **Ready-made** on
+the Jobs page and press **Install**, or ask an agent (`rook_jobs`
+`action="templates"`, then `install`). An installed one is an ordinary job:
+it runs as you, follows the guardrails, and you can switch it off, change its
+schedule in the Editor or delete it.
+
+- **Security scan** (every 5 minutes, nothing to set up): what is open on the
+  band (machines, console rooms, agents connecting, dashboard sign-ins) and
+  what the logs say (calls that were refused, wrong keys, new API keys, access
+  changes), compared with the last scan. The first scan only takes stock.
+- **Attention digest** (every 2 hours, 8:00 to 20:00): what came in since the
+  last digest from your phone's notifications, your chat rooms (Telegram and
+  Discord included) and, if you set one up, an email inbox (IMAP, with the
+  password stored under Secrets), in one message. Mail apps on your phone
+  count as email without any setup.
+- **Camera review** (every 10 minutes): one picture from each camera you list
+  (a snapshot address, an RTSP stream through a machine with ffmpeg, or a
+  machine's webcam). Only a picture that changed is shown to a vision model you
+  pick on Model providers, and only something notable (a person, a car, a
+  package, an open door, smoke) is reported. The pictures go to the provider
+  you pick, so choose a local one to keep them at home. Ring cameras need a
+  bridge such as ring-mqtt or Scrypted that gives an RTSP or snapshot address.
+
+They tell you quietly, and only when something changed: one line in the
+attention log and one quiet message in your phone's digest (Settings >
+Attention phones). They never put a card on your phone or ask you anything.
+Only a burst of refused keys (10 within 10 minutes, once an hour at most) rings as urgent; a camera rings only if you turn
+on `may_ring` for fire, smoke, flooding or a break-in.
+
 ## The Jobs page
 
 - **Overview**: what is running, what is next, recent failures and blocked jobs.
+- **Ready-made**: the jobs Rook ships, what each needs, and **Install**.
 - **Jobs**: every job; switch one on or off, run it now (▶), and edit, see runs,
   lock or unlock (🔒) or delete it from its ⋯ menu. **+ New** starts a new job; **All / On / Off**
   filters the list.

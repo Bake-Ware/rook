@@ -97,6 +97,7 @@ class HubNode:
         self._state_dir = state_dir
         self.attached = False  # set by attach_hub_node once a band client serves it
         self.journal = None    # the bridge's call journal, set by attach_hub_node
+        self.consoles = None   # the bridge's console-room store, set by the bridge
         self.enrollment = enrollment
         # The shared settings store (rook.hub.settings_store). Opened lazily:
         # nothing is created on disk until a value is written or read back.

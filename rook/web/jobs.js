@@ -106,7 +106,7 @@ export function lockMark(j){
 const TEMPLATE={name:'new-job',description:'',enabled:true,
   triggers:[{kind:'cron',expr:'0 3 * * *'}],entry:'main',
   steps:{main:{kind:'cap',worker:'rook',cap:'hub.info',timeout:'5m'}}};
-const TABS=[['overview','Overview'],['jobs','Jobs'],['editor','Editor'],['runs','Runs'],['guardrails','Guardrails'],['settings','Settings']];
+const TABS=[['overview','Overview'],['jobs','Jobs'],['ready','Ready-made'],['editor','Editor'],['runs','Runs'],['guardrails','Guardrails'],['settings','Settings']];
 
 export async function mountJobs(root){
   useCss();
@@ -128,7 +128,7 @@ export async function mountJobs(root){
   }
   async function show(id){
     tab=id;clear();drawTabs();clearInterval(timer);timer=null;
-    const view={overview,jobs:jobsTab,editor,runs,guardrails,settings}[tab];
+    const view={overview,jobs:jobsTab,ready,editor,runs,guardrails,settings}[tab];
     try{await view();}catch(e){fail(e);}
     if(tab==='overview'&&active)timer=setInterval(()=>{if(tab==='overview'&&!document.hidden)overview().catch(fail);},15000);
   }
@@ -207,6 +207,33 @@ export async function mountJobs(root){
       const d=dialog('Delete job',h('p',{text:'Delete '+j.name+' and its run history? Running runs are cancelled.'}),err,h('div',{class:'mg-actions end'},go));
     }
     draw();
+  }
+
+  // ---- ready-made jobs (docs/design/routines.md): install one as your own job ----
+  async function ready(){
+    const got=await api.call('templates');
+    body.replaceChildren(h('div',{class:'jb-tpls'},got.templates.map(t=>{
+      const installed=t.installed||[];
+      const needs=Object.entries(t.needs||{}),opts=Object.entries(t.options||{});
+      const cfg=h('textarea',{class:'jb-json jb-cfg',spellcheck:'false',autocomplete:'off','aria-label':'Settings for '+t.title});
+      cfg.value=JSON.stringify(t.zero_config?{}:t.example,null,2);
+      const err=h('small',{class:'mg-error',role:'alert'});
+      const go=btn(installed.length?'Install another':'Install','primary',async()=>{
+        err.textContent='';let config;
+        try{config=JSON.parse(cfg.value.trim()||'{}');}catch(e){err.textContent=e.message;return;}
+        const data={config};if(installed.length)data.name=t.template+'-'+(installed.length+1);
+        go.disabled=true;
+        try{const j=await api.call('install',{id:t.template,data});await openJob(j.id);}catch(e){err.textContent=e.message;go.disabled=false;}
+      },{disabled:t.available===false||!api.admin,title:t.available===false?'Not on this hub':!api.admin?'Hub owners install ready-made jobs':''});
+      const line=([k,v])=>h('div',{class:'mg-sub'},h('code',{text:k}),' '+v);
+      return h('section',{class:'mg-box jb-tpl'},
+        h('div',{class:'jb-card-head'},h('b',{text:t.title}),h('span',{class:'mg-dimtext',text:describeCron(t.schedule)})),
+        h('p',{class:'jb-tpl-what',text:t.what}),
+        needs.length?h('div',{class:'jb-tpl-needs'},h('span',{class:'mg-label',text:'Needs'}),needs.map(line)):null,
+        opts.length?h('details',{class:'jb-tpl-opts'},h('summary',{text:'Options'}),opts.map(line)):null,
+        installed.length?h('div',{class:'jb-tpl-made'},h('span',{class:'mg-label',text:'Installed'}),installed.map(j=>h('button',{type:'button',class:'jb-plain',text:j.name+(j.enabled?'':' (off)'),onclick:()=>openJob(j.id).catch(fail)}))):null,
+        needs.length||opts.length?cfg:null,err,h('div',{class:'mg-actions end'},go));
+    })));
   }
 
   // ---- editor ----

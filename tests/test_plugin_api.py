@@ -632,7 +632,7 @@ async def test_mcp_reaches_hub_caps(tmp_path, monkeypatch):
                                  {"name": "memory"},
                                  {"name": "notify"},
                                  {"name": "persona"},
-                                 {"name": "hub-policy"}, {"name": "roles"}, {"name": "chat-rooms"},
+                                 {"name": "hub-policy"}, {"name": "roles"}, {"name": "chat-rooms"}, {"name": "routines"},
                                  {"name": "advanced security"}, {"name": "serves"}, {"name": "settings"}, {"name": "show"}, {"name": "trust"},
                                  {"name": "dashboard-ui"}, {"name": "updates"},
                                  {"name": "huddle"}]

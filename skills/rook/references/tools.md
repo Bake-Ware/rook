@@ -137,8 +137,8 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `huddle.table` | huddle, action='list', artifact='', what='summary', path='', offset=0 | read | A chaired huddle's conference table: list (pinned artifacts, and votes with ballots sealed until all are in),… |
 | `huddle.vote` | huddle, action='call', kind='', artifact='', reason='', target='', skip_vote=false, motion='', self_review='' | write | Votes on a chaired huddle's table: call (kind merge\|qa\|deploy\|ship, artifact, reason?, target? for deploy/shi… |
 | `huddle.write` | action, room?, project?, band?, text?, data?, mention? | write | Post in a huddle: status (data {working_on, blocked_on?, needs_decision?, task?}), ask (text, data {options?,… |
-| `job.read` | action='list', id?, query='', data? | read | Read jobs and runs: list\|get\|runs\|run_get\|next\|validate\|guardrails_preview\|describe_schema. |
-| `job.write` | action, id?, data? | write | Write jobs: create\|update\|delete\|enable\|disable\|run\|cancel\|set_guardrails\|settings\|lock\|unlock. |
+| `job.read` | action='list', id?, query='', data? | read | Read jobs and runs: list\|get\|runs\|run_get\|next\|validate\|guardrails_preview\|describe_schema\|templates. |
+| `job.write` | action, id?, data? | write | Write jobs: create\|update\|delete\|enable\|disable\|run\|cancel\|set_guardrails\|settings\|lock\|unlock\|install. |
 | `knowledge.read` | action='search', band?, id?, query='', data? | read | Read the shared wiki: search\|get\|list\|context\|status\|bands\|deck. |
 | `knowledge.write` | action, band?, id?, data?, request_id? | write | Write the shared wiki: create\|update\|link\|retract (needs request_id). |
 | `llm.check` | provider='' | read | llm.check — whether a provider (or every one) answers, with latency. |
@@ -186,6 +186,9 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `role.sessions` | role='', id='', live=false, limit=20 | read | The coding sessions roles started: state, newest status, branch, worktree, pull request (`role` narrows, `liv… |
 | `role.set` | role, note='', dry_run=false, expect_rev? | admin | Create or replace a role (band owners and operator tokens). |
 | `role.workspace` | id, path='' | read | A role's workspace, read-only (its drafts, notes and working documents, in its home on its agent host): the f… |
+| `routine.attention_digest` | phones?, chat_as='user:operator', email?, max_items=8, dry_run=false, state='' | write | Fold what came in since the last digest (phone notifications, unread chat rooms including Telegram and Discor… |
+| `routine.camera_review` | cameras, provider, model='', threshold=0.06, note='', may_ring=false, dry_run=false, state='' | write | Grab a frame from each camera, compare it with the last one on the hub, and ask a vision model about changed… |
+| `routine.security_scan` | urgent_refusals=10, refusal_window_min=10, urgent_cooldown_min=60, dry_run=false, state='' | write | Compare what is open on the band and what the logs say with the last scan, and tell the person quietly about… |
 | `serves.clear` | worker | write | Remove a worker's hosting entry. |
 | `serves.list` | worker='' | read | What workers host: `{worker: {sites, services, updated, by}}`. |
 | `serves.set` | worker, sites?, services?, by='' | write | Write what a worker hosts. |
@@ -298,6 +301,9 @@ One persona for every harness. `rook_call(cap="persona.get", worker="rook", args
 
 ### roles
 Huddle roles (project manager, QA, lead developer, ...) each have a charter, a tool scope and their own memory, kept in the role's home directory on its agent host. `rook_call(worker="rook", cap="role.list")` lists them; `role.ask` with `{"id": "qa", "question": ...}` runs one turn of a role. `role.set`, `role.move` and `role.memory_edit` are admin: ask the user first.
+
+### routines (ready-made jobs)
+`rook_jobs(action="templates")` lists ready-made jobs: `security-scan` (every 5 minutes, zero config), `attention-digest` (phones, chats, optional email) and `camera-review` (needs cameras and a vision model provider). `rook_jobs(action="install", id="<template>", data={"config": {...}})` creates one as a job you own (owners only). Each runs a `routine.*` cap on worker `rook`; call one with `dry_run: true` to see what it would report. They report quietly (the attention log and the phone's digest channel), only when something changed.
 
 ### serves
 What each worker hosts: `serves` on a `rook_workers` row is `{sites: [{name, url}], services: [{name, url}]}`, written by hand. `rook_call(worker="rook", cap="serves.list")` returns all of it; `serves.set(worker, sites?, services?)` replaces the lists it is given; `serves.clear(worker)` removes the entry.

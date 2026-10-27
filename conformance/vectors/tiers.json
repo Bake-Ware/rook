@@ -1240,6 +1240,24 @@
   "role.workspace": {
    "tier": "read"
   },
+  "routine.attention_digest": {
+   "tier": "write",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "routine.camera_review": {
+   "tier": "write",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "routine.security_scan": {
+   "tier": "write",
+   "tags": [
+    "sensitive"
+   ]
+  },
   "screenshot.capture": {
    "tier": "read",
    "tags": [
