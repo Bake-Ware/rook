@@ -156,6 +156,17 @@ are set only in the environment or on the command line.
 | `attention.quiet_hours` | No reminders between | hub | str |  | `ROOK_ATTENTION_QUIET_HOURS` | live |
 | `attention.remind_unchecked` | Remind even when the room can't be checked | hub | bool | off | `ROOK_ATTENTION_REMIND_UNCHECKED` | live |
 
+## Browser (worker plugin, runs in worker)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `browser.headless` | Headless | worker | bool | on | `ROOK_BROWSER_HEADLESS` | live |
+| `browser.idle_timeout` | Idle timeout (s) | worker | int | `600` |  | live |
+| `browser.max_sessions` | Most sessions at once | worker | int | `3` |  | live |
+| `browser.executable` | Chromium executable | worker | path |  | `ROOK_BROWSER_EXECUTABLE` | restart |
+| `browser.allow_private` | Allow local network | worker | bool | off | `ROOK_BROWSER_ALLOW_PRIVATE` | live |
+| `browser.sandbox` | Chromium sandbox | worker | bool | on | `ROOK_BROWSER_SANDBOX` | live |
+
 ## Change (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
