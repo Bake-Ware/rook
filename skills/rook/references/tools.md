@@ -894,6 +894,6 @@ Native plugins of the Android app's embedded worker, in place of (or beside) the
 | `ui.screen` | limit=60, text_limit=40 | exec | The current screen, compactly: package and app; items to act on (label, kind button\|field\|toggle\|list, detail… |
 | `ui.scroll` | direction='down', text='', id='', contains=false, screen=false | exec | Scroll one page down (forward) or up (backward). |
 | `ui.text` | — | exec | All visible text on the current screen (top-to-bottom). |
-| `ui.type` | text, label='', id='', contains=false, index=0, append=false, submit=false, wait=0, screen=false | exec | Type text into a field in one call (no click first). label names the field: its hint, description, label view… |
+| `ui.type` | text, label='', id='', contains=false, index=-1, append=false, submit=false, wait=0, screen=false | exec | Type text into a field in one call (no click first). label names the field: its hint, description, label view… |
 | `ui.wait` | text='', desc='', id='', contains=false, gone=false, package='', changed_from='', settle_ms=0, timeout=8, screen=true | exec | Wait (up to timeout seconds, max 60) until the screen is how you want it, then return it (screen=false leaves… |
 <!-- END GENERATED: android-caps -->
