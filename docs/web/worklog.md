@@ -34,7 +34,7 @@ terminals run per worker. Finished terminals stay readable for 15 minutes.
 | Platform | Terminal backend | `shell` harness | Inbox for sessions started outside Rook |
 |---|---|---|---|
 | Linux, macOS | POSIX PTY (`pty`, controlling tty) | `$SHELL -l` | Claude: Unix socket. Codex: app-server control socket, or Konsole over D-Bus |
-| Windows 10 1809+ / 11 | ConPTY (`rook/worker/conpty.py`, pure ctypes, no extra package in the worker bundle) | `powershell.exe -NoLogo` (`pwsh.exe`, then `cmd.exe`, if PowerShell 5 is missing) | Claude: local named pipe. Codex: none (use a Rook terminal) |
+| Windows 10 1809+ / 11 | ConPTY (`rook/worker/conpty.py`, pure ctypes, no extra package in the worker bundle) | `pwsh.exe -NoLogo` when PowerShell 7 is installed, else `powershell.exe -NoLogo` (`cmd.exe` if neither) | Claude: local named pipe. Codex: none (use a Rook terminal) |
 | Windows before 1809 | none: the worker does not advertise `pty`, so `work.stream.*` is absent | | |
 
 On Windows the worker advertises the `pty` fact only when `kernel32` has
@@ -186,7 +186,7 @@ and callable with `rook_call`. No new MCP tools were added.
 
 | Cap | Risk | Purpose |
 |---|---|---|
-| `work.stream.open` | exec | start a harness under a PTY; returns `id`. With `resume` and `handoff_pid` it waits for that process (a Claude Code running `/rook-move`) to exit before resuming. With `argv` (a list, no shell) or `cmd` (`/bin/sh -c`, `cmd.exe /d /s /c` on Windows), harness `shell` only, it runs that command instead of the login shell, with `env` added and `PAGER`/`GIT_PAGER` set to `cat`. `task` (task id or slug, also exported as `ROOK_TASK`) and `room` (console room id) are recorded on the terminal (`work.stream.list`) and its `sessions.list` record (`links.task`, `links.console_room`) |
+| `work.stream.open` | exec | start a harness under a PTY; returns `id`. With `resume` and `handoff_pid` it waits for that process (a Claude Code running `/rook-move`) to exit before resuming. With `argv` (a list, no shell) or `cmd` (`/bin/sh -c`; PowerShell on Windows, as `shell.exec` runs it, see `rook/worker/shells.py`), harness `shell` only, it runs that command instead of the login shell, with `env` added and `PAGER`/`GIT_PAGER` set to `cat`. `task` (task id or slug, also exported as `ROOK_TASK`) and `room` (console room id) are recorded on the terminal (`work.stream.list`) and its `sessions.list` record (`links.task`, `links.console_room`) |
 | `work.stream.read` | read | long-poll output from `cursor` (`wait` up to 25 s) |
 | `work.stream.write` | exec | raw input (`\r` for Enter, `\x03` for Ctrl-C) |
 | `work.stream.resize` | write | set cols/rows |
