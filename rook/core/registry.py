@@ -183,11 +183,13 @@ class CapabilityRegistry:
             out[name] = entry
         return out
 
-    def arg_hint(self, dotpath: str, kwargs: dict) -> str:
+    def arg_hint(self, dotpath: str, kwargs: dict, suggest: bool = True) -> str:
         """For a call whose ``kwargs`` do not fit the handler: `` (cap takes:
         a, b?, ...; did you mean 'b' for 'x'?)``. Empty when they fit (the
         TypeError came from inside the cap) or the signature is unknown.
-        Callers guess argument names; this turns a guess into one retry."""
+        Callers guess argument names; this turns a guess into one retry.
+        ``suggest=False`` leaves out the did-you-mean (Python's own message
+        may carry one)."""
         fn = self._caps.get(dotpath)
         if fn is None:
             return ""
@@ -210,7 +212,7 @@ class CapabilityRegistry:
         takes = ", ".join(p.name + ("" if p.default is inspect.Parameter.empty else "?")
                           for p in params if p.kind != p.POSITIONAL_ONLY)
         tips = []
-        if not open_kw:
+        if suggest and not open_kw:
             for k in given:
                 if k not in names:
                     close = difflib.get_close_matches(str(k), names, 1, 0.5)

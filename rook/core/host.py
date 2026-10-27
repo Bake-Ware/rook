@@ -614,7 +614,7 @@ class PluginHost:
             return {"ok": False, "error": f"timeout: {e}"}
         except TypeError as e:  # includes ArgError
             try:
-                hint = self.registry.arg_hint(cap, args)
+                hint = self.registry.arg_hint(cap, args, suggest="Did you mean" not in str(e))
             except Exception:  # noqa: BLE001 - the hint is a courtesy
                 hint = ""
             return {"ok": False, "error": f"bad args: {e}{hint}"}

@@ -575,3 +575,37 @@ async def test_a_vote_cut_off_by_a_restart_ends_failed_and_the_dashboard_can_cal
                                                       "room": room})
         tb = r.json()["result"]["table"]
         assert tb["motions"][-1]["state"] == "executed" and tb["motions"][-1]["proposer"] == PERSON
+
+
+# -- hygiene: CI at pin time, PRs by URL, merged PRs tell their tasks (knowledge/prs.py) -----
+
+@pytest.mark.asyncio
+async def test_a_pin_says_where_ci_stands_and_a_vote_can_name_the_pr(table, monkeypatch):
+    room = await _huddle(table)
+    table.gh.checks[SHA1] = [("pytest (Python 3.12)", None), ("generated docs", "success")]
+    a = await table.t.pin(room, "agent:home", {"kind": "pr", "repo": "Bake-Ware/rook", "number": 7})
+    assert a["ci"].startswith("CI still running: pytest (Python 3.12)")
+    assert "CI still running" in _texts(table, room)[-1][1]
+    # The PR's URL, owner/repo#N or #N name its newest pin (agents pass what they asked for).
+    for ref in ("https://github.com/Bake-Ware/rook/pull/7", "bake-ware/rook#7", "#7"):
+        assert table.t.artifact(ref, room)["id"] == a["artifact"], ref
+    with pytest.raises(TB.TableError):
+        table.t.artifact("#8", room)
+    # A merge by the hub tells the knowledge plugin, which links the tasks.
+    told = []
+
+    class KB:
+        def pr_merged(self, repo, number, sha, head, how):
+            told.append((repo, number, sha, head, how))
+            return ["t_x"]
+    real = table.t._plugin
+    monkeypatch.setattr(table.t, "_plugin", lambda ns: KB() if ns == "knowledge" else real(ns))
+    table.gh.checks[SHA1] = [("pytest (Python 3.12)", "success")]
+    _all_yes(table)
+    out = await table.t.call(room, "agent:home", {"kind": "merge", "artifact": "#7",
+                                                  "reason": "The docs PR is done."})
+    await _settle(table)
+    m = table.t.motion(out["motion"])
+    assert m["state"] == "executed", m
+    assert told and told[0][:4] == ("bake-ware/rook", 7, "m" * 40, SHA1)
+    assert m["result"]["tasks"] == ["t_x"]
