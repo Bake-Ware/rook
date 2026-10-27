@@ -16,6 +16,8 @@ export const QUERY_OK = new Set(['huddles', 'knowledge', 'work', 'memory', 'jobs
 export const RISKY = /(delet|remov|revok|eras|wipe|destroy|deauth|sign.?out|log.?out|disconnect|reset|rotat|uninstall|restart|approv|deny|deni|reject|forget|purg|drop|send|sent|post|repl|answer|shar|invit|vot|merg|publish|updat|upgrad|deploy|roll.?out|install|stop|kill|disabl|enabl|allow|grant|confirm|\byes\b|\bok\b|pay|buy|order|\brun|start|cancel|close|archiv|save|apply|submit|accept|retry|clear|paus|resum|assign|\bpin|dismiss|\bdone\b|\bend\b|creat|\badd|\bnew\b|edit|\bmov|renam|import|export|upload|download|restor|link|lock|move|wake|ring|call|speak|play)/i;
 // The only buttons it presses: ones that show or find things.
 export const SAFE = /^(open|show|hide|view|filter|search|find|next|prev|previous|back|more|less|details|expand|collapse|refresh|reload|sort|list|grid|page|older|newer)\b/i;
+// Work's huddle view reads these (knowledge.js drawHuddle): never in a query it opens.
+export const HUDDLE_KEYS = new Set(['h', 'hp', 'hb']);
 export const TEXT_TYPES = new Set(['', 'text', 'search', 'email', 'url', 'number', 'tel']);
 
 const squash = s => String(s || '').replace(/\s+/g, ' ').trim();
@@ -61,9 +63,22 @@ export function fillRefusal(c) {
 /** null when page_go may open it, else why not. */
 export function goRefusal(page, query) {
   if (!/^[a-z][a-z0-9_-]{0,31}$/.test(String(page || ''))) return 'no dashboard page called ' + page;
+  query = String(query || '').replace(/^\?+/, '');
   if (query && !QUERY_OK.has(page)) return 'opening ' + page + ' with a query is for the person';
   // Work's huddle view opens (and so may start) a project's or band's huddle.
-  if (page === 'work' && /(^|&)v=huddle(&|$)/.test(String(query || '')))
+  // Judged on the query as the Work router reads it: decoded (v=%68uddle).
+  if (page === 'work' && opensHuddle(query))
     return 'opening a huddle from Work can start one: ask the person (or open #huddles)';
   return null;
+}
+
+/** Whether a #work query opens its huddle view (v=huddle, or a huddle key). */
+export function opensHuddle(query) {
+  let params;
+  try { params = new URLSearchParams(String(query || '').replace(/^\?+/, '')); } catch { return true; }
+  for (const [k, v] of params) {
+    const key = k.trim().toLowerCase();
+    if (HUDDLE_KEYS.has(key) || (key === 'v' && v.trim().toLowerCase().includes('huddle'))) return true;
+  }
+  return false;
 }

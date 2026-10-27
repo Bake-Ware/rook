@@ -184,7 +184,8 @@ async function act(a) {
     if (no) throw Error(no);
     if (!document.getElementById('tab-' + id) && !['feed', 'intelligence', 'chat'].includes(id))
       throw Error('no dashboard page called ' + id);
-    location.hash = '#' + id + (a.query ? '?' + String(a.query).replace(/^\?/, '') : '');
+    const q = String(a.query || '').replace(/^\?+/, '');
+    location.hash = '#' + id + (q ? '?' + q : '');
     const lands = {feed: 'overview', intelligence: 'home', chat: 'huddles'}[id] || id;
     for (let i = 0; i < 20 && view() !== lands; i++) await pause(100);
     await pause(600);                       // most pages load their content just after

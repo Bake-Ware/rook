@@ -54,6 +54,7 @@ def test_presses_only_show_or_find_things_on_everyday_pages():
         press(kind="link", label="Show", href="#account?invite=abc"),   # where it goes counts
         press(kind="link", label="Show", href="#bands?worker=w1"),
         press(kind="link", label="Show", href="#work?v=huddle&hp=p1"),
+        press(kind="link", label="Show", href="#work?v=%68uddle&hb=_"),
     ] + [press(v, label="Show details") for v in (
         "trust", "approvals", "decisions", "vault", "tokens", "people", "account", "bands",
         "settings", "plugins", "updates", "workers", "install", "ccmod", "sessions", "guidance",
@@ -91,13 +92,32 @@ def test_page_go_queries_only_pick_what_to_show():
                   {"go": True, "page": "account", "query": "invite=x"},
                   {"go": True, "page": "bands", "query": "worker=w1"},
                   {"go": True, "page": "work", "query": "v=huddle&hb=_"},
+                  {"go": True, "page": "work", "query": "v=%68uddle&hb=_"},     # decoded first
+                  {"go": True, "page": "work", "query": "%76=huddle"},
+                  {"go": True, "page": "work", "query": "?v=huddle"},
+                  {"go": True, "page": "work", "query": "v=board&hb=_"},       # a huddle key
+                  {"go": True, "page": "work", "query": "v=HUDDLE"},
                   {"go": True, "page": "../etc"}])
     assert got[0] is None and got[1] is None
     assert all(got[2:]), got
+    ok = _judge([{"go": True, "page": "work", "query": "v=board&project=p1"},
+                 {"go": True, "page": "work", "query": "?v=list"}])
+    assert ok == [None, None], ok
+
+
+def _js_set(name: str) -> set[str]:
+    text = RULES.read_text()
+    js = text[text.index(f"{name} = new Set(["):].split("]", 1)[0]
+    return {s.strip().strip("'") for s in js.split("[", 1)[1].split(",")}
 
 
 def test_the_hub_and_the_page_agree_on_which_queries_are_fine():
+    """The hub repeats page_go's rule: both copies of the lists stay the same,
+    and both decide the same queries the same way."""
     from rook.hub.plugins.home import page
-    text = RULES.read_text()
-    js = text[text.index("QUERY_OK = new Set(["):].split("]", 1)[0]
-    assert {s.strip().strip("'") for s in js.split("[", 1)[1].split(",")} == set(page.QUERY_OK)
+    assert _js_set("QUERY_OK") == set(page.QUERY_OK)
+    assert _js_set("HUDDLE_KEYS") == set(page.HUDDLE_KEYS)
+    queries = ["v=huddle", "v=%68uddle&hb=_", "%76=huddle", "?v=huddle", "v=board&hb=_",
+               "v=HUDDLE", "v=board&project=p1", "?v=list", "", "v=timeline"]
+    got = _judge([{"go": True, "page": "work", "query": q} for q in queries])
+    assert [bool(g) for g in got] == [page.opens_huddle(q) for q in queries], list(zip(queries, got))

@@ -313,9 +313,10 @@ def test_the_page_refuses_what_the_person_must_do(browser, hub):
         add('<article class="hd-q"><button type="button">Show me later</button></article>')
             .querySelector('button').onclick = () => pressed += 10000000;
         add('<a href="#account?invite=abc">Show</a>');           // only its target refuses it
-        for (const [cls, attr] of [['hx-card', ''], ['', 'data-card="c1"'], ['hd-opts', '']])
+        for (const [cls, attr] of [['hd-q', ''], ['hx-card', ''], ['', 'data-card="c1"'], ['hd-opts', '']])
             add('<div class="' + cls + '" ' + attr + '><button type="button">Show more</button></div>')
                 .querySelector('button').onclick = () => pressed += 100000000;
+        add('<div class="hd-q"><textarea aria-label="Note for the asker"></textarea></div>');
         add('<a id="off-link" href="/logout">Leave</a>');
         add('<label>Name <input id="name-in"></label>');
         add('<input id="pw-in" type="password" value="hunter2" aria-label="Password">');
@@ -336,6 +337,9 @@ def test_the_page_refuses_what_the_person_must_do(browser, hub):
         r.cards = [];
         for (const it of snap.items.filter(i => i.label === 'Show more'))
             r.cards.push(await m.run({do: 'click', ref: it.ref}));
+        r.cardFill = await m.run({do: 'fill', ref: snap.items.find(i => i.label === 'Note for the asker').ref,
+                                  value: 'yes'});
+        r.workHuddle = await m.run({do: 'go', page: 'work', query: 'v=%68uddle&hb=_'});
         r.hashAfter = location.hash;
         r.off = await m.run({do: 'click', ref: ref('off-link')});
         r.fill = await m.run({do: 'fill', ref: ref('name-in'), value: 'Ada'});
@@ -385,7 +389,9 @@ def test_the_page_refuses_what_the_person_must_do(browser, hub):
     assert not out["card"]["ok"] and "card" in out["card"]["result"]       # agent-written choices
     assert not out["invite"]["ok"] and "with a query" in out["invite"]["result"]  # page_go's rule
     assert out["hashAfter"] == "#overview"
-    assert len(out["cards"]) == 3 and not any(c["ok"] for c in out["cards"]), out["cards"]
+    assert len(out["cards"]) == 4 and not any(c["ok"] for c in out["cards"]), out["cards"]
+    assert not out["cardFill"]["ok"] and "card" in out["cardFill"]["result"]
+    assert not out["workHuddle"]["ok"] and "start one" in out["workHuddle"]["result"]
     assert not out["dialog"]["ok"] and "dialog" in out["dialog"]["result"]
     assert not out["stale"]["ok"] and "nothing with ref" in out["stale"]["result"], out["stale"]
     assert all(out["lockedPages"].values()), out["lockedPages"]

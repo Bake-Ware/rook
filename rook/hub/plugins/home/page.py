@@ -28,6 +28,7 @@ import re
 import secrets
 import time
 from typing import Any
+from urllib.parse import parse_qsl
 
 #: A page context older than this is not offered (the person moved on).
 FRESH_S = 600.0
@@ -48,6 +49,18 @@ KINDS = ("button", "link", "input", "textarea", "select", "checkbox", "tab", "su
 #: Pages page_go may open with a ?query (their queries only pick what to show);
 #: the same list as QUERY_OK in rook/web/page-rules.js.
 QUERY_OK = frozenset({"huddles", "knowledge", "work", "memory", "jobs", "settings", "help"})
+#: Keys Work's huddle view reads (HUDDLE_KEYS in page-rules.js).
+HUDDLE_KEYS = frozenset({"h", "hp", "hb"})
+
+
+def opens_huddle(query: str) -> bool:
+    """Whether a #work query opens its huddle view, judged decoded, as the Work
+    router reads it (v=%68uddle, %76=huddle, a leading ?)."""
+    for k, v in parse_qsl(str(query or "").lstrip("?"), keep_blank_values=True):
+        key = k.strip().lower()
+        if key in HUDDLE_KEYS or (key == "v" and "huddle" in v.strip().lower()):
+            return True
+    return False
 REF = re.compile(r"^[a-z]\d{1,5}$")
 TAB = re.compile(r"^[A-Za-z0-9]{8,32}$")
 VIEW = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
@@ -259,11 +272,14 @@ class PageBridge:
                 action[key] = _s(args.get(key), limit)
         if name == "page_go" and not VIEW.match(action.get("page", "")):
             return json.dumps({"ok": False, "error": "page: a dashboard page id, e.g. jobs"})
+        if "query" in action:
+            action["query"] = action["query"].lstrip("?")
+            if not action["query"]:
+                del action["query"]
         if name == "page_go" and action.get("query") and action["page"] not in QUERY_OK:
             return json.dumps({"ok": False, "error": f"opening {action['page']} with a query is "
                                                      "for the person"})
-        if name == "page_go" and action["page"] == "work" and \
-                re.search(r"(^|&)v=huddle(&|$)", action.get("query", "")):
+        if name == "page_go" and action["page"] == "work" and opens_huddle(action.get("query", "")):
             return json.dumps({"ok": False, "error": "opening a huddle from Work can start one: "
                                                      "ask the person (or open huddles)"})
         if name in ("page_fill", "page_click") and not REF.match(action.get("ref", "")):
