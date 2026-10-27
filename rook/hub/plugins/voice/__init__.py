@@ -27,7 +27,7 @@ engine for one line at a time.
 Without what the chosen engine needs, the plugin does not load and the
 Plugins page says what is missing in plain words. Its settings (the former
 ``voice`` service settings, same keys and variables) are on Settings > Voice;
-the Voice page (Manage > Voice) shows its state and has a microphone check.
+the Voice page (Intelligence sources > Voice) shows its state and has a microphone check.
 
 The standalone server keeps working unchanged (``python -m
 services.voice.server``); see docs/operations/voice.md for the move.
@@ -144,7 +144,7 @@ SETTINGS = (
             "none of its own: a Kokoro voice such as af_heart, or a Chatterbox voice such as "
             "default or a cloned one (kokoro:af_heart and chatterbox:<name> work too). On "
             "this hub's own engine it also wins over the voice last picked in an app. Blank: "
-            "the voice engine's own default. Pick it with a preview on Manage > Voice."),
+            "the voice engine's own default. Pick it with a preview on Intelligence sources > Voice."),
     _s("speech_cache_mb", float, 32.0, min=0.0, max=512.0, apply="reload", group="Speech",
        advanced=True,
        label="Spoken audio kept (MB)",
@@ -584,7 +584,7 @@ class Voice(Plugin):
         return {"audio": base64.b64encode(audio).decode(), "mime": "audio/wav",
                 "voice": str(voice or "").strip() or self.band_default()}
 
-    # -- Manage > Voice ------------------------------------------------------------------
+    # -- Intelligence sources > Voice -------------------------------------------------------------
     def page(self, svc) -> dict:
         return page_data(svc, self._node, self)
 
@@ -637,7 +637,7 @@ class AudioCache:
 
 
 def page_data(svc, node, plugin: "Voice | None") -> dict:
-    """What Manage > Voice shows. Works whether or not the plugin loaded (when
+    """What Intelligence sources > Voice shows. Works whether or not the plugin loaded (when
     it did not, the reason is the point of the page)."""
     def val(key: str) -> Any:
         try:

@@ -22,7 +22,7 @@ deprecated: false
 ---
 # The Workers page
 
-**Workers** is the dashboard's home page: every machine Rook can reach, live.
+**Workers** (in the sidebar's Settings section) shows every machine Rook can reach, live.
 
 ## Reading the list
 

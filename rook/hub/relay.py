@@ -13,7 +13,7 @@ These kinds of item wait on a person:
 * ``house``: a one-line ask from the house agent's front door (Yes / No /
   Explain; rook/hub/plugins/home/front.py), with ``line`` and ``explain``;
 * ``trust``: a pending trust-map proposal (rook/hub/trust.py). Only the person
-  decides one: a tap on its phone card, Manage > Trust, or their sure voice
+  decides one: a tap on its phone card, Trust > Trust map, or their sure voice
   with the read-back (rook/hub/plugins/home/cardpass.py). No relay does.
 
 :meth:`Relay.items` lists them, each with a speakable name, who asked, what
@@ -538,7 +538,7 @@ class Relay:
         if it["kind"] == "trust" and not tap:
             raise PermissionError(f"{it['id']} is a trust change: trust changes need "
                                   f"{said['who']}'s own tap or voice (the phone card, the "
-                                  "dashboard's Manage > Trust, or \"clear my cards\" by voice). "
+                                  "dashboard's Trust > Trust map, or \"clear my cards\" by voice). "
                                   "Tell them it is waiting; don't relay it")
         why = refusal(it, self.dashboard_only()) or (own_tap(it) if client else "")
         if why:

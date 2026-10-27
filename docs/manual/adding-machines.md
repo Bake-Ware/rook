@@ -17,7 +17,7 @@ join your band without you typing the band key.
 
 ## With a pairing code (recommended)
 
-1. Open **Install a worker** in the dashboard (under Manage).
+1. Open **Install a worker** in the dashboard (under Settings).
 2. Choose what the machine may do under **What do you want Rook to do?**
 3. Click **Get a pairing code**. The page shows the code, a countdown and
    ready-to-copy commands with the code filled in.

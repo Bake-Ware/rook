@@ -25,7 +25,7 @@ so does everything that uses the home agent's model, such as its memory
 
 ## Adding a provider
 
-Open **Manage > Model providers** (operator account) and choose **+ Add**.
+Open **Intelligence sources > Model providers** (operator account) and choose **+ Add**.
 
 1. Give it an id: lowercase letters, digits, `-` or `_` (for example
    `lab-gpu`). This is the name other pages use. A **Label** is optional.
@@ -45,7 +45,7 @@ Rook use each provider. You can have up to 32.
 
 ## Using a provider for the home agent
 
-On **Manage > Home agent**, choose it under **Model provider**. Its address
+On **Intelligence sources > Home agent**, choose it under **Model provider**. Its address
 and key are then used, and the home agent's own Base URL and API key are
 ignored. Leave Model provider at "None: use the endpoint below" to keep
 using the address on that page. If a chosen provider is removed, the home
@@ -72,6 +72,21 @@ Its settings:
   it, the status also shows lanes and the queue. The hub only reads it; it
   never drains, pauses or changes llmanifold.
 - **Status timeout** (advanced): how long a status check waits.
+
+## Other engines
+
+Model providers sits with the hub's other intelligence sources in the
+**Intelligence sources** section of the sidebar. Under the providers, **Other
+engines** lists the two that are not chat models, each with its state and a
+link to where it is set up:
+
+- **Voice**: speech in and out for phones, the desktop app and the browser,
+  and which engine it uses (on this hub or a remote voice server). **Open**
+  goes to the Voice page ([[manual-voice]]).
+- **Decision engine**: a one-pass decision model (hub plugin `decide`) that
+  answers a batch of typed questions at once, for fast screen control. It
+  shows the address it uses (never a password in it), or **Not set up** until
+  you give it one under Settings.
 
 ## For agents
 

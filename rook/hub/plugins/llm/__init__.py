@@ -1,4 +1,4 @@
-"""``llm.*``: the language models this hub can use (Manage > Model providers).
+"""``llm.*``: the language models this hub can use (Intelligence sources > Model providers).
 
 A *model provider* is an OpenAI-compatible endpoint (``/v1/models``,
 ``/v1/chat/completions``) with an optional API key (a vault reference,
@@ -127,7 +127,7 @@ class ModelProviders(Plugin):
                 label="OpenAI-compatible providers",
                 help='[{"id": "lab-gpu", "label": "Lab GPU", "base_url": "http://llm.example:8080/v1", '
                      '"api_key": "{{secret:lab-key}}", "models": [], "default_model": ""}]. '
-                     "Easier on Manage > Model providers."),
+                     "Easier on Intelligence sources > Model providers."),
         setting("check_timeout_s", float, 10.0, min=1.0, max=60.0, group="Providers", order=2,
                 advanced=True, label="Check timeout (s)"),
     )
@@ -313,7 +313,7 @@ class ModelProviders(Plugin):
                 out.append(await self.check(pid, actor=who))
         return {"checks": out}
 
-    # -- Manage > Model providers ------------------------------------------------------
+    # -- Intelligence sources > Model providers ---------------------------------------------------
     async def page(self, svc) -> dict:
         secrets = []
         vault = getattr(self._node, "_vault", None)
@@ -336,8 +336,38 @@ class ModelProviders(Plugin):
             rows.append(row)
         return {"view": "llm", "providers": rows, "secrets": secrets, "users": users,
                 "locked": bool(r.get("locked")), "env": r.get("env"),
-                "plugins": self._plugin_rows(),
+                "plugins": self._plugin_rows(), "engines": self._engine_rows(),
                 "history": svc.store.history(key="llm.", limit=20)}
+
+    def _engine_rows(self) -> list[dict]:
+        """The other intelligence sources, beside chat models: the voice server and
+        the decision engine (one-pass decision models, plugin ``decide``). The page
+        lists them with their state and where each is set up."""
+        host = getattr(self._node, "host", None)
+        status = getattr(host, "status", {}) or {}
+        rows = []
+        for ns, label, what, link, key in (
+                ("voice", "Voice", "Speech in and out for phones, the desktop app and the browser",
+                 "voice", "engine"),
+                ("decide", "Decision engine", "One-pass decision models that answer a batch of "
+                 "typed questions at once (decide.run, decide.drive)",
+                 "settings?view=plugin&target=decide", "endpoint")):
+            plugin = self._node.plugin(ns) if self._node is not None else None
+            st = status.get(ns) or {}
+            if plugin is None:
+                state, detail = "off", st.get("reason") or "plugin not loaded"
+            else:
+                value = str(plugin.settings.get(key) or "").strip()
+                if ns == "voice":
+                    state, detail = "on", "engine " + (value or "here")
+                elif value:
+                    shown = value if value.startswith("cap://") else url_host(value) or "set"
+                    state, detail = "on", "endpoint " + shown
+                else:
+                    state, detail = "unset", "no decision model endpoint yet"
+            rows.append({"id": ns, "label": label, "what": what, "state": state,
+                         "detail": detail, "link": link})
+        return rows
 
     def _plugin_rows(self) -> list[dict]:
         """Provider plugins that are not contributing (so the page can say why)."""

@@ -106,8 +106,20 @@ layout is listed under My preferences too, where you can reset it.
 
 ## The sidebar
 
-Click **WORKSPACE** or **MANAGE** in the sidebar to fold that group away or
-open it again; this browser remembers each group's choice. A folded group
+The sidebar has five sections:
+
+| Section | Pages |
+|---|---|
+| **Feed** | Overview, Start page |
+| **Work** | Work, Huddles, Sessions, Knowledge, Jobs, Memory |
+| **Intelligence sources** | Home agent, Roles, Model providers, Voice, Agent instructions |
+| **Trust** | Trust map, Approvals, Decisions, People, Account & access, API tokens, Secrets, Bands |
+| **Settings** | Settings, Workers, Install a worker, Plugins, Updates, Claude Code, Help |
+
+Every page keeps its old link (`#models`, `#trust`, `#workers` and so on), and
+`#feed` or `#intelligence` opens that section's first page. Click a section's
+name to fold it away or open it again; this browser remembers each section's
+choice. A folded group
 still shows the page you are on. When the window is too short for every
 entry, the sidebar scrolls on its own and **Sign out** stays at the bottom.
 On a phone (or any window narrower than about 800 pixels) the sidebar is a

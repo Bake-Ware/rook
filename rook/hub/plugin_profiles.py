@@ -383,7 +383,7 @@ def setup_presets_html(states: dict[str, bool | None] | None = None) -> str:
     rows = ['<fieldset class="presets"><legend>What do you want Rook to do?</legend>',
             '<input type="hidden" name="presets_shown" value="1">',
             '<small>Applies to the hub and to workers you add later; change it any time on '
-            'Manage &gt; Plugins. The ticks show the current choice (or what Rook does by '
+            'Settings &gt; Plugins. The ticks show the current choice (or what Rook does by '
             'default): only the groups you change are saved.</small>']
     for p in PRESETS:
         risk = ", ".join(p["tiers"])

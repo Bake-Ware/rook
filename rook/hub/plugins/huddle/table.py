@@ -1045,7 +1045,7 @@ class Table:
         home = self._plugin("home")
         front = getattr(home, "front", None)
         if front is None:
-            raise TableError("deploys run as the house agent: turn it on (Manage > Home agent)")
+            raise TableError("deploys run as the house agent: turn it on (Intelligence sources > Home agent)")
 
         def fill(v: Any) -> Any:
             if isinstance(v, str):

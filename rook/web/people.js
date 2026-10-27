@@ -1,4 +1,4 @@
-// Manage > People: who uses this hub and what each person may reach (access v2).
+// Trust > People: who uses this hub and what each person may reach (access v2).
 // Owners see everyone, what waits on them (requests in the person's own words,
 // people with no access yet, new machines and bands) and change it; anyone else
 // sees their own access and asks for more. Everything goes through

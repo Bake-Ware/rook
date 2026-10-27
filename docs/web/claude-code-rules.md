@@ -1,6 +1,6 @@
 # Claude Code rules
 
-**Manage > Claude Code** lets you decide, in one place, what happens when
+**Settings > Claude Code** lets you decide, in one place, what happens when
 Claude Code does something on any of your machines. Each rule reads like a
 sentence: *when Claude is about to use Bash, anywhere, block it and post in
 the "Claude Code" room*.

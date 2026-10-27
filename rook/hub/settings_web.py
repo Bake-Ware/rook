@@ -44,7 +44,7 @@ def _persona(svc):
 
 
 def _home(svc):
-    """The home agent hub plugin behind the Manage > Home agent page."""
+    """The home agent hub plugin behind the Intelligence sources > Home agent page."""
     node = getattr(svc, "node", None)
     plugin = node.plugin("home") if node is not None else None
     if plugin is None:
@@ -53,14 +53,14 @@ def _home(svc):
 
 
 def _voice(svc):
-    """The voice hub plugin behind Manage > Voice, or None when it is not
+    """The voice hub plugin behind Intelligence sources > Voice, or None when it is not
     loaded (the page then says why)."""
     node = getattr(svc, "node", None)
     return node, (node.plugin("voice") if node is not None else None)
 
 
 def _llm(svc):
-    """The model providers hub plugin behind Manage > Model providers."""
+    """The model providers hub plugin behind Intelligence sources > Model providers."""
     node = getattr(svc, "node", None)
     plugin = node.plugin("llm") if node is not None else None
     if plugin is None:
@@ -69,11 +69,11 @@ def _llm(svc):
 
 
 def _memory(svc):
-    """The memory hub plugin behind the Manage > Memory page."""
+    """The memory hub plugin behind the Work > Memory page."""
     node = getattr(svc, "node", None)
     plugin = node.plugin("memory") if node is not None else None
     if plugin is None:
-        raise SettingsError("Memory is off on this hub. Turn it on under Manage > Plugins "
+        raise SettingsError("Memory is off on this hub. Turn it on under Settings > Plugins "
                             "(hub plugin memory) or Settings > Memory.")
     return plugin
 

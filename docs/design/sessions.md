@@ -42,7 +42,7 @@ the hub's "Work session" record) keep their names.
 | Web | Dashboard **Sessions** tab (`sessions.js`, the Sessions page; `work.js` keeps the classic view behind a link), **Work** tab (tasks) | One list of sessions, a separate task board. Docs: `docs/web/sessions.md`. |
 | Claude Code mod | `integrations/claude-code/` | Pane with Bands, Sessions (`sessions.list`, falling back to `claude-history`), Deck (open tasks and handoffs: Work), Settings. |
 | Tasks and handoffs | `rook_task`, `rook_handoff_*`, journal | Work tracking; `ROOK_WORK_SESSION` env links a Rook-launched terminal to its hub session. |
-| Home agent | `rook/hub/plugins/home/`, Manage > Home agent (`home.js`) | Hub LLM reachable as `@home` in chat rooms and `home.ask`. Config page with a chat panel (workstream E, polls the shared 1:1 room). |
+| Home agent | `rook/hub/plugins/home/`, Intelligence sources > Home agent (`home.js`) | Hub LLM reachable as `@home` in chat rooms and `home.ask`. Config page with a chat panel (workstream E, polls the shared 1:1 room). |
 
 The pieces work; they disagree. A Claude session has a session id, maybe a
 terminal id, maybe a proc handle, maybe a console room, maybe a hub work
@@ -515,7 +515,7 @@ socket on Windows (its control endpoint is a Unix socket Python cannot reach
 there), so Codex input on Windows goes through a Rook terminal. Details and
 the platform table: `docs/web/worklog.md`.
 
-**E. Home agent chat.** *Done.* A chat panel on Manage > Home agent: talks to the
+**E. Home agent chat.** *Done.* A chat panel on Intelligence sources > Home agent: talks to the
 home agent in a two-person room through the existing chat store (so the
 conversation also shows in Chat), streaming the reply if the plugin can,
 with the room's history. Tests: unit and a browser test.

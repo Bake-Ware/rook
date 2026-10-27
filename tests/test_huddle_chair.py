@@ -401,7 +401,7 @@ def _client(hub):
 
 @pytest.mark.asyncio
 async def test_the_roles_page_api_acts_as_the_operator_account(hub, monkeypatch):
-    """Manage > Roles and the Memory page's role filter use role.* through
+    """Intelligence sources > Roles and the Memory page's role filter use role.* through
     /huddle/account-api as the operator account: its principal passes the
     roles plugin's real admin gate, and its name is the actor in the history."""
     import rook.hub.plugins.roles as roles_plugin
@@ -505,7 +505,7 @@ async def test_old_chat_rooms_stay_readable_and_huddles_list_with_activity(hub):
 
 @pytest.mark.asyncio
 async def test_the_home_page_shows_turns_and_tokens_per_role(hub):
-    """Manage > Home agent: the last 24 h of agent host turns and their token
+    """Intelligence sources > Home agent: the last 24 h of agent host turns and their token
     usage per role (the house agent's own, chairing included, as role "")."""
     await _roles(hub)
     h = await _call(hub, "huddle.start", {"title": "Standup", "roles": ["qa", "pm"]})

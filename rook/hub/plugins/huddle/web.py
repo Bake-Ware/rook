@@ -212,7 +212,7 @@ def routes(get_node: Callable[[], Any], accounts):
         home = plugin("home")
         front = getattr(home, "front", None)
         if home is None or front is None or not home.enabled():
-            raise LookupError("The house agent is off on this hub (Manage > Home agent).")
+            raise LookupError("The house agent is off on this hub (Intelligence sources > Home agent).")
         who = str(user.get("name") or user.get("username") or user["id"])
         if action == "front_count":
             return {"asks": len(front.store.asks("open"))}

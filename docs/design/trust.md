@@ -100,7 +100,7 @@ prompt include the summary (`TrustStore.summary`).
 
 | Who | May |
 |---|---|
-| Person, on the dashboard (Manage > Trust, `POST /api/trust`, owner/admin, not a weak credential, same origin) | anything; words required |
+| Person, on the dashboard (Trust > Trust map, `POST /api/trust`, owner/admin, not a weak credential, same origin) | anything; words required |
 | House agent (its own in-process identity; `trust.tighten`) | raise a level (same or more targets), add a guarded/sacred entry, make unlisted stricter, end an exception. Logged as a notice the person acknowledges |
 | Any agent (`trust.propose`, `rook_trust action=propose`) | propose a change with a reason; checked when proposed; the person accepts or rejects it |
 | `system` (the hub machine's CLI, `python -m rook.hub.trust seed`) | seed, recording whose words and who passed them on (`via`); such entries are `confirmed: false` until the person confirms them |

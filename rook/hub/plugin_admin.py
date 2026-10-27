@@ -1,4 +1,4 @@
-"""Band-wide plugin management behind Manage > Plugins.
+"""Band-wide plugin management behind Settings > Plugins.
 
 One view of every plugin on the hub and on each online worker, built from what
 already exists: the hub node's own plugin host and each worker's

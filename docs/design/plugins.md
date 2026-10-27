@@ -379,7 +379,7 @@ The same steps run for one module on a live node:
 
 Each returns `{"ok", "module", ...}` or `{"ok": false, "error"}`. The hub
 refuses to disable `settings`, `policy` and `info`, the worker `selfupdate`
-(Manage > Plugins also keeps `config` and `enrollment` on). The settings
+(Settings > Plugins also keeps `config` and `enrollment` on). The settings
 service pushes a worker change without a restart when every changed key is
 `apply="live"`/`"reload"` and the worker has `worker.plugin.reload`.
 `*.plugin.disable` and `*.plugin.reload` are tagged `destructive`: they stop
@@ -394,7 +394,7 @@ plugin that registers something on the node in its binder (the worker's
 `register_binary_handler`) undoes it in `stop()`, since a reload binds the
 new instance first.
 
-### 9.2 Switching plugins band-wide (Manage > Plugins)
+### 9.2 Switching plugins band-wide (Settings > Plugins)
 
 The dashboard's **Plugins** page shows every plugin on the hub and on each
 online worker (rows: plugins; columns: the hub and the workers, from each

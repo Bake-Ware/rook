@@ -1,4 +1,4 @@
-// Manage > Roles: the team members the house agent calls on in huddles
+// Intelligence sources > Roles: the team members the house agent calls on in huddles
 // (docs/design/huddles.md 4, 8). A role is a charter, what it watches, where it
 // looks, the tools it may use and its own memory, kept in its home folder on
 // its agent host. The list on the left, the selected role's form on the right
@@ -203,7 +203,7 @@ export async function mountRoles(root){
         h('div',{class:'mg-field'},'Built-in file tools',h('div',{class:'mg-actions'},
           h('label',{class:'mg-actions'},builtin[0],'Read files'),h('label',{class:'mg-actions'},builtin[1],'Search files'))),
         field('Autonomy',autonomy),field('Memory',memory),
-        h('div',{class:'mg-field'},h('span',{class:'mg-flabel'},'Speaking voice',info('The voice its huddle messages are read aloud in (the Speak button). Band default: Manage > Voice. The house agent (the chair) has its own on the Home agent page.','About the speaking voice')),vp.el,vp.note),
+        h('div',{class:'mg-field'},h('span',{class:'mg-flabel'},'Speaking voice',info('The voice its huddle messages are read aloud in (the Speak button). Band default: Intelligence sources > Voice. The house agent (the chair) has its own on the Home agent page.','About the speaking voice')),vp.el,vp.note),
         h('details',null,h('summary',{text:'Examples & memory'}),h('div',{class:'mg-pad',style:'padding-left:0;padding-right:0'},
           field('Example questions',examples,'Shown to the chair, so it knows when to call on this role.'),
           field('Starting memory',seed,'Saved into its memory when its home is created (its first answer). Never passwords, keys or code.'))),

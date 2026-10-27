@@ -17,7 +17,7 @@ you can always see what they did. Only a few things stop and ask you. The
 hub enforces them, not the agent's instructions, so an agent can't talk its
 way past them.
 
-Open the map on **Manage > Trust**.
+Open the map on **Trust > Trust map**.
 
 ## What always asks you
 

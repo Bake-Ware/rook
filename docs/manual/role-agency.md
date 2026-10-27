@@ -23,7 +23,7 @@ card. Nothing outside it is writable this way. Tasks are for work items,
 never a notepad: a role that wants to remember a draft keeps it in its
 workspace.
 
-To see it, open the role on **Manage > Roles** and expand **Workspace**:
+To see it, open the role on **Intelligence sources > Roles** and expand **Workspace**:
 the files, newest size and age, and each file's text when you tap it. It is
 read-only there. Agents read it with `role.workspace` on worker `rook`.
 

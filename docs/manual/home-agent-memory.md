@@ -14,7 +14,7 @@ deprecated: false
 The home agent ([[manual-home-agent]]) remembers between conversations. Tell
 it your name once, or that the bins go out on Tuesday, and it still knows next
 week. Memory is on by default; you can see and change everything it
-remembers under **Manage > Memory**.
+remembers under **Work > Memory**.
 
 Memory is not the knowledge wiki ([[manual-knowledge]]). The wiki holds pages
 your agents write with evidence and you verify. Memory holds short notes the
@@ -77,7 +77,7 @@ page) runs it at once.
 
 ## The Memory page
 
-Open **Manage > Memory** (operator account). Filter by kind (about a person,
+Open **Work > Memory** (operator account). Filter by kind (about a person,
 fact, conversation, skill), search, and pick a memory to see where it came
 from, the versions it replaced and its history. You can:
 

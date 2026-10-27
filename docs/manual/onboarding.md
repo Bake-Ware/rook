@@ -60,7 +60,7 @@ Each answer is recorded in your words. Then it reads the plan back and asks
 Then it tells you what it set.
 
 **Guarded** and **sacred** take effect at once. **Toy (ship-it)** waits
-for your tap on **Manage > Trust**, and so do the exceptions below. Until
+for your tap on **Trust > Trust map**, and so do the exceptions below. Until
 then the project's changes just go anyway; guarded only asks you first
 with the advanced security plugin on ([[manual-security]]).
 
@@ -111,7 +111,7 @@ exceptions. Borrowed things stay borrowed until you say restore.
 - **More > Decisions**: **Borrowed now** lists what is borrowed. **New
   projects** shows each conversation, the plan it read back, what setup did,
   and which proposals wait for you on Trust.
-- **Manage > Trust**: the ledger under **Borrowed state** (with your words
+- **Trust > Trust map**: the ledger under **Borrowed state** (with your words
   and until when), the proposals to accept, and **Normal state**: each
   machine's recorded normal state.
 
@@ -124,7 +124,7 @@ exceptions. Borrowed things stay borrowed until you say restore.
 
 ## Settings
 
-Under **Manage > Home agent**, **New projects**: how long until a project's
+Under **Intelligence sources > Home agent**, **New projects**: how long until a project's
 review (and its exception's expiry), how long a project must be quiet before
 it offers to restore, the concept new projects go under, and how often it
 checks.

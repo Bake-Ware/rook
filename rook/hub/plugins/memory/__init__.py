@@ -17,7 +17,7 @@ with tools become procedures. A consolidation job summarises finished
 conversations into episodes, rolls old episodes up by week, merges
 near-duplicates, lets unused memories fade and keeps each kind in budget.
 
-Everything is user-visible and editable on Manage > Memory. Secrets are
+Everything is user-visible and editable on Work > Memory. Secrets are
 never stored: known vault values become ``{{secret:name}}`` references and
 the deny patterns refuse (or, in summaries, redact) anything that looks like
 a credential (:mod:`.rules`).
@@ -195,7 +195,7 @@ class Memory(Plugin):
              "`memory.remember(text, kind)` (kind fact, or profile about yourself) adds one; "
              "`memory.forget(id)` removes one. Other people's memory, skills (procedures) and "
              "pinning are the operator's. Never store secrets. People browse and edit it on "
-             "Manage > Memory.\n")
+             "Work > Memory.\n")
 
     def __init__(self) -> None:
         super().__init__()
@@ -277,7 +277,7 @@ class Memory(Plugin):
 
     def _svc(self) -> MemoryService:
         if self.service is None:
-            raise ValueError("memory is off on this hub (Manage > Memory)")
+            raise ValueError("memory is off on this hub (Work > Memory)")
         return self.service
 
     # -- embeddings -------------------------------------------------------------------
@@ -291,7 +291,7 @@ class Memory(Plugin):
         s = self.settings
         home = self._home()
         # The home agent's resolved endpoint: a named model provider
-        # (home.llm_provider, Manage > Model providers) supplies it when set.
+        # (home.llm_provider, Intelligence sources > Model providers) supplies it when set.
         home_cfg = home.config() if home is not None else {}
         home_key = (home_cfg.get("base_url"), home_cfg.get("api_key")) if home else None
         key = (s.get("embeddings"), s.get("embedder"), s.get("embed_model"), home_key)
@@ -572,7 +572,7 @@ class Memory(Plugin):
                 return json.dumps({"ok": False, "error": str(e)})
         return [rook_memory]
 
-    # -- Manage > Memory (operator account; through settings_web) ----------------------
+    # -- Work > Memory (operator account; through settings_web) ----------------------
     def page(self) -> dict:
         svc = self._svc() if self.service is not None else None
         home = self._home()

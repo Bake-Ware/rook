@@ -49,7 +49,7 @@ Anyone who knows a band's key can join that band and control its machines.
 
 ## Advanced security
 
-The **advanced security** plugin (Manage > Plugins, off by default) brings
+The **advanced security** plugin (Settings > Plugins, off by default) brings
 back the stricter rules Rook used to have:
 
 - guarded trust entries ask first;

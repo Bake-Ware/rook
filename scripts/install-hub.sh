@@ -656,7 +656,7 @@ fi
 
 # ---- the Android app ---------------------------------------------------------------------------
 # The release's app (a generic build: no server address or band key inside) is
-# published the way Manage > Updates publishes one, into DATA_DIR/updates/apk,
+# published the way Settings > Updates publishes one, into DATA_DIR/updates/apk,
 # so the hub serves it at /apk and /apk.json from the first start. Each file is
 # checked against the release's SHA256SUMS, and the APK against its manifest.
 # Never replaces a newer app the operator published since.
@@ -703,7 +703,7 @@ if [ -z "$NO_APK" ]; then
     [ "$MODE" != system ] || as_root chown -R "$SVC_USER:" "$DATA_DIR/updates"
     say "app: $(sed -n 's/.*"version_name": *"\([^"]*\)".*/\1/p' "$TMP/rook-worker-apk.json") from $APK_TAG, served at /apk"
   elif [ "$rc" != 3 ]; then
-    say "no Android app to serve yet: /apk stays empty until you publish one (Manage > Updates)"
+    say "no Android app to serve yet: /apk stays empty until you publish one (Settings > Updates)"
   fi
 fi
 

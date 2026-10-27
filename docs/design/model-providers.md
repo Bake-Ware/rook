@@ -11,7 +11,7 @@ Model providers name them once.
 
 ## The pieces
 
-**`llm` hub plugin** (`rook/hub/plugins/llm`, Manage > Model providers).
+**`llm` hub plugin** (`rook/hub/plugins/llm`, Intelligence sources > Model providers).
 A registry of `Provider`s: `id`, `base_url` (an OpenAI-compatible `/v1`),
 `api_key` (a vault reference `{{secret:name}}`, never the key), `models`
 offered (empty: whatever `/v1/models` lists), `default_model`, `kind` and

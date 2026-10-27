@@ -2,7 +2,7 @@
 
 The hub checks GitHub releases (Rook and the telesthete relay), verifies
 what it downloads against each release's SHA256SUMS, and keeps it cached.
-Manage > Updates (rook/web/updates.js, API in :mod:`.web`) shows what every
+Settings > Updates (rook/web/updates.js, API in :mod:`.web`) shows what every
 member of the band runs against what is available and applies it:
 
 * **hub**: through ``rook hub deploy`` (dead-man rollback) or by re-running
@@ -204,7 +204,7 @@ class Updates(Plugin):
     async def apply_hub(self, tag: str) -> dict:
         """Update the hub to release ``tag`` (restarts it). Refused for a
         breaking release until the devices it cuts off are updated or the
-        operator acknowledged it on Manage > Updates."""
+        operator acknowledged it on Settings > Updates."""
         from .service import Refused
         who = self._admin("updates.apply_hub")
         try:

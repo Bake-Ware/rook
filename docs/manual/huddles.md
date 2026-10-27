@@ -132,7 +132,7 @@ one card.
 
 ## Roles
 
-Open **Roles** under Manage. The list shows each role, the machine that
+Open **Roles** under Intelligence sources. The list shows each role, the machine that
 keeps its folder (its host) and its autonomy.
 
 Pick a role to change it. The **(i)** beside a field explains it:
@@ -303,7 +303,7 @@ default), **Session quiet alarm** (`role.session_stall_minutes`, 20),
 sessions per role** (`role.sessions_per_role`, 2). Anything Rook shortens for a role or for you
 ends with `[truncated: N of M chars]`, so a cut is never silent.
 
-The home agent must be on (Manage > Home agent) to chair; the Huddles page
+The home agent must be on (Intelligence sources > Home agent) to chair; the Huddles page
 says so, with a link, when it is off. Roles run on an agent harness (Claude
 Code, Codex or OpenCode).
 

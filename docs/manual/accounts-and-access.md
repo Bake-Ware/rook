@@ -106,7 +106,7 @@ passing on your words never gives access; only you do.
 - Nothing expires and nothing is asked twice. What is still open waits on the
   **People** page.
 
-**Manage > People** shows owners everyone and what they reach, in plain
+**Trust > People** shows owners everyone and what they reach, in plain
 words, what waits on you (requests, people with no access yet, new machines
 and bands), and the history. **Give access**, **Remove**, **Make an owner**,
 **Share…** and **Owners only** change it there; the history records "<your

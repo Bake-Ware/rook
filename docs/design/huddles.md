@@ -162,7 +162,7 @@ Rules:
   turn id. The MCP calls the turn makes are journaled by the hub as usual under
   that token.
 
-### 3.2 Settings (Manage > Home agent, group "Claude Code")
+### 3.2 Settings (Intelligence sources > Home agent, group "Claude Code")
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -427,7 +427,7 @@ this way. Two ways in, one folder:
   way) and runs the host's own `file.*` caps (`shell.exec rm` for a delete)
   as hub system code, journaled as the role (`role.workspace`).
 
-People see the workspace read-only on the role's page (Manage > Roles,
+People see the workspace read-only on the role's page (Intelligence sources > Roles,
 **Workspace**: the file list, then one file's text; `role.workspace`).
 
 **The interim action tier** (`rook/hub/plugins/roles/tiers.py`), kept by the
@@ -651,7 +651,7 @@ Minimal, per Bake's standing rule (no chatty status, only actionable notices):
   `@role` completes. No presence sidebar.
 - **Roles** tab: charter, concerns, sources, tools, autonomy, model; a link to
   the role's memory on the Memory page; history.
-- **Manage > Home agent**: the backend switch and the Claude Code group (3.2),
+- **Intelligence sources > Home agent**: the backend switch and the Claude Code group (3.2),
   host picker with status, Test.
 
 As built (H4):
@@ -673,13 +673,13 @@ As built (H4):
   replies appear whole (`agenthost.events` stays future work).
 - Cards attach to their `seq`; a card without one goes after the last message
   of its round; cards older than the loaded messages go first. The only
-  notices: the house agent is off (link to Manage > Home agent), and open
+  notices: the house agent is off (link to Intelligence sources > Home agent), and open
   questions in a status huddle (link to answer them). A failed card shows
   "Failed: <why>" (the card's `error`).
 - New huddle: title and role checkboxes; checked are `huddle.default_roles`
   that exist and are on, else every role that is on (the `roles` action
   returns `default_roles`).
-- **Manage > Roles** (`rook/web/roles.js`): list, form for every role field,
+- **Intelligence sources > Roles** (`rook/web/roles.js`): list, form for every role field,
   Move (agent hosts with harness and sign-in status), history, presets,
   delete, a link to `#memory?role=<id>`. The **Memory** page has a "whose
   memory" menu: a role's memory through `role.memory` / `role.memory_edit`.
@@ -688,7 +688,7 @@ As built (H4):
   `role_memory`, `role_memory_edit`), which call the `role.*` caps with the
   operator account's principal (a band owner, so the roles plugin's admin
   gate passes) and `human:<username>` as the actor.
-- **Manage > Home agent** adds "Last 24 hours on agent hosts": turns, failed
+- **Intelligence sources > Home agent** adds "Last 24 hours on agent hosts": turns, failed
   turns, tokens and cost per role (`""` = the house agent, chair included),
   from an in-memory ledger in `AgentHostBackend` (since the MCP server
   started; `home` page `usage`). Its chat panel is the 1:1 huddle

@@ -267,7 +267,7 @@ def test_every_page_with_a_voice_shows_a_picker_with_a_preview():
     # The house agent (the chair): its own field, saved as home.voice.
     assert "voicePicker(val('voice'))" in home and "voice:vp.select.value" in home
     assert "field('Speaking voice'" in home
-    # The band default: on Manage > Voice and in Settings.
+    # The band default: on Intelligence sources > Voice and in Settings.
     assert "voicePicker(val('tts_default')" in voice and "key:'voice.tts_default'" in voice
     assert "['voice.tts_default'" in settings and "['home.voice'" in settings
     assert "fillVoiceSelect(input,cur" in settings

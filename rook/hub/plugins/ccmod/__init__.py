@@ -1,6 +1,6 @@
 """``ccmod.*``: Claude Code rules, set on the hub and pushed to workers.
 
-The operator writes rules on the dashboard (Manage > Claude Code) or with these
+The operator writes rules on the dashboard (Settings > Claude Code) or with these
 caps: when a Claude Code hook event (or Idle, or a worker going offline)
 happens in a scope, do something (docs/design/ccmod.md, :mod:`.model`).
 
@@ -110,7 +110,7 @@ class ClaudeCodeRules(Plugin):
                      "instructions, status line) work."),
     )
     SKILL = ("### Claude Code rules\n"
-             "Hub-managed triggers and actions for Claude Code on the workers (dashboard: Manage > "
+             "Hub-managed triggers and actions for Claude Code on the workers (dashboard: Settings > "
              "Claude Code). `rook_call(worker=\"rook\", cap=\"ccmod.list\")` lists them; "
              "`ccmod.status` shows what each worker holds. Changing or pushing rules writes "
              "people's Claude Code settings: ask the user first.\n")

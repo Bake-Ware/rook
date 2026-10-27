@@ -396,7 +396,7 @@ impl Hub {
                 }
                 ReplyState::Unavailable => {
                     return Err(HubError::Agent(
-                        "The home agent couldn't answer (its model is unavailable). Check Manage > Home agent.".into(),
+                        "The home agent couldn't answer (its model is unavailable). Check Intelligence sources > Home agent.".into(),
                     ))
                 }
                 ReplyState::Waiting => {}
@@ -561,7 +561,7 @@ pub fn band_result(v: Value) -> Result<Value, HubError> {
 
 fn friendly_agent_error(err: &str) -> String {
     if err.contains("home agent is off") {
-        "The home agent is off. Turn it on in the dashboard: Manage > Home agent.".into()
+        "The home agent is off. Turn it on in the dashboard: Intelligence sources > Home agent.".into()
     } else if err.contains("rate limited") {
         "Too many questions this minute. Try again shortly.".into()
     } else if err.contains("no worker") || err.contains("not on the band") {
@@ -577,9 +577,9 @@ fn friendly_agent_error(err: &str) -> String {
 
 pub fn agent_off_message(status: &HomeStatus) -> String {
     if !status.missing.is_empty() {
-        "The home agent isn't set up yet. Pick its model in the dashboard: Manage > Home agent.".into()
+        "The home agent isn't set up yet. Pick its model in the dashboard: Intelligence sources > Home agent.".into()
     } else {
-        "The home agent is off. Turn it on in the dashboard: Manage > Home agent.".into()
+        "The home agent is off. Turn it on in the dashboard: Intelligence sources > Home agent.".into()
     }
 }
 
@@ -758,7 +758,8 @@ mod tests {
             band_result(json!({"ok": true, "result": {"answer": "hi"}})).unwrap()["answer"],
             "hi"
         );
-        let off = band_result(json!({"ok": false, "error": "the home agent is off (Manage > Home agent)"}));
+        let off =
+            band_result(json!({"ok": false, "error": "the home agent is off (Intelligence sources > Home agent)"}));
         assert!(matches!(off, Err(HubError::Agent(m)) if m.contains("Turn it on")));
         let other = band_result(json!({"ok": false, "error": "worker said no"}));
         assert_eq!(other, Err(HubError::Agent("Worker said no".into())));

@@ -1,4 +1,4 @@
-"""Account API behind Manage > Claude Code: ``/ccmod/account-api``.
+"""Account API behind Settings > Claude Code: ``/ccmod/account-api``.
 
 Operator account only (``rook.remote.account_api``: session and CSRF); the
 dashboard proxies ``/account/ccmod/api`` here (rook/remote/knowledge_web.py
@@ -26,7 +26,7 @@ log = logging.getLogger("rook.hub.plugins.ccmod.web")
 
 PATH = "/ccmod/account-api"
 UNAVAILABLE = ("Claude Code rules are unavailable: the ccmod hub plugin is off or failed to start "
-               "(Manage > Plugins).")
+               "(Settings > Plugins).")
 
 
 def choices() -> dict:

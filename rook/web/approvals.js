@@ -79,7 +79,7 @@ export async function mountApprovals(root, opts = {}){
       h('div', {class: 'mg-actions ap-acts', style: 'flex-wrap:wrap'}, no, ok));
   }
 
-  // A trust-map proposal: the person decides it on Manage > Trust (their words recorded there).
+  // A trust-map proposal: the person decides it on Trust > Trust map (their words recorded there).
   function trustCard(x){
     const rows = [['Who', x.by], ['I want to', x.sentence]].concat(x.why ? [['Why', x.why]] : [])
       .concat([['Risk', x.loosens ? 'High: it loosens the trust map' + (x.sacred ? ', on something sacred' : '') + '; only you can say yes' : 'Low: it only makes the trust map stricter']]);

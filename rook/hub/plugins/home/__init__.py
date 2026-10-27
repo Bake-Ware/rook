@@ -2,7 +2,7 @@
 
 The operator assigns one OpenAI-compatible endpoint, a model, a persona and an
 API key (a vault reference, ``{{secret:name}}``; never stored in plain text)
-on the dashboard's Manage > Home agent page. The agent is then:
+on the dashboard's Intelligence sources > Home agent page. The agent is then:
 
 * **a chat participant.** It keeps itself present in the hub's chat rooms as
   ``agent:<name>`` (default ``agent:home``). A message that mentions it, that
@@ -121,14 +121,14 @@ def summarise(err: str) -> str:
     if "cannot reach" in e:
         return "the model endpoint is unreachable"
     if "vault" in e or "secret" in e or "API key" in e:
-        return "the API key is unavailable (check Manage > Home agent)"
+        return "the API key is unavailable (check Intelligence sources > Home agent)"
     if "public URL" in e or "callback" in e:
         return ("agent hosts cannot reach the hub: set its callback URL "
-                "(Manage > Home agent)")
+                "(Intelligence sources > Home agent)")
     if "agent host" in e:
-        return "no agent host can run the home agent now (Manage > Home agent)"
+        return "no agent host can run the home agent now (Intelligence sources > Home agent)"
     if "base URL" in e or "model" in e or "provider" in e:
-        return "the home agent is not fully configured (Manage > Home agent)"
+        return "the home agent is not fully configured (Intelligence sources > Home agent)"
     return "the model call failed"
 
 
@@ -154,7 +154,7 @@ class HomeAgent(Plugin):
                      "installed and signed in); see the Agent host group."),
         setting("llm_provider", str, "", pattern=r"^([a-z0-9][a-z0-9_-]{0,31})?$", group="Model",
                 order=0, label="Model provider",
-                help="A provider from Manage > Model providers (llmanifold, or one added there). "
+                help="A provider from Intelligence sources > Model providers (llmanifold, or one added there). "
                      "Set: its address and key are used, and the base URL and API key below "
                      "are not. Blank: the endpoint below."),
         setting("provider", str, "openai", choices=PROVIDERS, group="Model", order=1,
@@ -232,7 +232,7 @@ class HomeAgent(Plugin):
                      "for endpoints that do not support tool calls."),
         setting("memory", bool, True, group="Behaviour", order=5, label="Use memory",
                 help="Remember people, facts, conversations and skills between conversations "
-                     "(Manage > Memory). Off: it neither reads nor writes memory."),
+                     "(Work > Memory). Off: it neither reads nor writes memory."),
         setting("voice", str, "", pattern=r"^[A-Za-z0-9_.:-]{0,64}$", group="Behaviour",
                 order=6, label="Speaking voice",
                 help="The voice its huddle messages are read aloud in (the Speak button), "
@@ -475,7 +475,7 @@ class HomeAgent(Plugin):
 
     def _voice_setting(self, key: str) -> str:
         """One of the voice plugin's settings (the assistant's name and owner live there:
-        Manage > Voice > Speech), or "" when the voice plugin isn't set up."""
+        Intelligence sources > Voice > Speech), or "" when the voice plugin isn't set up."""
         with contextlib.suppress(Exception):
             node_settings = getattr(self._node, "settings", None)
             if node_settings is not None:
@@ -536,7 +536,7 @@ class HomeAgent(Plugin):
         for k, v in (overrides or {}).items():
             if k in cfg:
                 cfg[k] = v
-        # A named model provider (Manage > Model providers) supplies the
+        # A named model provider (Intelligence sources > Model providers) supplies the
         # endpoint and key, so everything reading base_url/api_key from here
         # (the chat client, memory's embeddings) follows it.
         pid = str(cfg.get("llm_provider") or "").strip()
@@ -588,7 +588,7 @@ class HomeAgent(Plugin):
             raise HomeError(f"provider must be one of {list(PROVIDERS)}")
         if cfg.get("_provider") and not str(cfg.get("base_url") or "").strip():
             raise HomeError(f"the model provider {cfg['_provider']!r} is not available "
-                            "(Manage > Model providers)")
+                            "(Intelligence sources > Model providers)")
         if not str(cfg.get("base_url") or "").strip():
             raise HomeError("set the home agent's base URL first")
         if need_model and not str(cfg.get("model") or "").strip():
@@ -1212,7 +1212,7 @@ class HomeAgent(Plugin):
     def job_unready(self) -> str:
         """Why a job agent step cannot use the home agent now ("" when it can)."""
         if not self.enabled():
-            return "the home agent is off (Manage > Home agent)"
+            return "the home agent is off (Intelligence sources > Home agent)"
         if not self.settings.get("job_steps", True):
             return "the home agent does not work job steps (setting home.job_steps)"
         missing = self.missing()
@@ -1335,7 +1335,7 @@ class HomeAgent(Plugin):
         (voice, mcp, ...). Errors when the home agent is off or not
         configured, and when one caller asks more than ASK_RATE times a minute."""
         if not self.enabled():
-            raise HomeError("the home agent is off (Manage > Home agent)")
+            raise HomeError("the home agent is off (Intelligence sources > Home agent)")
         question = str(question or "").strip()
         if not question:
             raise HomeError("ask needs a question")
@@ -1663,7 +1663,7 @@ class HomeAgent(Plugin):
                 return json.dumps({"ok": False, "error": str(e)})
         return [rook_home_ask] + ([rook_house] if self.front_door() else [])
 
-    # -- the Manage > Home agent page (operator account; via settings_web) ----
+    # -- the Intelligence sources > Home agent page (operator account; via settings_web) ----
     def page(self, svc) -> dict:
         rows = {}
         for s in self.SETTINGS:

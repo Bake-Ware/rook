@@ -460,7 +460,7 @@ class Onboarding:
         team = self.team(level)
         if level == "ship-it":
             notes.append("Ship-it loosens the trust map, so that entry waits for your tap on "
-                         "Manage > Trust.")
+                         "Trust > Trust map.")
         readback = (f"Here's the plan for {t['title']}: " + "; ".join(lines) + ". "
                     + " ".join(notes) + (" " if notes else "")
                     + f"Team: {', '.join(team)}. I'll create the project, a wiki page from my "

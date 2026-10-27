@@ -48,7 +48,7 @@ Ask the user before band-wide changes that are hard to undo: re-banding, deauth.
 
     # Appended to the server instructions: how an agent reaches the person when
     # they aren't in the conversation. Sites override it with their own devices
-    # and bridges (Manage > Agent instructions); the default names no host.
+    # and bridges (Intelligence sources > Agent instructions); the default names no host.
     "contact": """\
 Reaching the user when they aren't in this conversation (long jobs, blockers, results): use what the site provides, in this order unless they asked otherwise: a phone notification (rook_call cap=notify.post on their phone worker), speech on their phone (cap=voice.speak), or a messaging bridge the site has configured. Keep it to one short message and don't repeat it.""",
     # Tool tips are appended to that tool's description in every tools/list, so

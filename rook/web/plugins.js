@@ -1,4 +1,4 @@
-// Manage > Plugins: every plugin on the hub and on each online worker in one
+// Settings > Plugins: every plugin on the hub and on each online worker in one
 // grid, with switches, band defaults for new workers, presets, and the
 // marketplace preview. Everything goes through /account/plugins/api (operator
 // only; rook/hub/plugins_web.py). Stored text is rendered as text.

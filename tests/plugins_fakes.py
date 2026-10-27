@@ -1,4 +1,4 @@
-"""Doubles shared by the plugin management tests (Manage > Plugins)."""
+"""Doubles shared by the plugin management tests (Settings > Plugins)."""
 
 from __future__ import annotations
 

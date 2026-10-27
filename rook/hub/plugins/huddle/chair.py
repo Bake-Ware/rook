@@ -392,7 +392,7 @@ class Chair:
     def home(self):
         home = self._plugin("home")
         if home is None or not home.enabled():
-            raise ValueError("the house agent is off (Manage > Home agent); it chairs huddles")
+            raise ValueError("the house agent is off (Intelligence sources > Home agent); it chairs huddles")
         return home
 
     def roles(self):

@@ -30,7 +30,7 @@ No hub yet? Click **Install a hub on this computer** (see below).
 
 ## Quick ask
 
-The quick-ask box talks to your hub's **home agent** (Manage > Home agent in
+The quick-ask box talks to your hub's **home agent** (Intelligence sources > Home agent in
 the dashboard). If the home agent is off, the box says so.
 
 Your questions and its answers go to a private chat room named

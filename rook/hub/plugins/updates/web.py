@@ -1,4 +1,4 @@
-"""Account API behind Manage > Updates: ``/updates/account-api``.
+"""Account API behind Settings > Updates: ``/updates/account-api``.
 
 Operator account only, same session and CSRF rules as the other account
 APIs; the dashboard proxies ``/account/updates/api`` here
@@ -110,7 +110,7 @@ def _settings(node: Any, body: dict, actor: str) -> dict:
     for name in ("mode", "channel", "window"):
         if name in body:
             out[name] = settings.set(f"updates.{name}", body[name], actor=actor,
-                                     note="Manage > Updates", source="dashboard")["ok"]
+                                     note="Settings > Updates", source="dashboard")["ok"]
     if not out:
         raise ValueError("nothing to change: send mode, channel or window")
     return out

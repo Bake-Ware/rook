@@ -1,6 +1,6 @@
 """ccmod.*: the hub's Claude Code rules, put into effect on this machine.
 
-The hub keeps Claude Code rules (Manage > Claude Code; docs/design/ccmod.md):
+The hub keeps Claude Code rules (Settings > Claude Code; docs/design/ccmod.md):
 a trigger (a Claude Code hook event such as PreToolUse, or Idle), a scope and
 actions. It pushes each worker the rules that apply to it with
 ``ccmod.apply``. This plugin then:
@@ -225,7 +225,7 @@ class ClaudeCodeRules(Plugin):
     NAMESPACE = "ccmod"
     NAME = "ccmod"
     PLACEMENT = place("not is_hub and os != 'android'")
-    SKILL = ("Claude Code rules from the hub (Manage > Claude Code): `ccmod.status` shows which "
+    SKILL = ("Claude Code rules from the hub (Settings > Claude Code): `ccmod.status` shows which "
              "Claude Code installations here carry Rook's managed hooks and the rules' revision. "
              "The hub pushes them with `ccmod.apply` (admin); `ccmod.remove` takes them out. "
              "Only Rook's own entries in settings.json are touched.")

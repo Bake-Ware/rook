@@ -35,7 +35,7 @@ async def test_pairing_profile_mint_enroll_and_first_start(tmp_path, monkeypatch
                       "hub_public": "127.0.0.1:8765", "pyz_domain": "http://127.0.0.1:7005"})
     EnrollmentStore().import_config()
     band_id = EnrollmentStore().bands()[0]["id"]
-    # The operator chose plugins for new workers on this band (Manage > Plugins).
+    # The operator chose plugins for new workers on this band (Settings > Plugins).
     pp.set_worker_defaults(SettingsStore(), band_id, {"hid": False, "shell": True},
                            actor="human:op")
     server = CombinedServer(web_user="owner", web_pass="password", port=7005,

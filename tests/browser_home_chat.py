@@ -1,4 +1,4 @@
-"""Drive the chat panel on Manage > Home agent in a real browser, against the
+"""Drive the chat panel on Intelligence sources > Home agent in a real browser, against the
 real home agent plugin (fake model endpoint), the real huddle plugin and its
 dashboard API, and a real ChatStore.
 

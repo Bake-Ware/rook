@@ -1,7 +1,7 @@
 """Home agent memory (rook/hub/plugins/memory): write rules, dedupe and
 supersede, recall with and without embeddings, the prompt context and its
 budget, capture from chat, the model tools, consolidation, procedures from
-job steps, the Manage > Memory page actions, and the MCP tool."""
+job steps, the Work > Memory page actions, and the MCP tool."""
 
 from __future__ import annotations
 
@@ -227,7 +227,7 @@ async def test_semantic_recall_via_the_home_endpoint(env):
 
 @pytest.mark.asyncio
 async def test_embeddings_follow_the_home_agents_model_provider(env):
-    # The home agent names a model provider (Manage > Model providers) and has
+    # The home agent names a model provider (Intelligence sources > Model providers) and has
     # no base URL of its own: memory embeds through that provider.
     await env.node.plugin("llm").page_action(env.svc, {"action": "llm_save", "provider": {
         "id": "lab", "base_url": "http://192.0.2.5:8080/v1", "api_key": "{{secret:llm-key}}"}},

@@ -2,7 +2,7 @@
 
 The guardrails the hub had before the change-management reset
 (knowledge change-management-design-20261025), moved out of core so a band
-that wants them turns them back on in one place (Manage > Plugins, or the
+that wants them turns them back on in one place (Settings > Plugins, or the
 setting ``security.enabled``). On, it adds:
 
 * the trust map's ``guarded`` level and the ``balanced`` unlisted default
