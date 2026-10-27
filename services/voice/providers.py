@@ -551,10 +551,13 @@ class Provider:
 
         # Chatterbox (GPU) only when VOICE_CHATTERBOX_DEVICE is set; a failed load just leaves it out.
         chatterbox, error = tts_mod.load_chatterbox()
+        # Hosted voices (ElevenLabs) only when VOICE_TTS_HOSTED asks for them.
+        hosted, hosted_errors = tts_mod.load_hosted()
         self.tts = tts_mod.Catalog(_Kokoro, DEFAULT_VOICE.partition(':')[2] if ':' in DEFAULT_VOICE else DEFAULT_VOICE,
                                    chatterbox, error,
                                    os.environ.get('VOICE_TTS_DEFAULT', '').strip() or _read_voice() or DEFAULT_VOICE,
-                                   target_sr=24000)   # Kokoro's rate: every voice reaches clients alike
+                                   target_sr=24000,   # Kokoro's rate: every voice reaches clients alike
+                                   hosted=hosted, hosted_errors=hosted_errors)
         self.voices = self.tts.voices
         self.default_voice = self.tts.default
         self.turn = SmartTurn(os.path.join(HERE, 'smart-turn-v3.2-cpu.onnx'))
@@ -784,6 +787,8 @@ class Provider:
         chatterbox = getattr(getattr(self, 'tts', None), 'chatterbox', None)
         if chatterbox is not None:
             chatterbox.close()
+        for engine in getattr(getattr(self, 'tts', None), 'hosted', {}).values():
+            engine.close()
 
 
     async def turn_complete(self, pcm):

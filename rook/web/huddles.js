@@ -209,7 +209,7 @@ function deviceMenu(b,room,ref){
 // engine's voices (Chatterbox first, then Kokoro), a blank choice for the
 // band's default, and a Preview button that plays a short sample here.
 let voicesP=null;
-const ENGINE_NAMES={chatterbox:'Chatterbox (natural voices)',kokoro:'Kokoro (quick voices)'};
+const ENGINE_NAMES={chatterbox:'Chatterbox (natural voices)',kokoro:'Kokoro (quick voices)',elevenlabs:'ElevenLabs (hosted: text goes to ElevenLabs)'};
 /** The hub's voices (kept for the page's life; ``fresh`` asks again). */
 export function voiceList(fresh){
   // A failed or empty list is not kept: the next picker asks again.
@@ -229,7 +229,7 @@ export async function fillVoiceSelect(sel,current,blank=BAND_DEFAULT){
   const cat=(v.catalog&&v.catalog.length)?v.catalog:(v.voices||[]).map(x=>({id:x,label:x}));
   const opt=c=>h('option',{value:c.id,text:c.label&&c.label.toLowerCase()!==c.id.toLowerCase()?c.label+' ('+c.id+')':(c.label||c.id),selected:c.id===current});
   const groups={};for(const c of cat)(groups[c.engine||'']=groups[c.engine||'']||[]).push(c);
-  const rank=k=>k==='chatterbox'?0:k==='kokoro'?1:2;
+  const rank=k=>k==='chatterbox'?0:k==='kokoro'?1:k==='elevenlabs'?2:3;
   const order=Object.keys(groups).sort((a,b)=>rank(a)-rank(b)||a.localeCompare(b));
   sel.replaceChildren(h('option',{value:'',text:blank(v.default||'')}),
     ...(order.length>1||order[0]?order.map(k=>h('optgroup',{label:ENGINE_NAMES[k]||k||'Other'},groups[k].map(opt))):cat.map(opt)));

@@ -599,6 +599,12 @@ are set only in the environment or on the command line.
 | `voice.chatterbox_python` | Chatterbox Python | hub | path |  | `VOICE_CHATTERBOX_PYTHON`, `ROOK_VOICE_CHATTERBOX_PYTHON` | reload |
 | `voice.chatterbox_voices_dir` | Cloned voices folder | hub | path |  | `VOICE_CHATTERBOX_VOICES_DIR`, `ROOK_VOICE_CHATTERBOX_VOICES_DIR` | reload |
 | `voice.chatterbox_start_timeout_s` | Chatterbox start timeout (s) | hub | float | `180.0` | `VOICE_CHATTERBOX_START_TIMEOUT_S`, `ROOK_VOICE_CHATTERBOX_START_TIMEOUT_S` | reload |
+| `voice.tts_hosted` | Hosted voices | hub | str | `off` | `VOICE_TTS_HOSTED`, `ROOK_VOICE_TTS_HOSTED` | reload |
+| `voice.elevenlabs_api_key` | ElevenLabs API key (secret) | hub | str |  | `VOICE_ELEVENLABS_API_KEY`, `ROOK_VOICE_ELEVENLABS_API_KEY` | reload |
+| `voice.elevenlabs_voices` | ElevenLabs voices | hub | str |  | `VOICE_ELEVENLABS_VOICES`, `ROOK_VOICE_ELEVENLABS_VOICES` | reload |
+| `voice.elevenlabs_model` | ElevenLabs model | hub | str | `eleven_flash_v2_5` | `VOICE_ELEVENLABS_MODEL`, `ROOK_VOICE_ELEVENLABS_MODEL` | reload |
+| `voice.elevenlabs_url` | ElevenLabs address | hub | url | `https://api.elevenlabs.io` | `VOICE_ELEVENLABS_URL`, `ROOK_VOICE_ELEVENLABS_URL` | reload |
+| `voice.elevenlabs_timeout_s` | ElevenLabs timeout (s) | hub | float | `10.0` | `VOICE_ELEVENLABS_TIMEOUT_S`, `ROOK_VOICE_ELEVENLABS_TIMEOUT_S` | reload |
 | `voice.llm_url` | Language model URL | hub | url | `http://127.0.0.1:1234/v1/chat/completions` | `VLLM_URL`, `ROOK_VOICE_LLM_URL` | reload |
 | `voice.llm_model` | Model id | hub | str | `qwen3.8-flash-next-iq2_xs` | `VLLM_MODEL`, `ROOK_VOICE_LLM_MODEL` | reload |
 | `voice.mcp_url` | Rook MCP URL | hub | url | `http://127.0.0.1:8765/mcp` | `ROOK_MCP_URL`, `ROOK_VOICE_MCP_URL` | reload |

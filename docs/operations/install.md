@@ -48,6 +48,7 @@ curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/master/scripts/insta
 | `--package SPEC` | | pip requirement for Rook instead of the release wheel (a wheel file or URL, a source directory) |
 | `--git-ref REF` | | Install Rook from git at `REF` (installs `git`) |
 | `--python PATH` | first Python 3.11+ found | Interpreter for the virtualenv |
+| `--voice` | | Also set up speech on the hub (`rook voice setup`): the voice extras and the speech model files, about 1.4 GB, so phones and browsers can talk to it from the first start |
 
 `ROOK_REPO`, `TELESTHETE_REPO` (`owner/name`) and `ROOK_GITHUB` (base URL) point it at a
 fork or a mirror.

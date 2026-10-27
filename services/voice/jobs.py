@@ -29,7 +29,7 @@ def scrub(text):
     """An owner's readable error: this service's credentials and known secret
     shapes removed, truncated."""
     text = str(text)
-    for name in ('ROOK_MCP_TOKEN', 'LLM_PRIMARY_API_KEY', 'VOICE_TOKEN'):
+    for name in ('ROOK_MCP_TOKEN', 'LLM_PRIMARY_API_KEY', 'VOICE_TOKEN', 'VOICE_ELEVENLABS_API_KEY'):
         value = os.environ.get(name, '')
         if len(value) >= 6:
             text = text.replace(value, '[redacted]')

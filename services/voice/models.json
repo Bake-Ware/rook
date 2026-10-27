@@ -1,7 +1,24 @@
 {
+  "kokoro-v1.0.onnx": {
+    "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
+    "sha256": "7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5",
+    "size": 325532387,
+    "required": true,
+    "use": "the Kokoro voices (spoken replies)"
+  },
+  "voices-v1.0.bin": {
+    "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+    "sha256": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d",
+    "size": 28214398,
+    "required": true,
+    "use": "the Kokoro voices (spoken replies)"
+  },
   "smart-turn-v3.2-cpu.onnx": {
     "url": "https://raw.githubusercontent.com/pipecat-ai/pipecat/397ddee2b278f2eb217b48d73ada13c790220cd9/src/pipecat/audio/turn/smart_turn/data/smart-turn-v3.2-cpu.onnx",
-    "sha256": "2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f"
+    "sha256": "2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca967e4f",
+    "size": 8679182,
+    "required": true,
+    "use": "turn detection (when someone has finished speaking)"
   },
   "nemo_en_titanet_small.onnx": {
     "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_small.onnx",

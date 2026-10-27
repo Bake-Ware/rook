@@ -44,6 +44,9 @@
 #                       the hub serves the release's app at /apk, checked
 #                       against the release's SHA256SUMS; with --git-ref or
 #                       --package, the latest release's)
+#   --voice             also set up speech on the hub (`rook voice setup`): the
+#                       voice extras and the speech model files, about 1.4 GB,
+#                       so phones and browsers can talk to it from the first start
 set -euo pipefail
 
 # Everything runs from main(), called on the last line: a download cut short
@@ -71,7 +74,7 @@ usage() {
 # ---- options -----------------------------------------------------------------
 MODE="" VERSION="" RELAY_VERSION="" DATA_DIR="" BIND="" PUBLIC_HOST=""
 DASHBOARD_PORT="" MCP_PORT="" RELAY_PORT="" ASSUME_YES="" UNINSTALL="" PURGE=""
-NO_SYSTEMD="" RELAY_BIN="" PACKAGE="" GIT_REF="" PYTHON_BIN="" NO_APK=""
+NO_SYSTEMD="" RELAY_BIN="" PACKAGE="" GIT_REF="" PYTHON_BIN="" NO_APK="" VOICE=""
 # Which network options this run was given: on a re-run only those change hub.env.
 BIND_SET="" PUBLIC_SET="" DPORT_SET="" MPORT_SET="" RPORT_SET=""
 
@@ -97,6 +100,7 @@ while [ $# -gt 0 ]; do
     --git-ref) need_arg "$@"; GIT_REF="$2"; shift ;;
     --python) need_arg "$@"; PYTHON_BIN="$2"; shift ;;
     --no-apk) NO_APK=1 ;;
+    --voice) VOICE=1 ;;
     -h|--help) usage; exit 0 ;;
     *) die "unknown option: $1 (see --help)" ;;
   esac
@@ -403,7 +407,8 @@ cat <<EOF
 [rook]   program      $APP_DIR
 [rook]   data         $DATA_DIR
 [rook]   dashboard    http://$PUBLIC_HOST:$DASHBOARD_PORT   (listening on $BIND)
-[rook]   rook         $SOURCE_PLAN
+[rook]   rook         $SOURCE_PLAN$([ -z "$VOICE" ] || echo "
+[rook]   voice        speech on the hub (about 1.4 GB more)")
 EOF
 if [ -n "$EXPOSED" ]; then
   warn "this machine has a public address (${EXPOSED# }) and the hub will listen on it over"
@@ -705,6 +710,23 @@ if [ -z "$NO_APK" ]; then
   elif [ "$rc" != 3 ]; then
     say "no Android app to serve yet: /apk stays empty until you publish one (Settings > Updates)"
   fi
+fi
+
+# ---- voice (--voice) ---------------------------------------------------------------------------
+# Speech on the hub itself (voice.engine "here", the default): the voice extras
+# into the virtualenv and the speech model files, each checked against
+# services/voice/models.json, into the voice plugin's folder, so voice loads at
+# the first start. Without --voice, Intelligence sources > Voice says what is
+# missing and downloads the model files with one button.
+if [ -n "$VOICE" ]; then
+  say "voice: installing the speech extras and model files; this takes a few minutes"
+  if ! as_app env PIP_DISABLE_PIP_VERSION_CHECK=1 "$VENV/bin/python" -m rook voice setup \
+      --model-dir "$DATA_DIR/plugins/voice"; then
+    warn "voice setup did not finish; the hub runs without it. Try again later with:"
+    warn "  $VENV/bin/python -m rook voice setup --model-dir $DATA_DIR/plugins/voice"
+  fi
+  [ "$MODE" != system ] || ! as_root test -d "$DATA_DIR/plugins/voice" \
+    || as_root chown -R "$SVC_USER:" "$DATA_DIR/plugins"
 fi
 
 # ---- configuration and secrets -----------------------------------------------------------------

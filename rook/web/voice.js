@@ -50,7 +50,14 @@ export async function mountVoice(root){
   // Label beside the value, or above it on a phone.
   const row=(label,...value)=>h('div',{style:'display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:9px 0;border-top:1px solid var(--line-soft);font-size:13px'},h('span',{class:'mg-label',style:'flex:0 0 130px',text:label}),h('span',{style:'flex:1 1 220px;min-width:0;white-space:normal'},...value));
 
-  function draw(){drawState();drawDefault();drawMic();drawConnect();drawPanel();}
+  function draw(){drawState();drawDefault();drawMic();drawConnect();drawPanel();watch();}
+  // Look again every 2 s while models download, and while voice starts on them.
+  let polling=null;
+  function watch(){
+    const dl=d.download||{},s=d.status;
+    const busy=dl.state==='running'||(dl.state==='done'&&Date.now()/1000-(dl.finished_at||0)<120&&(!s.loaded||s.state==='starting'));
+    if(busy&&!polling)polling=setTimeout(()=>{polling=null;refresh().catch(()=>{});},2000);
+  }
 
   // The band's default voice: what messages are read in when a role or the
   // house agent has no voice of its own.
@@ -98,9 +105,22 @@ export async function mountVoice(root){
       out.push(h('div',null,h('div',{class:'mg-label',style:'margin-bottom:6px',text:'Install on the hub, then restart it'}),h('div',{class:'mg-actions',style:'flex-wrap:nowrap'},h('code',{class:'mg-code',text:cmd}),b)),
         h('div',{class:'mg-actions'},h('span',{class:'mg-sub',text:'About 1 GB.'}),info('This adds speech recognition and voices to the hub. A small hub does better forwarding voice to another machine: choose "On another machine".','About the extras')));
     }
-    if(req.models_missing&&req.models_missing.length)
-      out.push(h('p',{class:'mg-sub',style:'white-space:normal;line-height:1.6'},'Put these files in ',h('span',{class:'mg-mono',text:req.model_dir}),': ',h('span',{class:'mg-mono',text:req.models_missing.join(', ')}),'.'));
+    if(req.models_missing&&req.models_missing.length)out.push(download(req));
     return h('div',{style:'display:flex;flex-direction:column;gap:10px'},...out);
+  }
+  // Download the missing model files into the model folder; voice starts once they are in.
+  function download(req){
+    const dl=d.download||{},err=h('small',{class:'mg-error',role:'alert',text:dl.state==='error'?'Download failed: '+dl.error:''});
+    const mb=n=>Math.round(n/1048576);
+    if(dl.state==='running'){
+      const pct=dl.total?Math.min(100,Math.round(dl.done*100/dl.total)):0;
+      return h('div',null,h('div',{class:'mg-label',style:'margin-bottom:6px',text:'Downloading '+(dl.file||'the speech models')+' · '+mb(dl.done)+' of '+mb(dl.total)+' MB'}),
+        h('div',{class:'mg-meter',style:'max-width:none'},h('i',{style:'width:'+pct+'%'})));
+    }
+    const go=btn('Download','primary',()=>run(go,async()=>{const r=await post({action:'voice_models'});d.download=r.download;drawState();watch();},err));
+    return h('div',null,
+      h('p',{class:'mg-sub',style:'white-space:normal;line-height:1.6;margin:0 0 8px'},'Missing in ',h('span',{class:'mg-mono',text:req.model_dir}),': ',h('span',{class:'mg-mono',text:req.models_missing.join(', ')}),'.'),
+      h('div',{class:'mg-actions'},go,h('span',{class:'mg-sub',text:'About 360 MB, checked before use. Voice starts when they are in.'}),err));
   }
 
   function drawConnect(){
@@ -184,7 +204,7 @@ export async function mountVoice(root){
 
   return {
     activate(){refresh().catch(e=>{stateBox.replaceChildren(h('p',{class:'mg-empty mg-bad',text:e.message}));micBox.replaceChildren();connectBox.replaceChildren();panel.replaceChildren();});},
-    deactivate(){if(rec)rec.stop();}};
+    deactivate(){if(rec)rec.stop();if(polling){clearTimeout(polling);polling=null;}}};
 }
 
 // Record up to `seconds` of 16 kHz mono audio. Resolves to {stop(), done}:

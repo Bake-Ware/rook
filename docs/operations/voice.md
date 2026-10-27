@@ -53,10 +53,19 @@ Settings pages) use the engine's `/voices` and `/api/voice`:
    faster-whisper, kokoro-onnx, onnxruntime; about a gigabyte installed);
 2. the model files in the model folder (`voice.model_dir`, default the
    plugin's data folder, `<hub data>/plugins/voice`): `kokoro-v1.0.onnx`,
-   `voices-v1.0.bin`, `smart-turn-v3.2-cpu.onnx` (URLs and digests in
-   `services/voice/models.json` and `services/voice/README.md`);
+   `voices-v1.0.bin`, `smart-turn-v3.2-cpu.onnx` (URLs, sizes and SHA-256
+   digests in `services/voice/models.json`). **Download** on Intelligence
+   sources > Voice fetches the missing ones in the background (each into
+   `<name>.part`, checked, then renamed) and loads voice when they are in;
+   `rook voice models` does the same from a shell;
 3. the voice service code: a source checkout has it in `services/voice`; an
    installed hub carries it as `rook/_voice_engine`.
+
+`rook voice setup` (run as the hub's user; `--model-dir` when the model
+folder is not `$ROOK_DATA_DIR/plugins/voice`) installs the extras of the
+installed rook's `voice` extra with pip and downloads the model files;
+`rook voice status` says what is missing. The installer's `--voice` runs it.
+Speech recognition (faster-whisper) fetches its own model on first use.
 
 The models load in a thread at start, so the hub keeps answering; until they
 are loaded the voice paths answer 503 "starting". The voice keys and history
@@ -169,3 +178,26 @@ To run speech on the hub instead (a home server with spare CPU or a GPU):
 install the extras, copy the model files into the model folder, copy the
 voice server's `voice-admin.sqlite3` and `voice-state.sqlite3` there too to
 keep keys and history, then choose "On this hub".
+
+## Hosted voices (ElevenLabs)
+
+Off by default (`voice.tts_hosted = off`). With `elevenlabs` and an API key
+(`voice.elevenlabs_api_key`, a secret setting: the vault), the voice service
+adds the account's voices (or the `name=voice_id` pairs in
+`voice.elevenlabs_voices`) to its catalog as `eleven_<name>`, engine
+`elevenlabs`; the pickers list them after Kokoro. Nothing goes to ElevenLabs
+until one of those voices speaks: the default voice stays Kokoro (or
+Chatterbox) unless an operator picks a hosted one. Speech is requested as
+24 kHz PCM (`pcm_24000`, model `voice.elevenlabs_model`, default
+`eleven_flash_v2_5`), sound tags are removed first, and a refusal, a timeout
+(`voice.elevenlabs_timeout_s`) or a quota error speaks that line in the
+local default voice and is reported like a Chatterbox fallback. The key only
+travels in the `xi-api-key` header, is removed from any error text, and the
+address must be https (`voice.elevenlabs_url`; plain http only to the voice
+machine itself, for a test double). Another hosted service is one more
+entry in `services/voice/tts.py` `HOSTED`.
+
+These reach the in-hub engine from Settings > Voice. A standalone voice
+server (a GPU box) reads them from its own environment: `VOICE_TTS_HOSTED`,
+`VOICE_ELEVENLABS_API_KEY`, `VOICE_ELEVENLABS_VOICES`, `VOICE_ELEVENLABS_MODEL`,
+`VOICE_ELEVENLABS_URL`, `VOICE_ELEVENLABS_TIMEOUT_S`.

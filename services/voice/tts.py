@@ -1,6 +1,6 @@
 """Text-to-speech engines and the voice catalog.
 
-Two engines, both first-class:
+Two local engines, both first-class, and hosted ones when asked for:
 
 * ``kokoro``: kokoro-onnx on the CPU, always loaded (the provider builds it).
 * ``chatterbox``: Resemble AI's Chatterbox Turbo on a GPU. Loaded only when
@@ -8,6 +8,10 @@ Two engines, both first-class:
   (``VOICE_CHATTERBOX_PYTHON``, a venv with torch + chatterbox-tts) through
   ``chatterbox_worker.py`` so torch never shares this process; without that
   variable the worker code is imported in-process instead.
+* hosted engines (``HOSTED``; ``elevenlabs`` so far): off unless
+  ``VOICE_TTS_HOSTED`` names them. They only add voices to the catalog: text
+  goes to the service only when one of its voices is picked, and the default
+  voice stays local unless someone sets it to a hosted one.
 
 Voice ids are bare names (``af_heart``, ``sojourn``), unique across engines; the
 catalog records each voice's engine. A Chatterbox clip whose name is already a
@@ -25,8 +29,8 @@ import numpy as np
 
 log = logging.getLogger("voice.tts")
 
-KOKORO, CHATTERBOX = "kokoro", "chatterbox"
-ENGINES = (KOKORO, CHATTERBOX)
+KOKORO, CHATTERBOX, ELEVENLABS = "kokoro", "chatterbox", "elevenlabs"
+ENGINES = (KOKORO, CHATTERBOX, ELEVENLABS)
 # Tags Front may use with Chatterbox. Chatterbox Turbo knows a few more; these sound natural.
 FRONT_TAGS = ("[laugh]", "[chuckle]", "[sigh]")
 _TAG = re.compile(r"\s*\[(?:[a-z][a-z -]{0,22}[a-z])\]")
@@ -215,14 +219,18 @@ class ChatterboxEngine:
 
 
 class Catalog:
-    """Both engines' voices, id resolution, and synthesis with Kokoro fallback.
+    """Every engine's voices, id resolution, and synthesis with Kokoro fallback.
 
     ``kokoro`` needs ``voices`` (bare names) and ``synthesize(text, name) -> (samples, sr)``;
-    ``chatterbox`` the same plus ``sample_rate`` (or None when not loaded).
+    ``chatterbox`` the same plus ``sample_rate`` (or None when not loaded). Each of
+    ``hosted`` (from :func:`load_hosted`) also has ``name`` and ``labels``;
+    ``hosted_errors`` maps a hosted engine asked for but not loaded to why.
     """
 
-    def __init__(self, kokoro, kokoro_default, chatterbox=None, chatterbox_error=None, default=None, target_sr=None):
+    def __init__(self, kokoro, kokoro_default, chatterbox=None, chatterbox_error=None, default=None, target_sr=None,
+                 hosted=(), hosted_errors=None):
         self.kokoro, self.chatterbox = kokoro, chatterbox
+        self.hosted = {}                # engine name -> a loaded hosted engine (load_hosted)
         self.target_sr = target_sr     # Chatterbox audio is resampled to this rate (Kokoro's) when it differs
         self.engines = {KOKORO: {"available": True}, CHATTERBOX: {"available": chatterbox is not None}}
         if chatterbox_error:
@@ -238,6 +246,17 @@ class Catalog:
             self.engine[v] = CHATTERBOX
             entries.append({"id": v, "engine": CHATTERBOX, "name": v,
                             "label": "Chatterbox (default)" if v == "default" else v.replace("_", " ").title()})
+        for engine in hosted or ():
+            self.hosted[engine.name] = engine
+            self.engines[engine.name] = {"available": True, "hosted": True}
+            for v in engine.voices:
+                if v in self.engine:
+                    log.warning("%s voice %r skipped: a %s voice already has that name", engine.name, v, self.engine[v])
+                    continue
+                self.engine[v] = engine.name
+                entries.append({"id": v, "engine": engine.name, "name": v, "label": engine.labels.get(v, v)})
+        for name, error in (hosted_errors or {}).items():
+            self.engines[name] = {"available": False, "hosted": True, "error": str(error)[:200]}
         self.entries = entries
         self.voices = [e["id"] for e in entries]
         self.default = self.resolve(default) or self.kokoro_default
@@ -264,16 +283,20 @@ class Catalog:
     def synthesize(self, text, voice, on_fallback=None):
         """Blocking. Returns (int16 PCM bytes, sample rate)."""
         name = self.resolve(voice) or self.default
-        if self.engine[name] == CHATTERBOX:
+        engine = self.engine[name]
+        if engine != KOKORO:
             try:
-                samples, sr = self.chatterbox.synthesize(text, name)
+                if engine == CHATTERBOX:
+                    samples, sr = self.chatterbox.synthesize(text, name)
+                else:                     # hosted: no sound tags, they would be read aloud
+                    samples, sr = self.hosted[engine].synthesize(strip_tags(text), name)
                 if len(samples) == 0:
-                    raise RuntimeError("chatterbox returned no audio")
+                    raise RuntimeError(f"{engine} returned no audio")
                 if self.target_sr and int(sr) != self.target_sr:
                     samples, sr = resample(samples, int(sr), self.target_sr), self.target_sr
                 return to_pcm16(level(samples)), int(sr)
             except Exception as error:
-                log.warning("chatterbox failed, speaking with kokoro: %s", error)
+                log.warning("%s failed, speaking with kokoro: %s", engine, error)
                 if on_fallback:
                     on_fallback(error)
                 name = self.kokoro_default
@@ -295,3 +318,141 @@ def load_chatterbox(environ=None):
     except Exception as error:
         log.warning("chatterbox not loaded (%s); only kokoro voices are offered", error)
         return None, error
+
+
+# --- hosted engines -----------------------------------------------------------
+ELEVENLABS_URL = "https://api.elevenlabs.io"
+ELEVENLABS_MODEL = "eleven_flash_v2_5"     # low latency, multilingual
+ELEVENLABS_RATE = 24000                    # pcm_24000: Kokoro's rate, so no resampling
+ELEVENLABS_MAX_VOICES = 40
+ELEVENLABS_MAX_CHARS = 2500                # a spoken clause is far shorter; bounds what one call can cost
+_LOOPBACK = ("127.0.0.1", "localhost", "::1")
+
+
+def _slug(name):
+    return re.sub(r"[^a-z0-9]+", "_", str(name).lower()).strip("_")[:40]
+
+
+def parse_voice_map(raw):
+    """``'Rachel=21m00Tcm4TlvDq8ntWcQ, adam=pNInz6obpgDQGcFmaJgB'`` -> ``{'eleven_rachel':
+    ('Rachel', '21m00Tcm4TlvDq8ntWcQ'), ...}``. A bare entry is a voice id named after itself."""
+    out = {}
+    for part in str(raw or "").split(","):
+        label, sep, voice_id = part.strip().partition("=")
+        if not sep:
+            label, voice_id = label, label
+        label, voice_id = label.strip(), voice_id.strip()
+        if not voice_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", voice_id) or not _slug(label):
+            continue
+        out["eleven_" + _slug(label)] = (label, voice_id)
+    return out
+
+
+class ElevenLabsEngine:
+    """ElevenLabs text to speech over HTTPS. Opt-in (``VOICE_TTS_HOSTED=elevenlabs``).
+
+    ``voices`` maps catalog ids to ``(label, ElevenLabs voice_id)`` (:func:`parse_voice_map`);
+    None lists the account's voices once, here. ``synthesize`` is blocking and returns
+    float32 samples at 24 kHz. ``transport`` is an httpx transport for tests.
+    """
+
+    name = ELEVENLABS
+
+    def __init__(self, api_key, voices=None, model=ELEVENLABS_MODEL, base_url=ELEVENLABS_URL, timeout=10.0,
+                 transport=None):
+        import httpx
+        from urllib.parse import urlsplit
+        if not api_key:
+            raise ValueError("no ElevenLabs API key (Settings > Voice > ElevenLabs API key)")
+        url = urlsplit(base_url or ELEVENLABS_URL)
+        if url.scheme != "https" and not (url.scheme == "http" and url.hostname in _LOOPBACK):
+            raise ValueError("the ElevenLabs address must be https (http only on this machine, for tests)")
+        self._key = api_key
+        self.model = model or ELEVENLABS_MODEL
+        self._http = httpx.Client(base_url=(base_url or ELEVENLABS_URL).rstrip("/"), timeout=timeout,
+                                  transport=transport, trust_env=False, headers={"xi-api-key": api_key})
+        try:
+            self._ids = dict(voices) if voices else self._list_voices()
+        except Exception:
+            self._http.close()
+            raise
+        if not self._ids:
+            self._http.close()
+            raise RuntimeError("the ElevenLabs account has no voices")
+        self.voices = sorted(self._ids)
+        self.labels = {v: f"{label} (ElevenLabs)" for v, (label, _) in self._ids.items()}
+
+    def _fail(self, what, response):
+        try:
+            detail = response.json().get("detail")
+            detail = detail.get("message") or detail.get("status") if isinstance(detail, dict) else detail
+        except Exception:
+            detail = None
+        text = f"elevenlabs {what}: HTTP {response.status_code}" + (f" ({str(detail)[:160]})" if detail else "")
+        return RuntimeError(text.replace(self._key, "***"))
+
+    def _list_voices(self):
+        r = self._http.get("/v1/voices")
+        if r.status_code != 200:
+            raise self._fail("voice list", r)
+        out = {}
+        for v in (r.json().get("voices") or [])[:ELEVENLABS_MAX_VOICES]:
+            if isinstance(v, dict) and v.get("voice_id") and v.get("name"):
+                out.update(parse_voice_map(f"{v['name']}={v['voice_id']}"))
+        return out
+
+    def synthesize(self, text, name):
+        if name not in self._ids:
+            raise RuntimeError(f"no ElevenLabs voice {name!r}")
+        if len(text) > ELEVENLABS_MAX_CHARS:
+            raise RuntimeError(f"text longer than {ELEVENLABS_MAX_CHARS} characters")
+        r = self._http.post(f"/v1/text-to-speech/{self._ids[name][1]}",
+                            params={"output_format": f"pcm_{ELEVENLABS_RATE}"},
+                            json={"text": text, "model_id": self.model})
+        if r.status_code != 200:
+            raise self._fail("speech", r)
+        data = r.content
+        if len(data) < 2:
+            raise RuntimeError("elevenlabs returned no audio")
+        samples = np.frombuffer(data[: len(data) // 2 * 2], dtype="<i2").astype(np.float32) / 32768
+        return samples, ELEVENLABS_RATE
+
+    def close(self):
+        self._http.close()
+
+
+def load_elevenlabs(environ):
+    # Defaults written out: the hub's Settings > Voice must match them (tests check).
+    return ElevenLabsEngine(environ.get("VOICE_ELEVENLABS_API_KEY", "").strip(),
+                            parse_voice_map(environ.get("VOICE_ELEVENLABS_VOICES", "")) or None,
+                            environ.get("VOICE_ELEVENLABS_MODEL", "eleven_flash_v2_5").strip() or ELEVENLABS_MODEL,
+                            environ.get("VOICE_ELEVENLABS_URL", "https://api.elevenlabs.io").strip() or ELEVENLABS_URL,
+                            float(environ.get("VOICE_ELEVENLABS_TIMEOUT_S", "10") or 10))
+
+
+#: Hosted text to speech services ``VOICE_TTS_HOSTED`` can name -> loader(environ) -> engine.
+#: Another service is one more entry: an engine with ``name``, ``voices``, ``labels``,
+#: ``synthesize(text, voice) -> (float32 samples, rate)`` and ``close()``.
+HOSTED = {ELEVENLABS: load_elevenlabs}
+
+
+def load_hosted(environ=None):
+    """The hosted engines ``VOICE_TTS_HOSTED`` (comma separated; blank or ``off``: none) asks
+    for: ``(engines, {name: why it did not load})``. A failure only leaves that service out."""
+    environ = os.environ if environ is None else environ
+    engines, errors = [], {}
+    for name in str(environ.get("VOICE_TTS_HOSTED", "off")).split(","):
+        name = name.strip().lower()
+        if not name or name in ("off", "none"):
+            continue
+        if name not in HOSTED:
+            errors[name] = f"unknown hosted voice service (known: {', '.join(sorted(HOSTED))})"
+            continue
+        try:
+            engine = HOSTED[name](environ)
+            engines.append(engine)
+            log.info("%s voices offered: %s", name, engine.voices)
+        except Exception as error:
+            log.warning("%s voices not offered (%s)", name, error)
+            errors[name] = error
+    return engines, errors

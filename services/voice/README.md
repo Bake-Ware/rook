@@ -21,13 +21,22 @@ python -m services.voice.server
 ```
 
 Supply `VOICE_MODEL_DIR` containing `kokoro-v1.0.onnx`, `voices-v1.0.bin`, and
-`smart-turn-v3.2-cpu.onnx`. The Smart Turn URL and digest are in `models.json`.
+`smart-turn-v3.2-cpu.onnx`. Their URLs, sizes and digests are in `models.json`;
+`python -m services.voice.fetch_models "$VOICE_MODEL_DIR"` downloads the missing
+ones and checks them (`--check` only checks, `--optional` adds the speaker model).
 Existing Whisper configuration (`WHISPER_MODEL`, `WHISPER_DEVICE`,
 `WHISPER_COMPUTE`) and `VLLM_URL`/`VLLM_MODEL` continue to work. Keep model weights
 outside Git. The existing browser UI can live in `VOICE_MODEL_DIR/static`.
 
 Runtime configuration:
 
+* `VOICE_TTS_HOSTED`: hosted voices beside Kokoro and Chatterbox, off by default
+  (`off`). `elevenlabs` adds the account's ElevenLabs voices as `eleven_<name>`
+  (`VOICE_ELEVENLABS_API_KEY`; `VOICE_ELEVENLABS_VOICES` as `name=voice_id,...`
+  to choose them; `VOICE_ELEVENLABS_MODEL`, `VOICE_ELEVENLABS_URL`,
+  `VOICE_ELEVENLABS_TIMEOUT_S`). Text goes there only when one of those voices
+  speaks; a failure speaks the line in the Kokoro default. See
+  docs/operations/voice.md.
 * `VOICE_TOKEN`: bearer credential. No hardcoded credential or implicit public
   access. `VOICE_ALLOW_ANONYMOUS=1` lets keyless clients in as guests, with or
   without keys configured; a supplied key that isn't valid is still refused. Keyless guests (and unprivileged keys) get
