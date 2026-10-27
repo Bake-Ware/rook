@@ -54,8 +54,11 @@ that is missing. To switch it off again on a machine, use the same page.
 Pages load only over `http` and `https`; local files and other kinds of
 address are refused, and downloads are blocked. By default the browser also
 refuses your own network: `localhost`, addresses on your LAN, VPN addresses
-(such as Tailscale's `100.x`) and the like, so an agent can't use it to look
-at your router or other machines. Turn on **Allow local network** for a
+(such as Tailscale's `100.x`) and the like, so an agent can't simply point it
+at your router or other machines. This is a guard, not a firewall: a hostile
+website could still slip a request through to your network in a few ways (a
+redirect, a WebSocket, a DNS trick), so only machines whose network you are
+comfortable exposing that way should get the browser. Turn on **Allow local network** for a
 machine whose browser should reach those, for example a dev server.
 
 ## Settings

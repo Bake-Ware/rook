@@ -333,8 +333,10 @@ class BrowserPlugin(Plugin):
                 env="ROOK_BROWSER_ALLOW_PRIVATE", label="Allow local network",
                 help="On lets sessions load localhost, your LAN, VPN (100.64.0.0/10) and "
                      "link-local addresses, e.g. a dev server or a router page. Off "
-                     "refuses them, so an agent can't use the browser to reach machines "
-                     "and services behind your router."),
+                     "refuses those addresses when an agent asks for them and for a "
+                     "page's own requests. It is not a firewall: a hostile page can "
+                     "still get through by a redirect hop, a WebSocket or DNS "
+                     "rebinding."),
         setting("sandbox", bool, default=True, scope="worker", env="ROOK_BROWSER_SANDBOX",
                 label="Chromium sandbox", advanced=True,
                 help="Keep on. Turn off only where Chromium cannot start its sandbox "

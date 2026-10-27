@@ -124,7 +124,9 @@ plugin's data directory (the last 20 kept); inline JPEG is refused past about
   directory, so it cannot read the person's cookies or saved passwords.
   `browser.executable` changes the binary, not the profile.
 - Network reach: by default a session refuses non-public addresses, so a
-  write-tier caller cannot use it to read pages behind the router (SSRF):
+  write-tier caller cannot simply ask it to read pages behind the router
+  (SSRF). It is a guard, not a firewall (the gaps a hostile page can use are
+  listed at the end of this item):
   `localhost`/`*.localhost`, and any host that is or resolves to an address
   that is not globally routable (loopback, RFC 1918 LAN, 100.64.0.0/10 VPNs
   such as Tailscale, link-local including 169.254.169.254, IPv6 ULA and
@@ -134,8 +136,13 @@ plugin's data directory (the last 20 kept); inline JPEG is refused past about
   because redirect hops are not routed. `browser.allow_private` (worker
   setting, default off) lifts it for a machine whose browser should reach a
   dev server or a LAN page. Not covered: DNS rebinding between the check and
-  Chromium's own lookup; WebSockets opened by page script and WebRTC are not
-  routed by Playwright.
+  Chromium's own lookup (the verdict is cached per session); WebSockets
+  opened by page script and WebRTC are not routed by Playwright; a redirect
+  hop in the main tab reaches the private host before the landing check sends
+  the tab to `about:blank`, and redirect hops of subresources and iframes are
+  never checked. Planned fix for all three: send Chromium through a small
+  local proxy (Playwright's launch `proxy=`) that checks the address it
+  actually connects to.
 - Sessions belong to their opener (section 2). Agents acting for the same
   person share an identity and so share sessions. Do not log into personal
   accounts in a session; for a test login use `{{secret:name}}`, typed only
