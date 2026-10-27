@@ -268,6 +268,8 @@ async def websocket(ws: WebSocket):
         conn.barge_confirm = protocol == 2 and hello.get('barge') == 'confirm'
         # "Expressive voice" in the app: sound tags like [laugh] for voices that perform them.
         conn.expressive = hello.get('expressive') is not False
+        # The app's Debug switch: a "speaker" event per utterance (owner keys only).
+        conn.speaker_debug = protocol == 2 and hello.get('speaker_debug') is True
         conn.speakers = getattr(app.state, 'speakers', None)
         # An owner key may name the device it is talking from (the app sends its worker
         # name), so "my battery / where am I / my calendar" default to that device. Never

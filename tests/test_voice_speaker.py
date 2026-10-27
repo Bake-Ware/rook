@@ -363,3 +363,133 @@ def test_identify_reports_every_enrolled_score(tmp_path):
     s = enrolled(tmp_path, ("bake", 500), ("logan", 1300))
     result = run(s.identify(pcm(500)))
     assert set(result["scores"]) == {"bake", "logan"} and result["scores"]["bake"] > 0.9
+
+
+# --- the clip bank (Bake 2026-10-27) -------------------------------------------------------
+def toward(anchor, cos, seed=1):
+    """A unit vector with cosine ``cos`` to ``anchor`` (a fixed other direction per seed)."""
+    other = np.random.default_rng(seed).normal(size=anchor.size)
+    other -= other.dot(anchor) * anchor
+    other /= np.linalg.norm(other)
+    return (cos * anchor + np.sqrt(1 - cos * cos) * other).astype(np.float32)
+
+
+def speech(freq=500, seconds=2.0, noise=0.0):
+    """Tone bursts with pauses (a noise floor, like speech), as PCM16; ``noise`` adds hiss."""
+    x = tone(freq, seconds)
+    x[(np.arange(x.size) // 4000) % 3 == 2] = 0.0                 # every third 0.25 s is a pause
+    x = x + np.random.default_rng(3).normal(0, noise or 1e-4, x.size).astype(np.float32)
+    return (np.clip(x, -1, 1) * 32767).astype("<i2").tobytes()
+
+
+def test_bank_migrates_an_old_print_into_a_pinned_clip(tmp_path):
+    s = enrolled(tmp_path, ("bake", 500))
+    with s._db_lock:
+        s._db.execute("DELETE FROM voice_clips")                     # as a store from before the bank
+    again = make(tmp_path)
+    assert [(c["source"], c["pinned"], c["active"]) for c in again.bank("bake")] == [("enroll", True, True)]
+    assert run(again.identify(pcm(500)))["label"] == "bake"
+    fresh = enrolled(tmp_path / "new", ("bake", 500))
+    assert [c["pinned"] for c in fresh.bank("bake")] == [True, True, True]   # the 3 enrollment clips
+
+
+def test_learned_clips_lift_a_new_setting_but_only_so_far(tmp_path):
+    s = enrolled(tmp_path, ("bake", 500))
+    anchor = s._prints["bake"]
+    u = toward(anchor, 0.0, seed=5)
+    car = normalize_np(0.35 * anchor + np.sqrt(1 - 0.35 ** 2) * u)  # Bake in the car: 0.35 against the enrollment
+    assert s._score("bake", car)[0] == pytest.approx(0.35, abs=1e-4)
+    for i in range(3):                                               # three car clips, a little different each
+        w = toward(anchor, 0.0, seed=20 + i)
+        w = normalize_np(w - w.dot(u) * u)
+        clip = normalize_np(0.35 * anchor + np.sqrt(1 - 0.35 ** 2) * normalize_np(0.9 * u + 0.436 * w))
+        assert s.learn_sample("bake", clip, device="bakecar")["ok"]
+    lifted, clip = s._score("bake", car)
+    assert lifted == pytest.approx(0.35 + spk.BANK_MAX_LIFT, abs=1e-4) and clip["setting"] == "car"
+    assert s._score("bake", anchor)[0] >= 0.99                       # his phone voice: never lower
+    elsewhere = toward(anchor, 0.1, seed=99)
+    assert s._score("bake", elsewhere)[0] < 0.3                      # nobody else got closer
+
+
+def normalize_np(v):
+    return (v / np.linalg.norm(v)).astype(np.float32)
+
+
+def test_learn_sample_gates(tmp_path):
+    s = enrolled(tmp_path, ("bake", 500), ("logan", 1300))
+    bake, logan = s._prints["bake"], s._prints["logan"]
+    assert s.learn_sample("bake", toward(bake, 0.2))["reason"] == "too_far"
+    mixed = normalize_np(0.45 * bake + 0.6 * logan)
+    assert s.learn_sample("bake", mixed)["reason"] == "other_higher"
+    assert s.learn_sample("nobody", toward(bake, 0.5))["reason"] == "not_enrolled"
+    ok = s.learn_sample("bake", toward(bake, 0.4, seed=4))
+    assert ok["ok"] and s.learn_sample("bake", toward(bake, 0.4, seed=4))["reason"] == "duplicate"
+    # Quality: the clip's own audio must be long, loud, unclipped and clear of noise enough.
+    assert s.learn_sample("bake", toward(bake, 0.4, seed=6), pcm=speech(seconds=0.8))["reason"] == "quality"
+    assert s.learn_sample("bake", toward(bake, 0.4, seed=6), pcm=speech(noise=0.3))["reason"] == "quality"
+    good = s.learn_sample("bake", toward(bake, 0.4, seed=6), pcm=speech(), device="bakephone")
+    assert good["ok"] and good["device"] == "bakephone" and good["setting"] == "quiet"
+
+
+def test_bank_is_capped_and_never_evicts_the_enrollment(tmp_path, monkeypatch):
+    monkeypatch.setattr(spk, "BANK_MAX", 6)
+    s = enrolled(tmp_path, ("bake", 500))
+    bake = s._prints["bake"]
+    for i, cos in enumerate((0.40, 0.42, 0.44)):                     # fills the bank: 3 pinned + 3 learned
+        assert s.learn_sample("bake", toward(bake, cos, seed=40 + i))["ok"]
+    stronger = s.learn_sample("bake", toward(bake, 0.5, seed=50))
+    weakest = [c for c in s.bank("bake") if c["score"] == pytest.approx(0.40, abs=1e-3)][0]
+    assert stronger["evicted"] == weakest["version"] and weakest["ended"] == "evicted"
+    weaker = s.learn_sample("bake", toward(bake, 0.31, seed=51))     # weaker than all: the oldest learned goes
+    oldest = [c for c in s.bank("bake") if c["source"] == "learned"][1]
+    assert weaker["evicted"] == oldest["version"]
+    active = [c for c in s.bank("bake") if c["active"]]
+    assert len(active) == 6 and sum(c["pinned"] for c in active) == 3
+
+
+def test_learned_clips_roll_back_and_end_on_re_enrollment(tmp_path):
+    s = enrolled(tmp_path, ("bake", 500))
+    bake = s._prints["bake"].copy()
+    versions = [s.learn_sample("bake", toward(bake, 0.4, seed=60 + i))["version"] for i in range(3)]
+    assert s.learned_rollback("bake", to_version=versions[0]) == 2
+    assert [c["active"] for c in s.bank("bake") if c["source"] == "learned"] == [True, False, False]
+    assert len([c for c in make(tmp_path)._banks["bake"] if not c["pinned"]]) == 1   # persisted
+    assert s.learned_rollback("bake") == 1
+    assert all(c["pinned"] for c in s._banks["bake"])
+    assert s.learn_sample("bake", toward(bake, 0.4, seed=70))["ok"]
+    for _ in range(3):
+        assert run(s.enroll_add("bake", pcm(500)))["ok"]
+    assert s.enroll_finish("bake")
+    assert [c["source"] for c in s.bank("bake") if c["active"]] == ["enroll"] * 3
+    assert s.forget("bake") and s.bank("bake") == []
+
+
+def test_cohort_normalization_names_a_clear_match_under_the_threshold(tmp_path):
+    s = enrolled(tmp_path, ("bake", 500))
+    bake = s._prints["bake"]
+    turn = toward(bake, 0.38, seed=80)                               # a noisy line of his: under 0.45
+    assert run_identify(s, turn)["norm"] is None and run_identify(s, turn)["label"] == "guest"
+    for i in range(spk.COHORT_MIN + 2):                              # strangers heard on his phone
+        assert s.add_cohort(toward(bake, 0.02 * (i % 3), seed=200 + i))
+    assert not s.add_cohort(toward(bake, 0.02 * 0, seed=200))       # a near-copy is skipped
+    result = run_identify(s, turn)
+    assert result["norm"] >= spk.NORM_SURE and result["label"] == "bake"
+    assert run_identify(s, toward(bake, 0.2, seed=81))["label"] == "guest"   # under LEARN_MIN: never
+
+
+def run_identify(s, vector):
+    """identify() for a given embedding (the fake embedder maps audio, not vectors)."""
+    s._embed_samples = lambda samples: _done((vector, 1))
+    return run(s.identify(pcm(500)))
+
+
+async def _done(value):
+    return value
+
+
+@pytest.mark.parametrize("device,snr,setting", [
+    ("bakecar", 30, "car"), ("bake-watch", 30, "watch"), ("pixel-wear", 30, "watch"),
+    ("bakephone", 30, "quiet"), ("bakephone", 8, "noisy"), ("", 30, "quiet"),
+])
+def test_clip_setting_tags(device, snr, setting):
+    assert spk.setting_for(device, {"snr_db": snr}) == setting

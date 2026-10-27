@@ -37,6 +37,10 @@ ECHO_WINDOW_S = 1.5
 # (5th percentile) through simulated phone/room channels, people at most 0.43
 # (TitaNet small, kaiju, 2026-10-23). The speaker label itself uses 0.50.
 ECHO_SPEAKER_MIN = float(os.environ.get('VOICE_ECHO_SPEAKER_MIN', '0.6'))
+# Speaker learning on the owner's phone (Speakers.learn_sample checks the clip itself):
+# a turn scoring at least this against the owner, at most this many clips per connection.
+SPEAKER_LEARN_MIN = float(os.environ.get('VOICE_SPEAKER_LEARN_MIN', '0.30') or 0.30)
+SPEAKER_LEARN_PER_CONNECTION = int(os.environ.get('VOICE_SPEAKER_LEARN_PER_CONNECTION', '6') or 6)
 # Commands only at the start of an utterance ("hey sojourn, please enroll my voice"),
 # so a sentence that merely mentions a voice never starts or deletes anything.
 _LEAD = r"^\W*(?:(?:hey|ok|okay)\W+\w+\W+)?(?:(?:please|can you|could you|would you)\W+)?"
@@ -88,6 +92,12 @@ class Connection:
         self._unheld.set()
         self.speech_permission_until = 0.0
         self.speakers = None
+        # Speaker ID on the owner's phone: the device a confident owner match anchored this
+        # connection on (learning needs it), clips banked on it, and whether the app asked
+        # for a "speaker" event per utterance (its Debug switch).
+        self.speaker_anchor = None
+        self.speaker_learned = 0
+        self.speaker_debug = False
         self.enrolling = None
         self.timing = None
         self.mode = Mode()
@@ -285,6 +295,56 @@ class Connection:
             logging.warning('Speaker identification failed: %s', type(error).__name__)
             return None
 
+    def _owner_voice(self, pcm, heard, who_now, extra):
+        """The owner's phone, a real turn (not dropped, not echo). A confident owner match
+        anchors the connection on this device; afterwards a turn heard as the owner that
+        scored under the threshold but at least LEARN_MIN is banked as a clip of theirs
+        (Bake, 2026-10-27; Speakers.learn_sample checks the clip). Someone clearly else
+        ends the anchor until the owner is matched again, and their voice joins the cohort."""
+        owner, speakers = self.identity.principal, self.speakers
+        device = self.identity.worker or ''
+        if who_now['label'] != owner:
+            self.speaker_anchor = None
+            if who_now['label'] == 'guest' and heard.get('vector') is not None and hasattr(speakers, 'add_cohort'):
+                with contextlib.suppress(Exception):
+                    speakers.add_cohort(heard['vector'])
+            return
+        score = (heard.get('scores') or {}).get(owner)
+        if not isinstance(score, (int, float)):
+            return
+        if heard.get('principal') == owner and score >= getattr(speakers, 'threshold', 0.45):
+            self.speaker_anchor = device
+            return
+        if (self.speaker_anchor is None or self.speaker_anchor != device or score < SPEAKER_LEARN_MIN
+                or self.speaker_learned >= SPEAKER_LEARN_PER_CONNECTION or heard.get('vector') is None
+                or not hasattr(speakers, 'learn_sample')):
+            return
+        try:
+            result = speakers.learn_sample(owner, heard['vector'], pcm=pcm, device=device, session=self.session)
+        except Exception as error:
+            logging.warning('Speaker learning failed: %s', type(error).__name__)
+            return
+        if result.get('ok'):
+            self.speaker_learned += 1
+            extra['speaker_learned'] = result.get('version')
+        else:
+            extra['speaker_learn_skipped'] = result.get('reason')
+
+    async def _speaker_event(self, heard, extra, dropped=None):
+        """The app's speaker-ID debug line for one utterance: who it was taken for, the
+        raw match, the score against the threshold, and whether it was learned from."""
+        heard = heard or {}
+        owner = self.identity.principal
+        score = (heard.get('scores') or {}).get(owner, heard.get('score'))
+        await self.emit('speaker', turn=self.epoch, label=extra.get('speaker') or heard.get('label'),
+                        heard=heard.get('label'), score=score, best=heard.get('candidate'),
+                        best_score=heard.get('score'), norm=heard.get('norm'),
+                        threshold=getattr(self.speakers, 'threshold', None), sure=extra.get('speaker_sure'),
+                        basis=extra.get('speaker_basis') or ('voice' if heard else 'none'),
+                        clip=heard.get('clip'), learned=extra.get('speaker_learned'),
+                        skipped=extra.get('speaker_learn_skipped'), speech_s=extra.get('speech_s'),
+                        dropped=dropped)
+
     def echo_window(self):
         """The assistant is speaking, held, or stopped speaking moments ago."""
         return self.held_since is not None or time.monotonic() < self.play_until + ECHO_WINDOW_S
@@ -313,6 +373,7 @@ class Connection:
         if speaker:
             extra.update(speaker=speaker.get('label'), speaker_score=speaker.get('score'),
                          assistant_score=speaker.get('assistant_score'))
+        who_now = None
         if self.identity.owner and self.speakers is not None:
             # The owner's phone: the owner unless speaker ID is sure it is someone else.
             who_now = on_owner_phone(speaker, self.identity.principal, extra.get('speech_s'))
@@ -333,6 +394,10 @@ class Connection:
         known = getattr(self.speakers, 'has_assistant_voice', None)
         if speaker and known is not None and not known(self.voice):
             self._learn_voice()
+        if who_now is not None and speaker and not reason:
+            self._owner_voice(pcm, speaker, who_now, extra)
+        if self.speaker_debug and self.identity.owner:
+            await self._speaker_event(speaker, extra, reason)
         if reason:
             log_dropped(self.epoch, reason, endpoint_ms, stt_ms, held=held or None, **extra)
             self.activity_event('dropped', self.epoch, 'Ignored sound', reason=reason)
