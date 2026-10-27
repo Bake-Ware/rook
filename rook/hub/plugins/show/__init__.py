@@ -238,8 +238,8 @@ class Show(Plugin):
           screen cap, the voice falls back to auto's when it has none);
         * ``none``: nowhere;
         * ``auto``: the first online worker in ``show.screens``; else the
-          owner's phone (``home.brief_phone``); else the one online phone that
-          is not a protected device (none when there are several and nothing
+          owner's phone (``home.brief_phone``; when it is set but offline,
+          nothing); else the one online phone that is not a protected device (none when there are several and nothing
           says which is the person's). TVs only from ``show.screens``. For a
           member (access v2) auto picks nothing: no setting says which screen
           is theirs, so they name one.
@@ -280,6 +280,9 @@ class Show(Plugin):
         blocked = self._protected()
         if row is not None and fits(row, True) and row["name"].lower() not in blocked:
             return row, f"{row['name']} is the owner's phone (home.brief_phone)"
+        if mine and row is None:
+            # Their phone is set but away: never another phone in its place.
+            return None, f"the owner's phone ({mine}) is not online"
         cands = [r for r in rows if fits(r, True) and r["name"].lower() not in blocked]
         if len(cands) == 1:
             return cands[0], f"{cands[0]['name']} is the only phone online"
@@ -480,9 +483,10 @@ class Show(Plugin):
     def screens(self, where: str = "auto") -> dict:
         """Where show.present would go now, without showing anything:
         ``{screen, voice, why, online}`` (``online``: workers with a screen
-        or a voice)."""
-        place = self.pick(where, restricted=self._caller()["restricted"])
-        online = [{"worker": r["name"],
+        or a voice; owners only)."""
+        restricted = self._caller()["restricted"]
+        place = self.pick(where, restricted=restricted)
+        online = [] if restricted else [{"worker": r["name"],
                    "screen": self._screen_cap(r) or None,
                    "voice": VOICE_CAP in r["caps"]}
                   for r in self._roster() if self._screen_cap(r) or VOICE_CAP in r["caps"]]

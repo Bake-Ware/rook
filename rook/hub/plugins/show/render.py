@@ -11,7 +11,8 @@ an agent-written subject:
   it never run;
 * :func:`csp` sandboxes the document (an opaque origin: no cookies, no
   same-origin calls to the hub, whatever a page might contain), allows
-  scripts only with the page's nonce (Mermaid, from a pinned CDN URL), and
+  scripts only with the page's nonce (Mermaid, one pinned CDN file checked
+  by its integrity hash), and
   :data:`HEADERS` keep it out of caches, search engines and ``Referer``.
 """
 from __future__ import annotations
@@ -23,6 +24,10 @@ import time
 
 #: Mermaid, pinned (renders a ``diagram`` subject in the viewer's browser).
 MERMAID_SRC = "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"
+#: Its subresource integrity hash: the browser runs that exact file or nothing.
+MERMAID_SRI = "sha384-WmdflGW9aGfoBdHc4rRyWzYuAjEmDwMdGdiPNacbwfGKxBW/SO6guzuQ76qjnSlr"
+#: The document title (what tabs, history and link previews show): never the subject's.
+DOC_TITLE = "Shown by Rook"
 
 HEADERS = {
     "Cache-Control": "no-store",
@@ -35,7 +40,7 @@ HEADERS = {
 
 def csp(nonce: str) -> str:
     return ("default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; "
-            f"script-src 'nonce-{nonce}' https://cdn.jsdelivr.net; font-src data:; "
+            f"script-src 'nonce-{nonce}'; font-src data:; "
             "base-uri 'none'; form-action 'none'; frame-ancestors 'none'; "
             "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox")
 
@@ -240,7 +245,8 @@ def page_html(rec: dict, nonce: str, now: float | None = None) -> str:
     when = f"{mins} minute{'s' if mins != 1 else ''}" if mins < 120 else f"{round(mins / 60)} hours"
     script = ""
     if mermaid:
-        script = (f'<script nonce="{nonce}" src="{MERMAID_SRC}"></script>'
+        script = (f'<script nonce="{nonce}" src="{MERMAID_SRC}" integrity="{MERMAID_SRI}" '
+                  'crossorigin="anonymous"></script>'
                   f'<script nonce="{nonce}">try{{mermaid.initialize({{startOnLoad:true,'
                   "securityLevel:'strict',theme:(window.matchMedia&&matchMedia("
                   "'(prefers-color-scheme: dark)').matches)?'dark':'default'}})}}catch(e){{}}"
@@ -248,7 +254,7 @@ def page_html(rec: dict, nonce: str, now: float | None = None) -> str:
     return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
             "<meta name=\"robots\" content=\"noindex,nofollow\">"
-            f"<title>{esc(title)}</title><style>{STYLE}</style></head><body><main>"
+            f"<title>{DOC_TITLE}</title><style>{STYLE}</style></head><body><main>"
             f"<h1 class=\"title\">{esc(title)}</h1>{inner}"
             f"<footer>Shown by Rook. This page goes away in {when}.</footer>"
             f"</main>{script}</body></html>")

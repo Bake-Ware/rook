@@ -273,7 +273,9 @@ def test_markdown_renderer_escapes_everything():
     assert "onload" not in svg and svg.startswith('<img class="subject" src="data:image/svg+xml;base64,')
     csp = render.csp("abc")
     assert "sandbox allow-scripts" in csp and "'nonce-abc'" in csp and "default-src 'none'" in csp
-    assert "allow-same-origin" not in csp
+    assert "allow-same-origin" not in csp and "jsdelivr" not in csp   # only nonce'd scripts run
+    page = render.page_html({"kind": "mermaid", "body": "A-->B", "title": "T"}, "n1")
+    assert f'integrity="{render.MERMAID_SRI}"' in page and page.count('nonce="n1"') == 2
 
 
 @pytest.mark.asyncio
@@ -301,9 +303,15 @@ async def test_page_api_and_public_dashboard_route(tmp_path, monkeypatch):
     async with TestClient(TestServer(app)) as c:
         r = await c.get(f"/show/{out['id']}")
         body = await r.text()
+        assert r.headers["X-Robots-Tag"] == "noindex, nofollow"
         assert r.status == 200 and "<h1>Hello &lt;there&gt;</h1>" in body
         assert "sandbox" in r.headers["Content-Security-Policy"]
         assert r.headers["Cache-Control"] == "no-store" and r.headers["Referrer-Policy"] == "no-referrer"
+        assert r.headers["X-Robots-Tag"] == "noindex, nofollow"
+        assert "<title>Shown by Rook</title>" in body and "<title>Hi" not in body
+        p._load()[out["id"]]["expires"] = time.time() - 1          # expired: gone over HTTP too
+        r = await c.get(f"/show/{out['id']}")
+        assert r.status == 404 and "This page is gone" in await r.text()
         for bad in ("x" * 32, "nope", out["id"] + "%2F.."):
             r = await c.get(f"/show/{bad}")
             assert r.status == 404 and "This page is gone" in await r.text()
@@ -349,6 +357,28 @@ def test_house_agent_show_tool_runs_as_the_house_agent_for_the_asker(tmp_path, m
     assert out["shown"] and state["did"] == [{"summary": "showed X on bakephone", "ok": True}]
     assert client.calls[0][3] is house                       # device calls as the house agent
     assert front.compose(state, "")[0].startswith("Done: showed X on bakephone.")
+    # A member's show runs as the member (their grants and knowledge areas).
+    member = Principal("human:robin", "human", "member", ("human:member",))
+    seen = {}
+
+    async def read(action="search", id=None, **kw):
+        seen["who"] = current_principal.get()
+        return {"title": "Area page", "body": "x"}
+    p._node._plugins["knowledge"] = FakePlugin(read=read)
+    door.home.may_read_knowledge = lambda principal: True
+    n = len(client.calls)
+    out = run(door._show({"knowledge": "other-area", "where": "bakephone"}, state,
+                         asker="Robin", principal=member))
+    assert seen["who"] is member and client.calls[n][3] is member
+    out = run(door._show({"text": "x"}, state, asker="Robin", principal=member))
+    assert not out["shown"] and len(client.calls) == n + 1      # no auto screen for a member
+    # Someone unverified only gets a link; overheard talk gets nothing.
+    stranger = Principal("unverified", "unverified", verified=False)
+    out = run(door._show({"text": "x", "where": "bakephone"}, state, asker="?", principal=stranger))
+    assert not out["shown"] and len(client.calls) == n + 1 and out["url"].startswith("https://")
+    with pytest.raises(front.FrontError, match="overheard"):
+        run(door._show({"text": "x"}, state, asker="Bake", principal=asker, source="scribe"))
+    door.home.may_read_knowledge = lambda principal: False
     with pytest.raises(front.FrontError, match="may not read the knowledge"):
         run(door._show({"knowledge": "secret-page"}, state, asker="Bake", principal=asker))
     with pytest.raises(front.FrontError, match="may not show"):
@@ -364,3 +394,41 @@ def test_unknown_public_address_never_opens_a_relative_link(tmp_path, monkeypatc
     assert out["url"].startswith("/show/") and not out["shown"] and out["spoken"]
     assert [c[0] for c in client.calls] == ["voice.speak"]
     assert "public address is unknown" in out["notes"][0] and len(out["notes"]) == 1
+
+
+def test_owner_phone_away_means_no_other_phone_and_members_see_no_screens(tmp_path, monkeypatch):
+    p, client = make(tmp_path, monkeypatch, {"k": worker("kidphone", *PHONE)},
+                     brief_phone="bakephone")
+    out = run(p.present(say="Hi", text="x"))
+    assert not out["shown"] and client.calls == []
+    assert "the owner's phone (bakephone) is not online" in out["notes"][0]
+    assert p.screens()["online"] == [{"worker": "kidphone", "screen": "device.open_url",
+                                      "voice": True}]
+    tok = current_principal.set(Principal("human:robin", "human", "member", ("human:member",)))
+    try:
+        assert p.screens() == {"screen": "", "voice": "", "online": [],
+                               "why": "no screen is known to be yours: name one with where"}
+    finally:
+        current_principal.reset(tok)
+
+
+def test_real_vault_values_are_scrubbed_from_every_text_subject(tmp_path, monkeypatch):
+    from rook.band_mcp import secret_mask
+    from rook.band_mcp.vault import Vault
+    v = Vault(str(tmp_path / "vault.db"), key_path=str(tmp_path / "vault.key"))
+    secret_mask.install(v)
+    try:
+        v.set("router-pass", "plover-tangent-9931", "the router password", "human:u1")
+        p, _ = make(tmp_path / "s", monkeypatch, {})
+        for kw in ({"markdown": "# pw\n\nit is **plover-tangent-9931**"},
+                   {"diagram": "graph TD; A[plover-tangent-9931]-->B"},
+                   {"diagram": "<svg><text>plover-tangent-9931</text></svg>"},
+                   {"text": "plover-tangent-9931"}):
+            out = run(p.present(where="none", title="plover-tangent-9931", **kw))
+            rec = p.page(out["id"])
+            assert "plover-tangent-9931" not in json.dumps(rec), kw
+            assert "plover-tangent-9931" not in p.page_html(out["id"], "n")
+            raw = (tmp_path / "s" / "show" / "pages" / f"{out['id']}.json").read_text()
+            assert "plover-tangent-9931" not in raw
+    finally:
+        secret_mask.install(None)

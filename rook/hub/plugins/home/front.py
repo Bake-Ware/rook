@@ -1295,7 +1295,8 @@ class FrontDoor:
         if state is None:
             state = {"did": [], "started": [], "asked": [], "edits": [], "tools": [],
                      "approved": None, "onboard": [], "acted": False}
-        tools = [TOOLS[n] for n in TOOLS]
+        # Overheard talk never puts anything on a screen.
+        tools = [TOOLS[n] for n in TOOLS if not (source == "scribe" and n == "show")]
         if self.access.store() is not None and source != "scribe":
             # Overheard talk never changes who may do what.
             tools += [ACCESS_TOOLS[n] for n in ACCESS_TOOL_NAMES]
@@ -1356,7 +1357,7 @@ class FrontDoor:
         if name == "check_trust":
             return self._check(args)
         if name == "show":
-            return await self._show(args, state, asker=asker, principal=principal)
+            return await self._show(args, state, asker=asker, principal=principal, source=source)
         if name == "role_config":
             return self.home.sessions.role_config(
                 str(args.get("action") or "get"), args, principal=principal, said=said,
@@ -1529,10 +1530,14 @@ class FrontDoor:
             state["did"][-1]["asked"] = "read"
         return out
 
-    async def _show(self, args: dict, state: dict, *, asker: str, principal: Any) -> dict:
-        """The ``show`` tool: show.present for the person who asked, its device
-        calls made as the house agent (like do_action's), never for someone
-        who may not call show.present themselves."""
+    async def _show(self, args: dict, state: dict, *, asker: str, principal: Any,
+                    source: str = "") -> dict:
+        """The ``show`` tool: show.present for the person who asked, never for
+        someone who may not call show.present themselves. A member's device
+        calls and knowledge read are theirs; an owner's are the house agent's
+        (like do_action's); an unverified asker only gets a link."""
+        if source == "scribe":
+            raise FrontError("overheard talk never puts anything on a screen")
         sp = self.plugin("show")
         if sp is None or not hasattr(sp, "deliver"):
             raise FrontError("showing things on a screen is off on this hub")
@@ -1544,13 +1549,21 @@ class FrontDoor:
                              "from it")
         from ... import access
         from ...authz import current_principal
+        known = principal is None or bool(getattr(principal, "verified", False))
+        restricted = access.restricted(principal) or not known
         who = {"id": str(getattr(principal, "id", "") or asker),
                "user": access.user_of(principal) if principal is not None else None,
-               "restricted": access.restricted(principal)}
+               "restricted": restricted}
         keys = ("say", "url", "image", "diagram", "markdown", "text", "knowledge", "app",
                 "title", "where")
         kw = {k: str(args.get(k) or "") for k in keys if args.get(k) not in (None, "")}
-        tok = current_principal.set(self.principal())
+        if not known:
+            kw["where"] = "none"     # someone unverified gets a link, never a screen
+        # A member's show runs as the member: their grants decide which screens
+        # they may use and their knowledge areas which pages they may show.
+        # Everyone else's runs as the house agent, under the trust map.
+        run_as = principal if restricted and known else self.principal()
+        tok = current_principal.set(run_as)
         try:
             with self.home._as_self():
                 out = await sp.deliver(who=who, **kw)
@@ -1564,8 +1577,9 @@ class FrontDoor:
                                  "error": _one_line((out.get("notes") or ["no screen"])[0], 160)})
         self.home.journal("show.present", {"kind": out.get("kind"), "where": kw.get("where") or
                                            "auto", "for": asker},
-                          {"ok": True, "result": {k: out.get(k) for k in
-                                                  ("id", "screen", "voice", "shown", "spoken")}})
+                          {"ok": True, "result": {
+                              "id": str(out.get("id") or "")[:6],   # the id is the link's key
+                              **{k: out.get(k) for k in ("screen", "voice", "shown", "spoken")}}})
         return {"ok": True, **out}
 
     def _protected(self) -> set[str]:
