@@ -4,7 +4,7 @@ Bake (2026-10-26): "Short spoken answer plus showing the subject: diagram, web
 page, app, picture." ``show.present`` does both in one call: it says ``say``
 on a device with ``voice.speak`` and puts the subject on a screen near the
 person (``device.open_url`` / ``device.launch`` on a phone, ``tv.open_url`` /
-``tv.launch`` on a webOS TV). See docs/design/show.md.
+``tv.launch`` on a webOS TV).
 
 Subjects (exactly one): ``url`` (a web page, opened as is), ``image`` (an
 https URL or a ``data:image/...`` URI), ``diagram`` (Mermaid text, or SVG
@@ -385,6 +385,19 @@ class Show(Plugin):
         Returns ``{url, kind, title, expires, screen, voice, shown, spoken,
         notes}``; ``unsaid`` is the line when no device spoke it (say it in
         your reply). With no screen the link stays listed by ``show.list``."""
+        return await self.deliver(say=say, url=url, image=image, diagram=diagram,
+                                  markdown=markdown, text=text, knowledge=knowledge, app=app,
+                                  title=title, where=where, minutes=minutes, who=self._caller())
+
+    async def deliver(self, *, say: str = "", url: str = "", image: str = "", diagram: str = "",
+                      markdown: str = "", text: str = "", knowledge: str = "", app: str = "",
+                      title: str = "", where: str = "auto", minutes: int = 0,
+                      who: dict) -> dict:
+        """:meth:`present` for ``who`` (``{id, user, restricted}``: whose show it
+        is and whether auto may pick a screen for them). The house agent's
+        ``show`` tool passes the person who asked; the device calls run as the
+        current principal (the caller's, or the house agent's)."""
+        where = str(where or "auto")
         say = " ".join(str(say or "").split())
         if len(say) > SAY_MAX:
             raise ValueError(f"say is one or two short sentences (at most {SAY_MAX} "
@@ -396,7 +409,6 @@ class Show(Plugin):
         now = time.time()
         span = int(minutes or 0) or int(self.settings.get("minutes") or 60)
         span = max(1, min(span, 1440))
-        who = self._caller()
         sid = secrets.token_urlsafe(24)
         kind = subject["kind"]
         rec = {"id": sid, "kind": kind,
@@ -420,7 +432,7 @@ class Show(Plugin):
                      "expires": round(rec["expires"]), "screen": "", "voice": "",
                      "shown": False, "spoken": False}
         if kind != "url" and kind != "app" and not link.startswith("http"):
-            notes.append("the hub's public address is unknown (core.domain): the link is "
+            notes.append("the hub's public address is unknown (core.hub.domain): the link is "
                          "relative, so no device can open it")
             screen = None
         # Show first (it takes a moment to open), then speak over it.

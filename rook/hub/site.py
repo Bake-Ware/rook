@@ -50,7 +50,7 @@ RESERVED = ("/account", "/auth", "/api/band", "/api/bands", "/api/chat", "/api/a
             "/token", "/.well-known", "/skill", "/healthz", "/health", "/internal",
             "/static", "/web", "/apk", "/apk.json", "/band-worker.pyz", "/band-worker.json",
             "/band-worker-enrollment.pyz", "/rook", "/rook.py", "/worker", "/enroll", "/hub",
-            "/permissions", "/telesthete-hub")
+            "/permissions", "/telesthete-hub", "/show")
 _PATH = re.compile(r"^(/[A-Za-z0-9._~-]+)+$")
 
 _SERVED = False

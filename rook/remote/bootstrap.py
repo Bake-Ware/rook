@@ -1734,6 +1734,9 @@ class CombinedServer:
         self._app.router.add_get("/setup", self._setup_page)
         self._app.router.add_post("/setup", self._setup_submit)
         self._app.router.add_get("/health", self._health)
+        # Pages show.present puts on a screen (public: the id is the credential).
+        from .show_web import install as install_show
+        install_show(self._app)
         from .account_web import AccountWeb
         self._accounts = AccountWeb(self)
         self._accounts.store.owner_check = self._owner_check
@@ -1852,7 +1855,7 @@ class CombinedServer:
     _AUTH_EXEMPT = ("/health", "/worker", "/band-worker.pyz",
                     "/band-worker-enrollment.pyz", "/band-worker.json", "/updates/worker",
                     "/updates/desktop.json", "/enroll", "/install",
-                    "/rook", "/rook.py", "/hub", "/telesthete-hub")
+                    "/rook", "/rook.py", "/hub", "/telesthete-hub", "/show")
 
     @classmethod
     def _auth_exempt(cls, path: str) -> bool:
