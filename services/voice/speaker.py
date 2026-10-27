@@ -561,6 +561,7 @@ class Speakers:
                            if reference is not None and reference.shape == vector.shape else None)
         norm = self._norm(vector, score, best) if best is not None else None
         principal = best if score is not None and score >= self.threshold else None
+        # norm is returned for logging and debug view, but no longer names anyone (was a drift vulnerability)
         if (assistant_score is not None and assistant_score >= self.assistant_threshold
                 and (score is None or assistant_score > score)):
             label, principal = "assistant", None
