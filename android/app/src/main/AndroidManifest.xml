@@ -192,7 +192,7 @@
             android:taskAffinity="systems.bake.rook.attention" />
         <receiver android:name=".AttentionReceiver" android:exported="false" />
 
-        <!-- Home-screen widgets (RookWidgets): Talk, and what is waiting on you. -->
+        <!-- Home-screen widgets (RookWidgets): Talk, what is waiting on you, and Chat. -->
         <receiver
             android:name=".TalkWidget"
             android:exported="true"
@@ -211,6 +211,20 @@
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_waiting_info" />
         </receiver>
+        <receiver
+            android:name=".ChatWidget"
+            android:exported="true"
+            android:label="@string/widget_chat_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_chat_info" />
+        </receiver>
+        <!-- The Chat widget's bubbles (a launcher-scrolled list). -->
+        <service
+            android:name=".ChatWidgetService"
+            android:exported="false"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
         <!-- The Talk widget's tap: starts the voice session from the foreground, then closes. -->
         <activity
             android:name=".WidgetTalkActivity"

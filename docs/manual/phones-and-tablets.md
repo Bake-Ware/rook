@@ -61,7 +61,7 @@ It needs the voice service on your hub, see [[manual-voice]].
 ## Home-screen widgets
 
 Long-press the home screen, choose **Widgets** and find the Rook app. There
-are two:
+are three:
 
 - **Talk to <assistant>**: one tap starts talking to your house agent, the
   same as the app's Talk button. Tap again while it answers to stop it. The
@@ -70,8 +70,15 @@ are two:
   urgent ones and ones that didn't go through at the top. Tap one to answer it
   on its card, tap the title to open the app, or use the mic to talk. Make it
   taller to see more.
+- **Chat with <assistant>**: push-to-talk with the conversation above it, as
+  the app's Chat tab shows it: what you said on the right, the agent's replies
+  on the left, newest at the bottom. Replies appear as they come in, and the
+  agent's name shows whether it is listening or thinking. Tap **Talk** to
+  talk (tap again while it answers to stop it), scroll for earlier turns, and
+  tap the name or a bubble to open the app. Like the app, it starts empty
+  again after the app restarts or updates.
 
-Both show what is already on the phone, so they work without a connection and
+They show what is already on the phone, so they work without a connection and
 change as soon as a card arrives or is answered ([[manual-phone-attention]]).
 
 ## A watch (Wear OS)

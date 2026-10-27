@@ -57,6 +57,7 @@ class MainActivity : AppCompatActivity(), VoiceBus.Listener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        RookWidgets.bind(this)
         b = ActivityMainBinding.inflate(layoutInflater)
         setContentView(b.root)
         chat = ChatAdapter { prefs.getBoolean("show_thinking", false) }

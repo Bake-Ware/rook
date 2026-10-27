@@ -64,6 +64,7 @@ class WorkerService : Service() {
         super.onCreate()
         createChannel()
         runCatching { AttentionChannels.ensure(this) }
+        RookWidgets.bind(this)
         // EXPORTED on purpose: SystemUI (its own app uid, not the system uid) sends USER_PRESENT,
         // and a NOT_EXPORTED receiver never gets it on Android 13+. It is a protected broadcast,
         // so no ordinary app can send it to us.
