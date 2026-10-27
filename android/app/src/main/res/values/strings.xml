@@ -64,4 +64,8 @@
     <string name="widget_waiting_description">Decisions and questions waiting on you; tap one to answer it</string>
     <string name="widget_preview_row1">Question · Which bot should the hub use?</string>
     <string name="widget_preview_row2">Approval · Restart the voice service</string>
+    <string name="widget_chat_description">Push to talk, with your recent conversation</string>
+    <string name="widget_chat_empty">Tap Talk and say something</string>
+    <string name="widget_chat_preview_you">What\'s on tonight?</string>
+    <string name="widget_chat_preview_agent">Dinner at seven, and the bins go out.</string>
 </resources>

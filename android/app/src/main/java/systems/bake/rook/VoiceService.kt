@@ -734,10 +734,18 @@ object VoiceBus {
     fun emit(generation: Long = connectionGeneration, event: (Listener) -> Unit) {
         val e = log.append(generation, event)
         listener?.let { deliver(it, e) }
+        onLogged?.invoke()
     }
 
     /** Main thread: record an event the screen already rendered itself; returns its sequence number. */
-    fun record(generation: Long = connectionGeneration, event: (Listener) -> Unit): Long = log.append(generation, event).seq
+    fun record(generation: Long = connectionGeneration, event: (Listener) -> Unit): Long =
+        log.append(generation, event).seq.also { onLogged?.invoke() }
+
+    /** Told after every logged event; the Chat widget then catches up through [replay]. */
+    @Volatile var onLogged: (() -> Unit)? = null
+
+    /** Main thread: hand everything after [seenSeq] to [l] without making it the live observer. */
+    fun replay(l: Listener, seenSeq: Long) { for (e in log.after(seenSeq)) deliver(l, e) }
 
     /** Main thread: replay everything after [seenSeq] into [l], then make it the live observer. */
     fun attach(l: Listener, seenSeq: Long) {
