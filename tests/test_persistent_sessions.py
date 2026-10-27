@@ -60,6 +60,7 @@ class FakeSessionHost:
         self.hold: asyncio.Event | None = None     # set: a turn waits for it
         self.tokens: dict[str, str] = {}
         self.voice_clients = 1
+        self.quiet_configure = False       # set: lanes already run, configure emits nothing
         ws.on_send = self.on_send
 
     def emit(self, **ev):
@@ -72,6 +73,8 @@ class FakeSessionHost:
             for role, spec in msg["roles"].items():
                 for lane, ls in spec["lanes"].items():
                     self.tokens[f"{role}/{lane}"] = next(iter(ls["env"].values()), "")
+                    if self.quiet_configure:
+                        continue
                     self.emit(role=role, lane=lane, kind="state", state="idle",
                               session_id=ls.get("session_id") or f"sid-{role}-{lane}")
         elif t == "send":
@@ -263,6 +266,50 @@ async def test_the_link_needs_the_token_and_gets_files_and_lanes(penv):
     assert st["roles"]["house"]["line"] == "house agent: idle"
     await disconnect(task, host)
     assert penv.sess.link is None
+
+
+@pytest.mark.asyncio
+async def test_a_reconnect_with_an_idle_lane_runs_the_queued_turn(penv):
+    # Live 2026-10-27: a hub restart dropped the link, every lane went offline, and
+    # the session host came back with its lanes idle and unchanged. Its reconfigure
+    # sends no state event for those, so only the hello says they are idle.
+    host, task = await connect(penv)
+    await disconnect(task, host)
+    assert penv.sess.lanes["house/main"]["state"] == "offline"
+    waiter = asyncio.get_running_loop().create_future()
+    queued = penv.sess.inbox("house").put(I.Item(
+        id="q-oi", via="front-telegram", priority=I.priority_of("front-telegram"),
+        text="Oi", waiter=waiter))
+    ws = FakeWS()
+    back = FakeSessionHost(penv.sess, ws)
+    back.quiet_configure = True
+    ws.inq.put_nowait(json.dumps({"t": "hello", "host": "cachyrig", "version": "test",
+                                  "servers": ["rea"],
+                                  "lanes": {"house/main": "idle", "house/voice": "idle"}}))
+    task = asyncio.get_running_loop().create_task(penv.sess.accept(ws))
+    await until(lambda: back.sent("send"))
+    (sent,) = back.sent("send")
+    assert sent["item"] == "q-oi" and sent["text"].rstrip().endswith("Oi")
+    await until(lambda: queued.state == "done")
+    assert penv.sess.lanes["house/voice"]["state"] == "idle"
+    assert penv.home.status()["sessions"]["roles"]["house"]["line"] == "house agent: idle"
+    r = await penv.node.dispatch("home.ask", {"question": "still there?"}, "agent:claude")
+    assert r["result"]["answer"].startswith("done:")
+    await disconnect(task, back)
+
+
+@pytest.mark.asyncio
+async def test_a_hello_without_lanes_changes_nothing(penv):
+    host, task = await connect(penv)
+    await penv.sess._on_message({"t": "hello", "host": "cachyrig", "version": "test"})
+    await penv.sess._on_message({"t": "hello", "host": "cachyrig", "lanes": ["junk"]})
+    assert penv.sess.lanes["house/main"]["state"] == "idle"
+    assert penv.sess.link.hello.get("lanes") == ["junk"]
+    # A hello on a live link carrying a lane state is applied like a state event.
+    await penv.sess._on_message({"t": "hello", "host": "cachyrig",
+                                 "lanes": {"house/main": {"state": "busy"}}})
+    assert penv.sess.lanes["house/main"]["state"] == "busy"
+    await disconnect(task, host)
 
 
 @pytest.mark.asyncio
