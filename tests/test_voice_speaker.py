@@ -553,25 +553,26 @@ def test_cohort_norm_does_not_name_below_threshold(tmp_path):
 
 
 def test_bystander_drift_across_reconnects(tmp_path, monkeypatch):
-    """Bystander drift fix: anchor ends under 0.30, learning disabled for 0.30-0.44 range."""
+    """Bystander drift fix: anchor clears on score<0.30 OR non-owner label.
+    On owner's phone, bystander at 0.15-0.45 was previously banked; now all paths blocked."""
     from services.voice.runtime import Connection
     from services.voice.identity import Identity
 
     monkeypatch.setattr(spk, "LEARN_CAP", 6)
     speakers = enrolled(tmp_path, ("owner", 500), threshold=0.45)
     owner_vec = speakers._prints["owner"]
-    bystander = Identity("owner", worker="phone", owner=True)
+    owner_id = Identity("owner", worker="phone", owner=True)
 
-    bystander_below_threshold = toward(owner_vec, 0.35, seed=300)
+    bystander_quarter = toward(owner_vec, 0.25, seed=300)
     bystander_midrange = toward(owner_vec, 0.38, seed=301)
-    bystander_near_threshold = toward(owner_vec, 0.44, seed=302)
+    bystander_low = toward(owner_vec, 0.15, seed=302)
     owner_match = owner_vec.copy()
 
     class MockConnection:
         def __init__(self):
             self.speaker_anchor = None
             self.speaker_learned = 0
-            self.identity = bystander
+            self.identity = owner_id
             self.speakers = speakers
             self.session = "test"
 
@@ -580,23 +581,87 @@ def test_bystander_drift_across_reconnects(tmp_path, monkeypatch):
 
     heard_owner = {"scores": {"owner": 0.95}, "principal": "owner", "vector": owner_match, "label": "owner"}
     who_now_owner = {"label": "owner"}
-    heard_bystander_mid = {"scores": {"owner": 0.38}, "principal": None, "vector": bystander_midrange, "label": "guest"}
+
+    conn1 = MockConnection()
+    extra = {}
+    conn1._owner_voice(b"", heard_owner, who_now_owner, extra)
+    assert conn1.speaker_anchor == "phone"
+
+    heard_bystander_low = {"scores": {"owner": 0.15}, "principal": None, "vector": bystander_low, "label": "guest"}
     who_now_guest = {"label": "guest"}
-    heard_bystander_low = {"scores": {"owner": 0.15}, "principal": None, "vector": bystander_below_threshold, "label": "guest"}
+    extra = {}
+    conn1._owner_voice(b"", heard_bystander_low, who_now_guest, extra)
+    assert conn1.speaker_anchor is None
+
+    conn2 = MockConnection()
+    extra = {}
+    conn2._owner_voice(b"", heard_owner, who_now_owner, extra)
+    assert conn2.speaker_anchor == "phone"
+
+    heard_owner_low = {"scores": {"owner": 0.25}, "principal": None, "vector": bystander_quarter, "label": "owner"}
+    extra = {}
+    conn2._owner_voice(b"", heard_owner_low, who_now_owner, extra)
+    assert conn2.speaker_anchor is None
+
+    conn3 = MockConnection()
+    extra = {}
+    conn3._owner_voice(b"", heard_owner, who_now_owner, extra)
+    assert conn3.speaker_anchor == "phone"
+    heard_bystander_mid = {"scores": {"owner": 0.38}, "principal": None, "vector": bystander_midrange, "label": "owner"}
+    extra = {}
+    conn3._owner_voice(b"", heard_bystander_mid, who_now_owner, extra)
+    assert conn3.speaker_anchor == "phone"
+    for _ in range(3):
+        extra = {}
+        conn3._owner_voice(b"", heard_bystander_mid, who_now_owner, extra)
+        assert "speaker_learned" not in extra
+
+    conn4 = MockConnection()
+    extra = {}
+    conn4._owner_voice(b"", heard_owner, who_now_owner, extra)
+    assert conn4.speaker_anchor == "phone"
+    for i in range(3):
+        extra = {}
+        conn4._owner_voice(b"", heard_bystander_mid, who_now_owner, extra)
+        assert "speaker_learned" not in extra
+
+    learned = [c for c in speakers.bank("owner") if c["source"] == "learned"]
+    assert len(learned) == 0
+
+
+def test_owner_voice_at_threshold_anchors_not_learns(tmp_path):
+    """At score >= threshold, _owner_voice sets anchor and returns before learn_sample.
+    This documents that strong matches update anchor but don't reach the learning code."""
+    from services.voice.runtime import Connection
+    from services.voice.identity import Identity
+
+    speakers = enrolled(tmp_path, ("owner", 500), threshold=0.45)
+    owner_vec = speakers._prints["owner"]
+    owner_id = Identity("owner", worker="phone", owner=True)
+    strong_match = toward(owner_vec, 0.55, seed=400)
+
+    class MockConnection:
+        def __init__(self):
+            self.speaker_anchor = None
+            self.speaker_learned = 0
+            self.identity = owner_id
+            self.speakers = speakers
+            self.session = "test"
+
+        def _owner_voice(self, pcm, heard, who_now, extra):
+            Connection._owner_voice(self, pcm, heard, who_now, extra)
 
     conn = MockConnection()
+    heard_owner = {"scores": {"owner": 0.95}, "principal": "owner", "vector": owner_vec, "label": "owner"}
+    who_now_owner = {"label": "owner"}
     extra = {}
-
     conn._owner_voice(b"", heard_owner, who_now_owner, extra)
-    assert conn.speaker_anchor == "phone"
+    assert conn.speaker_anchor == "phone" and "speaker_learned" not in extra
 
+    heard_strong = {"scores": {"owner": 0.55}, "principal": "owner", "vector": strong_match, "label": "owner"}
     extra = {}
-    conn._owner_voice(b"", heard_bystander_mid, who_now_guest, extra)
-    assert conn.speaker_anchor is None
-
-    extra = {}
-    conn._owner_voice(b"", heard_bystander_low, who_now_guest, extra)
-    assert conn.speaker_anchor is None
+    conn._owner_voice(b"", heard_strong, who_now_owner, extra)
+    assert conn.speaker_anchor == "phone" and "speaker_learned" not in extra and "speaker_learn_skipped" not in extra
 
     learned = [c for c in speakers.bank("owner") if c["source"] == "learned"]
     assert len(learned) == 0
