@@ -3,6 +3,12 @@
  "vector": "tiers",
  "description": "effective_tier = max(builtin[cap], declared) (unknown everywhere -> exec); 'cmd.*' is always exec; an override raises freely and lowers only with lower=true. Tiers order read < write < exec < admin; letters r/w/x/a accepted.",
  "table": {
+  "adb.list": {
+   "tier": "read"
+  },
+  "adb.scan": {
+   "tier": "read"
+  },
   "agent.wake": {
    "tier": "exec"
   },

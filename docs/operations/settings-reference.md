@@ -124,6 +124,13 @@ are set only in the environment or on the command line.
 | `core.worker.authz_mode` | Worker permission checks | band+worker | str | `audit` | `ROOK_AUTHZ_MODE` | restart |
 | `core.worker.authz_allow_unsigned_repoint` | Allow unsigned hub/PSK changes | band+worker | bool | off | `ROOK_AUTHZ_ALLOW_UNSIGNED_REPOINT` | restart |
 
+## Adb (worker plugin, runs in worker)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `adb.devices` | Android devices | worker | str |  | `ROOK_ADB_DEVICES` | reload |
+| `adb.path` | adb binary | worker | path |  | `ROOK_ADB_PATH` | reload |
+
 ## Agenthost (worker plugin, runs in worker)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |
