@@ -27,6 +27,11 @@ version was `0.1.0`.
   recent conversation, drawn like the app's Chat tab (bubbles, interrupted replies faded, newest
   at the bottom, scrollable) and updating live as replies stream in. It replays the app's own
   conversation log, so it shows exactly what the app would. (manual: phones-and-tablets)
+- Watch app: the screen shows the conversation as it goes (the phone's recent chat, then each
+  heard line and reply), and the talk button and tile show a small Rook whose color is the
+  state (idle, connecting, listening, thinking, speaking, error) instead of status words. One
+  derived state drives both, and speaking lasts until the watch has played the reply. Watch
+  turns join the phone's chat. Link message `HISTORY` (22). (manual: phones-and-tablets)
 - Phone app home-screen widgets: **Talk to <assistant>** (push-to-talk to the house agent; a
   tap while it speaks stops it) and **Waiting on you** (the cards waiting on you, urgent and
   failed first, each opening its card; a mic button; more rows when made taller). Both read the
