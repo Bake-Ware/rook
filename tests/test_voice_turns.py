@@ -439,17 +439,14 @@ def run_owner_turns(tmp_path, *heard, device='phone', debug=False, identity=None
 
 
 def test_owner_voice_is_learned_only_in_an_anchored_connection(tmp_path):
-    """Bake 2026-10-27: after a confident match, his later probable lines (0.30 up to the
-    threshold) are banked; nothing before an anchor, nothing too weak, and someone clearly
-    else ends the anchor (their voice joins the cohort instead)."""
+    """After a confident owner match on the owner's device, the anchor persists.
+    Only strong matches (>= threshold) are learned or update the anchor. Weak turns
+    are not learned even with an active anchor. Nothing is learned when identified as someone else."""
     learned = lambda *heard: [score for _, score, _ in run_owner_turns(tmp_path, *heard)[0].learned]
     assert learned(('guest', 0.35), ('guest', 0.40)) == []
-    assert learned(('Alex', 0.6), ('guest', 0.35), ('guest', 0.2), ('guest', 0.40), ('Alex', 0.5)) == [0.35, 0.40]
-    speakers, _ = run_owner_turns(tmp_path, ('Alex', 0.6), ('guest', 0.05), ('guest', 0.35), ('Alex', 0.5),
-                                  ('guest', 0.38))
-    assert [score for _, score, _ in speakers.learned] == [0.38] and speakers.cohort == [0.05]
-    speakers, _ = run_owner_turns(tmp_path, ('Alex', 0.6), ('guest', 0.35), device='bakewatch')
-    assert speakers.learned == [('Alex', 0.35, 'bakewatch')]
+    assert learned(('Alex', 0.6), ('guest', 0.35), ('guest', 0.2), ('guest', 0.40), ('Alex', 0.5)) == []
+    speakers, _ = run_owner_turns(tmp_path, ('Alex', 0.6), ('Alex', 0.44), device='bakewatch')
+    assert speakers.learned == []
 
 
 def test_speaker_debug_event_per_utterance(tmp_path):
@@ -457,7 +454,7 @@ def test_speaker_debug_event_per_utterance(tmp_path):
     lines = [e for e in events if e.get('type') == 'speaker']
     assert [(e['label'], e['heard'], e['score'], e['threshold'], e['basis'], e['learned']) for e in lines] == [
         ('Alex', 'Alex', 0.6, 0.45, 'voice', None),
-        ('Alex', 'guest', 0.35, 0.45, 'owner phone', 101),
+        ('Alex', 'guest', 0.35, 0.45, 'owner phone', None),
         ('guest', 'guest', 0.05, 0.45, 'voice', None)]
     assert 'vector' not in lines[0] and json.dumps(lines)                # no embedding goes to the app
     assert not [e for e in run_owner_turns(tmp_path, ('Alex', 0.6))[1] if e.get('type') == 'speaker']
