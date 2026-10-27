@@ -613,7 +613,11 @@ class PluginHost:
         except CapTimeout as e:
             return {"ok": False, "error": f"timeout: {e}"}
         except TypeError as e:  # includes ArgError
-            return {"ok": False, "error": f"bad args: {e}"}
+            try:
+                hint = self.registry.arg_hint(cap, args, suggest="Did you mean" not in str(e))
+            except Exception:  # noqa: BLE001 - the hint is a courtesy
+                hint = ""
+            return {"ok": False, "error": f"bad args: {e}{hint}"}
         except CapError as e:
             # An expected, cap-authored failure: the message is the whole
             # error -- no exception type prefix, no traceback in the log.

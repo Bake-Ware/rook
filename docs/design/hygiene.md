@@ -57,7 +57,7 @@ a stop: it saves nothing.
 
 | Kind | Fires when | Says | Resolves when |
 |---|---|---|---|
-| `work_signal` | A commit or PR is linked to an open task: by hand (`link` kind `commit`, or a `url` with `/pull/` or `/commit/`), or found in a `rook_call` reply (below); or a console room linked to the task is closed | "If the work is finished: update state done with attrs.outcome" | The task leaves `in_progress`, or the signal expires |
+| `work_signal` | A commit or PR is linked to an open task: by hand (`link` kind `commit`, or a `url` with `/pull/` or `/commit/`), or found in a `rook_call` reply (below); or a console room linked to the task is closed | "If the work is finished: update state done with attrs.outcome" (a PR: "keep it in_progress until the PR merges", see `pr_merged`) | The task leaves `in_progress`, or the signal expires |
 | `handoff_saved` | A handoff is linked to a task still `in_progress` | "Stopping? release it (the handoff counts) or set paused/blocked/done" | Same |
 | `idle_claim` | Claimed, `in_progress`, idle past `hygiene_idle_minutes`, with work since the last handoff. Past `hygiene_dirty_hours` the claim is also marked dirty | "Stopped? save a handoff, link evidence, record knowledge, set the state" | The claimant is active again, releases, or the task leaves `in_progress` |
 | `release_proposed` | The same claim idle past `hygiene_release_hours` (to the claimant and, unaddressed, to the deck) | "Release it with a handoff: `rook_task release data {actor, handoff}`" | Same |
@@ -65,6 +65,57 @@ a stop: it saves nothing.
 | `done_without_knowledge` | A task goes `done` (on the update reply itself; the scan catches tasks finished elsewhere within `hygiene_done_window_days`) and no knowledge page links it, is linked from it, mentions `[[slug]]`, or was written by one of its claimants after their claim started | "Update a page (suggestions from search) or create one, and link it" | Such a page appears. Raised once |
 | `project_complete` | An `active` project whose tasks are all finished, the last one more than `hygiene_project_idle_hours` ago (to the project's creator and the last actor on its tasks) | "rook_project update state done, or add the next task" | A task reopens or is added, or the project changes state |
 | `stale_knowledge` | An active page mentions or record-links a superseded page, or links a cancelled task (to its last editor) | "Check it still holds; update or supersede it" | The page no longer relies on them |
+| `pr_merged` | An `in_progress` task's linked pull requests are all merged or closed (one merged): seen by the GitHub sweep, or at once when the hub merges it (huddle merge vote). The merge commit is linked as **evidence** (automatic link) | "Finished? update state done with attrs.outcome. More to do? Link the next PR" | The task leaves `in_progress`, or the link is retracted |
+| `pr_ci_failed` | An open linked pull request's checks failed at its head (sweep, `in_progress` tasks). A new failing head rewrites the finding and delivers it again | "Fix it before asking for a merge, marking done or reporting it green: gh pr checks N" | CI is no longer failing (running or green), the PR closes, or the task leaves `in_progress` |
+| `pr_open_done` | A `done` task (within `hygiene_done_window_days`) links a pull request that is still open (to the claimants and whoever set done) | "Reopen it until the PR merges, or retract the link" | The PR merges or closes, the link is retracted, or the task leaves `done` |
+
+### Pull requests behind tasks (`knowledge/prs.py`)
+
+Aimed at three failures seen on 2026-10-27: tasks marked done before their PR
+merged, claims left `in_progress` after it merged, and agents asking for merges,
+marking done or reporting green while CI was red or still running. Deterministic:
+the task's own links plus the PR's state on GitHub, no model.
+
+- **Which links.** A link whose ref is a pull request URL
+  (`github.com/<owner>/<repo>/pull/N`) with relation `evidence` or `produced`
+  (the `gh pr create` auto-link is `produced`). `touched` (incidental: an
+  umbrella PR, someone else's), `mentions`, `source`, `blocked_by` and the rest
+  are about other work. Retracted links do not count.
+- **Done check.** `update` to `done` reads the linked PRs (at most 5, cached a
+  minute). One still open (a draft too) → an **agent** is refused with what to
+  do: get CI green, have the chair pin it and call the merge vote (the hub
+  merges and links the merge commit), then mark it done; or retract the link
+  with a note saying why if that PR isn't this task's (the message names the
+  link ids; links are append-only, so the link and the note stay on record). A **person**
+  gets the same text as `pr_check` on the reply and the update goes through:
+  people decide. A PR closed without merging is a `pr_check` note. GitHub
+  unreachable → the update goes through with a note: never a refusal. This is
+  a saving rule on the task's state, like "done needs evidence"; it adds no
+  hold, guardrail or trust entry.
+- **Sweep.** Every `hygiene_github_minutes` (from the hygiene loop): in-progress
+  tasks and recently done ones (`hygiene_done_window_days`) with PR links.
+  Merged PRs are cached for good; open ones are read again when stale; a head's
+  checks are read only for in-progress work and only again while not green. At
+  most 40 reads a sweep, longest-unread first (so past 40 every PR still gets
+  its turn); a 403/429 or a network error stops reading for that sweep, and a
+  task whose PRs could not be read keeps its findings as they are (a PR GitHub
+  answers 404 for, deleted or private, leaves its task unchecked: no findings).
+  `pr_open_done` goes to whoever set the task done (claims end at done).
+- **The hub's merge.** `Table.execute` calls `knowledge.pr_merged(repo, n,
+  merge_sha, head)` after merging: the open tasks linking that PR get the merge
+  commit as evidence, and the in-progress ones (whose other PRs are settled) a
+  `pr_merged` finding, without waiting for the sweep.
+- **Credential.** The same GitHub client the huddle merge gates use
+  (`huddle.table.GitHub`). The hub's credential (`huddle.vote_github_secret`,
+  read from the vault once per sweep or done check as `system:hygiene`) is used
+  only for repositories the hub already works on (pinned on a conference
+  table); any other repo is read anonymously (60 an hour per IP), so linking a
+  PR in some other private repo never makes the hub read it with its token.
+- **CI at pin time.** Pinning a PR on the conference table reads its head's
+  checks and says where CI stands in the pin reply (`ci`) and the room line
+  ("CI still running: ... (wait for green before the vote)"). The ci gate is
+  unchanged. A vote's `artifact` may also be the PR's URL, `owner/repo#N` or
+  `#N` (its newest live pin in that huddle).
 
 ### Commits and PRs from band calls
 
@@ -87,8 +138,8 @@ for the pull request URL `gh pr create` prints (only for `gh pr create`:
 Then the `work_signal` above fires. A commit made through a console
 (`rook_console_write`) isn't seen; link it by hand or name the task.
 
-There is no GitHub webhook on the hub, so merges done on github.com are not
-seen. Adding one later only needs to call `HygieneEngine.on_link`.
+There is no GitHub webhook on the hub: merges done on github.com are seen by
+the PR sweep (below), within `hygiene_github_minutes`.
 
 ## Delivery
 
@@ -136,11 +187,14 @@ the canonical names (`ROOK_KNOWLEDGE_HYGIENE_IDLE_MINUTES` and so on).
 | `hygiene_hints_per_reply` | 1 | `_hygiene` items per MCP reply (0 = deck and `action="hygiene"` only) |
 | `hygiene_scan_seconds` | 300 | Scan interval |
 | `hygiene_notify_people` | `false` | Also post selected findings through `notify.send` |
+| `hygiene_github_minutes` | 10 | How often tasks' linked pull requests are read on GitHub (the PR findings above); 0 = off (the done check still runs) |
 
 ## Where it lives
 
 - `rook/hub/plugins/knowledge/hygiene.py`: `HygieneEngine` (findings table,
   event hooks, scan, delivery). Store-only, no network.
+- `rook/hub/plugins/knowledge/prs.py`: `PullRequests` (the done check, the
+  GitHub sweep, the merge hook). The only part that talks to GitHub.
 - `rook/hub/plugins/knowledge/migrations/002_hygiene.sql`: the `hygiene` table
   and an `events(actor, ts)` index. New objects only, so `user_version` stays 2
   and an older release still opens the file.
@@ -170,7 +224,8 @@ first to review the deck flags without agents seeing them.
 
 ## Not done
 
-- A GitHub webhook (merges on github.com), and commits made in consoles.
+- A GitHub webhook (the PR sweep polls instead), and commits made in consoles.
+- Commit links are not checked against the default branch (only PR links are).
 - Asking a freshly woken agent to do the write-up for `done_without_knowledge`
   (the §5 wake path); today it is a finding.
 - Per-worker rate limits; limits are per (record, kind, actor).

@@ -83,6 +83,8 @@ class KnowledgeService:
         self._band_cache = (0, [])
         # HygieneEngine (hygiene.py), set by the knowledge plugin; None = off.
         self.hygiene = None
+        # PullRequests (prs.py): a task's linked PRs on GitHub; None = off.
+        self.prs = None
 
     def _hook(self, name, *args, **kwargs):
         """Run a hygiene hook. Bookkeeping: never fails the caller."""
@@ -465,10 +467,13 @@ class KnowledgeService:
                              'whiteboard, create, update, link, retract, claim, release, note, jot, batch')
         if action == 'review':
             data = {k: data.get(k) for k in ('revision', 'verdict', 'note')}
+        pr_notes = None
         if action in ('update', 'release'):
             record = self.store.get(b, rid)
             note = 'inline handoff'
             to = (data.get('patch') or {}).get('state') if isinstance(data.get('patch'), dict) else None
+            if action == 'update' and to == 'done' and record['kind'] == 'task' and record['state'] != 'done':
+                pr_notes = await self._pr_done_check(record, actor)
             stopping = action == 'release' or (record['state'] == 'in_progress' and to in ('paused', 'blocked', 'todo'))
             if stopping and not data.get('handoff'):
                 # No handoff given: the whiteboard of the claim being stopped
@@ -503,12 +508,33 @@ class KnowledgeService:
             if closed:
                 result = {**result, 'closed_handoffs': closed}
         self._after_write(action, actor, data, result, record if action in ('update', 'release') else None)
+        if pr_notes:
+            result = {**result, 'pr_check': pr_notes}
         if action == 'create':
             result = {**result, 'comparable': [
                 {'id': r['id'], 'slug': r['slug'], 'title': r['title'], 'kind': r['kind'],
                  **({'name': r['name']} if r.get('name') else {})}
                 for r in self.store.lexical(b, result['title'], 5) if r['id'] != result['id']]}
         return result
+
+    async def _pr_done_check(self, record, actor):
+        """A task going done while a pull request it links is still open
+        (prs.py): refused for an agent, a note for a person (people decide).
+        GitHub unreachable or no client: a note, never a refusal. Returns the
+        notes for the reply (``pr_check``), or None."""
+        prs = self.prs
+        if prs is None:
+            return None
+        try:
+            got = await asyncio.to_thread(prs.done_check, record['id'])
+        except Exception:
+            log.exception('PR done check for %s failed', record.get('slug'))
+            return ['could not check the linked pull requests; make sure they merged']
+        if got.get('refuse'):
+            if (actor or {}).get('kind') != 'human':
+                raise ValueError(got['refuse'])
+            return [got['refuse']] + list(got.get('notes') or [])
+        return list(got.get('notes') or []) or None
 
     def _after_write(self, action, actor, data, result, before):
         """Hygiene triggers for a write that went through."""

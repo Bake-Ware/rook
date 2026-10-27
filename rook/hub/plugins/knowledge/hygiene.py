@@ -46,6 +46,9 @@ Triggers:
   and quiet for ``hygiene_project_idle_hours``: propose closing it.
 * ``stale_knowledge`` (scan): an active page that mentions or links a
   superseded page, or links a cancelled task.
+* ``pr_merged``, ``pr_ci_failed``, ``pr_open_done`` (the GitHub sweep in
+  prs.py): a task's linked pull request merged while it is in progress, its
+  CI failed, or it is still open on a done task.
 """
 from __future__ import annotations
 
@@ -77,6 +80,7 @@ DEFAULTS = {
     'hygiene_hints_per_reply': 1,
     'hygiene_scan_seconds': 300,
     'hygiene_notify_people': False,
+    'hygiene_github_minutes': 10.0,
 }
 
 # Per kind: ``once`` = never raised again for the same (record, actor) after it
@@ -91,9 +95,15 @@ KINDS = {
     'done_without_knowledge': {'once': True, 'repeat': False, 'scan': True},
     'project_complete': {'once': False, 'repeat': True, 'scan': True},
     'stale_knowledge': {'once': False, 'repeat': False, 'scan': True},
+    # Pull requests behind tasks (prs.py): its GitHub sweep raises and
+    # resolves these, not the scan.
+    'pr_merged': {'once': False, 'repeat': True, 'scan': False},
+    'pr_ci_failed': {'once': False, 'repeat': False, 'scan': False},
+    'pr_open_done': {'once': False, 'repeat': True, 'scan': False},
 }
 #: Kinds about the claimant's current work: finishing or stopping it resolves them.
-CLAIM_KINDS = ('work_signal', 'handoff_saved', 'idle_claim', 'release_proposed', 'session_ended')
+CLAIM_KINDS = ('work_signal', 'handoff_saved', 'idle_claim', 'release_proposed', 'session_ended',
+               'pr_merged', 'pr_ci_failed')
 #: Kinds worth a notify.send to people when ``hygiene_notify_people`` is on.
 NOTIFY_KINDS = ('release_proposed', 'project_complete')
 FINISHED = ('done', 'closed', 'cancelled', 'archived')
@@ -373,6 +383,12 @@ class HygieneEngine:
                 say = (f'{what} on [[{t["slug"]}]] while it is still in_progress. Stopping? '
                        f'rook_task release id={t["slug"]} (the handoff counts) or update state '
                        f'paused/blocked/done. Still working? Ignore this.')
+            elif what.startswith('PR '):
+                # A pull request is not finished work until it merges (prs.py
+                # refuses done while it is open, and says when it merged).
+                say = (f'{what} on [[{t["slug"]}]] ({t["state"]}). Keep the task in_progress until the '
+                       f'PR merges: CI green, then the huddle merge vote. Rook tells you when it '
+                       f'merged; then update state done with attrs.outcome.')
             else:
                 say = (f'{what} on [[{t["slug"]}]] ({t["state"]}). If the work is finished: rook_task update '
                        f'state done with attrs.outcome (link evidence first); if not, carry on.')
@@ -521,6 +537,8 @@ class HygieneEngine:
                 self.resolve(after['id'], CLAIM_KINDS, None, now, db)
             if after['state'] in FINISHED and after['state'] != 'done':
                 self.resolve(after['id'], ('done_without_knowledge',), None, now, db)
+            if after['state'] != 'done':
+                self.resolve(after['id'], ('pr_open_done',), None, now, db)
         if after['state'] == 'done':
             return self._check_done(after['id'], actor, now)
         return []

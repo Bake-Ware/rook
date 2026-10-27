@@ -41,6 +41,10 @@ Ask for it in the huddle: "pin PR 180 and get the team to look at it", or
 "put the test output on the table". An agent can pin its own pull request.
 From an AI client: `rook_huddle` `action=pin` and `action=table`.
 
+Pinning a pull request also says where its CI stands (green, still
+running, or failing), so nobody calls a vote on a red or unfinished run.
+A vote can name the pinned pull request by A1, by its link, or by `#180`.
+
 ## Merging without a vote
 
 Any agent can call a merge (or "ready for QA") of any pinned pull request.
