@@ -70,6 +70,7 @@ LEARN_MIN = float(os.environ.get("VOICE_SPEAKER_LEARN_MIN", "0.30") or 0.30)
 LEARN_MIN_SECONDS = 1.0
 LEARN_MIN_SNR_DB = 6.0
 LEARN_DUPLICATE = 0.98       # a clip this close to one already banked adds nothing
+LEARN_CAP = int(os.environ.get("VOICE_SPEAKER_LEARN_CAP", "12") or 12)  # max learned (non-pinned) clips per person; 0 = learning off
 NOISY_SNR_DB = 15.0          # below this a clip's setting is "noisy"
 # Cohort normalization: a turn's score is also compared with how well it matches voices
 # that are not the person (strangers heard on the owner's phone, the assistant's voices,
@@ -369,6 +370,7 @@ class Speakers:
         self.threshold = float(threshold) if threshold is not None else _env_float("VOICE_SPEAKER_THRESHOLD", DEFAULT_THRESHOLD)
         self.assistant_threshold = (float(assistant_threshold) if assistant_threshold is not None else
                                     _env_float("VOICE_SPEAKER_ASSISTANT_THRESHOLD", DEFAULT_ASSISTANT_THRESHOLD))
+        self.learn_min = max(LEARN_MIN, self.threshold)
         self.threads = int(threads or env.get("VOICE_SPEAKER_THREADS", "") or 2)
         self.timeout = float(timeout)
         self.error = None
@@ -558,8 +560,8 @@ class Speakers:
         assistant_score = (float(np.dot(vector, reference))
                            if reference is not None and reference.shape == vector.shape else None)
         norm = self._norm(vector, score, best) if best is not None else None
-        principal = best if score is not None and (
-            score >= self.threshold or (norm is not None and norm >= NORM_SURE and score >= LEARN_MIN)) else None
+        principal = best if score is not None and score >= self.threshold else None
+        # norm is returned for logging and debug view, but no longer names anyone (was a drift vulnerability)
         if (assistant_score is not None and assistant_score >= self.assistant_threshold
                 and (score is None or assistant_score > score)):
             label, principal = "assistant", None
@@ -771,7 +773,7 @@ class Speakers:
         ``{'ok': False, 'reason'}``: ``off``, ``not_enrolled``, ``quality`` (too short,
         quiet, clipped or noisy), ``too_far`` (under LEARN_MIN against the enrollment),
         ``other_higher`` (another enrolled voice matches as well) or ``duplicate``.
-        When the bank is full the weakest learned clip ends (the oldest, if the new one is
+        When the bank is full, or at LEARN_CAP learned clips, the weakest learned clip ends (the oldest, if the new one is
         weaker still); pinned enrollment clips never do."""
         if not self.available:
             return {"ok": False, "reason": "off"}
@@ -785,7 +787,7 @@ class Speakers:
                                 or q["clipped"] > ENROLL_MAX_CLIPPED or q["snr_db"] < LEARN_MIN_SNR_DB):
             return {"ok": False, "reason": "quality", "quality": q}
         base = float(np.dot(vector, self._prints[principal]))
-        if base < LEARN_MIN:
+        if base < self.learn_min:
             return {"ok": False, "reason": "too_far", "score": round(base, 4)}
         mine, _ = self._score(principal, vector)
         if any(self._score(name, vector)[0] >= mine for name, p in list(self._prints.items())
@@ -794,10 +796,14 @@ class Speakers:
         bank = self._banks.get(principal, [])
         if any(float(np.dot(vector, c["vec"])) >= LEARN_DUPLICATE for c in bank):
             return {"ok": False, "reason": "duplicate", "score": round(base, 4)}
-        setting = setting_for(device, q)
         learned = [c for c in bank if not c["pinned"]]
+        if LEARN_CAP <= 0:
+            return {"ok": False, "reason": "cap_reached", "score": round(base, 4)}
+        setting = setting_for(device, q)
         evict = None
-        if learned and len(bank) >= max(BANK_MAX, sum(c["pinned"] for c in bank) + 1):
+        # At LEARN_CAP learned clips (or a full bank) a new clip replaces one, so the bank
+        # keeps adapting while the learned part never grows past the cap.
+        if learned and (len(learned) >= LEARN_CAP or len(bank) >= max(BANK_MAX, sum(c["pinned"] for c in bank) + 1)):
             weakest = min(learned, key=lambda c: (c["score"], c["created"]))
             evict = weakest if base > weakest["score"] else min(learned, key=lambda c: c["created"])
         with self._db_lock:
