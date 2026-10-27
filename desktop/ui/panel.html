@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rook</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body class="panel">
+<main class="pn">
+  <header class="pn-top">
+    <img src="rook.svg" alt="">
+    <div class="pn-who">
+      <h1>Rook</h1>
+      <p class="muted small" id="hub-line"></p>
+    </div>
+    <button class="primary" id="ask">Ask</button>
+    <button id="ask-page" title="Open the dashboard's chat with the house agent, which sees the page you're on">Ask about this page</button>
+  </header>
+
+  <nav class="pn-sections" id="sections" aria-label="Dashboard sections"></nav>
+
+  <div class="pn-tabs" role="tablist">
+    <button role="tab" data-tab="waiting" aria-selected="true">Waiting on you <span class="count" id="n-waiting"></span></button>
+    <button role="tab" data-tab="work" aria-selected="false">Work <span class="count" id="n-work"></span></button>
+    <button role="tab" data-tab="knowledge" aria-selected="false">Knowledge</button>
+    <button role="tab" data-tab="sessions" aria-selected="false">Sessions <span class="count" id="n-sessions"></span></button>
+  </div>
+
+  <form class="pn-search" id="search" hidden autocomplete="off">
+    <input type="text" id="q" placeholder="Search knowledge and tasks" aria-label="Search knowledge" spellcheck="true">
+    <button type="submit">Search</button>
+  </form>
+
+  <p class="msg" id="msg"></p>
+  <ul class="pn-list" id="list" aria-live="polite"></ul>
+
+  <footer class="pn-foot">
+    <a id="open-dashboard">Open dashboard</a>
+    <a id="refresh">Refresh</a>
+    <a id="settings">Settings</a>
+  </footer>
+</main>
+<script src="common.js"></script>
+<script src="panel.js"></script>
+</body>
+</html>

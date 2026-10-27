@@ -6,12 +6,19 @@
 //! for spoken replies), and the text goes to the home agent like a typed
 //! quick ask.
 //!
+//! Answers can be read aloud with the voice server's `/api/voice` (the
+//! phone's speech path): `speak` splits and fetches, `playback` plays.
+//!
 //! This file is the platform-free part (resampling, end-of-speech detection,
-//! the transcription request), always compiled and unit-tested. `capture`
-//! needs the `voice` feature (cpal); `wake` needs `wake-word` (tract).
+//! the transcription request), always compiled and unit-tested, as is
+//! `speak`. `capture` and `playback` need the `voice` feature (cpal); `wake`
+//! needs `wake-word` (tract).
 
 #[cfg(feature = "voice")]
 pub mod capture;
+#[cfg(feature = "voice")]
+pub mod playback;
+pub mod speak;
 #[cfg(feature = "wake-word")]
 pub mod wake;
 

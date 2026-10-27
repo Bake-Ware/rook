@@ -1,18 +1,28 @@
 # Rook desktop
 
-A tray app for a Rook hub, for Windows, macOS and Linux. Version 0.1 is a
+A tray app for a Rook hub, for Windows, macOS and Linux. Version 0.2 is a
 preview. User guide: [docs/desktop-app.md](../docs/desktop-app.md). Voice
 design: [docs/design/desktop-voice.md](../docs/design/desktop-voice.md).
 
 What it does:
 
-- shows the hub's dashboard in a window, signed in;
+- shows the hub's dashboard in a window, signed in, with a tray Dashboard
+  menu of its five sections (`ui/sections.json`, checked against the hub's
+  sidebar by tests/test_desktop_contract.py);
+- the Rook panel (`ui/panel.html`): what waits on you (`approvals.list`),
+  tasks in progress and blocked (`task.read` deck), knowledge search
+  (`knowledge.read`) and agent sessions (`/account/work/sessions`), each item
+  a link into the dashboard;
 - opens a quick-ask box on a global hotkey (default `Ctrl+Alt+Space`) and
-  asks the hub's home agent;
-- shows desktop notifications for new chat messages, and for huddle
-  questions and tasks that need you on hubs that list them;
-- push-to-talk (hold `Ctrl+Alt+V`) and, in builds with the `wake-word`
-  feature, a wake word;
+  asks the hub's home agent; "Ask about this page" opens the dashboard's
+  page-aware @home dock instead;
+- shows desktop notifications for new chat messages and for what waits on
+  you;
+- push-to-talk (hold `Ctrl+Alt+V`) with answers read aloud by the voice
+  server (`/api/voice`, played with cpal) and, in builds with the
+  `wake-word` feature, a wake word;
+- one copy at a time (a second launch shows the panel), start at sign-in,
+  and an update check against the hub's `/updates/desktop.json`;
 - starts and stops this computer's worker;
 - installs a hub on this computer (Linux) or explains how to (macOS: Docker;
   Windows: WSL or Docker).
@@ -49,11 +59,14 @@ desktop/
   src-tauri/
     src/lib.rs        tray, windows, hotkeys, commands, background polling
     src/config.rs     settings.json and credentials.json (0600)
-    src/hub.rs        sign-in, home agent (chat or MCP), chat rooms, /api/attention
+    src/hub.rs        sign-in, home agent (chat or MCP), chat rooms, the panel's lists, updates
     src/notify.rs     what deserves a notification (pure)
+    src/sections.rs   the dashboard's sections for the tray menu (ui/sections.json)
+    src/update.rs     which published file is a newer app for this install (pure)
     src/worker.rs     find and start/stop this computer's worker
     src/installer.rs  the hub installer wizard's plan, arguments and output parsing
-    src/voice/        audio helpers, transcription, capture (cpal), wake word (tract)
+    src/voice/        audio helpers, transcription, capture and playback (cpal),
+                      speech pieces and WAV (speak.rs), wake word (tract)
     tests/live_hub.rs end-to-end against a running hub (ignored by default)
 ```
 
@@ -62,8 +75,10 @@ The dashboard window loads the hub's own site and stays there:
 - **No app access for hub pages.** `build.rs` declares every app command in
   an ACL manifest, so a command is callable only from a window whose
   capability allows it (`capabilities/settings.json`, `overlay.json`,
-  `install.json`, each listing just what that page uses). No capability
-  names the dashboard window.
+  `install.json`, `panel.json`, each listing just what that page uses). No
+  capability names the dashboard window. "Ask about this page" runs one
+  constant script there (`OPEN_DOCK_JS`: click the dock's launcher, focus its
+  text box); nothing from the page comes back to the app.
 - **Navigation guard.** It may navigate only within the hub's origin. Links
   elsewhere, popups and `target=_blank` open in the system browser (the
   opener plugin); other schemes are dropped.
@@ -88,10 +103,10 @@ same session cookie a browser gets:
   `rook_call(worker="rook", cap="home.ask")` over the hub's `/mcp`, exactly as
   `rook_home_ask` does.
 - **Notifications** poll `/api/chat/rooms` (unread counts and the last
-  message; it never moves your read marker) and `/api/attention`. Today's
-  hubs answer 404 there; the app then checks again only every 20 polls. The
-  `/api/attention` contract is in docs/desktop-app.md, for the huddle and
-  task work to implement.
+  message; it never moves your read marker) and `approvals.list` (a hub
+  without it is asked again only every 20 polls).
+- **The panel** calls read-risk hub caps through `/api/band/call`, which
+  the hub forwards to its MCP side and runs as the signed-in person.
 
 ## Building
 
@@ -112,8 +127,11 @@ cargo run --features wake-word -- --show settings
 cargo tauri build --features wake-word      # installers in target/release/bundle/
 ```
 
-`--show settings|overlay|install|dashboard` opens that window at start (the
-settings window also opens on first run).
+`--show settings|overlay|install|panel|dashboard` opens that window at start
+(the settings window also opens on first run, and a start by hand shows the
+panel; `--background`, which start-at-sign-in passes, shows nothing).
+`--check [file]` prints what the app sees on this computer as JSON and exits
+(the Windows build has no console, so give it a file there).
 
 Release builds unwind on panic (no `panic = "abort"`): the wake model is
 loaded inside `catch_unwind`, so a malformed model file turns the wake word
@@ -153,15 +171,23 @@ by commit, the Tauri CLI by exact version, and cargo runs with `--locked`.
   desktop-environment shortcut that runs the app's "Ask" action (follow-up).
 - **The sign-in cookie is stored in a 0600 file** in the app's config
   directory, not the OS keychain (follow-up).
+- **Publishing:** CI builds the bundles on every push to master;
+  `python tools/desktop_publish.py --run <run id> --tag <release>` attaches
+  them to a GitHub release as `rook-desktop-<version>-*`, which is what the
+  hub's update check offers (only a green run of a push to master). The app
+  offers only installers from Rook's GitHub releases (`update::RELEASES`).
 - **Google sign-in** leaves the hub's origin, so the navigation guard sends
   it to the system browser, where it signs in the browser, not the app. Use
   the password sign-in, or a local account.
 - **Tray on GNOME** needs the AppIndicator extension (Ubuntu ships it). Where
-  no tray shows, the hotkey still works, and running the app again with
-  `--show settings` opens its window (a single-instance hand-off is a
-  follow-up).
-- **Voice replies are shown, not spoken.** See the voice design doc for the
-  path to the full voice agent (the voice server's streaming protocol).
+  no tray shows, the hotkey still works, and running the app again shows the
+  panel of the running copy (`--show settings` for its settings).
+- **Answers are read aloud piece by piece** (`/api/voice`, up to 700
+  characters a request), not streamed: a long answer pauses between pieces.
+  The full voice agent (the voice server's streaming protocol) is the next
+  step; see the voice design doc.
+- **Updates are manual**: the app tells you and opens the download; it
+  doesn't install it itself (that needs signed builds).
 - **Bundle a hub with the app** ("one binary that also installs the hub"): the
   wizard runs the hub installer; shipping the hub inside the app is a
   follow-up.

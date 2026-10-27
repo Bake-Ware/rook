@@ -111,11 +111,15 @@ impl Watcher {
 }
 
 fn attention_notice(item: &AttentionItem) -> Notice {
+    // The kinds of approvals.list (rook/hub/relay.py KINDS).
     let title = match item.kind.as_str() {
-        "question" => "A question for you".to_string(),
-        "task" => "A task needs you".to_string(),
-        _ => "Needs you".to_string(),
-    };
+        "ask" | "card" => "A question for you",
+        "hold" | "job" => "An agent is waiting for your OK",
+        "house" => "The house agent asks",
+        "trust" => "A trust change to decide",
+        _ => "Needs you",
+    }
+    .to_string();
     let body = match (item.title.trim(), item.text.trim()) {
         ("", t) => clip(t, 160),
         (h, "") => clip(h, 160),
@@ -222,7 +226,7 @@ mod tests {
     fn attention_items() {
         let mut w = Watcher::new();
         assert!(w.attention(None).is_empty());
-        let first = w.attention(Some(&[item("1", "question"), item("2", "task")]));
+        let first = w.attention(Some(&[item("1", "ask"), item("2", "hold")]));
         assert_eq!(
             first,
             vec![Notice {
@@ -230,17 +234,17 @@ mod tests {
                 body: "2 things need you.".into()
             }]
         );
-        let next = w.attention(Some(&[item("2", "task"), item("3", "task")]));
+        let next = w.attention(Some(&[item("2", "hold"), item("3", "hold")]));
         assert_eq!(
             next,
             vec![Notice {
-                title: "A task needs you".into(),
+                title: "An agent is waiting for your OK".into(),
                 body: "T3: please look".into()
             }]
         );
         let mut fresh = Watcher::new();
         assert_eq!(
-            fresh.attention(Some(&[item("9", "question")]))[0].title,
+            fresh.attention(Some(&[item("9", "card")]))[0].title,
             "A question for you"
         );
     }

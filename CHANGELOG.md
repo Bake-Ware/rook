@@ -107,6 +107,18 @@ version was `0.1.0`.
   `media.control` show and drive what is playing. `device.open_url`, `device.launch` and
   `device.intent` add `may_be_blocked` when Android 10+ may silently refuse a start from the
   background (no overlay permission and no accessibility service). (manual: phones-and-tablets)
+- Desktop app 0.2 (roadmap: Windows, voice, work, knowledge, sessions). A tray **Dashboard**
+  menu with the hub's five sections and their pages; the **Rook panel** (tray > Open Rook):
+  what waits on you, tasks in progress and blocked, knowledge search and agents' live sessions,
+  each opening its dashboard page; **Ask about this page** opens the dashboard's page-aware
+  @home chat; notifications for what waits on you (`approvals.list`; the never-built
+  `/api/attention` is gone); answers **read aloud** by the voice server (when you asked by
+  voice, always or never; Esc or talking stops it); one copy at a time (opening it again shows
+  the panel); **start at sign-in**; an update check against the hub's `/updates/desktop.json`
+  with a download button. Windows: a worker that an update restarted outside its Scheduled
+  Task now shows as running and **Stop** stops it. `--check [file]` reports what the app sees
+  without starting it. `tools/desktop_publish.py` attaches CI's bundles to a release as
+  `rook-desktop-*`. (manual: desktop-app)
 - Phone app **Chat with <assistant>** widget (Bake, 2026-10-27: "push to talk, but it shows
   the conversation, like it does in the app"): a resizable widget with a Talk bar under the
   recent conversation, drawn like the app's Chat tab (bubbles, interrupted replies faded, newest

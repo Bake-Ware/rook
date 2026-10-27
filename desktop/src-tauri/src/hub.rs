@@ -13,8 +13,13 @@
 //!   asks in a private two-person chat room with the agent, which the home
 //!   agent answers the same way (and the thread shows up in Chat);
 //! * notifications: `/api/chat/rooms` (read-only: unread counts and the last
-//!   message, never moving the read mark) and, when a hub serves it,
-//!   `/api/attention` (huddle questions, tasks that need you).
+//!   message, never moving the read mark) and `approvals.list` (what waits on
+//!   the person: held calls, huddle cards and questions, house asks, trust
+//!   proposals);
+//! * the Rook panel: read-risk hub caps over `/api/band/call`, which the hub
+//!   runs as the signed-in person (`approvals.list`, `task.read`,
+//!   `knowledge.read`), and the Sessions page's `/account/work/sessions`;
+//! * updates: the public `/updates/desktop.json`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -140,8 +145,7 @@ pub struct Message {
     pub text: String,
 }
 
-/// One thing that needs the person: a huddle question or a task waiting on
-/// them. The `/api/attention` contract (docs/desktop-app.md).
+/// One thing that needs the person, for a notification (from `approvals.list`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AttentionItem {
     pub id: String,
@@ -273,18 +277,56 @@ impl Hub {
             .unwrap_or_default())
     }
 
-    /// `None` when this hub has no `/api/attention` yet.
+    /// What waits on the person, for notifications. `None` when this hub
+    /// has no approvals list (an older hub, or the plugin off).
     pub async fn attention(&self) -> Result<Option<Vec<AttentionItem>>, HubError> {
-        match self.json(self.req(reqwest::Method::GET, "/api/attention")).await {
-            Ok(v) => Ok(Some(
-                v.get("items")
-                    .cloned()
-                    .and_then(|i| serde_json::from_value(i).ok())
-                    .unwrap_or_default(),
+        match self.waiting().await {
+            Ok(items) => Ok(Some(
+                items
+                    .into_iter()
+                    .map(|w| AttentionItem {
+                        id: w.id,
+                        kind: w.kind,
+                        title: w.title,
+                        text: w.text,
+                    })
+                    .collect(),
             )),
+            Err(HubError::Agent(e)) if unsupported(&e) => Ok(None),
             Err(HubError::Http(404, _)) | Err(HubError::Http(405, _)) => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    /// Everything waiting on the person (`approvals.list`), oldest first.
+    pub async fn waiting(&self) -> Result<Vec<Waiting>, HubError> {
+        let v = self.hub_call("approvals.list", json!({}), 15.0).await?;
+        Ok(waiting_items(&v))
+    }
+
+    /// Tasks in progress or blocked across the band (`task.read` deck).
+    pub async fn work(&self) -> Result<Vec<WorkItem>, HubError> {
+        let args = json!({"action": "deck", "data": {
+            "states": ["in_progress", "blocked"], "done_days": 0, "limit": 50}});
+        let v = self.hub_call("task.read", args, 20.0).await?;
+        Ok(work_items(&v))
+    }
+
+    /// Knowledge pages and tasks matching the words (`knowledge.read` search).
+    pub async fn knowledge(&self, query: &str) -> Result<Vec<Found>, HubError> {
+        let args = json!({"action": "search", "query": query, "data": {"limit": 10}});
+        let v = self.hub_call("knowledge.read", args, 20.0).await?;
+        Ok(found_items(&v))
+    }
+
+    /// Agent sessions on every connected worker, live ones first (the
+    /// Sessions page's list; needs an account sign-in, not the dashboard
+    /// password).
+    pub async fn sessions(&self) -> Result<Vec<Session>, HubError> {
+        let v = self
+            .json(self.req(reqwest::Method::GET, "/account/work/sessions?live_only=1&limit=40"))
+            .await?;
+        Ok(session_items(&v))
     }
 
     async fn chat_read(&self, room: &str, since: u64) -> Result<(Vec<Message>, u64), HubError> {
@@ -620,6 +662,273 @@ pub fn agent_reply(msgs: &[Message], agent: &str) -> ReplyState {
     ReplyState::Waiting
 }
 
+/// A hub without the cap (older, or its plugin off) says so in plain words.
+fn unsupported(err: &str) -> bool {
+    let e = err.to_lowercase();
+    e.contains("unknown capability") || e.contains("no such capability")
+}
+
+fn text(v: &Value, key: &str) -> String {
+    v.get(key).and_then(Value::as_str).unwrap_or("").trim().to_string()
+}
+
+fn first_line(s: &str, max: usize) -> String {
+    let line = s.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    if line.chars().count() <= max {
+        line.to_string()
+    } else {
+        let mut out: String = line.chars().take(max - 1).collect();
+        out.push('\u{2026}');
+        out
+    }
+}
+
+/// One thing waiting on the person, as the Rook panel shows it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Waiting {
+    pub id: String,
+    /// hold, job, card, ask, house or trust (rook/hub/relay.py KINDS).
+    pub kind: String,
+    /// The speakable name ("brave-otter-lamp").
+    pub name: String,
+    pub title: String,
+    pub text: String,
+    pub who: String,
+    pub age: String,
+    /// Where it is decided on the dashboard.
+    pub link: String,
+}
+
+/// The dashboard page each kind of waiting item is decided on.
+pub fn waiting_page(kind: &str) -> &'static str {
+    match kind {
+        "hold" => "/#approvals",
+        "job" => "/#approvals",
+        "card" => "/#huddles",
+        "ask" => "/#huddles",
+        "house" => "/#decisions",
+        "trust" => "/#trust",
+        _ => "/#approvals",
+    }
+}
+
+/// `approvals.list` items (Relay.public): a plain card when the hub has one
+/// (`plain.title`, `plain.who`, `plain.for`), else `who wants to what`.
+pub fn waiting_items(v: &Value) -> Vec<Waiting> {
+    let Some(items) = v.get("items").and_then(Value::as_array) else {
+        return vec![];
+    };
+    items
+        .iter()
+        .filter_map(|i| {
+            let id = text(i, "id");
+            if id.is_empty() {
+                return None;
+            }
+            let kind = text(i, "kind");
+            let plain = i.get("plain").cloned().unwrap_or(Value::Null);
+            let who = Some(text(&plain, "who"))
+                .filter(|w| !w.is_empty())
+                .unwrap_or_else(|| text(i, "who"));
+            let title = [text(&plain, "title"), text(i, "what"), text(i, "line")]
+                .into_iter()
+                .find(|t| !t.is_empty())
+                .map(|t| first_line(&t, 120))
+                .unwrap_or_else(|| "Waiting for you".into());
+            let purpose = text(&plain, "for");
+            let detail = if purpose.is_empty() {
+                Some(first_line(&text(i, "line"), 200))
+                    .filter(|l| *l != title)
+                    .unwrap_or_default()
+            } else {
+                format!("For {purpose}")
+            };
+            Some(Waiting {
+                link: waiting_page(&kind).to_string(),
+                name: text(i, "name"),
+                text: first_line(&detail, 200),
+                age: text(i, "age"),
+                id,
+                kind,
+                title,
+                who,
+            })
+        })
+        .collect()
+}
+
+/// A task on the deck, as the Rook panel shows it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct WorkItem {
+    pub title: String,
+    /// in_progress or blocked.
+    pub state: String,
+    pub project: String,
+    /// Who holds it (claimants' actors), or why it is blocked.
+    pub note: String,
+    pub link: String,
+}
+
+/// The deck (`task.read` action deck): per project, its rows by state.
+pub fn work_items(v: &Value) -> Vec<WorkItem> {
+    let mut out = vec![];
+    for entry in v.get("deck").and_then(Value::as_array).into_iter().flatten() {
+        let project = text(entry.get("project").unwrap_or(&Value::Null), "title");
+        for state in ["blocked", "in_progress"] {
+            for t in entry.get(state).and_then(Value::as_array).into_iter().flatten() {
+                let title = text(t, "title");
+                if title.is_empty() {
+                    continue;
+                }
+                let note = if state == "blocked" {
+                    first_line(&text(t, "blocked_reason"), 160)
+                } else {
+                    t.get("claimants")
+                        .and_then(Value::as_array)
+                        .map(|cs| {
+                            cs.iter()
+                                .map(|c| text(c, "actor"))
+                                .filter(|a| !a.is_empty())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default()
+                };
+                out.push(WorkItem {
+                    link: work_link(t),
+                    title,
+                    state: state.to_string(),
+                    project: project.clone(),
+                    note,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The Work page's link to a task: `#work?t=<name or slug>&b=<band>`
+/// (rook/web/workviews.js `ref`).
+fn work_link(t: &Value) -> String {
+    let r = Some(text(t, "name"))
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| text(t, "slug"));
+    let mut link = format!("/#work?t={}", urlencode(&r));
+    let band = text(t, "band");
+    if !band.is_empty() {
+        link.push_str(&format!("&b={}", urlencode(&band)));
+    }
+    link
+}
+
+/// A knowledge search hit: a page, or a task the search also matched.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Found {
+    pub title: String,
+    pub kind: String,
+    pub excerpt: String,
+    pub link: String,
+}
+
+pub fn found_items(v: &Value) -> Vec<Found> {
+    let Some(results) = v.get("results").and_then(Value::as_array) else {
+        return vec![];
+    };
+    results
+        .iter()
+        .filter_map(|r| {
+            let slug = text(r, "slug");
+            let title = text(r, "title");
+            if slug.is_empty() || title.is_empty() {
+                return None;
+            }
+            let kind = text(r, "kind");
+            let link = if kind == "knowledge" {
+                let mut l = format!("/#knowledge?p={}", urlencode(&slug));
+                let band = text(r, "band");
+                if !band.is_empty() {
+                    l.push_str(&format!("&b={}", urlencode(&band)));
+                }
+                l
+            } else {
+                work_link(r)
+            };
+            Some(Found {
+                excerpt: first_line(&text(r, "excerpt").replace("**", ""), 220),
+                title,
+                kind,
+                link,
+            })
+        })
+        .collect()
+}
+
+/// An agent session (docs/design/sessions.md 3.1).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Session {
+    pub title: String,
+    /// claude, codex, hermes or shell.
+    pub agent: String,
+    pub worker: String,
+    /// live, idle or closed.
+    pub state: String,
+    pub cwd: String,
+    pub updated: f64,
+    pub link: String,
+}
+
+pub fn session_items(v: &Value) -> Vec<Session> {
+    let Some(list) = v.get("sessions").and_then(Value::as_array) else {
+        return vec![];
+    };
+    list.iter()
+        .filter_map(|s| {
+            let key = text(s, "key");
+            if key.is_empty() {
+                return None;
+            }
+            let agent = text(s, "agent");
+            let title = Some(text(s, "title"))
+                .filter(|t| !t.is_empty())
+                .unwrap_or_else(|| format!("{agent} session"));
+            Some(Session {
+                title: first_line(&title, 120),
+                worker: text(s, "worker"),
+                state: text(s, "state"),
+                cwd: text(s, "cwd"),
+                updated: s.get("updated").and_then(Value::as_f64).unwrap_or(0.0),
+                link: format!("/#sessions?key={}", urlencode(&key)),
+                agent,
+            })
+        })
+        .collect()
+}
+
+/// The hub's answer to "is there a newer desktop app?"
+/// (`GET /updates/desktop.json?version=&platform=`, public).
+pub async fn desktop_downloads(origin: &str, version: &str, platform: &str) -> Result<Vec<String>, HubError> {
+    let url = format!(
+        "{origin}/updates/desktop.json?version={}&platform={}",
+        urlencode(version),
+        urlencode(platform)
+    );
+    let resp = client(Duration::from_secs(15)).get(url).send().await?;
+    let status = resp.status().as_u16();
+    if status != 200 {
+        return Err(HubError::Http(status, String::new()));
+    }
+    let v: Value = resp
+        .json()
+        .await
+        .map_err(|_| HubError::Http(status, "not JSON".into()))?;
+    Ok(v.get("downloads")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|d| d.get("url").and_then(Value::as_str).map(String::from))
+        .collect())
+}
+
 pub fn urlencode(s: &str) -> String {
     url::form_urlencoded::byte_serialize(s.as_bytes()).collect()
 }
@@ -827,5 +1136,77 @@ mod tests {
             ..Default::default()
         };
         assert!(agent_off_message(&s).contains("isn't set up"));
+    }
+
+    #[test]
+    fn waiting_items_read_plain_cards_and_old_items() {
+        let v = json!({"count": 3, "items": [
+            {"kind": "hold", "id": "h1", "name": "brave-otter-lamp", "age": "4m",
+             "plain": {"title": "Restart nginx on web1", "who": "Claude web", "for": "Cert renewal"},
+             "who": "agent:x", "what": "restart nginx"},
+            {"kind": "ask", "id": "q9", "who": "Claude web", "what": "Ship the desktop app?\nWhy: ...",
+             "line": "Claude web asks: Ship the desktop app?"},
+            {"kind": "trust", "id": ""}
+        ]});
+        let w = waiting_items(&v);
+        assert_eq!(w.len(), 2);
+        assert_eq!(w[0].title, "Restart nginx on web1");
+        assert_eq!(w[0].who, "Claude web");
+        assert_eq!(w[0].text, "For Cert renewal");
+        assert_eq!((w[0].name.as_str(), w[0].age.as_str()), ("brave-otter-lamp", "4m"));
+        assert_eq!(w[0].link, "/#approvals");
+        assert_eq!(w[1].title, "Ship the desktop app?");
+        assert_eq!(w[1].text, "Claude web asks: Ship the desktop app?");
+        assert_eq!(w[1].link, "/#huddles");
+        assert!(waiting_items(&json!({"count": 0, "summary": "Nothing"})).is_empty());
+        assert_eq!(waiting_page("house"), "/#decisions");
+        assert_eq!(waiting_page("trust"), "/#trust");
+        assert!(unsupported("Unknown capability: approvals.list"));
+        assert!(!unsupported("denied"));
+    }
+
+    #[test]
+    fn work_items_from_the_deck() {
+        let v = json!({"deck": [{"band": "b1", "project": {"title": "Desktop"},
+            "in_progress": [{"title": "Windows", "name": "subtle-steeple-hemlock", "slug": "win", "band": "b1",
+                             "claimants": [{"actor": "claudeweb.claudecode.web"}]}],
+            "blocked": [{"title": "Sign the app", "slug": "sign", "blocked_reason": "Needs a certificate.\nMore."}]}]});
+        let w = work_items(&v);
+        assert_eq!(w.len(), 2);
+        assert_eq!((w[0].title.as_str(), w[0].state.as_str()), ("Sign the app", "blocked"));
+        assert_eq!(w[0].note, "Needs a certificate.");
+        assert_eq!(w[0].link, "/#work?t=sign");
+        assert_eq!(w[1].note, "claudeweb.claudecode.web");
+        assert_eq!(w[1].project, "Desktop");
+        assert_eq!(w[1].link, "/#work?t=subtle-steeple-hemlock&b=b1");
+    }
+
+    #[test]
+    fn knowledge_hits_link_to_pages_and_tasks() {
+        let v = json!({"results": [
+            {"slug": "manual-desktop-app", "kind": "knowledge", "title": "The desktop app",
+             "excerpt": "**Preview:** new."},
+            {"slug": "desktop-task", "name": "subtle-steeple-hemlock", "kind": "task", "title": "Desktop app"},
+            {"slug": "", "title": "no slug"}]});
+        let f = found_items(&v);
+        assert_eq!(f.len(), 2);
+        assert_eq!(f[0].link, "/#knowledge?p=manual-desktop-app");
+        assert_eq!(f[0].excerpt, "Preview: new.");
+        assert_eq!(f[1].link, "/#work?t=subtle-steeple-hemlock");
+    }
+
+    #[test]
+    fn sessions_link_by_key() {
+        let v = json!({"sessions": [
+            {"key": "w1/claude/abc", "agent": "claude", "worker": "cachyrig", "title": "Voice replies",
+             "state": "live", "cwd": "/srv/rook", "updated": 1.5},
+            {"key": "w1/shell/t1", "agent": "shell", "state": "idle"},
+            {"agent": "claude"}]});
+        let s = session_items(&v);
+        assert_eq!(s.len(), 2);
+        assert_eq!(s[0].link, "/#sessions?key=w1%2Fclaude%2Fabc");
+        assert_eq!(s[1].title, "shell session");
+        assert_eq!(first_line("", 5), "");
+        assert_eq!(first_line("abcdefgh", 5), "abcd\u{2026}");
     }
 }

@@ -2,8 +2,8 @@
 // The settings window.
 let S = null; // last state from the app
 
-const FIELDS = ['hub_url', 'ask_shortcut', 'poll_seconds', 'voice_url', 'ptt_shortcut', 'wake_model', 'wake_threshold'];
-const CHECKS = ['notifications', 'wake_word', 'worker_autostart'];
+const FIELDS = ['hub_url', 'ask_shortcut', 'poll_seconds', 'voice_url', 'ptt_shortcut', 'speak_answers', 'wake_model', 'wake_threshold'];
+const CHECKS = ['notifications', 'wake_word', 'worker_autostart', 'start_at_login'];
 
 function fill(st) {
   S = st;
@@ -37,7 +37,16 @@ function fill(st) {
   mic.textContent = st.microphone ? 'Mic: ' + st.microphone.slice(0, 28) : (st.features.voice ? 'No microphone' : 'Voice not in this build');
   mic.className = 'pill ' + (st.microphone ? 'ok' : '');
   const voiceOn = st.features.voice;
-  for (const id of ['voice_url', 'voice_key', 'ptt_shortcut']) document.getElementById(id).disabled = !voiceOn;
+  for (const id of ['voice_url', 'voice_key', 'ptt_shortcut', 'speak_answers']) document.getElementById(id).disabled = !voiceOn;
+
+  const u = st.update;
+  $('#update-pill').textContent = u ? 'Update: v' + u.version : 'v' + st.version;
+  $('#update-pill').className = 'pill ' + (u ? 'warn' : 'ok');
+  $('#update-box').hidden = !u;
+  if (u) $('#update-ver').textContent = u.version;
+  $('#update-note').textContent = u
+    ? 'Version ' + u.version + ' is out (' + u.name + '). It downloads in your browser; run it to update. The installers aren\'t signed yet, so your computer may ask you to confirm.'
+    : (st.signed_in ? 'Your hub tells the app when a new version is published.' : '');
   const wakeOn = st.features.wake_word;
   for (const id of ['wake_word', 'wake_model', 'wake_threshold']) document.getElementById(id).disabled = !wakeOn;
   $('#wake-note').textContent = wakeOn
@@ -123,6 +132,7 @@ $('#worker-start').addEventListener('click', e => run(e.target, $('#save-msg'), 
 $('#worker-stop').addEventListener('click', e => run(e.target, $('#save-msg'), async () => fill(await invoke('worker_action', { action: 'stop' }))));
 $('#worker-add').addEventListener('click', e => run(e.target, $('#save-msg'), () => invoke('open_dashboard_cmd', { path: '/#install' })));
 $('#open-install').addEventListener('click', () => invoke('show_window', { name: 'install' }));
+$('#update-get').addEventListener('click', e => run(e.target, $('#save-msg'), () => invoke('open_update')));
 
 listen('state-changed', refresh);
 listen('goto', id => document.getElementById(id)?.scrollIntoView());

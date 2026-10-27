@@ -1,8 +1,8 @@
 # Desktop voice: push-to-talk and wake word
 
-Status: v0.1 of the desktop app (desktop/). Push-to-talk ships in the default
-build; the wake word ships behind the `wake-word` cargo feature and a
-setting that is off by default.
+Status: v0.2 of the desktop app (desktop/). Push-to-talk and answers read
+aloud ship in the default build; the wake word ships behind the `wake-word`
+cargo feature and a setting that is off by default.
 
 ## Why voice on the desktop
 
@@ -67,8 +67,12 @@ mic (cpal, device rate, any channels)
 
 ## Not yet (and how)
 
-1. **Spoken answers.** Use the voice server's `/api/voice` TTS (the phone's
-   SpeakBridge path) and play through cpal; or the OS speech engine.
+1. ~~**Spoken answers.**~~ Done in 0.2: the answer goes to the voice
+   server's `/api/voice` in pieces of at most 700 characters (sentence ends,
+   markup and links dropped, 2,400 characters at most), each WAV played
+   through cpal on the default output, resampled to its rate. Pressing
+   push-to-talk or Esc stops it. Setting `speak_answers`: `voice` (after a
+   spoken question, the default), `always`, `never`.
 2. **The full voice agent.** Stream to the voice server's `/ws` with the
    protocol-2 hello (conversation id, `mode`, `device` = this worker's name),
    send PCM frames, play the TTS frames it returns, handle barge-in. That
