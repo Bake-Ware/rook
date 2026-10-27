@@ -1158,30 +1158,56 @@ def local_hub(timeout: float = 1.0) -> bool:
 
 
 def enrolled_server() -> str:
-    """The hub this machine paired with (the worker's enrollment), or ''."""
+    """The hub this machine paired with (the worker's enrollment file, where
+    rook.worker.enroll keeps it), or ''. Only its address is read."""
+    home = os.environ.get("ROOK_WORKER_HOME", "").strip()
+    path = os.environ.get("ROOK_ENROLLMENT_FILE") or os.path.join(
+        os.path.expanduser(home) if home else os.path.join(os.path.expanduser("~"),
+                                                            ".rook-band-worker"),
+        "enrollment.json")
     try:
-        from rook.worker.enroll import load
-    except ImportError:  # the standalone script, without the worker beside it
-        return ""
-    try:
-        return str(load().get("server") or "").strip()
+        with open(os.path.expanduser(path), encoding="utf-8") as f:
+            return str(json.load(f).get("server") or "").strip()
     except Exception:
         return ""
 
 
+def lan_address(host: str) -> bool:
+    """A loopback, private-LAN, link-local or CGNAT/Tailscale address, or a
+    name that only resolves on a home network (no dot, .local, .lan, ...),
+    as written: no DNS lookup."""
+    import ipaddress
+    host = host.strip("[]").lower()
+    try:
+        return not ipaddress.ip_address(host).is_global
+    except ValueError:
+        pass
+    return ("." not in host or host == "localhost"
+            or host.endswith((".localhost", ".local", ".lan", ".home", ".internal", ".home.arpa")))
+
+
+def with_scheme(url: str) -> str:
+    """A bare host gets https://, except a LAN address or name (a hub there
+    usually serves plain http on :7005). Decided by the address as written,
+    never by a DNS answer: a spoofed private answer must not turn a dotted
+    name into plain http with no prompt."""
+    url = url.strip()
+    if "://" in url:
+        return url
+    from urllib.parse import urlsplit
+    host = urlsplit("//" + url).hostname or ""
+    return ("http://" if lan_address(host) else "https://") + url
+
+
 def _ask_hub() -> str:
     """Ask for the dashboard address at the terminal; '' when none is given."""
-    try:
-        from rook.worker.localcli import _with_scheme
-    except ImportError:
-        _with_scheme = lambda u: u if "://" in u else "https://" + u  # noqa: E731
     print("Which hub? This machine isn't paired with one and none is running here.")
     try:
         url = input("Hub address (the one you open the dashboard at, "
                     "e.g. http://192.168.1.10:7005): ").strip()
     except (EOFError, KeyboardInterrupt):
         return ""
-    return _with_scheme(url) if url else ""
+    return with_scheme(url) if url else ""
 
 
 def hub_url(given: str | None, conf: dict) -> str:

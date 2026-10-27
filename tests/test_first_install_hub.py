@@ -106,17 +106,30 @@ def no_tty_answer(monkeypatch):
     return asked
 
 
-def test_dashboard_uses_the_paired_hub_without_probing(fresh, monkeypatch, no_tty_answer):
+def pair(server):
+    """Save an enrollment where the worker keeps it."""
     from rook.worker import enroll
-    monkeypatch.setattr(enroll, "load", lambda: {"server": "https://rook.example.com"})
+    enroll.save({"server": server, "bands": [], "active_band": None})
+
+
+@pytest.mark.parametrize("where", ["home", "file"])
+def test_dashboard_reads_the_enrollment_the_worker_saves(fresh, monkeypatch, tmp_path, where):
+    if where == "file":
+        monkeypatch.setenv("ROOK_ENROLLMENT_FILE", str(tmp_path / "elsewhere.json"))
+    assert band_tui.enrolled_server() == ""
+    pair("https://rook.example.com")
+    assert band_tui.enrolled_server() == "https://rook.example.com"
+
+
+def test_dashboard_uses_the_paired_hub_without_probing(fresh, monkeypatch, no_tty_answer):
+    pair("https://rook.example.com")
     monkeypatch.setattr(band_tui, "local_hub", lambda timeout=1.0: pytest.fail("probed"))
     assert band_tui.hub_url(None, {}) == "https://rook.example.com"
     assert no_tty_answer == []
 
 
 def test_dashboard_prefers_given_and_saved_urls(fresh, monkeypatch):
-    from rook.worker import enroll
-    monkeypatch.setattr(enroll, "load", lambda: {"server": "https://paired.example.com"})
+    pair("https://paired.example.com")
     assert band_tui.hub_url("http://given:7005", {"url": "http://saved"}) == "http://given:7005"
     assert band_tui.hub_url(None, {"url": "http://saved"}) == "http://saved"
     monkeypatch.setenv("ROOK_WEB_URL", "http://env")
