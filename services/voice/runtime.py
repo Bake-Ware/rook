@@ -297,11 +297,12 @@ class Connection:
             return None
 
     def _owner_voice(self, pcm, heard, who_now, extra):
-        """The owner's phone, a real turn (not dropped, not echo). A confident owner match
-        anchors the connection on this device; afterwards a turn heard as the owner that
-        scored under the threshold but at least the threshold is banked as a clip of theirs
-        (Bake, 2026-10-27; Speakers.learn_sample checks the clip). The anchor ends on any
-        turn scoring under 0.30 or when someone else is heard. Their voice joins the cohort."""
+        """The owner's phone, a real turn (not dropped, not echo). A turn at or above the
+        threshold anchors the connection on this device and returns; a turn below 0.30 clears
+        the anchor; otherwise nothing is learned. At the default threshold (0.45), learning
+        from the runtime is effectively off; the architecture was designed to bank only weak
+        matches (0.30-0.45), but that proved vulnerable to bystander drift and is now disabled
+        until redesigned. The anchor ends when someone else is heard. Guests join the cohort."""
         owner, speakers = self.identity.principal, self.speakers
         device = self.identity.worker or ''
         score = (heard.get('scores') or {}).get(owner)
