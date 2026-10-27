@@ -5,6 +5,7 @@ tests/test_home_dock_browser.py). Skipped without node."""
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -14,7 +15,14 @@ import pytest
 RULES = Path(__file__).resolve().parents[1] / "rook" / "web" / "page-rules.js"
 NODE = shutil.which("node")
 
-pytestmark = pytest.mark.skipif(NODE is None, reason="node is not installed")
+# Skipped without node on a laptop; in CI (GitHub sets CI=true) a missing node
+# fails instead, so a green CI run means these rules really ran.
+pytestmark = pytest.mark.skipif(NODE is None and not os.environ.get("CI"),
+                                reason="node is not installed")
+
+
+def test_node_is_there_in_ci():
+    assert NODE, "node is missing: the page rules (rook/web/page-rules.js) did not run"
 
 
 def _judge(cases: list[dict]) -> list:
