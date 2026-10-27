@@ -22,7 +22,7 @@ import pytest
 import pytest_asyncio
 
 from rook.core import facts as facts_mod
-from rook.worker import conpty, session_messages as messages, termwire, winsec
+from rook.worker import conpty, session_messages as messages, shells, termwire, winsec
 from rook.worker.plugins import terminals
 from rook.worker.plugins.terminals import TerminalsPlugin, build_argv, windows_command
 
@@ -254,9 +254,12 @@ def test_windows_shell_and_shim_resolution(tmp_path, monkeypatch):
     assert build_argv("shell", "C:\\Program Files\\PowerShell\\7\\pwsh.exe")[1:] == ["-NoLogo"]
     assert build_argv("shell", "C:\\Windows\\system32\\cmd.exe") == ["C:\\Windows\\system32\\cmd.exe"]
     monkeypatch.setattr(terminals, "_IS_WIN", True)
-    found = {"powershell.exe": "C:\\ps\\powershell.exe", "codex": "C:\\npm\\codex.CMD"}
+    monkeypatch.setattr(shells, "_IS_WIN", True)
+    found = {"powershell": "C:\\ps\\powershell.exe", "codex": "C:\\npm\\codex.CMD"}
     monkeypatch.setattr(terminals.shutil, "which", lambda name: found.get(name))
     assert terminals._binary("shell") == "C:\\ps\\powershell.exe"
+    found["pwsh"] = "C:\\ps7\\pwsh.exe"          # PowerShell 7 first, as shell.exec does
+    assert terminals._binary("shell") == "C:\\ps7\\pwsh.exe"
     assert terminals._binary("codex") == "C:\\npm\\codex.CMD"
 
     # An npm cmd-shim runs its real target, so cmd.exe never parses our args.
@@ -451,3 +454,57 @@ def test_codex_control_socket_is_off_on_windows(monkeypatch, tmp_path):
     from rook.worker import codex_input
     monkeypatch.setattr(codex_input.sys, "platform", "win32")
     assert codex_input.control_socket() is None
+
+
+# -- proc.start(pty=True) on the Windows backend ---------------------------------------
+
+@pytest_asyncio.fixture
+async def winproc(monkeypatch, k32):
+    from rook.worker.plugins import proc
+    monkeypatch.setattr(proc, "_IS_WIN", True)
+    monkeypatch.setattr(conpty, "available", lambda: True)
+    p = proc.ProcPlugin()
+    yield p
+    await p.stop()
+
+
+@pytest.mark.asyncio
+async def test_proc_pty_runs_on_conpty_and_answers_prompts(winproc, k32, tmp_path):
+    r = await winproc._start(argv=["/bin/sh", "-c", "echo ask; read x; echo got-$x; exit 3"],
+                             cwd=str(tmp_path), pty=True, label="prompt")
+    assert r["ok"] and r["pty"], r
+    sess = winproc._sessions[r["handle"]]
+    assert sess.conpty is not None and r["pid"] == sess.pid
+    create = next(c for c in k32.calls if c[0] == "CreateProcessW")
+    assert create[1] == '/bin/sh -c "echo ask; read x; echo got-$x; exit 3"'
+    w = await winproc._write(r["handle"], "yes")
+    assert w["ok"] and k32.input.endswith(b"yes\r")    # a console's Enter is CR
+    await winproc._write(r["handle"], "\n", newline=False)  # the fake console is a plain pipe
+    async with asyncio.timeout(10):
+        while sess.running:
+            await asyncio.sleep(0.02)
+    out = await winproc._read(r["handle"], 0, 32768)
+    assert "got-yes" in out["chunk"] and out["exit_code"] == 3 and out["eof"]
+    assert (await winproc._list())["sessions"][0]["pty"] is True
+
+
+@pytest.mark.asyncio
+async def test_proc_pty_signals_map_to_the_console(winproc, k32, tmp_path):
+    r = await winproc._start(argv=["/bin/sh", "-c", "sleep 30"], cwd=str(tmp_path), pty=True)
+    sess = winproc._sessions[r["handle"]]
+    assert (await winproc._signal(r["handle"], "INT"))["sent"] == "SIGINT"
+    assert k32.input.endswith(b"\x03")
+    bad = await winproc._signal(r["handle"], "USR1")
+    assert not bad["ok"] and "INT, TERM, HUP or KILL" in bad["error"]
+    closed = await winproc._close(r["handle"])
+    assert closed["ok"] and not sess.running and r["handle"] not in winproc._sessions
+    assert "TerminateJobObject" in k32.names()
+
+
+@pytest.mark.asyncio
+async def test_proc_pty_refused_without_conpty(monkeypatch):
+    from rook.worker.plugins import proc
+    monkeypatch.setattr(proc, "_IS_WIN", True)
+    monkeypatch.setattr(conpty, "available", lambda: False)
+    r = await proc.ProcPlugin()._start(argv=["x"], pty=True)
+    assert not r["ok"] and "1809" in r["error"]

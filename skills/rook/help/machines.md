@@ -17,7 +17,7 @@ notes:
 
 ## Which way
 
-- **Quick and bounded** (finishes inside its timeout): `rook_call(worker=…, cap="shell.exec", args={"argv": […]})`. Default timeout 30 s; raise `args.timeout` for slow-but-bounded work. Prefer `argv` to `cmd` (no quoting bugs). Windows workers run `cmd.exe`.
+- **Quick and bounded** (finishes inside its timeout): `rook_call(worker=…, cap="shell.exec", args={"argv": […]})`. Default timeout 30 s; raise `args.timeout` for slow-but-bounded work. Prefer `argv` to `cmd` (no quoting bugs). On Windows workers `cmd` runs in PowerShell (`ls`, `cat`, `pwd`, `$env:X`; Windows PowerShell 5.1 has no `&&`/`||`), UTF-8 out, the last command's exit code; `shell="sh"|"bash"|"powershell"|"cmd"` picks another (`sh`/`bash` are Git for Windows'). In `argv`, `python3` and npm commands resolve as a shell would.
 - **Slow, interactive (`pty=true`) or worth finding later**: `rook_console_open` → `rook_console_write` / `rook_console_read` → `rook_console_close(summary=…)`.
 - **Done before?** `rook_console_search("<task words>")`, then a knowledge search.
 - **Who has a cap / what is a worker?** Call your best guess (the refusal names the holders), or `rook_workers(name=…)`, `rook_caps(prefix=…)`, `rook_call(worker=…, cap="caps.describe", args={"prefix": "shell."})` on one worker for exact args.

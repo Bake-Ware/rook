@@ -566,7 +566,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `proc.list` | — | Every session on this worker — live and recently finished. |
 | `proc.read` | handle, cursor=0, max_bytes=8192 | Read output from `cursor` onward (0 = from the beginning). |
 | `proc.signal` | handle, sig='TERM' | Send a signal to the process group: TERM (polite), KILL (hard), INT (ctrl-C), HUP. |
-| `proc.start` | cmd?, argv?, label?, cwd?, env?, pty=false, buffer_bytes=262144 | Start a process and return a handle immediately — it keeps running after this call returns. |
+| `proc.start` | cmd?, argv?, label?, cwd?, env?, pty=false, buffer_bytes=262144, shell? | Start a process and return a handle immediately — it keeps running after this call returns. |
 | `proc.write` | handle, data, newline=true | Write to the process's stdin. |
 
 **screenshot**
@@ -620,7 +620,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 |---|---|---|
 | `shell.env.get` | name, default? | One environment variable (values pushed as secrets read `***`). |
 | `shell.env.list` | prefix='' | The environment (values pushed as secrets or credentials read `***`). |
-| `shell.exec` | cmd?, argv?, stdin?, timeout=30.0, cwd?, env? | Run a command. |
+| `shell.exec` | cmd?, argv?, stdin?, timeout=30.0, cwd?, env?, shell? | Run a command. |
 | `shell.which` | name | Full path of an executable on this worker's PATH, or null if it is not found. |
 
 **terminals**

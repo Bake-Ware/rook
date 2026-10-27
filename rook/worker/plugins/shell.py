@@ -6,6 +6,7 @@ import asyncio
 import os
 
 from ...core.pluginkit import ArgError, require_str, which
+from .. import shells
 from ..plugin import Plugin, capability
 
 
@@ -15,14 +16,21 @@ class ShellPlugin(Plugin):
     @capability("exec", risk="exec", scope="local")
     async def _exec(self, cmd: str | None = None, argv: list | None = None,
                     stdin: str | None = None, timeout: float = 30.0,
-                    cwd: str | None = None, env: dict | None = None) -> dict:
+                    cwd: str | None = None, env: dict | None = None,
+                    shell: str | None = None) -> dict:
         """Run a command. Returns code/stdout/stderr or an error dict.
 
         Pass EITHER ``argv`` (a list — exec'd directly, no shell) or ``cmd``
-        (a string handed to ``/bin/sh -c``). Prefer ``argv``: it needs no shell
-        quoting at all, so arguments containing spaces, quotes, ``$``, or
-        newlines just work. Use ``cmd`` only when you actually want shell
-        features (pipes, redirection, globbing).
+        (a string for a shell: ``/bin/sh -c``, PowerShell on Windows). Prefer
+        ``argv``: it needs no shell quoting at all, so arguments containing
+        spaces, quotes, ``$``, or newlines just work. Use ``cmd`` only when
+        you actually want shell features (pipes, redirection, globbing).
+        ``shell`` picks another one for ``cmd``: sh, bash, powershell or cmd
+        (cmd.exe); a reply from any shell but sh names it.
+
+        On Windows the output comes back as UTF-8 and PowerShell's exit code
+        is the last command's, as with sh; in ``argv``, ``python3``, ``npm``
+        and other PATHEXT names resolve as a shell would resolve them.
 
         ``stdin`` is fed to the process on its standard input — the way to pass
         a file body or a script without embedding it in a command string
@@ -39,15 +47,27 @@ class ShellPlugin(Plugin):
             child_env = dict(os.environ)
             child_env.update({str(k): str(v) for k, v in env.items()})
 
+        ran = None
+        if cmd:
+            try:
+                shell_argv, ran = shells.shell_argv(cmd, shell)
+            except ValueError as e:
+                raise ArgError(str(e)) from None
+        elif shell:
+            raise ArgError("shell applies to cmd; argv runs with no shell")
+
         kwargs = dict(stdout=asyncio.subprocess.PIPE,
                       stderr=asyncio.subprocess.PIPE,
                       stdin=asyncio.subprocess.PIPE if stdin is not None else None,
-                      cwd=cwd, env=child_env)
+                      cwd=cwd, env=child_env, **shells.popen_flags())
         if argv:
             proc = await asyncio.create_subprocess_exec(
-                *[str(a) for a in argv], **kwargs)
-        else:
+                *shells.resolve_argv(argv), **kwargs)
+        elif ran == "cmd":
+            # cmd.exe doesn't take MSVCRT quoting: hand it the line as is.
             proc = await asyncio.create_subprocess_shell(cmd, **kwargs)
+        else:
+            proc = await asyncio.create_subprocess_exec(*shell_argv, **kwargs)
 
         payload = stdin.encode() if stdin is not None else None
         try:
@@ -63,12 +83,15 @@ class ShellPlugin(Plugin):
             return {"ok": False, "error": "timeout", "timeout": timeout,
                     "note": "killed after timeout; partial side effects may "
                             "have landed. For long jobs use proc.start."}
-        return {
+        reply = {
             "ok": proc.returncode == 0,
             "code": proc.returncode,
-            "stdout": out.decode(errors="replace"),
-            "stderr": err.decode(errors="replace"),
+            "stdout": shells.decode(out),
+            "stderr": shells.decode(err),
         }
+        if shells.reported(ran):
+            reply["shell"] = ran
+        return reply
 
     @capability("which", risk="read", scope="local")
     def _which(self, name: str) -> str | None:

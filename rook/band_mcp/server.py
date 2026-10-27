@@ -1631,7 +1631,7 @@ def build_server(client: "BandClient | MultiBandClient",
         so a vague title makes the session unfindable forever.
 
         Pass ``argv`` (a list, no shell, no quoting) or ``cmd`` (a string via
-        ``/bin/sh -c``). Set ``pty=True`` for password prompts, REPLs, or
+        ``/bin/sh -c``, PowerShell on Windows). Set ``pty=True`` for password prompts, REPLs, or
         anything that needs a real tty. On workers with Rook terminals it runs
         in one (a tty, ``terminal`` in the reply, on the Sessions page).
 

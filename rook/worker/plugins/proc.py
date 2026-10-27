@@ -14,8 +14,10 @@ the dashboard as a **console room** without pushing a byte-per-packet firehose
 through the hub's broadcast relay.
 
 stdout and stderr are merged, as a terminal would. With ``pty=True`` the child
-gets a real tty (POSIX only) — needed for password prompts, REPLs and anything
-that checks ``isatty``.
+gets a real tty — needed for password prompts, REPLs and anything that checks
+``isatty``. On Windows (10 1809+) that is a ConPTY pseudoconsole
+(:mod:`rook.worker.conpty`): Ctrl-C is the 0x03 byte, TERM/HUP closes the
+console, KILL ends its job, and Enter is CR.
 """
 
 from __future__ import annotations
@@ -26,9 +28,11 @@ import os
 import shlex
 import signal as _signal
 import sys
+import threading
 import time
 import uuid
 
+from .. import conpty, shells
 from ..plugin import Plugin, capability
 from ..ring import ByteRing
 
@@ -80,6 +84,7 @@ class _Session:
         self.proc: asyncio.subprocess.Process | None = None
         self.pid: int | None = None
         self.pty_master: int | None = None
+        self.conpty: conpty.ConPty | None = None      # Windows pty=True
         self.ring = ByteRing(buffer_bytes)
         self._pump: asyncio.Task | None = None
         self._waiter: asyncio.Task | None = None
@@ -109,7 +114,7 @@ class _Session:
         return {"handle": self.handle, "label": self.label,
                 "cmd": self.argv_repr, "pid": self.pid,
                 "running": self.running, "exit_code": self.exit_code,
-                "pty": self.pty_master is not None,
+                "pty": self.pty_master is not None or self.conpty is not None,
                 "started": self.started,
                 "age_secs": round(time.time() - self.started, 1),
                 "bytes": self.total, "buffered": len(self.ring),
@@ -134,17 +139,20 @@ class ProcPlugin(Plugin):
     async def _start(self, cmd: str | None = None, argv: list | None = None,
                      label: str | None = None, cwd: str | None = None,
                      env: dict | None = None, pty: bool = False,
-                     buffer_bytes: int = DEFAULT_BUFFER_BYTES) -> dict:
+                     buffer_bytes: int = DEFAULT_BUFFER_BYTES,
+                     shell: str | None = None) -> dict:
         """Start a process and return a handle immediately — it keeps running
         after this call returns.
 
         Pass ``argv`` (a list, exec'd with no shell — no quoting needed) or
-        ``cmd`` (a string via ``/bin/sh -c``). ``label`` is a short human name
+        ``cmd`` (a string via ``/bin/sh -c``, PowerShell on Windows; ``shell``
+        picks sh, bash, powershell or cmd instead). ``label`` is a short human name
         for what this session is *for*; it becomes the console room title, so
         write it like a task ("install cuda driver"), not like a command.
 
         Set ``pty=True`` for anything that needs a real terminal — sudo/ssh
-        password prompts, REPLs, programs that check ``isatty`` (POSIX only).
+        password prompts, REPLs, programs that check ``isatty`` (a ConPTY on
+        Windows).
 
         Read the output with ``proc.read(handle, cursor)``, feed its stdin with
         ``proc.write``, and stop it with ``proc.signal`` / ``proc.close``.
@@ -157,8 +165,16 @@ class ProcPlugin(Plugin):
             return {"ok": False, "error": "pass argv or cmd, not both"}
         if not argv and not cmd:
             return {"ok": False, "error": "argv or cmd required"}
-        if pty and _IS_WIN:
-            return {"ok": False, "error": "pty=True is not supported on Windows"}
+        if pty and _IS_WIN and not conpty.available():
+            return {"ok": False, "error": "pty=True needs Windows 10 1809 or later (ConPTY)"}
+        run, ran = None, None
+        if cmd:
+            try:
+                run, ran = shells.shell_argv(str(cmd), shell)
+            except ValueError as e:
+                return {"ok": False, "error": str(e)}
+        elif shell:
+            return {"ok": False, "error": "shell applies to cmd; argv runs with no shell"}
 
         buffer_bytes = max(4096, min(int(buffer_bytes), MAX_BUFFER_BYTES))
         argv_list = [str(a) for a in argv] if argv else None
@@ -172,49 +188,59 @@ class ProcPlugin(Plugin):
         handle = uuid.uuid4().hex[:12]
         sess = _Session(handle, str(label or argv_repr)[:200], argv_repr, buffer_bytes)
 
+        if argv_list:
+            run = shells.resolve_argv(argv_list)
+        # cmd.exe doesn't take MSVCRT quoting: it gets the string itself.
+        line = cmd if ran == "cmd" else None
         try:
-            if pty:
-                await self._spawn_pty(sess, argv_list, cmd, cwd, child_env)
+            if pty and _IS_WIN:
+                await self._spawn_conpty(sess, run, cwd, child_env)
+            elif pty:
+                await self._spawn_pty(sess, run, line, cwd, child_env)
             else:
-                await self._spawn_pipe(sess, argv_list, cmd, cwd, child_env)
+                await self._spawn_pipe(sess, run, line, cwd, child_env)
         except FileNotFoundError as e:
             return {"ok": False, "error": f"command not found: {e}"}
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
         self._sessions[handle] = sess
-        return {"ok": True, "handle": handle, "pid": sess.pid,
-                "label": sess.label, "cmd": argv_repr, "pty": bool(pty),
-                "started": sess.started}
+        out = {"ok": True, "handle": handle, "pid": sess.pid,
+               "label": sess.label, "cmd": argv_repr, "pty": bool(pty),
+               "started": sess.started}
+        if shells.reported(ran):
+            out["shell"] = ran
+        return out
 
-    async def _spawn_pipe(self, sess, argv_list, cmd, cwd, child_env) -> None:
+    async def _spawn_pipe(self, sess, argv_list, line, cwd, child_env) -> None:
+        """``line`` (a string for cmd.exe) when set, else ``argv_list``."""
         kwargs = dict(stdin=asyncio.subprocess.PIPE,
                       stdout=asyncio.subprocess.PIPE,
                       stderr=asyncio.subprocess.STDOUT,
-                      cwd=cwd, env=child_env)
+                      cwd=cwd, env=child_env, **shells.popen_flags())
         if not _IS_WIN:
             # Own process group, so signalling kills the whole tree and not
             # just the shell that spawned it.
             kwargs["start_new_session"] = True
-        if argv_list:
+        if line is None:
             proc = await asyncio.create_subprocess_exec(*argv_list, **kwargs)
         else:
-            proc = await asyncio.create_subprocess_shell(cmd, **kwargs)
+            proc = await asyncio.create_subprocess_shell(line, **kwargs)
         sess.proc = proc
         sess.pid = proc.pid
         sess._pump = asyncio.create_task(self._pump_pipe(sess))
         sess._waiter = asyncio.create_task(self._wait(sess))
 
-    async def _spawn_pty(self, sess, argv_list, cmd, cwd, child_env) -> None:
+    async def _spawn_pty(self, sess, argv_list, line, cwd, child_env) -> None:
         import pty as _pty
         master, slave = _pty.openpty()
         try:
             kwargs = dict(stdin=slave, stdout=slave, stderr=slave,
                           cwd=cwd, env=child_env, start_new_session=True)
-            if argv_list:
+            if line is None:
                 proc = await asyncio.create_subprocess_exec(*argv_list, **kwargs)
             else:
-                proc = await asyncio.create_subprocess_shell(cmd, **kwargs)
+                proc = await asyncio.create_subprocess_shell(line, **kwargs)
         finally:
             # The child owns the slave end now; holding it open here would
             # keep the master readable forever after the child exits.
@@ -225,6 +251,44 @@ class ProcPlugin(Plugin):
         sess.pty_master = master
         sess._pump = asyncio.create_task(self._pump_pty(sess))
         sess._waiter = asyncio.create_task(self._wait(sess))
+
+    async def _spawn_conpty(self, sess, argv_list, cwd, child_env) -> None:
+        """pty=True on Windows: the child on a ConPTY in a kill-on-close job,
+        read by a daemon thread (the terminals plugin's shape)."""
+        pc = await asyncio.to_thread(conpty.ConPty.spawn, shells.command_line(argv_list),
+                                     cwd or os.getcwd(), child_env or dict(os.environ))
+        sess.conpty, sess.pid = pc, pc.pid
+        loop = asyncio.get_running_loop()
+        eof = asyncio.Event()
+        exited: asyncio.Future = loop.create_future()
+
+        def _post_exit(code) -> None:
+            if not exited.done():
+                exited.set_result(code)
+
+        def _exit_watch() -> None:  # one blocking wait per session, off the loop
+            try:
+                code = pc.wait()
+            except Exception:
+                code = None
+            loop.call_soon_threadsafe(_post_exit, -1 if code is None else code)
+
+        pc.start_reader(lambda data: loop.call_soon_threadsafe(sess.append, data),
+                        lambda: loop.call_soon_threadsafe(eof.set))
+        threading.Thread(target=_exit_watch, name=f"proc-conpty-{sess.handle}", daemon=True).start()
+        sess._waiter = asyncio.create_task(self._wait_conpty(sess, exited, eof))
+
+    async def _wait_conpty(self, sess: _Session, exited: asyncio.Future,
+                           eof: asyncio.Event) -> None:
+        code = await exited
+        # Hang up and kill what is left in the job; the reader then drains the
+        # remaining output to EOF (its chunks are queued before the EOF mark).
+        await asyncio.to_thread(sess.conpty.close)
+        try:
+            await asyncio.wait_for(eof.wait(), 3.0)
+        except asyncio.TimeoutError:
+            pass
+        sess.exit_code, sess.ended = code, time.time()
 
     async def _pump_pipe(self, sess: _Session) -> None:
         try:
@@ -337,9 +401,13 @@ class ProcPlugin(Plugin):
         if not sess.running:
             return {"ok": False, "error": "process has exited",
                     "exit_code": sess.exit_code}
-        payload = (data + ("\n" if newline else "")).encode()
+        # A console's Enter is CR; a pipe or a POSIX tty line ends in NL.
+        end = "\r" if sess.conpty is not None else "\n"
+        payload = (data + (end if newline else "")).encode()
         try:
-            if sess.pty_master is not None:
+            if sess.conpty is not None:
+                await asyncio.wait_for(asyncio.to_thread(sess.conpty.write, payload), 5)
+            elif sess.pty_master is not None:
                 os.write(sess.pty_master, payload)
             else:
                 sess.proc.stdin.write(payload)
@@ -359,6 +427,15 @@ class ProcPlugin(Plugin):
             return {"ok": True, "handle": handle, "note": "already exited",
                     "exit_code": sess.exit_code}
         name = str(sig).upper().removeprefix("SIG")
+        if sess.conpty is not None:
+            step = {"INT": "interrupt", "TERM": "hangup", "HUP": "hangup", "KILL": "kill"}.get(name)
+            if step is None:
+                return {"ok": False, "error": f"a Windows console takes INT, TERM, HUP or KILL, not {sig}"}
+            try:
+                await asyncio.to_thread(getattr(sess.conpty, step))
+            except OSError as e:
+                return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            return {"ok": True, "handle": handle, "sent": f"SIG{name}"}
         try:
             signum = getattr(_signal, f"SIG{name}")
         except AttributeError:
@@ -419,6 +496,8 @@ class ProcPlugin(Plugin):
         fails is logged and reported, never swallowed — silently failing here
         orphans the process while telling the caller it was closed.
         """
+        if sess.conpty is not None:
+            return await self._terminate_conpty(sess, hard)
         if sess.running and sess.proc is not None:
             try:
                 if hard and _IS_WIN:
@@ -453,6 +532,23 @@ class ProcPlugin(Plugin):
             sess.exit_code = sess.proc.returncode
             sess.ended = time.time()
         return ended
+
+    async def _terminate_conpty(self, sess: _Session, hard: bool) -> bool:
+        # Hang-up first (CTRL_CLOSE_EVENT lets programs save), then the job.
+        for step, grace in (("hangup", 1.5), ("kill", 3.0))[1 if hard else 0:]:
+            if not sess.running:
+                break
+            try:
+                await asyncio.to_thread(getattr(sess.conpty, step))
+            except OSError:
+                log.warning("failed to %s session %s (pid %s)", step, sess.handle,
+                            sess.pid, exc_info=True)
+            if sess._waiter is not None:
+                try:
+                    await asyncio.wait_for(asyncio.shield(sess._waiter), grace)
+                except (asyncio.TimeoutError, Exception):
+                    pass
+        return not sess.running
 
     def _reap(self) -> None:
         """Drop finished sessions whose tail nobody came back for."""

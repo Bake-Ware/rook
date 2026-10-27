@@ -44,7 +44,7 @@ import uuid
 from pathlib import Path
 
 from ..plugin import Plugin, capability, place
-from .. import conpty, termwire, winsec
+from .. import conpty, shells, termwire, winsec
 from ..ring import ByteRing
 from ..session_mirror import pid_alive
 
@@ -71,8 +71,6 @@ _STRIP_ENV = ("ROOK_BAND_PSK", "ROOK_PSK", "ROOK_MCP_STATIC_TOKEN")
 _IS_WIN = sys.platform == "win32"
 # cmd.exe would interpret these inside arguments to a .cmd/.bat launcher.
 _CMD_META = re.compile(r'[\r\n"%^&|<>!()]')
-# The target of an npm cmd-shim: "%dp0%\node_modules\pkg\bin\cli.js" %*
-_NPM_SHIM = re.compile(r'"%~?dp0%?\\([^"%*\r\n]+?\.(?:js|cjs|mjs|exe))"', re.I)
 
 
 def _check_id(value: str, what: str = "id") -> str:
@@ -84,8 +82,8 @@ def _check_id(value: str, what: str = "id") -> str:
 def _binary(harness: str) -> str | None:
     if _IS_WIN:
         if harness == "shell":
-            return (shutil.which("powershell.exe") or shutil.which("pwsh.exe")
-                    or os.environ.get("COMSPEC") or shutil.which("cmd.exe"))
+            return (shells.powershell() or os.environ.get("COMSPEC")
+                    or shutil.which("cmd.exe"))
         if harness == "claude":
             from .claude_history import _claude_bin
             return _claude_bin()
@@ -158,28 +156,6 @@ def build_argv(harness: str, binary: str, *, model: str = "", resume: str = "",
     return argv + persona_args(harness, persona)
 
 
-def _npm_shim_target(path: str) -> list[str] | None:
-    """[node, script] (or [exe]) behind an npm cmd-shim, so the harness runs
-    without cmd.exe re-parsing its arguments. None if it isn't one."""
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            m = _NPM_SHIM.search(f.read(16384))
-    except OSError:
-        return None
-    if not m:
-        return None
-    base = os.path.dirname(path)
-    target = os.path.normpath(os.path.join(base, *re.split(r"[\\/]", m.group(1))))
-    if not os.path.isfile(target):
-        return None
-    if target.lower().endswith(".exe"):
-        return [target]
-    node = os.path.join(base, "node.exe")
-    if not os.path.isfile(node):
-        node = shutil.which("node")
-    return [node, target] if node else None
-
-
 def windows_command(argv: list[str]) -> str:
     """The CreateProcess command line for a harness argv on Windows. npm
     installs CLIs as .cmd shims, which only cmd.exe can run and which would
@@ -188,7 +164,7 @@ def windows_command(argv: list[str]) -> str:
     argument contains a character cmd.exe treats specially."""
     argv = [str(a) for a in argv]
     if argv[0].lower().endswith((".cmd", ".bat")):
-        target = _npm_shim_target(argv[0])
+        target = shells.npm_shim_target(argv[0])
         if target:
             argv = target + argv[1:]
         else:
@@ -197,7 +173,7 @@ def windows_command(argv: list[str]) -> str:
                                  "options cannot be passed to it safely")
             comspec = os.environ.get("COMSPEC") or "cmd.exe"
             return f'"{comspec}" /d /s /c "{conpty.cmdline(argv)}"'
-    return conpty.cmdline(argv)
+    return shells.command_line(argv)
 
 
 class _Term:
@@ -381,9 +357,7 @@ class TerminalsPlugin(Plugin):
             return [str(a) for a in argv]
         if not isinstance(cmd, str):
             raise ValueError("cmd must be a string")
-        if _IS_WIN:
-            return [os.environ.get("COMSPEC") or "cmd.exe", "/d", "/s", "/c", cmd]
-        return ["/bin/sh", "-c", cmd]
+        return shells.shell_argv(cmd)[0]
 
     def _session_dir(self) -> Path:
         from ...core.paths import worker_state_path  # ROOK_WORKER_HOME
@@ -411,7 +385,7 @@ class TerminalsPlugin(Plugin):
                    task: str = "", room: str = "", force: bool = False) -> dict:
         """Start a harness (shell|claude|codex|hermes) under a PTY and return
         its terminal ``id`` immediately. With ``argv`` (a list, no shell) or
-        ``cmd`` (a string through /bin/sh -c, cmd.exe /c on Windows) it runs
+        ``cmd`` (a string through /bin/sh -c, PowerShell on Windows) it runs
         that command instead of the login shell (harness shell only); ``env``
         adds variables, and PAGER/GIT_PAGER default to cat so nothing waits
         on a pager. ``task`` (a Rook task id or slug) and ``room`` (a console
