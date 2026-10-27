@@ -554,7 +554,8 @@ def test_cohort_norm_does_not_name_below_threshold(tmp_path):
 
 def test_bystander_drift_across_reconnects(tmp_path, monkeypatch):
     """Bystander drift fix: anchor clears on score<0.30 OR non-owner label.
-    On owner's phone, bystander at 0.15-0.45 was previously banked; now all paths blocked."""
+    On owner's phone, bystander at 0.15-0.45 was previously banked; now all paths blocked.
+    Uses real audio to prove learn_sample is never called (not just rejected for quality)."""
     from services.voice.runtime import Connection
     from services.voice.identity import Identity
 
@@ -567,6 +568,8 @@ def test_bystander_drift_across_reconnects(tmp_path, monkeypatch):
     bystander_midrange = toward(owner_vec, 0.38, seed=301)
     bystander_low = toward(owner_vec, 0.15, seed=302)
     owner_match = owner_vec.copy()
+
+    good_audio = speech(seconds=3.0)
 
     class MockConnection:
         def __init__(self):
@@ -582,49 +585,66 @@ def test_bystander_drift_across_reconnects(tmp_path, monkeypatch):
     heard_owner = {"scores": {"owner": 0.95}, "principal": "owner", "vector": owner_match, "label": "owner"}
     who_now_owner = {"label": "owner"}
 
+    original_learn_sample = speakers.learn_sample
+    learn_calls = []
+    def spy_learn_sample(*args, **kwargs):
+        learn_calls.append((args, kwargs))
+        return original_learn_sample(*args, **kwargs)
+    speakers.learn_sample = spy_learn_sample
+
     conn1 = MockConnection()
     extra = {}
-    conn1._owner_voice(b"", heard_owner, who_now_owner, extra)
+    conn1._owner_voice(good_audio, heard_owner, who_now_owner, extra)
     assert conn1.speaker_anchor == "phone"
 
     heard_bystander_low = {"scores": {"owner": 0.15}, "principal": None, "vector": bystander_low, "label": "guest"}
     who_now_guest = {"label": "guest"}
     extra = {}
-    conn1._owner_voice(b"", heard_bystander_low, who_now_guest, extra)
+    conn1._owner_voice(good_audio, heard_bystander_low, who_now_guest, extra)
     assert conn1.speaker_anchor is None
 
     conn2 = MockConnection()
     extra = {}
-    conn2._owner_voice(b"", heard_owner, who_now_owner, extra)
+    conn2._owner_voice(good_audio, heard_owner, who_now_owner, extra)
     assert conn2.speaker_anchor == "phone"
 
-    heard_owner_low = {"scores": {"owner": 0.25}, "principal": None, "vector": bystander_quarter, "label": "owner"}
+    heard_owner_quarter = {"scores": {"owner": 0.25}, "principal": None, "vector": bystander_quarter, "label": "owner"}
     extra = {}
-    conn2._owner_voice(b"", heard_owner_low, who_now_owner, extra)
+    conn2._owner_voice(good_audio, heard_owner_quarter, who_now_owner, extra)
     assert conn2.speaker_anchor is None
 
     conn3 = MockConnection()
     extra = {}
-    conn3._owner_voice(b"", heard_owner, who_now_owner, extra)
+    conn3._owner_voice(good_audio, heard_owner, who_now_owner, extra)
     assert conn3.speaker_anchor == "phone"
     heard_bystander_mid = {"scores": {"owner": 0.38}, "principal": None, "vector": bystander_midrange, "label": "owner"}
     extra = {}
-    conn3._owner_voice(b"", heard_bystander_mid, who_now_owner, extra)
+    conn3._owner_voice(good_audio, heard_bystander_mid, who_now_owner, extra)
     assert conn3.speaker_anchor == "phone"
     for _ in range(3):
         extra = {}
-        conn3._owner_voice(b"", heard_bystander_mid, who_now_owner, extra)
+        conn3._owner_voice(good_audio, heard_bystander_mid, who_now_owner, extra)
         assert "speaker_learned" not in extra
 
     conn4 = MockConnection()
     extra = {}
-    conn4._owner_voice(b"", heard_owner, who_now_owner, extra)
+    conn4._owner_voice(good_audio, heard_owner, who_now_owner, extra)
     assert conn4.speaker_anchor == "phone"
     for i in range(3):
         extra = {}
-        conn4._owner_voice(b"", heard_bystander_mid, who_now_owner, extra)
+        conn4._owner_voice(good_audio, heard_bystander_mid, who_now_owner, extra)
         assert "speaker_learned" not in extra
 
+    heard_owner_low = {"scores": {"owner": 0.15}, "principal": None, "vector": bystander_low, "label": "owner"}
+    conn5 = MockConnection()
+    extra = {}
+    conn5._owner_voice(good_audio, heard_owner, who_now_owner, extra)
+    assert conn5.speaker_anchor == "phone"
+    extra = {}
+    conn5._owner_voice(good_audio, heard_owner_low, who_now_owner, extra)
+    assert conn5.speaker_anchor is None
+
+    assert len(learn_calls) == 0
     learned = [c for c in speakers.bank("owner") if c["source"] == "learned"]
     assert len(learned) == 0
 
