@@ -89,7 +89,7 @@ class ShellPlugin(Plugin):
             "stdout": shells.decode(out),
             "stderr": shells.decode(err),
         }
-        if ran and ran != "sh":     # say so whenever it isn't the classic sh -c
+        if shells.reported(ran):
             reply["shell"] = ran
         return reply
 

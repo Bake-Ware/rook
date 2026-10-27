@@ -173,3 +173,25 @@ async def test_proc_start_takes_a_shell_too():
         assert plain["ok"] and "shell" not in plain
     finally:
         await p.stop()
+
+
+@posix
+@pytest.mark.asyncio
+async def test_windows_git_sh_is_execd_and_named(monkeypatch):
+    """On Windows only cmd.exe takes the bare string; Git's sh gets argv, and
+    the reply names it (no shell field there means an old cmd.exe worker)."""
+    monkeypatch.setattr(shells, "_IS_WIN", True)
+    monkeypatch.setattr(shells, "popen_flags", lambda: {})
+    monkeypatch.setattr(shells, "_git_sh", lambda name: "/bin/sh")
+
+    async def no_shell(*a, **k):
+        raise AssertionError("would have run in cmd.exe")
+    monkeypatch.setattr(proc_mod.asyncio, "create_subprocess_shell", no_shell)
+    r = await ShellPlugin()._exec(cmd="echo $((6*7))", shell="sh")
+    assert r["stdout"] == "42\n" and r["shell"] == "sh"
+    p = proc_mod.ProcPlugin()
+    try:
+        r = await p._start(cmd="echo $((6*7))", shell="sh")
+        assert r["ok"] and r["shell"] == "sh", r
+    finally:
+        await p.stop()

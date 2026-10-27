@@ -190,9 +190,8 @@ class ProcPlugin(Plugin):
 
         if argv_list:
             run = shells.resolve_argv(argv_list)
-        # sh (POSIX) and cmd.exe take the string itself: unchanged from before
-        # there was a choice, and cmd.exe doesn't take MSVCRT quoting.
-        line = cmd if ran in ("sh", "cmd") else None
+        # cmd.exe doesn't take MSVCRT quoting: it gets the string itself.
+        line = cmd if ran == "cmd" else None
         try:
             if pty and _IS_WIN:
                 await self._spawn_conpty(sess, run, cwd, child_env)
@@ -209,12 +208,12 @@ class ProcPlugin(Plugin):
         out = {"ok": True, "handle": handle, "pid": sess.pid,
                "label": sess.label, "cmd": argv_repr, "pty": bool(pty),
                "started": sess.started}
-        if ran and ran != "sh":
+        if shells.reported(ran):
             out["shell"] = ran
         return out
 
     async def _spawn_pipe(self, sess, argv_list, line, cwd, child_env) -> None:
-        """``line`` (a string for sh or cmd.exe) when set, else ``argv_list``."""
+        """``line`` (a string for cmd.exe) when set, else ``argv_list``."""
         kwargs = dict(stdin=asyncio.subprocess.PIPE,
                       stdout=asyncio.subprocess.PIPE,
                       stderr=asyncio.subprocess.STDOUT,

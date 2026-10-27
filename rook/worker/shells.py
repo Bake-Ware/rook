@@ -60,6 +60,13 @@ def default_shell() -> str:
     return "powershell" if _IS_WIN else "sh"
 
 
+def reported(ran: str | None) -> bool:
+    """Whether a reply names the shell that ran ``cmd``: always, except the
+    classic POSIX ``sh -c`` (a Windows reply without it is an older worker,
+    which ran cmd.exe)."""
+    return bool(ran) and (ran != "sh" or _IS_WIN)
+
+
 def shell_name(shell: str | None) -> str:
     """``shell`` normalised to one of :data:`SHELLS` ('' = this OS's default)."""
     name = str(shell or "").strip().lower()
