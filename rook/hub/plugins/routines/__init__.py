@@ -103,7 +103,8 @@ class Routines(Plugin):
 
     # -- the security scan ---------------------------------------------------------------
     @capability("security_scan", risk="write", tags=("sensitive",), scope="multi-user", timeout=120)
-    async def security_scan(self, urgent_refusals: int = 10, dry_run: bool = False,
+    async def security_scan(self, urgent_refusals: int = 10, refusal_window_min: int = 10,
+                            urgent_cooldown_min: int = 60, dry_run: bool = False,
                             state: str = "") -> dict:
         """Compare what is open on the band and what the logs say with the last scan, and tell the person quietly about what changed (owners only).
 
@@ -111,7 +112,8 @@ class Routines(Plugin):
         dashboard sign-ins. Logs: denied calls, MCP calls refused for a bad
         key, unverified calls, new or removed API keys, access changes. The
         first scan is a silent baseline. urgent_refusals: this many refused
-        calls since the last scan make it an urgent alert (0: never urgent).
+        calls within refusal_window_min (10) minutes make it an urgent alert,
+        at most once per urgent_cooldown_min (60); 0: never urgent.
         dry_run: report without saving the state or sending anything. state:
         the saved-state name (default security-scan). Returns {changed,
         findings, urgent, delivered, skipped}."""
@@ -121,7 +123,9 @@ class Routines(Plugin):
         now = self.clock()
         scan = Scan(self._node, clock=self.clock)
         snap = scan.collect(float(prev.get("at") or 0), prev.get("journal"))
-        findings, nxt = Scan.compare(prev, snap, urgent_refusals=max(0, int(urgent_refusals or 0)))
+        findings, nxt = Scan.compare(prev, snap, urgent_refusals=max(0, int(urgent_refusals or 0)),
+                                     window_s=60 * max(1, int(refusal_window_min or 10)),
+                                     cooldown_s=60 * max(0, int(urgent_cooldown_min or 0)), now=now)
         nxt["at"] = now
         out: dict = {"baseline": not prev.get("at"), "changed": bool(findings), "findings": findings,
                      "urgent": any(f["level"] == "alert" for f in findings), "skipped": scan.skipped}
@@ -222,12 +226,15 @@ class Routines(Plugin):
         nxt = {"at": self.clock(), "thumbs": dict(prev.get("thumbs") or {})}
         grabber = cams.Cameras(self._node, http=self.http)
         events, errors, checked, asked = [], [], [], 0
+        told = dict(prev.get("told") or {})
+        nxt["told"] = {}
+        problems: list[str] = []          # model failures the person should hear about
         for cam in todo:
             name = clip(cam["name"], 40)
             try:
                 small, keep = cams.thumb(await grabber.grab(cam))
             except Exception as e:  # noqa: BLE001 - one camera never stops the others
-                errors.append(f"{name}: {clip(e, 160)}")
+                errors.append(f"{name}: {clip(cams.redact(e, cam), 160)}")
                 continue
             before_path = sf.sidecar(f"{cam['key']}.jpg")
             old = prev.get("thumbs", {}).get(cam["key"])
@@ -237,23 +244,31 @@ class Routines(Plugin):
             before = None
             with contextlib.suppress(OSError):
                 before = before_path.read_bytes()
+            keep_old = False
             if diff is not None and diff >= float(threshold) and before:
                 asked += 1
                 try:
                     reply = await client.chat(cams.messages(name, before, keep, note), max_tokens=200,
                                               temperature=0)
                     verdict = cams.parse_verdict(reply.get("content") or "")
-                except Exception as e:  # noqa: BLE001
-                    errors.append(f"{name}: the model failed ({clip(e, 140)})")
+                except Exception as e:  # noqa: BLE001 - LLMError, an unreadable answer
+                    msg = f"{name}: the model failed ({clip(cams.redact(e, cam), 140)})"
+                    errors.append(msg)
+                    # Keep the old frame: the change is looked at again next run.
+                    keep_old = True
+                    nxt["told"][cam["key"]] = msg
+                    if told.get(cam["key"]) != msg:
+                        problems.append(msg)
                     verdict = None
                 if verdict is not None:
                     row["level"] = verdict["level"]
                     if verdict["level"] != "nothing":
                         events.append({"camera": name, **verdict})
-            if not dry_run:
+            if keep_old:
+                nxt["thumbs"][cam["key"]] = old
+            elif not dry_run:
                 nxt["thumbs"][cam["key"]] = small.hex()
-                before_path.parent.mkdir(parents=True, exist_ok=True)
-                before_path.write_bytes(keep)
+                cams.write_private(before_path, keep)
         if todo and not checked:
             raise CapError("no camera answered: " + "; ".join(errors))
         urgent = bool(may_ring) and any(e["level"] == "urgent" for e in events)
@@ -263,10 +278,12 @@ class Routines(Plugin):
             out["dry_run"] = True
             return out
         sf.save(nxt)
-        if events:
-            text = "\n".join(f"- {e['camera']}: {e['what'] or 'something changed'}" for e in events)
-            line = f"Camera review: {plural(len(events), 'notable event')} (" + \
-                ", ".join(e["camera"] for e in events[:4]) + ")"
+        if events or problems:
+            text = "\n".join([f"- {e['camera']}: {e['what'] or 'something changed'}" for e in events]
+                             + [f"- {p} (it will look again)" for p in problems])
+            line = (f"Camera review: {plural(len(events), 'notable event')} (" +
+                    ", ".join(e["camera"] for e in events[:4]) + ")") if events else \
+                f"Camera review: the model could not check {plural(len(problems), 'camera')}"
             out["delivered"] = await deliver(self._node, source="camera-review", title="Cameras",
                                              text=text, line=line, urgent=urgent,
                                              why="the picture changed and the model found it notable")

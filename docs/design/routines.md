@@ -79,8 +79,11 @@ over the MCP (presence; a never-seen one is new), dashboard sign-ins (new
 since the last scan (`decision = deny`, `audit.denied` refused keys,
 `audit.unverified`), API keys added or removed (the token store) and
 access.db history (roles, grants, revokes, key owners, chat links, bots,
-spaces). `urgent_refusals` (10) refused calls since the last scan make it
-urgent; 0 never.
+spaces). Refused keys are a rate: `urgent_refusals` (10) or more within
+`refusal_window_min` (10 minutes, whatever the gap between scans) make it
+urgent, and it rings at most once per `urgent_cooldown_min` (60 minutes), so
+an ongoing burst rings once. 0 never rings. Denied calls, however many, are
+warnings.
 
 Not covered: failed dashboard password sign-ins (the dashboard's throttle
 keeps them in memory in another process), terminal sessions that are not
@@ -103,14 +106,21 @@ the jobs runtime at the call. Nothing new: nothing is sent.
 ## 6. Camera review
 
 Cameras: `{name, url, headers?}` (the hub fetches a JPEG snapshot, at most
-8 MB), `{name, worker, rtsp}` (`shell.exec` runs ffmpeg on that worker, the
-address passed as an argument, never in the shell text) or `{name, worker,
-camera}` (`camera.snap`). Each frame is shrunk to 64x36 greyscale and
+8 MB), `{name, worker, rtsp}` (`shell.exec` runs ffmpeg on that worker; the
+address goes in the call's `env` as `ROOK_CAMERA_URL`, never in the command
+text or the call's argv; ffmpeg itself still holds it as its input argument
+for the second or two it runs, visible to that worker's own users) or `{name,
+worker, camera}` (`camera.snap`). Error text drops the camera's address and
+any `user:password@` in a URL. Each frame is shrunk to 64x36 greyscale and
 compared with the last (mean absolute difference); at `threshold` (0.06) or
 more, the previous and current frames go to the provider's vision model
 (`llm.client(provider, model)`, OpenAI-style `image_url` parts) with a fixed
 prompt asking for `{"level": "nothing|notable|urgent", "what"}`. Only
-`notable` and `urgent` are reported. The last frame per camera is kept as a
-small JPEG beside the state. Ring: no local API; bring a bridge (ring-mqtt
+`notable` and `urgent` are reported. When the model fails or its answer
+can't be read, the old frame stays the baseline (the change is looked at
+again next run) and the failure is told once, in the report. The last frame
+per camera is kept as a small JPEG beside the state, mode 0600. Frames go to
+whichever provider the job names, which may be a cloud service: pick a local
+one if pictures of the house must stay home. Ring: no local API; bring a bridge (ring-mqtt
 with go2rtc, Scrypted) that exposes RTSP or a snapshot URL. A run where no
 camera answered fails, so the job's `max_failures` switches it off.

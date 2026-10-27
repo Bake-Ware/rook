@@ -227,22 +227,63 @@ async def test_the_first_scan_is_a_silent_baseline_then_only_changes_are_told(hu
     assert not again["changed"] and len(hub.band.posted) == 1, again["findings"]
 
 
+def refuse(hub, n):
+    for _ in range(n):
+        hub.node.journal.record(cap="audit.denied", worker=None, identity="unauthenticated",
+                                args=None, reply={"ok": False, "error": "bad token"})
+
+
 @pytest.mark.asyncio
 async def test_a_burst_of_refused_keys_is_the_one_urgent_case(hub):
     p = hub.plugin
     await p.security_scan()
-    for _ in range(3):
-        hub.node.journal.record(cap="audit.denied", worker=None, identity="unauthenticated",
-                                args=None, reply={"ok": False, "error": "bad token"})
+    refuse(hub, 3)
     out = await p.security_scan(urgent_refusals=3)
     assert out["urgent"] and out["findings"][0]["level"] == "alert"
     assert hub.band.posted[-1]["urgency"] == "urgent" and hub.band.posted[-1]["channel"] == "urgent"
     assert log_rows(hub)[0]["outcome"] == "ask_now"
-    for _ in range(3):
-        hub.node.journal.record(cap="audit.denied", worker=None, identity="unauthenticated",
-                                args=None, reply={"ok": False, "error": "bad token"})
-    calm = await p.security_scan(urgent_refusals=0)
+    # The same burst going on rings once: the next scans within the cool-down are quiet warnings.
+    refuse(hub, 5)
+    again = await p.security_scan(urgent_refusals=3)
+    assert again["changed"] and not again["urgent"] and again["findings"][0]["level"] == "warn"
+    assert hub.band.posted[-1]["urgency"] == "normal"
+    refuse(hub, 3)
+    assert (await p.security_scan(urgent_refusals=3, urgent_cooldown_min=0))["urgent"]
+    refuse(hub, 3)
+    calm = await p.security_scan(urgent_refusals=0, urgent_cooldown_min=0)
     assert calm["changed"] and not calm["urgent"]
+
+
+@pytest.mark.asyncio
+async def test_the_burst_is_a_rate_over_a_window_not_a_running_total(hub, monkeypatch):
+    import rook.band_mcp.journal as journal_mod
+    p = hub.plugin
+    shift = {"s": 0.0}
+    clock = lambda: time.time() + shift["s"]                       # noqa: E731
+    p.clock = clock
+    monkeypatch.setattr(journal_mod, "time", SimpleNamespace(time=clock))
+    await p.security_scan()
+    refuse(hub, 2)
+    under = await p.security_scan(urgent_refusals=3)               # just under the threshold
+    assert under["changed"] and not under["urgent"]
+    shift["s"] = 11 * 60                                            # those two age out of the window
+    refuse(hub, 2)
+    later = await p.security_scan(urgent_refusals=3, refusal_window_min=10)
+    assert not later["urgent"]
+    refuse(hub, 1)                                                 # 3 inside the window now
+    assert (await p.security_scan(urgent_refusals=3, refusal_window_min=10))["urgent"]
+
+
+@pytest.mark.asyncio
+async def test_many_denied_calls_never_ring(hub):
+    p = hub.plugin
+    await p.security_scan()
+    for _ in range(40):
+        hub.node.journal.record(cap="shell.exec", worker="kaiju", identity="agent:x", args=None,
+                                reply={"ok": False, "error": "denied"}, authz={"decision": "deny"})
+    out = await p.security_scan()
+    assert out["findings"] == [{"kind": "denied", "level": "warn", "text": "40 calls denied: agent:x -> shell.exec x40"}]
+    assert not out["urgent"] and hub.band.posted[-1]["urgency"] == "normal"
 
 
 @pytest.mark.asyncio
@@ -268,13 +309,19 @@ async def test_no_phone_set_up_still_logs_the_line(hub):
 
 @pytest.mark.asyncio
 async def test_routines_are_for_owners(hub):
-    tok = current_principal.set(AGENT)
-    try:
-        for fn in (hub.plugin.security_scan, hub.plugin.attention_digest):
+    member = Principal("human:guest", "human", "member", ("human:member",), label="Guest")
+    for who in (AGENT, member):
+        tok = current_principal.set(who)
+        try:
+            for fn in (hub.plugin.security_scan, hub.plugin.attention_digest):
+                with pytest.raises(CapError, match="hub owners"):
+                    await fn()
             with pytest.raises(CapError, match="hub owners"):
-                await fn()
-    finally:
-        current_principal.reset(tok)
+                await hub.plugin.camera_review(cameras=CAMS, provider="lab")
+        finally:
+            current_principal.reset(tok)
+        out = await jobs(hub, principal=who, action="install", id="security-scan")
+        assert not out["ok"] and out["code"] == "PermissionError"
     tok = current_principal.set(OWNER)
     try:
         assert (await hub.plugin.security_scan())["baseline"]
@@ -429,7 +476,7 @@ async def test_camera_sources_from_workers_and_their_errors(camera):
     seen = {}
 
     def shell(args, wid):
-        seen["argv"] = args["argv"]
+        seen["argv"], seen["env"] = args["argv"], args.get("env")
         return {"ok": True, "code": 0, "stdout": b64, "stderr": ""}
     camera.band.caps["shell.exec"] = shell
     camera.band.caps["camera.snap"] = lambda args, wid: {"ok": True, "data": b64}
@@ -440,8 +487,9 @@ async def test_camera_sources_from_workers_and_their_errors(camera):
     assert [c["camera"] for c in out["checked"]] == ["garage", "desk"]
     assert out["errors"] == ["gone: worker 'offline-box' is not on the band now"]
     # The stream address is an argument, never part of the shell text.
-    assert seen["argv"][:2] == ["sh", "-c"] and seen["argv"][-1] == "rtsp://u:p@10.0.0.9/live"
-    assert "rtsp://" not in seen["argv"][2]
+    # The stream address travels in the environment, never in the command or its argv.
+    assert seen["argv"][:2] == ["sh", "-c"] and not any("rtsp://" in a for a in seen["argv"])
+    assert seen["env"] == {"ROOK_CAMERA_URL": "rtsp://u:p@10.0.0.9/live"}
     with pytest.raises(CapError, match="no camera answered"):
         await camera.plugin.camera_review(cameras=[{"name": "x", "worker": "nobody", "camera": 0}],
                                           provider="lab")
@@ -455,7 +503,9 @@ def test_camera_config_is_checked_plainly():
                      ([{"name": "a", "url": "http://x"}, {"name": "A", "url": "http://y"}], "two cameras")):
         with pytest.raises(ValueError, match=msg):
             cams.check_cameras(bad)
-    assert cams.parse_verdict("no json") == {"level": "nothing", "what": ""}
+    with pytest.raises(ValueError, match="could not be read"):
+        cams.parse_verdict("no json")
+    assert cams.parse_verdict('{"notable": false}') == {"level": "nothing", "what": ""}
     assert cams.difference(b"\x00" * 4, b"\xff" * 4) == 1.0
 
 
@@ -473,3 +523,60 @@ async def test_an_installed_scan_runs_as_its_creator(hub):
     assert run["state"] == "success", run
     assert run["identity_used"] == "token:static"
     assert run["steps"]["run"]["output"]["baseline"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_model_failure_keeps_the_old_frame_and_is_told_once(camera):
+    import os
+    p = camera.plugin
+    await p.camera_review(cameras=CAMS, provider="lab")
+    frame = p.data_dir / "state" / "camera-review.porch.jpg"
+    assert frame.exists() and os.stat(frame).st_mode & 0o777 == 0o600
+    camera.frames["porch"] = jpeg(90, box=True)
+    camera.model.reply = "I am not sure what you mean."
+    bad = await p.camera_review(cameras=CAMS, provider="lab")
+    assert bad["asked"] == 1 and not bad["events"] and "could not be read" in bad["errors"][0]
+    post, = camera.band.posted
+    assert "the model failed" in post["line"] + post["explain"] + str(post.get("body") or "")
+    assert log_rows(camera)[0]["what"] == "Camera review: the model could not check 1 camera"
+    again = await p.camera_review(cameras=CAMS, provider="lab")
+    assert again["asked"] == 1 and len(camera.band.posted) == 1      # looked at again, told once
+    camera.model.reply = '{"level": "notable", "what": "A cat on the porch."}'
+    ok = await p.camera_review(cameras=CAMS, provider="lab")
+    assert ok["events"][0]["what"] == "A cat on the porch."            # the change was not lost
+    assert (await p.camera_review(cameras=CAMS, provider="lab"))["asked"] == 0
+
+
+def test_camera_errors_never_carry_credentials():
+    cam = {"rtsp": "rtsp://admin:hunter22@10.0.0.9/live"}
+    assert "hunter22" not in cams.redact("could not open rtsp://admin:hunter22@10.0.0.9/live: refused", cam)
+    assert cams.redact("GET https://u:pw@cam.local/snap failed") == "GET https://***@cam.local/snap failed"
+
+
+@pytest.mark.asyncio
+async def test_nothing_ever_becomes_a_card(camera):
+    p = camera.plugin
+    await p.security_scan()
+    camera.node.tokens.tokens.append({"id": "k5", "name": "x"})
+    refuse(camera, 12)
+    await p.security_scan()
+    camera.band.caps["attention.feed"] = lambda args, wid: {"ok": True, "entries": [
+        {"id": "1", "ts": time.time(), "app": "Signal", "priority": "normal", "summary": "hi"}]}
+    await p.attention_digest()
+    await p.camera_review(cameras=CAMS, provider="lab")
+    camera.frames["porch"] = jpeg(250)
+    await p.camera_review(cameras=CAMS, provider="lab")
+    assert len(camera.band.posted) == 3        # the scan, the digest and the camera event
+    assert all(x["kind"] == "alert" and x["actions"] == ["ack"] for x in camera.band.posted)
+    relay = camera.node.plugin("approvals").relay
+    assert relay.items() == []
+    assert {r["outcome"] for r in log_rows(camera)} <= {"tell", "ask_now"}
+
+
+@pytest.mark.asyncio
+async def test_an_installed_camera_job_never_rings_unless_asked(hub):
+    import inspect
+    config = {"cameras": CAMS, "provider": "lab"}
+    job = (await jobs(hub, action="install", id="camera-review", data={"config": config}))["result"]
+    assert "may_ring" not in job["definition"]["steps"]["run"]["args"]
+    assert inspect.signature(hub.plugin.camera_review).parameters["may_ring"].default is False

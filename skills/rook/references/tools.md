@@ -188,7 +188,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `role.workspace` | id, path='' | read | A role's workspace, read-only (its drafts, notes and working documents, in its home on its agent host): the f… |
 | `routine.attention_digest` | phones?, chat_as='user:operator', email?, max_items=8, dry_run=false, state='' | write | Fold what came in since the last digest (phone notifications, unread chat rooms including Telegram and Discor… |
 | `routine.camera_review` | cameras, provider, model='', threshold=0.06, note='', may_ring=false, dry_run=false, state='' | write | Grab a frame from each camera, compare it with the last one on the hub, and ask a vision model about changed… |
-| `routine.security_scan` | urgent_refusals=10, dry_run=false, state='' | write | Compare what is open on the band and what the logs say with the last scan, and tell the person quietly about… |
+| `routine.security_scan` | urgent_refusals=10, refusal_window_min=10, urgent_cooldown_min=60, dry_run=false, state='' | write | Compare what is open on the band and what the logs say with the last scan, and tell the person quietly about… |
 | `serves.clear` | worker | write | Remove a worker's hosting entry. |
 | `serves.list` | worker='' | read | What workers host: `{worker: {sites, services, updated, by}}`. |
 | `serves.set` | worker, sites?, services?, by='' | write | Write what a worker hosts. |

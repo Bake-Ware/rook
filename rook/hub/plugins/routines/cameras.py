@@ -99,8 +99,36 @@ async def http_get(url: str, headers: dict, timeout: float) -> bytes:
             return data
 
 
-RTSP_SH = ('ffmpeg -nostdin -hide_banner -loglevel error -rtsp_transport tcp -i "$1" -frames:v 1 '
-           '-vf "scale=\'min(1280,iw)\':-2" -f image2 -c:v mjpeg - | base64 | tr -d "\\n"')
+#: The stream address arrives in ROOK_CAMERA_URL (shell.exec's env), never in the
+#: command text or the call's argv. ffmpeg itself still takes it as its input
+#: argument for the second or two it runs.
+RTSP_SH = ('ffmpeg -nostdin -hide_banner -loglevel error -rtsp_transport tcp -i "$ROOK_CAMERA_URL" '
+           '-frames:v 1 -vf "scale=\'min(1280,iw)\':-2" -f image2 -c:v mjpeg - | base64 | tr -d "\\n"')
+URL_ENV = "ROOK_CAMERA_URL"
+USERINFO = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/\s@]*@")
+
+
+def redact(text: Any, cam: dict | None = None) -> str:
+    """Error text without credentials: the camera's own address (as given) and
+    any ``user:password@`` in a URL are taken out."""
+    text = str(text or "")
+    for k in ("url", "rtsp"):
+        v = str((cam or {}).get(k) or "")
+        if len(v) >= 8:
+            text = text.replace(v, f"<{k}>")
+    return USERINFO.sub(r"\1***@", text)
+
+
+def write_private(path, data: bytes) -> None:
+    """Write a frame readable by the hub's user only (0600)."""
+    import os
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
 
 
 class Cameras:
@@ -126,7 +154,7 @@ class Cameras:
             data = got.get("data")
         else:
             got = await band_call(self.node, "shell.exec",
-                                  {"argv": ["sh", "-c", RTSP_SH, "rook-camera", str(cam["rtsp"])],
+                                  {"argv": ["sh", "-c", RTSP_SH], "env": {URL_ENV: str(cam["rtsp"])},
                                    "timeout": 30}, wid, timeout=40, sensitive=True,
                                   why=f"camera review: a frame from {cam['name']} (ffmpeg)")
             data = got.get("stdout")
@@ -164,7 +192,8 @@ def difference(a: bytes, b: bytes) -> float:
 
 
 def parse_verdict(text: str) -> dict:
-    """The model's ``{level, what}``; anything unreadable is "nothing"."""
+    """The model's ``{level, what}``; raises ValueError when it can't be read
+    (the caller keeps the old frame, so the change is looked at again)."""
     m = re.search(r"\{.*\}", text or "", re.S)
     try:
         d = json.loads(m.group(0)) if m else {}
@@ -172,7 +201,9 @@ def parse_verdict(text: str) -> dict:
         d = {}
     level = str(d.get("level") or "").lower()
     if level not in LEVELS:
-        level = "notable" if d.get("notable") is True else "nothing"
+        if not isinstance(d.get("notable"), bool):
+            raise ValueError("the model's answer could not be read")
+        level = "notable" if d["notable"] else "nothing"
     return {"level": level, "what": clip(d.get("what") or "", 200)}
 
 

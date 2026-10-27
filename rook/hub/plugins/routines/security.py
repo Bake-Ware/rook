@@ -156,6 +156,7 @@ class Scan:
                                           for r in rows["denied"]),
             "refused": collections.Counter(str(r.get("identity") or "unauthenticated")
                                            for r in rows["refused"]),
+            "refused_at": [float(r.get("ts") or 0) for r in rows["refused"]],
             "unverified": collections.Counter(str(r.get("identity") or "?") for r in rows["unverified"]),
         }
 
@@ -190,8 +191,14 @@ class Scan:
 
     # -- comparing ---------------------------------------------------------------
     @staticmethod
-    def compare(prev: dict, snap: dict, *, urgent_refusals: int = 10) -> tuple[list[dict], dict]:
-        """``(findings, next state)``. Each finding: ``{kind, level, text}``."""
+    def compare(prev: dict, snap: dict, *, urgent_refusals: int = 10, window_s: float = 600,
+                cooldown_s: float = 3600, now: float | None = None) -> tuple[list[dict], dict]:
+        """``(findings, next state)``. Each finding: ``{kind, level, text}``.
+
+        Refused keys are urgent when ``urgent_refusals`` or more fall inside
+        the last ``window_s`` seconds (a rate, whatever the gap between scans),
+        at most once per ``cooldown_s``: one ring per burst."""
+        now = time.time() if now is None else now
         out: list[dict] = []
 
         def add(kind: str, level: str, text: str) -> None:
@@ -243,11 +250,18 @@ class Scan:
             state["journal"] = journal["mark"]
         elif prev.get("journal"):
             state["journal"] = prev["journal"]
+        recent = [t for t in (prev.get("refusals") or []) + list((journal or {}).get("refused_at") or [])
+                  if t > now - window_s]
+        state["refusals"] = sorted(recent)[-1000:]
+        state["rang_at"] = prev.get("rang_at") or 0
         if journal is not None and not baseline:
             refused = journal["refused"]
             n = sum(refused.values())
             if n:
-                level = "alert" if urgent_refusals and n >= urgent_refusals else "warn"
+                burst = bool(urgent_refusals) and len(recent) >= urgent_refusals
+                level = "alert" if burst and now - float(state["rang_at"]) >= cooldown_s else "warn"
+                if level == "alert":
+                    state["rang_at"] = now
                 add("refused", level, f"{plural(n, 'MCP call')} refused for a missing or invalid key"
                     + (f" ({_names(refused)})" if refused else ""))
             denied = journal["denied"]

@@ -110,13 +110,14 @@ schedule in the Editor or delete it.
   (a snapshot address, an RTSP stream through a machine with ffmpeg, or a
   machine's webcam). Only a picture that changed is shown to a vision model you
   pick on Model providers, and only something notable (a person, a car, a
-  package, an open door, smoke) is reported. Ring cameras need a bridge such as
-  ring-mqtt or Scrypted that gives an RTSP or snapshot address.
+  package, an open door, smoke) is reported. The pictures go to the provider
+  you pick, so choose a local one to keep them at home. Ring cameras need a
+  bridge such as ring-mqtt or Scrypted that gives an RTSP or snapshot address.
 
 They tell you quietly, and only when something changed: one line in the
 attention log and one quiet message in your phone's digest (Settings >
 Attention phones). They never put a card on your phone or ask you anything.
-Only a burst of refused keys rings as urgent; a camera rings only if you turn
+Only a burst of refused keys (10 within 10 minutes, once an hour at most) rings as urgent; a camera rings only if you turn
 on `may_ring` for fire, smoke, flooding or a break-in.
 
 ## The Jobs page

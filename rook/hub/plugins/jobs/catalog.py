@@ -33,8 +33,10 @@ TEMPLATES: dict[str, dict] = {
         "timeout": "2m",
         "retention_days": 3,
         "needs": {},
-        "options": {"urgent_refusals": "refused MCP calls since the last scan that make it urgent "
-                                       "(default 10; 0: never urgent)"},
+        "options": {"urgent_refusals": "refused MCP calls within the window that make it urgent "
+                                       "(default 10; 0: never urgent)",
+                    "refusal_window_min": "the window, in minutes (default 10)",
+                    "urgent_cooldown_min": "at most one urgent alert this often, in minutes (default 60)"},
         "example": {},
     },
     "attention-digest": {
