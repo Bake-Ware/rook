@@ -185,6 +185,13 @@ watch push-to-talk app.
   (`VOICE_SPEAKER_SURE` 0.45).
 
 ### Fixed
+- First install no longer points at localhost: `rook worker` without `--hub`, `ROOK_HUB`, a
+  pairing or a pushed config used to dial 127.0.0.1:7474, and `rook` (the terminal dashboard)
+  http://127.0.0.1:7005. The worker now uses the hub of its `--ws-url`, else a hub running on
+  the same machine (one answering /health on 127.0.0.1:7005), else exits saying how to pair
+  (`rook pair <code> --hub http://<hub address>:7005`). The dashboard uses the hub this
+  machine paired with, else a local hub, else asks for the address. The "using hub ... from
+  saved state, not the --hub/--psk given" warning no longer fires when none were given.
 - Phone cards are only sent in kinds the app takes (trust proposals and house asks were never
   posted).
 - House voice: a new person's "I agree to have my voice remembered" comes marked "unknown guest"

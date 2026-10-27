@@ -29,6 +29,44 @@ def _force_utf8_stdio() -> None:
             pass
 
 
+#: The band relay of a hub on this same machine (its default port).
+LOCAL_RELAY = "127.0.0.1:7474"
+
+
+def _hub_here() -> bool:
+    from rook.cli.band_tui import local_hub
+    return local_hub()
+
+
+def _not_joined() -> None:
+    """Exit with what to do when no hub was given and none can be found: a
+    fresh install must never quietly dial 127.0.0.1."""
+    print("Which hub? This machine isn't paired with one, no --hub was given and "
+          "no hub is running here.\n"
+          "  Pair it with a code from the dashboard's Install page:\n"
+          "    rook pair <code> --hub http://<hub address>:7005\n"
+          "  or name the hub's band address: rook worker --hub <hub address>:7474 "
+          "(or env ROOK_HUB)", file=sys.stderr)
+    sys.exit(2)
+
+
+def _default_hub(ws_url: str) -> str:
+    """host:port when neither --hub, ROOK_HUB, an enrollment nor a pushed
+    config named one: the --ws-url's host, else a hub on this machine. Exits
+    with what to do otherwise."""
+    from urllib.parse import urlsplit
+    if ws_url:
+        parts = urlsplit(ws_url.strip())
+        if parts.hostname:
+            port = parts.port or (443 if parts.scheme == "wss" else 80)
+            return f"{parts.hostname}:{port}"
+    if _hub_here():
+        logging.getLogger("rook.worker").warning(
+            "no --hub given: using the hub on this machine (%s)", LOCAL_RELAY)
+        return LOCAL_RELAY
+    _not_joined()
+
+
 def main() -> None:
     _force_utf8_stdio()
     # Keep legacy zipapp/service arguments working. Only the desktop launcher
@@ -49,8 +87,9 @@ def main() -> None:
                "before it is abandoned with a timeout error (default 300; 0 = no limit). "
                "Caps that take a timeout argument get that plus a margin; long-running "
                "caps (updates) opt out.")
-    ap.add_argument("--hub", default=os.environ.get("ROOK_HUB", "127.0.0.1:7474"),
-                    help="hub host:port (or env ROOK_HUB; default 127.0.0.1:7474)")
+    ap.add_argument("--hub", default=os.environ.get("ROOK_HUB") or None,
+                    help="hub host:port (or env ROOK_HUB). Default: the hub this machine "
+                         f"paired with, else a hub running on this machine ({LOCAL_RELAY})")
     ap.add_argument("--psk", default=os.environ.get("ROOK_BAND_PSK") or None,
                     help="band pre-shared key, must match peers (or env ROOK_BAND_PSK)")
     ap.add_argument("--enroll", metavar="HTTPS_SERVER", help="sign in through Google/local web login and fetch your configurations")
@@ -171,6 +210,8 @@ def main() -> None:
             ap.error('No enrolled band; run --enroll HTTPS_SERVER first.')
         args.psk=band['psk'];args.hub=band['hub']
     if not args.psk:
+        if args.hub is None and not _hub_here():
+            _not_joined()
         ap.error("--psk (or env ROOK_BAND_PSK) is required")
 
     # Deauth gate: a worker that received a signed worker.deauth parks itself
@@ -244,10 +285,14 @@ def main() -> None:
         ring.setLevel(logging.INFO)
         root.setLevel(min(level, logging.INFO))
 
+    if args.hub is None:
+        args.hub = _default_hub(args.ws_url or os.environ.get("ROOK_HUB_WS_URL", ""))
+
     # Saved enrollment and pushed config beat --hub/--psk; say so, because a
     # second worker started on an enrolled machine otherwise quietly joins the
     # enrolled band instead of the one on its command line.
-    if (args.hub, args.psk) != requested:
+    if ((requested[0] is not None and args.hub != requested[0])
+            or (requested[1] is not None and args.psk != requested[1])):
         logging.getLogger("rook.worker").warning(
             "using hub %s%s from saved state in %s (enrollment or "
             "pushed config), not the --hub/--psk given", args.hub,

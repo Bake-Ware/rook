@@ -188,8 +188,9 @@ In Claude Code you can also install the Rook mod, a pane showing your bands,
 sessions across the band and its open tasks (the Deck). See
 [integrations/claude-code](integrations/claude-code/README.md).
 
-**In the terminal UI:** run `rook` (or `rook band`). It connects to `http://127.0.0.1:7005`
-by default (`--url` for another hub) and prompts for the dashboard password.
+**In the terminal UI:** run `rook` (or `rook band`). It connects to the hub this machine
+paired with, or a hub running on the same machine; otherwise it asks for the dashboard's
+address (`--url` names another hub). It prompts for the dashboard password.
 Every call it makes goes through the hub, under that login.
 
 **On the roadmap:** a desktop app, a single binary that is a worker and can also install a

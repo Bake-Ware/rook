@@ -956,16 +956,17 @@ def _local_host(host: str, resolve: bool = False) -> bool:
     (hub.tailnet.ts.net, a LAN DNS name for 10.x); a name that doesn't resolve
     in time counts as public."""
     import ipaddress
+    from rook.cli.band_tui import lan_address
     host = host.strip("[]").lower()
-    try:
-        return not ipaddress.ip_address(host).is_global
-    except ValueError:
-        pass
-    if ("." not in host or host == "localhost"
-            or host.endswith((".localhost", ".local", ".lan", ".home", ".internal", ".home.arpa"))):
+    if lan_address(host):
         return True
     if not resolve:
         return False
+    try:
+        ipaddress.ip_address(host)
+        return False  # a public address as written
+    except ValueError:
+        pass
     infos = _resolve(host)
     try:
         addrs = {info[4][0].split("%")[0] for info in infos or []}
@@ -985,16 +986,8 @@ def _tls_hint(url: str, error: object, flag: str = "--url") -> str:
 
 
 def _with_scheme(url: str) -> str:
-    """A bare host gets https://, except a LAN address or name (a hub there
-    usually serves plain http on :7005). Decided by the address as written,
-    never by a DNS answer: a spoofed private answer must not turn a dotted
-    name into plain http with no prompt."""
-    url = url.strip()
-    if "://" in url:
-        return url
-    from urllib.parse import urlsplit
-    host = urlsplit("//" + url).hostname or ""
-    return ("http://" if _local_host(host, resolve=False) else "https://") + url
+    from rook.cli.band_tui import with_scheme
+    return with_scheme(url)
 
 
 def _confirm_cleartext(url: str, what: str) -> None:
