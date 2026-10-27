@@ -29,6 +29,13 @@ class TranscriptTest {
         assertEquals("on it", t.lines.last().text)
     }
 
+    @Test fun aRepeatedNoteIsNotStacked() {
+        val t = Transcript().note("Can't reach the phone").note("Can't reach the phone")
+        assertEquals(1, t.lines.size)
+        val u = t.heard("hi").note("Can't reach the phone").note("Lost the phone").note("Lost the phone")
+        assertEquals(listOf("Can't reach the phone", "hi", "Can't reach the phone", "Lost the phone"), u.lines.map { it.text })
+    }
+
     @Test fun keepsTheNewestLines() {
         var t = Transcript(capacity = 3)
         for (i in 1..5) t = t.heard("line $i")
