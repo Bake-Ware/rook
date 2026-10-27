@@ -1,10 +1,15 @@
-# Attention: the phone as the one app allowed to interrupt
+# Attention: the phone as the one app allowed to interrupt, and the Feed
 
 The Rook app on the person's phone is the one place Rook may interrupt them.
 The hub puts **decision cards** (everything waiting on the person) and
 **alerts** on it, and reads back what they tapped and whether they saw it.
 
-Code: `rook/hub/plugins/attention/` (hub side). The phone side
+One plugin, two faces: on the phone it is the one app allowed to interrupt;
+on the dashboard it is the **Feed** page, the same things as one stream (see
+"The Feed" and "Sorting" below).
+
+Code: `rook/hub/plugins/attention/` (hub side; `feed.py` and `web.py` for the
+Feed). The phone side
 (`attention.post`, `attention.update`, `attention.poll`,
 `attention.rules_set`) lives in the Android app; this page is the contract
 between them.
@@ -67,6 +72,10 @@ increasing), `ts` (epoch seconds) and `type`:
   summary (at most 140 characters) of an important notification from another
   app.
 
+- `sorted {app, pkg, priority}` (0.4.24-beta.7): the person chose how the phone sorts
+  an app on the Attention tab (`priority` urgent, family, normal, ignore, or
+  `default` for the phone's own rules); see Sorting.
+
 - `reminded {id, outcome, via?, level?}` (0.4.22-beta.3): what became of an
   `attention.remind`; `outcome` is `spoken`, `busy`, `call`, `voice_session`,
   `mic_in_use`, `media`, `speaking`, `unchecked`, `off`, `dnd` (the phone is
@@ -86,8 +95,12 @@ app's selected voice only if nobody is talking, and reports a `reminded`
 event.
 
 `attention.rules_set {rules}`: classification preferences for the phone's
-notice filter. The hub calls it only with `attention.push_rules` on, and
-derives no rules yet (a stub for the trust map).
+notice filter. The hub sends the person's sorting with it (see Sorting), with
+`attention.push_rules` on (the default).
+
+`attention.feed {limit}` (exec, sensitive): the phone's quiet feed, newest
+first: `{id, ts, app, pkg, category, priority, summary}` per entry (`pkg` since
+0.4.24-beta.7), plus `ignored_7d`. The hub reads it for the Feed.
 
 Tiers (hub floor, `rook/core/authz.py`): `attention.post` admin (physical),
 `attention.update` admin, `attention.poll` admin (sensitive),
@@ -232,6 +245,58 @@ pixel (phone): ..."), or `failed` with the reason. A phone that may not relay
 yet is told to turn on "May relay my approvals" for it on the Tokens page;
 once the person does, the card is posted again so the next tap counts.
 
+## The Feed
+
+The dashboard's **Feed** page (first under Feed in the sidebar;
+`rook/web/feed.js`, API `/attention/account-api`, owner accounts only) and the
+`attention.stream` cap show one stream, newest first:
+
+- **phone**: each configured phone's quiet feed. Every round the hub reads
+  `attention.feed {limit: 100}` on a phone, at most every `feed_pull_s` (60 s),
+  and keeps new entries (`feed.db` in the plugin's data dir, 30 days; an
+  entry already there is skipped, so nothing shows twice). Urgent and family
+  `notice` events go in as the same row, so with `feed_phone` off the Feed
+  still has them. Only what the phone already gives: the app, its package, a
+  category, a priority and the summary of at most 140 characters;
+- **alert**: every `attention.send`;
+- **decision**: cards queued and decided (log outcomes ask, ask_now, tell,
+  decided), read from the 30-day log;
+- **work**: tasks that became done (with their outcome) or blocked (with the
+  reason), read from the knowledge store's events.
+
+Above the stream: how many decisions wait on the person (a link to
+Approvals). Filters: All, Important (urgent and family), Phone, Alerts,
+Decisions, Work. A run of one app's rows folds after two ("Show 7 more from
+Telegram"); the phone's Attention tab folds the same way.
+
+## Sorting
+
+The person's say over how every phone sorts an app: **Ring me** (urgent),
+**Tell me** (family: a notification of its own, a summary for the hub),
+**Just list it** (normal) or **Hide it** (ignored). They choose it with Sort
+on a phone row of the Feed, or by tapping a line on the phone's Attention tab
+(the app applies it at once and reports `sorted`). Agents can read it
+(`attention.sorting`) but not change it: only the dashboard (an owner account)
+and the configured phones' own `sorted` events do.
+
+The hub keeps one choice per app (by package when the phone gave one, else by
+the app's name; a later choice replaces an earlier one) in `state.json`, and
+pushes one document to every phone with `attention.rules_set` once per change:
+
+```json
+{"version": 1, "extend_default": true, "family_names": ["Autumn"],
+ "rules": [{"priority": "ignore", "category": "hidden",
+            "note": "yours: hide it (Google)",
+            "match": {"packages": ["com.google.android.googlequicksearchbox"]}}]}
+```
+
+The person's rules go in front of the phone's own defaults (first match
+wins); `family_names` is the setting `attention.family`. Nothing is sent
+while there is no choice and no family name; once something was, an emptied
+list goes as a document with no rules, so the phone falls back to its
+defaults. The note `yours:` marks the person's own rules, so the phone
+replaces only those when the person sorts there.
+
 ## Hub caps (worker `rook`)
 
 - `attention.send {text, title?, urgency=normal, channel=digest, explain?}`
@@ -245,6 +310,10 @@ once the person does, the card is posted again so the next tap counts.
   newest first.
 - `attention.log {limit=30, since}` (read): the 30-day log, newest first,
   as readable lines and rows (no internal pointers).
+- `attention.stream {limit=30, before, source, important}` (read, sensitive):
+  the Feed (above): rows, `more` and `before` for the next page, `waiting`
+  (count and the first titles), the sorting and the family names.
+- `attention.sorting` (read): the person's choices and the family names.
 
 `attention.status` also reports `reminders`: queue and reminders on, the
 speaking phone, the last spoken reminder and try, the last reason one wasn't
@@ -260,15 +329,24 @@ Only:
 - `notice` summaries for urgent and family notifications: the app's name, a
   category, the priority and a summary of at most 140 characters.
 
+- with `feed_phone` on (the default), the quiet feed's own entries for the
+  Feed: the same summary fields for every notification the phone did not hide;
+- `sorted` events: an app's name and package and the choice.
+
 Never the full text of any notification. The hub keeps the last 500 signals
-and the last 500 notices in the plugin's `state.json`.
+and the last 500 notices in the plugin's `state.json`, and the Feed's rows in
+`feed.db` for 30 days.
 
 ## Settings
 
 - `attention.devices` (list, empty): phones (worker names or ids). Empty: off.
 - `attention.person` ("the person"): the name recorded with each decision.
 - `attention.poll_secs` (10): how often the hub checks the phones.
-- `attention.push_rules` (off): send `attention.rules_set` (no rules yet).
+- `attention.family` (list, empty): family names, pushed to the phones.
+- `attention.push_rules` (on): send the person's sorting and the family names
+  with `attention.rules_set`.
+- `attention.feed_phone` (on): the phones' quiet feeds in the Feed;
+  `attention.feed_pull_s` (60): how often each is read.
 - `attention.queue` (on): decision cards wait quietly; off pops them up.
 - `attention.remind` (on): spoken reminders (needs app 0.4.22-beta.3).
 - `attention.remind_wait_s` (120), `remind_gap_min` (15), `remind_again_min`

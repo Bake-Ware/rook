@@ -124,6 +124,39 @@ else meanwhile is passed over.
 - Nothing is decided from active listening, dictation or the scribe: only in
   the normal conversation.
 
+## The Feed and sorting your apps
+
+The dashboard's **Feed** page (the first page under Feed in the sidebar) shows
+what came in for you as one stream, newest first: your phone's notifications
+as the phone summarized them, alerts agents sent you, decisions asked and
+answered, and tasks that were finished or got blocked. At the top it says how
+many decisions wait on you. The buttons above the list narrow it: Important
+(urgent and family), Phone, Alerts, Decisions, Work. When one app sends a lot
+in a row, the Feed shows two and folds the rest ("Show 7 more from
+Telegram").
+
+You decide how your phone sorts each app. Press **Sort** on a phone line in
+the Feed, or tap a line in the app's Attention tab, and choose:
+
+- **Ring me**: it rings like an urgent alert, even through Do Not Disturb;
+- **Tell me**: a notification of its own, and it shows as important;
+- **Just list it**: it waits in the Attention tab and the Feed;
+- **Hide it**: it is not kept at all;
+- **The phone's own rules** takes your choice away again.
+
+Your choice counts from the next notification, on every phone you set up:
+the hub keeps it and sends it to them. Agents can see how you sorted your
+apps but can't change it. The list of your choices is at the foot of the
+Feed page, each with a button to undo it.
+
+**Family names** (Settings > Plugins > Attention) are the people whose
+messages always count as family; starred contacts count too.
+
+The Feed keeps the phone's lines for 30 days. It holds only the short
+summary the phone made (never a notification's full text). Turn **Phone feed
+in the Feed** off in Settings > Plugins > Attention to keep only urgent and
+family ones.
+
 ## The log
 
 Every card, reminder and decision (on the phone, by voice) is written as one plain line (what

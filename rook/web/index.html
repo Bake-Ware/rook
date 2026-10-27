@@ -271,6 +271,7 @@
     <div class="nav-group" data-nav-group="feed">
     <button type="button" class="nav-label" id="nav-label-feed" aria-expanded="true" aria-controls="nav-feed">FEED<span class="nav-chevron" aria-hidden="true"></span></button>
     <nav id="nav-feed" aria-label="Feed">
+      <a id="tab-feed" href="#feed" onclick="showView('feed');return false">Feed</a>
       <a id="tab-overview" href="#overview" onclick="showView('overview');return false">Overview</a>
       <a id="tab-start" href="#start" onclick="showView('start');return false">Start page</a>
     </nav>
@@ -397,6 +398,7 @@
       <div class="foot" id="foot"></div>
     </div>
 
+    <div id="view-feed" hidden></div>
     <div id="view-overview" hidden></div>
     <div id="view-approvals" hidden></div>
     <div id="view-start" hidden></div>
@@ -1062,6 +1064,7 @@ function renderCapResult(out,cap,reply){
 
 /* ---- views / install ---- */
 const viewInfo={
+ feed:['Feed','What came in for you: your phone, alerts, decisions and finished work, newest first.'],
  overview:['Overview','What is running, what is waiting on you, and the work in progress.'],
  approvals:['Approvals','Agent calls waiting for your yes or no: risky actions, and reaching many machines at once.'],
  trust:['Trust map','What agents may change on their own: sacred, guarded or ship-it, in your words.'],
@@ -1159,7 +1162,12 @@ async function pollFront(){
  try{const r=await fetch('/api/decisions?count=1',{headers:{Accept:'application/json'}});if(!r.ok)return;const d=await r.json();showFrontCount(Number(d.waiting)||0);}catch{}
 }
 pollFront();setInterval(pollFront,60000);
-let overviewUI=null, overviewLoading=null, startUI=null, startLoading=null;
+let overviewUI=null, overviewLoading=null, startUI=null, startLoading=null, feedUI=null, feedLoading=null;
+async function ensureFeed(){
+ if(feedUI)return feedUI;
+ if(!feedLoading)feedLoading=import('/account/attention/assets/feed.js').then(m=>m.mountFeed($('#view-feed'))).then(ui=>feedUI=ui).finally(()=>{feedLoading=null;});
+ return feedLoading;
+}
 async function ensureOverview(){
  if(overviewUI)return overviewUI;
  if(!overviewLoading)overviewLoading=import('/account/ui/assets/overview.js').then(m=>m.mountOverview($('#view-overview'))).then(ui=>overviewUI=ui).finally(()=>{overviewLoading=null;});
@@ -1326,9 +1334,9 @@ function revealNavTab(tab){
   const box=document.querySelector('.app-sidebar .sidebar-nav');
   if(box&&window.ResizeObserver)new ResizeObserver(()=>revealNavTab(box.querySelector('a.active'))).observe(box);
 })();
-/* Old and section-level links land on a page: Chat became Huddles, and #feed or
-   #intelligence (a section's name) opens that section's first page. */
-const viewAlias={chat:'huddles',feed:'overview',intelligence:'home'};
+/* Old and section-level links land on a page: Chat became Huddles, and
+   #intelligence (a section's name) opens that section's first page (#feed is a page). */
+const viewAlias={chat:'huddles',intelligence:'home'};
 function showView(v,updateHistory=true){
  v=viewAlias[v]||v;
  if(!viewInfo[v])v='overview';
@@ -1352,6 +1360,7 @@ function showView(v,updateHistory=true){
  if(activeView==='people')peopleUI?.deactivate();
  if(activeView==='updates')updatesUI?.deactivate();
  if(activeView==='overview')overviewUI?.deactivate();
+ if(activeView==='feed')feedUI?.deactivate();
  if(activeView==='start')startUI?.deactivate();
  activeView=v;document.body.dataset.view=v;closeNav();
  for(const t of document.querySelectorAll('.tabbar [data-tab]'))t.classList.toggle('active',t.dataset.tab===v);
@@ -1383,6 +1392,7 @@ function showView(v,updateHistory=true){
  if(v==='knowledge')ensureKnowledge().then(ui=>{if(activeView==='knowledge')ui.activate();}).catch(e=>{$('#view-knowledge').textContent=e.message;});
  if(v==='sessions')ensureSessions().then(ui=>{if(activeView==='sessions')ui.activate();else ui.deactivate();}).catch(()=>{});
  if(v==='work')ensureTasks().then(ui=>{if(activeView==='work')ui.activate();}).catch(e=>{$('#view-work').textContent=e.message;});
+ if(v==='feed')ensureFeed().then(ui=>{if(activeView==='feed')ui.activate();}).catch(e=>{$('#view-feed').textContent=e.message;});
  if(v==='overview')ensureOverview().then(ui=>{if(activeView==='overview')ui.activate();}).catch(e=>{$('#view-overview').textContent=e.message;});
  if(v==='start')ensureStart().then(ui=>{if(activeView==='start')ui.activate();}).catch(e=>{$('#view-start').textContent=e.message;});
  if(v==='bands')ensureBands().then(ui=>ui.refresh()).catch(()=>{});

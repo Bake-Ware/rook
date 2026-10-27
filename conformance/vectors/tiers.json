@@ -96,8 +96,17 @@
   "attention.send": {
    "tier": "write"
   },
+  "attention.sorting": {
+   "tier": "read"
+  },
   "attention.status": {
    "tier": "read"
+  },
+  "attention.stream": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
   },
   "attention.update": {
    "tier": "admin"

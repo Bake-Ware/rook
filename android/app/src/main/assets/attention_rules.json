@@ -34,7 +34,7 @@
     {"priority": "family", "category": "school", "note": "default: school apps",
      "match": {"packages": ["classdojo", "com.remind101", "parentsquare", "schoology", "seesaw", "bloomz", "skyward", "powerschool", "instructure"],
                "app_labels": ["school"], "words": ["school"]},
-     "except": {"words": ["% off", "coupon", "promo", "unsubscribe"]}},
+     "except": {"words": ["% off", "coupon", "promo", "unsubscribe", "school board", "work or school", "school or work", "school account"]}},
     {"priority": "family", "category": "health", "note": "default: health, pharmacy and doctors",
      "match": {"packages": ["mychart", "com.cvs", "walgreen", "com.goodrx", "teladoc", "zocdoc"],
                "app_labels": ["health", "pharmacy", "hospital", "doctor", "mychart", "clinic"],

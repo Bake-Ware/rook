@@ -13,6 +13,7 @@ import android.provider.Settings
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.app.NotificationManagerCompat
@@ -23,7 +24,8 @@ import java.util.Locale
 
 /**
  * The main screen's Attention tab: the setup grants (only while one is missing), pending
- * decision cards (tap to open), and the quiet feed of classified notifications.
+ * decision cards (tap to open), and the quiet feed of classified notifications (a run of one
+ * app's lines folds after two; tapping a line sorts that app: ring me, tell me, just list it, hide it).
  * Until the tab has been opened once, a one-line link above the chat points at missing grants.
  */
 class AttentionPanel(private val act: AppCompatActivity, private val b: ActivityMainBinding, private val askNotifications: () -> Unit,
@@ -33,6 +35,8 @@ class AttentionPanel(private val act: AppCompatActivity, private val b: Activity
     /** Called after each render, so the tab badge follows pending cards. */
     var onChanged: (() -> Unit)? = null
     private val refresh = Runnable { render() }
+    /** Runs of one app's lines the person unfolded ("+N more"), by their first line's id. */
+    private val openRuns = mutableSetOf<String>()
     private val red = Color.rgb(239, 120, 120)
     private val amber = Color.rgb(216, 173, 109)
     private fun dp(n: Int) = (n * act.resources.displayMetrics.density).toInt()
@@ -104,12 +108,30 @@ class AttentionPanel(private val act: AppCompatActivity, private val b: Activity
         val (feed, ignored) = AttentionStore.recentFeed(act, 100)
         val f = card(list)
         if (feed.isEmpty()) text(f, "Nothing yet.", act.getColor(R.color.rook_dim))
+        else text(f, "Tap a line to choose how this phone sorts that app.", act.getColor(R.color.rook_dim), 12f)
         val fmt = SimpleDateFormat("EEE HH:mm", Locale.getDefault())
-        feed.forEach { e ->
-            val color = when (e.optString("priority")) { "urgent" -> red; "family" -> amber; else -> act.getColor(R.color.rook_fg) }
-            text(f, "${fmt.format(Date((e.optDouble("ts") * 1000).toLong()))}  ${e.optString("summary")}", color)
+        AttentionModel.runs(feed.map { it.optString("app") }).forEach { (start, end) ->
+            val run = feed.subList(start, end)
+            val key = run.first().optString("id")
+            val shown = if (key in openRuns) run else run.take(RUN_SHOWN)
+            shown.forEach { e ->
+                val color = when (e.optString("priority")) { "urgent" -> red; "family" -> amber; else -> act.getColor(R.color.rook_fg) }
+                text(f, "${fmt.format(Date((e.optDouble("ts") * 1000).toLong()))}  ${e.optString("summary")}", color).apply {
+                    val app = e.optString("app")
+                    if (app.isNotBlank()) {
+                        isClickable = true; isFocusable = true
+                        contentDescription = "${e.optString("summary")}. Tap to sort $app"
+                        setOnClickListener { sortDialog(app, e.optString("pkg")) }
+                    }
+                }
+            }
+            if (run.size > shown.size) text(f, "+${run.size - shown.size} more from ${run.first().optString("app")} ›",
+                act.getColor(R.color.rook_dim), 12f).apply {
+                isClickable = true; isFocusable = true
+                setOnClickListener { openRuns.add(key); render() }
+            }
         }
-        if (ignored > 0) text(f, "$ignored ignored this week", act.getColor(R.color.rook_dim), 12f)
+        if (ignored > 0) text(f, "$ignored hidden this week", act.getColor(R.color.rook_dim), 12f)
         spokenReminders(list)
     }
 
@@ -127,6 +149,16 @@ class AttentionPanel(private val act: AppCompatActivity, private val b: Activity
         if (!on) return
         if (SpokenReminder.micGranted(act)) text(c, "Microphone: allowed", act.getColor(R.color.rook_dim), 12f)
         else grantRow(c, Grant("Microphone", "Needed to check the room is quiet", false) { askMic() })
+    }
+
+    /** Ring me / Tell me / Just list it / Hide it for one app: applies here at once and the hub keeps it. */
+    private fun sortDialog(app: String, pkg: String) {
+        val now = AttentionStore.choice(act, app, pkg)
+        val keys = AttentionRules.CHOICES.keys.toList() + listOfNotNull(if (now != null) "default" else null)
+        val labels = keys.map { k -> (AttentionRules.CHOICES[k] ?: "The phone's own rules") + if (k == now) "  ✓" else "" }
+        AlertDialog.Builder(act).setTitle("Notifications from $app")
+            .setItems(labels.toTypedArray()) { _, i -> AttentionStore.sort(act, app, pkg, keys[i]); render() }
+            .setNegativeButton("Cancel", null).show()
     }
 
     private fun grantRow(parent: LinearLayout, g: Grant) {
@@ -157,13 +189,17 @@ class AttentionPanel(private val act: AppCompatActivity, private val b: Activity
         parent.addView(row)
     }
 
-    private fun text(parent: LinearLayout, value: String, color: Int, size: Float = 13f) {
-        parent.addView(TextView(act).apply { text = value; textSize = size; setTextColor(color); setPadding(0, dp(3), 0, dp(3)) })
-    }
+    private fun text(parent: LinearLayout, value: String, color: Int, size: Float = 13f): TextView =
+        TextView(act).apply { text = value; textSize = size; setTextColor(color); setPadding(0, dp(3), 0, dp(3)) }
+            .also { parent.addView(it) }
     private fun card(parent: LinearLayout): LinearLayout = LinearLayout(act).apply {
         orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(8)); setBackgroundResource(R.drawable.rook_panel)
         parent.addView(this, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
     }
 
-    companion object { const val PREF_SEEN = "attention_tab_seen" }
+    companion object {
+        const val PREF_SEEN = "attention_tab_seen"
+        /** A run of one app's lines shows this many before "+N more". */
+        const val RUN_SHOWN = 2
+    }
 }

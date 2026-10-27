@@ -208,6 +208,16 @@ class UiWeb(KnowledgeWeb):
                                                'X-Content-Type-Options': 'nosniff'})
 
 
+class AttentionWeb(KnowledgeWeb):
+    """Feed: the phones' quiet feeds, alerts, decisions and work updates as one
+    stream, and how the person sorts apps (the ``attention`` hub plugin).
+    Owner accounts only, like the upstream."""
+    PATH = '/account/attention'
+    UPSTREAM = ('ROOK_ATTENTION_ADMIN_URL', 'http://127.0.0.1:8765/attention/account-api')
+    ASSETS = ('feed.js', 'feed.css')
+    UNAVAILABLE = 'The Feed is unavailable (is the MCP server running?).'
+
+
 class CcmodWeb(KnowledgeWeb):
     """Settings > Claude Code: rules for Claude Code on the workers, their
     pushes and previews. Operator account only, like the upstream."""

@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ....core import names
+from . import feed as F
 
 log = logging.getLogger("rook.hub.plugins.attention")
 
@@ -281,6 +282,7 @@ class AttentionService:
             from ...eventlog import EventLog
             log = EventLog(self.path.parent / "event_log.db", clock=clock)
         self.eventlog = log
+        self.feed = F.FeedStore(self.path.parent / "feed.db", clock=clock)
         self.lock = asyncio.Lock()
         self.state = self._load()
 
@@ -292,7 +294,7 @@ class AttentionService:
             data = {}
         data = data if isinstance(data, dict) else {}
         for key, empty in (("devices", {}), ("alerts", []), ("signals", []), ("notices", []),
-                           ("remind", {})):
+                           ("remind", {}), ("sorting", [])):
             if not isinstance(data.get(key), type(empty)):
                 data[key] = empty
         return data
@@ -355,6 +357,7 @@ class AttentionService:
                         "online": bool(wid) and online(w, now),
                         "attention": "attention.post" in caps,
                         "rules": "attention.rules_set" in caps,
+                        "feed": "attention.feed" in caps,
                         **({"ambiguous": True} if len(hits) > 1 else {})})
         return out
 
@@ -402,8 +405,10 @@ class AttentionService:
                     said = await self._remind(dev)
                     if said:
                         done[dev["name"]]["remind"] = said
-                    if self.settings().get("push_rules") and dev["rules"]:
+                    if self.settings().get("push_rules", True) is not False and dev["rules"]:
                         await self.push_rules(dev)
+                    if self.settings().get("feed_phone", True) is not False and dev["feed"]:
+                        await self._pull_feed(dev)
                 except Exception as e:     # one phone failing never stops the others
                     log.info("attention: %s: %s", dev["name"], e)
                     done[dev["name"]] = {"error": str(e)}
@@ -480,6 +485,11 @@ class AttentionService:
                                    "category": short(ev.get("category"), 40),
                                    "priority": pri, "summary": short(ev.get("summary"), SUMMARY_MAX),
                                    "ts": ts, "received": self.clock()})
+            row = F.notice_row(ev, wid, dev["name"], ts)
+            if row:
+                self.feed.add([{**row, "line": short(row["line"], SUMMARY_MAX)}])
+        elif kind == "sorted":
+            self._sorted(dev, ev)
 
     async def _decision(self, dev: dict, ev: dict, ts: float) -> None:
         from ...relay import RelayError
@@ -881,6 +891,11 @@ class AttentionService:
                      "urgency": urgency, "channel": channel, "explain": short(explain, EXPLAIN_MAX),
                      "source": short(source, 64), "created": self.clock(), "delivered": {}}
             self.state["alerts"].append(alert)
+            self.feed.add([{"id": f"alert:{ident}", "at": alert["created"], "source": "alert",
+                            "priority": "urgent" if urgency == "urgent" else "normal",
+                            "category": channel, "app": alert["source"],
+                            "line": (f"{alert['title']}: " if alert["title"] else "") + text,
+                            "ref": ident}])
             delivered = []
             for dev in self.reachable():
                 with contextlib.suppress(Exception):
@@ -894,23 +909,121 @@ class AttentionService:
         return {"id": ident, "delivered_now": bool(delivered), "delivered": delivered,
                 "queued_for": waiting}
 
-    # -- rules (stub) -----------------------------------------------------------------
-    def rules(self) -> list:
-        """Classification preferences for the phone's notice filter. A stub:
-        they will come from the trust map; nothing is derived yet."""
-        return []
+    # -- sorting: the person's say over how the phones sort apps -------------------------
+    def family(self) -> list[str]:
+        return F.family_names(self.settings().get("family") or [])
+
+    def rules(self) -> dict | None:
+        """The rules document every phone gets (:func:`feed.rules_doc`): the
+        person's choices in front of the phone's defaults, and the family
+        names. None while there is nothing to say."""
+        return F.rules_doc(self.state["sorting"], self.family())
 
     async def push_rules(self, dev: dict) -> bool:
-        """``attention.rules_set`` once per change, only with
-        ``attention.push_rules`` on (the tick checks)."""
-        rules = self.rules()
-        digest = json.dumps(rules, sort_keys=True)
+        """``attention.rules_set`` once per change (``attention.push_rules``, on
+        by default). Nothing is sent to a phone until there is something to
+        say; once something was, an emptied list goes as a document with no
+        rules, so the phone falls back to its own defaults."""
         d = self._dev(dev["worker_id"])
+        doc = self.rules()
+        if doc is None:
+            if not d.get("rules_sent"):
+                return False
+            doc = F.EMPTY_DOC
+        digest = json.dumps(doc, sort_keys=True)
         if d.get("rules_sent") == digest:
             return False
-        await self.call("attention.rules_set", {"rules": rules}, dev["worker_id"])
+        await self.call("attention.rules_set", {"rules": doc}, dev["worker_id"])
         d["rules_sent"] = digest
+        d["rules_sent_at"] = self.clock()
         return True
+
+    def sorting(self) -> list[dict]:
+        return [{**s, "choice": F.SORT_CHOICES[s["priority"]]} for s in self.state["sorting"]]
+
+    def sort(self, app: str, pkg: str, priority: str, by: str) -> dict:
+        """Record the person's choice for an app; the next tick pushes it to
+        every phone. Raises ValueError on a bad request."""
+        app, pkg, priority = F.clean_choice(app, pkg, priority)
+        row = F.choose(self.state["sorting"], app, pkg, priority, by, self.clock())
+        self.save()
+        self.log("handle", f"Sorting: {F.SORT_CHOICES[priority].lower()} for {row['app']}",
+                 how=by)
+        return {**row, "choice": F.SORT_CHOICES[priority]}
+
+    def unsort(self, ident: str, by: str) -> bool:
+        for s in list(self.state["sorting"]):
+            if s["id"] == ident:
+                self.state["sorting"].remove(s)
+                self.save()
+                self.log("handle", f"Sorting: back to the phone's own rules for {s['app']}", how=by)
+                return True
+        return False
+
+    def _sorted(self, dev: dict, ev: dict) -> None:
+        """The person sorted an app on the phone's Attention tab."""
+        if ev.get("priority") == "default":
+            key = F.sort_key(ev.get("app"), ev.get("pkg"))
+            for s in list(self.state["sorting"]):
+                if F.sort_key(s.get("app"), s.get("pkg")) == key:
+                    self.unsort(s["id"], f"{self.person()} on {self.label(dev)}")
+            return
+        try:
+            self.sort(ev.get("app"), ev.get("pkg"), ev.get("priority"),
+                      f"{self.person()} on {self.label(dev)}")
+        except ValueError as e:
+            log.info("attention: a sort from %s was refused: %s", dev["name"], e)
+
+    # -- the Feed ---------------------------------------------------------------------------
+    def _pull_due(self, d: dict) -> bool:
+        every = max(10.0, float(self.settings().get("feed_pull_s") or 60))
+        return self.clock() - float(d.get("feed_pulled") or 0) >= every
+
+    async def _pull_feed(self, dev: dict) -> int:
+        """New entries of the phone's quiet feed (summaries only), at most once
+        a minute (``attention.feed_pull_s``)."""
+        d = self._dev(dev["worker_id"])
+        if not self._pull_due(d):
+            return 0
+        d["feed_pulled"] = self.clock()
+        res = await self.call("attention.feed", {"limit": 100}, dev["worker_id"])
+        rows = F.phone_rows(res.get("entries") or [], dev["worker_id"], dev["name"])
+        return self.feed.add([{**r, "line": short(r["line"], SUMMARY_MAX)} for r in rows])
+
+    def stream(self, limit: int = 50, before: float = 0.0, source: str = "",
+               important: bool = False, work: Any = None) -> dict:
+        """The Feed, newest first: the phones' quiet feeds, alerts, decisions
+        and work updates (``source`` narrows to one; ``important`` keeps
+        urgent and family rows), what waits on the person, and the sorting."""
+        limit = max(1, min(int(limit or 50), 200))
+        before = float(before or 0)
+        sources = (source,) if source in F.SOURCES else F.SOURCES
+        want = limit * 4 if important else limit
+        rows: list[dict] = []
+        stored = tuple(s for s in sources if s in ("phone", "alert"))
+        if stored:
+            rows += self.feed.recent(want, before, stored)
+        if "decision" in sources:
+            rows += F.decision_rows(self.eventlog, want, before)
+        if "work" in sources:
+            rows += F.work_rows(work, want, before)
+        if important:
+            rows = [r for r in rows if r.get("priority") in ("urgent", "family")]
+        rows.sort(key=lambda r: -float(r["at"]))
+        more = len(rows) > limit
+        rows = rows[:limit]
+        for r in rows:
+            r.pop("ref", None)
+            if r["source"] == "phone" and r.get("app"):
+                r["sorted"] = F.choice_for(self.state["sorting"], r["app"], r.get("pkg") or "")
+        waiting = self.waiting()
+        return {"rows": rows, "more": more, "before": rows[-1]["at"] if rows and more else None,
+                "waiting": {"count": len(waiting),
+                            "items": [{"id": w["id"], "title": w["title"]} for w in waiting[:5]]},
+                "sorting": self.sorting(), "family": self.family(),
+                "choices": F.SORT_CHOICES,
+                "phones": [{"name": d["name"], "online": d["online"], "feed": d["feed"]}
+                           for d in self.configured()]}
 
     # -- reading ------------------------------------------------------------------------
     def status(self) -> dict:
@@ -932,6 +1045,8 @@ class AttentionService:
                    len([a for a in self.state["alerts"] if not a.get("expired")]),
                    "open_cards": len([p for p in (d.get("posted") or {}).values()
                                       if not p.get("closed")]),
+                   "sorting_sent": _when(d.get("rules_sent_at")),
+                   "feed_pulled": _when(d.get("feed_pulled")),
                    "last_seen": {k: _when(sig.get(k)) for k in SIGNALS if sig.get(k)},
                    "recent_signals": [{**s, "ts": _when(s["ts"])} for s in reversed(recent)]}
             if not wid:

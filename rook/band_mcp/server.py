@@ -2144,6 +2144,10 @@ class McpService:
         for route in show_routes(lambda: (mcp._rook_hub.plugin("show")
                                           if mcp._rook_hub is not None else None)):
             app.router.routes.insert(0, route)
+        # Feed page (the attention hub plugin's dashboard face).
+        from ..hub.plugins.attention.web import routes as attention_routes
+        for route in attention_routes(lambda: mcp._rook_hub, accounts):
+            app.router.routes.insert(0, route)
         # Overview, start page and themes (the ui hub plugin).
         from ..hub.plugins.ui.web import routes as ui_routes
         for route in ui_routes(lambda: mcp._rook_hub, accounts):

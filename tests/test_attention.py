@@ -368,15 +368,19 @@ async def test_poll_seq_is_persisted_and_signals_and_notices_are_kept(att):
 
 
 @pytest.mark.asyncio
-async def test_rules_are_pushed_only_when_enabled(att):
+async def test_rules_are_pushed_only_with_something_to_say_and_only_when_enabled(att):
     att.configure()
     att.band.workers[PHONE]["caps"].append("attention.rules_set")
+    await att.att.service.tick()
+    assert att.phone.rules == []                      # no sorting, no family: nothing sent
+    att.configure(push_rules=False)
+    att.att.service.sort("Ring", "com.ringapp", "urgent", "Bake")
     await att.att.service.tick()
     assert att.phone.rules == []
     att.configure(push_rules=True)
     await att.att.service.tick()
     await att.att.service.tick()
-    assert att.phone.rules == [[]]
+    assert len(att.phone.rules) == 1 and att.phone.rules[0]["rules"][0]["priority"] == "urgent"
 
 
 # -- consent on the Tokens page -----------------------------------------------------------
@@ -958,3 +962,179 @@ async def test_an_app_without_choice_buttons_points_to_voice_or_the_dashboard(at
     assert len([c for c in att.phone_calls if c.cap == "attention.post"]) == 5
     await att.att.service.tick()
     assert len([c for c in att.phone_calls if c.cap == "attention.post"]) == 5   # once
+
+
+# -- the Feed and sorting (feed.py) -----------------------------------------------------------
+
+def _phone_feed(phone, entries):
+    """The app's attention.feed: summary fields only, newest first."""
+    phone.feed = entries
+    orig = phone.handle
+
+    def handle(cap, args):
+        if cap == "attention.feed":
+            assert set(args) == {"limit"} and 1 <= args["limit"] <= 300
+            phone.feed_reads = getattr(phone, "feed_reads", 0) + 1
+            return {"ok": True, "entries": list(phone.feed), "ignored_7d": 3}
+        return orig(cap, args)
+    phone.handle = handle
+
+
+@pytest.mark.asyncio
+async def test_the_feed_pulls_the_phone_feed_once_a_minute_and_never_twice(att):
+    att.configure()
+    att.band.workers[PHONE]["caps"].append("attention.feed")
+    now = time.time()
+    _phone_feed(att.phone, [
+        {"id": "fa2", "ts": now - 10, "app": "Telegram", "pkg": "org.telegram.messenger",
+         "category": "other", "priority": "normal", "summary": "Telegram: other — Sojourn · hub ok"},
+        {"id": "fa1", "ts": now - 20, "app": "Messages", "category": "family", "priority": "family",
+         "summary": "Messages: family — Autumn · on my way"}])
+    # The urgent/family notice event for fa1 came first: the pull adds it only once.
+    att.phone.event("notice", id="fa1", ts=now - 20, app="Messages", category="family", priority="family",
+                    summary="Messages: family — Autumn · on my way")
+    await att.att.service.tick()
+    await att.att.service.tick()                      # within the minute: not read again
+    assert att.phone.feed_reads == 1
+    st = att.att.service.stream()
+    phone_rows = [r for r in st["rows"] if r["source"] == "phone"]
+    assert [r["line"] for r in phone_rows] == ["Telegram: other — Sojourn · hub ok",
+                                               "Messages: family — Autumn · on my way"]
+    assert phone_rows[0]["pkg"] == "org.telegram.messenger" and phone_rows[0]["device"] == "pixel"
+    assert all("ref" not in r for r in st["rows"])
+    important = att.att.service.stream(important=True)["rows"]
+    assert [r["app"] for r in important] == ["Messages"]
+    att.att.service._dev(PHONE)["feed_pulled"] = 0
+    await att.att.service.tick()
+    assert att.phone.feed_reads == 2
+    assert len(att.att.service.stream(source="phone")["rows"]) == 2   # nothing twice
+    # Off: only the urgent and family notices reach the Feed.
+    att.configure(feed_phone=False)
+    att.att.service._dev(PHONE)["feed_pulled"] = 0
+    await att.att.service.tick()
+    assert att.phone.feed_reads == 2
+
+
+@pytest.mark.asyncio
+async def test_the_feed_has_alerts_decisions_and_what_waits(att):
+    att.configure()
+    await att.node.dispatch("attention.send", {"text": "Backup finished", "title": "Backups"},
+                            "agent")
+    item = hold(att.ap)
+    await att.att.service.tick()
+    st = att.att.service.stream()
+    alert = next(r for r in st["rows"] if r["source"] == "alert")
+    assert alert["line"] == "Backups: Backup finished" and alert["priority"] == "normal"
+    assert st["waiting"]["count"] == 1 and st["waiting"]["items"][0]["id"] == item["id"]
+    assert any(r["source"] == "decision" for r in st["rows"])
+    assert st["phones"] == [{"name": "pixel", "online": True, "feed": False}]
+    only = att.att.service.stream(source="alert")["rows"]
+    assert [r["source"] for r in only] == ["alert"]
+    # The cap says the same; a bad source is refused.
+    res = await att.node.dispatch("attention.stream", {"source": "alert"}, "agent")
+    assert res["ok"] and res["result"]["rows"][0]["line"] == "Backups: Backup finished"
+    res = await att.node.dispatch("attention.stream", {"source": "email"}, "agent")
+    assert not res["ok"] and "source" in res["error"]
+
+
+@pytest.mark.asyncio
+async def test_sorting_is_pushed_to_the_phone_in_front_of_its_own_rules(att):
+    att.configure(family=["Autumn", " autumn ", "J"])
+    att.band.workers[PHONE]["caps"].append("attention.rules_set")
+    svc = att.att.service
+    await svc.tick()
+    doc, = att.phone.rules                            # family names alone are worth sending
+    assert doc["extend_default"] is True and doc["family_names"] == ["Autumn"]
+    assert doc["rules"] == []
+    row = svc.sort("Google", "com.google.android.googlequicksearchbox", "ignore", "Bake on the dashboard")
+    assert row["choice"] == "Hide it"
+    await svc.tick()
+    await svc.tick()                                  # once per change
+    assert len(att.phone.rules) == 2
+    rule, = att.phone.rules[-1]["rules"]
+    assert rule == {"priority": "ignore", "category": "hidden",
+                    "note": "yours: hide it (Google)",
+                    "match": {"packages": ["com.google.android.googlequicksearchbox"]}}
+    # The phone's own Sort menu: recorded as the person on that phone, replacing the old choice.
+    att.phone.event("sorted", app="Google", pkg="com.google.android.googlequicksearchbox",
+                    priority="normal")
+    att.phone.event("sorted", app="Chat", priority="family")
+    att.phone.event("sorted", app="Bad", pkg="not a package", priority="urgent")
+    await svc.tick()
+    choices = {s["app"]: (s["priority"], s["by"]) for s in svc.sorting()}
+    assert choices == {"Google": ("normal", "Bake on pixel (phone)"),
+                       "Chat": ("family", "Bake on pixel (phone)")}
+    pushed = att.phone.rules[-1]["rules"]
+    assert [r["match"] for r in pushed] == [{"app_labels": ["Chat"]},
+                                            {"packages": ["com.google.android.googlequicksearchbox"]}]
+    # Back to the phone's own rules; with nothing left, the phone still hears it once.
+    att.phone.event("sorted", app="Chat", priority="default")
+    await svc.tick()
+    google = svc.sorting()[0]
+    assert svc.unsort(google["id"], "Bake on the dashboard") and svc.sorting() == []
+    att.configure(family=[])
+    await svc.tick()
+    assert att.phone.rules[-1] == {"version": 1, "extend_default": True, "family_names": [],
+                                   "rules": []}
+    n = len(att.phone.rules)
+    await svc.tick()
+    assert len(att.phone.rules) == n
+    with pytest.raises(ValueError):
+        svc.sort("X", "", "loud", "Bake")
+    res = await att.node.dispatch("attention.sorting", {}, "agent")
+    assert res["ok"] and res["result"]["sorting"] == [] and res["result"]["pushed"] is True
+
+
+def test_work_rows_report_tasks_finished_or_blocked(tmp_path):
+    import uuid
+
+    from rook.hub.plugins.attention import feed as F
+    from rook.hub.plugins.knowledge.service import KnowledgeService
+    agent = {"id": "agent.test.worker-a", "kind": "agent", "label": "agent"}
+    k = KnowledgeService(tmp_path / "knowledge.db", lambda: agent)
+
+    def write(op, data):
+        return k.store.mutate("default", agent, uuid.uuid4().hex, op, data)
+    concept = write("create", {"kind": "concept", "title": "Home", "body": ""})
+    proj = write("create", {"kind": "project", "title": "House", "body": "", "parent": concept["id"]})
+    task = write("create", {"kind": "task", "title": "Fix the gate", "body": "", "parent": proj["id"]})
+    write("update", {"id": task["id"], "revision": task["revision"],
+                     "patch": {"state": "blocked", "attrs": {"blocked_reason": "needs a part"}}})
+    rows = F.work_rows(k, 10)
+    assert [r["line"] for r in rows] == ["Blocked: Fix the gate (needs a part)"]
+    assert rows[0]["source"] == "work" and rows[0]["slug"]
+    assert F.work_rows(None, 10) == [] and F.work_rows(k, 10, before=1) == []
+
+
+@pytest.mark.asyncio
+async def test_the_feed_page_api_is_for_owners_and_sorts(att):
+    import httpx
+
+    from rook.hub.plugins.attention.web import routes
+    att.configure()
+    accounts = SimpleNamespace(session=lambda c: {"id": c, "username": c, "csrf": "k",
+                                                  "admin": c == "op"} if c else None)
+    app = Starlette(routes=routes(lambda: att.node, accounts))
+    api = "/attention/account-api"
+    op, member = {"Cookie": "rook_account=op"}, {"Cookie": "rook_account=m1"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        assert (await c.get(api)).status_code == 401
+        assert (await c.get(api, headers=member)).status_code == 403
+        d = (await c.get(api, headers=op, params={"limit": "nope", "before": "inf"})).json()
+        assert d["csrf"] == "k" and d["rows"] == [] and d["choices"]["urgent"] == "Ring me"
+        assert (await c.get(api, headers=op, params={"source": "mail"})).status_code == 400
+        r = await c.post(api, headers=op, json={"action": "sort", "app": "Ring", "priority": "urgent"})
+        assert r.status_code == 403                    # CSRF
+        r = await c.post(api, headers=op, json={"csrf": "k", "action": "sort", "app": "Ring",
+                                                "pkg": "com.ringapp", "priority": "urgent"})
+        assert r.status_code == 200 and r.json()["sorted"]["by"] == "op on the dashboard"
+        r = await c.post(api, headers=op, json={"csrf": "k", "action": "sort", "app": "Ring",
+                                                "priority": "loud"})
+        assert r.status_code == 400
+        ident = att.att.service.sorting()[0]["id"]
+        assert (await c.post(api, headers=op, json={"csrf": "k", "action": "unsort",
+                                                    "id": ident})).status_code == 200
+        assert (await c.post(api, headers=op, json={"csrf": "k", "action": "unsort",
+                                                    "id": ident})).status_code == 404
+        assert (await c.post(api, headers=member, json={"csrf": "k", "action": "sort", "app": "Ring",
+                                                        "priority": "urgent"})).status_code == 403

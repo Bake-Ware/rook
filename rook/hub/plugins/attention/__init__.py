@@ -19,7 +19,13 @@ my approvals" for that phone on the Tokens page.
   notifications the phones reported (the only notification content that
   leaves a phone, at most 140 characters each);
 * ``attention.log`` (read): the last 30 days of decisions and reminders, one
-  plain line each (what, why, how it was decided).
+  plain line each (what, why, how it was decided);
+* ``attention.stream`` (read): the Feed, newest first: the phones' quiet
+  feeds, alerts, decisions and work updates (:mod:`.feed`); the dashboard's
+  Feed page shows the same (:mod:`.web`);
+* ``attention.sorting`` (read): how the person sorted apps (ring me, tell me,
+  just list it, hide it) and the family names; the hub pushes them to the
+  phones. Only the person changes them, on the Feed page or the phone.
 
 Decision cards queue: they are not emergencies, so they wait quietly in the
 app and the phone speaks a short reminder when the room is quiet (settings
@@ -57,9 +63,20 @@ class Attention(Plugin):
                      "phone (phone)\")."),
         setting("poll_secs", int, 10, min=2, max=300, group="Attention", order=3,
                 advanced=True, label="Check phones every (s)"),
-        setting("push_rules", bool, False, group="Attention", order=4, advanced=True,
-                label="Send notification rules to phones",
-                help="Not used yet: the hub derives no rules so far."),
+        setting("family", list, [], group="Attention", order=3, label="Family names",
+                help="Names the phone treats as family: their messages get a notification of "
+                     "their own and show as important in the Feed. Starred contacts count too."),
+        setting("push_rules", bool, True, group="Attention", order=4, advanced=True,
+                label="Send my sorting to phones",
+                help="How you sorted apps on the Feed page or the phone, and the family names, "
+                     "go to every phone in front of its own rules. Off: each phone keeps "
+                     "its own."),
+        setting("feed_phone", bool, True, group="Attention", order=13, label="Phone feed in the Feed",
+                help="The Feed page shows what the phone's quiet feed listed: each notification as "
+                     "the phone summarized it (at most 140 characters, never the full text), kept "
+                     "30 days on the hub. Off: only urgent and family ones."),
+        setting("feed_pull_s", int, 60, min=10, max=3600, group="Attention", order=14,
+                advanced=True, label="Read the phone feed every (s)"),
         setting("queue", bool, True, group="Attention", order=5, label="Queue decisions",
                 help="Decision cards aren't emergencies: each is a normal notification on the "
                      "phone (no pop-up, no takeover on unlock) and the phone reminds you out "
@@ -97,7 +114,10 @@ class Attention(Plugin):
              "`attention.notices {limit}` lists short summaries of their urgent and family "
              "notifications. Approvals reach the phone by themselves: they queue quietly and the "
              "phone reminds the person out loud when the room is quiet. `attention.log {limit}` "
-             "reads the 30-day log of decisions and reminders.\n")
+             "reads the 30-day log of decisions and reminders. `attention.stream {limit, before, "
+             "source: phone|alert|decision|work, important}` is the person's Feed (what came in, "
+             "newest first); `attention.sorting` says how they sorted apps (only they change "
+             "it).\n")
 
     def __init__(self) -> None:
         super().__init__()
@@ -160,6 +180,14 @@ class Attention(Plugin):
             except Exception:
                 log.exception("attention tick failed")
 
+    def knowledge(self) -> Any:
+        """The knowledge service, for the Feed's work updates (or None)."""
+        if self._node is None:
+            return None
+        with contextlib.suppress(Exception):
+            return getattr(self._node.plugin("knowledge"), "service", None)
+        return None
+
     def relay_rows(self) -> list[tuple[str, str]]:
         """``(device:<worker_id>, "<name> (phone)")`` for the Tokens page."""
         return self.service.relay_rows()
@@ -206,6 +234,20 @@ class Attention(Plugin):
         return {"count": len(rows), "lines": [self.service.eventlog.line(r, local) for r in rows],
                 "rows": [{k: r[k] for k in ("id", "at", "source", "outcome", "what", "why", "how")}
                          for r in rows]}
+
+    @capability("stream", risk="read", tags=("sensitive",), scope="multi-user")
+    def stream(self, limit: int = 30, before: float = 0, source: str = "",
+               important: bool = False) -> dict:
+        """The person's Feed, newest first: the phones' quiet feeds (summaries, never full text), alerts, decisions and finished or blocked tasks, plus what waits on them and how they sorted apps. limit 1-200; before: epoch seconds (page back); source phone|alert|decision|work; important: urgent and family only."""
+        if source and source not in ("phone", "alert", "decision", "work"):
+            raise CapError("source: phone, alert, decision or work")
+        return self.service.stream(limit, before, source, bool(important), self.knowledge())
+
+    @capability("sorting", risk="read", scope="multi-user")
+    def sorting(self) -> dict:
+        """How the person sorted apps (ring me, tell me, just list it, hide it) and the family names; pushed to every phone in front of its own rules. Only the person changes it (the Feed page or the phone's Attention tab)."""
+        return {"sorting": self.service.sorting(), "family": self.service.family(),
+                "pushed": bool(self.settings.get("push_rules", True))}
 
 
 PLUGIN = Attention

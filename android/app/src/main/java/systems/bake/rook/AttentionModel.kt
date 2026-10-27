@@ -222,6 +222,20 @@ class EventLog(private val cap: Int = 1000) {
 }
 
 /** The quiet feed: non-ignored notification summaries (newest last), capped and kept 7 days, plus a daily ignored count. */
+object AttentionModel {
+    /** `[start, end)` index ranges of consecutive equal keys (one app's lines in a row), in order. */
+    fun runs(keys: List<String>): List<Pair<Int, Int>> {
+        val out = mutableListOf<Pair<Int, Int>>()
+        var i = 0
+        while (i < keys.size) {
+            var j = i + 1
+            while (j < keys.size && keys[j] == keys[i] && keys[i].isNotEmpty()) j++
+            out.add(i to j); i = j
+        }
+        return out
+    }
+}
+
 class QuietFeed(private val cap: Int = 300, private val maxAgeSecs: Double = 7 * 86400.0) {
     private val entries = ArrayDeque<JSONObject>()
     private val ignored = sortedMapOf<Long, Int>()

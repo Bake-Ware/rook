@@ -47,6 +47,38 @@ class AttentionRulesTest {
         assertEquals("ignore", pri(item("com.cvs.launchers.cvs", "CVS", "20% off vitamins", "Rewards week")))
     }
 
+    @Test fun workAccountsAndSchoolBoardsAreNotSchool() {
+        // Seen on bakephone 2026-10-27: a work sign-in prompt and an employer's name sorted as school.
+        assertEquals("normal", pri(item("com.azure.authenticator", "Authenticator", "New sign-in request for your work or school account", "")))
+        assertEquals("normal", pri(item("com.microsoft.office.outlook", "Outlook", "Mary Lemons", "Texas Association of School Boards: agenda")))
+        assertEquals("school", rules.classify(item("com.google.android.calendar", "Calendar", "Advising appt school", "11:30 AM")).category)
+    }
+
+    @Test fun aChoiceGoesInFrontAndReplacesTheLastOneForThatApp() {
+        val a = AttentionRules.withChoice(null, "Google", "com.google.android.googlequicksearchbox", "ignore")
+        assertTrue(a.getBoolean("extend_default"))
+        val google = item("com.google.android.googlequicksearchbox", "Google", "75° in San Antonio", "Mostly sunny")
+        assertEquals("ignore", AttentionRules.effective(defaults, a).classify(google).priority)
+        assertEquals("ignore", AttentionRules.choiceOf(a, "Google", "com.google.android.googlequicksearchbox"))
+        // The same app again: one rule, the new choice; by name only for an app without a package.
+        val b = AttentionRules.withChoice(AttentionRules.withChoice(a, "Google", "com.google.android.googlequicksearchbox", "family"),
+            "Chat", "", "urgent")
+        assertEquals(2, b.getJSONArray("rules").length())
+        assertEquals("family", AttentionRules.effective(defaults, b).classify(google).priority)
+        assertEquals(AttentionRules.Verdict("urgent", "urgent", "yours: ring me (Chat)"),
+            AttentionRules.effective(defaults, b).classify(item("com.google.android.apps.dynamite", "Chat", "Autumn", "ok")))
+        // Back to the phone's own rules; rules that aren't the person's are kept.
+        val hub = JSONObject("""{"extend_default":true,"family_names":["Autumn"],"rules":[{"priority":"family","match":{"words":["x"]},"note":"hub"}]}""")
+        val c = AttentionRules.withChoice(AttentionRules.withChoice(hub, "Chat", "", "urgent"), "Chat", "", "default")
+        assertEquals(1, c.getJSONArray("rules").length())
+        assertEquals("hub", c.getJSONArray("rules").getJSONObject(0).getString("note"))
+        assertEquals("Autumn", c.getJSONArray("family_names").getString(0))
+        assertNull(AttentionRules.choiceOf(c, "Chat", ""))
+        // Every choice is a rule the phone (and the hub's check) accepts.
+        val all = AttentionRules.CHOICES.keys.fold(null as JSONObject?) { d, p -> AttentionRules.withChoice(d, "App$p", "com.app.$p", p) }!!
+        assertEquals(4, AttentionRules.rulesOf(all.getJSONArray("rules")).size)
+    }
+
     @Test fun shippingPromoNewsletterIgnored() {
         assertEquals("ignore", pri(item("com.google.android.gm", "Gmail", "Your package", "Out for delivery today")))
         assertEquals("ignore", pri(item("com.google.android.gm", "Gmail", "Weekend coupon", "Use code SAVE")))

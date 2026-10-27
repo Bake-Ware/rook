@@ -145,7 +145,8 @@ object AttentionStore {
         // Only the summary fields: the same privacy rule as notice events.
         quiet.recent(limit.coerceIn(1, 300)).forEach { e ->
             out.put(JSONObject().put("id", e.optString("id")).put("ts", e.optDouble("ts")).put("app", e.optString("app"))
-                .put("category", e.optString("category")).put("priority", e.optString("priority")).put("summary", e.optString("summary")))
+                .put("pkg", e.optString("pkg")).put("category", e.optString("category")).put("priority", e.optString("priority"))
+                .put("summary", e.optString("summary")))
         }
         JSONObject().put("ok", true).put("entries", out).put("ignored_7d", quiet.ignoredCount()).toString()
     }
@@ -179,6 +180,29 @@ object AttentionStore {
         if (doc == null) File(dir, "rules.json").delete() else write("rules.json", doc.toString())
         return JSONObject().put("ok", true).put("source", if (doc == null) "default" else "override").put("effective_rules", rules.rules.size).toString()
     } }
+
+    /**
+     * The person sorted an app on the Attention tab: their choice goes in front of the rules at once, and a
+     * `sorted` event tells the hub, which keeps every phone's sorting the same (it pushes it back with
+     * attention.rules_set). [priority] urgent|family|normal|ignore, or "default" for the phone's own rules.
+     */
+    fun sort(ctx: Context, app: String, pkg: String, priority: String) {
+        synchronized(lock) {
+            ensure(ctx.applicationContext)
+            val doc = AttentionRules.withChoice(override, app, pkg, priority)
+            override = doc
+            rules = AttentionRules.effective(defaults, doc)
+            write("rules.json", doc.toString())
+            event("sorted", JSONObject().put("app", app).put("pkg", pkg).put("priority", priority))
+        }
+        changed()
+    }
+
+    /** The person's choice for this app, if they made one (here or on the hub). */
+    fun choice(ctx: Context, app: String, pkg: String): String? = synchronized(lock) {
+        ensure(ctx.applicationContext)
+        AttentionRules.choiceOf(override, app, pkg)
+    }
 
     /**
      * attention.remind finished (SpokenReminder): one `reminded` event for the hub's poll. Only the
@@ -384,7 +408,7 @@ object AttentionStore {
             val summary = AttentionRules.summary(label, v.category, title, text)
             lastId = maxOf(System.currentTimeMillis(), lastId + 1)
             val id = "f" + java.lang.Long.toString(lastId, 36)
-            quiet.add(JSONObject().put("id", id).put("ts", t).put("app", label).put("category", v.category)
+            quiet.add(JSONObject().put("id", id).put("ts", t).put("app", label).put("pkg", pkg).put("category", v.category)
                 .put("priority", v.priority).put("summary", summary), t)
             saveFeed()
             if (v.priority == AttentionRules.URGENT || v.priority == AttentionRules.FAMILY) {

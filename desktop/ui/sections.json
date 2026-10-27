@@ -2,6 +2,7 @@
   "_comment": "The dashboard's sidebar (rook/web/index.html, nav groups): the tray's Dashboard menu and the Rook panel. tests/test_desktop_sections.py keeps this in step with the hub.",
   "sections": [
     {"id": "feed", "title": "Feed", "pages": [
+      {"hash": "feed", "title": "Feed"},
       {"hash": "overview", "title": "Overview"},
       {"hash": "start", "title": "Start page"}
     ]},
