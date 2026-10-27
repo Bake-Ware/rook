@@ -1291,6 +1291,21 @@
   "shell.which": {
    "tier": "read"
   },
+  "show.close": {
+   "tier": "write"
+  },
+  "show.list": {
+   "tier": "read"
+  },
+  "show.present": {
+   "tier": "write",
+   "tags": [
+    "physical"
+   ]
+  },
+  "show.screens": {
+   "tier": "read"
+  },
   "sms.list": {
    "tier": "exec",
    "tags": [
