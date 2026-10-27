@@ -182,7 +182,8 @@ async def test_refs_the_agent_never_saw_and_queries_that_act_are_refused():
     out = json.loads(await bridge.act("r1", "page_go", {"page": "account", "query": "invite=x"},
                                       timeout=0.05))
     assert not out["ok"] and "for the person" in out["error"]
-    for query in ("v=huddle&hb=_", "v=%68uddle&hb=_", "%76=huddle", "?v=huddle", "v=board&hp=p1"):
+    for query in ("v=huddle&hb=_", "v=%68uddle&hb=_", "%76=huddle", "?v=huddle", "v=board&hp=p1",
+                  "v=HUDDLE", "hb"):
         out = json.loads(await bridge.act("r1", "page_go", {"page": "work", "query": query},
                                           timeout=0.05))
         assert not out["ok"] and "start one" in out["error"], query

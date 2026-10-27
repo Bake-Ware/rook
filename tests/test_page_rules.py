@@ -118,6 +118,9 @@ def test_the_hub_and_the_page_agree_on_which_queries_are_fine():
     assert _js_set("QUERY_OK") == set(page.QUERY_OK)
     assert _js_set("HUDDLE_KEYS") == set(page.HUDDLE_KEYS)
     queries = ["v=huddle", "v=%68uddle&hb=_", "%76=huddle", "?v=huddle", "v=board&hb=_",
-               "v=HUDDLE", "v=board&project=p1", "?v=list", "", "v=timeline"]
+               "v=HUDDLE", "v=board&project=p1", "?v=list", "", "v=timeline",
+               # Parser edges, so a Python/JS difference would show here:
+               "hb", "v=board;hb=_", "x;hb=_", "v=hud+dle", "v=+huddle+", "v=board&v=huddle",
+               "v=%zz&hb", "v=%zzhuddle", "%20v%20=huddle", "v=board#hb=_", "??v=huddle"]
     got = _judge([{"go": True, "page": "work", "query": q} for q in queries])
     assert [bool(g) for g in got] == [page.opens_huddle(q) for q in queries], list(zip(queries, got))
