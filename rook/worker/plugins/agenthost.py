@@ -54,7 +54,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ...core.pluginkit import fail, which
+from ...core.pluginkit import fail, no_window, which
 from ...core.text import clip
 from .. import rolehome, rolemem
 from ..plugin import Plugin, capability, setting
@@ -548,7 +548,8 @@ class AgentHost(Plugin):
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT, env={**os.environ, **_harness_env()})
+                stderr=asyncio.subprocess.STDOUT, env={**os.environ, **_harness_env()},
+                **no_window())
         except OSError:
             return 127, ""
         try:
@@ -739,7 +740,7 @@ class AgentHost(Plugin):
         proc = await asyncio.create_subprocess_exec(
             *argv, cwd=cwd, env=env, stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            limit=8 * 1024 * 1024, start_new_session=True)
+            limit=8 * 1024 * 1024, start_new_session=True, **no_window())
         self._running[turn_id] = proc
         turn = Turn()
         stopped = ""

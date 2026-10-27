@@ -46,7 +46,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .pluginkit import is_termux
+from .pluginkit import is_termux, no_window
 
 log = logging.getLogger("rook.core.facts")
 
@@ -163,7 +163,7 @@ def _gpus() -> list[dict]:
     try:
         out = subprocess.run(
             [exe, "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=3)
+            capture_output=True, text=True, timeout=3, **no_window())
     except Exception:
         return []
     gpus = []

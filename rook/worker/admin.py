@@ -30,6 +30,7 @@ import shlex
 from typing import Any
 
 from ..core.paths import worker_state_dir
+from ..core.pluginkit import no_window
 from .plugin import Plugin
 
 log = logging.getLogger("rook.worker.admin")
@@ -366,7 +367,7 @@ class WorkerAdmin:
             try:
                 proc = await asyncio.create_subprocess_shell(
                     cmd, stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE)
+                    stderr=asyncio.subprocess.PIPE, **no_window())
                 out, err = await asyncio.wait_for(proc.communicate(), timeout)
             except asyncio.TimeoutError:
                 return {"ok": False, "error": f"timed out after {timeout}s", "cmd": cmd}

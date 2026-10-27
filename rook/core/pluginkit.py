@@ -96,7 +96,7 @@ async def run(cmd: Sequence[str], timeout: float = 30.0, *,
         *argv,
         stdin=asyncio.subprocess.PIPE if payload is not None else asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        env=child_env, cwd=cwd)
+        env=child_env, cwd=cwd, **no_window())
     try:
         out, err = await asyncio.wait_for(proc.communicate(payload), timeout)
     except asyncio.TimeoutError:
@@ -135,6 +135,17 @@ def which(name: str, *alternatives: str) -> str | None:
 
 def is_windows() -> bool:
     return sys.platform == "win32"
+
+
+#: CreateProcess flag: the Windows worker runs under pythonw.exe (no console),
+#: so every console program it starts would otherwise flash its own window.
+CREATE_NO_WINDOW = 0x08000000
+
+
+def no_window() -> dict:
+    """Extra ``subprocess``/``create_subprocess_*`` kwargs that keep a console
+    child's window hidden on Windows (and nothing elsewhere)."""
+    return {"creationflags": CREATE_NO_WINDOW} if is_windows() else {}
 
 
 def is_termux() -> bool:

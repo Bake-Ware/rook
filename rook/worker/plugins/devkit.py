@@ -57,7 +57,7 @@ from typing import Any
 from ...core.db import atomic_write_json
 from ...core.devices import Device, device_worker_id, valid_device_name
 from ...core.plugin import TIMEOUT_MARGIN, CapMeta
-from ...core.pluginkit import ArgError, CapError, fail
+from ...core.pluginkit import ArgError, CapError, fail, no_window
 from ..plugin import Plugin, capability, setting
 
 log = logging.getLogger("rook.worker.devkit")
@@ -797,7 +797,8 @@ async def run_argv(r: dict, values: dict, secrets: dict) -> dict:
     env.update({k: _fill(v, values, secrets) for k, v in (r.get("env") or {}).items()})
     try:
         proc = await asyncio.create_subprocess_exec(
-            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env)
+            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
+            **no_window())
     except OSError as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
     try:

@@ -52,6 +52,24 @@ def test_run_missing_binary_raises_file_not_found():
         asyncio.run(kit.run(["definitely-not-a-rook-binary"], 5))
 
 
+def test_run_hides_the_console_window_on_windows(monkeypatch):
+    """The Windows worker runs under pythonw.exe: a console child started
+    without CREATE_NO_WINDOW flashes a window on the person's desktop."""
+    seen = {}
+
+    async def fake_exec(*argv, **kwargs):
+        seen.update(kwargs)
+        raise FileNotFoundError(argv[0])
+    monkeypatch.setattr(kit.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(kit, "is_windows", lambda: True)
+    with pytest.raises(FileNotFoundError):
+        asyncio.run(kit.run(["tool"], 5))
+    assert seen["creationflags"] == kit.CREATE_NO_WINDOW
+    assert kit.no_window() == {"creationflags": kit.CREATE_NO_WINDOW}
+    monkeypatch.setattr(kit, "is_windows", lambda: False)
+    assert kit.no_window() == {}
+
+
 # -- platform -----------------------------------------------------------------
 
 @pytest.mark.parametrize("env,expect", [
