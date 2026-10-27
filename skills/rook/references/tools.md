@@ -806,16 +806,19 @@ Native plugins of the Android app's embedded worker, in place of (or beside) the
 
 | Cap | Args | Risk | Does |
 |---|---|---|---|
+| `device.apps` | query='', limit=200 | read | Apps on the launcher: label and package, sorted by label. query filters by label or package (case-insensitive… |
 | `device.clipboard_get` | — | exec | Read the clipboard. |
 | `device.clipboard_set` | text | exec | Put text on the clipboard. |
 | `device.find` | seconds=30 | exec | Ring at maximum alarm volume for 1–120 seconds; restores volume after. |
 | `device.find_stop` | — | exec | Stop the find-device ring and restore the previous alarm volume. |
 | `device.info` | — | read | Model, Android version, screen, uptime, and battery-independent bits. |
+| `device.intent` | kind, text='', to='', subject='', mode='', seconds=0, hour?, minute=0, label='', page='', package='', start=true, screen=false | exec | Common phone actions in one call. kind: share (text, subject: the share sheet), dial (to: opens the dialer wi… |
 | `device.keep_awake` | on, minutes=30 | exec | Keep the screen on (so it never locks) for `minutes` (1–1440), then release; on=false releases now. |
 | `device.keep_awake_settings` | auto?, idle_minutes? | exec | Change the passive setting now (same as the app's Settings screen): auto = "Keep phone awake while agent is w… |
 | `device.keep_awake_status` | — | read | Keep-awake state: on, mode (manual\|auto), until (epoch s), remaining_s, overlay/wake_lock in use, screen_on,… |
-| `device.launch` | package | exec | Launch an installed app by package name (e.g. com.android.settings). |
-| `device.open_url` | url | exec | Open a URL (or any Uri) in the default handler app. |
+| `device.launch` | package='', label='', screen=false | exec | Launch an installed app by package name (e.g. com.android.settings) or by its launcher label (label="Maps"; a… |
+| `device.open_url` | url, screen=false | exec | Open a URL (or any Uri) in the default handler app. screen=true waits for the app to come up and returns the… |
+| `device.sound` | stream='media', level?, step='', ringer='', dnd='' | exec | Read or set the volume, ringer and Do Not Disturb. |
 | `device.torch` | on=true | exec | Flashlight on/off (no permission needed via CameraManager). |
 | `device.unlock` | pin='', hold_ms=9000, pre_swipe=true | exec | Unlock a PIN-secured screen: wake, surface the PIN bouncer, and tap the digits at keypad positions computed f… |
 | `device.unlock_status` | — | read | Whether an unlock PIN is saved in the app (never the PIN itself), and whether passive keep-awake may use it (… |
@@ -839,6 +842,13 @@ Native plugins of the Android app's embedded worker, in place of (or beside) the
 | Cap | Args | Risk | Does |
 |---|---|---|---|
 | `location.get` | timeout=8.0 | exec | Get lat/lon, accuracy, age, stale flag and Maps URL. |
+
+**media_android**
+
+| Cap | Args | Risk | Does |
+|---|---|---|---|
+| `media.control` | action='toggle', package='' | exec | Play, pause, toggle, next, previous, stop, forward or rewind. |
+| `media.now` | — | read | What is playing: each active media session's app, state (playing\|paused\|stopped\|buffering...), title, artist,… |
 
 **notify_android**
 
@@ -878,9 +888,12 @@ Native plugins of the Android app's embedded worker, in place of (or beside) the
 
 | Cap | Args | Risk | Does |
 |---|---|---|---|
-| `ui.back` | — | exec | Press Back (the global accessibility action). |
-| `ui.click` | text='', desc='', id='', contains=false, index=0, long=false | exec | Click the node whose text, desc (content description) or id (view id, with or without the package: prefix) ma… |
+| `ui.back` | screen=false | exec | Press Back (the global accessibility action). screen=true returns the screen after it settles. |
+| `ui.click` | text='', desc='', id='', contains=false, index=0, long=false, wait=0, screen=false | exec | Click the node whose text, desc (content description) or id (view id, with or without the package: prefix) ma… |
 | `ui.nodes` | all=false, contains='', limit=300 | exec | Visible nodes on screen, top-to-bottom: text, desc, id, class, clickable, scrollable, checked, bounds [l,t,r,… |
-| `ui.scroll` | direction='down', text='', id='', contains=false | exec | Scroll one page down (forward) or up (backward). |
+| `ui.screen` | limit=60, text_limit=40 | exec | The current screen, compactly: package and app; items to act on (label, kind button\|field\|toggle\|list, detail… |
+| `ui.scroll` | direction='down', text='', id='', contains=false, screen=false | exec | Scroll one page down (forward) or up (backward). |
 | `ui.text` | — | exec | All visible text on the current screen (top-to-bottom). |
+| `ui.type` | text, label='', id='', contains=false, index=-1, append=false, submit=false, wait=0, screen=false | exec | Type text into a field in one call (no click first). label names the field: its hint, description, label view… |
+| `ui.wait` | text='', desc='', id='', contains=false, gone=false, package='', changed_from='', settle_ms=0, timeout=8, screen=true | exec | Wait (up to timeout seconds, max 60) until the screen is how you want it, then return it (screen=false leaves… |
 <!-- END GENERATED: android-caps -->

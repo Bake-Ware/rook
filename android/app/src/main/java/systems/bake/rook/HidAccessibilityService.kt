@@ -7,8 +7,10 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -29,7 +31,13 @@ class HidAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         // View ids make ui.nodes / ui.click usable by id. Set here as well as in
         // the XML so a service bound before the XML change still reports them.
-        serviceInfo = serviceInfo?.apply { flags = flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS }
+        // Interactive windows: a dropdown or popup menu is its own window above
+        // the activity, which rootInActiveWindow alone never shows.
+        serviceInfo = serviceInfo?.apply {
+            flags = flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+        }
+        lastChange = SystemClock.uptimeMillis()
         instance = this
         KeepAwake.accessibilityChanged()
     }
@@ -40,7 +48,14 @@ class HidAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) { /* unused */ }
+    /** Only notes when the screen last changed (ui.wait's "settled"); nothing else runs here. */
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        when (event?.eventType) {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED, AccessibilityEvent.TYPE_VIEW_SCROLLED ->
+                lastChange = SystemClock.uptimeMillis()
+        }
+    }
     override fun onInterrupt() { /* unused */ }
 
     private fun tapInternal(x: Float, y: Float): Boolean {
@@ -56,8 +71,8 @@ class HidAccessibilityService : AccessibilityService() {
     }
 
     private fun typeInternal(text: String): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val node = findFocusedEditable(root) ?: return false
+        val node = findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable }
+            ?: screenRoots().firstNotNullOfOrNull { findFocusedEditable(it) } ?: return false
         val args = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         }
@@ -65,9 +80,10 @@ class HidAccessibilityService : AccessibilityService() {
     }
 
     private fun dumpTextInternal(): String {
-        val root = rootInActiveWindow ?: return ""
+        val roots = screenRoots()
+        if (roots.isEmpty()) return ""
         val sb = StringBuilder()
-        collectText(root, sb, 0)
+        for (root in roots) collectText(root, sb, 0)
         return sb.toString().trim()
     }
 
@@ -88,9 +104,31 @@ class HidAccessibilityService : AccessibilityService() {
 
     private class Hit(val node: AccessibilityNodeInfo, val depth: Int)
 
-    /** Visible nodes of the active window in tree (top-to-bottom) order. */
+    /**
+     * Roots of the windows the ui.* caps read: the active window, then any app
+     * window above it (dropdowns, popup menus, dialogs). See ScreenModel.pickWindows.
+     */
+    private fun screenRoots(): List<AccessibilityNodeInfo> {
+        val active = rootInActiveWindow
+        val wins: List<AccessibilityWindowInfo> = try { windows ?: emptyList() } catch (_: Exception) { emptyList() }
+        if (wins.isEmpty()) return listOfNotNull(active)
+        // Roots of app windows only (popups, dialogs, the activity): their package
+        // keeps another app's window out (ScreenModel.pickWindows).
+        val roots = wins.map { w ->
+            if (w.isActive) active ?: w.root
+            else if (w.type == AccessibilityWindowInfo.TYPE_APPLICATION) w.root else null
+        }
+        val picked = ScreenModel.pickWindows(wins.mapIndexed { i, w ->
+            SWindow(w.type, w.layer, w.isActive, roots[i]?.packageName?.toString())
+        })
+        if (picked.isEmpty()) return listOfNotNull(active)
+        return picked.mapNotNull { roots[it] }.distinct()
+    }
+
+    /** Visible nodes of the screen's windows in tree (top-to-bottom) order. */
     private fun visibleNodes(): List<Hit> {
-        val root = rootInActiveWindow ?: return emptyList()
+        val roots = screenRoots()
+        if (roots.isEmpty()) return emptyList()
         val out = ArrayList<Hit>()
         fun walk(n: AccessibilityNodeInfo?, depth: Int) {
             n ?: return
@@ -98,8 +136,94 @@ class HidAccessibilityService : AccessibilityService() {
             if (n.isVisibleToUser) out.add(Hit(n, depth))
             for (i in 0 until n.childCount) walk(n.getChild(i), depth + 1)
         }
-        walk(root, 0)
+        for (root in roots) walk(root, 0)
         return out
+    }
+
+    /** The screen copied once into plain nodes (ScreenModel), with live refs to act on. */
+    private fun snapshot(): List<SNode> {
+        var count = 0
+        fun copy(n: AccessibilityNodeInfo, depth: Int): SNode {
+            count++
+            val kids = ArrayList<SNode>()
+            if (depth < 60) {
+                for (i in 0 until n.childCount) {
+                    if (count > 4000) break
+                    n.getChild(i)?.let { kids.add(copy(it, depth + 1)) }
+                }
+            }
+            val r = Rect().also { n.getBoundsInScreen(it) }
+            val hint = if (Build.VERSION.SDK_INT >= 26) n.hintText?.toString() else null
+            return SNode(
+                text = n.text?.toString(), desc = n.contentDescription?.toString(),
+                id = n.viewIdResourceName, cls = n.className?.toString()?.substringAfterLast('.'),
+                hint = hint, labeledBy = n.labeledBy?.let { label(it) }?.takeIf { it.isNotEmpty() },
+                clickable = n.isClickable, longClickable = n.isLongClickable, scrollable = n.isScrollable,
+                editable = n.isEditable, checkable = n.isCheckable, checked = n.isChecked,
+                selected = n.isSelected, focused = n.isFocused, password = n.isPassword,
+                showingHint = Build.VERSION.SDK_INT >= 26 && n.isShowingHintText,
+                enabled = n.isEnabled, visible = n.isVisibleToUser,
+                bounds = intArrayOf(r.left, r.top, r.right, r.bottom), children = kids, ref = n,
+            )
+        }
+        return screenRoots().map { copy(it, 0) }
+    }
+
+    private fun summaryInternal(maxItems: Int, maxText: Int): String {
+        // The package from the same read as the items, so they never mix two moments.
+        val roots = snapshot()
+        val pkg = (roots.lastOrNull()?.ref as? AccessibilityNodeInfo)?.packageName?.toString()
+        return ScreenModel.summary(roots, maxItems, maxText, pkg).toString()
+    }
+
+    private fun revInternal(): String = ScreenModel.rev(snapshot())
+
+    /** ui.type: set text in the field named by label/id (else the focused or only one). */
+    private fun typeIntoInternal(label: String?, id: String?, contains: Boolean, index: Int,
+                                 text: String, append: Boolean, submit: Boolean): String {
+        val roots = snapshot()
+        val hits = ScreenModel.findFields(roots, label, id, contains)
+        val out = JSONObject()
+        val (pick, why) = ScreenModel.chooseField(hits, index)
+        if (pick == null) {
+            val names = JSONArray()
+            (if (hits.size > 1) hits else ScreenModel.fields(roots)).take(10).forEach {
+                names.put(JSONObject().put("label", ScreenModel.fieldName(it))
+                    .put("bounds", JSONArray(it.bounds.toList())))
+            }
+            val err = if (hits.isEmpty() && label == null && id == null) {
+                if (names.length() == 0) "no text field on screen" else "no focused field; name one with label or id"
+            } else why
+            return out.put("ok", false).put("error", err).put("matches", hits.size).put("fields", names).toString()
+        }
+        val f = hits[pick]
+        val node = f.ref as? AccessibilityNodeInfo ?: return out.put("ok", false).put("error", "field went away").toString()
+        val now = ScreenModel.newText(f, text, append)
+            ?: return out.put("ok", false).put("error", "can't append to a password field (its text can't be read); type it whole").toString()
+        node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, now)
+        }
+        val ok = node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+        out.put("ok", ok).put("matches", hits.size)
+            .put("field", JSONObject().apply {
+                put("label", ScreenModel.fieldName(f))
+                f.id?.let { put("id", it) }
+                if (f.password) put("password", true)
+                put("bounds", JSONArray(f.bounds.toList()))
+            })
+            .put("chars", text.length)
+        if (!ok) out.put("error", "the field refused the text")
+        if (ok && submit) {
+            if (Build.VERSION.SDK_INT >= 30) {
+                val sent = node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+                out.put("submitted", sent)
+                if (!sent) out.put("note", "the field has no enter action; ui.click its send button")
+            } else {
+                out.put("submitted", false).put("note", "submit needs Android 11+; ui.click the send button")
+            }
+        }
+        return out.toString()
     }
 
     private fun label(n: AccessibilityNodeInfo): String {
@@ -243,9 +367,8 @@ class HidAccessibilityService : AccessibilityService() {
         } else {
             // Breadth-first, so the outermost (main) list wins over nested carousels.
             target = null
-            val root = rootInActiveWindow
             val queue = ArrayDeque<AccessibilityNodeInfo>()
-            root?.let { queue.add(it) }
+            queue.addAll(screenRoots())   // top window first: an open dropdown's list
             while (queue.isNotEmpty()) {
                 val n = queue.removeFirst()
                 if (n.isScrollable && n.isVisibleToUser) { target = n; break }
@@ -270,6 +393,8 @@ class HidAccessibilityService : AccessibilityService() {
 
     companion object {
         @Volatile private var instance: HidAccessibilityService? = null
+        /** SystemClock.uptimeMillis() of the last window/content change event. */
+        @Volatile private var lastChange: Long = 0L
 
         @JvmStatic fun isEnabled(): Boolean = instance != null
 
@@ -307,6 +432,29 @@ class HidAccessibilityService : AccessibilityService() {
         /** Scroll the matched (or first) scrollable node; JSON result, or null if not enabled. */
         @JvmStatic fun scrollNode(forward: Boolean, text: String?, id: String?, contains: Boolean): String? =
             instance?.scrollInternal(forward, text, id, contains)
+
+        /** Compact screen JSON (ScreenModel.summary), or null if not enabled. */
+        @JvmStatic fun screenSummary(maxItems: Int, maxText: Int): String? = instance?.summaryInternal(maxItems, maxText)
+
+        /** Revision of what is on screen (changes when labels/values/toggles do), or null. */
+        @JvmStatic fun screenRev(): String? = instance?.revInternal()
+
+        /** Milliseconds since the screen last changed, or -1 if not enabled. */
+        @JvmStatic fun quietMs(): Long =
+            if (instance == null) -1L else SystemClock.uptimeMillis() - lastChange
+
+        /** How many visible nodes match text/desc/id (ui.click's rules), or -1 if not enabled. */
+        @JvmStatic fun matchCount(text: String?, desc: String?, id: String?, contains: Boolean): Int =
+            instance?.findMatches(text, desc, id, contains)?.size ?: -1
+
+        /** How many fields ui.type would pick for label/id, or -1 if not enabled. */
+        @JvmStatic fun fieldCount(label: String?, id: String?, contains: Boolean): Int =
+            instance?.let { ScreenModel.findFields(it.snapshot(), label, id, contains).size } ?: -1
+
+        /** ui.type; JSON result, or null if not enabled. */
+        @JvmStatic fun typeInto(label: String?, id: String?, contains: Boolean, index: Int,
+                                text: String, append: Boolean, submit: Boolean): String? =
+            instance?.typeIntoInternal(label, id, contains, index, text, append, submit)
 
         /** Package and label of the app in the active window, or null. */
         @JvmStatic fun screenApp(): Array<String>? = instance?.let { svc ->

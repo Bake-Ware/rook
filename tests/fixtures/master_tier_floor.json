@@ -935,6 +935,12 @@
    "tier": "exec",
    "tags": []
   },
+  "device.apps": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
   "device.clipboard_get": {
    "tier": "exec",
    "tags": []
@@ -953,6 +959,10 @@
   },
   "device.info": {
    "tier": "read",
+   "tags": []
+  },
+  "device.intent": {
+   "tier": "exec",
    "tags": []
   },
   "device.keep_awake": {
@@ -976,6 +986,12 @@
   "device.open_url": {
    "tier": "exec",
    "tags": []
+  },
+  "device.sound": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
   },
   "device.torch": {
    "tier": "exec",
@@ -1037,6 +1053,18 @@
    "tier": "exec",
    "tags": []
   },
+  "media.control": {
+   "tier": "exec",
+   "tags": [
+    "physical"
+   ]
+  },
+  "media.now": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
   "notify.act": {
    "tier": "exec",
    "tags": []
@@ -1093,6 +1121,12 @@
     "sensitive"
    ]
   },
+  "ui.screen": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
+  },
   "ui.scroll": {
    "tier": "exec",
    "tags": []
@@ -1100,6 +1134,16 @@
   "ui.text": {
    "tier": "exec",
    "tags": []
+  },
+  "ui.type": {
+   "tier": "exec",
+   "tags": []
+  },
+  "ui.wait": {
+   "tier": "exec",
+   "tags": [
+    "sensitive"
+   ]
   },
   "voice.replies": {
    "tier": "read",

@@ -75,6 +75,20 @@ version was `0.1.0`.
   `{secret:name}`, fetched at use only when granted in the delegate's `devkit.secrets` setting
   (the hub's `settings.worker_secret` honours it). Help topic `devices`; the house agent's
   instructions point to it. (manual: devices)
+- Phone caps that drive the phone in fewer calls (roadmap, APK: "caps that drive the phone
+  better"): `ui.screen` (a compact screen: things to act on with kind, label, value and center,
+  the other text, a revision), `ui.wait` (until a node shows or goes, an app is in front, the
+  screen changed or settled), `ui.type` (into a field named by its hint, label or caption, with
+  optional submit), `wait=` on `ui.click` (for the node to appear first) and `screen=true` on
+  `ui.click`/`ui.scroll`/`ui.back`/`ui.type`/`device.launch`/`device.open_url`/`device.intent`
+  (the new screen in the same reply). The `ui.*` caps now read dropdowns and popup menus that
+  open over an app (they are their own window). `device.launch label=` opens an app by name,
+  `device.apps` lists them, `device.intent` starts common actions (share, dial, directions, map,
+  timer, alarm, settings pages, web search, draft email or text, camera; never sends or calls),
+  `device.sound` reads and sets volume, ringer and Do Not Disturb, and `media.now` /
+  `media.control` show and drive what is playing. `device.open_url`, `device.launch` and
+  `device.intent` add `may_be_blocked` when Android 10+ may silently refuse a start from the
+  background (no overlay permission and no accessibility service). (manual: phones-and-tablets)
 - Phone app **Chat with <assistant>** widget (Bake, 2026-10-27: "push to talk, but it shows
   the conversation, like it does in the app"): a resizable widget with a Talk bar under the
   recent conversation, drawn like the app's Chat tab (bubbles, interrupted replies faded, newest
