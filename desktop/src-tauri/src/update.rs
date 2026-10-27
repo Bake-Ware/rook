@@ -71,11 +71,19 @@ fn preference(platform: &str, appimage: bool) -> &'static [&'static str] {
 pub fn pick(urls: &[String], current: &str, platform: &str, appimage: bool) -> Option<Update> {
     let mut best: Option<(Update, usize)> = None;
     for url in urls {
-        // One release file: no query, fragment or extra path tricks.
+        // One release file, <tag>/<name> in plain characters: no query,
+        // fragment, encoding or dot-segment tricks.
         let Some(rest) = url.strip_prefix(RELEASES) else {
             continue;
         };
-        if rest.split('/').count() != 2 || rest.contains(['?', '#', '\\']) || rest.contains("..") {
+        let safe = |part: &str| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+                && !part.starts_with('.')
+        };
+        if rest.split('/').count() != 2 || !rest.split('/').all(safe) {
             continue;
         }
         let Some(version) = version_of(url) else { continue };
@@ -121,6 +129,11 @@ mod tests {
             "https://github.com/Bake-Ware/rook/releases/download/v9/rook-desktop-9.0.0-x64-setup.exe?x=1",
             "https://github.com.evil.example/Bake-Ware/rook/releases/download/v9/rook-desktop-9.0.0-x64-setup.exe",
             "file:///rook-desktop-9.0.0-x64-setup.exe",
+            "https://github.com/Bake-Ware/rook/releases/download/%2e%2e/rook-desktop-9.0.0-x64-setup.exe",
+            "https://github.com/Bake-Ware/rook/releases/download/v9/rook-desktop-9.0.0-x64%20setup.exe",
+            "https://github.com/Bake-Ware/rook/releases/download/v9/rook-desktop-9.0.0\t-x64-setup.exe",
+            "https://github.com/Bake-Ware/rook/releases/download/.v9/rook-desktop-9.0.0-x64-setup.exe",
+            "https://github.com/bake-ware/rook/releases/download/v9/rook-desktop-9.0.0-x64-setup.exe",
         ] {
             assert_eq!(pick(&[url.to_string()], "0.1.0", "windows", false), None, "{url}");
         }

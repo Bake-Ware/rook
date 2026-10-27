@@ -142,9 +142,10 @@ pub fn task_running(stdout: &str) -> bool {
 
 /// Ids of the processes running this install's worker, from `pid command
 /// line` rows (`ps -axo pid=,args=`, or the Win32_Process query on Windows):
-/// the command line must name this install's bundle (`pyz`, whole path) and
-/// `--enrolled`. Another install, a dev worker or a test run doesn't match.
-/// Windows paths compare without case.
+/// the command line must name this install's bundle (`pyz`, a whole argument:
+/// nothing glued on before or after) followed by `--enrolled`. Another
+/// install, a dev worker or a test run doesn't match. Windows paths compare
+/// without case.
 pub fn worker_pids(rows: &str, pyz: &Path, windows: bool) -> Vec<u32> {
     let fold = |s: &str| if windows { s.to_lowercase() } else { s.to_string() };
     let want = fold(&pyz.display().to_string());
@@ -152,11 +153,14 @@ pub fn worker_pids(rows: &str, pyz: &Path, windows: bool) -> Vec<u32> {
         .filter_map(|l| {
             let (pid, cmd) = l.trim_start().split_once(char::is_whitespace)?;
             let cmd = fold(cmd);
-            let named = cmd.split(want.as_str()).nth(1).is_some_and(|after| {
-                // The whole path: nothing glued on (band-worker.pyz.bak).
-                after.is_empty() || after.starts_with([' ', '"', '\''])
+            let edge = |c: Option<char>| c.map_or(true, |c| c.is_whitespace() || c == '"' || c == '\'');
+            let found = cmd.match_indices(want.as_str()).any(|(at, _)| {
+                let (before, after) = (&cmd[..at], &cmd[at + want.len()..]);
+                edge(before.chars().next_back())
+                    && edge(after.chars().next())
+                    && after.split_whitespace().any(|a| a.trim_matches('"') == "--enrolled")
             });
-            (named && cmd.split_whitespace().any(|a| a.trim_matches('"') == "--enrolled")).then_some(())?;
+            found.then_some(())?;
             pid.trim().parse().ok()
         })
         .collect()
@@ -165,7 +169,9 @@ pub fn worker_pids(rows: &str, pyz: &Path, windows: bool) -> Vec<u32> {
 /// This install's worker processes running outside the app and its service.
 fn worker_processes(pyz: &Path) -> Vec<u32> {
     if cfg!(windows) {
-        const SCRIPT: &str = "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | \
+        // UTF-8, so a profile path with non-ASCII letters (C:\\Users\\José) matches.
+        const SCRIPT: &str = "[Console]::OutputEncoding = [Text.Encoding]::UTF8; \
+            Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | \
             ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }";
         match run(
             "powershell",
@@ -182,7 +188,8 @@ fn worker_processes(pyz: &Path) -> Vec<u32> {
             _ => vec![],
         }
     } else {
-        match run("ps", &["-axo", "pid=,args="]) {
+        // -ww: whole command lines (macOS cuts them at the terminal width).
+        match run("ps", &["-ww", "-axo", "pid=,args="]) {
             Some((true, out)) => worker_pids(&out, pyz, false),
             _ => vec![],
         }
@@ -461,12 +468,14 @@ mod tests {
         // A worker an update restarted outside its Scheduled Task (and the
         // child it relaunched), beside other Python processes.
         let pyz = PathBuf::from(r"C:\Users\me\.rook-band-worker\band-worker.pyz");
-        let out = "7452\t\"C:\\Program Files\\Python311\\python.exe\" C:\\llama\\claude-router.py\r\n\
+        let out = "7452\t\"C:\\Program Files\\Python311\\python.exe\" C:\\tools\\other.py\r\n\
             45928\tC:\\Users\\me\\.rook-band-worker\\venv\\Scripts\\pythonw.exe C:\\Users\\me\\.rook-band-worker\\band-worker.pyz --enrolled --ws\r\n\
             116568\tC:\\Users\\me\\.rook-band-worker\\venv\\Scripts\\pythonw.exe \"C:\\Users\\ME\\.rook-band-worker\\Band-Worker.pyz\" --enrolled\r\n\
             501\tpython C:\\dev\\rook\\band-worker.pyz --enrolled\r\n\
             502\tpython C:\\Users\\me\\.rook-band-worker\\band-worker.pyz --hub 127.0.0.1:7474\r\n\
             503\tpython C:\\Users\\me\\.rook-band-worker\\band-worker.pyz.bak --enrolled\r\n\
+            504\tpython D:\\x\\C:\\Users\\me\\.rook-band-worker\\band-worker.pyz --enrolled\r\n\
+            505\tpython --enrolled C:\\Users\\me\\.rook-band-worker\\band-worker.pyz --ws\r\n\
             9\t\r\n\
             notapid\tpython band-worker.pyz --enrolled\r\n";
         assert_eq!(worker_pids(out, &pyz, true), vec![45928, 116568]);
@@ -476,7 +485,13 @@ mod tests {
         let ps = "  812 /home/me/.rook-band-worker/venv/bin/python /home/me/.rook-band-worker/band-worker.pyz --enrolled --ws\n\
                   913 /home/me/rook/.venv/bin/python /home/me/rook/band-worker.pyz --enrolled\n\
                   914 python -m pytest tests/test_band-worker.pyz.py\n\
-                  915 /home/me/.rook-band-worker/venv/bin/python /home/ME/.rook-band-worker/band-worker.pyz --enrolled\n";
-        assert_eq!(worker_pids(ps, &pyz, false), vec![812]);
+                  915 /home/me/.rook-band-worker/venv/bin/python /home/ME/.rook-band-worker/band-worker.pyz --enrolled\n\
+                  916 python /tmp/x/home/me/.rook-band-worker/band-worker.pyz --enrolled\n\
+                  917 python '/home/me/.rook-band-worker/band-worker.pyz' --enrolled\n";
+        assert_eq!(worker_pids(ps, &pyz, false), vec![812, 917]);
+        // A profile with non-ASCII letters (the PowerShell query reads UTF-8).
+        let pyz = PathBuf::from(r"C:\Users\José\.rook-band-worker\band-worker.pyz");
+        let out = "77\tC:\\Users\\José\\.rook-band-worker\\venv\\Scripts\\pythonw.exe C:\\Users\\JOSÉ\\.rook-band-worker\\band-worker.pyz --enrolled --ws\r\n";
+        assert_eq!(worker_pids(out, &pyz, true), vec![77]);
     }
 }
