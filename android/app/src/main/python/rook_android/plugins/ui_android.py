@@ -130,7 +130,7 @@ class AndroidUiPlugin(Plugin):
         unless contains=true; index picks among several matches (0 = first, top-down).
         Clicks the nearest clickable ancestor, else taps the node's center. long=true
         long-presses. Not found -> ok false with near matches.
-        wait=<seconds> (up to 10) first waits for the node to appear (an app still
+        wait=<seconds> (up to 8) first waits for the node to appear (an app still
         opening, a dropdown still dropping). screen=true returns the screen after the
         click settles (see ui.screen) as screen."""
         if (err := _guard()):
@@ -138,7 +138,7 @@ class AndroidUiPlugin(Plugin):
         try:
             t, d, i, c = _opt(text), _opt(desc), _opt(id), _flag(contains)
             want = int(index)
-            secs = _num(wait, 0, 0, 10)
+            secs = _num(wait, 0, 0, 8)
             if secs > 0 and (t or d or i):
                 async def present():
                     n = await asyncio.to_thread(_Hid.matchCount, t, d, i, c)
@@ -270,7 +270,7 @@ class AndroidUiPlugin(Plugin):
         just above it or to its left; id matches its view id. With neither, the
         focused field, else the only field on screen. Replaces the field's text
         unless append=true; submit=true then presses the keyboard's enter/send
-        (Android 11+). wait=<seconds> (up to 10) first waits for the field;
+        (Android 11+). wait=<seconds> (up to 8) first waits for the field;
         screen=true returns the screen after it settles. Not found -> ok false
         with the fields on screen. The reply never repeats the text."""
         if (err := _guard()):
@@ -278,7 +278,7 @@ class AndroidUiPlugin(Plugin):
         lab, i, c = _opt(label), _opt(id), _flag(contains)
         want = int(index)
         try:
-            secs = _num(wait, 0, 0, 10)
+            secs = _num(wait, 0, 0, 8)
             if secs > 0:
                 async def present():
                     n = await asyncio.to_thread(_Hid.fieldCount, lab, i, c)
