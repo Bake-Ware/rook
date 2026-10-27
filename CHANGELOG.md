@@ -9,6 +9,11 @@ version was `0.1.0`.
 ## Unreleased
 
 ### Changed
+- LG webOS TVs: `tv.power_on` now wakes TVs on Wi-Fi (it sent Wake-on-LAN only to the wired
+  MAC, so it never woke them), waits until the TV answers and says why when it doesn't (including
+  the TV's own "Turn on via Wi-Fi" setting); a request on a dropped connection is retried once;
+  `tv.launch` understands names as people say them (`disney plus`); `tv.status` shows where the
+  sound goes and whether the TV can be woken. (manual: devices)
 - Dashboard sidebar in five sections (site rework from Bake's 2026-10-26 roadmap): **Feed**
   (Overview, Start page), **Work** (Work, Huddles, Sessions, Knowledge, Jobs, Memory),
   **Intelligence sources** (Home agent, Roles, Model providers, Voice, Agent instructions),
@@ -32,6 +37,10 @@ version was `0.1.0`.
   (manual: work, conference-table)
 - A `bad args` reply from a hub cap lists the arguments the cap takes and the closest name
   for a mistyped one (`did you mean 'since_seq' for 'since'?`). (manual: n/a)
+- Home Assistant devices on the band (`homeassistant` plugin): each chosen HA device (lamp, plug,
+  thermostat, camera, fridge) becomes a device worker with live state and `ha.status`, `ha.on`,
+  `ha.off`, `ha.set` and the admin `ha.service`; HA scenes from the delegate. LG TVs gain
+  `tv.type` (type into the open search box) and `tv.sleep` (a sleep timer). (manual: devices)
 - Phone app **Chat with <assistant>** widget (Bake, 2026-10-27: "push to talk, but it shows
   the conversation, like it does in the app"): a resizable widget with a Talk bar under the
   recent conversation, drawn like the app's Chat tab (bubbles, interrupted replies faded, newest
