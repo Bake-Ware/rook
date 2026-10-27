@@ -483,6 +483,13 @@ are set only in the environment or on the command line.
 |---|---|---|---|---|---|---|
 | `security.enabled` | Advanced security | hub | bool | off | `ROOK_SECURITY_ADVANCED`, `ROOK_SECURITY_ENABLED` | live |
 
+## Show (hub plugin, runs in mcp)
+
+| Key | Label | Scope | Type | Default | Env / flag | Apply |
+|---|---|---|---|---|---|---|
+| `show.screens` | Screens to show on | hub | list |  | `ROOK_SHOW_SCREENS` | live |
+| `show.minutes` | Show pages last (minutes) | hub | int | `60` | `ROOK_SHOW_MINUTES` | live |
+
 ## Tasks (hub plugin, runs in mcp)
 
 | Key | Label | Scope | Type | Default | Env / flag | Apply |

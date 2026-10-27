@@ -78,7 +78,7 @@ ROUTER_WHERE = (
     "request reaches you first. Understand what they want, protect their attention, and take "
     "exactly one path per request.")
 ROUTER_RULES = """Paths (pick one; the hub tells the person which one you took):
-- answer: questions, chat, status. Just reply (use band_status, knowledge_search, digest or waiting when you need facts).
+- answer: questions, chat, status. Just reply (use band_status, knowledge_search, digest or waiting when you need facts). When a picture, diagram, page or app answers better than words, call show as well and keep your reply to a line.
 - do: a quick, reversible action. Call do_action (worker, cap, args, summary); band_status with the worker lists its caps. The hub checks the trust map: it runs the action when the map says go, and otherwise turns it into a one-line ask for the person. When the playbook says to ask first, pass ask_first=true and the rule id.
 - dispatch: one clear piece of code work. Call dispatch_session (instructions the session can follow alone, a branch name like fix/short-name, a title). It reports back on its own.
 - huddle: fuzzy, big or multi-discipline work. Call open_huddle (title, roles, brief), or continue_huddle when a huddle on it exists.
@@ -145,6 +145,20 @@ TOOLS = {
         "under 120 characters), explain (2-3 plain sentences), more (detail on request).",
         {"line": {"type": "string"}, "explain": {"type": "string"},
          "more": {"type": "string"}}, ["line", "explain"]),
+    "show": _fn(
+        "show", "Answer by showing it: put one subject on the person's screen (their phone; "
+        "a TV only when named) and say a short line there. Use it when a picture, diagram, "
+        "page, list or app answers better than words. Exactly one subject: url (a web page), "
+        "image (https URL), diagram (Mermaid text or SVG), markdown, text, knowledge (a page "
+        "slug) or app (Android package or TV app). title names it. say: one or two short "
+        "sentences; leave it empty when your reply is spoken anyway (a voice request). where: "
+        "auto, a machine name, or none (just make the link). The reply says what was shown "
+        "and spoken, and the link.",
+        {"say": {"type": "string"}, "url": {"type": "string"}, "image": {"type": "string"},
+         "diagram": {"type": "string"}, "markdown": {"type": "string"},
+         "text": {"type": "string"}, "knowledge": {"type": "string"},
+         "app": {"type": "string"}, "title": {"type": "string"},
+         "where": {"type": "string"}}),
     "check_trust": _fn(
         "check_trust", "The trust map's ruling (and its citation) for a cap on a worker, or a "
         "push/merge to repo + branch.",
@@ -1281,7 +1295,8 @@ class FrontDoor:
         if state is None:
             state = {"did": [], "started": [], "asked": [], "edits": [], "tools": [],
                      "approved": None, "onboard": [], "acted": False}
-        tools = [TOOLS[n] for n in TOOLS]
+        # Overheard talk never puts anything on a screen.
+        tools = [TOOLS[n] for n in TOOLS if not (source == "scribe" and n == "show")]
         if self.access.store() is not None and source != "scribe":
             # Overheard talk never changes who may do what.
             tools += [ACCESS_TOOLS[n] for n in ACCESS_TOOL_NAMES]
@@ -1341,6 +1356,8 @@ class FrontDoor:
                                                             "tells them."}
         if name == "check_trust":
             return self._check(args)
+        if name == "show":
+            return await self._show(args, state, asker=asker, principal=principal, source=source)
         if name == "role_config":
             return self.home.sessions.role_config(
                 str(args.get("action") or "get"), args, principal=principal, said=said,
@@ -1512,6 +1529,58 @@ class FrontDoor:
             state["did"][-1]["ok"] = False        # a read is an answer, not something done
             state["did"][-1]["asked"] = "read"
         return out
+
+    async def _show(self, args: dict, state: dict, *, asker: str, principal: Any,
+                    source: str = "") -> dict:
+        """The ``show`` tool: show.present for the person who asked, never for
+        someone who may not call show.present themselves. A member's device
+        calls and knowledge read are theirs; an owner's are the house agent's
+        (like do_action's); an unverified asker only gets a link."""
+        if source == "scribe":
+            raise FrontError("overheard talk never puts anything on a screen")
+        sp = self.plugin("show")
+        if sp is None or not hasattr(sp, "deliver"):
+            raise FrontError("showing things on a screen is off on this hub")
+        if not self.home.may_call(principal, "show.present"):
+            raise FrontError(f"{asker} may not show things on screens themselves, so I won't "
+                             "for them")
+        if args.get("knowledge") and not self.home.may_read_knowledge(principal):
+            raise FrontError(f"{asker} may not read the knowledge wiki, so I won't show a page "
+                             "from it")
+        from ... import access
+        from ...authz import current_principal
+        known = principal is None or bool(getattr(principal, "verified", False))
+        restricted = access.restricted(principal) or not known
+        who = {"id": str(getattr(principal, "id", "") or asker),
+               "user": access.user_of(principal) if principal is not None else None,
+               "restricted": restricted}
+        keys = ("say", "url", "image", "diagram", "markdown", "text", "knowledge", "app",
+                "title", "where")
+        kw = {k: str(args.get(k) or "") for k in keys if args.get(k) not in (None, "")}
+        if not known:
+            kw["where"] = "none"     # someone unverified gets a link, never a screen
+        # A member's show runs as the member: their grants decide which screens
+        # they may use and their knowledge areas which pages they may show.
+        # Everyone else's runs as the house agent, under the trust map.
+        run_as = principal if restricted and known else self.principal()
+        tok = current_principal.set(run_as)
+        try:
+            with self.home._as_self():
+                out = await sp.deliver(who=who, **kw)
+        finally:
+            current_principal.reset(tok)
+        what = _one_line(out.get("title") or out.get("kind") or "it", 60)
+        if out.get("shown"):
+            state["did"].append({"summary": f"showed {what} on {out['screen']}", "ok": True})
+        else:
+            state["did"].append({"summary": f"show {what}", "ok": False,
+                                 "error": _one_line((out.get("notes") or ["no screen"])[0], 160)})
+        self.home.journal("show.present", {"kind": out.get("kind"), "where": kw.get("where") or
+                                           "auto", "for": asker},
+                          {"ok": True, "result": {
+                              "id": str(out.get("id") or "")[:6],   # the id is the link's key
+                              **{k: out.get(k) for k in ("screen", "voice", "shown", "spoken")}}})
+        return {"ok": True, **out}
 
     def _protected(self) -> set[str]:
         rp = self.plugin("role")

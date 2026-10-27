@@ -6,6 +6,8 @@ features:
   - features/device-workers-tvs-and-other-devices
   - plugin/worker/webos
   - settings/webos
+  - plugin/hub/show
+  - settings/show
 since: 0.1.0
 deprecated: false
 ---
@@ -93,3 +95,28 @@ approvals apply to them as to any other capability.
 
 On the delegate itself, `webos.list` shows every configured TV and why it
 is not reachable. More about delegates and devices: [[manual-workers]].
+
+## Showing you things on a screen
+
+When a picture, a diagram, a web page or an app answers better than words,
+Rook can say a short line and put the thing itself on a screen near you, in
+one go. Ask the house agent ("show me the floor plan"), or have an agent call
+`show.present` on the hub.
+
+- **Where it goes**: the screens listed in **Settings > Show > Screens to show
+  on**, in order; otherwise your phone (the house agent's phone setting);
+  otherwise the only phone that is online. A TV is used only when you name it
+  ("on the office TV") or list it there. With several phones and nothing
+  saying which is yours, Rook doesn't guess: it keeps the link instead.
+- **What it shows**: a web page or an app opens as it is. A picture, a
+  diagram, a list or a knowledge page becomes a small page of its own at
+  `https://<your hub>/show/...`, which any browser can open without signing
+  in. Only someone with the link can open it, and the link stops working
+  after an hour (**Settings > Show > Show pages last**, at most a day).
+- **When no screen is free**: Rook still says the line and gives you the
+  link. When nothing can speak, it still shows the page.
+
+Showing on a device uses that device's own permissions: a person can only
+show things on screens they may use, and the house agent follows the trust
+map, as for any other call.
+

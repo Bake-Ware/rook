@@ -198,6 +198,10 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `settings.reset` | key, scope='', target='', note='' | admin | Remove a stored value so the key inherits again (in history). |
 | `settings.set` | key, value, scope='', target='', note='', dry_run=false | admin | Store a setting (validated, attributed, in history). |
 | `settings.worker_secret` | worker_id, names | read | Vault secrets a stored setting assigns to this worker (fetch at use). |
+| `show.close` | id | write | End a show now: its link stops working. |
+| `show.list` | — | read | Recent shows that have not expired, newest first: `{shows: [{id, title, kind, url, created, expires, shown_on… |
+| `show.present` | say='', url='', image='', diagram='', markdown='', text='', knowledge='', app='', title='', where='auto', minutes=0 | write | Say a short line and show one subject on a screen near the person. |
+| `show.screens` | where='auto' | read | Where show.present would go now, without showing anything: `{screen, voice, why, online}` (`online`: workers… |
 | `task.read` | action='deck', kind='task', band?, id?, query='', data? | read | Read tasks/projects/concepts: deck\|search\|list\|get\|context\|status\|hygiene\|whiteboard. |
 | `task.write` | action, kind='task', band?, id?, data?, request_id? | write | Write tasks/projects/concepts: create\|update\|link\|retract\|claim\|release\|note\|jot\|batch. |
 | `telegram.send` | text, chat?, user? | write | Post a message to the configured Telegram chat. |
@@ -300,6 +304,9 @@ What each worker hosts: `serves` on a `rook_workers` row is `{sites: [{name, url
 
 ### settings
 Hub, band, worker and user settings with their source (default / hub / band / worker / user / file / env) on worker `rook`: `settings.get(key=…)` or `settings.get(prefix="core.", scope="hub")`, `settings.history`, `settings.describe`. Writes (`settings.set`, `settings.reset`, `settings.apply_worker`) are admin actions: ask the user first. A key set by an environment variable is locked; the reply says which.
+
+### show
+Answer with a short spoken line plus the thing itself on a screen: `rook_call(worker="rook", cap="show.present", args={"say": "Here is the floor plan.", "diagram": "graph TD; A-->B"})`. One subject: `url`, `image` (https or data:image URI), `diagram` (Mermaid or SVG), `markdown`, `text`, `knowledge` (page slug) or `app` (Android package / TV app); `title` names it. `where`: `auto` (the person's phone; TVs only when named or in show.screens), a worker name, or `none` (just make the link). `say` is one or two sentences; put the detail in the subject. The reply says `shown`, `spoken`, the `url`, and `unsaid` (say it yourself) when no voice took it. `show.screens` previews where auto would go; `show.list` / `show.close` your recent shows.
 
 ### tasks
 Tasks, projects and concepts. Use `rook_task(action="deck")` to see what is on; `claim` a task before working (your calls, consoles and handoffs then link to it, and the hub keeps the claim's whiteboard from them: `rook_task(action="whiteboard")` reads it, `action="jot"` adds decisions and open items); finish with `update` state done + `attrs.outcome` + an evidence `link`, or leave a handoff (released or ended without one, the whiteboard is saved as it). Over the band: `task.read` (deck/search/list/get) and `task.write` (create/update/link/retract/claim/release) on worker `rook`, with `kind=task|project|concept`. Hygiene nudges ride replies as `_hygiene` and show on the deck; `rook_task(action="hygiene")` lists open ones (`data {mine: true}`). A commit message with `rook: <task id, slug or name>` links the commit to that task as evidence when you hold a claim on it. Tasks and projects have speakable names (`brave-otter-lamp`): any `id` takes one; a write needs it exact.

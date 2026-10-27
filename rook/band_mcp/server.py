@@ -2137,6 +2137,11 @@ class McpService:
             return getattr(home, "sessions", None)
         for route in home_session_routes(_home_sessions):
             app.router.routes.insert(0, route)
+        # Show pages (show.present): the dashboard's public /show/<id> asks here.
+        from ..hub.plugins.show.web import routes as show_routes
+        for route in show_routes(lambda: (mcp._rook_hub.plugin("show")
+                                          if mcp._rook_hub is not None else None)):
+            app.router.routes.insert(0, route)
         # Overview, start page and themes (the ui hub plugin).
         from ..hub.plugins.ui.web import routes as ui_routes
         for route in ui_routes(lambda: mcp._rook_hub, accounts):
