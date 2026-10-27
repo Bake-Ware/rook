@@ -39,7 +39,7 @@ ECHO_WINDOW_S = 1.5
 ECHO_SPEAKER_MIN = float(os.environ.get('VOICE_ECHO_SPEAKER_MIN', '0.6'))
 # Speaker learning on the owner's phone (Speakers.learn_sample checks the clip itself):
 # a turn scoring at least this against the owner, at most this many clips per connection.
-# SPEAKER_LEARN_MIN is calculated per-connection to be at least the threshold.
+# The floor is never below the threshold: only sure voice matches are learned.
 _SPEAKER_LEARN_MIN_ENV = float(os.environ.get('VOICE_SPEAKER_LEARN_MIN', '0.30') or 0.30)
 SPEAKER_LEARN_PER_CONNECTION = int(os.environ.get('VOICE_SPEAKER_LEARN_PER_CONNECTION', '6') or 6)
 # Commands only at the start of an utterance ("hey sojourn, please enroll my voice"),
@@ -297,12 +297,15 @@ class Connection:
             return None
 
     def _owner_voice(self, pcm, heard, who_now, extra):
-        """The owner's phone, a real turn (not dropped, not echo). A turn at or above the
-        threshold anchors the connection on this device and returns; a turn below 0.30 clears
-        the anchor; otherwise nothing is learned. At the default threshold (0.45), learning
-        from the runtime is effectively off; the architecture was designed to bank only weak
-        matches (0.30-0.45), but that proved vulnerable to bystander drift and is now disabled
-        until redesigned. The anchor ends when someone else is heard. Guests join the cohort."""
+        """The owner's phone, a real turn (not dropped, not echo). Learning is on (Bake,
+        2026-10-27: "keep learning on"), but only from real voice matches: a turn that
+        speaker ID itself names as the owner at the threshold (0.45) or above. The first
+        such turn anchors the connection on this device; later ones on it are banked
+        (Speakers.learn_sample checks the clip: enrollment cosine >= the threshold, nobody
+        else matching as well, quality, the total cap). A turn that is the owner only by
+        default (a weak or short match) is never learned: banking those let a bystander
+        drift into the print (#241). Someone else, or any turn under 0.30, ends the anchor;
+        a clear stranger joins the cohort."""
         owner, speakers = self.identity.principal, self.speakers
         device = self.identity.worker or ''
         score = (heard.get('scores') or {}).get(owner)
@@ -314,14 +317,13 @@ class Connection:
                 with contextlib.suppress(Exception):
                     speakers.add_cohort(heard['vector'])
             return
-        if heard.get('principal') == owner and score >= getattr(speakers, 'threshold', 0.45):
+        learn_min = max(_SPEAKER_LEARN_MIN_ENV, getattr(speakers, 'threshold', 0.45))
+        if heard.get('principal') != owner or score is None or score < learn_min:
+            return
+        if self.speaker_anchor != device:
             self.speaker_anchor = device
             return
-        if score is None:
-            return
-        speaker_learn_min = max(_SPEAKER_LEARN_MIN_ENV, getattr(speakers, 'threshold', 0.45))
-        if (self.speaker_anchor is None or self.speaker_anchor != device or score < speaker_learn_min
-                or self.speaker_learned >= SPEAKER_LEARN_PER_CONNECTION or heard.get('vector') is None
+        if (self.speaker_learned >= SPEAKER_LEARN_PER_CONNECTION or heard.get('vector') is None
                 or not hasattr(speakers, 'learn_sample')):
             return
         try:

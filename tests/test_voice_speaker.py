@@ -517,16 +517,20 @@ def test_learn_sample_respects_learn_min_floor(tmp_path):
 
 
 def test_learned_clips_capped_per_person(tmp_path, monkeypatch):
-    """Learned clips are capped at LEARN_CAP per person across reconnects."""
+    """Learned clips never exceed LEARN_CAP per person: at the cap a new clip replaces
+    the weakest learned one (Bake 2026-10-27: "keep learning on"); 0 turns learning off."""
     monkeypatch.setattr(spk, "LEARN_CAP", 4)
     s = enrolled(tmp_path, ("bake", 500))
     bake = s._prints["bake"]
     for i in range(4):
-        assert s.learn_sample("bake", toward(bake, 0.46, seed=110 + i))["ok"]
-    assert len([c for c in s.bank("bake") if c["source"] == "learned"]) == 4
-    capped = s.learn_sample("bake", toward(bake, 0.5, seed=114))
-    assert capped["reason"] == "cap_reached"
-    assert len([c for c in s.bank("bake") if c["source"] == "learned"]) == 4
+        assert s.learn_sample("bake", toward(bake, 0.46 + 0.01 * i, seed=110 + i))["ok"]
+    weakest = [c for c in s.bank("bake") if c["source"] == "learned"][0]
+    replaced = s.learn_sample("bake", toward(bake, 0.5, seed=114))
+    assert replaced["ok"] and replaced["evicted"] == weakest["version"]
+    active = [c for c in s.bank("bake") if c["active"]]
+    assert len([c for c in active if c["source"] == "learned"]) == 4 and sum(c["pinned"] for c in active) == 3
+    monkeypatch.setattr(spk, "LEARN_CAP", 0)
+    assert s.learn_sample("bake", toward(bake, 0.5, seed=115))["reason"] == "cap_reached"
 
 
 def test_learned_cap_persists_across_reconnects(tmp_path, monkeypatch):
@@ -534,12 +538,12 @@ def test_learned_cap_persists_across_reconnects(tmp_path, monkeypatch):
     monkeypatch.setattr(spk, "LEARN_CAP", 3)
     s1 = enrolled(tmp_path, ("bake", 500))
     bake = s1._prints["bake"]
-    for i in range(3):
+    for i in range(4):
         assert s1.learn_sample("bake", toward(bake, 0.46, seed=120 + i))["ok"]
-    assert s1.learn_sample("bake", toward(bake, 0.47, seed=123))["reason"] == "cap_reached"
     s2 = make(tmp_path)
-    assert len([c for c in s2.bank("bake") if c["source"] == "learned"]) == 3
-    assert s2.learn_sample("bake", toward(bake, 0.5, seed=124))["reason"] == "cap_reached"
+    assert len([c for c in s2.bank("bake") if c["source"] == "learned" and c["active"]]) == 3
+    assert s2.learn_sample("bake", toward(bake, 0.5, seed=124))["ok"]
+    assert len([c for c in s2.bank("bake") if c["source"] == "learned" and c["active"]]) == 3
 
 
 def test_cohort_norm_does_not_name_below_threshold(tmp_path):
@@ -719,39 +723,57 @@ def test_bystander_midrange_never_learned(tmp_path):
     assert len(learned) == 0
 
 
-def test_owner_voice_at_threshold_anchors_not_learns(tmp_path):
-    """At score >= threshold, _owner_voice sets anchor and returns before learn_sample.
-    This documents that strong matches update anchor but don't reach the learning code."""
+def test_owner_voice_learns_only_sure_matches_after_an_anchor(tmp_path):
+    """Bake 2026-10-27 "keep learning on": the first sure match (>= threshold) anchors the
+    connection; later sure matches on the same device are banked. A turn that is the owner
+    only by default (no real match) is never learned, and another device re-anchors first."""
     from services.voice.runtime import Connection
     from services.voice.identity import Identity
 
     speakers = enrolled(tmp_path, ("owner", 500), threshold=0.45)
     owner_vec = speakers._prints["owner"]
-    owner_id = Identity("owner", worker="phone", owner=True)
-    strong_match = toward(owner_vec, 0.55, seed=400)
 
     class MockConnection:
-        def __init__(self):
+        def __init__(self, device):
             self.speaker_anchor = None
             self.speaker_learned = 0
-            self.identity = owner_id
+            self.identity = Identity("owner", worker=device, owner=True)
             self.speakers = speakers
             self.session = "test"
 
-        def _owner_voice(self, pcm, heard, who_now, extra):
-            Connection._owner_voice(self, pcm, heard, who_now, extra)
+        def turn(self, vector, score, principal="owner"):
+            extra = {}
+            Connection._owner_voice(self, speech(seconds=2.0), {"scores": {"owner": score}, "principal": principal,
+                                    "vector": vector, "label": principal or "guest"}, {"label": "owner"}, extra)
+            return extra
 
-    conn = MockConnection()
-    heard_owner = {"scores": {"owner": 0.95}, "principal": "owner", "vector": owner_vec, "label": "owner"}
-    who_now_owner = {"label": "owner"}
-    extra = {}
-    conn._owner_voice(b"", heard_owner, who_now_owner, extra)
-    assert conn.speaker_anchor == "phone" and "speaker_learned" not in extra
+    conn = MockConnection("phone")
+    first = conn.turn(toward(owner_vec, 0.6, seed=400), 0.6)
+    assert conn.speaker_anchor == "phone" and "speaker_learned" not in first
+    sure = conn.turn(toward(owner_vec, 0.55, seed=401), 0.55)
+    assert sure.get("speaker_learned"), sure
+    weak = conn.turn(toward(owner_vec, 0.38, seed=402), 0.38, principal=None)      # his phone, no real match
+    assert "speaker_learned" not in weak and "speaker_learn_skipped" not in weak
+    watch = MockConnection("watch")
+    assert "speaker_learned" not in watch.turn(toward(owner_vec, 0.6, seed=403), 0.6)
+    assert watch.speaker_anchor == "watch" and watch.turn(toward(owner_vec, 0.58, seed=404), 0.58).get("speaker_learned")
+    assert len([c for c in speakers.bank("owner") if c["source"] == "learned"]) == 2
 
-    heard_strong = {"scores": {"owner": 0.55}, "principal": "owner", "vector": strong_match, "label": "owner"}
-    extra = {}
-    conn._owner_voice(b"", heard_strong, who_now_owner, extra)
-    assert conn.speaker_anchor == "phone" and "speaker_learned" not in extra and "speaker_learn_skipped" not in extra
 
-    learned = [c for c in speakers.bank("owner") if c["source"] == "learned"]
-    assert len(learned) == 0
+def test_learned_clips_cannot_pull_a_bystander_in(tmp_path):
+    """Learning on (2026-10-27) keeps the drift guard: a voice that matches only through
+    learned clips (bank score lifted over the threshold, enrollment cosine 0.38) is
+    never learned itself, so learned clips can't bootstrap a bystander into the print."""
+    s = enrolled(tmp_path, ("bake", 500))
+    bake = s._prints["bake"]
+    u = toward(bake, 0.0, seed=600)
+    edge = normalize_np(0.46 * bake + np.sqrt(1 - 0.46 ** 2) * u)              # Bake at the edge, learned
+    for i in range(3):
+        w = toward(bake, 0.0, seed=610 + i)
+        w = normalize_np(w - w.dot(u) * u)
+        assert s.learn_sample("bake", normalize_np(0.46 * bake + np.sqrt(1 - 0.46 ** 2)
+                                                     * normalize_np(0.95 * u + 0.31 * w)))["ok"]
+    bystander = normalize_np(0.38 * bake + np.sqrt(1 - 0.38 ** 2) * u)         # near those clips, not him
+    assert s._score("bake", bystander)[0] >= s.threshold                         # the bank lifts it ...
+    assert s.learn_sample("bake", bystander)["reason"] == "too_far"             # ... but it is never banked
+    assert float(edge.dot(bake)) == pytest.approx(0.46, abs=1e-4)
