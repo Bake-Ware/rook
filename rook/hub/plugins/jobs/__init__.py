@@ -22,9 +22,13 @@ Caps (``rook_call(cap=..., worker="rook")``; the ``rook_jobs`` MCP tool
 routes to them):
 
 * ``job.read`` (risk ``read``): list, get, runs, run_get, next, validate,
-  guardrails_preview, describe_schema.
+  guardrails_preview, describe_schema, templates.
 * ``job.write`` (risk ``write``): create, update, delete, enable, disable,
-  run, cancel, set_guardrails, settings, lock, unlock.
+  run, cancel, set_guardrails, settings, lock, unlock, install.
+
+Ready-made jobs (:mod:`.catalog`, docs/design/routines.md): ``templates``
+lists them, ``install`` makes one an ordinary job the caller owns; none is
+installed by default.
 
 Jobs switch themselves off by their ``limits`` (max_runs, until,
 max_failures, complete_on) or a step's ``complete``; repeated messages are
@@ -218,23 +222,25 @@ class Jobs(Plugin):
     @capability("read", risk="read", scope="multi-user")
     async def read(self, action: str = "list", id: str | None = None, query: str = "",
                    data: dict | None = None) -> dict:
-        """Read jobs and runs: list|get|runs|run_get|next|validate|guardrails_preview|describe_schema.
+        """Read jobs and runs: list|get|runs|run_get|next|validate|guardrails_preview|describe_schema|templates.
 
         Same arguments and result as rook_jobs' read actions. id is a job id
         or name (a run id for run_get). describe_schema returns the job JSON
-        schema; validate checks data (a job) without saving."""
+        schema; validate checks data (a job) without saving; templates lists
+        the ready-made jobs, what each needs and which are installed."""
         return await self.run(False, action, id, query, data)
 
     @capability("write", risk="write", scope="multi-user")
     async def write(self, action: str, id: str | None = None, data: dict | None = None) -> dict:
-        """Write jobs: create|update|delete|enable|disable|run|cancel|set_guardrails|settings|lock|unlock.
+        """Write jobs: create|update|delete|enable|disable|run|cancel|set_guardrails|settings|lock|unlock|install.
 
         Same arguments and result as rook_jobs' write actions. create data =
         the job; update id + data = fields to replace (data.revision checks
         for a concurrent edit); run id + data {vars}; cancel id = a run (or a
         job: all its runs). lock / unlock (data {note}) are for a person
         signed in to the dashboard; a locked job refuses every other change
-        from agents and tokens."""
+        from agents and tokens. install id=<template> data {config, name?,
+        schedule?, enabled?} makes a ready-made job (hub owners only)."""
         return await self.run(True, action, id, "", data)
 
     # -- MCP ---------------------------------------------------------------------------
@@ -253,8 +259,9 @@ class Jobs(Plugin):
                 return error_reply(error)
         rook_jobs.__doc__ = (
             "Scheduled hub jobs. Reads: list|get|runs|run_get|next|validate|guardrails_preview|"
-            "describe_schema. Writes: create|update|delete|enable|disable|run|cancel|set_guardrails|"
-            "lock|unlock. describe_schema before writing "
+            "describe_schema|templates. Writes: create|update|delete|enable|disable|run|cancel|"
+            "set_guardrails|lock|unlock|install. templates: ready-made jobs; install id=<template> "
+            "data {config} makes one. describe_schema before writing "
             "a job. id: job id/name (run id: run_get, cancel). data: the job (create/validate), "
             "fields to change (update) or options (runs {states, steps:true}, run {vars}).")
         return [rook_jobs]

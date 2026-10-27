@@ -632,8 +632,11 @@ before) are the audit record, and the revision goes up.
 ## 8. Interfaces
 
 **Caps (worker `rook`):**
-- `job.read` (risk `read`) takes `action` = `list | get | runs | run_get | next | validate | guardrails_preview | describe_schema`.
-- `job.write` (risk `write`) takes `action` = `create | update | delete | enable | disable | run | cancel | set_guardrails | settings`.
+- `job.read` (risk `read`) takes `action` = `list | get | runs | run_get | next | validate | guardrails_preview | describe_schema | templates`.
+- `job.write` (risk `write`) takes `action` = `create | update | delete | enable | disable | run | cancel | set_guardrails | settings | lock | unlock | install`.
+- `templates` / `install`: the ready-made jobs (docs/design/routines.md).
+  `install` (`id` = a template, `data {config, name?, schedule?, enabled?}`,
+  hub owners only) builds the job and saves it through `create`.
 - Arguments are `action`, `id`, `query` (reads) and `data`. `id` is a job
   id or name; for `run_get` and `cancel` it is a run id (`cancel` with a job
   id cancels all of that job's waiting and running runs).

@@ -27,6 +27,20 @@ version was `0.1.0`.
   model-providers)
 
 ### Added
+- **Ready-made jobs** (Bake's 2026-10-26 roadmap: "Canned jobs: 5-minute security scan (open
+  sessions, logs); attention aggregation (email, phone notifications, chats); security camera
+  review (Ring, others)"). `rook_jobs action=templates` lists them and `install` makes one an
+  ordinary job you own (owners only; nothing is installed by default); the Jobs page has a
+  **Ready-made** tab. **Security scan** (every 5 minutes, zero config): workers, console rooms,
+  MCP identities, dashboard sign-ins, denied calls, refused keys, API keys and access changes
+  against the last scan. **Attention digest**: phone notifications, chat rooms (Telegram and
+  Discord included) and optional email (IMAP with a vault password, or a worker cap) as one
+  message. **Camera review**: snapshot URLs, RTSP via ffmpeg on a worker or `camera.snap`, a
+  change test on the hub and a vision model only for changed frames; Ring through a bridge
+  (ring-mqtt, Scrypted). All report quietly, only on change: the attention log and the phone's
+  digest channel, never a card; urgent only for a burst of refused keys (cameras: opt-in
+  `may_ring`). New hub caps `routine.security_scan`, `routine.attention_digest`,
+  `routine.camera_review`. (manual: jobs)
 - Tasks and their pull requests (hygiene, docs/design/hygiene.md): an agent's `update` to `done`
   is refused while a pull request the task links is still open, with what to do (get it merged
   through the huddle, or retract the link); a person gets the same text as `pr_check` and the
