@@ -23,6 +23,13 @@ design-decisions-2026-10-26-voi`` items 2, 3, 4, 6 and 7.
   (``resources``). The house agent turns both into conversation
   (rook/hub/plugins/home/access_talk.py); owners also see them on the People
   page.
+* Chat accounts (item 5): each person links their own Telegram / Discord
+  account with a one-time code (:meth:`AccessStore.link_code`, redeemed by
+  the bot with :meth:`AccessStore.redeem`); a linked account acts as its
+  person and anyone else is ignored. The hub's bot is the default; a person
+  may name their own bot (its token stays in the vault). Shared spaces (a
+  household Discord server, a family Telegram group) are hub resources,
+  granted like machines with a ``space`` grant (``ref`` = ``<platform>:<id>``).
 
 The store is ``access.db`` beside ``policy.json`` (both hub processes open
 it, as they share ``approvals.db``). :class:`rook.hub.authz.Authorizer`
@@ -36,9 +43,12 @@ from __future__ import annotations
 
 import contextvars
 import fnmatch
+import hashlib
 import json
 import logging
 import os
+import re
+import secrets
 import time
 import uuid
 from typing import Any, Iterable
@@ -49,10 +59,11 @@ from ..core.db import secure_file, transaction
 log = logging.getLogger("rook.hub.access")
 
 ROLES = ("owner", "member")
-KINDS = ("band", "worker", "hub", "knowledge", "any")
+KINDS = ("band", "worker", "hub", "knowledge", "any", "space")
 DEFAULT_TIER = "exec"
 #: Hub caps a person may always call about themselves (no grant needed).
-SELF_CAPS = frozenset({"users.me", "users.explain", "users.request"})
+SELF_CAPS = frozenset({"users.me", "users.explain", "users.request", "users.link_code",
+                       "users.links", "users.unlink", "users.chat_bot"})
 KNOWLEDGE_CAPS = ("knowledge.read", "knowledge.write")
 WORDS_MAX = 1000
 REQUEST_STATES = ("open", "asked", "done", "declined")
@@ -60,6 +71,14 @@ RESOURCE_KINDS = ("worker", "band")
 RESOURCE_STATES = ("new", "asked", "settled")
 #: Who carried a person's change in (the house agent), for the history's actor.
 via: contextvars.ContextVar[str] = contextvars.ContextVar("rook_access_via", default="")
+#: Chat platforms a person can link an account on.
+PLATFORMS = ("telegram", "discord")
+#: How long a link code works, and its alphabet (no 0/O, 1/I: read aloud, typed on a phone).
+CODE_TTL = 600.0
+CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+CODE_LEN = 8
+_SECRET_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_SPACE_ID = re.compile(r"^-?[0-9]{1,24}$")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS members (
@@ -70,21 +89,6 @@ CREATE TABLE IF NOT EXISTS members (
     updated REAL NOT NULL,
     actor   TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS grants (
-    id       TEXT PRIMARY KEY,
-    user_id  TEXT NOT NULL,
-    kind     TEXT NOT NULL CHECK(kind IN ('band','worker','hub','knowledge','any')),
-    ref      TEXT NOT NULL,
-    caps     TEXT NOT NULL DEFAULT '["*"]',
-    tier     TEXT NOT NULL DEFAULT 'exec',
-    created  REAL NOT NULL,
-    actor    TEXT NOT NULL,
-    words    TEXT NOT NULL DEFAULT '',
-    revoked  REAL,
-    revoked_by TEXT,
-    revoke_words TEXT
-);
-CREATE INDEX IF NOT EXISTS grants_user ON grants(user_id, revoked);
 CREATE TABLE IF NOT EXISTS history (
     seq     INTEGER PRIMARY KEY,
     ts      REAL NOT NULL,
@@ -136,11 +140,81 @@ CREATE TABLE IF NOT EXISTS resources (
     words   TEXT NOT NULL DEFAULT '',
     PRIMARY KEY(kind, ref)
 );
+CREATE TABLE IF NOT EXISTS chat_links (
+    platform      TEXT NOT NULL,
+    platform_user TEXT NOT NULL,
+    user_id       TEXT NOT NULL,
+    handle        TEXT NOT NULL DEFAULT '',
+    created       REAL NOT NULL,
+    PRIMARY KEY (platform, platform_user),
+    UNIQUE (user_id, platform)
+);
+CREATE TABLE IF NOT EXISTS link_codes (
+    code_hash TEXT PRIMARY KEY,
+    user_id   TEXT NOT NULL,
+    platform  TEXT NOT NULL,
+    expires   REAL NOT NULL,
+    actor     TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chat_bots (
+    user_id  TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    secret   TEXT NOT NULL,
+    created  REAL NOT NULL,
+    PRIMARY KEY (user_id, platform)
+);
+CREATE TABLE IF NOT EXISTS spaces (
+    platform TEXT NOT NULL,
+    space_id TEXT NOT NULL,
+    name     TEXT NOT NULL DEFAULT '',
+    created  REAL NOT NULL,
+    actor    TEXT NOT NULL,
+    PRIMARY KEY (platform, space_id)
+);
 """
 
 #: Words kept for a key carried over to the first owner.
 CARRIED_OVER = ("carried over at the access v2 upgrade: this API key was made before keys "
                 "belonged to a person, so it belongs to the hub's first owner")
+
+#: The grants table; its kind check follows :data:`KINDS` (an older table is
+#: rebuilt by :func:`_migrate_grants` when a kind is added).
+_GRANTS = """
+CREATE TABLE IF NOT EXISTS {name} (
+    id       TEXT PRIMARY KEY,
+    user_id  TEXT NOT NULL,
+    kind     TEXT NOT NULL CHECK(kind IN ({kinds})),
+    ref      TEXT NOT NULL,
+    caps     TEXT NOT NULL DEFAULT '["*"]',
+    tier     TEXT NOT NULL DEFAULT 'exec',
+    created  REAL NOT NULL,
+    actor    TEXT NOT NULL,
+    words    TEXT NOT NULL DEFAULT '',
+    revoked  REAL,
+    revoked_by TEXT,
+    revoke_words TEXT
+)"""
+
+
+def _grants_sql(name: str = "grants") -> str:
+    return _GRANTS.format(name=name, kinds=",".join(f"'{k}'" for k in KINDS))
+
+
+def _migrate_grants(db) -> None:
+    """Create the grants table, or rebuild one whose kind check predates a
+    kind in :data:`KINDS` (SQLite cannot alter a CHECK in place)."""
+    row = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='grants'").fetchone()
+    if row is None:
+        db.execute(_grants_sql())
+    elif any(f"'{k}'" not in row[0] for k in KINDS):
+        db.execute("DROP TABLE IF EXISTS grants_rebuild")
+        db.execute(_grants_sql("grants_rebuild"))
+        new = {r[1] for r in db.execute("PRAGMA table_info(grants_rebuild)")}
+        cols = ",".join(r[1] for r in db.execute("PRAGMA table_info(grants)") if r[1] in new)
+        db.execute(f"INSERT INTO grants_rebuild({cols}) SELECT {cols} FROM grants")
+        db.execute("DROP TABLE grants")
+        db.execute("ALTER TABLE grants_rebuild RENAME TO grants")
+    db.execute("CREATE INDEX IF NOT EXISTS grants_user ON grants(user_id, revoked)")
 
 
 class AccessError(ValueError):
@@ -220,6 +294,8 @@ class AccessStore:
         secure_file(path)
         with self.db() as db:
             db.executescript(_SCHEMA)
+        with self.db() as db:
+            _migrate_grants(db)
         self._bands_seen: dict[str, tuple] | None = None
 
     @classmethod
@@ -299,6 +375,8 @@ class AccessStore:
             raise AccessError(f"ref: which {kind} (a {'band id' if kind == 'band' else 'name'})")
         if kind == "knowledge" and ref != "*" and not ref.replace("-", "").replace("_", "").isalnum():
             raise AccessError("ref: a knowledge folder slug, or * for every area")
+        if kind == "space":
+            ref = self._space_ref(ref)
         t = core_authz.norm_tier(tier) if tier else DEFAULT_TIER
         if t is None:
             raise AccessError(f"tier: one of {', '.join(core_authz.TIERS)}")
@@ -649,6 +727,8 @@ class AccessStore:
                 hit = is_hub
             elif kind == "knowledge":
                 hit = is_hub and cap in KNOWLEDGE_CAPS
+            elif kind == "space":
+                hit = False  # a chat space, not a machine: see may_use_space
             elif kind == "worker":
                 hit = bool(tid) and not is_hub and (ref == tid or ref.casefold() == tname)
             else:  # band
@@ -664,6 +744,202 @@ class AccessStore:
             return None, f"{cap} is a {tier} cap, above what your grant allows"
         where = getattr(target, "name", "") or tid or "every machine"
         return None, f"no grant covers {cap} on {'the hub' if is_hub else where}"
+
+    # -- chat accounts (item 5) ------------------------------------------------
+    def link_code(self, user_id: str, platform: str, *, actor: str) -> dict:
+        """A fresh one-time code that links ``user_id``'s account on
+        ``platform`` when sent to the bot. It replaces any earlier unused code
+        for the same person and platform, works once and expires after
+        :data:`CODE_TTL` seconds. Only its hash is stored."""
+        platform = _platform(platform)
+        if not user_id:
+            raise AccessError("user: an account id")
+        raw = "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LEN))
+        code = f"{raw[:4]}-{raw[4:]}"
+        now = time.time()
+        with self.db() as db:
+            db.execute("DELETE FROM link_codes WHERE expires<? OR (user_id=? AND platform=?)",
+                       (now, user_id, platform))
+            db.execute("INSERT INTO link_codes(code_hash,user_id,platform,expires,actor) "
+                       "VALUES(?,?,?,?,?)", (_code_hash(code), user_id, platform,
+                                            now + CODE_TTL, actor))
+            self._log(db, actor, "link_code", user_id, platform, {"expires": now + CODE_TTL})
+        return {"code": code, "platform": platform, "expires": now + CODE_TTL}
+
+    def redeem(self, platform: str, code: str, platform_user: str, handle: str = "", *,
+               bot_owner: str | None = None) -> str | None:
+        """Link ``platform_user`` to the person whose code this is; returns
+        their account id, or None for an unknown, used or expired code. On a
+        person's own bot (``bot_owner``) only that person's codes work. The
+        account replaces whatever that person had linked on the platform
+        before, and a platform account belongs to one person at a time."""
+        platform = _platform(platform)
+        platform_user = str(platform_user or "").strip()
+        if not platform_user:
+            return None
+        h, now = _code_hash(code), time.time()
+        with self.db() as db:
+            r = db.execute("SELECT * FROM link_codes WHERE code_hash=?", (h,)).fetchone()
+            if r is None or r["platform"] != platform or r["expires"] < now:
+                return None
+            uid = r["user_id"]
+            if bot_owner is not None and uid != bot_owner:
+                return None
+            db.execute("DELETE FROM link_codes WHERE code_hash=?", (h,))
+            old = db.execute("SELECT user_id FROM chat_links WHERE platform=? AND platform_user=?",
+                             (platform, platform_user)).fetchone()
+            db.execute("DELETE FROM chat_links WHERE platform=? AND (user_id=? OR platform_user=?)",
+                       (platform, uid, platform_user))
+            db.execute("INSERT INTO chat_links(platform,platform_user,user_id,handle,created) "
+                       "VALUES(?,?,?,?,?)", (platform, platform_user, uid, str(handle)[:120], now))
+            doc = {"platform_user": platform_user, "handle": str(handle)[:120]}
+            if old is not None and old["user_id"] != uid:
+                doc["was"] = old["user_id"]
+            self._log(db, f"{platform}:{platform_user}", "link", uid, platform, doc,
+                      "sent the one-time link code to the bot")
+        return uid
+
+    def linked_user(self, platform: str, platform_user: str) -> str | None:
+        """The account a platform user id is linked to, or None (a stranger)."""
+        with self.db(False) as db:
+            r = db.execute("SELECT user_id FROM chat_links WHERE platform=? AND platform_user=?",
+                           (platform, str(platform_user))).fetchone()
+        return r["user_id"] if r else None
+
+    def links(self, user_id: str | None = None, platform: str | None = None) -> list[dict]:
+        q, params, where = "SELECT * FROM chat_links", [], []
+        if user_id:
+            where.append("user_id=?")
+            params.append(user_id)
+        if platform:
+            where.append("platform=?")
+            params.append(platform)
+        if where:
+            q += " WHERE " + " AND ".join(where)
+        with self.db(False) as db:
+            return [dict(r) for r in db.execute(q + " ORDER BY created", params)]
+
+    def unlink(self, user_id: str, platform: str, *, actor: str, words: str) -> bool:
+        platform = _platform(platform)
+        words = _words(words)
+        with self.db() as db:
+            gone = db.execute("DELETE FROM chat_links WHERE user_id=? AND platform=?",
+                              (user_id, platform)).rowcount
+            db.execute("DELETE FROM link_codes WHERE user_id=? AND platform=?", (user_id, platform))
+            if gone:
+                self._log(db, actor, "unlink", user_id, platform, {}, words)
+        return bool(gone)
+
+    def set_bot(self, user_id: str, platform: str, secret: str, *, actor: str,
+                words: str, owner: bool = False) -> dict:
+        """Use the person's own bot on ``platform`` instead of the hub's.
+        ``secret`` names the vault secret holding its token (never the token);
+        members name one under ``user.<their id>.``. An empty ``secret`` goes
+        back to the hub's bot."""
+        platform = _platform(platform)
+        words = _words(words)
+        secret = str(secret or "").strip()
+        if secret.startswith("{{secret:"):
+            secret = secret[len("{{secret:"):].split("|", 1)[0].rstrip("}")
+        with self.db() as db:
+            if not secret:
+                gone = db.execute("DELETE FROM chat_bots WHERE user_id=? AND platform=?",
+                                  (user_id, platform)).rowcount
+                if gone:
+                    self._log(db, actor, "bot", user_id, platform, {"secret": None}, words)
+                return {"user": user_id, "platform": platform, "bot": "hub"}
+            if not _SECRET_NAME.match(secret):
+                raise AccessError("secret: the vault secret's name (lowercase, digits, . _ -), "
+                                  "never the token itself")
+            if not owner and not secret.startswith(f"user.{user_id.lower()}."):
+                raise AccessError(f"secret: keep your bot's token in the vault under "
+                                  f"user.{user_id.lower()}.<name> (yours alone)")
+            db.execute("INSERT INTO chat_bots(user_id,platform,secret,created) VALUES(?,?,?,?) "
+                       "ON CONFLICT(user_id,platform) DO UPDATE SET secret=excluded.secret, "
+                       "created=excluded.created", (user_id, platform, secret, time.time()))
+            self._log(db, actor, "bot", user_id, platform, {"secret": secret}, words)
+        return {"user": user_id, "platform": platform, "bot": "own", "secret": secret}
+
+    def bots(self, platform: str | None = None, user_id: str | None = None) -> list[dict]:
+        q, params, where = "SELECT * FROM chat_bots", [], []
+        if platform:
+            where.append("platform=?")
+            params.append(platform)
+        if user_id:
+            where.append("user_id=?")
+            params.append(user_id)
+        if where:
+            q += " WHERE " + " AND ".join(where)
+        with self.db(False) as db:
+            return [dict(r) for r in db.execute(q + " ORDER BY created", params)]
+
+    # -- shared chat spaces ------------------------------------------------------
+    def _space_ref(self, ref: str) -> str:
+        platform, _, sid = str(ref or "").partition(":")
+        platform = platform.strip().lower()
+        with self.db(False) as db:
+            r = db.execute("SELECT 1 FROM spaces WHERE platform=? AND space_id=?",
+                           (platform, sid.strip())).fetchone()
+        if r is None:
+            raise AccessError("ref: a shared space as <platform>:<id>, added first with "
+                              "users.space (users.spaces lists them)")
+        return f"{platform}:{sid.strip()}"
+
+    def add_space(self, platform: str, space_id: str, name: str, *, actor: str,
+                  words: str) -> dict:
+        """Make a Discord server or a Telegram group a hub resource people can
+        be granted (``kind=space``)."""
+        platform = _platform(platform)
+        space_id = str(space_id or "").strip()
+        if not _SPACE_ID.match(space_id):
+            raise AccessError("space: the Discord server id or the Telegram group's chat id")
+        words = _words(words)
+        name = str(name or "").strip()[:120]
+        with self.db() as db:
+            db.execute("INSERT INTO spaces(platform,space_id,name,created,actor) VALUES(?,?,?,?,?) "
+                       "ON CONFLICT(platform,space_id) DO UPDATE SET name=excluded.name",
+                       (platform, space_id, name, time.time(), actor))
+            self._log(db, actor, "space", "*", f"{platform}:{space_id}", {"name": name}, words)
+        return {"space": f"{platform}:{space_id}", "name": name}
+
+    def remove_space(self, platform: str, space_id: str, *, actor: str, words: str) -> dict:
+        """Stop treating a space as a hub resource; its grants are revoked."""
+        platform = _platform(platform)
+        ref = f"{platform}:{str(space_id).strip()}"
+        words = _words(words)
+        with self.db() as db:
+            gone = db.execute("DELETE FROM spaces WHERE platform=? AND space_id=?",
+                              (platform, str(space_id).strip())).rowcount
+            ids = [r["id"] for r in db.execute("SELECT id FROM grants WHERE kind='space' AND "
+                                               "ref=? AND revoked IS NULL", (ref,))]
+            db.execute("UPDATE grants SET revoked=?, revoked_by=?, revoke_words=? WHERE kind='space' "
+                       "AND ref=? AND revoked IS NULL", (time.time(), actor, words, ref))
+            if gone:
+                self._log(db, actor, "space_removed", "*", ref, {"revoked": ids}, words)
+        return {"space": ref, "removed": bool(gone), "revoked": ids}
+
+    def spaces(self, platform: str | None = None) -> list[dict]:
+        with self.db(False) as db:
+            if platform:
+                rows = db.execute("SELECT * FROM spaces WHERE platform=? ORDER BY created",
+                                  (platform,))
+            else:
+                rows = db.execute("SELECT * FROM spaces ORDER BY created")
+            return [dict(r) for r in rows]
+
+    def space(self, platform: str, space_id: str) -> dict | None:
+        with self.db(False) as db:
+            r = db.execute("SELECT * FROM spaces WHERE platform=? AND space_id=?",
+                           (platform, str(space_id))).fetchone()
+        return dict(r) if r else None
+
+    def may_use_space(self, user_id: str, platform: str, space_id: str) -> bool:
+        """Whether a person may speak through the hub in a shared space:
+        owners always, members with a ``space`` grant on it."""
+        if self.is_owner(user_id):
+            return True
+        ref = f"{platform}:{space_id}"
+        return any(g["kind"] == "space" and g["ref"] == ref for g in self.grants(user_id))
 
     def knowledge_areas(self, user_id: str, write: bool = False) -> set[str] | None:
         """Folder slugs a member may read (or write) in knowledge; ``{"*"}``
@@ -682,6 +958,18 @@ class AccessStore:
             if g["kind"] == "knowledge":
                 areas.add(g["ref"])
         return areas
+
+
+def _platform(platform: str) -> str:
+    p = str(platform or "").strip().lower()
+    if p not in PLATFORMS:
+        raise AccessError(f"platform: one of {', '.join(PLATFORMS)}")
+    return p
+
+
+def _code_hash(code: str) -> str:
+    norm = "".join(ch for ch in str(code or "").upper() if ch.isalnum())
+    return hashlib.sha256(("rook-link:" + norm).encode()).hexdigest()
 
 
 def store_for(data_dir: str | None) -> AccessStore | None:

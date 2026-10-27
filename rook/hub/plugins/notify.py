@@ -4,8 +4,10 @@ Plugins, agents and the watchdog call ``notify.send`` on worker ``rook``
 instead of talking to Telegram or Discord themselves; it posts to each
 running chat integration (every loaded :class:`ChatIntegration` plugin, by
 namespace: ``telegram``, ``discord``, or a third-party one) or the one named
-by ``channel``. With no integration configured it returns ``ok: false`` so a
-caller can fall back to its own channel. See docs/integrations.md.
+by ``channel``. With ``user`` it goes to that person's linked accounts
+instead (direct messages, from their own bot where they run one). With no
+integration configured it returns ``ok: false`` so a caller can fall back to
+its own channel. See docs/integrations.md.
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from ...core.plugin import Plugin, capability, place
-from ..integrations import ChatIntegration
+from ..integrations import ChatIntegration, person_refusal
 
 
 class Notify(Plugin):
@@ -24,7 +26,8 @@ class Notify(Plugin):
     SKILL = ("### notify\n"
              "`rook_call(worker=\"rook\", cap=\"notify.send\", args={\"text\": \"...\"})` "
              "posts a notification to every configured chat integration (Telegram, "
-             "Discord); `channel=\"telegram\"` picks one.\n")
+             "Discord); `channel=\"telegram\"` picks one; `user=\"<account id>\"` messages "
+             "that person's linked accounts directly (yourself; owners: anyone).\n")
 
     def __init__(self) -> None:
         super().__init__()
@@ -42,13 +45,19 @@ class Notify(Plugin):
         return {p.NAMESPACE: p for p in node.host.plugins if isinstance(p, ChatIntegration)}
 
     @capability("send", risk="write", scope="external")
-    async def send(self, text: str, channel: str = "all") -> dict:
+    async def send(self, text: str, channel: str = "all", user: str | None = None) -> dict:
         """Send a notification to the chat integrations.
 
         ``channel`` is ``all`` (default: every running integration) or one
         integration's name (``telegram``, ``discord``; ``notify.channels``
-        lists them). ``ok`` is true if at least one channel took it; ``sent``
-        and ``errors`` say which."""
+        lists them). ``user``: a person's account id; the message goes to
+        their linked accounts as direct messages (yourself; owners may
+        message anyone). ``ok`` is true if at least one channel took it;
+        ``sent`` and ``errors`` say which."""
+        if user:
+            refusal = person_refusal(user)
+            if refusal:
+                return {"ok": False, "error": refusal}
         live = self._channels()
         if channel != "all" and channel not in live:
             return {"ok": False, "error": (f"no chat integration is running for {channel}"
@@ -59,7 +68,7 @@ class Notify(Plugin):
                                            + ("" if channel == "all" else f" for {channel}"))}
         sent, errors = [], {}
         for name, plugin in targets.items():
-            res = await plugin.notify(text)
+            res = await (plugin.notify_person(user, text) if user else plugin.notify(text))
             if res.get("ok"):
                 sent.append(name)
             else:

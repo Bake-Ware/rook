@@ -34,6 +34,31 @@ only the last 20 are sent, with a note saying how many were skipped.
 Notifications from jobs, the watchdog and agents go to every connected app
 ([[manual-chat]]).
 
+### Linking your account
+
+The bot only listens to people it knows. Each person links their own
+Telegram or Discord account once:
+
+1. Ask the hub for a code: on the house agent or any agent, "give me a
+   Telegram link code" (the tool is `users.link_code`). An owner can make one
+   for someone else.
+2. Send `/link CODE` to the bot (on Discord, `!link CODE`), best as a direct
+   message, within 10 minutes. The code works once.
+
+After that, what you send acts as you: your access decides what the bot may
+do for you, the same as on the dashboard. Write to the bot directly and the
+house agent answers. Messages from accounts nobody linked are ignored.
+`users.links` shows what you have linked and `users.unlink` forgets it.
+
+**Your own bot.** The hub's bot is used by default. To use your own, put its
+token in the vault (as `user.<your id>.<name>`) and tell the hub its name with
+`users.chat_bot`. Your messages and notifications then go through your bot.
+
+**Shared servers and groups.** An owner can make a household Discord server
+or a family Telegram group a hub resource (`users.space`) and give people
+access to it like a machine (a `space` grant). There the bot answers only
+commands, replies to it and mentions of it, from people with that access.
+
 ## Deluge
 
 On a machine that runs the Deluge torrent client, the `deluge.*` capabilities

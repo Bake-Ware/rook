@@ -101,7 +101,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `decide.run` | state, questions, temperature? | read | Answer a batch of typed questions about `state` in one pass. |
 | `decide.runs` | run_id='', steps=5, limit=20 | read | Recent drives, or one drive with its last `steps` journaled frames (answers, decision, gates, executed calls)… |
 | `decide.stop` | run_id='' | write | Kill switch: stop one drive (`run_id`) or every live drive. |
-| `discord.send` | text, chat? | write | Post a message to the configured Discord channel. |
+| `discord.send` | text, chat?, user? | write | Post a message to the configured Discord channel. |
 | `discord.status` | — | read | Discord integration status: connected, channel and token configured (never the token), bridged rooms, counter… |
 | `help` | topic='', detail=false | read | Rook help for agents: no topic gives the core model and the topic menu; `topic` (a name, a tool, a cap, a hub… |
 | `home.ask` | question, context='', source='' | write | Ask the hub's home agent a question or give it a request; returns its answer. |
@@ -157,7 +157,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `memory.show` | id | read | One memory in full: text, provenance, what it replaced and its history. |
 | `memory.status` | — | read | Counts by kind and state, embeddings and the last tidy-up. |
 | `notify.channels` | — | read | Which notification channels are running on this hub. |
-| `notify.send` | text, channel='all' | write | Send a notification to the chat integrations. |
+| `notify.send` | text, channel='all', user? | write | Send a notification to the chat integrations. |
 | `persona.assign` | scope, profile='', target='', note='' | admin | Assign a profile at a scope: `default` (everyone), `band` (band id), `family` (claude-code, codex, hermes, vo… |
 | `persona.delete` | id, note='' | admin | Delete an unassigned profile (its history stays). |
 | `persona.get` | id='', family='', user='', band='', harness='' | read | A persona profile with its rendered `text`. |
@@ -200,7 +200,7 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `settings.worker_secret` | worker_id, names | read | Vault secrets a stored setting assigns to this worker (fetch at use). |
 | `task.read` | action='deck', kind='task', band?, id?, query='', data? | read | Read tasks/projects/concepts: deck\|search\|list\|get\|context\|status\|hygiene\|whiteboard. |
 | `task.write` | action, kind='task', band?, id?, data?, request_id? | write | Write tasks/projects/concepts: create\|update\|link\|retract\|claim\|release\|note\|jot\|batch. |
-| `telegram.send` | text, chat? | write | Post a message to the configured Telegram chat. |
+| `telegram.send` | text, chat?, user? | write | Post a message to the configured Telegram chat. |
 | `telegram.status` | — | read | Telegram integration status: connected, chat and token configured (never the token), bridged rooms, counters… |
 | `trust.check` | cap='', worker='', repo='', branch='', project='', tier='' | read | The ruling for an action, with its citation: a cap on a worker (its tier is the band's), or repo + branch (a… |
 | `trust.get` | section='' | read | The trust map: summary (what agents get in context) and the map; section: entries\|exceptions\|baseline\|ledger\|… |
@@ -213,16 +213,22 @@ The hub appears on the band as the reserved worker `rook`, serving the caps of h
 | `updates.prepare_hub` | tag | admin | For a `rook hub` install the hub cannot switch itself: download and verify release `tag`, leave a signed hub… |
 | `updates.rollout` | workers?, build=0 | admin | Staged worker rollout of `build` (default: the newest the hub has) to `workers` (ids or names; default all),… |
 | `updates.status` | — | read | Hub version against the newest release, how many workers are behind, the running rollout, and the mode/channe… |
+| `users.chat_bot` | platform, words, secret='' | write | Use your own Telegram/Discord bot instead of the hub's. |
 | `users.explain` | cap, worker?, user? | read | Whether a person (default: you) may call `cap` on `worker`, and which grant decides. |
 | `users.grant` | user, kind, words, ref='', caps?, tier? | admin | Give a member access. |
 | `users.history` | user?, limit=50 | read | Who changed whose access, when, and in whose words (newest first). |
+| `users.link_code` | platform, user? | write | A one-time code that links your Telegram or Discord account. |
+| `users.links` | user? | read | Your linked chat accounts and which bot speaks for you on each platform (the hub's, or your own). |
 | `users.list` | — | read | Everyone with an account or access: role, grants, in plain words. |
 | `users.me` | — | read | Your own role and grants, in plain words. |
 | `users.request` | words | write | Ask the hub's owners for access, in your own words ("the living room PC and the recipes folder"). |
 | `users.revoke` | grant, words | admin | Take a grant away (kept in the history with `words`). |
 | `users.role` | user, role, words | admin | Make someone an `owner` or a `member`. |
 | `users.settle` | what, words | admin | Close what waits on you, with your words: a new machine or band (`worker:<id>` / `band:<id>`, from `users.lis… |
+| `users.space` | platform, space, words, name='', remove=false | admin | Add (or `remove`) a shared space: a Discord server id or a Telegram group chat id. |
+| `users.spaces` | — | read | Shared chat spaces (Discord servers, Telegram groups) this hub treats as resources, and who holds a grant on… |
 | `users.token` | token, user, words | admin | Say whose an API key is: it then reaches exactly what that person reaches, from any client. |
+| `users.unlink` | platform, words, user? | write | Forget your linked Telegram or Discord account: its messages are ignored again. |
 
 ### approvals (relayed)
 `rook_approvals(action="summary")` says what is waiting on the person (held calls, held job calls, huddle cards, pinned questions, trust proposals); `action="list"` gives each item's name, who asked, what exactly would happen, risk, source and age. Read it back tersely: count, then name + one line each. When the person tells you their decision (also on something you did on their word), record it: `rook_approvals(action="approve"|"deny", item=<name or id>, relayed_by={"who": <person>, "quote": <their exact words>, "session": <conversation URL or id>}, reason=<why, for a deny>)`. Never relay your own judgement, never decide items they did not name, and leave held calls, trust proposals and dashboard-only items to them; withdraw your own question that no longer needs them (rook_huddle withdraw).
@@ -243,7 +249,7 @@ Persistent rooms shared by agents, people and workers. MCP: `rook_chat_*`. Over 
 One-pass decision model (worker `rook`). `decide.run(state, questions)` answers a batch of `{id, type: choice|score|noul, question, options|levels}` in one pass; probabilities are uncalibrated. `decide.drive(goal, screen_worker, input_worker?, dry_run?, texts?, keys?)` runs screenshot -> decide -> `hid.*` with confirmation gates and returns a `run_id`; dry-run is the default. Watch it with `decide.runs(run_id=...)`, approve with `decide.confirm(run_id, approve)`, kill with `decide.stop()`.
 
 ### discord
-When the Discord integration is on: `discord.send` (text) posts to the configured channel; `discord.status` shows whether it is connected. Prefer `notify.send` to reach every configured channel.
+When the Discord integration is on: `discord.send` (text) posts to the configured channel; `discord.status` shows whether it is connected. Prefer `notify.send` to reach every configured channel. People link their account with `users.link_code platform=discord` and `!link CODE` to the bot.
 
 ### help
 `rook_call(worker="rook", cap="help")` returns the core model and the topic menu; `args={"topic": …}` one topic (a name, a tool, a cap, a hub plugin or a few words); `"detail": true` adds its reference pages.
@@ -275,7 +281,7 @@ The Rook user manual (plain-language help for every feature). In the knowledge w
 What the hub's home agent remembers (people, facts, conversations, skills). `memory.recall(query)` on worker `rook` searches shared memory (and your own); `memory.remember(text, kind)` (kind fact, or profile about yourself) adds one; `memory.forget(id)` removes one. Other people's memory, skills (procedures) and pinning are the operator's. Never store secrets. People browse and edit it on Manage > Memory.
 
 ### notify
-`rook_call(worker="rook", cap="notify.send", args={"text": "..."})` posts a notification to every configured chat integration (Telegram, Discord); `channel="telegram"` picks one.
+`rook_call(worker="rook", cap="notify.send", args={"text": "..."})` posts a notification to every configured chat integration (Telegram, Discord); `channel="telegram"` picks one; `user="<account id>"` messages that person's linked accounts directly (yourself; owners: anyone).
 
 ### persona
 One persona for every harness. `rook_call(cap="persona.get", worker="rook", args={"family": "claude-code"})` returns the persona that applies to you (user > family > band > default) with its rendered `text`. To install it in a harness file on a machine: `rook_call(cap="persona.apply", worker="<name>", args={"harness": "claude-code", "dry_run": true})` (then without `dry_run`; `remove=true` takes it out). It only edits between its own markers. `persona.set` / `persona.assign` are admin: ask the user first.
@@ -299,7 +305,7 @@ Hub, band, worker and user settings with their source (default / hub / band / wo
 Tasks, projects and concepts. Use `rook_task(action="deck")` to see what is on; `claim` a task before working (your calls, consoles and handoffs then link to it, and the hub keeps the claim's whiteboard from them: `rook_task(action="whiteboard")` reads it, `action="jot"` adds decisions and open items); finish with `update` state done + `attrs.outcome` + an evidence `link`, or leave a handoff (released or ended without one, the whiteboard is saved as it). Over the band: `task.read` (deck/search/list/get) and `task.write` (create/update/link/retract/claim/release) on worker `rook`, with `kind=task|project|concept`. Hygiene nudges ride replies as `_hygiene` and show on the deck; `rook_task(action="hygiene")` lists open ones (`data {mine: true}`). A commit message with `rook: <task id, slug or name>` links the commit to that task as evidence when you hold a claim on it. Tasks and projects have speakable names (`brave-otter-lamp`): any `id` takes one; a write needs it exact.
 
 ### telegram
-When the Telegram integration is on: `telegram.send` (text) posts to the configured chat; `telegram.status` shows whether it is connected. Prefer `notify.send` to reach every configured channel.
+When the Telegram integration is on: `telegram.send` (text) posts to the configured chat; `telegram.status` shows whether it is connected. Prefer `notify.send` to reach every configured channel. People link their account with `users.link_code platform=telegram` and `/link CODE` to the bot.
 
 ### trust map
 The hub enforces a trust map: a `sacred` host, project, repo or resource changes only after the person says so (you may read, propose and prepare); `guarded` and `ship-it` entries just go unless the advanced security plugin is on. A held call cites its entry. `rook_trust(action="summary")` before acting on something you are unsure of; `action="check", data={"cap":…, "worker":…}` gives the ruling. Never try to get around a trust hold. To change the map, `action="propose", data={"change": {"op": "set_entry", "data": {...}}, "why": …}`: the person decides on the dashboard. Only the person changes it; a proposal that only makes it stricter is refused.
@@ -308,7 +314,7 @@ The hub enforces a trust map: a `sacred` host, project, repo or resource changes
 `updates.status` on worker `rook`: hub version vs the newest release, workers behind, the running rollout. Applying updates (`updates.apply_hub`, `updates.prepare_hub`, `updates.rollout`) is for operators: ask the person who runs the hub first.
 
 ### users
-People on this hub are owners (reach everything) or members (reach only what a grant names: a band, a machine, the hub's caps, a knowledge folder, or anything; optional cap patterns and a tier ceiling, default exec). New people reach nothing. `users.me` shows your own access; `users.explain` whether a call would be allowed. Owners change access with `users.grant` / `users.revoke` / `users.role`, always passing `words`: the person's own words asking for it. An API key reaches exactly what the person it belongs to reaches, from any client; owners move a key with `users.token`. Change access only when a person asks you to in conversation. A new person asks for access with `users.request` (their words); owners see what waits in `users.list` and close a new machine or band as owners-only with `users.settle`.
+People on this hub are owners (reach everything) or members (reach only what a grant names: a band, a machine, the hub's caps, a knowledge folder, or anything; optional cap patterns and a tier ceiling, default exec). New people reach nothing. `users.me` shows your own access; `users.explain` whether a call would be allowed. Owners change access with `users.grant` / `users.revoke` / `users.role`, always passing `words`: the person's own words asking for it. An API key reaches exactly what the person it belongs to reaches, from any client; owners move a key with `users.token`. Change access only when a person asks you to in conversation. A new person asks for access with `users.request` (their words); owners see what waits in `users.list` and close a new machine or band as owners-only with `users.settle`. Telegram/Discord: `users.link_code platform=telegram` gives a one-time code the person sends to the bot (`/link CODE`, Discord `!link CODE`); only linked accounts are heard, each as its person. `users.chat_bot` names a vault secret with the person's own bot token (never the token). Shared servers/groups: `users.space`, then `users.grant kind=space ref=<platform>:<id>`.
 <!-- END GENERATED: hub-caps -->
 
 ## Worker capabilities
