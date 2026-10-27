@@ -34,6 +34,7 @@ import systems.bake.rook.wearlink.LinkMessage
 import systems.bake.rook.wearlink.LinkReader
 import systems.bake.rook.wearlink.LinkWriter
 import systems.bake.rook.wearlink.Pcm
+import systems.bake.rook.wearlink.Transcript
 import systems.bake.rook.wearlink.WearLink
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -71,7 +72,7 @@ class TalkService : Service() {
     @Volatile private var uplink: AudioEncoder? = null
     @Volatile private var player: ReplyPlayer? = null
     private var wakeLock: PowerManager.WakeLock? = null
-    private var buzzedListening = false
+    @Volatile private var buzzedListening = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -88,14 +89,15 @@ class TalkService : Service() {
     private fun begin() {
         if (running) return
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            Talk.update { Talk.State(Talk.Phase.ERROR, error = "Rook needs the microphone") }
+            Talk.update { it.ended("Rook needs the microphone") }
             stopSelf(); return
         }
         running = true; ready = false; buzzedListening = false
         startForeground(NOTIF_ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
         wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "rook:talk").apply { acquire(MAX_SESSION_MS + 5_000) }
-        Talk.update { Talk.State(Talk.Phase.CONNECTING) }
+        Talk.update { Talk.State(running = true, transcript = it.transcript.done()) }
+        TalkTile.follow(this)
         main.postDelayed(tooLong, MAX_SESSION_MS)
         thread(name = "talk-link") { link() }
     }
@@ -124,7 +126,10 @@ class TalkService : Service() {
             val enc = Codecs.encoder(WearLink.CODEC_OPUS, WearLink.SR_IN).also { uplink = it }
             w.send(WearLink.HELLO, JSONObject().put("v", WearLink.VERSION).put("codec", enc.codec).put("sr", WearLink.SR_IN)
                 .put("accepts", JSONArray().put(WearLink.CODEC_OPUS).put(WearLink.CODEC_PCM)))
-            player = ReplyPlayer { turn, frames -> send(WearLink.PLAYED, JSONObject().put("turn", turn).put("frames", frames)) }
+            player = ReplyPlayer(
+                played = { turn, frames -> send(WearLink.PLAYED, JSONObject().put("turn", turn).put("frames", frames)) },
+                playing = { on -> changed { it.copy(playing = on) } },
+            )
             thread(name = "talk-mic") { mic() }
             val reader = LinkReader(input)
             while (running) {
@@ -149,23 +154,28 @@ class TalkService : Service() {
             WearLink.READY -> {
                 if (m.json().optString("uplink") != uplink?.codec) { uplink?.close(); uplink = Pcm(WearLink.SR_IN) }
                 ready = true
+                changed { it.copy(ready = true) }
             }
-            WearLink.STATE -> {
-                val phase = Talk.phaseOf(m.json().optString("state"))
-                if (phase == Talk.Phase.LISTENING && !buzzedListening) { buzzedListening = true; buzz() }
-                Talk.update { it.copy(phase = phase) }
-            }
-            WearLink.HEARD -> m.json().optString("text").takeIf { it.isNotBlank() }?.let { t -> Talk.update { it.copy(heard = t, reply = "") } }
-            WearLink.REPLY -> { val t = m.json().optString("text"); Talk.update { it.copy(reply = it.reply + t) } }
+            WearLink.STATE -> { val st = m.json().optString("state"); changed { it.copy(server = st) } }
+            WearLink.HISTORY -> { val h = Transcript.fromJson(m.json()); Talk.update { it.copy(transcript = h) } }
+            WearLink.HEARD -> { val t = m.json().optString("text"); Talk.update { it.copy(transcript = it.transcript.heard(t)) } }
+            WearLink.REPLY -> { val t = m.json().optString("text"); Talk.update { it.copy(transcript = it.transcript.reply(t)) } }
+            WearLink.REPLY_DONE -> Talk.update { it.copy(transcript = it.transcript.done()) }
             WearLink.OUT_FORMAT -> m.json().let { player?.format(it.optString("codec", WearLink.CODEC_PCM), it.optInt("sr", 24000), it.optInt("turn")) }
             WearLink.OUT_AUDIO -> player?.audio(m.payload)
             WearLink.FLUSH -> player?.flush()
             WearLink.PAUSE -> player?.pause()
             WearLink.RESUME -> player?.resume()
-            WearLink.ERROR -> { val msg = m.json().optString("msg"); Talk.update { it.copy(error = msg) } }
+            WearLink.ERROR -> { val msg = m.json().optString("msg"); Talk.update { it.copy(transcript = it.transcript.note(msg)) } }
             WearLink.BYE -> return false
         }
         return true
+    }
+
+    /** Any thread: change a fact; the first time Rook listens, the watch taps the wrist. */
+    private fun changed(change: (Talk.State) -> Talk.State) {
+        Talk.update(change)
+        if (!buzzedListening && Talk.state.value.phase == Talk.Phase.LISTENING) { buzzedListening = true; buzz() }
     }
 
     @SuppressLint("MissingPermission")
@@ -234,10 +244,7 @@ class TalkService : Service() {
         thread { uplink?.close(); uplink = null }
         try { wakeLock?.release() } catch (_: Exception) {}
         wakeLock = null
-        Talk.update {
-            if (failure != null) it.copy(phase = Talk.Phase.ERROR, error = failure)
-            else it.copy(phase = Talk.Phase.IDLE)
-        }
+        Talk.update { it.ended(failure) }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -257,7 +264,7 @@ class TalkService : Service() {
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle(getString(R.string.app_name))
-            .setContentText("Listening")
+            .setContentText(getString(R.string.notif_text))
             .setOngoing(true)
             .setContentIntent(open)
             .addAction(Notification.Action.Builder(null, "End", end).build())

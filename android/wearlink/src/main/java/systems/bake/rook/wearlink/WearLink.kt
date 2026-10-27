@@ -44,6 +44,7 @@ object WearLink {
     const val RESUME = 19
     const val ERROR = 20       // json {msg}
     const val BYE = 21         // json {reason}: the phone ended the conversation
+    const val HISTORY = 22     // json {lines: [{who: user|rook, text}]}: the conversation so far (Transcript)
 
     const val CODEC_OPUS = "opus"
     const val CODEC_PCM = "pcm16"

@@ -14,9 +14,13 @@ import kotlin.concurrent.thread
 /**
  * Plays the replies the phone sends, on the watch's audio output: paired earbuds or glasses
  * when connected (media route), else the watch speaker. [format], [audio], [flush], [pause]
- * and [resume] come from the link's reader thread; [played] reports progress for the server.
+ * and [resume] come from the link's reader thread; [played] reports progress for the server,
+ * [playing] whether reply audio is coming out of the watch right now (on changes only).
  */
-class ReplyPlayer(private val played: (turn: Int, frames: Long) -> Unit) : AutoCloseable {
+class ReplyPlayer(
+    private val played: (turn: Int, frames: Long) -> Unit,
+    private val playing: (Boolean) -> Unit = {},
+) : AutoCloseable {
     private sealed class Item {
         class Turn(val turn: Int, val sr: Int) : Item()
         class Pcm(val bytes: ByteArray, val rate: Int) : Item()
@@ -38,6 +42,10 @@ class ReplyPlayer(private val played: (turn: Int, frames: Long) -> Unit) : AutoC
     private var streamSr = 24000
     private var turnStart = 0L
     private var lastReport = 0L
+    /** When the audio written so far will have played out (elapsedRealtime); 0: nothing pending. */
+    @Volatile private var endsAt = 0L
+    @Volatile private var pausedAt = 0L
+    private var wasPlaying = false
     private val player = thread(name = "reply-player") { play() }
 
     fun format(codec: String, sampleRate: Int, turn: Int) {
@@ -61,24 +69,34 @@ class ReplyPlayer(private val played: (turn: Int, frames: Long) -> Unit) : AutoC
         paused = false
     }
 
-    fun pause() = synchronized(lock) { paused = true; try { track?.pause() } catch (_: Exception) {} }
-    fun resume() = synchronized(lock) { paused = false; try { track?.play() } catch (_: Exception) {} }
+    fun pause() = synchronized(lock) {
+        if (!paused) pausedAt = SystemClock.elapsedRealtime()
+        paused = true; try { track?.pause() } catch (_: Exception) {}
+    }
+    fun resume() = synchronized(lock) {
+        // Paused audio plays later by as long as it was held.
+        if (paused && endsAt > 0) endsAt += SystemClock.elapsedRealtime() - pausedAt
+        paused = false; try { track?.play() } catch (_: Exception) {}
+    }
 
     private fun play() {
         try {
             while (running) {
-                val item = queue.poll(200, TimeUnit.MILLISECONDS)
+                val item = queue.poll(100, TimeUnit.MILLISECONDS)
                 report()
+                notePlaying()
                 when (item) {
                     null -> {}
                     is Item.Turn -> {
                         // A new reply cuts what is left of the last one (as the phone's player does).
                         synchronized(lock) { track?.let { it.pause(); it.flush(); if (!paused) it.play() } }
+                        endsAt = 0L
                         playTurn = item.turn; streamSr = item.sr
                         turnStart = track?.playbackHeadPosition?.toLong()?.and(0xffffffffL) ?: 0L
                     }
                     is Item.Flush -> synchronized(lock) {
                         track?.let { it.pause(); it.flush(); it.play() }
+                        endsAt = 0L
                         turnStart = track?.playbackHeadPosition?.toLong()?.and(0xffffffffL) ?: 0L
                     }
                     is Item.Pcm -> write(item)
@@ -86,7 +104,16 @@ class ReplyPlayer(private val played: (turn: Int, frames: Long) -> Unit) : AutoC
             }
         } catch (_: InterruptedException) {
         } catch (e: Exception) { Log.w(TAG, "reply playback failed", e) }
-        finally { synchronized(lock) { try { track?.stop(); track?.release() } catch (_: Exception) {}; track = null } }
+        finally {
+            synchronized(lock) { try { track?.stop(); track?.release() } catch (_: Exception) {}; track = null }
+            endsAt = 0L; notePlaying()
+        }
+    }
+
+    /** Player thread: tells [playing] when sound starts or stops coming out. */
+    private fun notePlaying() {
+        val now = !paused && SystemClock.elapsedRealtime() < endsAt
+        if (now != wasPlaying) { wasPlaying = now; playing(now) }
     }
 
     private fun write(item: Item.Pcm) {
@@ -111,7 +138,12 @@ class ReplyPlayer(private val played: (turn: Int, frames: Long) -> Unit) : AutoC
             if (queue.peek() is Item.Flush) return
             val n = tr.write(item.bytes, off, item.bytes.size - off, AudioTrack.WRITE_NON_BLOCKING)
             if (n < 0) return
-            if (n == 0) { Thread.sleep(5); report() } else off += n
+            if (n == 0) { Thread.sleep(5); report() } else {
+                off += n
+                val now = SystemClock.elapsedRealtime()
+                endsAt = maxOf(endsAt, now) + n / 2 * 1000L / item.rate
+                notePlaying()
+            }
         }
     }
 

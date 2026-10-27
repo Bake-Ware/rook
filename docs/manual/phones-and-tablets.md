@@ -88,6 +88,14 @@ puts the voice assistant on a Wear OS watch paired with a phone that runs the
 Rook app. Open Rook on the watch (from the app list, its tile or a key you map
 to it) and it starts listening; tap to end the conversation or stop a reply.
 
+The screen is the conversation as it goes: what you said, Rook's replies as
+they come in, and the earlier lines from the phone's chat, scrolling with the
+bezel. Your watch conversations show in the phone's chat too. Below it is a
+small Rook (also on the tile) whose color says what it is doing: gray idle,
+indigo connecting, green listening, amber thinking, blue speaking (until the
+watch has played the last word), red when the conversation stopped on an
+error (the reason is the last line).
+
 The watch is only a microphone and a speaker. It sends your voice to the Rook
 app on the paired phone, which holds the voice session with the phone's own
 voice settings and account, and plays the reply on the watch or its earbuds.
