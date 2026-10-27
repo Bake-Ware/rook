@@ -32,7 +32,7 @@ from pathlib import Path
 
 from ...core.paths import legacy_state_path, worker_install_dir, worker_state_dir
 from ...core.db import atomic_write_json, atomic_write_text
-from ...core.pluginkit import RunTimeout, is_termux, is_windows, run
+from ...core.pluginkit import RunTimeout, is_termux, is_windows, no_window, run
 from ..plugin import ANDROID_APP_REPLACED, Plugin, capability, place
 
 log = logging.getLogger("rook.worker.plugins.selfupdate")
@@ -715,7 +715,8 @@ class SelfUpdatePlugin(Plugin):
         try:
             proc = await asyncio.create_subprocess_exec(
                 sys.executable, str(pyz_path), "--selftest",
-                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                **no_window())
         except Exception:
             log.exception("smoke test could not start")
             return False
@@ -1143,7 +1144,7 @@ class SelfUpdatePlugin(Plugin):
         )
         try:
             r = subprocess.run([ps, "-NoProfile", "-NonInteractive", "-Command", script],
-                               capture_output=True, timeout=15)
+                               capture_output=True, timeout=15, **no_window())
             return r.returncode == 0
         except Exception:
             log.exception("failed to persist scheduled task")

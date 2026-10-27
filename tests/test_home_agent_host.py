@@ -206,6 +206,22 @@ async def test_agenthost_bounds_tools_time_and_errors(host):
     await host.stop()           # the re-read a failed turn starts must end inside the test
 
 
+@pytest.mark.asyncio
+async def test_agenthost_probe_hides_console_windows(monkeypatch):
+    """The 5-minute version/login probe runs under pythonw.exe on Windows; each
+    harness it starts must get CREATE_NO_WINDOW or the desktop flashes."""
+    from rook.core import pluginkit
+    seen = []
+
+    async def fake_exec(*argv, **kwargs):
+        seen.append(kwargs)
+        raise OSError("not really started")
+    monkeypatch.setattr(pluginkit, "is_windows", lambda: True)
+    monkeypatch.setattr(agenthost.asyncio, "create_subprocess_exec", fake_exec)
+    assert await agenthost.AgentHost._run_cmd(["claude", "--version"]) == (127, "")
+    assert seen and seen[0]["creationflags"] == pluginkit.CREATE_NO_WINDOW
+
+
 # -- the home plugin on the Claude Code backend ----------------------------------------
 
 class FakeAgentHost:

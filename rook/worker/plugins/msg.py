@@ -17,7 +17,8 @@ import asyncio
 import json
 import time
 
-from ...core.pluginkit import has_display, is_windows, opt_int, require_str, state_path, which
+from ...core.pluginkit import (has_display, is_windows, no_window, opt_int, require_str,
+                               state_path, which)
 from ..plugin import Plugin, capability
 
 _INBOX = state_path("messages.jsonl")
@@ -68,7 +69,7 @@ async def _notify_windows(title: str, body: str) -> bool:
     try:
         proc = await asyncio.create_subprocess_exec(
             ps, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script,
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL, **no_window())
         await asyncio.wait_for(proc.wait(), 8)
         return proc.returncode == 0
     except Exception:
