@@ -260,8 +260,7 @@ class Jobs(Plugin):
         rook_jobs.__doc__ = (
             "Scheduled hub jobs. Reads: list|get|runs|run_get|next|validate|guardrails_preview|"
             "describe_schema|templates. Writes: create|update|delete|enable|disable|run|cancel|"
-            "set_guardrails|lock|unlock|install. templates: ready-made jobs; install id=<template> "
-            "data {config} makes one. describe_schema before writing "
+            "set_guardrails|lock|unlock|install. describe_schema before writing "
             "a job. id: job id/name (run id: run_get, cancel). data: the job (create/validate), "
             "fields to change (update) or options (runs {states, steps:true}, run {vars}).")
         return [rook_jobs]
