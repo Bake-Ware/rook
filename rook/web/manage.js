@@ -102,7 +102,7 @@ export async function accountAction(csrf,fields){
 // Show a one-time value (invitation link, new key) with a copy button.
 export function reveal(title,note,text){
   const c=btn('Copy','soft',()=>copy(text,c));
-  return dialog(title,h('p',{text:note}),h('pre',{text,tabindex:'0'}),h('div',{class:'mg-actions end'},c));
+  return dialog(title,h('p',{text:note}),h('pre',{text,tabindex:'0','data-secret':''}),h('div',{class:'mg-actions end'},c));
 }
 // Copy-paste commands that join a machine with pairing `code` through the hub
 // at `origin` (the server's public base, http:// on a LAN hub):
@@ -122,7 +122,7 @@ export function pairCommands(origin,code){
 // the panel is on screen an expired code is replaced in the same pairing
 // session; off screen it waits. stop() ends it.
 export function pairingPanel(data){
-  const code=h('strong',{class:'mg-big pairing-code'}),left=h('p',{class:'mg-sub pairing-expiry'}),rows=h('div',{class:'pairing-commands'});
+  const code=h('strong',{class:'mg-big pairing-code','data-secret':''}),left=h('p',{class:'mg-sub pairing-expiry'}),rows=h('div',{class:'pairing-commands','data-secret':''});
   let grant=data.pairing,pending=false,stopped=false;
   const show=()=>{
     code.textContent=grant.code;

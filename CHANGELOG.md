@@ -8,6 +8,24 @@ version was `0.1.0`.
 
 ## Unreleased
 
+### Added
+- The dashboard chat knows your page: each message from the @home dock (and the Home agent
+  page's chat) carries the page you are on, the text you selected and what is on screen, and
+  the house agent gets page tools that run in your browser with your own sign-in: `page_go`
+  (open a page), `page_point` (scroll to and highlight), `page_fill` (fill a field, never
+  submit), `page_click` (press a button) and `page_read`. Actions ride the chat's poll and
+  answer with a fresh snapshot, only in the tab the message came from (random action ids,
+  answers checked against the tab); each is journaled as `home.page` (typed values only by
+  length). Typing and pressing work only on Overview, Start page, Work, Huddles, Knowledge,
+  Memory and Help (elsewhere it opens and points); a press only shows or finds things (tabs,
+  # links, details, Open/Show/Filter/Search/Next buttons), typing goes only into text fields
+  and never fires the change that saves, dialogs, cards and waiting questions are the
+  person's, a # link must lead where page_go may go, and a control must be on
+  screen and still read as the agent saw it (rules in `rook/web/page-rules.js`, tested with
+  node in CI). It never reads password fields or shown-once secrets (now marked
+  `data-secret`: new tokens, invite links, pairing codes). Setting `home.page_tools` (on). Works on the front door, the
+  plain chair and the persistent session. (manual: home-agent)
+
 ### Changed
 - LG webOS TVs: `tv.power_on` now wakes TVs on Wi-Fi (it sent Wake-on-LAN only to the wired
   MAC, so it never woke them), waits until the TV answers and says why when it doesn't (including

@@ -74,7 +74,7 @@ from .service import PERSON
 
 PATH = "/huddle/account-api"
 HUDDLE_ACTIONS = ("list", "view", "send", "answer", "start", "card", "archive", "roles", "pin",
-                  "vote")
+                  "vote", "page")
 SPEECH_ACTIONS = ("speak", "voices", "preview", "speak_devices", "speak_on")
 #: What a preview says when the hub cannot speak (the browser reads it).
 PREVIEW_FALLBACK = "Hello. This is how this browser sounds; the hub has no voice engine now."
@@ -494,12 +494,33 @@ def routes(get_node: Callable[[], Any], accounts):
                 result = await svc.view(PERSON, since_seq=int(data.get("since_seq") or 0),
                                         limit=min(int(data.get("limit") or 100), 300),
                                         create=True, targets=True, **where)
+                # The house agent's page tools waiting for this room's chat (home/page.py),
+                # only to a chat that runs them (not the Huddles page reading the room).
+                bridge = getattr(plugin("home"), "page_bridge", None)
+                if bridge is not None and data.get("page") and isinstance(result, dict) \
+                        and result.get("room"):
+                    actions = bridge.take(result["room"], str(data.get("page"))[:32])
+                    if actions:
+                        result["page_actions"] = actions
+            elif action == "page":
+                # The browser's answer to one page action, with its page after it.
+                bridge = getattr(plugin("home"), "page_bridge", None)
+                room = svc.room_id(str(data.get("room") or ""))[0]
+                if bridge is None or not room:
+                    raise ValueError("no page actions here")
+                result = {"taken": bridge.done(room, str(data.get("id") or "")[:24],
+                                               bool(data.get("ok")), data.get("result"),
+                                               data.get("page"), str(data.get("tab") or "")[:32])}
             elif action == "send":
                 mention = data.get("mention") or []
                 if isinstance(mention, str):
                     mention = [m.strip() for m in mention.split(",") if m.strip()]
                 if where["room"]:
                     where["room"] = svc.room_id(where["room"])[0]
+                # The dashboard chat says which page the person is on (home/page.py).
+                bridge = getattr(plugin("home"), "page_bridge", None)
+                if bridge is not None and where["room"] and data.get("page") is not None:
+                    bridge.note(where["room"], data.get("page"))
                 if where["room"] and svc.store.chaired(where["room"]):
                     result = await svc.post(PERSON, where["room"], str(data.get("text") or ""),
                                             mention)
