@@ -243,9 +243,10 @@ class HomeAgent(Plugin):
                 help="On: a message from the dashboard's chat carries the page you are on, "
                      "what you selected and what is on screen, and the agent can open pages and "
                      "point at things there, in your browser; on Overview, Start page, Work, "
-                     "Huddles, Knowledge, Jobs, Memory and Help it can also fill fields and press "
-                     "buttons (never delete, approve, send or update-style ones). Off: it only "
-                     "reads your message."),
+                     "Huddles, Knowledge, Memory and Help it can also type into text fields "
+                     "(never saving) and press things that only show or find (tabs, Open, "
+                     "Filter, Search). Anything that changes something stays yours to press. "
+                     "Off: it only reads your message."),
         setting("front_door", bool, False, group="Front door", order=1,
                 label="Route requests (front door)",
                 help="On: every request (voice, web, chat, MCP, huddles it chairs) is triaged: "

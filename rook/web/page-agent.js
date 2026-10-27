@@ -3,20 +3,20 @@
 // controls, each with a short ref (b3 a button, i5 a field) that stays the same
 // while the control is on the page. run(action): the agent's page_go,
 // page_point, page_fill, page_click or page_read, done here in your browser
-// with your own session, then a fresh snapshot.
-// It opens and points anywhere, but only fills and presses on the everyday
-// pages (ACTS: Feed, Work but Sessions, Help), so it never changes through
-// your sign-in what it could not change itself (trust, settings, plugins,
-// updates, its own instructions, machines, terminals). It never presses a
-// button that deletes, approves, sends or ships something, never follows a
-// link off the dashboard, and never reads password fields or shown-once
-// secrets.
-const ACTS = new Set(['overview', 'start', 'work', 'huddles', 'knowledge', 'jobs', 'memory', 'help']);
-const RISKY = /\b(delete|remove|revoke|erase|wipe|destroy|deauth|sign ?out|log ?out|disconnect|reset|rotate|uninstall|restart|approve|deny|reject|forget|purge|drop|send|post|reply|answer|share|invite|vote|merge|publish|update|upgrade|deploy|roll ?out|install|stop|kill|disable|enable|allow|grant|confirm|yes|pay|buy|order)\b/i;
-// Every name a control goes by: its text, aria-label and title (an icon button
-// shows a glyph but says "Delete" to screen readers).
-const names = el => [el.textContent, el.getAttribute('aria-label'), el.getAttribute('title'), el.value]
-  .map(squash).filter(Boolean).join(' ');
+// with your own session, then a fresh snapshot. What it may do is decided by
+// page-rules.js; it never reads password fields or shown-once secrets.
+const search = new URL(import.meta.url).search;
+const rules = await import('/account/settings/assets/page-rules.js' + search);
+// Every name a control goes by: its text, aria-label, aria-labelledby, title,
+// value and image alt (an icon button shows a glyph but says "Delete").
+function names(el) {
+  const by = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
+    .map(id => document.getElementById(id)?.textContent);
+  const alts = [...el.querySelectorAll('img[alt]')].map(i => i.alt);
+  return [el.textContent, el.getAttribute('aria-label'), ...by, el.getAttribute('title'),
+    el.tagName === 'INPUT' && !['password', 'hidden'].includes(el.type) ? el.value : '', ...alts]
+    .map(squash).filter(Boolean).join(' ').slice(0, 300);
+}
 // One id per open tab: the hub hands a page action only to the tab it was asked from.
 export const TAB = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)).replace(/-/g, '').slice(0, 16);
 const CONTROLS = 'a[href], button, input, select, textarea, [role=button], [role=tab], summary';
@@ -29,7 +29,7 @@ const byRef = new Map();          // ref -> WeakRef(element)
 const refOf = new WeakMap();      // element -> ref
 
 const view = () => document.body.dataset.view || '';
-const locked = () => !ACTS.has(view());
+const locked = () => !rules.ACTS.has(view());
 const say = text => { try { window.rookToast?.(text); } catch {} };
 
 function shown(el) {
@@ -47,9 +47,10 @@ function kindOf(el) {
   if (t === 'TEXTAREA') return 'textarea';
   if (t === 'INPUT') return el.type === 'checkbox' || el.type === 'radio' ? 'checkbox' : 'input';
   if (el.getAttribute('role') === 'tab') return 'tab';
+  if (t === 'SUMMARY') return 'summary';
   return 'button';
 }
-const LETTER = {link: 'l', select: 's', textarea: 't', input: 'i', checkbox: 'c', tab: 'a', button: 'b'};
+const LETTER = {link: 'l', select: 's', textarea: 't', input: 'i', checkbox: 'c', tab: 'a', summary: 'd', button: 'b'};
 function ref(el) {
   let r = refOf.get(el);
   if (!r) { r = LETTER[kindOf(el)] + next++; refOf.set(el, r); byRef.set(r, new WeakRef(el)); }
@@ -177,6 +178,8 @@ async function act(a) {
   if (a.do === 'read') return 'looked at the page';
   if (a.do === 'go') {
     const id = String(a.page || '');
+    const no = rules.goRefusal(id, a.query);
+    if (no) throw Error(no);
     if (!document.getElementById('tab-' + id) && !['feed', 'intelligence', 'chat'].includes(id))
       throw Error('no dashboard page called ' + id);
     location.hash = '#' + id + (a.query ? '?' + String(a.query).replace(/^\?/, '') : '');
@@ -194,36 +197,27 @@ async function act(a) {
   }
   const el = find(a.ref);
   if (!el) throw Error('nothing with ref ' + a.ref + ' on the page now (page_read for fresh refs)');
-  if (locked()) throw Error('only opening and pointing here: ask the person to do it');
   if (el.closest('.hd, .xterm, .terminal')) throw Error('not the chat or a terminal');
   const label = labelOf(el);
+  // The control must still be the one the agent saw (Pause can become Resume).
+  if (a.label !== undefined && squash(a.label) !== label)
+    throw Error(a.ref + ' now reads "' + label + '", not "' + a.label + '": look again (page_read)');
+  const c = rules.describeControl({view: view(), kind: kindOf(el), type: el.type, names: names(el), label,
+    href: el.getAttribute('href') || '', inDialog: !!el.closest('dialog'), readOnly: el.readOnly,
+    disabled: el.disabled});
   if (a.do === 'fill') {
-    if (!['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) throw Error(a.ref + ' is not a field');
-    if (['password', 'file', 'hidden'].includes(el.type)) throw Error('the person types that field themselves');
-    if (el.disabled || el.readOnly) throw Error(label + ' is read-only');
-    const v = String(a.value ?? '');
-    if (el.type === 'checkbox' || el.type === 'radio') {
-      el.checked = /^(true|yes|on|1|checked)$/i.test(v);
-    } else if (el.tagName === 'SELECT') {
-      const opt = [...el.options].find(o => o.value === v || squash(o.textContent).toLowerCase() === v.toLowerCase());
-      if (!opt) throw Error('no option "' + v + '" in ' + label);
-      el.value = opt.value;
-    } else {
-      const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, v);
-    }
-    el.dispatchEvent(new Event('input', {bubbles: true}));
-    el.dispatchEvent(new Event('change', {bubbles: true}));
+    const no = rules.fillRefusal(c);
+    if (no) throw Error(no);
+    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, String(a.value ?? ''));
+    el.dispatchEvent(new Event('input', {bubbles: true}));   // never 'change': that saves on some pages
     point(el);
     say('@home filled ' + (label || a.ref));
-    return 'filled ' + (label || a.ref);
+    return 'filled ' + (label || a.ref) + ' (not saved: the person presses Save)';
   }
   if (a.do === 'click') {
-    if (el.disabled) throw Error(label + ' is disabled');
-    if (RISKY.test(names(el))) throw Error('"' + (label || names(el)) + '" is for the person to press');
-    if (el.closest('dialog')) throw Error('answering a dialog is for the person');
-    if (el.tagName === 'A' && !(el.getAttribute('href') || '').startsWith('#'))
-      throw Error('that link leaves the dashboard: ask the person to open it');
+    const no = rules.pressRefusal(c);
+    if (no) throw Error(no);
     point(el);
     say('@home pressed ' + (label || a.ref));
     el.click();

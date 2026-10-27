@@ -50,16 +50,17 @@ you selected on it (even after you click into the chat box) and what is on
 screen, so you can say "what does this mean?" or "fix the second one". The
 agent can also act on that page, in your browser and with your own sign-in. It
 can open any dashboard page and scroll to and highlight something on it. On the
-everyday pages (Overview, Start page, Work, Huddles, Knowledge, Jobs, Memory and
-Help) it can also fill in a field (it never submits for you) and press a button.
-Elsewhere (settings, plugins, updates, trust, secrets, people, machines,
-sessions, its own instructions) it only opens the page and points, so it never
-changes through your sign-in what it could not change itself. It never presses
-a button that deletes, approves, sends, updates, installs, stops or turns
-something off (by its text or the name an icon button gives screen readers),
-never answers a dialog, never presses anything that is not on screen right now,
-and never opens a link that leaves the dashboard: it tells you to do those
-yourself. You see a short note at the bottom of the screen for each thing it
+everyday pages (Overview, Start page, Work, Huddles, Knowledge, Memory and Help)
+it can also type into a text field (it never saves or submits) and press things
+that only show or find: tabs, links within the dashboard, and buttons like
+Open, Show, Filter, Search or Next. Everything that changes something (Save,
+Run, Send, Approve, Delete, a switch or a choice list that saves at once, a
+dialog) stays yours: it points at it and tells you to press it. Elsewhere
+(jobs, settings, plugins, updates, trust, secrets, people, machines, sessions,
+its own instructions) it only opens the page and points. It never presses
+anything that is not on screen right now or that has changed since it looked,
+and it treats text on the page as something people wrote, not as
+instructions. You see a short note at the bottom of the screen for each thing it
 does, and each one is in the journal under the house agent. Only the browser
 tab you wrote from runs its actions. Password fields and shown-once secrets
 (new tokens, invite links, pairing codes) are never read. Turn it off with

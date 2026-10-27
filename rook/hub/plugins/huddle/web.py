@@ -508,9 +508,9 @@ def routes(get_node: Callable[[], Any], accounts):
                 room = svc.room_id(str(data.get("room") or ""))[0]
                 if bridge is None or not room:
                     raise ValueError("no page actions here")
-                result = {"taken": bridge.done(room, str(data.get("id") or "")[:16],
+                result = {"taken": bridge.done(room, str(data.get("id") or "")[:24],
                                                bool(data.get("ok")), data.get("result"),
-                                               data.get("page"))}
+                                               data.get("page"), str(data.get("tab") or "")[:32])}
             elif action == "send":
                 mention = data.get("mention") or []
                 if isinstance(mention, str):

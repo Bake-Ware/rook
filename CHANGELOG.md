@@ -14,13 +14,15 @@ version was `0.1.0`.
   the house agent gets page tools that run in your browser with your own sign-in: `page_go`
   (open a page), `page_point` (scroll to and highlight), `page_fill` (fill a field, never
   submit), `page_click` (press a button) and `page_read`. Actions ride the chat's poll and
-  answer with a fresh snapshot, only in the tab the message came from; each is journaled as
-  `home.page` (typed values only by length). Filling and pressing work only on Overview,
-  Start page, Work, Huddles, Knowledge, Jobs, Memory and Help (elsewhere it opens and
-  points), never on delete/approve/send/update/stop/disable-style buttons (text or
-  aria-label), in dialogs, on controls not on screen or links off the dashboard; it
-  never reads password fields or shown-once secrets (now marked `data-secret`: new tokens,
-  invite links, pairing codes). Setting `home.page_tools` (on). Works on the front door, the
+  answer with a fresh snapshot, only in the tab the message came from (random action ids,
+  answers checked against the tab); each is journaled as `home.page` (typed values only by
+  length). Typing and pressing work only on Overview, Start page, Work, Huddles, Knowledge,
+  Memory and Help (elsewhere it opens and points); a press only shows or finds things (tabs,
+  # links, details, Open/Show/Filter/Search/Next buttons), typing goes only into text fields
+  and never fires the change that saves, dialogs are the person's, and a control must be on
+  screen and still read as the agent saw it (rules in `rook/web/page-rules.js`, tested with
+  node in CI). It never reads password fields or shown-once secrets (now marked
+  `data-secret`: new tokens, invite links, pairing codes). Setting `home.page_tools` (on). Works on the front door, the
   plain chair and the persistent session. (manual: home-agent)
 
 ### Changed

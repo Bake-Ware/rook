@@ -300,7 +300,7 @@ export function homeChat({toForm,status}){
     if(acting)return;
     acting=true;
     try{while(pending.length){const a=pending.shift(),r=await pageAgent.run(a);
-      await hapi('page',{room,id:a.id,ok:r.ok,result:r.result,page:r.page}).catch(()=>{});}}
+      await hapi('page',{room,id:a.id,ok:r.ok,result:r.result,page:r.page,tab:pageAgent.TAB}).catch(()=>{});}}
     finally{acting=false;}
   }
   const read=()=>hapi('view',{room,since_seq:seq,limit:100,page:pageAgent.TAB}).then(v=>{actOnPage(v);return v;});
