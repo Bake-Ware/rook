@@ -355,7 +355,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | Cap | Args | Does |
 |---|---|---|
 | `adb.list` | — | Every configured Android device: `{items: [{name, serial, adb, model, battery}]}`. |
-| `adb.scan` | — | Every device adb sees on this worker (attached or emulated), for adding to adb.devices. |
+| `adb.scan` | — | Every device adb sees on this worker (attached or emulated), for adding to adb.devices: serial, state and mod… |
 
 **adb devices**
 

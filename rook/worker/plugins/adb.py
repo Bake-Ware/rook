@@ -19,8 +19,9 @@ Safety:
   from this computer reports ``unauthorized``; a person taps Allow on it once.
 - Nothing here runs ``adb root``, ``tcpip``, ``reboot``, ``install`` or
   ``kill-server``. ``shell.exec`` runs as Android's ``shell`` user, which
-  cannot read other apps' data but can change settings and uninstall apps for
-  the current user: it is ``exec`` risk, like ``shell.exec`` anywhere.
+  cannot read other apps' private data but can read and delete shared storage
+  (photos, downloads), change settings and uninstall apps for the current
+  user: it is ``exec`` risk, like ``shell.exec`` anywhere.
 
 Config (settings, or env):
     ROOK_ADB_DEVICES   ``name=serial`` pairs, comma-separated, e.g.
@@ -233,9 +234,10 @@ class AndroidDevice(Device):
 
         Pass EITHER ``argv`` (a list, quoted for you) or ``cmd`` (a string for
         the device's /system/bin/sh, with pipes and redirection). ``stdin`` is
-        fed to the command; ``cwd`` and ``env`` apply on the device. Each
-        stream is capped at 1 MiB (``truncated`` says so). A command still
-        running at ``timeout`` is ended on the device too.
+        fed to the command; ``cwd`` and ``env`` apply on the device. A command
+        that prints more than 1 MiB to a stream is stopped there
+        (``truncated``), and one still running at ``timeout`` is ended on the
+        device too.
         """
         if argv and cmd:
             raise ArgError("pass argv or cmd, not both")
@@ -275,10 +277,11 @@ class AndroidDevice(Device):
             return {"ok": False, "error": "disconnected",
                     "note": f"{self.name} left adb while the command ran; "
                             "partial side effects may have landed.", "stderr": stderr}
-        reply: dict[str, Any] = {"ok": code == 0, "code": code,
+        reply: dict[str, Any] = {"ok": code == 0 and not cut, "code": code,
                                  "stdout": out.decode("utf-8", errors="replace"), "stderr": stderr}
         if cut:
-            reply["truncated"] = True
+            reply.update(code=None, truncated=True,
+                         note="stopped at the 1 MiB output limit; redirect big output to a file")
         return reply
 
     @capability("device.info", risk="read", scope="multi-machine")
@@ -370,11 +373,12 @@ class AndroidDevice(Device):
         items = ui_items(out[start:end + 1])
         return {"text": "\n".join(i["text"] for i in items), "items": items}
 
-    async def _input(self, *commands: tuple[str, ...]) -> dict:
+    async def _input(self, *commands: tuple[str, ...], timeout: float = 15.0) -> dict:
         """Run ``input`` commands as one device-side script, one caller at a
         time, so another session's taps never land in the middle."""
         async with self._input_lock:
-            await self.sh(" && ".join(shlex.join(("input",) + c) for c in commands))
+            await self.sh(" && ".join(shlex.join(("input",) + c) for c in commands),
+                          timeout=timeout)
         return {"ok": True}
 
     @capability("hid.type", risk="exec", tags=("physical",), scope="multi-machine")
@@ -392,7 +396,8 @@ class AndroidDevice(Device):
                 # `input text` reads %s as a space (and has no other escape).
                 commands.append(("text", line.replace(" ", "%s")))
         if commands:
-            await self._input(*commands)
+            # `input text` types a few dozen characters a second.
+            await self._input(*commands, timeout=15 + len(text) / 10)
         return {"ok": True, "typed": len(text)}
 
     @capability("hid.key_combo", risk="exec", tags=("physical",), scope="multi-machine")
@@ -480,8 +485,9 @@ class AdbPlugin(Plugin):
                         cap: int | None = None) -> tuple[int, bytes, bytes, bool]:
         """Like :meth:`adb` but keeps stdout/stderr as bytes (screencap, big
         output): ``(code, out, err, truncated)``. With ``cap``, each stream
-        keeps its first ``cap`` bytes and the rest is read and dropped, so a
-        command that prints without end can't fill the worker's memory."""
+        keeps its first ``cap`` bytes; past that adb is stopped (which ends
+        the command on the device), so a command that prints without end
+        neither fills the worker's memory nor runs out the timeout."""
         binary = self._binary()
         if not binary:
             fail("adb is not installed on this worker")
@@ -498,6 +504,8 @@ class AdbPlugin(Plugin):
             while chunk := await stream.read(65536):
                 if cap is not None and len(buf) + len(chunk) > cap:
                     buf.extend(chunk[:max(0, cap - len(buf))])
+                    if not cut and proc.returncode is None:
+                        proc.kill()
                     cut = True
                 else:
                     buf.extend(chunk)
@@ -583,7 +591,8 @@ class AdbPlugin(Plugin):
     @capability("scan", risk="read", scope="multi-machine")
     async def _scan(self) -> dict:
         """Every device adb sees on this worker (attached or emulated), for adding
-        to adb.devices. Lists only; it never authorizes or changes a device."""
+        to adb.devices: serial, state and model, including phones that are only
+        charging there. Lists only; it never authorizes or changes a device."""
         known = {d.serial: d.name for d in self._devices.values()}
         return {"items": [{"serial": s, **row, "configured_as": known.get(s)}
                           for s, row in sorted((await self._seen()).items())]}

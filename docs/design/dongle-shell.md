@@ -46,7 +46,9 @@ Rook Android app uses, so an agent drives it the way it drives any phone:
 | `device.info`, `battery.status` | read | `getprop`, `wm size`, `dumpsys power / battery` |
 
 On the delegate: `adb.list` (configured devices and their adb state) and
-`adb.scan` (every serial adb sees, to fill in the setting).
+`adb.scan` (every serial adb sees, to fill in the setting). `adb.scan` is a
+read, but it shows the serial and model of every Android device cabled to
+that worker, including one that is only charging there; it addresses none.
 
 Rules:
 
@@ -58,14 +60,16 @@ Rules:
   once"; the heartbeat says `not paired`.
 - **No privileged adb verbs.** The plugin never runs `root`, `tcpip`,
   `connect`, `reboot`, `install` or `kill-server`. `shell.exec` runs as
-  Android's `shell` user: it cannot read other apps' data, but it can change
-  settings and remove apps for the current user, which is why it is `exec`.
+  Android's `shell` user: it cannot read other apps' private data, but it can
+  read and delete shared storage (photos, downloads), change settings and
+  remove apps for the current user, which is why it is `exec`.
   The policy that already holds `shell.exec` on any worker holds it here (same
   cap name, same tier floor).
 - **Timeouts end the remote command.** Killing the local `adb` client closes
   the shell session and Android kills the command (checked on an Android 15 emulator).
-- Output is capped at 1 MiB per stream while it is read (`truncated: true`);
-  the rest is drained and dropped, so `cat /dev/zero` can't fill the worker.
+- Output is capped at 1 MiB per stream while it is read: past it adb is
+  stopped, which ends the command, and the reply says `truncated: true`, so
+  `cat /dev/zero` neither fills the worker nor runs out the timeout.
 - adb's own "device not found" in the middle of a command (cable pulled) comes
   back as `error: disconnected`, not as the command's exit code 1.
 - `hid.*` calls send one device-side script each, under a per-device lock, so
@@ -110,7 +114,7 @@ the cable goes to the worker. With a dead touch layer:
 2. **Remote, twin dongle (design):** the RP2040 dongle has one USB port, so
    plugged into the tablet its serial port belongs to the tablet and the band
    cannot reach it. Two RP2040-Zeros joined by UART fix that, the topology
-   Bake's Geppetto bridge already proves: board A on the worker (USB serial),
+   proven by twin-Pico HID bridges: board A on the worker (USB serial),
    board B in the tablet (USB keyboard and mouse), the same firmware on both.
    Protocol 2 would add a `relay` field: a command sent to A with
    `"via": "twin"` goes out A's UART, B runs it and the reply comes back the
@@ -130,11 +134,12 @@ After first contact the tablet needs only a data cable to the worker.
   cable; the plugin does not run `connect`, so a Wi-Fi serial (`ip:port`) works
   only if something else keeps the connection up. Add an explicit
   `adb.connect` setting if wanted.
-- **Firmware.** No firmware changed. The RP2040 that enumerates as
-  `2e8a:000a Bake-Ware Geppetto` on cachyrig is Bake's Geppetto HID bridge
-  (`~/gepetto/geppetto`), not a Rook dongle: anything written to its serial
-  port is typed on the machine at the other end. Rook must never set
-  `dongle.port` to it.
+- **Firmware.** No firmware changed: no Rook RP2040 or ESP32 dongle was
+  attached anywhere to test on. Not every RP2040 serial port is a Rook dongle:
+  some (twin-Pico HID bridges, for one) type whatever is written to them on
+  another machine, which is why `dongle.*` checks the device's identity before
+  it sends anything but `status`, and why `dongle.port` must name the dongle's
+  own `/dev/serial/by-id/` path.
 - **The host-side shell of option (a)** for PCs without a worker. It needs the
   ESP32 dongle (the only one that reaches the band by itself) and is the old
   `run_command` of `firmware/DEVLOG.md`; revisit with the ESP32 dongle.
