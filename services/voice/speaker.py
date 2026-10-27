@@ -467,17 +467,17 @@ class Speakers:
 
         ``{'label': principal | 'guest' | 'assistant', 'score': best enrolled cosine or None,
         'principal': matched name or None, 'assistant_score': cosine vs the assistant voice
-        reference or None, 'ms': embedding time}``. ``candidate`` names the best enrolled
-        match even below the threshold (for shadow logs).
+        reference or None, 'scores': each enrolled print's cosine, 'ms': embedding time}``.
+        ``candidate`` names the best enrolled match even below the threshold (for shadow logs).
         """
         vector, ms = await self._embed_samples(pcm_to_float(pcm))
         if vector is None:
             return None
-        best, score = None, None
+        best, score, scores = None, None, {}
         for principal, voiceprint in list(self._prints.items()):
             if voiceprint.shape != vector.shape:
                 continue
-            value = float(np.dot(vector, voiceprint))
+            value = scores[principal] = float(np.dot(vector, voiceprint))
             if score is None or value > score:
                 best, score = principal, value
         reference = self._assistant.get(assistant_voice) if assistant_voice else None
@@ -491,7 +491,8 @@ class Speakers:
             label = principal or "guest"
         return {"label": label, "score": None if score is None else round(score, 4), "principal": principal,
                 "assistant_score": None if assistant_score is None else round(assistant_score, 4),
-                "candidate": best, "ms": ms, "vector": vector}
+                "candidate": best, "scores": {p: round(v, 4) for p, v in scores.items()}, "ms": ms,
+                "vector": vector}
 
     # --- echo guard: the assistant's own voice ---------------------------------------
     def has_assistant_voice(self, voice):
