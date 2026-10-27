@@ -151,7 +151,11 @@ pub fn worker_pids(rows: &str, pyz: &Path, windows: bool) -> Vec<u32> {
     let want = fold(&pyz.display().to_string());
     rows.lines()
         .filter_map(|l| {
-            let (pid, cmd) = l.trim_start().split_once(char::is_whitespace)?;
+            // A byte-order mark may lead the first row (Windows PowerShell).
+            let (pid, cmd) = l
+                .trim_start_matches('\u{feff}')
+                .trim_start()
+                .split_once(char::is_whitespace)?;
             let cmd = fold(cmd);
             let edge = |c: Option<char>| c.map_or(true, |c| c.is_whitespace() || c == '"' || c == '\'');
             let found = cmd.match_indices(want.as_str()).any(|(at, _)| {
@@ -170,7 +174,7 @@ pub fn worker_pids(rows: &str, pyz: &Path, windows: bool) -> Vec<u32> {
 fn worker_processes(pyz: &Path) -> Vec<u32> {
     if cfg!(windows) {
         // UTF-8, so a profile path with non-ASCII letters (C:\\Users\\José) matches.
-        const SCRIPT: &str = "[Console]::OutputEncoding = [Text.Encoding]::UTF8; \
+        const SCRIPT: &str = "[Console]::OutputEncoding = New-Object Text.UTF8Encoding $false; \
             Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | \
             ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }";
         match run(
@@ -493,5 +497,7 @@ mod tests {
         let pyz = PathBuf::from(r"C:\Users\José\.rook-band-worker\band-worker.pyz");
         let out = "77\tC:\\Users\\José\\.rook-band-worker\\venv\\Scripts\\pythonw.exe C:\\Users\\JOSÉ\\.rook-band-worker\\band-worker.pyz --enrolled --ws\r\n";
         assert_eq!(worker_pids(out, &pyz, true), vec![77]);
+        let bom = format!("\u{feff}{out}");
+        assert_eq!(worker_pids(&bom, &pyz, true), vec![77]);
     }
 }
