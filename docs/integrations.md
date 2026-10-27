@@ -278,11 +278,19 @@ Don't paste it into a `rook_call`, because call arguments are journaled.
      from `getUpdates`, or use a helper bot.
   4. Group chat ids are negative.
 - **Discord.**
-  1. Create an application and a bot.
-  2. Turn on the **Message Content** intent.
-  3. Invite the bot with the permissions to view the channel, send
-     messages and read message history.
+  1. Create an application and a bot. Give the hub its own bot: Discord
+     sends each message to one gateway connection per bot, so a bot another
+     program (Hermes, say) already listens with will not work reliably.
+  2. Turn on the **Message Content** intent. Without it the hub still
+     connects, but it hears only direct messages and messages that mention
+     the bot; `discord.status` then shows `message_content: false`.
+  3. Invite the bot to a server with the permissions to view the channel,
+     send messages and read message history. Discord only lets people send
+     the bot a direct message when they share a server with it.
   4. `chat_id` is the channel id (turn on Developer Mode and use Copy ID).
+  5. Link: `users.link_code platform=discord`, then send `!link CODE` to the
+     bot in a direct message. In a server channel, `@Bot !link CODE` also
+     works, as do `@Bot !help` and the other commands.
 
 ## Limits and non-goals
 

@@ -114,6 +114,29 @@ class Access(Plugin):
             log.warning("could not read accounts from %s", path, exc_info=True)
             return []
 
+    def _account(self, user: str | None, also: tuple = ()) -> str:
+        """The account id ``user`` names: an id, or one account's name,
+        username or email. An unknown user is refused rather than given a code
+        or a grant nobody can use. ``also``: ids accepted besides accounts and
+        members (a stale link can still be removed). A node that cannot see
+        the accounts takes the id as given."""
+        user = str(user or "").strip()
+        accounts = self._accounts()
+        if not user or not accounts:
+            return user
+        known = {a["id"] for a in accounts} | {m["user_id"] for m in self._store().members()}
+        if user in known or user in also:
+            return user
+        key = user.casefold()
+        hits = {a["id"] for a in accounts
+                if key in {str(a.get(f) or "").casefold() for f in ("name", "username", "email")}}
+        if len(hits) == 1:
+            return hits.pop()
+        if hits:
+            raise ValueError(f"user: {len(hits)} accounts are called {user!r}; pass the "
+                             "account id (users.list lists them)")
+        raise ValueError(f"user: no account {user!r} (users.list lists them)")
+
     def _target(self, worker: str | None):
         from ...authz import target_from_entry
         node = self._node
@@ -168,7 +191,7 @@ class Access(Plugin):
         """Whether a person (default: you) may call ``cap`` on ``worker``, and
         which grant decides. Asking about someone else is for owners."""
         store = self._store()
-        uid = user or self._me()
+        uid = self._person(user, "users.explain") if user else self._me()
         if not uid:
             raise ValueError("user: an account id (users.list lists them)")
         if uid != self._me():
@@ -237,7 +260,7 @@ class Access(Plugin):
         """Make someone an ``owner`` or a ``member``. ``words``: the person's
         own words asking for it (kept). The last owner stays an owner. Owners only."""
         _gate("users.role")
-        return self._store().set_role(user, role, actor=_actor(), words=words)
+        return self._store().set_role(self._account(user), role, actor=_actor(), words=words)
 
     @capability("grant", risk="admin", scope="multi-user")
     def grant(self, user: str, kind: str, words: str, ref: str = "", caps: Any = None,
@@ -249,7 +272,7 @@ class Access(Plugin):
         ``words``: the person's own words asking for it. Owners only; hub
         settings, sign-in and policy stay owner-only whatever a grant says."""
         _gate("users.grant")
-        return {"grant": self._store().grant(user, kind, ref, caps=caps, tier=tier,
+        return {"grant": self._store().grant(self._account(user), kind, ref, caps=caps, tier=tier,
                                              actor=_actor(), words=words)}
 
     @capability("revoke", risk="admin", scope="multi-user")
@@ -317,23 +340,32 @@ class Access(Plugin):
         if not hits and not ref.startswith("agent_"):
             raise ValueError(f"token: no API key {ref!r}")
         aid = hits[0]["agent_id"] if hits else ref
-        accounts = {a["id"] for a in self._accounts()}
-        if accounts and user not in accounts:
-            raise ValueError(f"user: no account {user!r} (users.list lists them)")
+        user = self._account(user)
         return self._store().set_token_user(aid, user, actor=_actor(), words=words,
                                             label=hits[0].get("name") or "" if hits else "")
 
     # -- chat accounts ---------------------------------------------------------
-    def _person(self, user: str | None, what: str) -> str:
-        """``user`` when an owner names someone, else the caller (a person)."""
+    def _person(self, user: str | None, what: str, also: tuple = ()) -> str:
+        """``user`` when an owner names someone (an account id, or a unique
+        name), else the caller (a person)."""
         me = self._me()
         if user and user != me:
-            _gate(f"{what} for someone else")
-            return user
+            try:
+                uid, bad = self._account(user, also), None
+            except ValueError as e:
+                uid, bad = None, e
+            if uid != me:
+                _gate(f"{what} for someone else")   # members learn nothing about others
+            if bad is not None:
+                raise bad
+            return uid
         if me is None:
             raise ValueError("this is about a signed-in person: sign in on the dashboard, "
                              "or an owner passes user=")
         return me
+
+    def _linked(self) -> tuple:
+        return tuple({l["user_id"] for l in self._store().links()})
 
     def _chat_plugins(self) -> list:
         from ...integrations import ChatIntegration
@@ -375,7 +407,7 @@ class Access(Plugin):
         if user == "*":
             _gate("users.links for everyone")
             return {"links": store.links(), "bots": store.bots()}
-        uid = self._person(user, "users.links")
+        uid = self._person(user, "users.links", self._linked())
         return {"user": uid, "links": store.links(uid),
                 "bots": {b["platform"]: b["secret"] for b in store.bots(user_id=uid)}}
 
@@ -383,7 +415,7 @@ class Access(Plugin):
     def unlink(self, platform: str, words: str, user: str | None = None) -> dict:
         """Forget your linked Telegram or Discord account: its messages are
         ignored again. ``words``: who asked, in their words (kept)."""
-        uid = self._person(user, "users.unlink")
+        uid = self._person(user, "users.unlink", self._linked())
         return {"user": uid, "platform": platform,
                 "unlinked": self._store().unlink(uid, platform, actor=_actor(), words=words)}
 

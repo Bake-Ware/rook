@@ -31,10 +31,13 @@ log = logging.getLogger("rook.hub.plugins.discord")
 
 API = "https://discord.com/api/v10"
 #: GUILD_MESSAGES | DIRECT_MESSAGES | MESSAGE_CONTENT
-INTENTS = (1 << 9) | (1 << 12) | (1 << 15)
+MESSAGE_CONTENT = 1 << 15
+INTENTS = (1 << 9) | (1 << 12) | MESSAGE_CONTENT
 _USER_MENTION = re.compile(r"<@!?(\d+)>")
 #: Gateway close codes that will not get better by retrying soon.
 _FATAL_CLOSE = {4004, 4010, 4011, 4012, 4013, 4014}
+#: Closed for asking an intent the app may not use (Message Content not ticked).
+_DISALLOWED_INTENTS = 4014
 
 
 class Discord(ChatIntegration):
@@ -56,6 +59,7 @@ class Discord(ChatIntegration):
         self._session: Any = None
         self._names: dict[str, str] = {}   # user id -> username, from recent messages
         self._guilds: dict[str, str] = {}  # channel id -> server id ('' for none)
+        self._no_content: set[str] = set()  # bots refused the Message Content intent
 
     # -- HTTP --------------------------------------------------------------
     def _base(self) -> str:
@@ -131,8 +135,10 @@ class Discord(ChatIntegration):
                     acked[0] = False
                     await ws.send_json({"op": 1, "d": seq[0]})
 
+            key = bot.key if bot is not None else "hub"
+            intents = INTENTS & ~MESSAGE_CONTENT if key in self._no_content else INTENTS
             await ws.send_json({"op": 2, "d": {
-                "token": bot.token if bot is not None else self.token(), "intents": INTENTS,
+                "token": bot.token if bot is not None else self.token(), "intents": intents,
                 "properties": {"os": platform.system().lower() or "linux",
                                "browser": "rook", "device": "rook"}}})
             beater = asyncio.get_running_loop().create_task(beat())
@@ -161,6 +167,14 @@ class Discord(ChatIntegration):
                 else:
                     self.state["connected"] = False
             code = ws.close_code
+        if code == _DISALLOWED_INTENTS and key not in self._no_content:
+            # Discord still sends the text of direct messages and of messages
+            # that mention the bot, so carry on with those.
+            self._no_content.add(key)
+            self.state["last_error"] = (
+                "the Message Content intent is off for this bot (Discord developer portal "
+                "> Bot); hearing only direct messages and messages that mention it")
+            return
         if code in _FATAL_CLOSE:
             raise FatalAuth(f"gateway closed with {code}")
 
@@ -199,6 +213,12 @@ class Discord(ChatIntegration):
                        message_id=str(d.get("id", "")),
                        reply_to=str(ref.get("message_id", "")) if ref else "",
                        mentions=mentions, private=not guild, space=guild)
+
+    def unaddressed(self, text: str, bot: Bot) -> str:
+        """``@Bot !link CODE`` in a server reads as ``!link CODE``."""
+        if bot.bot_id:
+            return re.sub(rf"^<@!?{re.escape(bot.bot_id)}>\s*", "", text)
+        return text
 
     def _inbound_text(self, m: Inbound) -> str:
         """Native ``<@id>`` mentions read as ``@name`` in the room; a mention
@@ -265,8 +285,10 @@ class Discord(ChatIntegration):
     @capability("status", risk="read", scope="external")
     def status(self) -> dict:
         """Discord integration status: connected, channel and token configured
-        (never the token), bridged rooms, counters and the last error."""
-        return self.status_dict()
+        (never the token), bridged rooms, counters, the last error, and
+        whether the bot reads every message (``message_content``) or only
+        direct messages and mentions."""
+        return {**self.status_dict(), "message_content": "hub" not in self._no_content}
 
 
 PLUGIN = Discord

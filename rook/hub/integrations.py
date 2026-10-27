@@ -397,6 +397,11 @@ class ChatIntegration(Plugin):
     def format_mention(self, handle: str) -> str:
         return "@" + handle
 
+    def unaddressed(self, text: str, bot: Bot) -> str:
+        """``text`` without a leading mention of ``bot`` (so a command
+        addressed to it still parses)."""
+        return text
+
     # -- masking -------------------------------------------------------------
     def mask(self, text: Any) -> str:
         """``text`` with the token (and anything token-shaped) replaced."""
@@ -597,7 +602,7 @@ class ChatIntegration(Plugin):
             return "ignored:bot"
         if self._people() is None:
             return await self._legacy_inbound(m)
-        text = (m.text or "").strip()
+        text = self.unaddressed((m.text or "").strip(), bot).strip()
         if not text:
             return "ignored:empty"
         if not self._rate_ok(str(m.user_id)):
