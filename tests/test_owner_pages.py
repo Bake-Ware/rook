@@ -78,6 +78,30 @@ def test_owner_check_failing_leaves_only_the_operator(people):
     assert not s.session(people.tokens['partner'])['admin']
 
 
+def test_a_second_owner_owns_every_band_as_the_operator_does(people):
+    s, band = people.p.store, people.p.source['id']
+    partner, kid = people.uid['partner'], people.uid['kid']
+    assert [b['id'] for b in s.bands(people.uid['operator'])] == [band]
+    assert [(b['id'], b['role']) for b in s.bands(partner)] == [(band, 'owner')]
+    assert s.require_band(partner, band, True) == 'owner'
+    assert [m['id'] for m in s.members(partner, band)] == [people.uid['operator']]
+    assert s.bands(kid) == []
+    with pytest.raises(PermissionError):
+        s.require_band(kid, band)
+    with pytest.raises(PermissionError):
+        s.require_band(partner, 'no-such-band')
+
+
+@pytest.mark.asyncio
+async def test_a_second_owner_sees_the_bands_page_as_the_operator_does(people):
+    async with TestClient(TestServer(people.p.app)) as http:
+        op = await (await http.get('/account/bands/api', headers=people.cookie('operator'))).json()
+        partner = await (await http.get('/account/bands/api', headers=people.cookie('partner'))).json()
+        kid = await (await http.get('/account/bands/api', headers=people.cookie('kid'))).json()
+    assert partner == op and partner['bands'][0]['members']
+    assert kid['bands'] == []
+
+
 # -- the MCP side: every account API -----------------------------------------------
 
 def _mcp_pages(accounts, tmp_path):

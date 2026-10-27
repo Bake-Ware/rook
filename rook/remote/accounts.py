@@ -334,13 +334,20 @@ class AccountStore:
                 return self.require_band(uid,band_id,owner,connection)
         row = db.execute('SELECT m.role,b.active FROM memberships m JOIN bands b ON b.id=m.band_id WHERE m.user_id=? AND m.band_id=? AND b.deleted=0', (uid,band_id)).fetchone()
         if not row or (owner and row['role']!='owner'):
+            # A hub owner owns every band, as the operator account does.
+            if self.is_owner(uid) and db.execute('SELECT 1 FROM bands WHERE id=? AND deleted=0', (band_id,)).fetchone():
+                return 'owner'
             raise PermissionError('Band access denied.')
         return row['role']
 
     def bands(self, uid, configs=False):
         with self.db() as db:
             fields = ',b.psk' if configs else ''
-            rows = db.execute('SELECT b.id,b.name,b.hub,b.epoch,b.active,b.psk_hash,m.role'+fields+' FROM bands b JOIN memberships m ON m.band_id=b.id WHERE m.user_id=? AND b.deleted=0', (uid,)).fetchall()
+            if self.is_owner(uid):
+                # A hub owner sees and owns every band, as the operator does.
+                rows = db.execute("SELECT b.id,b.name,b.hub,b.epoch,b.active,b.psk_hash,'owner' AS role"+fields+' FROM bands b WHERE b.deleted=0').fetchall()
+            else:
+                rows = db.execute('SELECT b.id,b.name,b.hub,b.epoch,b.active,b.psk_hash,m.role'+fields+' FROM bands b JOIN memberships m ON m.band_id=b.id WHERE m.user_id=? AND b.deleted=0', (uid,)).fetchall()
         return [{**dict(r),'label':r['psk_hash'][:8]} for r in rows if r['active'] or not configs]
 
     @staticmethod
