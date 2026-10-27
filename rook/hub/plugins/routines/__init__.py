@@ -120,7 +120,7 @@ class Routines(Plugin):
         prev = sf.load()
         now = self.clock()
         scan = Scan(self._node, clock=self.clock)
-        snap = scan.collect(float(prev.get("at") or 0))
+        snap = scan.collect(float(prev.get("at") or 0), prev.get("journal"))
         findings, nxt = Scan.compare(prev, snap, urgent_refusals=max(0, int(urgent_refusals or 0)))
         nxt["at"] = now
         out: dict = {"baseline": not prev.get("at"), "changed": bool(findings), "findings": findings,

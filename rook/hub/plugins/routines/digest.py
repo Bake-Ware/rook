@@ -10,10 +10,12 @@ Sources:
   Phones: the ``phones`` argument, else ``attention.devices``, else every
   live worker that has one of the two caps. Mail apps' notifications count
   as email.
-* **Chats**: Rook chat rooms with unread messages for ``chat_as`` (the
-  dashboard's chat identity, ``user:operator``, unless told otherwise) that
-  had activity since the last digest. Telegram and Discord conversations are
-  bridged into Rook rooms, so they are here too.
+* **Chats**: Rook chat rooms with activity since the last digest: those
+  ``chat_as`` (the dashboard's chat identity, ``user:operator``, unless told
+  otherwise) is in, with their unread count, and other rooms whose newest
+  message is from a person or a bridge (``telegram:``, ``discord:``,
+  ``human:``, ``user:``). Telegram and Discord conversations are bridged into
+  Rook rooms, so they are here too.
 * **Email** (optional, ``email``): ``{"imap": {"host", "user", "password":
   "{{secret:name}}", "port": 993, "folder": "INBOX"}}`` reads new unseen
   messages' sender and subject over IMAP (read-only, nothing is marked
@@ -44,6 +46,8 @@ log = logging.getLogger("rook.hub.plugins.routines.digest")
 FIRST_WINDOW = 2 * 3600       # the first digest looks back this far
 MAIL_HINTS = ("mail", "gmail", "outlook", "proton", "fastmail", "thunderbird", "k9", "android.gm")
 FETCH_LIMIT = 100
+#: Senders that are people (or people on a bridge), for rooms the person is not in.
+PEOPLE = ("telegram", "discord", "human", "user")
 IMAP_TIMEOUT = 20.0
 
 
@@ -119,17 +123,24 @@ class Digest:
             self.errors.append("chats: no chat store on this hub")
             return []
         now = self.clock()
-        got = chat.rooms_for(chat_as, limit=200)
+        got = chat.rooms_for(chat_as, limit=200, include_all=True)
         out = []
         for r in got.get("rooms") or []:
-            if not r.get("unread"):
-                continue
             if now - float(r.get("last_activity_age_secs") or 0) <= since:
                 continue
             sender = str(r.get("last_sender") or "")
-            via = sender.split(":", 1)[0] if sender.split(":", 1)[0] in ("telegram", "discord") else ""
+            kind = sender.split(":", 1)[0]
+            if r.get("member", True):
+                if not r.get("unread"):
+                    continue
+                unread = int(r["unread"])
+            elif kind in PEOPLE and sender != chat_as:
+                unread = 0      # a room they are not in: new messages from a person or a bridge
+            else:
+                continue
             out.append({"room": clip(r.get("name") or r.get("title") or r.get("room"), 60),
-                        "unread": int(r["unread"]), "from": clip(sender, 40), "via": via})
+                        "unread": unread, "from": clip(sender, 40),
+                        "via": kind if kind in ("telegram", "discord") else ""})
         return out
 
     # -- email -------------------------------------------------------------------
@@ -196,11 +207,11 @@ def compose(got: dict, *, since_label: str, max_items: int = 8) -> tuple[str, st
                      + (f"; {len(mail) - max_items} more" if len(mail) > max_items else ""))
     chats = got["chats"]
     if chats:
-        shown = [f"{c['room']} {c['unread']}" + (f" via {c['via']}" if c["via"] else "")
-                 for c in chats[:max_items]]
+        shown = [f"{c['room']} " + (str(c["unread"]) if c["unread"] else f"new from {c['from']}")
+                 + (f" via {c['via']}" if c["via"] else "") for c in chats[:max_items]]
         lines.append("Chats: " + "; ".join(shown)
                      + (f"; {len(chats) - max_items} more rooms" if len(chats) > max_items else ""))
-    count = len(notes) + len(mail) + sum(c["unread"] for c in chats)
+    count = len(notes) + len(mail) + sum(c["unread"] or 1 for c in chats)
     if not lines:
         return "", "", 0
     text = f"Since {since_label}:\n" + "\n".join(lines)

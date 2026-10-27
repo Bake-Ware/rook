@@ -130,19 +130,33 @@ class Scan:
                 "changes": [(str(r["action"]), str(r["username"] or "someone")) for r in audit
                             if str(r["action"]) in ACCOUNT_ACTIONS]}
 
-    def journal(self, since: float) -> dict | None:
+    def journal(self, mark: dict) -> dict | None:
+        """Rows since ``mark`` (``{ts, ids}``: the newest row the last scan
+        saw and the call ids at that instant). The journal keeps ts to the
+        millisecond, so a time cut alone would miss or repeat rows written
+        around a scan; the mark does neither."""
         j = getattr(self.node, "journal", None)
         if j is None or not getattr(j, "enabled", True):
             self.skipped["journal"] = "no call journal on this hub"
             return None
-        denied = j.query(since=since, decision="deny", limit=JOURNAL_LIMIT)
-        refused = j.query(since=since, cap_prefix="audit.denied", limit=JOURNAL_LIMIT)
-        unverified = j.query(since=since, cap_prefix="audit.unverified", limit=JOURNAL_LIMIT)
+        since = float(mark.get("ts") or 0)
+        seen = set(mark.get("ids") or ())
+        rows = {k: [r for r in j.query(since=since, limit=JOURNAL_LIMIT, **q)
+                    if r.get("call_id") not in seen]
+                for k, q in (("denied", {"decision": "deny"}), ("refused", {"cap_prefix": "audit.denied"}),
+                             ("unverified", {"cap_prefix": "audit.unverified"}))}
+        every = [r for v in rows.values() for r in v]
+        top = max((float(r.get("ts") or 0) for r in every), default=None)
+        nxt = {"ts": since, "ids": sorted(seen)} if top is None else \
+            {"ts": top, "ids": sorted({r.get("call_id") for r in every if float(r.get("ts") or 0) == top}
+                                      | (seen if top == since else set()))}
         return {
+            "mark": nxt,
             "denied": collections.Counter(f"{r.get('identity') or '?'} -> {r.get('cap') or '?'}"
-                                          for r in denied),
-            "refused": collections.Counter(str(r.get("identity") or "unauthenticated") for r in refused),
-            "unverified": collections.Counter(str(r.get("identity") or "?") for r in unverified),
+                                          for r in rows["denied"]),
+            "refused": collections.Counter(str(r.get("identity") or "unauthenticated")
+                                           for r in rows["refused"]),
+            "unverified": collections.Counter(str(r.get("identity") or "?") for r in rows["unverified"]),
         }
 
     def keys(self) -> dict | None:
@@ -162,13 +176,14 @@ class Scan:
                 for r in reversed(store.history(limit=200))
                 if float(r.get("ts") or 0) > since and str(r.get("action")) in ACCESS_ACTIONS]
 
-    def collect(self, since: float) -> dict:
+    def collect(self, since: float, mark: dict | None = None) -> dict:
+        mark = mark if isinstance(mark, dict) else {"ts": since, "ids": []}
         return {
             "workers": self._try("workers", self.workers),
             "consoles": self._try("consoles", self.consoles),
             "agents": self._try("agents", lambda: self.agents(since)),
             "logins": self._try("logins", lambda: self.logins(since)),
-            "journal": self._try("journal", lambda: self.journal(since)),
+            "journal": self._try("journal", lambda: self.journal(mark)),
             "keys": self._try("keys", self.keys),
             "access": self._try("access", lambda: self.access(since)),
         }
@@ -214,7 +229,7 @@ class Scan:
                 add("agents", "warn", "New identity over the MCP: " + ", ".join(new_a[:MAX_NAMES])
                     + (f" and {len(new_a) - MAX_NAMES} more" if len(new_a) > MAX_NAMES else ""))
             known_a.update(agents)
-        state["agents"] = sorted(known_a)[-500:]
+        state["agents"] = sorted(known_a)[:2000]
 
         logins = snap.get("logins")
         if logins is not None and not baseline:
@@ -224,6 +239,10 @@ class Scan:
                 add("logins", "warn", f"Account change: {ACCOUNT_ACTIONS[action]} ({who})")
 
         journal = snap.get("journal")
+        if journal is not None:
+            state["journal"] = journal["mark"]
+        elif prev.get("journal"):
+            state["journal"] = prev["journal"]
         if journal is not None and not baseline:
             refused = journal["refused"]
             n = sum(refused.values())

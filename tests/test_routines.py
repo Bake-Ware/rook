@@ -59,8 +59,9 @@ class FakeChat:
         return [{"identity": i, "last_seen_age_secs": round(now - t, 1), "online": now - t < 90}
                 for i, t in self.presence.items()]
 
-    def rooms_for(self, identity, limit=50):
-        return {"ok": True, "rooms": [r for r in self.rooms if identity in r["participants"]]}
+    def rooms_for(self, identity, limit=50, include_all=False):
+        return {"ok": True, "rooms": [{**r, "member": identity in r["participants"]} for r in self.rooms
+                                      if include_all or identity in r["participants"]]}
 
 
 class FakeConsoles:
@@ -220,7 +221,7 @@ async def test_the_first_scan_is_a_silent_baseline_then_only_changes_are_told(hu
     assert row["outcome"] == "tell" and row["source"] == "security-scan"
     assert row["what"].startswith("Security scan: ") and "new-laptop" not in row["what"]
     again = await p.security_scan()
-    assert not again["changed"] and len(hub.band.posted) == 1
+    assert not again["changed"] and len(hub.band.posted) == 1, again["findings"]
 
 
 @pytest.mark.asyncio
@@ -292,19 +293,26 @@ async def test_the_digest_folds_phones_chats_and_mail_into_one_quiet_message(hub
                             "last_activity_age_secs": 30, "last_sender": "telegram:mom",
                             "participants": ["user:operator"]},
                            {"room": "r2", "title": "stale", "unread": 1,
-                            "last_activity_age_secs": 5 * 3600, "participants": ["user:operator"]}]
+                            "last_activity_age_secs": 5 * 3600, "participants": ["user:operator"]},
+                           {"room": "r3", "title": "Discord general", "unread": 0,
+                            "last_activity_age_secs": 20, "last_sender": "discord:42",
+                            "participants": ["agent:sojourn"]},
+                           {"room": "r4", "title": "agents only", "unread": 0,
+                            "last_activity_age_secs": 20, "last_sender": "agent:claude",
+                            "participants": ["agent:claude"]}]
     out = await hub.plugin.attention_digest()
-    assert out["changed"] and out["counts"] == {"notifications": 2, "email": 1, "chat_rooms": 1}, out
+    assert out["changed"] and out["counts"] == {"notifications": 2, "email": 1, "chat_rooms": 2}, out
     post, = hub.band.posted
     assert post["channel"] == "digest" and post["urgency"] == "normal"
     row, = log_rows(hub)
-    assert row["what"] == "Attention digest: 2 phone notifications, 1 email, 1 chat room"
+    assert row["what"] == "Attention digest: 2 phone notifications, 1 email, 2 chat rooms"
     assert "Mom" not in row["what"] + row["why"]     # the log keeps counts, never content
     # The feed was read as the caller, journaled without its content.
     assert ("attention.feed", PHONE, "token:static") in hub.band.calls
     j = hub.node.journal.query(cap_prefix="attention.feed", include_reply=True)
     assert j and j[0]["reply"]["result"] == "[sensitive: not journaled]"
-    hub.node.chat.rooms[0]["last_activity_age_secs"] = 9999
+    for r in hub.node.chat.rooms:
+        r["last_activity_age_secs"] = 9999
     nothing = await hub.plugin.attention_digest()
     assert not nothing["changed"] and len(hub.band.posted) == 1
 
@@ -313,10 +321,10 @@ def test_compose_reads_plainly():
     got = {"notifications": [{"app": "Signal", "text": "Ann: hi", "priority": "normal"}] * 2,
            "phone_mail": [], "email": [{"from": "Bob", "subject": "Invoice 7"}],
            "chats": [{"room": "rook-beta", "unread": 4, "from": "agent:x", "via": ""},
-                     {"room": "Family", "unread": 1, "from": "discord:1", "via": "discord"}]}
+                     {"room": "Family", "unread": 0, "from": "discord:1", "via": "discord"}]}
     text, line, count = compose(got, since_label="2:00 PM")
     assert text == ("Since 2:00 PM:\nPhone: Signal 2 (Ann: hi)\nEmail (1): Bob: Invoice 7\n"
-                    "Chats: rook-beta 4; Family 1 via discord")
+                    "Chats: rook-beta 4; Family new from discord:1 via discord")
     assert line == "Attention digest: 2 phone notifications, 1 email, 2 chat rooms" and count == 8
     assert compose({"notifications": [], "phone_mail": [], "email": [], "chats": []},
                    since_label="x") == ("", "", 0)
