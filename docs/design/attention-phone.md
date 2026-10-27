@@ -172,12 +172,18 @@ goes in front of the defaults; a document replaces them unless
 `extend_default: true`. A trust map from elsewhere fits as `{priority, match:
 {senders}, note}` entries.
 
+The person's own choices (Sort on the Attention tab, or the hub's Feed page,
+pushed back by the hub) are rules with a note starting `yours:` in front of
+the rest; sorting an app again replaces only its `yours:` rule
+(`AttentionRules.withChoice`), and the app reports a `sorted` event.
+
 Default order: system/clock noise, shops and shipping apps, social and news
 apps → ignore; the urgent words ("fire", "emergency", "evacuat", "lockdown",
 "911", "urgent", "ambulance", "injured", "hurt", "police", "alarm", "pick up
 now", "call me") → urgent, **but only from messaging, phone, school, health
 and home-safety apps or from family**, and not with promo words; family names
-→ family; school apps or "school" → family (category school); health,
+→ family; school apps or "school" → family (category school; not "school board",
+"work or school" or "school account", which are about work); health,
 pharmacy, doctors → family (category health, not promos); delivery, promo and
 newsletter words → ignore; anything else → normal.
 

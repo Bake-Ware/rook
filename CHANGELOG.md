@@ -9,6 +9,18 @@ version was `0.1.0`.
 ## Unreleased
 
 ### Added
+- The Feed: the attention plugin's dashboard face. A new **Feed** page (first under Feed in the
+  sidebar; `#feed` is now that page) shows what came in for you as one stream: the phone's quiet
+  feed (summaries only, pulled from `attention.feed` at most once a minute, kept 30 days in
+  `feed.db`), alerts, decisions asked and answered, and tasks finished or blocked, with how many
+  decisions wait on you and filters (Important, Phone, Alerts, Decisions, Work). Runs of one app
+  fold. New caps `attention.stream` and `attention.sorting` (read). (manual: phone-attention)
+- Sorting your apps: Sort on a Feed row, or a tap on a line in the app's Attention tab
+  (0.4.24-beta.7), sets Ring me, Tell me, Just list it or Hide it for that app; the hub keeps one
+  choice per app and pushes it, with the new **Family names** setting (`attention.family`), to every
+  phone with `attention.rules_set` in front of the phone's own rules. `attention.push_rules` is now
+  on by default and sends nothing until there is something to say. Agents can read the sorting,
+  not change it. Settings `attention.feed_phone` (on) and `attention.feed_pull_s` (60).
 - The dashboard chat knows your page: each message from the @home dock (and the Home agent
   page's chat) carries the page you are on, the text you selected and what is on screen, and
   the house agent gets page tools that run in your browser with your own sign-in: `page_go`
@@ -27,6 +39,9 @@ version was `0.1.0`.
   plain chair and the persistent session. (manual: home-agent)
 
 ### Changed
+- The phone's default rules no longer sort "school board", "work or school" and "school account"
+  as school (a work sign-in prompt and an employer named after school boards were shown as
+  family); its quiet feed entries carry the app's package (0.4.24-beta.7).
 - LG webOS TVs: `tv.power_on` now wakes TVs on Wi-Fi (it sent Wake-on-LAN only to the wired
   MAC, so it never woke them), waits until the TV answers and says why when it doesn't (including
   the TV's own "Turn on via Wi-Fi" setting); a request on a dropped connection is retried once;

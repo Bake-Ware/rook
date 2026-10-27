@@ -195,4 +195,9 @@ class AttentionModelTest {
         assertNull(UpdateChannel.normalize("nightly"))
         assertEquals(UpdateChannel.BETA, UpdateChannel.normalize(" Beta "))
     }
+
+    @Test fun runsGroupOneAppsLinesInARow() {
+        assertEquals(listOf(0 to 3, 3 to 4, 4 to 5, 5 to 6), AttentionModel.runs(listOf("Telegram", "Telegram", "Telegram", "Chat", "", "")))
+        assertEquals(emptyList<Pair<Int, Int>>(), AttentionModel.runs(emptyList()))
+    }
 }

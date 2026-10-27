@@ -146,7 +146,10 @@ are set only in the environment or on the command line.
 | `attention.devices` | Phones | hub | list |  | `ROOK_ATTENTION_DEVICES` | live |
 | `attention.person` | Your name | hub | str | `the person` | `ROOK_ATTENTION_PERSON` | live |
 | `attention.poll_secs` | Check phones every (s) | hub | int | `10` | `ROOK_ATTENTION_POLL_SECS` | live |
-| `attention.push_rules` | Send notification rules to phones | hub | bool | off | `ROOK_ATTENTION_PUSH_RULES` | live |
+| `attention.family` | Family names | hub | list |  | `ROOK_ATTENTION_FAMILY` | live |
+| `attention.push_rules` | Send my sorting to phones | hub | bool | on | `ROOK_ATTENTION_PUSH_RULES` | live |
+| `attention.feed_phone` | Phone feed in the Feed | hub | bool | on | `ROOK_ATTENTION_FEED_PHONE` | live |
+| `attention.feed_pull_s` | Read the phone feed every (s) | hub | int | `60` | `ROOK_ATTENTION_FEED_PULL_S` | live |
 | `attention.queue` | Queue decisions | hub | bool | on | `ROOK_ATTENTION_QUEUE` | live |
 | `attention.remind` | Spoken reminders | hub | bool | on | `ROOK_ATTENTION_REMIND` | live |
 | `attention.remind_wait_s` | Wait before announcing a new card (s) | hub | int | `120` | `ROOK_ATTENTION_REMIND_WAIT_S` | live |

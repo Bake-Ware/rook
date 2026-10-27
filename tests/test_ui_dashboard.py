@@ -594,10 +594,12 @@ def test_every_old_page_link_still_opens_a_page():
            "trust", "people", "account", "tokens", "guidance", "vault", "home", "roles", "voice",
            "models", "memory", "help"}
     info = re.search(r"const viewInfo=\{(.*?)\n\};", html, re.S).group(1)
-    assert set(re.findall(r"^ (\w+):\[", info, re.M)) == old
+    # The Feed section's own page (the attention plugin's dashboard face) came later.
+    assert set(re.findall(r"^ (\w+):\[", info, re.M)) == old | {"feed"}
     for view in old:
         assert f'id="tab-{view}" href="#{view}"' in html and f'id="view-{view}"' in html
-    assert "const viewAlias={chat:'huddles',feed:'overview',intelligence:'home'};" in html
+    assert "const viewAlias={chat:'huddles',intelligence:'home'};" in html
+    assert 'id="tab-feed" href="#feed"' in html and 'id="view-feed"' in html
     assert "v=viewAlias[v]||v;" in html
     assert "history.replaceState(null,'','#'+viewAlias[old]+location.hash.slice(1+old.length));" in html
 
@@ -641,7 +643,8 @@ def test_sidebar_groups_fold_and_the_nav_scrolls():
         assert outer[-1] == "nav-group" and nav_outer[-1] == "nav-group" and "sidebar-nav" in outer
     # Every page sits in exactly one section; Help is the last page under Settings.
     tabs = [(a["id"][4:], outer) for t, a, outer in tags.found if t == "a" and a.get("id", "").startswith("tab-")]
-    assert len(tabs) == len({v for v, _ in tabs}) == 28
+    assert len(tabs) == len({v for v, _ in tabs}) == 29
+    assert tabs[0][0] == "feed"
     assert all(outer[-2:] == ["nav-group", ""] for _, outer in tabs)
     assert tabs[-1][0] == "help"
     # The footer is outside the scrolling area.

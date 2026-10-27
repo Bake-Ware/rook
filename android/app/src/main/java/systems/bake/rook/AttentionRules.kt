@@ -107,6 +107,52 @@ class AttentionRules(val rules: List<Rule>, val familyNames: List<String> = empt
                 if (override.has("default")) o.default else base.default)
         }
 
+        /** What the person may choose for an app (Sort on the Attention tab or the hub's Feed page). */
+        val CHOICES = linkedMapOf(URGENT to "Ring me", FAMILY to "Tell me", NORMAL to "Just list it", IGNORE to "Hide it")
+        private val CHOICE_CATEGORY = mapOf(URGENT to "urgent", FAMILY to "important", NORMAL to "other", IGNORE to "hidden")
+        /** The note that marks the person's own choices (the hub writes the same). */
+        const val YOURS = "yours:"
+
+        private fun isChoiceFor(rule: JSONObject, app: String, pkg: String): Boolean {
+            if (!rule.optString("note").startsWith(YOURS)) return false
+            val m = rule.optJSONObject("match") ?: return false
+            val pkgs = strings(m.optJSONArray("packages")).map { it.lowercase() }
+            val labels = strings(m.optJSONArray("app_labels")).map { it.lowercase() }
+            return (pkg.isNotBlank() && pkgs == listOf(pkg.trim().lowercase())) || (labels == listOf(app.trim().lowercase()))
+        }
+
+        /**
+         * The rules override with the person's choice for one app in front, replacing an earlier choice for it;
+         * a [priority] that isn't a choice ("default") just removes it. Matches by package when known, else by
+         * the app's name. Other rules, and the rest of the document, are kept.
+         */
+        fun withChoice(override: JSONObject?, app: String, pkg: String, priority: String): JSONObject {
+            val doc = override?.let { JSONObject(it.toString()) } ?: JSONObject().put("extend_default", true)
+            val old = doc.optJSONArray("rules") ?: JSONArray()
+            val out = JSONArray()
+            if (priority in CHOICES) {
+                val match = if (pkg.isNotBlank()) JSONObject().put("packages", JSONArray().put(pkg.trim()))
+                    else JSONObject().put("app_labels", JSONArray().put(app.trim()))
+                out.put(JSONObject().put("priority", priority).put("category", CHOICE_CATEGORY.getValue(priority))
+                    .put("note", "$YOURS ${CHOICES.getValue(priority).lowercase()} (${app.trim()})").put("match", match))
+            }
+            for (i in 0 until old.length()) {
+                val r = old.optJSONObject(i) ?: continue
+                if (!isChoiceFor(r, app, pkg)) out.put(r)
+            }
+            return doc.put("rules", out)
+        }
+
+        /** The person's current choice for this app in [override], if any. */
+        fun choiceOf(override: JSONObject?, app: String, pkg: String): String? {
+            val a = override?.optJSONArray("rules") ?: return null
+            for (i in 0 until a.length()) {
+                val r = a.optJSONObject(i) ?: continue
+                if (isChoiceFor(r, app, pkg)) return r.optString("priority").takeIf { it in CHOICES }
+            }
+            return null
+        }
+
         private fun clip(s: String, n: Int) = s.trim().let { if (it.length <= n) it else it.take(n - 1).trimEnd() + "…" }
 
         /** "<App>: <category> — <title clipped>" plus a few words of text, at most 140 chars. The only content that leaves the phone. */

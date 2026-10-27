@@ -109,7 +109,8 @@ class AccountWeb:
         from .token_web import TokenWeb
         TokenWeb(self).install(app)
         from .knowledge_web import (KnowledgeWeb, GuidanceWeb, VaultWeb, SettingsWeb, PluginsWeb,
-                                    HuddleWeb, UiWeb, ManualWeb, CcmodWeb, UpdatesWeb, PeopleWeb)
+                                    HuddleWeb, UiWeb, ManualWeb, CcmodWeb, UpdatesWeb, PeopleWeb,
+                                    AttentionWeb)
         KnowledgeWeb(self).install(app)
         PeopleWeb(self).install(app)
         HuddleWeb(self).install(app)
@@ -119,6 +120,7 @@ class AccountWeb:
         PluginsWeb(self).install(app)
         CcmodWeb(self).install(app)
         UiWeb(self).install(app)
+        AttentionWeb(self).install(app)
         ManualWeb(self).install(app)
         UpdatesWeb(self).install(app)
         from .jobs_web import JobsWeb
