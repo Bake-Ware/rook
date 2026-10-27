@@ -36,6 +36,9 @@ class FakeVault:
     def delete(self, name, actor):
         return self.data.pop(name, None) is not None
 
+    def list(self):
+        return [{"name": n} for n in sorted(self.data)]
+
 
 class FakeClient:
     """Band client double: a roster and scripted replies."""
@@ -283,6 +286,31 @@ def test_worker_delivery_band_defaults_overrides_and_secret_refs(tmp_path):
     settings, _ = svc.delivery("box", typed=True)
     assert settings["env"]["ROOK_MEMORY_VAULT"] is None
     assert settings["announce_interval"] is None and settings["log_level"] == "info"
+
+
+def test_worker_secret_grants_name_vault_entries_for_a_worker(tmp_path):
+    """devkit.secrets lists vault names a delegate may fetch for its devices:
+    only for that worker (or its band), only the names listed."""
+    vault = FakeVault()
+    vault.set("front-door.token", "tok-123456", "lock", "test")
+    vault.set("garage.token", "tok-654321", "garage", "test")
+    node = _worker_node()
+    svc = _svc(tmp_path, vault=vault, node=node)
+    assert svc.worker_secrets("w1", ["front-door.token"])["missing"] == ["front-door.token"]
+    svc.set("devkit.secrets", ["front-door.token"], scope="worker", target="box")
+    got = svc.worker_secrets("w1", ["front-door.token", "garage.token"])
+    assert got["secrets"] == {"front-door.token": "tok-123456"}
+    assert got["missing"] == ["garage.token"]
+    # Names that exist, never values: a {{secret:…}} the hub filled in is refused.
+    for bad in (["tok-123456"], ["not-in-vault"], ["Bad Name"]):
+        with pytest.raises(SettingsError, match="vault names"):
+            svc.set("devkit.secrets", bad, scope="worker", target="box")
+    with pytest.raises(SettingsError, match="vault is unavailable"):
+        _svc(tmp_path / "novault", node=node).set("devkit.secrets", ["front-door.token"],
+                                                  scope="worker", target="box")
+    svc.set("devkit.secrets", ["front-door.token"], scope="worker", target="other-box")
+    svc.reset("devkit.secrets", scope="worker", target="box")
+    assert svc.worker_secrets("w1", ["front-door.token"])["missing"] == ["front-door.token"]
 
 
 @pytest.mark.asyncio

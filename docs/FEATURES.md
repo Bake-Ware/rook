@@ -241,6 +241,8 @@ The first driver is **LG webOS TVs** (`webos` plugin, `WEBOS_TVS="office-tv=192.
 
 **Home Assistant** (`homeassistant` plugin, `HASS_URL`, `HASS_TOKEN`, `HASS_DEVICES="bed-lights=bed lights, Thermostat"`): one device worker per Home Assistant device, live over HA's WebSocket API, with `ha.status` · `ha.on` · `ha.off` · `ha.set` · `ha.service` (admin), plus `homeassistant.devices`, `homeassistant.scenes` and `homeassistant.scene` on the delegate.
 
+**Devices by asking** (`devkit` plugin): ask the house agent to "add my front door lock" and it writes the device itself, as a definition of small recipes (HTTP, TCP, UDP or a local program) on a delegate, with typed args, values extracted from the reply and a periodic state check for the heartbeat. Risk can't go below what the recipe does (only GET/HEAD can be a read; actions are physical), and credentials stay in the vault (`{secret:name}`, granted per delegate). `devkit.define` · `devkit.test` · `devkit.list` · `devkit.remove` · `devkit.discover`. See [docs/design/devices-by-asking.md](design/devices-by-asking.md).
+
 ## Control planes
 
 Drive the same band three ways — they all read from the same roster and invoke the same caps.

@@ -10,6 +10,8 @@ features:
   - settings/show
   - plugin/worker/homeassistant
   - settings/homeassistant
+  - plugin/worker/devkit
+  - settings/devkit
 since: 0.1.0
 deprecated: false
 ---
@@ -199,3 +201,45 @@ Showing on a device uses that device's own permissions: a person can only
 show things on screens they may use, and the house agent follows the trust
 map, as for any other call.
 
+## Adding a device by asking
+
+You don't need a driver for every device. Ask your house agent, for
+example "add my front door lock" or "can you control the porch light?",
+and it builds the device itself: it finds the device on your network,
+looks up how the device is controlled locally, and describes each thing
+it can do as a small recipe on a delegate worker (the `devkit` plugin).
+The device then shows on the Workers page like any other, with its own
+name, capabilities and status.
+
+What the agent may ask you:
+
+- **Which device and where**, if it can't find it on the network.
+- **A password or token**, if the device needs one. You store it yourself
+  under **Trust > Secrets**, with the name the agent gives you; the agent
+  never sees it. The agent then lets the delegate use that one secret (the
+  delegate's `devkit.secrets` setting), which may come to you as an
+  approval.
+- **Whether to try an action.** Testing "lock" locks the door, so the
+  agent tries actions only when you say so, and never tries unlock or open
+  unless you ask.
+
+What a device added this way can do depends on its own local API: a lock
+might get `lock.state`, `lock.lock` and `lock.unlock`. Reading its state is
+a read; every action counts as a physical action. Every action on a lock,
+alarm, valve, garage door, gate or door is an admin action, as for Home
+Assistant devices, and the agent marks other actions that matter if they
+happen at the wrong time as higher risk, so your trust map and approvals
+apply to them as to anything else. Nothing here bypasses them. A device that has a state check
+shows `on` while the delegate can reach it and `off` when it can't.
+
+On the delegate:
+
+- `devkit.list` shows every device defined there, its capabilities and
+  their risk, whether it is reachable and its last state.
+- `devkit.discover` lists what answers on its network (SSDP and mDNS).
+- `devkit.remove` takes a device off the band. Removed and replaced
+  definitions are kept on the delegate, so the agent can put one back.
+
+Devices that only work through a cloud account, or that need a constant
+connection to report events, still need a proper driver. More for agents:
+the `devices` help topic.
