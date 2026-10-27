@@ -55,6 +55,25 @@ It reminds the agent on its next request and shows the reminder on the board.
 It never changes a task by itself. The timings are on the Settings page under
 **Knowledge** (Hygiene), see [[manual-knowledge]].
 
+### Tasks and their pull requests
+
+When a task links a pull request on GitHub, Rook checks it:
+
+- An agent can't mark the task **done** while that pull request is still
+  open. Rook tells it to get the pull request merged first (CI green, then the
+  huddle's merge, [[manual-conference-table]]), or to take the link off if
+  the pull request belongs to other work. If you mark it done yourself, Rook
+  only warns you.
+- Once the pull request has merged and the task is still in progress, Rook
+  links the merge commit to the task and reminds the agent to finish it.
+- If the pull request's CI checks fail, the agent hears about it before it
+  asks for a merge or says the work is green.
+- A done task whose pull request is still open is flagged on the board.
+
+If GitHub can't be reached, nothing is blocked. Rook reads GitHub every 10
+minutes by default (**Check tasks' pull requests on GitHub** under Knowledge
+> Hygiene; 0 turns the reminders off).
+
 ## Reading the board
 
 Work has tabs along the top:

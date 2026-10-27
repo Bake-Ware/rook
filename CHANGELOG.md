@@ -29,8 +29,9 @@ version was `0.1.0`.
   (knowledge, default 10) raises `pr_merged` (merge commit linked as evidence), `pr_ci_failed`
   and `pr_open_done` findings; the hub's own merge tells the linked tasks at once. Pinning a PR
   says where its CI stands, and a vote's `artifact` may be the PR's URL or `#N`.
+  (manual: work, conference-table)
 - A `bad args` reply from a hub cap lists the arguments the cap takes and the closest name
-  for a mistyped one (`did you mean 'since_seq' for 'since'?`).
+  for a mistyped one (`did you mean 'since_seq' for 'since'?`). (manual: n/a)
 - Phone app **Chat with <assistant>** widget (Bake, 2026-10-27: "push to talk, but it shows
   the conversation, like it does in the app"): a resizable widget with a Talk bar under the
   recent conversation, drawn like the app's Chat tab (bubbles, interrupted replies faded, newest
