@@ -17,7 +17,8 @@ version was `0.1.0`.
   answer with a fresh snapshot, only in the tab the message came from; each is journaled as
   `home.page` (typed values only by length). Filling and pressing work only on Overview,
   Start page, Work, Huddles, Knowledge, Jobs, Memory and Help (elsewhere it opens and
-  points), never on delete/approve/send/update-style buttons or links off the dashboard; it
+  points), never on delete/approve/send/update/stop/disable-style buttons (text or
+  aria-label), in dialogs, on controls not on screen or links off the dashboard; it
   never reads password fields or shown-once secrets (now marked `data-secret`: new tokens,
   invite links, pairing codes). Setting `home.page_tools` (on). Works on the front door, the
   plain chair and the persistent session. (manual: home-agent)

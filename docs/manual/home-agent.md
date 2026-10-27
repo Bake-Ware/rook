@@ -55,8 +55,10 @@ Help) it can also fill in a field (it never submits for you) and press a button.
 Elsewhere (settings, plugins, updates, trust, secrets, people, machines,
 sessions, its own instructions) it only opens the page and points, so it never
 changes through your sign-in what it could not change itself. It never presses
-a button that deletes, approves, sends, updates or installs something, and
-never opens a link that leaves the dashboard: it tells you to do those
+a button that deletes, approves, sends, updates, installs, stops or turns
+something off (by its text or the name an icon button gives screen readers),
+never answers a dialog, never presses anything that is not on screen right now,
+and never opens a link that leaves the dashboard: it tells you to do those
 yourself. You see a short note at the bottom of the screen for each thing it
 does, and each one is in the journal under the house agent. Only the browser
 tab you wrote from runs its actions. Password fields and shown-once secrets

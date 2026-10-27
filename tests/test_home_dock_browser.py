@@ -301,6 +301,8 @@ def test_the_page_refuses_what_the_person_must_do(browser, hub):
         add('<button type="button" id="ok-btn">Refresh list</button>').onclick = () => pressed++;
         add('<button type="button" id="bad-btn">Delete everything</button>').onclick = () => pressed += 100;
         add('<button type="button" id="send-btn">Send</button>').onclick = () => pressed += 1000;
+        add('<button type="button" aria-label="Delete this job">🗑</button>').onclick = () => pressed += 10000;
+        add('<button type="button">Approve</button>').onclick = () => pressed += 100000;
         add('<a id="off-link" href="/logout">Leave</a>');
         add('<label>Name <input id="name-in"></label>');
         add('<input id="pw-in" type="password" value="hunter2" aria-label="Password">');
@@ -314,6 +316,8 @@ def test_the_page_refuses_what_the_person_must_do(browser, hub):
         r.ok = await m.run({do: 'click', ref: ref('ok-btn')});
         r.bad = await m.run({do: 'click', ref: ref('bad-btn')});
         r.send = await m.run({do: 'click', ref: snap.items.find(i => i.label === 'Send').ref});
+        r.icon = await m.run({do: 'click', ref: snap.items.find(i => i.label === '🗑').ref});
+        r.approve = await m.run({do: 'click', ref: snap.items.find(i => i.label === 'Approve').ref});
         r.off = await m.run({do: 'click', ref: ref('off-link')});
         r.fill = await m.run({do: 'fill', ref: ref('name-in'), value: 'Ada'});
         r.pw = await m.run({do: 'fill', ref: ref('pw-in'), value: 'x'});
@@ -321,6 +325,30 @@ def test_the_page_refuses_what_the_person_must_do(browser, hub):
         r.pressed = pressed; r.name = document.getElementById('name-in').value;
         r.pwShown = JSON.stringify(snap).includes('hunter2');
         r.secretShown = /rk_SHOWN_ONCE_123|PAIR-CODE-9/.test(JSON.stringify(snap));
+        // A dialog's buttons are the person's.
+        const dlg = document.createElement('dialog');
+        dlg.innerHTML = '<button type="button">Looks fine</button>';
+        document.body.append(dlg); dlg.show();
+        const inDialog = m.snapshot().items.find(i => i.label === 'Looks fine');
+        r.dialog = await m.run({do: 'click', ref: inDialog.ref});
+        dlg.close(); dlg.remove();
+        // A ref read on Trust map, pressed after opening Overview: not on screen now.
+        location.hash = '#trust'; await new Promise(res => setTimeout(res, 600));
+        const tb = document.createElement('button'); tb.type = 'button'; tb.textContent = 'Harmless';
+        tb.onclick = () => pressed += 1000000;
+        document.getElementById('view-trust').prepend(tb);
+        const trustRef = m.snapshot().items.find(i => i.label === 'Harmless').ref;
+        location.hash = '#overview'; await new Promise(res => setTimeout(res, 600));
+        r.stale = await m.run({do: 'click', ref: trustRef});
+        r.lockedPages = {};
+        for (const id of ['trust', 'approvals', 'decisions', 'tokens', 'people', 'account', 'bands',
+                          'settings', 'plugins', 'updates', 'workers', 'install', 'ccmod', 'sessions',
+                          'guidance', 'home', 'roles', 'models', 'voice']) {
+            location.hash = '#' + id; await new Promise(res => setTimeout(res, 250));
+            r.lockedPages[id] = m.snapshot().locked;
+        }
+        location.hash = '#overview'; await new Promise(res => setTimeout(res, 400));
+        r.pressedAfter = pressed;
         for (const id of ['settings', 'vault']) {
             location.hash = '#' + id; await new Promise(res => setTimeout(res, 800));
             const v = m.snapshot();
@@ -330,8 +358,14 @@ def test_the_page_refuses_what_the_person_must_do(browser, hub):
         r.tab = m.snapshot().tab;
         return r; }""")
     assert out["ok"]["ok"] and out["pressed"] == 1, out
+    assert out["pressedAfter"] == 1, out          # nothing refused ever fired
     assert not out["bad"]["ok"] and "for the person" in out["bad"]["result"]
     assert not out["send"]["ok"] and "for the person" in out["send"]["result"]   # never as them
+    assert not out["icon"]["ok"] and "for the person" in out["icon"]["result"]   # by its aria-label
+    assert not out["approve"]["ok"] and "for the person" in out["approve"]["result"]
+    assert not out["dialog"]["ok"] and "dialog" in out["dialog"]["result"]
+    assert not out["stale"]["ok"] and "nothing with ref" in out["stale"]["result"], out["stale"]
+    assert all(out["lockedPages"].values()), out["lockedPages"]
     assert not out["off"]["ok"] and "leaves the dashboard" in out["off"]["result"]
     assert out["fill"]["ok"] and out["name"] == "Ada"
     assert not out["pw"]["ok"] and not out["pwShown"] and not out["secretShown"]

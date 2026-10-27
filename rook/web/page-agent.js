@@ -12,7 +12,11 @@
 // link off the dashboard, and never reads password fields or shown-once
 // secrets.
 const ACTS = new Set(['overview', 'start', 'work', 'huddles', 'knowledge', 'jobs', 'memory', 'help']);
-const RISKY = /\b(delete|remove|revoke|erase|wipe|destroy|deauth|sign ?out|log ?out|disconnect|reset|rotate|uninstall|restart|approve|deny|reject|forget|purge|drop|send|post|reply|answer|share|invite|vote|merge|publish|update|upgrade|deploy|roll ?out|install)\b/i;
+const RISKY = /\b(delete|remove|revoke|erase|wipe|destroy|deauth|sign ?out|log ?out|disconnect|reset|rotate|uninstall|restart|approve|deny|reject|forget|purge|drop|send|post|reply|answer|share|invite|vote|merge|publish|update|upgrade|deploy|roll ?out|install|stop|kill|disable|enable|allow|grant|confirm|yes|pay|buy|order)\b/i;
+// Every name a control goes by: its text, aria-label and title (an icon button
+// shows a glyph but says "Delete" to screen readers).
+const names = el => [el.textContent, el.getAttribute('aria-label'), el.getAttribute('title'), el.value]
+  .map(squash).filter(Boolean).join(' ');
 // One id per open tab: the hub hands a page action only to the tab it was asked from.
 export const TAB = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2)).replace(/-/g, '').slice(0, 16);
 const CONTROLS = 'a[href], button, input, select, textarea, [role=button], [role=tab], summary';
@@ -137,9 +141,11 @@ export function snapshot() {
     items, pages: pages(), locked: locked(), tab: TAB};
 }
 
+// A ref counts only while its control is on screen in the page shown now:
+// never a hidden page's (read Trust, open Overview, press a Trust ref).
 function find(r) {
   const el = byRef.get(String(r || ''))?.deref();
-  return el && el.isConnected ? el : null;
+  return el && el.isConnected && roots().some(root => root.contains(el)) && shown(el) ? el : null;
 }
 function byText(text) {
   const want = squash(text).toLowerCase();
@@ -214,7 +220,8 @@ async function act(a) {
   }
   if (a.do === 'click') {
     if (el.disabled) throw Error(label + ' is disabled');
-    if (RISKY.test(label)) throw Error('"' + label + '" is for the person to press');
+    if (RISKY.test(names(el))) throw Error('"' + (label || names(el)) + '" is for the person to press');
+    if (el.closest('dialog')) throw Error('answering a dialog is for the person');
     if (el.tagName === 'A' && !(el.getAttribute('href') || '').startsWith('#'))
       throw Error('that link leaves the dashboard: ask the person to open it');
     point(el);
