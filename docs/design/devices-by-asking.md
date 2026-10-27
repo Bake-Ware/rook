@@ -72,14 +72,15 @@ A definition can't make a cap look safer than what it does:
 | any other GET / HEAD (`open_garage`, `relay`, `turn_on`, `set_level`): plugs switch on GET | write |
 | any other HTTP method, tcp, udp | write |
 | argv (runs a program) | exec |
+| any action on a device of type lock, alarm, valve, garage, gate, door | admin |
 
 A declared `risk` only raises it. Every cap that is not a read is also tagged
 `physical`: it acts on a thing in the house, the convention `webos` already
 follows. The agent declares `destructive` and `sensitive` where they apply
 (a camera snapshot is a sensitive read). From there the existing machinery
 decides (trust map, approvals, hard stops); this plugin adds no holds of its
-own. Unlocking a door or opening a garage is declared `exec` (see the help
-topic), which the trust map treats as it treats any exec.
+own. A way into the house (types lock, alarm, valve, garage, gate, door)
+is admin for every action, as the Home Assistant driver treats them.
 
 Management caps: `devkit.define` and `devkit.remove` are **admin** (they
 create or take away callable surface and set its tiers for everyone);

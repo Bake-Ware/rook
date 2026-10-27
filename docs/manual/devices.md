@@ -225,10 +225,11 @@ What the agent may ask you:
 
 What a device added this way can do depends on its own local API: a lock
 might get `lock.state`, `lock.lock` and `lock.unlock`. Reading its state is
-a read; every action counts as a physical action, and the agent marks the
-ones that matter if they happen at the wrong time (unlocking, opening the
-garage) as higher risk, so your trust map and approvals apply to them as to
-anything else. Nothing here bypasses them. A device that has a state check
+a read; every action counts as a physical action. Every action on a lock,
+alarm, valve, garage door, gate or door is an admin action, as for Home
+Assistant devices, and the agent marks other actions that matter if they
+happen at the wrong time as higher risk, so your trust map and approvals
+apply to them as to anything else. Nothing here bypasses them. A device that has a state check
 shows `on` while the delegate can reach it and `off` when it can't.
 
 On the delegate:

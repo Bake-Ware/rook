@@ -112,9 +112,15 @@ def test_a_definition_is_normalized_with_honest_risk():
     assert spec["key"] == "front-door" and spec["type"] == "lock"
     caps = spec["caps"]
     assert caps["state"]["risk"] == "read" and caps["state"]["tags"] == []
-    # A POST is at least write and acts on a thing: physical, whatever was declared.
-    assert caps["lock"]["risk"] == "write" and caps["lock"]["tags"] == ["physical"]
-    assert caps["unlock"]["risk"] == "exec" and "physical" in caps["unlock"]["tags"]
+    # A lock is a way in: every action on it is admin and physical, as in the HA driver.
+    assert caps["lock"]["risk"] == "admin" and caps["lock"]["tags"] == ["physical"]
+    assert caps["unlock"]["risk"] == "admin" and "physical" in caps["unlock"]["tags"]
+    # Elsewhere a POST is at least write and physical.
+    plug = normalize({**lock_def("192.0.2.20"), "type": "plug"})["caps"]
+    assert plug["lock"]["risk"] == "write" and plug["unlock"]["risk"] == "exec"
+    for typ in devkit.GUARDED_TYPES:
+        g = normalize({**lock_def("192.0.2.20"), "type": typ})["caps"]
+        assert g["state"]["risk"] == "read" and g["lock"]["risk"] == "admin", typ
     assert spec["state"] == {"cap": "state", "every": 30}
     assert devkit.secrets_of(spec) == ["front-door.token"]
 
@@ -352,13 +358,13 @@ async def test_define_call_state_and_remove_through_a_worker(worker, lock, tmp_p
         res = reply["result"]
         dev_id = device_worker_id(w.worker_id, "devkit", "front-door")
         assert res["worker_id"] == dev_id and res["updated"] is False
-        assert res["caps"] == {"lock.state": "read", "lock.lock": "write", "lock.unlock": "exec"}
+        assert res["caps"] == {"lock.state": "read", "lock.lock": "admin", "lock.unlock": "admin"}
         assert res["secrets_ready"] is True and res["reachable"] is True
         await asyncio.sleep(0)                       # the re-announce runs
         ann = [m for m in w.transport.sent if m.get("worker_id") == dev_id][-1]
         assert ann["name"] == "front-door" and ann["delegate"] == w.worker_id
         assert ann["device"] == {"type": "lock", "driver": "devkit", "model": "Demo Lock"}
-        assert ann["tiers"] == {"lock.state": "read", "lock.lock": "write", "lock.unlock": "exec"}
+        assert ann["tiers"] == {"lock.state": "read", "lock.lock": "admin", "lock.unlock": "admin"}
         assert ann["hb"] == {"lock": {"on": True, "locked": True, "battery": 87}}
         own = [m for m in w.transport.sent if m.get("worker_id") == w.worker_id][-1]
         assert own["devices"] == [dev_id]
@@ -370,7 +376,7 @@ async def test_define_call_state_and_remove_through_a_worker(worker, lock, tmp_p
         assert w.secret_asks == [["front-door.token"]]
         described = (await _call(w, "caps.describe", target=dev_id))["result"]
         assert described["lock.unlock"]["doc"] == "Unlock the door."
-        assert described["lock.unlock"]["risk"] == "exec"
+        assert described["lock.unlock"]["risk"] == "admin"
         assert described["lock.unlock"]["tags"] == ["physical"]
 
         # A failing device call is a clear failure.
@@ -476,7 +482,7 @@ def test_device_caps_carry_scope_and_meta():
     assert sorted(caps) == ["lock.lock", "lock.state", "lock.unlock"]
     from rook.core.plugin import validate_caps
     assert validate_caps(caps) == []
-    assert caps["lock.unlock"]._rook_cap_meta.risk == "exec"
+    assert caps["lock.unlock"]._rook_cap_meta.risk == "admin"
     assert dev.heartbeat() is None                    # not checked yet
 
 

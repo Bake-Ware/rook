@@ -32,7 +32,7 @@ refs: [references/tools.md]
               "http": {"method": "POST", "url": "http://{host}/api/lock",
                        "headers": {"Authorization": "Bearer {secret:front-door.token}"},
                        "body": {"locked": true}}},
-   "unlock": {"doc": "Unlock the door.", "risk": "exec",
+   "unlock": {"doc": "Unlock the door.",
               "http": {"method": "POST", "url": "http://{host}/api/lock",
                        "headers": {"Authorization": "Bearer {secret:front-door.token}"},
                        "body": {"locked": false}}}},
@@ -50,7 +50,7 @@ refs: [references/tools.md]
 
 - Name every cap for what it does. A GET is a read only when its name says it reads (`state`, `status`, `get_…`, `…_level`, `battery`, `info`…) and has no action verb; anything else (`open_garage`, `relay`, `turn_on`, `set_level`) is at least `write`, because many plugs and relays (Shelly, Tasmota) switch on a plain GET.
 - The host and port come from `vars` only; a cap's args can't pick where it goes.
-- Reads are `read` (only GET/HEAD can be). Everyday reversible actions (a light, a volume) stay `write`. An action that matters if it happens at the wrong time (unlock, open the garage, disarm an alarm, turn off a freezer) is `"risk": "exec"`; add `"tags": ["destructive"]` if it can't be undone, `["sensitive"]` for a camera snapshot. The plugin never lets a cap go below its recipe's floor and tags every action `physical`; the trust map and approvals do the rest. Don't try to route around them.
+- Reads are `read` (only GET/HEAD can be). Everyday reversible actions (a light, a volume) stay `write`. A device of type `lock`, `alarm`, `valve`, `garage`, `gate` or `door` is a way into the house: every action on it is `admin` by itself (as Home Assistant locks and garage doors are). Elsewhere, an action that matters if it happens at the wrong time (turn off a freezer, start a heater) is `"risk": "exec"`; add `"tags": ["destructive"]` if it can't be undone, `["sensitive"]` for a camera snapshot. The plugin never lets a cap go below its recipe's floor and tags every action `physical`; the trust map and approvals do the rest. Don't try to route around them.
 
 ## Changing or removing
 

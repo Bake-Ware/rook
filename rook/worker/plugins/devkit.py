@@ -87,6 +87,10 @@ _CRED_KEY = re.compile(r"(pass(word|wd)?$|token|secret|api_?key|apikey|^auth|coo
 #: Device types that would collide with a device's own built-in caps or core namespaces.
 RESERVED_TYPES = frozenset({"caps", "info", "worker", "customcap", "cmd", "devkit", "shell",
                             "file", "proc", "secret", "vault", "settings", "band"})
+#: Device types that are a way into the house or hold back water: every action on
+#: one is admin, as the Home Assistant driver treats locks, alarm panels, valves,
+#: garage doors, gates and doors (rook/worker/plugins/homeassistant.py GUARDED).
+GUARDED_TYPES = frozenset({"lock", "alarm", "valve", "garage", "gate", "door"})
 #: Arg names the cap machinery itself reads.
 RESERVED_ARGS = frozenset({"timeout", "fields", "limit", "why", "args", "target"})
 RISKS = ("read", "write", "exec", "admin")
@@ -487,6 +491,8 @@ def normalize(defn: Any) -> dict:
             problems.append(f"{where}: where it goes (host, port) comes from the definition's "
                             f"vars only, not {sorted(wrong)}: a caller must not pick the host")
         floor = _floor(kind, recipe, cname) if recipe else "write"
+        if typ in GUARDED_TYPES and floor != "read":
+            floor = "admin"
         declared = raw.get("risk") or floor
         if declared not in RISKS:
             problems.append(f"{where}: risk is one of {list(RISKS)}")
