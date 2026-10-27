@@ -456,6 +456,74 @@ def test_fragment_reply_asks_again_from_tidy_history(tmp_path, replies, said):
     assert [m['content'] for m in transcript if m['role'] == 'assistant'] == said
 
 
+def test_history_leaves_out_repeated_replies_but_not_acknowledgements():
+    msgs = [{'role': 'user', 'content': 'Testing.'}, {'role': 'assistant', 'content': 'I am here.'},
+            {'role': 'user', 'content': 'End voice.'}, {'role': 'assistant', 'content': 'I am here!'},
+            {'role': 'user', 'content': 'Weather?'}, {'role': 'assistant', 'content': 'Let me check.'},
+            {'role': 'user', 'content': 'And mail?'}, {'role': 'assistant', 'content': 'Let me check.'}]
+    assert [m['content'] for m in front_mod.history(msgs, 6) if m['role'] == 'assistant'] == [
+        'I am here.', 'Let me check.', 'Let me check.']
+    assert [m['content'] for m in front_mod.history(msgs, 6, avoid='i am here') if m['role'] == 'assistant'] == [
+        'Let me check.', 'Let me check.']
+
+
+def test_transcript_commit_keeps_a_repeat_out():
+    t = front_mod.Transcript()
+    t.request('fixed', [], {}, 'Testing.')
+    t.commit('I am here.')
+    t.request('fixed', [], {}, 'End voice.')
+    t.commit('I am here.')
+    assert t.messages == [{'role': 'user', 'content': 'Testing.'}, {'role': 'assistant', 'content': 'I am here.'},
+                          {'role': 'user', 'content': 'End voice.'}]
+
+
+def test_repeat_guard_holds_only_a_possible_repeat():
+    async def run(recent, *clauses):
+        said = []
+        async def say(c):
+            said.append(c)
+        guard = front_mod.RepeatGuard([{'role': 'assistant', 'content': r} for r in recent])
+        for c in clauses:
+            await guard.clause(c, say)
+        await guard.finish(say)
+        return said
+    with pytest.raises(front_mod.RepeatReply):
+        asyncio.run(run(['I am here.'], 'I am here.'))
+    with pytest.raises(front_mod.RepeatReply):
+        asyncio.run(run(['Hi.', 'I am here. Still here.'], 'I am here.', 'Still here!'))
+    assert asyncio.run(run(['I am here.'], 'I am here.', 'What do you need?')) == ['I am here.', 'What do you need?']
+    assert asyncio.run(run(['I am here.'], 'Hello there.')) == ['Hello there.']
+    assert asyncio.run(run(['Let me check.'], 'Let me check.')) == ['Let me check.']
+    assert asyncio.run(run([], 'I am here.')) == ['I am here.']
+
+
+@pytest.mark.parametrize('replies,said,requests', [
+    ((('I am ', 'here.'), ('What do you need?',)), ['What do you need?'], 2),
+    ((('I am ', 'here.'),), ['I am here.'], 2),          # asked once more; the second answer is spoken
+    ((('Let me check.',),), ['Let me check.'], 1),
+])
+def test_repeat_reply_asks_again_without_it(tmp_path, replies, said, requests):
+    model = Replies(*replies)
+    async def scenario():
+        conn, store, jobs, events, _ = connection(tmp_path, front=model.front(),
+                                                  complete=Script(call('no_action'), call('no_action')))
+        try:
+            store.append('session', 'user', {'text': 'Testing.'})
+            store.append('session', 'assistant', {'text': 'I am here.' if requests == 2 else 'Let me check.'})
+            await conn.start(text='End voice.', speak=False)
+            await settle(conn)
+            return events, store.messages('session')
+        finally:
+            await shutdown(conn, store, jobs)
+    events, stored = asyncio.run(scenario())
+    assert spoken_text(events) == said and len(model.requests) == requests
+    if requests == 2:
+        retry = model.requests[1]['messages']
+        assert not any(m['role'] == 'assistant' and 'I am here' in m['content'] for m in retry)
+        assert retry[-1]['content'].endswith('End voice.')
+    assert stored[-1] == {'role': 'assistant', 'content': said[0]}
+
+
 # --- policy -----------------------------------------------------------------
 @pytest.mark.parametrize('identity,mode_id,expected', [
     (OWNER, 'assistant', ALL_TOOLS),

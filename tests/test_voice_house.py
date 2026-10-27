@@ -402,6 +402,7 @@ def test_host_that_accepts_and_says_nothing_costs_one_connect_timeout(tmp_path, 
             started = time.monotonic()
             await conn.start(text='one', speak=False)
             await wait_for(lambda: len(lines) == 1)
+            front.reply = 'Another local reply.'      # not a repeat (Front would ask again)
             first = time.monotonic() - started
             await conn.start(text='two', speak=False)
             await wait_for(lambda: len(lines) == 2)

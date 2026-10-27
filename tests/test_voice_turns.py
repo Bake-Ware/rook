@@ -4,6 +4,7 @@ Front's append-only transcript."""
 import asyncio
 import json
 import logging
+import re
 import time
 
 import pytest
@@ -348,6 +349,67 @@ def test_speaker_label_is_logged_in_shadow_mode(tmp_path, monkeypatch, caplog):
     asyncio.run(scenario())
 
 
+class SequenceSpeakers:
+    """Speaker ID that hears the given (label, owner score) per utterance, in order;
+    only the owner ``Alex`` is enrolled, and every turn has a voiceprint."""
+    available, threshold = True, 0.45
+
+    def __init__(self, *heard):
+        self.heard = list(heard)
+
+    async def identify(self, pcm, assistant_voice=None):
+        label, score = self.heard.pop(0)
+        return {'label': label, 'score': score, 'principal': 'Alex' if label == 'Alex' else None,
+                'candidate': 'Alex', 'scores': {'Alex': score}, 'assistant_score': 0.0, 'ms': 5,
+                'vector': [score]}
+
+    def has_assistant_voice(self, voice):
+        return True
+
+
+
+class TimedProvider(Provider):
+    """Speech length from the audio (16 kHz PCM16), as the real STT stats give it."""
+    async def transcribe_detail(self, pcm):
+        reply = await super().transcribe_detail(pcm)
+        reply['stats'] = {'speech_s': round(len(pcm) / 32000, 2)}
+        return reply
+
+
+def test_speaker_does_not_flip_mid_turn_on_a_weak_match(tmp_path, caplog):
+    """Bake 2026-10-27: mid-conversation, mid-turn, the voice said "I can only do that for
+    Bake" to Bake. On the owner's phone a weak match (his own short or noisy line, 0.25)
+    stays the owner; only a strong mismatch on real speech is someone else."""
+    def lines():
+        return [line for line in (json.loads(r.getMessage()) for r in caplog.records
+                                  if 'voice_turn_timing' in r.getMessage()) if 'speaker_basis' in line]
+
+    async def scenario():
+        gate = asyncio.Event()
+        speakers = SequenceSpeakers(('Alex', 0.56), ('guest', 0.25), ('guest', 0.05), ('guest', 0.05))
+        conn, store, jobs, events = connection(tmp_path, front=SlowFront(gate=gate), speakers=speakers,
+                                               transcripts=['what is on my calendar', 'and tomorrow',
+                                                            'yes', 'can I play a game'])
+        conn.provider = TimedProvider(conn.provider.transcripts)
+        try:
+            with caplog.at_level(logging.INFO, logger='voice.timing'):
+                await conn.heard(b'\0' * 64000, time.monotonic())            # 2 s, a sure match
+                await wait_for(lambda: conn.task is not None)
+                await conn.heard(b'\0' * 51200, time.monotonic())            # 1.6 s, mid-turn, weak
+                gate.set()
+                await wait_for(lambda: conn.task is not None and conn.task.done())
+                for n, size in ((3, 22400), (4, 64000)):  # 0.7 s, too short to judge; 2 s, clearly not him
+                    await conn.heard(b'\0' * size, time.monotonic())
+                    await wait_for(lambda: len(lines()) >= n)
+        finally:
+            await shutdown(conn, store, jobs)
+        return [(line['speaker'], line['speaker_sure'], line['speaker_basis']) for line in lines()]
+    heard = asyncio.run(scenario())
+    assert heard[0] == ('Alex', True, 'voice')
+    assert ('Alex', True, 'owner phone') in heard                        # the weak and the short line
+    assert heard.count(('guest', False, 'voice')) == 1                   # only the strong mismatch
+
+
 # --- Front transcript ----------------------------------------------------------------
 def test_transcript_requests_extend_each_other():
     t = front_mod.Transcript(max_chars=10_000)
@@ -418,7 +480,10 @@ def test_warm_start_then_first_turn_extends_it(tmp_path):
         finally:
             await shutdown(conn, store, jobs)
         warm, first = front.requests[0], front.requests[1]
-        assert 'Bake prefers short answers' in warm[-1]['content'] and 'Reply with just: Ready.' in warm[-1]['content']
+        assert 'Bake prefers short answers' in warm[-1]['content'] and 'has not spoken yet' in warm[-1]['content']
+        # The warm-up stays in the transcript: it must not tell the model how to reply,
+        # or later turns obey it too ("I am here." to every line, 2026-10-27).
+        assert not re.search(r'(?i)\b(reply|say|answer)\b', FrontBackground.WARM_NOTE)
         assert first[:len(warm)] == warm and first[len(warm)] == {'role': 'assistant', 'content': 'Ready.'}
         assert first[-1]['content'].endswith('hello')
     asyncio.run(scenario())

@@ -347,3 +347,19 @@ def test_a_named_match_is_sure_by_default(monkeypatch):
     monkeypatch.delenv('VOICE_SPEAKER_SURE', raising=False)
     assert house.SPEAKER_SURE <= speaker.DEFAULT_THRESHOLD
     assert SessionSpeakers().label({"principal": "bake", "score": 0.46, "vector": [1.0, 0.0]}) == "bake"
+
+
+# --- per-person scores ----------------------------------------------------------------
+def enrolled(tmp_path, *people):
+    s = make(tmp_path)
+    for name, freq in people:
+        for _ in range(3):
+            assert run(s.enroll_add(name, pcm(freq)))["ok"]
+        assert s.enroll_finish(name)
+    return s
+
+
+def test_identify_reports_every_enrolled_score(tmp_path):
+    s = enrolled(tmp_path, ("bake", 500), ("logan", 1300))
+    result = run(s.identify(pcm(500)))
+    assert set(result["scores"]) == {"bake", "logan"} and result["scores"]["bake"] > 0.9

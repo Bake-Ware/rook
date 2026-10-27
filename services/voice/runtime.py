@@ -10,7 +10,7 @@ import time
 import uuid
 import re
 import traceback
-from .identity import Identity, current_identity
+from .identity import Identity, current_identity, on_owner_phone
 from .modes import Mode, dictation_command
 from .sounds import stage_directions
 from .timing import TurnTiming, log_dropped
@@ -313,6 +313,13 @@ class Connection:
         if speaker:
             extra.update(speaker=speaker.get('label'), speaker_score=speaker.get('score'),
                          assistant_score=speaker.get('assistant_score'))
+        if self.identity.owner and self.speakers is not None:
+            # The owner's phone: the owner unless speaker ID is sure it is someone else.
+            who_now = on_owner_phone(speaker, self.identity.principal, extra.get('speech_s'))
+            if who_now is not None:
+                if speaker:
+                    extra['speaker_heard'] = speaker.get('label')
+                extra.update(speaker=who_now['label'], speaker_sure=who_now['sure'], speaker_basis=who_now['basis'])
         reason = result.get('reason')
         if not reason and not result.get('text', '').strip():
             reason = 'empty'

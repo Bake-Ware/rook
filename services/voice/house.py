@@ -497,8 +497,10 @@ class HouseVoice:
         if isinstance(label, str) and label and label != 'assistant':
             score = extra.get('speaker_score')
             score = float(score) if isinstance(score, (int, float)) else None
+            sure = extra.get('speaker_sure')       # the owner's phone: speaker.on_owner_phone decided
             out['speaker'] = {'label': label, 'score': None if score is None else round(score, 3),
-                              'sure': bool(label != 'guest' and score is not None and score >= SPEAKER_SURE)}
+                              'sure': sure if isinstance(sure, bool) else
+                              bool(label != 'guest' and score is not None and score >= SPEAKER_SURE)}
         return out
 
     # --- a user turn ------------------------------------------------------------

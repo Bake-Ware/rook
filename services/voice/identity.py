@@ -92,3 +92,41 @@ def with_hello_device(identity, device):
     if identity.owner and not identity.worker and isinstance(device, str) and _DEVICE_NAME.fullmatch(device):
         return dataclasses.replace(identity, worker=device)
     return identity
+
+
+# On the owner's own phone the speaker is the owner unless speaker ID is confident it is
+# someone else (Bake, 2026-10-27: "default to Bake. Only treat the speaker as someone else
+# when it's confidently 'definitely not Bake' ... Unsure means Bake."). Measured on kaiju
+# 2026-10-27: Bake's own turns scored 0.17-0.67 against his print (a third of them under
+# 0.45, so they were heard as "guest" and refused Bake-only requests mid-conversation);
+# Logan's scored at most 0.13. "Definitely not" is under NOT_OWNER_BELOW on at least
+# NOT_OWNER_MIN_S of speech, or a match to another enrolled voice.
+NOT_OWNER_BELOW = float(os.environ.get('VOICE_SPEAKER_NOT_OWNER', '0.15') or 0.15)
+NOT_OWNER_MIN_S = float(os.environ.get('VOICE_SPEAKER_NOT_OWNER_MIN_S', '1.0') or 1.0)
+
+
+def on_owner_phone(heard, owner, speech_s=None):
+    """Who is talking on the owner's own phone: ``{'label', 'score', 'sure', 'basis'}``.
+
+    The owner, unless ``heard`` (:meth:`speaker.Speakers.identify`'s result, or None when no
+    voiceprint could be made) is confident it is someone else: another enrolled voice
+    matched, or the owner's print scored under :data:`NOT_OWNER_BELOW` on at least
+    :data:`NOT_OWNER_MIN_S` of speech (``speech_s``). Then the label is that person or
+    'guest'. A weak or missing match never moves a turn away from the owner, so the
+    speaker cannot flip mid-conversation on one short or noisy utterance. ``basis`` is
+    'voice' when the voice decided, 'owner phone' when the owner stands by default.
+    None for the assistant's own voice (the echo guard's label stays as heard)."""
+    heard = heard or {}
+    if heard.get('label') == 'assistant':
+        return None
+    principal, score = heard.get('principal'), heard.get('score')
+    if principal and principal != owner:
+        return {'label': principal, 'score': score, 'sure': True, 'basis': 'voice'}
+    owner_score = (heard.get('scores') or {}).get(owner)
+    if owner_score is None and heard.get('candidate', principal) == owner:
+        owner_score = score
+    if (owner_score is not None and owner_score < NOT_OWNER_BELOW
+            and isinstance(speech_s, (int, float)) and speech_s >= NOT_OWNER_MIN_S):
+        return {'label': 'guest', 'score': owner_score, 'sure': False, 'basis': 'voice'}
+    matched = principal == owner and owner_score is not None
+    return {'label': owner, 'score': owner_score, 'sure': True, 'basis': 'voice' if matched else 'owner phone'}

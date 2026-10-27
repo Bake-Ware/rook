@@ -71,6 +71,66 @@ class FragmentReply(Exception):
     """Front stopped after a word or two with no sentence end, and nothing was spoken yet."""
 
 
+class RepeatReply(Exception):
+    """Front's whole reply repeated one of its last replies word for word; nothing was spoken."""
+
+
+REPEAT_WINDOW = 3
+# The acknowledgements RULES asks for: saying one again for the next lookup is right.
+ACKNOWLEDGEMENTS = frozenset({'let me check', 'on it', 'one moment', 'let me look', 'let me see', 'checking',
+                              'okay', 'ok', 'sure', 'got it'})
+
+
+def same_words(text):
+    """``text`` compared word for word: lower case, no notes or punctuation."""
+    return ' '.join(re.sub(r"[^\w\s']", ' ', _NOTE.sub(' ', text or '').lower()).split())
+
+
+def recent_replies(messages, window=REPEAT_WINDOW):
+    """The last ``window`` assistant replies in ``messages``, compared word for word."""
+    replies = [same_words(m['content']) for m in messages
+               if m.get('role') == 'assistant' and isinstance(m.get('content'), str)]
+    return {r for r in replies[-window:] if r and r not in ACKNOWLEDGEMENTS}
+
+
+class RepeatGuard:
+    """Holds Front's first clauses while they could still be a word-for-word repeat of
+    one of its last few replies; once they differ they are spoken at once.
+
+    The small Front model, fed a reply it gave before, gives it again to whatever
+    comes next: "I am here." to "End voice.", "What the fuck, dude?" and "Yeah, I
+    know." (2026-10-27, replayed 4 of 4). A held reply that ends as such a repeat
+    raises :class:`RepeatReply` so the caller asks once more instead of speaking it."""
+
+    def __init__(self, messages, window=REPEAT_WINDOW):
+        self.recent = recent_replies(messages, window)
+        self.held, self.open = [], bool(self.recent)
+
+    def _could_repeat(self):
+        text = same_words(' '.join(self.held))
+        return any(r == text or r.startswith(text + ' ') for r in self.recent)
+
+    async def clause(self, clause, say):
+        if not self.open:
+            await say(clause)
+            return
+        self.held.append(clause)
+        if not self._could_repeat():
+            await self.release(say)
+
+    async def release(self, say):
+        self.open = False
+        held, self.held = self.held, []
+        for clause in held:
+            await say(clause)
+
+    async def finish(self, say):
+        """After the stream: raise :class:`RepeatReply` for a whole repeat, else speak what is held."""
+        if self.open and self.held and same_words(' '.join(self.held)) in self.recent:
+            raise RepeatReply(' '.join(self.held))
+        await self.release(say)
+
+
 def tidy_reply(text):
     """A Front reply as it goes back into the model's history ('' leaves it out).
 
@@ -99,11 +159,12 @@ def tidy_reply(text):
     return head.strip()
 
 
-def history(messages, turns):
+def history(messages, turns, avoid=''):
     """The last ``turns`` user/assistant exchanges as plain text, marker-free and
     with same-role neighbours merged (tool records and silences dropped, assistant
-    replies tidied by :func:`tidy_reply`)."""
-    out = []
+    replies tidied by :func:`tidy_reply`, and a reply that repeats one of the last few
+    left out, as is any reply that says ``avoid`` word for word)."""
+    out, said = [], []
     for message in messages:
         role, content = message.get('role'), message.get('content')
         if role not in ('user', 'assistant') or not isinstance(content, str):
@@ -115,6 +176,13 @@ def history(messages, turns):
             content = tidy_reply(content)
             if not content:
                 continue
+            # A reply repeating one of the last few is left out: seen twice, the
+            # model gives it to every line after (see RepeatGuard).
+            words = same_words(content)
+            if words and words not in ACKNOWLEDGEMENTS:
+                if words in said[-REPEAT_WINDOW:] or words == avoid:
+                    continue
+                said.append(words)
         if out and out[-1]['role'] == role:
             out[-1]['content'] += ' ' + content
         else:
@@ -207,6 +275,7 @@ class Transcript:
         self.told = {}
         self.pending = None
         self.resets = 0
+        self.avoid = ''
 
     def size(self):
         return sum(len(m['content']) for m in self.messages)
@@ -216,7 +285,9 @@ class Transcript:
         (``text`` after any new facts). ``past``: stored history, used on a (re)start."""
         if fixed != self.fixed or self.size() > self.max_chars:
             self.fixed, self.told, self.resets = fixed, {}, self.resets + 1
-            self.messages = history(past, min(self.keep_turns, 3) if self.size() > self.max_chars else self.keep_turns)
+            self.messages = history(past, min(self.keep_turns, 3) if self.size() > self.max_chars else self.keep_turns,
+                                    self.avoid)
+            self.avoid = ''
             if preface:
                 text = preface + '\n' + text
         note = facts_note(facts, self.told)
@@ -247,9 +318,10 @@ class Transcript:
         else:
             self.messages.append({'role': 'assistant', 'content': text})
 
-    def restart(self):
-        """Rebuild from the stored history at the next request (after a fragment reply)."""
-        self.fixed = None
+    def restart(self, avoid=''):
+        """Rebuild from the stored history at the next request (after a fragment reply),
+        leaving out replies that say ``avoid`` (a repeat) word for word."""
+        self.fixed, self.avoid = None, same_words(avoid)
 
     def commit(self, reply):
         """After the completion: ``reply`` as generated (or as heard), tidied by
@@ -257,6 +329,8 @@ class Transcript:
         if self.pending is None:
             return
         reply = tidy_reply(reply)
+        if reply and same_words(reply) in recent_replies(self.pending):
+            reply = ''                               # a repeat stays out (see RepeatGuard)
         self.messages = self.pending + ([{'role': 'assistant', 'content': reply}] if reply else [])
         self.pending = None
 
