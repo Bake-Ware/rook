@@ -43,6 +43,7 @@ from typing import Any, Callable
 
 from ....band_mcp import secret_mask
 from ....core import names
+from . import catalog
 from .cron import DEFAULT_TZ, Cron, describe, iso, valid_zone
 from .guardrails import (DEFAULT_GUARDRAILS, Guardrails, check_defaults, check_job_block,
                          normalize_defaults)
@@ -54,15 +55,16 @@ from .scheduler import Scheduler
 from .steps import StepContext
 from .store import JobStore
 
-READS = ("list", "get", "runs", "run_get", "next", "validate", "guardrails_preview", "describe_schema")
+READS = ("list", "get", "runs", "run_get", "next", "validate", "guardrails_preview", "describe_schema",
+         "templates")
 WRITES = ("create", "update", "delete", "enable", "disable", "run", "cancel", "set_guardrails", "settings",
-          "lock", "unlock")
+          "lock", "unlock", "install")
 ERRORS = (ValueError, KeyError, TypeError, PermissionError, LookupError)
 log = logging.getLogger("rook.hub.plugins.jobs.service")
 ALERT_TIMEOUT = 30.0
 DEFAULT_ACCESS = {"read": "*", "edit": "*", "run": "*"}
 #: Actions whose ``id`` is not a job: no ref, or a run (``cancel``: a run, else a job).
-NO_REF = ("list", "validate", "describe_schema", "settings")
+NO_REF = ("list", "validate", "describe_schema", "settings", "templates", "install")
 RUN_REF = ("run_get",)
 
 
@@ -430,6 +432,55 @@ class JobService:
 
     def a_describe_schema(self, rid, query, data) -> dict:
         return schema()
+
+    # -- ready-made jobs (catalog.py) -------------------------------------------------
+    def _has_cap(self, cap: str) -> bool | None:
+        meta = getattr(getattr(getattr(self.node, "host", None), "registry", None), "meta", None)
+        if not callable(meta):
+            return None
+        try:
+            return meta(cap) is not None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def a_templates(self, rid, query, data) -> dict:
+        """The ready-made jobs: what each does and needs, and the jobs (that
+        the caller can read) already made from it."""
+        made: dict[str, list] = {}
+        for r in self._readable(caller()):
+            t = ((r["definition"] or {}).get("vars") or {}).get("template")
+            if isinstance(t, str):
+                made.setdefault(t, []).append({"id": r["id"], "name": r["name"], "enabled": r["enabled"]})
+        out = []
+        for name, t in catalog.TEMPLATES.items():
+            row = catalog.describe(name, t)
+            row["installed"] = made.get(name, [])
+            have = self._has_cap(t["cap"])
+            if have is not None:
+                row["available"] = have
+            out.append(row)
+        return {"templates": out, "install": "job.write install id=<template> data={config, name?, "
+                                              "schedule?, enabled?}"}
+
+    def a_install(self, rid, query, data) -> dict:
+        """Make a job from a template (``id``), owned by the caller. Owners
+        only: the routines behind the templates are for hub owners."""
+        who = caller()
+        if not is_admin(who):
+            raise PermissionError("denied: ready-made jobs are for hub owners (their routines read the "
+                                  "band's security picture, phones and cameras); ask an owner to install it")
+        if not rid:
+            raise ValueError(f"id is the template: one of {', '.join(catalog.TEMPLATES)}")
+        t = catalog.template(rid)
+        if self._has_cap(t["cap"]) is False:
+            raise LookupError(f"{t['cap']} is not on this hub (the routines plugin is off or missing)")
+        job = catalog.build(rid, data)
+        if self.store.get_job(job["name"]) is not None:
+            raise ValueError(f"a job named {job['name']!r} already exists: pass data.name to install "
+                             f"another {rid}, or edit that one")
+        out = self.a_create(None, "", job)
+        out["template"] = rid
+        return out
 
     # -- guardrails ------------------------------------------------------------------------
     def _proposed_defaults(self, data: dict) -> dict:

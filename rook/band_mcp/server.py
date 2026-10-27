@@ -607,6 +607,8 @@ def build_server(client: "BandClient | MultiBandClient",
         # Job identities (hub plugin jobs) check API keys and accounts for
         # revocation; the account store opens on first use.
         mcp._rook_hub.tokens = store
+        # The security scan (hub plugin routines) lists live console rooms.
+        mcp._rook_hub.consoles = console
         if enrollment is not None:
             from ..remote.accounts import AccountStore as _Accounts
             mcp._rook_hub.accounts = lambda: _Accounts(enrollment)
