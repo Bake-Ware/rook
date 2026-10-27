@@ -1,0 +1,43 @@
+{
+  "_comment": "The dashboard's sidebar (rook/web/index.html, nav groups): the tray's Dashboard menu and the Rook panel. tests/test_desktop_sections.py keeps this in step with the hub.",
+  "sections": [
+    {"id": "feed", "title": "Feed", "pages": [
+      {"hash": "overview", "title": "Overview"},
+      {"hash": "start", "title": "Start page"}
+    ]},
+    {"id": "work", "title": "Work", "pages": [
+      {"hash": "work", "title": "Work"},
+      {"hash": "huddles", "title": "Huddles"},
+      {"hash": "sessions", "title": "Sessions"},
+      {"hash": "knowledge", "title": "Knowledge"},
+      {"hash": "jobs", "title": "Jobs"},
+      {"hash": "memory", "title": "Memory"}
+    ]},
+    {"id": "intelligence", "title": "Intelligence sources", "pages": [
+      {"hash": "home", "title": "Home agent"},
+      {"hash": "roles", "title": "Roles"},
+      {"hash": "models", "title": "Model providers"},
+      {"hash": "voice", "title": "Voice"},
+      {"hash": "guidance", "title": "Agent instructions"}
+    ]},
+    {"id": "trust", "title": "Trust", "pages": [
+      {"hash": "trust", "title": "Trust map"},
+      {"hash": "approvals", "title": "Approvals"},
+      {"hash": "decisions", "title": "Decisions"},
+      {"hash": "people", "title": "People"},
+      {"hash": "account", "title": "Account & access"},
+      {"hash": "tokens", "title": "API tokens"},
+      {"hash": "vault", "title": "Secrets"},
+      {"hash": "bands", "title": "Bands"}
+    ]},
+    {"id": "settings", "title": "Settings", "pages": [
+      {"hash": "settings", "title": "Settings"},
+      {"hash": "workers", "title": "Workers"},
+      {"hash": "install", "title": "Install a worker"},
+      {"hash": "plugins", "title": "Plugins"},
+      {"hash": "updates", "title": "Updates"},
+      {"hash": "ccmod", "title": "Claude Code"},
+      {"hash": "help", "title": "Help"}
+    ]}
+  ]
+}

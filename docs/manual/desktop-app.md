@@ -17,12 +17,17 @@ The Rook desktop app sits in your computer's tray (the menu bar on a Mac) on
 Windows, macOS and Linux, and keeps your hub one keypress away:
 
 - **The dashboard in its own window**, signed in with your usual Rook login.
+  The tray's **Dashboard** menu lists its five sections and their pages.
+- **The Rook panel**: what is waiting on you, the work in progress, a
+  knowledge search and your agents' sessions.
 - **Quick ask**: press `Ctrl+Alt+Space` anywhere, type a question and press
   Enter; your hub's home agent answers ([[manual-home-agent]]).
+- **Ask about this page**: opens the dashboard's chat with the house agent,
+  which sees the page you are on.
 - **Notifications** when someone writes to you in a chat room
-  ([[manual-chat]]).
+  ([[manual-chat]]), and when something waits on you.
 - **Voice**: hold `Ctrl+Alt+V`, speak and let go, using your voice server
-  ([[manual-voice]]). Optionally, a wake word.
+  ([[manual-voice]]), and hear the answer read aloud. Optionally, a wake word.
 - **This computer's worker**: start and stop it from the tray
   ([[manual-adding-machines]]).
 - **Install a hub on this computer**, on Linux ([[manual-running-a-hub]]).
@@ -41,6 +46,33 @@ Nothing changes on the hub to use it.
 Only the hub's owners (or the dashboard password) can use the app,
 the same as the dashboard.
 
+Opening the app again shows the Rook panel of the copy already running. To
+start Rook when you sign in to your computer, tick **Start Rook when I sign
+in** in Settings > This app.
+
+## The Rook panel
+
+Tray > **Open Rook**. Four tabs:
+
+- **Waiting on you**: what the dashboard's Approvals page lists (an agent
+  waiting for your OK, huddle questions and cards, the house agent's asks,
+  trust changes). Click one to decide it on the dashboard.
+- **Work**: tasks in progress and blocked tasks, by project.
+- **Knowledge**: search your knowledge pages and tasks.
+- **Sessions**: your agents' live sessions on every computer. This needs an
+  owner account sign-in, not the dashboard password.
+
+Click anything to open it in the dashboard window. The buttons at the top
+open any dashboard page by section. The panel only shows things; you decide
+on the dashboard.
+
+## Ask about this page
+
+Tray > **Ask about this page** (also in the quick-ask box and the panel)
+brings up the dashboard window with its **@home** chat open. The house agent
+sees the page you are on and what you selected, and can point things out or
+fill them in for you ([[manual-home-agent]]).
+
 ## Quick ask
 
 The quick-ask box talks to your hub's home agent; if the home agent is off,
@@ -57,7 +89,8 @@ Wayland, use the tray menu's **Ask the home agent**.
 
 With **Tell me about new messages and things that need me** on (Settings >
 Notifications), the app checks your hub every 30 seconds and shows a
-notification for a new message in a chat room you're in. Checking never
+notification for a new message in a chat room you're in, and for anything
+new waiting on you. Checking never
 marks anything as read, and the first check after the app starts only notes
 where things stand, so you don't get a burst of old messages.
 
@@ -66,13 +99,21 @@ where things stand, so you don't get a burst of old messages.
 In Settings > Voice, enter your voice server's address (the one the Android
 app uses) and its voice key, if it needs one. Then hold `Ctrl+Alt+V`, speak
 and let go, or click the microphone in the quick-ask box. The answer is shown
-in the box.
+in the box and read aloud. **Read answers aloud** chooses when: when you asked
+by voice (the default), always, or never. Press Esc, or start talking, to stop
+it.
 
 A wake word is available in builds that include it: turn on **Listen for a
 wake word** and pick your own wake word model (an openWakeWord `.onnx` file).
 Nothing leaves your computer until the wake word is heard. Rook doesn't
 include a model: openWakeWord's ready-made ones are for non-commercial use
 only, so you train or bring your own.
+
+## Updates
+
+When a newer desktop app is published, the app tells you once, and
+Settings > This app shows **Download version ...**: it opens the installer in
+your browser. Run it to update; your settings are kept.
 
 ## This computer's worker
 

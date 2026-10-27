@@ -63,8 +63,11 @@ async fn live_hub_round_trip() {
     let rooms = h.chat_rooms().await.unwrap();
     assert_eq!(hub::find_quick_room(&rooms, &a.agent).as_deref(), Some(room.as_str()));
 
-    // No /api/attention on today's hubs: a clean "not supported".
-    assert_eq!(h.attention().await.unwrap(), None);
+    // What waits on the person (approvals.list), and the panel's lists.
+    assert!(h.attention().await.unwrap().is_some());
+    h.waiting().await.unwrap();
+    h.work().await.unwrap();
+    h.knowledge("rook").await.unwrap();
 
     if let Ok(token) = std::env::var("ROOK_TEST_MCP_TOKEN") {
         let m = h

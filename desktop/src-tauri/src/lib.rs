@@ -2,16 +2,23 @@
 //!
 //! * the hub's dashboard in a window (the hub's own pages; no app access);
 //! * a global hotkey (default Ctrl+Alt+Space) for a quick-ask box that talks
-//!   to the home agent;
-//! * desktop notifications for new chat messages and, on hubs that list
-//!   them, huddle questions and tasks that need you;
-//! * push-to-talk and an optional wake word (feature `wake-word`);
-//! * start/stop for this computer's worker, and a hub installer wizard.
+//!   to the home agent, and "ask about this page", which opens the
+//!   dashboard's own page-aware @home chat;
+//! * the tray's Dashboard menu: the hub's five sections and their pages;
+//! * the Rook panel: what waits on you, work in progress, knowledge search
+//!   and agent sessions;
+//! * desktop notifications for new chat messages and for what waits on you;
+//! * push-to-talk, an optional wake word (feature `wake-word`), and answers
+//!   read aloud by the voice server;
+//! * start/stop for this computer's worker, and a hub installer wizard;
+//! * one copy at a time, starting at sign-in if asked, and an update check.
 
 pub mod config;
 pub mod hub;
 pub mod installer;
 pub mod notify;
+pub mod sections;
+pub mod update;
 pub mod voice;
 pub mod worker;
 
@@ -20,16 +27,32 @@ use serde::Serialize;
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
 /// How long a quick ask waits for the home agent (its own timeout is 90 s).
 const ASK_WAIT: Duration = Duration::from_secs(150);
+/// The bundle identifier (tauri.conf.json): the config folder's name.
+const IDENTIFIER: &str = "systems.bake.rook.desktop";
+/// Started at sign-in: stay in the tray.
+const BACKGROUND_ARG: &str = "--background";
+/// How often to ask the hub for a newer app.
+const UPDATE_EVERY: Duration = Duration::from_secs(6 * 3600);
+/// Opens the dashboard's @home dock (rook/web/home-dock.js), which carries
+/// the page you are on to the house agent (page-aware chat): clicks its
+/// launcher when the dock is closed (the launcher hides while it is open),
+/// then focuses its text box. Waits up to 10 s for the dock to mount; does
+/// nothing on a hub without one (the agent off).
+const OPEN_DOCK_JS: &str = "(function t(n){var b=document.querySelector('.hd-launch');\
+if(b){var p=document.querySelector('.hd-panel');if(p&&p.hidden)b.click();\
+setTimeout(function(){var i=document.querySelector('.hd-panel textarea');if(i)i.focus();},60);}\
+else if(n>0)setTimeout(function(){t(n-1)},250);})(40);";
 
 pub struct App {
     store: Store,
@@ -42,6 +65,10 @@ pub struct App {
     signin_gen: AtomicU64,
     installing: AtomicBool,
     worker_item: Mutex<Option<MenuItem<tauri::Wry>>>,
+    /// A newer app the hub offers, if any.
+    update: Mutex<Option<update::Update>>,
+    /// Set to stop the answer being read aloud.
+    speaking: Mutex<Option<Arc<AtomicBool>>>,
     #[cfg(feature = "voice")]
     recording: Mutex<Option<voice::capture::Recording>>,
     #[cfg(feature = "wake-word")]
@@ -116,6 +143,54 @@ fn show_install(app: &AppHandle) {
     {
         log::error!("install window: {e}");
     }
+}
+
+/// The Rook panel: what waits on you, work, knowledge and sessions.
+fn show_panel(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("panel") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        let _ = w.emit("panel-refresh", ());
+        return;
+    }
+    if let Err(e) = WebviewWindowBuilder::new(app, "panel", WebviewUrl::App("panel.html".into()))
+        .title("Rook")
+        .inner_size(600.0, 760.0)
+        .min_inner_size(360.0, 420.0)
+        .build()
+    {
+        log::error!("panel window: {e}");
+    }
+}
+
+/// "Ask about this page": the dashboard window with its @home dock open, so
+/// the house agent sees the page (the dashboard's page-aware chat). Opens
+/// the dashboard first when it isn't open.
+fn ask_on_page(app: &AppHandle) -> Result<(), String> {
+    let fresh = app.get_webview_window("dashboard").is_none();
+    if fresh {
+        open_dashboard(app, "/")?;
+    }
+    let Some(w) = app.get_webview_window("dashboard") else {
+        return Err("The dashboard window didn't open.".into());
+    };
+    let _ = w.unminimize();
+    let _ = w.show();
+    let _ = w.set_focus();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if fresh {
+            // Let the first page start loading, or the script lands on about:blank.
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+        }
+        if let Some(w) = app.get_webview_window("dashboard") {
+            if let Err(e) = w.eval(OPEN_DOCK_JS) {
+                log::warn!("couldn't open the dashboard chat: {e}");
+            }
+        }
+    });
+    Ok(())
 }
 
 fn build_overlay(app: &AppHandle) -> tauri::Result<()> {
@@ -273,6 +348,14 @@ struct UiState {
     version: &'static str,
     os: &'static str,
     worker: worker::Info,
+    /// The dashboard's sections and pages (ui/sections.json).
+    sections: Vec<sections::Section>,
+    /// A newer app the hub offers.
+    update: Option<update::Update>,
+    /// The dashboard window is open (for "Ask about this page").
+    dashboard_open: bool,
+    /// An answer is being read aloud.
+    speaking: bool,
 }
 
 /// What the settings page shows. The worker status and the microphone name
@@ -299,6 +382,10 @@ async fn ui_state(app: &AppHandle) -> UiState {
         version: env!("CARGO_PKG_VERSION"),
         os: installer::current_os(),
         worker,
+        sections: sections::all(),
+        update: state(app).update.lock().unwrap().clone(),
+        dashboard_open: app.get_webview_window("dashboard").is_some(),
+        speaking: state(app).speaking.lock().unwrap().is_some(),
     }
 }
 
@@ -394,6 +481,83 @@ fn on_shortcut(app: &AppHandle, sc: &Shortcut, pressed: bool) {
     }
 }
 
+// ---- reading answers aloud -----------------------------------------------------------
+
+/// Whether to read this answer aloud (Settings > Voice > Read answers aloud).
+fn wants_speech(s: &Settings, spoken_question: bool) -> bool {
+    cfg!(feature = "voice")
+        && !s.voice_url.is_empty()
+        && match s.speak_answers.as_str() {
+            config::SPEAK_ALWAYS => true,
+            config::SPEAK_VOICE => spoken_question,
+            _ => false,
+        }
+}
+
+/// Stop reading aloud (a new question, Esc in the quick-ask box).
+fn stop_speech(app: &AppHandle) {
+    if let Some(flag) = state(app).speaking.lock().unwrap().take() {
+        flag.store(true, Ordering::Relaxed);
+        let _ = app.emit("speaking", false);
+    }
+}
+
+/// Read an answer aloud, piece by piece: each piece is fetched from the voice
+/// server while nothing plays, so a busy server costs a pause, not the answer.
+/// Failing to speak is a note in the box; the answer is on screen anyway.
+#[cfg(feature = "voice")]
+fn speak(app: &AppHandle, text: &str) {
+    stop_speech(app);
+    let pieces = voice::speak::chunks(text);
+    if pieces.is_empty() {
+        return;
+    }
+    let stop = Arc::new(AtomicBool::new(false));
+    *state(app).speaking.lock().unwrap() = Some(stop.clone());
+    let _ = app.emit("speaking", true);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let s = settings(&app);
+        let key = creds(&app).voice_key;
+        for piece in pieces {
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            let (pcm, rate) = match voice::speak::synthesize(&s.voice_url, &key, &piece).await {
+                Ok(audio) => audio,
+                Err(e) => {
+                    log::warn!("speaking: {e}");
+                    let _ = app.emit_to("overlay", "speak-error", e);
+                    break;
+                }
+            };
+            let flag = stop.clone();
+            let played = tauri::async_runtime::spawn_blocking(move || voice::playback::play(&pcm, rate, &flag)).await;
+            if let Ok(Err(e)) = played {
+                log::warn!("speaking: {e}");
+                let _ = app.emit_to("overlay", "speak-error", e);
+                break;
+            }
+        }
+        // Clear the flag only if it is still ours (a newer answer replaces it).
+        let st = state(&app);
+        let mut slot = st.speaking.lock().unwrap();
+        if slot.as_ref().is_some_and(|f| Arc::ptr_eq(f, &stop)) {
+            *slot = None;
+            let _ = app.emit("speaking", false);
+        }
+    });
+}
+
+#[cfg(not(feature = "voice"))]
+fn speak(_: &AppHandle, _: &str) {}
+
+fn maybe_speak(app: &AppHandle, text: &str, spoken_question: bool) {
+    if wants_speech(&settings(app), spoken_question) {
+        speak(app, text);
+    }
+}
+
 // ---- asking -------------------------------------------------------------------------
 
 async fn ask_impl(app: &AppHandle, question: &str) -> Result<hub::Answer, String> {
@@ -456,7 +620,10 @@ async fn voice_question(app: AppHandle, pcm: Vec<i16>) {
     };
     overlay_state(&app, "thinking", "", &text);
     match ask_impl(&app, &text).await {
-        Ok(a) => overlay_state(&app, "answer", &a.text, &text),
+        Ok(a) => {
+            overlay_state(&app, "answer", &a.text, &text);
+            maybe_speak(&app, &a.text, true);
+        }
         Err(e) => overlay_state(&app, "error", &e, &text),
     }
 }
@@ -468,6 +635,7 @@ fn ptt_begin(app: &AppHandle) {
     if rec.is_some() {
         return; // key auto-repeat
     }
+    stop_speech(app); // talking over the answer stops it
     show_overlay(app);
     *rec = Some(voice::capture::Recording::start());
     overlay_state(app, "recording", "", "");
@@ -613,10 +781,15 @@ fn spawn_poller(app: AppHandle) {
         let mut attention_supported = true;
         let mut polls: u64 = 0;
         let mut warned = false;
+        let mut update_checked: Option<std::time::Instant> = None;
         loop {
             let s = settings(&app);
             tokio::time::sleep(Duration::from_secs(s.poll_seconds)).await;
             polls += 1;
+            if update_checked.map_or(true, |t| t.elapsed() >= UPDATE_EVERY) {
+                update_checked = Some(std::time::Instant::now());
+                check_update(&app).await;
+            }
             if polls % 4 == 0 {
                 let (info, _) = system_facts(&app).await;
                 update_worker_item(&app, &info);
@@ -648,7 +821,7 @@ fn spawn_poller(app: AppHandle) {
                 }
                 Err(e) => log::debug!("poll: {e}"),
             }
-            // Hubs without /api/attention are re-checked now and then (an
+            // Hubs without approvals.list are re-checked now and then (an
             // upgrade may add it), not on every poll.
             if attention_supported || polls % 20 == 0 {
                 match h.attention().await {
@@ -663,6 +836,48 @@ fn spawn_poller(app: AppHandle) {
             }
         }
     });
+}
+
+/// Ask the hub whether a newer app is published; announce each new version
+/// once.
+async fn check_update(app: &AppHandle) {
+    let s = settings(app);
+    let Ok(origin) = config::normalize_hub_url(&s.hub_url) else {
+        return;
+    };
+    let current = env!("CARGO_PKG_VERSION");
+    let downloads = match hub::desktop_downloads(&origin, current, update::platform()).await {
+        Ok(d) => d,
+        Err(e) => {
+            log::debug!("update check: {e}");
+            return;
+        }
+    };
+    let found = update::pick(
+        &downloads,
+        current,
+        update::platform(),
+        std::env::var_os("APPIMAGE").is_some(),
+    );
+    *state(app).update.lock().unwrap() = found.clone();
+    let Some(u) = found else { return };
+    if u.version != s.update_notified && s.notifications {
+        notify(
+            app,
+            "Rook update",
+            &format!(
+                "Version {} of the desktop app is out. Settings has the download.",
+                u.version
+            ),
+        );
+        let st = state(app);
+        let mut cur = st.settings.lock().unwrap();
+        cur.update_notified = u.version.clone();
+        if let Err(e) = st.store.save_settings(&cur) {
+            log::error!("saving settings: {e}");
+        }
+    }
+    changed(app);
 }
 
 /// After the person signs in inside the dashboard window, take that
@@ -742,8 +957,32 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     } else {
         format!("Ask the home agent\u{2026}  ({})", s.ask_shortcut)
     };
-    let dashboard = MenuItem::with_id(app, "dashboard", "Open dashboard", true, None::<&str>)?;
+    let panel = MenuItem::with_id(app, "panel", "Open Rook", true, None::<&str>)?;
+    // Dashboard > Feed / Work / Intelligence sources / Trust / Settings > page.
+    let dashboard = Submenu::with_id(app, "dashboard-menu", "Dashboard", true)?;
+    dashboard.append(&MenuItem::with_id(
+        app,
+        "dashboard",
+        "Open dashboard",
+        true,
+        None::<&str>,
+    )?)?;
+    dashboard.append(&PredefinedMenuItem::separator(app)?)?;
+    for section in sections::all() {
+        let sub = Submenu::with_id(app, format!("section:{}", section.id), &section.title, true)?;
+        for page in &section.pages {
+            sub.append(&MenuItem::with_id(
+                app,
+                sections::menu_id(&page.hash),
+                &page.title,
+                true,
+                None::<&str>,
+            )?)?;
+        }
+        dashboard.append(&sub)?;
+    }
     let ask = MenuItem::with_id(app, "ask", ask_label, true, None::<&str>)?;
+    let page_ask = MenuItem::with_id(app, "page-ask", "Ask about this page", true, None::<&str>)?;
     // The real label (start, stop, add) comes from refresh_worker_item, which
     // asks the system on a blocking thread.
     let worker = MenuItem::with_id(app, "worker", "This computer's worker\u{2026}", true, None::<&str>)?;
@@ -760,8 +999,10 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let menu = Menu::with_items(
         app,
         &[
+            &panel,
             &dashboard,
             &ask,
+            &page_ask,
             &sep()?,
             &worker,
             &install,
@@ -775,12 +1016,24 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .tooltip("Rook")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id.as_ref() {
+            "panel" => show_panel(app),
             "dashboard" => {
                 if open_dashboard(app, "/").is_err() {
                     show_settings(app, Some("hub"));
                 }
             }
+            id if id.starts_with("page:") => {
+                let opened = sections::path_for(id).map(|p| open_dashboard(app, &p));
+                if !matches!(opened, Some(Ok(()))) {
+                    show_settings(app, Some("hub"));
+                }
+            }
             "ask" => show_overlay(app),
+            "page-ask" => {
+                if ask_on_page(app).is_err() {
+                    show_settings(app, Some("hub"));
+                }
+            }
             "worker" => {
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
@@ -855,8 +1108,26 @@ async fn save_settings(app: AppHandle, mut settings: Settings) -> Result<UiState
         .save_settings(&settings)
         .map_err(|e| format!("Couldn't save settings: {e}"))?;
     apply_wake(&app);
+    if let Err(e) = apply_start_at_login(&app) {
+        changed(&app);
+        return Err(e);
+    }
     changed(&app);
     Ok(ui_state(&app).await)
+}
+
+/// Make the system's start-at-sign-in entry match the setting (the Run key
+/// on Windows, a LaunchAgent on macOS, ~/.config/autostart on Linux).
+fn apply_start_at_login(app: &AppHandle) -> Result<(), String> {
+    let want = settings(app).start_at_login;
+    let al = app.autolaunch();
+    let have = al.is_enabled().unwrap_or(false);
+    let r = match (want, have) {
+        (true, false) => al.enable(),
+        (false, true) => al.disable(),
+        _ => Ok(()),
+    };
+    r.map_err(|e| format!("Couldn't change starting at sign-in: {e}"))
 }
 
 #[tauri::command]
@@ -953,7 +1224,66 @@ fn open_dashboard_cmd(app: AppHandle, path: Option<String>) -> Result<(), String
 
 #[tauri::command]
 async fn ask(app: AppHandle, question: String) -> Result<hub::Answer, String> {
-    ask_impl(&app, &question).await
+    stop_speech(&app);
+    let a = ask_impl(&app, &question).await?;
+    maybe_speak(&app, &a.text, false);
+    Ok(a)
+}
+
+#[tauri::command]
+fn stop_speaking(app: AppHandle) {
+    stop_speech(&app);
+}
+
+#[tauri::command]
+fn ask_on_page_cmd(app: AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("overlay") {
+        let _ = w.hide();
+    }
+    ask_on_page(&app)
+}
+
+fn to_json<T: Serialize>(r: Result<T, hub::HubError>) -> Result<serde_json::Value, String> {
+    let v = r.map_err(|e| e.to_string())?;
+    serde_json::to_value(v).map_err(|e| e.to_string())
+}
+
+/// The Rook panel's lists: `waiting`, `work`, `knowledge` (with `query`) or
+/// `sessions`. Read-only, as the signed-in person.
+#[tauri::command]
+async fn panel_data(app: AppHandle, kind: String, query: Option<String>) -> Result<serde_json::Value, String> {
+    let h = hub_client(&app)?;
+    match kind.as_str() {
+        "waiting" => to_json(h.waiting().await),
+        "work" => to_json(h.work().await),
+        "knowledge" => {
+            let q: String = query.unwrap_or_default().trim().chars().take(200).collect();
+            if q.is_empty() {
+                return Ok(json!([]));
+            }
+            to_json(h.knowledge(&q).await)
+        }
+        // The Sessions list is an account page: the dashboard password can't open it.
+        "sessions" => match h.sessions().await {
+            Err(hub::HubError::NotSignedIn | hub::HubError::NotOperator | hub::HubError::Http(403, _)) => {
+                Err("Sessions need an owner account sign-in (not the dashboard password).".into())
+            }
+            other => to_json(other),
+        },
+        _ => Err("unknown list".into()),
+    }
+}
+
+/// Open the newer app's download in the browser.
+#[tauri::command]
+fn open_update(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let Some(u) = state(&app).update.lock().unwrap().clone() else {
+        return Err("No update is waiting.".into());
+    };
+    app.opener()
+        .open_url(&u.url, None::<&str>)
+        .map_err(|e| format!("Couldn't open the download: {e}"))
 }
 
 #[tauri::command]
@@ -973,6 +1303,7 @@ fn show_window(app: AppHandle, name: String) {
     match name.as_str() {
         "overlay" => show_overlay(&app),
         "install" => show_install(&app),
+        "panel" => show_panel(&app),
         _ => show_settings(&app, None),
     }
 }
@@ -1105,10 +1436,129 @@ fn config_dir(app: &AppHandle) -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from(".rook-desktop"))
 }
 
+/// `--show <window>` from a command line.
+fn show_arg(args: &[String]) -> Option<String> {
+    args.iter().skip_while(|a| *a != "--show").nth(1).cloned()
+}
+
+/// What a launch asks for: a window, or (started at sign-in, or a plain
+/// second launch) nothing special.
+fn show_requested(app: &AppHandle, which: Option<&str>) {
+    match which {
+        Some("overlay") => show_overlay(app),
+        Some("install") => show_install(app),
+        Some("panel") => show_panel(app),
+        Some("dashboard") => {
+            if open_dashboard(app, "/").is_err() {
+                show_settings(app, Some("hub"));
+            }
+        }
+        Some(_) => show_settings(app, None),
+        None => {}
+    }
+}
+
+// ---- --check: what the app sees on this computer, without starting it ------------------
+
+/// `rook-desktop --check [file]`: the app's view of this computer as JSON
+/// (version, settings folder, sign-in, the worker, microphone, speaker, web
+/// view, the hub's answer), printed and, with a file, written there too (a
+/// Windows build has no console). Changes nothing.
+fn check(out: Option<&str>) -> i32 {
+    let dir = dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(IDENTIFIER);
+    let store = Store::new(dir.clone());
+    let s = store.load_settings();
+    let c = store.load_credentials();
+    let origin = config::normalize_hub_url(&s.hub_url).unwrap_or_default();
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let worker = worker::Controller::new(worker::Layout::from_env(&home)).info();
+    let hub = tauri::async_runtime::block_on(async {
+        if origin.is_empty() {
+            return json!({"configured": false});
+        }
+        let downloads = hub::desktop_downloads(&origin, env!("CARGO_PKG_VERSION"), update::platform()).await;
+        let mut v = json!({
+            "configured": true,
+            "origin": origin,
+            "update_check": match &downloads { Ok(d) => json!({"ok": true, "downloads": d.len()}),
+                                               Err(e) => json!({"ok": false, "error": e.to_string()}) },
+            "update": downloads.ok().and_then(|d| update::pick(&d, env!("CARGO_PKG_VERSION"),
+                                                               update::platform(), false)),
+        });
+        if c.signed_in_to(&origin) {
+            let h = hub::Hub::new(&origin, &c.cookie);
+            v["whoami"] = match h.whoami().await {
+                Ok(w) => json!({"ok": true, "principal": w.principal}),
+                Err(e) => json!({"ok": false, "error": e.to_string()}),
+            };
+            v["waiting"] = match h.waiting().await {
+                Ok(w) => json!({"ok": true, "count": w.len()}),
+                Err(e) => json!({"ok": false, "error": e.to_string()}),
+            };
+        }
+        v
+    });
+    let report = json!({
+        "app": "rook-desktop",
+        "version": env!("CARGO_PKG_VERSION"),
+        "os": installer::current_os(),
+        "features": {"voice": cfg!(feature = "voice"), "wake_word": cfg!(feature = "wake-word")},
+        "config_dir": dir.display().to_string(),
+        "settings_saved": dir.join("settings.json").is_file(),
+        "signed_in": c.signed_in_to(&origin),
+        "principal": c.principal,
+        "speak_answers": s.speak_answers,
+        "start_at_login": s.start_at_login,
+        "worker": worker,
+        "microphone": microphone_name(),
+        "speaker": speaker_name(),
+        "webview": tauri::webview_version().ok(),
+        "sections": sections::all().iter().map(|s| s.title.clone()).collect::<Vec<_>>(),
+        "hub": hub,
+    });
+    let text = serde_json::to_string_pretty(&report).unwrap_or_default();
+    println!("{text}");
+    if let Some(path) = out {
+        if let Err(e) = std::fs::write(path, &text) {
+            eprintln!("couldn't write {path}: {e}");
+            return 1;
+        }
+    }
+    0
+}
+
+#[cfg(feature = "voice")]
+fn speaker_name() -> Option<String> {
+    use cpal::traits::{DeviceTrait, HostTrait};
+    cpal::default_host().default_output_device().and_then(|d| d.name().ok())
+}
+#[cfg(not(feature = "voice"))]
+fn speaker_name() -> Option<String> {
+    None
+}
+
 pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    let show: Vec<String> = std::env::args().skip_while(|a| a != "--show").skip(1).take(1).collect();
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--check") {
+        std::process::exit(check(args.get(i + 1).map(String::as_str)));
+    }
+    let show = show_arg(&args);
+    let background = args.iter().any(|a| a == BACKGROUND_ARG);
     let app = tauri::Builder::default()
+        // First: a second copy hands its request to this one and exits.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            let want = show_arg(&argv).or_else(|| Some("panel".into()));
+            show_requested(app, want.as_deref());
+        }))
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args([BACKGROUND_ARG])
+                .app_name("Rook")
+                .build(),
+        )
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(
@@ -1134,6 +1584,8 @@ pub fn run() {
                 signin_gen: AtomicU64::new(0),
                 installing: AtomicBool::new(false),
                 worker_item: Mutex::new(None),
+                update: Mutex::new(None),
+                speaking: Mutex::new(None),
                 #[cfg(feature = "voice")]
                 recording: Mutex::new(None),
                 #[cfg(feature = "wake-word")]
@@ -1150,6 +1602,9 @@ pub fn run() {
                 notify(&handle, "Rook", &e);
             }
             apply_wake(&handle);
+            if let Err(e) = apply_start_at_login(&handle) {
+                log::warn!("{e}");
+            }
             if !no_tray {
                 refresh_worker_item(&handle);
             }
@@ -1165,16 +1620,13 @@ pub fn run() {
                 });
             }
             spawn_poller(handle.clone());
-            match show.first().map(String::as_str) {
-                Some("overlay") => show_overlay(&handle),
-                Some("install") => show_install(&handle),
-                Some("dashboard") => {
-                    let _ = open_dashboard(&handle, "/");
-                }
-                Some("settings") => show_settings(&handle, None),
+            match show.as_deref() {
+                Some(w) => show_requested(&handle, Some(w)),
                 // Without a tray icon the settings window is the way in.
-                _ if first_run || no_tray => show_settings(&handle, None),
-                _ => {}
+                None if first_run || no_tray => show_settings(&handle, None),
+                // Started by hand (not at sign-in): show the panel.
+                None if !background => show_panel(&handle),
+                None => {}
             }
             Ok(())
         })
@@ -1196,6 +1648,10 @@ pub fn run() {
             install_plan,
             install_run,
             install_connect,
+            panel_data,
+            ask_on_page_cmd,
+            stop_speaking,
+            open_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Rook");

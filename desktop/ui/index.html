@@ -85,6 +85,13 @@
     </div>
     <label class="field"><span>Hold to talk</span>
       <span class="shortcut"><input type="text" id="ptt_shortcut" spellcheck="false" placeholder="Off"><button type="button" data-record="ptt_shortcut">Change</button></span></label>
+    <label class="field"><span>Read answers aloud</span>
+      <select id="speak_answers">
+        <option value="voice">When I asked by voice</option>
+        <option value="always">Always</option>
+        <option value="never">Never</option>
+      </select></label>
+    <p class="note">Your voice server reads the answer. Press Esc in the quick-ask box, or start talking, to stop it.</p>
     <div id="wake-box">
       <label class="check"><input type="checkbox" id="wake_word"> Listen for a wake word</label>
       <p class="note" id="wake-note">The microphone stays on while this is on. Speech is only sent after the wake word.</p>
@@ -93,6 +100,21 @@
         <label class="field"><span>Sensitivity <b id="wake-val"></b></span><input type="range" id="wake_threshold" min="0.2" max="0.9" step="0.05"></label>
       </div>
     </div>
+  </section>
+
+  <section class="card" id="app">
+    <div class="card-head">
+      <div>
+        <h2>This app</h2>
+        <p class="muted small">Rook lives in the tray. Opening it again shows the Rook panel.</p>
+      </div>
+      <span class="pill" id="update-pill">Up to date</span>
+    </div>
+    <label class="check"><input type="checkbox" id="start_at_login"> Start Rook when I sign in to this computer</label>
+    <div class="actions" id="update-box" hidden>
+      <button class="primary" id="update-get">Download version <span id="update-ver"></span></button>
+    </div>
+    <p class="note" id="update-note"></p>
   </section>
 
   <section class="card" id="worker">

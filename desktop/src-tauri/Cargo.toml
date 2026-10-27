@@ -1,6 +1,6 @@
 [package]
 name = "rook-desktop"
-version = "0.1.0"
+version = "0.2.0"
 description = "Rook desktop companion: tray, dashboard window, quick-ask hotkey, notifications and voice"
 license = "Apache-2.0"
 edition = "2021"
@@ -20,6 +20,10 @@ tauri-plugin-global-shortcut = "2.4"
 tauri-plugin-notification = "2.6"
 # Links the dashboard window leaves the hub for open in the system browser.
 tauri-plugin-opener = "2.7"
+# A second launch (the Start menu, a desktop shortcut) shows the running app.
+tauri-plugin-single-instance = "2"
+# Settings > Start Rook when I sign in.
+tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

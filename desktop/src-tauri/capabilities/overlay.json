@@ -10,6 +10,9 @@
     "allow-overlay-hide",
     "allow-open-settings",
     "allow-ptt-toggle",
-    "allow-open-dashboard-cmd"
+    "allow-open-dashboard-cmd",
+    "allow-ask-on-page-cmd",
+    "allow-stop-speaking",
+    "allow-show-window"
   ]
 }

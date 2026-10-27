@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 
 pub const DEFAULT_ASK_SHORTCUT: &str = "Ctrl+Alt+Space";
 pub const DEFAULT_PTT_SHORTCUT: &str = "Ctrl+Alt+V";
+pub const SPEAK_VOICE: &str = "voice";
+pub const SPEAK_ALWAYS: &str = "always";
+pub const SPEAK_NEVER: &str = "never";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -32,6 +35,13 @@ pub struct Settings {
     pub wake_threshold: f32,
     /// Start the local worker when the app starts (child-process mode only).
     pub worker_autostart: bool,
+    /// Read answers aloud: "voice" (after a spoken question), "always" or
+    /// "never". Needs the voice server.
+    pub speak_answers: String,
+    /// Start the app when the person signs in to the computer.
+    pub start_at_login: bool,
+    /// The newest app version already announced, so each is announced once.
+    pub update_notified: String,
 }
 
 impl Default for Settings {
@@ -47,6 +57,9 @@ impl Default for Settings {
             wake_model: String::new(),
             wake_threshold: 0.5,
             worker_autostart: false,
+            speak_answers: SPEAK_VOICE.into(),
+            start_at_login: false,
+            update_notified: String::new(),
         }
     }
 }
@@ -62,6 +75,9 @@ impl Settings {
         self.voice_url = self.voice_url.trim().to_string();
         self.ask_shortcut = self.ask_shortcut.trim().to_string();
         self.ptt_shortcut = self.ptt_shortcut.trim().to_string();
+        if ![SPEAK_VOICE, SPEAK_ALWAYS, SPEAK_NEVER].contains(&self.speak_answers.as_str()) {
+            self.speak_answers = SPEAK_VOICE.into();
+        }
         self
     }
 }
@@ -282,6 +298,10 @@ mod tests {
     fn unknown_fields_and_partial_files_load() {
         let s: Settings = serde_json::from_str(r#"{"hub_url":"https://a.example","future":1}"#).unwrap();
         assert_eq!(s.ask_shortcut, DEFAULT_ASK_SHORTCUT);
+        assert_eq!(s.speak_answers, SPEAK_VOICE);
+        assert!(!s.start_at_login);
+        let odd: Settings = serde_json::from_str(r#"{"speak_answers":"loud"}"#).unwrap();
+        assert_eq!(odd.sanitized().speak_answers, SPEAK_VOICE);
         assert!(s.notifications);
     }
 }

@@ -338,11 +338,14 @@ login, else this worker's band link (reads only). Details: [docs/operations/work
 ### Desktop app (preview)
 
 A tray app for Windows, macOS and Linux (`desktop/`, Tauri 2): your dashboard
-in a window, a global hotkey (`Ctrl+Alt+Space`) to ask the home agent,
-notifications for new chat messages, push-to-talk and an optional wake word,
-start/stop for this computer's worker, and an "Install a hub on this
-computer" wizard on Linux. It signs in with the hub's usual login; nothing
-changes on the hub. See [desktop-app.md](desktop-app.md).
+in a window with a tray menu of its five sections, the Rook panel (what waits
+on you, work in progress, knowledge search, agent sessions), a global hotkey
+(`Ctrl+Alt+Space`) to ask the home agent, "ask about this page" through the
+dashboard's page-aware chat, notifications for new chat messages and for what
+waits on you, push-to-talk with answers read aloud and an optional wake word,
+start/stop for this computer's worker, start at sign-in, an update check, and
+an "Install a hub on this computer" wizard on Linux. It signs in with the
+hub's usual login; nothing changes on the hub. See [desktop-app.md](desktop-app.md).
 
 ### Chat & messaging
 

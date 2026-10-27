@@ -19,6 +19,10 @@ const COMMANDS: &[&str] = &[
     "install_plan",
     "install_run",
     "install_connect",
+    "panel_data",
+    "ask_on_page_cmd",
+    "stop_speaking",
+    "open_update",
 ];
 
 fn main() {

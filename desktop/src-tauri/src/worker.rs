@@ -9,6 +9,12 @@
 //! * the Scheduled Task `RookBandWorker` (Windows installer): `schtasks`;
 //! * otherwise (macOS, Linux without systemd) the installed bundle, run by the
 //!   app as a child process with the saved enrollment (`--enrolled --ws`).
+//!
+//! A worker can also run outside all of these: the Linux installer's nohup
+//! fallback, or on Windows a worker an update restarted itself (its Scheduled
+//! Task then reads "Ready" while the worker runs). Those are found by their
+//! command line (this install's `band-worker.pyz`, whole path, and
+//! `--enrolled`) and count as running.
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -134,6 +140,66 @@ pub fn task_running(stdout: &str) -> bool {
         .any(|l| l.trim_end().trim_end_matches('"').ends_with("Running"))
 }
 
+/// Ids of the processes running this install's worker, from `pid command
+/// line` rows (`ps -axo pid=,args=`, or the Win32_Process query on Windows):
+/// the command line must name this install's bundle (`pyz`, a whole argument:
+/// nothing glued on before or after) followed by `--enrolled`. Another
+/// install, a dev worker or a test run doesn't match. Windows paths compare
+/// without case.
+pub fn worker_pids(rows: &str, pyz: &Path, windows: bool) -> Vec<u32> {
+    let fold = |s: &str| if windows { s.to_lowercase() } else { s.to_string() };
+    let want = fold(&pyz.display().to_string());
+    rows.lines()
+        .filter_map(|l| {
+            // A byte-order mark may lead the first row (Windows PowerShell).
+            let (pid, cmd) = l
+                .trim_start_matches('\u{feff}')
+                .trim_start()
+                .split_once(char::is_whitespace)?;
+            let cmd = fold(cmd);
+            let edge = |c: Option<char>| c.map_or(true, |c| c.is_whitespace() || c == '"' || c == '\'');
+            let found = cmd.match_indices(want.as_str()).any(|(at, _)| {
+                let (before, after) = (&cmd[..at], &cmd[at + want.len()..]);
+                edge(before.chars().next_back())
+                    && edge(after.chars().next())
+                    && after.split_whitespace().any(|a| a.trim_matches('"') == "--enrolled")
+            });
+            found.then_some(())?;
+            pid.trim().parse().ok()
+        })
+        .collect()
+}
+
+/// This install's worker processes running outside the app and its service.
+fn worker_processes(pyz: &Path) -> Vec<u32> {
+    if cfg!(windows) {
+        // UTF-8, so a profile path with non-ASCII letters (C:\\Users\\José) matches.
+        const SCRIPT: &str = "[Console]::OutputEncoding = New-Object Text.UTF8Encoding $false; \
+            Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | \
+            ForEach-Object { \"$($_.ProcessId)`t$($_.CommandLine)\" }";
+        match run(
+            "powershell",
+            &[
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                SCRIPT,
+            ],
+        ) {
+            Some((true, out)) => worker_pids(&out, pyz, true),
+            _ => vec![],
+        }
+    } else {
+        // -ww: whole command lines (macOS cuts them at the terminal width).
+        match run("ps", &["-ww", "-axo", "pid=,args="]) {
+            Some((true, out)) => worker_pids(&out, pyz, false),
+            _ => vec![],
+        }
+    }
+}
+
 fn quiet(cmd: &mut Command) -> &mut Command {
     #[cfg(windows)]
     {
@@ -184,13 +250,23 @@ impl Controller {
         }
     }
 
-    /// A bundle worker running outside the app (the installer's nohup
-    /// fallback), found by its command line.
+    /// A bundle worker running outside the app and its service (the
+    /// installer's nohup fallback; on Windows, one an update restarted),
+    /// found by its command line.
     fn running_elsewhere(&self) -> bool {
-        if cfg!(unix) {
-            matches!(run("pgrep", &["-f", "band-worker.pyz"]), Some((true, _)))
-        } else {
-            false
+        !worker_processes(&self.layout.pyz()).is_empty()
+    }
+
+    /// End those processes, and only those: not the processes they started
+    /// (terminals and agent sessions the worker hosts keep running).
+    fn stop_elsewhere(&self) {
+        for pid in worker_processes(&self.layout.pyz()) {
+            let pid = pid.to_string();
+            if cfg!(windows) {
+                let _ = run("taskkill", &["/PID", &pid, "/F"]);
+            } else {
+                let _ = run("kill", &[&pid]);
+            }
         }
     }
 
@@ -209,13 +285,19 @@ impl Controller {
                 }
             }
             Mode::WindowsTask => {
-                let up = run("schtasks", &["/Query", "/TN", WINDOWS_TASK, "/FO", "CSV", "/NH"])
+                let task = run("schtasks", &["/Query", "/TN", WINDOWS_TASK, "/FO", "CSV", "/NH"])
                     .map(|(_, o)| task_running(&o))
                     .unwrap_or(false);
+                let outside = !task && self.running_elsewhere();
+                let up = task || outside;
                 Info {
                     mode: "task",
                     status: if up { "running" } else { "stopped" },
-                    detail: format!("Installed as the Scheduled Task {WINDOWS_TASK}."),
+                    detail: if outside {
+                        format!("Installed as the Scheduled Task {WINDOWS_TASK}; running outside it (an update restarted it).")
+                    } else {
+                        format!("Installed as the Scheduled Task {WINDOWS_TASK}.")
+                    },
                     can_start: !up,
                     can_stop: up,
                 }
@@ -292,13 +374,23 @@ impl Controller {
     pub fn stop(&mut self) -> Result<Info, String> {
         match detect(&self.layout) {
             Mode::SystemdUser => checked(run("systemctl", &["--user", "stop", SERVICE]), "stop the service")?,
-            Mode::WindowsTask => checked(run("schtasks", &["/End", "/TN", WINDOWS_TASK]), "stop the task")?,
+            Mode::WindowsTask => {
+                let task = run("schtasks", &["/Query", "/TN", WINDOWS_TASK, "/FO", "CSV", "/NH"])
+                    .map(|(_, o)| task_running(&o))
+                    .unwrap_or(false);
+                if task {
+                    checked(run("schtasks", &["/End", "/TN", WINDOWS_TASK]), "stop the task")?;
+                }
+                if self.running_elsewhere() {
+                    self.stop_elsewhere();
+                }
+            }
             Mode::Bundle { .. } => {
                 if let Some(mut c) = self.child.take() {
                     let _ = c.kill();
                     let _ = c.wait();
                 } else if self.running_elsewhere() {
-                    let _ = run("pkill", &["-f", "band-worker.pyz"]);
+                    self.stop_elsewhere();
                 }
             }
             Mode::NotInstalled => {}
@@ -373,5 +465,39 @@ mod tests {
         assert!(!systemd_active("failed"));
         assert!(task_running("\"\\RookBandWorker\",\"N/A\",\"Running\"\r\n"));
         assert!(!task_running("\"\\RookBandWorker\",\"N/A\",\"Ready\""));
+    }
+
+    #[test]
+    fn worker_processes_by_exact_command_line() {
+        // A worker an update restarted outside its Scheduled Task (and the
+        // child it relaunched), beside other Python processes.
+        let pyz = PathBuf::from(r"C:\Users\me\.rook-band-worker\band-worker.pyz");
+        let out = "7452\t\"C:\\Program Files\\Python311\\python.exe\" C:\\tools\\other.py\r\n\
+            45928\tC:\\Users\\me\\.rook-band-worker\\venv\\Scripts\\pythonw.exe C:\\Users\\me\\.rook-band-worker\\band-worker.pyz --enrolled --ws\r\n\
+            116568\tC:\\Users\\me\\.rook-band-worker\\venv\\Scripts\\pythonw.exe \"C:\\Users\\ME\\.rook-band-worker\\Band-Worker.pyz\" --enrolled\r\n\
+            501\tpython C:\\dev\\rook\\band-worker.pyz --enrolled\r\n\
+            502\tpython C:\\Users\\me\\.rook-band-worker\\band-worker.pyz --hub 127.0.0.1:7474\r\n\
+            503\tpython C:\\Users\\me\\.rook-band-worker\\band-worker.pyz.bak --enrolled\r\n\
+            504\tpython D:\\x\\C:\\Users\\me\\.rook-band-worker\\band-worker.pyz --enrolled\r\n\
+            505\tpython --enrolled C:\\Users\\me\\.rook-band-worker\\band-worker.pyz --ws\r\n\
+            9\t\r\n\
+            notapid\tpython band-worker.pyz --enrolled\r\n";
+        assert_eq!(worker_pids(out, &pyz, true), vec![45928, 116568]);
+        assert!(worker_pids("", &pyz, true).is_empty());
+        // ps on Linux and macOS: case matters, and only this install's bundle.
+        let pyz = PathBuf::from("/home/me/.rook-band-worker/band-worker.pyz");
+        let ps = "  812 /home/me/.rook-band-worker/venv/bin/python /home/me/.rook-band-worker/band-worker.pyz --enrolled --ws\n\
+                  913 /home/me/rook/.venv/bin/python /home/me/rook/band-worker.pyz --enrolled\n\
+                  914 python -m pytest tests/test_band-worker.pyz.py\n\
+                  915 /home/me/.rook-band-worker/venv/bin/python /home/ME/.rook-band-worker/band-worker.pyz --enrolled\n\
+                  916 python /tmp/x/home/me/.rook-band-worker/band-worker.pyz --enrolled\n\
+                  917 python '/home/me/.rook-band-worker/band-worker.pyz' --enrolled\n";
+        assert_eq!(worker_pids(ps, &pyz, false), vec![812, 917]);
+        // A profile with non-ASCII letters (the PowerShell query reads UTF-8).
+        let pyz = PathBuf::from(r"C:\Users\José\.rook-band-worker\band-worker.pyz");
+        let out = "77\tC:\\Users\\José\\.rook-band-worker\\venv\\Scripts\\pythonw.exe C:\\Users\\JOSÉ\\.rook-band-worker\\band-worker.pyz --enrolled --ws\r\n";
+        assert_eq!(worker_pids(out, &pyz, true), vec![77]);
+        let bom = format!("\u{feff}{out}");
+        assert_eq!(worker_pids(&bom, &pyz, true), vec![77]);
     }
 }
