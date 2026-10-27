@@ -379,6 +379,25 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 |---|---|---|
 | `battery.status` | — | Current battery: `{percent, charging, plugged, status, ...}`. |
 
+**browser**
+
+| Cap | Args | Does |
+|---|---|---|
+| `browser.click` | session, target, double=false, snapshot=false | Click one element: target is a ref from browser.snapshot (e12) or a Playwright selector (css, text=Sign in, r… |
+| `browser.close` | session='', all=false | Close a session (its Chromium and everything in it), or all=true for every session of yours on this worker. |
+| `browser.eval` | session, js, max_chars=4000 | Run JavaScript in the current tab and return its JSON-able result (an expression, or a function body like `()… |
+| `browser.goto` | session, url, wait='load', new_tab=false, timeout=30, snapshot=false | Load url in the session's current tab (new_tab=true: a new tab). url "back", "forward" or "reload" moves thro… |
+| `browser.open` | url='', session='', headless?, viewport='1280x800', timeout=30, snapshot=false | Start a browser session: a fresh throwaway Chromium (no cookies, no logins, never this machine's own browser… |
+| `browser.press` | session, key, target='', snapshot=false | Press a key or chord (Enter, Escape, Tab, PageDown, ArrowDown, Control+A, Meta+L) on target (ref or selector)… |
+| `browser.read` | session, selector='', max_chars=8000, offset=0 | The page's readable text (the <main>/<article> part when there is one, else the whole body; selector picks an… |
+| `browser.screenshot` | session, target='', full_page=false, inline=false | Screenshot the current tab (the visible part; full_page=true for all of it) or one element (target: ref or se… |
+| `browser.select` | session, target, option | Choose option(s) in a <select> (target: ref or selector). option is a value or visible label, or a list of th… |
+| `browser.sessions` | — | The open browser sessions on this worker: name, current url, tab count, headless, who opened it, and seconds… |
+| `browser.snapshot` | session, max_chars=6000, selector='' | The current page as a short outline an agent can act on: headings (#), text, and every link, button, field an… |
+| `browser.tabs` | session, switch?, close? | List the session's tabs ({index, url, title, current}). switch=N makes tab N current; close=N closes it. |
+| `browser.type` | session, target, text, clear=true, submit=false, snapshot=false | Type text into a field (target: ref or selector, as for browser.click). clear=true (default) replaces what is… |
+| `browser.wait` | session, text='', target='', state='visible', timeout=10 | Wait until text appears on the page, or target (ref or selector) reaches state (visible, hidden, attached, de… |
+
 **camera**
 
 | Cap | Args | Does |

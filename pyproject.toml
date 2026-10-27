@@ -43,6 +43,11 @@ voice = [
     "onnxruntime>=1.18",
     "ddgs>=9",
 ]
+# Browser control on a worker (browser.* caps). After installing, fetch the
+# browser once: python -m playwright install chromium
+browser = [
+    "playwright>=1.49",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

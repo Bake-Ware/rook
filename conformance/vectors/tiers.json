@@ -123,6 +123,51 @@
   "battery.status": {
    "tier": "read"
   },
+  "browser.click": {
+   "tier": "write"
+  },
+  "browser.close": {
+   "tier": "write"
+  },
+  "browser.eval": {
+   "tier": "exec"
+  },
+  "browser.goto": {
+   "tier": "write"
+  },
+  "browser.open": {
+   "tier": "write"
+  },
+  "browser.press": {
+   "tier": "write"
+  },
+  "browser.read": {
+   "tier": "read"
+  },
+  "browser.screenshot": {
+   "tier": "read",
+   "tags": [
+    "sensitive"
+   ]
+  },
+  "browser.select": {
+   "tier": "write"
+  },
+  "browser.sessions": {
+   "tier": "read"
+  },
+  "browser.snapshot": {
+   "tier": "read"
+  },
+  "browser.tabs": {
+   "tier": "write"
+  },
+  "browser.type": {
+   "tier": "write"
+  },
+  "browser.wait": {
+   "tier": "read"
+  },
   "calendar.create": {
    "tier": "exec"
   },
