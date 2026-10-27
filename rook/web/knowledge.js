@@ -59,6 +59,19 @@ function linksTable(links){const t=el('table',undefined,'kn-table');const h=el('
   for(const l of links.slice().reverse()){const tr=el('tr');tr.append(el('td',date(l.ts)),el('td',l.relation),el('td',l.kind),el('td',l.ref+(l.note?' — '+l.note:'')),el('td',l.actor),el('td',l.auto?'auto':''));t.append(tr);}
   const wrap=el('div',undefined,'kn-scroll');wrap.append(t);return wrap;}
 
+// A claim's whiteboard (knowledge/whiteboard.py): what the hub kept from the
+// agent's calls and their why, plus its decisions and open items.
+function whiteboardBlock(b,open){const d=el('details',undefined,'kn-board');d.open=!!open;
+  d.append(el('summary',(b.goal||'Whiteboard')+' · '+b.actor+' · '+(b.released?date(b.since)+' → '+date(b.released):'since '+date(b.since))));
+  if(b.goal)d.append(el('p','Goal: '+b.goal));
+  for(const [key,label] of [['decisions','Decisions'],['open','Open'],['done','Done'],['notes','Notes']]){const v=b[key]||[];if(!v.length)continue;
+    d.append(el('h3',label));const ul=el('ul',undefined,'kn-list');for(const x of v)ul.append(el('li',x.text));d.append(ul);}
+  if(b.work&&b.work.length){d.append(el('h3','Work'+(b.earlier?' (latest '+b.work.length+'; '+b.earlier+' earlier)':'')));const ul=el('ul',undefined,'kn-list');
+    for(const w of b.work){const li=el('li');li.append(el('span',(w.kind?w.kind+': ':'')+w.what),el('span',' · '+[w.worker,w.cap,w.n?'×'+w.n:'',w.ok===false?'failed':'',ago(w.ts)].filter(Boolean).join(' · '),'kn-dim'));ul.append(li);}d.append(ul);}
+  if(b.machines)d.append(el('p','Machines: '+Object.keys(b.machines).join(', '),'kn-dim'));
+  if(!b.work&&!b.decisions&&!b.open&&!b.goal)d.append(el('p','Nothing yet.','kn-dim'));
+  return d;}
+
 function historyBlock(events){const d=el('details',undefined,'kn-history');d.append(el('summary','History ('+events.length+')'));for(const e of events){const x=el('details');x.append(el('summary',date(e.ts)+' · '+e.action+' · '+e.actor),el('pre',JSON.stringify(e.data,null,2)));d.append(x);}return d;}
 
 function dialog(root){const dlg=el('dialog',undefined,'kn-dialog');const form=el('form');const title=el('h2');const fields=el('div',undefined,'kn-fields');const err=el('p','','kn-error');const row=el('div',undefined,'kn-row');
@@ -293,6 +306,8 @@ export async function mountTasks(root){
     if(r.attrs.blocked_reason)main.append(el('p','Blocked: '+r.attrs.blocked_reason,'kn-warn'));
     main.append(renderBody(r.body,s=>refOpen(s,r.band)));
     for(const [key,label] of [['criteria','Done when'],['dependencies','Depends on'],['workers','Workers'],['tags','Labels']]){const v=r.attrs[key]||[];if(v.length){main.append(el('h2',label));const ul=el('ul',undefined,'kn-list');for(const x of v){const li=el('li');if(key==='dependencies'){const a=el('a',x);a.href='#';a.onclick=e=>{e.preventDefault();refOpen(x,r.band);};li.append(a);}else li.textContent=x;ul.append(li);}main.append(ul);}}
+    if(r.kind==='task'&&r.claims.length){const box=el('div');main.append(box);
+      c.api('whiteboard',{id:r.id,band:r.band}).then(w=>{if(!w.boards.length)return;box.append(el('h2','Whiteboard'));w.boards.forEach((b,i)=>box.append(whiteboardBlock(b,i===0&&!b.released)));}).catch(()=>{});}
     if(r.children.length){main.append(el('h2','Subtasks'));for(const k of r.children)main.append(taskCard(k,r.band));}
     if(r.links.length){main.append(el('h2','Audit trail'),linksTable(r.links));}
     if(r.claims.length>live.length){const d=el('details');d.append(el('summary','Past claims'));for(const x of r.claims.filter(x=>x.released))d.append(el('div',x.actor+' · '+date(x.started)+' → '+date(x.released),'kn-dim'));main.append(d);}

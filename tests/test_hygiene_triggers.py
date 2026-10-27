@@ -465,14 +465,26 @@ async def test_mcp_replies_carry_hygiene_and_a_closed_session_asks_for_a_handoff
         assert ('commit', '9f8e7d6', 'produced') in [(l['kind'], l['ref'], l['relation']) for l in got['links']]
         open_ = (await env.tool('rook_task', action='hygiene', data={'mine': True}))['result']['findings']
         assert [f['kind'] for f in open_] == ['work_signal']
-        # The session closes with work since the last handoff.
+        # The session closes with work since the last handoff: its whiteboard
+        # (knowledge/whiteboard.py) is saved as the handoff, nobody is asked.
+        await env.close()
+        await env.connect()
+        assert '_hygiene' not in await env.tool('rook_task', action='deck')
+        got = (await env.tool('rook_task', action='get', id=t['id'], data={'links': 'all'}))['result']
+        assert [l['note'] for l in got['links'] if l['kind'] == 'handoff'] == ['automatic handoff from the whiteboard']
+        deck = (await env.tool('rook_task', action='deck'))['result']['deck'][0]
+        assert not deck['in_progress'][0].get('needs_hygiene')
+        # A claim with nothing on its whiteboard since still asks for a handoff.
+        t2 = (await env.tool('rook_task', action='create', request_id='t2',
+                             data={'title': 'Do more', 'parent': p['slug']}))['result']
+        await env.tool('rook_task', action='claim', id=t2['slug'], request_id='cl2')
         await env.close()
         await env.connect()
         hint = (await env.tool('rook_task', action='deck'))['_hygiene']
-        assert hint[0]['kind'] == 'session_ended'
+        assert hint[0]['kind'] == 'session_ended' and t2['slug'] in hint[0]['say']
         deck = (await env.tool('rook_task', action='deck'))['result']['deck'][0]
-        assert deck['in_progress'][0]['needs_hygiene']
-        assert sorted(deck['in_progress'][0]['hygiene']) == ['session_ended', 'work_signal']
+        row = next(r for r in deck['in_progress'] if r['id'] == t2['id'])
+        assert row['needs_hygiene'] and row['hygiene'] == ['session_ended']
 
 
 def _engine(env):
@@ -563,8 +575,8 @@ async def test_session_end_still_fires_after_another_session_timed_out(tmp_path,
         t = (await env.tool('rook_task', action='create', request_id='t1',
                             data={'title': 'Do it', 'parent': p['slug']}))['result']
         await env.tool('rook_task', action='claim', id=t['slug'], request_id='cl1')
-        await env.tool('rook_call', why='test', cap='shell.exec', worker='gpubox', args={'cmd': 'ls'})
-        # This session is abandoned (no DELETE) and times out.
+        # This session is abandoned (no DELETE) and times out. (Claimed, no
+        # calls: an empty whiteboard, so the closed session asks for a handoff.)
         old = env.http.headers['mcp-session-id']
         await env.connect()
         await env.tool('rook_whoami')

@@ -30,7 +30,7 @@ import uuid
 from ....band_mcp.secret_mask import scrub
 from ....core import migrations, names
 from ....core.db import open_db, transaction
-from . import chunk
+from . import chunk, whiteboard
 
 KINDS = ('concept', 'project', 'task', 'knowledge')
 # Kinds with a speakable name (rook.core.names), kept beside the record in
@@ -745,17 +745,21 @@ class KnowledgeStore:
                     {'claim': mine['id'], **({'of': aid, 'stale': True} if aid != me else {})})
         return {'released': mine['id'], 'task': r['id']}
 
-    def auto_link(self, actor, kind, ref, relation='touched', note='', task=None, band=None):
-        """Attach an artifact to the actor's most recently claimed open task,
-        or to ``task`` (id, slug or exact name) when the caller names one. A claim idle
-        longer than STALE_CLAIM_SECS is skipped: the actor has moved on, and
-        its later work belongs to something else. ``band`` limits the claim
-        lookup to one band. Called by the hub on the actor's behalf; returns
+    def auto_link(self, actor, kind, ref, relation='touched', note='', task=None, band=None, board=None):
+        """Attach an artifact to the claimed open task of the caller's MCP
+        session (whiteboard.SESSION), else the actor's most recently claimed
+        one, or to ``task`` (id, slug or exact name) when the caller names one.
+        A claim idle longer than STALE_CLAIM_SECS is skipped: the actor has
+        moved on, and its later work belongs to something else. ``band`` limits
+        the claim lookup to one band. The link also becomes a line on the
+        claim's whiteboard; ``board`` adds what the link can't carry ({text,
+        worker, cap, ok}). Called by the hub on the actor's behalf; returns
         the task id or None."""
         aid = actor.get('id')
         if not aid:
             return None
         ref, note = scrub(str(ref)), scrub(note)
+        board = scrub(board) if board else None
         with self.db() as db:
             if task:
                 row = db.execute(f"SELECT * FROM records WHERE kind='task' AND (id=? OR slug=? OR id IN "
@@ -771,15 +775,126 @@ class KnowledgeStore:
                 self._link(db, row[0]['band'], row[0]['id'], actor, kind, str(ref)[:500], relation, note, auto=True)
                 db.execute('UPDATE claims SET last_active=?,dirty=NULL WHERE task=? AND actor=? AND released IS NULL',
                            (time.time(), row[0]['id'], aid))
+                whiteboard.from_link(db, self._claim_of(db, aid, row[0]['id']), kind, ref, note, board)
                 return row[0]['id']
-            claim = db.execute('SELECT * FROM claims WHERE actor=? AND released IS NULL AND last_active>=? '
-                               + ('AND band=? ' if band else '') + 'ORDER BY started DESC LIMIT 1',
-                               (aid, time.time() - STALE_CLAIM_SECS, *([band] if band else []))).fetchone()
+            claim = self._session_claim(db, aid, band)
             if not claim:
                 return None
             self._link(db, claim['band'], claim['task'], actor, kind, str(ref)[:500], relation, note, auto=True)
             db.execute('UPDATE claims SET last_active=?,dirty=NULL WHERE id=?', (time.time(), claim['id']))
+            whiteboard.from_link(db, claim, kind, ref, note, board)
             return claim['task']
+
+    @staticmethod
+    def _claim_of(db, aid, task):
+        return db.execute('SELECT * FROM claims WHERE task=? AND actor=? AND released IS NULL',
+                          (task, aid)).fetchone()
+
+    def _session_claim(self, db, aid, band=None):
+        """The claim the current call's work belongs to: the one its MCP
+        session made (whatever its age: the session is still at it), else the
+        actor's newest claim active within STALE_CLAIM_SECS."""
+        mine = whiteboard.session_task()
+        if mine:
+            claim = self._claim_of(db, aid, mine)
+            if claim and (not band or claim['band'] == band):
+                return claim
+        return db.execute('SELECT * FROM claims WHERE actor=? AND released IS NULL AND last_active>=? '
+                          + ('AND band=? ' if band else '') + 'ORDER BY started DESC LIMIT 1',
+                          (aid, time.time() - STALE_CLAIM_SECS, *([band] if band else []))).fetchone()
+
+    # -- whiteboard (whiteboard.py) ---------------------------------------------
+
+    def claimed_by(self, aid, task):
+        with self.db(False) as db:
+            return self._claim_of(db, aid, task) is not None
+
+    def current_claim(self, aid):
+        """The caller's claim for a whiteboard read or jot without a task:
+        its session's, else its newest open one (any age)."""
+        with self.db(False) as db:
+            claim = self._session_claim(db, aid)
+            if claim is None:
+                claim = db.execute('SELECT * FROM claims WHERE actor=? AND released IS NULL '
+                                   'ORDER BY started DESC LIMIT 1', (aid,)).fetchone()
+            return dict(claim) if claim else None
+
+    def whiteboards(self, band, rid, aid=None, claims=3, limit=whiteboard.WORK_SHOWN):
+        """Task ``rid``'s whiteboards, newest claim first: ``aid``'s own open
+        claim (``yours``) leads, then up to ``claims`` in all."""
+        with self.db(False) as db:
+            r = self._get(db, band, rid)
+            if r['kind'] != 'task':
+                raise ValueError('Only tasks have whiteboards')
+            rows = db.execute('SELECT * FROM claims WHERE task=? ORDER BY released IS NOT NULL, started DESC',
+                              (r['id'],)).fetchall()
+            mine = [c for c in rows if c['actor'] == aid and c['released'] is None]
+            ordered = mine[:1] + [c for c in rows if not mine or c['id'] != mine[0]['id']]
+            boards = []
+            for c in ordered[:max(1, min(int(claims or 3), 20))]:
+                b = whiteboard.view(db, c, limit)
+                if mine and c['id'] == mine[0]['id']:
+                    b['yours'] = True
+                boards.append(b)
+        task = {'id': r['id'], 'slug': r['slug'], 'title': r['title'], 'state': r['state'],
+                **({'name': r['name']} if r.get('name') else {})}
+        return {'task': task, 'boards': boards, **({'more_claims': len(rows) - len(boards)}
+                                                   if len(rows) > len(boards) else {})}
+
+    def board_of(self, claim_id, limit=whiteboard.WORK_SHOWN):
+        with self.db(False) as db:
+            c = db.execute('SELECT * FROM claims WHERE id=?', (claim_id,)).fetchone()
+            return whiteboard.view(db, c, limit) if c else None
+
+    def board_handoff(self, task_id, aid, reason):
+        """A handoff written from ``aid``'s open claim on ``task_id`` (None:
+        the claim active most recently), when its board has work since the
+        task's last handoff; else None."""
+        with self.db(False) as db:
+            claim = self._claim_of(db, aid, task_id) if aid else db.execute(
+                'SELECT * FROM claims WHERE task=? AND released IS NULL ORDER BY last_active DESC LIMIT 1',
+                (task_id,)).fetchone()
+            if claim is None:
+                return None
+            last = db.execute("SELECT max(ts) FROM links WHERE record=? AND kind='handoff' AND retracts IS NULL",
+                              (task_id,)).fetchone()[0] or 0
+            if not whiteboard.news_since(db, claim, last):
+                return None
+            task = self.record(db.execute('SELECT * FROM records WHERE id=?', (task_id,)).fetchone())
+            return whiteboard.as_handoff(whiteboard.view(db, claim, whiteboard.MAX_ROWS), task, reason)
+
+    def link_board_handoff(self, task_id, aid, thread):
+        """Link a handoff the hub saved from ``aid``'s whiteboard. Unlike
+        auto_link it leaves the claim's last_active alone: the hub wrote it,
+        the agent did nothing."""
+        with self.db() as db:
+            r = db.execute('SELECT band FROM records WHERE id=?', (task_id,)).fetchone()
+            self._link(db, r['band'], task_id, {'id': aid}, 'handoff', str(thread)[:500], 'produced',
+                       'automatic handoff from the whiteboard', auto=True)
+            whiteboard.add(db, self._claim_of(db, aid, task_id), 'handoff',
+                           'handoff saved from this whiteboard', ref=thread)
+
+    def board_console(self, room, text):
+        """A console closed: a line on the board of the claim it was opened under."""
+        with self.db() as db:
+            for link in db.execute("SELECT record, actor FROM links WHERE kind='console' AND ref=? AND auto=1 "
+                                   'AND retracts IS NULL', (room,)).fetchall():
+                whiteboard.add(db, self._claim_of(db, link['actor'], link['record']), 'console', scrub(text),
+                               ref=room)
+
+    def _op_jot(self, db, band, actor, data):
+        """Lines the agent adds to its own whiteboard on task ``data.id``
+        (whiteboard.jot): the board belongs to the caller's open claim."""
+        r = self._get(db, band, data['id'])
+        claim = self._claim_of(db, actor_id(actor), r['id'])
+        if claim is None:
+            raise ValueError('A whiteboard belongs to a claim: claim the task first '
+                             '(rook_task action=claim), then jot')
+        out = whiteboard.jot(db, claim, data)
+        db.execute('UPDATE claims SET last_active=?,dirty=NULL WHERE id=?', (time.time(), claim['id']))
+        board = whiteboard.view(db, claim, 1)
+        return {'task': r['id'], 'claim': claim['id'], **out,
+                **({'open': board['open']} if board.get('open') else {})}
 
     def active_claims(self):
         with self.db(False) as db:

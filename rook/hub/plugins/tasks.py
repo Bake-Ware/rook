@@ -9,9 +9,10 @@ Caps (the ``rook_task`` / ``rook_project`` / ``rook_concept`` MCP tools route
 to them; ``kind`` picks the record kind, default ``task``):
 
 * ``task.read`` (risk ``read``): deck, search, list, get, context, status,
-  hygiene (open hygiene findings, docs/design/hygiene.md).
+  hygiene (open hygiene findings, docs/design/hygiene.md), whiteboard (a
+  claim's living page, knowledge/whiteboard.py).
 * ``task.write`` (risk ``write``): create, update, link, retract, claim,
-  release (``review`` is for people, from the Knowledge page).
+  release, note, jot (``review`` is for people, from the Knowledge page).
 
 Handoffs stay in the MCP bridge's session store (``rook_handoff_*``), not
 here: a handoff is a *thread* record whose id is shared with the call journal
@@ -48,9 +49,11 @@ class Tasks(Plugin):
     }
     SKILL = ("### tasks\n"
              "Tasks, projects and concepts. Use `rook_task(action=\"deck\")` to see what is on; "
-             "`claim` a task before working (your calls, consoles and handoffs then link to it); "
+             "`claim` a task before working (your calls, consoles and handoffs then link to it, "
+             "and the hub keeps the claim's whiteboard from them: `rook_task(action=\"whiteboard\")` "
+             "reads it, `action=\"jot\"` adds decisions and open items); "
              "finish with `update` state done + `attrs.outcome` + an evidence `link`, or leave a "
-             "handoff. Over the band: `task.read` (deck/search/list/get) and `task.write` "
+             "handoff (released or ended without one, the whiteboard is saved as it). Over the band: `task.read` (deck/search/list/get) and `task.write` "
              "(create/update/link/retract/claim/release) on worker `rook`, with "
              "`kind=task|project|concept`. Hygiene nudges ride replies as `_hygiene` and show on "
              "the deck; `rook_task(action=\"hygiene\")` lists open ones (`data {mine: true}`). A commit "
@@ -76,7 +79,7 @@ class Tasks(Plugin):
     @capability("read", risk="read", scope="multi-user")
     async def read(self, action: str = 'deck', kind: str = 'task', band: str | None = None,
                    id: str | None = None, query: str = '', data: dict | None = None) -> dict:
-        """Read tasks/projects/concepts: deck|search|list|get|context|status|hygiene.
+        """Read tasks/projects/concepts: deck|search|list|get|context|status|hygiene|whiteboard.
 
         Same arguments and result as rook_task's read actions; kind picks
         task (default), project or concept. deck: id=project narrows. id: an
@@ -88,7 +91,7 @@ class Tasks(Plugin):
     async def write(self, action: str, kind: str = 'task', band: str | None = None,
                     id: str | None = None, data: dict | None = None,
                     request_id: str | None = None) -> dict:
-        """Write tasks/projects/concepts: create|update|link|retract|claim|release|note|batch.
+        """Write tasks/projects/concepts: create|update|link|retract|claim|release|note|jot|batch.
 
         Same arguments and result as rook_task's write actions (needs
         request_id); kind picks task (default), project or concept."""
@@ -131,14 +134,16 @@ class Tasks(Plugin):
         rook_task.__doc__ = """Tasks. deck (id=project narrows): in progress with claimants and latest
 handoff, blocked, paused, todo, recently done; rows have revision, unblocked. deck data {states,
 done_days, fields, project_fields, project, offset, limit, handoffs:true}; page to next_offset
-null. claim id before you work: your calls, consoles and handoffs
-link to it.
+null. claim id before you work: your calls, consoles and handoffs link to it and fill
+its whiteboard (read: whiteboard, id defaults to yours). jot data {goal|decision|open|note,
+done: open item seq|text}.
 create data {title, body, parent: project or task, attrs:{criteria, workers, dependencies, start, due
 (YYYY-MM-DD), tags}}.
 update data {revision, patch:{state?, attrs?, title?, body?}}; states todo|in_progress|blocked|
 paused|done|closed|cancelled|archived. done needs attrs.outcome + evidence link; closed (a person
 said so) needs data.closed_by {who, quote, session}; blocked needs
-attrs.blocked_reason or a blocked_by link; release/stopping needs data.handoff {goal, state, next_steps}.
+attrs.blocked_reason or a blocked_by link; release/stopping: data.handoff {goal, state,
+next_steps}, else the whiteboard is saved as it.
 note data {text, evidence?}. batch data {ops:[{action, id, data}]}.
 release data {actor}: free a stale claim. get data {links:"all"}: + auto links.
 """ + LINKS_HELP + """

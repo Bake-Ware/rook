@@ -74,6 +74,21 @@ receipt the agent repeats on later calls. When an agent stops repeating it
 brief again with what is current, once. Agents that never repeat it get the
 brief only on their first call.
 
+## The whiteboard
+
+Each claimed task has a whiteboard: a running page of the work, kept by Rook
+from the agent's own calls. Every call says why it was made, and that line goes
+on the board with the machine it ran on and whether it worked. The board also
+gets the consoles the agent opened and their summaries, the handoffs it saved,
+the secrets it used (by name) and the commits it made. The agent adds what calls
+can't show: its goal, decisions, open items and what's done.
+
+An agent whose conversation was condensed gets its whiteboard back with the
+brief. When an agent stops (it releases the task, goes quiet or its session
+ends), the whiteboard is saved as the task's handoff, so the next agent picks
+up where it left off and nobody has to ask for a write-up. You see a task's
+whiteboards on its page under Work.
+
 ## When a call waits for you
 
 A few calls always ask you first: a change on a sacred machine, erasing

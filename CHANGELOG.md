@@ -9,6 +9,15 @@ version was `0.1.0`.
 ## Unreleased
 
 ### Added
+- Agent whiteboards (agent sessions, Bake's design decision 13): each claimed task gets a
+  living page the hub keeps from the agent's own calls (each call's why, the machine, the
+  result; repeats collapse), consoles and their summaries, handoffs, secrets used (by name) and
+  commits. Agents jot goals, decisions, open items and done marks with
+  `rook_task(action="jot")`; `rook_task(action="whiteboard")` reads it and a task's page under
+  Work shows it. It rides the session brief when an agent lost its context, and is saved as the
+  task's handoff when the agent releases or stops the task, goes idle or closes its session,
+  so nobody has to ask for one. Calls now go to the claim of the MCP session that made it, not
+  the newest claim of everyone sharing the token. (manual: agents-and-mcp)
 - Agent help on demand: hub plugin `help`, cap `help` on worker `rook`. The skill shrinks to a
   stub; the core model and one topic per subsystem (machines, tasks, handoffs, knowledge, the
   person, chat, secrets, jobs, holds, admin) live in `skills/rook/help/` and are served in

@@ -43,6 +43,18 @@ moment, to the agent that can fix it, and leave a mark for whoever comes next.
 
 ## Triggers
 
+**The whiteboard stands in for the handoff** (`rook/hub/plugins/knowledge/whiteboard.py`,
+agent sessions design item 13). Each claim has a whiteboard the hub fills from the
+session's calls (each call's `why`, worker and result), consoles, handoffs and commits,
+plus what the agent jots (goal, decisions, open items). Wherever a handoff would be asked
+for, a claim whose whiteboard has work since the task's last handoff gets the board saved as
+that handoff instead: on `release` or a stop by `update` (paused/blocked/todo) without
+`data.handoff`, when the client closes its MCP session (the session's own claim, or all the
+actor's claims when it was its last session), and in the idle-claim loop
+(`band_mcp/hygiene.py`, before any nudge). So `idle_claim` and `session_ended` below fire
+only for claims with nothing new on their board. An MCP session's idle timeout (5 min) is not
+a stop: it saves nothing.
+
 | Kind | Fires when | Says | Resolves when |
 |---|---|---|---|
 | `work_signal` | A commit or PR is linked to an open task: by hand (`link` kind `commit`, or a `url` with `/pull/` or `/commit/`), or found in a `rook_call` reply (below); or a console room linked to the task is closed | "If the work is finished: update state done with attrs.outcome" | The task leaves `in_progress`, or the signal expires |

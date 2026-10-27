@@ -9,7 +9,7 @@ notes:
 ---
 # Handoffs
 
-**Use it when** you stop with work unfinished: before releasing or pausing a task, before your context is compacted or the session ends, and when passing work to another agent. Resuming: `rook_handoff_list(limit=5)`, then `rook_handoff_get(thread_id)`.
+**Use it when** you pass work to another agent or person with context your whiteboard can't show. A claimed task's whiteboard (topic `tasks`) is saved as its handoff on its own when you release it, go idle or the session ends, so routine stops need no handoff. Resuming: `rook_handoff_list(limit=5)`, then `rook_handoff_get(thread_id)`.
 
 ## What goes in
 
