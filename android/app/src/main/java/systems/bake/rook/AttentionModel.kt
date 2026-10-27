@@ -14,11 +14,15 @@ class AttentionCard(
     val created: Double, val local: Boolean = false,
     /** Short plain lines ("For: …", "Who: …", "I want to: …", "Risk: …") always shown under the title. */
     var body: String = "",
+    /** A question's choices (with the "choose" action): one button each, the tapped one sent back verbatim. */
+    var options: List<String> = emptyList(),
 ) {
     /** pending -> sent (a decision went out) -> done | failed; "gone" removes the card. */
     var state = "pending"
     var message = ""
     var decision = ""
+    /** The option tapped (decision "choose"), verbatim. */
+    var choice = ""
     /** When the decision went out (state sent): the card screen moves on at once, and brings it back if the hub never confirms. */
     var sentAt = 0.0
     /** Put away without a decision (swiped or Later): no more takeovers on unlock. */
@@ -28,12 +32,18 @@ class AttentionCard(
 
     val urgent get() = urgency == "urgent" || channel == "urgent"
     /** Ordinary decisions take over the screen when the phone is next unlocked. */
-    val takeover get() = !urgent && channel in TAKEOVER_CHANNELS && actions.any { it == "yes" || it == "no" }
+    val takeover get() = !urgent && channel in TAKEOVER_CHANNELS && answerable
     /**
-     * A decision the hub queued (digest channel, with Yes/No): no pop-up or takeover, but a normal
-     * notification in the shade and status bar, never the collapsed silent section.
+     * A decision the hub queued (digest channel, with Yes/No or choices): no pop-up or takeover, but a
+     * normal notification in the shade and status bar, never the collapsed silent section.
      */
-    val waiting get() = !urgent && channel == "digest" && actions.any { it == "yes" || it == "no" }
+    val waiting get() = !urgent && channel == "digest" && answerable
+    /** Something to answer here: Yes / No, or a choice between options. */
+    val answerable get() = actions.any { it == "yes" || it == "no" } || choosing
+    /** A choice between options instead of Yes / No. */
+    val choosing get() = "choose" in actions && options.isNotEmpty()
+    /** The option [tapped] names exactly, as the hub sent it, or null: nothing else is ever sent back as a choice. */
+    fun chosen(tapped: String): String? = if (choosing) options.firstOrNull { it == tapped } else null
     fun expired(now: Double) = expiresAt > 0 && now >= expiresAt
     /** Sent long ago and never confirmed or refused by the hub: offered again. */
     fun unconfirmed(now: Double) = state == "sent" && now - sentAt >= SENT_STALE_SECS
@@ -41,12 +51,13 @@ class AttentionCard(
     fun toJson(): JSONObject = JSONObject().put("id", id).put("kind", kind).put("line", line).put("body", body).put("explain", explain)
         .put("urgency", urgency).put("channel", channel).put("actions", JSONArray(actions)).put("source", source)
         .put("expires_at", expiresAt).put("created", created).put("local", local).put("state", state)
+        .put("options", JSONArray(options)).put("choice", choice)
         .put("message", message).put("decision", decision).put("sent_at", sentAt).put("dismissed", dismissed).put("seen", seen).put("opened", opened)
 
     companion object {
         val KINDS = setOf("hold", "job", "card", "ask", "alert")
         val CHANNELS = setOf("urgent", "family", "approvals", "digest", "jobs")
-        val ACTIONS = listOf("yes", "no", "explain", "ack")
+        val ACTIONS = listOf("yes", "no", "choose", "explain", "ack")
         val TAKEOVER_CHANNELS = setOf("approvals", "family")
         const val LINE_MAX = 140
         /** "More details": the full why, the undo, the exact call, where it was asked, links. */
@@ -55,6 +66,9 @@ class AttentionCard(
         const val SENT_STALE_SECS = 300.0
         const val BODY_MAX = 600
         const val BODY_LINES = 6
+        /** A question's choices: as many and as long as a huddle ask takes. */
+        const val OPTIONS_MAX = 6
+        const val OPTION_MAX = 200
 
         /** Newlines kept: each line's whitespace collapsed, blank lines dropped, at most BODY_LINES / BODY_MAX, "…" where cut. */
         fun cleanBody(text: String): String {
@@ -81,18 +95,27 @@ class AttentionCard(
             val actions = if (given == null) (if (kind == "alert") listOf("ack") else listOf("yes", "no", "explain"))
                 else (0 until given.length()).map { given.optString(it) }
             require(actions.all { it in ACTIONS }) { "actions must be a subset of $ACTIONS" }
+            val options = strings(o.optJSONArray("options")).map { it.trim() }
+            require(options.size <= OPTIONS_MAX && options.all { it.isNotEmpty() && it.length <= OPTION_MAX }) {
+                "options must be 1-$OPTIONS_MAX answers of 1-$OPTION_MAX characters"
+            }
+            require(options.toSet().size == options.size) { "options must differ from each other" }
+            require(("choose" in actions) == options.isNotEmpty()) { "the choose action and options go together" }
             return AttentionCard(id, kind, line.take(LINE_MAX), o.optString("explain").trim().take(EXPLAIN_MAX), urgency, channel,
                 ACTIONS.filter { it in actions }.ifEmpty { listOf("ack") }, o.optString("source").take(80),
                 o.optDouble("expires_at", 0.0).takeIf { it.isFinite() && it > 0 } ?: 0.0, now, local,
-                cleanBody(o.optString("body")))
+                cleanBody(o.optString("body")), options)
         }
+
+        private fun strings(a: JSONArray?): List<String> = (0 until (a?.length() ?: 0)).map { a!!.optString(it) }
 
         fun fromJson(o: JSONObject): AttentionCard = AttentionCard(o.getString("id"), o.optString("kind", "card"),
             o.optString("line"), o.optString("explain"), o.optString("urgency", "normal"), o.optString("channel", "approvals"),
             o.optJSONArray("actions")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: listOf("yes", "no"),
             o.optString("source"), o.optDouble("expires_at", 0.0), o.optDouble("created", 0.0), o.optBoolean("local"),
-            o.optString("body")).apply {
+            o.optString("body"), strings(o.optJSONArray("options"))).apply {
             state = o.optString("state", "pending"); message = o.optString("message"); decision = o.optString("decision")
+            choice = o.optString("choice")
             sentAt = o.optDouble("sent_at", 0.0)
             dismissed = o.optBoolean("dismissed"); seen = o.optBoolean("seen"); opened = o.optBoolean("opened")
         }
@@ -116,6 +139,7 @@ class CardBook(private val cap: Int = 100) {
         }
         old.kind = card.kind; old.line = card.line; old.body = card.body; old.explain = card.explain; old.urgency = card.urgency
         old.channel = card.channel; old.actions = card.actions; old.source = card.source; old.expiresAt = card.expiresAt
+        old.options = card.options
         if (old.state == "failed") { old.state = "pending"; old.message = "" }
         return false
     }

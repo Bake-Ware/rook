@@ -125,6 +125,63 @@ def unready(text: Any, options: Any) -> str:
             "1038 (cards fix)?\\nI want to: ...\\nWhy: ...\\nRisk: ...\\nUndo: ...\"")
 
 
+#: Words that only say yes or no: as an answer to a real choice they name no option.
+_YES_NO = {"yes", "y", "yeah", "yep", "yup", "ok", "okay", "sure", "approve", "approved",
+           "accept", "go", "no", "n", "nope", "nah", "deny", "denied", "decline", "reject"}
+#: An option's own label: "(A) ...", "A) ...", "A: ...", "1. ...", "B - ...".
+_OPTION_LABEL = re.compile(r"^\s*\(?([A-Za-z]|\d{1,2})[).:]\s+|^\s*([A-Za-z]|\d{1,2})\s+[-–]\s+")
+
+
+def _norm(text: Any) -> str:
+    return " ".join(re.sub(r"[^a-z0-9']+", " ", str(text or "").lower()).split())
+
+
+def choices(options: Any) -> list[str]:
+    """An ask's options when they are a real choice, else ``[]`` (none, or
+    only yes and no: those are the card's own Yes / No)."""
+    opts = [str(o) for o in options or () if str(o).strip()] if isinstance(options, list) else []
+    if not opts or {_norm(o) for o in opts} <= {"yes", "no"}:
+        return []
+    return opts
+
+
+def pick(answer: Any, options: Any) -> str:
+    """The option ``answer`` names, verbatim as the asker wrote it, or "":
+    its whole text (any case or punctuation), or just its label ("B" for
+    "(B) Remove plugin features"), when that is exactly one option."""
+    said = _norm(answer)
+    opts = [str(o) for o in options or ()] if isinstance(options, list) else []
+    if not said:
+        return ""
+    hit = [o for o in opts if _norm(o) == said]
+    if not hit:
+        hit = [o for o in opts if (m := _OPTION_LABEL.match(o))
+               and (m.group(1) or m.group(2)).lower() == said]
+    return hit[0] if len(hit) == 1 else ""
+
+
+def choice_answer(answer: Any, options: Any) -> tuple[str, str]:
+    """``(text, note)`` to send back for an answer to an ask: the option it
+    names, verbatim; the person's own words with a note when they name none
+    (they said something else; the asker reads it); or :class:`ValueError`
+    for a bare yes or no to a real choice, which says nothing about which
+    option was meant (bug 2026-10-26: q849's A / B / C came back as "Yes")."""
+    text = " ".join(str(answer or "").split())
+    opts = choices(options)
+    if not opts:
+        return text, ""
+    hit = pick(text, opts)
+    if hit:
+        return hit, ""
+    words = _norm(text).split()
+    labels = {(m.group(1) or m.group(2)).lower() for o in opts if (m := _OPTION_LABEL.match(o))}
+    named = any(_norm(o) in _norm(text) for o in opts) or bool(labels & set(words[1:]))
+    if words and words[0] in _YES_NO and not named:
+        raise ValueError(f"{text!r} doesn't say which option: this question has "
+                         f"{len(opts)} ({' / '.join(opts)}). Answer with one of them")
+    return text, f"not one of the options: {' / '.join(opts)}"
+
+
 def title_of(text: Any, limit: int = TITLE_MAX) -> str:
     """A short title from a sentence or two: the first sentence (a question
     keeps its "?"), without parentheses when that is too long, cut at a

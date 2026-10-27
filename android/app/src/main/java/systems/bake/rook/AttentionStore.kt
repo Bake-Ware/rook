@@ -229,6 +229,24 @@ object AttentionStore {
         changed()
     }
 
+    /**
+     * One of a question's options tapped: a "decision" event with decision "choose" and the option's
+     * text exactly as the hub sent it (never a bare Yes, which would not say which one was meant).
+     * Anything that is not one of the card's options is ignored.
+     */
+    fun choose(ctx: Context, id: String, option: String) {
+        val app = ctx.applicationContext
+        val card = synchronized(lock) {
+            ensure(app)
+            val c = book[id] ?: return
+            val picked = c.chosen(option) ?: return
+            c.state = "sent"; c.decision = "choose"; c.choice = picked; c.message = ""; c.sentAt = now()
+            event("decision", JSONObject().put("id", id).put("decision", "choose").put("choice", picked)); saveCards(); c
+        }
+        AttentionChannels.postCard(app, card, ring = false)
+        changed()
+    }
+
     /** "Got it" on an alert: an "acked" event and the card goes away. */
     fun ack(ctx: Context, id: String) {
         val app = ctx.applicationContext

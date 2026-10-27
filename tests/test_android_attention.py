@@ -109,7 +109,34 @@ def test_clean_post_body_keeps_lines(mod):
     assert mod.clean_post("a", line="l", body=None)["body"] == ""
 
 
+def test_a_choice_card_keeps_each_option_verbatim(mod, monkeypatch):
+    """A question with choices: one button per option on the phone, sent back
+    word for word (the Kotlin side: AttentionModelTest), never a bare Yes."""
+    from rook.hub.plugins.attention.service import card_for
+    opts = ["(A) No-expiry only", "(B) A  + remove plugin features", "(C) Everything"]
+    card = card_for({"id": "q849", "kind": "ask", "who": "agent:claude", "what": "get an answer",
+                     "options": opts, "created": 1.0})
+    assert card["options"] == opts and card["actions"] == ["choose", "explain"]
+    c = mod.clean_post(**card)
+    assert c["options"] == opts and c["actions"] == ["choose", "explain"]
+    assert mod.clean_post("a", line="l")["options"] == []
+    p, store = plugin(mod, monkeypatch)
+    assert p._post(**card)["ok"] is True and store.calls[-1][1]["options"] == opts
+    # Yes and no alone are the card's own buttons, not a choice.
+    yn = card_for({"id": "q1", "kind": "ask", "who": "a", "what": "w", "options": ["yes", "no"],
+                   "created": 1.0})
+    assert "options" not in yn and yn["actions"] == ["yes", "no", "explain"]
+
+
 @pytest.mark.parametrize("kwargs, msg", [
+    ({"id": "a", "line": "l", "actions": ["choose"]}, "choose"),
+    ({"id": "a", "line": "l", "options": ["x", "y"]}, "choose"),
+    ({"id": "a", "line": "l", "actions": ["choose"], "options": "x, y"}, "options"),
+    ({"id": "a", "line": "l", "actions": ["choose"], "options": ["x", " "]}, "options"),
+    ({"id": "a", "line": "l", "actions": ["choose"], "options": ["x", "x"]}, "differ"),
+    ({"id": "a", "line": "l", "actions": ["choose"], "options": ["o" * 201]}, "options"),
+    ({"id": "a", "line": "l", "actions": ["choose"], "options": list("1234567")}, "options"),
+
     ({"id": "", "line": "l"}, "id"),
     ({"id": "x" * 65, "line": "l"}, "id"),
     ({"id": "a", "line": "  "}, "line"),

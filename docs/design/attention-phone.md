@@ -28,7 +28,7 @@ polls and posts against the contract below.
 
 | Cap | Args | Returns | Tier |
 |---|---|---|---|
-| `attention.post` | id (≤64), kind hold\|job\|card\|ask\|alert, line (≤140), explain="" (≤600), urgency normal\|urgent, channel approvals\|urgent\|family\|digest\|jobs, actions ⊆ yes/no/explain/ack (default yes,no,explain; alerts ack), source="", expires_at=0 | `{ok, id, new}` | admin |
+| `attention.post` | id (≤64), kind hold\|job\|card\|ask\|alert, line (≤140), explain="" (≤600), urgency normal\|urgent, channel approvals\|urgent\|family\|digest\|jobs, actions ⊆ yes/no/choose/explain/ack (default yes,no,explain; alerts ack), source="", expires_at=0, options=[] (1-6 choices ≤200 each, with `choose`) | `{ok, id, new}` | admin |
 | `attention.update` | id, state done\|failed\|gone, message="" | `{ok}` | admin |
 | `attention.poll` | since=0 | `{ok, events, last}` (+ `more`, `reset`, `gap`) | admin, sensitive |
 | `attention.feed` | limit=50 | `{ok, entries, ignored_7d}` (summaries only) | exec, sensitive |
@@ -46,7 +46,8 @@ text is clipped, unknown enum values are refused.
 
 Events: `{seq, ts, type, ...}`, seq monotonic across restarts.
 
-- `decision` {id, decision approve\|deny, reason?} (reason only on No, optional)
+- `decision` {id, decision approve\|deny\|choose, reason?, choice?} (reason only on No, optional;
+  choice: the option tapped on a question with choices, exactly as posted)
 - `seen` {id, via card\|heads_up}: the card screen had focus, or the heads-up
   was posted while the phone was awake and unlocked (an approximation:
   Android does not report when a notification is actually looked at)

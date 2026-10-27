@@ -612,13 +612,27 @@ class Relay:
             if ap is None:
                 raise RelayError("relaying needs the approval queue (approvals.db)")
             words = " ".join(str(answer or "").split())
+            opts = _plain.choices(it.get("options"))
             if not words:
                 words = "Yes" if decision == "approve" else "No"
-                if reason:
+                if opts:
+                    # A bare Yes / No names an option only when one is called that.
+                    words = _plain.pick(words, opts)
+                    if not words:
+                        raise RelayError(
+                            f"{it.get('name') or it['id']} is a choice, not a yes or no: "
+                            f"{' / '.join(opts)}. Relay the option {said['who']} chose as "
+                            "answer= (its text or its label)")
+                elif reason:
                     words += f": {reason}"
+            try:
+                words, _ = _plain.choice_answer(words, it.get("options"))
+            except ValueError as e:
+                raise RelayError(str(e)) from None
             ap.queue.relay_add({**rel, "kind": "ask", "item": it["id"], "decision": decision})
             res = await svc.answer(it["question"], words, f"relay:{relayer}", by, relayed=text)
-            out = {"state": "answered", "answer": words, "wake": res.get("wake")}
+            out = {"state": "answered", "answer": res.get("answer") or words,
+                   "wake": res.get("wake"), **({"note": res["note"]} if res.get("note") else {})}
         self._journal(it, decision, rel, out)
         return {"item": it["id"], "name": it.get("name"), "kind": it["kind"],
                 "decision": decision, **out, "recorded": text}

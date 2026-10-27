@@ -569,3 +569,29 @@ async def test_rook_approvals_tool(hub):
     out = json.loads(await as_(CLAUDE, tool(action="deny", item="nope-nope-nope",
                                             relayed_by=SAID)))
     assert not out["ok"] and "no waiting item" in out["error"]
+
+
+@pytest.mark.asyncio
+async def test_a_relayed_bare_yes_to_a_choice_is_refused_and_an_option_goes_verbatim(hub):
+    """Bug 2026-10-26 (q849): a question with options A / B / C came back as
+    "Yes". A relay names the option; a bare approve is refused, unrecorded."""
+    opts = ["(A) No-expiry only", "(B) A + remove plugin features", "(C) Everything"]
+    h = await _call(hub, "huddle.start", {"title": "Approvals"})
+    await _call(hub, "huddle.write", {"action": "ask", "room": h["room"], "text": "Which scope?",
+                                      "data": {"options": opts}}, GUEST)
+    hub.ap.queue.set_relayer(CLAUDE.id, True, "human:bake", "Claude web")
+    ask, = [i for i in hub.relay.items() if i["kind"] == "ask"]
+    res = await cap(hub, "approvals.relay", {"item": ask["id"], "decision": "approve",
+                                             "relayed_by": {**SAID, "quote": "yes"}})
+    assert not res["ok"] and "is a choice, not a yes or no" in res["error"], res
+    res = await cap(hub, "approvals.relay", {"item": ask["id"], "decision": "approve",
+                                             "answer": "yes",
+                                             "relayed_by": {**SAID, "quote": "yes"}})
+    assert not res["ok"] and "doesn't say which option" in res["error"], res
+    assert hub.ap.queue.relays() == []
+    res = await cap(hub, "approvals.relay", {"item": ask["id"], "decision": "approve",
+                                             "answer": "b",
+                                             "relayed_by": {**SAID, "quote": "go with B"}})
+    assert res["ok"] and res["result"]["answer"] == opts[1], res
+    q = hub.svc.store.question(int(ask["id"][1:]))
+    assert q["state"] == "answered" and q["answer"] == opts[1]

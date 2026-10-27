@@ -30,10 +30,12 @@ except Exception:  # pragma: no cover - only importable on a Chaquopy host
 
 KINDS = ("hold", "job", "card", "ask", "alert")
 CHANNELS = ("urgent", "family", "approvals", "digest", "jobs")
-ACTIONS = ("yes", "no", "explain", "ack")
+ACTIONS = ("yes", "no", "choose", "explain", "ack")
 STATES = ("done", "failed", "gone")
 LINE_MAX, EXPLAIN_MAX, ID_MAX = 140, 2000, 64
 BODY_MAX, BODY_LINES = 600, 6
+#: A question's choices: as many and as long as a huddle ask takes, kept verbatim.
+OPTIONS_MAX, OPTION_MAX = 6, 200
 RULES_MAX_BYTES = 64 * 1024
 REMIND_TEXT_MAX = 300
 SAMPLE_MIN_MS, SAMPLE_MAX_MS, SAMPLE_DEFAULT_MS = 1000, 8000, 3000
@@ -71,8 +73,22 @@ def _actions(value) -> list[str]:
     return [a for a in ACTIONS if a in out]
 
 
+def _options(value) -> list[str]:
+    """A question's choices, each kept as written (only trimmed). Raises ValueError."""
+    if value is None or value == "" or value == []:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("options must be a list of short answers")
+    out = [str(o).strip() for o in value]
+    if len(out) > OPTIONS_MAX or not all(out) or any(len(o) > OPTION_MAX for o in out):
+        raise ValueError(f"options must be 1-{OPTIONS_MAX} answers of 1-{OPTION_MAX} characters")
+    if len(set(out)) != len(out):
+        raise ValueError("options must differ from each other")
+    return out
+
+
 def clean_post(id, kind="card", line="", explain="", urgency="normal", channel="approvals",
-               actions=None, source="", expires_at=0, body="") -> dict:
+               actions=None, source="", expires_at=0, body="", options=None) -> dict:
     """Validate and normalize attention.post args. Raises ValueError."""
     cid = str(id or "").strip()
     if not cid or len(cid) > ID_MAX:
@@ -90,6 +106,9 @@ def clean_post(id, kind="card", line="", explain="", urgency="normal", channel="
     if channel not in CHANNELS:
         raise ValueError(f"channel must be one of {list(CHANNELS)}")
     acts = _actions(actions) if actions is not None else (["ack"] if kind == "alert" else ["yes", "no", "explain"])
+    opts = _options(options)
+    if ("choose" in acts) != bool(opts):
+        raise ValueError("the choose action and options go together")
     try:
         exp = float(expires_at or 0)
     except (TypeError, ValueError):
@@ -98,7 +117,7 @@ def clean_post(id, kind="card", line="", explain="", urgency="normal", channel="
         raise ValueError("expires_at must be epoch seconds")
     return {"id": cid, "kind": kind, "line": text, "body": _body(body), "explain": _clip(explain, EXPLAIN_MAX),
             "urgency": urgency, "channel": channel, "actions": acts or ["ack"], "source": _clip(source, 80),
-            "expires_at": exp}
+            "expires_at": exp, "options": opts}
 
 
 def _flag(value, name: str) -> bool:
@@ -198,7 +217,7 @@ class AndroidAttentionPlugin(Plugin):
     @capability("post", risk="admin", tags=("physical",), scope="local")
     def _post(self, id: str, kind: str = "card", line: str = "", explain: str = "", urgency: str = "normal",
               channel: str = "approvals", actions: list | str | None = None, source: str = "",
-              expires_at: float = 0, body: str = "") -> dict:
+              expires_at: float = 0, body: str = "", options: list | None = None) -> dict:
         """Put a decision card on the phone; re-posting the same id updates it without ringing again.
 
         id: up to 64 chars, your handle for attention.update and the events.
@@ -210,12 +229,14 @@ class AndroidAttentionPlugin(Plugin):
         like an alarm and takes over the screen (also channel=urgent); normal is a
         heads-up that opens the card when the phone is next unlocked.
         channel: urgent|family|approvals|digest|jobs. actions: subset of
-        yes/no/explain/ack (default yes,no,explain; ack for alerts).
+        yes/no/choose/explain/ack (default yes,no,explain; ack for alerts).
+        options: a question's choices (1-6, up to 200 chars each), one button
+        each, with the choose action; the tapped one comes back verbatim.
         source: who asks, shown small. expires_at: epoch seconds, 0 = never.
         The answer comes back through attention.poll as a "decision" event.
         """
         try:
-            card = clean_post(id, kind, line, explain, urgency, channel, actions, source, expires_at, body)
+            card = clean_post(id, kind, line, explain, urgency, channel, actions, source, expires_at, body, options)
         except ValueError as e:
             return {"ok": False, "error": str(e)}
         return _call("post", json.dumps(card, ensure_ascii=False))
@@ -260,7 +281,7 @@ class AndroidAttentionPlugin(Plugin):
         """Events after seq ``since``: {events, last}; pass ``last`` next time.
 
         Each event has seq (monotonic), ts (epoch s) and type: decision {id,
-        decision approve|deny, reason?}, seen {id, via card|heads_up}, opened {id},
+        decision approve|deny|choose, reason?, choice? (the option tapped, verbatim)}, seen {id, via card|heads_up}, opened {id},
         dismissed {id}, acked {id}, unlocked {}, notice {id, app, category,
         priority, summary} (an urgent/family notification, summary only),
         reminded {id, outcome spoken|dnd|busy|call|voice_session|mic_in_use|
