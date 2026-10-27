@@ -384,6 +384,7 @@ are set only in the environment or on the command line.
 | `knowledge.hygiene_hints_per_reply` | Nudges per MCP reply | hub | int | `1` | `ROOK_KNOWLEDGE_HYGIENE_HINTS_PER_REPLY` | live |
 | `knowledge.hygiene_scan_seconds` | Scan interval (seconds) | hub | int | `300` | `ROOK_KNOWLEDGE_HYGIENE_SCAN_SECONDS` | live |
 | `knowledge.hygiene_notify_people` | Also notify people | hub | bool | off | `ROOK_KNOWLEDGE_HYGIENE_NOTIFY_PEOPLE` | live |
+| `knowledge.hygiene_github_minutes` | Check tasks' pull requests on GitHub (minutes) | hub | float | `10.0` | `ROOK_KNOWLEDGE_HYGIENE_GITHUB_MINUTES` | live |
 
 ## llmanifold (hub plugin, runs in mcp)
 
