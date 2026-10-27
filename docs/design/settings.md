@@ -187,7 +187,7 @@ Entry point: `rook/worker/cli.py:main`.
 
 | Name | Where | Default | Scope | Read by | Secret | Restart |
 |---|---|---|---|---|---|---|
-| `--hub` / `ROOK_HUB` | flag, env; **overridden by** enrollment and pushed `config.json` `hub` | `127.0.0.1:7474` | worker | `cli.main` | no | proc |
+| `--hub` / `ROOK_HUB` | flag, env; **overridden by** enrollment and pushed `config.json` `hub` | the `--ws-url` host, else `127.0.0.1:7474` only when a hub answers on `127.0.0.1:7005`, else it exits saying how to pair | worker | `cli.main` | no | proc |
 | `--psk` / `ROOK_BAND_PSK` | flag, env; **overridden by** enrollment and pushed `psk` | **required** | worker | `cli.main` | **yes** | proc |
 | `--enroll URL`, `--pair-code`, `--enrolled` | flag | off | worker | `worker/enroll.py` | pair code **yes** | proc |
 | `--name` | flag; **overridden by** pushed `name` | hostname | worker | `Worker` | no | proc |
@@ -258,7 +258,7 @@ The dashboard renders these scripts with `{hub_public}`, `{band_psk}`,
 
 | Name | Where | Default | Scope | Secret | Restart |
 |---|---|---|---|---|---|
-| `--url` / `ROOK_WEB_URL` / `band.conf url` | flag > env > file | `http://127.0.0.1:7005` | user | no | proc |
+| `--url` / `ROOK_WEB_URL` / `band.conf url` | flag > env > file > enrollment's server | `http://127.0.0.1:7005` only when a hub answers there, else it asks | user | no | proc |
 | `--user` / `ROOK_WEB_USER` / `band.conf user` | flag > env > file | `admin` | user | no | proc |
 | `--pass` / `ROOK_WEB_PASS` / `band.conf pass` | flag > env > file > prompt | prompt | user | **yes** | proc |
 | `--reset` | flag | off | user | no | n/a |

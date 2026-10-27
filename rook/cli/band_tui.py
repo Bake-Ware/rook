@@ -14,9 +14,10 @@ command-caps, message chat-capable workers, deauth/ban, and work the hub's
 scheduled jobs (``J``: list, runs, run now, enable/disable, lock/unlock, view JSON) — the terminal
 counterpart to the web dashboard. Curses only — no third-party deps.
 
-Connection: ``--url`` (default http://127.0.0.1:7005) + ``--user``/``--pass``
-(or env ROOK_WEB_URL / ROOK_WEB_USER / ROOK_WEB_PASS). Password is prompted if
-not supplied, so it never lands in shell history.
+Connection: ``--url`` + ``--user``/``--pass`` (or env ROOK_WEB_URL /
+ROOK_WEB_USER / ROOK_WEB_PASS). Without a URL: the saved login, the hub this
+machine paired with, a hub running on this machine, else it asks. Password is
+prompted if not supplied, so it never lands in shell history.
 """
 
 from __future__ import annotations
@@ -1138,6 +1139,62 @@ def _save_conf(url: str, user: str, password: str) -> bool:
         return False
 
 
+#: A hub's dashboard on this same machine (its default port). Only used when
+#: one answers there: a fresh install elsewhere never assumes 127.0.0.1.
+LOCAL_DASHBOARD = "http://127.0.0.1:7005"
+
+
+def local_hub(timeout: float = 1.0) -> bool:
+    """True when a Rook hub's dashboard answers ``/health`` on this machine."""
+    # No proxy: an http_proxy setting must not turn a loopback probe into a
+    # request to some other machine.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(LOCAL_DASHBOARD + "/health", timeout=timeout) as r:
+            data = json.loads(r.read(4096))
+    except Exception:
+        return False
+    return isinstance(data, dict) and data.get("status") == "ok" and "band_workers" in data
+
+
+def enrolled_server() -> str:
+    """The hub this machine paired with (the worker's enrollment), or ''."""
+    try:
+        from rook.worker.enroll import load
+    except ImportError:  # the standalone script, without the worker beside it
+        return ""
+    try:
+        return str(load().get("server") or "").strip()
+    except Exception:
+        return ""
+
+
+def _ask_hub() -> str:
+    """Ask for the dashboard address at the terminal; '' when none is given."""
+    try:
+        from rook.worker.localcli import _with_scheme
+    except ImportError:
+        _with_scheme = lambda u: u if "://" in u else "https://" + u  # noqa: E731
+    print("Which hub? This machine isn't paired with one and none is running here.")
+    try:
+        url = input("Hub address (the one you open the dashboard at, "
+                    "e.g. http://192.168.1.10:7005): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return ""
+    return _with_scheme(url) if url else ""
+
+
+def hub_url(given: str | None, conf: dict) -> str:
+    """The dashboard to connect to: --url, ROOK_WEB_URL, the saved login, the
+    hub this machine paired with, a hub on this machine, else the person's
+    answer ('' when they give none)."""
+    url = (given or os.environ.get("ROOK_WEB_URL") or conf.get("url")
+           or enrolled_server())
+    if url:
+        return url
+    return LOCAL_DASHBOARD if local_hub() else _ask_hub()
+
+
 def main() -> None:
     import argparse
     import sys
@@ -1166,7 +1223,8 @@ def main() -> None:
         del sys.argv[1]
     ap = argparse.ArgumentParser(prog="rook",
                                  description="Terminal control panel for the worker band")
-    ap.add_argument("--url", help="dashboard URL (default: saved config or http://127.0.0.1:7005)")
+    ap.add_argument("--url", help="dashboard URL (default: saved config, else the hub this "
+                                  "machine paired with, else a hub on this machine, else it asks)")
     ap.add_argument("--user", help="dashboard username (default: saved config or 'admin')")
     ap.add_argument("--pass", dest="password", help="dashboard password (default: saved config, else prompt)")
     ap.add_argument("--reset", action="store_true", help="ignore saved config and re-enter connection details")
@@ -1176,7 +1234,9 @@ def main() -> None:
         ap.error("open an interactive terminal to use the dashboard (rook --help for options)")
 
     conf = {} if args.reset else _load_conf()
-    url = args.url or os.environ.get("ROOK_WEB_URL") or conf.get("url") or "http://127.0.0.1:7005"
+    url = hub_url(args.url, conf)
+    if not url:
+        raise SystemExit("No hub address given. Run: rook --url http://<hub address>:7005")
     user = args.user or os.environ.get("ROOK_WEB_USER") or conf.get("user") or "admin"
     password = args.password or os.environ.get("ROOK_WEB_PASS") or conf.get("pass")
     had_saved = bool(conf.get("pass")) and not args.reset
