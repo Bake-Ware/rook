@@ -715,7 +715,8 @@ class SelfUpdatePlugin(Plugin):
         try:
             proc = await asyncio.create_subprocess_exec(
                 sys.executable, str(pyz_path), "--selftest",
-                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                **no_window())
         except Exception:
             log.exception("smoke test could not start")
             return False

@@ -193,8 +193,8 @@ version was `0.1.0`.
 - Windows workers no longer flash console windows on the desktop. The `agenthost` probe ran
   `claude --version`, `claude auth status` and `opencode --version` every five minutes from
   `pythonw.exe` without `CREATE_NO_WINDOW`, so each popped a window; agent turns, `pluginkit.run`,
-  custom caps, devkit commands, the Windows balloon notification, the start-up GPU check and the
-  self-update scheduled-task write had the same gap. They now all start hidden
+  custom caps, devkit and adb commands, the Windows balloon notification, the start-up GPU check
+  and self-update's smoke test and scheduled-task write had the same gap. They now all start hidden
   (`pluginkit.no_window()`).
 - `users.link_code`, `users.grant`, `users.role`, `users.explain` and `users.token` refuse a
   user that matches no account, instead of making a code or grant for an account that does not

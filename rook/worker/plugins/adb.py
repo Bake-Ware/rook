@@ -48,7 +48,7 @@ from typing import Any
 
 from ...core.devices import Device, valid_device_name
 from ...core.plugin import cap_methods
-from ...core.pluginkit import (ArgError, RunTimeout, fail, opt_int, require_int,
+from ...core.pluginkit import (ArgError, RunTimeout, fail, no_window, opt_int, require_int,
                                require_str, run, which)
 from ..plugin import Plugin, capability, setting
 
@@ -495,7 +495,7 @@ class AdbPlugin(Plugin):
         proc = await asyncio.create_subprocess_exec(
             binary, *args,
             stdin=asyncio.subprocess.PIPE if payload is not None else asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **no_window())
         cut = False
 
         async def drain(stream) -> bytes:
