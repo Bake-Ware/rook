@@ -58,6 +58,22 @@ hands-free wake word, pick a voice, and follow what the agent is doing in the
 Chat, Activity and Decisions tabs. You can make it Android's default assistant.
 It needs the voice service on your hub, see [[manual-voice]].
 
+## Home-screen widgets
+
+Long-press the home screen, choose **Widgets** and find the Rook app. There
+are two:
+
+- **Talk to <assistant>**: one tap starts talking to your house agent, the
+  same as the app's Talk button. Tap again while it answers to stop it. The
+  first time, the app opens to ask for the microphone.
+- **Waiting on you**: the decisions, questions and alerts waiting on you, with
+  urgent ones and ones that didn't go through at the top. Tap one to answer it
+  on its card, tap the title to open the app, or use the mic to talk. Make it
+  taller to see more.
+
+Both show what is already on the phone, so they work without a connection and
+change as soon as a card arrives or is answered ([[manual-phone-attention]]).
+
 ## A watch (Wear OS)
 
 The Rook watch app (`rook-wear.apk` in each release, version 0.1.0 and up)

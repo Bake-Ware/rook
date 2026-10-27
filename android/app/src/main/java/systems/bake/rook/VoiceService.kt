@@ -574,6 +574,7 @@ class VoiceService : Service() {
 
     private fun setState(s: String) {
         VoiceBus.state = s; VoiceBus.listener?.onState(s)
+        RookWidgets.voiceState(this, s)
         if (foreground) (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIF_ID, buildNotification(s))
     }
 
@@ -586,7 +587,7 @@ class VoiceService : Service() {
         }
     }
 
-    override fun onDestroy() { destroyed = true; if (inst === this) inst = null; standby = false; closeSession(); stopMic(); arbiter.stop(); buttons?.release(); buttons = null; VoiceBus.micPaused = null; try { wakeLock?.release() } catch (_: Throwable) {}; wakeLock = null; super.onDestroy() }
+    override fun onDestroy() { destroyed = true; if (inst === this) inst = null; standby = false; closeSession(); stopMic(); arbiter.stop(); buttons?.release(); buttons = null; VoiceBus.micPaused = null; try { wakeLock?.release() } catch (_: Throwable) {}; wakeLock = null; RookWidgets.voiceState(this, "idle"); super.onDestroy() }
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun startForegroundCompat(n: Notification) {
