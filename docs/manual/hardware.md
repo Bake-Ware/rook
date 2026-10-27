@@ -86,7 +86,9 @@ so a phone plugged into the same computer to charge stays off the band. It
 never allows USB debugging on its own, and never roots, reboots or installs
 apps. Commands run as Android's shell user: they can change settings and
 remove apps, so a shell command on the tablet is treated like one on any
-worker. Typing is ASCII only.
+worker, and could delete the tablet's photos and files: only list a device
+you can afford to lose. Typing is ASCII only, and taps on a sleeping or
+locked screen land on the lock screen, so wake and unlock it first.
 
 ## PiKVM
 

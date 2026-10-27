@@ -215,8 +215,31 @@ async def test_shell_exec_timeout_and_output_cap(fake, monkeypatch):
     r = await dev.shell_exec(cmd="sleep 30", timeout=1)
     assert r["ok"] is False and r["error"] == "timeout"
     monkeypatch.setattr(adb, "OUTPUT_CAP", 4)
-    r = await dev.shell_exec(argv=["cat"], stdin="123456789")
-    assert r["stdout"] == "1234" and r["truncated"]
+    r = await dev.shell_exec(argv=["cat"], stdin="123456789" * 100000)
+    assert r["stdout"] == "1234" and r["truncated"] and r["ok"]
+
+
+@pytest.mark.asyncio
+async def test_unplugged_mid_command_is_not_the_commands_exit_code(fake):
+    p = _plugin(fake)
+    dev = adb.AndroidDevice(p, "playground-tablet", "R52N30ABCDE")
+    fake.state["shell"]["long job"] = {"err": "adb: device 'R52N30ABCDE' not found\n", "code": 1}
+    fake.state["shell"]["false"] = {"err": "error: nope\n", "code": 1}
+    fake.save()
+    r = await dev.shell_exec(cmd="long job")
+    assert r["ok"] is False and r["error"] == "disconnected" and dev.state["adb"] == "missing"
+    r = await dev.shell_exec(cmd="false")
+    assert r == {"ok": False, "code": 1, "stdout": "", "stderr": "error: nope\n"}
+
+
+@pytest.mark.asyncio
+async def test_two_callers_typing_never_interleave(fake):
+    p = _plugin(fake)
+    dev = adb.AndroidDevice(p, "playground-tablet", "R52N30ABCDE")
+    await asyncio.gather(dev.hid_type("one\ntwo"), dev.hid_type("three\nfour"))
+    remotes = sorted(c[5] for c in fake.calls() if c[2:3] == ["shell"])
+    assert remotes == ["input text one && input keyevent KEYCODE_ENTER && input text two",
+                       "input text three && input keyevent KEYCODE_ENTER && input text four"]
 
 
 @pytest.mark.asyncio
@@ -273,8 +296,8 @@ async def test_input_commands(fake):
     await dev.hid_mouse_click(200, 950)
     await dev.hid_mouse_drag(1, 2, 3, 4, duration=0.5)
     remotes = [c[5] for c in fake.calls() if c[2:3] == ["shell"]]
-    assert remotes == ["input text 50%%soff", "input keyevent KEYCODE_ENTER",
-                       "input text ok", "input keyevent KEYCODE_HOME",
+    assert remotes == ["input text 50%%soff && input keyevent KEYCODE_ENTER && input text ok",
+                       "input keyevent KEYCODE_HOME",
                        "input keycombination KEYCODE_CTRL_LEFT KEYCODE_A",
                        "input tap 200 950", "input swipe 1 2 3 4 500"]
     for call, args in ((dev.hid_type, ("héllo",)), (dev.hid_key_combo, ("hyper",)),

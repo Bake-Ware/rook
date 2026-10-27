@@ -56,6 +56,8 @@ log = logging.getLogger("rook.worker.adb")
 POLL_SECS = 30.0
 OUTPUT_CAP = 1 << 20        # per stream; a band reply is not a file transfer
 _SERIAL = re.compile(r"^[A-Za-z0-9._:\-]{1,64}$")
+# What adb itself prints when the device goes away mid-command.
+_GONE = re.compile(r"^(adb: |error: )(device .*(not found|offline)|no devices)", re.M)
 _ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 # Friendly names for hid.key_combo, mapped to Android key codes.
 KEYS = {
@@ -111,10 +113,6 @@ def parse_adb_devices(text: str) -> dict[str, dict]:
     return out
 
 
-def _cap(data: bytes) -> tuple[str, bool]:
-    return data[:OUTPUT_CAP].decode("utf-8", errors="replace"), len(data) > OUTPUT_CAP
-
-
 def ui_items(xml: str) -> list[dict]:
     """The text a person would read on screen, from a ``uiautomator dump``:
     ``[{text, x, y, clickable?}]`` top to bottom, where x/y is the centre of
@@ -151,6 +149,8 @@ class AndroidDevice(Device):
         self.plugin = plugin
         self.serial = serial
         self.state: dict[str, Any] = {"adb": "missing"}
+        # One input sequence at a time, so two callers' typing never interleaves.
+        self._input_lock = asyncio.Lock()
 
     # -- device protocol ---------------------------------------------------
     # Caps use the Rook Android app's names (shell.exec, hid.type…), which
@@ -262,15 +262,22 @@ class AndroidDevice(Device):
         await self.ready()
         try:
             # Killing the local adb ends the device-side command too (shell v2).
-            code, out, err = await self.plugin.adb_bytes(
-                "-s", self.serial, "shell", "-T", "--", remote, timeout=t, stdin=stdin)
+            code, out, err, cut = await self.plugin.adb_bytes(
+                "-s", self.serial, "shell", "-T", "--", remote, timeout=t, stdin=stdin,
+                cap=OUTPUT_CAP)
         except RunTimeout:
             return {"ok": False, "error": "timeout", "timeout": t,
                     "note": "ended after timeout; partial side effects may have landed."}
-        stdout, cut_out = _cap(out)
-        stderr, cut_err = _cap(err)
-        reply: dict[str, Any] = {"ok": code == 0, "code": code, "stdout": stdout, "stderr": stderr}
-        if cut_out or cut_err:
+        stderr = err.decode("utf-8", errors="replace")
+        if code == 1 and _GONE.search(stderr):
+            # adb's own failure, not the command's exit 1: the cable went.
+            self.state["adb"] = "missing"
+            return {"ok": False, "error": "disconnected",
+                    "note": f"{self.name} left adb while the command ran; "
+                            "partial side effects may have landed.", "stderr": stderr}
+        reply: dict[str, Any] = {"ok": code == 0, "code": code,
+                                 "stdout": out.decode("utf-8", errors="replace"), "stderr": stderr}
+        if cut:
             reply["truncated"] = True
         return reply
 
@@ -323,8 +330,8 @@ class AndroidDevice(Device):
         from .screenshot import _shrink
         quality = opt_int(quality, "quality", 85, min=10, max=100)
         await self.ready()
-        code, data, err = await self.plugin.adb_bytes(
-            "-s", self.serial, "exec-out", "screencap", "-p", timeout=30)
+        code, data, err, _ = await self.plugin.adb_bytes(
+            "-s", self.serial, "exec-out", "screencap", "-p", timeout=30, cap=64 << 20)
         if code != 0 or not data.startswith(b"\x89PNG"):
             fail(err.decode(errors="replace").strip()[:300] or "screencap failed")
         fd, path = tempfile.mkstemp(suffix=".png", prefix="rook-adb-shot-")
@@ -363,8 +370,11 @@ class AndroidDevice(Device):
         items = ui_items(out[start:end + 1])
         return {"text": "\n".join(i["text"] for i in items), "items": items}
 
-    async def _input(self, *args: str) -> dict:
-        await self.sh(shlex.join(("input",) + args))
+    async def _input(self, *commands: tuple[str, ...]) -> dict:
+        """Run ``input`` commands as one device-side script, one caller at a
+        time, so another session's taps never land in the middle."""
+        async with self._input_lock:
+            await self.sh(" && ".join(shlex.join(("input",) + c) for c in commands))
         return {"ok": True}
 
     @capability("hid.type", risk="exec", tags=("physical",), scope="multi-machine")
@@ -374,13 +384,15 @@ class AndroidDevice(Device):
         text = require_str(text, "text", strip=False, max_len=2000)
         if not text.isascii():
             raise ArgError("the device types ASCII only; set other text with shell.exec")
-        lines = text.split("\n")
-        for i, line in enumerate(lines):
+        commands = []
+        for i, line in enumerate(text.split("\n")):
+            if i:
+                commands.append(("keyevent", "KEYCODE_ENTER"))
             if line:
                 # `input text` reads %s as a space (and has no other escape).
-                await self._input("text", line.replace(" ", "%s"))
-            if i < len(lines) - 1:
-                await self._input("keyevent", "KEYCODE_ENTER")
+                commands.append(("text", line.replace(" ", "%s")))
+        if commands:
+            await self._input(*commands)
         return {"ok": True, "typed": len(text)}
 
     @capability("hid.key_combo", risk="exec", tags=("physical",), scope="multi-machine")
@@ -399,15 +411,15 @@ class AndroidDevice(Device):
                 raise ArgError(f"unknown key {k!r}")
             codes.append(code)
         if len(codes) == 1:
-            return await self._input("keyevent", codes[0])
-        return await self._input("keycombination", *codes)
+            return await self._input(("keyevent", codes[0]))
+        return await self._input(("keycombination", *codes))
 
     @capability("hid.mouse.click", risk="exec", tags=("physical",), scope="multi-machine")
     async def hid_mouse_click(self, x: int, y: int) -> dict:
         """Tap the screen at pixel (x, y) (``ui.text`` gives element centres)."""
         x = require_int(x, "x", min=0, max=20000)
         y = require_int(y, "y", min=0, max=20000)
-        return await self._input("tap", str(x), str(y))
+        return await self._input(("tap", str(x), str(y)))
 
     @capability("hid.mouse.drag", risk="exec", tags=("physical",), scope="multi-machine")
     async def hid_mouse_drag(self, x1: int, y1: int, x2: int, y2: int,
@@ -416,7 +428,7 @@ class AndroidDevice(Device):
         pts = [str(require_int(v, n, min=0, max=20000))
                for v, n in ((x1, "x1"), (y1, "y1"), (x2, "x2"), (y2, "y2"))]
         ms = int(max(0.05, min(float(duration), 10.0)) * 1000)
-        return await self._input("swipe", *pts, str(ms))
+        return await self._input(("swipe", *pts, str(ms)))
 
 
 class AdbPlugin(Plugin):
@@ -464,9 +476,12 @@ class AdbPlugin(Plugin):
             fail("adb is not installed on this worker")
         return await run([binary, *args], timeout=timeout, stdin=stdin)
 
-    async def adb_bytes(self, *args: str, timeout: float = 15.0,
-                        stdin: str | None = None) -> tuple[int, bytes, bytes]:
-        """Like :meth:`adb` but keeps stdout/stderr as bytes (screencap, big output)."""
+    async def adb_bytes(self, *args: str, timeout: float = 15.0, stdin: str | None = None,
+                        cap: int | None = None) -> tuple[int, bytes, bytes, bool]:
+        """Like :meth:`adb` but keeps stdout/stderr as bytes (screencap, big
+        output): ``(code, out, err, truncated)``. With ``cap``, each stream
+        keeps its first ``cap`` bytes and the rest is read and dropped, so a
+        command that prints without end can't fill the worker's memory."""
         binary = self._binary()
         if not binary:
             fail("adb is not installed on this worker")
@@ -475,8 +490,35 @@ class AdbPlugin(Plugin):
             binary, *args,
             stdin=asyncio.subprocess.PIPE if payload is not None else asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        cut = False
+
+        async def drain(stream) -> bytes:
+            nonlocal cut
+            buf = bytearray()
+            while chunk := await stream.read(65536):
+                if cap is not None and len(buf) + len(chunk) > cap:
+                    buf.extend(chunk[:max(0, cap - len(buf))])
+                    cut = True
+                else:
+                    buf.extend(chunk)
+            return bytes(buf)
+
+        async def feed() -> None:
+            if payload is not None:
+                try:
+                    proc.stdin.write(payload)
+                    await proc.stdin.drain()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                proc.stdin.close()
+
+        async def both():
+            _, out, err = await asyncio.gather(feed(), drain(proc.stdout), drain(proc.stderr))
+            await proc.wait()
+            return out, err
+
         try:
-            out, err = await asyncio.wait_for(proc.communicate(payload), timeout)
+            out, err = await asyncio.wait_for(both(), timeout)
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
@@ -485,7 +527,7 @@ class AdbPlugin(Plugin):
             if proc.returncode is None:
                 proc.kill()
             raise
-        return proc.returncode or 0, out, err
+        return proc.returncode or 0, out, err, cut
 
     async def _seen(self) -> dict[str, dict]:
         code, out, _ = await self.adb("devices", "-l", timeout=10)

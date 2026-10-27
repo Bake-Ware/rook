@@ -64,7 +64,19 @@ Rules:
   cap name, same tier floor).
 - **Timeouts end the remote command.** Killing the local `adb` client closes
   the shell session and Android kills the command (checked on an Android 15 emulator).
-- Output is capped at 1 MiB per stream (`truncated: true`).
+- Output is capped at 1 MiB per stream while it is read (`truncated: true`);
+  the rest is drained and dropped, so `cat /dev/zero` can't fill the worker.
+- adb's own "device not found" in the middle of a command (cable pulled) comes
+  back as `error: disconnected`, not as the command's exit code 1.
+- `hid.*` calls send one device-side script each, under a per-device lock, so
+  two callers' typing never interleaves. Shell commands run side by side, as
+  on any worker.
+- Known limits: a screen that is asleep or locked takes taps on the lock
+  screen (check `device.info` `awake`, press `wake`); devices older than
+  Android 7 lack adb's shell protocol v2, so exit codes and timeouts on them
+  are best effort; the delegate shares the one adb server (port 5037) with
+  anyone else using adb on that machine, and a different adb version there
+  restarts it under the plugin.
 - The heartbeat (`hb.android = {on, paired?, adb?, battery?}`) comes from one
   `adb devices -l` every 30 s and a battery read every 5 minutes. The first
   call starts the adb server on the delegate if none runs (as any `adb` use
