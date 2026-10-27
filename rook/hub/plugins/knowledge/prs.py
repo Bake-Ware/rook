@@ -29,10 +29,16 @@ pull request's state on GitHub, and says what to do.
 * **Merge hook** (:meth:`PullRequests.on_merged`): the hub's own merge (the
   huddle merge vote) tells the tasks that link that PR at once.
 
-Which links count: ``url`` links (or any link whose ref is a pull request
-URL) with relation ``evidence``, ``produced`` or ``touched`` (the work's own
-links; ``mentions``, ``source``, ``blocked_by`` and the rest are about other
-work). Retracted links do not count.
+Which links count: links whose ref is a pull request URL with relation
+``evidence`` or ``produced`` (the work's own: ``gh pr create`` auto-links
+``produced``). ``touched`` (incidental: an umbrella PR, someone else's),
+``mentions``, ``source``, ``blocked_by`` and the rest are about other work.
+Retracted links do not count. A repo name with ``..`` in it is ignored.
+
+Credential: :class:`ScopedGitHub` uses the hub's token only for repositories
+the hub already works on (pinned on a conference table); any other repo is
+read anonymously, so linking a PR in some other private repo never makes the
+hub read it with its own token.
 
 Writes stay inside the hygiene rules: findings, events, and the automatic
 merge-commit link. Never a task's state, never a claim, never a hold.
@@ -51,7 +57,7 @@ log = logging.getLogger("rook.hub.plugins.knowledge.prs")
 
 SYSTEM = {'id': 'system:hygiene', 'kind': 'system', 'label': 'Rook hygiene'}
 PR_REF = re.compile(r'github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)(?!\d)', re.I)
-WORK_RELATIONS = ('evidence', 'produced', 'touched')
+WORK_RELATIONS = ('evidence', 'produced')
 OPEN_TASK = ('todo', 'in_progress', 'blocked', 'paused')
 #: Findings this module owns (raised and resolved by the sweep).
 KINDS = ('pr_merged', 'pr_ci_failed', 'pr_open_done')
@@ -79,7 +85,7 @@ def linked_prs(store, db, task_id) -> list[dict]:
         if l['relation'] not in WORK_RELATIONS:
             continue
         m = PR_REF.search(str(l['ref'] or ''))
-        if not m:
+        if not m or '..' in m.group(1):
             continue
         key = pr_key(m.group(1), m.group(2))
         if key in seen:
@@ -116,6 +122,24 @@ def ci_words(ci: dict | None) -> str:
     if ci['state'] == 'green':
         return f"CI green ({ci['count']} checks)"
     return 'no CI checks'
+
+
+class ScopedGitHub:
+    """``pr``/``checks`` with the hub's credential only for ``repos`` (the
+    ones the hub already works on); anonymous reads for any other."""
+
+    def __init__(self, authed, anon, repos):
+        self.authed, self.anon = authed, anon
+        self.repos = {str(r).lower() for r in repos or () if r}
+
+    def _for(self, repo):
+        return self.authed if str(repo).lower() in self.repos else self.anon
+
+    def pr(self, repo, number):
+        return self._for(repo).pr(repo, number)
+
+    def checks(self, repo, sha):
+        return self._for(repo).checks(repo, sha)
 
 
 class PullRequests:
@@ -217,8 +241,9 @@ class PullRequests:
         text = ('Not done yet: ' + '; '.join(s for s, _ in still) + '. A task is done once its pull '
                 'request has merged: get CI green, ask the huddle chair to pin it and call the merge '
                 'vote (the hub merges it and links the merge commit here), then mark it done. If that '
-                'PR is not this task\'s work, retract its link first (rook_task retract id='
-                + ', id='.join(l for _, l in still) + '). Work stopped? Use paused, blocked or cancelled.')
+                'PR is not this task\'s work, retract its link with a note saying why (rook_task retract id='
+                + ', id='.join(l for _, l in still) + ' data {note}; the link and the note stay on the '
+                'record). Work stopped? Use paused, blocked or cancelled.')
         return {'refuse': text, 'notes': notes}
 
     # -- the sweep --------------------------------------------------------------
@@ -253,9 +278,10 @@ class PullRequests:
                     'SELECT DISTINCT actor FROM claims WHERE task=? AND released IS NULL', (r['id'],))})
                 done_by = None
                 if r['state'] == 'done':
+                    # Whoever set it done (not a later edit of its text).
                     e = db.execute("SELECT actor FROM events WHERE record=? AND action='updated' "
-                                   "AND actor NOT LIKE 'system:%' ORDER BY seq DESC LIMIT 1",
-                                   (r['id'],)).fetchone()
+                                   "AND actor NOT LIKE 'system:%' AND json_extract(data, '$.state')='done' "
+                                   "ORDER BY seq DESC LIMIT 1", (r['id'],)).fetchone()
                     done_by = e['actor'] if e else None
                 evidence = {l['ref'] for l in self.store._live_links(db, r['id']) if l['kind'] == 'commit'}
                 tasks.append({'id': r['id'], 'band': r['band'], 'slug': r['slug'], 'state': r['state'],
@@ -278,26 +304,28 @@ class PullRequests:
         # A PR's checks matter only for in-progress work.
         checks = {pr_key(p['repo'], p['number']) for t in tasks if t['state'] == 'in_progress'
                   for p in t['prs']}
+        named = {}
         for t in tasks:
             for p in t['prs']:
-                key = pr_key(p['repo'], p['number'])
-                if key in infos or key in unread:
-                    continue
-                cached = self._cache.get(key)
-                fresh = cached is not None and (cached['merged'] or now - cached['at'] <= max_age)
-                if not fresh and reads >= SWEEP_MAX:
-                    unread.add(key)
-                    continue
-                try:
-                    reads += 0 if fresh else 1
-                    infos[key] = self.read(client, p['repo'], p['number'], max_age,
-                                           checks=key in checks)
-                except Exception as e:  # noqa: BLE001 - fail open for this PR
-                    self.last_error = f'{label(p["repo"], p["number"])}: {clip(str(e), 160)}'
-                    unread.add(key)
-                    if getattr(e, 'status', None) in (0, 403, 429):
-                        # Unreachable or rate limited: stop reading this sweep.
-                        reads = SWEEP_MAX
+                named.setdefault(pr_key(p['repo'], p['number']), p)
+        # Longest unread first (never read = first), so past SWEEP_MAX every
+        # PR still gets its turn on a later sweep.
+        for key in sorted(named, key=lambda k: (self._cache.get(k) or {}).get('at', 0.0)):
+            p = named[key]
+            cached = self._cache.get(key)
+            fresh = cached is not None and (cached['merged'] or now - cached['at'] <= max_age)
+            if not fresh and reads >= SWEEP_MAX:
+                unread.add(key)
+                continue
+            try:
+                reads += 0 if fresh else 1
+                infos[key] = self.read(client, p['repo'], p['number'], max_age, checks=key in checks)
+            except Exception as e:  # noqa: BLE001 - fail open for this PR
+                self.last_error = f'{label(p["repo"], p["number"])}: {clip(str(e), 160)}'
+                unread.add(key)
+                if getattr(e, 'status', None) in (0, 403, 429):
+                    # Unreachable or rate limited: stop reading this sweep.
+                    reads = SWEEP_MAX
         holding, skipped, want, links = set(), set(), [], []
         for t in tasks:
             keys = [pr_key(p['repo'], p['number']) for p in t['prs']]

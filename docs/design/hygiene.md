@@ -77,14 +77,16 @@ marking done or reporting green while CI was red or still running. Deterministic
 the task's own links plus the PR's state on GitHub, no model.
 
 - **Which links.** A link whose ref is a pull request URL
-  (`github.com/<owner>/<repo>/pull/N`) with relation `evidence`, `produced` or
-  `touched` (the `gh pr create` auto-link is `produced`). `mentions`, `source`,
-  `blocked_by` and the rest are about other work. Retracted links do not count.
+  (`github.com/<owner>/<repo>/pull/N`) with relation `evidence` or `produced`
+  (the `gh pr create` auto-link is `produced`). `touched` (incidental: an
+  umbrella PR, someone else's), `mentions`, `source`, `blocked_by` and the rest
+  are about other work. Retracted links do not count.
 - **Done check.** `update` to `done` reads the linked PRs (at most 5, cached a
   minute). One still open (a draft too) → an **agent** is refused with what to
   do: get CI green, have the chair pin it and call the merge vote (the hub
-  merges and links the merge commit), then mark it done; or retract the link if
-  that PR isn't this task's (the message names the link ids). A **person**
+  merges and links the merge commit), then mark it done; or retract the link
+  with a note saying why if that PR isn't this task's (the message names the
+  link ids; links are append-only, so the link and the note stay on record). A **person**
   gets the same text as `pr_check` on the reply and the update goes through:
   people decide. A PR closed without merging is a `pr_check` note. GitHub
   unreachable → the update goes through with a note: never a refusal. This is
@@ -94,16 +96,21 @@ the task's own links plus the PR's state on GitHub, no model.
   tasks and recently done ones (`hygiene_done_window_days`) with PR links.
   Merged PRs are cached for good; open ones are read again when stale; a head's
   checks are read only for in-progress work and only again while not green. At
-  most 40 reads a sweep; a 403/429 or a network error stops reading for that
-  sweep, and a task whose PRs could not be read keeps its findings as they are.
+  most 40 reads a sweep, longest-unread first (so past 40 every PR still gets
+  its turn); a 403/429 or a network error stops reading for that sweep, and a
+  task whose PRs could not be read keeps its findings as they are (a PR GitHub
+  answers 404 for, deleted or private, leaves its task unchecked: no findings).
+  `pr_open_done` goes to whoever set the task done (claims end at done).
 - **The hub's merge.** `Table.execute` calls `knowledge.pr_merged(repo, n,
   merge_sha, head)` after merging: the open tasks linking that PR get the merge
   commit as evidence, and the in-progress ones (whose other PRs are settled) a
   `pr_merged` finding, without waiting for the sweep.
 - **Credential.** The same GitHub client the huddle merge gates use
-  (`huddle.table.GitHub`), with the hub's credential (`huddle.vote_github_secret`)
-  read from the vault once per sweep or done check (`system:hygiene`), else
-  anonymous reads (60 an hour per IP: enough for done checks, thin for sweeps).
+  (`huddle.table.GitHub`). The hub's credential (`huddle.vote_github_secret`,
+  read from the vault once per sweep or done check as `system:hygiene`) is used
+  only for repositories the hub already works on (pinned on a conference
+  table); any other repo is read anonymously (60 an hour per IP), so linking a
+  PR in some other private repo never makes the hub read it with its token.
 - **CI at pin time.** Pinning a PR on the conference table reads its head's
   checks and says where CI stands in the pin reply (`ci`) and the room line
   ("CI still running: ... (wait for green before the vote)"). The ci gate is

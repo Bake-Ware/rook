@@ -30,7 +30,7 @@ from pathlib import Path
 from ....core.context import current_identity
 from ....core.plugin import Plugin, capability, place, resource, setting
 from .hygiene import NOTIFY_KINDS, HygieneEngine
-from .prs import PullRequests
+from .prs import PullRequests, ScopedGitHub
 from .search import DEFAULT_MODEL, Search
 from .service import WRITES, KnowledgeService
 from .store import LINK_KINDS, RELATIONS
@@ -229,20 +229,34 @@ class Knowledge(Plugin):
 
     def _github(self):
         """A GitHub client for one PR sweep or done check (prs.py): the hub's
-        credential (the vault secret ``huddle.vote_github_secret`` names), read
-        once here, else anonymous reads."""
+        credential (the vault secret ``huddle.vote_github_secret`` names, read
+        once here) for the repositories the hub already works on (pinned on a
+        conference table), anonymous reads for any other repo."""
         from ..huddle.table import GitHub
-        token = None
         node = self._node
         huddle = node.plugin("huddle") if node is not None else None
+        anon = GitHub(lambda: None)
+        repos = set()
+        table = getattr(getattr(huddle, "service", None), "table", None)
+        if table is not None:
+            try:
+                for r in table._q("SELECT DISTINCT ref FROM huddle_artifacts WHERE kind IN ('pr','commit','file')"):
+                    repo = (json.loads(r["ref"] or "{}") or {}).get("repo")
+                    if repo:
+                        repos.add(str(repo).lower())
+            except Exception:
+                log.exception("knowledge: could not list the table's repositories")
         name = str((huddle.settings.get("vote_github_secret") if huddle is not None else "") or "").strip()
         vault = getattr(node, "_vault", None)
-        if name and vault is not None:
+        token = None
+        if repos and name and vault is not None:
             try:
                 token = vault.get(name, "system:hygiene", via="hygiene: tasks' pull requests")
             except KeyError:
                 log.warning("knowledge: no vault secret %r (huddle.vote_github_secret)", name)
-        return GitHub(lambda: token)
+        if not token:
+            return anon
+        return ScopedGitHub(GitHub(lambda: token), anon, repos)
 
     def pr_merged(self, repo, number, merge_sha="", head="", how="merged by the hub") -> list:
         """The hub merged a pull request (the huddle merge vote): tell the

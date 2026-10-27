@@ -609,3 +609,28 @@ async def test_a_pin_says_where_ci_stands_and_a_vote_can_name_the_pr(table, monk
     assert m["state"] == "executed", m
     assert told and told[0][:4] == ("bake-ware/rook", 7, "m" * 40, SHA1)
     assert m["result"]["tasks"] == ["t_x"]
+
+
+@pytest.mark.asyncio
+async def test_a_pr_url_names_only_a_pin_in_this_huddle_and_a_failing_hook_never_fails_the_merge(
+        table, monkeypatch):
+    room = await _huddle(table)
+    a = await table.t.pin(room, "agent:home", {"kind": "pr", "repo": "Bake-Ware/rook", "number": 7})
+    for ref in ("https://github.com/someone/else/pull/7", "someone/else#7"):
+        with pytest.raises(TB.TableError):
+            table.t.artifact(ref, room)
+    other = await _call(table, "huddle.start", {"title": "Another", "roles": ["lead"]})
+    with pytest.raises(TB.TableError):
+        table.t.artifact("#7", other["room"])  # A65 lives in the first huddle only
+
+    class KB:
+        def pr_merged(self, *a):
+            raise RuntimeError("knowledge store is gone")
+    real = table.t._plugin
+    monkeypatch.setattr(table.t, "_plugin", lambda ns: KB() if ns == "knowledge" else real(ns))
+    _all_yes(table)
+    out = await table.t.call(room, "agent:home", {"kind": "merge", "artifact": a["artifact"],
+                                                  "reason": "The docs PR is done."})
+    await _settle(table)
+    m = table.t.motion(out["motion"])
+    assert m["state"] == "executed" and m["result"]["merged"] and "tasks" not in m["result"]

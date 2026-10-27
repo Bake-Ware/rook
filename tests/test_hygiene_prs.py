@@ -135,6 +135,8 @@ def test_only_the_tasks_own_pr_links_count(w):
     w.gh.add(9)
     link(w, PR.format(9), relation='mentions')
     link(w, PR.format(9), relation='blocked_by')
+    link(w, PR.format(9), relation='touched')  # incidental: an umbrella PR, someone else's
+    link(w, 'https://github.com/a/../pull/9', relation='produced')
     link(w, 'repo@abc1234', kind='commit')
     with w.s.db(False) as db:
         assert linked_prs(w.s, db, w.task['id']) == []
@@ -318,12 +320,19 @@ async def test_plugin_wires_the_sweep_and_reads_the_hub_credential_once(tmp_path
             reads.append((name, actor))
             return 'ghp_' + 'T' * 36
     real = n.plugin
-    monkeypatch.setattr(n, 'plugin', lambda name: SimpleNamespace(settings={'vote_github_secret': 'hub-gh'})
-                        if name == 'huddle' else real(name))
+    pinned = []
+    table = SimpleNamespace(_q=lambda sql, args=(): [{'ref': json.dumps({'repo': r})} for r in pinned])
+    huddle = SimpleNamespace(settings={'vote_github_secret': 'hub-gh'}, service=SimpleNamespace(table=table))
+    monkeypatch.setattr(n, 'plugin', lambda name: huddle if name == 'huddle' else real(name))
     monkeypatch.setattr(n, '_vault', Vault(), raising=False)
     kb.bind_host(n)
+    # Nothing pinned yet: anonymous, and the vault is not touched.
+    assert kb._github()._token() is None and reads == []
+    pinned.append('Bake-Ware/rook')
     client = kb._github()
-    assert client._token() == 'ghp_' + 'T' * 36 and client._token() and reads == [('hub-gh', 'system:hygiene')]
+    assert reads == [('hub-gh', 'system:hygiene')]  # once per client, not per request
+    assert client._for('bake-ware/rook')._token() == 'ghp_' + 'T' * 36
+    assert client._for('someone/private')._token() is None  # never the hub's token elsewhere
     # The tick runs the sweep when it is due.
     gh = FakeGitHub()
     gh.add(7, state='closed', merged=True)
@@ -393,3 +402,55 @@ def test_a_pr_on_a_done_task_and_an_in_progress_one_still_gets_its_checks(w):
     done(w, actor=PERSON)
     raised = w.prs.sweep()
     assert {f['kind'] for f in raised} == {'pr_open_done', 'pr_ci_failed'}
+
+
+def test_rate_limited_github_stops_reading_for_the_sweep(w):
+    for n in (1, 2, 3):
+        w.gh.add(n)
+        t = w.create('task', f'Task {n}', w.project['id'])
+        w.s.mutate('default', AGENT, rid(), 'claim', {'id': t['id']})
+        link(w, PR.format(n), task=t)
+
+    def limited(repo, number):
+        w.gh.calls.append(('pr', repo, number))
+        raise GitHubError(403, 'API rate limit exceeded')
+    w.gh.pr = limited
+    assert w.prs.sweep() == []
+    assert len([c for c in w.gh.calls if c[0] == 'pr']) == 1  # stopped after the first 403
+    assert 'rate limit' in w.prs.last_error
+
+
+def test_a_sweep_reads_at_most_sweep_max_prs_and_every_pr_gets_its_turn(w, monkeypatch):
+    import rook.hub.plugins.knowledge.prs as P
+    monkeypatch.setattr(P, 'SWEEP_MAX', 2)
+    for n in range(1, 6):
+        w.gh.add(n)
+        link(w, PR.format(n))
+    w.prs.sweep()
+    assert len([c for c in w.gh.calls if c[0] == 'pr']) == 2
+    for _ in range(2):
+        later(w)
+        w.prs.sweep()
+    assert {c[2] for c in w.gh.calls if c[0] == 'pr'} == {1, 2, 3, 4, 5}
+
+
+def test_pr_open_done_goes_to_whoever_set_done_not_a_later_editor(w):
+    w.gh.add(242)
+    link(w, PR.format(242))
+    done(w, actor=PERSON)
+    cur = w.s.get('default', w.task['id'])
+    w.s.mutate('default', AGENT, rid(), 'update', {'id': w.task['id'], 'revision': cur['revision'],
+                                                    'patch': {'title': 'Ship the PR check (typo)'}})
+    assert {f['actor'] for f in w.prs.sweep()} == {PERSON['id']}
+
+
+def test_pr_open_done_clears_when_the_pr_merges(w):
+    w.gh.add(242)
+    link(w, PR.format(242))
+    done(w, actor=PERSON)
+    w.prs.sweep()
+    assert findings(w, 'pr_open_done')
+    w.gh.add(242, state='closed', merged=True)
+    later(w)
+    w.prs.sweep()
+    assert findings(w, 'pr_open_done') == []
