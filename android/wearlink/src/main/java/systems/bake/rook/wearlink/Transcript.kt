@@ -30,7 +30,11 @@ data class Transcript(
 
     fun done(): Transcript = if (open) copy(open = false) else this
 
-    fun note(text: String): Transcript = if (text.isBlank()) this else add(Line(Who.NOTE, text.trim()))
+    /** A note the line above already says (a retry that failed the same way) is not repeated. */
+    fun note(text: String): Transcript {
+        val line = Line(Who.NOTE, text.trim())
+        return if (text.isBlank() || lines.lastOrNull() == line) done() else add(line)
+    }
 
     private fun add(line: Line) = copy(lines = (lines + line).takeLast(capacity), open = false)
 
