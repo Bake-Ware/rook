@@ -367,7 +367,8 @@ def test_bad_args_say_what_the_cap_takes_and_the_closest_name():
     # Python's own did-you-mean is not repeated.
     r.register('t.read', read)
     out = asyncio.run(host.dispatch('t.read', {'rooom': 'h'}))
-    assert out['error'].count('id you mean') <= 1 and '(t.read takes: room, since_seq?)' in out['error']
+    # (Python 3.13+ suggests 'room' itself; older ones get ours.)
+    assert out['error'].count('id you mean') == 1 and '(t.read takes: room, since_seq?' in out['error']
     out = asyncio.run(host.dispatch('t.boom', {}))
     assert out['error'] == 'bad args: inside the cap'
 
