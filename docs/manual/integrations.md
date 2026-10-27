@@ -20,7 +20,10 @@ Connect Rook to a Telegram chat or a Discord channel to get notifications
 there, talk to your chat rooms from your phone, and send a few commands. Both
 are off until you set them up.
 
-1. Create a bot: with Telegram's @BotFather, or in Discord's developer portal.
+1. Create a bot: with Telegram's @BotFather, or in Discord's developer portal
+   (there, also turn on the **Message Content** intent, or the bot hears only
+   direct messages and mentions). Give the hub a bot of its own: a bot that
+   another program already listens with won't work reliably.
 2. On the Settings page, open **Telegram** or **Discord** and enter the bot
    token (stored write-only) and the chat or channel to use.
 3. Choose which Rook chat rooms to connect. Messages flow both ways: Rook
@@ -41,9 +44,12 @@ Telegram or Discord account once:
 
 1. Ask the hub for a code: on the house agent or any agent, "give me a
    Telegram link code" (the tool is `users.link_code`). An owner can make one
-   for someone else.
+   for someone else, naming them by account id, name, user name or email;
+   a name that matches no account is refused.
 2. Send `/link CODE` to the bot (on Discord, `!link CODE`), best as a direct
-   message, within 10 minutes. The code works once.
+   message, within 10 minutes. The code works once. On Discord you can only
+   message a bot you share a server with; in a server channel, write
+   `@Bot !link CODE`.
 
 After that, what you send acts as you: your access decides what the bot may
 do for you, the same as on the dashboard. Write to the bot directly and the

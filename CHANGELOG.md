@@ -55,6 +55,18 @@ version was `0.1.0`.
   (`approvals.approval_secs` is gone). The phone's cards, clearing cards by voice and relaying
   your quoted words work as before. (manual: accounts-and-access, security)
 
+### Fixed
+- `users.link_code`, `users.grant`, `users.role`, `users.explain` and `users.token` refuse a
+  user that matches no account, instead of making a code or grant for an account that does not
+  exist (a Telegram linked that way reached nothing). A unique name, user name or email now
+  resolves to the account id. A member naming someone else still gets only "not allowed".
+  `users.links`/`users.unlink` still take a stale id that has a link, so it can be removed.
+  (manual: integrations)
+- Discord: a bot without the Message Content intent no longer stops after Discord closes the
+  gateway with 4014. It reconnects without the intent and hears direct messages and mentions
+  (`discord.status` shows `message_content: false`). In a server channel, `@Bot !link CODE`
+  and `@Bot !help` work like the same commands sent in a direct message. (manual: integrations)
+
 ### Removed
 - The blanket holds, with the advanced security plugin on or off: admin and destructive calls
   (`approvals.enabled`, `approvals.hold`, `ROOK_APPROVALS`), operator `hold` rules in the

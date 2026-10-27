@@ -537,6 +537,94 @@ async def test_discord_dms_links_and_servers(tmp_path):
             await p.stop()
 
 
+@pytest.mark.asyncio
+async def test_discord_link_then_dms_reach_the_house_agent_as_that_person(tmp_path):
+    """The Telegram flow end to end over the Discord gateway: strangers are
+    ignored (told once, in a DM), ``!link CODE`` links, and the house agent
+    answers a linked person's DM as them."""
+    node, store = people_node(tmp_path)
+    async with FakeDiscordDM() as dc:
+        p = wire(Discord(), tmp_path, DC_TOKEN, chat_id=CHANNEL, api_base=dc.base)
+        p.bind_host(node)
+        await p.start()
+        try:
+            await wait_for(lambda: p.state["connected"] and p.bot_id == "999")
+            dc.push("hello", author_id="42", channel="dm42")              # a stranger's DM
+            dc.push("hello again", author_id="42", channel="dm42")
+            dc.push("!workers", author_id="42", channel=CHANNEL)          # and in the channel
+            await wait_for(lambda: p.state["unknown"] == 3)
+            assert [m["content"] for m in dc.sent] == [
+                "I only answer people linked to this Rook hub. Ask it for a link code, "
+                "then send !link CODE here."]
+            assert dc.sent[0]["_channel"] == "dm42" and node.client.calls == []
+
+            code = store.link_code("u_kid", "discord", actor="human:u_kid")["code"]
+            dc.push(f"!link {code}", author_id="42", username="kiddo", channel="dm42")
+            await wait_for(lambda: len(dc.sent) == 2)
+            assert dc.sent[1]["content"] == "Linked: messages from this account now act as Kid."
+            assert store.linked_user("discord", "42") == "u_kid"
+
+            dc.push("what's for dinner?", author_id="42", channel="dm42")
+            await wait_for(lambda: len(dc.sent) == 3)
+            assert dc.sent[2]["content"] == "house: what's for dinner?"
+            assert dc.sent[2]["message_reference"]["message_id"] == str(9000 + dc.seq)
+            call = node.client.calls[-1]
+            assert call["cap"] == "home.ask" and call["principal"] == "human:u_kid"
+            assert call["role"] == "member" and call["identity"] == "human:u_kid/discord"
+            assert call["args"] == {"question": "what's for dinner?", "source": "discord"}
+
+            # in a server, "@Rook !link CODE" works like a DM's "!link CODE"
+            code = store.link_code("u_bake", "discord", actor="human:u_bake")["code"]
+            assert await p.handle_inbound(Inbound(
+                chat_id=CHANNEL, user_id="43", username="bake", text=f"<@999> !link {code}",
+                mentions={"999": "rookbot"}, to_bot=True)) == "linked"
+            assert store.linked_user("discord", "43") == "u_bake"
+            dc.push("<@999> hi", author_id="44", channel="dm44", bot=True)  # bots never count
+            await wait_for(lambda: dc.events.empty())
+            assert store.linked_user("discord", "44") is None
+        finally:
+            await p.stop()
+
+
+class FakeDiscordNoContent(FakeDiscordDM):
+    """An app whose Message Content intent is not ticked in the portal."""
+
+    def __init__(self):
+        super().__init__()
+        self.intents: list[int] = []
+
+    async def ws(self, request):
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        await ws.send_json({"op": 10, "d": {"heartbeat_interval": 45000}})
+        ident = await ws.receive_json()
+        self.intents.append(ident["d"]["intents"])
+        if ident["d"]["intents"] & (1 << 15):
+            await ws.close(code=4014)
+            return ws
+        await ws.send_json({"op": 0, "t": "READY", "s": 1,
+                            "d": {"user": {"id": "999", "username": "rookbot"}}})
+        while not ws.closed:
+            await asyncio.sleep(0.05)
+        return ws
+
+
+@pytest.mark.asyncio
+async def test_discord_without_message_content_still_hears_dms(tmp_path):
+    node, store = people_node(tmp_path)
+    async with FakeDiscordNoContent() as dc:
+        p = wire(Discord(), tmp_path, DC_TOKEN, chat_id=CHANNEL, api_base=dc.base)
+        p.bind_host(node)
+        await p.start()
+        try:
+            await wait_for(lambda: p.state["connected"], timeout=8)
+            assert dc.intents[0] & (1 << 15) and not dc.intents[-1] & (1 << 15)
+            st = p.status()
+            assert st["message_content"] is False and "Message Content" in st["last_error"]
+        finally:
+            await p.stop()
+
+
 # -- the users.* caps ----------------------------------------------------------------
 
 class Client:
@@ -606,3 +694,54 @@ async def test_users_caps_for_chat_accounts(hub):
     assert sp["spaces"][0]["ref"] == "discord:777" and sp["spaces"][0]["granted"] == ["u_kid"]
     me = await as_(member(), lambda: n.invoke("users.me", {}, "human:u_kid"))
     assert "chat space discord:777" in me["plain"]
+
+
+@pytest.mark.asyncio
+async def test_users_caps_refuse_an_account_that_does_not_exist(tmp_path, monkeypatch):
+    """2026-10-27: link_code user="bake" (a name) made a code for a nonexistent
+    account, and the linked Telegram reached nothing."""
+    from tests.test_access import accounts_db
+    accounts_db(tmp_path / "enrollment.db")
+    monkeypatch.setenv("ROOK_ENROLLMENT_DB", str(tmp_path / "enrollment.db"))
+    az = build_authorizer(str(tmp_path), signer=False)
+    az.signer = None
+    az.access.set_role("u_bake", "owner", actor="t", words="seed", label="Bake")
+    n, store = HubNode(str(tmp_path), entry_points=False, build_version="1.test.node",
+                       client=Client(az)), az.access
+
+    async def call(cap, args, who=owner()):
+        return await as_(who, lambda: n.invoke(cap, args, f"human:{who.id}"))
+
+    with pytest.raises(ValueError, match="no account 'nobody'"):
+        await call("users.link_code", {"platform": "telegram", "user": "nobody"})
+    assert not [h for h in store.history(limit=20) if h["action"] == "link_code"]
+    # a unique name, username or email resolves to the account id
+    got = await call("users.link_code", {"platform": "telegram", "user": "Kid"})
+    assert store.redeem("telegram", got["code"], "42") == "u_kid"
+    got = await call("users.link_code", {"platform": "discord", "user": "b@example.com"})
+    assert store.redeem("discord", got["code"], "7") == "u_bake"
+    assert (await call("users.links", {"user": "kid"}))["user"] == "u_kid"
+
+    for cap, args in (("users.grant", {"user": "nobody", "kind": "hub", "words": "w"}),
+                      ("users.role", {"user": "nobody", "role": "member", "words": "w"}),
+                      ("users.explain", {"cap": "shell.exec", "user": "nobody"})):
+        with pytest.raises(ValueError, match="no account"):
+            await call(cap, args)
+    assert (await call("users.grant", {"user": "kid", "kind": "hub", "words": "w"})
+            )["grant"]["user_id"] == "u_kid"
+
+    # a member naming someone else is refused without learning who exists
+    for user in ("nobody", "bake"):
+        with pytest.raises(PermissionError):
+            await call("users.link_code", {"platform": "telegram", "user": user}, member())
+    mine = await call("users.link_code", {"platform": "telegram", "user": "kid"}, member())
+    assert store.redeem("telegram", mine["code"], "43") == "u_kid"
+
+    # a link left on a bogus id from before the fix can still be removed
+    with store.db() as db:
+        db.execute("INSERT INTO chat_links(platform,platform_user,user_id,handle,created) "
+                   "VALUES('telegram','99','bake','',0)")
+    assert (await call("users.links", {"user": "bake"}))["user"] == "bake"
+    out = await call("users.unlink", {"platform": "telegram", "user": "bake",
+                                      "words": "Bake: drop the stray link"})
+    assert out["user"] == "bake" and out["unlinked"] is True
