@@ -674,7 +674,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | Cap | Args | Does |
 |---|---|---|
 | `webos.discover` | timeout=3.0 | Find LG webOS TVs on this worker's network (SSDP), for adding to webos.tvs. |
-| `webos.list` | — | Every configured TV: `{items: [{name, host, on, app, reachable, paired, wake_on_lan, macs, error}]}`. |
+| `webos.list` | — | Every configured TV: `{items: [{name, host, on, app, reachable, paired, wake_on_lan, macs, sleep_at, error}]}… |
 
 **webos devices**
 
@@ -695,7 +695,7 @@ Grouped by plugin module. A plugin only loads where its backend is present (disp
 | `tv.sleep` | minutes | Switch the TV off in `minutes` (1-720), like the remote's sleep timer; `minutes=0` cancels it. |
 | `tv.status` | — | Live state: `{on, power, app, app_id, volume, muted, screen, sound_output, reachable, paired, wake_on_lan, ma… |
 | `tv.toast` | message | Show a short notification on the TV screen. |
-| `tv.type` | text='', enter=false, replace=false | Type `text` into the text field open on the TV (a search box, a login form), as the on-screen keyboard would. |
+| `tv.type` | text='', enter=false, replace=false, app? | Type `text` into the text field open on the TV (a search box), as the on-screen keyboard would. |
 | `tv.volume` | level?, step? | Set the volume to `level` (0-100), or move it by `step` (e.g. +3, -2). |
 
 **work**

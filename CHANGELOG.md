@@ -27,6 +27,16 @@ version was `0.1.0`.
   model-providers)
 
 ### Added
+- Tasks and their pull requests (hygiene, docs/design/hygiene.md): an agent's `update` to `done`
+  is refused while a pull request the task links is still open, with what to do (get it merged
+  through the huddle, or retract the link); a person gets the same text as `pr_check` and the
+  update goes through; GitHub unreachable never blocks. A sweep every `hygiene_github_minutes`
+  (knowledge, default 10) raises `pr_merged` (merge commit linked as evidence), `pr_ci_failed`
+  and `pr_open_done` findings; the hub's own merge tells the linked tasks at once. Pinning a PR
+  says where its CI stands, and a vote's `artifact` may be the PR's URL or `#N`.
+  (manual: work, conference-table)
+- A `bad args` reply from a hub cap lists the arguments the cap takes and the closest name
+  for a mistyped one (`did you mean 'since_seq' for 'since'?`). (manual: n/a)
 - Home Assistant devices on the band (`homeassistant` plugin): each chosen HA device (lamp, plug,
   thermostat, camera, fridge) becomes a device worker with live state and `ha.status`, `ha.on`,
   `ha.off`, `ha.set` and the admin `ha.service`; HA scenes from the delegate. LG TVs gain

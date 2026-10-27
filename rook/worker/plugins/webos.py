@@ -170,6 +170,9 @@ class WebOSTV(Device):
                     hb[k] = s[k]
             if s.get("screen") == "off":
                 hb["screen"] = "off"
+            at = self.plugin.sleep_at(self)
+            if at:
+                hb["sleep_at"] = at   # a sleep timer is running: visible on the band
         if not s.get("paired"):
             hb["paired"] = False
         return hb
@@ -335,8 +338,12 @@ class WebOSTV(Device):
 
     def _on_power(self, p: dict) -> None:
         st = str(p.get("state") or "")
+        was_on = self.state.get("on") and self.state.get("power") is not None
         self.state["power"] = st or None
         self.state["on"] = st in ("Active", "Screen Off", "Screen Saver")
+        if was_on and not self.state["on"] and st and self.plugin.sleep_at(self):
+            # Switched off some other way (the remote): the timer is done with.
+            self.plugin.set_sleep(self, None)
         self.state["screen"] = "off" if st == "Screen Off" else ("on" if st == "Active" else None)
 
     def _on_volume(self, p: dict) -> None:
@@ -541,14 +548,23 @@ class WebOSTV(Device):
         return {"ok": True, "button": key}
 
     @capability("type", risk="write", tags=("physical",), scope="multi-machine")
-    async def _type(self, text: str = "", enter: bool = False, replace: bool = False) -> dict:
-        """Type ``text`` into the text field open on the TV (a search box,
-        a login form), as the on-screen keyboard would. ``replace`` clears
-        the field first; ``enter`` presses Enter after it (search, submit)."""
+    async def _type(self, text: str = "", enter: bool = False, replace: bool = False,
+                    app: str | None = None) -> dict:
+        """Type ``text`` into the text field open on the TV (a search box),
+        as the on-screen keyboard would. ``replace`` clears the field first;
+        ``enter`` presses Enter after it (search, submit). ``app``: type only
+        if that app is in front (``"YouTube"``). The reply names the app the
+        text went to."""
         text = require_str(text, "text", max_len=500, strip=False, empty=True)
         if not text and not enter and not replace:
             raise ArgError("pass text, enter or replace")
         await self._live()   # off or unpaired: say so plainly, not as a text-field problem
+        front = self.state.get("app_id")
+        if app is not None:
+            want = self._match_app(require_str(app, "app", max_len=200))
+            if front not in want and _norm(app) != _norm(self.state.get("app") or ""):
+                fail(f"{self.name}: {self.state.get('app') or 'no app'} is in front, not "
+                     f"{app!r}; nothing typed")
         try:
             if text or replace:
                 await self._req(ssap.INSERT_TEXT, {"text": text, "replace": bool(replace)})
@@ -557,7 +573,8 @@ class WebOSTV(Device):
         except CapError as e:
             fail(f"{e}. A text field must be open on the TV: open the app's search "
                  "first (tv.button, or the app's own search screen)")
-        return {"ok": True, "typed": len(text), "enter": bool(enter)}
+        return {"ok": True, "typed": len(text), "enter": bool(enter),
+                "app": self.state.get("app")}
 
     @capability("open_url", risk="write", tags=("physical",), scope="multi-machine")
     async def _open_url(self, url: str) -> dict:
@@ -607,7 +624,7 @@ class WebOSTV(Device):
         delegate on the TV's network."""
         if isinstance(wait, bool) or not isinstance(wait, int) or not 0 <= wait <= 60:
             raise ArgError("wait must be an integer from 0 to 60")
-        if self.state.get("on") and self.state.get("reachable"):
+        if self.state.get("on") and self.state.get("reachable") and await self._really_on():
             return {"ok": True, "on": True, "already_on": True}
         live = arp_mac(self.host)   # the kernel remembers it a while after the TV went off
         if live and live not in self.macs:
@@ -652,6 +669,20 @@ class WebOSTV(Device):
                "wake from a short standby")
         fail(f"{self.name} did not come on within {wait} s (Wake-on-LAN sent to "
              f"{', '.join(self.macs)}): {why}")
+
+    async def _really_on(self) -> bool:
+        """Ask the TV, rather than trust the last state: a connection that
+        died without closing still looks on."""
+        c = self.client
+        if c is None or not c.connected:
+            return False
+        try:
+            self._on_power(await c.request(ssap.POWER_STATE, timeout=3))
+        except Exception:
+            await c.close()
+            self.state.update(on=False, reachable=False)
+            return False
+        return bool(self.state.get("on"))
 
     @capability("sleep", risk="write", tags=("physical",), scope="multi-machine")
     async def _sleep(self, minutes: int) -> dict:
@@ -729,6 +760,7 @@ class WebOSPlugin(Plugin):
         self._tvs: dict[str, WebOSTV] = {}
         self._sleep_task: asyncio.Task | None = None
         self._sleep_wake = asyncio.Event()
+        self._timers: dict[str, int] = {}   # TV key -> sleep time; mirrors sleep.json
 
     def _spec(self) -> list[tuple[str, str, str | None]]:
         try:
@@ -772,16 +804,15 @@ class WebOSPlugin(Plugin):
 
     # -- sleep timers ------------------------------------------------------
     def sleep_at(self, tv: WebOSTV) -> int | None:
-        at = self._load("sleep.json").get(tv.key)
-        return at if isinstance(at, (int, float)) and not isinstance(at, bool) else None
+        """``tv``'s sleep time (epoch seconds), from memory: heartbeats read it."""
+        return self._timers.get(tv.key)
 
     def set_sleep(self, tv: WebOSTV, at: int | None) -> bool:
         """Set (or with ``None`` clear) ``tv``'s sleep time; whether one was set."""
-        timers = self._load("sleep.json")
-        had = timers.pop(tv.key, None) is not None
+        had = self._timers.pop(tv.key, None) is not None
         if at is not None:
-            timers[tv.key] = at
-        self._save("sleep.json", timers)
+            self._timers[tv.key] = at
+        self._save("sleep.json", self._timers)
         self._sleep_wake.set()
         return had
 
@@ -797,9 +828,9 @@ class WebOSPlugin(Plugin):
             except (TimeoutError, asyncio.TimeoutError):
                 pass
             now = time.time()
-            for key, at in list(self._load("sleep.json").items()):
+            for key, at in list(self._timers.items()):
                 tv = self._tvs.get(key)
-                if tv is None or not isinstance(at, (int, float)) or at > now:
+                if tv is None or at > now:
                     continue
                 self.set_sleep(tv, None)
                 if now - at > SLEEP_LATE:
@@ -813,6 +844,8 @@ class WebOSPlugin(Plugin):
 
     # -- lifecycle ---------------------------------------------------------
     async def start(self) -> None:
+        self._timers = {k: v for k, v in self._load("sleep.json").items()
+                        if isinstance(v, (int, float)) and not isinstance(v, bool)}
         macs = self._load("macs.json")
         for name, host, mac in self._spec():
             stored = macs.get(name.lower())
@@ -837,14 +870,15 @@ class WebOSPlugin(Plugin):
     @capability("list", risk="read", scope="multi-machine")
     async def _list(self) -> dict:
         """Every configured TV: ``{items: [{name, host, on, app, reachable, paired,
-        wake_on_lan, macs, error}]}``."""
+        wake_on_lan, macs, sleep_at, error}]}``."""
         items = []
         for tv in self._tvs.values():
             s = tv.state
             items.append({"name": tv.name, "host": tv.host, "on": bool(s.get("on")),
                           "app": s.get("app"), "reachable": bool(s.get("reachable")),
                           "paired": bool(s.get("paired")), "wake_on_lan": s.get("wake_on_lan"),
-                          "macs": list(tv.macs), "error": s.get("error")})
+                          "macs": list(tv.macs), "sleep_at": self.sleep_at(tv),
+                          "error": s.get("error")})
         return {"items": items}
 
     @capability("discover", risk="read", timeout=20, scope="multi-machine")

@@ -27,10 +27,11 @@ Capabilities (on each device):
     ha.status                       read
     ha.on, ha.off, ha.set           write (physical)
     ha.service                      admin (any HA service on its entities:
-                                    unlocking a door goes this way)
+                                    locks, alarms, valves, garage doors and
+                                    gates go only this way)
 And on this worker: ``homeassistant.devices`` (HA's devices, for picking),
-``homeassistant.scenes`` and ``homeassistant.scene`` (scenes belong to no
-device).
+``homeassistant.scenes`` and ``homeassistant.scene`` (admin; scenes belong
+to no device).
 """
 
 from __future__ import annotations
@@ -70,9 +71,11 @@ CONTROL = {d for d, _ in KINDS} | {"switch", "siren", "number", "select", "butto
 SWITCHABLE = {"light", "switch", "fan", "media_player", "climate", "humidifier",
               "water_heater", "input_boolean"}
 # Switched only when named: a siren on a camera is not what "turn it on" means.
-NAMED_ONLY = {"siren", "valve", "cover"}
+NAMED_ONLY = {"siren", "cover"}
 # Security devices: only through ha.service, which is an admin cap.
-GUARDED = {"lock", "alarm_control_panel"}
+GUARDED = {"lock", "alarm_control_panel", "valve"}
+# Covers that are a way into the house count as security devices too.
+GUARDED_COVERS = {"garage", "gate", "door"}
 SETTABLE = {"number", "input_number", "select", "input_select", "climate", "cover", "fan",
             "media_player", "light", "text", "input_text", "water_heater", "humidifier"}
 OFF_STATES = {"off", "unavailable", "unknown", "standby", "closed", "locked", "docked", ""}
@@ -105,8 +108,15 @@ def _plug_like(e: dict) -> bool:
     return dom in ("switch", "input_boolean") or (dom == "sensor" and e.get("dc") in PLUG_SENSORS)
 
 
+def _guarded(e: dict) -> bool:
+    """A lock, an alarm panel, a valve (a water main) or a garage door, gate or
+    door: only through ha.service, the admin cap."""
+    dom = e["id"].split(".")[0]
+    return dom in GUARDED or (dom == "cover" and e.get("dc") in GUARDED_COVERS)
+
+
 def slug(name: str) -> str:
-    """A band name from an HA name: ``"Jr's room speaker"`` -> ``jrs-room-speaker``."""
+    """A band name from an HA name: ``"Sam's desk lamp"`` -> ``sams-desk-lamp``."""
     s = re.sub(r"[^a-z0-9]+", "-", name.lower().replace("'", "")).strip("-")
     return s[:63] or "device"
 
@@ -256,13 +266,14 @@ class HADevice(Device):
         if entity is not None and entity != "all":
             e = self._resolve(entity)
             dom = e["id"].split(".")[0]
-            if dom in GUARDED:
-                fail(f"{e['id']} is a {dom}: use ha.service (an admin action) for it")
+            if _guarded(e):
+                fail(f"{e['id']} is a {e.get('dc') or dom}: use ha.service (an admin "
+                     "action) for it")
             if dom not in allowed:
                 fail(f"{e['id']} can't be {verb} ({dom}); ha.service calls any of its services")
             return [e]
-        cands = [e for e in self.entities if not e.get("category")
-                 and e["id"].split(".")[0] in allowed - NAMED_ONLY - GUARDED]
+        cands = [e for e in self.entities if not e.get("category") and not _guarded(e)
+                 and e["id"].split(".")[0] in allowed - NAMED_ONLY]
         if not cands:
             fail(f"{self.name} has nothing to be {verb}; ha.status lists its entities")
         if len(cands) > 1 and entity != "all":
@@ -427,7 +438,7 @@ class HADevice(Device):
                 "entities": await self._settled([eid], before)}
 
     def _settable_default(self) -> dict:
-        cands = [e for e in self.entities if not e.get("category")
+        cands = [e for e in self.entities if not e.get("category") and not _guarded(e)
                  and e["id"].split(".")[0] in SETTABLE]
         if len(cands) == 1:
             return cands[0]
@@ -457,7 +468,9 @@ class HADevice(Device):
             raise ArgError("data must not name a target: ha.service always acts on this device")
         if entity is not None:
             ids = [self._resolve(entity)["id"]]
-            if dom != "homeassistant" and ids[0].split(".")[0] != dom:
+            # The service's domain must be the entity's own: a domain-wide
+            # one ("homeassistant.restart") would act on all of HA.
+            if ids[0].split(".")[0] != dom:
                 raise ArgError(f"{ids[0]} is not a {dom} entity")
         else:
             ids = [e["id"] for e in self.entities if e["id"].split(".")[0] == dom]
@@ -495,6 +508,10 @@ class HomeAssistantPlugin(Plugin):
         self.temp_unit = "°"
         self.error: str | None = None
         self._devices: dict[str, HADevice] = {}
+        # Each configured entry, once matched: {entry: {id, name}}, so a rename
+        # in HA neither drops the device nor changes its band name.
+        self._bindings: dict[str, dict] = {}
+        self.not_found: list[str] = []
         self._task: asyncio.Task | None = None
         self._reload: asyncio.Task | None = None
         self._wake = asyncio.Event()
@@ -537,6 +554,13 @@ class HomeAssistantPlugin(Plugin):
                 cached = json.load(f)
         except (OSError, ValueError):
             cached = {}
+        try:
+            with open(self.data_dir / "bindings.json", encoding="utf-8") as f:
+                bound = json.load(f)
+            self._bindings = {k: v for k, v in bound.items()
+                              if isinstance(v, dict) and isinstance(v.get("id"), str)}
+        except (OSError, ValueError, AttributeError):
+            self._bindings = {}
         if isinstance(cached, dict):
             # Listed (as unavailable) before HA answers, or while it is down.
             self.registry = {k: v for k, v in cached.items() if isinstance(v, dict)}
@@ -675,21 +699,32 @@ class HomeAssistantPlugin(Plugin):
             by_name.setdefault(_norm(m.get("ha_name")), []).append(k)
         fresh: dict[str, HADevice] = {}
         used: set[str] = set()
+        bindings: dict[str, dict] = {}
+        missing: list[str] = []
         for band_name, ref in self._spec():
-            if ref in self.registry:
+            entry = f"{band_name}={ref}" if band_name else ref
+            bound = self._bindings.get(entry)
+            if bound and bound["id"] in self.registry:
+                ids = [bound["id"]]
+            elif ref in self.registry:
                 ids = [ref]
             else:
                 ids = by_name.get(_norm(ref), [])
             if len(ids) != 1:
+                if bound:
+                    bindings[entry] = bound   # gone for now; HA may bring it back
                 if cached:
                     continue
+                missing.append(ref)
                 log.warning("homeassistant.devices: %r %s", ref,
                             "matches several HA devices; use its id" if ids
                             else "is not an HA device")
                 continue
             ha_id = ids[0]
             meta = self.registry[ha_id]
-            name = band_name or slug(meta.get("ha_name") or ref)
+            name = band_name or (bound["name"] if bound and bound["id"] == ha_id
+                                 and bound.get("name") else slug(meta.get("ha_name") or ref))
+            bindings[entry] = {"id": ha_id, "name": name}
             if not valid_device_name(name) or name.lower() in used or ha_id in fresh:
                 log.warning("homeassistant.devices: %r left out (bad or repeated name)", ref)
                 continue
@@ -703,9 +738,12 @@ class HomeAssistantPlugin(Plugin):
         self._devices = fresh
         if cached:
             return
+        self.not_found = missing
+        self._bindings = bindings
         cache = {k: self.registry[k] for k in fresh}
         try:
             atomic_write_json(self.data_dir / "devices.json", cache, indent=1)
+            atomic_write_json(self.data_dir / "bindings.json", bindings, indent=1)
         except OSError:
             log.debug("could not cache the HA devices", exc_info=True)
 
@@ -764,7 +802,8 @@ class HomeAssistantPlugin(Plugin):
     async def _devices_cap(self, query: str = "", all: bool = False) -> dict:
         """Home Assistant's devices, for picking which go on the band
         (homeassistant.devices setting): ``{connected, version, items: [{id,
-        ha_name, area, model, controls, available, on_band_as}]}``. Leaves out
+        ha_name, area, model, controls, available, on_band_as}], not_found}``
+        (``not_found``: configured entries no single HA device matches). Leaves out
         HA's own services and devices with nothing to control unless ``all``."""
         if not self.connected:
             try:
@@ -790,6 +829,8 @@ class HomeAssistantPlugin(Plugin):
         items.sort(key=lambda i: (not i["available"], str(i["ha_name"]).lower()))
         out: dict[str, Any] = {"connected": self.connected, "version": self.version,
                                "items": items}
+        if self.not_found:
+            out["not_found"] = list(self.not_found)   # configured, but no (single) HA device
         if self.error and not self.connected:
             out["error"] = self.error
         return out
@@ -801,9 +842,10 @@ class HomeAssistantPlugin(Plugin):
         return {"items": [{"scene": k, "name": (s.get("attributes") or {}).get("friendly_name") or k}
                           for k, s in sorted(self.states.items()) if k.startswith("scene.")]}
 
-    @capability("scene", risk="write", tags=("physical",), scope="multi-machine")
+    @capability("scene", risk="admin", tags=("physical",), scope="multi-machine")
     async def _scene(self, name: str) -> dict:
-        """Turn on a scene by id or name (``"office lights full"``)."""
+        """Turn on a scene by id or name (``"office lights full"``). Admin: a
+        scene can do anything HA can, unlocking a door included."""
         await self.live()
         name = require_str(name, "name", max_len=200)
         scenes = {k: (s.get("attributes") or {}).get("friendly_name") or k

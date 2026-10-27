@@ -36,6 +36,7 @@ class FakeTV:
         self.wol = "true"
         self.sound_output = "tv_speaker"
         self.ime_open = True
+        self.stall = set()        # uris the TV never answers
 
     def payload(self, uri, body):
         uri = uri.removeprefix("ssap://")
@@ -125,6 +126,8 @@ class FakeTV:
                 continue
             uri, body = msg.get("uri", ""), msg.get("payload") or {}
             self.calls.append((uri.removeprefix("ssap://"), body))
+            if uri.removeprefix("ssap://") in self.stall and kind == "request":
+                continue
             if self.drop_on and uri.removeprefix("ssap://") == self.drop_on:
                 self.drop_on = None
                 await ws.close()
@@ -351,12 +354,12 @@ async def test_unreachable_tv_is_off_not_an_error(tmp_path, monkeypatch):
         assert len(sent) >= 3
         assert await dev._power_off() == {"ok": True, "already_off": True}
         # Off since before the delegate learned its Wi-Fi MAC: the ARP table still has it.
-        monkeypatch.setattr(webos, "arp_mac", lambda host: "f8:b9:5a:1d:f2:4e")
+        monkeypatch.setattr(webos, "arp_mac", lambda host: "02:00:5e:10:00:02")
         sent.clear()
         await dev._power_on(wait=0)
-        assert sent == [(["f8:b9:5a:1d:f2:4e", "aa:bb:cc:dd:ee:ff"], "127.0.0.1")]
+        assert sent == [(["02:00:5e:10:00:02", "aa:bb:cc:dd:ee:ff"], "127.0.0.1")]
         assert json.loads((tmp_path / "webos" / "macs.json").read_text())["office-tv"][0] == \
-            "f8:b9:5a:1d:f2:4e"
+            "02:00:5e:10:00:02"
     finally:
         await p.stop()
 
@@ -470,9 +473,9 @@ async def test_a_connection_that_drops_at_once_backs_off(tv, tmp_path, monkeypat
 def test_arp_mac_reads_the_kernel_table(tmp_path):
     t = tmp_path / "arp"
     t.write_text("IP address       HW type     Flags       HW address            Mask     Device\n"
-                 "192.0.2.98       0x1         0x2         F8:B9:5A:1D:F2:4E     *        eth0\n"
+                 "192.0.2.98       0x1         0x2         02:00:5E:10:00:02     *        eth0\n"
                  "192.0.2.99       0x1         0x0         00:00:00:00:00:00     *        eth0\n")
-    assert webos.arp_mac("192.0.2.98", str(t)) == "f8:b9:5a:1d:f2:4e"
+    assert webos.arp_mac("192.0.2.98", str(t)) == "02:00:5e:10:00:02"
     assert webos.arp_mac("192.0.2.99", str(t)) is None   # incomplete entry
     assert webos.arp_mac("192.0.2.1", str(t)) is None
     assert webos.arp_mac("192.0.2.98", str(tmp_path / "none")) is None
@@ -482,27 +485,27 @@ def test_arp_mac_reads_the_kernel_table(tmp_path):
 async def test_wake_goes_to_every_mac_the_live_one_first(tv, tmp_path, monkeypatch):
     """The CX TVs report a wired MAC while on Wi-Fi; the first version woke
     only the wired one, so tv.power_on never reached them."""
-    monkeypatch.setattr(webos, "arp_mac", lambda host: "f8:b9:5a:1d:f2:4e")
+    monkeypatch.setattr(webos, "arp_mac", lambda host: "02:00:5e:10:00:02")
     orig = tv.payload
 
     def payload(uri, body):
         if uri.removeprefix("ssap://") == ssap.CONNECTION_INFO:
-            return {"wiredInfo": {"macAddress": "B4:B2:91:10:0A:E8"},
-                    "wifiInfo": {"macAddress": "F8:B9:5A:1D:F2:4E"},
-                    "p2pInfo": {"macAddress": "FA:B9:5A:1D:F2:4E"}}
+            return {"wiredInfo": {"macAddress": "02:00:5E:10:00:01"},
+                    "wifiInfo": {"macAddress": "02:00:5E:10:00:02"},
+                    "p2pInfo": {"macAddress": "06:00:5E:10:00:02"}}
         return orig(uri, body)
     tv.payload = payload
     p = _plugin(tmp_path, monkeypatch)
     # A macs.json from the first version: one string, the wired MAC.
-    (tmp_path / "webos" / "macs.json").write_text(json.dumps({"office-tv": "b4:b2:91:10:0a:e8"}))
+    (tmp_path / "webos" / "macs.json").write_text(json.dumps({"office-tv": "02:00:5e:10:00:01"}))
     await p.start()
     [dev] = p.devices()
     try:
-        assert dev.macs == ["b4:b2:91:10:0a:e8"]
+        assert dev.macs == ["02:00:5e:10:00:01"]
         await _until(lambda: len(dev.macs) == 2)
-        assert dev.macs == ["f8:b9:5a:1d:f2:4e", "b4:b2:91:10:0a:e8"]
+        assert dev.macs == ["02:00:5e:10:00:02", "02:00:5e:10:00:01"]
         assert json.loads((tmp_path / "webos" / "macs.json").read_text()) == \
-            {"office-tv": ["f8:b9:5a:1d:f2:4e", "b4:b2:91:10:0a:e8"]}
+            {"office-tv": ["02:00:5e:10:00:02", "02:00:5e:10:00:01"]}
         assert (await p._list())["items"][0]["macs"] == dev.macs
     finally:
         await p.stop()
@@ -611,13 +614,21 @@ async def test_type_text_into_the_open_field(tv, tmp_path, monkeypatch):
     [dev] = p.devices()
     try:
         await _until(lambda: dev.state.get("reachable"))
-        assert await dev._type("bluey", enter=True) == {"ok": True, "typed": 5, "enter": True}
+        await _until(lambda: dev.state.get("app") == "YouTube")
+        assert await dev._type("bluey", enter=True) == {"ok": True, "typed": 5, "enter": True,
+                                                        "app": "YouTube"}
         assert (ssap.INSERT_TEXT, {"text": "bluey", "replace": False}) in tv.calls
         assert (ssap.ENTER_KEY, {}) in tv.calls
         await dev._type("x", replace=True)
         assert (ssap.INSERT_TEXT, {"text": "x", "replace": True}) in tv.calls
         with pytest.raises(TypeError):
             await dev._type("")
+        # app= guards against typing into whatever happens to be in front.
+        assert (await dev._type("x", app="youtube"))["app"] == "YouTube"
+        n = len(tv.calls)
+        with pytest.raises(CapError, match="YouTube is in front, not 'netflix'; nothing typed"):
+            await dev._type("secret", app="netflix")
+        assert len(tv.calls) == n
         tv.ime_open = False
         with pytest.raises(CapError, match="A text field must be open on the TV"):
             await dev._type("bluey")
@@ -688,6 +699,7 @@ async def test_sleep_timer(tv, tmp_path, monkeypatch):
         assert r["ok"] and r["in_minutes"] == 30
         st = await dev._status()
         assert st["sleep_in_minutes"] == 30 and st["sleep_at"] == r["sleep_at"]
+        assert dev.heartbeat()["sleep_at"] == r["sleep_at"]   # visible on the band
         assert await dev._sleep(0) == {"ok": True, "cancelled": True}
         assert "sleep_at" not in await dev._status()
         with pytest.raises(TypeError):
@@ -702,6 +714,12 @@ async def test_sleep_timer(tv, tmp_path, monkeypatch):
         await _until(lambda: p.sleep_at(dev) is None)
         await asyncio.sleep(0.1)
         assert ssap.POWER_OFF not in [u for u, _ in tv.calls]
+        # Switched off with the remote: the timer is cleared, not left to fire later.
+        await dev._sleep(30)
+        tv.power = "Active Standby"
+        await tv.push()
+        await _until(lambda: p.sleep_at(dev) is None)
+        assert "sleep_at" not in dev.heartbeat()
     finally:
         await p.stop()
 
@@ -719,3 +737,20 @@ async def test_sleep_timer_survives_a_restart(tv, tmp_path, monkeypatch):
         assert p2.sleep_at(p2.devices()[0]) == at
     finally:
         await p2.stop()
+
+
+@pytest.mark.asyncio
+async def test_power_on_asks_the_tv_before_saying_already_on(tv, tmp_path, monkeypatch):
+    """A connection that died without closing still looks on: power_on asks."""
+    p = _plugin(tmp_path, monkeypatch, spec="office-tv=127.0.0.1@aa:bb:cc:dd:ee:ff")
+    await p.start()
+    [dev] = p.devices()
+    try:
+        await _until(lambda: dev.state.get("on") and dev.state.get("reachable"))
+        tv.stall.add(ssap.POWER_STATE)
+        sent = []
+        monkeypatch.setattr(webos, "_send_wol", lambda macs, host: sent.append(macs) or [host])
+        r = await dev._power_on(wait=0)
+        assert "already_on" not in r and sent == [["aa:bb:cc:dd:ee:ff"]]
+    finally:
+        await p.stop()

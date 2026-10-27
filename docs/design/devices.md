@@ -115,9 +115,13 @@ rows carry `delegate`, `delegate_name` and `device`.
   `+` read as "plus"; same name, then prefix, then substring; a miss re-reads
   the app list once; an input name gets "use tv.input".
 - **New caps**: `tv.type` (IME `insertText`/`sendEnterKey` into the open
-  field) and `tv.sleep` (a wall-clock timer kept in `sleep.json`, ticked
+  field; the reply names the app in front, and `app=` refuses to type into
+  any other) and `tv.sleep` (a wall-clock timer kept in `sleep.json`, ticked
   every 15 s; one missed by more than 10 min while the delegate was down is
-  dropped, not acted on late). `tv.status` adds `sound_output` (`tv.volume`
+  dropped, not acted on late; shown as `hb.tv.sleep_at`; cleared when the TV
+  is switched off another way).
+- `tv.power_on` asks the TV for its power state before answering "already
+  on": a connection that died without closing still looks on. `tv.status` adds `sound_output` (`tv.volume`
   notes when sound goes to an external device) and `wake_on_lan`.
 
 ## 7. Home Assistant driver
@@ -125,8 +129,8 @@ rows carry `delegate`, `delegate_name` and `device`.
 - **One device worker per HA device**, chosen in `homeassistant.devices`
   (HA name or id, optionally `band-name=`). Opt-in, not "everything": a real
   house's HA has dozens of devices, many duplicates and dead ones (the one
-  this was built against: 64 devices, half of them unavailable, three named
-  "Jr's room speaker"), and names that would collide with other band workers
+  this was built against: dozens, half of them unavailable, several
+  sharing one name), and names that would collide with other band workers
   (an HA "Office TV" next to the webOS `office-tv`). `homeassistant.devices`
   lists the candidates, working ones first, to pick from.
 - **Kind** (`device.type`): from the first of climate, light, fan, cover,
@@ -138,11 +142,18 @@ rows carry `delegate`, `delegate_name` and `device`.
   `ha.on`/`ha.off` (lights take brightness, colour, kelvin), `ha.set` (one
   value, meaning by domain), and `ha.service` for anything else. With no
   `entity`, on/off/set act only when there is exactly one candidate; never a
-  guess across a power strip's sockets. Sirens, covers and valves switch only
-  when named. Locks and alarm panels only through `ha.service`, which is
-  `admin` because it can unlock a door; the rest are `write`, physical.
+  guess across a power strip's sockets. Sirens and covers (blinds) switch only
+  when named. Locks, alarm panels, valves (a water main) and covers that are
+  a way in (device class garage, gate or door) only through `ha.service`,
+  which is `admin` because it can unlock a door; the rest are `write`,
+  physical. `homeassistant.scene` is `admin` too: a scene can do anything.
   `ha.service` always targets the device's own entities (a `data` naming a
   target is refused).
+- **Renames**: each configured entry is bound to its HA device id at the
+  first match (`bindings.json`), so renaming the device in HA neither drops
+  it nor changes its band name (trust entries and jobs keep working).
+  Entries no single HA device matches are listed as `not_found` by
+  `homeassistant.devices`.
 - **Live state**: one WebSocket to HA; registries and states read once per
   connection, then `state_changed` events; registry events re-read the
   registries (debounced). The configured devices' registry entries are saved

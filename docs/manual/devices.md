@@ -85,12 +85,14 @@ it.
 - `tv.media`: play, pause, stop, rewind and fast forward in the current app.
 - `tv.button`: press a remote button, such as `HOME`, `BACK` or the arrows.
 - `tv.type`: type into the text field open on the TV, such as an app's
-  search box, and optionally press Enter.
+  search box, and optionally press Enter. With `app`, it types only if
+  that app is in front.
 - `tv.open_url`: open a web page in the TV's browser.
 - `tv.screen`: turn only the screen off (sound keeps playing) and back on.
 - `tv.sleep`: switch the TV off after some minutes, like the remote's sleep
   timer (`minutes=0` cancels it). The delegate keeps the time, so it holds
-  across the delegate's restarts.
+  across the delegate's restarts. Switching the TV off another way cancels
+  it.
 - `tv.power_off`, `tv.power_on`: switch the TV off, or on with Wake-on-LAN.
   `tv.power_on` waits until the TV answers (20 seconds unless told
   otherwise) and says so, or says why it didn't come on.
@@ -138,7 +140,10 @@ Pick a worker on the same network as Home Assistant to be the delegate
    it shows instead.
 
 Save, and each device appears on the Workers page within a minute. A
-device that Home Assistant can't reach shows as `unavailable`. If Home
+device that Home Assistant can't reach shows as `unavailable`. Renaming a
+device in Home Assistant later doesn't change its name on the band. An
+entry that matches no device is listed under `not_found` by
+`homeassistant.devices`. If Home
 Assistant itself is down, the devices stay listed as unavailable until it
 is back.
 
@@ -152,20 +157,23 @@ Every device has the same few capabilities:
   things to switch (a power strip's sockets), name one with `entity`, for
   example `entity="socket 2"`, or `entity="all"`. Lights also take
   `brightness` (percent), `color` (a name such as `warm white`, or
-  `#ff8000`) and `kelvin`. A camera's siren only sounds when you name it.
+  `#ff8000`) and `kelvin`. A camera's siren only sounds, and a blind only
+  moves, when you name it.
 - `ha.set`: set one value: a thermostat's temperature or mode (`heat`,
   `cool`, `off`), a light's brightness, a fan's speed, a blind's
   position, a speaker's volume, or a setting's number or option.
 - `ha.service`: call any Home Assistant service on the device's own
-  entities, such as `button.press` or `lock.unlock`. This is how locks
-  and alarm panels are used, so it counts as an admin action.
+  entities, such as `button.press` or `lock.unlock`. Locks, alarm panels,
+  water valves, garage doors and gates are used only this way, so it
+  counts as an admin action.
 
 On the delegate, `homeassistant.scenes` lists your Home Assistant scenes
 and `homeassistant.scene` turns one on by name, such as `office lights
 full`.
 
-Switching, setting and scenes count as physical actions and `ha.service`
-as an admin action, so your permission rules and approvals apply to them.
+Switching and setting count as physical actions, and `ha.service` and
+scenes (a scene can unlock a door) as admin actions, so your permission
+rules and approvals apply to them.
 
 ## Showing you things on a screen
 

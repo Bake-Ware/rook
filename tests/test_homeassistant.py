@@ -37,7 +37,7 @@ class FakeHA:
             {"id": "dev-thermo", "name": "Thermostat", "name_by_user": None,
              "area_id": "living_room", "manufacturer": "Resideo",
              "model": "Honeywell Home Thermostat", "entry_type": None, "disabled_by": None},
-            {"id": "dev-strip", "name": "ninjas tank", "name_by_user": None, "area_id": None,
+            {"id": "dev-strip", "name": "desk strip", "name_by_user": None, "area_id": None,
              "manufacturer": "Tuya", "model": "Smart Power Strip", "entry_type": None,
              "disabled_by": None},
             {"id": "dev-door", "name": "Front Door", "name_by_user": None, "area_id": None,
@@ -51,10 +51,14 @@ class FakeHA:
             {"id": "dev-assist", "name": "assist microphone", "name_by_user": None,
              "area_id": "kitchen", "manufacturer": None, "model": None, "entry_type": "service",
              "disabled_by": None},
-            {"id": "dev-spk1", "name": "Jr's room speaker", "name_by_user": None, "area_id": None,
+            {"id": "dev-garage", "name": "Garage", "name_by_user": None, "area_id": None,
+             "manufacturer": "Meross", "model": "MSG100", "entry_type": None, "disabled_by": None},
+            {"id": "dev-yard", "name": "Yard", "name_by_user": None, "area_id": None,
+             "manufacturer": "Rachio", "model": "3", "entry_type": None, "disabled_by": None},
+            {"id": "dev-spk1", "name": "Den speaker", "name_by_user": None, "area_id": None,
              "manufacturer": "Google Inc.", "model": "Google Home", "entry_type": None,
              "disabled_by": None},
-            {"id": "dev-spk2", "name": "Jr's room speaker", "name_by_user": None, "area_id": None,
+            {"id": "dev-spk2", "name": "Den speaker", "name_by_user": None, "area_id": None,
              "manufacturer": "Google Inc.", "model": "Google Home", "entry_type": None,
              "disabled_by": None},
         ]
@@ -62,10 +66,10 @@ class FakeHA:
             _ent("light.bedroom_1_bed_lights", "dev-bed", "bed lights"),
             _ent("climate.thermostat", "dev-thermo", None),
             _ent("sensor.thermostat_humidity", "dev-thermo", "Humidity"),
-            _ent("switch.ninjas_tank_socket_1", "dev-strip", "Socket 1"),
-            _ent("switch.ninjas_tank_socket_2", "dev-strip", "Socket 2"),
-            _ent("switch.ninjas_tank_child_lock", "dev-strip", "Child lock", category="config"),
-            _ent("select.ninjas_tank_power_on_behavior", "dev-strip", "Power on behavior",
+            _ent("switch.desk_strip_socket_1", "dev-strip", "Socket 1"),
+            _ent("switch.desk_strip_socket_2", "dev-strip", "Socket 2"),
+            _ent("switch.desk_strip_child_lock", "dev-strip", "Child lock", category="config"),
+            _ent("select.desk_strip_power_on_behavior", "dev-strip", "Power on behavior",
                  category="config"),
             _ent("camera.front_door", "dev-door", None),
             _ent("switch.front_door_motion_detection", "dev-door", "Motion detection"),
@@ -77,12 +81,16 @@ class FakeHA:
                  "Reset water filter", category="config"),
             _ent("switch.office_family_hub_power_cool", "dev-fridge", "Power cool"),
             _ent("binary_sensor.office_family_hub_fridge_door", "dev-fridge", "Fridge door"),
-            _ent("sensor.ninjas_tank_power", "dev-strip", "Power"),
+            _ent("sensor.desk_strip_power", "dev-strip", "Power"),
             _ent("camera.front_door_live_view", "dev-door", "Live view"),
             _ent("lock.back_door", "dev-lock", None),
+            _ent("cover.garage_door", "dev-garage", "Door"),
+            _ent("light.garage_light", "dev-garage", "Light"),
+            _ent("valve.yard_main", "dev-yard", "Main"),
+            _ent("cover.yard_shade", "dev-yard", "Shade"),
             _ent("switch.assist_microphone_mute", "dev-assist", "Mute"),
-            _ent("media_player.jr_s_room_speaker", "dev-spk1", None),
-            _ent("media_player.jr_s_room_speaker_2", "dev-spk2", None),
+            _ent("media_player.den_speaker", "dev-spk1", None),
+            _ent("media_player.den_speaker_2", "dev-spk2", None),
             _ent("light.gone", "dev-bed", "old", disabled="user"),
         ]
         self.areas = [{"area_id": "bedroom_1", "name": "Bedroom 1"},
@@ -98,10 +106,10 @@ class FakeHA:
                                                 "hvac_modes": ["off", "heat", "cool"],
                                                 "min_temp": 50, "max_temp": 90}),
                 ("sensor.thermostat_humidity", "41", {"unit_of_measurement": "%"}),
-                ("switch.ninjas_tank_socket_1", "on", {}),
-                ("switch.ninjas_tank_socket_2", "off", {}),
-                ("switch.ninjas_tank_child_lock", "off", {}),
-                ("select.ninjas_tank_power_on_behavior", "on",
+                ("switch.desk_strip_socket_1", "on", {}),
+                ("switch.desk_strip_socket_2", "off", {}),
+                ("switch.desk_strip_child_lock", "off", {}),
+                ("select.desk_strip_power_on_behavior", "on",
                  {"options": ["off", "on", "memory"]}),
                 ("camera.front_door", "idle", {}),
                 ("switch.front_door_motion_detection", "on", {}),
@@ -112,13 +120,17 @@ class FakeHA:
                 ("button.office_family_hub_reset_water_filter", "unknown", {}),
                 ("switch.office_family_hub_power_cool", "off", {}),
                 ("binary_sensor.office_family_hub_fridge_door", "off", {"device_class": "door"}),
-                ("sensor.ninjas_tank_power", "12.5", {"device_class": "power",
+                ("sensor.desk_strip_power", "12.5", {"device_class": "power",
                                                       "unit_of_measurement": "W"}),
                 ("camera.front_door_live_view", "idle", {}),
                 ("lock.back_door", "locked", {}),
+                ("cover.garage_door", "closed", {"device_class": "garage"}),
+                ("light.garage_light", "off", {}),
+                ("valve.yard_main", "open", {}),
+                ("cover.yard_shade", "open", {"device_class": "shade", "current_position": 100}),
                 ("switch.assist_microphone_mute", "off", {}),
-                ("media_player.jr_s_room_speaker", "unavailable", {}),
-                ("media_player.jr_s_room_speaker_2", "off", {}),
+                ("media_player.den_speaker", "unavailable", {}),
+                ("media_player.den_speaker_2", "off", {}),
                 ("scene.office_lights_full", "unknown", {"friendly_name": "office lights full"}),
                 ("scene.bed_lights_off", "unknown", {"friendly_name": "bed lights off"})):
             self.set_state(eid, state, attrs)
@@ -213,7 +225,7 @@ async def fake():
 
 
 def _plugin(tmp_path, monkeypatch, fake, devices="bed-lights=bed lights, Thermostat, "
-            "ninjas tank, Front Door, fridge=Family Hub, dev-lock", token=TOKEN):
+            "desk strip, Front Door, fridge=Family Hub, dev-lock", token=TOKEN):
     monkeypatch.setenv("HASS_URL", fake.url if fake else "http://127.0.0.1:1")
     monkeypatch.setenv("HASS_TOKEN", token)
     monkeypatch.setenv("HASS_DEVICES", devices)
@@ -242,7 +254,7 @@ def test_device_list_parsing_and_names():
     for bad in ("x=", "bad/name=lamp"):
         with pytest.raises(ValueError):
             ha.parse_devices(bad)
-    assert ha.slug("Jr's room speaker") == "jrs-room-speaker"
+    assert ha.slug("Sam's desk lamp") == "sams-desk-lamp"
     assert ha.slug("game terminal ") == "game-terminal"
     assert hass.ws_url("https://ha.local:8123/") == "wss://ha.local:8123/api/websocket"
     assert hass.ws_url("192.0.2.5:8123") == "ws://192.0.2.5:8123/api/websocket"
@@ -266,6 +278,9 @@ def test_caps_declare_scope_and_risk():
     risks = {k: v._rook_cap_meta.risk for k, v in caps.items()}
     assert risks == {"ha.status": "read", "ha.on": "write", "ha.off": "write",
                      "ha.set": "write", "ha.service": "admin"}
+    plugin = {k: v._rook_cap_meta.risk
+              for k, v in ha.HomeAssistantPlugin.declared_caps().items()}
+    assert plugin["homeassistant.scene"] == "admin"   # a scene can unlock a door
 
 
 # -- the band devices ----------------------------------------------------------
@@ -277,9 +292,9 @@ async def test_devices_heartbeats_and_status(fake, tmp_path, monkeypatch):
     try:
         await _until(lambda: p.connected and len(p.devices()) == 6)
         names = sorted(d.name for d in p.devices())
-        assert names == ["back-door-lock", "bed-lights", "fridge", "front-door",
-                         "ninjas-tank", "thermostat"]
-        bed, thermo, strip = _dev(p, "bed-lights"), _dev(p, "thermostat"), _dev(p, "ninjas-tank")
+        assert names == ["back-door-lock", "bed-lights", "desk-strip", "fridge",
+                         "front-door", "thermostat"]
+        bed, thermo, strip = _dev(p, "bed-lights"), _dev(p, "thermostat"), _dev(p, "desk-strip")
         assert bed.info() == {"type": "light", "driver": "homeassistant"}
         assert thermo.info() == {"type": "climate", "driver": "homeassistant",
                                  "model": "Honeywell Home Thermostat"}
@@ -301,7 +316,7 @@ async def test_devices_heartbeats_and_status(fake, tmp_path, monkeypatch):
                                      "temperature": 70, "hvac_modes": ["off", "heat", "cool"]}
         assert st["entities"][1]["name"] == "Humidity"
         sst = await strip._status()
-        assert {"entity": "switch.ninjas_tank_child_lock", "name": "Child lock",
+        assert {"entity": "switch.desk_strip_child_lock", "name": "Child lock",
                 "state": "off", "category": "config"} in sst["entities"]
         # Disabled entities are left out.
         assert all(e["entity"] != "light.gone" for e in (await bed._status())["entities"])
@@ -321,7 +336,7 @@ async def test_switching(fake, tmp_path, monkeypatch):
     await p.start()
     try:
         await _until(lambda: p.connected and len(p.devices()) == 6)
-        bed, strip, door = _dev(p, "bed-lights"), _dev(p, "ninjas-tank"), _dev(p, "front-door")
+        bed, strip, door = _dev(p, "bed-lights"), _dev(p, "desk-strip"), _dev(p, "front-door")
         r = await bed._on(brightness=30, color="#ff8000")
         assert fake.calls[-1] == ("light", "turn_on", ["light.bedroom_1_bed_lights"],
                                   {"brightness_pct": 30, "rgb_color": [255, 128, 0]})
@@ -337,9 +352,9 @@ async def test_switching(fake, tmp_path, monkeypatch):
         with pytest.raises(CapError, match="several things that can be switched off"):
             await strip._off()
         await strip._off(entity="socket 2")
-        assert fake.calls[-1][2] == ["switch.ninjas_tank_socket_2"]
+        assert fake.calls[-1][2] == ["switch.desk_strip_socket_2"]
         await strip._on(entity="all")
-        assert fake.calls[-1][2] == ["switch.ninjas_tank_socket_1", "switch.ninjas_tank_socket_2"]
+        assert fake.calls[-1][2] == ["switch.desk_strip_socket_1", "switch.desk_strip_socket_2"]
         with pytest.raises(TypeError, match="lights only"):
             await strip._on(entity="socket 1", brightness=50)
         # A doorbell: "on" without a name is its one plain switch, never the siren.
@@ -366,7 +381,7 @@ async def test_set_values(fake, tmp_path, monkeypatch):
     await p.start()
     try:
         await _until(lambda: p.connected and len(p.devices()) == 6)
-        thermo, fridge, strip = _dev(p, "thermostat"), _dev(p, "fridge"), _dev(p, "ninjas-tank")
+        thermo, fridge, strip = _dev(p, "thermostat"), _dev(p, "fridge"), _dev(p, "desk-strip")
         r = await thermo._set(72)
         assert fake.calls[-1] == ("climate", "set_temperature", ["climate.thermostat"],
                                   {"temperature": 72})
@@ -382,7 +397,7 @@ async def test_set_values(fake, tmp_path, monkeypatch):
             await fridge._set(50)
         await strip._set("memory", entity="power on behavior")
         assert fake.calls[-1] == ("select", "select_option",
-                                  ["select.ninjas_tank_power_on_behavior"], {"option": "memory"})
+                                  ["select.desk_strip_power_on_behavior"], {"option": "memory"})
         with pytest.raises(CapError, match="nothing to set"):
             await strip._set(1)
         with pytest.raises(TypeError, match="one entity at a time"):
@@ -410,6 +425,11 @@ async def test_service_escape_hatch(fake, tmp_path, monkeypatch):
             await fridge._service("light.turn_on", entity="power cool")
         with pytest.raises(CapError, match="no vacuum entity"):
             await fridge._service("vacuum.start")
+        # Nothing HA-wide: the service's domain must be one of this device's entities'.
+        with pytest.raises(TypeError, match="not a homeassistant entity"):
+            await fridge._service("homeassistant.restart", entity="power cool")
+        with pytest.raises(CapError, match="no homeassistant entity"):
+            await fridge._service("homeassistant.restart")
         with pytest.raises(TypeError):
             await fridge._service("not a service")
         fake.fail_services.add("button.press")
@@ -421,7 +441,7 @@ async def test_service_escape_hatch(fake, tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_listing_devices_and_scenes(fake, tmp_path, monkeypatch):
-    p = _plugin(tmp_path, monkeypatch, fake, devices="Jr's room speaker, bed lights")
+    p = _plugin(tmp_path, monkeypatch, fake, devices="Den speaker, bed lights")
     await p.start()
     try:
         await _until(lambda: p.connected)
@@ -436,7 +456,7 @@ async def test_listing_devices_and_scenes(fake, tmp_path, monkeypatch):
         assert bed == {"id": "dev-bed", "ha_name": "bed lights", "area": "Bedroom 1",
                        "model": None, "controls": ["light"], "available": True,
                        "on_band_as": "bed-lights"}
-        spk = [i for i in listed["items"] if i["ha_name"] == "Jr's room speaker"]
+        spk = [i for i in listed["items"] if i["ha_name"] == "Den speaker"]
         assert [i["available"] for i in spk] == [True, False]   # available first
         assert [i["id"] for i in (await p._devices_cap(query="living room"))["items"]] == \
             ["dev-thermo"]
@@ -462,8 +482,13 @@ async def test_registry_changes_follow_and_devices_survive_ha_down(fake, tmp_pat
         fake.entities.append(_ent("switch.bed_lights_night_mode", "dev-bed", "Night mode"))
         fake.set_state("switch.bed_lights_night_mode", "off")
         await fake.emit("entity_registry_updated", {"action": "create"})
-        # Renamed in HA: matched by the old name no more, so it leaves the band.
-        await _until(lambda: not p.devices())
+        # Renamed in HA: bound by its id since the first match, so it stays,
+        # under the same band name, and picks up its new entity.
+        await _until(lambda: len(bed.entities) == 2)
+        assert [d.name for d in p.devices()] == ["bed-lights"] and p.devices()[0] is bed
+        assert bed.meta["ha_name"] == "Bed Lights 2"
+        assert json.loads((tmp_path / "homeassistant" / "bindings.json").read_text()) == \
+            {"bed lights": {"id": "dev-bed", "name": "bed-lights"}}
     finally:
         await p.stop()
     # Restarted while HA is down: still listed from the last registry, as unavailable.
@@ -539,3 +564,29 @@ async def test_ha_devices_become_device_workers_of_the_delegate(fake, tmp_path, 
         assert fake.calls[-1][3] == {"brightness_pct": 40}
     finally:
         await w.host.stop()
+
+
+@pytest.mark.asyncio
+async def test_doors_gates_and_valves_only_through_the_admin_cap(fake, tmp_path, monkeypatch):
+    p = _plugin(tmp_path, monkeypatch, fake, devices="Garage, Yard, nothing like it")
+    await p.start()
+    try:
+        await _until(lambda: p.connected and len(p.devices()) == 2)
+        garage, yard = _dev(p, "garage"), _dev(p, "yard")
+        # "on" without a name is the garage's light, never its door.
+        await garage._on()
+        assert fake.calls[-1][2] == ["light.garage_light"]
+        with pytest.raises(CapError, match="cover.garage_door is a garage: use ha.service"):
+            await garage._on(entity="door")
+        with pytest.raises(CapError, match="use ha.service"):
+            await garage._set(50, entity="door")
+        with pytest.raises(CapError, match="valve.yard_main is a valve: use ha.service"):
+            await yard._off(entity="main")
+        # A shade is no way in: it opens and closes when named.
+        await yard._off(entity="shade")
+        assert fake.calls[-1][:3] == ("cover", "close_cover", ["cover.yard_shade"])
+        await garage._service("cover.open_cover", entity="door")
+        assert fake.calls[-1][:3] == ("cover", "open_cover", ["cover.garage_door"])
+        assert (await p._devices_cap())["not_found"] == ["nothing like it"]
+    finally:
+        await p.stop()
