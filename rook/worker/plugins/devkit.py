@@ -90,15 +90,24 @@ RESERVED_TYPES = frozenset({"caps", "info", "worker", "customcap", "cmd", "devki
 #: Arg names the cap machinery itself reads.
 RESERVED_ARGS = frozenset({"timeout", "fields", "limit", "why", "args", "target"})
 RISKS = ("read", "write", "exec", "admin")
-#: Words that make a cap an action even over GET (``turn_on``, ``disarm``, Tasmota's
-#: ``cmnd``), anywhere in its name; and words that do when they are the whole name
-#: (``lock``, ``open``: ``lock_state`` is still a read). ``set_…`` is always an action.
+#: Verbs that make a cap an action even over GET (``turn_on``, ``set_level``,
+#: Tasmota's ``cmnd``), as any segment of its name; many plugs and relays switch on GET.
 ACTION_WORDS = frozenset({
-    "on", "off", "turn", "toggle", "unlock", "press", "push", "start", "stop", "arm",
-    "disarm", "reboot", "restart", "reset", "shutdown", "trigger", "activate", "cmnd",
-    "cmd", "send", "write", "dim", "brighten", "mute", "unmute", "enable", "disable",
-    "ring", "play", "pause"})
-ACTION_NAMES = frozenset({"lock", "open", "close", "switch", "run", "move", "power", "set"})
+    "turn", "turnon", "turnoff", "toggle", "unlock", "set", "press", "push", "start", "stop",
+    "arm", "disarm", "reboot", "restart", "reset", "shutdown", "trigger", "activate", "cmnd",
+    "cmd", "send", "write", "dim", "brighten", "mute", "unmute", "enable", "disable", "ring",
+    "play", "pause", "run", "move", "cycle", "fire", "flip", "release", "dispense", "feed",
+    "spray", "beep", "blink", "flash", "honk", "apply", "execute", "do"})
+#: Words that mark a GET as a reading (``state``, ``lock_state``, ``get_level``). A GET
+#: is a read only when its name has one of these and none of :data:`ACTION_WORDS`:
+#: ``lock_state`` reads the lock, ``open_garage`` and ``relay`` are actions.
+READ_WORDS = frozenset({
+    "state", "status", "get", "info", "list", "read", "reading", "readings", "level",
+    "levels", "usage", "check", "is", "temp", "temperature", "humidity", "battery",
+    "version", "health", "ping", "query", "show", "current", "sensor", "sensors", "stats",
+    "metrics", "energy", "value", "values", "mode", "position", "config", "settings",
+    "details", "describe", "presence", "motion", "snapshot", "image", "history", "events",
+    "log", "logs", "uptime", "firmware", "signal", "rssi", "count", "load", "weather"})
 #: The environment a program run by an argv recipe gets, besides its own ``env``.
 ARGV_ENV = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT",
             "USERPROFILE", "APPDATA", "LOCALAPPDATA", "COMSPEC", "PATHEXT")
@@ -148,11 +157,12 @@ def _templated(value: Any) -> bool:
 
 def _floor(kind: str, recipe: dict, cname: str = "") -> str:
     if kind == "http":
-        # Many plugs and relays switch on a plain GET: a cap named for an
-        # action is an action, whatever the method.
+        # Many plugs and relays switch on a plain GET: only a GET named as a
+        # reading is a read.
         words = cname.split("_")
-        acts = bool(set(words) & ACTION_WORDS) or cname in ACTION_NAMES or words[0] == "set"
-        return "read" if recipe["method"] in _READ_METHODS and not acts else "write"
+        reads = recipe["method"] in _READ_METHODS and bool(set(words) & READ_WORDS) \
+            and not set(words) & ACTION_WORDS
+        return "read" if reads else "write"
     return "exec" if kind == "argv" else "write"
 
 
@@ -1189,6 +1199,11 @@ class DevkitPlugin(Plugin):
             raise ArgError(f"no cap {cap!r}; it has {sorted(spec['caps'])}")
         if args is not None and not isinstance(args, dict):
             raise ArgError("args is an object")
+        if definition is not None and secrets_of({"caps": {cname: spec["caps"][cname]}}):
+            # A draft's vars are the caller's: with a secret in it, the caller
+            # could send that secret anywhere. Define it (admin), then test it.
+            raise ArgError(f"{cname} uses a secret: define the device first, then "
+                           "devkit.test with device=<name>")
         res, secrets = await self._run(spec, cname, dict(args or {}))
         return {"cap": f"{spec['type']}.{cname}", "risk": spec["caps"][cname]["risk"],
                 **mask(res, secrets)}

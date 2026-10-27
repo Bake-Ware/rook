@@ -305,6 +305,9 @@ def test_worker_secret_grants_name_vault_entries_for_a_worker(tmp_path):
     for bad in (["tok-123456"], ["not-in-vault"], ["Bad Name"]):
         with pytest.raises(SettingsError, match="vault names"):
             svc.set("devkit.secrets", bad, scope="worker", target="box")
+    with pytest.raises(SettingsError, match="vault is unavailable"):
+        _svc(tmp_path / "novault", node=node).set("devkit.secrets", ["front-door.token"],
+                                                  scope="worker", target="box")
     svc.set("devkit.secrets", ["front-door.token"], scope="worker", target="other-box")
     svc.reset("devkit.secrets", scope="worker", target="box")
     assert svc.worker_secrets("w1", ["front-door.token"])["missing"] == ["front-door.token"]

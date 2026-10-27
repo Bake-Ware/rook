@@ -68,8 +68,8 @@ A definition can't make a cap look safer than what it does:
 
 | Recipe | Lowest risk |
 |---|---|
-| http GET / HEAD | read |
-| a GET/HEAD cap named for an action (`turn_on`, `disarm`, `set_level`, `lock`) | write |
+| http GET / HEAD named as a reading (`state`, `get_level`, `lock_state`) with no action verb | read |
+| any other GET / HEAD (`open_garage`, `relay`, `turn_on`, `set_level`): plugs switch on GET | write |
 | any other HTTP method, tcp, udp | write |
 | argv (runs a program) | exec |
 
@@ -134,7 +134,8 @@ and a short pointer in the house agent's own instructions
    (`settings.set devkit.secrets`), which the trust map treats as the admin
    change it is.
 5. Draft the definition; `devkit.test` each read cap until the replies and
-   extracts are right; test action caps only with the person's go-ahead
+   extracts are right (a cap that uses a secret only after `devkit.define`:
+   a draft's host is the caller's to pick, so a draft never gets a secret); test action caps only with the person's go-ahead
    (testing unlock unlocks).
 6. `devkit.define`, check the device on the band (`rook_workers`), call its
    state, and tell the person what they can now say.

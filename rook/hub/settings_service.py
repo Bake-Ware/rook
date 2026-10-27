@@ -801,8 +801,10 @@ class SettingsService:
         """A grant lists vault *names* that exist. A value is refused: a
         ``{{secret:…}}`` written into the call's args reaches here already
         filled in, and must not be stored in plain text in the settings."""
+        if self.vault is None:
+            raise SettingsError(f"{key}: the vault is unavailable on this hub")
         known = None
-        if self.vault is not None and hasattr(self.vault, "list"):
+        if hasattr(self.vault, "list"):
             known = {str(r.get("name")) for r in self.vault.list() if isinstance(r, dict)}
         for name in value or []:
             if not isinstance(name, str) or not _VAULT_NAME.match(name) \

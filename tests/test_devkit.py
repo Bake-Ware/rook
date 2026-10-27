@@ -124,12 +124,12 @@ def test_declared_risk_never_goes_under_the_recipe_floor():
         "on": {"risk": "read", "http": {"method": "PUT", "url": "http://h/on"}},
         "blink": {"risk": "read", "udp": {"host": "h", "port": 9, "send": "blink"}},
         "cli": {"risk": "write", "argv": {"argv": ["true"]}},
-        "peek": {"risk": "read", "tags": ["sensitive"], "http": {"url": "http://h/cam"}},
+        "snapshot": {"risk": "read", "tags": ["sensitive"], "http": {"url": "http://h/cam"}},
     }}
     caps = normalize(d)["caps"]
     assert caps["on"]["risk"] == "write" and caps["blink"]["risk"] == "write"
     assert caps["cli"]["risk"] == "exec"
-    assert caps["peek"] == {"http": caps["peek"]["http"], "args": {}, "risk": "read",
+    assert caps["snapshot"] == {"http": caps["snapshot"]["http"], "args": {}, "risk": "read",
                             "tags": ["sensitive"]}
 
 
@@ -426,10 +426,15 @@ async def test_test_runs_a_draft_and_secrets_must_be_granted(worker, lock):
         assert reply["ok"] and reply["result"]["value"] == {"locked": True, "battery": 87}
         assert reply["result"]["cap"] == "lock.state" and reply["result"]["risk"] == "read"
         assert _plugin(w).devices() == []             # a draft is never saved
-        # A device that echoes the credential back never shows it.
-        draft["caps"]["echo"] = {"http": {"url": "http://{host}/echo-token", "headers": {
+        # A draft's vars are the caller's: a cap using a secret is tested only once defined.
+        draft["caps"]["get_echo"] = {"http": {"url": "http://{host}/echo-token", "headers": {
             "Authorization": "Bearer {secret:front-door.token}"}}}
-        reply = await _call(w, "devkit.test", definition=draft, cap="echo")
+        reply = await _call(w, "devkit.test", definition=draft, cap="get_echo")
+        assert reply["ok"] is False and "define the device first" in reply["error"]
+        assert w.secret_asks == []
+        # A device that echoes the credential back never shows it.
+        assert (await _call(w, "devkit.define", definition=draft))["ok"]
+        reply = await _call(w, "devkit.test", device="front-door", cap="get_echo")
         assert TOKEN not in json.dumps(reply)
         assert reply["result"]["body"]["you_sent"] == "Bearer {secret:front-door.token}"
         # Not granted to this worker: defined anyway, with a note how to grant it.
@@ -525,6 +530,15 @@ def test_get_caps_named_for_an_action_are_actions():
     for name in ("turn_on", "lock", "set_level"):
         assert caps[name]["risk"] == "write" and caps[name]["tags"] == ["physical"], name
     assert caps["lock_state"]["risk"] == "read" and caps["power_usage"]["risk"] == "read"
+    # Only a GET named as a reading is a read: open_garage, relay, power_cycle are actions.
+    more = normalize({"name": "relay", "type": "plug", "caps": {n: {"risk": "read", "http": {
+        "url": "http://h/x"}} for n in ("open_garage", "lock_door", "power_cycle", "run_scene",
+                                       "relay", "close_valve", "get_status", "is_on",
+                                       "door_status")}})["caps"]
+    assert {n: c["risk"] for n, c in more.items()} == {
+        "open_garage": "write", "lock_door": "write", "power_cycle": "write",
+        "run_scene": "write", "relay": "write", "close_valve": "write",
+        "get_status": "read", "is_on": "read", "door_status": "read"}
     assert caps["ping"]["tags"] == ["physical"] and caps["cli"]["tags"] == ["physical"]
 
 

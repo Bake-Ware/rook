@@ -15,7 +15,7 @@ refs: [references/tools.md]
 2. **Its local API.** The maker's developer docs, the web, the device's own status page. Prefer a documented local API (HTTP/JSON, a TCP line protocol) to a cloud one. No local API at all: say so and stop; don't guess at undocumented writes to a lock.
 3. **The delegate.** An always-on worker on the same network (`rook_workers`; not a laptop that sleeps). It must have the `devkit` plugin.
 4. **Credentials.** Never ask for a password in chat or by voice. Ask the person to store it under **Trust > Secrets** with a name you give (`front-door.token`). Then grant that name to the delegate: `rook_call(worker="rook", cap="settings.set", args={"key": "devkit.secrets", "value": ["front-door.token"], "scope": "worker", "target": "<delegate>"})`. The value is a list of vault **names** (add to what is there: `settings.get` first). It is an admin change: the trust map may ask the person.
-5. **Draft and test.** Write the definition (below) and run each read cap with `devkit.test(definition=…, cap="state")` until the reply and `extract` are right. **Testing an action does it**: test `lock` or `turn_on` only with the person's go-ahead, and never test `unlock`/`open` unless they ask you to, standing by.
+5. **Draft and test.** Write the definition (below) and run each read cap with `devkit.test(definition=…, cap="state")` until the reply and `extract` are right. A cap that uses a `{secret:…}` can't be tested from a draft (the draft's host would be yours to pick): define the device first, then `devkit.test(device="front-door", cap="state")`. **Testing an action does it**: test `lock` or `turn_on` only with the person's go-ahead, and never test `unlock`/`open` unless they ask you to, standing by.
 6. **Define and confirm.** `devkit.define(definition=…)`. The reply has the device's `worker_id`, caps with their risk, and `secrets_ready`. Check it on the band (`rook_workers(name="front-door")`), call its state cap on the device itself (`rook_call(worker="front-door", cap="lock.state")`), and tell the person what they can now ask for.
 
 ## The definition
@@ -48,7 +48,7 @@ refs: [references/tools.md]
 
 ## Risk, honestly
 
-- A GET that switches something (many plugs and relays: Shelly, Tasmota) is an action, not a read: name the cap for what it does (`turn_on`, `unlock`) and it is at least `write`; never declare such a cap `read`.
+- Name every cap for what it does. A GET is a read only when its name says it reads (`state`, `status`, `get_…`, `…_level`, `battery`, `info`…) and has no action verb; anything else (`open_garage`, `relay`, `turn_on`, `set_level`) is at least `write`, because many plugs and relays (Shelly, Tasmota) switch on a plain GET.
 - The host and port come from `vars` only; a cap's args can't pick where it goes.
 - Reads are `read` (only GET/HEAD can be). Everyday reversible actions (a light, a volume) stay `write`. An action that matters if it happens at the wrong time (unlock, open the garage, disarm an alarm, turn off a freezer) is `"risk": "exec"`; add `"tags": ["destructive"]` if it can't be undone, `["sensitive"]` for a camera snapshot. The plugin never lets a cap go below its recipe's floor and tags every action `physical`; the trust map and approvals do the rest. Don't try to route around them.
 
