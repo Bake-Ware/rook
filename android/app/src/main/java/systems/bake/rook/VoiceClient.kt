@@ -70,6 +70,8 @@ class VoiceClient(
         fun onVoices(names: List<String>) {}
         /** "Go to sleep for 10 minutes": don't wake on the wake word for this long. */
         fun onQuiet(ms: Long) {}
+        /** Settings > Debug: show speaker ID; one line per utterance ([SpeakerDebug.line]). */
+        fun onSpeaker(line: String) {}
     }
     companion object { const val SR_IN = 16000; const val FRAME_BYTES = 640; const val PLAY_TAIL_MS = 200L }
     private data class Packet(val turn: Int, val sr: Int, val bytes: ByteArray)
@@ -148,7 +150,8 @@ class VoiceClient(
                     .put("barge", "confirm")
                     .put("expressive", prefs.getBoolean(PREF_EXPRESSIVE, true))
                     .put("mode", mode.id).apply { if (modePrompt.isNotBlank()) put("mode_prompt", modePrompt) }
-                    .apply { if (thinking) put("thinking", true) }.toString())
+                    .apply { if (thinking) put("thinking", true) }
+                    .apply { if (prefs.getBoolean(SpeakerDebug.PREF, false)) put("speaker_debug", true) }.toString())
                 webSocket.send(JSONObject().put("type", "voice")
                     .put("voice", prefs.getString("voice_choice", VoiceCatalog.FALLBACK)).toString())
                 connected = true
@@ -198,6 +201,7 @@ class VoiceClient(
                     }
                     "voices" -> m.optJSONArray("names")?.let { a -> listener.onVoices((0 until a.length()).map { a.optString(it) }) }
                     "voice_models" -> listener.onVoiceModels(m.toString())
+                    "speaker" -> SpeakerDebug.line(m)?.let { listener.onSpeaker(it) }
                     "tool" -> listener.onTool(m.optString("title"), m.optString("status"))
                     "error" -> if (m.optString("code") == "unknown_mode") { refuse(m.optString("msg")); return } else listener.onError(m.optString("msg"))
                 }
