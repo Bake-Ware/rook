@@ -59,4 +59,6 @@ dependencies {
     implementation "androidx.wear.protolayout:protolayout:1.1.0"
     implementation "androidx.wear.protolayout:protolayout-material:1.1.0"
     implementation "com.google.guava:guava:33.2.1-android"
+
+    testImplementation "junit:junit:4.13.2"
 }

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Rook in one flat color, tinted by state (Talk.Phase): the talk button and the tile. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="60" android:viewportHeight="60">
+  <group android:translateX="-20" android:translateY="-23">
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M28,24 L36,24 L36,32 L40,32 L40,24 L48,24 L48,32 L52,32 L52,24 L60,24 L60,32 L64,32 L64,24 L72,24 L72,34 L69,37 L63,44 L59,60 L62,66 L68,71 L74,75 L74,82 L26,82 L26,75 L32,71 L38,66 L41,60 L37,44 L31,37 L28,34 Z" />
+  </group>
+</vector>

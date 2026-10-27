@@ -3,4 +3,5 @@
     <string name="app_name">Rook</string>
     <string name="tile_label">Talk to Rook</string>
     <string name="channel_name">Rook voice</string>
+    <string name="notif_text">Tap to open the conversation</string>
 </resources>
