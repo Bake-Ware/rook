@@ -57,7 +57,7 @@ a stop: it saves nothing.
 
 | Kind | Fires when | Says | Resolves when |
 |---|---|---|---|
-| `work_signal` | A commit or PR is linked to an open task: by hand (`link` kind `commit`, or a `url` with `/pull/` or `/commit/`), or found in a `rook_call` reply (below); or a console room linked to the task is closed | "If the work is finished: update state done with attrs.outcome" | The task leaves `in_progress`, or the signal expires |
+| `work_signal` | A commit or PR is linked to an open task: by hand (`link` kind `commit`, or a `url` with `/pull/` or `/commit/`), or found in a `rook_call` reply (below); or a console room linked to the task is closed | "If the work is finished: update state done with attrs.outcome" (a PR: "keep it in_progress until the PR merges", see `pr_merged`) | The task leaves `in_progress`, or the signal expires |
 | `handoff_saved` | A handoff is linked to a task still `in_progress` | "Stopping? release it (the handoff counts) or set paused/blocked/done" | Same |
 | `idle_claim` | Claimed, `in_progress`, idle past `hygiene_idle_minutes`, with work since the last handoff. Past `hygiene_dirty_hours` the claim is also marked dirty | "Stopped? save a handoff, link evidence, record knowledge, set the state" | The claimant is active again, releases, or the task leaves `in_progress` |
 | `release_proposed` | The same claim idle past `hygiene_release_hours` (to the claimant and, unaddressed, to the deck) | "Release it with a handoff: `rook_task release data {actor, handoff}`" | Same |
@@ -68,7 +68,6 @@ a stop: it saves nothing.
 | `pr_merged` | An `in_progress` task's linked pull requests are all merged or closed (one merged): seen by the GitHub sweep, or at once when the hub merges it (huddle merge vote). The merge commit is linked as **evidence** (automatic link) | "Finished? update state done with attrs.outcome. More to do? Link the next PR" | The task leaves `in_progress`, or the link is retracted |
 | `pr_ci_failed` | An open linked pull request's checks failed at its head (sweep, `in_progress` tasks). A new failing head rewrites the finding and delivers it again | "Fix it before asking for a merge, marking done or reporting it green: gh pr checks N" | CI is no longer failing (running or green), the PR closes, or the task leaves `in_progress` |
 | `pr_open_done` | A `done` task (within `hygiene_done_window_days`) links a pull request that is still open (to the claimants and whoever set done) | "Reopen it until the PR merges, or retract the link" | The PR merges or closes, the link is retracted, or the task leaves `done` |
-
 
 ### Pull requests behind tasks (`knowledge/prs.py`)
 
