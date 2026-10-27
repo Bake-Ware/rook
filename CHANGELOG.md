@@ -86,7 +86,9 @@ version was `0.1.0`.
   `device.apps` lists them, `device.intent` starts common actions (share, dial, directions, map,
   timer, alarm, settings pages, web search, draft email or text, camera; never sends or calls),
   `device.sound` reads and sets volume, ringer and Do Not Disturb, and `media.now` /
-  `media.control` show and drive what is playing. (manual: phones-and-tablets)
+  `media.control` show and drive what is playing. `device.open_url`, `device.launch` and
+  `device.intent` add `may_be_blocked` when Android 10+ may silently refuse a start from the
+  background (no overlay permission and no accessibility service). (manual: phones-and-tablets)
 - Phone app **Chat with <assistant>** widget (Bake, 2026-10-27: "push to talk, but it shows
   the conversation, like it does in the app"): a resizable widget with a Talk bar under the
   recent conversation, drawn like the app's Chat tab (bubbles, interrupted replies faded, newest

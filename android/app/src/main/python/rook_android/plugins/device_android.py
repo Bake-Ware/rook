@@ -481,7 +481,9 @@ class AndroidDevicePlugin(Plugin):
     @capability("open_url", risk="exec", scope="local")
     async def _open_url(self, url: str, screen: bool = False) -> dict:
         """Open a URL (or any Uri) in the default handler app. screen=true waits
-        for the app to come up and returns the screen (see ui.screen)."""
+        for the app to come up and returns the screen (see ui.screen).
+        may_be_blocked=true: Android 10+ may not have shown it (Rook has neither
+        'Display over other apps' nor its accessibility service on)."""
         return await _then_screen(lambda: self._start_view(url), screen)
 
     def _start_view(self, url: str) -> dict:
@@ -494,7 +496,7 @@ class AndroidDevicePlugin(Plugin):
             i = Intent(Intent.ACTION_VIEW, Uri.parse(str(url)))
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ctx.startActivity(i)
-            return {"ok": True, "url": str(url)}
+            return _bal({"ok": True, "url": str(url)}, ctx)
         except Exception as e:
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
@@ -532,7 +534,7 @@ class AndroidDevicePlugin(Plugin):
             Intent = jclass("android.content.Intent")
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ctx.startActivity(i)
-            return {"ok": True, "package": pkg, "ts": time.time()}
+            return _bal({"ok": True, "package": pkg, "ts": time.time()}, ctx)
         return await _then_screen(go, screen)
 
     def _launcher_apps(self, ctx) -> list[dict]:
@@ -624,7 +626,7 @@ class AndroidDevicePlugin(Plugin):
             out = {"ok": True, "kind": str(kind).strip().lower(), "action": spec["action"]}
             if handler and handler != "android":
                 out["app"] = handler
-            return out
+            return _bal(out, ctx)
         return await _then_screen(go, screen)
 
     @capability("sound", risk="exec", tags=("physical",), scope="local")
@@ -698,6 +700,26 @@ class AndroidDevicePlugin(Plugin):
                 "dnd": DND.get(int(nm.getCurrentInterruptionFilter()), "unknown")
                 if VER.SDK_INT >= 23 else "unknown",
                 "dnd_access": access}
+
+
+def _bal(out: dict, ctx) -> dict:
+    """Android 10+ may silently refuse an activity started from the background.
+    Rook is exempt while it may draw over other apps or its accessibility
+    service is on; without either, say the start may not have shown (the reply
+    keeps ok true: startActivity itself did not fail)."""
+    try:
+        if int(jclass("android.os.Build$VERSION").SDK_INT) < 29:
+            return out
+        if jclass("android.provider.Settings").canDrawOverlays(ctx):
+            return out
+        if jclass("systems.bake.rook.HidAccessibilityService").isEnabled():
+            return out
+    except Exception:
+        return out
+    out["may_be_blocked"] = True
+    out["note"] = ("Android may not show this: grant 'Display over other apps' or the "
+                   "accessibility service in the Rook app; screen=true shows what opened")
+    return out
 
 
 async def _then_screen(go, screen) -> dict:

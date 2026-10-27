@@ -220,3 +220,19 @@ def test_media_control_rejects_unknown_actions(mods):
     assert p._now()["error"] == "not an Android host"
     assert set(mods.media.KEYS) >= {"play", "pause", "toggle", "next", "previous"}
     json.dumps(mods.media.STATES)
+
+
+def test_background_start_warns_only_without_an_exemption(mods, monkeypatch):
+    flags = {"sdk": 34, "overlay": False, "a11y": False}
+    classes = {"android.os.Build$VERSION": lambda: SimpleNamespace(SDK_INT=flags["sdk"]),
+               "android.provider.Settings": lambda: SimpleNamespace(
+                   canDrawOverlays=lambda ctx: flags["overlay"]),
+               "systems.bake.rook.HidAccessibilityService": lambda: SimpleNamespace(
+                   isEnabled=lambda: flags["a11y"])}
+    monkeypatch.setattr(mods.dev, "jclass", lambda n: classes[n]())
+    out = mods.dev._bal({"ok": True, "url": "x"}, object())
+    assert out["ok"] and out["may_be_blocked"] is True and "Display over other apps" in out["note"]
+    for k, v in (("overlay", True), ("a11y", True), ("sdk", 28)):
+        f = {"sdk": 34, "overlay": False, "a11y": False, k: v}
+        flags.update(f)
+        assert mods.dev._bal({"ok": True}, object()) == {"ok": True}
