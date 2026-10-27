@@ -66,6 +66,7 @@ android {
         buildConfigField "String", "WAKE_MODEL", "\"${wakeModel}\""
         buildConfigField "String", "WAKE_PHRASE", "\"${wakePhrase}\""
         resValue "string", "voice_title", assistantName
+        resValue "string", "widget_talk_name", "Talk to ${assistantName}"
         resValue "string", "hint_message", "Message ${assistantName}…"
         resValue "string", "wake_enabled", wakePhrase ? "Wake word: \u201c${wakePhrase}\u201d" : "Wake word (no model in this build)"
         resValue "string", "st_standby", wakePhrase ? "standby · \u201c${wakePhrase}\u201d" : "standby"

@@ -192,6 +192,34 @@
             android:taskAffinity="systems.bake.rook.attention" />
         <receiver android:name=".AttentionReceiver" android:exported="false" />
 
+        <!-- Home-screen widgets (RookWidgets): Talk, and what is waiting on you. -->
+        <receiver
+            android:name=".TalkWidget"
+            android:exported="true"
+            android:label="@string/widget_talk_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_talk_info" />
+        </receiver>
+        <receiver
+            android:name=".WaitingWidget"
+            android:exported="true"
+            android:label="@string/widget_waiting_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_waiting_info" />
+        </receiver>
+        <!-- The Talk widget's tap: starts the voice session from the foreground, then closes. -->
+        <activity
+            android:name=".WidgetTalkActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <receiver android:name=".ApkUpdateReceiver" android:exported="false" />
         <receiver android:name=".ReplyReceiver" android:exported="false" />
         <!-- Voice timers: AlarmManager target that rings and speaks a finished timer. -->

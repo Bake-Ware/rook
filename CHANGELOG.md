@@ -9,6 +9,11 @@ version was `0.1.0`.
 ## Unreleased
 
 ### Added
+- Phone app home-screen widgets: **Talk to <assistant>** (push-to-talk to the house agent; a
+  tap while it speaks stops it) and **Waiting on you** (the cards waiting on you, urgent and
+  failed first, each opening its card; a mic button; more rows when made taller). Both read the
+  phone's own card book and voice state, so they work offline and update as cards change.
+  (manual: phones-and-tablets)
 - Agent whiteboards (agent sessions, Bake's design decision 13): each claimed task gets a
   living page the hub keeps from the agent's own calls (each call's why, the machine, the
   result; repeats collapse), consoles and their summaries, handoffs, secrets used (by name) and

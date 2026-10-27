@@ -30,6 +30,8 @@ object AttentionStore {
     private const val TAG = "RookAttention"
     private val lock = Any()
     private var dir: File? = null
+    /** The app, once the store has loaded: what [changed] redraws the home-screen widgets with. */
+    private var app: Context? = null
     private val book = CardBook()
     private val log = EventLog()
     private val quiet = QuietFeed()
@@ -70,6 +72,7 @@ object AttentionStore {
         defaults = runCatching { ctx.assets.open("attention_rules.json").use { JSONObject(String(it.readBytes(), Charsets.UTF_8)) } }
             .getOrElse { JSONObject() }
         rules = AttentionRules.effective(defaults, override)
+        app = ctx.applicationContext
         dir = d
     }
 
@@ -87,7 +90,7 @@ object AttentionStore {
 
     private fun event(type: String, fields: JSONObject = JSONObject()) { log.add(type, fields, now()); saveEvents() }
 
-    private fun changed() { main.post { listeners.forEach { runCatching { it.run() } } } }
+    private fun changed() { main.post { listeners.forEach { runCatching { it.run() } }; app?.let { RookWidgets.refresh(it) } } }
     fun addListener(l: Runnable) { listeners.add(l) }
     fun removeListener(l: Runnable) { listeners.remove(l) }
 
