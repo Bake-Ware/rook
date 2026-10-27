@@ -79,10 +79,11 @@ object ScreenModel {
         val active = wins.indexOfFirst { it.active }
         if (active < 0) return emptyList()
         val floor = wins[active].layer
-        val app = wins[active].pkg
+        // Unknown app in front: read only its own window, never others' above it.
+        val app = wins[active].pkg ?: return listOf(active)
         val above = wins.indices.filter { i ->
             i != active && wins[i].type == TYPE_APPLICATION && wins[i].layer > floor &&
-                (app == null || wins[i].pkg == app)
+                wins[i].pkg == app
         }.sortedByDescending { wins[it].layer }
         return above + active
     }
@@ -243,6 +244,26 @@ object ScreenModel {
 
     /** Visible editable fields, top to bottom. */
     fun fields(roots: List<SNode>): List<SNode> = flatten(roots).filter { it.visible && it.editable }
+
+    /**
+     * Which of [hits] ui.type uses: [index] (0 = top), or with index < 0 the
+     * only one. Returns the position, or null with the reason when there are
+     * several and no index, none, or the index is out of range.
+     */
+    fun chooseField(hits: List<SNode>, index: Int): Pair<Int?, String?> = when {
+        index < 0 && hits.size > 1 -> null to "${hits.size} fields match; pass index (0 = top)"
+        hits.isEmpty() -> null to "no field matches"
+        index < 0 -> 0 to null
+        index >= hits.size -> null to "only ${hits.size} matching field(s), index $index out of range"
+        else -> index to null
+    }
+
+    /** The text to set: [text], or the field's value plus it; null when appending to a password (unreadable). */
+    fun newText(f: SNode, text: String, append: Boolean): String? = when {
+        !append -> text
+        f.password -> null
+        else -> (f.value() ?: "") + text
+    }
 
     /** How a field is named in a not-found reply: label, hint or id. */
     fun fieldName(n: SNode): String =

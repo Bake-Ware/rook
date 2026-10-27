@@ -184,31 +184,23 @@ class HidAccessibilityService : AccessibilityService() {
         val roots = snapshot()
         val hits = ScreenModel.findFields(roots, label, id, contains)
         val out = JSONObject()
-        if (index < 0 && hits.size > 1) {
-            // Never pick one of several silently: name them and ask for index.
+        val (pick, why) = ScreenModel.chooseField(hits, index)
+        if (pick == null) {
             val names = JSONArray()
-            hits.take(10).forEach { names.put(JSONObject().put("label", ScreenModel.fieldName(it))
-                .put("bounds", JSONArray(it.bounds.toList()))) }
-            return out.put("ok", false).put("error", "${hits.size} fields match; pass index (0 = top)")
-                .put("matches", hits.size).put("fields", names).toString()
-        }
-        val pick = if (index < 0) 0 else index
-        if (pick >= hits.size) {
-            val names = JSONArray()
-            ScreenModel.fields(roots).take(10).forEach { names.put(ScreenModel.fieldName(it)) }
-            return out.put("ok", false)
-                .put("error", when {
-                    hits.isNotEmpty() -> "only ${hits.size} matching field(s), index $pick out of range"
-                    label == null && id == null -> if (names.length() == 0) "no text field on screen"
-                        else "no focused field; name one with label or id"
-                    else -> "no field matches"
-                })
-                .put("matches", hits.size).put("fields", names).toString()
+            (if (hits.size > 1) hits else ScreenModel.fields(roots)).take(10).forEach {
+                names.put(JSONObject().put("label", ScreenModel.fieldName(it))
+                    .put("bounds", JSONArray(it.bounds.toList())))
+            }
+            val err = if (hits.isEmpty() && label == null && id == null) {
+                if (names.length() == 0) "no text field on screen" else "no focused field; name one with label or id"
+            } else why
+            return out.put("ok", false).put("error", err).put("matches", hits.size).put("fields", names).toString()
         }
         val f = hits[pick]
         val node = f.ref as? AccessibilityNodeInfo ?: return out.put("ok", false).put("error", "field went away").toString()
+        val now = ScreenModel.newText(f, text, append)
+            ?: return out.put("ok", false).put("error", "can't append to a password field (its text can't be read); type it whole").toString()
         node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-        val now = if (append) (f.value() ?: "") + text else text
         val args = Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, now)
         }

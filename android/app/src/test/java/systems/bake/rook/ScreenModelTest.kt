@@ -101,6 +101,12 @@ class ScreenModelTest {
             SWindow(ScreenModel.TYPE_APPLICATION, 20, true, "com.app"),
         )
         assertEquals(listOf(2, 1, 3), ScreenModel.pickWindows(apps))
+        // The app in front is unknown: only its own window, nothing above it.
+        val unknown = listOf(
+            SWindow(ScreenModel.TYPE_APPLICATION, 22, false, "com.app"),
+            SWindow(ScreenModel.TYPE_APPLICATION, 20, true, null),
+        )
+        assertEquals(listOf(1), ScreenModel.pickWindows(unknown))
         assertEquals(emptyList<Int>(), ScreenModel.pickWindows(wins.map { SWindow(it.type, it.layer, false) }))
         assertEquals(listOf(0), ScreenModel.pickWindows(listOf(SWindow(ScreenModel.TYPE_APPLICATION, 1, true))))
     }
@@ -133,5 +139,41 @@ class ScreenModelTest {
         val focused = listOf(SNode(children = listOf(SNode(editable = true, id = "a"), SNode(editable = true, id = "b", focused = true))))
         assertEquals("b", ScreenModel.findFields(focused, null, null, false).single().id)
         assertEquals("Search", ScreenModel.fieldName(ScreenModel.findFields(roots, null, "q", false).single()))
+    }
+
+    @Test fun twoFieldsWithTheSameCaptionNeedAnIndex() {
+        // Two "Name" captions, each with its field below (a form with a billing and a shipping block).
+        val roots = listOf(SNode(children = listOf(
+            SNode(text = "Name", bounds = b(40, 100, 300, 140)),
+            SNode(editable = true, id = "app:id/billing", bounds = b(40, 150, 1040, 230)),
+            SNode(text = "Name", bounds = b(40, 600, 300, 640)),
+            SNode(editable = true, id = "app:id/shipping", bounds = b(40, 650, 1040, 730)),
+        )))
+        val hits = ScreenModel.findFields(roots, "Name", null, false)
+        assertEquals(listOf("app:id/billing", "app:id/shipping"), hits.map { it.id })
+        val (none, why) = ScreenModel.chooseField(hits, -1)
+        assertNull(none)
+        assertEquals("2 fields match; pass index (0 = top)", why)
+        assertEquals("app:id/shipping", hits[ScreenModel.chooseField(hits, 1).first!!].id)
+        assertEquals(0, ScreenModel.chooseField(hits, 0).first)
+        assertNull(ScreenModel.chooseField(hits, 2).first)
+        assertEquals(0, ScreenModel.chooseField(hits.take(1), -1).first)       // one: no index needed
+        assertEquals("no field matches", ScreenModel.chooseField(emptyList(), -1).second)
+        // A caption more than 300 px above a field does not name it.
+        val far = listOf(SNode(children = listOf(
+            SNode(text = "Notes", bounds = b(40, 100, 300, 140)),
+            SNode(editable = true, id = "app:id/far", bounds = b(40, 460, 1040, 540)),
+        )))
+        assertTrue(ScreenModel.findFields(far, "Notes", null, false).isEmpty())
+    }
+
+    @Test fun appendNeverGuessesAPassword() {
+        val pw = SNode(text = "••••", editable = true, password = true)
+        val plain = SNode(text = "hello", editable = true)
+        val empty = SNode(text = "Search", editable = true, hint = "Search")
+        assertNull(ScreenModel.newText(pw, "x", true))
+        assertEquals("x", ScreenModel.newText(pw, "x", false))
+        assertEquals("hello world", ScreenModel.newText(plain, " world", true))
+        assertEquals("q", ScreenModel.newText(empty, "q", true))                 // hint is not text
     }
 }
