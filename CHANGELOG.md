@@ -21,6 +21,7 @@ version was `0.1.0`.
   phone with `attention.rules_set` in front of the phone's own rules. `attention.push_rules` is now
   on by default and sends nothing until there is something to say. Agents can read the sorting,
   not change it. Settings `attention.feed_phone` (on) and `attention.feed_pull_s` (60).
+  (manual: phone-attention)
 - The dashboard chat knows your page: each message from the @home dock (and the Home agent
   page's chat) carries the page you are on, the text you selected and what is on screen, and
   the house agent gets page tools that run in your browser with your own sign-in: `page_go`
