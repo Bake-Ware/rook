@@ -48,7 +48,7 @@ export async function mountTokens(root){
   const nameOf=uid=>((data.people||[]).find(p=>p.id===uid)||{}).name||uid||'—';
   function showSecret(token){
     const c=btn('Copy token','soft',()=>copy(token,c),{'data-copy-token':''});
-    dialog('Copy your new token',h('p',{text:'This secret is shown once. Copy it before closing.'}),h('pre',{class:'token-secret',tabindex:'0',text:token}),h('div',{class:'mg-actions end'},c));
+    dialog('Copy your new token',h('p',{text:'This secret is shown once. Copy it before closing.'}),h('pre',{class:'token-secret',tabindex:'0',text:token,'data-secret':''}),h('div',{class:'mg-actions end'},c));
   }
   function picture(id){
     const v=data.avatars[id],attrs={class:'mg-avatar','aria-label':'Change picture for '+id,title:'Change picture','data-picture':id,onclick:()=>{identity=id;file.click();}};

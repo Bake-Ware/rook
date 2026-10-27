@@ -45,6 +45,20 @@ between pages until you close it. Only owners see it.
 While the agent works the panel says it is thinking; if it cannot answer, the
 panel says why and points at the form.
 
+The chat knows the page you are on. Each message carries the page, any text
+you selected on it (even after you click into the chat box) and what is on
+screen, so you can say "what does this mean?" or "fix the second one". The
+agent can also act on that page, in your browser and with your own sign-in:
+open another page, scroll to and highlight something, fill in a field (it never
+submits for you) or press a button. You see a short note at the bottom of the
+screen for each thing it does, and each one is in the journal under the house
+agent. It never presses or types anything on Approvals, Trust map, Decisions,
+Secrets, API tokens, People or Account & access, never presses a delete,
+revoke, approve or similar button, and never opens a link that leaves the
+dashboard: it tells you to do those yourself. Password fields and revealed
+secrets are never read. Turn it off with **Act on the page you chat from**
+(Settings, Home agent).
+
 The page also shows its recent activity, so you can see what it was asked and
 what it said. With **Read-only tools** on, it can search the knowledge wiki
 before answering. Jobs can use it as a step too ([[manual-jobs]]).

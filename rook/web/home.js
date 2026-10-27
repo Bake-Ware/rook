@@ -3,11 +3,13 @@
 // ever a vault reference ({{secret:name}}); this page never sees a key.
 // The chat panel is the 1:1 huddle with the agent (a chaired huddle with no
 // roles, through /account/huddle/api), so the conversation is also on the
-// Huddles page.
+// Huddles page. Each message carries the page it was sent from, and the agent's
+// page actions come back with the chat's poll (page-agent.js, home/page.py).
 // Versioned like this module (?v=...), so a stale edge cache cannot pair it
 // with an old manage.js.
 const {h, ago, useCss, btn, table, two, info} = await import('/account/bands/assets/manage.js' + new URL(import.meta.url).search);
 const {hapi, voicePicker} = await import('/account/huddle/assets/huddles.js' + new URL(import.meta.url).search);
+const pageAgent = await import('/account/settings/assets/page-agent.js' + new URL(import.meta.url).search);
 
 const API='/account/settings/api';
 const VIA={chat:'Chat',ask:'home.ask',test:'Test','huddle-chair':'Huddle','huddle-close':'Huddle summary',job:'Job'};
@@ -291,7 +293,17 @@ export function homeChat({toForm,status}){
       .sort((a,b)=>(b.created||0)-(a.created||0));
     return mine.length?mine[0].room:null;
   }
-  const read=()=>hapi('view',{room,since_seq:seq,limit:100});
+  // The agent's page tools ride the poll: each runs here, then its answer goes back.
+  const pending=[];let acting=false;
+  async function actOnPage(v){
+    pending.push(...((v&&v.page_actions)||[]));
+    if(acting)return;
+    acting=true;
+    try{while(pending.length){const a=pending.shift(),r=await pageAgent.run(a);
+      await hapi('page',{room,id:a.id,ok:r.ok,result:r.result,page:r.page}).catch(()=>{});}}
+    finally{acting=false;}
+  }
+  const read=()=>hapi('view',{room,since_seq:seq,limit:100,page:true}).then(v=>{actOnPage(v);return v;});
   // The round a message of ours started: done ends the wait, failed says why.
   function settle(v){
     if(!waiting)return;
@@ -347,7 +359,8 @@ export function homeChat({toForm,status}){
       if(!room){room=(await hapi('start',{title:name,roles:[]})).room;seq=0;loaded=true;
         sub.replaceChildren(h('a',{href:'#huddles?room='+encodeURIComponent(room),text:'In Huddles ↗'}));}
       const t0=Date.now();
-      const sent=await hapi('send',{room,text});
+      let page=null;try{page=pageAgent.snapshot();}catch{}
+      const sent=await hapi('send',{room,text,...(page?{page}:{})});
       box.value='';box.style.height='';
       wait(sent.seq,t0);
       const v=await read();render(v.messages||[]);settle(v);log.scrollTop=log.scrollHeight;schedule();

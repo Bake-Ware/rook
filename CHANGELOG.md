@@ -8,6 +8,19 @@ version was `0.1.0`.
 
 ## Unreleased
 
+### Added
+- The dashboard chat knows your page: each message from the @home dock (and the Home agent
+  page's chat) carries the page you are on, the text you selected and what is on screen, and
+  the house agent gets page tools that run in your browser with your own sign-in: `page_go`
+  (open a page), `page_point` (scroll to and highlight), `page_fill` (fill a field, never
+  submit), `page_click` (press a button) and `page_read`. Actions ride the chat's poll and
+  answer with a fresh snapshot; each is journaled as `home.page` (typed values only by
+  length). The page refuses clicks and typing on Approvals, Trust map, Decisions, Secrets,
+  API tokens, People and Account & access, delete/revoke/approve-style buttons and links off
+  the dashboard, and never reads password fields or revealed secrets. Setting
+  `home.page_tools` (on). Works on the front door, the plain chair and the persistent
+  session. (manual: home-agent)
+
 ### Changed
 - LG webOS TVs: `tv.power_on` now wakes TVs on Wi-Fi (it sent Wake-on-LAN only to the wired
   MAC, so it never woke them), waits until the TV answers and says why when it doesn't (including

@@ -6,6 +6,7 @@ Skipped without Playwright's Chromium unless ROOK_REQUIRE_BROWSER=1.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import socket
 import threading
@@ -83,6 +84,7 @@ def hub(tmp_path_factory):
             for k, v in values.items():
                 box["node"].settings.set(f"home.{k}", v, actor="human:op")
         asyncio.run_coroutine_threadsafe(go(), loop).result(10)
+    configure.box, configure.loop = box, loop     # for tests that swap the model
 
     try:
         yield f"http://127.0.0.1:{port}", configure
@@ -200,6 +202,137 @@ def test_the_dock_follows_the_operator_across_pages(browser, hub):
     assert panel["width"] >= PHONE["width"] - 20
     assert phone.errors == []
     phone.context.close()
+
+
+class _PageLLM:
+    """A model that uses the page tools: it opens Jobs, then answers."""
+    def __init__(self):
+        self.bodies = []
+
+    async def __call__(self, method, url, body, headers, timeout):
+        if url.endswith("/models"):
+            return 200, {"data": [{"id": "small-model"}]}
+        self.bodies.append(body)
+        if any(m.get("role") == "tool" for m in body["messages"]):
+            msg = {"role": "assistant", "content": "I opened Jobs for you."}
+        else:
+            msg = {"role": "assistant", "content": None, "tool_calls": [{
+                "id": "call_1", "type": "function",
+                "function": {"name": "page_go", "arguments": json.dumps({"page": "jobs"})}}]}
+        return 200, {"model": body["model"], "choices": [{"index": 0, "finish_reason": "stop",
+                                                          "message": msg}]}
+
+
+def test_the_house_agent_sees_the_page_and_acts_on_it(browser, hub):
+    """The dock sends the page, the selection and what is on screen; the agent's
+    page_go runs in the browser through the chat's poll and comes back."""
+    base, configure = hub
+    llm = _PageLLM()
+    node = configure.box["node"]
+    configure.loop.call_soon_threadsafe(setattr, node.plugin("home"), "_http", llm)
+    configure(enabled=True, base_url="http://llm.example:1234/v1", model="small-model")
+    page = _signed_in(browser, base, viewport={"width": 1280, "height": 900})
+    _open(page, base, "#workers")
+    page.locator(".hd-launch").click()
+    # Select the page title, then ask from the dock.
+    page.evaluate("""() => { const r = document.createRange();
+        r.selectNodeContents(document.getElementById('view-title'));
+        getSelection().removeAllRanges(); getSelection().addRange(r); }""")
+    page.fill(".hd-panel textarea", "open my jobs")
+    page.press(".hd-panel textarea", "Enter")
+    page.locator(".hd-panel .hc-text", has_text="I opened Jobs for you.").wait_for()
+    assert page.evaluate("document.body.dataset.view") == "jobs"
+    assert page.locator(".hd-panel").is_visible()       # the chat stayed open
+
+    first = llm.bodies[0]
+    assert "page_go" in {t["function"]["name"] for t in first.get("tools") or []}
+    said = "\n".join(str(m.get("content") or "") for m in first["messages"])
+    assert "Their page:\nPage: Workers (#workers)" in said and "Selected text: Workers" in said
+    # The tool's answer to the model: done, with the page it landed on.
+    tool = json.loads(next(m for m in llm.bodies[1]["messages"] if m.get("role") == "tool")["content"])
+    assert tool["ok"] and tool["did"] == "opened Jobs" and "Page: Jobs (#jobs)" in tool["page"]
+    # Journaled as the house agent.
+    rows = node.journal.query(cap_prefix="home.page")
+    assert len(rows) == 1 and rows[0]["ok"] and rows[0]["identity"] == "agent:home", rows
+    assert page.errors == []
+    page.context.close()
+
+
+def test_the_front_door_gets_the_page_too(browser, hub):
+    """Live hubs route the dock through the front door (home.front_door on): the
+    same page context and page tools reach that turn."""
+    base, configure = hub
+    llm = _PageLLM()
+    node = configure.box["node"]
+    configure.loop.call_soon_threadsafe(setattr, node.plugin("home"), "_http", llm)
+    configure(enabled=True, base_url="http://llm.example:1234/v1", model="small-model",
+              front_door=True)
+    try:
+        page = _signed_in(browser, base, viewport={"width": 1280, "height": 900})
+        _open(page, base, "#overview")
+        page.locator(".hd-launch").click()
+        page.fill(".hd-panel textarea", "show me my jobs")
+        page.press(".hd-panel textarea", "Enter")
+        page.locator(".hd-panel .hc-text", has_text="I opened Jobs for you.").wait_for()
+        assert page.evaluate("document.body.dataset.view") == "jobs"
+        first = llm.bodies[0]
+        names = {t["function"]["name"] for t in first.get("tools") or []}
+        assert {"page_go", "page_click", "do_action"} <= names     # the front door's own tools too
+        said = "\n".join(str(m.get("content") or "") for m in first["messages"])
+        assert "Their page:\nPage: Overview (#overview)" in said
+        assert page.errors == []
+        page.context.close()
+    finally:
+        configure(front_door=False)
+
+
+def test_the_page_refuses_what_the_person_must_do(browser, hub):
+    """page-agent.js on its own: no clicks or typing on pages that gate things,
+    no delete/approve-style buttons, no links off the dashboard."""
+    base, _ = hub
+    page = _signed_in(browser, base, viewport={"width": 1280, "height": 900})
+    _open(page, base, "#overview")
+    out = page.evaluate("""async () => {
+        const m = await import('/account/settings/assets/page-agent.js');
+        const box = document.getElementById('view-overview');
+        const add = (html) => { const d = document.createElement('div'); d.innerHTML = html;
+                                box.prepend(d); return d.firstChild; };
+        let pressed = 0;
+        add('<button type="button" id="ok-btn">Refresh list</button>').onclick = () => pressed++;
+        add('<button type="button" id="bad-btn">Delete everything</button>').onclick = () => pressed += 100;
+        add('<a id="off-link" href="/logout">Leave</a>');
+        add('<label>Name <input id="name-in"></label>');
+        add('<input id="pw-in" type="password" value="hunter2" aria-label="Password">');
+        add('<pre data-secret>rk_SHOWN_ONCE_123</pre>');
+        add('<strong class="pairing-code">PAIR-CODE-9</strong>');
+        const snap = m.snapshot();
+        const ref = id => snap.items.find(i => i.label === id || i.label === ({
+            'ok-btn': 'Refresh list', 'bad-btn': 'Delete everything', 'off-link': 'Leave',
+            'name-in': 'Name', 'pw-in': 'Password'})[id]).ref;
+        const r = {};
+        r.ok = await m.run({do: 'click', ref: ref('ok-btn')});
+        r.bad = await m.run({do: 'click', ref: ref('bad-btn')});
+        r.off = await m.run({do: 'click', ref: ref('off-link')});
+        r.fill = await m.run({do: 'fill', ref: ref('name-in'), value: 'Ada'});
+        r.pw = await m.run({do: 'fill', ref: ref('pw-in'), value: 'x'});
+        r.point = await m.run({do: 'point', text: 'Refresh list'});
+        r.pressed = pressed; r.name = document.getElementById('name-in').value;
+        r.pwShown = JSON.stringify(snap).includes('hunter2');
+        r.secretShown = /rk_SHOWN_ONCE_123|PAIR-CODE-9/.test(JSON.stringify(snap));
+        location.hash = '#vault'; await new Promise(res => setTimeout(res, 800));
+        const v = m.snapshot();
+        r.locked = v.locked;
+        r.vault = v.items.length ? await m.run({do: 'click', ref: v.items[0].ref}) : {ok: false, result: 'gates things'};
+        return r; }""")
+    assert out["ok"]["ok"] and out["pressed"] == 1, out
+    assert not out["bad"]["ok"] and "for the person" in out["bad"]["result"]
+    assert not out["off"]["ok"] and "leaves the dashboard" in out["off"]["result"]
+    assert out["fill"]["ok"] and out["name"] == "Ada"
+    assert not out["pw"]["ok"] and not out["pwShown"] and not out["secretShown"]
+    assert out["point"]["ok"]
+    assert out["locked"] and not out["vault"]["ok"] and "gates things" in out["vault"]["result"]
+    assert page.errors == []
+    page.context.close()
 
 
 def test_settings_restart_button_top_right(browser, hub, monkeypatch):

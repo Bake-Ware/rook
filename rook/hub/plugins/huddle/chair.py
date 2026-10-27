@@ -747,10 +747,15 @@ class Chair:
                 return await self._relay_tool(relay, name, args, rid, room, asker, text)
             if name in TABLE_TOOLS:
                 return await self._table_tool(name, args, room)
+            if name.startswith("page_") and page_tools:
+                return await home.page_bridge.act(room, name, args)
             return json.dumps({"ok": False, "error": f"unknown tool {name!r}"})
 
         tools = ([CALL_ON] if roster else []) + [ANSWER, PROPOSE] + self._table_tools(roster)
         asker = (self.store.round(rid) or {}).get("asker")
+        # A 1:1 from the dashboard chat: the person's page and the tools to act on it.
+        page_tools, page_text = self._page(home, room, asker) if not roster else ([], "")
+        tools += page_tools
         extra_rules = ""
         relay = self._relay()
         if relay is not None:
@@ -770,7 +775,8 @@ class Chair:
         msgs = self._chair_messages(home, cfg, roster, room,
                                     CHAIR_RULES + (" " + extra_rules if extra_rules else "")
                                     + (TABLE_RULES if self._table_tools(roster) else ""),
-                                    extra or "Respond to the newest message.", memory)
+                                    (extra or "Respond to the newest message.")
+                                    + ("\n\n" + page_text if page_text else ""), memory)
         res = await home.tool_turn(msgs, cfg, tools, handler, via="huddle-chair", max_calls=6)
         self.journal("huddle.chair", {"round": rid}, {"ok": True, "result": {
             "model": res.get("model"), "called": [c["role"] for c in state["calls"]],
@@ -782,6 +788,19 @@ class Chair:
             sent = self.svc._send(room, home.identity, body)
             self._attach(rid, home.identity, sent["seq"])
         return {"calls": state["calls"], "answered": bool(answer), "model": res.get("model")}
+
+    @staticmethod
+    def _page(home: Any, room: str, asker: Any) -> tuple[list[dict], str]:
+        """The page tools and the page as text, when a person wrote this from the
+        dashboard chat (rook/hub/plugins/home/page.py); nothing otherwise."""
+        bridge = getattr(home, "page_bridge", None)
+        if bridge is None or not _is_person(asker):
+            return [], ""
+        try:
+            return bridge.tools_for(room), bridge.prompt_text(room)
+        except Exception:  # noqa: BLE001 - the page never sinks a round
+            log.exception("huddle: the page context failed")
+            return [], ""
 
     def _front_on(self) -> bool:
         home = self.home()
@@ -800,15 +819,20 @@ class Chair:
         if relay is not None:
             extra = [t for t in self._waiting_tools(relay, asker)[0]
                      if t["function"]["name"] == "relay"]
+        page_tools, page_text = self._page(home, room, asker)
+        extra += page_tools
 
         async def extra_handler(name: str, args: dict) -> str:
+            if name.startswith("page_"):
+                return await home.page_bridge.act(room, name, args)
             return await self._relay_tool(relay, name, args, rid, room, asker, text)
 
         out = await home.front.handle(
             text, source="web", asker=asker or "user:operator",
             principal=home.chat_principal(asker), room=room,
             context="The conversation so far, oldest first (answer only the newest message):\n"
-            + self._transcript(room, int(rnd.get("trigger_seq") or 0)),
+            + self._transcript(room, int(rnd.get("trigger_seq") or 0))
+            + ("\n\n" + page_text if page_text else ""),
             extra_tools=extra, extra_handler=extra_handler, person=home.person_of(asker))
         sent = self.svc._send(room, home.identity, clip(scrub(out["answer"]), POST_CHARS))
         self._attach(rid, home.identity, sent["seq"])

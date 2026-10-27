@@ -50,6 +50,7 @@ from .front import FrontDoor, FrontError
 from .playbook import PlaybookError
 from .agent_host import AgentHostBackend, TurnFailed, Unavailable
 from .llm import PROVIDERS, ChatClient, LLMError, aiohttp_request, base_url
+from .page import PageBridge
 from .sessions import Sessions
 
 log = logging.getLogger("rook.hub.plugins.home")
@@ -237,6 +238,14 @@ class HomeAgent(Plugin):
                 order=6, label="Speaking voice",
                 help="The voice its huddle messages are read aloud in (the Speak button), "
                      "from the hub's voice engine. Blank: the band's default voice."),
+        setting("page_tools", bool, True, group="Behaviour", order=7,
+                label="Act on the page you chat from",
+                help="On: a message from the dashboard's chat carries the page you are on, "
+                     "what you selected and what is on screen, and the agent can open pages, "
+                     "point at things, fill fields and press buttons there, in your browser "
+                     "(never on Approvals, Trust map, Decisions, Secrets, API tokens, People or "
+                     "Account & access, and never delete or approve-style buttons). Off: it only "
+                     "reads your message."),
         setting("front_door", bool, False, group="Front door", order=1,
                 label="Route requests (front door)",
                 help="On: every request (voice, web, chat, MCP, huddles it chairs) is triaged: "
@@ -410,6 +419,7 @@ class HomeAgent(Plugin):
         self.agents = AgentHostBackend(self)
         self.front = FrontDoor(self)
         self.sessions = Sessions(self)
+        self.page_bridge = PageBridge(self)
 
     # -- wiring ------------------------------------------------------------
     def bind_host(self, node) -> None:
