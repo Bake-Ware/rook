@@ -656,6 +656,23 @@ def test_secret_resolution_failure_is_reported_not_sent(hub):
     assert out["error"].startswith("secret:") and not hub.tx.requests
 
 
+def test_resolved_args_without_canonical_form_are_reported(hub):
+    hub.secrets = lambda args, caller: {"x": float("inf")}
+    out, _ = call(hub, BAKE, "file.read", {"x": "{{secret:x}}"})
+    assert out["error"].startswith("secret:") and not hub.tx.requests
+
+
+def test_bad_timeout_falls_back_to_default(hub):
+    hub.worker.caps["file.read"] = {**CAPS["file.read"], "timeout": "soon"}
+    assert call(hub, BAKE, "file.read")[0]["ok"]
+
+
+def test_sub_call_with_junk_ticket(hub):
+    for t in (None, "x", {"nonce": ["unhashable"]}, {}):
+        assert run(hub.sub_call(WID, t, "web.fetch", "kaiju", None, "x"))["error"] == (
+            "denied: core.call: no such call in flight")
+
+
 def test_hubkey_rides_unsigned(hub):
     hub.hubkey = {"typ": "rook-hubkey", "v": 2}
     call(hub, BAKE, "file.read")

@@ -289,6 +289,7 @@ class Dispatcher:
         cid = entry["call"]
         try:
             args = self.secrets(call.args, caller) if self.secrets else call.args
+            ahash = wire.args_hash(args)
         except Exception as e:
             entry.update(ok=False, error=f"secret: {e}")
             return {"id": cid, "ok": False, "error": entry["error"]}
@@ -298,12 +299,12 @@ class Dispatcher:
         request = {"id": cid, "cap": call.cap, "target": w.id, "args": {} if args is None else args}
         if call.appliance is not None:
             request["appliance"] = call.appliance
-        wait = (parse_duration(meta["timeout"]) if "timeout" in meta else DEFAULT_TIMEOUT) + TIMEOUT_GRACE
+        wait = _timeout(meta) + TIMEOUT_GRACE
         may_retry = bool(meta.get("idempotent")) and not NO_RETRY & set(_hold_effects(meta))
         entry["ticket"], reminted, retried = [], False, False
         start = time.monotonic()
         while True:
-            request["ticket"] = self._mint(cid, caller, s, w, call, args)
+            request["ticket"] = self._mint(cid, caller, s, w, call, ahash)
             nonce = request["ticket"]["nonce"]
             entry["ticket"].append(nonce)
             self._inflight[nonce] = (request["ticket"], caller, s.id)
@@ -341,11 +342,11 @@ class Dispatcher:
         entry["ok"] = out["ok"]
         return out
 
-    def _mint(self, cid: str, caller: Caller, s: Session, w: Worker, call: Call, args: Any) -> dict:
+    def _mint(self, cid: str, caller: Caller, s: Session, w: Worker, call: Call, ahash: str) -> dict:
         now = int(self.clock())
         t = {"typ": "rook-ticket", "v": 2, "hub": self.hub_id, "band": w.band, "call": cid,
              "nonce": _secrets.token_hex(16), "worker": w.id, "cap": call.cap,
-             "args_hash": wire.args_hash(args), "session": s.id, "why": call.why,
+             "args_hash": ahash, "session": s.id, "why": call.why,
              "iat": now, "exp": now + TICKET_SECS}
         if call.appliance is not None:
             t["appliance"] = call.appliance
@@ -417,7 +418,8 @@ class Dispatcher:
         agent and session, with the calling plugin's ``uses`` as an extra
         layer. The parent ticket must be one this hub minted for that worker
         and still in flight."""
-        held = self._inflight.get(ticket.get("nonce")) if isinstance(ticket, dict) else None
+        nonce = ticket.get("nonce") if isinstance(ticket, dict) else None
+        held = self._inflight.get(nonce) if isinstance(nonce, str) else None
         if held is None or held[0] != ticket or ticket["worker"] != from_worker:
             return {"ok": False, "error": "denied: core.call: no such call in flight"}
         parent, caller, sid = held
@@ -441,6 +443,13 @@ def _resolve_alias(caps: dict, cap: str) -> str:
         return cap
     named = [n for n, m in caps.items() if cap in (m.get("aliases") or ())]
     return named[0] if len(named) == 1 else cap
+
+
+def _timeout(meta: dict) -> float:
+    try:
+        return parse_duration(meta["timeout"]) if "timeout" in meta else DEFAULT_TIMEOUT
+    except ValueError:
+        return DEFAULT_TIMEOUT
 
 
 def _call_facts(meta: dict, elevate: bool) -> dict:
