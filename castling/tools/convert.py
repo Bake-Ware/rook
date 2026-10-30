@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import ast
 import collections
+import copy
 import json
 import re
 import sys
@@ -327,7 +328,7 @@ def build(caps: dict, plugins: dict, decisions: list[dict]) -> tuple[dict, list[
             tags = [t for t in src["tags"] if t not in EFFECT_TAGS]
             if tags:
                 cap["tags"] = tags
-            args = json.loads(json.dumps(src["args"]))
+            args = copy.deepcopy(src["args"])
             if len(d["new_names"]) > 1:  # a split: the name now says what the argument did
                 for a in SPLIT_ARGS:
                     args.pop(a, None)
@@ -344,16 +345,13 @@ def build(caps: dict, plugins: dict, decisions: list[dict]) -> tuple[dict, list[
                 m.setdefault("provides", {})[new] = f"{plugin}.{new}"
             caps_ = m.setdefault("caps", {})
             if key_name in caps_:  # a merge: several old caps into one new name
-                old = caps_[key_name]
-                old.setdefault("aliases", [])
-                for a in cap.get("aliases", []) + ([d["cap"]] if d["cap"] == new else []):
-                    if a not in old["aliases"] and a != new:
-                        old["aliases"].append(a)
+                kept = caps_[key_name]
+                for a in cap.get("aliases", []):
+                    if a not in kept.setdefault("aliases", []):
+                        kept["aliases"].append(a)
                 for a, spec in cap.get("args", {}).items():
-                    old.setdefault("args", {}).setdefault(a, {**spec, "required": False}
-                                                          if spec.get("required") else spec)
-                    if old["args"][a].get("required") is False:
-                        old["args"][a].pop("required")
+                    if a not in kept.setdefault("args", {}):  # only some callers pass it
+                        kept["args"][a] = {k: v for k, v in spec.items() if k != "required"}
                 continue
             caps_[key_name] = cap
     for name, m in mans.items():
