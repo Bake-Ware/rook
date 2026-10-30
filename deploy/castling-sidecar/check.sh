@@ -33,7 +33,7 @@ check "shell.exec uname -n" "j.get('ok') and '$(uname -n)' in json.dumps(j['resu
 r=$(post /call "{\"worker\":\"$WORKER_NAME\",\"cap\":\"file.read\",\"args\":{\"path\":\"$SRC/.castling-sha\"},\"why\":\"Sidecar check: read the installed commit.\"}")
 check "file.read the installed commit" "j.get('ok') and '$(cut -c1-12 "$SRC/.castling-sha")' in json.dumps(j['result'])" "$r"
 check "journal has the calls" "any(e.get('cap')=='shell.exec' for e in j.get('entries', j.get('journal', [])))" "$(get '/journal?limit=10')"
-check "dashboard serves /" "True" "$(curl -s --max-time 5 -o /dev/null -w '{"code": %{http_code}}' "$LOCAL_URL/")"
+check "dashboard serves / (sign-in redirect)" "j['code'] in (200, 303)" "$(curl -s --max-time 5 -o /dev/null -w '{"code": %{http_code}}' "$LOCAL_URL/")"
 r=$(curl -s --max-time 20 -H "$M" -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "http://$MCP_BIND/mcp")
 check "MCP door lists its tools" "'call' in [t['name'] for t in j['result']['tools']]" "$r"
