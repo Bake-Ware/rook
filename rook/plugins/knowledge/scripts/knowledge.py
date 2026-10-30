@@ -12,10 +12,11 @@ MAX_BACKLINKS = 200
 
 
 def _page(ctx, ref):
-    """A page by slug or id, or None."""
-    rows = ctx.records.knowledge.list(where={"slug": ref}, limit=1)
-    if rows:
-        return rows[0]
+    """A page by slug or id (archived ones too: their slugs stay taken), or None."""
+    for archived in (False, True):
+        rows = ctx.records.knowledge.list(where={"slug": ref}, archived=archived, limit=1)
+        if rows:
+            return rows[0]
     try:
         return ctx.records.knowledge.get(ref)
     except ctx.Error:

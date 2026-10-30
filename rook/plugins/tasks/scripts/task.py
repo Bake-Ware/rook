@@ -1,6 +1,7 @@
-"""Task verbs the records kit doesn't generate. Each one changes a list on
-the task (claims, links, comments, signoff) with the record's revision, so
-two agents writing at once both land: a conflict rereads and tries again."""
+"""Task verbs the records kit doesn't generate. Claims and links are lists on
+the task, changed with the record's revision so two agents writing at once
+both land (a conflict rereads and tries again). Comments and sign-offs are
+records of their own that only these caps write."""
 
 import time
 
@@ -77,15 +78,14 @@ def link(ctx, id, kind, ref, relation="evidence", note=None, remove=False):
     return _brief(_change(ctx, id, change), "links")
 
 
-def _comment(ctx, t, text):
-    return [*(t["comments"] or ()), {"by": ctx.caller.actor, "when": time.time(), "text": text}]
-
-
 def comment(ctx, id, text):
     if not text.strip():
         raise ctx.Error("bad args: text is empty")
-    t = _change(ctx, id, lambda t: {"comments": _comment(ctx, t, text)})
-    return {"id": t["id"], "revision": t["revision"], "comments": len(t["comments"])}
+    t = ctx.records.task.get(id)
+    if t["archived"]:
+        raise ctx.Error(f"task {id} is archived")
+    c = ctx.records.comment.create(task=id, text=text)
+    return {"id": c["id"], "task": id, "by": c["creator"]}
 
 
 def handoff(ctx, id, to, note):
@@ -94,47 +94,58 @@ def handoff(ctx, id, to, note):
     def change(t):
         if t["state"] not in OPEN:
             raise ctx.Error(f"task {id} is {t['state']}; nothing to hand off")
-        return {**_without(t, me), "assignee": to,
-                "comments": _comment(ctx, t, f"Handed to {to}: {note}")}
+        return {**_without(t, me), "assignee": to}
 
     t = _change(ctx, id, change)
+    ctx.records.comment.create(task=id, text=f"Handed to {to}: {note}")
     ctx.emit("task.handed_off", {"id": t["id"], "title": t["title"], "to": to, "by": me, "note": note})
     return _brief(t, "assignee", "claims")
 
 
+def _signoffs(ctx, id):
+    return ctx.records.signoff.list(where={"task": id}, limit=500, order="created")
+
+
+def _set_signoff(ctx, id, reviewer, **fields):
+    """One row per (task, reviewer): asking again or answering rewrites it."""
+    key = f"{id} {reviewer}"
+    for attempt in range(2):
+        row = next(iter(ctx.records.signoff.list(where={"key": key}, limit=1)), None)
+        if row is not None:
+            return ctx.records.signoff.update(row["id"], **fields)
+        try:
+            return ctx.records.signoff.create(task=id, reviewer=reviewer, key=key, **fields)
+        except ctx.Error:
+            if attempt:          # not a race with another writer: a real failure
+                raise
+
+
+def _view(s):
+    return {k: s[k] for k in ("reviewer", "state", "note", "by", "updated")}
+
+
 def request_signoff(ctx, id, reviewers, note=None):
-    me, now = ctx.caller.actor, time.time()
-
-    def change(t):
-        if t["state"] not in OPEN:
-            raise ctx.Error(f"task {id} is {t['state']}; reopen it before asking for sign-off")
-        asked = set(reviewers)
-        keep = [s for s in t["signoff"] or () if s["reviewer"] not in asked]
-        return {"signoff": keep + [{"reviewer": r, "state": "requested", "note": note or "",
-                                    "by": me, "when": now} for r in dict.fromkeys(reviewers)]}
-
-    t = _change(ctx, id, change)
-    ctx.emit("task.signoff_requested", {"id": t["id"], "title": t["title"], "reviewers": list(reviewers),
+    me, t = ctx.caller.actor, ctx.records.task.get(id)
+    if t["archived"] or t["state"] not in OPEN:
+        raise ctx.Error(f"task {id} is {'archived' if t['archived'] else t['state']}; "
+                        "reopen it before asking for sign-off")
+    for r in dict.fromkeys(reviewers):
+        _set_signoff(ctx, id, r, state="requested", note=note or "", by=me)
+    ctx.emit("task.signoff_requested", {"id": id, "title": t["title"], "reviewers": list(dict.fromkeys(reviewers)),
                                         "by": me, "note": note or ""})
-    return _brief(t, "signoff")
+    return {"id": id, "signoff": [_view(s) for s in _signoffs(ctx, id)]}
 
 
 def signoff(ctx, id, approve, note=None, reviewer=None):
-    """Answers the request for ``reviewer`` (a role, say), else the one naming
-    the caller; with neither, the caller's answer is added beside the rest."""
+    """Answer the request made to ``reviewer`` (a role you were asked as), or
+    to you. Nobody answers for a person or another agent: a person's
+    sign-off comes from the person, not through an agent acting for them."""
     me = ctx.caller.actor
-    entry = {"reviewer": reviewer or me, "state": "approved" if approve else "declined",
-             "note": note or "", "by": me, "when": time.time()}
-
-    def change(t):
-        rows = list(t["signoff"] or ())
-        names = (reviewer,) if reviewer else (me, ctx.person)
-        for i, s in enumerate(rows):
-            if s["reviewer"] in names:
-                rows[i] = {**entry, "reviewer": s["reviewer"]}
-                break
-        else:
-            rows.append(entry)
-        return {"signoff": rows}
-
-    return _brief(_change(ctx, id, change), "signoff")
+    target = reviewer or me
+    if target.startswith("person:") and target == ctx.person and ctx.agent:
+        raise ctx.Error(f"{target} signs off from their own login, not through an agent")
+    if target != me and target.startswith(("person:", "agent:")):
+        raise ctx.Error(f"only {target} signs off as {target}")
+    ctx.records.task.get(id)
+    _set_signoff(ctx, id, target, state="approved" if approve else "declined", note=note or "", by=me)
+    return {"id": id, "signoff": [_view(s) for s in _signoffs(ctx, id)]}

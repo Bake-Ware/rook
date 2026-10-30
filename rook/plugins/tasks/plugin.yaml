@@ -1,7 +1,9 @@
-# A task is a unit of work in a project. Claims, links, comments and sign-off
-# requests live on the task (small lists the run: caps change one entry at a
-# time); its working state is the task's whiteboard (plugin whiteboard), and
-# the history of what happened is the journal.
+# A task is a unit of work in a project. Claims and links are small lists on
+# the task (the run: caps change one entry at a time). Comments and sign-offs
+# are their own records, written only by the run: caps, so who said or signed
+# what is the caller, never a field someone typed. The task's working state is
+# its whiteboard (plugin whiteboard); the history of what happened is the
+# journal.
 manifest: 1
 plugin: task
 version: 0.5.0
@@ -31,11 +33,25 @@ records:
       tags: { type: list, items: { type: str } }
       claims: { type: list, items: { type: map }, doc: "Who works on it now: [{actor, person, session, since}] (task.claim, task.release)." }
       links: { type: list, items: { type: map }, doc: "[{kind, ref, relation, note, by, when}] (task.link)." }
-      comments: { type: list, items: { type: map }, doc: "[{by, when, text}] (task.comment)." }
-      signoff: { type: list, items: { type: map }, doc: "[{reviewer, state: requested|approved|declined, note, by, when}] (task.request_signoff, task.signoff)." }
     index: [state, project, assignee]
     search: [title, body, outcome]
     history: true
+  comment:
+    fields:
+      task: { type: ref, to: task.task, required: true }
+      text: { type: markdown, required: true }
+    index: [task]
+    caps: [list]
+  signoff:
+    fields:
+      task: { type: ref, to: task.task, required: true }
+      reviewer: { type: str, required: true, doc: "Who was asked: a person, an agent or a role." }
+      state: { type: str, enum: [requested, approved, declined], required: true }
+      note: { type: str }
+      by: { type: str, doc: Who answered (or asked). }
+      key: { type: str, unique: true, doc: "<task> <reviewer>: one row each." }
+    index: [task]
+    caps: [list]
 caps:
   claim:
     doc: "Claim a task before working on it (it goes in_progress from todo or paused). Several may hold a claim; the reply names the others. Read whiteboard.read next."
@@ -69,7 +85,7 @@ caps:
     result: { type: map }
     run: scripts/task.py:link
   comment:
-    doc: Add a comment to a task.
+    doc: Add a comment to a task (task.comment.list where={task} reads them).
     risk: write
     scope: multi-user
     args:
@@ -88,7 +104,7 @@ caps:
     result: { type: map }
     run: scripts/task.py:handoff
   request_signoff:
-    doc: "Ask reviewers to sign off before the task is done (event task.signoff_requested). Reviewers come from the project's concepts (concept.pool); the project's trust level says whether the person is one of them."
+    doc: "Ask reviewers to sign off before the task is done (event task.signoff_requested; task.signoff.list where={task} shows where it stands). Reviewers come from the project's concepts (concept.pool); the project's trust level says whether the person is one of them."
     risk: write
     scope: multi-user
     args:
@@ -98,14 +114,14 @@ caps:
     result: { type: map }
     run: scripts/task.py:request_signoff
   signoff:
-    doc: Sign off on a task (approve) or decline with what to fix.
+    doc: "Sign off on a task (approve) or decline with what to fix. A person's request is answered only by that person, from their own login (not through an agent)."
     risk: write
     scope: multi-user
     args:
       id: { type: str, required: true }
       approve: { type: bool, required: true }
       note: { type: str }
-      reviewer: { type: str, doc: "The request you answer (a role you were asked as); default the one naming you." }
+      reviewer: { type: str, doc: "The request you answer (a role you were asked as); default you." }
     result: { type: map }
     run: scripts/task.py:signoff
 emits:

@@ -68,7 +68,8 @@ def test_caps_are_the_decided_names():
     async def body(b):
         assert set(b.plugins.caps()) == {
             *(f"task.{v}" for v in ("list", "get", "search", "create", "update", "archive", "history", "claim",
-                                    "release", "link", "comment", "handoff", "request_signoff", "signoff")),
+                                    "release", "link", "comment", "handoff", "request_signoff", "signoff",
+                                    "comment.list", "signoff.list")),
             *(f"project.{v}" for v in ("list", "get", "search", "create", "update", "archive", "history")),
             *(f"project.trust.{v}" for v in ("list", "get", "create", "update")),
             *(f"concept.{v}" for v in ("list", "get", "search", "create", "update", "archive", "history", "pool")),
@@ -103,8 +104,9 @@ def test_claim_release_and_handoff():
         assert (out["assignee"], out["claims"], out["state"]) == ("role:qa", [], "todo")
         assert b.events[-1] == ("task.handed_off", {"id": t["id"], "title": "Workbench merged", "to": "role:qa",
                                                     "by": "agent:ann", "note": "Ready for QA; see the whiteboard."})
-        full = await b("task.get", id=t["id"])
-        assert full["comments"][-1]["text"] == "Handed to role:qa: Ready for QA; see the whiteboard."
+        said = await b("task.comment.list", where={"task": t["id"]})
+        assert [(c["text"], c["creator"]) for c in said] == \
+            [("Handed to role:qa: Ready for QA; see the whiteboard.", "agent:ann")]
         # a stale claim can be taken off by someone else, naming its actor
         await b("task.claim", BOB, id=t["id"])
         out = await b("task.release", id=t["id"], actor="agent:bob", state="blocked")
@@ -130,7 +132,7 @@ def test_links_comments_and_signoff():
         assert out["links"] == []
         with pytest.raises(KitError, match="no pr link"):
             await b("task.link", id=t["id"], kind="pr", ref="nope", remove=True)
-        assert (await b("task.comment", id=t["id"], text="Milk is out."))["comments"] == 1
+        assert (await b("task.comment", id=t["id"], text="Milk is out."))["by"] == "agent:ann"
         with pytest.raises(KitError, match="text is empty"):
             await b("task.comment", id=t["id"], text="  ")
         b.events.clear()
@@ -140,15 +142,24 @@ def test_links_comments_and_signoff():
         assert b.events[-1][0] == "task.signoff_requested"
         assert b.events[-1][1]["reviewers"] == ["role:qa", "person:bake"]
         out = await b("task.signoff", BOB, id=t["id"], approve=True, reviewer="role:qa", note="Looks right")
+        # nobody signs for a person: not another agent, not an agent acting for them
+        with pytest.raises(KitError, match="only person:bake signs off as person:bake"):
+            await b("task.signoff", BOB, id=t["id"], approve=True, reviewer="person:bake")
+        with pytest.raises(KitError, match="from their own login"):
+            await b("task.signoff", ANN, id=t["id"], approve=True, reviewer="person:bake")
+        with pytest.raises(KitError, match="only agent:bob"):
+            await b("task.signoff", ANN, id=t["id"], approve=True, reviewer="agent:bob")
         out = await b("task.signoff", BAKE, id=t["id"], approve=False, note="Add eggs")
         assert [(s["reviewer"], s["state"], s["by"]) for s in out["signoff"]] == \
             [("role:qa", "approved", "agent:bob"), ("person:bake", "declined", "person:bake")]
         out = await b("task.signoff", BOB, id=t["id"], approve=True)     # unasked: added beside
         assert out["signoff"][-1]["reviewer"] == "agent:bob"
+        # sign-offs are written only by these caps: no generated create or update
+        assert not {"task.signoff.create", "task.signoff.update", "task.comment.create"} & set(b.plugins.caps())
         # asking again resets that reviewer only
         out = await b("task.request_signoff", id=t["id"], reviewers=["person:bake"])
         assert [(s["reviewer"], s["state"]) for s in out["signoff"]] == \
-            [("role:qa", "approved"), ("agent:bob", "approved"), ("person:bake", "requested")]
+            [("role:qa", "approved"), ("person:bake", "requested"), ("agent:bob", "approved")]
     bench(body)
 
 
@@ -157,7 +168,13 @@ def test_concurrent_writes_all_land():
         t = await b("task.create", title="Busy task")
         await asyncio.gather(*(b("task.comment", Caller(agent=f"agent:{i}", band="b1"), id=t["id"], text=f"c{i}")
                                for i in range(6)))
-        assert sorted(c["text"] for c in (await b("task.get", id=t["id"]))["comments"]) == [f"c{i}" for i in range(6)]
+        await asyncio.gather(*(b("task.link", Caller(agent=f"agent:{i}", band="b1"), id=t["id"], kind="file",
+                                 ref=f"f{i}") for i in range(6)))
+        assert sorted(x["ref"] for x in (await b("task.get", id=t["id"]))["links"]) == [f"f{i}" for i in range(6)]
+        said = await b("task.comment.list", where={"task": t["id"]})
+        assert sorted(c["text"] for c in said) == [f"c{i}" for i in range(6)]
+        await asyncio.gather(*(b("task.request_signoff", id=t["id"], reviewers=["role:qa"]) for _ in range(4)))
+        assert len(await b("task.signoff.list", where={"task": t["id"]})) == 1
         await asyncio.gather(*(b("whiteboard.write", task=t["id"], append=f"- line {i}") for i in range(6)))
         text = (await b("whiteboard.read", task=t["id"]))["text"]
         assert sorted(text.splitlines()) == [f"- line {i}" for i in range(6)]
@@ -207,6 +224,9 @@ def test_knowledge_pages_links_and_provenance():
             await b("knowledge.create", title="Unsourced", body="Claim.[^x]")
         dup = await b("knowledge.create", title="Castling")
         assert dup["slug"] == "castling-2"
+        await b("knowledge.archive", id=dup["id"], revision=dup["revision"])
+        assert (await b("knowledge.create", title="Castling"))["slug"] == "castling-3"   # archived slugs stay taken
+        assert (await b("knowledge.get", id="castling-2"))["archived"]
         got = await b("knowledge.get", id="castling-design")
         assert [x["slug"] for x in got["links_out"]] == ["workbench"] and got["missing"] == ["nowhere"]
         assert [x["slug"] for x in got["backlinks"]] == ["workbench"]
@@ -321,6 +341,8 @@ def _source_copy(tmp_path) -> Path:
                                                 ("decision", "restart, don't rebuild", None)], 1):
         db.execute("INSERT INTO whiteboard(band,task,claim,actor,kind,text,first,ts,closed) VALUES(?,?,?,?,?,?,?,?,?)",
                    ("band0001", task, "cl_x", "claude", kind, text, seq, seq, closed))
+    db.execute("INSERT INTO events(band,record,actor,action,ts,data) VALUES(?,?,?,?,?,?)",
+               ("band0001", task, "codex.codex.gpu-box", "note", 7.0, '{"text": "Logs look clean."}'))
     db.commit()
     db.close()
     sessions = sqlite3.connect(tmp_path / "sessions.db")
@@ -365,6 +387,9 @@ def test_import_04_is_read_only_and_maps_everything(tmp_path, importer, capsys):
         assert tasks["Write the runbook"]["outcome"] == "Runbook written."
         assert tasks["Write the runbook"]["links"][0]["ref"] == "abc1234"
         assert all(not t["claims"] for t in tasks.values())
+        said = store.type("task.comment").list(me, where={"task": tasks["Restart test service"]["id"]})
+        assert [(c["text"], c["creator"], c["created"]) for c in said] == \
+            [("Logs look clean.", "codex.codex.gpu-box", 7.0)]
         board = store.type("whiteboard.board").list(me, where={"task": tasks["Restart test service"]["id"]})[0]
         assert board["text"] == ("Handoff from claude:\nGoal: Restart it\nState: Paused mid-way\nNext:\n- run the restart"
                                  "\n\nGoal: Service answers\n\nDecisions:\n- restart, don't rebuild\n\nOpen:\n- check logs")
@@ -379,6 +404,7 @@ def test_import_04_is_read_only_and_maps_everything(tmp_path, importer, capsys):
     try:
         assert len(store.type("task.task").list(me)) == 3
         assert len(store.type("whiteboard.board").list(me)) == 1
+        assert len(store.type("task.comment").list(me)) == 1
     finally:
         store.close()
 
@@ -391,6 +417,11 @@ def test_import_04_dry_run_and_one_band(tmp_path, importer, capsys):
     assert importer.main(["--from", str(FIXTURE), "--records", str(rec), "--band", "b1", "--from-band", other]) == 0
     out = capsys.readouterr().out
     assert '"renamed": []' in out
+    wal = tmp_path / "live.db"
+    shutil.copy(FIXTURE, wal)
+    Path(f"{wal}-wal").write_bytes(b"")
+    assert importer.main(["--from", str(wal), "--records", str(rec), "--band", "b1"]) == 2
+    assert ".backup" in capsys.readouterr().err
     bad = tmp_path / "empty.db"
     sqlite3.connect(bad).close()
     assert importer.main(["--from", str(bad), "--records", str(rec), "--band", "b1"]) == 2

@@ -29,8 +29,10 @@ keeps the old text.
 ## Importing 0.4
 
 `scripts/import_04.py` copies a 0.4 hub's knowledge, concepts, projects and
-tasks into these records. Stop the 0.5 hub, copy the 0.4 `knowledge.db`
-(and, for handoffs, its sessions db) somewhere, then:
+tasks into these records. Stop the 0.5 hub and copy the 0.4 `knowledge.db`
+(and, for handoffs, its sessions db) with `sqlite3 knowledge.db ".backup
+copy.db"` (one consistent file; a plain copy can leave recent writes in a
+`-wal` file, and the import refuses one), then:
 
 ```sh
 python rook/plugins/knowledge/scripts/import_04.py --from knowledge-copy.db \
@@ -40,7 +42,7 @@ python rook/plugins/knowledge/scripts/import_04.py --from knowledge-copy.db \
 
 The copy is opened read-only. Verification becomes provenance (evidence
 links are sources; a person's review is a `user` source); superseded pages
-are archived; task links, notes, open whiteboard lines and the latest
+are archived; task links, notes (as comments), open whiteboard lines and the latest
 handoff come along; claims don't (claim again). It prints what it imported,
 skipped (already there from an earlier run) and renamed (a slug another
 record already had).

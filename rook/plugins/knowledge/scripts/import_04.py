@@ -15,16 +15,21 @@ title, slug, body, creator and times; then:
 - wiki pages -> knowledge records. Verification is gone: evidence links
   become the page's sources, a person's review becomes a ``user`` source;
   superseded pages are archived and the newer page lists them;
-- task links (not auto-links) become task links, notes become comments,
-  ``blocked_reason`` and ``closed_by`` become comments too;
+- task links (not auto-links) become task links; notes, ``blocked_reason``
+  and ``closed_by`` become comments (``task.comment`` records);
 - a task's open whiteboard lines (goal, decisions, open items, notes) and,
   with ``--handoffs`` (a copy of the 0.4 sessions db), its latest handoff
   become the task's whiteboard.
 
 Claims are not imported: 0.4 agent names mean nothing on 0.5; whoever picks
 a task up claims it again. Re-running skips what an earlier run imported
-(same slug, title and creation time); a different record with a taken slug
-gets ``-2``, ``-3``... and is listed under ``renamed``.
+(same title and creation time); a different record with a taken slug gets
+``-2``, ``-3``... and is listed under ``renamed``.
+
+Make the copy with ``sqlite3 knowledge.db ".backup copy.db"``: one
+consistent file. A plain copy of a live database can leave recent writes in
+a ``-wal`` file beside it, which a read-only open would not see, so the
+import refuses a copy with a ``-wal`` next to it.
 """
 
 from __future__ import annotations
@@ -71,6 +76,7 @@ class Importer:
         self.rows = {r["id"]: r for r in src.execute(f"SELECT * FROM records {where} ORDER BY created, id", args)}
         self.attrs = {i: json.loads(r["attrs"] or "{}") for i, r in self.rows.items()}
         self.links = self._links()
+        self.has_whiteboard = "whiteboard" in _tables(src)
         self.new: dict[str, str] = {}             # 0.4 id -> 0.5 id
         self.fresh: set[str] = set()              # 0.4 ids this run created
         self.times: list[tuple[str, str, float, float]] = []
@@ -95,16 +101,18 @@ class Importer:
         return Caller(agent=row["creator"] or "import:0.4", band=self.band, why="import from 0.4")
 
     def _put(self, full: str, row, fields: dict, archived: bool = False) -> str | None:
-        """Create one record (or find the one an earlier run made)."""
+        """Create one record, unless an earlier run made it (same title and
+        creation time). A slug another record holds gets -2, -3..."""
         rtype, caller, kind = self.store.type(full), self._caller(row), full.split(".")[0]
         fields = {k: v for k, v in fields.items() if v is not None}
-        base = fields.get("slug")
-        n = 1
-        while base and (taken := self._by_slug(rtype, caller, fields["slug"])) is not None:
-            if taken["title"] == fields["title"] and taken["created"] == row["created"]:
-                self.new[row["id"]] = taken["id"]
-                self.report["skipped"][kind] = self.report["skipped"].get(kind, 0) + 1
-                return None
+        earlier = next((r for r in self._all(rtype, caller, title=fields["title"])
+                        if r["created"] == row["created"]), None)
+        if earlier is not None:
+            self.new[row["id"]] = earlier["id"]
+            self.report["skipped"][kind] = self.report["skipped"].get(kind, 0) + 1
+            return None
+        base, n = fields.get("slug"), 1
+        while base and self._all(rtype, caller, slug=fields["slug"]):
             n += 1
             fields["slug"] = f"{base[:75]}-{n}"
         if base and fields["slug"] != base:
@@ -120,12 +128,9 @@ class Importer:
         return rec["id"]
 
     @staticmethod
-    def _by_slug(rtype, caller, slug):
-        for archived in (False, True):
-            rows = rtype.list(caller, where={"slug": slug}, archived=archived, limit=1)
-            if rows:
-                return rows[0]
-        return None
+    def _all(rtype, caller, **where) -> list:
+        """Records matching ``where``, archived or not."""
+        return [r for archived in (False, True) for r in rtype.list(caller, where=where, archived=archived, limit=500)]
 
     def _update(self, full: str, old_id: str, **fields) -> None:
         rtype, caller = self.store.type(full), self._caller(self.rows[old_id])
@@ -221,10 +226,14 @@ class Importer:
             if r["id"] not in self.fresh:
                 continue
             links = [self._task_link(link) for link in self.links.get(r["id"], ())]
-            comments = self._comments(r)
-            if links or comments:
-                self._update("task.task", r["id"], **({"links": links} if links else {}),
-                             **({"comments": comments} if comments else {}))
+            if links:
+                self._update("task.task", r["id"], links=links)
+            for c in self._comments(r):
+                self.store.clock = lambda c=c: c["when"]
+                self.store.type("task.comment").create(
+                    Caller(agent=c["by"] or "import:0.4", band=self.band, why="import from 0.4"),
+                    task=self.new[r["id"]], text=c["text"])
+                self.report["imported"]["comment"] = self.report["imported"].get("comment", 0) + 1
             board = self._board(r)
             if board and not self._has_board(r):
                 self._put_board(r, board)
@@ -280,7 +289,7 @@ class Importer:
         h = self._handoff(r)
         if h:
             parts.append(h)
-        if "whiteboard" in _tables(self.src):
+        if self.has_whiteboard:
             rows = self.src.execute("SELECT kind, text FROM whiteboard WHERE task=? AND closed IS NULL "
                                     "ORDER BY first, seq", (r["id"],)).fetchall()
             for kind, title in JOTS:
@@ -364,6 +373,11 @@ def main(argv=None) -> int:
     ap.add_argument("--handoffs", help="a copy of the 0.4 sessions db, for each task's latest handoff")
     ap.add_argument("--dry-run", action="store_true", help="import into memory and report; write nothing")
     a = ap.parse_args(argv)
+    for f in (a.src, a.handoffs):
+        if f and Path(f"{f}-wal").exists():
+            print(f"{f}-wal exists: make the copy with sqlite3 {f} \".backup <copy>\" (one consistent file)",
+                  file=sys.stderr)
+            return 2
     src = open_ro(a.src)
     missing = {"records", "links", "events"} - _tables(src)
     if missing:

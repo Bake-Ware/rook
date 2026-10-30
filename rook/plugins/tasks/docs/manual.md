@@ -13,7 +13,8 @@ Working a task:
    current while you work: it is how the next person picks up where you are.
 3. `task.link` what the work produced or rests on (a PR, a commit, a journal
    entry, a page, a task that blocks it with `relation: blocked_by`).
-   `task.comment` for anything worth saying.
+   `task.comment` for anything worth saying (`task.comment.list
+   where={task: <id>}` reads them).
 4. Finish with `task.update state=done outcome=...` and the evidence linked,
    or `task.release` with the state it is in (`blocked`, `paused`, `todo`).
 
@@ -31,8 +32,13 @@ task depends on other work.
 sign-off before it is done. Reviewers come from the project's concepts
 (`concept.pool`); the project's trust level says whether the person must be
 one of them. Reviewers answer with `task.signoff approve=true|false`
-(`reviewer=` when they answer a request made to a role). Nothing enforces
-it: sign-off is a working habit, like on a real team.
+(`reviewer=` when they answer a request made to a role);
+`task.signoff.list where={task: <id>}` shows where it stands. Nobody signs
+for someone else: a person's sign-off comes from that person's own login,
+never from an agent acting for them. Comments and sign-offs are written
+only by these caps, so who said or signed what is always the caller.
+Nothing stops a task being marked done without sign-off: it is a working
+habit, like on a real team.
 
 A stale claim (someone stopped and never released) can be taken off by
 anyone with `task.release actor=<them>`; the journal records who did.
