@@ -98,11 +98,7 @@ let opening = 0;
 async function open(pid) {
   const n = ++opening;
   document.body.classList.remove("nav-open");
-  $("#note").hidden = true;
-  if (current && current.frame) current.frame.remove();
-  current = null;
-  $("#title").textContent = "";
-  $("#note-btn").hidden = $("#archive-btn").hidden = true;
+  closePage();
   if (!pid) return message("No pages yet.");
   const r = await api("/web/api/open", { page: pid });
   if (n !== opening) return;      // another page was asked for meanwhile
@@ -112,11 +108,28 @@ async function open(pid) {
   frame.setAttribute("sandbox", "allow-scripts");
   frame.setAttribute("referrerpolicy", "no-referrer");
   frame.src = r.frame;
+  const cur = { page: pid, token: r.token, frame, listening: false };
+  let loads = 0;
+  frame.addEventListener("load", () => {
+    // A page that navigates its frame away is closed: whatever loaded there isn't the page.
+    if (++loads > 1 && cur === current) {
+      closePage();
+      message("This page tried to leave the hub and was closed.", true);
+    }
+  });
   $("#stage").prepend(frame);
-  current = { page: pid, token: r.token, frame, listening: false, made: r.page.made };
+  current = cur;
   $("#title").textContent = r.page.title;
   $("#note-btn").hidden = $("#archive-btn").hidden = false;
   mark();
+}
+
+function closePage() {
+  if (current) current.frame.remove();
+  current = null;
+  mark();
+  $("#title").textContent = "";
+  $("#note").hidden = $("#note-btn").hidden = $("#archive-btn").hidden = true;
 }
 
 function toFrame(cur, msg) {
@@ -165,6 +178,7 @@ async function listen(cur) {
 
 $("#note-btn").onclick = async () => {
   const box = $("#note");
+  if (!current) return;
   if (!box.hidden) {
     box.hidden = true;
     return;
@@ -172,9 +186,8 @@ $("#note-btn").onclick = async () => {
   const d = await call("pages.get", { page: current.page });
   box.replaceChildren();
   if (d.made) {
-    const a = d.author || {};
-    const who = [a.agent, a.person].filter(Boolean).join(" for ");
-    box.append(el("div", { className: "section" }, "Made by " + (who || "?")),
+    const who = (d.made_by.authors || []).map((a) => [a.agent, a.person].filter(Boolean).join(" for "));
+    box.append(el("div", { className: "section" }, "Made by " + (who.join(", ") || "?")),
       el("pre", {}, d.note || ""));
   } else {
     box.append(el("div", { className: "section" }, "From a plugin"),
@@ -199,7 +212,11 @@ $("#archive-btn").onclick = async () => {
 };
 
 $("#menu").onclick = () => document.body.classList.toggle("nav-open");
-$("#pages").onclick = () => document.body.classList.remove("nav-open");
+$("#pages").onclick = (e) => {
+  document.body.classList.remove("nav-open");
+  const a = e.target.closest("a");
+  if (a && !current && location.hash === a.getAttribute("href")) open(a.dataset.page);   // reopen a closed page
+};
 
 $("#signout").onclick = async () => {
   await api("/logout", {}).catch(() => {});

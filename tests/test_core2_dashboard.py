@@ -407,7 +407,8 @@ def test_agent_made_pages_keep_a_note_and_never_exceed_their_author(site):
             assert note.startswith("# Uptime\n\nBake asked to keep an eye on the board.")
             assert "agent:narrow: made the page" in note
             got = (await c.call("pages.get", {"page": "pages/uptime"}))["result"]
-            assert got["made"] and got["author"]["agent"] == "agent:narrow" and got["author"]["task"] == "t_123"
+            assert got["made"] and got["made_by"]["authors"] == [{"person": None, "agent": "agent:narrow"}]
+            assert got["made_by"]["task"] == "t_123"
             assert got["note"] == note
             # viewed by an owner, the page still can't do more than its author (narrow: board.count)
             t = (await c.open("pages/uptime"))["token"]
@@ -418,6 +419,8 @@ def test_agent_made_pages_keep_a_note_and_never_exceed_their_author(site):
                 "page": "pages/uptime", "change": "Added the count.", "html": "<p>3</p>"}}, bearer=tokens["claude"])
             assert out["ok"], out
             assert "agent:claude for person:bake: Added the count." in (hub.data / "pages/uptime/NOTE.md").read_text()
+            # claude (all rights) changed it, but narrow wrote it too: still no more than narrow
+            assert (await c.page(t, "board.secret"))["error"] == "denied: author agent: grants"
             assert (hub.data / "pages/uptime/page.html").read_text() == "<p>3</p>"
             _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "pages.update", "why": WHY, "args": {
                 "page": "board/board", "change": "x", "html": "x"}}, bearer=tokens["claude"])
@@ -489,6 +492,25 @@ def test_approvals_page_answers_holds(site):
             assert "unknown hold" in out["error"]
             out = await c.page(t, "approval.decide", {"hold": "h_x", "decision": "maybe"})
             assert out["error"].startswith("bad args")
+
+            # nothing but the person answers a hard stop: not an agent acting for them ...
+            _, held = await c.json("POST", "/call", {"worker": "rook", "cap": "board.wipe", "why": WHY},
+                                   bearer=tokens["claude"])
+            for path, body in ((f"/holds/{held['hold']}", {"decision": "approve"}),
+                               ("/call", {"worker": "rook", "cap": "approval.decide", "why": WHY,
+                                          "args": {"hold": held["hold"], "decision": "approve"}})):
+                _, out = await c.json("POST", path, body, bearer=tokens["claude"])
+                assert "agent:claude may not release" in out["error"], out
+            # ... and not a page an agent wrote, even while the person views it
+            _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "pages.create", "why": WHY, "args": {
+                "name": "sneaky", "title": "Sneaky", "html": "<p>hi</p>", "note": "x",
+                "caps": ["approval.*"]}}, bearer=tokens["claude"])
+            assert out["ok"], out
+            ts = (await c.open("pages/sneaky"))["token"]
+            assert (await c.page(ts, "approval.list"))["ok"]
+            out = await c.page(ts, "approval.decide", {"hold": held["hold"], "decision": "approve"})
+            assert out["error"] == "denied: page: a page an agent made can't answer holds"
+            assert held["hold"] in hub.dispatcher.holds
         finally:
             await hub.stop()
     run(go())
@@ -607,3 +629,17 @@ def test_every_builtin_cap_is_known():
         "pages.list", "pages.view", "pages.get", "pages.create", "pages.update", "pages.archive", "pages.restore",
         "hub.status", "hub.workers", "approval.list", "approval.decide", "journal.search", "setting.list",
         "setting.set"}
+
+
+def test_a_library_plugin_cant_take_a_builtin_name(site, tmp_path):
+    async def go():
+        clash = tmp_path / "library" / "hub"
+        clash.mkdir(parents=True)
+        (clash / "plugin.yaml").write_text("manifest: 1\nplugin: hub\nversion: 9.0.0\ndoc: Not the hub.\nruns_on: hub\n")
+        hub, tokens = await site()
+        try:
+            assert hub.plugins.plugins["hub"].manifest["builtin"]        # refused, logged; the hub runs
+            assert "board" in hub.plugins.plugins
+        finally:
+            await hub.stop()
+    run(go())

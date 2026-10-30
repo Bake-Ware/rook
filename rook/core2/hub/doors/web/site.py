@@ -52,9 +52,6 @@ class Session:
 class PageToken:
     session: str              # web session digest
     page: str
-    caps: list
-    events: list
-    author: list | None       # [[layer, rights]] for an agent-made page
     dispatch: str             # the dispatch session its calls belong to
     exp: float
 
@@ -114,7 +111,7 @@ class Web:
             return _json(200, self._poll(sid, query.get("token", ""), query.get("since")))
         if method != "POST":
             raise _Error(404, "not found")
-        if not secrets.compare_digest(req.headers.get("X-Rook-CSRF", ""), session.csrf):
+        if not secrets.compare_digest(req.headers.get("X-Rook-CSRF", "").encode(), session.csrf.encode()):
             raise _Error(403, "missing or wrong X-Rook-CSRF")
         if path == "/logout":
             with self._lock:
@@ -141,8 +138,11 @@ class Web:
     def _login(self, req):
         ctype = req.headers.get("Content-Type", "")
         if ctype.startswith("application/x-www-form-urlencoded"):
-            n = int(req.headers.get("Content-Length") or 0)
-            if n > 4096:
+            try:
+                n = int(req.headers.get("Content-Length") or 0)
+            except ValueError:
+                raise _Error(411, "Content-Length required") from None
+            if n < 0 or n > 4096:
                 raise _Error(413, "body too large")
             token = dict(parse_qsl(req.rfile.read(n).decode("utf-8", "replace"))).get("token", "")
             form = True
@@ -205,11 +205,6 @@ class Web:
             "session": req._run(self._shell_session(caller))}, "web"))
         if not reply.get("ok"):
             return reply
-        page = self.hub.pages.openable(pid)
-        author = None
-        if page.made:
-            who = Caller(page.made.get("person"), page.made.get("agent"))
-            author = [[f"author {k}", r] for k, r in self.hub.identities.layers(who)] or [["author", NONE]]
         token, nonce = secrets.token_urlsafe(32), secrets.token_urlsafe(24)
         dsid = req._run(self._page_session(caller))
         now = time.time()
@@ -217,7 +212,7 @@ class Web:
             s = self.sessions.get(sid)
             if s is None:
                 raise _Error(401, "sign in first")
-            self.tokens[token] = PageToken(sid, pid, list(page.caps), list(page.events), author, dsid, now + TOKEN_SECS)
+            self.tokens[token] = PageToken(sid, pid, dsid, now + TOKEN_SECS)
             s.tokens.append(token)
             while len(s.tokens) > TOKENS_PER_SESSION:
                 self.tokens.pop(s.tokens.pop(0), None)
@@ -243,7 +238,7 @@ class Web:
             doc = self.hub.pages.html(page)
         except Exception as e:
             raise _Error(404, str(getattr(e, "message", e))) from None
-        info = {"page": page.id, "title": page.title, "caps": t.caps, "events": t.events}
+        info = {"page": page.id, "title": page.title, "caps": page.caps, "events": page.events}
         return 200, {"Content-Type": TYPES[".html"], "Content-Security-Policy": PAGE_CSP,
                      "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer"}, \
             inject(doc, info).encode("utf-8")
@@ -251,20 +246,33 @@ class Web:
     def _page_call(self, req, sid: str, caller: Caller, body: dict) -> dict:
         t = self._token(sid, body.get("token"))
         try:
-            self.hub.pages.openable(t.page)
+            page = self.hub.pages.openable(t.page)       # as it is now: archived or narrowed since it opened
         except Exception as e:
             return {"ok": False, "error": f"denied: page: {getattr(e, 'message', e)}"}
         cap = body.get("cap")
         if not isinstance(cap, str) or not cap:
             raise _Error(400, "cap is required")
+        if page.made and cap == "approval.decide":
+            # Agent-written code runs as the viewer: it must never answer the viewer's holds.
+            return {"ok": False, "error": "denied: page: a page an agent made can't answer holds"}
         worker = body.get("worker") if isinstance(body.get("worker"), str) else None
         if worker is None:
             worker = req._run(_target(self.hub, cap)) or "rook"
         why = body.get("why") if isinstance(body.get("why"), str) and body["why"].strip() else \
             f"Shown on the {t.page} page."
-        layers = [["page", {"grants": t.caps}], *(t.author or [])]
+        layers = [["page", {"grants": page.caps}], *self._authors(page)]
         return req._run(self.hub.call(caller, {"worker": worker, "cap": cap, "args": body.get("args"), "why": why,
                                                "session": t.dispatch}, "web", layers=layers))
+
+    def _authors(self, page) -> list:
+        """A page an agent made never does more than any of its authors."""
+        if not page.made:
+            return []
+        out = []
+        for a in page.made.get("authors") or [{}]:
+            who = Caller(a.get("person"), a.get("agent"))
+            out += [[f"author {k}", r] for k, r in self.hub.identities.layers(who)] or [["author", NONE]]
+        return out
 
     async def _shell_session(self, caller: Caller) -> str:
         """The shell's dispatch session: pages.* only."""
@@ -289,9 +297,13 @@ class Web:
             since = int(since) if since not in (None, "") else None
         except ValueError:
             raise _Error(400, "since is a number") from None
+        try:
+            page = self.hub.pages.openable(t.page)
+        except Exception as e:
+            raise _Error(403, str(getattr(e, "message", e))) from None
         person = self.sessions[sid].person if sid in self.sessions else None
         layers = [["person", self.hub.identities.person_rights(person) if person else NONE],
-                  ["page", {"grants": t.events}], *(t.author or [])]
+                  ["page", {"grants": page.events}], *self._authors(page)]
 
         def visible():
             return [{"seq": s, "event": e, "payload": p} for s, e, p in self._events
@@ -301,7 +313,7 @@ class Web:
             if since is None:          # first poll: where the stream is now
                 return {"ok": True, "seq": self._seq, "events": []}
             while True:
-                got = visible() if t.events else []
+                got = visible() if page.events else []
                 left = deadline - time.monotonic()
                 if got or left <= 0:
                     return {"ok": True, "seq": self._seq, "events": got}

@@ -373,13 +373,12 @@ class Hub:
         self.plugins = HubPlugins(records=self.records, contracts=self.contracts, call=self.call_as,
                                   emit=self._emit, data_dir=self.data / "plugins", settings=cfg.settings)
         self.plugins.add_core(self.core)
+        builtin_caps.install(self)               # pages, hub, approval, journal, setting: before the library
         self.dispatcher = Dispatcher(hub_id=self.hub_id, op_key=self.op, identities=self.identities,
                                      workers={}, send=self._send, journal=self._journal,
                                      hubkey=self.grant, clock=self.clock)
         self._sync_hub()
         await self._load_library()
-        builtin_caps.install(self)               # pages, hub, approval, journal, setting
-        self._sync_hub()
         self.dispatcher.gates = self.plugins.gates()
         self._load_manifests()
         self._load_workers()
@@ -1045,8 +1044,10 @@ class Hub:
             if owner or (caller.person and h.caller.person == caller.person) or h.caller == caller]}
 
     async def decide(self, caller: Caller, hold: str, decision: Any) -> dict:
-        """A person's answer to a hold: ``approve`` runs the exact call, ``refuse`` is final."""
-        by = caller.person or caller.agent
+        """A person's answer to a hold: ``approve`` runs the exact call, ``refuse`` is final.
+        An agent acting for a person answers as the agent, not the person
+        (10.3: nothing but the person releases a hard stop)."""
+        by = caller.agent or caller.person
         if decision == "approve":
             out = await self.dispatcher.release(hold, by)
         elif decision == "refuse":

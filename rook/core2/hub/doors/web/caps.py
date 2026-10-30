@@ -44,7 +44,7 @@ class Page:
     events: list = field(default_factory=list)
     sizes: list = field(default_factory=list)
     section: str = "Pages"
-    made: dict | None = None     # agent-made: {person, agent, created, task}
+    made: dict | None = None     # agent-made: {authors: [{person, agent}], created, task}
 
     def view(self) -> dict:
         return {"page": self.id, "title": self.title, "caps": list(self.caps), "events": list(self.events),
@@ -63,7 +63,7 @@ class Pages:
 
     def all(self) -> dict[str, Page]:
         out = {}
-        for p in self.hub.plugins.plugins.values():
+        for p in list(self.hub.plugins.plugins.values()):
             for name, spec in (p.manifest.get("pages") or {}).items():
                 if p.folder is None:
                     continue
@@ -79,7 +79,7 @@ class Pages:
             pid = f"{MADE}/{name}"
             out[pid] = Page(pid, m.get("title") or name, meta_path.parent / "page.html", list(m.get("caps") or ()),
                             list(m.get("events") or ()), ["page"], m.get("section") or "Pages",
-                            {k: m.get(k) for k in ("person", "agent", "created", "task")})
+                            {k: m.get(k) for k in ("authors", "created", "task")})
         return out
 
     def get(self, pid: str) -> Page:
@@ -164,7 +164,7 @@ class _Handlers:
         p = pages.get(page)
         out = {**p.view(), "archived": pages.archived.get(page)}
         if p.made:
-            out.update(author=p.made, note=pages.note(p))
+            out.update(made_by=p.made, note=pages.note(p))
         else:
             plugin = self.hub.plugins.plugins[page.partition("/")[0]].manifest
             out["plugin"] = {"name": plugin["plugin"], "version": str(plugin["version"]),
@@ -180,7 +180,7 @@ class _Handlers:
             raise KitError(f"{MADE}/{name} exists: change it with pages.update")
         _check_sizes(html, note)
         meta = {"title": title, "caps": _patterns(caps), "events": _patterns(events), "section": section or "Pages",
-                "person": ctx.caller.person, "agent": ctx.caller.agent, "created": time.time(), "task": task,
+                "authors": [_author(ctx)], "created": time.time(), "task": task,
                 "note": note, "history": [_history(ctx, "made the page")]}
         folder.mkdir(parents=True, exist_ok=True)
         _write(folder / "page.html", html)
@@ -203,6 +203,8 @@ class _Handlers:
             if value is not None:
                 meta[key] = _patterns(value)
         meta.setdefault("history", []).append(_history(ctx, change))
+        if _author(ctx) not in meta.setdefault("authors", []):
+            meta["authors"].append(_author(ctx))       # the page never does more than anyone who wrote it
         if html is not None:
             _write(folder / "page.html", html)
         self._save(folder, meta)
@@ -280,7 +282,7 @@ class Settings:
             hub.plugins.settings.setdefault(plugin, {}).update(values)
 
     def _specs(self, plugin: str | None = None):
-        for p in sorted(self.hub.plugins.plugins.values(), key=lambda p: p.name):
+        for p in sorted(list(self.hub.plugins.plugins.values()), key=lambda p: p.name):
             if plugin and p.name != plugin:
                 continue
             for key, spec in (p.manifest.get("settings") or {}).items():
@@ -337,6 +339,10 @@ def _check_sizes(html: str, note: str) -> None:
         raise KitError(f"bad args: html is over {MAX_HTML // 1024} KiB")
     if len(note.encode("utf-8")) > MAX_NOTE:
         raise KitError(f"bad args: note is over {MAX_NOTE // 1024} KiB")
+
+
+def _author(ctx) -> dict:
+    return {"person": ctx.caller.person, "agent": ctx.caller.agent}
 
 
 def _history(ctx, change: str) -> dict:
