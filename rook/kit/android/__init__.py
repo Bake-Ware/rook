@@ -140,6 +140,12 @@ def _value(cur: Any, i: int) -> Any:
     return None
 
 
+def num(value: Any) -> int:
+    """A provider's number column as an int (None and "" are 0): what
+    ``Cursor.getInt`` would give, whatever type the provider stored."""
+    return int(float(value)) if value not in (None, "") else 0
+
+
 def cursor(ctx: Any, name: str, value: int | None = None) -> int | None:
     """Where a watcher got to, kept in the plugin's data folder so a restart
     picks up what arrived meanwhile: read it (None the first time), or save ``value``."""

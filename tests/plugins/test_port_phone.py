@@ -178,7 +178,8 @@ def test_contact_search_dedupes(phone, java):
 
 def test_call_list_and_dial(phone, java):
     java.granted |= {"android.permission.READ_CALL_LOG"}
-    java.tables["content://call_log/calls"] = [{"number": "5", "name": None, "type": 3, "duration": 0,
+    # A provider that keeps numbers as text reads like Cursor.getInt would.
+    java.tables["content://call_log/calls"] = [{"number": "5", "name": None, "type": "3", "duration": None,
                                                 "date": 1_700_000_000_000}]
     assert phone.call("call.list")["calls"] == [{"number": "5", "name": "", "direction": "missed",
                                                  "duration_s": 0, "ts": 1_700_000_000.0}]

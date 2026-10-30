@@ -12,8 +12,9 @@ def list_calls(ctx, limit):
     rows = android.query("content://call_log/calls", ["number", "name", "type", "duration", "date"],
                          order="date DESC", limit=limit)
     return {"calls": [{"number": r.get("number") or "", "name": r.get("name") or "",
-                       "direction": DIRECTIONS.get(r.get("type"), "?"), "duration_s": r.get("duration") or 0,
-                       "ts": round((r.get("date") or 0) / 1000.0, 3)} for r in rows]}
+                       "direction": DIRECTIONS.get(android.num(r.get("type")), "?"),
+                       "duration_s": android.num(r.get("duration")),
+                       "ts": round(android.num(r.get("date")) / 1000.0, 3)} for r in rows]}
 
 
 def dial(ctx, to):

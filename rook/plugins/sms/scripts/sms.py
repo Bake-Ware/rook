@@ -9,8 +9,8 @@ COLUMNS = ["address", "body", "date", "type", "read"]
 
 def _message(row):
     return {"from": row.get("address") or "", "body": row.get("body") or "",
-            "ts": round((row.get("date") or 0) / 1000.0, 3), "box": TYPES.get(row.get("type"), "?"),
-            "read": bool(row.get("read"))}
+            "ts": round(android.num(row.get("date")) / 1000.0, 3), "box": TYPES.get(android.num(row.get("type")), "?"),
+            "read": bool(android.num(row.get("read")))}
 
 
 def list_messages(ctx, box, limit, since):
@@ -39,10 +39,10 @@ def watch(ctx):
     seen = android.cursor(ctx, "inbox")
     if seen is None:
         newest = android.query(BOXES["inbox"], ["date"], order="date DESC", limit=1)
-        android.cursor(ctx, "inbox", newest[0]["date"] if newest else 0)
+        android.cursor(ctx, "inbox", android.num(newest[0]["date"]) if newest else 0)
         return
     for row in android.query(BOXES["inbox"], COLUMNS, "date > ?", [str(seen)], "date ASC", limit=100):
         m = _message(row)
         ctx.emit("sms.received", {"from": m["from"], "body": m["body"], "ts": m["ts"]})
-        seen = max(seen, row.get("date") or 0)
+        seen = max(seen, android.num(row.get("date")))
         android.cursor(ctx, "inbox", seen)

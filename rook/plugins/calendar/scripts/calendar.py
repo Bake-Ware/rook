@@ -81,8 +81,8 @@ def select_rows(rows: list, begin: int, finish: int, n: int, offset=offset_ms) -
     first_day, last_day = local_date(begin, offset), local_date(finish - 1, offset)
     keep = []
     for r in rows:
-        b, e = int(r.get("begin") or 0), int(r.get("end") or 0)
-        if r.get("allDay"):
+        b, e = android.num(r.get("begin")), android.num(r.get("end"))
+        if android.num(r.get("allDay")):
             d0, d_end = all_day_dates(b, e)
             if not (d0 <= last_day and d_end > first_day):
                 continue
@@ -92,14 +92,14 @@ def select_rows(rows: list, begin: int, finish: int, n: int, offset=offset_ms) -
             if not (b < finish and (e > begin or b >= begin)):
                 continue
             key = b
-        keep.append((key, 0 if r.get("allDay") else 1, str(r.get("title") or ""), r))
+        keep.append((key, 0 if android.num(r.get("allDay")) else 1, str(r.get("title") or ""), r))
     keep.sort(key=lambda k: k[:3])
     return [k[3] for k in keep[:n]]
 
 
 def event_row(row: dict, offset=offset_ms) -> dict:
-    all_day = bool(row.get("allDay"))
-    begin, end = int(row.get("begin") or 0), int(row.get("end") or 0)
+    all_day = bool(android.num(row.get("allDay")))
+    begin, end = android.num(row.get("begin")), android.num(row.get("end"))
     if all_day:   # the end is an exclusive midnight: a one-day event ends the same date
         start_s, end_s = _utc_date(begin).isoformat(), _utc_date(max(begin, end - 1)).isoformat()
     else:
@@ -107,8 +107,8 @@ def event_row(row: dict, offset=offset_ms) -> dict:
     out = {"title": row.get("title") or "(no title)", "start": start_s, "end": end_s, "all_day": all_day,
            "start_ms": begin, "end_ms": end, "location": row.get("eventLocation") or "",
            "calendar": row.get("calendar_displayName") or "", "account": row.get("account_name") or "",
-           "account_type": row.get("account_type") or "", "event_id": row.get("event_id")}
-    if row.get("selfAttendeeStatus") == 2:
+           "account_type": row.get("account_type") or "", "event_id": android.num(row.get("event_id"))}
+    if android.num(row.get("selfAttendeeStatus")) == 2:
         out["declined"] = True
     return out
 
@@ -139,9 +139,10 @@ def _writable():
 def _calendars() -> list[dict]:
     rows = android.query(CALENDARS, ["_id", "calendar_displayName", "account_name", "isPrimary",
                                      "calendar_access_level", "visible"])
-    return [{"id": int(r["_id"]), "name": r.get("calendar_displayName") or "", "account": r.get("account_name") or "",
-             "primary": r.get("isPrimary") == 1, "access": r.get("calendar_access_level") or 0,
-             "visible": r.get("visible") == 1} for r in rows]
+    n = android.num
+    return [{"id": n(r["_id"]), "name": r.get("calendar_displayName") or "", "account": r.get("account_name") or "",
+             "primary": n(r.get("isPrimary")) == 1, "access": n(r.get("calendar_access_level")),
+             "visible": n(r.get("visible")) == 1} for r in rows]
 
 
 def _values(title=None, location=None, description=None, times=None, calendar_id=None):
@@ -219,12 +220,11 @@ def create(ctx, title, start, all_day, location, description, calendar, end=None
 def update(ctx, event_id, title=None, start=None, end=None, all_day=None, location=None, description=None):
     _writable()
     was = _event(event_id)
-    b0 = int(was.get("dtstart") or 0)
-    e0 = was.get("dtend")
+    b0, e0 = android.num(was.get("dtstart")), android.num(was.get("dtend")) or None
     times = None
     if start is not None or end is not None or all_day is not None:
-        day = bool(was.get("allDay")) if all_day is None else all_day
-        times = _times(start, end, day, (b0, int(e0) if e0 else None))
+        day = bool(android.num(was.get("allDay"))) if all_day is None else all_day
+        times = _times(start, end, day, (b0, e0))
     cv = _values(title, location, description, times)
     if cv.size() == 0:
         raise KitError("nothing to change")
