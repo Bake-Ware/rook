@@ -362,14 +362,13 @@ class Host:
         settings = self._action_settings(p, set(_SETTING_REF.findall(text)))
         tmp = tempfile.TemporaryDirectory(prefix=f"rook-{p.name}-") if _TMP_REF.search(text) else None
         try:
-            # TODO(castling:manifest-v11): pass cap=c.spec once run_action takes it
-            # (arg join/map and result coercion, manifest 1.1).
+            # cap=: arg join/map and result coercion (manifest 1.1).
             return await run_action(
                 c.action, args, settings=settings, worker={"os": self.os_name},
                 secrets=self.resolve_secret, tmp=tmp.name if tmp else None,
                 plugin_dir=str(p.folder) if p.folder else None,
                 plugin_data=str(self._data_dir(p)) if self.data_root else None,
-                timeout=c.timeout)
+                timeout=c.timeout, cap=c.spec)
         finally:
             if tmp is not None:
                 tmp.cleanup()
