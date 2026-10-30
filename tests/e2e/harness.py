@@ -40,6 +40,7 @@ E2E_TIMEOUT = int(os.environ.get("E2E_TIMEOUT", "150"))
 START_SECS = 30.0
 HTTP_SECS = 60.0
 WHY = "End-to-end test of the Castling hub and worker."
+PORTS = ("battery", "torrent")         # real 0.5 ports the worker loads too
 
 
 def until(cond, seconds: float = 20.0, what: str = "condition", every: float = 0.1):
@@ -194,7 +195,7 @@ class Band:
             "data": "./data",
             "anchor": "../anchor.json",
             "name": "e2e-worker",
-            "plugins": [str(HERE / "plugins")],
+            "plugins": [str(HERE / "plugins"), *(str(REPO / "rook" / "plugins" / p) for p in PORTS)],
             "bands": band,
             "log": {"level": "info", "format": "json"},
         }, indent=1))

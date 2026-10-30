@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+import shutil
 import time
 
 from rook.core2 import journal
 from rook.core2.transport import TelestheteLink, Transport
 
-from harness import WHY, tv, until
+from harness import PORTS, WHY, tv, until
 
 
 def on_band(band, fn, seconds: float = 20.0):
@@ -42,7 +43,7 @@ def test_the_hub_lists_what_the_worker_announces(band):
     workers = {w["name"]: w for w in band.owner.get("/workers")["workers"]}
     w = workers["e2e-worker"]
     assert w["id"] == band.worker_id and w["online"] and w["core"] == "2.0" and w["problem"] is None
-    assert set(w["plugins"]) == {"core", "e2e"} and w["facts"]["os"] == "linux"
+    assert set(w["plugins"]) == {"core", "e2e", *PORTS} and w["facts"]["os"] == "linux"
     caps = band.caps()["caps"]
     assert caps["e2e.wipe"]["effects"] == ["destructive"] and caps["e2e.admin"]["risk"] == "admin"
     assert {"core.manifests", "core.trust.set", "core.plugin.install"} <= set(caps)
@@ -61,7 +62,7 @@ def test_caps_stay_known_while_the_worker_is_offline_and_across_hub_restarts(fre
     assert b.hub.stop() == 0
     b.start_hub()
     w = next(w for w in b.owner.get("/workers")["workers"] if w["name"] == "e2e-worker")
-    assert not w["online"] and set(w["plugins"]) == {"core", "e2e"}
+    assert not w["online"] and set(w["plugins"]) == {"core", "e2e", *PORTS}
     offline = b.caps()
     assert not offline["online"] and "e2e.ping" in offline["caps"]
     b.start_worker()
@@ -71,6 +72,25 @@ def test_caps_stay_known_while_the_worker_is_offline_and_across_hub_restarts(fre
     # the general chain runs on across the restart
     calls = [e for e in chain_holds(b) if e.get("cap") == "e2e.ping"]
     assert [e["args"]["text"] for e in calls] == ["before", "after"]
+
+
+def test_real_plugin_ports_say_what_this_machine_can_serve(band):
+    """battery and torrent from rook/plugins in the real worker: the hub
+    lists their caps, and one the machine can't serve says why, in the
+    listing and in the reply."""
+    c = band.caps()
+    assert {"battery.status", "torrent.version", "torrent.add"} <= set(c["caps"])
+    # the worker's config declares no battery hardware
+    assert c["unavailable"]["battery.status"] == "missing hardware: battery"
+    out = band.owner.call("battery.status")
+    assert out["error"] == "unavailable: battery.status: missing hardware: battery", out
+    if shutil.which("deluge-console"):
+        v = band.owner.call("torrent.version")
+        assert v["ok"] and v["result"]["deluge"], v
+    else:
+        assert c["unavailable"]["torrent.version"] == "missing bin: deluge-console"
+        assert band.owner.call("torrent.version")["error"] == \
+            "unavailable: torrent.version: missing bin: deluge-console"
 
 
 # -- 3. a call, end to end ------------------------------------------------------------------
