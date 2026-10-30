@@ -136,9 +136,9 @@ There is no `info` plugin in 0.5 yet; `hub.workers` and `caps` cover it.
 Hub (`hub/library`): `agents` (8 ready-made agents: house, pm, lead, qa,
 writer, archivist, producer, security), `notify` (no channels set up yet),
 and the workbench (`tasks`, `projects`, `knowledge`, `concepts`,
-`whiteboard`) once PR #277 is on castling (`install.sh --upgrade` picks it
-up). The library also holds the worker plugins, so `POST /plugins/push` can
-reinstall them signed.
+`whiteboard`: caps `task.*`, `project.*`, ..., no pages yet; a project
+"Try Rook 0.5" with one task is there from the check). The library also
+holds the worker plugins, so `POST /plugins/push` can reinstall them signed.
 
 ## What to try first
 
@@ -149,7 +149,10 @@ reinstall them signed.
 3. Talk to an agent (over MCP or the HTTP door):
    `call worker=rook cap=agents.chat.send args={"agent": "house", "text": "..."}`.
    Read back with `agents.chat.read`. A first turn takes about 10 s.
-4. Something that waits for you: a `destructive` cap (e.g. `torrent.delete`)
+4. The workbench: `call worker=rook cap=task.list`, `project.list`, then
+   `task.create {title, project: <project id>}` (a project is referred to
+   by its record id).
+5. Something that waits for you: a `destructive` cap (e.g. `torrent.delete`)
    is held; approve or refuse it on **Approvals**.
 
 By hand with curl:
