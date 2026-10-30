@@ -361,7 +361,7 @@ class _Band:
         if not isinstance(node_id, str) or not node_id or node_id == self.t.node_id:
             return
         peer = self.peers.get(node_id) or Peer(node_id)
-        self.peers[node_id] = peer
+        _remember(self.peers, node_id, peer)    # bounded: any PSK holder can invent ids
         peer.last_heard = now
         if msg is None:
             return
