@@ -217,6 +217,21 @@ def test_plugin_failures_never_take_the_host_down(tmp_path):
     go(body)
 
 
+def test_secrets_are_redacted_from_run_cap_errors(tmp_path):
+    async def body():
+        vault = {"tv": "tv-pairing-key"}
+        host = Host(os_name="linux", resolve_secret=vault.get)
+        await host.set_settings("counter", hub={"key": "tv"})
+        await host.load(counter(tmp_path))
+        with pytest.raises(CallError, match=r"^tv refused \[redacted\]$"):
+            await host.call("counter.leak", {}, ME)
+        vault["tv"] = "other-key"
+        with pytest.raises(CallError, match=r"^counter.leak failed: ValueError: bad key \[redacted\]$"):
+            await host.call("counter.leak", {}, ME)
+        await host.close()
+    go(body)
+
+
 def test_timeouts_cancel_async_and_hold_exclusive_locks(tmp_path):
     async def body():
         host = Host(os_name="linux")

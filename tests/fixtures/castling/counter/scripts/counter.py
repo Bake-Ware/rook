@@ -49,6 +49,13 @@ def quit(ctx):
     sys.exit(3)
 
 
+def leak(ctx):
+    key = ctx.settings["key"]
+    if key == "tv-pairing-key":
+        raise ctx.Error(f"tv refused {key}")
+    raise ValueError(f"bad key {key}")
+
+
 def refuse(ctx):
     raise ctx.Error("device busy", retry=True)
 

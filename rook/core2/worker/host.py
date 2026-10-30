@@ -22,6 +22,7 @@ return to it without a restart.
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import inspect
 import json
@@ -226,8 +227,8 @@ class Host:
             raise CallError(f"bad args: {where + ': ' if where else ''}{e.message}")
         for key, spec in c.spec.get("args", {}).items():
             if key not in args and "default" in spec:
-                args[key] = spec["default"]
-        args.update(c.bind)
+                args[key] = copy.deepcopy(spec["default"])
+        args.update(copy.deepcopy(c.bind))
         loop = asyncio.get_running_loop()
         deadline = loop.time() + c.timeout
         lock = None
@@ -238,7 +239,8 @@ class Host:
                     await lock.acquire()
             except TimeoutError:
                 raise CallError(f"busy: {c.spec['exclusive']} is in use", retry=True) from None
-        work = asyncio.ensure_future(self._exec(p, c, args, caller))
+        shown: list[str] = []   # secret values this call's code was handed
+        work = asyncio.ensure_future(self._exec(p, c, args, caller, shown))
         work.add_done_callback(_retrieve)
         if lock is not None:
             # Held until the work really ends: a timed-out sync function keeps
@@ -262,14 +264,17 @@ class Host:
         except CallError:
             raise
         except (KitError, ActionError) as e:
-            raise CallError(getattr(e, "message", None) or str(e), retry=e.retry) from None
+            msg = _redact(getattr(e, "message", None) or str(e), shown)
+            raise CallError(msg, retry=e.retry) from None
         except asyncio.CancelledError:   # the plugin cancelled itself
             raise CallError(f"{cap} was cancelled") from None
-        except BaseException as e:      # SystemExit from plugin code included
+        except BaseException as e:      # anything plugin code raises
             if isinstance(e, KeyboardInterrupt):
                 raise
-            log.warning("%s failed", cap, exc_info=e)
-            raise CallError(f"{cap} failed: {type(e).__name__}: {e}") from None
+            msg = _redact(f"{cap} failed: {type(e).__name__}: {e}", shown)
+            log.warning("%s", msg)
+            log.debug("%s traceback", cap, exc_info=e)
+            raise CallError(msg) from None
 
     def _find(self, cap: str):
         for p in self.plugins.values():
@@ -281,9 +286,9 @@ class Host:
                 raise CallError(f"unavailable: {cap}: {p.unavailable[cap]}")
         raise CallError(f"unknown capability: {cap}")
 
-    async def _exec(self, p: Plugin, c, args: dict, caller: Caller) -> Any:
+    async def _exec(self, p: Plugin, c, args: dict, caller: Caller, shown: list[str]) -> Any:
         if c.action is None:
-            return await invoke(c.func, self._ctx(p, caller), args)
+            return await invoke(c.func, self._ctx(p, caller, shown), args)
         text = json.dumps(c.action)
         settings = self._action_settings(p, set(_SETTING_REF.findall(text)))
         tmp = tempfile.TemporaryDirectory(prefix=f"rook-{p.name}-") if _TMP_REF.search(text) else None
@@ -318,10 +323,17 @@ class Host:
             out[key] = value
         return out
 
-    def _ctx(self, p: Plugin, caller: Caller) -> Ctx:
+    def _ctx(self, p: Plugin, caller: Caller, shown: list[str] | None = None) -> Ctx:
         store = partial(self.store_setting, p.name) if self.store_setting else None
+        resolve = self.resolve_secret
+        if resolve is not None and shown is not None:
+            def resolve(name, _get=resolve):
+                value = _get(name)
+                if value:
+                    shown.append(str(value))
+                return value
         return Ctx(p.manifest, caller, dispatch=self.dispatch, settings=p.settings,
-                   resolve_secret=self.resolve_secret, store_setting=store, emit=self.emit,
+                   resolve_secret=resolve, store_setting=store, emit=self.emit,
                    data_dir=self._data_dir(p) if self.data_root else None,
                    streams=self.streams)
 
@@ -353,12 +365,9 @@ class Host:
 
     async def status(self, ceiling: Mapping | None = None) -> dict:
         """``{plugin: status}`` from ``status`` hooks; plugins without one are left out."""
-        out = {}
-        for p in self._visible(ceiling):
-            s = await self.scheduler.status(p.name)
-            if s is not None:
-                out[p.name] = s
-        return out
+        visible = self._visible(ceiling)
+        got = await asyncio.gather(*(self.scheduler.status(p.name) for p in visible))
+        return {p.name: s for p, s in zip(visible, got, strict=True) if s is not None}
 
     async def announce(self, ceiling: Mapping | None = None) -> dict:
         """The plugin part of the worker announce (spec 5.3): ``manifests``,
@@ -385,6 +394,12 @@ def _retrieve(task: asyncio.Future) -> None:
     """Mark a finished call's exception as seen (a timed-out call ends later)."""
     if not task.cancelled():
         task.exception()
+
+
+def _redact(text: str, secrets: list[str]) -> str:
+    for value in sorted(set(secrets), key=len, reverse=True):
+        text = text.replace(value, "[redacted]")
+    return text
 
 
 def _jsonable(res: Any) -> Any:

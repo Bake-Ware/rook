@@ -6,6 +6,7 @@ version: 1.0.0
 doc: Counts.
 settings:
   step: { type: int, default: 1 }
+  key: { where: hub, secret: true }
 hooks:
   start: scripts/counter.py:start
   stop: scripts/counter.py:stop
@@ -49,6 +50,11 @@ caps:
     risk: read
     scope: self
     run: scripts/counter.py:quit
+  leak:
+    doc: Fails with the secret in the message.
+    risk: read
+    scope: self
+    run: scripts/counter.py:leak
   refuse:
     doc: A clean failure.
     risk: read
