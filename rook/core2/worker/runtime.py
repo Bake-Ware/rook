@@ -22,7 +22,8 @@ What it wires together:
   at start-up, re-checked.
 - **Transport** (:mod:`rook.core2.transport`): one connection per band, each
   with its own announce, heartbeat and hub-loss clock (9.4). Bands come from
-  the config and from ``core.trust.set`` (kept in ``<data>/bands.json``).
+  the config, enrollment and ``core.trust.set`` (the last two kept in
+  ``<data>/bands.json``).
   Losing the hub on a band drops its leases there (7.4).
 
 Plugin code's ``ctx.call`` becomes ``core.call`` on the hub, authenticated
@@ -521,8 +522,9 @@ class Worker:
         return {"ok": True}
 
     def _joined(self) -> dict[str, dict]:
-        """Bands joined through ``core.trust.set``: band -> link spec. The
-        file holds band PSKs, so it is private to the worker's account."""
+        """Bands joined at enrollment and through ``core.trust.set``: band ->
+        link spec. The file holds band PSKs, so it is private to the worker's
+        account."""
         try:
             got = json.loads((self.data / "bands.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):

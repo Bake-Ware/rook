@@ -1,15 +1,24 @@
-"""Run a 0.5 worker.
+"""Enroll a 0.5 worker with its home hub, or run it.
 
+    python -m rook.core2.worker --config worker.yaml enroll https://rook.example [--name kaiju]
+    python -m rook.core2.worker --config worker.yaml enroll 'rook://enroll?url=…&code=…&hub=…'
+    python -m rook.core2.worker --config worker.yaml enroll --discover
     python -m rook.core2.worker --config worker.yaml
+
+``enroll`` (spec 12; rook.core2.enroll.device) signs the machine in as a
+person: with the QR's one-time code, else by showing a short code the person
+approves on their phone or the dashboard. It writes the anchor, the home
+band and the config's ``anchor``/``name``/``worker_id``; the rest of an
+existing config is kept.
 
 A config (paths are relative to the file)::
 
-    data: ./worker-data           # worker_id, replay cache, memberships, installed plugins
+    data: ./worker-data           # worker_id, replay cache, memberships, bands, installed plugins
     anchor: /etc/rook/anchor.json # the home hub {hub, root, band}: written at enrollment, read-only here
     name: kaiju                   # default: the hostname
     worker_id: 3f0a...            # from enrollment; default: made once in <data>
     memberships: ./memberships.json   # other hubs' signed memberships + ceilings; default <data>/memberships.json
-    bands:                        # one connection per band (home, co-owner and guest hubs)
+    bands:                        # more bands by hand; enrollment and core.trust.set keep theirs in <data>/bands.json
       - { psk_env: ROOK_PSK, relay: "relay.example:7474" }
       - { psk_env: ROOK_GUEST_PSK, ws_url: "wss://friend.example/band" }
     plugins: [./plugins]          # plugin folders, or folders of them, loaded at start
@@ -24,6 +33,7 @@ import argparse
 import asyncio
 import signal
 import sys
+from pathlib import Path
 
 from .runtime import Worker, load_config, setup_logging
 
@@ -43,10 +53,44 @@ async def serve(worker: Worker) -> None:
         await worker.stop()
 
 
+def enroll(args) -> int:
+    from ..enroll import device, mdns
+    config = Path(args.config)
+    try:
+        if bool(args.hub) == args.discover:
+            raise device.EnrollError("give the hub's address (or QR text), or --discover")
+        url, code, pinned = device.parse_target(args.hub) if args.hub else (None, None, None)
+        if args.discover:
+            url, pinned = device.find_hub(mdns.discover)
+            print(f"Found hub {pinned} at {url}")
+        device.check_url(url, args.insecure)
+        if not args.force and device.home_of(config):
+            raise device.EnrollError(device.already(device.home_of(config)))
+        name = args.name or device.default_name(config)
+        bundle = device.sign_in(url, name, args.code or code, pinned, say=lambda s: print(s, flush=True))
+        paths = device.install(config, bundle, url, force=args.force)
+    except device.EnrollError as e:
+        print(f"enroll: {e}", file=sys.stderr)
+        return 1
+    print(f"Enrolled {bundle['name']} ({bundle['worker_id']}) with hub {bundle['hub']['hub_id']}, "
+          f"owned by {bundle.get('owner')}.\nStart it:  python -m rook.core2.worker --config {paths['config']}")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="python -m rook.core2.worker", description="Rook 0.5 worker")
     ap.add_argument("--config", required=True, help="the worker's YAML config")
+    sub = ap.add_subparsers(dest="cmd")
+    en = sub.add_parser("enroll", help="sign this machine in with its home hub (writes the anchor and config)")
+    en.add_argument("hub", nargs="?", help="the hub's address, or the text of its enrollment QR")
+    en.add_argument("--discover", action="store_true", help="find the hub on the local network")
+    en.add_argument("--code", help="a one-time code from the hub (else a code to approve is shown)")
+    en.add_argument("--name", help="this machine's name on the band (default: the config's, else the hostname)")
+    en.add_argument("--insecure", action="store_true", help="allow a plain http hub address off this machine")
+    en.add_argument("--force", action="store_true", help="enroll again: a new home hub, every other band dropped")
     args = ap.parse_args(argv)
+    if args.cmd == "enroll":
+        return enroll(args)
     try:
         cfg = load_config(args.config)
     except (OSError, ValueError) as e:
