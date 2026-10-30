@@ -38,7 +38,8 @@
   "rook-lease": "rook-lease-v2\n",
   "rook-hubkey": "rook-hubkey-v2\n",
   "rook-membership": "rook-membership-v2\n",
-  "rook-announce": "rook-announce-v2\n"
+  "rook-announce": "rook-announce-v2\n",
+  "rook-plugin": "rook-plugin-v2\n"
  },
  "signing_input": {
   "object": {
@@ -244,6 +245,51 @@
    },
    "pub": "ed25519:MbCo4yBEeKDrk+P009e4Ek1aVP0U3gd/ico2zVw2opQ=",
    "valid": true
+  },
+  {
+   "name": "plugin.sig",
+   "object": {
+    "typ": "rook-plugin",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "plugin": "echo",
+    "version": "1.0.0",
+    "files": {
+     "plugin.yaml": "fb6c22cc6e58f10e93af1f5ca29b1b8d17ce051cf6c3e17a068427d805676a7c"
+    },
+    "python": [
+     "anyio==4.15.1"
+    ],
+    "iat": 1793300000,
+    "kid": "3c1945587ef004c3",
+    "sig": "2v9sCqzOMLlB5JAoa54PT1BOItKAHf8VPwf0EryPcNiyj1ip+kn7il0cuAix3lEzboi8n8/9J3WSxE6DXHI9CQ=="
+   },
+   "pub": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+   "valid": true
+  },
+  {
+   "name": "plugin.sig with a file added",
+   "object": {
+    "typ": "rook-plugin",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "plugin": "echo",
+    "version": "1.0.0",
+    "files": {
+     "plugin.yaml": "fb6c22cc6e58f10e93af1f5ca29b1b8d17ce051cf6c3e17a068427d805676a7c",
+     "x.py": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "python": [
+     "anyio==4.15.1"
+    ],
+    "iat": 1793300000,
+    "kid": "3c1945587ef004c3",
+    "sig": "2v9sCqzOMLlB5JAoa54PT1BOItKAHf8VPwf0EryPcNiyj1ip+kn7il0cuAix3lEzboi8n8/9J3WSxE6DXHI9CQ=="
+   },
+   "pub": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+   "valid": false
   },
   {
    "name": "unknown field is signed and verifies",

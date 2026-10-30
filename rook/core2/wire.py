@@ -137,6 +137,7 @@ PREFIX = {
     "rook-hubkey": b"rook-hubkey-v2\n",
     "rook-membership": b"rook-membership-v2\n",
     "rook-announce": b"rook-announce-v2\n",
+    "rook-plugin": b"rook-plugin-v2\n",
 }
 
 # Keys that ride on a signed object without being signed (spec 3.3).
