@@ -59,7 +59,7 @@ async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, sys
 def parse(ctx, code, out: bytes, err: bytes) -> dict:
     text = out.decode("utf-8", "replace").strip()
     try:
-        res = json.loads(text[text.index("{"):]) if "{" in text else None
+        res = json.JSONDecoder().raw_decode(text, text.index("{"))[0] if "{" in text else None
     except ValueError:
         res = None
     if not isinstance(res, dict):

@@ -261,16 +261,47 @@ def test_a_message_nobody_waits_on_is_never_run_as_the_plugin(rig):
     run(rig, body)
 
 
-def test_sleep_mid_turn_answers_the_waiter(rig):
+def test_sleep_and_archive_answer_every_waiter(rig):
     async def body():
         rig.backend.hold = asyncio.Event()
-        send = asyncio.ensure_future(rig.call("chat_send", agent="lead", text="slow one"))
+        first = asyncio.ensure_future(rig.call("chat_send", agent="lead", text="slow one"))
         await until(lambda: rig.backend.turns())
+        queued = asyncio.ensure_future(rig.call("chat_send", agent="lead", text="behind it"))
+        await until(lambda: len(rig.rt.asks) == 1)
         assert (await rig.call("get", name="lead"))["awake"]
         assert (await rig.call("sleep", name="lead"))["awake"] is False
-        with pytest.raises(KitError, match="put to sleep before it answered"):
-            await send
+        for send in (first, queued):
+            with pytest.raises(KitError, match="put to sleep before it answered"):
+                await send
+        assert rig.rt.asks == {} and not rig.rt.awake("lead")
+        busy = asyncio.ensure_future(rig.call("chat_send", agent="qa", text="hang on"))
+        await until(lambda: len(rig.backend.turns()) == 2)
+        queued = asyncio.ensure_future(rig.call("chat_send", agent="qa", text="and this"))
+        await until(lambda: len(rig.rt.asks) == 1)
+        await rig.call("archive", name="qa")
+        for send in (busy, queued):
+            with pytest.raises(KitError, match="put to sleep before it answered"):
+                await send
+        assert not rig.rt.awake("qa") and rig.rt.asks == {}
     run(rig, body)
+
+
+def test_a_message_sent_as_the_runner_lets_go_is_answered(tmp_path):
+    rig = Rig(tmp_path, warm="30ms")
+
+    async def body():
+        for i in range(25):
+            await asyncio.sleep(0.03 + (i % 5) * 0.003)            # around the warm boundary
+            out = await asyncio.wait_for(rig.call("chat_send", agent="qa", text=f"#{i}"), 5)
+            assert out["text"] == f"echo #{i}"
+        # The hand-over itself: a waiter on a session with no runner gets one.
+        sid = rig.rt.session("lead", "person:bake")
+        ev = rig.rt.streams.append(sid, "input", {"text": "late"}, by="person:bake")
+        fut = asyncio.get_running_loop().create_future()
+        rig.rt.asks[(sid, ev.seq)] = (rig.ctx(BAKE), fut)
+        rig.rt.after("lead", sid)
+        assert (await asyncio.wait_for(fut, 5))["text"] == "echo late"
+    go(lambda: _started(rig, body), 30)
 
 
 # -- notepad, memory, dreams ------------------------------------------------------------------
@@ -304,7 +335,14 @@ def test_dream_curates_the_notepad_into_memory(rig):
         rig.backend.dream = {"add": ["Burn-down every Monday", " ", 7],
                              "update": [{"id": m1, "text": "Reports go out Mondays"}, {"id": m3, "text": "hijack"}],
                              "remove": [m2, m3], "keep": [n2, 999]}
-        out = await rig.call("dream", PM, name="pm")
+        rig.backend.hold = asyncio.Event()
+        dreaming = asyncio.ensure_future(rig.call("dream", PM, name="pm"))
+        await until(lambda: rig.backend.dreams())
+        await rig.call("update", name="pm", summary="edited while it dreamed")
+        rig.backend.hold.set()
+        rig.backend.hold = None
+        out = await dreaming
+        assert rt.agent("pm")["summary"] == "edited while it dreamed"
         assert out == {"dreamed": True, "added": 1, "updated": 1, "removed": 1, "notes_kept": 1}
         assert [m["text"] for m in rt.memories("pm")] == ["Reports go out Mondays", "Burn-down every Monday"]
         assert [m["text"] for m in rt.memories("qa")] == ["Not pm"]       # another agent's memory is untouchable
@@ -320,6 +358,20 @@ def test_dream_curates_the_notepad_into_memory(rig):
         assert "## Notepad since your last dream\n- release 0.5 slips" in system
         assert n1 not in [n["id"] for n in rt.notes("pm")]
         assert await rig.call("dream", name="lead") == {"dreamed": False}       # nothing to curate
+        # The house agent is always on and never wakes again: its prompt
+        # picks up a dream between turns.
+        await rig.call("chat_send", agent="house", text="hi")
+        await rig.call("note", agent="house", text="Bake takes his coffee black")
+        rig.backend.dream = {"add": ["Coffee: black"]}
+        await rig.call("dream", name="house")
+        rig.backend.dream = {"add": []}
+        await rig.call("chat_send", agent="house", text="coffee?")
+        assert "## Memory\n- Coffee: black" in rig.backend.turns()[-1][1]["system"]
+        for i in range(205):
+            rt.db.execute("INSERT INTO memory (agent, text, created, updated) VALUES ('lead', ?, 0, 0)", (f"m{i}",))
+        await rig.call("chat_send", agent="lead", text="?")
+        system = rig.backend.turns()[-1][1]["system"]
+        assert "- m204" in system and "- m4\n" not in system and "- m5\n" in system   # the newest 200
         rig.backend.dream = "I'd rather not."
         await rig.call("note", agent="lead", text="x")
         with pytest.raises(KitError, match="no JSON object; the notepad is kept"):

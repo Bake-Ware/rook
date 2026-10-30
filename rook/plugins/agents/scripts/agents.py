@@ -125,6 +125,7 @@ class Runtime:
 
     async def close(self) -> None:
         self.closing = True
+        self.drop_asks(lambda sid: True, "the hub is stopping")
         tasks = [*self.runners.values(), *self.tasks]
         for t in tasks:
             t.cancel()
@@ -202,44 +203,66 @@ class Runtime:
             self.runners[sid] = asyncio.get_running_loop().create_task(self.run(name, sid))
 
     async def sleep(self, name: str) -> None:
-        tasks = [t for sid, t in list(self.runners.items()) if self.streams.get(sid).attrs.get("agent") == name]
+        mine = {m.id for m in self.sessions(name)}
+        self.drop_asks(lambda sid: sid in mine, "the agent was put to sleep before it answered")
+        tasks = [t for sid, t in list(self.runners.items()) if sid in mine]
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
+    def drop_asks(self, which, error: str) -> None:
+        """Answer the senders waiting on these sessions' queued messages."""
+        for key in [k for k in self.asks if which(k[0])]:
+            _, fut = self.asks.pop(key)
+            if not fut.done():
+                fut.set_result({"error": error})
+
     async def run(self, name: str, sid: str) -> None:
         """An agent's runner on one session: take input, answer, and let go
-        after ``warm`` without input (the system prompt is built once per
-        wake: memory doesn't change while the agent works)."""
+        after ``warm`` without input. Memory doesn't change while the agent
+        works: the system prompt is built on wake, and again only after a
+        dream or an edit (an always-on agent never wakes again)."""
         try:
             prod = self.streams.attach(sid, f"agents.{name}")
         except StreamError:
             self.runners.pop(sid, None)      # someone else is producing (another hub process)
             return
-        system = None
+        system, built = None, None
         inputs = prod.inputs().__aiter__()
         try:
             while True:
                 try:
-                    a = self.agent(name)
-                except KeyError:
-                    break                    # archived while awake
-                try:
-                    ev = await asyncio.wait_for(inputs.__anext__(),
-                                                None if a.get("always_on") else self.seconds("warm"))
-                except (asyncio.TimeoutError, StopAsyncIteration):
-                    break
+                    warm = None if self.agent(name).get("always_on") else self.seconds("warm")
+                    ev = await asyncio.wait_for(inputs.__anext__(), warm)
+                    a = self.agent(name)     # as it is now, after the wait
+                except (KeyError, asyncio.TimeoutError, StopAsyncIteration):
+                    break                    # archived, or idle for warm
                 if "text" not in ev.body:
                     continue                 # signals and resizes mean nothing to an agent yet
-                system = system or self.system_prompt(a)
+                if system is None or built != (a.get("updated"), a.get("dreamed")):
+                    system, built = self.system_prompt(a), (a.get("updated"), a.get("dreamed"))
                 await self.turn(a, prod, ev, system)
         finally:
-            await inputs.aclose()
+            # Let go before the first await, so a message sent from here on
+            # starts a new runner instead of waiting on this one.
             prod.detach()
             if self.runners.get(sid) is asyncio.current_task():
                 del self.runners[sid]
-            if not self.awake(name) and not self.closing:
-                self.spawn(self.dream_quietly(name))
+            await inputs.aclose()
+            if not self.closing:
+                self.after(name, sid)
+
+    def after(self, name: str, sid: str) -> None:
+        """A runner let go: answer what came in meanwhile, else dream if the
+        agent is now fully asleep."""
+        if any(k[0] == sid for k in self.asks):
+            try:
+                self.agent(name)
+            except KeyError:
+                return self.drop_asks(lambda s: s == sid, f"agent {name} was archived")
+            self.wake(name, sid)
+        elif not self.awake(name):
+            self.spawn(self.dream_quietly(name))
 
     async def turn(self, a: dict, prod, ev, system: str) -> None:
         ask = self.asks.pop((prod.id, ev.seq), None)
@@ -313,7 +336,7 @@ class Runtime:
         if skills:
             parts.append("## Skills\nRead a skill with agents.skill before you follow it.\n" + "\n".join(skills))
         parts.append("## Notepad\n" + NOTEPAD.format(name=name))
-        mems = self.memories(name)
+        mems = self.memories(name)[-MAX_MEMORIES:]
         if mems:
             parts.append("## Memory\n" + "\n".join(f"- {m['text']}" for m in mems))
         notes = self.notes(name)[-MAX_NOTES:]
@@ -328,8 +351,7 @@ class Runtime:
         return [{"id": i, "at": at, "text": t} for i, at, t in rows]
 
     def memories(self, name: str) -> list[dict]:
-        rows = self.db.execute("SELECT id, text, updated FROM memory WHERE agent = ? ORDER BY id LIMIT ?",
-                               (name, MAX_MEMORIES))
+        rows = self.db.execute("SELECT id, text, updated FROM memory WHERE agent = ? ORDER BY id", (name,))
         return [{"id": i, "text": t, "updated": u} for i, t, u in rows]
 
     async def dream(self, name: str, ctx=None) -> dict:
@@ -362,8 +384,7 @@ class Runtime:
                                     [(u["text"], now, u["id"]) for u in update])
                 self.db.executemany("DELETE FROM memory WHERE id = ?", [(i,) for i in remove])
                 self.db.executemany("DELETE FROM note WHERE id = ?", [(i,) for i in seen - keep])
-            a["dreamed"] = now
-            self.save(a)
+            self.save({**self.agent(name, archived=True), "dreamed": now})   # as edited meanwhile
         return {"dreamed": True, "added": len(ops["add"]), "updated": len(update), "removed": len(remove),
                 "notes_kept": len(keep)}
 
