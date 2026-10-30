@@ -85,8 +85,7 @@ contracts:
     args:
       text: { type: str, required: true }
       voice: { type: str, doc: "A voice the provider offers; blank: the band's default." }
-      format: { type: str, enum: [wav, mp3, ogg], default: wav }
-    result: { type: file, doc: The audio. }
+    result: { type: file, doc: "The audio (its mime type says the format)." }
 
   voice.stt:
     doc: Speech to text.

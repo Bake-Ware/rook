@@ -1,11 +1,12 @@
 """The call context every ``run:`` function gets (castling-manifest-2, "Python contract").
 
 ``def func(ctx, **args)`` (sync or async) returns JSON-able data,
-``ctx.file(...)`` or ``ctx.stream(...)`` (the call then answers
-``{"stream": id}`` and the code keeps writing through the handle). ``ctx`` carries who is asking
-(person, agent, session, band, why) and the plumbing a plugin would otherwise
-rebuild: settings with secrets resolved, ``call`` limited by the manifest's
-``uses``, records, ``emit``, a data dir, a per-call tmp dir and a logger.
+``ctx.file(...)`` or ``ctx.stream(...)`` (the call answers ``{"stream": id}``
+and the code keeps writing through the handle). ``ctx`` carries who is
+asking (person, agent, session, band, why) and the plumbing a plugin would
+otherwise rebuild: settings with secrets resolved, ``call`` limited by the
+manifest's ``uses``, records, ``emit``, a data dir, a per-call tmp dir and a
+logger.
 
 The host builds one :class:`Ctx` per call and runs the function through
 :func:`invoke`, which awaits async functions, runs sync ones in a thread and
@@ -242,12 +243,15 @@ class Ctx:
             raise KitError(f"no such file: {p}")
         return FileResult(p, data, name or (p.name if p else None), mime)
 
-    def stream(self, kind: str = "process", *, title: str = "", attrs: Mapping | None = None) -> Any:
+    def stream(self, kind: str = "process", *, title: str = "",
+               attrs: Mapping | None = None) -> Producer:
         """Open the stream this cap declares (``stream:`` in its manifest
         entry) with this cap as its producer, and return the producer handle:
         ``handle.id`` is the stream id, ``handle.append(type, body)`` writes,
         ``handle.inputs()`` takes input. Returning the handle from the
-        function makes the call answer ``{"stream": id}``."""
+        function makes the call answer ``{"stream": id}``. Appends belong on
+        the host loop: a thread hands them over with
+        ``loop.call_soon_threadsafe`` (rook.streams)."""
         if self._streams is None:
             raise KitError("streams are not available here")
         block = self._cap_spec.get("stream")
