@@ -160,6 +160,18 @@ def _key(path: Path, max_age: float | None = None, now: float | None = None) -> 
     return sk
 
 
+def env_secret(name: str) -> str:
+    """A hub plugin's secret setting, by vault name. TODO(castling:vault):
+    stand-in until the hub has its vault: the value comes from the hub
+    process's environment, ``ROOK_SECRET_<NAME>`` (upper case, anything not a
+    letter or digit as ``_``), so it is never in a config file."""
+    var = "ROOK_SECRET_" + re.sub(r"[^A-Z0-9]", "_", str(name).upper())
+    value = os.environ.get(var)
+    if not value:
+        raise KitError(f"secret {name} is not set (no vault yet: set {var} for the hub)")
+    return value
+
+
 def home_band(cfg: Config) -> str:
     """The hub's band: ``band``, else the first transport band's PSK's."""
     if cfg.band:
@@ -366,7 +378,8 @@ class Hub:
 
         self.contracts = Contracts(dict(cfg.contracts))
         self.plugins = HubPlugins(records=self.records, contracts=self.contracts, call=self.call_as,
-                                  emit=self._emit, data_dir=self.data / "plugins", settings=cfg.settings)
+                                  emit=self._emit, data_dir=self.data / "plugins", settings=cfg.settings,
+                                  resolve_secret=env_secret)
         self.plugins.add_core(self.core)
         builtin_caps.install(self)               # pages, hub, approval, journal, setting: before the library
         self.enroll = Enrollment(self, cfg.enroll)
@@ -927,11 +940,13 @@ class Hub:
 
     # -- calls from hub plugins (ctx.call, hooks, contract routing) ---------------
 
-    async def call_as(self, who: KitCaller, cap: str, args: dict | None, uses: list | None = None) -> dict:
+    async def call_as(self, who: KitCaller, cap: str, args: dict | None, uses: list | None = None,
+                      target: str | None = None) -> dict:
         """Dispatch a call a hub plugin makes. With a person or agent (a call
         in progress) it runs as them in their session; without (a hook), as
         ``system:plugin.<name>`` (a dot no plugin name has, so no plugin can
-        be ``system:hub``). ``uses`` is the plugin's extra layer."""
+        be ``system:hub``). ``uses`` is the plugin's extra layer; ``target``
+        names the worker (``ctx.call_on``), else the one that serves ``cap``."""
         if who.person or who.agent:
             caller, sid = Caller(who.person, who.agent), who.session or ""
         else:
@@ -940,7 +955,7 @@ class Hub:
             if who.plugin in self.plugins.plugins:
                 self.identities.add_component(component, {"grants": self.plugins.uses(who.plugin)})
             sid = self._session(self._component_sessions, component, caller, ["*"])
-        target = self._target_for(cap)
+        target = target or self._target_for(cap)
         if target is None:
             return {"ok": False, "error": f"no single worker serves {cap}"}
         return await self.dispatcher.dispatch(caller, Call(
@@ -949,8 +964,7 @@ class Hub:
 
     def _target_for(self, cap: str) -> str | None:
         """The hub if it serves ``cap``, else the one worker that does (the
-        one online, when several do). TODO(castling:kit): let ctx.call name a
-        target."""
+        one online, when several do)."""
         hub = self.dispatcher.workers.get(self.node)
         if hub and cap in hub.caps:
             return self.node

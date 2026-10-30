@@ -129,6 +129,7 @@ def install(hub) -> None:
         "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide},
         "journal": {"journal.search": h.journal_search},
         "setting": {"setting.list": settings.list, "setting.set": settings.set},
+        "llm": {"llm.providers": h.llm_providers, "llm.models": h.llm_models, "llm.status": h.llm_status},
     }
     for plugin, handlers in table.items():
         hub.plugins.add_builtin(BUILTIN / plugin, handlers)
@@ -266,30 +267,92 @@ class _Handlers:
         return {"entries": out["entries"]}
 
 
+    # -- llm: the llm.complete providers ------------------------------------------
+
+    async def llm_providers(self, ctx) -> dict:
+        contracts = self.hub.contracts
+        caps = contracts.providers("llm.complete")
+        chosen = contracts.choose("llm.complete") if caps else None
+        return {"chosen": chosen and _plugin_of(chosen),
+                "providers": [{"provider": _plugin_of(c), "cap": c, "chosen": c == chosen} for c in caps]}
+
+    async def llm_models(self, ctx, provider: str | None = None) -> dict:
+        plugin = self._llm_provider(provider)
+        return {"provider": plugin, **await self._llm_call(ctx, plugin)}
+
+    async def llm_status(self, ctx, provider: str | None = None) -> dict:
+        plugins = [self._llm_provider(provider)] if provider else \
+            [_plugin_of(c) for c in self.hub.contracts.providers("llm.complete")]
+        out = []
+        for plugin in plugins:
+            t = time.monotonic()
+            try:
+                await self._llm_call(ctx, plugin)
+                row = {"provider": plugin, "ok": True}
+            except KitError as e:
+                row = {"provider": plugin, "ok": False, "error": e.message}
+            out.append({**row, "ms": round((time.monotonic() - t) * 1000)})
+        return {"providers": out}
+
+    def _llm_provider(self, provider: str | None) -> str:
+        contracts = self.hub.contracts
+        if not provider:
+            return _plugin_of(contracts.choose("llm.complete"))
+        if provider not in {_plugin_of(c) for c in contracts.providers("llm.complete")}:
+            raise KitError(f"{provider} doesn't provide llm.complete (llm.providers lists them)")
+        return provider
+
+    async def _llm_call(self, ctx, plugin: str) -> dict:
+        reply = await self.hub.call_as(ctx.caller, f"{plugin}.models", {})
+        if not reply.get("ok"):
+            raise KitError(str(reply.get("error") or "failed"))
+        return reply.get("result") or {}
+
+
+def _plugin_of(cap: str) -> str:
+    return cap.partition(".")[0]
+
+
 # -- settings -------------------------------------------------------------------
 
 class Settings:
-    """Hub-side settings (``where: hub``) of the hub's plugins. Values set
-    with ``setting.set`` are kept in ``<data>/settings.json`` and win over the
-    config file; the plugins read them on their next call."""
+    """Hub-side settings (``where: hub``) of the hub's plugins, and each
+    person's own (``where: person``: a notification handle, a preferred
+    voice). Values set with ``setting.set`` are kept in ``<data>/settings.json``
+    and ``<data>/person-settings.json`` and win over the config file; the
+    plugins read them on their next call. This is also the hub plugins'
+    view of people (``ctx.settings_for``, ``ctx.owners``)."""
 
     def __init__(self, hub):
         self.hub = hub
         self.path = Path(hub.data) / "settings.json"
+        self.people_path = Path(hub.data) / "person-settings.json"
         self.base = copy.deepcopy(hub.cfg.settings)        # the config file's values
         self.stored: dict = _read_json(self.path)
+        self.personal: dict = _read_json(self.people_path)  # person:<name> -> {plugin: {key: value}}
         for plugin, values in self.stored.items():
             hub.plugins.settings.setdefault(plugin, {}).update(values)
+        hub.plugins.people = self
 
-    def _specs(self, plugin: str | None = None):
+    # -- the people view hub plugins get --------------------------------------
+
+    def owners(self) -> list:
+        return [f"person:{u.name}" for u in self.hub.identities.users.values() if u.preset == "owner"]
+
+    def settings(self, person: str) -> dict:
+        return self.personal.get(person) or {}
+
+    # -- caps -------------------------------------------------------------------
+
+    def _specs(self, plugin: str | None = None, where: str = "hub"):
         for p in sorted(list(self.hub.plugins.plugins.values()), key=lambda p: p.name):
             if plugin and p.name != plugin:
                 continue
             for key, spec in (p.manifest.get("settings") or {}).items():
-                if spec.get("where") == "hub":
+                if spec.get("where") == where:
                     yield p.name, key, spec
 
-    async def list(self, ctx, plugin: str | None = None) -> dict:
+    async def list(self, ctx, plugin: str | None = None, person: str | None = None) -> dict:
         out = []
         for name, key, spec in self._specs(plugin):
             values = self.hub.plugins.settings.get(name, {})
@@ -298,9 +361,23 @@ class Settings:
             out.append({"plugin": name, "key": key, "type": spec.get("type"), "doc": spec.get("doc", ""),
                         "default": spec.get("default"), "secret": bool(spec.get("secret")),
                         "value": values.get(key, spec.get("default")), "source": source})
+        who = self._person(ctx, person)
+        if who:
+            mine = self.settings(who)
+            for name, key, spec in self._specs(plugin, "person"):
+                have = key in mine.get(name, {})
+                out.append({"plugin": name, "key": key, "type": spec.get("type"), "doc": spec.get("doc", ""),
+                            "default": spec.get("default"), "secret": bool(spec.get("secret")),
+                            "value": mine[name][key] if have else spec.get("default"),
+                            "source": "set" if have else "default", "where": "person", "person": who})
         return {"settings": out}
 
-    async def set(self, ctx, plugin: str, key: str, value) -> dict:
+    async def set(self, ctx, plugin: str, key: str, value, person: str | None = None) -> dict:
+        spec = next((s for p, k, s in self._specs(plugin, "person") if k == key), None)
+        if spec is not None:
+            return self._set_personal(ctx, plugin, key, value, spec, person)
+        if person:
+            raise KitError(f"{plugin}.{key} is not a per-person setting")
         if not ctx.caller.owner:
             raise KitError("denied: only an owner changes settings")
         spec = next((s for p, k, s in self._specs(plugin) if k == key), None)
@@ -314,14 +391,44 @@ class Settings:
             else:
                 live.pop(key, None)
         else:
-            errors = list(Draft202012Validator(compile_fields({key: setting_spec(spec)})).iter_errors({key: value}))
-            if errors:
-                raise KitError(f"bad value: {errors[0].message}")
+            _check_value(key, spec, value)
             self.stored.setdefault(plugin, {})[key] = value
             live[key] = copy.deepcopy(value)
         self.stored = {p: v for p, v in self.stored.items() if v}
         _write(self.path, json.dumps(self.stored, indent=1))
         return {"plugin": plugin, "key": key, "value": live.get(key, spec.get("default"))}
+
+    def _set_personal(self, ctx, plugin: str, key: str, value, spec: dict, person: str | None) -> dict:
+        who = self._person(ctx, person)
+        if not who:
+            raise KitError("a per-person setting needs a person: give person")
+        if who != ctx.caller.person and not ctx.caller.owner:
+            raise KitError("denied: only an owner changes someone else's settings")
+        mine = self.personal.setdefault(who, {}).setdefault(plugin, {})
+        if value is None:
+            mine.pop(key, None)
+        else:
+            _check_value(key, spec, value)
+            mine[key] = value
+        self.personal = {w: {p: v for p, v in ps.items() if v} for w, ps in self.personal.items()}
+        self.personal = {w: ps for w, ps in self.personal.items() if ps}
+        _write(self.people_path, json.dumps(self.personal, indent=1))
+        return {"plugin": plugin, "key": key, "person": who, "value": mine.get(key, spec.get("default"))}
+
+    def _person(self, ctx, person: str | None) -> str | None:
+        """``person`` as ``person:<name>`` (a known one), else the caller."""
+        if not person:
+            return ctx.caller.person
+        who = person if person.startswith("person:") else f"person:{person}"
+        if self.hub.identities.user(who) is None:
+            raise KitError(f"no person {person} on this hub")
+        return who
+
+
+def _check_value(key: str, spec: dict, value) -> None:
+    errors = list(Draft202012Validator(compile_fields({key: setting_spec(spec)})).iter_errors({key: value}))
+    if errors:
+        raise KitError(f"bad value: {errors[0].message}")
 
 
 # -- helpers --------------------------------------------------------------------

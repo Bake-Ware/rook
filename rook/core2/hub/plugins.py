@@ -45,7 +45,7 @@ from .gate import Gate
 
 log = logging.getLogger("rook.hub.plugins")
 
-# call(caller, cap, args, session, why, uses) -> dispatch reply {"ok", "result" | "error"}
+# call(caller, cap, args, uses=, target=) -> dispatch reply {"ok", "result" | "error"}
 CallAs = Callable[..., Awaitable[dict]]
 
 
@@ -72,12 +72,13 @@ class HubPlugins:
     def __init__(self, *, records: RecordStore, contracts: Contracts, call: CallAs,
                  emit: Callable[[str, dict, str], Any] | None = None, data_dir: str | Path | None = None,
                  settings: dict | None = None, resolve_secret: Callable[[str], Any] | None = None,
-                 hook_timeout: float = 30.0):
+                 hook_timeout: float = 30.0, people: Any = None):
         self.records, self.contracts, self._call = records, contracts, call
         self.emit = emit
         self.data_dir = Path(data_dir) if data_dir else None
         self.settings = settings or {}          # plugin -> {setting: value}
         self.resolve_secret = resolve_secret    # TODO(castling:vault)
+        self.people = people                    # owners() and settings(person): ctx.settings_for
         self.scheduler = Scheduler(dispatch=self._hook_call, timeout=hook_timeout)
         self.plugins: dict[str, HubPlugin] = {}
         self._caps: dict[str, HubCap] = {}
@@ -231,11 +232,11 @@ class HubPlugins:
     # -- ctx ------------------------------------------------------------------
 
     def _ctx(self, p: HubPlugin, caller: Caller, cap: str | None = None) -> Ctx:
-        async def dispatch(c: str, a: dict, who: Caller) -> Any:
-            return _result(await self._call(who, c, a, uses=self.uses(p.name)))
+        async def dispatch(c: str, a: dict, who: Caller, target: str | None = None) -> Any:
+            return _result(await self._call(who, c, a, uses=self.uses(p.name), target=target))
         return Ctx(p.manifest, caller, dispatch=dispatch, settings=self.settings.get(p.name, {}),
                    resolve_secret=self.resolve_secret, records=self.records, emit=self.emit,
-                   data_dir=self._data(p) if self.data_dir else None, cap=cap)
+                   data_dir=self._data(p) if self.data_dir else None, cap=cap, people=self.people)
 
     async def _hook_call(self, cap: str, args: dict, caller: Caller) -> Any:
         """A hook's ``call:`` target: as the plugin, held to its uses."""
