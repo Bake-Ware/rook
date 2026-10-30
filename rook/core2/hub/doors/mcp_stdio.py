@@ -82,10 +82,16 @@ def main(argv=None, stdin=None, stdout=None) -> int:
                 if mid is not None:
                     write(_err(mid, -32000, "door: a reply that is not JSON"))
 
+    def safe(line: str) -> None:
+        try:
+            one(line)
+        except Exception as e:      # a pool thread's exception would vanish
+            print(f"mcp_stdio: {type(e).__name__}: {e}", file=sys.stderr)
+
     with ThreadPoolExecutor(8) as pool:
         for line in stdin:
             if line.strip():
-                pool.submit(one, line)
+                pool.submit(safe, line)
     return 0
 
 

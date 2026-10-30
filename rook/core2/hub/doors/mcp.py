@@ -27,11 +27,14 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import logging
 from typing import Any
 from urllib.parse import urlsplit
 
 from ... import CORE_VERSION
 from .http import HttpDoor, _Error, _Handler
+
+log = logging.getLogger("rook.hub.door.mcp")
 
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")   # newest first
 
@@ -99,7 +102,8 @@ TOOLS = [
          "limit": {"type": "integer"},
          "wait": {"type": "number", "description": "Seconds to wait for new events (long poll)."}}}},
 ]
-_NAMES = {t["name"] for t in TOOLS}
+_SCHEMAS = {t["name"]: t["inputSchema"] for t in TOOLS}
+_TYPES = {"string": str, "object": dict, "array": list, "boolean": bool, "integer": int, "number": (int, float)}
 _JOURNAL_DROP = ("hash", "prev", "args_hash", "ticket", "hub")
 
 
@@ -132,11 +136,13 @@ class McpDoor(HttpDoor):
             return {"tools": TOOLS}
         if method == "tools/call":
             name, args = params.get("name"), params.get("arguments") or {}
-            if name not in _NAMES:
+            if name not in _SCHEMAS:
                 raise RpcError(-32602, f"unknown tool: {name}")
             if not isinstance(args, dict):
                 raise RpcError(-32602, "arguments must be an object")
-            out = await getattr(self, f"_{name}")(caller, args)
+            bad = _check(_SCHEMAS[name], args)
+            out = {"ok": False, "error": f"bad arguments: {bad}"} if bad else \
+                await getattr(self, f"_{name}")(caller, args)
             return {"content": [{"type": "text", "text": json.dumps(out, separators=(",", ":"), default=str)}],
                     "isError": out.get("ok") is False and not out.get("held")}
         raise RpcError(-32601, f"method not found: {method}")
@@ -227,6 +233,11 @@ class _McpHandler(_Handler):
                          "result": self._run(self.door.rpc(caller, msg["method"], params))}
         except RpcError as e:
             return 200, _err(mid, e.code, e.message)
+        except _Error:
+            raise
+        except Exception:
+            log.exception("mcp request failed")
+            return 200, _err(mid, -32603, "internal error")
 
 
 McpDoor.handler = _McpHandler
@@ -244,9 +255,22 @@ def _matches(name: str, match: str) -> bool:
     return name == match or name.startswith(match)
 
 
+def _check(schema: dict, args: dict) -> str | None:
+    """What's wrong with a tool's argument names and types, or None. Missing
+    ones are dispatch's to refuse (a call without a why is journaled)."""
+    props = schema["properties"]
+    for k, v in args.items():
+        want = props.get(k, {}).get("type")
+        if want is None:
+            return f"unknown argument {k} (takes {', '.join(props)})"
+        if v is not None and (not isinstance(v, _TYPES[want]) or (isinstance(v, bool) and want != "boolean")):
+            return f"{k} must be a{'n' if want[0] in 'aio' else ''} {want}"
+    return None
+
+
 def _line(meta: dict) -> str:
     doc = str(meta.get("doc") or "").strip().splitlines()
-    return f"{meta.get('risk', '?')}: {doc[0] if doc else ''}".rstrip(": ")
+    return f"{meta.get('risk', '?')}: {doc[0]}" if doc else str(meta.get("risk", "?"))
 
 
 def _trim(d: dict) -> dict:

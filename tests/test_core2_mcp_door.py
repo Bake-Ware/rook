@@ -124,8 +124,16 @@ def test_tools_end_at_dispatch(mcp_hub):
             _, out = await tool(url, token, "journal", cap="echo.say", limit=5)
             assert out["entries"] and all(e["cap"] == "echo.say" for e in out["entries"])
             assert not {"hash", "prev", "ticket"} & set(out["entries"][0])
+            err, out = await tool(url, token, "journal", since=-1e30, limit=10**9)
+            assert not err                                     # clamped by the hub
             err, out = await tool(url, token, "journal", limit="lots")
-            assert err and "numbers" in out["error"]
+            assert err and out["error"] == "bad arguments: limit must be an integer"
+            err, out = await tool(url, token, "caps", match=["echo."])
+            assert err and out["error"] == "bad arguments: match must be a string"
+            err, out = await tool(url, token, "call", worker="kaiju", cap="echo.say", reason=WHY)
+            assert err and out["error"].startswith("bad arguments: unknown argument reason (takes worker, cap")
+            err, out = await tool(url, token, "call", worker="kaiju", cap="echo.say", elevate=1)
+            assert err and out["error"] == "bad arguments: elevate must be a boolean"
 
             # a session narrows the agent's calls
             _, s = await tool(url, token, "session", caps=["core.*"], project="castling")
@@ -158,6 +166,12 @@ def test_door_refuses_before_dispatch(mcp_hub):
             assert status == 400 and out["error"]["code"] == -32700
             status, _, out = await post(url, {"jsonrpc": "2.0", "id": 2, "method": "ping", "params": []}, token)
             assert out["error"]["code"] == -32600
+
+            async def broken(caller):
+                raise RuntimeError("boom")
+            hub.workers_view = broken
+            out = await rpc(url, token, "tools/call", {"name": "workers"})
+            assert out["error"] == {"code": -32603, "message": "internal error"}
         finally:
             await hub.stop()
     run(go())
