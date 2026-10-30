@@ -41,7 +41,13 @@ def parse_duration(value: Any) -> float:
 @functools.lru_cache(maxsize=512)
 def _validator(spec_json: str):
     from jsonschema import Draft202012Validator
-    return Draft202012Validator(compile_type(json.loads(spec_json)))
+    from jsonschema.exceptions import SchemaError
+    schema = compile_type(json.loads(spec_json))
+    try:
+        Draft202012Validator.check_schema(schema)   # a bad `schema:` passthrough
+    except SchemaError as e:
+        raise TypeSpecError((), f"bad schema: {e.message}") from None
+    return Draft202012Validator(schema)
 
 
 def check(name: str, spec: Mapping[str, Any], value: Any) -> None:
