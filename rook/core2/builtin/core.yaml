@@ -23,6 +23,48 @@ runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 
+# Every worker serves these (spec core-v2 13); the hub knows them for any
+# worker before its own manifests arrive. core.elevate and core.call are the
+# hub's answers to band requests, not dispatched caps.
+caps:
+  manifests:
+    doc: The parsed manifests this worker serves on the band (its filtered view).
+    on: worker
+    risk: read
+    scope: self
+    idempotent: true
+    args:
+      plugins: { type: list, items: { type: str }, doc: "Only these plugins; blank: all." }
+    result: { type: map }
+  lease.drop:
+    doc: Drop elevation leases, by lease id or by person, agent or session.
+    on: worker
+    risk: write
+    scope: self
+    args:
+      lease: { type: str }
+      person: { type: str }
+      agent: { type: str }
+      session: { type: str }
+    result: { type: map, fields: { dropped: { type: int } } }
+  trust.set:
+    doc: Accept a membership document from the home hub (add, change or remove a band).
+    on: worker
+    risk: admin
+    scope: self
+    effects: [persists]
+    args:
+      membership: { type: map, required: true }
+      connect: { type: map, doc: "The band's relay or ws_url and PSK (a secret reference)." }
+    result: { type: map }
+  trust.get:
+    doc: The worker's anchor and memberships (no PSKs).
+    on: worker
+    risk: read
+    scope: self
+    idempotent: true
+    result: { type: map }
+
 contracts:
   # -- services: the hub routes to one chosen provider ----------------------
 
