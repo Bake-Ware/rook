@@ -254,8 +254,18 @@ class _Checker:
 
     # -- sections
 
+    def aliases(self):
+        names = set(self.own)
+        for rel, cap in (self.data.get("caps") or {}).items():
+            for i, alias in enumerate(cap.get("aliases") or ()):
+                if alias in names:
+                    self.error(("caps", rel, "aliases", i), "cap-collision",
+                               f"alias {alias} is already a cap or another alias")
+                names.add(alias)
+
     def check(self) -> list[Issue]:
         d = self.data
+        self.aliases()
         for name, spec in (d.get("settings") or {}).items():
             self.setting(spec, ("settings", name))
         for rel, cap in (d.get("caps") or {}).items():
@@ -394,8 +404,9 @@ class _Checker:
             if contract not in self.contracts:
                 self.warn(path, "unknown-contract", f"contract {contract} is not known here; not checked")
                 continue
-            cap = self.caps.get(cap_name)
-            for problem in contract_problems(self.contracts[contract], cap or {}):
+            if cap_name not in self.caps:
+                continue  # a record cap: its args come from the records kit
+            for problem in contract_problems(self.contracts[contract], self.caps[cap_name]):
                 self.error(path, "contract-mismatch", f"{cap_name} vs {contract}: {problem}")
 
     def appliance_(self):

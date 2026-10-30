@@ -21,6 +21,18 @@
       "code": "multiple-actions"
     }
   ],
+  "invalid/actions.yaml": [
+    {
+      "level": "error",
+      "path": "/caps/pick/action/returns",
+      "code": "schema-anyOf"
+    },
+    {
+      "level": "error",
+      "path": "/caps/post/action/http",
+      "code": "schema-not"
+    }
+  ],
   "invalid/argv-binary-from-arg.yaml": [
     {
       "level": "error",
@@ -211,6 +223,11 @@
     },
     {
       "level": "error",
+      "path": "/caps/c/aliases/0",
+      "code": "cap-collision"
+    },
+    {
+      "level": "error",
       "path": "/check/0",
       "code": "unknown-cap"
     },
@@ -361,5 +378,6 @@
       "path": "/routes/open/auth",
       "code": "route-auth-none"
     }
-  ]
+  ],
+  "valid/windows-only.yaml": []
 }

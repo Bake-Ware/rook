@@ -1,0 +1,17 @@
+manifest: 1
+plugin: thing
+version: 1.0.0
+caps:
+  post:
+    doc: Two bodies at once.
+    risk: write
+    scope: external
+    action:
+      http: { method: POST, url: "https://example.org", json: { a: 1 }, body: raw }
+  pick:
+    doc: returns takes dotted paths, not expressions.
+    risk: read
+    scope: external
+    action:
+      http: { url: "https://example.org" }
+      returns: { count: "len(items)" }

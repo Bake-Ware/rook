@@ -54,7 +54,7 @@ def test_yaml_12_scalars():
                     "c": "1:30", "d": 31, "e": 1000.0, "f": None, "g": float("inf"), "on": 1}
 
 
-@pytest.mark.parametrize("text", ["a: &x 1\nb: *x\n", "a: 1\na: 2\n", "1: x\n",
+@pytest.mark.parametrize("text", ["a: " + "[" * 5000 + "]" * 5000, "a: &x 1\nb: *x\n", "a: 1\na: 2\n", "1: x\n",
                                   "a: !!python/object:os.system x\n", "a: !custom x\n", "a: [\n"])
 def test_yaml_refused(text):
     with pytest.raises(_yaml.YamlError):
@@ -171,6 +171,13 @@ def test_contracts_from_other_plugins():
     assert [i.code for i in validate(data, contracts=core)] == ["contract-mismatch"]
     data["caps"]["send"]["args"]["to"] = {"type": "str"}
     assert validate(data, contracts=core) == []
+
+
+def test_provides_by_a_record_cap_is_not_checked_against_args():
+    data = _yaml.loads("manifest: 1\nplugin: t\nversion: 1.0.0\nrecords: { item: { fields: { x: {} } } }\n"
+                       "contracts: { c.list: { args: { limit: { type: int } } } }\n"
+                       "provides: { c.list: t.item.list }\n")
+    assert validate(data) == []
 
 
 def test_glob_match():
@@ -303,6 +310,14 @@ def test_cli_validate(tmp_path, capsys):
     bad = _folder(tmp_path / "bad", (ROOT / "invalid" / "missing-version.yaml").read_text())
     assert main(["validate", str(bad)]) == 1
     assert "'version' is a required property [schema-required]" in capsys.readouterr().out
+
+
+def test_cli_validate_takes_the_yaml_path(tmp_path, capsys):
+    _folder(tmp_path, PIKVM)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "x.md").write_text("")
+    assert main(["validate", str(tmp_path / "plugin.yaml")]) == 0
+    assert "2 file(s)" in capsys.readouterr().out
 
 
 def test_cli_diff(tmp_path, capsys):

@@ -1,0 +1,14 @@
+# A cap with only a per-OS exec (no default argv), and an alias kept from a rename.
+manifest: 1
+plugin: winver
+version: 1.0.0
+platforms: [windows]
+caps:
+  version.get:
+    doc: Windows version.
+    risk: read
+    scope: self
+    aliases: [winver.get]
+    action:
+      exec: { windows: { argv: [cmd, /c, ver] } }
+      parse: text

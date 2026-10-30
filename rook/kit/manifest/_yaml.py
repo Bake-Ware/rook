@@ -16,6 +16,9 @@ import re
 import yaml
 
 
+MAX_DEPTH = 64
+
+
 class YamlError(ValueError):
     """The text is not in the manifest YAML subset."""
 
@@ -89,11 +92,18 @@ def _check_nodes(node) -> None:
 def loads(text: str):
     """Parse one manifest document into plain JSON data."""
     try:
-        # Aliases are refused before composing, so a nested-alias bomb never
-        # expands.
+        # Aliases and deep nesting are refused before composing, so an alias
+        # bomb never expands and PyYAML's parse (quadratic in depth) stops early.
+        depth = 0
         for event in yaml.parse(text, Loader=_Loader):
             if isinstance(event, yaml.AliasEvent) or getattr(event, "anchor", None):
                 raise YamlError(f"line {event.start_mark.line + 1}: anchors and aliases are not allowed")
+            if isinstance(event, yaml.CollectionStartEvent):
+                depth += 1
+                if depth > MAX_DEPTH:
+                    raise YamlError(f"line {event.start_mark.line + 1}: nested deeper than {MAX_DEPTH}")
+            elif isinstance(event, yaml.CollectionEndEvent):
+                depth -= 1
         loader = _Loader(text)
         try:
             node = loader.get_single_node()

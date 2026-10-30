@@ -400,9 +400,10 @@
           ]
         },
         "returns": {
+          "description": "Fields to pick, or a rename map; dotted paths only.",
           "anyOf": [
-            {"$ref": "#/$defs/strings"},
-            {"type": "object", "additionalProperties": {"type": "string"}}
+            {"type": "array", "items": {"$ref": "#/$defs/dotted_path"}},
+            {"type": "object", "additionalProperties": {"$ref": "#/$defs/dotted_path"}}
           ]
         }
       }
@@ -412,6 +413,7 @@
       "minItems": 1,
       "items": {"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]}
     },
+    "dotted_path": {"type": "string", "pattern": "^[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*$"},
     "string_map": {"type": "object", "additionalProperties": {"type": "string"}},
     "exec_step": {
       "type": "object",
@@ -440,7 +442,8 @@
         "android": {"$ref": "#/$defs/exec_step"},
         "try": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/exec_step"}}
       },
-      "anyOf": [{"required": ["argv"]}, {"required": ["try"]}]
+      "anyOf": [{"required": ["argv"]}, {"required": ["try"]}, {"required": ["linux"]},
+                {"required": ["windows"]}, {"required": ["macos"]}, {"required": ["android"]}]
     },
     "http": {
       "type": "object",
@@ -464,7 +467,9 @@
         },
         "tls": {"$ref": "#/$defs/tls"},
         "ok": {"type": "array", "items": {"type": "integer"}}
-      }
+      },
+      "not": {"anyOf": [{"required": ["json", "form"]}, {"required": ["json", "body"]},
+                        {"required": ["form", "body"]}]}
     },
     "tls": {
       "anyOf": [

@@ -6,10 +6,11 @@ import argparse
 import sys
 
 from . import check_bump, diff, file_hashes, load, trust_class
-from .load import ManifestError, check
+from .load import ManifestError, _paths, check
 
 
-def _validate(folder) -> int:
+def _validate(path) -> int:
+    folder = _paths(path)[1]
     data, issues = check(folder)
     for i in issues:
         print(i)
