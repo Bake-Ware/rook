@@ -174,10 +174,7 @@ class Band:
         for name, key in (("root.key", self.root_key), ("op.key", self.op_key)):
             (keys / name).write_text(bytes(key).hex() + "\n")
             (keys / name).chmod(0o600)
-        self.relay = self._spawn("relay", [sys.executable, str(HERE / "relay.py")], self.root)
-        port = until(lambda: self.relay.lines and self.relay.lines[0].strip().isdigit() and self.relay.lines[0],
-                     START_SECS, "the relay's port")
-        self.relay_addr = f"127.0.0.1:{int(port)}"
+        self.start_relay()
         band = [{"psk_env": "ROOK_E2E_PSK", "relay": self.relay_addr}]
         (self.hub_dir / "hub.yaml").write_text(json.dumps({
             "data": "./data",
@@ -198,6 +195,13 @@ class Band:
         }, indent=1))
         self.owner_token = self.hub_cli("token", "--person", "bake")
         self.kid_token = self.hub_cli("token", "--person", "kid")
+
+    def start_relay(self) -> str:
+        self.relay = self._spawn("relay", [sys.executable, str(HERE / "relay.py")], self.root)
+        port = until(lambda: self.relay.lines and self.relay.lines[0].strip().isdigit() and self.relay.lines[0],
+                     START_SECS, "the relay's port")
+        self.relay_addr = f"127.0.0.1:{int(port)}"
+        return self.relay_addr
 
     def hub_cli(self, *args: str) -> str:
         r = subprocess.run([sys.executable, "-m", "rook.core2.hub", "--config", str(self.hub_dir / "hub.yaml"),
