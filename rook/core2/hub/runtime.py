@@ -28,6 +28,9 @@ What it owns:
 - **The hub node**: calls to ``rook`` (the hub's own caps) are dispatched like
   any other and run in-process; the band's ``core.elevate`` and ``core.call``
   requests are answered here (13).
+- **Enrollment** (:mod:`rook.core2.enroll.hub`): devices signing in as a
+  person, the config bundle, the owner's recovery key, other hubs' invites
+  and the memberships this hub signs for its workers (spec 9, 12).
 - **Doors** (:mod:`.doors`): the ways in. They authenticate a token and call
   the async door API below (:meth:`Hub.call`, :meth:`Hub.workers_view`, ...).
 
@@ -60,6 +63,7 @@ from rook.kit.records import RecordStore
 
 from .. import CORE_VERSION, rights, wire
 from ..builtin import CORE
+from ..enroll.hub import Enrollment, check_options as check_enroll, recovery_key
 from . import distribute
 from .dispatch import Call, Dispatcher, Worker
 from .doors.web import caps as builtin_caps
@@ -93,6 +97,7 @@ class Config:
     sacred: list = field(default_factory=list)      # worker names: changes there are hard stops
     doors: dict = field(default_factory=lambda: {"http": {"bind": "127.0.0.1:8740"}})
     transport: dict | None = None                   # rook.core2.transport.hub_transport options
+    enroll: dict = field(default_factory=dict)      # rook.core2.enroll.hub: url, relay, ws_url, discover, services
     log: dict = field(default_factory=dict)         # {level, format: text|json}
 
 
@@ -131,6 +136,7 @@ def check_config(cfg: Config) -> None:
             raise ValueError(f"users: bad entry {name!r}")
     if not any(u.get("preset") == "owner" for u in cfg.users.values()):
         raise ValueError("users: seed at least one owner (preset: owner)")
+    check_enroll(cfg.enroll)
 
 
 # -- keys -----------------------------------------------------------------------
@@ -164,17 +170,6 @@ def home_band(cfg: Config) -> str:
     if not psk:
         raise ValueError("transport: the first band needs psk or psk_env")
     return band_of(psk)
-
-
-def anchor(cfg: Config) -> dict:
-    """What a worker of this hub keeps as its anchor (``{hub, root, band}``).
-    The root key is made here on a first run, as at start.
-    TODO(castling:enrollment): enrollment writes this onto the worker."""
-    Path(cfg.data).mkdir(parents=True, exist_ok=True, mode=0o700)
-    keys = Path(cfg.data) / "keys"
-    keys.mkdir(exist_ok=True, mode=0o700)
-    root = _key(keys / "root.key")
-    return {"hub": wire.key_id(bytes(root.verify_key)), "root": wire.pub_text(root), "band": home_band(cfg)}
 
 
 # -- transport ------------------------------------------------------------------
@@ -374,9 +369,10 @@ class Hub:
                                   emit=self._emit, data_dir=self.data / "plugins", settings=cfg.settings)
         self.plugins.add_core(self.core)
         builtin_caps.install(self)               # pages, hub, approval, journal, setting: before the library
+        self.enroll = Enrollment(self, cfg.enroll)
         self.dispatcher = Dispatcher(hub_id=self.hub_id, op_key=self.op, identities=self.identities,
                                      workers={}, send=self._send, journal=self._journal,
-                                     hubkey=self.grant, clock=self.clock)
+                                     hubkey=self.grant, clock=self.clock, secrets=self.enroll.resolve)
         self._sync_hub()
         await self._load_library()
         self.dispatcher.gates = self.plugins.gates()
@@ -393,6 +389,14 @@ class Hub:
             door = make_door(name, self, opts or {})
             await door.start()
             self.doors.append(door)
+        if cfg.enroll.get("discover"):
+            from ..enroll.mdns import Responder
+            self.mdns = Responder(cfg.enroll["url"], self.hub_id)
+            try:
+                await self.mdns.start()
+            except OSError as e:          # the port is taken: devices can still type the address
+                log.warning("not discoverable", extra={"fields": {"error": str(e)}})
+                self.mdns = None
 
     async def stop(self) -> None:
         """Doors first (nothing new comes in), then background work, the band,
@@ -411,6 +415,9 @@ class Hub:
             except Exception as e:
                 log.warning("door stop failed", extra={"fields": {"door": door.name, "error": str(e)}})
         self.doors.clear()
+        if getattr(self, "mdns", None) is not None:
+            await self.mdns.stop()
+            self.mdns = None
         for t in self._loops + list(self._tasks):
             t.cancel()
         await asyncio.gather(*self._loops, *self._tasks, return_exceptions=True)
@@ -490,8 +497,10 @@ class Hub:
             owner = next(n for n, u in self.cfg.users.items() if u.get("preset") == "owner")
             token = self.add_token(Caller(person=f"person:{owner}"), label="first owner")
             _write_private(self.data / "owner.token", token + "\n")
+            recovery_key(self.data)
             log.info("owner token written", extra={"fields": {"person": owner,
                                                               "file": str(self.data / "owner.token")}})
+            log.info("recovery key made: an owner sees it with the recovery-key command or GET /recovery-key")
             return
         self._tokens_mtime = path.stat().st_mtime
         for d, rec in json.loads(path.read_text(encoding="utf-8")).items():
@@ -997,7 +1006,8 @@ class Hub:
             out.append({"id": k.id, "name": k.name, "online": k.online, "last_seen": k.last_seen,
                         "core": k.core, "version": k.version, "description": k.description,
                         "facts": k.facts, "plugins": [e["plugin"] for e in k.manifests],
-                        "unavailable": k.unavailable, "status": k.status, "problem": k.problem})
+                        "unavailable": k.unavailable, "status": k.status, "problem": k.problem,
+                        "owner": self.enroll.owner_of(k.id)})
         return {"ok": True, "workers": out}
 
     async def caps_view(self, caller: Caller, worker: str | None = None) -> dict:

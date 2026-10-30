@@ -146,9 +146,9 @@ class Door:
 
 
 class Band:
-    """One relay, one hub, one worker, all generated under ``root``. The
-    test holds the hub's keys (it wrote them), so it can sign memberships
-    and mint tickets the way a hub would."""
+    """One relay, one hub, one worker, all generated under ``root``; the
+    worker enrolls with the hub the first time it starts. The test holds the
+    hub's keys (it wrote them), so it can mint tickets the way a hub would."""
 
     def __init__(self, root: Path):
         self.root = root
@@ -174,10 +174,7 @@ class Band:
         for name, key in (("root.key", self.root_key), ("op.key", self.op_key)):
             (keys / name).write_text(bytes(key).hex() + "\n")
             (keys / name).chmod(0o600)
-        self.relay = self._spawn("relay", [sys.executable, str(HERE / "relay.py")], self.root)
-        port = until(lambda: self.relay.lines and self.relay.lines[0].strip().isdigit() and self.relay.lines[0],
-                     START_SECS, "the relay's port")
-        self.relay_addr = f"127.0.0.1:{int(port)}"
+        self.start_relay()
         band = [{"psk_env": "ROOK_E2E_PSK", "relay": self.relay_addr}]
         (self.hub_dir / "hub.yaml").write_text(json.dumps({
             "data": "./data",
@@ -189,19 +186,22 @@ class Band:
             "log": {"level": "info", "format": "json"},
         }, indent=1))
         self.worker_dir.mkdir()
-        anchor = self.hub_cli("anchor")       # what enrollment will write onto the worker
-        assert json.loads(anchor) == {"hub": self.hub_id, "root": wire.pub_text(self.root_key), "band": self.band}
-        (self.root / "anchor.json").write_text(anchor)
+        # No anchor and no band: enrollment (start_worker) writes those.
         (self.worker_dir / "worker.yaml").write_text(json.dumps({
             "data": "./data",
-            "anchor": "../anchor.json",
             "name": "e2e-worker",
             "plugins": [str(HERE / "plugins"), *(str(REPO / "rook" / "plugins" / p) for p in PORTS)],
-            "bands": band,
             "log": {"level": "info", "format": "json"},
         }, indent=1))
         self.owner_token = self.hub_cli("token", "--person", "bake")
         self.kid_token = self.hub_cli("token", "--person", "kid")
+
+    def start_relay(self) -> str:
+        self.relay = self._spawn("relay", [sys.executable, str(HERE / "relay.py")], self.root)
+        port = until(lambda: self.relay.lines and self.relay.lines[0].strip().isdigit() and self.relay.lines[0],
+                     START_SECS, "the relay's port")
+        self.relay_addr = f"127.0.0.1:{int(port)}"
+        return self.relay_addr
 
     def hub_cli(self, *args: str) -> str:
         r = subprocess.run([sys.executable, "-m", "rook.core2.hub", "--config", str(self.hub_dir / "hub.yaml"),
@@ -225,7 +225,23 @@ class Band:
         self.kid = Door(self.url, self.kid_token)
         return self.hub
 
+    def worker_cli(self, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, "-m", "rook.core2.worker", "--config", "worker.yaml", *args],
+                              cwd=cwd or self.worker_dir, env=self.env, capture_output=True, text=True, timeout=60)
+
+    def enroll(self) -> None:
+        """Enroll the worker the way a person with the QR would: the owner
+        asks the hub for a one-time code, the worker claims it."""
+        qr = self.owner.post("/enroll/code", {})
+        assert qr.get("ok"), qr
+        r = self.worker_cli("enroll", qr["qr"])
+        assert r.returncode == 0, r.stderr
+        anchor = json.loads((self.worker_dir / "anchor.json").read_text())
+        assert anchor == {"hub": self.hub_id, "root": wire.pub_text(self.root_key), "band": self.band}
+
     def start_worker(self) -> Proc:
+        if not (self.worker_dir / "anchor.json").exists():
+            self.enroll()
         self.worker = self._spawn("worker", [sys.executable, "-m", "rook.core2.worker", "--config", "worker.yaml"],
                                   self.worker_dir)
         started = self.worker.wait_log("worker started")
@@ -259,14 +275,6 @@ class Band:
                 p.stop()
 
     # -- acting as a hub would (the test holds its keys) ------------------------------
-
-    def membership(self, role: str, ceiling: dict | None, iat: int | None = None) -> dict:
-        doc = {"typ": "rook-membership", "v": 2, "serial": secrets.token_hex(16), "worker": self.worker_id,
-               "hub": self.hub_id, "root": wire.pub_text(self.root_key), "band": self.band, "role": role,
-               "by": "person:bake", "iat": int(time.time()) if iat is None else iat}
-        if ceiling is not None:
-            doc["ceiling"] = ceiling
-        return wire.sign(self.root_key, doc)
 
     def ticket(self, cap: str, args: dict | None, call: str, **extra) -> dict:
         now = int(time.time())

@@ -7,7 +7,6 @@ import json
 import os
 import secrets
 import shutil
-import time
 
 from rook.core2 import journal
 from rook.core2.transport import TelestheteLink, Transport
@@ -196,9 +195,8 @@ def test_the_worker_ceiling_holds_even_when_the_hub_grants_more(band):
     """The home hub narrows its own ceiling on the worker (a signed
     membership through core.trust.set). The hub then refuses what's outside
     it, and the worker refuses a validly signed hub ticket for it too."""
-    now = int(time.time())
-    narrowed = band.owner.call("core.trust.set",
-                               {"membership": band.membership("home", {"grants": ["e2e.ping"]}, now)})
+    narrowed = band.owner.post("/memberships", {"worker": "e2e-worker", "role": "home", "why": WHY,
+                                                "ceiling": {"grants": ["e2e.ping"]}})
     assert narrowed["ok"], narrowed
     # the announce carries the new ceiling; the hub's dispatch applies it
     via_hub = until(lambda: (r := band.owner.call("e2e.admin")) and not r["ok"] and r, 20, "the narrowed announce")
@@ -214,7 +212,7 @@ def test_the_worker_ceiling_holds_even_when_the_hub_grants_more(band):
     assert direct["ok"] is False and direct["error"] == "denied by worker: outside_ceiling", direct
 
     # the home hub widens it again; core.trust.set is never outside a home ceiling
-    widened = band.owner.call("core.trust.set", {"membership": band.membership("home", {"grants": ["*"]}, now + 1)})
+    widened = band.owner.post("/memberships", {"worker": "e2e-worker", "role": "home", "why": WHY})
     assert widened["ok"], widened
     band.wait_caps("e2e.admin")
     assert band.owner.call("e2e.admin")["ok"]

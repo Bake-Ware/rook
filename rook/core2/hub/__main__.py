@@ -1,8 +1,14 @@
-"""Run a 0.5 hub, mint a door token, or print the anchor its workers keep.
+"""Set up a 0.5 hub, run it, mint a door token, or show the recovery key.
 
+    python -m rook.core2.hub --config hub.yaml init --owner bake --relay relay.example:7474 [--url https://rook.example]
     python -m rook.core2.hub --config hub.yaml
     python -m rook.core2.hub --config hub.yaml token --person bake [--agent claude-code] [--label laptop]
-    python -m rook.core2.hub --config hub.yaml anchor > anchor.json   # a worker's {hub, root, band}
+    python -m rook.core2.hub --config hub.yaml recovery-key
+
+``init`` is the owner hub's first run: it writes the config (with a new band
+key), makes the hub's keys, and prints the owner's sign-in token and the
+recovery key, once. Devices then enroll with ``python -m rook.core2.worker
+--config worker.yaml enroll`` (spec 12).
 
 A config (paths are relative to the file)::
 
@@ -18,6 +24,11 @@ A config (paths are relative to the file)::
       mcp: { bind: "127.0.0.1:8741" }   # agents: http://127.0.0.1:8741/mcp with an --agent token
     transport:                    # rook.core2.transport options; leave out for no band
       bands: [ { psk_env: ROOK_PSK, relay: "relay.example:7474" } ]
+    enroll:                       # what enrolling devices are told (rook.core2.enroll.hub)
+      url: https://rook.example   # where they reach this door (behind TLS)
+      relay: rook.example:7474    # the band relay as devices reach it, if not the transport's
+      discover: true              # answer local network discovery (mDNS _rook-hub._tcp)
+      services: { voice: { url: "https://voice.example", key_env: VOICE_KEY, presets: [owner, adult] } }
     log: { level: info, format: json }
 
 SIGINT or SIGTERM stops it cleanly.
@@ -26,12 +37,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
+import secrets
 import signal
 import sys
+from pathlib import Path
 
+import yaml
+
+from .. import wire
+from ..enroll.hub import recovery_key
 from .identity import Caller
-from .runtime import Hub, add_token, anchor, load_config, setup_logging
+from .runtime import Hub, _key, _write_private, add_token, home_band, load_config, setup_logging
 
 
 async def serve(cfg) -> None:
@@ -50,6 +66,41 @@ async def serve(cfg) -> None:
         await hub.stop()
 
 
+def init(path: Path, owner: str, relay: str | None, ws_url: str | None, url: str | None, bind: str) -> int:
+    """The owner hub's first run: config, keys, owner token, recovery key."""
+    if path.exists():
+        print(f"init: {path} exists; this hub is set up already", file=sys.stderr)
+        return 2
+    if not (relay or ws_url):
+        print("init: give the band's --relay (host:port) or --ws-url", file=sys.stderr)
+        return 2
+    band = {"psk": secrets.token_hex(24), **({"relay": relay} if relay else {}), **({"ws_url": ws_url} if ws_url else {})}
+    raw = {"data": "./data", "library": "./library", "users": {owner: {"preset": "owner"}},
+           "doors": {"http": {"bind": bind}}, "transport": {"bands": [band]}}
+    if url:
+        raw["enroll"] = {"url": url}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_private(path, "# Rook hub, written by init. It holds the band key: keep it private.\n"
+                   + yaml.safe_dump(raw, sort_keys=False))
+    try:
+        cfg = load_config(path)
+    except ValueError as e:
+        path.unlink()
+        print(f"init: {e}", file=sys.stderr)
+        return 2
+    (path.parent / "library").mkdir(exist_ok=True)
+    (cfg.data / "keys").mkdir(parents=True, exist_ok=True, mode=0o700)
+    root = _key(cfg.data / "keys" / "root.key")
+    token = add_token(cfg.data, Caller(person=f"person:{owner}"), "first owner")
+    print(f"Rook hub {wire.key_id(bytes(root.verify_key))} set up in {path.parent} (band {home_band(cfg)[:8]}).")
+    print(f"\nSign-in token for {owner}, shown once (only its hash is kept):\n  {token}")
+    print(f"\nRecovery key: save it however you like. You need it only if this hub dies;\n"
+          f"while it lives, the recovery-key command shows it again.\n  {recovery_key(cfg.data)}")
+    print(f"\nStart it:  python -m rook.core2.hub --config {path}")
+    print(f"Add a machine:  python -m rook.core2.worker --config worker.yaml enroll {url or 'http://' + bind}")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="python -m rook.core2.hub", description="Rook 0.5 hub")
     ap.add_argument("--config", required=True, help="the hub's YAML config")
@@ -58,19 +109,23 @@ def main(argv=None) -> int:
     tok.add_argument("--person", help="the person it calls for (a user in the config)")
     tok.add_argument("--agent", help="the agent that calls (an agent in the config)")
     tok.add_argument("--label", default="")
-    sub.add_parser("anchor", help="print the anchor a worker of this hub keeps ({hub, root, band})")
+    ini = sub.add_parser("init", help="set up a new hub: config, keys, the owner's token and recovery key")
+    ini.add_argument("--owner", required=True, help="the owner's user name (lowercase)")
+    ini.add_argument("--relay", help="the band's Telesthete relay, host:port")
+    ini.add_argument("--ws-url", help="or its WebSocket address")
+    ini.add_argument("--url", help="where devices reach this hub's door (https://...), for enrollment")
+    ini.add_argument("--bind", default="127.0.0.1:8740", help="the HTTP door's address (default %(default)s)")
+    sub.add_parser("recovery-key", help="show the owner's recovery key")
     args = ap.parse_args(argv)
+    if args.cmd == "init":
+        return init(Path(args.config), args.owner, args.relay, args.ws_url, args.url, args.bind)
     try:
         cfg = load_config(args.config)
     except (OSError, ValueError) as e:
         print(f"config: {e}", file=sys.stderr)
         return 2
-    if args.cmd == "anchor":
-        try:
-            print(json.dumps(anchor(cfg)))
-        except ValueError as e:
-            print(f"anchor: {e}", file=sys.stderr)
-            return 2
+    if args.cmd == "recovery-key":
+        print(recovery_key(cfg.data))
         return 0
     if args.cmd == "token":
         if args.person and args.person not in cfg.users:
