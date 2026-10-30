@@ -1,0 +1,64 @@
+# An llm.complete provider through a CLI subscription (castling-inference:
+# most people arrive with Claude Code or Codex and want utility from just
+# that). One completion per call, with tools and MCP servers off:
+# `claude -p --tools "" --strict-mcp-config` or
+# `codex exec` in a read-only sandbox, run on the worker where the CLI is
+# signed in, through core's launch path. The conversation goes in on stdin.
+# max_tokens and temperature can't be passed to a CLI and are ignored; stop
+# sequences cut the reply here. Code: scripts/cli.py.
+manifest: 1
+plugin: llm-cli
+version: 0.5.0
+title: Models through Claude Code or Codex
+doc: Completions through a Claude Code or Codex subscription signed in on this worker.
+package: core
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [linux, macos, windows]
+
+settings:
+  tool: { enum: [claude, codex], default: claude, doc: "Which CLI: claude (Claude Code) or codex." }
+  program: { type: path, doc: "The CLI's program: a name on PATH or a full path; blank: claude or codex." }
+  model_one: { doc: "System One's model; blank: haiku for claude, the CLI's default for codex." }
+  model_two: { doc: "System Two's model, the default; blank: opus for claude, the CLI's default for codex." }
+  model_three: { doc: "System Three's model; blank: haiku for claude, the CLI's default for codex." }
+  timeout: { type: duration, default: 5m, doc: Longest one completion may take. }
+
+caps:
+  complete:
+    doc: One completion through the CLI. model is a model id or a system (one, two, three); blank is System Two.
+    risk: exec
+    scope: external
+    timeout: 10m
+    run: scripts/cli.py:complete
+    args:
+      messages:
+        type: list
+        required: true
+        items:
+          type: map
+          fields:
+            role: { type: str, required: true, enum: [system, user, assistant] }
+            content: { type: str, required: true }
+      model: { type: str }
+      max_tokens: { type: int, min: 1, doc: Not passed (a CLI has no such option). }
+      temperature: { type: float, min: 0, max: 2, doc: Not passed. }
+      stop: { type: list, items: { type: str }, max: 4, doc: The reply is cut at the first one. }
+    result:
+      type: map
+      fields:
+        text: { type: str, required: true }
+        model: { type: str }
+        stop_reason: { type: str }
+        usage: { type: map, items: { type: int } }
+  models:
+    doc: Whether the CLI runs here (its version) and the System One/Two/Three choices.
+    risk: exec
+    scope: local
+    idempotent: true
+    run: scripts/cli.py:models
+    result: { type: map }
+
+provides:
+  llm.complete: llm-cli.complete
+docs: { manual: docs/manual.md }

@@ -4,9 +4,10 @@
 ``ctx.file(...)`` or ``ctx.stream(...)`` (the call answers ``{"stream": id}``
 and the code keeps writing through the handle). ``ctx`` carries who is
 asking (person, agent, session, band, why) and the plumbing a plugin would
-otherwise rebuild: settings with secrets resolved, ``call`` limited by the
-manifest's ``uses``, records, ``emit``, a data dir, a per-call tmp dir and a
-logger.
+otherwise rebuild: settings with secrets resolved (``where: person`` ones are
+the caller's own; ``settings_for(person)`` reads someone else's), ``call``
+limited by the manifest's ``uses`` (``call_on`` names the worker), records,
+``emit``, a data dir, a per-call tmp dir and a logger.
 
 The host builds one :class:`Ctx` per call and runs the function through
 :func:`invoke`, which awaits async functions, runs sync ones in a thread and
@@ -84,7 +85,9 @@ def allowed(plugin: str, uses: Iterable[str], cap: str) -> bool:
     return any(fnmatch.fnmatchcase(cap, g) for g in uses)
 
 
-Dispatch = Callable[[str, dict, Caller], Any]   # may return an awaitable
+# dispatch(cap, args, caller) or, from call_on, dispatch(cap, args, caller, target=worker);
+# may return an awaitable.
+Dispatch = Callable[..., Any]
 
 
 class _Settings(Mapping):
@@ -139,7 +142,8 @@ class Ctx:
                  store_setting: Callable[[str, Any, bool], None] | None = None,
                  records: Any = None, emit: Callable[[str, dict, str], Any] | None = None,
                  data_dir: str | Path | None = None, streams: Any = None,
-                 loop: asyncio.AbstractEventLoop | None = None, cap: str | None = None):
+                 loop: asyncio.AbstractEventLoop | None = None, cap: str | None = None,
+                 people: Any = None):
         self.plugin = manifest["plugin"]
         self.caller = caller
         # The cap this call runs (full or relative name); None for hooks.
@@ -153,7 +157,13 @@ class Ctx:
         for rec in manifest.get("records") or {}:
             self._emits |= {f"{self.plugin}.{rec}.{e}" for e in ("created", "updated", "archived")}
         self._dispatch = dispatch
-        self.settings = _Settings(manifest.get("settings") or {}, settings or {},
+        # people: the hub's view of its people, ``owners()`` and
+        # ``settings(person) -> {plugin: {key: value}}`` (where: person values).
+        self._people = people
+        self._decls = manifest.get("settings") or {}
+        self._values = dict(settings or {})
+        self._resolve = resolve_secret
+        self.settings = _Settings(self._decls, {**self._values, **self._personal(caller.person)},
                                   resolve_secret, store_setting)
         self._records = records
         self._emit = emit
@@ -169,11 +179,43 @@ class Ctx:
     band = property(lambda self: self.caller.band)
     why = property(lambda self: self.caller.why)
 
+    # -- people -----------------------------------------------------------------
+
+    def _personal(self, person: str | None) -> dict:
+        """``person``'s own values of this plugin's ``where: person`` settings."""
+        if not person or self._people is None:
+            return {}
+        mine = (self._people.settings(person) or {}).get(self.plugin) or {}
+        return {k: v for k, v in mine.items() if (self._decls.get(k) or {}).get("where") == "person"}
+
+    def settings_for(self, person: str) -> Mapping:
+        """This plugin's settings as ``person`` sees them: their own
+        ``where: person`` values over the rest (read only)."""
+        if self._people is None:
+            raise KitError("no people here: per-person settings live on the hub")
+        return _Settings(self._decls, {**self._values, **self._personal(person)}, self._resolve, None)
+
+    def owners(self) -> list[str]:
+        """The hub's owners (``person:<name>``)."""
+        if self._people is None:
+            raise KitError("no people here: the hub knows its owners")
+        return list(self._people.owners())
+
     # -- calls ----------------------------------------------------------------
 
     def call(self, cap: str, /, **args: Any) -> Any:
         """Call another cap as this plugin, still bounded by the caller's rights
         (the dispatcher intersects them). Refused unless ``uses`` allows it."""
+        return self._call(cap, args, None)
+
+    def call_on(self, target: str, cap: str, /, **args: Any) -> Any:
+        """``call`` on one worker (name or id), e.g. a device contract such as
+        ``notification.post`` on the person's phone."""
+        if not isinstance(target, str) or not target:
+            raise KitError("call_on needs a worker")
+        return self._call(cap, args, target)
+
+    def _call(self, cap: str, args: dict, target: str | None) -> Any:
         if not allowed(self.plugin, self._uses, cap):
             raise KitError(f"{self.plugin} may not call {cap}: not in its manifest's uses")
         if self._dispatch is None:
@@ -183,7 +225,7 @@ class Ctx:
             asyncio.get_running_loop()
         except RuntimeError:
             if self._loop is None:      # no host loop (a plain script, a test)
-                res = self._dispatch(cap, dict(args), caller)
+                res = _dispatch(self._dispatch, cap, dict(args), caller, target)
                 if inspect.isawaitable(res):
                     if inspect.iscoroutine(res):
                         res.close()
@@ -192,8 +234,8 @@ class Ctx:
             # Sync plugin code in a worker thread: the dispatcher runs on the
             # host loop, where the hub's state lives, and this thread waits.
             return asyncio.run_coroutine_threadsafe(
-                _await_call(self._dispatch, cap, dict(args), caller), self._loop).result()
-        return _await_call(self._dispatch, cap, dict(args), caller)
+                _await_call(self._dispatch, cap, dict(args), caller, target), self._loop).result()
+        return _await_call(self._dispatch, cap, dict(args), caller, target)
 
     def emit(self, event: str, payload: Mapping | None = None) -> None:
         """Publish an event this plugin declared under ``emits`` (or a record's auto event)."""
@@ -265,8 +307,19 @@ class Ctx:
             raise KitError(str(e)) from None
 
 
-async def _await_call(dispatch: Dispatch, cap: str, args: dict, caller: Caller) -> Any:
-    res = dispatch(cap, args, caller)
+def _dispatch(dispatch: Dispatch, cap: str, args: dict, caller: Caller, target: str | None) -> Any:
+    if target is None:
+        return dispatch(cap, args, caller)
+    try:
+        inspect.signature(dispatch).bind(cap, args, caller, target=target)
+    except TypeError:
+        raise KitError("this host can't call a named worker") from None
+    return dispatch(cap, args, caller, target=target)
+
+
+async def _await_call(dispatch: Dispatch, cap: str, args: dict, caller: Caller,
+                      target: str | None = None) -> Any:
+    res = _dispatch(dispatch, cap, args, caller, target)
     return await res if inspect.isawaitable(res) else res
 
 

@@ -1,5 +1,7 @@
 """rook.kit.ctx: the call context and the Python contract."""
 
+import asyncio
+
 import pytest
 
 from rook.kit.ctx import Caller, Ctx, FileResult, KitError, allowed, invoke, load_run
@@ -214,3 +216,55 @@ def test_load_run(tmp_path):
     for bad in ("scripts/x.py", "scripts/x.py:g", "../x.py:f", "scripts/none.py:f"):
         with pytest.raises(KitError):
             load_run(tmp_path, bad)
+
+
+class People:
+    def __init__(self):
+        self.values = {"bake": {"tv": {"room": "den", "host": "ignored"}}, "kid": {"tv": {"room": "attic"}}}
+
+    def owners(self):
+        return ["bake"]
+
+    def settings(self, person):
+        return self.values.get(person, {})
+
+
+PERSONAL = {**MANIFEST, "settings": {**MANIFEST["settings"], "room": {"where": "person", "default": "hall"}}}
+
+
+def test_per_person_settings_and_owners():
+    ctx = Ctx(PERSONAL, BAKE, settings={"port": 3000}, people=People())
+    assert ctx.settings["room"] == "den"                 # the caller's own value
+    assert ctx.settings["host"] == "10.0.0.5"            # a person can't override a non-person setting
+    assert ctx.settings_for("kid")["room"] == "attic"
+    assert ctx.settings_for("ann")["room"] == "hall" and ctx.settings_for("ann")["port"] == 3000
+    assert ctx.owners() == ["bake"]
+    bare = Ctx(PERSONAL, BAKE)
+    assert bare.settings["room"] == "hall"
+    with pytest.raises(KitError, match="per-person settings live on the hub"):
+        bare.settings_for("kid")
+    with pytest.raises(KitError, match="owners"):
+        bare.owners()
+
+
+def test_call_on_names_the_worker():
+    got = []
+
+    async def dispatch(cap, args, caller, target=None):
+        got.append((cap, args, target, caller.plugin))
+        return "shown"
+
+    async def body():
+        ctx = Ctx({**MANIFEST, "uses": ["notification.post"]}, BAKE, dispatch=dispatch)
+        assert await ctx.call_on("pixel", "notification.post", text="hi") == "shown"
+        assert await ctx.call("notification.post", text="yo") == "shown"
+        with pytest.raises(KitError, match="not in its manifest's uses"):
+            await ctx.call_on("pixel", "shell.exec")
+        with pytest.raises(KitError, match="needs a worker"):
+            ctx.call_on("", "notification.post")
+        old = Ctx({**MANIFEST, "uses": ["notification.post"]}, BAKE, dispatch=lambda cap, args, caller: "x")
+        with pytest.raises(KitError, match="can't call a named worker"):
+            await old.call_on("pixel", "notification.post")
+    asyncio.run(asyncio.wait_for(body(), 10))
+    assert got == [("notification.post", {"text": "hi"}, "pixel", "tv"),
+                   ("notification.post", {"text": "yo"}, None, "tv")]

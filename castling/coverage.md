@@ -173,6 +173,47 @@ Screen captures: adb's is the only worker-side one left (`adb.screen.capture`); 
   N4 (checks with `{}`: shell, file, cec, camera, adb, tv and dongle have none), N5 (`display` for
   hid-desktop has no vocabulary yet).
 
+## Hub services (wave 5)
+
+Hub-services agent, 2026-10-30 (PR on branch c5/hub-services). The shared services the
+decisions put in core (castling-caps rows 151-154, 169-170, 114-115, 222-223) are real 0.5
+plugins, `package: core`, tested on a real hub against fake Bot API, Discord REST + Gateway,
+OpenAI-compatible and Claude API servers, and end to end (`tests/e2e/test_hub_services_e2e.py`).
+The `notify` and `llm` drafts in `castling/manifests/` are superseded.
+
+| 0.5 plugin | Provides | Caps | What changed from 0.4 |
+|---|---|---|---|
+| notify (hub) | notify.send | send, channels | Router, not fan-out: tries the person's own order (`reach`, a `where: person` setting), else the hub's `channels`, and stops at the first that works; `channel: all` fans out; blank `to` = the owners (the contract). Channels: `phone` (`notification.post` on the person's `phone` worker via `ctx.call_on`), `telegram`, `discord`. `user=` and the owner-only rule are gone: anyone who may call it reaches any person; every channel call runs as the caller. |
+| telegram, discord (hub) | - | send, post, link, unlink, status | send/status binned for agents by decision but kept as the channel plumbing notify calls (notify.channels absorbs status). `send` = the band's bot to a linked person (no effect flag); `post` = to any chat or channel, `sends_as` (hard stop). Links only by a one-time code the person sends the bot (`/link`, `!link`): a typed handle would let anyone claim another's chat, so handles are plugin data, not `where: person` settings. Inbound messages are `telegram.message` / `discord.message` events with `taints: true` and `person` when linked. Room bridging (now streams), bot commands, per-person bots and shared spaces are not carried. |
+| llm-openai (hub) | llm.complete | complete, models | One OpenAI-compatible endpoint per hub (llmanifold, llama.cpp, vLLM, Ollama, a hosted API); 0.4's provider list is gone. |
+| llm-anthropic (hub) | llm.complete | complete, models | Raw Messages API (stdlib), version 2026-10-21: `temperature` is accepted by the contract but never sent. |
+| llm-cli (worker) | llm.complete | complete, models | Claude Code (`claude -p --tools ""`) or Codex (`codex exec -s read-only`) under the subscription signed in on the worker; `risk: exec`. |
+| llm (builtin) | - | providers, models, status | The hub's view of the llm.complete providers (contract registry); models/status ask `<provider>.models`. |
+
+Every provider maps `model: one | two | three` (castling-agents' three systems) to its
+`model_one/two/three` settings; blank is System Two. Claude defaults Haiku/Opus/Haiku.
+
+### What the hub services needed (and added)
+
+- **H1. `where: person` settings had no store.** Added: `setting.list/set {person}` (yours;
+  owners: anyone's) kept in `<data>/person-settings.json`; `ctx.settings` reads the caller's own,
+  `ctx.settings_for(person)` someone else's, `ctx.owners()` the owners. `setting.set` is still
+  `admin`, so a child can't set their own: an owner does. Reading someone else's is for owners;
+  per-person `secret` settings are refused until the vault (a vault name a person picks could
+  name the band's own secrets).
+- **H2. `ctx.call` couldn't name a worker.** Added `ctx.call_on(worker, cap, **args)` (the hub's
+  `call_as(target=)`): a device contract on the person's phone.
+- **H3. A uses grant for a target contract must name the provider.** Rights check the resolved
+  cap (`phone.notification.post`), not the contract name, so notify's `uses` has
+  `*.notification.post` (the `<plugin>.<contract>` naming convention) beside `notification.post`.
+- **H4. No vault on the hub.** `secret: true` settings resolve through `env_secret`, the hub
+  process's `ROOK_SECRET_<NAME>` (TODO(castling:vault)).
+- **H5. No cap picks a contract's provider.** The choice is the config file's `contracts:`;
+  `llm.providers` shows it. The house agent can't switch providers yet.
+- **H6. A new notify channel means editing notify's `channels` enum and `uses`.**
+- Voice: core.yaml's `voice.tts`/`voice.stt` should become `speech.*` (castling-naming-decisions,
+  B10); not changed here, nothing provides them yet.
+
 ## Gaps
 
 What a plugin needs that manifest v1 can't say, grouped by section. Each has the plugin that hits it

@@ -628,7 +628,7 @@ def test_every_builtin_cap_is_known():
     assert declared == {
         "pages.list", "pages.view", "pages.get", "pages.create", "pages.update", "pages.archive", "pages.restore",
         "hub.status", "hub.workers", "approval.list", "approval.decide", "journal.search", "setting.list",
-        "setting.set"}
+        "setting.set", "llm.providers", "llm.models", "llm.status"}
 
 
 def test_a_library_plugin_cant_take_a_builtin_name(site, tmp_path):

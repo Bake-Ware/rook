@@ -1,6 +1,7 @@
-# Hub-side plugin settings (manifest `settings:` with where: hub), for pages
-# (castling-dashboard). Values set here are kept in <data>/settings.json and
-# win over the config file's `settings:`. Implemented by the hub
+# Hub-side plugin settings (manifest `settings:` with where: hub) and each
+# person's own (where: person), for pages (castling-dashboard) and agents.
+# Values set here are kept in <data>/settings.json (and
+# <data>/person-settings.json) and win over the config file's `settings:`. Implemented by the hub
 # (rook.core2.hub.doors.web.caps). TODO(castling:dashboard): worker-side settings.
 manifest: 1
 plugin: setting
@@ -15,16 +16,17 @@ source: https://github.com/Bake-Ware/rook
 
 caps:
   list:
-    doc: Every hub-side setting of the hub's plugins, with its type, default and value.
+    doc: Every hub-side setting of the hub's plugins, with its type, default and value, then your own per-person ones.
     on: hub
     risk: read
     scope: multi-user
     idempotent: true
     args:
       plugin: { type: str, doc: "Only this plugin's." }
+      person: { type: str, doc: "Whose per-person settings (a name); blank: yours." }
     result: { type: map }
   set:
-    doc: Set one hub-side setting (owners only). It applies to the next call; null goes back to the default.
+    doc: "Set one hub-side setting (owners only) or a per-person one (yours; owners: anyone's). It applies to the next call; null goes back to the default."
     on: hub
     risk: admin
     scope: multi-user
@@ -33,6 +35,7 @@ caps:
       plugin: { type: str, required: true }
       key: { type: str, required: true }
       value: { type: json, required: true }
+      person: { type: str, doc: "For a per-person setting: whose (a name); blank: yours." }
     result: { type: map }
 
 pages:
