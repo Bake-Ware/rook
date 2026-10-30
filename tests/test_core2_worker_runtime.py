@@ -1,0 +1,476 @@
+"""The 0.5 worker runtime (rook/core2/worker/runtime.py) end to end: an
+in-process worker on the loopback relay, a fake hub node that signs
+announces, tickets and leases (rook/core2/wire.py) and pushes bundles built
+by the real distribution code over Drop. Every test has a hard timeout."""
+from __future__ import annotations
+
+import asyncio
+import io
+import itertools
+import json
+import os
+import secrets
+import signal
+import subprocess
+import sys
+import tarfile
+import time
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("nacl")
+pytest.importorskip("telesthete")
+from nacl.signing import SigningKey  # noqa: E402
+
+from rook.core2 import CORE_VERSION, wire  # noqa: E402
+from rook.core2.hub import distribute as d  # noqa: E402
+from rook.core2.transport import FEATURES, LoopbackRelay, Transport, band_of  # noqa: E402
+from rook.core2.worker.runtime import Config, Worker, load_config  # noqa: E402
+
+REPO = Path(__file__).resolve().parents[1]
+PSK, PSK2 = "worker-runtime-band-one", "worker-runtime-band-two"
+BAND, BAND2 = band_of(PSK), band_of(PSK2)
+WID = "3f0a" * 8
+ROOT, OP = SigningKey(b"\x11" * 32), SigningKey(b"\x12" * 32)
+G_ROOT, G_OP = SigningKey(b"\x21" * 32), SigningKey(b"\x22" * 32)
+HOME, GUEST = wire.key_id(bytes(ROOT.verify_key)), wire.key_id(bytes(G_ROOT.verify_key))
+
+ECHO_YAML = """manifest: 1
+plugin: echo
+version: 1.0.0
+caps:
+  say:
+    doc: Say it back, with who asked.
+    risk: read
+    scope: self
+    args: { text: { type: str } }
+    run: scripts/echo.py:say
+  boom:
+    doc: Always fails.
+    risk: read
+    scope: self
+    run: scripts/echo.py:boom
+  root:
+    doc: Needs administrator rights.
+    risk: write
+    scope: local
+    elevation: may
+    run: scripts/echo.py:root
+  relay:
+    doc: Calls another cap through the hub.
+    risk: read
+    scope: self
+    run: scripts/echo.py:relay
+"""
+
+ECHO_PY = """
+def say(ctx, text=""):
+    return {"text": text, "person": ctx.person, "agent": ctx.agent, "why": ctx.why}
+
+def boom(ctx):
+    raise RuntimeError("kaboom")
+
+def root(ctx):
+    if not ctx.lease:
+        raise PermissionError("needs root")
+    return {"lease": ctx.lease["id"]}
+
+def relay(ctx):
+    return {"inner": ctx.call("echo.say", text="inner")}
+"""
+
+
+def go(body, seconds=20):
+    async def main():
+        return await asyncio.wait_for(body(), seconds)
+    return asyncio.run(main())
+
+
+async def until(cond, seconds=5.0):
+    deadline = time.monotonic() + seconds
+    while not cond():
+        if time.monotonic() > deadline:
+            raise AssertionError("condition not met in time")
+        await asyncio.sleep(0.01)
+
+
+class FakeHub:
+    """A hub node on one band: signed announces with its hubkey grant,
+    ticketed requests, and answers to ``core.elevate`` and ``core.call``."""
+
+    def __init__(self, relay, psk, root, op):
+        self.root, self.op = root, op
+        self.hub, self.band, self.node = wire.key_id(bytes(root.verify_key)), band_of(psk), secrets.token_hex(16)
+        now = int(time.time())
+        self.grant = wire.sign(root, {"typ": "rook-hubkey", "v": 2, "hub": self.hub, "key": wire.pub_text(op),
+                                      "bands": [self.band], "iat": now - 60, "exp": now + 86400})
+        self.seq = itertools.count(int(time.time()))
+        self.issued: dict[str, dict] = {}
+        self.got: list[dict] = []
+        self.sub_calls: list[dict] = []
+        self.t = Transport(self.node, [relay.link(psk)], hello=self.announce, beat=self.announce, every=0.05)
+
+    def announce(self, band):
+        msg = wire.sign(self.op, {"kind": "announce", "typ": "rook-announce", "v": 2, "worker_id": self.node,
+                                  "name": "rook", "hub": self.hub, "band": band, "core": CORE_VERSION,
+                                  "ts": int(time.time()), "seq": next(self.seq), "features": FEATURES})
+        return {**msg, "hubkey": self.grant}
+
+    async def start(self):
+        await self.t.start(self.on_message)
+
+    async def on_message(self, band, msg):
+        if isinstance(msg.get("cap"), str):
+            asyncio.ensure_future(self.answer(band, msg))
+        else:
+            self.got.append(msg)
+
+    async def answer(self, band, req):
+        args, out = req.get("args") or {}, {"id": req["id"], "from": self.node}
+        ticket = args.get("ticket") or {}
+        if self.issued.get(ticket.get("nonce")) != ticket:
+            out.update(ok=False, error="denied: no such call in flight")
+        elif req["cap"] == "core.elevate":
+            now = int(time.time())
+            lease = {"typ": "rook-lease", "v": 2, "id": secrets.token_hex(16), "hub": self.hub, "band": band,
+                     "worker": ticket["worker"], "session": ticket["session"], "iat": now,
+                     "exp": now + wire.LEASE_SECS}
+            lease.update({k: ticket[k] for k in ("person", "agent") if k in ticket})
+            out.update(ok=True, result={"lease": wire.sign(self.op, lease)})
+        elif req["cap"] == "core.call":
+            self.sub_calls.append(args)
+            out.update(ok=True, result={"cap": args["cap"], "args": args["args"], "parent": ticket["call"]})
+        else:
+            out.update(ok=False, error=f"unknown capability: {req['cap']}")
+        await self.t.send(band, out)
+
+    def request(self, cap, args=None, *, target=WID, iat=None, **ticket):
+        cid, now = secrets.token_hex(16), int(time.time()) if iat is None else iat
+        t = wire.sign(self.op, {"typ": "rook-ticket", "v": 2, "hub": self.hub, "band": self.band, "call": cid,
+                                "nonce": secrets.token_hex(16), "worker": target, "cap": cap,
+                                "args_hash": wire.args_hash(args), "person": "person:bake",
+                                "agent": "agent:claude-code", "session": "s_1", "why": "Testing the worker.",
+                                "iat": now, "exp": now + 60, **ticket})
+        self.issued[t["nonce"]] = t
+        return {"id": cid, "cap": cap, "target": target, "args": args, "ticket": t}
+
+    async def send(self, req, timeout=10):
+        return await self.t.request(self.band, req, timeout)
+
+    async def call(self, cap, args=None, timeout=10, **kw):
+        return await self.send(self.request(cap, args, **kw), timeout)
+
+    def announces(self):
+        return [m for m in self.got if m.get("kind") == "announce" and m.get("worker_id") == WID]
+
+
+class BandPush:
+    """distribute's transport, over the band: offer the bundle over Drop and
+    send ``core.plugin.install`` with its descriptor."""
+
+    def __init__(self, hub: FakeHub):
+        self.hub = hub
+
+    async def push(self, worker_id, bundle):
+        return await self.push_bytes(Path(bundle).read_bytes(), worker_id)
+
+    async def push_bytes(self, blob, worker_id=WID):
+        desc = self.hub.t.offer(self.hub.band, blob, to=worker_id)
+        out = await self.hub.call("core.plugin.install", {"bundle": desc}, target=worker_id, timeout=30)
+        return out["result"] if out["ok"] else {"ok": False, "reason": out["error"]}
+
+
+ENV = d.WorkerEnv(worker_id=WID, os="linux", python="3.11", packages={})
+
+
+def tv(root, version, *, fail=False):
+    folder = root / f"src-tv-{version}"
+    (folder / "scripts").mkdir(parents=True)
+    (folder / "plugin.yaml").write_text(
+        f"manifest: 1\nplugin: tv\nversion: {version}\n"
+        "caps:\n  ping:\n    doc: Answer.\n    risk: read\n    scope: self\n    run: scripts/main.py:ping\n"
+        "check: [tv.ping]\n")
+    body = "def ping(ctx):\n    raise ctx.Error('screen not answering')\n" if fail else \
+        f"def ping(ctx):\n    return {{'version': {version!r}}}\n"
+    (folder / "scripts" / "main.py").write_text(body)
+    return folder
+
+
+@pytest.fixture
+def setup(tmp_path):
+    echo = tmp_path / "local" / "echo"
+    (echo / "scripts").mkdir(parents=True)
+    (echo / "plugin.yaml").write_text(ECHO_YAML)
+    (echo / "scripts" / "echo.py").write_text(ECHO_PY)
+    anchor = tmp_path / "anchor.json"
+    anchor.write_text(json.dumps({"hub": HOME, "root": wire.pub_text(ROOT), "band": BAND}))
+    relay = LoopbackRelay()
+    cfg = Config(data=tmp_path / "data", anchor=anchor, name="kaiju", worker_id=WID,
+                 bands=[{"psk": PSK}], plugins=[tmp_path / "local"])
+
+    def worker(**opts):
+        return Worker(cfg, make_link=lambda spec: relay.link(spec["psk"]),
+                      transport_opts={"every": 0.05, **opts})
+    return relay, cfg, worker
+
+
+async def up(relay, worker, psk=PSK, root=ROOT, op=OP):
+    hub = FakeHub(relay, psk, root, op)
+    await hub.start()
+    await worker.start()
+    await until(lambda: (hub.hub, hub.band) in worker.hub_nodes and hub.announces())
+    return hub
+
+
+# -- calls --------------------------------------------------------------------
+
+def test_worker_serves_verified_calls_and_refuses_bad_tickets(setup):
+    relay, cfg, make = setup
+
+    async def body():
+        w = make()
+        hub = await up(relay, w)
+        a = hub.announces()[-1]
+        assert a["name"] == "kaiju" and a["core"] == CORE_VERSION and a["role"] == "home"
+        assert a["ceiling"] == {"grants": ["*"]}
+        assert [m["plugin"] for m in a["manifests"]] == ["core", "echo"]
+        assert a["manifests"][0]["builtin"] is True and a["facts"]["os"]
+        await until(lambda: any(m.get("kind") == "heartbeat" and m["manifests_hash"] == a["manifests_hash"]
+                                for m in hub.got))
+
+        req = hub.request("echo.say", {"text": "hi"})
+        out = await hub.send(req)
+        assert out == {"id": req["id"], "from": WID, "ok": True,
+                       "result": {"text": "hi", "person": "person:bake", "agent": "agent:claude-code",
+                                  "why": "Testing the worker."}}
+        assert (await hub.send(req))["error"] == "denied by worker: replay"
+
+        old = int(time.time()) - 300
+        assert (await hub.call("echo.say", {"text": "x"}, iat=old))["error"] == "denied by worker: expired"
+        tampered = hub.request("echo.say", {"text": "hi"})
+        tampered["args"] = {"text": "rm -rf"}
+        assert (await hub.send(tampered))["error"] == "denied by worker: wrong_args"
+        forged = hub.request("echo.say", {"text": "hi"})
+        forged["ticket"] = {**forged["ticket"], "person": "person:mallory"}
+        assert (await hub.send(forged))["error"] == "denied by worker: bad_signature"
+        stranger = FakeHub(relay, PSK, SigningKey(b"\x31" * 32), SigningKey(b"\x32" * 32))
+        assert (await hub.send(stranger.request("echo.say", {})))["error"] == "denied by worker: unknown_hub"
+        assert (await hub.call("echo.nope"))["error"] == "unknown capability: echo.nope"
+        assert (await hub.call("echo.say", {"text": 5}))["error"].startswith("bad args: ")
+        with pytest.raises(asyncio.TimeoutError):          # not for this worker: silence
+            await hub.call("echo.say", {}, target="ab" * 16, timeout=0.3)
+
+        out = await hub.call("echo.boom")
+        assert out["ok"] is False and out["error"] == "echo.boom failed: RuntimeError: kaboom"
+        assert (await hub.call("echo.say", {"text": "still here"}))["ok"]
+
+        out = await hub.call("echo.root")
+        assert out["ok"] and out["elevated"] == out["result"]["lease"]
+        assert list(w.gate.leases) == [out["elevated"]]
+
+        req = hub.request("echo.relay")
+        out = await hub.send(req)
+        assert out["result"] == {"inner": {"cap": "echo.say", "args": {"text": "inner"}, "parent": req["id"]}}
+        assert hub.sub_calls[-1]["ticket"] == req["ticket"] and hub.sub_calls[-1]["target"] == "rook"
+
+        got = await hub.call("core.trust.get")
+        assert got["result"]["anchor"] == {"hub": HOME, "band": BAND, "protected": False}
+        got = await hub.call("core.manifests", {"plugins": ["echo"]})
+        assert [m["plugin"] for m in got["result"]["manifests"]] == ["echo"]
+        assert (await hub.call("core.lease.drop", {"person": "person:bake"}))["result"] == {"dropped": 1}
+
+        await w.stop()
+        await hub.t.close()
+    go(body)
+
+
+def test_leases_end_when_the_hub_is_lost(setup):
+    relay, cfg, make = setup
+
+    async def body():
+        w = make(lost_after=0.4)
+        hub = await up(relay, w)
+        out = await hub.call("echo.root")
+        assert out["ok"] and w.gate.leases
+        await hub.t.close()                     # the hub goes quiet
+        await until(lambda: not w.gate.leases, 5)
+        await w.stop()
+    go(body)
+
+
+# -- plugins pushed by the hub -----------------------------------------------------
+
+def test_signed_bundles_install_roll_back_and_survive_a_restart(setup, tmp_path):
+    relay, cfg, make = setup
+
+    async def body():
+        w = make()
+        hub = await up(relay, w)
+        push = BandPush(hub)
+
+        async def ship(folder, signer=OP):
+            return await d.install(folder, ENV, push, signer=signer, hub=HOME, resolve=lambda r, e: [])
+
+        report = await ship(tv(tmp_path, "1.0.0"))
+        assert report["ok"] and report["version"] == "1.0.0" and report["checks"] == ["tv.ping"]
+        assert (await hub.call("tv.ping"))["result"] == {"version": "1.0.0"}
+        await until(lambda: any(m["plugin"] == "tv" for m in hub.announces()[-1]["manifests"]))
+
+        bad = await ship(tv(tmp_path, "1.1.0", fail=True))
+        assert not bad["ok"] and "screen not answering" in bad["reason"] and "(rolled back)" in bad["reason"]
+        assert (await hub.call("tv.ping"))["result"] == {"version": "1.0.0"}
+
+        stranger = await ship(tv(tmp_path, "1.2.0"), signer=SigningKey(b"\x41" * 32))
+        assert not stranger["ok"] and "not signed by a hub that may approve plugins here" in stranger["reason"]
+
+        plan = d.prepare(tv(tmp_path, "1.3.0"), ENV, signer=OP, hub=HOME, resolve=lambda r, e: [])
+        bundle = d.write_bundle(plan, tmp_path / "tv.tar")
+        tampered = await push.push_bytes(_swap(bundle.read_bytes(), "scripts/main.py",
+                                               b"def ping(ctx):\n    return 'owned'\n"))
+        assert not tampered["ok"] and "tampered bundle" in tampered["reason"]
+        assert (await hub.call("tv.ping"))["result"] == {"version": "1.0.0"}
+
+        assert (await ship(tv(tmp_path, "1.4.0")))["ok"]
+        assert (await hub.call("tv.ping"))["result"] == {"version": "1.4.0"}
+        back = await hub.call("core.plugin.rollback", {"plugin": "tv"})
+        assert back["ok"] and back["result"]["version"] == "1.0.0"
+        assert (await hub.call("tv.ping"))["result"] == {"version": "1.0.0"}
+        replayed = hub.request("tv.ping")
+        assert (await hub.send(replayed))["ok"]
+
+        await w.stop()
+        w2 = make()                              # restart on the same data folder
+        await w2.start()
+        await until(lambda: (HOME, BAND) in w2.hub_nodes)
+        assert (await hub.call("tv.ping"))["result"] == {"version": "1.0.0"}
+        assert (await hub.send(replayed))["error"] == "denied by worker: replay"
+        assert w2.worker_id == WID and not w2.gate.leases
+        await w2.stop()
+        await hub.t.close()
+    go(body, 40)
+
+
+def _swap(blob: bytes, name: str, data: bytes) -> bytes:
+    """The same tar with one file's bytes replaced (plugin.sig untouched)."""
+    out = io.BytesIO()
+    with tarfile.open(fileobj=io.BytesIO(blob)) as src, tarfile.open(fileobj=out, mode="w") as dst:
+        for m in src.getmembers():
+            body = data if m.name == name else src.extractfile(m).read()
+            m.size = len(body)
+            dst.addfile(m, io.BytesIO(body))
+    return out.getvalue()
+
+
+# -- several bands -------------------------------------------------------------------
+
+def test_guest_band_joins_through_the_home_hub_with_its_own_ceiling(setup):
+    relay, cfg, make = setup
+
+    def membership(role, iat, ceiling=None):
+        doc = {"typ": "rook-membership", "v": 2, "serial": secrets.token_hex(16), "worker": WID, "hub": GUEST,
+               "root": wire.pub_text(G_ROOT), "band": BAND2, "role": role, "by": "person:bake", "iat": iat}
+        if ceiling is not None:
+            doc["ceiling"] = ceiling
+        return wire.sign(ROOT, doc)
+
+    async def body():
+        w = make()
+        home = await up(relay, w)
+        guest = FakeHub(relay, PSK2, G_ROOT, G_OP)
+        await guest.start()
+        now = int(time.time())
+        out = await home.call("core.trust.set", {"membership": membership("guest", now, {"grants": ["echo.say"]}),
+                                                 "connect": {"psk": PSK2}})
+        assert out["ok"], out
+        await until(lambda: (GUEST, BAND2) in w.hub_nodes and guest.announces())
+        assert set(w.transport.bands) == {BAND, BAND2}
+        a = guest.announces()[-1]
+        assert a["role"] == "guest" and a["ceiling"] == {"grants": ["echo.say"]}
+        assert json.loads((cfg.data / "bands.json").read_text()) == {BAND2: {"psk": PSK2}}
+
+        said = await guest.call("echo.say", {"text": "hello guest"})
+        assert said["ok"] and said["result"]["text"] == "hello guest"
+        assert (await guest.call("echo.boom"))["error"] == "denied by worker: outside_ceiling"
+        refused = await guest.call("core.trust.set", {"membership": membership("guest", now + 1, {"grants": ["*"]})})
+        assert refused["error"].startswith("denied by worker: ")
+        # a guest ticket for the home band is not good there
+        cross = guest.request("echo.say", {"text": "x"})
+        assert (await home.send(cross))["error"] == "denied by worker: unknown_hub"
+
+        out = await home.call("core.trust.set", {"membership": membership("removed", now + 2)})
+        assert out["ok"], out
+        await until(lambda: w.transport.bands == [BAND])
+        assert json.loads((cfg.data / "bands.json").read_text()) == {}
+        await w.stop()
+        await home.t.close()
+        await guest.t.close()
+    go(body)
+
+
+# -- config and the command ------------------------------------------------------------
+
+def test_load_config_resolves_paths_and_refuses_mistakes(tmp_path):
+    path = tmp_path / "worker.yaml"
+    path.write_text("data: ./state\nanchor: anchor.json\nname: kaiju\nplugins: [plugins]\n"
+                    "bands: [{psk_env: ROOK_PSK, relay: 'relay:7474'}]\n")
+    cfg = load_config(path)
+    assert cfg.data == tmp_path / "state" and cfg.anchor == tmp_path / "anchor.json"
+    assert cfg.plugins == [tmp_path / "plugins"] and cfg.bands[0]["psk_env"] == "ROOK_PSK"
+    for bad, why in (("data: x\n", "anchor is required"), ("data: x\nanchor: a\nband: 1\n", "unknown keys: band"),
+                     ("data: x\nanchor: a\nname: rook\n", "name must be"),
+                     ("data: x\nanchor: a\nworker_id: abc\n", "worker_id must be 32 hex")):
+        path.write_text(bad)
+        with pytest.raises(ValueError, match=why):
+            load_config(path)
+
+
+def test_the_command_starts_and_stops_cleanly(tmp_path):
+    anchor = tmp_path / "anchor.json"
+    anchor.write_text(json.dumps({"hub": HOME, "root": wire.pub_text(ROOT), "band": BAND}))
+    (tmp_path / "worker.yaml").write_text("data: ./state\nanchor: anchor.json\nname: kaiju\nlog: {format: json}\n")
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(REPO), os.environ.get("PYTHONPATH", "")])}
+    p = subprocess.Popen([sys.executable, "-m", "rook.core2.worker", "--config", str(tmp_path / "worker.yaml")],
+                         cwd=tmp_path, env=env, stderr=subprocess.PIPE, text=True)
+    try:
+        lines = []
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            line = p.stderr.readline()
+            if not line:
+                break
+            lines.append(line)
+            if "worker started" in line:
+                break
+        assert any("worker started" in x for x in lines), "".join(lines)
+        started = json.loads(next(x for x in lines if "worker started" in x))
+        assert started["name"] == "kaiju" and len(started["worker"]) == 32
+        p.send_signal(signal.SIGTERM)
+        _, err = p.communicate(timeout=30)
+        assert p.returncode == 0, err
+        assert "worker stopped" in err
+        assert (tmp_path / "state" / "worker_id").read_text().strip() == started["worker"]
+    finally:
+        if p.poll() is None:
+            p.kill()
+            p.wait(10)
+
+    (tmp_path / "bad.yaml").write_text("data: x\n")
+    r = subprocess.run([sys.executable, "-m", "rook.core2.worker", "--config", str(tmp_path / "bad.yaml")],
+                       cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 2 and "anchor is required" in r.stderr
+
+
+def test_a_failed_start_closes_what_it_opened(setup):
+    relay, cfg, make = setup
+
+    def broken(spec):
+        raise RuntimeError("no relay here")
+
+    async def body():
+        w = Worker(cfg, make_link=broken)
+        with pytest.raises(RuntimeError, match="no relay here"):
+            await w.start()
+        assert not w.started and w.host.plugins == {}       # echo was loaded, then closed
+        await w.stop()                                       # a no-op, not a crash
+    go(body)
