@@ -1,0 +1,72 @@
+# The stream caps on a worker (castling-streams; terminals collapse into
+# these). Caps that declare a `stream:` block (shell.open, ...) open the
+# stream and answer {"stream": id}; these read it, write input to it, list
+# and close it. Implemented in rook/core2/worker/builtins.py on the worker's
+# own Streams (bounded, in memory: terminals and processes). A stream is for
+# the people and agents it was opened for (its participants).
+manifest: 1
+plugin: stream
+version: 0.5.0
+title: Streams
+doc: Read, write, list and close the live streams (terminals, processes) on this worker.
+package: core
+builtin: true
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+caps:
+  read:
+    doc: >-
+      Events after the cursor `after` (start at 0, pass back `next`): {events, next, dropped,
+      closed}. Output bytes come as b64. wait > 0 holds an empty read up to that many seconds
+      (long-poll). dropped counts events a bounded stream discarded before you read them.
+    risk: read
+    scope: self
+    idempotent: true
+    timeout: 60s
+    aliases: [work.stream.read]
+    args:
+      stream: { type: str, required: true, pattern: "^s_[0-9a-f]{16}$" }
+      after: { type: int, default: 0, min: 0 }
+      limit: { type: int, default: 200, min: 1, max: 1000 }
+      wait: { type: float, default: 0, min: 0, max: 50 }
+      types: { type: list, items: { type: str }, doc: "Only these event types (bytes, status, ...)." }
+    result: { type: map }
+  write:
+    doc: >-
+      Send input to a live stream: body {text} (keystrokes; "\r" is Enter on a terminal),
+      {signal: INT|TERM|KILL|HUP} or {resize: [cols, rows]}. Typing into a shell runs what you
+      type, so this is exec.
+    risk: exec
+    scope: local
+    aliases: [work.stream.write]
+    args:
+      stream: { type: str, required: true, pattern: "^s_[0-9a-f]{16}$" }
+      type: { type: str, enum: [input], default: input }
+      body: { type: map, required: true }
+    result:
+      type: map
+      fields:
+        seq: { type: int }
+  list:
+    doc: "Your streams on this worker: {streams: [{id, kind, title, producer, created, closed, last_seq, attrs}]}."
+    risk: read
+    scope: self
+    idempotent: true
+    aliases: [work.stream.list]
+    args:
+      kind: { type: str, doc: "terminal, process, ..." }
+      open: { type: bool, default: false, doc: Only streams still open. }
+    result:
+      type: map
+      fields:
+        streams: { type: list }
+  close:
+    doc: >-
+      Close a stream: it stays readable but takes no more events, and its producer stops (a
+      terminal's process gets SIGHUP).
+    risk: write
+    scope: self
+    aliases: [work.stream.close]
+    args:
+      stream: { type: str, required: true, pattern: "^s_[0-9a-f]{16}$" }
+    result: { type: map }
