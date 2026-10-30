@@ -429,6 +429,44 @@ class Dispatcher:
         return await self.dispatch(caller, Call(cap=cap, target=target, args=args, why=why,
                                                 session=sid, layers=[["uses", uses]]))
 
+    # -- core.elevate (7.2, 13): a lease for a call in flight -------------
+
+    def elevate(self, from_worker: str, ticket: dict, reason: str) -> dict:
+        """Answer a worker's ``core.elevate``: the ticket must be one this hub
+        minted for that worker and still in flight, and the call's rights
+        (person, agent, session, the worker's ceiling) must permit
+        ``core.elevate`` there. Journals the outcome; returns the reply body."""
+        nonce = ticket.get("nonce") if isinstance(ticket, dict) else None
+        held = self._inflight.get(nonce) if isinstance(nonce, str) else None
+        w = self.workers.get(from_worker)
+        s = self.sessions.get(held[2]) if held else None
+        if held is None or held[0] != ticket or ticket["worker"] != from_worker or w is None or s is None:
+            return {"ok": False, "error": "elevation: denied"}
+        caller = held[1]
+        target = ticket.get("appliance") or w.name
+        layers = self.identities.layers(caller) + [["session", {"grants": s.caps}], ["ceiling", w.ceiling]]
+        out = rights.check(layers, {"cap": "core.elevate", "risk": "admin", "effects": [], "target": target})
+        entry = {"kind": "elevation", "ts": self.clock(), "hub": self.hub_id, "call": ticket["call"],
+                 "cap": ticket["cap"], "worker": from_worker, "band": ticket["band"], "risk": "admin",
+                 "reason": reason if isinstance(reason, str) else None, "session": s.id,
+                 "project": s.project, "person": caller.person, "agent": caller.agent}
+        if not out["ok"]:
+            entry.update(decision="deny", layer=f"{out['layer']}: {out['reason']}")
+            self.journal(entry)
+            return {"ok": False, "error": "elevation: outside ceiling" if out["layer"] == "ceiling"
+                    else "elevation: denied"}
+        now = int(self.clock())
+        lease = {"typ": "rook-lease", "v": 2, "id": _secrets.token_hex(16), "hub": self.hub_id,
+                 "band": ticket["band"], "worker": from_worker, "session": s.id,
+                 "iat": now, "exp": now + wire.LEASE_SECS}
+        for k in ("person", "agent"):
+            if k in ticket:
+                lease[k] = ticket[k]
+        lease = wire.sign(self.op_key, lease)
+        entry.update(decision="allow", lease=lease["id"])
+        self.journal(entry)
+        return {"ok": True, "result": {"lease": lease}}
+
     # -- journal -----------------------------------------------------------
 
     def _note(self, kind: str, s: Session | None, **fields) -> None:
