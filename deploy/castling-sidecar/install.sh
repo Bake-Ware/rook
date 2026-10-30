@@ -186,5 +186,5 @@ cat <<EOF
   Recovery key:  $SECRETS/recovery-key.txt
   MCP door:      http://$MCP_BIND/mcp  (token in $SECRETS/mcp.token)
   Claude Code:   claude --mcp-config $SECRETS/claude-mcp.json
-  Check it:      $here/check.sh
+  Check it:      $SRC/deploy/castling-sidecar/check.sh
 EOF
