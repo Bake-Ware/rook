@@ -1,0 +1,69 @@
+# An llm.complete provider for any OpenAI-compatible chat completions
+# endpoint (castling-inference): a local server (llama.cpp, vLLM, Ollama,
+# LM Studio), a front door such as llmanifold on kaiju, or a hosted API.
+# One endpoint per hub. The model arg takes a model id or a system name
+# (one, two, three: castling-agents' three systems), mapped by the settings.
+# Code: scripts/openai.py.
+manifest: 1
+plugin: llm-openai
+version: 0.5.0
+title: OpenAI-compatible models
+doc: Completions from an OpenAI-compatible endpoint (a local model server, llmanifold, a hosted API).
+package: core
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+requires: { settings: [url] }
+
+settings:
+  url:
+    type: url
+    where: hub
+    doc: "The API base, up to /v1 (http://kaiju:8080/v1)."
+    setup: Ask where the model server or llmanifold listens and set its /v1 base.
+  key: { secret: true, where: hub, doc: "The vault name of the API key; blank: the endpoint needs none." }
+  model_one: { where: hub, doc: "System One's model (the fast voice talker); blank: System Two's." }
+  model_two: { where: hub, doc: "System Two's model, the default; blank: the endpoint's own default." }
+  model_three: { where: hub, doc: "System Three's model (the dream cycle's cleanup); blank: System One's." }
+  timeout: { type: duration, default: 2m, where: hub, doc: Longest one completion may take. }
+
+caps:
+  complete:
+    doc: One chat completion. model is a model id or a system (one, two, three); blank is System Two.
+    on: hub
+    risk: read
+    scope: external
+    timeout: 5m
+    run: scripts/openai.py:complete
+    args:
+      messages:
+        type: list
+        required: true
+        items:
+          type: map
+          fields:
+            role: { type: str, required: true, enum: [system, user, assistant] }
+            content: { type: str, required: true }
+      model: { type: str }
+      max_tokens: { type: int, min: 1 }
+      temperature: { type: float, min: 0, max: 2 }
+      stop: { type: list, items: { type: str }, max: 4 }
+    result:
+      type: map
+      fields:
+        text: { type: str, required: true }
+        model: { type: str }
+        stop_reason: { type: str }
+        usage: { type: map, items: { type: int } }
+  models:
+    doc: The model ids the endpoint offers (its /models) and the System One/Two/Three choices.
+    on: hub
+    risk: read
+    scope: external
+    idempotent: true
+    run: scripts/openai.py:models
+    result: { type: map }
+
+provides:
+  llm.complete: llm-openai.complete
+docs: { manual: docs/manual.md }

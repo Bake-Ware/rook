@@ -1,0 +1,97 @@
+# The band's Telegram bot (castling-caps: telegram.send/status bin into
+# notify.send and notify.channels; this plugin is the channel behind them).
+# A person links their Telegram account with a one-time code (/link CODE to
+# the bot), so the hub knows which chat is theirs; a typed chat id would let
+# anyone claim someone else's chat. Inbound messages become telegram.message
+# events, tainted (outside content). Bot API over HTTPS, long-polled
+# getUpdates; no Telegram library. Code: scripts/telegram.py.
+manifest: 1
+plugin: telegram
+version: 0.5.0
+title: Telegram
+doc: The band's Telegram bot, a notify channel; inbound messages become events.
+package: core
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+requires: { settings: [token] }
+
+settings:
+  token:
+    secret: true
+    where: hub
+    apply: reload
+    doc: The vault name of the bot token from @BotFather.
+    setup: Make a bot with @BotFather, store its token in the vault and set this to the vault name.
+  api: { type: url, default: "https://api.telegram.org", where: hub, apply: reload, doc: The Bot API base URL. }
+  poll: { type: int, default: 25, min: 0, max: 50, where: hub, apply: reload, doc: Seconds one getUpdates long poll waits. }
+
+caps:
+  send:
+    doc: A direct message from the bot to a person who linked their Telegram account.
+    on: hub
+    risk: write
+    scope: external
+    run: scripts/telegram.py:send
+    args:
+      to: { type: str, required: true, doc: The person (their name). }
+      text: { type: str, required: true }
+      title: { type: str, doc: "A first line, as a heading." }
+    result: { type: map }
+  post:
+    doc: Post to any Telegram chat or group the bot is in, in the band's name (to people outside it).
+    on: hub
+    risk: write
+    scope: external
+    effects: [sends_as]
+    run: scripts/telegram.py:post
+    args:
+      chat: { type: str, required: true, doc: "The chat id (a telegram.message event's chat)." }
+      text: { type: str, required: true }
+      reply_to: { type: str, doc: A message id in that chat to reply to. }
+    result: { type: map }
+  link:
+    doc: A one-time code that links your Telegram account; send /link CODE to the bot within 10 minutes.
+    on: hub
+    risk: write
+    scope: self
+    effects: [persists]
+    run: scripts/telegram.py:link
+    result: { type: map }
+  unlink:
+    doc: "Forget a person's linked Telegram account (yours; owners: anyone's)."
+    on: hub
+    risk: write
+    scope: self
+    run: scripts/telegram.py:unlink
+    args:
+      to: { type: str, doc: "The person; blank: you." }
+    result: { type: map }
+  status:
+    doc: Whether the bot is connected, its name, the last error and whether a person is linked.
+    on: hub
+    risk: read
+    scope: multi-user
+    idempotent: true
+    run: scripts/telegram.py:status
+    args:
+      to: { type: str, doc: "The person; blank: you." }
+    result: { type: map }
+
+emits:
+  telegram.message:
+    doc: Someone wrote to the bot, or in a group it is in.
+    taints: true
+    payload:
+      text: { type: str, required: true }
+      chat: { type: str, required: true, doc: Where to answer (telegram.post). }
+      private: { type: bool, doc: A direct message to the bot. }
+      from: { type: str, doc: Their Telegram name. }
+      from_id: { type: str }
+      person: { type: str, doc: "The Rook person, when their account is linked." }
+      message: { type: str, doc: The message id. }
+
+hooks:
+  start: scripts/telegram.py:start
+  stop: scripts/telegram.py:stop
+docs: { manual: docs/manual.md }

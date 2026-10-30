@@ -1,0 +1,70 @@
+# An llm.complete provider for the Claude API (Anthropic's Messages API,
+# castling-inference). Raw HTTPS with the stdlib, no SDK: plugins stay
+# stdlib-first. System messages become the request's system prompt. The model
+# arg takes a model id or a system name (one, two, three); the defaults
+# follow castling-inference for Claude: Haiku for System One and Three, Opus
+# for Two. Code: scripts/anthropic.py.
+manifest: 1
+plugin: llm-anthropic
+version: 0.5.0
+title: Claude API
+doc: Completions from the Claude API with an API key.
+package: core
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+requires: { settings: [key] }
+
+settings:
+  key:
+    secret: true
+    where: hub
+    doc: The vault name of the Claude API key.
+    setup: Make an API key in the Claude Console, store it in the vault and set this to the vault name.
+  url: { type: url, default: "https://api.anthropic.com", where: hub, doc: The API base URL. }
+  model_one: { default: claude-haiku-5-5, where: hub, doc: System One's model (the fast voice talker). }
+  model_two: { default: claude-opus-5-5, where: hub, doc: "System Two's model, the default (claude-sonnet-5-5 costs less)." }
+  model_three: { default: claude-haiku-5-5, where: hub, doc: "System Three's model (the dream cycle's cleanup)." }
+  max_tokens: { type: int, default: 16000, min: 1, where: hub, doc: Longest reply when the call doesn't say. }
+  timeout: { type: duration, default: 5m, where: hub, doc: Longest one completion may take. }
+
+caps:
+  complete:
+    doc: One Claude completion. model is a model id or a system (one, two, three); blank is System Two. temperature is not sent (the API refuses it).
+    on: hub
+    risk: read
+    scope: external
+    timeout: 5m
+    run: scripts/anthropic.py:complete
+    args:
+      messages:
+        type: list
+        required: true
+        items:
+          type: map
+          fields:
+            role: { type: str, required: true, enum: [system, user, assistant] }
+            content: { type: str, required: true }
+      model: { type: str }
+      max_tokens: { type: int, min: 1 }
+      temperature: { type: float, min: 0, max: 2 }
+      stop: { type: list, items: { type: str }, max: 4 }
+    result:
+      type: map
+      fields:
+        text: { type: str, required: true }
+        model: { type: str }
+        stop_reason: { type: str }
+        usage: { type: map, items: { type: int } }
+  models:
+    doc: The model ids the API offers (its /v1/models) and the System One/Two/Three choices.
+    on: hub
+    risk: read
+    scope: external
+    idempotent: true
+    run: scripts/anthropic.py:models
+    result: { type: map }
+
+provides:
+  llm.complete: llm-anthropic.complete
+docs: { manual: docs/manual.md }

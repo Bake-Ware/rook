@@ -1,0 +1,98 @@
+# The band's Discord bot (castling-caps: discord.send/status bin into
+# notify.send and notify.channels; this plugin is the channel behind them).
+# A person links their Discord account with a one-time code (!link CODE in a
+# direct message to the bot), so the hub knows which user is theirs.
+# Inbound messages become discord.message events, tainted (outside content).
+# REST API plus the Gateway websocket (identify, heartbeat, reconnect with
+# backoff) over aiohttp; no discord.py. The bot needs the Message Content
+# intent to read messages in servers. Code: scripts/discord.py.
+manifest: 1
+plugin: discord
+version: 0.5.0
+title: Discord
+doc: The band's Discord bot, a notify channel; inbound messages become events.
+package: core
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+requires: { settings: [token] }
+
+settings:
+  token:
+    secret: true
+    where: hub
+    apply: reload
+    doc: The vault name of the bot token (Discord developer portal > your app > Bot).
+    setup: Make an application with a bot, tick the Message Content intent, store the bot token in the vault and set this to the vault name.
+  api: { type: url, default: "https://discord.com/api/v10", where: hub, apply: reload, doc: The REST API base URL. }
+
+caps:
+  send:
+    doc: A direct message from the bot to a person who linked their Discord account.
+    on: hub
+    risk: write
+    scope: external
+    run: scripts/discord.py:send
+    args:
+      to: { type: str, required: true, doc: The person (their name). }
+      text: { type: str, required: true }
+      title: { type: str, doc: "A first line, as a heading." }
+    result: { type: map }
+  post:
+    doc: Post to any Discord channel the bot can write in, in the band's name (to people outside it).
+    on: hub
+    risk: write
+    scope: external
+    effects: [sends_as]
+    run: scripts/discord.py:post
+    args:
+      chat: { type: str, required: true, doc: "The channel id (a discord.message event's chat)." }
+      text: { type: str, required: true }
+      reply_to: { type: str, doc: A message id in that chat to reply to. }
+    result: { type: map }
+  link:
+    doc: A one-time code that links your Discord account; send !link CODE to the bot in a direct message within 10 minutes.
+    on: hub
+    risk: write
+    scope: self
+    effects: [persists]
+    run: scripts/discord.py:link
+    result: { type: map }
+  unlink:
+    doc: "Forget a person's linked Discord account (yours; owners: anyone's)."
+    on: hub
+    risk: write
+    scope: self
+    run: scripts/discord.py:unlink
+    args:
+      to: { type: str, doc: "The person; blank: you." }
+    result: { type: map }
+  status:
+    doc: Whether the bot is connected, its name, the last error and whether a person is linked.
+    on: hub
+    risk: read
+    scope: multi-user
+    idempotent: true
+    run: scripts/discord.py:status
+    args:
+      to: { type: str, doc: "The person; blank: you." }
+    result: { type: map }
+
+emits:
+  discord.message:
+    doc: Someone wrote to the bot, or in a channel it can read.
+    taints: true
+    payload:
+      text: { type: str, required: true }
+      chat: { type: str, required: true, doc: Where to answer (discord.post). }
+      private: { type: bool, doc: A direct message to the bot. }
+      guild: { type: str, doc: "The server's id, for a message in a server." }
+      from: { type: str, doc: Their Discord user name. }
+      from_id: { type: str }
+      person: { type: str, doc: "The Rook person, when their account is linked." }
+      message: { type: str, doc: The message id. }
+
+hooks:
+  start: scripts/discord.py:start
+  stop: scripts/discord.py:stop
+docs: { manual: docs/manual.md }
