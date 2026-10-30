@@ -236,7 +236,7 @@ def install(hub) -> None:
                   "pages.archive": h.pages_archive, "pages.restore": h.pages_restore,
                   "pages.components": h.pages_components, "pages.site": h.pages_site,
                   "pages.start": h.pages_start},
-        "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers},
+        "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers, "hub.manifests": h.hub_manifests},
         "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide},
         "journal": {"journal.search": h.journal_search},
         "setting": {"setting.list": settings.list, "setting.set": settings.set},
@@ -458,6 +458,30 @@ class _Handlers:
 
     async def hub_workers(self, ctx) -> dict:
         return {"workers": (await self.hub.workers_view(_who(ctx)))["workers"]}
+
+    async def hub_manifests(self, ctx, section: str | None = None) -> dict:
+        """Hub plugins first, then what workers announce. ``folder`` (where the
+        hub holds the plugin: loaded, or in its library) only for owners and
+        the hub's own components, which run code from there (jobs)."""
+        hub = self.hub
+        found = {p.name: (p.manifest, p.folder) for p in hub.plugins.plugins.values()}
+        for k in sorted(hub.known.values(), key=lambda k: k.name):
+            for e in k.manifests:
+                m = hub._norm.get(e.get("hash"))
+                if m is not None and m["plugin"] not in found:
+                    found[m["plugin"]] = (m, None)
+        show_folder = ctx.caller.owner or (ctx.agent or "").startswith("system:")
+        out = []
+        for name, (m, folder) in sorted(found.items()):
+            if section and not m.get(section):
+                continue
+            item = {"plugin": name, "version": str(m["version"])}
+            item.update({section: m[section]} if section else {"manifest": m})
+            folder = folder or (hub._library_folder(name) if show_folder else None)
+            if folder and show_folder:
+                item["folder"] = str(folder)
+            out.append(item)
+        return {"manifests": out}
 
     async def approval_list(self, ctx) -> dict:
         return {"holds": (await self.hub.holds_view(_who(ctx)))["holds"]}

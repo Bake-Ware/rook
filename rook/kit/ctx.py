@@ -215,12 +215,21 @@ class Ctx:
             raise KitError("call_on needs a worker")
         return self._call(cap, args, target)
 
-    def _call(self, cap: str, args: dict, target: str | None) -> Any:
+    def call_as(self, caller: Caller, cap: str, args: Mapping | None = None, *,
+                target: str | None = None) -> Any:
+        """Call a cap as ``caller`` rather than this call's caller, on
+        ``target`` (a worker; None: wherever the host finds it). For hub
+        plugins that act for someone else: a job runs as its creator, its
+        persona or the plugin that ships it (spec 8.1, 10.1). Still held to
+        this plugin's ``uses``; dispatch checks ``caller``'s own rights."""
+        return self._call(cap, dict(args or {}), target, caller)
+
+    def _call(self, cap: str, args: dict, target: str | None, caller: Caller | None = None) -> Any:
         if not allowed(self.plugin, self._uses, cap):
             raise KitError(f"{self.plugin} may not call {cap}: not in its manifest's uses")
         if self._dispatch is None:
             raise KitError("no dispatcher: ctx.call is unavailable here")
-        caller = replace(self.caller, plugin=self.plugin)
+        caller = caller or replace(self.caller, plugin=self.plugin)
         try:
             asyncio.get_running_loop()
         except RuntimeError:

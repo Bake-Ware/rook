@@ -26,6 +26,15 @@ caps:
     scope: multi-machine
     idempotent: true
     result: { type: map }
+  manifests:
+    doc: "The manifest of every plugin in use: the hub's own and those its workers announce (latest known). With section, only plugins that have it, and only that section (jobs, personas, ...)."
+    on: hub
+    risk: read
+    scope: multi-machine
+    idempotent: true
+    args:
+      section: { type: str, doc: "A manifest section, e.g. jobs; blank: whole manifests." }
+    result: { type: map }
 
 pages:
   workers: { title: Workers, file: pages/workers.html, caps: [hub.workers], events: ["worker.*", "plugin.*"], nav: { section: Hub } }

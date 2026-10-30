@@ -16,7 +16,9 @@ instead of to the band. What gets served:
   caps run in the action engine);
 - the generated caps of ``records:`` types (rook.kit.records);
 - one service cap per ``route: provider`` contract (core.yaml), which goes on
-  to the chosen provider as the same caller (rook.kit.contracts).
+  to the chosen provider as the same caller (rook.kit.contracts);
+- the ``routes:`` of ``runs_on: hub`` plugins, which the HTTP door serves
+  under ``/p/<plugin><path>`` (:meth:`HubPlugins.serve`).
 
 Hooks start only for ``runs_on: hub`` plugins (the rest run on workers). They
 act as ``system:plugin.<name>``, whose rights are the plugin's own namespace plus
@@ -59,6 +61,14 @@ class HubCap:
 
 
 @dataclass
+class Route:
+    path: str
+    methods: list
+    auth: str                                     # user | none (hmac, token: not served yet)
+    handler: Callable[..., Any]                   # handler(ctx, request)
+
+
+@dataclass
 class HubPlugin:
     name: str
     manifest: dict                                # normalized
@@ -66,14 +76,16 @@ class HubPlugin:
     caps: list = field(default_factory=list)      # names served by the hub
     hooks: bool = False
     gate: Gate | None = None
+    routes: dict = field(default_factory=dict)    # path -> Route
 
 
 class HubPlugins:
     def __init__(self, *, records: RecordStore, contracts: Contracts, call: CallAs,
                  emit: Callable[[str, dict, str], Any] | None = None, data_dir: str | Path | None = None,
                  settings: dict | None = None, resolve_secret: Callable[[str], Any] | None = None,
-                 hook_timeout: float = 30.0, people: Any = None):
+                 hook_timeout: float = 30.0, people: Any = None, band: str = ""):
         self.records, self.contracts, self._call = records, contracts, call
+        self.band = band                        # the hub's band: hooks and routes act in it
         self.emit = emit
         self.data_dir = Path(data_dir) if data_dir else None
         self.settings = settings or {}          # plugin -> {setting: value}
@@ -116,10 +128,16 @@ class HubPlugins:
             if data.get("gate"):
                 g = data["gate"]
                 p.gate = Gate.from_manifest(name, g, resolve(g["run"]), resolve(g["result"]) if "result" in g else None)
+            if data.get("runs_on") == "hub":
+                for route in (data.get("routes") or {}).values():
+                    auth = route.get("auth", "user")
+                    p.routes[route["path"]] = Route(route["path"], list(route.get("methods") or ["GET", "POST"]),
+                                                    auth if isinstance(auth, str) else next(iter(auth)),
+                                                    resolve(route["run"]))
             self.plugins[name] = p          # its hooks' calls need its uses
             if data.get("runs_on") == "hub" and data.get("hooks"):
                 await self.scheduler.start(data, make_ctx=lambda caller: self._ctx(p, caller),
-                                           resolve=resolve)
+                                           resolve=resolve, band=self.band)
                 p.hooks = True
         except BaseException:
             self.plugins.pop(name, None)
@@ -224,6 +242,20 @@ class HubPlugins:
                                     plugin_data=str(self._data(p)) if self.data_dir else None,
                                     timeout=_timeout(hc.meta))
         return await invoke(hc.handler, self._ctx(p, caller, cap), args)
+
+    def route(self, plugin: str, path: str) -> Route | None:
+        p = self.plugins.get(plugin)
+        return p.routes.get(path) if p else None
+
+    async def serve(self, plugin: str, path: str, request: dict, caller: Caller | None = None) -> Any:
+        """Run a hub plugin's route for one HTTP request. The door checked the
+        method and ``auth``: ``caller`` is the signed-in one for ``user``, None
+        for ``none`` (it runs as the plugin). ``request`` is ``{method, path,
+        query, headers, body}``, the body as bytes. The handler answers with
+        JSON-able data; KitError or PermissionError refuse."""
+        p, route = self.plugins[plugin], self.route(plugin, path)
+        who = caller or Caller(plugin=plugin, band=self.band, why=f"{plugin} route {path}")
+        return await invoke(route.handler, self._ctx(p, who), {"request": request})
 
     async def _route(self, contract: str, args: dict, caller: Caller) -> Any:
         async def dispatch(cap, a, c):

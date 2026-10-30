@@ -379,7 +379,7 @@ class Hub:
         self.contracts = Contracts(dict(cfg.contracts))
         self.plugins = HubPlugins(records=self.records, contracts=self.contracts, call=self.call_as,
                                   emit=self._emit, data_dir=self.data / "plugins", settings=cfg.settings,
-                                  resolve_secret=env_secret)
+                                  resolve_secret=env_secret, band=self.band)
         self.plugins.add_core(self.core)
         builtin_caps.install(self)               # pages, hub, approval, journal, setting: before the library
         self.enroll = Enrollment(self, cfg.enroll)
@@ -942,13 +942,18 @@ class Hub:
 
     async def call_as(self, who: KitCaller, cap: str, args: dict | None, uses: list | None = None,
                       target: str | None = None) -> dict:
-        """Dispatch a call a hub plugin makes. With a person or agent (a call
-        in progress) it runs as them in their session; without (a hook), as
-        ``system:plugin.<name>`` (a dot no plugin name has, so no plugin can
-        be ``system:hub``). ``uses`` is the plugin's extra layer; ``target``
-        names the worker (``ctx.call_on``), else the one that serves ``cap``."""
+        """Dispatch a call a hub plugin makes. With a person or agent it runs
+        as them: in the call's session, or (a job acting for its creator or
+        persona, ``ctx.call_as``) in their default session. Without (a hook),
+        as ``system:plugin.<name>`` (a dot no plugin name has, so no plugin
+        can be ``system:hub``). ``uses`` is the plugin's extra layer;
+        ``target`` names the worker (``ctx.call_on``, ``ctx.call_as``), else
+        the one that serves ``cap``."""
         if who.person or who.agent:
-            caller, sid = Caller(who.person, who.agent), who.session or ""
+            caller = Caller(who.person, who.agent)
+            if caller.problem():
+                return {"ok": False, "error": f"denied: caller: {caller.problem()}"}
+            sid = who.session or self._door_session(caller)
         else:
             component = f"plugin.{who.plugin}" if who.plugin else "hub"
             caller = Caller(agent=f"system:{component}")
