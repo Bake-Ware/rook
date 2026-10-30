@@ -197,7 +197,11 @@ def _bind(data: dict, folder: Path | None, handlers, os_name: str, hardware: set
     norm = normalize(data)
     decls = norm.get("settings") or {}
     settings = merge_settings(decls, local, hub)
-    p = Plugin(name=norm["plugin"], version=str(norm["version"]), hash=wire.manifest_hash(data),
+    try:
+        digest = wire.manifest_hash(data)
+    except ValueError as e:   # no canonical form (spec 3.2): the hub couldn't have signed it either
+        raise LoadError(f"{norm['plugin']}: {e}") from None
+    p = Plugin(name=norm["plugin"], version=str(norm["version"]), hash=digest,
                raw=data, manifest=norm, folder=folder, builtin=bool(norm.get("builtin")),
                settings=settings)
     p.reason = _platform(norm.get("platforms"), os_name) or \

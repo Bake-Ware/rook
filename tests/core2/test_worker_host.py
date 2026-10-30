@@ -328,6 +328,10 @@ def test_invalid_manifest_is_refused(tmp_path):
         host = Host(os_name="linux")
         with pytest.raises(LoadError):
             await host.load(bad)
+        (bad / "plugin.yaml").write_text("manifest: 1\nplugin: big\nversion: 1.0.0\n"
+                                         "settings:\n  n: { type: int, default: 9007199254740993 }\n")
+        with pytest.raises(LoadError, match="big: "):
+            await host.load(bad)
         assert host.plugins == {}
     go(body)
 
