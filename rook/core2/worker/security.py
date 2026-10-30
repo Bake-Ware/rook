@@ -181,7 +181,7 @@ class TrustStore:
         try:
             if wire.key_id(root) != hub:
                 raise ValueError("anchor hub is not key_id(root)")
-        except (TypeError, ValueError, IndexError) as e:
+        except (AttributeError, TypeError, ValueError, IndexError) as e:
             raise ValueError(f"anchor root key: {e}") from None
         self.home = Member(hub, root, band, "home", {"grants": ["*"]})
         self.anchor_protected = not os.access(self.anchor_path, os.W_OK)
@@ -190,6 +190,9 @@ class TrustStore:
         self.skipped: list[str] = []                  # why stored documents didn't load
         if self.path is not None and self.path.exists():
             for rec in json.loads(self.path.read_text(encoding="utf-8")).get("memberships", []):
+                if not isinstance(rec, dict):
+                    self.skipped.append("malformed")
+                    continue
                 ok, reason = self._verify(rec.get("doc"), rec.get("hubkey"), None)
                 if ok:
                     self.docs[(rec["doc"]["hub"], rec["doc"]["band"])] = rec
@@ -542,6 +545,11 @@ class LaunchUnsupported(Exception):
     """No elevated launch on this platform yet."""
 
 
+class LaunchRefused(Exception):
+    """The worker runs as an administrator and has no normal account to drop
+    to. Not a PermissionError on purpose: it must never trigger elevation."""
+
+
 DENIED_MARKERS = ("permission denied", "operation not permitted", "access is denied",
                   "must be run as root", "are you root", "requires root", "eacces", "eperm",
                   "requires elevation", "administrator privileges")
@@ -589,13 +597,13 @@ def launch_plan(argv: list[str], lease: dict | None, *, platform: str = sys.plat
         if lease is not None:
             raise LaunchUnsupported(f"elevated launch is not built for {platform} yet")
         if admin:
-            raise PermissionError(f"worker runs as an administrator; dropping rights isn't built for {platform}")
+            raise LaunchRefused(f"worker runs as an administrator; dropping rights isn't built for {platform}")
         return list(argv), {}
     if admin:
         if lease is not None:
             return list(argv), {}
         if not run_as:
-            raise PermissionError("worker runs as root but no normal account (run_as) is set")
+            raise LaunchRefused("worker runs as root but no normal account (run_as) is set")
         import pwd
         pw = pwd.getpwnam(run_as)
         return list(argv), {"user": pw.pw_uid, "group": pw.pw_gid,

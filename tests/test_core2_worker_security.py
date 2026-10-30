@@ -281,6 +281,8 @@ def test_full_replay_store_refuses_the_call(tmp_path):
 
 def test_anchor_must_match_its_root(tmp_path):
     with pytest.raises(ValueError):
+        sec.TrustStore(anchor_file(tmp_path, root=None), None, WORKER)
+    with pytest.raises(ValueError):
         sec.TrustStore(anchor_file(tmp_path, hub=GUEST), None, WORKER)
     with pytest.raises(ValueError):
         sec.TrustStore(anchor_file(tmp_path, band="xyz"), None, WORKER)
@@ -308,6 +310,8 @@ def test_no_rollback_and_tampered_file(tmp_path):
     (tmp_path / "m.json").write_text(json.dumps(data))
     again = sec.TrustStore(anchor_file(tmp_path), tmp_path / "m.json", WORKER)
     assert again.member(GUEST, GUEST_BAND) is None and again.skipped == ["bad_signature"]
+    (tmp_path / "m.json").write_text(json.dumps({"memberships": ["junk"]}))
+    assert sec.TrustStore(anchor_file(tmp_path), tmp_path / "m.json", WORKER).skipped == ["malformed"]
 
 
 def test_op_signed_membership_needs_its_grant(tmp_path):
@@ -556,7 +560,7 @@ def test_launch_plan_linux():
     assert sec.launch_plan(["id"], None, platform="linux", admin=False) == (["id"], {})
     assert sec.launch_plan(["id"], lease, platform="linux", admin=False) == (["sudo", "-n", "--", "id"], {})
     assert sec.launch_plan(["id"], lease, platform="linux", admin=True) == (["id"], {})
-    with pytest.raises(PermissionError):
+    with pytest.raises(sec.LaunchRefused):
         sec.launch_plan(["id"], None, platform="linux", admin=True)
     import pwd
     me = pwd.getpwuid(os.getuid())
@@ -566,9 +570,22 @@ def test_launch_plan_linux():
         sec.launch_plan([], None, platform="linux", admin=False)
 
 
+def test_root_without_run_as_never_elevates(tmp_path, monkeypatch):
+    hub = Hub()
+    gate = make_gate(tmp_path, hub)
+    monkeypatch.setattr(sec, "_is_admin", lambda platform: True)
+
+    async def action(lease):
+        await sec.launch(["true"], lease)
+
+    with pytest.raises(sec.LaunchRefused):
+        arun(gate.execute(checked(gate, "fs.write"), action, NOW))
+    assert not hub.calls
+
+
 def test_launch_plan_other_platforms_are_stubbed():
     assert sec.launch_plan(["cmd"], None, platform="win32", admin=False) == (["cmd"], {})
-    with pytest.raises(PermissionError):
+    with pytest.raises(sec.LaunchRefused):
         sec.launch_plan(["cmd"], None, platform="win32", admin=True)
     with pytest.raises(sec.LaunchUnsupported):
         sec.launch_plan(["cmd"], {"id": "l"}, platform="win32", admin=False)
