@@ -1,0 +1,115 @@
+# The security gate (castling-security): canary secrets, taint and the
+# pinned task, enforced at hub dispatch, plus the triage agent's one-call
+# release. Ships enabled and is replaceable: disabling or swapping it is a
+# deliberate owner action (spec 10.2). The CPU classifier is its own plugin
+# (security-ml), shadow first. Code: scripts/security.py.
+manifest: 1
+plugin: security
+version: 0.5.0
+title: Security
+doc: Canary secrets, taint and pinned-task checks on every call; tells the person only when it matters.
+package: core
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+uses: ["agents.chat.send", "notify.send", "approval.decide", "task.task.get"]
+
+settings:
+  house_agent: { type: str, default: house, doc: The agent that reaches the person (canary hits only). }
+  triage_agent: { type: str, default: security, doc: "The agent woken on this gate's holds; the only one security.release takes." }
+  task_cap: { type: str, default: task.task.get, doc: "How the gate reads a session's pinned task (title and body)." }
+
+gate:
+  run: scripts/security.py:check
+  result: scripts/security.py:seen
+  budget: 20ms
+  mode: enforce
+
+caps:
+  canary.create:
+    doc: >-
+      Make a canary: a decoy secret nobody should ever use. Returns its tokens and a decoy file's
+      text; the first file.write of exactly that text within 10 minutes is allowed (plant it where an
+      intruder would look, e.g. ~/.aws/credentials), and naming that path in planted (worker:path)
+      makes touching it a hit too. Owners in person only.
+    risk: admin
+    scope: multi-machine
+    effects: [persists]
+    run: scripts/security.py:canary_create
+    args:
+      kind: { type: str, enum: [token, aws, github, password], default: token }
+      name: { type: str, pattern: "^[A-Za-z0-9_.-]{1,64}$", doc: "Looks like a real secret's name; blank: made up." }
+      planted: { type: list, items: { type: str }, doc: "worker:path where its decoy file lives." }
+    result: { type: map }
+  canary.list:
+    doc: The canaries, where they're planted and how often they were hit (never their values).
+    risk: read
+    scope: multi-machine
+    idempotent: true
+    run: scripts/security.py:canary_list
+    result: { type: map }
+  canary.retire:
+    doc: Stop watching for a canary. Owners in person only.
+    risk: admin
+    scope: multi-machine
+    effects: [persists]
+    run: scripts/security.py:canary_retire
+    args:
+      name: { type: str, required: true }
+    result: { type: map }
+  clear:
+    doc: >-
+      Lift a quarantine after a canary hit ("that was me"): the session and/or the agent named.
+      Owners in person only.
+    risk: admin
+    scope: multi-user
+    run: scripts/security.py:clear
+    args:
+      session: { type: str }
+      agent: { type: str, doc: "agent:<name> or <name>." }
+    result: { type: map }
+  status:
+    doc: Canaries, quarantines, holds this gate made and recent alerts (details for owners).
+    risk: read
+    scope: multi-user
+    effects: [personal]
+    idempotent: true
+    run: scripts/security.py:status
+    result: { type: map }
+  release:
+    doc: >-
+      The triage agent releases one call this gate held, on evidence checked here: matches_task (it
+      shares words with its session's pinned task) or seen_clean (this caller ran this command there
+      from a clean session before). Never hard stops, canary hits, persistence or other gates' holds.
+    risk: write
+    scope: multi-user
+    run: scripts/security.py:release
+    args:
+      hold: { type: str, required: true }
+      evidence: { type: str, required: true, enum: [matches_task, seen_clean] }
+      note: { type: str, required: true, doc: "Why it is a false alarm, in a sentence; journaled." }
+    result: { type: map }
+
+emits:
+  security.alert:
+    doc: A canary was hit (the call was blocked and its session quarantined).
+    payload:
+      kind: { type: str }
+      canary: { type: str }
+      where: { type: str, doc: "args or result." }
+      cap: { type: str }
+      worker: { type: str }
+      session: { type: str }
+      caller: { type: map }
+      why: { type: str }
+      ts: { type: float }
+
+hooks:
+  start: scripts/security.py:start
+  stop: scripts/security.py:stop
+  every: [ { interval: 5m, run: scripts/security.py:save } ]
+  on:
+    - { event: hold.created, run: scripts/security.py:on_hold }
+    - { event: hold.decided, run: scripts/security.py:on_decided }
+
+docs: { manual: docs/manual.md }

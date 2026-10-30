@@ -7,12 +7,18 @@ A gate is a plugin's ``gate:`` section::
       match: { risk: [write, exec, admin], effects: [...], caps: [...] }
       budget: 20ms
       mode: shadow                  # shadow | enforce; ships shadow first
+      result: scripts/gate.py:seen  # optional: input + "result" -> the same verdict
 
 Gates run in parallel for the calls their ``match`` selects. They can only
 restrict: the hub keeps ``verdict``, ``confidence`` and ``reason`` and
 ignores everything else. A gate that errors, overruns its budget or returns
 something malformed counts as ``flag`` with reason ``gate_error``. Shadow
 gates are journaled and never count (rights.gate_decision).
+
+A gate's optional ``result`` check sees a call's result after it ran (the
+input plus ``result``). It can only withhold the result: a ``block`` turns
+the reply into a refusal. A flag there can't hold a call that already ran, so
+it is journaled like a shadow verdict.
 """
 from __future__ import annotations
 
@@ -41,9 +47,11 @@ class Gate:
     match: dict = field(default_factory=dict)
     budget: float = DEFAULT_BUDGET
     mode: str = "shadow"
+    result: Check | None = None
 
     @classmethod
-    def from_manifest(cls, plugin: str, section: dict, check: Check) -> "Gate":
+    def from_manifest(cls, plugin: str, section: dict, check: Check,
+                      result: Check | None = None) -> "Gate":
         """``section`` is the manifest's ``gate:``; ``check`` is its resolved
         ``run`` target. TODO(castling:wiring): resolve ``run`` with
         rook.kit.ctx.load_run and decide whether gates get a ctx."""
@@ -51,7 +59,7 @@ class Gate:
         if mode not in MODES:
             raise ValueError(f"gate {plugin}: unknown mode {mode!r}")
         budget = parse_duration(section["budget"]) if "budget" in section else DEFAULT_BUDGET
-        return cls(plugin, check, dict(section.get("match") or {}), budget, mode)
+        return cls(plugin, check, dict(section.get("match") or {}), budget, mode, result)
 
     def selects(self, call: dict) -> bool:
         """Every key given in ``match`` must match: ``risk`` lists the call's
@@ -100,13 +108,14 @@ def _in_thread(check: Check, inp: dict) -> asyncio.Future:
     return fut
 
 
-async def _one(gate: Gate, inp: dict) -> dict:
+async def _one(gate: Gate, inp: dict, check: Check | None = None) -> dict:
     out = {"gate": gate.name, "mode": gate.mode}
+    check = check or gate.check
     try:
-        if inspect.iscoroutinefunction(gate.check):
-            pending = gate.check(inp)
+        if inspect.iscoroutinefunction(check):
+            pending = check(inp)
         else:
-            pending = _in_thread(gate.check, inp)
+            pending = _in_thread(check, inp)
         res = clean(await asyncio.wait_for(pending, min(gate.budget, MAX_WAIT)))
     except Exception:  # an error or a timeout: the gate failed, the call is flagged
         res = None
@@ -120,3 +129,14 @@ async def run(gates: list[Gate], inp: dict) -> list[dict]:
     call = {"cap": inp["cap"], "risk": inp["risk"], "effects": inp["effects"]}
     chosen = [g for g in gates if g.selects(call)]
     return list(await asyncio.gather(*(_one(g, copy.deepcopy(inp)) for g in chosen)))
+
+
+async def run_result(gates: list[Gate], inp: dict, result: Any) -> list[dict]:
+    """Run the ``result`` checks of the gates that select this call on what
+    it returned; entries as :func:`run`, with ``stage: result``."""
+    call = {"cap": inp["cap"], "risk": inp["risk"], "effects": inp["effects"]}
+    chosen = [g for g in gates if g.result is not None and g.selects(call)]
+    if not chosen:
+        return []
+    out = await asyncio.gather(*(_one(g, copy.deepcopy({**inp, "result": result}), g.result) for g in chosen))
+    return [{**r, "stage": "result"} for r in out]

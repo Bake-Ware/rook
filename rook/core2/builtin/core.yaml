@@ -326,6 +326,8 @@ emits:
       person: { type: str }
       agent: { type: str }
       why: { type: str }
+      session: { type: str }
+      reasons: { type: list, items: { type: str }, doc: "Why it waits: hard stops, \"new cap\", \"gate <name>\"." }
   hold.decided:
     doc: A person answered a hold.
     payload:

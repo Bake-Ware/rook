@@ -333,6 +333,8 @@ class _Checker:
             self.templates(route.get("auth"), path + ("auth",))
         if "gate" in d:
             self.run(d["gate"]["run"], ("gate", "run"))
+            if "result" in d["gate"]:
+                self.run(d["gate"]["result"], ("gate", "result"))
         for name, c in (d.get("contracts") or {}).items():
             self.type_(c.get("args", {}), ("contracts", name, "args"), fields=True)
             if "result" in c:

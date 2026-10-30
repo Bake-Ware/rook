@@ -125,6 +125,7 @@
       "required": ["run"],
       "properties": {
         "run": {"$ref": "#/$defs/run_ref"},
+        "result": {"$ref": "#/$defs/run_ref"},
         "match": {
           "type": "object",
           "properties": {
