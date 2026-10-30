@@ -2,6 +2,7 @@
 # plugins ship (manifest `pages:`); agents also make pages here, kept in the
 # hub's data folder with a markdown note saying why they exist. Every page
 # action is a cap, so a person, an agent, a job or a trigger can call it.
+# Components are the canned tier any agent arranges into a page (layout).
 # Implemented by the hub (rook.core2.hub.doors.web.caps).
 manifest: 1
 plugin: pages
@@ -13,6 +14,9 @@ builtin: true
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
+
+settings:
+  dock: { type: str, where: hub, default: house, doc: "The agent in the site's chat dock (with the agents package); blank: no dock." }
 
 caps:
   list:
@@ -43,9 +47,11 @@ caps:
     result: { type: map }
   create:
     doc: >-
-      Make a page on the hub site: one self-contained HTML file (inline script and style). It runs
-      sandboxed and reaches data only through window.rook.call on the caps it declares, as whoever
-      views it and never more than its author may. The note says why it exists.
+      Make a page on the hub site: either one self-contained HTML file (inline script and style), or a
+      layout of ready-made components (pages.components lists them). It runs sandboxed and reaches data
+      only through window.rook.call on the caps it declares (a layout: its components' caps), as whoever
+      views it and never more than its author may. The note says why it exists. With the workbench,
+      the page is linked to the task it was built under (one is made when task is blank).
     on: hub
     risk: write
     scope: multi-user
@@ -53,12 +59,17 @@ caps:
     args:
       name: { type: str, required: true, doc: "Lowercase letters, digits, - and _; the page is pages/<name>." }
       title: { type: str, required: true }
-      html: { type: str, required: true }
+      html: { type: str, doc: "The whole page; or give layout instead." }
+      layout:
+        type: list
+        max: 50
+        doc: "Components top to bottom: [{component: hub/workers, props: {...}, title?, wide?}]."
+        items: { type: map }
       note: { type: str, required: true, doc: "Markdown: why the page exists, who asked, what it watches." }
       caps: { type: list, items: { type: str }, doc: "Cap patterns the page may call." }
       events: { type: list, items: { type: str }, doc: "Event patterns the page hears." }
       section: { type: str, doc: "Sidebar section; blank: Pages." }
-      task: { type: str, doc: "The task this page was built under, where there is one." }
+      task: { type: str, doc: "The task this page was built under (workbench); blank: one is made." }
     result: { type: map }
   update:
     doc: Change a page an agent made. Each change is added to its note's history.
@@ -71,6 +82,7 @@ caps:
       change: { type: str, required: true, doc: "What changed and why, for the history." }
       title: { type: str }
       html: { type: str }
+      layout: { type: list, max: 50, items: { type: map }, doc: "A new layout (replaces html)." }
       note: { type: str, doc: "A new note body (the history is kept)." }
       caps: { type: list, items: { type: str } }
       events: { type: list, items: { type: str } }
@@ -96,3 +108,41 @@ caps:
     args:
       page: { type: str, required: true }
     result: { type: map }
+  components:
+    doc: The ready-made components a page layout can use, with their props and the caps they call.
+    on: hub
+    risk: read
+    scope: multi-user
+    idempotent: true
+    result: { type: map }
+  site:
+    doc: What the site shows you first - your start page - and the agent in its chat dock.
+    on: hub
+    risk: read
+    scope: multi-user
+    idempotent: true
+    result: { type: map }
+  start:
+    doc: >-
+      Set the page the site opens on: yours when you act for a person, else the hub's own (everyone
+      without one of their own). Blank goes back to the default.
+    on: hub
+    risk: write
+    scope: multi-user
+    effects: [persists]
+    args:
+      page: { type: str, doc: "plugin/name; blank: the default." }
+    result: { type: map }
+
+components:
+  text: { title: Note, file: components/text.js, doc: "Words on the page: a heading, a reminder, what this page is for. Blank lines split paragraphs.", props: { text: { type: str, required: true } } }
+  value:
+    title: Value
+    file: components/value.js
+    doc: "Any cap's result: one field as a big number or text, or a list as a table. Name the cap in the page's caps too."
+    props:
+      cap: { type: str, required: true }
+      args: { type: map }
+      worker: { type: str, doc: "Where the cap runs; blank: wherever the hub finds it." }
+      field: { type: str, doc: "A dotted path into the result, e.g. workers or battery.level." }
+      every: { type: int, min: 0, doc: "Seconds between refreshes; 0: once." }

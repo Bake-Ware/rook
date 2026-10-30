@@ -39,4 +39,4 @@ caps:
     result: { type: map }
 
 pages:
-  settings: { title: Settings, file: pages/settings.html, caps: ["hub.status", "setting.*"], nav: { section: Hub } }
+  settings: { title: Settings, file: pages/settings.html, caps: ["hub.status", "setting.*"] }

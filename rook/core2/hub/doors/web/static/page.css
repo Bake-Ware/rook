@@ -26,3 +26,8 @@ pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .grow { flex: 1; }
 .scroll { overflow-x: auto; }
+.layout { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; }
+.layout .part { margin: 0; min-width: 0; } .layout .part.wide { grid-column: 1 / -1; }
+.layout .part h3:empty { display: none; }
+.big { font-size: 28px; font-weight: 600; }
+a.go, button.go { color: var(--accent); cursor: pointer; }

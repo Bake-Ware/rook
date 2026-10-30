@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Projects</title>
+<style>
+  .detail td { background: var(--card); }
+  .detail p { margin: 4px 0; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div class="scroll"><table>
+  <thead><tr><th>Project</th><th>State</th><th>Open tasks</th><th>Changed</th></tr></thead>
+  <tbody id="rows"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+</table></div>
+<script>
+"use strict";
+const OPEN = ["todo", "in_progress", "blocked", "paused"];
+let projects = [], tasks = [], shown = null;
+
+function render() {
+  const body = document.getElementById("rows");
+  if (!projects.length) {
+    body.innerHTML = '<tr><td colspan="4" class="muted">No projects yet.</td></tr>';
+    return;
+  }
+  let html = "";
+  for (const p of projects) {
+    const mine = tasks.filter((t) => t.project === p.id && OPEN.includes(t.state));
+    html += `<tr class="click" data-id="${rook.esc(p.id)}"><td>${rook.esc(p.title)}</td><td>${rook.esc(p.state)}</td>
+      <td>${mine.length}</td><td class="muted">${rook.ago(p.updated)}</td></tr>`;
+    if (shown === p.id) {
+      html += `<tr class="detail"><td colspan="4">${p.body ? `<p>${rook.esc(p.body)}</p>` : ""}
+        ${(p.concepts || []).length ? `<p class="muted">${p.concepts.map(rook.esc).join(", ")}</p>` : ""}
+        ${mine.length ? "<ul>" + mine.map((t) => `<li>${rook.esc(t.title)} <span class="muted">${rook.esc(t.state)}</span></li>`).join("") + "</ul>"
+          : '<p class="muted">No open tasks.</p>'}
+        <p><a class="go" data-page="task/tasks">All tasks</a></p></td></tr>`;
+    }
+  }
+  body.innerHTML = html;
+}
+
+document.getElementById("rows").onclick = (e) => {
+  const go = e.target.closest("a.go");
+  if (go) return rook.open(go.dataset.page);
+  const tr = e.target.closest("tr.click");
+  if (!tr) return;
+  shown = shown === tr.dataset.id ? null : tr.dataset.id;
+  render();
+};
+
+async function load() {
+  projects = await rook.call("project.list", { limit: 200 });
+  tasks = await rook.call("task.list", { limit: 500 }).catch(() => []);     // tasks may not be installed
+  render();
+}
+
+load().catch((x) => { document.getElementById("rows").innerHTML = `<tr><td colspan="4" class="bad">${rook.esc(x.message)}</td></tr>`; });
+rook.on("project.*", () => load().catch(() => {}));
+</script>
+</body>
+</html>

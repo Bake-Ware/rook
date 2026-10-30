@@ -33,4 +33,7 @@ caps:
     result: { type: map }
 
 pages:
-  journal: { title: Journal, file: pages/journal.html, caps: [journal.search], nav: { section: Hub } }
+  journal: { title: Journal, file: pages/journal.html, caps: [journal.search] }
+
+components:
+  recent: { title: Recent calls, file: components/recent.js, doc: "The latest journal entries, filtered.", caps: [journal.search], props: { cap: { type: str }, worker: { type: str }, limit: { type: int, min: 1, max: 100, default: 10 } } }

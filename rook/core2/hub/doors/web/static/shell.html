@@ -10,6 +10,7 @@
 <nav id="nav">
   <div class="brand">Rook</div>
   <div id="pages"></div>
+  <details id="more" hidden><summary>More</summary><div></div></details>
   <details id="archived" hidden><summary>Archived</summary><ul></ul></details>
   <button id="signout" class="link">Sign out</button>
 </nav>
@@ -20,9 +21,15 @@
     <span class="grow"></span>
     <button id="note-btn" hidden>About</button>
     <button id="archive-btn" hidden>Archive</button>
+    <button id="dock-btn" hidden aria-label="Chat">Chat</button>
   </header>
   <div id="stage"><div id="msg" hidden></div><aside id="note" hidden></aside></div>
 </main>
+<aside id="dock" hidden>
+  <div id="dock-head"><span id="dock-name"></span><span class="grow"></span><button id="dock-close" class="link" aria-label="Close">&times;</button></div>
+  <div id="dock-log" aria-live="polite"></div>
+  <form id="dock-form"><textarea id="dock-text" rows="2" placeholder="Ask, or tell it what to set up"></textarea><button>Send</button></form>
+</aside>
 <script src="/web/static/shell.js"></script>
 </body>
 </html>

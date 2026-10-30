@@ -226,6 +226,10 @@ def test_sign_in_and_the_session_cookie(site):
             # the shell calls pages.* only
             status, out = await c.json("POST", "/web/api/call", {"cap": "hub.workers"})
             assert status == 403 and "pages.*" in out["error"]
+            # no agents package: no dock, so no chat either
+            status, out = await c.json("POST", "/web/api/call", {"cap": "agents.chat.send",
+                                                                 "args": {"agent": "house", "text": "hi"}})
+            assert status == 403
             # static files and no path tricks
             assert (await c.req("GET", "/web/static/shell.js"))[0] == 200
             assert (await c.req("GET", "/web/static/..%2Fsite.py"))[0] == 404
@@ -377,7 +381,7 @@ def test_archive_and_restore_are_caps_and_lose_nothing(site):
             assert "archived" in (await c.page(t, "board.count"))["error"]   # open pages stop too
             assert (await c.call("pages.restore", {"page": "board/board"}))["ok"]
             assert (await c.open("board/board"))["ok"]
-            assert json.loads((hub.data / "pages.json").read_text()) == {"archived": {}}
+            assert json.loads((hub.data / "pages.json").read_text()) == {"archived": {}, "start": {}}
             # an agent (or a job) archives the same way, through the HTTP door
             _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "pages.archive",
                                                     "args": {"page": "journal/journal"}, "why": WHY},
@@ -535,7 +539,8 @@ def test_workers_journal_and_settings_pages(site):
             assert {"pages", "hub", "approval", "journal", "setting", "board"} <= {p["plugin"] for p in status["plugins"]}
             listed = (await c.page(t, "setting.list"))["result"]["settings"]
             assert {(s["plugin"], s["key"], s["value"], s["source"]) for s in listed} == {
-                ("board", "motto", "hello", "default"), ("board", "size", 3, "default")}
+                ("board", "motto", "hello", "default"), ("board", "size", 3, "default"),
+                ("pages", "dock", "house", "default")}
             out = await c.page(t, "setting.set", {"plugin": "board", "key": "size", "value": "big"})
             assert out["error"].startswith("bad value")
             assert (await c.page(t, "setting.set", {"plugin": "board", "key": "motto", "value": "hi"}))["ok"]
@@ -569,7 +574,7 @@ def test_stored_settings_apply_at_start(site, tmp_path):
             assert out["result"] == {"motto": "stored"}
             _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "setting.list", "why": WHY},
                                   bearer=tokens["bake"])
-            src = {s["key"]: (s["value"], s["source"]) for s in out["result"]["settings"]}
+            src = {s["key"]: (s["value"], s["source"]) for s in out["result"]["settings"] if s["plugin"] == "board"}
             assert src == {"motto": ("stored", "set"), "size": (9, "config")}
         finally:
             await hub.stop()
@@ -627,7 +632,7 @@ def test_every_builtin_cap_is_known():
         declared |= set(load(folder).data["caps"])
     assert declared == {
         "pages.list", "pages.view", "pages.get", "pages.create", "pages.update", "pages.archive", "pages.restore",
-        "hub.status", "hub.workers", "approval.list", "approval.decide", "journal.search", "setting.list",
+        "pages.components", "pages.site", "pages.start", "hub.status", "hub.workers", "approval.list", "approval.decide", "journal.search", "setting.list",
         "setting.set", "llm.providers", "llm.models", "llm.status"}
 
 
