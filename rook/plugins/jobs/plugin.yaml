@@ -1,0 +1,210 @@
+# Jobs (castling-jobs): one concept, a job, that holds a whole flow. What it
+# runs is one of: a cap call, an agent with a prompt, or a Python script with
+# a small workflow library (call a cap, wait, ask a person, notify, retry,
+# parallel); branching is just code. Triggers: cron, every, on an event (+
+# filter), manual, webhook (/p/jobs/hook, HMAC per job). A job runs as its
+# creator or as a persona (owners only); every call goes through dispatch
+# (why, rights, gates, journal). Runs are records. No checkpointing: a run cut
+# off by a hub restart is marked failed, so jobs should be safe to run twice.
+#
+# Templates: every plugin's manifest `jobs:` section (hub.manifests). An
+# `enabled: true` job that runs as a persona is installed active; the rest are
+# offered for a person to install (they then run as that person).
+#
+# Code: scripts/jobs.py (hub side), scripts/child.py (the script process and
+# its workflow library), templates/ (this plugin's ready-made jobs).
+manifest: 1
+plugin: jobs
+version: 0.5.0
+title: Jobs
+doc: Scheduled, event, manual and webhook jobs that call caps, ask agents or run Python scripts.
+package: core
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+# A job's calls are bounded by its identity (its creator or persona), not by
+# this list: dispatch intersects the two.
+uses: ["*"]
+
+settings:
+  timezone: { type: str, default: UTC, doc: "IANA zone for cron schedules (e.g. America/Chicago)." }
+  timeout: { type: duration, default: 10m, doc: How long a run may take unless the job says otherwise. }
+  retry_after: { type: duration, default: 1m, doc: "Wait before a failed run's retry (doubles each attempt)." }
+  default_agent: { type: str, default: house, doc: The agent an agent job asks when it names no persona. }
+  tick: { type: duration, default: 1s, doc: How often the scheduler looks for due jobs. }
+
+records:
+  jobs:
+    fields:
+      name: { type: str, required: true, pattern: "^[a-z0-9][a-z0-9._-]{0,63}$" }
+      doc: { type: str }
+      trigger: { type: map, required: true, doc: "One of cron, every, on (+ filter), manual, webhook." }
+      call: { type: str, doc: A cap to call. }
+      worker: { type: str, doc: "Where call runs (blank: the worker that serves it)." }
+      args: { type: map, doc: The call's args. }
+      agent: { type: map, doc: "{persona?, prompt}: ask an agent." }
+      script: { type: str, doc: "Python source with main(job) (owners only)." }
+      plugin: { type: str, doc: The plugin whose script run names (templates). }
+      run: { type: str, doc: "A plugin's script, path.py:function (templates)." }
+      run_as: { type: str, enum: [creator, persona], default: creator }
+      persona: { type: str, doc: "The persona a persona job runs as (agent:<persona>)." }
+      vars: { type: map, doc: "Values the script reads as job.vars." }
+      enabled: { type: bool, default: true }
+      retries: { type: int, default: 0, min: 0, max: 10 }
+      catch_up: { type: bool, default: false, doc: "Run once at start for a schedule missed while the hub was down." }
+      timeout: { type: duration }
+      notify: { type: str, enum: [failure, always, never], default: failure }
+      source: { type: str, doc: "plugin/job: the manifest job this one came from." }
+      source_version: { type: str }
+      edited: { type: bool, default: false, doc: "Changed by a person: plugin updates leave it alone." }
+    index: [name, source]
+    history: true
+    private: true
+    caps: [list, get, history, archive]
+  run:
+    fields:
+      job: { type: ref, to: jobs, required: true }
+      name: { type: str, doc: The job's name when it ran. }
+      trigger: { type: str, enum: [cron, every, event, manual, webhook, catch_up, retry] }
+      scheduled: { type: float, doc: The schedule slot this run is for. }
+      attempt: { type: int, default: 1 }
+      by: { type: str, doc: Who started it (manual runs). }
+      as_who: { type: str, doc: The identity its calls ran as. }
+      state: { type: str, enum: [running, waiting, ok, failed, cancelled], required: true }
+      started: { type: float }
+      ended: { type: float }
+      result: { type: json }
+      error: { type: str }
+      log: { type: list, items: { type: str } }
+      asking: { type: map, doc: "What it waits on a person for: {question, options}." }
+      event: { type: map, doc: "{name, payload}: the event or webhook that started it." }
+    index: [job, state]
+    private: true
+    retain: 30d
+    caps: [list, get]
+
+caps:
+  create:
+    doc: "Make a job. Exactly one of call (+ worker, args), agent {persona?, prompt} or script (owners). as: persona, on triggers and scripts are for owners."
+    risk: write
+    scope: multi-user
+    effects: [persists]
+    run: scripts/jobs.py:create
+    args:
+      name: { type: str, required: true, pattern: "^[a-z0-9][a-z0-9._-]{0,63}$" }
+      doc: { type: str }
+      trigger: { type: map, required: true, doc: "{cron: '0 8 * * *'} | {every: 5m} | {on: worker.online, filter: {name: kaiju}} | {manual: true} | {webhook: true}" }
+      call: { type: str }
+      worker: { type: str }
+      args: { type: map }
+      agent: { type: map, doc: "{persona?, prompt}" }
+      script: { type: str, doc: "Python: def main(job): ... (job.call, job.ask, job.notify, job.wait, job.retry, job.parallel, job.log)." }
+      as: { type: str, enum: [creator, persona], default: creator }
+      persona: { type: str }
+      vars: { type: map }
+      enabled: { type: bool, default: true }
+      retries: { type: int, default: 0, min: 0, max: 10 }
+      catch_up: { type: bool, default: false }
+      timeout: { type: duration }
+      notify: { type: str, enum: [failure, always, never], default: failure }
+    result: { type: map }
+  update:
+    doc: Change a job (pass its current revision). The same owner-only rules as create.
+    risk: write
+    scope: multi-user
+    effects: [persists]
+    run: scripts/jobs.py:update
+    args:
+      id: { type: str, required: true, doc: The job's id or name. }
+      revision: { type: int, required: true }
+      name: { type: str, pattern: "^[a-z0-9][a-z0-9._-]{0,63}$" }
+      doc: { type: str }
+      trigger: { type: map }
+      call: { type: str }
+      worker: { type: str }
+      args: { type: map }
+      agent: { type: map }
+      script: { type: str }
+      as: { type: str, enum: [creator, persona] }
+      persona: { type: str }
+      vars: { type: map }
+      enabled: { type: bool }
+      retries: { type: int, min: 0, max: 10 }
+      catch_up: { type: bool }
+      timeout: { type: duration }
+      notify: { type: str, enum: [failure, always, never] }
+    result: { type: map }
+  start:
+    doc: Run a job now, as the job's own identity. With wait, answers when the run ends.
+    risk: write
+    scope: multi-user
+    timeout: 30m
+    run: scripts/jobs.py:start_run
+    args:
+      job: { type: str, required: true, doc: Its id or name. }
+      vars: { type: map, doc: Merged over the job's vars for this run. }
+      wait: { type: bool, default: false }
+    result: { type: map }
+  cancel:
+    doc: Stop a running run (its script process is killed).
+    risk: write
+    scope: multi-user
+    run: scripts/jobs.py:cancel
+    args:
+      run: { type: str, required: true }
+    result: { type: map }
+  answer:
+    doc: Answer a run that asked a person something (job.ask).
+    risk: write
+    scope: multi-user
+    run: scripts/jobs.py:answer
+    args:
+      run: { type: str, required: true }
+      answer: { type: str, required: true }
+    result: { type: map }
+  templates:
+    doc: Ready-made jobs from every plugin's manifest, with whether each is installed.
+    risk: read
+    scope: multi-user
+    idempotent: true
+    run: scripts/jobs.py:templates
+    result: { type: list }
+  install:
+    doc: Install a ready-made job (plugin/job from jobs.templates) as yours.
+    risk: write
+    scope: multi-user
+    effects: [persists]
+    run: scripts/jobs.py:install
+    args:
+      template: { type: str, required: true, doc: "plugin/job" }
+      name: { type: str, pattern: "^[a-z0-9][a-z0-9._-]{0,63}$" }
+      vars: { type: map }
+      enabled: { type: bool, default: true }
+    result: { type: map }
+  webhook:
+    doc: "A webhook job's URL path and HMAC key: POST there with X-Rook-Signature (or X-Hub-Signature-256): sha256=<hex HMAC of the body>."
+    risk: read
+    scope: self
+    effects: [sensitive]
+    run: scripts/jobs.py:webhook_info
+    args:
+      id: { type: str, required: true, doc: The job's id or name. }
+    result: { type: map }
+
+hooks:
+  start: scripts/jobs.py:start
+  stop: scripts/jobs.py:stop
+  on: [ { event: "*", run: scripts/jobs.py:on_event } ]
+
+routes:
+  hook: { path: /hook, methods: [POST], run: scripts/jobs.py:webhook, auth: none }
+
+# Ready-made (castling-jobs). The other 0.4 ready-mades wait for their caps:
+# attention-digest (no attention plugin in 0.5 yet), camera-review
+# (llm.complete takes no images).
+jobs:
+  security-scan:
+    doc: "Every 5 minutes: refused and held calls in the journal since the last scan; tells the owners when refusals pile up (vars.threshold, default 10)."
+    trigger: { every: 5m }
+    run: templates/security_scan.py:main
+    enabled: false

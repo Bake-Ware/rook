@@ -120,6 +120,24 @@ def test_call_without_a_loop():
         ctx.call("notify.send")
 
 
+@pytest.mark.asyncio
+async def test_call_as_another_identity_on_a_target():
+    seen = []
+
+    async def dispatch(cap, args, caller, target=None):
+        seen.append((cap, args, caller, target))
+        return "ok"
+
+    ctx = Ctx(MANIFEST, BAKE, dispatch=dispatch)
+    job = Caller(person="pat", band="b1", why="a job")
+    assert await ctx.call_as(job, "notify.send", {"text": "hi"}, target="phone") == "ok"
+    assert await ctx.call_as(job, "notify.send") == "ok"
+    assert seen[0] == ("notify.send", {"text": "hi"}, job, "phone")      # as given: no plugin stamped
+    assert seen[1][3] is None
+    with pytest.raises(KitError, match="uses"):
+        ctx.call_as(job, "shell.exec")                                    # still held to uses
+
+
 def test_emit_declared_only():
     seen = []
     ctx = Ctx(MANIFEST, BAKE, emit=lambda e, p, src: seen.append((e, p, src)))
