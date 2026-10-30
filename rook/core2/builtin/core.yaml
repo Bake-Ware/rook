@@ -386,7 +386,7 @@ contracts:
     args:
       key: { type: str, required: true }
       action: { type: str, doc: Its index or title. }
-      text: { type: str, doc: The reply, for an action that takes one. }
+      text: { type: str, doc: "The reply, for an action that takes one." }
   voice.speak:
     doc: Say text aloud on the device.
     route: target
