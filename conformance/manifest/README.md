@@ -1,8 +1,13 @@
 # Plugin manifest conformance (format 1)
 
-The plugin manifest (`plugin.yaml`) is designed in the knowledge pages
-`castling-manifest` and `castling-manifest-2`. The reference validator is
-`rook.kit.manifest` (`python -m rook.kit.manifest validate <folder>`).
+The plugin manifest (`plugin.yaml`) is designed in the knowledge page
+`castling-manifest` and its `castling-manifest-*` section pages. The
+reference validator is `rook.kit.manifest`
+(`python -m rook.kit.manifest validate <folder>`).
+
+Format 1.1 adds optional keys only, so files still say `manifest: 1`; the
+list of additions is on `castling-manifest-lifecycle`. `valid/v1-1.yaml`,
+`valid/argv-lint.yaml` and `invalid/v1-1*.yaml` cover them.
 
 | File | What |
 |---|---|

@@ -501,7 +501,7 @@ class _Checker:
                 self.run(h, path)
                 continue
             if ("run" in h) == ("call" in h):
-                self.error(path, "hook-action", "a hook has a run or a call, not both")
+                self.error(path, "hook-action", "a hook has exactly one of run or call")
             if "run" in h:
                 self.run(h["run"], path + ("run",))
             if "call" in h and not self.callable_(h["call"]):

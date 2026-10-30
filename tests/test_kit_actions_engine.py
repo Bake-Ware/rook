@@ -447,3 +447,136 @@ async def test_file_write_then_read(tmp_path):
         await run({"file": {"read": "{{plugin.data}}/missing"}}, plugin_data=data)
     with pytest.raises(ActionError, match="needs read or write"):
         await run({"file": {}})
+
+
+# --- manifest 1.1 -----------------------------------------------------------------
+
+TERMUX = {"os": "termux", "arch": "aarch64", "name": "phone"}
+
+
+@hard
+async def test_per_os_override_brings_parse_and_returns_and_inherits_the_rest():
+    action = {"exec": {"argv": py("print('percentage: 87%')"),
+                       "env": {"LANG": "C"},
+                       "termux": {"argv": py("import os,json; print(json.dumps({'percentage': 55,"
+                                             " 'lang': os.environ['LANG']}))"),
+                                  "parse": "json", "returns": {"percent": "percentage", "lang": "lang"}}},
+              "parse": {"regex": r"percentage:\s+(?P<percent>\d+)"}}
+    cap = {"result": {"type": "map", "fields": {"percent": {"type": "int"}}}}
+    assert await run(action, cap=cap) == {"percent": 87}
+    assert await run(action, worker=TERMUX, cap=cap) == {"percent": 55, "lang": "C"}
+
+
+@hard
+async def test_try_falls_back_on_a_failing_exit_too(tmp_path):
+    action = {"exec": {"try": [{"argv": py("import sys; sys.exit('no wayland')")},
+                               {"argv": ["no-such-scrot-xyz"]},
+                               {"argv": py("print('from the third')")}]}, "parse": "text"}
+    assert await run(action) == "from the third"
+    action["exec"]["try"].pop()
+    with pytest.raises(ActionError, match="exited 1: no wayland"):
+        await run(action)    # something ran and failed: that failure, not "not installed"
+
+
+@hard
+async def test_unset_optional_args_drop_keys_and_render_empty_in_text(http_base):
+    action = {"http": {"method": "POST", "url": "http://{{appliance.host}}/echo/x",
+                       "query": {"q": "{{args.q}}", "keep": "1"},
+                       "headers": {"X-Thing": "{{args.h}}"},
+                       "body": "op {{args.op}}!"}}
+    out = await run(action, {}, appliance={"host": http_base})
+    assert out["query"] == {"keep": "1"} and out["x"] is None and out["body"] == "op !"
+    stdin = {"exec": {"argv": py("import sys; print(sys.stdin.read())"), "stdin": "{{args.s}}"}, "parse": "text"}
+    assert await run(stdin) == ""
+    with pytest.raises(ActionError, match=r"\{\{settings.x\}\} is not set"):
+        await run({"exec": {"argv": py("pass"), "stdin": "{{settings.x}}"}})   # settings still must be set
+
+
+@hard
+async def test_join_and_map(http_base):
+    cap = {"args": {"keys": {"type": "list", "join": ","},
+                    "state": {"type": "str", "map": {"S": "Seeding", "D": "Downloading"}},
+                    "flags": {"type": "list", "map": {"a": "-a"}}}}
+    action = {"http": {"method": "POST", "url": "http://{{appliance.host}}/echo/{{args.keys}}",
+                       "query": {"keys": "{{args.keys}}", "state": "{{args.state}}"},
+                       "json": {"keys": "{{args.keys}}", "text": "k={{args.keys}}"}}}
+    out = await run(action, {"keys": ["ControlLeft", "KeyC"], "state": "S"},
+                    appliance={"host": http_base}, cap=cap)
+    assert out["query"] == {"keys": "ControlLeft,KeyC", "state": "Seeding"}
+    assert out["raw_path"].startswith("/echo/ControlLeft,KeyC?")   # one path segment
+    assert json.loads(out["body"]) == {"keys": ["ControlLeft", "KeyC"], "text": "k=ControlLeft,KeyC"}
+    argv = {"exec": {"argv": py(ECHO_ARGV) + ["{{args.keys}}", "{{args.flags}}", "{{args.state}}"]}, "parse": "json"}
+    assert await run(argv, {"keys": ["a", "b"], "flags": ["a", "x"], "state": "Q"}, cap=cap) == \
+        ["a,b", "-a", "x", "Q"]
+
+
+@hard
+async def test_fail_if_turns_matching_output_into_an_error():
+    action = {"exec": {"argv": py("print('ok line'); print('Failed to connect to daemon at x:58846')")},
+              "fail_if": {"regex": "^Failed to connect"}, "parse": "lines"}
+    with pytest.raises(ActionError, match="^failed: Failed to connect to daemon at x:58846$"):
+        await run(action)
+    action["exec"]["argv"] = py("print('all good')")
+    assert await run(action) == ["all good"]
+
+
+@hard
+async def test_result_coerced_to_the_caps_types():
+    action = {"exec": {"argv": py("print('n=87 ok=yes r=0.5 name=7 empty=')")},
+              "parse": {"regex": r"n=(?P<n>\S+) ok=(?P<ok>\S+) r=(?P<r>\S+) name=(?P<name>\S+) empty=(?P<e>\S*)"}}
+    cap = {"result": {"type": "map", "fields": {"n": {"type": "int"}, "ok": {"type": "bool"},
+                                                 "r": {"type": "float"}, "name": {"type": "str"},
+                                                 "e": {"type": "int"}}}}
+    assert await run(action, cap=cap) == {"n": 87, "ok": True, "r": 0.5, "name": "7", "e": None}
+    lst = {"exec": {"argv": py("print('1\\n2')")}, "parse": "lines"}
+    assert await run(lst, cap={"result": {"type": "list", "items": {"type": "int"}}}) == [1, 2]
+    with pytest.raises(ActionError, match=r"result\.n: 'x' is not an int"):
+        await run({"exec": {"argv": py("print('n=x')")}, "parse": "kv"},
+                  cap={"result": {"type": "map", "fields": {"n": {"type": "int"}}}})
+
+
+@hard
+async def test_regex_each_matches_per_line():
+    out = "ID: abc State: Seeding\nnoise ID: def\nID: ghi State: Paused\n"
+    action = {"exec": {"argv": py(f"print({out!r}, end='')")},
+              "parse": {"regex": r"^ID: (?P<id>\S+) State: (?P<state>\w+)$", "each": True}}
+    assert await run(action) == [{"id": "abc", "state": "Seeding"}, {"id": "ghi", "state": "Paused"}]
+
+
+@hard
+async def test_tls_verify_from_a_setting(server_tls):
+    async def ok(request):
+        return web.json_response({"ok": True})
+
+    app = web.Application()
+    app.router.add_get("/", ok)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0, ssl_context=server_tls)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]
+    try:
+        action = {"http": {"url": f"https://127.0.0.1:{port}/", "tls": {"verify": "{{settings.verify}}"}}}
+        assert await run(action, settings={"verify": False}) == {"ok": True}
+        assert await run(action, settings={"verify": "false"}) == {"ok": True}
+        with pytest.raises(ActionError, match="http failed"):
+            await run(action, settings={"verify": True})
+        with pytest.raises(ActionError, match="must be true or false"):
+            await run(action, settings={"verify": "maybe"})
+    finally:
+        await runner.cleanup()
+
+
+def test_appliance_instance_settings_win():
+    from rook.kit.actions import appliance_values
+    assert appliance_values({"host": "10.0.0.5", "port": 80, "name": "tv"}, {"port": 9526, "key": None}) == \
+        {"host": "10.0.0.5", "port": 9526, "name": "tv"}
+
+
+def test_termux_is_not_android(monkeypatch):
+    for k in ("TERMUX_VERSION", "ANDROID_ROOT", "PREFIX"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("ANDROID_ROOT", "/system")
+    assert engine._local_os() == "android"
+    monkeypatch.setenv("TERMUX_VERSION", "0.118")
+    assert engine._local_os() == "termux"

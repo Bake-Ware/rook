@@ -140,6 +140,36 @@ def test_record_delete_is_destructive():
     assert cap["risk"] == "admin" and cap["effects"] == ["destructive"]
 
 
+def test_load_v1_1(tmp_path):
+    """The 1.1 additions normalize: bare-namespace cap, same-named record
+    without the middle segment, history verb, timeout none, apply, route."""
+    m = load(_folder(tmp_path, (ROOT / "valid" / "v1-1.yaml").read_text(), ["scripts/task.py"]))
+    assert m.warnings == []
+    assert sorted(m.caps) == sorted(["task", "task.claim", "task.release", "task.battery", "task.remote"]
+                                    + [f"task.{v}" for v in ("list", "get", "create", "update", "archive",
+                                                             "history")])
+    assert m.caps["task"]["run"] == "scripts/task.py:Tasks.help"
+    assert m.caps["task.claim"]["timeout"] is None and m.caps["task.claim"]["bind"] == {"op": "claim"}
+    assert m.caps["task.history"]["risk"] == "read" and m.caps["task.history"]["idempotent"]
+    assert m.data["settings"]["api"]["apply"] == "reload" and m.data["settings"]["tls_verify"]["apply"] == "live"
+    assert m.data["contracts"]["screen.capture"]["route"] == "target"
+    assert m.caps["task.remote"]["args"]["tags"]["join"] == ","
+
+
+def test_undeclared_args_are_refused():
+    from jsonschema import Draft202012Validator
+    from rook.kit.manifest import compile_fields
+    v = Draft202012Validator(compile_fields({"id": {"type": "str"}}))
+    assert v.is_valid({"id": "x"}) and not v.is_valid({"id": "x", "extra": 1})
+
+
+def test_url_and_path_types():
+    assert compile_type({"type": "url", "pattern": "^https:"})["format"] == "uri"
+    assert compile_type({"type": "path", "min": 1}) == {"type": "string", "x-rook-type": "path", "minLength": 1}
+    with pytest.raises(TypeSpecError):
+        compile_type({"type": "str", "join": ","})
+
+
 def test_load_marks_unknown_action_unavailable(tmp_path):
     m = load(_folder(tmp_path, (ROOT / "valid" / "warnings.yaml").read_text(), ["scripts/open.py"]))
     assert m.caps["gizmo.serial.send"]["unavailable"] == "unknown action type: serial"
