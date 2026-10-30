@@ -1,0 +1,208 @@
+{
+ "spec": "2.0",
+ "vector": "leases",
+ "ticket": {
+  "typ": "rook-ticket",
+  "v": 2,
+  "hub": "19c7d7856f775f9a",
+  "band": "e17904e6ed4c664592f64f6f1d02c682",
+  "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+  "nonce": "9b1f2e3d4c5b6a798877665544332211",
+  "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+  "cap": "shell.exec",
+  "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+  "person": "person:bake",
+  "agent": "agent:claude-code",
+  "session": "s_7c1e",
+  "why": "Check how long kaiju has been up.",
+  "iat": 1793300000,
+  "exp": 1793300060,
+  "kid": "3c1945587ef004c3",
+  "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+ },
+ "keys": {
+  "3c1945587ef004c3": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk="
+ },
+ "cases": [
+  {
+   "name": "ok",
+   "lease": {
+    "typ": "rook-lease",
+    "v": 2,
+    "id": "c0ffee00c0ffee00c0ffee00c0ffee00",
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "iat": 1793300000,
+    "exp": 1793300900,
+    "kid": "3c1945587ef004c3",
+    "sig": "BdixdoavVReZb+u3sSscS1YA3LSZzQI5KVoZ7kYW3mL8IiVcceG7OEkWtNy0ZFSXEBqMBhINnetw7VzVEqCjDg=="
+   },
+   "now": 1793300010,
+   "reason": "ok"
+  },
+  {
+   "name": "last second",
+   "lease": {
+    "typ": "rook-lease",
+    "v": 2,
+    "id": "c0ffee00c0ffee00c0ffee00c0ffee00",
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "iat": 1793300000,
+    "exp": 1793300900,
+    "kid": "3c1945587ef004c3",
+    "sig": "BdixdoavVReZb+u3sSscS1YA3LSZzQI5KVoZ7kYW3mL8IiVcceG7OEkWtNy0ZFSXEBqMBhINnetw7VzVEqCjDg=="
+   },
+   "now": 1793300900,
+   "reason": "ok"
+  },
+  {
+   "name": "expired",
+   "lease": {
+    "typ": "rook-lease",
+    "v": 2,
+    "id": "c0ffee00c0ffee00c0ffee00c0ffee00",
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "iat": 1793300000,
+    "exp": 1793300900,
+    "kid": "3c1945587ef004c3",
+    "sig": "BdixdoavVReZb+u3sSscS1YA3LSZzQI5KVoZ7kYW3mL8IiVcceG7OEkWtNy0ZFSXEBqMBhINnetw7VzVEqCjDg=="
+   },
+   "now": 1793300901,
+   "reason": "expired"
+  },
+  {
+   "name": "longer than 15 minutes",
+   "lease": {
+    "typ": "rook-lease",
+    "v": 2,
+    "id": "c0ffee00c0ffee00c0ffee00c0ffee00",
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "iat": 1793300000,
+    "exp": 1793301800,
+    "kid": "3c1945587ef004c3",
+    "sig": "Hpo0AQZihA1KiL0IJD+x3J4z63d8041QRZKr43HjNoHamGFwhZGljm1cfJgXl3vV0DBiPRb/3neekOVQqiZ7Dg=="
+   },
+   "now": 1793300000,
+   "reason": "bad_lifetime"
+  },
+  {
+   "name": "another session",
+   "lease": {
+    "typ": "rook-lease",
+    "v": 2,
+    "id": "c0ffee00c0ffee00c0ffee00c0ffee00",
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_other",
+    "iat": 1793300000,
+    "exp": 1793300900,
+    "kid": "3c1945587ef004c3",
+    "sig": "6GbCB8d1+qVnsZpT9TCCxzriIn5DQ/BcOwRYb7CwO07+xLi6BkSyCDVSc8fw7oiqYdF9okeNiwaiCwgA9fx1CA=="
+   },
+   "now": 1793300000,
+   "reason": "wrong_session"
+  },
+  {
+   "name": "another worker",
+   "lease": {
+    "typ": "rook-lease",
+    "v": 2,
+    "id": "c0ffee00c0ffee00c0ffee00c0ffee00",
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "worker": "00000000000000000000000000000000",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "iat": 1793300000,
+    "exp": 1793300900,
+    "kid": "3c1945587ef004c3",
+    "sig": "U2tgKL645BCrGJu8K+qEhLAqPnQedlJGvtTvU24//B6WYQq1hAo8jl6Q4wr63iZ5K/qdqO+s/zZk7zitccagDw=="
+   },
+   "now": 1793300000,
+   "reason": "wrong_worker"
+  },
+  {
+   "name": "another agent",
+   "lease": {
+    "typ": "rook-lease",
+    "v": 2,
+    "id": "c0ffee00c0ffee00c0ffee00c0ffee00",
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "person": "person:bake",
+    "agent": "agent:other",
+    "session": "s_7c1e",
+    "iat": 1793300000,
+    "exp": 1793300900,
+    "kid": "3c1945587ef004c3",
+    "sig": "o/ZG6y25nqUqxmXJTiwxGGgQD3RrbOABvsulS/oflhlatHtwF6Op90Xv8QVQm7eXyCkN+2+mWGnVk0mCSC6hDQ=="
+   },
+   "now": 1793300000,
+   "reason": "wrong_identity"
+  },
+  {
+   "name": "unknown key",
+   "lease": {
+    "typ": "rook-lease",
+    "v": 2,
+    "id": "c0ffee00c0ffee00c0ffee00c0ffee00",
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "iat": 1793300000,
+    "exp": 1793300900,
+    "kid": "7f7970658681bad8",
+    "sig": "ba6j4O3GD06ENlG+FFjjYZ8WPSptuhVNf9U0ht6jXYMk0WT25PDphzjND3vP554qKwUCvhd/CnsqoqA0i4CPBQ=="
+   },
+   "now": 1793300000,
+   "reason": "unknown_key"
+  },
+  {
+   "name": "tampered",
+   "lease": {
+    "typ": "rook-lease",
+    "v": 2,
+    "id": "c0ffee00c0ffee00c0ffee00c0ffee00",
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "iat": 1793300000,
+    "exp": 1793300899,
+    "kid": "3c1945587ef004c3",
+    "sig": "BdixdoavVReZb+u3sSscS1YA3LSZzQI5KVoZ7kYW3mL8IiVcceG7OEkWtNy0ZFSXEBqMBhINnetw7VzVEqCjDg=="
+   },
+   "now": 1793300000,
+   "reason": "bad_signature"
+  }
+ ]
+}

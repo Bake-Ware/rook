@@ -1,0 +1,82 @@
+{
+ "spec": "2.0",
+ "vector": "version",
+ "current": "2.0",
+ "cases": [
+  {
+   "mine": "2.0",
+   "theirs": "2.0",
+   "speak": "2.0"
+  },
+  {
+   "mine": "2.0",
+   "theirs": "2.3",
+   "speak": "2.0"
+  },
+  {
+   "mine": "2.3",
+   "theirs": "2.1",
+   "speak": "2.1"
+  },
+  {
+   "mine": "2.10",
+   "theirs": "2.9",
+   "speak": "2.9"
+  },
+  {
+   "mine": "2.1",
+   "theirs": "3.0",
+   "speak": null
+  },
+  {
+   "mine": "1.0",
+   "theirs": "2.0",
+   "speak": null
+  },
+  {
+   "mine": "2",
+   "theirs": "2.0",
+   "speak": null
+  },
+  {
+   "mine": "2.0.1",
+   "theirs": "2.0",
+   "speak": null
+  },
+  {
+   "mine": "02.0",
+   "theirs": "2.0",
+   "speak": null
+  },
+  {
+   "mine": "2.01",
+   "theirs": "2.1",
+   "speak": null
+  },
+  {
+   "mine": "",
+   "theirs": "2.0",
+   "speak": null
+  },
+  {
+   "mine": null,
+   "theirs": "2.0",
+   "speak": null
+  },
+  {
+   "mine": 2.0,
+   "theirs": "2.0",
+   "speak": null
+  },
+  {
+   "mine": "v2.0",
+   "theirs": "2.0",
+   "speak": null
+  },
+  {
+   "mine": "2.0 ",
+   "theirs": "2.0",
+   "speak": null
+  }
+ ]
+}

@@ -1,0 +1,391 @@
+{
+ "spec": "2.0",
+ "vector": "signatures",
+ "keys": [
+  {
+   "name": "home-root",
+   "seed": "b91792428103715d35c4fda75c2139a01e2ddf63c0b7104b9812b575db95eaae",
+   "pub": "ed25519:MbCo4yBEeKDrk+P009e4Ek1aVP0U3gd/ico2zVw2opQ=",
+   "kid": "19c7d7856f775f9a"
+  },
+  {
+   "name": "home-op",
+   "seed": "becbec25a1af39201022e2bcc483ed0c1665d67f3317888a87f147de642762c7",
+   "pub": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+   "kid": "3c1945587ef004c3"
+  },
+  {
+   "name": "guest-root",
+   "seed": "47bb924268e1bd32bf6b0c1c24714f98985ca172b18a51d9683581145deb250d",
+   "pub": "ed25519:0G6e9ChOgUm2QB5pMh5LvK54jlzfQPe2KfUDEGyQDQE=",
+   "kid": "21f7b4340bc96a6c"
+  },
+  {
+   "name": "guest-op",
+   "seed": "d7c54643b46628452bdeea0a467a71530ee48c192c6b8b3d0fb12db03b95fec6",
+   "pub": "ed25519:uGKvOPc22R/4jxq7epL+EUo/PPqRzkN7Pp0GWcT1dao=",
+   "kid": "3c9277f3747fa1be"
+  },
+  {
+   "name": "attacker",
+   "seed": "808eac56aaab83130704a057282a4a13976ce182306b72495bde3e92ea77be6a",
+   "pub": "ed25519:TDjPN4COaqItSqRV7AEIqHx+XMyo0j4r2Nlicq8zzaU=",
+   "kid": "7f7970658681bad8"
+  }
+ ],
+ "prefixes": {
+  "rook-ticket": "rook-ticket-v2\n",
+  "rook-lease": "rook-lease-v2\n",
+  "rook-hubkey": "rook-hubkey-v2\n",
+  "rook-membership": "rook-membership-v2\n",
+  "rook-announce": "rook-announce-v2\n"
+ },
+ "signing_input": {
+  "object": {
+   "typ": "rook-ticket",
+   "v": 2,
+   "hub": "19c7d7856f775f9a",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+   "nonce": "9b1f2e3d4c5b6a798877665544332211",
+   "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+   "cap": "shell.exec",
+   "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+   "person": "person:bake",
+   "agent": "agent:claude-code",
+   "session": "s_7c1e",
+   "why": "Check how long kaiju has been up.",
+   "iat": 1793300000,
+   "exp": 1793300060,
+   "kid": "3c1945587ef004c3",
+   "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+  },
+  "bytes_utf8": "rook-ticket-v2\n{\"agent\":\"agent:claude-code\",\"args_hash\":\"-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM\",\"band\":\"e17904e6ed4c664592f64f6f1d02c682\",\"call\":\"5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7\",\"cap\":\"shell.exec\",\"exp\":1793300060,\"hub\":\"19c7d7856f775f9a\",\"iat\":1793300000,\"kid\":\"3c1945587ef004c3\",\"nonce\":\"9b1f2e3d4c5b6a798877665544332211\",\"person\":\"person:bake\",\"session\":\"s_7c1e\",\"typ\":\"rook-ticket\",\"v\":2,\"why\":\"Check how long kaiju has been up.\",\"worker\":\"3f0a9c1d2e3f40516273849506a7b8c9\"}"
+ },
+ "hubkey": [
+  {
+   "name": "ok",
+   "grant": {
+    "typ": "rook-hubkey",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "key": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+    "bands": [
+     "e17904e6ed4c664592f64f6f1d02c682"
+    ],
+    "iat": 1793213600,
+    "exp": 1793818400,
+    "kid": "19c7d7856f775f9a",
+    "sig": "2WLOn/+I+K5r8P46W8W+j0aoc1V375Z2FEdbhkTONqwEmZ1UDWrTTiC3Hc8WYrsKQcLodNNF6UFNmjKttqvUAA=="
+   },
+   "root": "ed25519:MbCo4yBEeKDrk+P009e4Ek1aVP0U3gd/ico2zVw2opQ=",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "key": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk="
+  },
+  {
+   "name": "other band",
+   "grant": {
+    "typ": "rook-hubkey",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "key": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+    "bands": [
+     "e17904e6ed4c664592f64f6f1d02c682"
+    ],
+    "iat": 1793213600,
+    "exp": 1793818400,
+    "kid": "19c7d7856f775f9a",
+    "sig": "2WLOn/+I+K5r8P46W8W+j0aoc1V375Z2FEdbhkTONqwEmZ1UDWrTTiC3Hc8WYrsKQcLodNNF6UFNmjKttqvUAA=="
+   },
+   "root": "ed25519:MbCo4yBEeKDrk+P009e4Ek1aVP0U3gd/ico2zVw2opQ=",
+   "band": "3384db16e75f5d25f75fa3010b904c9f",
+   "now": 1793300000,
+   "key": null
+  },
+  {
+   "name": "expired past the hour of grace",
+   "grant": {
+    "typ": "rook-hubkey",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "key": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+    "bands": [
+     "e17904e6ed4c664592f64f6f1d02c682"
+    ],
+    "iat": 1793213600,
+    "exp": 1793818400,
+    "kid": "19c7d7856f775f9a",
+    "sig": "2WLOn/+I+K5r8P46W8W+j0aoc1V375Z2FEdbhkTONqwEmZ1UDWrTTiC3Hc8WYrsKQcLodNNF6UFNmjKttqvUAA=="
+   },
+   "root": "ed25519:MbCo4yBEeKDrk+P009e4Ek1aVP0U3gd/ico2zVw2opQ=",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793822001,
+   "key": null
+  },
+  {
+   "name": "inside the hour of grace",
+   "grant": {
+    "typ": "rook-hubkey",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "key": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+    "bands": [
+     "e17904e6ed4c664592f64f6f1d02c682"
+    ],
+    "iat": 1793213600,
+    "exp": 1793818400,
+    "kid": "19c7d7856f775f9a",
+    "sig": "2WLOn/+I+K5r8P46W8W+j0aoc1V375Z2FEdbhkTONqwEmZ1UDWrTTiC3Hc8WYrsKQcLodNNF6UFNmjKttqvUAA=="
+   },
+   "root": "ed25519:MbCo4yBEeKDrk+P009e4Ek1aVP0U3gd/ico2zVw2opQ=",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793822000,
+   "key": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk="
+  },
+  {
+   "name": "checked against another hub's root",
+   "grant": {
+    "typ": "rook-hubkey",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "key": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+    "bands": [
+     "e17904e6ed4c664592f64f6f1d02c682"
+    ],
+    "iat": 1793213600,
+    "exp": 1793818400,
+    "kid": "19c7d7856f775f9a",
+    "sig": "2WLOn/+I+K5r8P46W8W+j0aoc1V375Z2FEdbhkTONqwEmZ1UDWrTTiC3Hc8WYrsKQcLodNNF6UFNmjKttqvUAA=="
+   },
+   "root": "ed25519:0G6e9ChOgUm2QB5pMh5LvK54jlzfQPe2KfUDEGyQDQE=",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "key": null
+  },
+  {
+   "name": "self-signed by the operational key",
+   "grant": {
+    "typ": "rook-hubkey",
+    "v": 2,
+    "hub": "3c1945587ef004c3",
+    "key": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+    "bands": [
+     "e17904e6ed4c664592f64f6f1d02c682"
+    ],
+    "iat": 1793213600,
+    "exp": 1793818400,
+    "kid": "3c1945587ef004c3",
+    "sig": "vW8HzOHJmTR+YCbYfhqIsG7L25Vw4eCBoN8hcijwuLgY616lYlNa+upETX4eqcDef7qwVx7bzL4306vhsvtaCw=="
+   },
+   "root": "ed25519:MbCo4yBEeKDrk+P009e4Ek1aVP0U3gd/ico2zVw2opQ=",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "key": null
+  }
+ ],
+ "verify": [
+  {
+   "name": "ticket",
+   "object": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+   },
+   "pub": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+   "valid": true
+  },
+  {
+   "name": "hubkey grant",
+   "object": {
+    "typ": "rook-hubkey",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "key": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+    "bands": [
+     "e17904e6ed4c664592f64f6f1d02c682"
+    ],
+    "iat": 1793213600,
+    "exp": 1793818400,
+    "kid": "19c7d7856f775f9a",
+    "sig": "2WLOn/+I+K5r8P46W8W+j0aoc1V375Z2FEdbhkTONqwEmZ1UDWrTTiC3Hc8WYrsKQcLodNNF6UFNmjKttqvUAA=="
+   },
+   "pub": "ed25519:MbCo4yBEeKDrk+P009e4Ek1aVP0U3gd/ico2zVw2opQ=",
+   "valid": true
+  },
+  {
+   "name": "unknown field is signed and verifies",
+   "object": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "DOyJZKzUVLwkkHDcYqgR8+mQCHsyZn+CR0MRhDHf4I08KkgCU0MO84W9aKuuuDR3IjMjmN+lVWJrmjVB2JGgAg==",
+    "x_future": {
+     "added": "in 2.1"
+    }
+   },
+   "pub": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+   "valid": true
+  },
+  {
+   "name": "unknown field removed after signing",
+   "object": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "DOyJZKzUVLwkkHDcYqgR8+mQCHsyZn+CR0MRhDHf4I08KkgCU0MO84W9aKuuuDR3IjMjmN+lVWJrmjVB2JGgAg=="
+   },
+   "pub": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+   "valid": false
+  },
+  {
+   "name": "hubkey rides unsigned",
+   "object": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA==",
+    "hubkey": {
+     "typ": "rook-hubkey",
+     "v": 2,
+     "hub": "19c7d7856f775f9a",
+     "key": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+     "bands": [
+      "e17904e6ed4c664592f64f6f1d02c682"
+     ],
+     "iat": 1793213600,
+     "exp": 1793818400,
+     "kid": "19c7d7856f775f9a",
+     "sig": "2WLOn/+I+K5r8P46W8W+j0aoc1V375Z2FEdbhkTONqwEmZ1UDWrTTiC3Hc8WYrsKQcLodNNF6UFNmjKttqvUAA=="
+    }
+   },
+   "pub": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+   "valid": true
+  },
+  {
+   "name": "field changed after signing",
+   "object": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "something else",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+   },
+   "pub": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+   "valid": false
+  },
+  {
+   "name": "same signature under another typ prefix",
+   "object": {
+    "typ": "rook-lease",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+   },
+   "pub": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+   "valid": false
+  },
+  {
+   "name": "wrong key",
+   "object": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+   },
+   "pub": "ed25519:TDjPN4COaqItSqRV7AEIqHx+XMyo0j4r2Nlicq8zzaU=",
+   "valid": false
+  }
+ ]
+}

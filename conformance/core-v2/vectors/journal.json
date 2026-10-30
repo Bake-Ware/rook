@@ -1,0 +1,243 @@
+{
+ "spec": "2.0",
+ "vector": "journal",
+ "genesis": "0000000000000000000000000000000000000000000000000000000000000000",
+ "chain": [
+  {
+   "id": "j1",
+   "kind": "call",
+   "chain": "project:castling",
+   "ts": 1793300000,
+   "call": "00000000000000000000000000000001",
+   "cap": "shell.exec",
+   "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+   "person": "person:bake",
+   "agent": "agent:claude-code",
+   "why": "Vector entry.",
+   "ok": true,
+   "prev": "0000000000000000000000000000000000000000000000000000000000000000",
+   "hash": "ee0fc14c65c0d6b013ba6729024a6c277975d997f07208813eb7bad273621e3d"
+  },
+  {
+   "id": "j2",
+   "kind": "call",
+   "chain": "project:castling",
+   "ts": 1793300001,
+   "call": "00000000000000000000000000000002",
+   "cap": "deluge.torrents.list",
+   "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+   "person": "person:bake",
+   "agent": "agent:claude-code",
+   "why": "Vector entry.",
+   "ok": true,
+   "prev": "ee0fc14c65c0d6b013ba6729024a6c277975d997f07208813eb7bad273621e3d",
+   "hash": "8b7315878e11911943daa8bb0e738427903496f905faaa4fd317ff0683f8e8f5"
+  },
+  {
+   "id": "j3",
+   "kind": "call",
+   "chain": "project:castling",
+   "ts": 1793300002,
+   "call": "00000000000000000000000000000003",
+   "cap": "light.set",
+   "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+   "person": "person:bake",
+   "agent": "agent:claude-code",
+   "why": "Vector entry.",
+   "ok": false,
+   "prev": "8b7315878e11911943daa8bb0e738427903496f905faaa4fd317ff0683f8e8f5",
+   "hash": "b5f376125b7eb0e439319ea1d3cea42720242ebfd7fe1a5c09043a97a2f99c7e"
+  }
+ ],
+ "checks": [
+  {
+   "name": "intact",
+   "entries": [
+    {
+     "id": "j1",
+     "kind": "call",
+     "chain": "project:castling",
+     "ts": 1793300000,
+     "call": "00000000000000000000000000000001",
+     "cap": "shell.exec",
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "person": "person:bake",
+     "agent": "agent:claude-code",
+     "why": "Vector entry.",
+     "ok": true,
+     "prev": "0000000000000000000000000000000000000000000000000000000000000000",
+     "hash": "ee0fc14c65c0d6b013ba6729024a6c277975d997f07208813eb7bad273621e3d"
+    },
+    {
+     "id": "j2",
+     "kind": "call",
+     "chain": "project:castling",
+     "ts": 1793300001,
+     "call": "00000000000000000000000000000002",
+     "cap": "deluge.torrents.list",
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "person": "person:bake",
+     "agent": "agent:claude-code",
+     "why": "Vector entry.",
+     "ok": true,
+     "prev": "ee0fc14c65c0d6b013ba6729024a6c277975d997f07208813eb7bad273621e3d",
+     "hash": "8b7315878e11911943daa8bb0e738427903496f905faaa4fd317ff0683f8e8f5"
+    },
+    {
+     "id": "j3",
+     "kind": "call",
+     "chain": "project:castling",
+     "ts": 1793300002,
+     "call": "00000000000000000000000000000003",
+     "cap": "light.set",
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "person": "person:bake",
+     "agent": "agent:claude-code",
+     "why": "Vector entry.",
+     "ok": false,
+     "prev": "8b7315878e11911943daa8bb0e738427903496f905faaa4fd317ff0683f8e8f5",
+     "hash": "b5f376125b7eb0e439319ea1d3cea42720242ebfd7fe1a5c09043a97a2f99c7e"
+    }
+   ],
+   "first_break": null
+  },
+  {
+   "name": "edited entry",
+   "entries": [
+    {
+     "id": "j1",
+     "kind": "call",
+     "chain": "project:castling",
+     "ts": 1793300000,
+     "call": "00000000000000000000000000000001",
+     "cap": "shell.exec",
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "person": "person:bake",
+     "agent": "agent:claude-code",
+     "why": "Vector entry.",
+     "ok": true,
+     "prev": "0000000000000000000000000000000000000000000000000000000000000000",
+     "hash": "ee0fc14c65c0d6b013ba6729024a6c277975d997f07208813eb7bad273621e3d"
+    },
+    {
+     "id": "j2",
+     "kind": "call",
+     "chain": "project:castling",
+     "ts": 1793300001,
+     "call": "00000000000000000000000000000002",
+     "cap": "deluge.torrents.list",
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "person": "person:bake",
+     "agent": "agent:claude-code",
+     "why": "Vector entry.",
+     "ok": false,
+     "prev": "ee0fc14c65c0d6b013ba6729024a6c277975d997f07208813eb7bad273621e3d",
+     "hash": "8b7315878e11911943daa8bb0e738427903496f905faaa4fd317ff0683f8e8f5"
+    },
+    {
+     "id": "j3",
+     "kind": "call",
+     "chain": "project:castling",
+     "ts": 1793300002,
+     "call": "00000000000000000000000000000003",
+     "cap": "light.set",
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "person": "person:bake",
+     "agent": "agent:claude-code",
+     "why": "Vector entry.",
+     "ok": false,
+     "prev": "8b7315878e11911943daa8bb0e738427903496f905faaa4fd317ff0683f8e8f5",
+     "hash": "b5f376125b7eb0e439319ea1d3cea42720242ebfd7fe1a5c09043a97a2f99c7e"
+    }
+   ],
+   "first_break": 1
+  },
+  {
+   "name": "missing entry",
+   "entries": [
+    {
+     "id": "j1",
+     "kind": "call",
+     "chain": "project:castling",
+     "ts": 1793300000,
+     "call": "00000000000000000000000000000001",
+     "cap": "shell.exec",
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "person": "person:bake",
+     "agent": "agent:claude-code",
+     "why": "Vector entry.",
+     "ok": true,
+     "prev": "0000000000000000000000000000000000000000000000000000000000000000",
+     "hash": "ee0fc14c65c0d6b013ba6729024a6c277975d997f07208813eb7bad273621e3d"
+    },
+    {
+     "id": "j3",
+     "kind": "call",
+     "chain": "project:castling",
+     "ts": 1793300002,
+     "call": "00000000000000000000000000000003",
+     "cap": "light.set",
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "person": "person:bake",
+     "agent": "agent:claude-code",
+     "why": "Vector entry.",
+     "ok": false,
+     "prev": "8b7315878e11911943daa8bb0e738427903496f905faaa4fd317ff0683f8e8f5",
+     "hash": "b5f376125b7eb0e439319ea1d3cea42720242ebfd7fe1a5c09043a97a2f99c7e"
+    }
+   ],
+   "first_break": 1
+  },
+  {
+   "name": "rehashed entry breaks the next link",
+   "entries": [
+    {
+     "id": "j1",
+     "kind": "call",
+     "chain": "project:castling",
+     "ts": 1793300000,
+     "call": "00000000000000000000000000000001",
+     "cap": "shell.exec",
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "person": "person:bake",
+     "agent": "agent:claude-code",
+     "why": "Vector entry.",
+     "ok": true,
+     "prev": "0000000000000000000000000000000000000000000000000000000000000000",
+     "hash": "ee0fc14c65c0d6b013ba6729024a6c277975d997f07208813eb7bad273621e3d"
+    },
+    {
+     "id": "j2",
+     "kind": "call",
+     "chain": "project:castling",
+     "ts": 1793300001,
+     "call": "00000000000000000000000000000002",
+     "cap": "deluge.torrents.list",
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "person": "person:bake",
+     "agent": "agent:claude-code",
+     "why": "Covering tracks.",
+     "ok": true,
+     "prev": "ee0fc14c65c0d6b013ba6729024a6c277975d997f07208813eb7bad273621e3d",
+     "hash": "8eba7ee51c45ad67fe0621840cbfd6e49203e20d0163ecc750503c674e9556e5"
+    },
+    {
+     "id": "j3",
+     "kind": "call",
+     "chain": "project:castling",
+     "ts": 1793300002,
+     "call": "00000000000000000000000000000003",
+     "cap": "light.set",
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "person": "person:bake",
+     "agent": "agent:claude-code",
+     "why": "Vector entry.",
+     "ok": false,
+     "prev": "8b7315878e11911943daa8bb0e738427903496f905faaa4fd317ff0683f8e8f5",
+     "hash": "b5f376125b7eb0e439319ea1d3cea42720242ebfd7fe1a5c09043a97a2f99c7e"
+    }
+   ],
+   "first_break": 2
+  }
+ ]
+}
