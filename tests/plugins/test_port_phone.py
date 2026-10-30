@@ -653,3 +653,18 @@ def test_voice_waits_no_longer_than_timeout(phone, java, monkeypatch):
     b.status.return_value = json.dumps({"ok": True, "state": "speaking", "done": False})
     got = phone.call("voice-android.voice.speak", text="long", timeout=1)
     assert got["timed_out"] is True and got["spoken"] is False
+
+
+def test_battery_rides_the_heartbeat(java):
+    bm = java.service("BATTERY_SERVICE")
+    bm.getIntProperty.return_value, bm.isCharging.return_value = 55, True
+    java.ctx.registerReceiver.return_value = None
+
+    async def body():
+        host = Host(os_name="android")
+        await host.load(PLUGINS / "battery-android")
+        try:
+            return (await host.announce())["status"]
+        finally:
+            await host.close()
+    assert go(body) == {"battery-android": {"percent": 55, "charging": True}}

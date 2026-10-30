@@ -28,5 +28,5 @@ caps:
 provides:
   battery.status: battery-android.battery.status
 hooks:
-  status: { call: battery-android.battery.status }
+  status: scripts/battery.py:status   # rides the heartbeat (a run hook: a worker's call hooks need a hub call in flight)
 docs: { manual: docs/manual.md }

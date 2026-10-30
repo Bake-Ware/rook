@@ -214,6 +214,65 @@ Every provider maps `model: one | two | three` (castling-agents' three systems) 
 - Voice: core.yaml's `voice.tts`/`voice.stt` should become `speech.*` (castling-naming-decisions,
   B10); not changed here, nothing provides them yet.
 
+## The phone ports (wave 5)
+
+The Rook Android app's plugins (0.4: Python under Chaquopy in
+`android/app/src/main/python/rook_android/plugins`) are 17 plugins with
+`platforms: [android]` (the app; Termux is `termux`), all `run:` scripts on
+Java through `rook.kit.android` (the app's context, permissions, content
+provider queries, its Kotlin bridges' JSON replies, activity starts) and
+`rook.kit.android.screen` (the accessibility screen summary, waits,
+keep-awake, PIN unlock). `rook.core2.worker.android` runs the 0.5 worker in
+the app's service thread: no processes, no pip, `start`/`stop`/`kick` for
+the Kotlin side (docs/castling-phone.md, with what the app needs next).
+Tests fake Chaquopy's `java` module (`tests/plugins/phone_fakes.py`); every
+manifest validates against core's contracts with no issues, and the drafts
+in `castling/manifests/` for these plugins are superseded.
+
+core.yaml gained the rest of the C1 device contracts the phone provides
+(`ui.click/scroll/type/wait`, `hid.status`, `screen.keep_on/status`,
+`battery.status`, `app.list/open_url/share/settings`, `clipboard.*`,
+`sound.status/dnd`, `media.status`, `notification.list/get/update/dismiss/act`,
+`voice.speak/ask/replies/stop/voices`), each with only what every device
+shares.
+
+| 0.5 plugin | Caps | What changed from 0.4 |
+|---|---|---|
+| sms | list, send | `send` is `sends_as`, `external`; `list` is `read` + `personal`, `sensitive`, `taints` (was `exec`, `external`); `to` has a phone-number pattern; inbound texts are `sms.received` events (`taints`), from a 30 s watch with a cursor kept across restarts (the first run announces nothing) |
+| contact | search | `read` + `personal` (was `exec`) |
+| call | list, dial | calllog.list + `call.dial`, which now **places** the call (ACTION_CALL, needs CALL_PHONE: the app must add it) and is `sends_as`; opening the dialer is `app.open_url tel:` |
+| clock | timer, alarm, alarms | from device.intent; extras as Java ints, as before |
+| location | get, navigate, show | location.get (`personal`) + device.intent navigate/map |
+| calendar | list, create, update, delete | `type: time` args; errors raise; moving an all-day event keeps it all-day (0.4 turned it into a timed one) |
+| phone | find, find_stop, unlock, vibrate, torch | `unlock`'s `pin` is `type: secret` (a vault reference) and the reply never carries digits or tap positions (0.4 echoed both); device.info, update and keep_awake_settings binned (worker status, worker.update, plugin settings) |
+| screen-android | screen.on, keep_on, status, capture | keep-awake settings are plugin settings (`apply: reload`) handed to the app only when set; `capture` returns a file; `capture_preview` binned (`quality`) |
+| ui-android | ui.screen, click, scroll, type, wait | ui.screen items carry the contract's `text`, `x`, `y` (0.4: `label`, `at`); ui.text, ui.nodes, ui.back binned; failures raise with the bridge's near matches / fields in the message; screen-returning caps are `taints` |
+| hid-android | hid.status, type, click, drag, key | contract shapes (key + mods: back, home, recents only; click needs x, y; drag `duration`); `hid.type enter` |
+| app-android | app.list, launch, open_url, share, settings | `launch` takes the contract's `app` (package or launcher name) and `params` (extras); search/email/sms drafts/camera are `open_url` URIs; `screen` only on launch and open_url |
+| clipboard-android | clipboard.get, set | - |
+| sound-android | sound.status, set, dnd | device.sound split; `step` is a signed count (contract), `mute` a bool |
+| media-android | media.status, play, pause, stop, next, previous, seek | media.control split by `bind`; `seek` takes `by` seconds (seekTo) or the player's own skip |
+| notification-android | notification.post, update, list, get, dismiss, act | `post` absorbs attention.post: with `id` it is a decision card; `act` is `sends_as`; attention.poll becomes events: `notification-android.card` (answers, 10 s) and `notification-android.received` (other apps' notifications, `taints`, 30 s); feed and rules binned (castling-attention) |
+| voice-android | voice.speak, ask, replies, stop, voices | speak with reply=true is `voice.ask` (`taints`: the reply is what the mic heard); speak_status binned (`wait`) |
+| battery-android | battery.status | heartbeat through a `run:` status hook (N20) |
+
+### What the phone ports found
+
+- **N20. `call:` hooks don't work on a worker.** The worker's `dispatch` is the hub's `core.call`,
+  which needs a call in flight, so a hook like battery's `status: { call: battery.status }` reports
+  `{"error": "ctx.call ...: only a cap running for a hub call ..."}` in every heartbeat.
+  battery-android uses a `run:` status hook instead. Fix (worker runtime): run a plugin's own caps
+  locally for hooks.
+- **N21. Events stay on the worker** (`TODO(castling:events)` in the runtime). `sms.received` and the
+  notification events reach only this worker's `on:` hooks; the hub's attention job can't see them
+  until events travel.
+- **N22. Who may post a decision card** is call C4 (open). `notification.post` is `write` for plain
+  notifications and cards alike (0.4 had attention.post at `admin`).
+- **N23. attention.remind -> voice.speak {only_if_quiet} is not ported.** Its outcome arrives on the
+  app's AttentionStore event log, which only a hub-side reader (N21) could deliver.
+- **N24. Keep-awake has no "before every call" hook in 0.5.** Screen-driving scripts call
+  `rook.kit.android.screen.awake(cap)` themselves (0.4 wrapped the registry).
+
 ## Gaps
 
 What a plugin needs that manifest v1 can't say, grouped by section. Each has the plugin that hits it
@@ -333,10 +392,11 @@ and the smallest fix that would cover it. **Bold** = Bake should decide. Status 
 9. **Decisions route names outside their plugin.** device.intent splits into call.dial, clock.*,
    location.*; one namespace has one owner, so the converter sends them to plugins `call`, `location`
    (each now draws on two phone files) and a new `clock`. **Bake: confirm.**
-   **Open:** Bake.
+   **Closed:** Bake: "go with yours" (castling-naming-decisions); the phone ports have them.
 10. **`voice` is both a C1 contract (device speech out) and the hub voice service's namespace**
     (`voice.status` in the agents package). **Bake: rename one** (e.g. the service as `speech`).
-   **Open:** Bake.
+   **Decided** (castling-naming-decisions): `voice` is the device contract (voice-android provides
+   `voice.*`); the hub service moves to `speech` (core.yaml's voice.tts/stt: TODO(castling:hub-services)).
 
 ### C. Records
 
@@ -400,7 +460,7 @@ and the smallest fix that would cover it. **Bold** = Bake should decide. Status 
   `destructive`. Every `*.delete` cap gets `destructive` (castling-caps rule 3). Args named
   `*token|*password|*secret|api_key` are `type: secret` (e.g. stream.open `mcp_token`).
 - Not inferred: the four new flags (`sends_as`, `spends`, `persists`, `taints`) have no 0.4 tag.
-  Candidates for whoever ports them: sms.send, call.dial (`sends_as`); browser.goto/read/snapshot,
+  Candidates for whoever ports them: sms.send, call.dial (`sends_as`: done in the phone ports, with notification.act); browser.goto/read/snapshot,
   homeassistant reads (`taints`); worker.update, plugin.install, claudecode.install,
   harness.shim.install, user.grant, user.assign_key, job.create (`persists`).
 
