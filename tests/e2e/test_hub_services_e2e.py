@@ -11,7 +11,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from harness import REPO, WHY
+from harness import REPO, WHY, until
 
 TOKEN = "123456:e2e-telegram-token"
 
@@ -86,7 +86,8 @@ def test_notify_send_reaches_a_worker_and_telegram(fresh, tmp_path):
 
         fresh.start_hub()
         fresh.start_worker()
-        fresh.wait_caps("phone.notification.post")
+        until(lambda: (c := fresh.caps()).get("online") and "phone.notification.post" in c.get("caps", {}),
+              30, "the worker online with its phone cap")
         hub = fresh.owner
         assert hub.call("setting.set", {"plugin": "notify", "key": "phone", "value": "e2e-worker"},
                         worker="rook")["ok"]
