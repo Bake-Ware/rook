@@ -113,7 +113,7 @@ def event_row(row: dict, offset=offset_ms) -> dict:
     return out
 
 
-def list_events(ctx, start, end, limit):
+def list_events(ctx, limit, start=None, end=None):
     android.need("READ_CALENDAR")
     begin = parse_time(start, int(time.time() * 1000))
     finish = parse_time(end, begin + DAY_MS)
@@ -195,7 +195,7 @@ def _event(event_id) -> dict:
     return rows[0]
 
 
-def create(ctx, title, start, end, all_day, location, description, calendar):
+def create(ctx, title, start, all_day, location, description, calendar, end=None):
     _writable()
     cals = [c for c in _calendars() if c["access"] >= CAN_WRITE]
     want = calendar.strip().lower()
