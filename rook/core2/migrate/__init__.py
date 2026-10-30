@@ -33,6 +33,7 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import importlib.util
+import itertools
 import json
 import os
 import shutil
@@ -88,13 +89,14 @@ def _run(source: Source, cfg, cfg_path: Path, band: str, apply: bool, rename: di
     notes: list[str] = []
     report: dict = {"from": str(source.root), "to": str(cfg_path), "applied": apply, "found": source.found(),
                     "notes": notes}
-    users, presets, mapping, more = convert.people(source.people(), cfg.users, source.worker_names(),
-                                                    len(source.bands()) > 1, rename)
+    workers = source.workers()
+    names = {**{w["name"].casefold(): w["name"] for w in workers}, **source.worker_names()}
+    users, presets, mapping, more = convert.people(source.people(), cfg.users, names, len(source.bands()) > 1,
+                                                    rename)
     notes += more
     for s in source.spaces():
         notes.append(f"chat space {s['platform']}:{s['space_id']} ({s['name']}) isn't carried over: "
                      "share it again once the 0.5 chat plugin runs")
-    workers = source.workers()
     sacred, levels, more = convert.trust(source.trust(), [w["name"] for w in workers])
     sacred = sorted(set(cfg.sacred) | set(sacred), key=str.casefold)
     notes += more
@@ -158,7 +160,7 @@ def _write_config(path: Path, users: dict, presets: dict, sacred: list) -> str |
     if backup.exists():
         backup = path.with_name(f"{path.name}.pre-migrate-{_dt.datetime.now():%Y%m%d-%H%M%S}")
     _write_private(backup, text)
-    head = "".join(line for line in text.splitlines(keepends=True)[:20] if line.startswith("#"))
+    head = "".join(itertools.takewhile(lambda line: line.startswith("#"), text.splitlines(keepends=True)))
     _write_private(path, head + yaml.safe_dump(new, sort_keys=False))
     try:
         load_config(path)
@@ -202,8 +204,11 @@ def _archive_journal(source: Source, data: Path) -> dict:
             out.close()
         os.chmod(tmp, 0o444)
         os.replace(tmp, dest)
-    digest = hashlib.sha256(dest.read_bytes()).hexdigest()
-    return {"path": str(dest), "sha256": digest}
+    digest = hashlib.sha256()
+    with dest.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return {"path": str(dest), "sha256": digest.hexdigest()}
 
 
 # -- workbench ------------------------------------------------------------------
@@ -221,16 +226,16 @@ def _importer():
 def _workbench(source: Source, cfg, band: str, apply: bool, levels: dict, notes: list) -> dict:
     """Knowledge, concepts, projects and tasks -> workbench records (into
     memory on a dry run, to count them), then the projects' trust levels."""
+    if source.db("knowledge") is None or {"records", "links", "events"} - _tables(source.db("knowledge")):
+        if levels:
+            notes.append(f"trust: no 0.4 knowledge.db in the copy, so project levels ({', '.join(levels)}) "
+                         "have no project to go on")
+        return {"not_imported": "no 0.4 knowledge.db in the copy"}
     mod = _importer()
     if mod is None:
         # TODO(castling:workbench): import_04.py lands with the workbench (PR #277).
         notes.append("knowledge, projects and tasks: the workbench importer isn't in this checkout: not imported")
         return {"not_imported": "no workbench importer in this checkout"}
-    if source.db("knowledge") is None:
-        if levels:
-            notes.append(f"trust: no knowledge.db in the copy, so project levels ({', '.join(levels)}) "
-                         "have no project to go on")
-        return {"not_imported": "no knowledge.db in the copy"}
     sessions = source.db("sessions")
     if sessions is not None and "handoffs" not in _tables(sessions):
         sessions = None

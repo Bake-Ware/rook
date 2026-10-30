@@ -239,7 +239,7 @@ def test_apply_writes_the_05_hub_and_reruns_add_nothing(tmp_path, copy04):
     assert _hashes(copy04) == before
     data = cfg.parent / "data"
     c = load_config(cfg)
-    assert c.users["bake"] == {"preset": "owner", "grants": []} or c.users["bake"] == {"preset": "owner"}
+    assert c.users["bake"] == {"preset": "owner"}
     assert c.users["autumn-r"]["preset"] == "member-admin" and c.sacred == ["kaiju", "living-room-tv"]
     assert c.presets["member-write"] == {"grants": [], "max_risk": "write"}
     assert cfg.read_text().startswith("# Rook hub, written by init.")
@@ -248,9 +248,11 @@ def test_apply_writes_the_05_hub_and_reruns_add_nothing(tmp_path, copy04):
     # the vault: re-sealed under the hub's root key, readable only with it
     assert vault.names(data) == ["github-pat", "pikvm"] and vault.get(data, "github-pat") == SECRET
     assert stat.S_IMODE((data / "vault.db").stat().st_mode) == 0o600
+    root = (data / "keys" / "root.key").read_text()
     (data / "keys" / "root.key").write_text(os.urandom(32).hex())
     with pytest.raises(nacl.exceptions.CryptoError):
         vault.get(data, "github-pat")
+    (data / "keys" / "root.key").write_text(root)
     # memory: the house agent's
     agents = sqlite3.connect(data / "plugins" / "agents" / "agents.db")
     mem = [r[0] for r in agents.execute("SELECT text FROM memory WHERE agent='house' ORDER BY id")]
@@ -268,11 +270,10 @@ def test_apply_writes_the_05_hub_and_reruns_add_nothing(tmp_path, copy04):
     assert "- [ ] **kaiju** (sacred): calls in the 0.4 journal: 2" in report and "Applied" in report
     assert stat.S_IMODE((data / "migrate" / "report.json").stat().st_mode) == 0o600
 
-    (data / "keys" / "root.key").unlink()          # a fresh key: the re-run must not need the old values
     again = migrate(copy04, cfg, apply=True)
     assert again["config_backup"] is None and again["secrets_written"] == []
     assert again["memory"]["written"] == {"memory": 0, "notepad": 0}
-    assert load_config(cfg).users == c.users
+    assert load_config(cfg).users == c.users and vault.get(data, "pikvm") == "kvm-pass-123"
 
 
 def test_existing_05_people_are_kept_and_rename_maps(tmp_path, copy04):
@@ -287,6 +288,25 @@ def test_existing_05_people_are_kept_and_rename_maps(tmp_path, copy04):
     assert people["lo"]["from"] == "u3"
     assert "autumn: already a user as adult; kept that (0.4 said member-admin)" in r["notes"]
     assert "member-admin" not in r["presets"]
+
+
+def test_other_05_users_and_comments_are_left_alone(tmp_path, copy04):
+    cfg = make_05(tmp_path)
+    raw = yaml.safe_load(cfg.read_text())
+    raw["users"]["zed"] = {"preset": "adult"}
+    cfg.write_text("# top comment\n" + yaml.safe_dump(raw).replace("users:", "# not a header\nusers:"))
+    migrate(copy04, cfg, apply=True)
+    assert load_config(cfg).users["zed"] == {"preset": "adult"}
+    text = cfg.read_text()
+    assert text.startswith("# top comment\n") and text.count("#") == 1
+
+
+def test_a_copy_without_04_knowledge_skips_the_workbench(tmp_path, copy04):
+    (copy04 / "knowledge.db").unlink()
+    sqlite3.connect(copy04 / "knowledge.db").close()
+    r = migrate(copy04, make_05(tmp_path))
+    assert r["workbench"] == {"not_imported": "no 0.4 knowledge.db in the copy"}
+    assert any("project levels (knowledge-service)" in n for n in r["notes"])
 
 
 @pytest.mark.skipif(not IMPORTER.exists(), reason="the workbench importer (PR #277) isn't in this checkout")
@@ -423,6 +443,8 @@ def test_grant_patterns():
     assert convert.grant_patterns({**g, "kind": "worker", "ref": "kaiju", "caps": ["*"]}, {}, False) == \
         (["*@kaiju"], [])
     assert convert.grant_patterns({**g, "kind": "band", "caps": ["*"]}, {}, False) == (["*"], [])
+    assert convert.grant_patterns({**g, "kind": "worker", "ref": "Kaiju", "caps": ["*"]}, {"kaiju": "kaiju"},
+                                  False) == (["*@kaiju"], [])          # 0.4 matched names in any case
 
 
 def test_trust_project_levels_take_the_strictest():

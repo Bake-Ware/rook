@@ -15,6 +15,7 @@ exceptions, baselines, ledger, tool grants) has no 0.5 equivalent yet.
 """
 from __future__ import annotations
 
+import copy
 import datetime as _dt
 import fnmatch
 import re
@@ -52,7 +53,8 @@ def _tier(t) -> str:
 
 
 def grant_patterns(g: dict, worker_names: dict, several_bands: bool) -> tuple[list, list]:
-    """One 0.4 grant -> (0.5 patterns, notes)."""
+    """One 0.4 grant -> (0.5 patterns, notes). ``worker_names``: 0.4 worker
+    id, or casefolded name, -> the machine's name."""
     caps, kind, ref, notes = g["caps"] or ["*"], g["kind"], g["ref"], []
     odd = [c for c in caps if any(ch in c for ch in "?[]")]
     if odd:
@@ -64,7 +66,7 @@ def grant_patterns(g: dict, worker_names: dict, several_bands: bool) -> tuple[li
             notes.append(f"grant {g['id']} (band {ref[:8]}) now covers every machine of the 0.5 hub")
         return list(caps), notes
     if kind == "worker":
-        name = worker_names.get(ref, ref)
+        name = worker_names.get(ref) or worker_names.get(ref.casefold(), ref)     # 0.4 matched names in any case
         return [f"{c}@{name}" for c in caps], notes
     if kind == "hub":
         if caps != ["*"]:
@@ -89,7 +91,7 @@ def people(rows: list[dict], existing: dict, worker_names: dict, several_bands: 
     ``presets`` the ``member-<tier>`` presets used; ``mapping`` one row per
     0.4 member for the report."""
     rename = rename or {}
-    users = {k: {**v, "grants": list(v.get("grants") or ())} for k, v in existing.items()}
+    users = copy.deepcopy(existing)
     taken, claimed, mapping, notes = set(users), set(), [], []
     for p in rows:
         base = user_name(p, set())
@@ -122,11 +124,10 @@ def people(rows: list[dict], existing: dict, worker_names: dict, several_bands: 
             u = users[name]
             if u.get("preset") != preset:
                 notes.append(f"{name}: already a user as {u.get('preset')}; kept that (0.4 said {preset})")
-            u["grants"] = list(dict.fromkeys(u["grants"] + grants))
+            if grants:
+                u["grants"] = list(dict.fromkeys(list(u.get("grants") or ()) + grants))
         else:
-            users[name] = {"preset": preset, "grants": grants}
-        if not users[name]["grants"]:
-            users[name].pop("grants")
+            users[name] = {"preset": preset, **({"grants": grants} if grants else {})}
         taken.add(name)
         mapping.append({"from": p["id"], "name": name, "role": p["role"],
                         "preset": users[name]["preset"], "grants": users[name].get("grants", [])})
