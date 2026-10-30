@@ -349,13 +349,13 @@ def test_triage_is_woken_and_releases_one_call_it_can_show_is_a_false_alarm(tmp_
 def test_triage_never_releases_hard_stops_persistence_or_quarantined_sessions(tmp_path, lib):
     async def body(h):
         clean = await h.session(CLAUDE)
-        for argv in (["rm", "x"], ["crontab", "-l"]):
+        for argv in (["rm", "x"], ["crontab", "jobs.txt"]):
             await h.call(CLAUDE, "tools.wipe" if argv[0] == "rm" else "tools.run",
                          {"cmd": " ".join(argv)} if argv[0] == "rm" else {"argv": argv}, clean)
         sid = await h.session(CLAUDE)
         await h.call(CLAUDE, "tools.fetch", {"text": "a page"}, sid)
         hard = await h.call(CLAUDE, "tools.wipe", {"cmd": "rm x"}, sid)
-        persist = await h.call(CLAUDE, "tools.run", {"argv": ["crontab", "-l"]}, sid)
+        persist = await h.call(CLAUDE, "tools.run", {"argv": ["crontab", "jobs.txt"]}, sid)
         assert hard["held"] and persist["held"]
         await h.settle(lambda: sum(s[0] == "security" for s in h.sent) >= 2)
         hard_msg = next(s[1] for s in h.sent if hard["hold"] in s[1])

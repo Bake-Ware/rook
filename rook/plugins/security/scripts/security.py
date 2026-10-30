@@ -60,7 +60,7 @@ SCAN_MAX = 8 << 20        # characters of a result scanned for canaries
 
 # Persistence markers in command text: keys, scheduled tasks, services, users,
 # autostart. (security-ml has its own copy among its features.)
-PERSIST = re.compile(r"authorized_keys|crontab|/etc/cron|systemctl\s+(--user\s+)?enable|\.service\b"
+PERSIST = re.compile(r"authorized_keys|crontab(?!\s+-l\b)|/etc/cron|systemctl\s+(--user\s+)?enable|\.service\b"
                      r"|useradd|adduser|usermod|net\s+user\s+\S+\s+/add|schtasks|\\run\b|currentversion\\run"
                      r"|launchctl\s+load|launchagents|/etc/rc\.local|\.bashrc|\.profile\b|\.zshrc"
                      r"|/etc/sudoers|systemd/system", re.I)
