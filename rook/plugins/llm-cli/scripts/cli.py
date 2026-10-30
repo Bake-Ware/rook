@@ -1,5 +1,6 @@
 """llm-cli: one completion through Claude Code (``claude -p --output-format
-json --tools "" --strict-mcp-config``: no tools, no MCP servers; the system
+json --tools "" --strict-mcp-config --setting-sources project,local``: no
+tools, no MCP servers, none of the signed-in user's hooks; the system
 prompt by --system-prompt) or Codex (``codex
 exec --ephemeral -s read-only -o FILE -``), the prompt on stdin, started
 through the worker's launch path in a per-call temp folder."""
@@ -23,7 +24,7 @@ async def complete(ctx, messages, model=None, max_tokens=None, temperature=None,
     prompt = transcript([m for m in messages if m["role"] != "system"])
     if tool == "claude":
         cmd = [_program(ctx), "-p", "--output-format", "json", "--tools", "", "--strict-mcp-config",
-               "--no-session-persistence"]
+               "--setting-sources", "project,local", "--no-session-persistence"]
         cmd += ["--model", model] if model else []
         cmd += ["--system-prompt", system] if system else []
         out = await _run(ctx, cmd, prompt)
