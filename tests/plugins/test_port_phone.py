@@ -545,6 +545,10 @@ def test_notification_post_plain_and_card(phone, java):
     got = phone.call("notification-android.notification.post", text="Build done", channel="digest")
     assert got["channel"] == "rook_digest"
     java.app("AttentionChannels").ensure.assert_called_with(java.ctx)
+    java.cls("android.os.Build$VERSION").SDK_INT = 25                  # minSdk 23: no channels before 26
+    phone.call("notification-android.notification.post", text="old phone")
+    assert java.cls("android.app.Notification$Builder").call_args.args == (java.ctx,)
+    java.cls("android.os.Build$VERSION").SDK_INT = 34
     store = java.app("AttentionStore")
     store.post.return_value = json.dumps({"ok": True, "id": "q1", "posted": True})
     assert phone.call("notification-android.notification.post", id="q1", text="Deploy 1234?",

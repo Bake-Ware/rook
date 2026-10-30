@@ -62,14 +62,16 @@ def post(ctx, text, title, channel, kind, body, explain, urgency, source, expire
     J = android.jclass
     nm = android.service("NOTIFICATION_SERVICE", "android.app.NotificationManager")
     Builder = J("android.app.Notification$Builder")
-    if channel:
-        android.app("AttentionChannels").ensure(c)
-        chan = CHANNELS[channel]
+    chan = CHANNELS[channel] if channel else "rook_msgs"
+    if int(J("android.os.Build$VERSION").SDK_INT) < 26:   # Android 6/7: no channels
+        b = Builder(c)
     else:
-        chan = "rook_msgs"
-        nm.createNotificationChannel(J("android.app.NotificationChannel")(
-            chan, "Rook messages", J("android.app.NotificationManager").IMPORTANCE_DEFAULT))
-    b = Builder(c, chan)
+        if channel:
+            android.app("AttentionChannels").ensure(c)
+        else:
+            nm.createNotificationChannel(J("android.app.NotificationChannel")(
+                chan, "Rook messages", J("android.app.NotificationManager").IMPORTANCE_DEFAULT))
+        b = Builder(c, chan)
     b.setContentTitle(title).setContentText(text).setSmallIcon(J("android.R$drawable").stat_notify_chat)
     b.setAutoCancel(True).setContentIntent(android.app("NotificationNavigation").mainActivity(c))
     nid = int(time.time() * 1000) & 0x7fffffff
