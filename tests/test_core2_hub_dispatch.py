@@ -400,6 +400,31 @@ def test_refused_hold_is_final(hub):
     assert not run(hub.release(out["hold"], "person:bake"))["ok"] and not hub.tx.requests
 
 
+def test_released_call_is_the_held_one_even_if_the_door_changes_its_args(hub):
+    s = hub.start_session(BAKE, ["*"])
+    args = {"path": "/tmp/x"}
+    out = run(hub.dispatch(BAKE, Call(cap="file.delete", target="kaiju", args=args, why="x", session=s.id)))
+    args["path"] = "/"
+    assert run(hub.release(out["hold"], "person:bake"))["ok"]
+    assert hub.tx.requests[0]["args"] == {"path": "/tmp/x"}
+    assert calls(hub)[0]["args"] == {"path": "/tmp/x"}
+
+
+def test_ended_session_stays_ended_for_holds(hub):
+    out, s = call(hub, BAKE, "file.delete")
+    hub.end_session(s.id)
+    assert run(hub.release(out["hold"], "person:bake"))["error"] == "denied: session: ended"
+    assert not hub.tx.requests
+
+
+def test_holds_do_not_expire(hub):
+    out, _ = call(hub, BAKE, "file.delete")
+    hub.clock_box[0] += 3 * 86400
+    assert run(hub.release(out["hold"], "person:bake"))["ok"]
+    t = hub.tx.requests[0]["ticket"]
+    assert t["iat"] == int(hub.clock_box[0])
+
+
 def test_release_rechecks_rights(hub):
     out, _ = call(hub, CLAUDE_FOR_BAKE, "file.delete")
     hub.identities.agents["claude"] = {"grants": ["shell.*"]}
@@ -534,8 +559,9 @@ def test_gate_from_manifest():
 
 
 def test_changing_gates_and_doors_is_an_owner_action(hub):
-    with pytest.raises(PermissionError):
-        hub.set_gates([], "agent:claude")
+    for by in ("agent:claude", "system:security", "person:ann"):
+        with pytest.raises(PermissionError):
+            hub.set_gates([], by)
     hub.set_gates([G("ml")], "person:bake")
     assert hub.log[-1] == {"kind": "gates", "ts": NOW, "hub": hub.hub_id, "by": "person:bake",
                            "gates": [["ml", "enforce"]]}

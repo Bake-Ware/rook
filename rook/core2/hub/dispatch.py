@@ -28,6 +28,7 @@ database:
 from __future__ import annotations
 
 import asyncio
+import copy
 import secrets as _secrets
 import time
 from dataclasses import dataclass, field, replace
@@ -154,8 +155,8 @@ class Dispatcher:
     def set_gates(self, gates: list, by: str) -> None:
         """Replace the gate list (enable, disable, swap): a deliberate,
         journaled owner action."""
-        if not self.identities.is_owner(by) and not by.startswith("system:"):
-            raise PermissionError("only an owner or the hub changes gates")
+        if not self.identities.is_owner(by):
+            raise PermissionError("only an owner changes gates")
         self.gates = list(gates)
         self._note("gates", None, by=by, gates=[[g.name, g.mode] for g in self.gates])
 
@@ -185,7 +186,10 @@ class Dispatcher:
 
     async def _dispatch(self, caller: Caller, call: Call, entry: dict) -> dict:
         cid = entry["call"]
-        call = replace(call)
+        # Our own copy: a held call must run exactly as asked, whatever the
+        # door does with its objects afterwards.
+        call = replace(call, args=copy.deepcopy(call.args), layers=copy.deepcopy(call.layers))
+        entry["args"] = call.args
 
         def deny(error: str, layer: str | None = None) -> dict:
             entry.update(decision="deny", ok=False, error=error)
@@ -362,6 +366,8 @@ class Dispatcher:
         """Hard stops: only the person the call is for (an owner when it is
         for no person). A new cap for a child: an owner. A gate flag: the
         person, an owner, or the hub's own platform agents (system:)."""
+        if not isinstance(by, str):
+            return False
         person, owner = hold.caller.person, self.identities.is_owner(by)
         if hold.hard and by != person and (person or not owner):
             return False
@@ -370,8 +376,9 @@ class Dispatcher:
         return not hold.flagged_by or by == person or owner or by.startswith("system:")
 
     async def release(self, name: str, by: str) -> dict:
-        """Run the exact held call with a ticket minted now. Rights are
-        checked again: a grant taken away while it waited still counts."""
+        """Run the exact held call with a ticket minted now. Holds don't
+        expire, but rights are checked again (a grant taken away while it
+        waited still counts) and a session ended on purpose stays ended."""
         hold = self.holds.get(name)
         if hold is None:
             return {"ok": False, "error": f"unknown hold: {name}"}
@@ -380,6 +387,8 @@ class Dispatcher:
         del self.holds[name]
         entry = {**hold.entry, "ts": self.clock(), "decision": "released", "by": by}
         refused = self._rights(hold.caller, hold.session, hold.worker, hold.call, entry)
+        if hold.session.ended:
+            refused = {"layer": "session", "reason": "ended"}
         if refused:
             entry.update(decision="deny", ok=False, layer=f"{refused['layer']}: {refused['reason']}",
                          error=f"denied: {refused['layer']}: {refused['reason']}")
