@@ -115,8 +115,8 @@ fi
 plugins="$SRC/rook/plugins"
 # The library: the hub's trusted plugin folders (hub plugins run there; the
 # worker ones are pushable). The worker loads its own straight from the code.
-HUB_PLUGINS="agents tasks projects knowledge concepts"
-WORKER_PLUGINS="shell file notification-desktop screen-desktop torrent agents-claude-code"
+HUB_PLUGINS="agents notify tasks projects knowledge concepts whiteboard"
+WORKER_PLUGINS="shell file notification-desktop screen-desktop torrent agents-claude-code llm-cli"
 mkdir -p "$ROOT/hub/library"
 find "$ROOT/hub/library" -maxdepth 1 -type l -delete
 for p in $HUB_PLUGINS $WORKER_PLUGINS; do
