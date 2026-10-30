@@ -253,7 +253,10 @@ class Band:
 
     def close(self) -> None:
         for p in reversed(self.procs):
-            p.kill() if p.name == "relay" else p.stop()
+            if p.name == "relay":
+                p.kill()
+            else:
+                p.stop()
 
     # -- acting as a hub would (the test holds its keys) ------------------------------
 

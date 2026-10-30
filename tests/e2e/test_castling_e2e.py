@@ -1,5 +1,5 @@
 """Castling 0.5 as real processes: hub, worker and relay on localhost over
-the real Telesthete transport (see conftest.py and docs/castling-e2e.md)."""
+the real Telesthete transport (see harness.py and docs/castling-e2e.md)."""
 from __future__ import annotations
 
 import asyncio
@@ -10,6 +10,7 @@ import time
 
 from rook.core2 import journal
 from rook.core2.transport import TelestheteLink, Transport
+from rook.core2.worker.loader import local_os
 
 from harness import PORTS, WHY, tv, until
 
@@ -43,7 +44,7 @@ def test_the_hub_lists_what_the_worker_announces(band):
     workers = {w["name"]: w for w in band.owner.get("/workers")["workers"]}
     w = workers["e2e-worker"]
     assert w["id"] == band.worker_id and w["online"] and w["core"] == "2.0" and w["problem"] is None
-    assert set(w["plugins"]) == {"core", "e2e", *PORTS} and w["facts"]["os"] == "linux"
+    assert set(w["plugins"]) == {"core", "e2e", *PORTS} and w["facts"]["os"] == local_os()
     caps = band.caps()["caps"]
     assert caps["e2e.wipe"]["effects"] == ["destructive"] and caps["e2e.admin"]["risk"] == "admin"
     assert {"core.manifests", "core.trust.set", "core.plugin.install"} <= set(caps)

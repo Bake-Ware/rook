@@ -169,8 +169,9 @@ def anchor(cfg: Config) -> dict:
     """What a worker of this hub keeps as its anchor (``{hub, root, band}``).
     The root key is made here on a first run, as at start.
     TODO(castling:enrollment): enrollment writes this onto the worker."""
+    Path(cfg.data).mkdir(parents=True, exist_ok=True, mode=0o700)
     keys = Path(cfg.data) / "keys"
-    keys.mkdir(parents=True, exist_ok=True, mode=0o700)
+    keys.mkdir(exist_ok=True, mode=0o700)
     root = _key(keys / "root.key")
     return {"hub": wire.key_id(bytes(root.verify_key)), "root": wire.pub_text(root), "band": home_band(cfg)}
 
@@ -1078,8 +1079,8 @@ class Hub:
             return {"ok": False, "error": f"{name} has no worker part to push"}
         # Know the manifest before the worker announces it: else its caps
         # are gone from dispatch until a core.manifests fetch comes back.
-        raw, _ = check(plan.folder, self._contract_specs())
-        if raw is not None:
+        raw, issues = check(plan.folder, self._contract_specs())
+        if raw is not None and not any(i.level == "error" for i in issues):
             self._save_manifest(self._cache(raw))
         blob = await asyncio.to_thread(_bundle_bytes, plan)
         try:
