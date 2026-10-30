@@ -1,0 +1,11 @@
+manifest: 1
+plugin: thing
+version: 1.0.0
+caps:
+  find:
+    doc: Find.
+    risk: read
+    scope: local
+    args: { q: { type: str, required: true }, n: { type: int, min: 1 } }
+    examples: [ { args: { q: x, extra: 1 } }, { args: { n: 0 } } ]
+    action: { exec: { argv: [find, "{{args.q}}"] } }

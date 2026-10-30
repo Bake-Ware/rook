@@ -1,0 +1,3 @@
+manifest: 1
+plugin: !!python/name:os.system thing
+version: 1.0.0

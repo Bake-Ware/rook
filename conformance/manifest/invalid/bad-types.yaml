@@ -1,0 +1,11 @@
+manifest: 1
+plugin: thing
+version: 1.0.0
+caps:
+  find:
+    doc: Find.
+    risk: read
+    scope: local
+    args: { q: { type: string } }
+    result: { type: list, items: { type: map, fields: { id: { type: number } } } }
+    action: { exec: { argv: [find] } }

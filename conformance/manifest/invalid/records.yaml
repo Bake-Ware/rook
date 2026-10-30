@@ -1,0 +1,10 @@
+manifest: 1
+plugin: thing
+version: 1.0.0
+records:
+  item:
+    fields: { title: { type: str } }
+    index: [due]
+    search: [title, body]
+caps:
+  item.list: { doc: Clashes with the generated cap., risk: read, scope: local, run: scripts/x.py:f }

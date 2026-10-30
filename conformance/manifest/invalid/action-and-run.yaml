@@ -1,0 +1,8 @@
+manifest: 1
+plugin: thing
+version: 1.0.0
+caps:
+  both: { doc: Both., risk: read, scope: local, run: scripts/x.py:f, action: { exec: { argv: [ls] } } }
+  neither: { doc: Neither., risk: read, scope: local }
+  two: { doc: Two types., risk: read, scope: local, action: { exec: { argv: [ls] }, http: { url: "http://x" } } }
+  parse-only: { doc: Nothing to run., risk: read, scope: local, action: { parse: json } }

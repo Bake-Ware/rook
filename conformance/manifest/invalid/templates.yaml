@@ -1,0 +1,16 @@
+manifest: 1
+plugin: thing
+version: 1.0.0
+settings:
+  host: { default: localhost }
+caps:
+  get:
+    doc: Get.
+    risk: read
+    scope: local
+    args: { id: { type: int } }
+    action:
+      http:
+        url: "http://{{settings.hots}}/items/{{args.ident}}"
+        headers: { X-Worker: "{{worker.hostname}}", X-Dev: "{{appliance.host}}" }
+        body: "{{args.id}"

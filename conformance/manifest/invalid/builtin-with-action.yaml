@@ -1,0 +1,6 @@
+manifest: 1
+plugin: core
+version: 1.0.0
+builtin: true
+caps:
+  ping: { doc: Ping., risk: read, scope: self, run: scripts/ping.py:ping }

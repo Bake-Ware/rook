@@ -1,0 +1,19 @@
+manifest: 1
+plugin: thing
+version: 1.0.0
+contracts:
+  notify.send:
+    args: { to: { type: str }, text: { type: str, required: true }, level: { type: str, enum: [info, alert] } }
+    result: { type: map, fields: { id: { type: str }, at: { type: time } } }
+caps:
+  send:
+    doc: Send.
+    risk: write
+    scope: external
+    args: { text: { type: int, required: true }, level: { type: str, enum: [info] }, room: { type: str, required: true } }
+    result: { type: map, fields: { id: { type: str } } }
+    run: scripts/send.py:send
+provides:
+  notify.send: thing.send
+  llm.complete: thing.missing
+  voice.tts: thing.send

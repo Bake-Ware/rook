@@ -1,0 +1,159 @@
+# Every section, used the way the pages describe it. No warnings.
+manifest: 1
+plugin: telegram
+version: 2.0.0-beta.1+build.7
+title: Telegram
+doc: Talk to people on Telegram through your own bot.
+icon: chat
+author: Bake-Ware
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+package: agents
+runs_on: hub
+platforms: [linux, macos]
+replaces: [tg]
+requires:
+  rook: ">=0.5,<0.6"
+  plugins: { notify: ">=1.0" }
+  python: ["httpx>=0.27"]
+  bins: []
+  hardware: [gpu, "usb:1234:abcd"]
+uses: ["notify.*", "llm.complete"]
+assets:
+  model: { url: "https://example.org/m.bin", sha256: "0000000000000000000000000000000000000000000000000000000000000000", size: 10 }
+settings:
+  bot_token: { where: hub, secret: true, setup: Ask the user for the bot token from BotFather. }
+  webhook_secret: { where: hub, secret: true }
+  handle: { where: person, doc: Your Telegram handle. }
+  limit: { type: int, min: 1, max: 100, default: 20 }
+caps:
+  send:
+    doc: Send a message.
+    risk: write
+    scope: external
+    effects: [sends_as]
+    args:
+      to: { type: str }
+      text: { type: str, required: true }
+    result: { type: map, fields: { id: { type: str }, at: { type: time } } }
+    idempotent: false
+    elevation: never
+    on: hub
+    action:
+      http:
+        method: POST
+        url: "https://api.telegram.org/bot{{secret:telegram-bot}}/sendMessage"
+        json: { chat_id: "{{args.to}}", text: "{{args.text}}" }
+        ok: [200]
+      returns: { id: result.message_id }
+  updates.watch:
+    doc: Stream incoming messages.
+    risk: read
+    scope: external
+    effects: [taints]
+    stream: { types: [status], input: false, durable: true }
+    exclusive: poller
+    run: scripts/bot.py:watch
+  ping:
+    doc: Is the API reachable?
+    risk: read
+    scope: external
+    platforms: [linux]
+    requires: { bins: [curl] }
+    deprecated: Use send with a dry run.
+    undo: telegram.send
+    action:
+      exec:
+        try: [ { argv: [curl, "-s", "https://api.telegram.org"] }, { argv: [wget, "-qO-", "https://api.telegram.org"] } ]
+        ok_exit: [0]
+        cwd: "{{plugin.data}}"
+        output: "{{tmp}}/out.txt"
+  probe:
+    doc: Raw TCP probe.
+    risk: read
+    scope: external
+    action:
+      tcp: { host: api.telegram.org, port: 443, send: "", until: { bytes: 4 }, tls: true }
+  sock:
+    doc: One websocket round trip.
+    risk: read
+    scope: external
+    action:
+      ws: { url: "wss://example.org/{{worker.name}}", send: "{\"os\": \"{{worker.os}}\"}" }
+  note.read:
+    doc: Read the local notes file.
+    risk: read
+    scope: self
+    action:
+      file: { read: "{{plugin.data}}/notes.txt" }
+      parse: lines
+records:
+  chat:
+    fields:
+      title: { type: str, required: true }
+      peer: { type: ref, to: telegram.chat }
+      tags: { type: list, items: { type: str } }
+      meta: { type: json }
+      raw: { schema: { type: object } }
+      slug: { type: str, unique: true }
+    semantic: [title]
+    private: true
+    retain: 90d
+    caps: [list, get, delete]
+    risk: { delete: admin }
+    migrations: scripts/migrate.py
+emits:
+  telegram.message.received: { doc: A message arrived., payload: { from: { type: str }, text: { type: str } }, taints: true }
+hooks:
+  start: scripts/bot.py:start
+  stop: scripts/bot.py:stop
+  status: scripts/bot.py:status
+  every: [ { interval: 60, call: notify.send, args: { text: alive } } ]
+  on: [ { event: worker.online, run: scripts/bot.py:warm } ]
+routes:
+  webhook: { path: /webhook, methods: [POST], run: scripts/bot.py:webhook, auth: { hmac: "{{settings.webhook_secret}}" } }
+gate:
+  run: scripts/gate.py:check
+  match: { risk: [write, exec, admin] }
+  budget: 20ms
+  mode: shadow
+contracts:
+  notify.send: { doc: Get a message to a person., args: { to: { type: str }, text: { type: str, required: true } } }
+provides:
+  notify.send: telegram.send
+check: [telegram.ping]
+personas:
+  liaison:
+    title: Liaison
+    summary: Answers Telegram.
+    prompt: personas/liaison.md
+    skills: [reply]
+    grants: ["telegram.*", journal.read]
+    always_on: false
+    backend: default
+    model: { two: default, three: haiku }
+    voice: default
+    create: offer
+skills: { reply: skills/reply.md }
+docs: { manual: docs/manual.md }
+concepts:
+  outreach: { doc: Talking to people., roles: [lead], skills: [reply], signoff: experts, trust: normal }
+pages:
+  inbox: { title: Inbox, file: pages/inbox.html, caps: ["telegram.*"], events: ["telegram.*"], sizes: [page], nav: { section: home } }
+components:
+  chat-card: { file: pages/chat-card.js, props: { id: { type: str } }, caps: [telegram.chat.get] }
+jobs:
+  digest:
+    doc: Daily digest.
+    trigger: { cron: "0 8 * * *" }
+    agent: { persona: liaison, prompt: Summarize yesterday. }
+    as: persona
+    enabled: false
+    retries: 2
+    catch_up: true
+  on-message:
+    trigger: { on: telegram.message.received, filter: { from: mom } }
+    call: telegram.send
+    args: { to: mom, text: got it }
+presets:
+  guest: { grants: [telegram.chat.list] }

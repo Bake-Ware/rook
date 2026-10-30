@@ -1,0 +1,365 @@
+{
+  "invalid/action-and-run.yaml": [
+    {
+      "level": "error",
+      "path": "/caps/both",
+      "code": "action-and-run"
+    },
+    {
+      "level": "error",
+      "path": "/caps/neither",
+      "code": "no-action"
+    },
+    {
+      "level": "error",
+      "path": "/caps/parse-only/action",
+      "code": "no-action"
+    },
+    {
+      "level": "error",
+      "path": "/caps/two/action",
+      "code": "multiple-actions"
+    }
+  ],
+  "invalid/argv-binary-from-arg.yaml": [
+    {
+      "level": "error",
+      "path": "/caps/launch/action/exec/argv/0",
+      "code": "argv-binary-from-arg"
+    },
+    {
+      "level": "error",
+      "path": "/caps/launch/action/exec/try/0/argv/0",
+      "code": "argv-binary-from-arg"
+    }
+  ],
+  "invalid/bad-example.yaml": [
+    {
+      "level": "error",
+      "path": "/caps/find/examples/0/args",
+      "code": "bad-example"
+    },
+    {
+      "level": "error",
+      "path": "/caps/find/examples/1/args",
+      "code": "bad-example"
+    },
+    {
+      "level": "error",
+      "path": "/caps/find/examples/1/args/n",
+      "code": "bad-example"
+    }
+  ],
+  "invalid/bad-names.yaml": [
+    {
+      "level": "error",
+      "path": "/manifest",
+      "code": "schema-const"
+    },
+    {
+      "level": "error",
+      "path": "/plugin",
+      "code": "schema-pattern"
+    },
+    {
+      "level": "error",
+      "path": "/version",
+      "code": "schema-pattern"
+    }
+  ],
+  "invalid/bad-types.yaml": [
+    {
+      "level": "error",
+      "path": "/caps/find/args/q/type",
+      "code": "schema-enum"
+    },
+    {
+      "level": "error",
+      "path": "/caps/find/result/items/fields/id/type",
+      "code": "schema-enum"
+    }
+  ],
+  "invalid/builtin-with-action.yaml": [
+    {
+      "level": "error",
+      "path": "/caps/ping",
+      "code": "builtin-has-action"
+    }
+  ],
+  "invalid/cap-missing-risk.yaml": [
+    {
+      "level": "error",
+      "path": "/caps/go",
+      "code": "schema-required"
+    }
+  ],
+  "invalid/contract-mismatch.yaml": [
+    {
+      "level": "error",
+      "path": "/provides/llm.complete",
+      "code": "unknown-cap"
+    },
+    {
+      "level": "error",
+      "path": "/provides/notify.send",
+      "code": "contract-mismatch"
+    },
+    {
+      "level": "error",
+      "path": "/provides/notify.send",
+      "code": "contract-mismatch"
+    },
+    {
+      "level": "error",
+      "path": "/provides/notify.send",
+      "code": "contract-mismatch"
+    },
+    {
+      "level": "error",
+      "path": "/provides/notify.send",
+      "code": "contract-mismatch"
+    },
+    {
+      "level": "error",
+      "path": "/provides/notify.send",
+      "code": "contract-mismatch"
+    },
+    {
+      "level": "warning",
+      "path": "/provides/voice.tts",
+      "code": "unknown-contract"
+    }
+  ],
+  "invalid/globs.yaml": [
+    {
+      "level": "error",
+      "path": "/personas/helper/grants/0",
+      "code": "schema-pattern"
+    },
+    {
+      "level": "error",
+      "path": "/uses/0",
+      "code": "schema-pattern"
+    },
+    {
+      "level": "error",
+      "path": "/uses/1",
+      "code": "schema-pattern"
+    }
+  ],
+  "invalid/missing-version.yaml": [
+    {
+      "level": "error",
+      "path": "",
+      "code": "schema-required"
+    }
+  ],
+  "invalid/presets.yaml": [
+    {
+      "level": "error",
+      "path": "/presets/child/grants/0",
+      "code": "preset-above-ceiling"
+    },
+    {
+      "level": "error",
+      "path": "/presets/child/grants/2",
+      "code": "preset-foreign-grant"
+    },
+    {
+      "level": "error",
+      "path": "/presets/child/max_risk",
+      "code": "preset-ceiling"
+    },
+    {
+      "level": "error",
+      "path": "/presets/guest/grants/0",
+      "code": "preset-above-ceiling"
+    }
+  ],
+  "invalid/records.yaml": [
+    {
+      "level": "error",
+      "path": "/caps/item.list",
+      "code": "cap-collision"
+    },
+    {
+      "level": "error",
+      "path": "/records/item/index/0",
+      "code": "unknown-field"
+    },
+    {
+      "level": "error",
+      "path": "/records/item/search/1",
+      "code": "unknown-field"
+    }
+  ],
+  "invalid/references.yaml": [
+    {
+      "level": "error",
+      "path": "/appliance/pair",
+      "code": "unknown-cap"
+    },
+    {
+      "level": "error",
+      "path": "/caps/a/run",
+      "code": "bad-path"
+    },
+    {
+      "level": "warning",
+      "path": "/caps/a/undo",
+      "code": "unknown-cap"
+    },
+    {
+      "level": "error",
+      "path": "/check/0",
+      "code": "unknown-cap"
+    },
+    {
+      "level": "error",
+      "path": "/hooks/every/0/call",
+      "code": "call-not-in-uses"
+    },
+    {
+      "level": "error",
+      "path": "/hooks/on/0",
+      "code": "hook-action"
+    },
+    {
+      "level": "error",
+      "path": "/jobs/j",
+      "code": "job-action"
+    },
+    {
+      "level": "error",
+      "path": "/jobs/j/trigger",
+      "code": "job-trigger"
+    },
+    {
+      "level": "error",
+      "path": "/skills/s",
+      "code": "bad-path"
+    }
+  ],
+  "invalid/templates.yaml": [
+    {
+      "level": "error",
+      "path": "/caps/get/action/http/body",
+      "code": "template-syntax"
+    },
+    {
+      "level": "error",
+      "path": "/caps/get/action/http/headers/X-Dev",
+      "code": "template-unknown-appliance"
+    },
+    {
+      "level": "error",
+      "path": "/caps/get/action/http/headers/X-Worker",
+      "code": "template-unknown"
+    },
+    {
+      "level": "error",
+      "path": "/caps/get/action/http/url",
+      "code": "template-unknown-arg"
+    },
+    {
+      "level": "error",
+      "path": "/caps/get/action/http/url",
+      "code": "template-unknown-setting"
+    }
+  ],
+  "invalid/type-modifiers.yaml": [
+    {
+      "level": "error",
+      "path": "/caps/find/args/kind/default",
+      "code": "bad-default"
+    },
+    {
+      "level": "error",
+      "path": "/caps/find/args/n/min",
+      "code": "bad-type"
+    },
+    {
+      "level": "error",
+      "path": "/caps/find/args/owner",
+      "code": "bad-type"
+    },
+    {
+      "level": "error",
+      "path": "/settings/login/type",
+      "code": "oauth-unsupported"
+    },
+    {
+      "level": "error",
+      "path": "/settings/port/default",
+      "code": "bad-default"
+    }
+  ],
+  "invalid/yaml-alias.yaml": [
+    {
+      "level": "error",
+      "path": "",
+      "code": "yaml"
+    }
+  ],
+  "invalid/yaml-duplicate-key.yaml": [
+    {
+      "level": "error",
+      "path": "",
+      "code": "yaml"
+    }
+  ],
+  "invalid/yaml-tag.yaml": [
+    {
+      "level": "error",
+      "path": "",
+      "code": "yaml"
+    }
+  ],
+  "valid/core.yaml": [],
+  "valid/deluge.yaml": [],
+  "valid/everything.yaml": [],
+  "valid/homework.yaml": [],
+  "valid/pikvm.yaml": [],
+  "valid/warnings.yaml": [
+    {
+      "level": "warning",
+      "path": "/caps/serial.send/action/serial",
+      "code": "unknown-action"
+    },
+    {
+      "level": "warning",
+      "path": "/caps/zap/color",
+      "code": "unknown-key"
+    },
+    {
+      "level": "warning",
+      "path": "/caps/zap/effects/0",
+      "code": "effect-risk-mismatch"
+    },
+    {
+      "level": "warning",
+      "path": "/caps/zap/effects/1",
+      "code": "unknown-effect"
+    },
+    {
+      "level": "warning",
+      "path": "/emits/zapped",
+      "code": "event-namespace"
+    },
+    {
+      "level": "warning",
+      "path": "/future_section",
+      "code": "unknown-key"
+    },
+    {
+      "level": "warning",
+      "path": "/presets/teen",
+      "code": "unknown-preset"
+    },
+    {
+      "level": "warning",
+      "path": "/routes/open/auth",
+      "code": "route-auth-none"
+    }
+  ]
+}

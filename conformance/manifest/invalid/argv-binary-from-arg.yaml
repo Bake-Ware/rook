@@ -1,0 +1,19 @@
+manifest: 1
+plugin: thing
+version: 1.0.0
+caps:
+  launch:
+    doc: Run a program.
+    risk: write
+    scope: local
+    args: { program: { type: str, required: true } }
+    action:
+      exec:
+        argv: ["{{args.program}}", "--quiet"]
+        try: [ { argv: [[sudo, "{{ args.program }}"]] } ]
+  launch-ok:
+    doc: Run a program (declared as exec).
+    risk: exec
+    scope: local
+    args: { program: { type: str, required: true } }
+    action: { exec: { argv: ["{{args.program}}"] } }

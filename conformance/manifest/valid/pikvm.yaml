@@ -1,0 +1,31 @@
+# The whole-plugin example from the castling-manifest page, verbatim.
+manifest: 1
+plugin: pikvm
+version: 1.0.0
+package: devices
+appliance:
+  discover: [ { http: { url: "https://{{host}}/api/info", match: kvmd } } ]
+  settings: { password: { secret: true, setup: Ask the user for the PiKVM web password. } }
+caps:
+  power.set:
+    doc: Press the ATX power button.
+    risk: write
+    scope: local
+    effects: [physical]
+    args: { action: { type: str, enum: [on, off, off_hard, reset_hard], required: true } }
+    action:
+      http:
+        method: POST
+        url: "https://{{appliance.host}}/api/atx/power"
+        query: { action: "{{args.action}}" }
+        auth: { basic: [admin, "{{appliance.password}}"] }
+        tls: { verify: false }
+  screen.get:
+    doc: Current screen as JPEG.
+    risk: read
+    scope: local
+    effects: [sensitive]
+    action:
+      http: { url: "https://{{appliance.host}}/api/streamer/snapshot", auth: { basic: [admin, "{{appliance.password}}"] }, tls: { verify: false } }
+      parse: bytes
+check: [pikvm.screen.get]

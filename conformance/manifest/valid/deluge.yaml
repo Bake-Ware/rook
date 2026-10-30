@@ -1,0 +1,46 @@
+# The castling-plugins example shape, in manifest format 1.
+manifest: 1
+plugin: deluge
+version: 1.2.0
+requires: { bins: [deluge-console] }
+settings:
+  console:
+    default: deluge-console
+    doc: Path to deluge-console.
+    setup: Find the Deluge console executable and set this.
+  password: { where: hub, secret: true }
+caps:
+  torrents.list:
+    doc: List torrents.
+    risk: read
+    scope: local
+    tags: [media]
+    tip: Use state to filter; ids work with torrents.remove.
+    examples: [{ args: { state: Seeding } }]
+    args: { state: { type: str, enum: [Downloading, Seeding, Paused] } }
+    result: { type: list, items: { type: map, fields: { id: { type: str }, name: { type: str } } } }
+    timeout: 30s
+    idempotent: true
+    aliases: [deluge.list]
+    action:
+      exec:
+        argv: ["{{settings.console}}", "info", ["-s", "{{args.state}}"]]
+        windows: { argv: ["{{settings.console}}.exe", "info"] }
+        env: { LANG: C }
+      parse: { regex: "^ID: (?P<id>\\S+)", each: true }
+      returns: [id]
+  torrents.remove:
+    doc: Remove a torrent and its data.
+    risk: write
+    scope: local
+    effects: [destructive]
+    args: { id: { type: str, required: true } }
+    action:
+      exec: { argv: ["{{settings.console}}", "rm", "--remove_data", "{{args.id}}"] }
+  stats.custom:
+    doc: Custom stats.
+    risk: read
+    scope: local
+    run: scripts/stats.py:collect
+hooks:
+  every: [ { interval: 5m, call: deluge.stats.custom } ]
