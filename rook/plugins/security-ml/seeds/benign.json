@@ -1,0 +1,913 @@
+[
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "git",
+    "status"
+   ]
+  },
+  "why": "See what changed in the checkout.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "git",
+    "pull",
+    "--ff-only"
+   ]
+  },
+  "why": "Update the checkout before working.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "git",
+    "log",
+    "-1",
+    "--oneline"
+   ]
+  },
+  "why": "Check the deployed commit.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "git",
+    "diff",
+    "--stat"
+   ]
+  },
+  "why": "Review my changes.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "git",
+    "push",
+    "origin",
+    "fix/login"
+   ]
+  },
+  "why": "Push the branch for review.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/test_login.py"
+   ]
+  },
+  "why": "Run the login tests.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "npm",
+    "test"
+   ]
+  },
+  "why": "Run the frontend tests.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "make",
+    "build"
+   ]
+  },
+  "why": "Build the project.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "ls",
+    "-la",
+    "/srv/media"
+   ]
+  },
+  "why": "List the media folder.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "cmd": "df -h / | tail -1"
+  },
+  "why": "Check free disk space.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "free",
+    "-h"
+   ]
+  },
+  "why": "Check memory use.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "uptime"
+   ]
+  },
+  "why": "See how long the box has been up.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "systemctl",
+    "status",
+    "nginx",
+    "--no-pager"
+   ]
+  },
+  "why": "Check the web server is running.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "journalctl",
+    "-u",
+    "rook-worker",
+    "-n",
+    "50",
+    "--no-pager"
+   ]
+  },
+  "why": "Read the worker's recent log.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "docker",
+    "ps"
+   ]
+  },
+  "why": "List running containers.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "docker",
+    "compose",
+    "up",
+    "-d"
+   ]
+  },
+  "why": "Start the media stack.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "nvidia-smi"
+   ]
+  },
+  "why": "Check GPU memory before loading the model.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "cmd": "grep -rn 'TODO' src | head -20"
+  },
+  "why": "Find open TODOs in the source.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "cat",
+    "README.md"
+   ]
+  },
+  "why": "Read the project readme.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "tail",
+    "-n",
+    "100",
+    "/var/log/nginx/error.log"
+   ]
+  },
+  "why": "Look for web server errors.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "cmd": "curl -s http://localhost:8080/health"
+  },
+  "why": "Check the service answers on its health endpoint.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "curl",
+    "-sI",
+    "https://example.com"
+   ]
+  },
+  "why": "Check the site responds.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "rsync",
+    "-a",
+    "--delete",
+    "/srv/photos/",
+    "/mnt/backup/photos/"
+   ]
+  },
+  "why": "Back up the photos to the NAS.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "sudo",
+    "systemctl",
+    "restart",
+    "nginx"
+   ]
+  },
+  "why": "Restart the web server after the config change.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "pip",
+    "list",
+    "--outdated"
+   ]
+  },
+  "why": "See which packages are stale.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "ffmpeg",
+    "-i",
+    "in.mkv",
+    "-c",
+    "copy",
+    "out.mp4"
+   ]
+  },
+  "why": "Remux the video for the TV.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "crontab",
+    "-l"
+   ]
+  },
+  "why": "List the scheduled jobs.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "ping",
+    "-c",
+    "3",
+    "192.168.1.1"
+   ]
+  },
+  "why": "Check the router answers.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "ssh",
+    "kaiju",
+    "uptime"
+   ]
+  },
+  "why": "Check the GPU box is up.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "cmd": "ps aux --sort=-%mem | head -5"
+  },
+  "why": "Find what is using memory.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "python",
+    "manage.py",
+    "migrate"
+   ]
+  },
+  "why": "Apply the database migrations.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "cargo",
+    "build",
+    "--release"
+   ]
+  },
+  "why": "Build the release binary.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "gh",
+    "pr",
+    "list"
+   ]
+  },
+  "why": "List open pull requests.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "shell.exec",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "argv": [
+    "code",
+    "--version"
+   ]
+  },
+  "why": "Check the editor version.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "file.read",
+  "risk": "read",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "path": "/home/bake/projects/site/config.yaml"
+  },
+  "why": "Read the site config.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "file.read",
+  "risk": "read",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "path": "/srv/notes/todo.md"
+  },
+  "why": "Read my todo list.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "file.write",
+  "risk": "exec",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "path": "/srv/notes/todo.md",
+   "content": "- buy milk\n"
+  },
+  "why": "Add to the todo list.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "file.list",
+  "risk": "read",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "path": "/srv/media/movies"
+  },
+  "why": "List the movies.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "file.stat",
+  "risk": "read",
+  "scope": "local",
+  "effects": [],
+  "args": {
+   "path": "/srv/media/movies/a.mkv"
+  },
+  "why": "Check the file finished downloading.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "battery.status",
+  "risk": "read",
+  "scope": "self",
+  "effects": [],
+  "args": {},
+  "why": "Check the laptop battery.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "torrent.list",
+  "risk": "read",
+  "scope": "local",
+  "effects": [],
+  "args": {},
+  "why": "See what is downloading.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "torrent.add",
+  "risk": "write",
+  "scope": "external",
+  "effects": [],
+  "args": {
+   "url": "magnet:?xt=urn:btih:abc"
+  },
+  "why": "Download the show Bake asked for.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "tv.power",
+  "risk": "write",
+  "scope": "local",
+  "effects": [
+   "physical"
+  ],
+  "args": {
+   "on": true
+  },
+  "why": "Turn the TV on for movie night.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "tv.volume",
+  "risk": "write",
+  "scope": "local",
+  "effects": [
+   "physical"
+  ],
+  "args": {
+   "level": 12
+  },
+  "why": "Turn the TV down.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "task.task.list",
+  "risk": "read",
+  "scope": "multi-user",
+  "effects": [],
+  "args": {
+   "project": "castling"
+  },
+  "why": "See the open tasks.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "task.claim",
+  "risk": "write",
+  "scope": "multi-user",
+  "effects": [],
+  "args": {
+   "id": "t_1"
+  },
+  "why": "Claim the task before working.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "knowledge.page.search",
+  "risk": "read",
+  "scope": "multi-user",
+  "effects": [],
+  "args": {
+   "query": "deploy hub"
+  },
+  "why": "Look up how the hub is deployed.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "agents.chat.send",
+  "risk": "write",
+  "scope": "multi-user",
+  "effects": [],
+  "args": {
+   "agent": "house",
+   "text": "Tests pass."
+  },
+  "why": "Tell the house agent the result.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "web.fetch",
+  "risk": "read",
+  "scope": "external",
+  "effects": [
+   "taints"
+  ],
+  "args": {
+   "url": "https://docs.python.org/3/library/asyncio.html"
+  },
+  "why": "Read the asyncio docs.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "notify.send",
+  "risk": "write",
+  "scope": "external",
+  "effects": [],
+  "args": {
+   "text": "Backup finished."
+  },
+  "why": "Tell Bake the backup finished.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "screen.capture",
+  "risk": "read",
+  "scope": "local",
+  "effects": [
+   "sensitive"
+  ],
+  "args": {},
+  "why": "See what is on the screen.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ },
+ {
+  "cap": "journal.search",
+  "risk": "read",
+  "scope": "multi-user",
+  "effects": [
+   "sensitive"
+  ],
+  "args": {
+   "limit": 20
+  },
+  "why": "Review recent calls.",
+  "worker": "kaiju",
+  "caller": {
+   "person": "person:bake",
+   "agent": "agent:claude-code"
+  }
+ }
+]

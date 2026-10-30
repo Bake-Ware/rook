@@ -8,14 +8,14 @@ millisecond on a small CPU. The gate ships in shadow mode: verdicts are
 journaled and never count until an owner switches it to enforce.
 
 The shipped model (model/baseline.json) is trained from the seed calls in
-data/ (``python scripts/ml.py --baseline`` rebuilds it). ``security-ml.train``
+seeds/ (``python scripts/ml.py --baseline`` rebuilds it). ``security-ml.train``
 retrains from the journal (the nightly job below runs it as its creator, an
 owner, since only owners read the whole journal) and:
 
 - never learns from flagged calls: a session with any call a gate flagged,
   blocked or held is left out whole, and so are this plugin family's own
   sessions;
-- tests the candidate on the locked attack set (data/locked-attacks.json,
+- tests the candidate on the locked attack set (seeds/locked-attacks.json,
   part of the signed plugin, never trained on): every one must be flagged,
   and at most ``max_fp`` of the newest clean calls (held out) may be;
 - promotes only after ``clean_nights`` passing runs in a row, since a new
@@ -73,7 +73,7 @@ async def check(inp: dict) -> dict:
 # -- seed data and the baseline ------------------------------------------------------
 
 def seeds(name: str) -> list:
-    return json.loads((PLUGIN_DIR / "data" / f"{name}.json").read_text(encoding="utf-8"))
+    return json.loads((PLUGIN_DIR / "seeds" / f"{name}.json").read_text(encoding="utf-8"))
 
 
 ACTORS = [{"person": "person:bake"}, {"person": "person:bake", "agent": "agent:claude-code"},
