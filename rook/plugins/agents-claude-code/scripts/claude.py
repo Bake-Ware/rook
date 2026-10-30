@@ -50,9 +50,11 @@ async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, sys
     try:
         out, err = await asyncio.wait_for(proc.communicate(prompt.encode("utf-8")), parse_duration(timeout))
     except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
         raise ctx.Error(f"Claude Code took longer than {timeout}", retry=True) from None
+    finally:
+        if proc.returncode is None:      # timed out or the call was cancelled: no orphan turn
+            proc.kill()
+            await proc.wait()
     return parse(ctx, proc.returncode, out, err)
 
 

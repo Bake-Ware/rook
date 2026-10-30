@@ -76,6 +76,28 @@ def test_a_slow_turn_is_killed(tmp_path, bins, monkeypatch):
     assert e.value.retry
 
 
+def test_a_cancelled_turn_kills_claude(tmp_path, bins, monkeypatch):
+    import asyncio
+    import subprocess
+    bins.add("claude", CLAUDE)
+    monkeypatch.setenv("FAKE_CLAUDE", "slow")
+    m = load(FOLDER, CONTRACTS).data
+    func = load_run(FOLDER, "scripts/claude.py:turn", {})
+
+    async def body():
+        task = asyncio.ensure_future(invoke(func, Ctx(m, ME, data_dir=tmp_path / "data", cap="turn"), {"prompt": "x"}))
+        for _ in range(250):
+            if (bins.dir / "claude.stdin").exists():
+                break
+            await asyncio.sleep(0.02)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    go(body)
+    ps = subprocess.run(["pgrep", "-f", str(bins.dir / "claude")], capture_output=True, text=True)
+    assert ps.stdout.strip() == ""
+
+
 def test_missing_program_and_folder(tmp_path, bins):
     with pytest.raises(KitError, match="nope not found: install Claude Code"):
         turn(tmp_path, {"claude": "nope"}, prompt="x")
