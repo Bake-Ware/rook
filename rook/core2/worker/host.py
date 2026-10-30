@@ -7,11 +7,12 @@
     await host.rollback("deluge")                   # back to the kept version
     announce = {**base, **await host.announce(ceiling)}
 
-Calls arrive here after core verified the ticket (security.py) and built the
-:class:`~rook.kit.ctx.Caller` from it. The host checks args against the
-manifest, merges ``bind``, takes the cap's ``exclusive`` lock, runs the
-action or ``run:`` function under the cap's timeout, and turns every failure
-into :class:`CallError`: a plugin never takes the worker down.
+A request from a band goes through :meth:`Host.handle`: the worker gate
+(security.py) checks its ticket (spec 6.3) and runs it, elevating when the
+cap asks; the host checks args against the manifest, merges ``bind``, takes
+the cap's ``exclusive`` lock, runs the action or ``run:`` function under the
+cap's timeout, and turns every failure into an error reply: a plugin never
+takes the worker down. The gate's cap table follows every load and unload.
 
 Replacing a plugin stops the old version's hooks, binds the new one from its
 folder and starts its hooks; if that fails the old one comes back. The
@@ -40,6 +41,7 @@ from rook.kit.ctx import Caller, Ctx, FileResult, KitError, invoke
 from rook.kit.hooks import Scheduler
 
 from .loader import LoadError, Plugin, load_builtin, load_folder, local_os, merge_settings
+from .security import Call, NeedsElevation, WorkerGate, reply
 
 __all__ = ["CallError", "Host", "LoadError"]
 
@@ -73,7 +75,7 @@ class Host:
                  store_setting: Callable | None = None, emit: Callable | None = None,
                  data_root: str | Path | None = None, streams: Any = None,
                  contracts: dict | None = None, may_receive: Callable | None = None,
-                 hook_timeout: float = 30.0):
+                 hook_timeout: float = 30.0, gate: WorkerGate | None = None):
         self.os_name = os_name or local_os()
         self.hardware = set(hardware)
         self.dispatch = dispatch
@@ -90,13 +92,19 @@ class Host:
         self._hub: dict[str, dict] = {}           # hub-provided setting values per plugin
         self._locks: dict[str, asyncio.Lock] = {}  # exclusive: lock name -> lock, per worker
         self._admin = asyncio.Lock()               # one load/unload at a time
+        self.gate = gate
+        self._sync()
 
     # -- loading ----------------------------------------------------------------
 
     def add_builtin(self, data: dict, handlers: Mapping[str, Callable[..., Any]]) -> Plugin:
         """Register a ``builtin: true`` manifest (core) and its handlers."""
-        p = load_builtin(data, handlers, os_name=self.os_name, hardware=self.hardware)
+        # Core caps that need the verified call are answered by handle(); a
+        # stub handler marks them served.
+        own = {cap: _handled_by_host for cap in _HOST_CAPS}
+        p = load_builtin(data, {**own, **handlers}, os_name=self.os_name, hardware=self.hardware)
         self.plugins[p.name] = p
+        self._sync()
         return p
 
     async def load(self, folder: str | Path) -> Plugin:
@@ -129,6 +137,7 @@ class Host:
             await self.scheduler.stop(name)
             del self.plugins[name]
             self._keep(p)
+            self._sync()
 
     async def set_settings(self, name: str, *, local: Mapping | None = None,
                            hub: Mapping | None = None) -> None:
@@ -161,6 +170,7 @@ class Host:
             for p in self.plugins.values():
                 p.forget_modules()
             self.plugins.clear()
+            self._sync()
 
     def _loaded(self, name: str) -> Plugin:
         p = self.plugins.get(name)
@@ -192,6 +202,7 @@ class Host:
                 raise
             raise LoadError(f"{new.name}: start hook failed: {_message(e)}") from e
         self.plugins[new.name] = new
+        self._sync()
         if old is not None:
             if keep:
                 self._keep(old)
@@ -223,14 +234,52 @@ class Host:
     # -- calls ------------------------------------------------------------------
 
     def caps(self) -> dict[str, dict]:
-        """``{cap: {"risk", "effects"}}`` for every cap served now (aliases
-        included): what the ticket check (spec 6.3) needs."""
-        return {name: {"risk": c.spec["risk"], "effects": list(c.spec.get("effects", ()))}
+        """``{cap: {"risk", "effects", "elevation"}}`` for every cap served
+        now (aliases included): what the worker gate checks (spec 6.3, 7)."""
+        return {name: {"risk": c.spec["risk"], "effects": list(c.spec.get("effects", ())),
+                       "elevation": c.spec.get("elevation", "never")}
                 for p in self.plugins.values() for name, c in p.caps.items()}
 
-    async def call(self, cap: str, args: Mapping | None, caller: Caller) -> Any:
-        """Run one cap for ``caller`` (from a verified ticket). Returns the
-        JSON-able result or raises CallError."""
+    def _sync(self) -> None:
+        if self.gate is not None:
+            self.gate.caps.clear()
+            self.gate.caps.update(self.caps())
+
+    async def handle(self, request: Any, band: str, now: int | None = None) -> dict | None:
+        """One request that arrived on ``band``: the reply to send, or None
+        when it isn't for this worker. Needs a ``gate``."""
+        got = self.gate.check(request, band, now)
+        if not isinstance(got, Call):
+            return got
+        call, cap = got, got.ticket["cap"]
+        args = request.get("args") or {}
+        info = call.context()
+        caller = Caller(person=info["person"], agent=info["agent"], session=info["session"],
+                        band=band, why=info["why"])
+
+        async def action(lease):
+            if cap == "core.manifests":
+                return self.manifests(args.get("plugins"), call.member.ceiling)
+            if cap == "core.lease.drop":
+                return self.gate.drop_leases(call.ticket["hub"], band, args)
+            return await self.call(cap, args, caller, lease=lease)
+
+        try:
+            return await self.gate.execute(call, action, now)
+        except CallError as e:
+            out = reply(request["id"], self.gate.worker_id, error=e.message)
+            if e.retry:
+                out["retry"] = True
+            return out
+        except (NeedsElevation, PermissionError) as e:   # a cap that may not elevate hit access denied
+            return reply(request["id"], self.gate.worker_id,
+                         error=f"{cap} failed: access denied{': ' + str(e) if str(e) else ''}")
+
+    async def call(self, cap: str, args: Mapping | None, caller: Caller, lease: dict | None = None) -> Any:
+        """Run one cap for ``caller`` (from a verified ticket), elevated when
+        ``lease`` is set. Returns the JSON-able result or raises CallError;
+        access denied (``NeedsElevation``, ``PermissionError``) passes through
+        so the gate can elevate and run it again."""
         p, c = self._find(cap)
         args = dict(args or {})
         errors = sorted(c.validator.iter_errors(args), key=lambda e: list(e.absolute_path))
@@ -253,7 +302,7 @@ class Host:
             except TimeoutError:
                 raise CallError(f"busy: {c.spec['exclusive']} is in use", retry=True) from None
         shown: list[str] = []   # secret values this call's code was handed
-        work = asyncio.ensure_future(self._exec(p, c, args, caller, shown))
+        work = asyncio.ensure_future(self._exec(p, c, args, caller, shown, lease))
         work.add_done_callback(_retrieve)
         if lock is not None:
             # Held until the work really ends: a timed-out sync function keeps
@@ -275,7 +324,7 @@ class Host:
             raise CallError(f"{cap} timed out after {c.timeout:g}s", retry=True)
         try:
             return _jsonable(work.result())
-        except CallError:
+        except (CallError, NeedsElevation, PermissionError):
             raise
         except (KitError, ActionError) as e:
             msg = _redact(getattr(e, "message", None) or str(e), shown)
@@ -300,9 +349,15 @@ class Host:
                 raise CallError(f"unavailable: {cap}: {p.unavailable[cap]}")
         raise CallError(f"unknown capability: {cap}")
 
-    async def _exec(self, p: Plugin, c, args: dict, caller: Caller, shown: list[str]) -> Any:
+    async def _exec(self, p: Plugin, c, args: dict, caller: Caller, shown: list[str],
+                    lease: dict | None = None) -> Any:
         if c.action is None:
-            return await invoke(c.func, self._ctx(p, caller, shown), args)
+            ctx = self._ctx(p, caller, shown)
+            # TODO(castling:wiring): the call context (6.6: hub, call id, risk,
+            # lease) belongs on Caller; until then the lease rides on ctx so
+            # plugin code can pass it to security.launch.
+            ctx.lease = lease
+            return await invoke(c.func, ctx, args)
         text = json.dumps(c.action)
         settings = self._action_settings(p, set(_SETTING_REF.findall(text)))
         tmp = tempfile.TemporaryDirectory(prefix=f"rook-{p.name}-") if _TMP_REF.search(text) else None
@@ -410,6 +465,13 @@ def _retrieve(task: asyncio.Future) -> None:
     """Mark a finished call's exception as seen (a timed-out call ends later)."""
     if not task.cancelled():
         task.exception()
+
+
+_HOST_CAPS = ("core.manifests", "core.lease.drop")
+
+
+def _handled_by_host(ctx, **args):
+    raise KitError("served through Host.handle")
 
 
 def _required_settings(manifest: Mapping) -> set:

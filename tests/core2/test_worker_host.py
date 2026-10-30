@@ -426,7 +426,7 @@ def test_announce_and_filtered_view(tmp_path):
         assert ann["manifests_hash"] == hashlib.sha256(wire.canonical(ann["manifests"])).hexdigest()
         assert ann["unavailable"]["core.trust.get"] == "not implemented on this worker"
         assert "core.manifests" in host.caps()
-        assert host.caps()["counter.hold"] == {"risk": "write", "effects": []}
+        assert host.caps()["counter.hold"] == {"risk": "write", "effects": [], "elevation": "never"}
         assert host.caps()["echo.speak"] == host.caps()["echo.say"]
 
         # A band whose ceiling grants only echo.* sees core (core.manifests is
