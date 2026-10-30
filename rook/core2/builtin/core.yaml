@@ -1,0 +1,296 @@
+# Core's own manifest (castling-manifest-builtin): implemented inside the hub
+# and worker binaries, announced, never pushed. It defines the base contracts
+# every provider plugin is checked against, the events core emits and the four
+# user presets (castling-manifest-presets; spec core-v2 8.5).
+#
+# Contracts route one of two ways (coverage gap B2):
+#   route: provider  the hub's service cap goes to the chosen provider (a hub
+#                    setting; default the first installed).
+#   route: target    the call names a worker or appliance and goes to what
+#                    provides the contract there (device contracts).
+# A provider accepts every contract arg with the same type and requires none
+# the contract doesn't; it may take extra optional args of its own.
+# TODO(castling:manifest-v11): `route` joins the contract schema in manifest
+# v1.1; until then the validator warns it is an unknown key.
+manifest: 1
+plugin: core
+version: 0.5.0-draft.1
+title: Rook core
+doc: The hub and worker core. Defines the base contracts, core events and user presets.
+package: core
+builtin: true
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+
+contracts:
+  # -- services: the hub routes to one chosen provider ----------------------
+
+  notify.send:
+    doc: Get a message to a person on their chat channels (Telegram, Discord, ...).
+    route: provider
+    args:
+      text: { type: str, required: true, doc: The message. }
+      to: { type: str, doc: "The person to reach (their name); blank: the hub's owners." }
+      title: { type: str, doc: "A short heading, where the channel shows one." }
+
+  llm.complete:
+    doc: One completion from a language model (an OpenAI-compatible endpoint, a local model, an API).
+    route: provider
+    args:
+      messages:
+        type: list
+        required: true
+        doc: The conversation, oldest first.
+        items:
+          type: map
+          fields:
+            role: { type: str, required: true, enum: [system, user, assistant] }
+            content: { type: str, required: true }
+      model: { type: str, doc: "A model id the provider offers; blank: its default." }
+      max_tokens: { type: int, min: 1, doc: Longest reply. }
+      temperature: { type: float, min: 0, max: 2 }
+      stop: { type: list, items: { type: str }, max: 4, doc: Stop sequences. }
+    result:
+      type: map
+      fields:
+        text: { type: str, required: true }
+        model: { type: str }
+        stop_reason: { type: str, doc: "end, length or stop." }
+        usage: { type: map, items: { type: int }, doc: "Token counts: input, output." }
+
+  agent.backend:
+    doc: One agent turn in a harness (Claude Code, Codex, OpenCode, a local or API agent).
+    route: provider
+    args:
+      prompt: { type: str, required: true }
+      session: { type: str, doc: "The harness's session id to resume; blank: a new session." }
+      cwd: { type: str, doc: The folder the agent works in. }
+      model: { type: str, doc: "blank: the harness's default." }
+      effort: { type: str, doc: "Reasoning effort, where the harness has one; blank: its default." }
+      system: { type: str, doc: Appended to the harness's own system prompt. }
+      timeout: { type: duration, doc: How long the turn may take. }
+    result:
+      type: map
+      fields:
+        text: { type: str, required: true, doc: The agent's reply. }
+        session: { type: str, required: true, doc: Pass back to continue the conversation. }
+        usage: { type: map, items: { type: int } }
+
+  # TODO(bake): `voice` is both the device speech contracts' namespace and the
+  # hub voice service's (coverage gap B10); Bake is deciding which one moves.
+  voice.tts:
+    doc: Text to speech.
+    route: provider
+    args:
+      text: { type: str, required: true }
+      voice: { type: str, doc: "A voice the provider offers; blank: the band's default." }
+    result: { type: file, doc: "The audio (its mime type says the format)." }
+
+  voice.stt:
+    doc: Speech to text.
+    route: provider
+    args:
+      audio: { type: file, required: true }
+      language: { type: str, doc: "BCP 47 tag (en, en-US); blank: detect." }
+    result:
+      type: map
+      fields:
+        text: { type: str, required: true }
+        language: { type: str }
+
+  # -- devices: the call names the device (coverage gaps B2, B4) ------------
+
+  hid.click:
+    doc: Click or tap. With x and y, at that pixel (top-left origin); without, where the pointer is (a touch screen needs x and y).
+    route: target
+    args:
+      x: { type: int, min: 0 }
+      y: { type: int, min: 0 }
+      button: { type: str, enum: [left, right, middle], default: left }
+
+  hid.key:
+    doc: Press and release a key, with modifiers held.
+    route: target
+    args:
+      key:
+        type: str
+        required: true
+        doc: "A key name: enter, escape, tab, backspace, up, down, left, right, home, back, f1..f12, a letter or digit."
+      mods: { type: list, items: { type: str, enum: [ctrl, shift, alt, meta] } }
+
+  hid.drag:
+    doc: Press at (x1, y1), move to (x2, y2), release; a swipe on a touch screen.
+    route: target
+    args:
+      x1: { type: int, required: true, min: 0 }
+      y1: { type: int, required: true, min: 0 }
+      x2: { type: int, required: true, min: 0 }
+      y2: { type: int, required: true, min: 0 }
+      duration: { type: duration, default: 300ms }
+      button: { type: str, enum: [left, right, middle], default: left }
+
+  hid.type:
+    doc: Type text into whatever has focus, as a keyboard would.
+    route: target
+    args:
+      text: { type: str, required: true }
+      enter: { type: bool, default: false, doc: Press Enter after the text. }
+
+  app.launch:
+    doc: Open an app.
+    route: target
+    args:
+      app: { type: str, required: true, doc: "Its id (an Android package, a TV app id) or its launcher name (Maps, YouTube)." }
+      params: { type: json, doc: "Launch parameters (intent extras, a TV app's contentTarget)." }
+
+  notification.post:
+    doc: Show a notification on the device.
+    route: target
+    args:
+      text: { type: str, required: true }
+      title: { type: str }
+
+  power.off:
+    doc: Turn the device off.
+    route: target
+    args:
+      force: { type: bool, default: false, doc: "Hard off (hold the power button) instead of a clean shutdown." }
+
+  screen.capture:
+    doc: The screen as an image.
+    route: target
+    args:
+      quality: { type: int, min: 1, max: 100, doc: "JPEG quality; blank: the device's default." }
+    result: { type: file, doc: A JPEG or PNG. }
+
+  screen.on:
+    doc: Turn the screen on (wake it).
+    route: target
+
+  sound.set:
+    doc: Set the volume. Give level, step or mute.
+    route: target
+    args:
+      level: { type: int, min: 0, max: 100, doc: Volume in percent. }
+      step: { type: int, doc: "Move the volume by this many steps (+3, -2)." }
+      mute: { type: bool }
+
+  media.play:
+    doc: Play (or resume) the current media.
+    route: target
+  media.pause:
+    doc: Pause the current media.
+    route: target
+  media.stop:
+    doc: Stop the current media.
+    route: target
+  media.next:
+    doc: Skip to the next track or episode.
+    route: target
+  media.previous:
+    doc: Go back to the previous track or episode.
+    route: target
+  media.seek:
+    doc: Move within the current media.
+    route: target
+    args:
+      by: { type: int, doc: "Seconds; negative goes back. Blank: the player's own skip forward." }
+
+  ui.screen:
+    doc: What is on the screen as text, with the centre of each element to click.
+    route: target
+    args:
+      limit: { type: int, min: 1, doc: Most elements to return. }
+    result:
+      type: map
+      fields:
+        app: { type: str, doc: The app in front. }
+        items:
+          type: list
+          items:
+            type: map
+            fields:
+              text: { type: str }
+              x: { type: int }
+              y: { type: int }
+
+emits:
+  worker.online:
+    doc: A worker joined (or rejoined) the band.
+    payload:
+      worker: { type: str, required: true, doc: Its worker_id. }
+      name: { type: str }
+      version: { type: str }
+  worker.offline:
+    doc: A worker stopped answering.
+    payload:
+      worker: { type: str, required: true }
+      name: { type: str }
+      last_seen: { type: time }
+  worker.updated:
+    doc: A worker now runs another build.
+    payload:
+      worker: { type: str, required: true }
+      name: { type: str }
+      from: { type: str }
+      to: { type: str, required: true }
+  plugin.installed:
+    doc: A plugin was installed on the hub or a worker.
+    payload:
+      plugin: { type: str, required: true }
+      version: { type: str, required: true }
+      worker: { type: str, doc: "blank: the hub." }
+  plugin.updated:
+    doc: A plugin moved to another version (an update or a rollback).
+    payload:
+      plugin: { type: str, required: true }
+      from: { type: str }
+      to: { type: str, required: true }
+      worker: { type: str }
+  plugin.removed:
+    doc: A plugin was uninstalled.
+    payload:
+      plugin: { type: str, required: true }
+      version: { type: str }
+      worker: { type: str }
+  hold.created:
+    doc: A call is waiting for a person's approval.
+    payload:
+      hold: { type: str, required: true }
+      cap: { type: str, required: true }
+      worker: { type: str }
+      person: { type: str }
+      agent: { type: str }
+      why: { type: str }
+  hold.decided:
+    doc: A person answered a hold.
+    payload:
+      hold: { type: str, required: true }
+      decision: { type: str, required: true, enum: [approved, denied] }
+      by: { type: str }
+  session.started:
+    doc: An agent session began.
+    payload:
+      session: { type: str, required: true }
+      agent: { type: str }
+      person: { type: str }
+  session.ended:
+    doc: An agent session ended.
+    payload:
+      session: { type: str, required: true }
+      agent: { type: str }
+      tainted: { type: bool }
+  gate.blocked:
+    doc: A gate blocked a call (a security event, for triage).
+    payload:
+      cap: { type: str, required: true }
+      worker: { type: str }
+      session: { type: str }
+      reason: { type: str }
+
+presets:
+  owner: { grants: ["*"] }
+  adult: { grants: ["*"], max_risk: admin }
+  child: { grants: ["agents.chat.*", pages.view], max_risk: write, effects: [], approve_new: owner }
+  guest: { grants: ["agents.chat.*"], max_risk: write, effects: [], expires: 7d }

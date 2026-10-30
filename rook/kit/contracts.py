@@ -11,9 +11,14 @@ to the chosen provider: the one picked in the hub setting (house agent or
 user), else the first installed. The provider runs with the original caller's
 rights, as if they had called it directly.
 
-The compatibility check here is by argument names (the provider accepts every
-contract arg and needs nothing the contract doesn't give).
-TODO(castling:manifest): swap for the validator's full schema check.
+A contract with ``route: target`` (device contracts: ``screen.capture``,
+``hid.click``) has no chosen provider: the call names a worker or appliance
+and goes to whatever provides the contract there, which is the dispatcher's
+job, not this registry's.
+
+Compatibility is the manifest validator's check: the provider accepts every
+contract arg with the same type, needs nothing the contract doesn't give and
+returns what the contract promises.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ import inspect
 from typing import Any, Callable, Mapping, MutableMapping
 
 from .ctx import Caller, KitError
+from .manifest.validate import contract_problems
 
 __all__ = ["Contracts"]
 
@@ -93,6 +99,8 @@ class Contracts:
 
     def choose(self, contract: str) -> str:
         """The provider cap a call to ``contract`` goes to."""
+        if (self.contract(contract) or {}).get("route") == "target":
+            raise KitError(f"{contract} routes by target: call it on a worker or appliance")
         installed = self.providers(contract)
         if not installed:
             raise KitError(f"nothing provides {contract}; install a plugin that does")
@@ -116,14 +124,6 @@ class Contracts:
 
 
 def _check_compatible(contract: str, spec: Mapping, cap: str, cap_spec: Mapping) -> None:
-    want = spec.get("args") or {}
-    have = cap_spec.get("args") or {}
-    missing = [a for a in want if a not in have]
-    extra = [a for a, s in have.items() if (s or {}).get("required") and a not in want]
-    if missing or extra:
-        why = []
-        if missing:
-            why.append(f"doesn't take {', '.join(missing)}")
-        if extra:
-            why.append(f"requires {', '.join(extra)} the contract doesn't give")
-        raise KitError(f"{cap} can't provide {contract}: it {' and '.join(why)}")
+    problems = contract_problems(spec, cap_spec)
+    if problems:
+        raise KitError(f"{cap} can't provide {contract}: {'; '.join(problems)}")

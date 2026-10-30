@@ -1,10 +1,12 @@
 """The call context every ``run:`` function gets (castling-manifest-2, "Python contract").
 
 ``def func(ctx, **args)`` (sync or async) returns JSON-able data,
-``ctx.file(...)`` or ``ctx.stream(...)``. ``ctx`` carries who is asking
-(person, agent, session, band, why) and the plumbing a plugin would otherwise
-rebuild: settings with secrets resolved, ``call`` limited by the manifest's
-``uses``, records, ``emit``, a data dir, a per-call tmp dir and a logger.
+``ctx.file(...)`` or ``ctx.stream(...)`` (the call answers ``{"stream": id}``
+and the code keeps writing through the handle). ``ctx`` carries who is
+asking (person, agent, session, band, why) and the plumbing a plugin would
+otherwise rebuild: settings with secrets resolved, ``call`` limited by the
+manifest's ``uses``, records, ``emit``, a data dir, a per-call tmp dir and a
+logger.
 
 The host builds one :class:`Ctx` per call and runs the function through
 :func:`invoke`, which awaits async functions, runs sync ones in a thread and
@@ -30,6 +32,8 @@ import types
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
+
+from rook.streams import Producer, StreamError, cap_stream
 
 __all__ = ["Caller", "Ctx", "FileResult", "KitError", "allowed", "invoke", "load_run"]
 
@@ -135,9 +139,15 @@ class Ctx:
                  store_setting: Callable[[str, Any, bool], None] | None = None,
                  records: Any = None, emit: Callable[[str, dict, str], Any] | None = None,
                  data_dir: str | Path | None = None, streams: Any = None,
-                 loop: asyncio.AbstractEventLoop | None = None):
+                 loop: asyncio.AbstractEventLoop | None = None, cap: str | None = None):
         self.plugin = manifest["plugin"]
         self.caller = caller
+        # The cap this call runs (full or relative name); None for hooks.
+        if cap is not None and not cap.startswith(self.plugin + "."):
+            cap = f"{self.plugin}.{cap}"
+        self.cap = cap
+        caps = manifest.get("caps") or {}
+        self._cap_spec = (caps.get(cap) or caps.get(cap[len(self.plugin) + 1:]) or {}) if cap else {}
         self._uses = list(manifest.get("uses") or [])
         self._emits = set(manifest.get("emits") or {})
         for rec in manifest.get("records") or {}:
@@ -233,15 +243,26 @@ class Ctx:
             raise KitError(f"no such file: {p}")
         return FileResult(p, data, name or (p.name if p else None), mime)
 
-    def stream(self, **opts: Any) -> Any:
-        """Open a stream and return its id (castling-streams).
-
-        TODO(castling:streams): delegates to the injected streams service; the
-        interface is the streams agent's (rook/streams/). Until it lands this
-        passes ``opts`` through as ``open(plugin=..., caller=..., **opts)``."""
+    def stream(self, kind: str = "process", *, title: str = "",
+               attrs: Mapping | None = None) -> Producer:
+        """Open the stream this cap declares (``stream:`` in its manifest
+        entry) with this cap as its producer, and return the producer handle:
+        ``handle.id`` is the stream id, ``handle.append(type, body)`` writes,
+        ``handle.inputs()`` takes input. Returning the handle from the
+        function makes the call answer ``{"stream": id}``. Appends belong on
+        the host loop: a thread hands them over with
+        ``loop.call_soon_threadsafe`` (rook.streams)."""
         if self._streams is None:
             raise KitError("streams are not available here")
-        return self._streams.open(plugin=self.plugin, caller=self.caller, **opts)
+        block = self._cap_spec.get("stream")
+        if block is None:
+            raise KitError(f"{self.cap or self.plugin} declares no stream: in its manifest")
+        who = [p for p in (self.caller.person, self.caller.agent) if p]
+        try:
+            return cap_stream(self._streams, block, producer=self.cap, kind=kind, title=title,
+                              participants=who, attrs=dict(attrs or {}))
+        except StreamError as e:
+            raise KitError(str(e)) from None
 
 
 async def _await_call(dispatch: Dispatch, cap: str, args: dict, caller: Caller) -> Any:
@@ -256,9 +277,12 @@ async def invoke(func: Callable[..., Any], ctx: Ctx, args: Mapping | None = None
         ctx._loop = asyncio.get_running_loop()
     try:
         if inspect.iscoroutinefunction(func):
-            return await func(ctx, **(args or {}))
-        res = await asyncio.to_thread(func, ctx, **(args or {}))
-        return await res if inspect.isawaitable(res) else res
+            res = await func(ctx, **(args or {}))
+        else:
+            res = await asyncio.to_thread(func, ctx, **(args or {}))
+            if inspect.isawaitable(res):
+                res = await res
+        return res.result() if isinstance(res, Producer) else res
     finally:
         ctx.cleanup()
 

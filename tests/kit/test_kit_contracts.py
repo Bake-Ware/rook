@@ -66,9 +66,9 @@ async def test_route_as_the_caller():
 def test_compatibility_and_ownership():
     c = Contracts()
     c.load(CORE)
-    with pytest.raises(KitError, match="doesn't take text"):
+    with pytest.raises(KitError, match="no arg text"):
         c.load({"plugin": "sms", "provides": {"notify.send": "send"}, "caps": {"send": {"args": {"to": {}}}}})
-    with pytest.raises(KitError, match="requires number"):
+    with pytest.raises(KitError, match="requires arg number"):
         c.load({"plugin": "sms", "provides": {"notify.send": "send"},
                 "caps": {"send": {"args": {"to": {}, "text": {}, "number": {"required": True}}}}})
     with pytest.raises(KitError, match="doesn't declare"):
@@ -80,5 +80,5 @@ def test_compatibility_and_ownership():
     # A provider may arrive before its contract (load order); it's checked when the contract does.
     c.load({"plugin": "tts", "provides": {"voice.tts": "speak"}, "caps": {"speak": {}}})
     assert c.choose("voice.tts") == "tts.speak"
-    with pytest.raises(KitError, match="doesn't take text"):
+    with pytest.raises(KitError, match="no arg text"):
         c.define("voice.tts", {"args": {"text": {"required": True}}}, "voice")
