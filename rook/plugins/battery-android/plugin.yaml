@@ -1,0 +1,32 @@
+# The phone's battery through BatteryManager: an app can't read
+# /sys/class/power_supply, so the desktop battery plugin never loads here.
+manifest: 1
+plugin: battery-android
+version: 0.5.0
+title: Phone battery
+doc: Charge level and charging state of the phone running the Rook app.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [android]
+caps:
+  battery.status:
+    doc: "The battery: percent, charging, status (charging, discharging, not charging, full or unknown), plugged and temp_c when the phone reports it."
+    risk: read
+    scope: local
+    idempotent: true
+    timeout: 10s
+    result:
+      type: map
+      fields:
+        percent: { type: int }
+        charging: { type: bool }
+        status: { type: str }
+        plugged: { type: bool }
+        temp_c: { type: float }
+    run: scripts/battery.py:status
+provides:
+  battery.status: battery-android.battery.status
+hooks:
+  status: { call: battery-android.battery.status }
+docs: { manual: docs/manual.md }

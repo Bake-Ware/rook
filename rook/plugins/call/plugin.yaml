@@ -1,0 +1,46 @@
+# Phone calls: the call log, and placing a call (it speaks as the owner, so
+# the hub asks the person first). Opening the dialer without calling is
+# app.open_url tel:<number>.
+manifest: 1
+plugin: call
+version: 0.5.0
+title: Calls
+doc: The call log of the phone running the Rook app, and placing calls from it.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [android]
+caps:
+  list:
+    doc: "Recent calls, newest first: {calls: [{number, name, direction, duration_s, ts}]}; direction is incoming, outgoing, missed, voicemail, rejected or blocked."
+    risk: read
+    scope: local
+    effects: [personal]
+    idempotent: true
+    timeout: 20s
+    aliases: [calllog.list]
+    args:
+      limit: { type: int, default: 30, min: 1, max: 500 }
+    result:
+      type: map
+      fields:
+        calls:
+          type: list
+          items:
+            type: map
+            fields: { number: { type: str }, name: { type: str }, direction: { type: str },
+                      duration_s: { type: int }, ts: { type: float } }
+    run: scripts/call.py:list_calls
+  dial:
+    doc: Call a phone number now, as the phone's owner (the phone's speaker and microphone carry the call).
+    risk: write
+    scope: external
+    effects: [sends_as, physical]
+    timeout: 15s
+    args:
+      to: { type: str, required: true, pattern: "^\\+?[0-9 ()./*#-]{3,32}$", doc: The phone number. }
+    result:
+      type: map
+      fields: { to: { type: str }, app: { type: str } }
+    run: scripts/call.py:dial
+docs: { manual: docs/manual.md }

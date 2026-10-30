@@ -1,0 +1,31 @@
+manifest: 1
+plugin: clipboard-android
+version: 0.5.0
+title: Phone clipboard
+doc: Read and set the clipboard of the phone running the Rook app.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [android]
+caps:
+  clipboard.get:
+    doc: "The clipboard's text: {text}. Android 10+ hides the clipboard from apps in the background, so this is often empty (text null, with a note)."
+    risk: read
+    scope: local
+    effects: [sensitive]
+    timeout: 10s
+    aliases: [device.clipboard_get]
+    run: scripts/clipboard.py:get
+  clipboard.set:
+    doc: Put text on the clipboard.
+    risk: write
+    scope: local
+    timeout: 10s
+    aliases: [device.clipboard_set]
+    args:
+      text: { type: str, required: true, max: 100000 }
+    run: scripts/clipboard.py:set_text
+provides:
+  clipboard.get: clipboard-android.clipboard.get
+  clipboard.set: clipboard-android.clipboard.set
+docs: { manual: docs/manual.md }

@@ -1,0 +1,92 @@
+# What plays on the phone and its transport controls (MediaSession, read
+# through the app's notification listener).
+manifest: 1
+plugin: media-android
+version: 0.5.0
+title: Phone media
+doc: What is playing on the phone running the Rook app, and play, pause, skip and seek on it.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [android]
+caps:
+  media.status:
+    doc: "What is playing: each media session's app, package, state (playing, paused, stopped, buffering, ...), title, artist, album, position_s and duration_s, the playing one first; music_active. Without notification access only music_active is known."
+    risk: read
+    scope: local
+    effects: [personal]
+    idempotent: true
+    timeout: 10s
+    aliases: [media.now]
+    result: { type: map }
+    run: scripts/media.py:status
+  media.play:
+    doc: "Play (or resume). Without notification access a media key goes to the app that played last."
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 10s
+    args:
+      package: { type: str, default: "", doc: "A package or app name; blank: the one playing, else the most recent." }
+    bind: { action: play }
+    run: scripts/media.py:control
+  media.pause:
+    doc: "Pause."
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 10s
+    args:
+      package: { type: str, default: "", doc: "A package or app name; blank: the one playing, else the most recent." }
+    bind: { action: pause }
+    run: scripts/media.py:control
+  media.stop:
+    doc: "Stop."
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 10s
+    args:
+      package: { type: str, default: "", doc: "A package or app name; blank: the one playing, else the most recent." }
+    bind: { action: stop }
+    run: scripts/media.py:control
+  media.next:
+    doc: "Skip to the next track or episode."
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 10s
+    args:
+      package: { type: str, default: "", doc: "A package or app name; blank: the one playing, else the most recent." }
+    bind: { action: next }
+    run: scripts/media.py:control
+  media.previous:
+    doc: "Back to the previous track or episode."
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 10s
+    args:
+      package: { type: str, default: "", doc: "A package or app name; blank: the one playing, else the most recent." }
+    bind: { action: previous }
+    run: scripts/media.py:control
+  media.seek:
+    doc: "Move by seconds (negative goes back); blank: the player's own skip forward."
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 10s
+    args:
+      by: { type: int, doc: "Seconds; negative goes back. Blank: the player's own skip forward." }
+      package: { type: str, default: "", doc: "A package or app name; blank: the one playing, else the most recent." }
+    bind: { action: seek }
+    run: scripts/media.py:control
+provides:
+  media.status: media-android.media.status
+  media.play: media-android.media.play
+  media.pause: media-android.media.pause
+  media.stop: media-android.media.stop
+  media.next: media-android.media.next
+  media.previous: media-android.media.previous
+  media.seek: media-android.media.seek
+docs: { manual: docs/manual.md }

@@ -1,0 +1,120 @@
+# The phone's notifications: post them (plain ones, or decision cards the
+# person answers), read and act on other apps' (the app's notification
+# listener), and hear new ones and card answers arrive as events.
+manifest: 1
+plugin: notification-android
+version: 0.5.0
+title: Phone notifications
+doc: Post notifications and decision cards on the phone running the Rook app, read and act on its other notifications.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [android]
+caps:
+  notification.post:
+    doc: "Show a notification. Plain: title and text (channel picks how loud). With id it is a decision card: text is its one line (140 characters), body up to 6 short lines under it (For:, Who:, I want to:, Risk:), explain what More details shows; actions the buttons (default yes, no, explain; ack for an alert), options a question's choices (with the choose action); urgency urgent rings like an alarm. Posting the same id again updates the card without ringing. The answer arrives as a notification-android.card event."
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 15s
+    aliases: [notify.post, attention.post]
+    args:
+      text: { type: str, required: true, min: 1, max: 4000 }
+      title: { type: str, default: Rook, max: 200 }
+      channel: { type: str, enum: ["", urgent, family, approvals, digest, jobs], default: "", doc: "Blank: Rook messages; a card's blank is approvals." }
+      id: { type: str, min: 1, max: 64, pattern: "^\\S(.*\\S)?$", doc: "A card's handle, for notification.update and its answer." }
+      kind: { type: str, enum: [card, hold, job, ask, alert], default: card }
+      body: { type: str, default: "", max: 2000 }
+      explain: { type: str, default: "", max: 2000 }
+      urgency: { type: str, enum: [normal, urgent], default: normal }
+      actions: { type: list, items: { type: str, enum: [yes, no, choose, explain, ack] }, max: 5 }
+      options: { type: list, items: { type: str, min: 1, max: 200 }, max: 6 }
+      source: { type: str, default: "", max: 80, doc: "Who asks, shown small." }
+      expires_at: { type: float, default: 0, min: 0, doc: "Epoch seconds; 0: never." }
+    run: scripts/notification.py:post
+  notification.update:
+    doc: "Show what came of a card: done (a short confirmation, then the card closes), failed (shows message) or gone (removed without a sound)."
+    risk: write
+    scope: local
+    timeout: 15s
+    aliases: [attention.update]
+    args:
+      id: { type: str, required: true, min: 1, max: 64 }
+      state: { type: str, required: true, enum: [done, failed, gone] }
+      message: { type: str, default: "", max: 300 }
+    run: scripts/notification.py:update
+  notification.list:
+    doc: "Other apps' notifications, newest first: {notifications: [{key, package, title, text, ts, posted_ms, clearable, sub_text?, big_text?}]}. packages keeps only those apps (mail apps put the sender in title, the subject in text, a preview in big_text)."
+    risk: read
+    scope: local
+    effects: [personal, sensitive, taints]
+    idempotent: true
+    timeout: 15s
+    aliases: [notify.list]
+    args:
+      limit: { type: int, default: 40, min: 1, max: 200 }
+      packages: { type: list, items: { type: str }, default: [] }
+    run: scripts/notification.py:list_notifications
+  notification.get:
+    doc: "One notification by key (from notification.list) with the actions it offers: {notification, actions: [{index, title, takes_text}]}."
+    risk: read
+    scope: local
+    effects: [personal, sensitive, taints]
+    idempotent: true
+    timeout: 15s
+    aliases: [notify.actions]
+    args:
+      key: { type: str, required: true }
+    run: scripts/notification.py:get
+  notification.dismiss:
+    doc: Dismiss a notification by key (from notification.list).
+    risk: write
+    scope: local
+    timeout: 15s
+    aliases: [notify.dismiss]
+    args:
+      key: { type: str, required: true }
+    run: scripts/notification.py:dismiss
+  notification.act:
+    doc: "Run one of a notification's own actions (action: its index or title, from notification.get). text fills a reply action: that sends a message to someone as the phone's owner. Needs the owner's switch in the app."
+    risk: write
+    scope: external
+    effects: [sends_as]
+    timeout: 15s
+    aliases: [notify.act]
+    args:
+      key: { type: str, required: true }
+      action: { type: str, default: "0" }
+      text: { type: str, default: "", max: 2000 }
+    run: scripts/notification.py:act
+emits:
+  notification-android.received:
+    doc: Another app posted a notification (checked every 30 s). Its words are the sender's.
+    taints: true
+    payload:
+      key: { type: str }
+      package: { type: str }
+      title: { type: str }
+      text: { type: str }
+      ts: { type: float }
+  notification-android.card:
+    doc: "The person did something with a card: type decision (decision approve, deny or choose; choice, the option tapped, verbatim; reason), acked, dismissed, seen or opened."
+    payload:
+      id: { type: str }
+      type: { type: str }
+      decision: { type: str }
+      choice: { type: str }
+      reason: { type: str }
+      ts: { type: float }
+hooks:
+  every:
+    - { interval: 30s, run: scripts/notification.py:watch }
+    - { interval: 10s, run: scripts/notification.py:watch_cards }
+provides:
+  notification.post: notification-android.notification.post
+  notification.update: notification-android.notification.update
+  notification.list: notification-android.notification.list
+  notification.get: notification-android.notification.get
+  notification.dismiss: notification-android.notification.dismiss
+  notification.act: notification-android.notification.act
+docs: { manual: docs/manual.md }

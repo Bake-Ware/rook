@@ -1,0 +1,76 @@
+# Touch and keys on the phone without root: gestures and text through the
+# app's accessibility service.
+manifest: 1
+plugin: hid-android
+version: 0.5.0
+title: Phone touch and keys
+doc: Tap, swipe, type and press back/home/recents on the phone running the Rook app (accessibility service).
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [android]
+caps:
+  hid.status:
+    doc: "The input backend (android-accessibility) and whether it is on: {backend, ready}."
+    risk: read
+    scope: local
+    idempotent: true
+    timeout: 10s
+    aliases: [hid.backend]
+    result: { type: map, fields: { backend: { type: str }, ready: { type: bool } } }
+    run: scripts/hid.py:status
+  hid.type:
+    doc: Type text into the focused field (it replaces what the field holds). enter then presses the keyboard's enter (Android 11+).
+    risk: exec
+    scope: local
+    effects: [physical]
+    timeout: 20s
+    args:
+      text: { type: str, required: true, max: 10000 }
+      enter: { type: bool, default: false, doc: Press Enter after the text. }
+    run: scripts/hid.py:type_text
+  hid.click:
+    doc: Tap the screen at pixel (x, y), top-left origin (ui.screen gives each item's centre). A touch screen needs x and y and has only the left button.
+    risk: exec
+    scope: local
+    effects: [physical]
+    timeout: 15s
+    aliases: [hid.mouse.click]
+    args:
+      x: { type: int, min: 0, max: 20000 }
+      y: { type: int, min: 0, max: 20000 }
+      button: { type: str, enum: [left, right, middle], default: left }
+    run: scripts/hid.py:click
+  hid.drag:
+    doc: Swipe from (x1, y1) to (x2, y2) over duration (50ms to 10s).
+    risk: exec
+    scope: local
+    effects: [physical]
+    timeout: 20s
+    aliases: [hid.mouse.drag]
+    args:
+      x1: { type: int, required: true, min: 0, max: 20000 }
+      y1: { type: int, required: true, min: 0, max: 20000 }
+      x2: { type: int, required: true, min: 0, max: 20000 }
+      y2: { type: int, required: true, min: 0, max: 20000 }
+      duration: { type: duration, default: 300ms }
+      button: { type: str, enum: [left, right, middle], default: left }
+    run: scripts/hid.py:drag
+  hid.key:
+    doc: "Press back, home or recents (Android's global actions; no modifiers)."
+    risk: exec
+    scope: local
+    effects: [physical]
+    timeout: 15s
+    aliases: [hid.key_combo]
+    args:
+      key: { type: str, required: true }
+      mods: { type: list, items: { type: str, enum: [ctrl, shift, alt, meta] }, default: [] }
+    run: scripts/hid.py:key
+provides:
+  hid.status: hid-android.hid.status
+  hid.type: hid-android.hid.type
+  hid.click: hid-android.hid.click
+  hid.drag: hid-android.hid.drag
+  hid.key: hid-android.hid.key
+docs: { manual: docs/manual.md }

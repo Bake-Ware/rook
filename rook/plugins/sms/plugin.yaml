@@ -1,0 +1,57 @@
+# Texts on the phone running the Rook app: the SMS content provider to read,
+# SmsManager to send. Inbound texts become sms.received events (tainted:
+# whoever sent them wrote the words).
+manifest: 1
+plugin: sms
+version: 0.5.0
+title: SMS
+doc: Read the phone's text messages, send texts as the phone's owner, and hear new ones arrive.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [android]
+caps:
+  list:
+    doc: "Recent texts, newest first: {messages: [{from, body, ts, box, read}]}. box is inbox, sent or all; since (epoch seconds) leaves out older ones."
+    risk: read
+    scope: local
+    effects: [personal, sensitive, taints]
+    idempotent: true
+    timeout: 20s
+    args:
+      box: { type: str, enum: [inbox, sent, all], default: inbox }
+      limit: { type: int, default: 30, min: 1, max: 500 }
+      since: { type: float, default: 0, min: 0, doc: Epoch seconds. }
+    result:
+      type: map
+      fields:
+        messages:
+          type: list
+          items:
+            type: map
+            fields: { from: { type: str }, body: { type: str }, ts: { type: float }, box: { type: str }, read: { type: bool } }
+    run: scripts/sms.py:list_messages
+  send:
+    doc: Send a text to a phone number as the phone's owner. A long message goes as several parts.
+    risk: write
+    scope: external
+    effects: [sends_as]
+    timeout: 20s
+    args:
+      to: { type: str, required: true, pattern: "^\\+?[0-9 ()./-]{3,32}$", doc: The phone number. }
+      text: { type: str, required: true, min: 1, max: 5000 }
+    result:
+      type: map
+      fields: { to: { type: str }, parts: { type: int } }
+    run: scripts/sms.py:send
+emits:
+  sms.received:
+    doc: A text arrived. Seen within a minute (the inbox is checked every 30 s).
+    taints: true
+    payload:
+      from: { type: str }
+      body: { type: str }
+      ts: { type: float, doc: Epoch seconds. }
+hooks:
+  every: [ { interval: 30s, run: scripts/sms.py:watch } ]
+docs: { manual: docs/manual.md }

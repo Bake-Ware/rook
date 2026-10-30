@@ -140,8 +140,9 @@ contracts:
         session: { type: str, required: true, doc: Pass back to continue the conversation. }
         usage: { type: map, items: { type: int } }
 
-  # TODO(bake): `voice` is both the device speech contracts' namespace and the
-  # hub voice service's (coverage gap B10); Bake is deciding which one moves.
+  # TODO(castling:hub-services): Bake decided B10 (castling-naming-decisions):
+  # `voice` is the device speech contract (voice.speak, below); the hub's voice
+  # service moves to `speech`, so these become speech.tts and speech.stt.
   voice.tts:
     doc: Text to speech.
     route: provider
@@ -277,6 +278,136 @@ contracts:
               text: { type: str }
               x: { type: int }
               y: { type: int }
+
+  # The rest of the shared device names (castling-caps C1), first provided
+  # by the phone plugins (rook/plugins/*-android). Only what every device
+  # has in common is in the contract; providers add their own optional args.
+  ui.click:
+    doc: Click what shows the given text.
+    route: target
+    args:
+      text: { type: str }
+  ui.scroll:
+    doc: Scroll a page down or up.
+    route: target
+    args:
+      direction: { type: str, enum: [down, up], default: down }
+  ui.type:
+    doc: Type text into a field on the screen.
+    route: target
+    args:
+      text: { type: str, required: true }
+  ui.wait:
+    doc: Wait until what shows the given text is on the screen, then return the screen.
+    route: target
+    args:
+      text: { type: str }
+      timeout: { type: float, min: 0, doc: Seconds. }
+  hid.status:
+    doc: The input backend and whether it is ready.
+    route: target
+  screen.keep_on:
+    doc: Keep the screen on, or let it go.
+    route: target
+    args:
+      on: { type: bool, required: true }
+  screen.status:
+    doc: The screen's state (on, locked, kept on).
+    route: target
+  battery.status:
+    doc: The battery's charge and state.
+    route: target
+    result:
+      type: map
+      fields:
+        percent: { type: float, doc: Charge in percent. }
+        status: { type: str, doc: "charging, discharging, full, ... (the device's own word)." }
+  app.list:
+    doc: The apps that can be opened.
+    route: target
+    args:
+      query: { type: str, doc: Only apps whose name contains it. }
+  app.open_url:
+    doc: Open a link in the app that takes it.
+    route: target
+    args:
+      url: { type: str, required: true }
+  app.share:
+    doc: Offer text to share; a person picks where it goes.
+    route: target
+    args:
+      text: { type: str, required: true }
+  app.settings:
+    doc: Open the device's settings.
+    route: target
+  clipboard.get:
+    doc: The clipboard's text.
+    route: target
+  clipboard.set:
+    doc: Put text on the clipboard.
+    route: target
+    args:
+      text: { type: str, required: true }
+  sound.status:
+    doc: Volume, and the ringer and Do Not Disturb where the device has them.
+    route: target
+  sound.dnd:
+    doc: Set Do Not Disturb.
+    route: target
+    args:
+      mode: { type: str, required: true, enum: [off, priority, alarms, total] }
+  media.status:
+    doc: What is playing.
+    route: target
+  notification.list:
+    doc: The device's notifications, newest first.
+    route: target
+    args:
+      limit: { type: int, min: 1 }
+  notification.get:
+    doc: One notification, with the actions it offers.
+    route: target
+    args:
+      key: { type: str, required: true }
+  notification.update:
+    doc: Show what came of a notification that asked something.
+    route: target
+    args:
+      id: { type: str, required: true }
+      state: { type: str, required: true, enum: [done, failed, gone] }
+  notification.dismiss:
+    doc: Dismiss a notification.
+    route: target
+    args:
+      key: { type: str, required: true }
+  notification.act:
+    doc: Run one of a notification's own actions (a reply sends as the device's owner).
+    route: target
+    args:
+      key: { type: str, required: true }
+      action: { type: str, doc: Its index or title. }
+      text: { type: str, doc: The reply, for an action that takes one. }
+  voice.speak:
+    doc: Say text aloud on the device.
+    route: target
+    args:
+      text: { type: str, required: true }
+  voice.ask:
+    doc: Say text aloud, then listen for the spoken answer.
+    route: target
+    args:
+      text: { type: str, required: true }
+  voice.replies:
+    doc: Answers voice.ask heard.
+    route: target
+    args:
+      since: { type: float, doc: Epoch seconds. }
+  voice.stop:
+    doc: Stop speaking.
+    route: target
+  voice.voices:
+    doc: The voices the device can speak in.
+    route: target
 
 emits:
   worker.online:

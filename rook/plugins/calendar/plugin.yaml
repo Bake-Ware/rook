@@ -1,0 +1,64 @@
+# The phone's calendars (CalendarContract). Changes need the phone owner's
+# own switch in the app as well as the calendar permission.
+manifest: 1
+plugin: calendar
+version: 0.5.0
+title: Calendar
+doc: Read and change the calendars on the phone running the Rook app (Google, Outlook when it syncs, others).
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [android]
+caps:
+  list:
+    doc: "Events in a window, soonest first, ongoing ones included: {start, end, timezone_offset_min, events: [{title, start, end, all_day, location, calendar, account, account_type, start_ms, end_ms, event_id, declined?}]}. Times are phone-local ISO; all-day events use dates."
+    risk: read
+    scope: local
+    effects: [personal]
+    idempotent: true
+    timeout: 30s
+    args:
+      start: { type: time, doc: "ISO 8601 (no offset: phone-local), epoch seconds or \"now\". Blank: now." }
+      end: { type: time, doc: "Same forms. Blank: start + 24 hours; at most 366 days after start." }
+      limit: { type: int, default: 20, min: 1, max: 200 }
+    run: scripts/calendar.py:list_events
+  create:
+    doc: "Add an event to a calendar on the phone: {event_id, calendar, start, end}. calendar names one by name or account; blank: the primary one the phone may write to."
+    risk: write
+    scope: local
+    effects: [personal]
+    timeout: 30s
+    args:
+      title: { type: str, required: true, min: 1, max: 500 }
+      start: { type: time, required: true }
+      end: { type: time, doc: "Blank: an hour after start." }
+      all_day: { type: bool, default: false }
+      location: { type: str, default: "", max: 500 }
+      description: { type: str, default: "", max: 4000 }
+      calendar: { type: str, default: "" }
+    run: scripts/calendar.py:create
+  update:
+    doc: Change an event by event_id (from calendar.list), only the fields given. Moving start alone keeps the event's length.
+    risk: write
+    scope: local
+    effects: [personal]
+    timeout: 30s
+    args:
+      event_id: { type: int, required: true, min: 1 }
+      title: { type: str, min: 1, max: 500 }
+      start: { type: time }
+      end: { type: time }
+      all_day: { type: bool }
+      location: { type: str, max: 500 }
+      description: { type: str, max: 4000 }
+    run: scripts/calendar.py:update
+  delete:
+    doc: Delete an event by event_id (from calendar.list), every occurrence of it. Not undone.
+    risk: write
+    scope: local
+    effects: [personal, destructive]
+    timeout: 30s
+    args:
+      event_id: { type: int, required: true, min: 1 }
+    run: scripts/calendar.py:delete
+docs: { manual: docs/manual.md }

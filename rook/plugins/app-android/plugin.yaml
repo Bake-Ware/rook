@@ -1,0 +1,71 @@
+# Apps on the phone: list and launch them, open links and URIs, the share
+# sheet and Settings pages.
+manifest: 1
+plugin: app-android
+version: 0.5.0
+title: Phone apps
+doc: List and open apps, links, the share sheet and Settings pages on the phone running the Rook app.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [android]
+caps:
+  app.list:
+    doc: "Apps on the launcher, by name: {apps: [{label, package}], truncated}. query keeps those whose name or package contains it."
+    risk: read
+    scope: local
+    idempotent: true
+    timeout: 20s
+    aliases: [device.apps]
+    args:
+      query: { type: str, default: "", max: 100 }
+      limit: { type: int, default: 200, min: 1, max: 1000 }
+    run: scripts/app.py:list_apps
+  app.launch:
+    doc: "Open an app by its package (com.android.settings) or its launcher name (Maps). An unclear name: an error listing the candidates. screen returns the screen once the app is up."
+    risk: write
+    scope: local
+    effects: [taints]
+    timeout: 20s
+    aliases: [device.launch]
+    args:
+      app: { type: str, required: true, min: 1, max: 200 }
+      params: { type: json, doc: "Intent extras for the launch, an object of strings, numbers and booleans." }
+      screen: { type: bool, default: false }
+    run: scripts/app.py:launch
+  app.open_url:
+    doc: "Open a link or URI in the app that takes it: https:, tel: (the dialer, no call), mailto: and smsto: (drafts, nothing sent), geo:, market:, an app's deep link. screen returns the screen once it is up."
+    risk: write
+    scope: local
+    effects: [taints]
+    timeout: 20s
+    aliases: [device.open_url]
+    args:
+      url: { type: str, required: true, min: 1, max: 4000 }
+      screen: { type: bool, default: false }
+    run: scripts/app.py:open_url
+  app.share:
+    doc: Open the share sheet with text (and a subject, for apps that take one); a person picks where it goes.
+    risk: write
+    scope: local
+    timeout: 15s
+    args:
+      text: { type: str, required: true, min: 1, max: 10000 }
+      subject: { type: str, default: "", max: 200 }
+    run: scripts/app.py:share
+  app.settings:
+    doc: "Open a Settings page: main, wifi, internet, bluetooth, airplane, network, nfc, display, sound, volume, dnd, battery, location, apps, app (needs package), notifications (needs package), accessibility, date, storage, security or developer."
+    risk: write
+    scope: local
+    timeout: 15s
+    args:
+      page: { type: str, default: main, enum: [main, wifi, internet, bluetooth, airplane, network, nfc, display, sound, volume, dnd, battery, location, apps, app, notifications, accessibility, date, storage, security, developer] }
+      package: { type: str, default: "", max: 200 }
+    run: scripts/app.py:settings
+provides:
+  app.list: app-android.app.list
+  app.launch: app-android.app.launch
+  app.open_url: app-android.app.open_url
+  app.share: app-android.app.share
+  app.settings: app-android.app.settings
+docs: { manual: docs/manual.md }

@@ -1,0 +1,105 @@
+# The phone's apps by what they show, through the app's accessibility
+# service: read the screen, click, scroll and type by label (works on apps
+# that block screenshots), wait for the screen to be how you want it.
+manifest: 1
+plugin: ui-android
+version: 0.5.0
+title: Phone UI
+doc: Read and drive the apps on the phone running the Rook app by their labels (accessibility service).
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [android]
+caps:
+  ui.screen:
+    doc: "The screen, compactly: app and package; items to act on, each with text, kind (button, field, toggle, list), detail, id, checked, a field's value and hint, and its centre x, y for hid.click; the other text top to bottom; focus; locked; rev (for ui.wait changed_from). Popups and dialogs above the app are included; passwords never are."
+    risk: read
+    scope: local
+    effects: [sensitive, taints]
+    idempotent: true
+    timeout: 15s
+    args:
+      limit: { type: int, default: 60, min: 1, max: 300, doc: Most items. }
+      text_limit: { type: int, default: 40, min: 0, max: 300, doc: Most lines of other text. }
+    result:
+      type: map
+      fields:
+        app: { type: str }
+        package: { type: str }
+        items:
+          type: list
+          items: { type: map, fields: { text: { type: str }, x: { type: int }, y: { type: int } } }
+        text: { type: list, items: { type: str } }
+        rev: { type: str }
+    run: scripts/ui.py:screen
+  ui.click:
+    doc: "Click what matches text, desc (its description) or id (view id, with or without the package: prefix); every given field must match, exactly and ignoring case unless contains. text also matches the description of a node without text. index picks among matches (0 is the top one). Clicks the nearest clickable parent, else taps the centre; long long-presses. wait first waits up to that many seconds for it to appear. Not found: an error naming near matches. screen returns the screen once the click has settled."
+    risk: exec
+    scope: local
+    effects: [taints]
+    timeout: 30s
+    args:
+      text: { type: str, default: "" }
+      desc: { type: str, default: "" }
+      id: { type: str, default: "" }
+      contains: { type: bool, default: false }
+      index: { type: int, default: 0, min: 0 }
+      long: { type: bool, default: false }
+      wait: { type: float, default: 0, min: 0, max: 8 }
+      screen: { type: bool, default: false }
+    run: scripts/ui.py:click
+  ui.scroll:
+    doc: "Scroll one page down or up: the scrollable holding the text or id match, else the outermost one on screen (an open dropdown's list first). scrolled false: already at the end. screen returns the screen once it has settled."
+    risk: exec
+    scope: local
+    effects: [taints]
+    timeout: 30s
+    args:
+      direction: { type: str, enum: [down, up], default: down }
+      text: { type: str, default: "" }
+      id: { type: str, default: "" }
+      contains: { type: bool, default: false }
+      screen: { type: bool, default: false }
+    run: scripts/ui.py:scroll
+  ui.type:
+    doc: "Type text into a field without clicking it first. label names the field (its hint, description, label, or the caption above or left of it; never what is in it); id its view id; neither: the focused field, else the only field. Several matches: an error listing them, unless index picks one (0 is the top one). Replaces the field's text unless append; submit then presses the keyboard's enter (Android 11+). wait first waits for the field; screen returns the screen once it has settled. The reply never repeats the text."
+    risk: exec
+    scope: local
+    effects: [taints]
+    timeout: 30s
+    args:
+      text: { type: str, required: true, max: 10000 }
+      label: { type: str, default: "" }
+      id: { type: str, default: "" }
+      contains: { type: bool, default: false }
+      index: { type: int, default: -1, min: -1 }
+      append: { type: bool, default: false }
+      submit: { type: bool, default: false }
+      wait: { type: float, default: 0, min: 0, max: 8 }
+      screen: { type: bool, default: false }
+    run: scripts/ui.py:type_text
+  ui.wait:
+    doc: "Wait up to timeout seconds until the screen is how you want it, then return it (screen false leaves it out). Every given condition must hold: something matching text, desc or id (ui.click's rules) shows, or with gone none does; package is in front (package or app name); rev differs from changed_from (from ui.screen). settle_ms then also waits until nothing changed for that long; with no other condition it is 600 ms. Timed out: an error, with the screen as it is."
+    risk: read
+    scope: local
+    effects: [sensitive, taints]
+    timeout: 70s
+    args:
+      text: { type: str, default: "" }
+      desc: { type: str, default: "" }
+      id: { type: str, default: "" }
+      contains: { type: bool, default: false }
+      gone: { type: bool, default: false }
+      package: { type: str, default: "" }
+      changed_from: { type: str, default: "" }
+      settle_ms: { type: int, default: 0, min: 0, max: 10000 }
+      timeout: { type: float, default: 8, min: 0, max: 60 }
+      screen: { type: bool, default: true }
+    run: scripts/ui.py:wait
+provides:
+  ui.screen: ui-android.ui.screen
+  ui.click: ui-android.ui.click
+  ui.scroll: ui-android.ui.scroll
+  ui.type: ui-android.ui.type
+  ui.wait: ui-android.ui.wait
+docs: { manual: docs/manual.md }
