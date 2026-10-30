@@ -179,8 +179,8 @@ class Importer:
             a, parent = self.attrs[r["id"]], self.rows.get(r["parent"])
             fields = {"title": r["title"], "slug": r["slug"], "body": r["body"],
                       "state": r["state"] if r["state"] in ("active", "paused", "done") else "done"}
-            if parent is not None and parent["kind"] == "concept":
-                fields["concepts"] = [parent["slug"] or _slugify(parent["title"])]
+            if parent is not None and parent["kind"] == "concept" and parent["id"] in self.new:
+                fields["concepts"] = [self._slug("concept.concept", parent["id"])]
             if _date(a.get("due")):
                 fields["due"] = a["due"]
             self._put("project.project", r, fields, archived=r["state"] == "archived")
@@ -238,6 +238,10 @@ class Importer:
             if board and not self._has_board(r):
                 self._put_board(r, board)
 
+    def _slug(self, full: str, old_id: str) -> str:
+        """The slug a record got here (the import may have added -2)."""
+        return self.store.type(full).get(self._caller(self.rows[old_id]), self.new[old_id])["slug"]
+
     def _project_of(self, r):
         seen = set()
         while r is not None and r["id"] not in seen:
@@ -255,7 +259,7 @@ class Importer:
         target = self.rows.get(ref) if kind == "record" else None
         if target is not None:
             if target["kind"] == "knowledge":
-                return "page", target["slug"] or ref
+                return "page", self._slug("knowledge.knowledge", ref) if ref in self.new else target["slug"] or ref
             return target["kind"], self.new.get(ref, ref)
         return ("user" if kind == "human" else kind), ref
 
