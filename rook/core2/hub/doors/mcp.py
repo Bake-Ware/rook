@@ -50,6 +50,7 @@ and shown to the person if the call is held.
 - Every call is journaled under your token's agent and person; journal reads it back."""
 
 _WHY = {"type": "string", "description": "One plain sentence: why you make this call. Journaled."}
+_READ = {"readOnlyHint": True}
 _WORKER = {"type": "string", "description": "Worker name or id (workers lists them; 'rook' is the hub)."}
 
 TOOLS = [
@@ -63,24 +64,25 @@ TOOLS = [
          "session": {"type": "string", "description": "A session from the session tool; blank: your default."},
          "appliance": {"type": "string", "description": "A device behind the worker, if the cap is on one."},
          "elevate": {"type": "boolean", "description": "Ask for administrator rights up front."}}}},
-    {"name": "caps",
+    {"name": "caps", "annotations": _READ,
      "description": "What workers serve, from their manifests (offline workers included): "
                     "one line per cap, or full detail (arguments, effects) for an exact cap or full=true.",
      "inputSchema": {"type": "object", "properties": {
          "worker": _WORKER,
          "match": {"type": "string", "description": "An exact cap, a prefix (shell.) or a glob (*.list)."},
          "full": {"type": "boolean", "description": "Full detail for every match."}}}},
-    {"name": "workers",
+    {"name": "workers", "annotations": _READ,
      "description": "The band's machines, online or not: name, id, plugins, description, problems.",
      "inputSchema": {"type": "object", "properties": {}}},
-    {"name": "journal",
+    {"name": "journal", "annotations": _READ,
      "description": "Journal entries you may read (newest first): who called what, why, and how it went.",
      "inputSchema": {"type": "object", "properties": {
-         **{k: {"type": "string"} for k in ("call", "cap", "worker", "project", "kind", "session")},
+         **{k: {"type": "string"} for k in ("call", "cap", "worker", "person", "agent", "project", "kind",
+                                            "session", "chain")},
          "since": {"type": "number", "description": "Unix time."},
          "until": {"type": "number", "description": "Unix time."},
          "limit": {"type": "integer", "description": "Default 20, at most 500."}}}},
-    {"name": "holds",
+    {"name": "holds", "annotations": _READ,
      "description": "Calls waiting for a person's approval (yours, or all for an owner). Only a person decides.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "session",

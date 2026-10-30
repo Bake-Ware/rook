@@ -86,8 +86,10 @@ def test_tools_end_at_dispatch(mcp_hub):
             status, _, body = await post(url, {"jsonrpc": "2.0", "method": "notifications/initialized"}, token)
             assert (status, body) == (202, None)
             assert (await rpc(url, token, "ping"))["result"] == {}
-            names = [t["name"] for t in (await rpc(url, token, "tools/list"))["result"]["tools"]]
-            assert names == ["call", "caps", "workers", "journal", "holds", "session", "stream"]
+            tools = (await rpc(url, token, "tools/list"))["result"]["tools"]
+            assert [t["name"] for t in tools] == ["call", "caps", "workers", "journal", "holds", "session", "stream"]
+            assert [t["name"] for t in tools if t.get("annotations", {}).get("readOnlyHint")] == [
+                "caps", "workers", "journal", "holds"]
 
             # a call: the worker verifies a ticket for the agent acting for the person
             err, out = await tool(url, token, "call", worker="kaiju", cap="echo.say", args={"text": "hi"}, why=WHY)
@@ -121,7 +123,7 @@ def test_tools_end_at_dispatch(mcp_hub):
             assert "problem" not in names["kaiju"]       # nothing to say: left out
 
             # the journal reads back, trimmed
-            _, out = await tool(url, token, "journal", cap="echo.say", limit=5)
+            _, out = await tool(url, token, "journal", cap="echo.say", agent="agent:claude", limit=5)
             assert out["entries"] and all(e["cap"] == "echo.say" for e in out["entries"])
             assert not {"hash", "prev", "ticket"} & set(out["entries"][0])
             err, out = await tool(url, token, "journal", since=-1e30, limit=10**9)
