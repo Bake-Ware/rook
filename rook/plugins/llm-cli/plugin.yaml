@@ -1,7 +1,8 @@
 # An llm.complete provider through a CLI subscription (castling-inference:
 # most people arrive with Claude Code or Codex and want utility from just
 # that). One completion per call, with tools and MCP servers off:
-# `claude -p --tools "" --strict-mcp-config` or
+# `claude -p --tools "" --strict-mcp-config --setting-sources project,local`
+# (none of the signed-in user's hooks) or
 # `codex exec` in a read-only sandbox, run on the worker where the CLI is
 # signed in, through core's launch path. The conversation goes in on stdin.
 # max_tokens and temperature can't be passed to a CLI and are ignored; stop

@@ -45,10 +45,11 @@ def test_a_turn_and_its_resume(tmp_path, bins):
     assert out == {"text": "hi: hello", "session": "sess-1", "usage": {"input_tokens": 5, "output_tokens": 2}}
     (call,) = bins.calls("claude")
     assert call["argv"] == ["-p", "--output-format", "json", "--model", "opus",
-                            "--append-system-prompt", "You are pm."]
+                            "--append-system-prompt", "You are pm.",
+                            "--setting-sources", "project,local", "--strict-mcp-config"]
     assert (tmp_path / "data" / "work").is_dir()                   # its own work folder by default
     out = turn(tmp_path, {"model": "", "permission_mode": "acceptEdits", "allowed_tools": ["Read", "Bash(git:*)"],
-                          "mcp_config": "/etc/rook/mcp.json"},
+                          "mcp_config": "/etc/rook/mcp.json", "isolate": False},
                prompt="again", session="sess-9", model="haiku", cwd=str(tmp_path), effort="high")
     assert out["session"] == "sess-9"
     assert bins.calls("claude")[1]["argv"] == [

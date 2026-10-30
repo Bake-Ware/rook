@@ -148,7 +148,7 @@ def test_cli_claude(tmp_path, bins):
                    "usage": {"input": 9, "output": 5}}
     (call,) = bins.calls("claude")
     assert call["argv"] == ["-p", "--output-format", "json", "--tools", "", "--strict-mcp-config",
-                            "--no-session-persistence",
+                            "--setting-sources", "project,local", "--no-session-persistence",
                             "--model", "opus", "--system-prompt", "Be brief."]
     prompt = (bins.dir / "claude.stdin").read_text()
     assert "User: hi\n\nAssistant: hello\n\nUser: how are you?" in prompt and "Be brief" not in prompt

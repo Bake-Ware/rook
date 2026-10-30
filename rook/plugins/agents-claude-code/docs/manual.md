@@ -20,6 +20,7 @@ Settings:
 | `permission_mode` | Claude Code's | `--permission-mode` for turns. |
 | `allowed_tools` | none | `--allowedTools`: tools a turn may use without asking. |
 | `mcp_config` | none | `--mcp-config`: how the agent reaches Rook (the MCP door). |
+| `isolate` | on | Leave out the signed-in user's own settings, hooks and MCP servers (`--setting-sources project,local --strict-mcp-config`), so a turn reaches only what `mcp_config` gives it. Off: turns run with the user's whole Claude Code setup. |
 
 For `mcp_config`, point Claude Code at the hub's MCP door (`/mcp`) with a
 token for the agent acting for a person
