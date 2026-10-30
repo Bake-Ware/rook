@@ -25,6 +25,7 @@ What they prove:
 | A call | a door call with a why gets a ticket the worker verifies; the result comes back; the journal entry is on the `general` chain and the chain verifies |
 | Refusals | no why; a child over its preset (and its first use of a cap waiting for an owner); a ticket sniffed off the band and replayed; a worker ceiling narrower than the hub's grant (refused by the hub early and by the worker for a validly signed ticket); a destructive cap held until the person approves or refuses |
 | Plugins | a plugin pushed from the hub library, signed for that worker, installs and passes its `check`; a new version replaces it in the same worker process (hot reload); a broken version fails its check and is rolled back; `core.plugin.rollback` goes back by hand; installed plugins load again after a worker restart |
+| MCP door | an agent token (claude-code for bake) calls a cap over MCP, its hold waits for the person, the journal reads back; the stdio shim does the same as a child process |
 | Real ports | the worker also loads `rook/plugins/battery` and `rook/plugins/torrent`; what the machine can't serve is listed as unavailable, with the reason, and a call says why |
 
 ## A 0.5 hub and worker by hand
@@ -81,5 +82,10 @@ curl -s -H "$H" -d '{"worker":"laptop","cap":"core.plugin.rollback","args":{"plu
 ```
 
 More tokens: `python -m rook.core2.hub --config hub.yaml token --person me --agent claude-code`
-(add the agent under `agents:` first). The `anchor` command stands in for
+(add the agent under `agents:` first).
+
+Agents: add `mcp: { bind: "127.0.0.1:8741" }` under `doors:` and give the
+agent its own token. Claude Code:
+`claude mcp add --transport http rook http://127.0.0.1:8741/mcp --header "Authorization: Bearer <token>"`;
+stdio-only agents run `ROOK_TOKEN=<token> python -m rook.core2.hub.doors.mcp_stdio`. The `anchor` command stands in for
 enrollment (spec 12), which will write that file onto the worker.

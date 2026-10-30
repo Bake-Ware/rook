@@ -15,6 +15,7 @@ A config (paths are relative to the file)::
       claude-code: { grants: ["*"], max_risk: exec }
     doors:
       http: { bind: "127.0.0.1:8740" }
+      mcp: { bind: "127.0.0.1:8741" }   # agents: http://127.0.0.1:8741/mcp with an --agent token
     transport:                    # rook.core2.transport options; leave out for no band
       bands: [ { psk_env: ROOK_PSK, relay: "relay.example:7474" } ]
     log: { level: info, format: json }

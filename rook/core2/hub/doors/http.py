@@ -39,10 +39,11 @@ def _reject(token: str):
 
 class HttpDoor:
     name = "http"
+    bind = "127.0.0.1:8740"
 
     def __init__(self, hub, options: dict):
         self.hub = hub
-        host, _, port = str(options.get("bind", "127.0.0.1:8740")).rpartition(":")
+        host, _, port = str(options.get("bind", self.bind)).rpartition(":")
         self.host, self.port = host or "127.0.0.1", int(port)
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -50,7 +51,7 @@ class HttpDoor:
     async def start(self) -> None:
         door, loop = self, asyncio.get_running_loop()
 
-        class Handler(_Handler):
+        class Handler(self.handler):
             pass
         Handler.door, Handler.loop = door, loop
         self._server = ThreadingHTTPServer((self.host, self.port), Handler)
@@ -87,15 +88,18 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             status, body = self._route(method)
         except _Error as e:
-            status, body = e.status, {"ok": False, "error": e.message}
+            status, body = e.status, e.body or {"ok": False, "error": e.message}
         except Exception:
             log.exception("door request failed")
             status, body = 500, {"ok": False, "error": "internal error"}
         if status >= 400:
             self.close_connection = True    # a body we didn't read must not become the next request
-        data = json.dumps(body, default=str).encode("utf-8")
+        data = b"" if body is None else json.dumps(body, default=str).encode("utf-8")
         self.send_response(status)
-        self.send_header("Content-Type", "application/json")
+        if body is not None:
+            self.send_header("Content-Type", "application/json")
+        if status == 401:
+            self.send_header("WWW-Authenticate", "Bearer")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -163,6 +167,9 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 class _Error(Exception):
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, body: dict | None = None):
         super().__init__(message)
-        self.status, self.message = status, message
+        self.status, self.message, self.body = status, message, body
+
+
+HttpDoor.handler = _Handler

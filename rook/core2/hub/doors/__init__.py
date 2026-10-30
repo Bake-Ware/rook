@@ -4,13 +4,13 @@ caller and calls the hub's async door API (``Hub.call``, ``Hub.workers_view``
 
 A door is ``Door(hub, options)`` with ``name``, ``async start()`` and
 ``async stop()``; the config's ``doors:`` block names which ones run and
-their options. MCP and the dashboard are later doors.
+their options. The dashboard is a later door.
 """
 from __future__ import annotations
 
 import importlib
 
-DOORS = {"http": "rook.core2.hub.doors.http:HttpDoor"}
+DOORS = {"http": "rook.core2.hub.doors.http:HttpDoor", "mcp": "rook.core2.hub.doors.mcp:McpDoor"}
 
 
 def make_door(name: str, hub, options: dict):
