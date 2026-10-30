@@ -25,7 +25,8 @@ def vec(name: str) -> dict:
 
 
 def test_vectors_are_current():
-    r = subprocess.run([sys.executable, str(DIR / "generate.py"), "--check"], capture_output=True, text=True)
+    r = subprocess.run([sys.executable, str(DIR / "generate.py"), "--check"], capture_output=True, text=True,
+                       timeout=120)
     assert r.returncode == 0, r.stdout + r.stderr
 
 
@@ -96,7 +97,8 @@ def test_leases():
 def test_memberships():
     v = vec("memberships")
     for c in v["cases"]:
-        assert wire.verify_membership(c["document"], v["home_keys"], v["worker_id"])[1] == c["reason"], c["name"]
+        got = wire.verify_membership(c["document"], v["home_hub"], v["home_keys"], v["worker_id"])
+        assert got[1] == c["reason"], c["name"]
 
 
 def test_version():
@@ -147,3 +149,14 @@ def test_journal():
     # Appending continues from the head.
     nxt = journal.append(chain[-1]["hash"], {"id": "j4", "kind": "call", "chain": chain[-1]["chain"]})
     assert journal.first_break(chain + [nxt]) is None
+
+
+def test_hostile_args_refuse_instead_of_raising():
+    v = vec("tickets")
+    c = next(c for c in v["cases"] if c["name"] == "ok")
+    deep: list = []
+    for _ in range(100_000):
+        deep = [deep]
+    req = {**c["request"], "args": {"x": deep}}
+    got = wire.verify_ticket(c["ticket"], req, {**v["worker"], "band": c["band"]}, c["now"], wire.ReplayCache())
+    assert got == (False, "wrong_args")

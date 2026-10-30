@@ -68,7 +68,7 @@ CANONICAL_ERRORS = [
     ("integer above 2^53-1", 9007199254740992),
     ("lone surrogate", "\ud800"),
 ]
-ARGS = [None, {}, {"argv": ["uptime"]}, {"volume": 0.5, "name": "kitchen lamp é"}]
+ARGS = [None, {}, [], {"argv": ["uptime"]}, {"volume": 0.5, "name": "kitchen lamp é"}]
 
 
 def gen_canonical() -> dict:
@@ -85,7 +85,7 @@ def gen_canonical() -> dict:
             pass
         cases.append({"name": name, "value": value, "error": True})
     hashes = [{"args": a, "args_hash": wire.args_hash(a)} for a in ARGS]
-    check(hashes[0]["args_hash"] == hashes[1]["args_hash"], "null args hash as {}")
+    check(hashes[0]["args_hash"] == hashes[1]["args_hash"] != hashes[2]["args_hash"], "only null hashes as {}")
     return {"cases": cases, "args_hash": hashes}
 
 
@@ -106,6 +106,8 @@ def gen_signatures() -> dict:
         ("expired past the hour of grace", grant, "home-root", BAND, grant["exp"] + 3601, None),
         ("inside the hour of grace", grant, "home-root", BAND, grant["exp"] + 3600, PUB["home-op"]),
         ("checked against another hub's root", grant, "guest-root", BAND, T0, None),
+        ("bands as a string, not a list", wire.sign(KEYS["home-root"], {**grant, "bands": "xx" + BAND + "xx"}),
+         "home-root", BAND, T0, None),
         ("self-signed by the operational key", wire.sign(KEYS["home-op"], {**grant, "hub": KID["home-op"]}),
          "home-root", BAND, T0, None),
     ]:
@@ -194,6 +196,8 @@ def gen_tickets() -> dict:
         ("elevate not a boolean", r, ticket_for(elevate="yes"), BAND, T0, [], "malformed"),
         ("elevate up front", r, ticket_for(elevate=True), BAND, T0, [], "ok"),
         ("wrong v", r, ticket_for(v=1), BAND, T0, [], "malformed"),
+        ("kid not a string", r, {**ticket_for(), "kid": [KID["home-op"]]}, BAND, T0, [], "malformed"),
+        ("empty args list is not {}", request(args=[]), ticket_for(request(args={})), BAND, T0, [], "wrong_args"),
         ("unknown hub", r, ticket_for(hub="00" * 8), BAND, T0, [], "unknown_hub"),
         ("guest hub's ticket on the home band", r, ticket_for(signer="guest-op", hub=GUEST, band=BAND),
          BAND, T0, [], "unknown_hub"),
@@ -299,13 +303,15 @@ def gen_memberships() -> dict:
         ("home narrows its own band", m(hub=HOME, root=PUB["home-root"], band=BAND, role="home",
                                         ceiling={"grants": ["*"], "max_risk": "exec"}), "ok"),
         ("tampered ceiling", {**m(), "ceiling": {"grants": ["*"]}}, "bad_signature"),
+        ("a second home", m(role="home"), "bad_role"),
+        ("home hub as a guest of itself", m(hub=HOME, root=PUB["home-root"], band=BAND), "bad_role"),
     ]
     out = []
     for name, doc, expect in cases:
-        ok, reason = wire.verify_membership(doc, home_keys, WORKER)
+        ok, reason = wire.verify_membership(doc, HOME, home_keys, WORKER)
         check(reason == expect, f"membership {name}: {reason}")
         out.append({"name": name, "document": doc, "reason": expect})
-    return {"worker_id": WORKER, "home_keys": home_keys, "cases": out}
+    return {"worker_id": WORKER, "home_hub": HOME, "home_keys": home_keys, "cases": out}
 
 
 # -- versions -------------------------------------------------------------------
@@ -398,12 +404,15 @@ PRESET_CASES = [
     ("child: chat", "child", [], [], call("agents.chat.send", "write"), {"ok": True}),
     ("child: page view", "child", [], [], call("pages.view"), {"ok": True}),
     ("child: shell not granted", "child", [], [], call("shell.exec", "exec"), {"ok": False, "reason": "grants"}),
-    ("child: plugin adds a read cap", "child", ["homework.item.list"], [], call("homework.item.list"), {"ok": True}),
-    ("child: plugin grant can't pass max_risk", "child", ["homework.*"], [],
+    ("child: plugin adds a read cap", "child", {"homework": ["homework.item.list"]}, [], call("homework.item.list"),
+     {"ok": True}),
+    ("child: plugin can't grant outside its namespace", "child", {"homework": ["shell.*", "*"]}, [],
+     call("shell.exec", "write"), {"ok": False, "reason": "grants"}),
+    ("child: plugin grant can't pass max_risk", "child", {"homework": ["homework.*"]}, [],
      call("homework.item.purge", "admin", ["destructive"]), {"ok": False, "reason": "risk"}),
     ("child: owner grant can't pass effects", "child", [], ["lights.set"],
      call("lights.set", "write", ["physical"]), {"ok": False, "reason": "effects"}),
-    ("child: personal data refused", "child", ["phone.*"], [], call("phone.sms.list", "read", ["personal"]),
+    ("child: personal data refused", "child", {"phone": ["phone.*"]}, [], call("phone.sms.list", "read", ["personal"]),
      {"ok": False, "reason": "effects"}),
     ("guest: chat", "guest", [], [], call("agents.chat.send", "write"), {"ok": True}),
     ("guest: pages not in preset", "guest", [], [], call("pages.view"), {"ok": False, "reason": "grants"}),

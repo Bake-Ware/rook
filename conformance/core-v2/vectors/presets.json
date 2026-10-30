@@ -150,9 +150,11 @@
   {
    "name": "child: plugin adds a read cap",
    "preset": "child",
-   "plugin_grants": [
-    "homework.item.list"
-   ],
+   "plugin_grants": {
+    "homework": [
+     "homework.item.list"
+    ]
+   },
    "user_grants": [],
    "rights": {
     "grants": [
@@ -174,11 +176,42 @@
    }
   },
   {
+   "name": "child: plugin can't grant outside its namespace",
+   "preset": "child",
+   "plugin_grants": {
+    "homework": [
+     "shell.*",
+     "*"
+    ]
+   },
+   "user_grants": [],
+   "rights": {
+    "grants": [
+     "agents.chat.*",
+     "pages.view"
+    ],
+    "max_risk": "write",
+    "effects": []
+   },
+   "call": {
+    "cap": "shell.exec",
+    "risk": "write",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "reason": "grants"
+   }
+  },
+  {
    "name": "child: plugin grant can't pass max_risk",
    "preset": "child",
-   "plugin_grants": [
-    "homework.*"
-   ],
+   "plugin_grants": {
+    "homework": [
+     "homework.*"
+    ]
+   },
    "user_grants": [],
    "rights": {
     "grants": [
@@ -234,9 +267,11 @@
   {
    "name": "child: personal data refused",
    "preset": "child",
-   "plugin_grants": [
-    "phone.*"
-   ],
+   "plugin_grants": {
+    "phone": [
+     "phone.*"
+    ]
+   },
    "user_grants": [],
    "rights": {
     "grants": [

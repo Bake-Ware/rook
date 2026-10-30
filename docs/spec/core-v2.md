@@ -186,7 +186,7 @@ through an IEEE double). An integer-valued number and the same value
 written with a fraction (`1` and `1.0`) canonicalise identically.
 
 `args_hash(args)` = base64url(SHA-256(canonical(args))) without padding,
-where a missing, `null` or empty `args` hashes as `{}`.
+where a missing or `null` `args` hashes as `{}` (and nothing else does).
 
 Vectors: `canonical.json`.
 
@@ -560,7 +560,8 @@ it.
 ### 6.6 Call context
 
 A worker hands the cap the verified call context from the ticket: `person`,
-`agent`, `session`, `band`, `why`, plus the hub (`hub`) and the call id.
+`agent`, `session`, `band`, `why`, plus the hub (`hub`), the call id and the
+cap's `risk` from its manifest (`admin` when running elevated).
 Plugin code reads it as `ctx.person`, `ctx.agent`, … (plugin kit). Nothing
 else on the wire says who a call is for; a worker MUST NOT take identity
 from anywhere but a verified ticket.
@@ -730,7 +731,8 @@ other hub state, and plugins add grants to them in their manifest
 | `guest` | `["agents.chat.*"]` | `write` | `[]` | `expires: 7d` after the account is created |
 
 A person's rights = the preset's `grants`, plus the grants plugins add to
-that preset, plus grants an owner gives that person; **`max_risk` and
+that preset (a plugin may add only patterns inside its own namespace,
+`<plugin>.…`; others are ignored), plus grants an owner gives that person; **`max_risk` and
 `effects` stay the preset's**. A plugin (or a per-person grant) can widen
 what is reachable but never push past the preset's ceilings: a child
 granted `lights.set` still can't use it while it has `physical`. Vectors:
@@ -793,7 +795,9 @@ past them, whatever its grants say.
 The worker accepts a document signed by the home hub's root key or a
 verified home operational key, for its own `worker_id`, whose `hub` is
 `key_id(root)`, with a known role and a valid ceiling (vectors:
-`memberships.json`). Documents arrive through
+`memberships.json`). Role `home` is valid exactly when `hub` is the home
+hub: there is one home, and the home hub is never a guest or co-owner of
+itself. Documents arrive through
 `core.trust.set` (13), whose arguments also carry the member band's
 connection details (relay or WebSocket address and the band PSK as a
 `{{secret:…}}` reference, resolved by the home hub for that call).
@@ -826,7 +830,11 @@ Re-anchoring removes every membership; the new home adds them again.
 
 ### 10.1 Dispatch order
 
-Every door ends at dispatch, before a ticket exists. A hub MUST apply, in
+Every door ends at dispatch, before a ticket exists. Platform agents that
+run inside the hub (the security triage agent, recovery) call dispatch
+in-process rather than through MCP, so they keep working when MCP fails or
+is compromised; an owner or the security agent can switch the MCP door off
+(the kill switch) without touching the other doors. A hub MUST apply, in
 order:
 
 1. **Caller.** Authenticate the door's caller into `person` and/or `agent`
@@ -1019,7 +1027,10 @@ which the hub minted itself, for that worker.
 
 Worker administration (plugins over Drop, updates, configuration,
 enrollment changes) is defined by the core manifest's caps, not by this
-document.
+document. Whatever pushes a plugin, a worker loads it only when its
+`plugin.sig` (the hub's signature over the plugin's file-hash list)
+verifies under a hub it trusts with role `home` or `co-owner`; anyone may
+write a plugin, but only those hubs approve it for this machine.
 
 ## 14. Conformance
 

@@ -2,6 +2,7 @@
  "spec": "2.0",
  "vector": "memberships",
  "worker_id": "3f0a9c1d2e3f40516273849506a7b8c9",
+ "home_hub": "19c7d7856f775f9a",
  "home_keys": {
   "19c7d7856f775f9a": "ed25519:MbCo4yBEeKDrk+P009e4Ek1aVP0U3gd/ico2zVw2opQ=",
   "3c1945587ef004c3": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk="
@@ -260,6 +261,54 @@
     "sig": "9d3qwfzJXE8H2Gt2JHzrkvnGjO372s/QtG+2MH8yf256O2XLjoZUJ2Az1abkspv5wNUDtI8DpRaPVyxmuoedCg=="
    },
    "reason": "bad_signature"
+  },
+  {
+   "name": "a second home",
+   "document": {
+    "typ": "rook-membership",
+    "v": 2,
+    "serial": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "hub": "21f7b4340bc96a6c",
+    "root": "ed25519:0G6e9ChOgUm2QB5pMh5LvK54jlzfQPe2KfUDEGyQDQE=",
+    "band": "3384db16e75f5d25f75fa3010b904c9f",
+    "role": "home",
+    "ceiling": {
+     "grants": [
+      "light.*@lamp-*"
+     ],
+     "max_risk": "write"
+    },
+    "by": "person:bake",
+    "iat": 1793300000,
+    "kid": "19c7d7856f775f9a",
+    "sig": "B2RTAD5pfObqzK7r5o0dR8faQtjyx0BNX9DFhyS6V6fFsHD9cVtAaju7gXAzSY7YTB7BbxnyNsuLarIdm3U+Cg=="
+   },
+   "reason": "bad_role"
+  },
+  {
+   "name": "home hub as a guest of itself",
+   "document": {
+    "typ": "rook-membership",
+    "v": 2,
+    "serial": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "hub": "19c7d7856f775f9a",
+    "root": "ed25519:MbCo4yBEeKDrk+P009e4Ek1aVP0U3gd/ico2zVw2opQ=",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "role": "guest",
+    "ceiling": {
+     "grants": [
+      "light.*@lamp-*"
+     ],
+     "max_risk": "write"
+    },
+    "by": "person:bake",
+    "iat": 1793300000,
+    "kid": "19c7d7856f775f9a",
+    "sig": "dZ59GSfxvO6DQWvcG/WsiH5aP6FrinYBpP6zqee5+KRMzGEFCYYCNpew71LVwA/NjpOFvVlqwoou2rkb6Y1YDg=="
+   },
+   "reason": "bad_role"
   }
  ]
 }

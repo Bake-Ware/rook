@@ -164,6 +164,24 @@
    "key": null
   },
   {
+   "name": "bands as a string, not a list",
+   "grant": {
+    "typ": "rook-hubkey",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "key": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+    "bands": "xxe17904e6ed4c664592f64f6f1d02c682xx",
+    "iat": 1793213600,
+    "exp": 1793818400,
+    "kid": "19c7d7856f775f9a",
+    "sig": "MwaF47jgVctv+uEg5NwdltwCkKS0gmMDXcYY3bA4iG+eS3e0g0r89SvgsORpIBEwZeYJKAL3rHEoPYIVZ+AiCg=="
+   },
+   "root": "ed25519:MbCo4yBEeKDrk+P009e4Ek1aVP0U3gd/ico2zVw2opQ=",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "key": null
+  },
+  {
    "name": "self-signed by the operational key",
    "grant": {
     "typ": "rook-hubkey",

@@ -91,11 +91,14 @@ def check(layers: list, call: dict) -> dict:
     return {"ok": True}
 
 
-def preset_rights(preset: dict, plugin_grants: list | None = None,
+def preset_rights(preset: dict, plugin_grants: dict | None = None,
                   user_grants: list | None = None) -> dict:
-    """A person's rights from their preset: plugins and owners may add grants,
-    but the preset's ``max_risk`` and ``effects`` stay the ceiling."""
-    out = {"grants": list(preset["grants"]) + list(plugin_grants or ()) + list(user_grants or ())}
+    """A person's rights from their preset: plugins ({plugin: [pattern]}) add
+    grants inside their own namespace only, owners add any, and the preset's
+    ``max_risk`` and ``effects`` stay the ceiling."""
+    added = [g for plugin, pats in (plugin_grants or {}).items() for g in pats
+             if g.startswith(plugin + ".")]
+    out = {"grants": list(preset["grants"]) + added + list(user_grants or ())}
     for k in ("max_risk", "effects"):
         if k in preset:
             out[k] = preset[k]

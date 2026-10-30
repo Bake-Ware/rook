@@ -100,8 +100,9 @@ def unb64(text: str) -> bytes:
 
 
 def args_hash(args: Any) -> str:
-    """base64url(SHA-256(canonical(args or {}))), unpadded."""
-    digest = hashlib.sha256(canonical(args if args else {})).digest()
+    """base64url(SHA-256(canonical(args))), unpadded; missing or null args
+    hash as {}."""
+    digest = hashlib.sha256(canonical({} if args is None else args)).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
@@ -200,7 +201,7 @@ def verify_hubkey(grant: Any, root_pub: str, band: str, now: int) -> str | None:
             return None
         if not (grant["iat"] - GRANT_GRACE <= now <= grant["exp"] + GRANT_GRACE):
             return None
-        if band not in grant.get("bands", []):
+        if not isinstance(grant.get("bands"), list) or band not in grant["bands"]:
             return None
         return grant["key"]
     except (KeyError, TypeError, ValueError):
@@ -214,7 +215,7 @@ MIN_LIFETIME = 60      # exp - iat bounds
 MAX_LIFETIME = 120
 REPLAY_KEEP = 900      # replay cache entry lifetime (spec: 600..1200)
 
-_TICKET_STR = ("hub", "band", "call", "nonce", "worker", "cap", "args_hash", "session", "why")
+_TICKET_STR = ("kid", "hub", "band", "call", "nonce", "worker", "cap", "args_hash", "session", "why")
 _HEX32 = re.compile(r"[0-9a-f]{32}")
 WHY_MAX = 500
 
@@ -269,7 +270,7 @@ def verify_ticket(ticket: Any, request: dict, worker: dict, now: int,
     entry = worker["trust"].get(ticket["hub"])
     if not entry or entry["band"] != worker["band"]:
         return False, "unknown_hub"
-    pub = entry["keys"].get(ticket.get("kid"))
+    pub = entry["keys"].get(ticket["kid"])
     if not pub:
         return False, "unknown_key"
     if not verify_sig(pub, ticket):
@@ -287,7 +288,7 @@ def verify_ticket(ticket: Any, request: dict, worker: dict, now: int,
     try:
         if ticket["args_hash"] != args_hash(request.get("args")):
             return False, "wrong_args"
-    except ValueError:
+    except (ValueError, RecursionError):
         return False, "wrong_args"
     life = ticket["exp"] - ticket["iat"]
     if not MIN_LIFETIME <= life <= MAX_LIFETIME:
@@ -347,9 +348,10 @@ def verify_lease(lease: Any, ticket: dict, keys: dict, now: int) -> tuple[bool, 
 ROLES = ("home", "co-owner", "guest", "removed")
 
 
-def verify_membership(doc: Any, home_keys: dict, worker_id: str) -> tuple[bool, str]:
+def verify_membership(doc: Any, home_hub: str, home_keys: dict, worker_id: str) -> tuple[bool, str]:
     """Check a ``rook-membership`` document signed by the worker's home hub
-    (``home_keys``: its verified op keys and its root key, {kid: pub})."""
+    ``home_hub`` (``home_keys``: its verified op keys and its root key,
+    {kid: pub}). Role ``home`` is for the home hub's own band and only there."""
     if not isinstance(doc, dict) or doc.get("typ") != "rook-membership" or doc.get("v") != 2:
         return False, "malformed"
     pub = home_keys.get(doc.get("kid"))
@@ -364,7 +366,7 @@ def verify_membership(doc: Any, home_keys: dict, worker_id: str) -> tuple[bool, 
             return False, "wrong_root"
     except (KeyError, TypeError, ValueError):
         return False, "malformed"
-    if doc.get("role") not in ROLES:
+    if doc.get("role") not in ROLES or (doc["role"] == "home") != (doc["hub"] == home_hub):
         return False, "bad_role"
     if doc["role"] != "removed" and not rights.valid_rights(doc.get("ceiling")):
         return False, "bad_ceiling"

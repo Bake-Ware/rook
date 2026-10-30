@@ -434,6 +434,76 @@
    "reason": "malformed"
   },
   {
+   "name": "kid not a string",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": [
+     "3c1945587ef004c3"
+    ],
+    "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+   },
+   "reason": "malformed"
+  },
+  {
+   "name": "empty args list is not {}",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": []
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "nY9oHDKcu+vCvCeTB5UTqx0pkg1C8UVIkN2qZreb21xtPTgHfKSNZ8SMeOrf4w/T2kos93MdKvBg4Dd8CqGOAw=="
+   },
+   "reason": "wrong_args"
+  },
+  {
    "name": "unknown hub",
    "band": "e17904e6ed4c664592f64f6f1d02c682",
    "now": 1793300000,

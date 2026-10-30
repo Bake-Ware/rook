@@ -22,10 +22,10 @@ reference passes them in `tests/test_core2_vectors.py`.
 | `signatures.json` | test `keys` (Ed25519 seeds, `ed25519:` public keys, `kid`), the per-`typ` `prefixes`, one `signing_input` spelled out, `hubkey` grant checks (`key` = the certified operational key or `null`), and `verify` cases (`valid`) | 3.3, 5.2 |
 | `tickets.json` | the worker check order: a `worker` state plus `cases` with the band the request arrived on, `now`, nonces already `seen`, the `request`, the `ticket` and the expected `reason` (`ok` or the reason code) | 6.2, 6.3 |
 | `leases.json` | elevation leases checked against the `ticket` of the call they elevate | 7.3 |
-| `memberships.json` | membership documents checked against the home hub's keys | 9.3 |
+| `memberships.json` | membership documents checked against the home hub's id (`home_hub`) and keys | 9.3 |
 | `version.json` | `negotiate(mine, theirs)` → `speak` (`null` = no common version); symmetric | 2.2 |
 | `rights.json` | the enums (`risks`, `scopes`, `effects`, `hard_stop_effects`) and the intersection rule: `layers` (`[name, rights]`, in order) and a `call` → `{ok}` or `{ok: false, layer, reason}` | 4, 8.2, 8.3 |
-| `presets.json` | the four core `presets` and, per case, the person's computed `rights` (preset + plugin grants + owner grants) and the decision for a `call` | 8.5 |
+| `presets.json` | the four core `presets` and, per case, the person's computed `rights` (preset + `plugin_grants` as `{plugin: [pattern]}`, kept only inside that plugin's namespace + owner grants) and the decision for a `call` | 8.5 |
 | `gate.json` | combining gate results into one dispatch verdict | 10.2 |
 | `journal.json` | a three-entry hash chain and tamper `checks` (`first_break` = index of the first entry that doesn't follow, or `null`) | 11.3 |
 
