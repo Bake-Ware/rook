@@ -166,6 +166,15 @@ if [ ! -s "$SECRETS/mcp.token" ]; then
     "$PY" -m rook.core2.hub --config "$HUB_CFG" token --person "$OWNER" --agent claude-code \
         --label sidecar-mcp > "$SECRETS/mcp.token"
 fi
+# A Claude Code MCP config for the door (claude --mcp-config <it>); it holds the token.
+"$PY" - "$SECRETS" "http://$MCP_BIND/mcp" <<'EOF'
+import json, sys
+from pathlib import Path
+d, url = Path(sys.argv[1]), sys.argv[2]
+token = (d / "mcp.token").read_text().strip()
+(d / "claude-mcp.json").write_text(json.dumps({"mcpServers": {"rook05": {
+    "type": "http", "url": url, "headers": {"Authorization": f"Bearer {token}"}}}}, indent=2) + "\n")
+EOF
 chmod 600 "$SECRETS"/*
 say "start: worker"
 systemctl --user start rook-castling-worker
@@ -176,5 +185,6 @@ cat <<EOF
   Sign-in token: $SECRETS/owner.token
   Recovery key:  $SECRETS/recovery-key.txt
   MCP door:      http://$MCP_BIND/mcp  (token in $SECRETS/mcp.token)
+  Claude Code:   claude --mcp-config $SECRETS/claude-mcp.json
   Check it:      $here/check.sh
 EOF
