@@ -37,6 +37,7 @@ The band comes through a transport with three methods (``start(on_message)``,
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -230,6 +231,7 @@ class Known:
     last_seen: float = 0.0
     online: bool = False
     problem: str | None = None           # why some or all of it can't be used
+    tried: str | None = None             # the last heartbeat manifests_hash a fetch was made for
 
     def saved(self) -> dict:
         d = asdict(self)
@@ -289,6 +291,7 @@ class Hub:
         self._tasks: set[asyncio.Task] = set()
         self._loops: list[asyncio.Task] = []
         self._pending: dict[str, asyncio.Future] = {}
+        self._late: dict[str, str] = {}          # call id -> worker, for calls given up on (bounded)
         self._locks: dict[str, asyncio.Lock] = {}
         self._door_sessions: dict[tuple, str] = {}
         self._component_sessions: dict[str, str] = {}
@@ -302,6 +305,17 @@ class Hub:
     # -- start and stop ---------------------------------------------------------
 
     async def start(self) -> None:
+        try:
+            await self._start()
+        except BaseException:
+            await self._teardown()      # a failed start leaves nothing open
+            raise
+        self.started = True
+        log.info("hub started", extra={"fields": {"hub": self.hub_id, "node": self.node, "band": self.band,
+                                                  "plugins": len(self.plugins.plugins), "workers": len(self.known),
+                                                  "doors": [d.name for d in self.doors]}})
+
+    async def _start(self) -> None:
         cfg = self.cfg
         self.data.mkdir(parents=True, exist_ok=True, mode=0o700)
         (self.data / "keys").mkdir(exist_ok=True, mode=0o700)
@@ -342,7 +356,6 @@ class Hub:
         self._load_workers()
         self._sync_hub()
         await self.transport.start(self._on_message)
-        self.started = True
         self._loops = [self._every(ANNOUNCE_EVERY, self._announce_hub, jitter=0.2, now=True),
                        self._every(15.0, self._liveness),
                        self._every(3600.0, self._hourly),
@@ -352,9 +365,6 @@ class Hub:
             door = make_door(name, self, opts or {})
             await door.start()
             self.doors.append(door)
-        log.info("hub started", extra={"fields": {"hub": self.hub_id, "node": self.node, "band": self.band,
-                                                  "plugins": len(self.plugins.plugins), "workers": len(self.known),
-                                                  "doors": [d.name for d in self.doors]}})
 
     async def stop(self) -> None:
         """Doors first (nothing new comes in), then background work, the band,
@@ -362,6 +372,11 @@ class Hub:
         if not self.started:
             return
         self.started = False
+        await self._teardown()
+        log.info("hub stopped", extra={"fields": {"hub": self.hub_id}})
+
+    async def _teardown(self) -> None:
+        """Close whatever start opened, in reverse; safe after a partial start."""
         for door in reversed(self.doors):
             try:
                 await door.stop()
@@ -374,12 +389,15 @@ class Hub:
         for fut in self._pending.values():
             if not fut.done():
                 fut.set_result({"ok": False, "error": "hub stopping"})
-        await self.transport.close()
-        await self.plugins.close()
-        self._save_workers()
-        self.journal.close()
-        self.records.close()
-        log.info("hub stopped", extra={"fields": {"hub": self.hub_id}})
+        if hasattr(self, "transport"):
+            await self.transport.close()
+        if hasattr(self, "plugins"):
+            await self.plugins.close()
+        if hasattr(self, "dispatcher"):
+            self._save_workers()
+        for store in ("journal", "records"):
+            if hasattr(self, store):
+                getattr(self, store).close()
 
     def _every(self, seconds: float, fn: Callable[[], Any], jitter: float = 0.0, now: bool = False) -> asyncio.Task:
         async def loop():
@@ -608,6 +626,8 @@ class Hub:
         except ValueError as e:
             log.warning("bad worker announce", extra={"fields": {"worker": wid, "error": str(e)}})
             return
+        if any(o.name == name and o.id != wid for o in self.known.values()):
+            log.warning("a second worker id claims a known name", extra={"fields": {"worker": wid, "name": name}})
         async with self._lock(wid):
             k = self.known.get(wid) or Known(wid, name, band)
             before = (k.online, k.version)
@@ -616,8 +636,7 @@ class Hub:
             k.core = wire.negotiate(CORE_VERSION, msg.get("core"))
             k.version = msg.get("version") if isinstance(msg.get("version"), str) else None
             k.description = str(msg["description"])[:280] if msg.get("description") else None
-            k.facts = {f: v for f, v in msg.get("facts").items() if not f.startswith("is_")
-                       and f not in ("role", "roles", "grants")} if isinstance(msg.get("facts"), dict) else {}
+            k.facts = _facts(msg.get("facts"))
             k.manifests, k.manifests_hash = entries, msg["manifests_hash"]
             k.unavailable = msg.get("unavailable") if isinstance(msg.get("unavailable"), dict) else {}
             k.ceiling = msg.get("ceiling") if isinstance(msg.get("ceiling"), dict) else None
@@ -650,10 +669,12 @@ class Hub:
             k.core = wire.negotiate(CORE_VERSION, msg.get("core"))
             if isinstance(msg.get("status"), dict):
                 k.status = msg["status"]
-            if k.core and msg.get("manifests_hash") != k.manifests_hash:
+            mhash = msg.get("manifests_hash")
+            if k.core and mhash != k.manifests_hash and mhash != k.tried:
+                k.tried = mhash       # once per new hash: a worker that keeps failing isn't asked every 30 s
                 self._sync(k)
                 await self._fetch(k, None)
-                if k.manifests_hash != msg.get("manifests_hash"):
+                if k.manifests_hash != mhash:
                     k.problem = "manifests changed while the hub fetched them"
                 self._sync_hub()
                 self._save_workers()
@@ -738,10 +759,11 @@ class Hub:
             fut = self._pending.get(msg["id"])
             if fut is not None and not fut.done():
                 fut.set_result(msg)
-            else:
+            elif self._late.get(msg["id"]) == msg.get("from"):    # only calls this hub gave up on
+                del self._late[msg["id"]]
                 self._journal({"kind": "late_reply", "ts": self.clock(), "hub": self.hub_id,
-                               "call": msg["id"][:64], "worker": str(msg.get("from"))[:64],
-                               "ok": msg.get("ok") is True})
+                               "call": msg["id"], "worker": msg["from"], "ok": msg.get("ok") is True,
+                               **({"error": str(msg.get("error"))[:500]} if msg.get("ok") is not True else {})})
 
     async def _band_request(self, band: str, req: dict) -> None:
         """``core.elevate`` and ``core.call`` from a worker, each authenticated
@@ -782,6 +804,10 @@ class Hub:
         finally:
             if self._pending.get(request["id"]) is fut:
                 del self._pending[request["id"]]
+            if not fut.done():           # timed out or cancelled: a reply may still come
+                self._late[request["id"]] = request["target"]
+                while len(self._late) > 1000:
+                    del self._late[next(iter(self._late))]
 
     async def _local(self, req: dict) -> dict:
         """A call to the hub node. Dispatch minted its ticket a moment ago in
@@ -795,7 +821,7 @@ class Hub:
             out.update(ok=True, result=await self.plugins.run(req["cap"], req.get("args"), caller))
         except asyncio.CancelledError:
             raise
-        except Exception as e:
+        except (Exception, SystemExit) as e:    # plugin code never takes the hub down
             msg = getattr(e, "message", None) or f"{req['cap']} failed: {type(e).__name__}: {e}"
             out.update(ok=False, error=msg)
             if getattr(e, "retry", False):
@@ -870,15 +896,16 @@ class Hub:
     async def call_as(self, who: KitCaller, cap: str, args: dict | None, uses: list | None = None) -> dict:
         """Dispatch a call a hub plugin makes. With a person or agent (a call
         in progress) it runs as them in their session; without (a hook), as
-        ``system:<plugin>``. ``uses`` is the plugin's extra layer."""
+        ``system:plugin.<name>`` (a dot no plugin name has, so no plugin can
+        be ``system:hub``). ``uses`` is the plugin's extra layer."""
         if who.person or who.agent:
             caller, sid = Caller(who.person, who.agent), who.session or ""
         else:
-            name = who.plugin or "hub"
-            caller = Caller(agent=f"system:{name}")
-            if name in self.plugins.plugins:
-                self.identities.add_component(name, {"grants": self.plugins.uses(name)})
-            sid = self._session(self._component_sessions, name, caller, ["*"])
+            component = f"plugin.{who.plugin}" if who.plugin else "hub"
+            caller = Caller(agent=f"system:{component}")
+            if who.plugin in self.plugins.plugins:
+                self.identities.add_component(component, {"grants": self.plugins.uses(who.plugin)})
+            sid = self._session(self._component_sessions, component, caller, ["*"])
         target = self._target_for(cap)
         if target is None:
             return {"ok": False, "error": f"no single worker serves {cap}"}
@@ -953,7 +980,7 @@ class Hub:
             if worker and worker not in (w.id, w.name):
                 continue
             k = self.known.get(w.id)
-            out[w.name if list(out).count(w.name) == 0 else w.id] = {
+            out[w.id if w.name in out else w.name] = {
                 "id": w.id, "online": True if w.id == self.node else bool(k and k.online),
                 "caps": {n: {f: m[f] for f in ("doc", "risk", "scope", "effects", "args", "aliases", "timeout")
                              if f in m} for n, m in sorted(w.caps.items())},
@@ -1005,8 +1032,14 @@ class Hub:
         return out
 
 
+def _facts(facts: Any) -> dict:
+    """Self-reported facts (5.3): at most 1024 bytes, grant-looking keys dropped."""
+    if not isinstance(facts, dict) or len(json.dumps(facts, separators=(",", ":"), default=str)) > 1024:
+        return {}
+    return {f: v for f, v in facts.items() if not str(f).startswith("is_") and f not in ("role", "roles", "grants")}
+
+
 def _entries_hash(entries: list) -> str:
-    import hashlib
     return hashlib.sha256(wire.canonical(entries)).hexdigest()
 
 

@@ -19,7 +19,7 @@ instead of to the band. What gets served:
   to the chosen provider as the same caller (rook.kit.contracts).
 
 Hooks start only for ``runs_on: hub`` plugins (the rest run on workers). They
-act as ``system:<plugin>``, whose rights are the plugin's own namespace plus
+act as ``system:plugin.<name>``, whose rights are the plugin's own namespace plus
 its ``uses``. A plugin's ``gate:`` becomes a hub gate (rook.core2.hub.gate).
 """
 from __future__ import annotations
@@ -241,7 +241,8 @@ def short_caps(data: dict) -> dict:
 
 def _result(reply: dict) -> Any:
     if not reply.get("ok"):
-        raise KitError(str(reply.get("error", "failed")), retry=bool(reply.get("retry")))
+        hold = f" (hold {reply['hold']})" if reply.get("held") else ""   # the inner call waits for a person
+        raise KitError(str(reply.get("error", "failed")) + hold, retry=bool(reply.get("retry")))
     return reply.get("result")
 
 

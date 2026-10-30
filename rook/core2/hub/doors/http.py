@@ -90,6 +90,8 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception:
             log.exception("door request failed")
             status, body = 500, {"ok": False, "error": "internal error"}
+        if status >= 400:
+            self.close_connection = True    # a body we didn't read must not become the next request
         data = json.dumps(body, default=str).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -104,8 +106,8 @@ class _Handler(BaseHTTPRequestHandler):
         hub = self.door.hub
         if method == "GET" and path == "/health":
             return 200, {"ok": True, "hub": hub.hub_id}
-        body = self._body() if method == "POST" else None
         caller = self._run(self._auth())
+        body = self._body() if method == "POST" else None
         query = dict(parse_qsl(url.query))
         routes = {
             ("POST", "/call"): lambda: hub.call(caller, body, self.door.name),

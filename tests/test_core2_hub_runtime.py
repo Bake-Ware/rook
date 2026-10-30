@@ -88,6 +88,11 @@ caps:
       text: { type: str, required: true }
       to: { type: str }
       title: { type: str }
+  quit:
+    doc: Plugin code that exits.
+    risk: read
+    scope: self
+    run: scripts/notes.py:quit
 provides:
   notify.send: notes.tell
 hooks:
@@ -103,8 +108,11 @@ def count(ctx):
 def tell(ctx, text, to=None, title=None):
     return ctx.records.note.create(text=text)["id"]
 
+def quit(ctx):
+    raise SystemExit(3)
+
 def online(ctx, event, payload):
-    SEEN.append(payload["name"])
+    SEEN.append((payload["name"], ctx.call("notes.count")["count"]))
 """
 
 
@@ -240,7 +248,7 @@ class FakeWorker:
 
 
 @pytest.fixture
-def setup(tmp_path):
+def hubs(tmp_path):
     """(start, stop) helpers around one hub with a loopback band."""
     state = {}
 
@@ -255,9 +263,9 @@ def setup(tmp_path):
     return start
 
 
-def test_call_through_the_door_reaches_a_worker_and_is_journaled(setup):
+def test_call_through_the_door_reaches_a_worker_and_is_journaled(hubs):
     async def go():
-        hub, w, token = await setup()
+        hub, w, token = await hubs()
         try:
             await w.announce()
             await until(lambda: "echo.say" in hub.dispatcher.workers.get(WID, runtime.Worker("", "", "", {}, {})).caps)
@@ -283,9 +291,9 @@ def test_call_through_the_door_reaches_a_worker_and_is_journaled(setup):
     run(go())
 
 
-def test_door_auth_and_bad_requests(setup):
+def test_door_auth_and_bad_requests(hubs):
     async def go():
-        hub, _, token = await setup(worker=False)
+        hub, _, token = await hubs(worker=False)
         try:
             assert (await http(hub, "GET", "/health"))[0] == 200
             assert (await http(hub, "GET", "/workers"))[0] == 401
@@ -304,9 +312,9 @@ def test_door_auth_and_bad_requests(setup):
     run(go())
 
 
-def test_why_rights_and_holds(setup):
+def test_why_rights_and_holds(hubs):
     async def go():
-        hub, w, token = await setup()
+        hub, w, token = await hubs()
         try:
             await w.announce()
             await until(lambda: WID in hub.known and hub.known[WID].problem is None
@@ -338,9 +346,9 @@ def test_why_rights_and_holds(setup):
     run(go())
 
 
-def test_holds_wait_for_the_person(setup, tmp_path):
+def test_holds_wait_for_the_person(hubs, tmp_path):
     async def go():
-        hub, w, token = await setup(config(tmp_path, sacred=["kaiju"]))
+        hub, w, token = await hubs(config(tmp_path, sacred=["kaiju"]))
         try:
             await w.announce()
             await until(lambda: "echo.root" in hub.dispatcher.workers.get(WID, runtime.Worker("", "", "", {}, {})).caps)
@@ -360,9 +368,9 @@ def test_holds_wait_for_the_person(setup, tmp_path):
     run(go())
 
 
-def test_first_run_state_survives_a_restart(setup, tmp_path):
+def test_first_run_state_survives_a_restart(hubs, tmp_path):
     async def go():
-        hub, w, token = await setup()
+        hub, w, token = await hubs()
         hub_id, node = hub.hub_id, hub.node
         await w.announce()
         await until(lambda: "echo.say" in hub.dispatcher.workers.get(WID, runtime.Worker("", "", "", {}, {})).caps)
@@ -388,11 +396,11 @@ def test_first_run_state_survives_a_restart(setup, tmp_path):
     run(go())
 
 
-def test_presence_and_manifest_refresh(setup, tmp_path):
+def test_presence_and_manifest_refresh(hubs, tmp_path):
     now = [time.time()]      # the worker checks tickets on the real clock
 
     async def go():
-        hub, w, token = await setup(worker=False)
+        hub, w, token = await hubs(worker=False)
         await hub.stop()
         hub = Hub(config(tmp_path), transport=(band := Loopback()), clock=lambda: now[0])
         await hub.start()
@@ -412,6 +420,9 @@ def test_presence_and_manifest_refresh(setup, tmp_path):
             await until(lambda: sum(t["cap"] == "core.manifests" for t in w.verified) == fetches + 1)
             await until(lambda: hub.known[WID].problem is not None)
             assert hub.known[WID].problem == "manifests changed while the hub fetched them"
+            await w.heartbeat(mhash="0" * 64)           # same hash again: not asked again
+            await asyncio.sleep(0.3)
+            assert sum(t["cap"] == "core.manifests" for t in w.verified) == fetches + 1
             # an incompatible core: shown, never called
             await w.announce(core="3.0")
             await until(lambda: hub.known[WID].core is None)
@@ -424,13 +435,13 @@ def test_presence_and_manifest_refresh(setup, tmp_path):
     run(go())
 
 
-def test_hub_plugins_records_contracts_and_hooks(setup, tmp_path):
+def test_hub_plugins_records_contracts_and_hooks(hubs, tmp_path):
     lib = tmp_path / "lib"
     plugin(lib, "notes", NOTES, {"notes.py": NOTES_PY})
     plugin(lib, "broken", "manifest: 1\nplugin: broken\n", {})
 
     async def go():
-        hub, w, token = await setup(config(tmp_path, library=lib))
+        hub, w, token = await hubs(config(tmp_path, library=lib))
         try:
             assert list(hub.plugins.plugins) == ["notes"]       # broken was refused, the hub runs
             _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "notes.note.create",
@@ -445,11 +456,15 @@ def test_hub_plugins_records_contracts_and_hooks(setup, tmp_path):
             _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "notes.note.create",
                                                        "args": {"txt": "x"}, "why": WHY}, token)
             assert out["error"].startswith("bad args"), out
+            _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "notes.quit", "why": WHY}, token)
+            assert out["error"] == "notes.quit failed: SystemExit: 3" and hub.started
             _, caps = await http(hub, "GET", "/caps?worker=rook", token=token)
             assert caps["workers"]["rook"]["caps"]["notify.send"]["risk"] == "write"
             await w.announce()
             mod = next(m for m in hub.plugins._modules["notes"].values())
-            await until(lambda: mod.SEEN == ["kaiju"])           # on: worker.online hook ran
+            await until(lambda: mod.SEEN == [("kaiju", 2)])     # on: worker.online hook ran, and called a cap
+            hooked = hub.journal.query(cap="notes.count", limit=1)[0]
+            assert (hooked["agent"], hooked["person"], hooked["ok"]) == ("system:plugin.notes", None, True)
         finally:
             await hub.stop()
     run(go())
@@ -481,13 +496,56 @@ def test_config_file_and_token_command(tmp_path, capsys):
     assert main(["--config", str(path)]) == 2
 
 
-def test_hub_announce_is_signed_and_accepted(setup):
+def test_hub_announce_is_signed_and_accepted(hubs):
     async def go():
-        hub, w, _ = await setup()
+        hub, w, _ = await hubs()
         try:
             await w.announce()
             await until(lambda: w.announces >= 1)
             assert w.gate.lost(hub.hub_id, BAND) is False
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_a_failed_start_leaves_nothing_open(tmp_path):
+    async def go():
+        hub = Hub(config(tmp_path, library=tmp_path / "missing"), transport=Loopback())
+        with pytest.raises(ValueError, match="not a folder"):
+            await hub.start()
+        hub = Hub(config(tmp_path), transport=Loopback())   # the same data folder starts fine
+        await hub.start()
+        await hub.stop()
+    run(go())
+
+
+def test_announce_facts_are_bounded(hubs):
+    async def go():
+        hub, w, _ = await hubs()
+        try:
+            await w.announce(facts={"os": "linux", "is_hub": True, "grants": ["*"]})
+            await until(lambda: WID in hub.known)
+            assert hub.known[WID].facts == {"os": "linux"}
+            await w.announce(facts={"blob": "x" * 2000})
+            await until(lambda: hub.known[WID].facts == {})
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_only_late_replies_to_our_own_calls_are_journaled(hubs):
+    async def go():
+        hub, w, token = await hubs()
+        try:
+            await w.announce()
+            await until(lambda: "echo.say" in hub.dispatcher.workers.get(WID, runtime.Worker("", "", "", {}, {})).caps)
+            hub._late["a" * 32] = WID
+            await w.to_hub({"id": "b" * 32, "from": WID, "ok": True, "result": 1})      # never asked
+            await w.to_hub({"id": "a" * 32, "from": "c" * 32, "ok": True, "result": 1})  # wrong worker
+            await w.to_hub({"id": "a" * 32, "from": WID, "ok": False, "error": "slow"})
+            await until(lambda: hub.journal.query(kind="late_reply"))
+            await asyncio.sleep(0.1)
+            assert [(e["call"], e["error"]) for e in hub.journal.query(kind="late_reply")] == [("a" * 32, "slow")]
         finally:
             await hub.stop()
     run(go())
