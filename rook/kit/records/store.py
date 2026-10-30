@@ -156,6 +156,11 @@ class RecordStore:
     def close(self) -> None:
         self._db.close()
 
+    def _query(self, sql: str, params: Any = ()) -> list[sqlite3.Row]:
+        """Reads share the one connection with writers, so they take the lock too."""
+        with self._lock:
+            return self._db.execute(sql, params).fetchall()
+
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
         with self._lock:
@@ -258,11 +263,11 @@ class RecordStore:
 
     def backlinks(self, caller: Caller, full: str, rid: str) -> list[dict]:
         """Records (any plugin) whose ref fields point at ``full`` record ``rid``."""
-        rows = self._db.execute(
+        rows = self._query(
             "SELECT src, src_id, field FROM kit_refs WHERE dst=? AND dst_id=? AND band=? "
             "AND (private_creator IS NULL OR ? OR private_creator IN (?, ?)) ORDER BY src, src_id",
             (full, rid, caller.band, caller.owner, f"p:{caller.person}" if caller.person else "",
-             f"a:{caller.actor}")).fetchall()
+             f"a:{caller.actor}"))
         return [{"type": r["src"], "id": r["src_id"], "field": r["field"]} for r in rows]
 
     def prune(self, now: float | None = None) -> int:
@@ -326,11 +331,10 @@ class RecordType:
 
     def _row(self, caller: Caller, rid: str) -> sqlite3.Row:
         vis, params = self._visible(caller)
-        row = self.store._db.execute(f"SELECT * FROM {self._t} WHERE id = ? AND {vis}",
-                                     [rid, *params]).fetchone()
-        if row is None:
+        rows = self.store._query(f"SELECT * FROM {self._t} WHERE id = ? AND {vis}", [rid, *params])
+        if not rows:
             raise KitError(f"no {self.rdef.full} {rid}")
-        return row
+        return rows[0]
 
     def _out(self, row: sqlite3.Row) -> dict:
         rec = {k: row[k] for k in KIT_COLUMNS if k != "band"}
@@ -355,9 +359,9 @@ class RecordType:
         if not self.rdef.history:
             raise KitError(f"{self.rdef.full} keeps no history")
         self._row(caller, id)
-        rows = self.store._db.execute(
+        rows = self.store._query(
             f"SELECT revision, ts, actor, op, data FROM {_q('h:' + self.rdef.full)} "
-            "WHERE id = ? ORDER BY revision", (id,)).fetchall()
+            "WHERE id = ? ORDER BY revision", (id,))
         return [{**dict(r), "data": json.loads(r["data"])} for r in rows]
 
     def list(self, caller: Caller, where: Mapping | None = None, archived: bool = False,
@@ -375,10 +379,10 @@ class RecordType:
         col = order.lstrip("-")
         if col not in ("created", "updated") and col not in self.rdef.fields:
             raise KitError(f"can't order by {col}")
-        rows = self.store._db.execute(
+        rows = self.store._query(
             f"SELECT * FROM {self._t} WHERE {' AND '.join(sql)} ORDER BY {_q(col)} "
             f"{'DESC' if order.startswith('-') else 'ASC'}, id LIMIT ? OFFSET ?",
-            [*params, max(1, min(int(limit), 500)), max(0, int(offset))]).fetchall()
+            [*params, max(1, min(int(limit), 500)), max(0, int(offset))])
         return [self._out(r) for r in rows]
 
     def search(self, caller: Caller, query: str, limit: int = 20, semantic: bool = False) -> list[dict]:
@@ -397,10 +401,10 @@ class RecordType:
             raise KitError(f"{self.rdef.full} declares no search fields")
         vis, params = self._visible(caller, "r.")
         ft = _q("f:" + self.rdef.full)
-        rows = self.store._db.execute(
+        rows = self.store._query(
             f"SELECT r.* FROM {ft} JOIN {self._t} r ON r.id = {ft}.id "
             f"WHERE {ft} MATCH ? AND {vis} AND r.archived IS NULL ORDER BY bm25({ft}) LIMIT ?",
-            [_fts_query(query), *params, max(1, min(int(limit), 200))]).fetchall()
+            [_fts_query(query), *params, max(1, min(int(limit), 200))])
         return [self._out(r) for r in rows]
 
     # -- writes ---------------------------------------------------------------
@@ -530,7 +534,8 @@ class RecordType:
             ft = _q("f:" + rdef.full)
             db.execute(f"DELETE FROM {ft} WHERE id = ?", (rid,))
             db.execute(f"INSERT INTO {ft} (id, {', '.join(map(_q, rdef.search))}) "
-                       f"VALUES (?{', ?' * len(rdef.search)})", [rid, *(rec[f] for f in rdef.search)])
+                       f"VALUES (?{', ?' * len(rdef.search)})",
+                       [rid, *(self._store_value(f, rec[f]) for f in rdef.search)])
         for f, spec in rdef.fields.items():
             if spec["type"] != "ref":
                 continue

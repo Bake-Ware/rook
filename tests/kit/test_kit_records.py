@@ -1,7 +1,5 @@
 """rook.kit.records: storage, migration, search, history, privacy, refs, generated caps."""
 
-import sqlite3
-
 import pytest
 
 from rook.kit.ctx import Caller, Ctx, KitError
@@ -344,3 +342,34 @@ def test_unregister_keeps_data(store):
     assert record_caps(store, "homework") == {}
     store.register(HOMEWORK)
     assert store.type("homework.item").get(BAKE, a["id"])["title"] == "keep"
+
+
+def test_search_over_a_list_field():
+    s = RecordStore()
+    s.register({"plugin": "p", "records": {"t": {"fields": {"tags": {"type": "list"}}, "search": ["tags"]}}})
+    s.type("p.t").create(BAKE, tags=["garden", "tomato"])
+    assert len(s.type("p.t").search(BAKE, "tomato")) == 1
+
+
+def test_threads_share_the_store(tmp_path):
+    import threading
+    s = RecordStore(str(tmp_path / "r.db"))
+    s.register({"plugin": "p", "records": {"t": {"fields": {"n": {"type": "int"}}, "search": ["n"]}}})
+    t = s.type("p.t")
+    errors = []
+
+    def work(k):
+        try:
+            for i in range(25):
+                r = t.create(BAKE, n=k * 100 + i)
+                t.update(BAKE, r["id"], revision=1, n=r["n"] + 1)
+                t.list(BAKE, limit=5)
+        except Exception as e:      # pragma: no cover - the assertion reports it
+            errors.append(e)
+
+    threads = [threading.Thread(target=work, args=(k,)) for k in range(4)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    assert errors == [] and len(t.list(BAKE, limit=500)) == 100
