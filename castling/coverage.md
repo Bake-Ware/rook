@@ -105,6 +105,74 @@ bug), screen.capture `result: {type: file}` (both screen plugins); kvm stops cla
 - Not a gap, a known limit kept from 0.4: on KDE/GNOME Wayland grim fails and scrot may exit 0 with
   a black frame through XWayland; spectacle and gnome-screenshot come after scrot in the try-chain.
 
+## The real ports, batch 2 (wave 4)
+
+Plugin-ports agent, 2026-10-30 (PR on branch c4/ports2). Eight more plugins are real 0.5 folders,
+tested through the worker host or, for appliance caps, through the bound action/script with the
+instance's values (N3 still open): fake binaries, a fake Pico-CEC TCP bridge, a fake SSAP websocket
+TV, a fake dongle on a PTY pair, real `sh` and real PTYs for shell. Every manifest validates against
+core's contracts with no issues; their drafts in `castling/manifests/` are superseded. A test now fails any `scripts/*.py` that starts a process other than
+through `rook.core2.worker.security.launch` (spec 7.1).
+
+| 0.5 plugin | Config | `run:` | What changed from the draft |
+|---|---|---|---|
+| shell | - | exec, which, env, open | `shell.open` is new: the producer of `terminal` (PTY) and `process` (pipes) streams, so **proc merges here** (castling-streams); output is `bytes` events, input events `text`/`signal`/`resize`, the stream closes with `{exit}`; the PTY is the child's controlling terminal (Ctrl-C works). exec: errors raise, a timeout kills the process group; `elevation: may` but never re-run on its own (a half-run command): a denied-looking failure answers `denied: true`. `env` absorbs `env.list` (`prefix`) and masks credential-like names (0.4's wconfig masking has no 0.5 source). 0.4's Windows shell model (PowerShell default, Git sh, PATHEXT/npm/python-stub resolution) is kept; `cmd.exe` goes through argv (a line with `"` in it is better sent to PowerShell). No `check` (every cap needs an arg, N4). |
+| file | - | read, write, list, search, stat | Errors raise and name the path; `file.exists` -> `file.stat` (+ mode, symlinks as themselves); search walks lazily and stops at `limit` or 50 s (a sync function's thread can't be cancelled); arg names `hidden`/`limit`; never elevates (in-process, no launch: elevation is shell's) |
+| cec | send, status | - | appliance (instance `port`); `fail_if` is a positive match (`OK` / `pong`), so a silent bridge fails too; `cec.raw` dropped by decision (A6); no `check` (N4); lowercase hex only, as 0.4 sent it. Unverified on the firmware: with no operands the line ends `send 0 36 \n` (a trailing space) |
+| camera | capture (fswebcam -> ffmpeg; Termux; Windows ffmpeg dshow with `device`) | list (sysfs names, termux-camera-info, ffmpeg -list_devices) | `personal` effect on capture; `quality` for fswebcam; ImageMagick downscale dropped (A11); macOS not supported (as 0.4); no `check` |
+| adb (appliance) | - | all 9 (scan, shell.exec, battery.status, screen.capture, ui.screen, hid.type/key/click/drag) | phones are instances (`discover: adb`, instance `serial`, blank = instance name); `adb.devices`/`path` settings gone (`requires.bins: [adb]`); contract shapes (hid.key `key`+`mods`, hid.drag `duration`, hid.click refuses no x/y or a non-left button, ui.screen `{app, items}` + `limit`, screen.capture `result: file`, JPEG through ImageMagick when present); `shell.exec`/`battery.status` have no contract, so no `provides`; a per-device lock keeps two callers' taps apart; no heartbeat poll, no `check` |
+| tv (appliance) | - | all 19 | `webos.tvs` setting gone: TVs are instances (SSDP), instance `client_key` (vault) and `mac`; `appliance.pair: tv.pair` (`admin`, `persists`) returns `{paired, settings: {client_key}}` for onboarding (N10); one SSAP connection per instance, closed by `hooks.stop`; no background loop (subscriptions, heartbeat and the `tv.sleep` timer gone: schedule `tv.power.off` with a job); contract shapes (hid.key `key`+`mods`, hid.type `enter`, notification.post `text`/`title`, sound.set absorbs `tv.mute`, media.seek `by` sign only, power.off `force` accepted and ignored); `screen.on`/`screen.off` replace `screen {on}`; `requires.python: [websockets>=12]` (0.4 used it too) |
+| hid-desktop | hid.type, hid.move (Linux try-chain, Windows PowerShell) | hid.key, hid.click, hid.drag, hid.status | typed text goes on stdin, never argv; ydotool 1.x key codes; Termux `input` and evdev backends dropped; `platforms: [linux, windows]`, `requires.hardware: [display]`; `check: [hid.status]` |
+| dongle | - | status, display, hid.key, keycodes, hid.move, hid.click, hid.scroll, hid.release | stdlib serial (termios + flock): pyserial gone, `platforms: [linux, macos]`; every cap `exclusive: dongle`, `requires.settings: [port]`; status absorbs display_probe; display is `write`; raw usage codes are `dongle.keycodes` (aliases `dongle.keyboard`, `dongle.consumer`); hid.click refuses x/y (relative mouse); a firmware `ok: false` is an error; no `check` |
+| proc | - | - | nothing to port: `shell.open` is the process producer; `proc.*` become `stream.*` (decided) |
+
+Screen captures: adb's is the only worker-side one left (`adb.screen.capture`); the phone's
+(`screen-android`) is an APK plugin and the TV has none.
+
+### What batch 2 found
+
+- **N8. Streams aren't wired on the worker.** `shell.open` needs `Host(streams=...)`; the worker
+  runtime builds its Host without one, and the `stream.*` caps don't exist yet, so on a real worker
+  `shell.open` answers `streams are not available here`. Fix (wiring): a bounded `Streams` per worker,
+  the `stream.read/write/list/close` builtins, and the hub relay.
+- **N9. Config exec actions don't go through `launch`** (the known `TODO(castling:manifest-v11)`).
+  Every config cap that runs a tool (camera.capture, hid.type/move, screen.capture, battery, torrent,
+  notification) runs it as the worker process, not through the normal-user/elevation path the scripts
+  now use.
+- **N10. `launch` needs `run_as` on a root worker and nothing gives plugin code one.** shell, adb and
+  camera scripts call `launch(argv, ctx.lease)`; on a worker running as root that raises "no normal
+  account (run_as)". Fix (wiring): put the worker's `run_as` on the call context, or let `launch` read
+  it from core.
+- **N11. A pairing result carries a secret.** `tv.pair` returns the TV's client key as a call result,
+  so it lands in the journal unless the hub diverts it. Fix: a convention (a pair cap's
+  `result.settings` goes to the instance's vault entries and is redacted from the journal) or
+  `ctx.appliance.set(...)`.
+- **N12. `ctx.file(path)` under `ctx.tmp` can't work.** `invoke` removes the per-call tmp dir before
+  the host reads a `FileResult` path, so a script must return `data=` bytes (adb does). Fix: read the
+  file before cleanup, or document it.
+- **N13. `map:` is silently ignored on `run:` caps** (it only applies when an action renders args).
+  tv and hid-desktop map key names in their scripts. Fix: say so, or warn in the validator.
+- **N14. `map:` is per arg, not per OS or per try step.** xdotool keysyms, ydotool input codes and
+  Windows virtual-key codes differ, which is why hid.key/click/drag are scripts though each is one
+  command per tool.
+- **N15. A try-chain falls through on failure for physical caps too.** A tool that half-typed before
+  failing would be retried by the next; acceptable for xdotool's real failure (no display, nothing
+  typed), worth knowing for any cap with side effects.
+- **N16. `requires.python` isn't checked when a worker loads a plugin** (bins, hardware and settings
+  are). A worker without `websockets` serves tv caps that fail with ImportError. Fine while
+  distribution resolves deps with uv; a hand-loaded plugin could be marked unavailable instead.
+- **N17. No serial port on Windows without pyserial**, and `requires.python` can't be per OS, so the
+  dongle is POSIX-only now (0.4 covered Windows through pyserial).
+- **N18. Elevation and in-process caps.** file.* can't elevate (nothing to launch); the gate's
+  "re-run once with a lease" for `elevation: may` is unsafe for a shell command that may have
+  half-run, so shell.exec never asks for it by itself (`denied: true` instead). Spec 7.2 could say
+  `may` re-runs are for caps that are safe to repeat.
+- **N19. No PTY on Windows.** ConPTY (0.4 `rook/worker/conpty.py`) isn't ported; `shell.open` takes
+  `pty=false` there.
+- Still open from batch 1: N3 (appliance values on the host call: adb, tv and cec tests stand in),
+  N4 (checks with `{}`: shell, file, cec, camera, adb, tv and dongle have none), N5 (`display` for
+  hid-desktop has no vocabulary yet).
+
 ## Gaps
 
 What a plugin needs that manifest v1 can't say, grouped by section. Each has the plugin that hits it

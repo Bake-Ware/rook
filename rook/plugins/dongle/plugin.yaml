@@ -1,0 +1,122 @@
+# The Rook RP2040 dongle: a USB keyboard and mouse for the machine it is
+# plugged into, driven over its serial port by the worker it is attached to
+# (firmware-rp2040). Every exchange opens the port exclusively, checks the
+# device says it is a protocol-1 Rook dongle, sends one command and, for HID
+# commands, always releases every key and button afterwards. Serial access is
+# stdlib (termios), so POSIX only; one call at a time (exclusive: dongle).
+manifest: 1
+plugin: dongle
+version: 0.5.0
+title: Rook USB dongle
+doc: Keyboard, mouse and media keys on the machine the Rook RP2040 dongle is plugged into, plus its small display.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [linux, macos]
+requires: { settings: [port] }
+settings:
+  port:
+    type: path
+    where: worker
+    apply: reload
+    doc: The dongle's serial device (/dev/ttyACM0, /dev/serial/by-id/usb-Rook_...). Blank leaves dongle.* off.
+caps:
+  status:
+    doc: "The dongle's identity and state: {device, version, protocol, usb_mounted, oled_connected, ...}. probe_display=true re-probes the display first (after wiring it up)."
+    risk: read
+    scope: local
+    idempotent: true
+    exclusive: dongle
+    timeout: 10s
+    args:
+      probe_display: { type: bool, default: false }
+    run: scripts/dongle.py:status
+  display:
+    doc: Show text (at most 80 UTF-8 bytes) on the dongle's display.
+    risk: write
+    scope: local
+    effects: [physical]
+    exclusive: dongle
+    timeout: 10s
+    args:
+      text: { type: str, required: true, max: 80, doc: At most 80 UTF-8 bytes. }
+    run: scripts/dongle.py:display
+  hid.key:
+    doc: Tap a key with modifiers held on the dongle's USB host (US layout); media keys (volume_up, volume_down, mute, play_pause, next, previous, stop) too.
+    risk: exec
+    scope: local
+    effects: [physical]
+    exclusive: dongle
+    timeout: 10s
+    args:
+      key:
+        type: str
+        required: true
+        pattern: "^[a-z0-9_]{1,16}$"
+        doc: "enter, escape, tab, backspace, space, delete, insert, home, end, pageup, pagedown, up, down, left, right, printscreen, menu, f1..f12, a letter or digit, or a media key."
+      mods: { type: list, items: { type: str, enum: [ctrl, shift, alt, meta] }, default: [] }
+    run: scripts/dongle.py:key
+  keycodes:
+    doc: "Tap raw USB HID codes: up to six keyboard usage codes with a modifier bitmask (1 ctrl, 2 shift, 4 alt, 8 gui), or one consumer usage (0xE9 volume up, 0xCD play/pause)."
+    risk: exec
+    scope: local
+    effects: [physical]
+    exclusive: dongle
+    timeout: 10s
+    aliases: [dongle.keyboard, dongle.consumer]
+    args:
+      keys: { type: list, items: { type: int, min: 0, max: 255 }, max: 6 }
+      mods: { type: int, default: 0, min: 0, max: 255 }
+      usage: { type: int, min: 1, max: 65535 }
+    run: scripts/dongle.py:keycodes
+  hid.move:
+    doc: Move the pointer by (x, y) counts, relative to where it is (the dongle is a relative mouse).
+    risk: exec
+    scope: local
+    effects: [physical]
+    exclusive: dongle
+    timeout: 10s
+    aliases: [dongle.mouse]
+    args:
+      x: { type: int, default: 0, min: -2032, max: 2032 }
+      y: { type: int, default: 0, min: -2032, max: 2032 }
+    run: scripts/dongle.py:move
+  hid.click:
+    doc: Click a mouse button where the pointer is. The dongle can't click at a pixel; move with dongle.hid.move first.
+    risk: exec
+    scope: local
+    effects: [physical]
+    exclusive: dongle
+    timeout: 10s
+    args:
+      x: { type: int, min: 0, doc: Not supported (a relative mouse); refused when given. }
+      y: { type: int, min: 0, doc: Not supported; refused when given. }
+      button: { type: str, enum: [left, right, middle], default: left }
+    run: scripts/dongle.py:click
+  hid.scroll:
+    doc: Scroll the wheel by `wheel` notches (positive is up) and/or pan sideways by `pan`.
+    risk: exec
+    scope: local
+    effects: [physical]
+    exclusive: dongle
+    timeout: 10s
+    args:
+      wheel: { type: int, default: 0, min: -127, max: 127 }
+      pan: { type: int, default: 0, min: -127, max: 127 }
+    run: scripts/dongle.py:scroll
+  hid.release:
+    doc: Release every key and button the dongle holds on its USB host.
+    risk: write
+    scope: local
+    effects: [physical]
+    idempotent: true
+    exclusive: dongle
+    timeout: 10s
+    aliases: [dongle.release]
+    run: scripts/dongle.py:release
+provides:
+  hid.key: dongle.hid.key
+  hid.click: dongle.hid.click
+docs: { manual: docs/manual.md }
+# No check: an install may come before the dongle is plugged in, and a failing
+# check rolls the install back (castling/coverage.md N4).

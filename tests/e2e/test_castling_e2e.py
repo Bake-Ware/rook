@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import secrets
 import shutil
 import time
@@ -92,6 +93,24 @@ def test_real_plugin_ports_say_what_this_machine_can_serve(band):
         assert c["unavailable"]["torrent.version"] == "missing bin: deluge-console"
         assert band.owner.call("torrent.version")["error"] == \
             "unavailable: torrent.version: missing bin: deluge-console"
+
+
+def test_shell_and_file_run_on_the_real_worker(band, tmp_path):
+    """shell.exec through hub, ticket and worker gate, its process started by
+    core's launch path as the worker's own user; file reads it back."""
+    if local_os() == "windows":
+        return
+    target = tmp_path / "e2e-shell.txt"
+    out = band.owner.call("shell.exec", {"argv": ["sh", "-c", 'printf "%s" "$1" > "$2"; id -u', "-",
+                                                  "made by shell", str(target)]})
+    assert out["ok"], out
+    assert out["result"]["code"] == 0 and out["result"]["stdout"].strip() == str(os.getuid())
+    got = band.owner.call("file.read", {"path": str(target)})
+    assert got["ok"] and got["result"]["content"] == "made by shell", got
+    assert band.owner.call("file.stat", {"path": str(tmp_path / "nope")})["result"] == {"exists": False}
+    # shell.open needs the worker's streams, which core doesn't wire yet (coverage N8)
+    opened = band.owner.call("shell.open", {"argv": ["true"]})
+    assert opened["error"] == "streams are not available here", opened
 
 
 # -- 3. a call, end to end ------------------------------------------------------------------

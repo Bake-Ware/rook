@@ -1,0 +1,119 @@
+# Keyboard and mouse on this worker's desktop. hid.type and hid.move are one
+# command per input tool (config: a try-chain on Linux, PowerShell on
+# Windows). hid.key, hid.click and hid.drag translate key names and buttons
+# per tool and run sequences, so they are scripts/hid.py, which starts every
+# tool through core's launch path and uses SendInput on Windows; hid.status
+# names the tool scripts/hid.py would use. A failing tool in a try-chain hands
+# over to the next (xdotool on a Wayland session falls through to wtype or
+# ydotool).
+manifest: 1
+plugin: hid-desktop
+version: 0.5.0
+title: Desktop keyboard and mouse
+doc: Type, press keys, move, click and drag on this worker's desktop (xdotool, wtype or ydotool on Linux; SendInput on Windows).
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [linux, windows]
+requires: { hardware: [display] }
+caps:
+  hid.type:
+    doc: Type text into whatever has focus, as a keyboard would (a newline presses Enter).
+    risk: exec
+    scope: local
+    effects: [physical]
+    timeout: 30s
+    aliases: [hid.type_text]
+    args:
+      text: { type: str, required: true }
+      enter: { type: bool, default: false, doc: Press Enter after the text., map: { "true": "\n", "false": "" } }
+    action:
+      exec:
+        # The text goes on stdin: never in argv, where `ps` shows it.
+        stdin: "{{args.text}}{{args.enter}}"
+        try:
+          - argv: [xdotool, type, --clearmodifiers, --file, "-"]
+          - argv: [wtype, "-"]
+          - argv: [ydotool, type, --file, "-"]
+        windows:
+          argv: [powershell, -NoProfile, -NonInteractive, -Command,
+                 "Add-Type -AssemblyName System.Windows.Forms; [Console]::InputEncoding = New-Object System.Text.UTF8Encoding $false; $t = [Console]::In.ReadToEnd() -replace '[+^%~(){}\\[\\]]', '{$0}'; $t = $t -replace \"`r?`n\", '{ENTER}'; [System.Windows.Forms.SendKeys]::SendWait($t)"]
+      parse: text
+  hid.move:
+    doc: Move the pointer to pixel (x, y) of the desktop (top-left origin).
+    risk: exec
+    scope: local
+    effects: [physical]
+    aliases: [hid.mouse.move]
+    args:
+      x: { type: int, required: true, min: 0 }
+      y: { type: int, required: true, min: 0 }
+    action:
+      exec:
+        try:
+          - argv: [xdotool, mousemove, "{{args.x}}", "{{args.y}}"]
+          - argv: [ydotool, mousemove, --absolute, -x, "{{args.x}}", -y, "{{args.y}}"]
+        windows:
+          argv: [powershell, -NoProfile, -NonInteractive, -Command,
+                 "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point([int]$env:ROOK_X, [int]$env:ROOK_Y)"]
+          env: { ROOK_X: "{{args.x}}", ROOK_Y: "{{args.y}}" }
+      parse: text
+  hid.key:
+    doc: Press and release a key with modifiers held (released in reverse).
+    risk: exec
+    scope: local
+    effects: [physical]
+    timeout: 10s
+    aliases: [hid.key_combo]
+    args:
+      key:
+        type: str
+        required: true
+        pattern: "^[A-Za-z0-9_]{1,24}$"
+        doc: "enter, escape, tab, backspace, space, delete, insert, home, end, pageup, pagedown, up, down, left, right, f1..f12, a letter or digit; on Linux also an X keysym name (Print, XF86AudioPlay)."
+      mods: { type: list, items: { type: str, enum: [ctrl, shift, alt, meta] }, default: [] }
+    run: scripts/hid.py:key
+  hid.click:
+    doc: Click a mouse button. With x and y, first move the pointer to that pixel (top-left origin).
+    risk: exec
+    scope: local
+    effects: [physical]
+    timeout: 10s
+    aliases: [hid.mouse.click]
+    args:
+      x: { type: int, min: 0 }
+      y: { type: int, min: 0 }
+      button: { type: str, enum: [left, right, middle], default: left }
+    run: scripts/hid.py:click
+  hid.drag:
+    doc: Press a button at (x1, y1), move to (x2, y2) over `duration`, release.
+    risk: exec
+    scope: local
+    effects: [physical]
+    timeout: 20s
+    aliases: [hid.mouse.drag]
+    args:
+      x1: { type: int, required: true, min: 0 }
+      y1: { type: int, required: true, min: 0 }
+      x2: { type: int, required: true, min: 0 }
+      y2: { type: int, required: true, min: 0 }
+      duration: { type: duration, default: 300ms, max: 10 }
+      button: { type: str, enum: [left, right, middle], default: left }
+    run: scripts/hid.py:drag
+  hid.status:
+    doc: "The input tools this worker uses: {backend (keyboard), pointer, platform}; null when none is installed."
+    risk: read
+    scope: local
+    idempotent: true
+    aliases: [hid.backend]
+    result:
+      type: map
+      fields: { backend: { type: str }, pointer: { type: str }, platform: { type: str } }
+    run: scripts/hid.py:status
+provides:
+  hid.type: hid-desktop.hid.type
+  hid.key: hid-desktop.hid.key
+  hid.click: hid-desktop.hid.click
+  hid.drag: hid-desktop.hid.drag
+docs: { manual: docs/manual.md }
+check: [hid-desktop.hid.status]

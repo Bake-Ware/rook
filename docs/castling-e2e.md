@@ -26,7 +26,7 @@ What they prove:
 | Refusals | no why; a child over its preset (and its first use of a cap waiting for an owner); a ticket sniffed off the band and replayed; a worker ceiling narrower than the hub's grant (refused by the hub early and by the worker for a validly signed ticket); a destructive cap held until the person approves or refuses |
 | Plugins | a plugin pushed from the hub library, signed for that worker, installs and passes its `check`; a new version replaces it in the same worker process (hot reload); a broken version fails its check and is rolled back; `core.plugin.rollback` goes back by hand; installed plugins load again after a worker restart |
 | MCP door | an agent token (claude-code for bake) calls a cap over MCP, its hold waits for the person, the journal reads back; the stdio shim does the same as a child process |
-| Real ports | the worker also loads `rook/plugins/battery` and `rook/plugins/torrent`; what the machine can't serve is listed as unavailable, with the reason, and a call says why |
+| Real ports | the worker also loads `rook/plugins/battery`, `torrent`, `shell` and `file`; what the machine can't serve is listed as unavailable, with the reason, and a call says why; `shell.exec` runs through the ticket, the worker gate and core's launch path, and `file.read` reads its output back |
 
 ## A 0.5 hub and worker by hand
 

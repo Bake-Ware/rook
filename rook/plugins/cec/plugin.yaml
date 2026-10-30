@@ -1,0 +1,52 @@
+# A Pico-CEC bridge (a Pico W on the HDMI CEC bus, newline-terminated text
+# commands over TCP) is an appliance: the delegate worker that reaches it
+# carries the call. Config only (tcp actions). Its port setting wins over the
+# instance's discovered port (manifest 1.1, A14).
+manifest: 1
+plugin: cec
+version: 0.5.0
+title: HDMI-CEC (Pico-CEC)
+doc: Send HDMI-CEC frames through a network-attached Pico-CEC bridge.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+appliance:
+  settings:
+    port: { type: int, default: 9526, min: 1, max: 65535, doc: TCP port the Pico-CEC firmware listens on. }
+caps:
+  send:
+    doc: "Transmit a CEC frame and return the bridge's reply: addr is the destination logical address (0-f, 0 = TV), opcode a byte, operands more bytes, all bare lowercase hex (36 = standby, 04 = image view on)."
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 5s
+    args:
+      addr: { type: str, required: true, pattern: "^[0-9a-f]$" }
+      opcode: { type: str, required: true, pattern: "^[0-9a-f]{1,2}$" }
+      operands: { type: list, items: { type: str, pattern: "^[0-9a-f]{1,2}$" }, join: " ", doc: Operand bytes. }
+    examples:
+      - { args: { addr: "0", opcode: "36" }, doc: TV standby. }
+      - { args: { addr: "5", opcode: "44", operands: ["41"] }, doc: Volume up on the audio system. }
+    result: { type: str, doc: "The bridge's reply line (OK ...)." }
+    action:
+      tcp:
+        host: "{{appliance.host}}"
+        port: "{{appliance.port}}"
+        send: "send {{args.addr}} {{args.opcode}} {{args.operands}}\n"
+        until: newline
+      fail_if: { regex: '\A(?!OK)' }      # ERR ..., or no reply at all ("failed: ")
+      parse: text
+  status:
+    doc: Check the bridge answers; returns its reply (its logical and physical address).
+    risk: read
+    scope: local
+    timeout: 5s
+    idempotent: true
+    aliases: [cec.ping]
+    result: { type: str }
+    action:
+      tcp: { host: "{{appliance.host}}", port: "{{appliance.port}}", send: "ping\n", until: newline }
+      fail_if: { regex: '\A(?!pong)' }
+      parse: text
+docs: { manual: docs/manual.md }
+# No check: an install has no appliance instance to call (N4).

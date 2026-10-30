@@ -1,0 +1,58 @@
+# Still photos from this worker's cameras. capture is config (fswebcam, then
+# ffmpeg; termux-camera-photo; ffmpeg dshow on Windows); list needs logic per
+# OS, so it is a script. 0.4's ImageMagick downscale is gone (post-processing
+# stays run:, A11): the default 1280x720 JPEG is small enough to relay.
+manifest: 1
+plugin: camera
+version: 0.5.0
+title: Cameras
+doc: Still photos from this worker's cameras.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [linux, termux, windows]
+caps:
+  list:
+    doc: "The cameras on this worker: [{camera, name}]. Linux: camera is the N of /dev/videoN; Termux: 0 is the back camera, 1 the front; Windows: name is what capture's device takes."
+    risk: read
+    scope: local
+    idempotent: true
+    timeout: 20s
+    result:
+      type: list
+      items:
+        type: map
+        fields:
+          camera: { type: int }
+          name: { type: str }
+          facing: { type: str }
+    run: scripts/camera.py:list_
+  capture:
+    doc: A still JPEG from a camera (Linux and Termux by camera number, Windows by device name).
+    risk: read
+    scope: local
+    effects: [sensitive, personal]
+    timeout: 30s
+    aliases: [camera.snap]
+    args:
+      camera: { type: int, default: 0, min: 0, max: 63, doc: "The camera's number from camera.list (/dev/video<N> on Linux)." }
+      device: { type: str, default: Integrated Camera, pattern: '^[^":\x00-\x1f]{1,128}$', doc: "Windows only: the DirectShow device name from camera.list." }
+      resolution: { type: str, default: 1280x720, pattern: '^\d{2,5}x\d{2,5}$', doc: "Capture size, WxH." }
+      quality: { type: int, default: 85, min: 1, max: 100, doc: "JPEG quality (fswebcam; ffmpeg uses its own)." }
+    result: { type: file, doc: A JPEG. }
+    action:
+      exec:
+        try:
+          - argv: [fswebcam, -d, "/dev/video{{args.camera}}", --no-banner, -q, -r, "{{args.resolution}}",
+                   --jpeg, "{{args.quality}}", "{{tmp}}/c.jpg"]
+          - argv: [ffmpeg, -nostdin, -loglevel, error, -y, -f, v4l2, -video_size, "{{args.resolution}}",
+                   -i, "/dev/video{{args.camera}}", -frames:v, "1", -q:v, "3", "{{tmp}}/c.jpg"]
+        termux:
+          argv: [termux-camera-photo, -c, "{{args.camera}}", "{{tmp}}/c.jpg"]
+        windows:
+          argv: [ffmpeg, -nostdin, -loglevel, error, -y, -f, dshow, -video_size, "{{args.resolution}}",
+                 -i, "video={{args.device}}", -frames:v, "1", -q:v, "3", "{{tmp}}/c.jpg"]
+        output: "{{tmp}}/c.jpg"
+      parse: bytes
+docs: { manual: docs/manual.md }
+# No check: a worker without a camera would roll the install back (N4).
