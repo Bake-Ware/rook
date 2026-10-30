@@ -34,7 +34,7 @@ def version(ctx):
 
 
 def whoami(ctx):
-    return {"person": ctx.person, "agent": ctx.agent, "why": ctx.why}
+    return {"person": ctx.person, "agent": ctx.agent, "why": ctx.why, "cap": ctx.cap}
 
 
 def file(ctx):

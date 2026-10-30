@@ -207,7 +207,7 @@ def test_run_plugin_hooks_bind_and_context(tmp_path):
         with pytest.raises(CallError, match="bad args"):            # bound args aren't caller args
             await host.call("counter.add_ten", {"n": 1}, ME)
         assert await host.call("counter.whoami", {}, ME) == {
-            "person": "bake", "agent": "claude", "why": "testing the host"}
+            "person": "bake", "agent": "claude", "why": "testing the host", "cap": "counter.whoami"}
         f = await host.call("counter.file", {}, ME)
         assert f["name"] == "a.txt" and f["data"] == "aGk=" and f["bytes"] == 2
         ann = await host.announce()

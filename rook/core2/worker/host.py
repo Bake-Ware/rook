@@ -352,7 +352,7 @@ class Host:
     async def _exec(self, p: Plugin, c, args: dict, caller: Caller, shown: list[str],
                     lease: dict | None = None) -> Any:
         if c.action is None:
-            ctx = self._ctx(p, caller, shown)
+            ctx = self._ctx(p, caller, shown, cap=c.name)
             # TODO(castling:wiring): the call context (6.6: hub, call id, risk,
             # lease) belongs on Caller; until then the lease rides on ctx so
             # plugin code can pass it to security.launch.
@@ -394,7 +394,8 @@ class Host:
             out[key] = value
         return out
 
-    def _ctx(self, p: Plugin, caller: Caller, shown: list[str] | None = None) -> Ctx:
+    def _ctx(self, p: Plugin, caller: Caller, shown: list[str] | None = None,
+             cap: str | None = None) -> Ctx:
         store = partial(self.store_setting, p.name) if self.store_setting else None
         resolve = self.resolve_secret
         if resolve is not None and shown is not None:
@@ -406,7 +407,7 @@ class Host:
         return Ctx(p.manifest, caller, dispatch=self.dispatch, settings=p.settings,
                    resolve_secret=resolve, store_setting=store, emit=self.emit,
                    data_dir=self._data_dir(p) if self.data_root else None,
-                   streams=self.streams)
+                   streams=self.streams, cap=cap)
 
     def _data_dir(self, p: Plugin) -> Path:
         return self.data_root / p.name
