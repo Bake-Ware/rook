@@ -1,0 +1,83 @@
+# run: plugin for tests/core2/test_worker_host.py: hooks, bind, exclusive,
+# timeouts and failures. Tests copy it and bump VERSION for hot reloads.
+manifest: 1
+plugin: counter
+version: 1.0.0
+doc: Counts.
+settings:
+  step: { type: int, default: 1 }
+  mode: { default: a, apply: reload }
+  key: { where: hub, secret: true }
+hooks:
+  start: scripts/counter.py:start
+  stop: scripts/counter.py:stop
+  status: scripts/counter.py:status
+  on: [ { event: worker.online, run: scripts/counter.py:warm } ]
+caps:
+  add:
+    doc: Add to the counter.
+    risk: write
+    scope: self
+    args: { n: { type: int, default: 1 } }
+    run: scripts/counter.py:add
+  add_ten:
+    doc: Add ten.
+    risk: write
+    scope: self
+    bind: { n: 10 }
+    run: scripts/counter.py:add
+  version:
+    doc: Which code is running.
+    risk: read
+    scope: self
+    run: scripts/counter.py:version
+  whoami:
+    doc: The call context.
+    risk: read
+    scope: self
+    run: scripts/counter.py:whoami
+  file:
+    doc: Return a file.
+    risk: read
+    scope: self
+    run: scripts/counter.py:file
+  crash:
+    doc: Raise.
+    risk: read
+    scope: self
+    run: scripts/counter.py:crash
+  quit:
+    doc: sys.exit from plugin code.
+    risk: read
+    scope: self
+    run: scripts/counter.py:quit
+  leak:
+    doc: Fails with the secret in the message.
+    risk: read
+    scope: self
+    run: scripts/counter.py:leak
+  refuse:
+    doc: A clean failure.
+    risk: read
+    scope: self
+    run: scripts/counter.py:refuse
+  slow:
+    doc: Async, longer than its timeout.
+    risk: read
+    scope: self
+    timeout: 200ms
+    run: scripts/counter.py:slow
+  hold:
+    doc: Sync, holds the device past its timeout.
+    risk: write
+    scope: self
+    timeout: 200ms
+    exclusive: device
+    run: scripts/counter.py:hold
+  poke:
+    doc: Uses the device briefly.
+    risk: write
+    scope: self
+    timeout: 5s
+    exclusive: device
+    run: scripts/counter.py:poke

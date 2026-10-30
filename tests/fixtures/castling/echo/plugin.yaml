@@ -1,0 +1,61 @@
+# YAML-only plugin for tests/core2/test_worker_host.py: exec actions, settings,
+# a secret, and caps this worker can't serve.
+manifest: 1
+plugin: echo
+version: 1.0.0
+doc: Says things back.
+settings:
+  greeting: { default: hello }
+  token: { where: hub, secret: true }
+  motto: { where: hub }
+caps:
+  say:
+    doc: Echo the text.
+    risk: read
+    scope: self
+    args: { text: { type: str, required: true } }
+    aliases: [echo.speak]
+    action:
+      exec: { argv: [echo, "{{args.text}}"] }
+  greet:
+    doc: Greet someone.
+    risk: read
+    scope: self
+    args: { name: { type: str, default: world } }
+    action:
+      exec: { argv: [echo, "{{settings.greeting}}", "{{args.name}}"] }
+  secret:
+    doc: Echo the token (test only).
+    risk: read
+    scope: self
+    action:
+      exec: { argv: [echo, "{{settings.token}}"] }
+  motto:
+    doc: Echo the band motto.
+    risk: read
+    scope: self
+    requires: { settings: [motto] }
+    action:
+      exec: { argv: [echo, "{{settings.motto}}"] }
+  gone:
+    doc: Needs a binary nobody has.
+    risk: read
+    scope: self
+    requires: { bins: [rook-no-such-binary] }
+    action:
+      exec: { argv: [rook-no-such-binary] }
+  windows:
+    doc: Windows only.
+    risk: read
+    scope: self
+    platforms: [windows]
+    action:
+      exec: { argv: [cmd, /c, ver] }
+  lamp:
+    doc: Needs a lamp.
+    risk: write
+    scope: local
+    effects: [physical]
+    requires: { hardware: [lamp] }
+    action:
+      exec: { argv: [echo, "on"] }
