@@ -47,6 +47,7 @@ CAPS = {
     "agents.chat.send": {"risk": "write", "scope": "self", "effects": []},
     "weird.risk": {"risk": "godmode", "scope": "nowhere", "effects": []},
     "core.manifests": {"risk": "read", "scope": "self", "effects": []},
+    "core.trust.set": {"risk": "admin", "scope": "self", "effects": ["persists"]},
 }
 
 
@@ -143,9 +144,13 @@ def test_target_by_id_and_alias_resolves(hub):
     assert hub.tx.requests[0]["ticket"]["cap"] == "file.read" and calls(hub)[0]["cap"] == "file.read"
 
 
-def test_core_manifests_ignores_the_ceiling(hub):
+def test_core_manifests_and_trust_set_ignore_the_ceiling(hub):
     hub.worker.ceiling = {"grants": []}
     assert call(hub, BAKE, "core.manifests")[0]["ok"]
+    # the worker takes core.trust.set from its home hub whatever the ceiling
+    # (6.3): a home hub that narrowed it can widen it again
+    assert call(hub, BAKE, "core.trust.set", {"membership": {}})[0]["ok"]
+    assert hub.tx.verdicts[-1] == "ok"
     assert call(hub, BAKE, "file.read")[0]["error"] == "denied: ceiling: grants"
 
 

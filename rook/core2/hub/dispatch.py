@@ -275,7 +275,10 @@ class Dispatcher:
         if caller.person and self.identities.expired(caller.person, self.clock()):
             return {"layer": "person", "reason": "expired"}
         layers = self.identities.layers(caller) + [["session", {"grants": s.caps}]] + list(call.layers)
-        if call.cap not in wire.ALWAYS:
+        # The worker's two exceptions (6.3): ALWAYS caps are within every
+        # ceiling; core.trust.set goes by role, so a narrowed home ceiling
+        # can be widened again.
+        if call.cap not in wire.ALWAYS + wire.HOME_ONLY:
             layers.append(["ceiling", w.ceiling])
         facts = {"cap": call.cap, "risk": entry["risk"], "effects": entry["effects"],
                  "target": call.appliance or w.name}
