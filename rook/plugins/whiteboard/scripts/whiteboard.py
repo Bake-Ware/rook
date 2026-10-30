@@ -2,7 +2,7 @@
 on first write. Last write wins; append rereads so a line is never lost."""
 
 MAX = 16000      # a whiteboard holds essentials, not logs
-TRIES = 5
+TRIES = 8
 
 
 def _which(ctx, task, project):

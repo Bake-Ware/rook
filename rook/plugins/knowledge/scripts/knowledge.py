@@ -7,7 +7,7 @@ import time
 WIKI = re.compile(r"\[\[([a-z0-9][a-z0-9-]{0,79})\]\]")
 CITE = re.compile(r"\[\^([A-Za-z0-9_-]{1,32})\](?!:)")
 DEFINED = re.compile(r"^\[\^([A-Za-z0-9_-]{1,32})\]:", re.M)
-TRIES = 5
+TRIES = 8
 MAX_BACKLINKS = 200
 
 

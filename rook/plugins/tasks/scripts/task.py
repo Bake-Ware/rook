@@ -5,7 +5,7 @@ two agents writing at once both land: a conflict rereads and tries again."""
 import time
 
 OPEN = ("todo", "in_progress", "blocked", "paused")
-TRIES = 5
+TRIES = 8
 
 
 def _change(ctx, id, change):
