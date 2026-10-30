@@ -64,6 +64,27 @@ caps:
     scope: self
     idempotent: true
     result: { type: map }
+  # A push is a ticketed call whose args carry the bundle's Drop descriptor,
+  # so the ticket's args_hash binds the bundle's hash (spec 13: plugin.sig).
+  plugin.install:
+    doc: Pull a hub-signed plugin bundle over Drop, install it, run its checks; a failure rolls back.
+    on: worker
+    risk: admin
+    scope: self
+    effects: [persists]
+    timeout: 20m
+    args:
+      bundle: { type: map, required: true, doc: "The bundle's Drop descriptor: id, size, sha256." }
+    result: { type: map }
+  plugin.rollback:
+    doc: Go back to the kept previous version of a plugin installed by a hub.
+    on: worker
+    risk: admin
+    scope: self
+    effects: [persists]
+    args:
+      plugin: { type: str, required: true }
+    result: { type: map }
 
 contracts:
   # -- services: the hub routes to one chosen provider ----------------------
