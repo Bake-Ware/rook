@@ -426,6 +426,7 @@ def test_load_config_resolves_paths_and_refuses_mistakes(tmp_path):
             load_config(path)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM")
 def test_the_command_starts_and_stops_cleanly(tmp_path):
     anchor = tmp_path / "anchor.json"
     anchor.write_text(json.dumps({"hub": HOME, "root": wire.pub_text(ROOT), "band": BAND}))

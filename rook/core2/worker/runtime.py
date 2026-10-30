@@ -513,7 +513,7 @@ class Worker:
                 raise KitError(f"membership kept, but the band can't be joined: {e}") from None
             if link.band != band:
                 raise KitError("membership kept, but connect is for another band (its PSK)")
-            joined[band] = {k: connect[k] for k in ("psk", "relay", "ws_url") if connect.get(k)}
+            joined[band] = {k: connect[k] for k in ("psk", "psk_env", "relay", "ws_url") if connect.get(k)}
             self._save_joined(joined)
             await self.transport.add(link)
             log.info("joined band", extra=_f(band=band[:8], hub=membership["hub"], role=role))
