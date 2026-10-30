@@ -32,6 +32,8 @@ def argv(settings, *, session=None, model=None, system=None) -> list[str]:
         out += ["--allowedTools", ",".join(settings["allowed_tools"])]
     if settings["mcp_config"]:
         out += ["--mcp-config", str(settings["mcp_config"])]
+    if settings["isolate"]:          # not the person's own hooks, plugins and MCP servers (another band's, say)
+        out += ["--setting-sources", "project,local", "--strict-mcp-config"]
     return out
 
 

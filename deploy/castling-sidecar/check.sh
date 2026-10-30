@@ -18,12 +18,13 @@ get() { curl -s --max-time 20 -H "$H" "$LOCAL_URL$1"; }
 post() { curl -s --max-time 60 -H "$H" -d "$2" "$LOCAL_URL$1"; }
 
 check "hub health" "j.get('ok')" "$(curl -s --max-time 5 "$LOCAL_URL/health")"
-for _ in $(seq 30); do
+online="any(x.get('name')=='$WORKER_NAME' and x.get('online') for x in j['workers'])"
+for _ in $(seq 45); do      # a fresh relay hears of the worker at its first keepalive (~20 s)
     w=$(get /workers)
-    printf '%s' "$w" | grep -q '"online": *true' && break
+    printf '%s' "$w" | "$PY" -c "import json,sys; j=json.load(sys.stdin); sys.exit(0 if ($online) else 1)" 2>/dev/null && break
     sleep 2
 done
-check "worker $WORKER_NAME online" "any(x.get('name')=='$WORKER_NAME' and x.get('online') for x in j['workers'])" "$w"
+check "worker $WORKER_NAME online" "$online" "$w"
 caps=$(get "/caps?worker=$WORKER_NAME")
 check "worker serves shell.exec, file.read, agents-claude-code.turn" \
     "{'shell.exec','file.read','agents-claude-code.turn'} <= set(j['workers']['$WORKER_NAME']['caps']) - set(j['workers']['$WORKER_NAME'].get('unavailable') or {})" "$caps"

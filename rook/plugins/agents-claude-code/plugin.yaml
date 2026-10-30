@@ -17,6 +17,7 @@ settings:
   permission_mode: { doc: "Claude Code's --permission-mode for agent turns (default, acceptEdits, plan, ...); blank: its own default." }
   allowed_tools: { type: list, items: { type: str }, doc: "Tools a turn may use without asking (--allowedTools), e.g. Read, Bash(git status:*)." }
   mcp_config: { type: path, doc: "An MCP config file for agent turns (--mcp-config), e.g. the Rook MCP door." }
+  isolate: { type: bool, default: true, doc: "Leave out the signed-in user's own Claude Code settings, hooks and MCP servers (--setting-sources project,local --strict-mcp-config): a turn reaches only what mcp_config gives it." }
 caps:
   turn:
     doc: One agent turn in Claude Code; pass session back to continue the conversation.
