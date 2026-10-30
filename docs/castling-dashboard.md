@@ -8,7 +8,8 @@ castling-attention. Code: `rook/core2/hub/doors/web/`.
 ## Sign in
 
 Open `http://127.0.0.1:8740/` and paste a token made for you: the first
-owner's is in `<data>/owner.token`, others come from
+owner's is printed once by `init` (or written to `<data>/owner.token` on a
+first run without it), others come from
 `python -m rook.core2.hub --config hub.yaml token --person <name>`. An agent's
 token can't sign in. Behind TLS, set `doors: {http: {web: {secure_cookie: true}}}`;
 `web: false` turns the site off.
