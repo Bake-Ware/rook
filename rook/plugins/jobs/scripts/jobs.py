@@ -324,12 +324,13 @@ class Runtime:
     # -- the schedule ----------------------------------------------------------------
 
     async def loop(self) -> None:
-        for rec in self.recovered:
-            job = self.job(rec["job"])
-            if job is not None:
-                await self.after_run(job, rec)
         while not self.closing:
-            await asyncio.sleep(self.tick)
+            await asyncio.sleep(self.tick)      # first: the rest of the hub's library loads
+            for rec in self.recovered:
+                job = self.job(rec["job"])
+                if job is not None:
+                    await self.after_run(job, rec)
+            self.recovered = []
             try:
                 if time.time() - self.seeded >= SEED_EVERY:
                     await self.seed()
@@ -398,7 +399,15 @@ class Runtime:
         live = Live(rec, job, {**(job.get("vars") or {}), **(vars_ or {})}, event)
         self.running[job["id"]] = self.runs[live.id] = live
         live.task = self.spawn(self.execute(live, who))
+        live.task.add_done_callback(lambda _: self.forget(live))
         return live
+
+    def forget(self, live: Live) -> None:
+        if self.running.get(live.job["id"]) is live:
+            del self.running[live.job["id"]]
+        self.runs.pop(live.id, None)
+        if not live.done.done():
+            live.done.set_result(None)
 
     async def execute(self, live: Live, who: Caller) -> None:
         job, state, result, error = live.job, "failed", None, None
@@ -410,9 +419,10 @@ class Runtime:
         except asyncio.CancelledError:
             if not live.cancelled:      # the hub is stopping: the next start fails it (recover)
                 _kill(live.proc)
-                self.sys.records.run.update(live.id, log=live.log)
-                self.running.pop(job["id"], None)
-                self.runs.pop(live.id, None)
+                try:
+                    self.sys.records.run.update(live.id, log=live.log)
+                except Exception as e:
+                    log.warning("run log not saved", extra={"fields": {"run": live.id, "error": str(e)}})
                 raise
             state, error = "cancelled", "cancelled"
         except asyncio.TimeoutError:
@@ -436,10 +446,7 @@ class Runtime:
             rec = self.sys.records.run.update(live.id, state=state, ended=time.time(), result=result,
                                               error=error, log=live.log, asking=None)
         finally:
-            self.running.pop(live.job["id"], None)
-            self.runs.pop(live.id, None)
-            if not live.done.done():
-                live.done.set_result(None)
+            self.forget(live)
         log.info("job run", extra={"fields": {"job": live.job["name"], "run": live.id, "state": state}})
         if not self.closing:
             await self.after_run(live.job, rec, live.vars)
@@ -456,7 +463,7 @@ class Runtime:
     async def retry(self, jid: str, rec: dict, vars_: dict | None) -> None:
         await asyncio.sleep(self.retry_after * 2 ** (rec["attempt"] - 1))
         job = self.job(jid)
-        if job is not None:
+        if job is not None and job["enabled"]:
             self.fire(job, "retry", scheduled=rec["scheduled"], event=rec["event"], vars_=vars_,
                       attempt=rec["attempt"] + 1)
 
@@ -656,7 +663,7 @@ def template_fields(m: dict, name: str, spec: dict) -> dict:
            "catch_up": bool(spec.get("catch_up")), "source": f"{m['plugin']}/{name}",
            "source_version": m["version"]}
     if "call" in spec:
-        out.update(call=spec["call"], args=copy.deepcopy(spec.get("args") or {}))
+        out.update(call=spec["call"], args=copy.deepcopy(spec.get("args") or {}), worker=spec.get("worker"))
     elif "agent" in spec:
         out["agent"] = copy.deepcopy(spec["agent"])
     else:
