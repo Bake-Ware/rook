@@ -95,10 +95,8 @@ def env(ctx, name=None, prefix=None, default=None):
 async def open_(ctx, argv=None, cmd=None, shell=None, cwd=None, env=None, pty=True,
                 cols=120, rows=32, title=""):
     if argv is None and cmd is None:   # an interactive shell
-        if IS_WIN:
-            cmd = ""
-        else:
-            argv = [os.environ.get("SHELL") or "/bin/sh", "-l"]
+        argv = ([_powershell() or "powershell.exe", "-NoLogo"] if IS_WIN
+                else [os.environ.get("SHELL") or "/bin/sh", "-l"])
     command, ran = _command(ctx, argv, cmd, shell)
     if pty and IS_WIN:
         # TODO(castling:ports): ConPTY (0.4 rook/worker/conpty.py) isn't ported; pty=false works.
@@ -111,6 +109,7 @@ async def open_(ctx, argv=None, cmd=None, shell=None, cwd=None, env=None, pty=Tr
         if pty:
             import pty as ptys
             master, slave = ptys.openpty()
+            os.set_blocking(master, False)
             try:
                 _winsize(master, cols, rows)
                 proc = await _start(ctx, command, cwd, env, slave=slave)
@@ -176,19 +175,24 @@ async def _start(ctx, argv, cwd, env, *, stdin=False, merge=False, slave=None):
 
 
 async def _kill(proc) -> None:
-    if proc.returncode is not None:
-        return
-    try:
-        if IS_WIN:
-            proc.kill()
-        else:
-            os.killpg(proc.pid, signal.SIGKILL)   # the whole session: sh -c's children too
-    except (ProcessLookupError, PermissionError):
-        pass
-    try:
-        await asyncio.wait_for(proc.wait(), 5)
-    except asyncio.TimeoutError:
-        pass
+    """End the process and everything in its session (sh -c's children too).
+    TERM first: an elevated process is sudo, which passes TERM on to the
+    command it runs as root, where our KILL could only reach sudo itself."""
+    for sig, grace in ((signal.SIGTERM, 2), (getattr(signal, "SIGKILL", None), 5)):
+        if proc.returncode is not None:
+            return
+        try:
+            if IS_WIN:
+                proc.kill()
+            else:
+                os.killpg(proc.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            await asyncio.wait_for(proc.wait(), grace)
+            return
+        except asyncio.TimeoutError:
+            pass
 
 
 def _take_tty() -> None:
@@ -237,6 +241,8 @@ async def _read_pty(handle, master, loop) -> None:
     def readable():
         try:
             data = os.read(master, CHUNK)
+        except BlockingIOError:
+            return
         except OSError:          # EIO: the other end closed
             data = b""
         got.put_nowait(data)
@@ -263,8 +269,12 @@ async def _feed(handle, proc, master) -> None:
             data = body["text"].encode()
             try:
                 if master is not None:
+                    # Non-blocking: a child that stops reading must not stall the worker's loop.
                     while data:
-                        data = data[os.write(master, data):]
+                        try:
+                            data = data[os.write(master, data):]
+                        except BlockingIOError:
+                            await asyncio.sleep(0.05)
                 else:
                     proc.stdin.write(data)
                     await proc.stdin.drain()

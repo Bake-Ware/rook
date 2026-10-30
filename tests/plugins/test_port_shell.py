@@ -255,3 +255,43 @@ def test_unloading_ends_open_terminals():
             await asyncio.sleep(0.05)
         assert _gone(pid)
     go(body)
+
+
+def test_exec_timeout_kills_a_command_that_ignores_term():
+    started = time.monotonic()
+    with pytest.raises(CallError, match="timed out after 0.3s"):
+        run("exec", {"cmd": "trap '' TERM; sleep 30", "timeout": 0.3})
+    assert time.monotonic() - started < 8      # TERM, a 2 s grace, then KILL
+
+
+def test_input_to_a_child_that_never_reads_does_not_stall_the_worker():
+    # A blocked loop can't run go()'s timeout: SIGALRM is the hard stop.
+    import signal
+
+    def hung(*_):
+        raise TimeoutError("the event loop was blocked writing to the PTY")
+
+    old = signal.signal(signal.SIGALRM, hung)
+    signal.alarm(15)
+    try:
+        _never_reads()
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+
+
+def _never_reads():
+    async def body():
+        host, streams, sid = await _open({"cmd": "stty raw -echo; sleep 30"})
+        try:
+            for _ in range(4):                  # far more than a PTY buffer holds
+                streams.append(sid, "input", {"text": "x" * 200_000})
+            loop = asyncio.get_running_loop()
+            t0 = loop.time()
+            for _ in range(5):
+                await asyncio.sleep(0.05)
+            assert loop.time() - t0 < 1.0, "the event loop was blocked"
+        finally:
+            await host.close()
+        assert streams.get(sid).closed
+    go(body)
