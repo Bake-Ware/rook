@@ -319,15 +319,15 @@ class Dispatcher:
                 reply = {"ok": False, "error": f"send failed: {e}"}
             finally:
                 self._inflight.pop(nonce, None)
+            if not isinstance(reply, dict) or not isinstance(reply.get("ok"), bool):
+                reply = {"ok": False, "error": "malformed reply"}
+            elif "from" in reply and reply["from"] != w.id:
+                reply = {"ok": False, "error": "reply from the wrong worker"}
             if not reminted and not reply.get("ok") and reply.get("error") in REMINT:
                 reminted = True
                 continue
             break
         entry["ms"] = int((time.monotonic() - start) * 1000)
-        if not isinstance(reply, dict) or not isinstance(reply.get("ok"), bool):
-            reply = {"ok": False, "error": "malformed reply"}
-        elif "from" in reply and reply["from"] != w.id:
-            reply = {"ok": False, "error": "reply from the wrong worker"}
         out = {"id": cid, "ok": reply["ok"]}
         if reply["ok"]:
             out["result"] = reply.get("result")

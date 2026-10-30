@@ -640,12 +640,14 @@ def test_send_errors_and_bad_replies(hub):
     assert call(hub, BAKE, "file.read")[0]["error"] == "reply from the wrong worker"
     hub.tx.answer = lambda req, n: {"id": req["id"], "ok": "yes"}
     assert call(hub, BAKE, "file.read")[0]["error"] == "malformed reply"
+    hub.tx.answer = lambda req, n: None
+    assert call(hub, BAKE, "file.read")[0]["error"] == "malformed reply"
     hub.tx.answer = lambda req, n: {"id": req["id"], "from": WID, "ok": True, "result": None,
                                     "elevated": "l_1", "retry": False}
     out, _ = call(hub, BAKE, "file.read")
     assert out == {"id": out["id"], "ok": True, "result": None, "retry": False, "elevated": "l_1"}
     assert calls(hub)[-1]["lease"] == "l_1"
-    assert all(e["ok"] is False for e in calls(hub)[:3])
+    assert all(e["ok"] is False for e in calls(hub)[:4])
 
 
 def test_secret_resolution_failure_is_reported_not_sent(hub):
