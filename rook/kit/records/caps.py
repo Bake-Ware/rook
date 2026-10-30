@@ -32,11 +32,13 @@ class GeneratedCap:
     handler: Callable[..., Any]
 
 
-def _field_args(rtype: RecordType, keep_required: bool) -> dict:
+def _field_args(rtype: RecordType, creating: bool) -> dict:
+    """Field args. Only create keeps required and default: an update arg that
+    a validator filled with its default would overwrite the stored value."""
     out = {}
     for f, spec in rtype.rdef.fields.items():
-        arg = {k: spec[k] for k in _FIELD_KEYS if k in spec}
-        if keep_required and spec.get("required"):
+        arg = {k: spec[k] for k in _FIELD_KEYS if k in spec and (creating or k != "default")}
+        if creating and spec.get("required"):
             arg["required"] = True
         out[f] = arg
     return out
@@ -57,11 +59,11 @@ def _args(rtype: RecordType, verb: str) -> dict:
         return {"query": {"type": "str", "required": True, "doc": "Words to find (all must match)."},
                 "limit": {"type": "int", "default": 20, "min": 1, "max": 200}}
     if verb == "create":
-        return _field_args(rtype, keep_required=True)
+        return _field_args(rtype, creating=True)
     revision = {"revision": {"type": "int", "required": rtype.rdef.history,
                              "doc": "Current revision (refused if the record changed since)."}}
     if verb == "update":
-        return {**rid, **revision, **_field_args(rtype, keep_required=False)}
+        return {**rid, **revision, **_field_args(rtype, creating=False)}
     if verb == "archive":
         return {**rid, **revision, "restore": {"type": "bool", "default": False,
                                                "doc": "Bring an archived record back."}}

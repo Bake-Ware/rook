@@ -71,6 +71,8 @@ def test_compatibility_and_ownership():
     with pytest.raises(KitError, match="requires number"):
         c.load({"plugin": "sms", "provides": {"notify.send": "send"},
                 "caps": {"send": {"args": {"to": {}, "text": {}, "number": {"required": True}}}}})
+    with pytest.raises(KitError, match="doesn't declare"):
+        c.load({"plugin": "sms", "provides": {"notify.send": "send"}, "caps": {}})
     with pytest.raises(KitError, match="own cap"):
         c.provide("notify.send", "telegram.send", "sms")
     with pytest.raises(KitError, match="already defined"):

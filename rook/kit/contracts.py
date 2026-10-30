@@ -45,7 +45,9 @@ class Contracts:
         caps = manifest.get("caps") or {}
         for contract, cap in (manifest.get("provides") or {}).items():
             short = cap[len(plugin) + 1:] if cap.startswith(plugin + ".") else cap
-            self.provide(contract, f"{plugin}.{short}", plugin, caps.get(short))
+            if short not in caps:
+                raise KitError(f"{plugin} provides {contract} with {plugin}.{short}, which it doesn't declare")
+            self.provide(contract, f"{plugin}.{short}", plugin, caps[short])
 
     def unload(self, plugin: str) -> None:
         """Drop a plugin's providers and contracts. A choice naming a gone

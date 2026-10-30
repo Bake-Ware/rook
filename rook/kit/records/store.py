@@ -15,7 +15,8 @@ A manifest ``records:`` block (castling-manifest-2, "Records") declares a type;
 Migrations are additive: new fields become new columns, dropped fields keep
 their column (rolling a plugin back never loses data), index and unique
 changes rebuild their indexes, search changes rebuild the FTS table. A type
-change is not additive and needs the plugin's ``migrate`` callback.
+change is not additive and needs the plugin's migration (SQLite can't retype
+a column, so the migration moves it aside and adds the new one).
 
 Every operation takes the :class:`~rook.kit.ctx.Caller`: rows are filtered to
 the caller's band, private types to their creator (and owners), and records
@@ -34,10 +35,11 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 
 from .._types import check, parse_duration
-from ..ctx import Caller, KitError
+from ..ctx import Caller, KitError, load_run
 
 __all__ = ["RecordDef", "RecordStore", "RecordType", "VERBS"]
 
@@ -48,6 +50,8 @@ _PLUGIN = re.compile(r"[a-z][a-z0-9-]*\Z")
 _AFFINITY = {"int": "INTEGER", "bool": "INTEGER", "float": "REAL"}
 _JSON_TYPES = {"json", "list", "map"}
 _SAME_STORAGE = {"str", "markdown"}   # a type change between these is still additive
+_TYPES = {"str", "int", "float", "bool", "time", "duration", "markdown", "json", "file",
+          "secret", "ref", "list", "map"}
 
 
 @dataclass
@@ -84,6 +88,8 @@ class RecordDef:
             if not _NAME.match(f) or f in KIT_COLUMNS:
                 raise KitError(f"{plugin}.{name}: bad or reserved field name {f!r}")
             spec.setdefault("type", "str")
+            if spec["type"] not in _TYPES:
+                raise KitError(f"{plugin}.{name}.{f}: unknown type {spec['type']!r}")
             if spec["type"] == "ref" and not spec.get("to"):
                 raise KitError(f"{plugin}.{name}.{f}: a ref needs to:")
             if spec["type"] == "ref" and "." not in spec["to"]:
@@ -106,6 +112,11 @@ class RecordDef:
                    retain=parse_duration(retain) if retain not in (None, "forever") else None,
                    verbs=verbs, risk=dict(block.get("risk") or {}),
                    migrations=block.get("migrations"))
+
+
+def _script_migrate(plugin_dir: str | Path, ref: str) -> Callable:
+    """The plugin's migration script, loaded only when a change needs it."""
+    return lambda db, rdef, old: load_run(plugin_dir, ref)(db, rdef, old)
 
 
 def _q(name: str) -> str:
@@ -174,13 +185,22 @@ class RecordStore:
 
     # -- types ----------------------------------------------------------------
 
-    def register(self, manifest: Mapping, *, migrate: Callable | None = None) -> list["RecordType"]:
+    def register(self, manifest: Mapping, *, plugin_dir: str | Path | None = None,
+                 migrate: Callable | None = None) -> list["RecordType"]:
         """Register every type in a manifest's ``records:`` block (the adapter
-        over the plain manifest dict). ``migrate(db, rdef, old_fields)`` runs
-        inside the transaction for a non-additive change."""
+        over the plain manifest dict). For a non-additive change the type's
+        ``migrations:`` script (``migrate(db, rdef, old_fields)`` in it, found
+        under ``plugin_dir``) or the ``migrate`` callback runs inside the
+        transaction."""
         plugin = manifest["plugin"]
-        return [self.define(RecordDef.parse(plugin, name, block or {}), migrate=migrate)
-                for name, block in (manifest.get("records") or {}).items()]
+        out = []
+        for name, block in (manifest.get("records") or {}).items():
+            rdef = RecordDef.parse(plugin, name, block or {})
+            fn = migrate
+            if fn is None and rdef.migrations and plugin_dir is not None:
+                fn = _script_migrate(plugin_dir, f"{rdef.migrations}:migrate")
+            out.append(self.define(rdef, migrate=fn))
+        return out
 
     def define(self, rdef: RecordDef, *, migrate: Callable | None = None) -> "RecordType":
         with self._tx() as db:

@@ -195,3 +195,16 @@ async def test_core_every_with_async_fn():
     await until(lambda: len(hits) >= 2)
     await s.close()
     assert s.plugins == []
+
+
+async def test_may_receive_filters_events():
+    got = []
+    s = Scheduler(may_receive=lambda plugin, event: not event.startswith("secret."))
+    await s.start({"plugin": "w", "hooks": {"on": [{"event": "*", "run": "w.py:f"}]}},
+                  resolve=lambda ref: (lambda ctx, event, payload: got.append(event)))
+    s.publish("secret.item.created", {"record": {"x": 1}})
+    s.publish("worker.online")
+    await until(lambda: got == ["worker.online"])
+    await asyncio.sleep(0.03)
+    assert got == ["worker.online"]
+    await s.close()

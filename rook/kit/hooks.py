@@ -61,12 +61,16 @@ class _Plugin:
 
 
 class Scheduler:
-    """One per process. ``dispatch(cap, args, caller)`` runs ``call:`` targets."""
+    """One per process. ``dispatch(cap, args, caller)`` runs ``call:`` targets;
+    ``may_receive(plugin, event)`` filters which events reach ``on`` hooks."""
 
     def __init__(self, dispatch: Callable[[str, dict, Caller], Any] | None = None,
-                 timeout: float = 30.0):
+                 timeout: float = 30.0, may_receive: Callable[[str, str], bool] | None = None):
         self.dispatch = dispatch
         self.timeout = timeout
+        # Event grants are hub state: core passes its check here so a plugin's
+        # on: hooks only see events it was granted (default: all).
+        self.may_receive = may_receive
         self._plugins: dict[str, _Plugin] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -159,6 +163,8 @@ class Scheduler:
 
     def _fan_out(self, event: str, payload: dict) -> None:
         for p in list(self._plugins.values()):
+            if p.on and self.may_receive is not None and not self.may_receive(p.name, event):
+                continue
             for pattern, target in p.on:
                 if fnmatch.fnmatchcase(event, pattern):
                     args = {"event": event, "payload": payload} if target.func else {}

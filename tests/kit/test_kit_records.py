@@ -373,3 +373,35 @@ def test_threads_share_the_store(tmp_path):
     for th in threads:
         th.join()
     assert errors == [] and len(t.list(BAKE, limit=500)) == 100
+
+
+def test_update_args_carry_no_defaults(store):
+    """A validator filling defaults into update args must not reset fields."""
+    caps = record_caps(store, "homework")
+    assert "default" not in caps["homework.item.update"].spec["args"]["done"]
+    assert caps["homework.item.create"].spec["args"]["done"]["default"] is False
+
+
+def test_unknown_field_type_fails_at_load():
+    with pytest.raises(KitError, match="unknown type"):
+        RecordDef.parse("p", "t", {"fields": {"a": {"type": "oauth"}}})
+
+
+def test_migrations_script(tmp_path):
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "migrate.py").write_text(
+        "def migrate(db, rdef, old):\n"
+        "    # SQLite can't retype a column: move it aside and refill a new one.\n"
+        "    db.execute('ALTER TABLE \"r:p.t\" RENAME COLUMN a TO a_old')\n"
+        "    db.execute('ALTER TABLE \"r:p.t\" ADD COLUMN a INTEGER')\n"
+        "    db.execute('UPDATE \"r:p.t\" SET a = CAST(a_old AS INTEGER)')\n")
+    db = str(tmp_path / "r.db")
+    s = RecordStore(db)
+    s.register({"plugin": "p", "records": {"t": {"fields": {"a": {}}}}})
+    r = s.type("p.t").create(BAKE, a="7")
+    s.close()
+    s = RecordStore(db)
+    s.register({"plugin": "p", "records": {"t": {"fields": {"a": {"type": "int"}},
+                                                 "migrations": "scripts/migrate.py"}}},
+               plugin_dir=tmp_path)
+    assert s.type("p.t").get(BAKE, r["id"])["a"] == 7

@@ -93,6 +93,30 @@ async def test_call_from_async_and_thread():
     assert [c[1] for c in d.calls] == [{"n": 1}, {"n": 2}]
 
 
+@pytest.mark.asyncio
+async def test_thread_call_dispatches_on_the_host_loop():
+    """Sync plugin code runs in a thread, but the dispatcher must run on the loop."""
+    import threading
+    loop_thread = threading.get_ident()
+    seen = []
+
+    def dispatch(cap, args, caller):
+        seen.append(threading.get_ident())
+        return "done"
+
+    ctx = Ctx(MANIFEST, BAKE, dispatch=dispatch)
+    assert await invoke(lambda ctx: ctx.call("notify.send"), ctx) == "done"
+    assert seen == [loop_thread]
+
+
+def test_call_without_a_loop():
+    ctx = Ctx(MANIFEST, BAKE, dispatch=FakeDispatch())
+    assert ctx.call("notify.send") == "ok"
+    ctx = Ctx(MANIFEST, BAKE, dispatch=FakeDispatch(is_async=True))
+    with pytest.raises(KitError, match="host loop"):
+        ctx.call("notify.send")
+
+
 def test_emit_declared_only():
     seen = []
     ctx = Ctx(MANIFEST, BAKE, emit=lambda e, p, src: seen.append((e, p, src)))

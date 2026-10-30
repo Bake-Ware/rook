@@ -172,13 +172,18 @@ class Ctx:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
-            res = self._dispatch(cap, dict(args), caller)
-            if inspect.isawaitable(res):
-                if self._loop is None:
+            if self._loop is None:      # no host loop (a plain script, a test)
+                res = self._dispatch(cap, dict(args), caller)
+                if inspect.isawaitable(res):
+                    if inspect.iscoroutine(res):
+                        res.close()
                     raise KitError("ctx.call from a thread needs the host loop") from None
-                return asyncio.run_coroutine_threadsafe(_await(res), self._loop).result()
-            return res
-        return _await(self._dispatch(cap, dict(args), caller))
+                return res
+            # Sync plugin code in a worker thread: the dispatcher runs on the
+            # host loop, where the hub's state lives, and this thread waits.
+            return asyncio.run_coroutine_threadsafe(
+                _await_call(self._dispatch, cap, dict(args), caller), self._loop).result()
+        return _await_call(self._dispatch, cap, dict(args), caller)
 
     def emit(self, event: str, payload: Mapping | None = None) -> None:
         """Publish an event this plugin declared under ``emits`` (or a record's auto event)."""
@@ -239,7 +244,8 @@ class Ctx:
         return self._streams.open(plugin=self.plugin, caller=self.caller, **opts)
 
 
-async def _await(res: Any) -> Any:
+async def _await_call(dispatch: Dispatch, cap: str, args: dict, caller: Caller) -> Any:
+    res = dispatch(cap, args, caller)
     return await res if inspect.isawaitable(res) else res
 
 
