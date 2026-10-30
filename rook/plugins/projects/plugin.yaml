@@ -1,0 +1,38 @@
+# Projects are the parents of tasks. Concepts are tags (a project can carry
+# several); the trust level is its own admin-only record, so an agent that
+# may edit a project can't loosen how carefully it is changed.
+manifest: 1
+plugin: project
+version: 0.5.0
+title: Projects
+doc: Ongoing work with a goal; tasks belong to a project, concepts tag it with the disciplines it draws on.
+package: workbench
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+runs_on: hub
+records:
+  project:
+    fields:
+      title: { type: str, required: true }
+      slug: { type: str, unique: true, pattern: "^[a-z0-9][a-z0-9-]{0,79}$", doc: "Short name for [[links]]." }
+      body: { type: markdown, doc: The goal and scope. }
+      state: { type: str, enum: [active, paused, done], default: active }
+      concepts: { type: list, items: { type: str }, doc: "Concept slugs: what kind of work this is (concept.pool gives its experts)." }
+      due: { type: str, pattern: "^\\d{4}-\\d{2}-\\d{2}$", doc: YYYY-MM-DD. }
+    index: [state]
+    search: [title, body]
+    history: true
+  trust:
+    fields:
+      project: { type: ref, to: project.project, required: true, unique: true }
+      level:
+        type: str
+        enum: [sacred, normal, ship-it]
+        required: true
+        doc: "How much ceremony a change gets: sacred = full change record and the owner signs off; normal = full record, proceeds; ship-it = a one-line note."
+      note: { type: str, doc: Why this level. }
+    index: [project]
+    history: true
+    caps: [list, get, create, update]
+    risk: { create: admin, update: admin }
+docs: { manual: docs/manual.md }

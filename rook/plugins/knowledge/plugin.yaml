@@ -1,0 +1,104 @@
+# The shared wiki. A page links others as [[slug]]; get shows links both
+# ways. Provenance instead of verification: a statement cites its source as a
+# footnote [^key], and sources say where it came from (the person said so, a
+# journal entry, a commit, a file, a page, or the agent's own conclusion) and
+# when. A wrong page gets fixed and cites why, like a wiki edit.
+manifest: 1
+plugin: knowledge
+version: 0.5.0
+title: Knowledge
+doc: "The shared wiki: facts, decisions, procedures and skills, each statement with its source."
+package: workbench
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+runs_on: hub
+records:
+  knowledge:
+    fields:
+      title: { type: str, required: true }
+      slug: { type: str, unique: true, required: true, pattern: "^[a-z0-9][a-z0-9-]{0,79}$" }
+      body: { type: markdown }
+      kind: { type: str, enum: [fact, decision, procedure, observation, question, summary, skill], default: observation }
+      parent: { type: ref, to: knowledge.knowledge, doc: The folder page this sits under. }
+      tags: { type: list, items: { type: str } }
+      sources: { type: list, items: { type: map }, doc: "[{key, kind, ref, quote, note, by, when}]: body cites one as [^key]." }
+    index: [kind]
+    search: [title, body]
+    semantic: [body]
+    history: true
+    caps: [list, search, archive, history]
+caps:
+  get:
+    doc: "A page by id or slug, with the pages it links ([[slug]]), the pages that link it, and its child pages."
+    risk: read
+    scope: multi-user
+    idempotent: true
+    args:
+      id: { type: str, required: true, doc: Id or slug. }
+    result: { type: map }
+    run: scripts/knowledge.py:get
+  create:
+    doc: "Write a new page. Cite each statement's source as a footnote [^key] with a matching sources entry (or a [^key]: line in the body). Search first so the same page isn't written twice."
+    risk: write
+    scope: multi-user
+    args:
+      title: { type: str, required: true }
+      body: { type: markdown, default: "" }
+      slug: { type: str, pattern: "^[a-z0-9][a-z0-9-]{0,79}$", doc: Default from the title. }
+      kind: { type: str, enum: [fact, decision, procedure, observation, question, summary, skill], default: observation }
+      parent: { type: str, doc: Folder page id or slug. }
+      tags: { type: list, items: { type: str } }
+      sources:
+        type: list
+        max: 50
+        items:
+          type: map
+          fields:
+            key: { type: str, pattern: "^[A-Za-z0-9_-]{1,32}$", doc: "What the body cites: [^key]." }
+            kind: { type: str, required: true, pattern: "^[a-z][a-z0-9_]{0,31}$", doc: "user (the person said so; quote their words), agent (your own conclusion), journal, commit, pr, file, url, page, task, chat, session." }
+            ref: { type: str, doc: "Where to find it: a journal id, commit, path, URL, slug, or who said it." }
+            quote: { type: str }
+            note: { type: str }
+    result: { type: map }
+    run: scripts/knowledge.py:create
+  update:
+    doc: "Edit a page (needs its current revision). sources are added; one with an existing key replaces it. Fixing a wrong page: change it and cite why."
+    risk: write
+    scope: multi-user
+    args:
+      id: { type: str, required: true, doc: Id or slug. }
+      revision: { type: int, required: true }
+      title: { type: str }
+      body: { type: markdown }
+      slug: { type: str, pattern: "^[a-z0-9][a-z0-9-]{0,79}$" }
+      kind: { type: str, enum: [fact, decision, procedure, observation, question, summary, skill] }
+      parent: { type: str, doc: Folder page id or slug; empty to move to the top. }
+      tags: { type: list, items: { type: str } }
+      sources:
+        type: list
+        max: 50
+        items:
+          type: map
+          fields:
+            key: { type: str, pattern: "^[A-Za-z0-9_-]{1,32}$", doc: "What the body cites: [^key]." }
+            kind: { type: str, required: true, pattern: "^[a-z][a-z0-9_]{0,31}$", doc: "user (the person said so; quote their words), agent (your own conclusion), journal, commit, pr, file, url, page, task, chat, session." }
+            ref: { type: str, doc: "Where to find it: a journal id, commit, path, URL, slug, or who said it." }
+            quote: { type: str }
+            note: { type: str }
+    result: { type: map }
+    run: scripts/knowledge.py:update
+  link:
+    doc: "Add a source or related link to a page (a commit, a task, the person's words), or remove=true to take it off (by key, else by kind and ref)."
+    risk: write
+    scope: multi-user
+    args:
+      id: { type: str, required: true, doc: Id or slug. }
+      kind: { type: str, required: true, pattern: "^[a-z][a-z0-9_]{0,31}$" }
+      ref: { type: str }
+      key: { type: str, pattern: "^[A-Za-z0-9_-]{1,32}$" }
+      quote: { type: str }
+      note: { type: str }
+      remove: { type: bool, default: false }
+    result: { type: map }
+    run: scripts/knowledge.py:link
+docs: { manual: docs/manual.md }

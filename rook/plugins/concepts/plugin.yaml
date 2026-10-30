@@ -1,0 +1,40 @@
+# A concept is a discipline (software, hardware, creative writing, a wedding
+# playlist): the pool of experts, skills and sign-off norms that projects
+# tagged with it draw on. Fields mirror the manifest's concepts: section.
+manifest: 1
+plugin: concept
+version: 0.5.0
+title: Concepts
+doc: Kinds of work and the pool of expert roles, skills and sign-off norms projects tagged with them draw on.
+package: workbench
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+runs_on: hub
+records:
+  concept:
+    fields:
+      title: { type: str, required: true }
+      slug: { type: str, unique: true, required: true, pattern: "^[a-z0-9][a-z0-9-]{0,79}$" }
+      doc: { type: markdown, doc: What this kind of work is and how the person likes it done. }
+      roles: { type: list, items: { type: str }, doc: Expert roles (agent personas) to draw on. }
+      skills: { type: list, items: { type: str }, doc: Skill page slugs (knowledge kind skill). }
+      signoff:
+        type: str
+        enum: [none, experts, user]
+        default: experts
+        doc: "Who signs off before a task is done: nobody, reviewers from the roles, or the person too."
+      trust: { type: str, enum: [sacred, normal, ship-it], default: normal, doc: Suggested trust level for new projects. }
+      from: { type: str, doc: "plugin@version when a plugin's concepts: section seeded it." }
+    search: [title, doc]
+    history: true
+caps:
+  pool:
+    doc: "The merged pool for some concepts (a project's concepts list): every role and skill, the strictest sign-off and trust, and each concept's doc."
+    risk: read
+    scope: multi-user
+    idempotent: true
+    args:
+      concepts: { type: list, items: { type: str }, required: true, max: 20, doc: Concept slugs or ids. }
+    result: { type: map }
+    run: scripts/concept.py:pool
+docs: { manual: docs/manual.md }

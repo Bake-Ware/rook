@@ -1,0 +1,118 @@
+# A task is a unit of work in a project. Claims, links, comments and sign-off
+# requests live on the task (small lists the run: caps change one entry at a
+# time); its working state is the task's whiteboard (plugin whiteboard), and
+# the history of what happened is the journal.
+manifest: 1
+plugin: task
+version: 0.5.0
+title: Tasks
+doc: "Units of work: claim one before working on it, link what it produced, ask for sign-off, hand it to whoever is next."
+package: workbench
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+runs_on: hub
+records:
+  task:
+    fields:
+      title: { type: str, required: true, doc: "The result, not the activity." }
+      slug: { type: str, unique: true, pattern: "^[a-z0-9][a-z0-9-]{0,79}$" }
+      body: { type: markdown, doc: What and why. }
+      project: { type: ref, to: project.project }
+      parent: { type: ref, to: task.task, doc: The bigger task this one is part of. }
+      state:
+        type: str
+        enum: [todo, in_progress, blocked, paused, done, cancelled]
+        default: todo
+        doc: "blocked: say why with a blocked_by link or a comment. done: set outcome and link the evidence."
+      criteria: { type: list, items: { type: str }, doc: What done means. }
+      outcome: { type: markdown, doc: What came of it. }
+      assignee: { type: str, doc: "Who picks it up next (a person, an agent or a role); task.handoff sets it." }
+      due: { type: str, pattern: "^\\d{4}-\\d{2}-\\d{2}$", doc: YYYY-MM-DD. }
+      tags: { type: list, items: { type: str } }
+      claims: { type: list, items: { type: map }, doc: "Who works on it now: [{actor, person, session, since}] (task.claim, task.release)." }
+      links: { type: list, items: { type: map }, doc: "[{kind, ref, relation, note, by, when}] (task.link)." }
+      comments: { type: list, items: { type: map }, doc: "[{by, when, text}] (task.comment)." }
+      signoff: { type: list, items: { type: map }, doc: "[{reviewer, state: requested|approved|declined, note, by, when}] (task.request_signoff, task.signoff)." }
+    index: [state, project, assignee]
+    search: [title, body, outcome]
+    history: true
+caps:
+  claim:
+    doc: "Claim a task before working on it (it goes in_progress from todo or paused). Several may hold a claim; the reply names the others. Read whiteboard.read next."
+    risk: write
+    scope: multi-user
+    args:
+      id: { type: str, required: true }
+    result: { type: map }
+    run: scripts/task.py:claim
+  release:
+    doc: "Drop a claim (yours, or a stale one named by actor), optionally setting the state. The last claim leaving puts an in_progress task back to todo."
+    risk: write
+    scope: multi-user
+    args:
+      id: { type: str, required: true }
+      actor: { type: str, doc: Whose claim; default yours. }
+      state: { type: str, enum: [todo, in_progress, blocked, paused, done, cancelled] }
+    result: { type: map }
+    run: scripts/task.py:release
+  link:
+    doc: "Link something to a task: evidence, what it produced, what blocks it. remove=true takes the link (same kind and ref) off again."
+    risk: write
+    scope: multi-user
+    args:
+      id: { type: str, required: true }
+      kind: { type: str, required: true, pattern: "^[a-z][a-z0-9_]{0,31}$", doc: "journal, commit, pr, file, url, page, task, session, chat, ..." }
+      ref: { type: str, required: true }
+      relation: { type: str, default: evidence, pattern: "^[a-z][a-z0-9_]{0,31}$", doc: "evidence, produced, blocked_by, touched, supersedes, ..." }
+      note: { type: str }
+      remove: { type: bool, default: false }
+    result: { type: map }
+    run: scripts/task.py:link
+  comment:
+    doc: Add a comment to a task.
+    risk: write
+    scope: multi-user
+    args:
+      id: { type: str, required: true }
+      text: { type: str, required: true }
+    result: { type: map }
+    run: scripts/task.py:comment
+  handoff:
+    doc: "Hand a task to whoever is next (engineer to QA to whoever deploys): sets assignee, drops your claim, notes why, and tells them (event task.handed_off)."
+    risk: write
+    scope: multi-user
+    args:
+      id: { type: str, required: true }
+      to: { type: str, required: true, doc: "A person, an agent or a role." }
+      note: { type: str, required: true, doc: What they need to know; the whiteboard holds the rest. }
+    result: { type: map }
+    run: scripts/task.py:handoff
+  request_signoff:
+    doc: "Ask reviewers to sign off before the task is done (event task.signoff_requested). Reviewers come from the project's concepts (concept.pool); the project's trust level says whether the person is one of them."
+    risk: write
+    scope: multi-user
+    args:
+      id: { type: str, required: true }
+      reviewers: { type: list, items: { type: str }, required: true, max: 20 }
+      note: { type: str, doc: What to look at. }
+    result: { type: map }
+    run: scripts/task.py:request_signoff
+  signoff:
+    doc: Sign off on a task (approve) or decline with what to fix.
+    risk: write
+    scope: multi-user
+    args:
+      id: { type: str, required: true }
+      approve: { type: bool, required: true }
+      note: { type: str }
+      reviewer: { type: str, doc: "The request you answer (a role you were asked as); default the one naming you." }
+    result: { type: map }
+    run: scripts/task.py:signoff
+emits:
+  task.handed_off:
+    doc: A task was handed to someone.
+    payload: { id: { type: str }, title: { type: str }, to: { type: str }, by: { type: str }, note: { type: str } }
+  task.signoff_requested:
+    doc: A task asks for sign-off.
+    payload: { id: { type: str }, title: { type: str }, reviewers: { type: list, items: { type: str } }, by: { type: str }, note: { type: str } }
+docs: { manual: docs/manual.md }
