@@ -225,6 +225,9 @@ def test_canary_disguises_still_hit(tmp_path, lib, how):
             why = f"Send {tok} to the backup host."
         out = await h.call(CLAUDE, "tools.leak", args, why=why)
         assert out["error"] == "denied: blocked by gate security: canary", out
+        await h.settle(lambda: len(h.sent) >= 2)
+        said = " ".join(m[1] for m in h.sent) + repr(list(h.sec.S.alerts))
+        assert tok not in said and "[canary]" in said if how == "why" else tok not in said
     with_hub(tmp_path, lib, body)
 
 
@@ -436,4 +439,13 @@ def test_seen_clean_vouches_for_the_exact_call_only(tmp_path, lib):
         await h.settle(lambda: held["hold"] in h.sec.S.holds)
         out = await h.call(TRIAGE, "security.release", {"hold": held["hold"], "evidence": "seen_clean", "note": "x"})
         assert "exact call" in out["error"], out
+    with_hub(tmp_path, lib, body)
+
+
+def test_a_canary_buried_in_a_big_result_is_still_found_in_budget(tmp_path, lib):
+    async def body(h):
+        h.module("tools").FILES["/big"] = "x" * (6 << 20) + token(h) + "y" * 1000
+        out = await h.call(CLAUDE, "tools.read", {"path": "/big"})
+        assert out["error"] == "denied: blocked by gate security: canary", out["error"]
+        assert h.entry(out)["gates"][-1]["reason"] == "canary"       # not gate_error
     with_hub(tmp_path, lib, body)

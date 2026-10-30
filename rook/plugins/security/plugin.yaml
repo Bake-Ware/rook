@@ -22,7 +22,7 @@ settings:
 gate:
   run: scripts/security.py:check
   result: scripts/security.py:seen
-  budget: 20ms
+  budget: 100ms             # room to scan a large result in one pass
   mode: enforce
 
 caps:

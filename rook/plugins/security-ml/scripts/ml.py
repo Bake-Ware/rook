@@ -242,7 +242,7 @@ def rollback(ctx):
 
 def status(ctx):
     state = _state()
-    return {"model": S.name, "mode": "see the hub's gate list", "trained": (S.model or {}).get("trained"),
+    return {"model": S.name, "trained": (S.model or {}).get("trained"),
             "streak": state.get("streak", 0), "candidate": state.get("candidate"),
             "history": state.get("history", []), "last": state.get("last")}
 

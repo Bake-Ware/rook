@@ -93,43 +93,51 @@ class State:
         self.decoys: dict = {}       # canary name -> (decoy text, until)
         self.released: deque = deque(maxlen=RELEASES_PER_HOUR)
         self.pending: set = set()    # background tasks (alerts, task fetches)
-        self._needles: list | None = None
+        self._finder: tuple | None = None
 
     # -- canaries -----------------------------------------------------------------
 
-    def needles(self) -> list:
-        """(text, canary name) pairs to look for: each token, its base64 at
-        the three alignments, and the vault reference to the canary's name."""
-        if self._needles is None:
-            out = []
+    def finder(self) -> tuple:
+        """One compiled pattern over every live canary (one pass over a big
+        result), and which canary each matched text belongs to: each token,
+        its base64 at the three alignments, and ``{{secret:<name>}}``."""
+        if self._finder is None:
+            owner, parts = {}, []
             for c in self.canaries.values():
                 if c.get("retired"):
                     continue
                 for tok in c["tokens"]:
-                    out += [(n, c["name"]) for n in _encodings(tok)]
-            self._needles = out
-        return self._needles
+                    for n in _encodings(tok):
+                        owner[n] = c["name"]
+                        parts.append(re.escape(n))
+                parts.append(r"\{\{\s*secret:\s*" + re.escape(c["name"]) + r"\s*(?:\||\}\})")
+            self._finder = (re.compile("|".join(parts)) if parts else None, owner)
+        return self._finder
 
     def canary_in(self, text: str, worker: str = "") -> str | None:
-        for needle, name in self.needles():
-            if needle in text:
-                return name
+        rx, owner = self.finder()
+        m = rx.search(text) if rx else None
+        if m:
+            got = m.group(0)
+            return owner.get(got) or re.search(r"secret:\s*([A-Za-z0-9_.-]+)", got).group(1)
         for c in self.canaries.values():
-            if c.get("retired"):
-                continue
-            if re.search(r"\{\{\s*secret:\s*" + re.escape(c["name"]) + r"\s*(\||\}\})", text):
-                return c["name"]
-            for p in c.get("planted") or ():
+            for p in () if c.get("retired") else c.get("planted") or ():
                 w, _, path = p.partition(":")
                 if path and w == worker and path in text:
                     return c["name"]
         return None
 
     def changed(self) -> None:
-        self._needles = None
+        self._finder = None
 
 
 S = State()
+
+
+def _redact(text: str) -> str:
+    """``text`` with any canary in it replaced: alerts never repeat one."""
+    rx, _ = S.finder()
+    return rx.sub("[canary]", text) if rx else text
 
 
 def _encodings(tok: str) -> list:
@@ -333,7 +341,8 @@ async def _alert(name: str, inp: dict, where: str) -> None:
     if caller.get("agent") and caller.get("person"):
         who = f"{caller['agent']} (for {caller['person']})"
     alert = {"ts": time.time(), "kind": "canary", "canary": name, "where": where, "cap": inp.get("cap"),
-             "worker": inp.get("worker"), "session": session.get("id"), "caller": caller, "why": inp.get("why")}
+             "worker": inp.get("worker"), "session": session.get("id"), "caller": caller,
+             "why": _redact(inp.get("why") or "")}
     S.alerts.append(alert)
     _save()
     ctx = S.ctx
