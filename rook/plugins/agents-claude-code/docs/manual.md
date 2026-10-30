@@ -21,6 +21,12 @@ Settings:
 | `allowed_tools` | none | `--allowedTools`: tools a turn may use without asking. |
 | `mcp_config` | none | `--mcp-config`: how the agent reaches Rook (the MCP door). |
 
+For `mcp_config`, point Claude Code at the hub's MCP door (`/mcp`) with a
+token for the agent acting for a person
+(`python -m rook.core2.hub --config hub.yaml token --person <you> --agent <agent>`).
+Until agents are hub identities of their own, every turn on this worker
+shares that one token.
+
 Turns run in the folder the agent names, else in this plugin's data folder
 (`work/`). Install Claude Code on the worker and sign in once (`claude`)
 before agents use it.
