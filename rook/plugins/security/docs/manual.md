@@ -33,8 +33,9 @@ If it was you testing, say "that was me": lift it with `security.clear`
 
 ## Taint and the pinned task
 
-A session is tainted once it read outside content (a web page, an email:
-caps with the `taints` effect). From then on:
+This part watches agents (prompt injection steers agents, not you or the
+hub's own plugin code). An agent's session is tainted once it read outside
+content (a web page, an email: caps with the `taints` effect). From then on:
 
 - a risky call (exec or admin, or persistence, sensitive or destructive
   effects) waits for you unless it shares words with the session's pinned

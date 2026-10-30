@@ -10,7 +10,8 @@ One gate, enforced at hub dispatch (spec 10.2), cheapest checks first:
    session (and the agent behind it) quarantined, and the person told once,
    in plain words, through the house agent. Near-zero false positives, so it
    blocks outright.
-2. **Taint and the pinned task.** A session is tainted once it read outside
+2. **Taint and the pinned task** (agents only: injection steers agents, not
+   people or plugin code). A session is tainted once it read outside
    content (spec 8.4). From a tainted session, a risky call (exec or admin,
    or persistence, sensitive or destructive effects) is flagged (held for
    the person) unless it matches the session's pinned task; persistence from
@@ -190,6 +191,9 @@ async def check(inp: dict) -> dict:
     if hit and not _decoy_write(hit, inp):
         _hit(hit, inp, "args")
         return _verdict("block", 1.0, "canary")
+    if not str(agent or "").startswith("agent:"):   # injection steers agents, not people or plugin code
+        _remember_clean(inp)
+        return _verdict("allow", 0.9, "other")
     return _taint(inp, session)
 
 

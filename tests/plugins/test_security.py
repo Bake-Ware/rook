@@ -449,3 +449,12 @@ def test_a_canary_buried_in_a_big_result_is_still_found_in_budget(tmp_path, lib)
         assert out["error"] == "denied: blocked by gate security: canary", out["error"]
         assert h.entry(out)["gates"][-1]["reason"] == "canary"       # not gate_error
     with_hub(tmp_path, lib, body)
+
+
+def test_taint_watches_agents_not_people(tmp_path, lib):
+    async def body(h):
+        sid = await h.session(BAKE)
+        await h.call(BAKE, "tools.fetch", {"text": "a page"}, sid)
+        out = await h.call(BAKE, "tools.run", {"cmd": "echo k >> ~/.ssh/authorized_keys"}, sid)
+        assert out["ok"], out                      # the person, in person: no taint hold
+    with_hub(tmp_path, lib, body)
