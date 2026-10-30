@@ -1,0 +1,17 @@
+# Each OS prints the same "state: ... / percentage: N%" shape so one regex
+# parses all of them (the per-OS override can't carry its own parse).
+title: Battery
+doc: Charge level and charging state of this worker's battery.
+platforms: [linux, windows]
+hooks: null
+caps:
+  status:
+    doc: "Current battery: percent and state (charging, discharging, full, ...)."
+    idempotent: true
+    action:
+      exec:
+        argv: [upower, -i, /org/freedesktop/UPower/devices/DisplayDevice]
+        windows:
+          argv: [powershell, -NoProfile, -NonInteractive, -Command,
+                 "$b = Get-CimInstance Win32_Battery | Select-Object -First 1; if (-not $b) { exit 3 }; $s = @{1='discharging';2='plugged';3='full';6='charging';7='charging';8='charging';9='charging'}[[int]$b.BatteryStatus]; 'state: ' + $s; 'percentage: ' + $b.EstimatedChargeRemaining + '%'"]
+      parse: { regex: 'state:\s+(?P<status>[\w-]+)[\s\S]*?percentage:\s+(?P<percent>[\d.]+)%' }

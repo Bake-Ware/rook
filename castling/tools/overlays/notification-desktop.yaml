@@ -1,0 +1,23 @@
+# Text reaches PowerShell and osascript through env vars, never through the
+# script text, so templating can't inject into either language.
+title: Desktop notifications
+doc: Pop up a notification on this worker's desktop.
+requires: { hardware: [display] }
+caps:
+  notification.post:
+    doc: Show a desktop notification on this worker.
+    scope: local
+    args:
+      sender: null
+      title: { type: str, default: Rook }
+      text: { type: str, required: true }
+    action:
+      exec:
+        argv: [notify-send, -a, rook, --, "{{args.title}}", "{{args.text}}"]
+        env: { ROOK_TITLE: "{{args.title}}", ROOK_TEXT: "{{args.text}}" }
+        windows:
+          argv: [powershell, -NoProfile, -NonInteractive, -WindowStyle, Hidden, -Command,
+                 "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $n = New-Object System.Windows.Forms.NotifyIcon; $n.Icon = [System.Drawing.SystemIcons]::Information; $n.Visible = $true; $n.BalloonTipTitle = $env:ROOK_TITLE; $n.BalloonTipText = $env:ROOK_TEXT; $n.ShowBalloonTip(5000); Start-Sleep -Seconds 4; $n.Dispose()"]
+        macos:
+          argv: [osascript, -e, 'display notification (system attribute "ROOK_TEXT") with title (system attribute "ROOK_TITLE")']
+      parse: text

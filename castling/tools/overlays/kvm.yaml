@@ -1,0 +1,91 @@
+# PiKVM as an appliance (castling-manifest example): the delegate worker carries
+# each call; host and credentials belong to the appliance instance.
+title: PiKVM
+doc: Drive a PiKVM (screen, keyboard, mouse, ATX power) over its REST API.
+settings: null
+appliance:
+  discover:
+    - http: { url: "https://{{host}}/api/info", match: kvmd }
+  settings:
+    user: { default: admin, doc: PiKVM web user. }
+    password: { secret: true, setup: Ask the user for the PiKVM web password. }
+caps:
+  screen.capture:
+    doc: Current screen as a JPEG (preview = 256x144 thumbnail).
+    args:
+      preview: { type: bool, default: true, doc: true = 256x144 thumbnail; false = full resolution. }
+      quality: { type: int, min: 1, max: 100, doc: JPEG quality; unset lets PiKVM pick. }
+    action:
+      http:
+        url: "https://{{appliance.host}}/api/streamer/snapshot"
+        query: { save: "0", load: "0", preview: "{{args.preview}}", quality: "{{args.quality}}" }
+        auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
+        tls: { verify: false }
+      parse: bytes
+  hid.type:
+    action:
+      http:
+        method: POST
+        url: "https://{{appliance.host}}/api/hid/print"
+        query: { limit: "0", slow: "{{args.slow}}" }
+        headers: { Content-Type: text/plain; charset=utf-8 }
+        body: "{{args.text}}"
+        auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
+        tls: { verify: false }
+  hid.move:
+    action:
+      http:
+        method: POST
+        url: "https://{{appliance.host}}/api/hid/events/send_mouse_move"
+        query: { to_x: "{{args.x}}", to_y: "{{args.y}}" }
+        auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
+        tls: { verify: false }
+  hid.click:
+    doc: Click a mouse button (press and release).
+    args:
+      button: { type: str, enum: [left, right, middle], default: left }
+    action:
+      http:
+        method: POST
+        url: "https://{{appliance.host}}/api/hid/events/send_mouse_button"
+        query: { button: "{{args.button}}" }   # no state = press and release (kvmd; verify on device)
+        auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
+        tls: { verify: false }
+  power.on:
+    doc: Press the ATX power button to turn the machine on.
+    effects: [physical]
+    action:
+      http:
+        method: POST
+        url: "https://{{appliance.host}}/api/atx/power"
+        query: { action: "on" }
+        auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
+        tls: { verify: false }
+  power.off:
+    doc: Turn the machine off (off = soft press, off_hard = hold the button).
+    args:
+      mode: { type: str, enum: [off, off_hard], default: "off" }
+    action:
+      http:
+        method: POST
+        url: "https://{{appliance.host}}/api/atx/power"
+        query: { action: "{{args.mode}}" }
+        auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
+        tls: { verify: false }
+  power.reset:
+    doc: Press the ATX reset button.
+    action:
+      http:
+        method: POST
+        url: "https://{{appliance.host}}/api/atx/power"
+        query: { action: reset_hard }
+        auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
+        tls: { verify: false }
+  power.status:
+    action:
+      http:
+        url: "https://{{appliance.host}}/api/atx"
+        auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
+        tls: { verify: false }
+      returns: { power: result.leds.power, hdd: result.leds.hdd, busy: result.busy }
+check: [kvm.power.status]
