@@ -76,7 +76,9 @@ def test_a_fresh_worker_enrolls_with_a_device_code_and_joins_a_second_band_as_a_
               30, "the home hub to see the laptop")
         row = next(w for w in bake.get("/workers")["workers"] if w["name"] == "laptop")
         assert row["owner"] == "person:bake"
-        assert bake.call("e2e.ping", {"text": "home"}, worker="laptop")["ok"]
+        home_ping = until(lambda: (r := bake.call("e2e.ping", {"text": "home"}, worker="laptop"))["ok"] and r,
+                          30, "a first call at home")
+        assert home_ping["result"]
 
         # The other hub invites; the home hub's owner accepts with a ceiling of their own.
         invite = ann.post("/bands/invite", {"role": "guest", "ceiling": {"grants": ["e2e.*"]}})["invite"]
@@ -89,8 +91,11 @@ def test_a_fresh_worker_enrolls_with_a_device_code_and_joins_a_second_band_as_a_
         guest = until(lambda: next((w for w in ann.get("/workers")["workers"] if w["name"] == "laptop"
                                     and w["online"]), None), 30, "the other hub to see the laptop")
         assert guest["id"] == wid and guest["owner"] is None
-        assert ann.call("e2e.ping", {"text": "guest"}, worker="laptop")["ok"]
-        assert set(ann.get("/caps?worker=laptop")["workers"]["laptop"]["caps"]) >= {"e2e.ping"}
+        # online comes with the announce; the caps once the hub has fetched the manifests
+        until(lambda: "e2e.ping" in (ann.get("/caps?worker=laptop").get("workers", {}).get("laptop") or {})
+              .get("caps", {}), 30, "the other hub to list the laptop's caps")
+        pinged = ann.call("e2e.ping", {"text": "guest"}, worker="laptop")
+        assert pinged["ok"], pinged
         refused = ann.call("e2e.admin", worker="laptop")
         assert not refused["ok"] and refused["error"].startswith("denied: ceiling"), refused
         assert bake.call("e2e.admin", worker="laptop")["ok"]                  # home is untouched
