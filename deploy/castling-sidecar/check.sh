@@ -26,7 +26,7 @@ done
 check "worker $WORKER_NAME online" "any(x.get('name')=='$WORKER_NAME' and x.get('online') for x in j['workers'])" "$w"
 caps=$(get "/caps?worker=$WORKER_NAME")
 check "worker serves shell.exec, file.read, agents-claude-code.turn" \
-    "{'shell.exec','file.read','agents-claude-code.turn'} <= {c['cap'] for w in j['workers'] for c in w['caps'] if c.get('available', True)}" "$caps"
+    "{'shell.exec','file.read','agents-claude-code.turn'} <= set(j['workers']['$WORKER_NAME']['caps']) - set(j['workers']['$WORKER_NAME'].get('unavailable') or {})" "$caps"
 r=$(post /call "{\"worker\":\"$WORKER_NAME\",\"cap\":\"shell.exec\",\"args\":{\"argv\":[\"uname\",\"-n\"]},\"why\":\"Sidecar check: a shell call through the 0.5 hub.\"}")
 check "shell.exec uname -n" "j.get('ok') and '$(uname -n)' in json.dumps(j['result'])" "$r"
 r=$(post /call "{\"worker\":\"$WORKER_NAME\",\"cap\":\"file.read\",\"args\":{\"path\":\"$SRC/.castling-sha\"},\"why\":\"Sidecar check: read the installed commit.\"}")

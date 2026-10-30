@@ -146,6 +146,8 @@ cfg.setdefault("name", name)
 cfg["plugins"] = [str(plugins / p) for p in wanted if (plugins / p / "plugin.yaml").is_file()]
 claude = shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
 cfg.setdefault("settings", {}).setdefault("agents-claude-code", {"claude": claude})
+if os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"):
+    cfg["hardware"] = sorted(set(cfg.get("hardware") or []) | {"display"})   # screen + notification ports
 cfg["log"] = {"level": "info", "format": "text"}
 path.write_text(yaml.safe_dump(cfg, sort_keys=False))
 EOF
@@ -170,7 +172,7 @@ systemctl --user start rook-castling-worker
 say "done: $(cat "$SRC/.castling-sha" | cut -c1-8) installed"
 cat <<EOF
 
-  Dashboard:     http://$(hostname -I 2>/dev/null | awk '{print $1}'):$HTTP_PORT/  (or $LOCAL_URL/ here)
+  Dashboard:     http://$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' || hostname):$HTTP_PORT/  (or $LOCAL_URL/ here)
   Sign-in token: $SECRETS/owner.token
   Recovery key:  $SECRETS/recovery-key.txt
   MCP door:      http://$MCP_BIND/mcp  (token in $SECRETS/mcp.token)
