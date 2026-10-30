@@ -349,7 +349,16 @@ class Worker:
         log.warning("hub lost", extra=_f(band=band[:8], leases_dropped=dropped))
 
     def _regained(self, band: str) -> None:
+        """First hub contact on ``band``, or contact after losing it: the hub
+        may have (re)started since this worker last announced, so announce."""
         log.info("hub contact", extra=_f(band=band[:8]))
+        self._spawn(self._announce_on(band))
+
+    async def _announce_on(self, band: str) -> None:
+        try:
+            await self.transport.send(band, await self._announce(band))
+        except TransportError as e:
+            log.debug("announce not sent", extra=_f(band=band[:8], error=str(e)))
 
     def _view(self, band: str) -> tuple[Member | None, dict]:
         """The band's membership and the ceiling its announce is filtered by
@@ -384,10 +393,7 @@ class Worker:
     async def reannounce(self) -> None:
         """Send a fresh announce on every band (after a plugin or trust change)."""
         for band in self.transport.bands:
-            try:
-                await self.transport.send(band, await self._announce(band))
-            except TransportError as e:
-                log.debug("announce not sent", extra=_f(band=band[:8], error=str(e)))
+            await self._announce_on(band)
 
     async def _hub_request(self, band: str, hub: str, cap: str, args: dict, timeout: float) -> dict:
         node = self.hub_nodes.get((hub, band))
@@ -420,15 +426,18 @@ class Worker:
         return None
 
     async def _dispatch(self, cap: str, args: dict, caller: Caller) -> Any:
-        """``ctx.call``: ``core.call`` on the hub with the parent call's ticket (13).
-        TODO(castling:kit): ctx.call names no target yet; the hub resolves ``rook``."""
+        """``ctx.call``: ``core.call`` on the hub with the parent call's ticket
+        (13). The hub dispatches it with the caller's rights and the plugin's
+        ``uses``, to this worker when it serves the cap, else to the hub.
+        TODO(castling:kit): let ctx.call name a target (another worker)."""
         parent = self._parent(caller)
         if parent is None:
             raise KitError(f"ctx.call {cap}: only a cap running for a hub call can call another cap")
+        target = self.worker_id if cap in self.gate.caps else "rook"
         try:
             out = await self._hub_request(
                 parent.band, parent.ticket["hub"], "core.call",
-                {"ticket": parent.ticket, "cap": cap, "target": "rook", "args": args,
+                {"ticket": parent.ticket, "cap": cap, "target": target, "args": args,
                  "why": caller.why or parent.ticket["why"]}, SUB_CALL_TIMEOUT)
         except (TransportError, asyncio.TimeoutError) as e:
             raise KitError(f"ctx.call {cap}: hub unreachable: {e or 'timed out'}", retry=True) from None

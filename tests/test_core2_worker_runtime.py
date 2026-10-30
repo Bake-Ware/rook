@@ -39,6 +39,7 @@ HOME, GUEST = wire.key_id(bytes(ROOT.verify_key)), wire.key_id(bytes(G_ROOT.veri
 ECHO_YAML = """manifest: 1
 plugin: echo
 version: 1.0.0
+uses: [echo.say]
 caps:
   say:
     doc: Say it back, with who asked.
@@ -272,7 +273,7 @@ def test_worker_serves_verified_calls_and_refuses_bad_tickets(setup):
         req = hub.request("echo.relay")
         out = await hub.send(req)
         assert out["result"] == {"inner": {"cap": "echo.say", "args": {"text": "inner"}, "parent": req["id"]}}
-        assert hub.sub_calls[-1]["ticket"] == req["ticket"] and hub.sub_calls[-1]["target"] == "rook"
+        assert hub.sub_calls[-1]["ticket"] == req["ticket"] and hub.sub_calls[-1]["target"] == WID
 
         got = await hub.call("core.trust.get")
         assert got["result"]["anchor"] == {"hub": HOME, "band": BAND, "protected": False}
@@ -474,3 +475,49 @@ def test_a_failed_start_closes_what_it_opened(setup):
         assert not w.started and w.host.plugins == {}       # echo was loaded, then closed
         await w.stop()                                       # a no-op, not a crash
     go(body)
+
+
+# -- the real hub ----------------------------------------------------------------------
+
+def test_the_real_hub_drives_the_worker_over_the_transport(setup, tmp_path):
+    """rook.core2.hub.runtime.Hub and this worker on one loopback band: the
+    hub learns the worker from its announce (fetching the echo manifest with
+    core.manifests), dispatches ticketed calls, grants elevation and runs a
+    plugin's ctx.call as a sub-call."""
+    from rook.core2.hub.identity import Caller as HubCaller
+    from rook.core2.hub.runtime import Config as HubConfig, Hub
+
+    relay, cfg, make = setup
+    keys = tmp_path / "hub" / "keys"
+    keys.mkdir(parents=True)
+    (keys / "root.key").write_text(bytes(ROOT).hex())
+    (keys / "op.key").write_text(bytes(OP).hex())
+    node = secrets.token_hex(16)
+    (tmp_path / "hub" / "hub.json").write_text(json.dumps({"node": node}))
+    hub_cfg = HubConfig(data=tmp_path / "hub", band=BAND, users={"bake": {"preset": "owner"}}, doors={})
+    bake = HubCaller(person="person:bake")
+
+    async def body():
+        w = make()
+        await w.start()
+        hub = Hub(hub_cfg, transport=Transport(node, [relay.link(PSK)]))
+        await hub.start()                 # its first announce is hub contact; the worker announces back
+        await until(lambda: "echo.say" in getattr(hub.dispatcher.workers.get(WID), "caps", {}), 10)
+        assert hub.known[WID].name == "kaiju" and hub.known[WID].problem is None
+
+        async def call(cap, args=None):
+            return await hub.call(bake, {"worker": "kaiju", "cap": cap, "args": args,
+                                         "why": "Checking the worker runtime against the hub."}, "test")
+
+        said = await call("echo.say", {"text": "hi"})
+        assert said["ok"] and said["result"]["person"] == "person:bake", said
+        boom = await call("echo.boom")
+        assert not boom["ok"] and boom["error"] == "echo.boom failed: RuntimeError: kaboom"
+        root = await call("echo.root")
+        assert root["ok"] and root["elevated"] == root["result"]["lease"], root
+        relayed = await call("echo.relay")
+        assert relayed["ok"] and relayed["result"]["inner"]["text"] == "inner", relayed
+
+        await hub.stop()
+        await w.stop()
+    go(body, 30)
