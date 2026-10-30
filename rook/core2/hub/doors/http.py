@@ -10,6 +10,7 @@ agent, or an agent for a person).
     GET  /journal[?cap=&worker=&project=&kind=&session=&since=&until=&limit=]
     GET  /holds           calls waiting for a person
     POST /holds/<name>    {decision: approve | refuse}
+    POST /plugins/push    {worker, plugin, why}  owners: sign the library's plugin for that worker and install it
     GET  /health          no token
 
 Replies are JSON objects with ``ok``; a refused call is still 200 (the body
@@ -117,6 +118,7 @@ class _Handler(BaseHTTPRequestHandler):
             ("GET", "/caps"): lambda: hub.caps_view(caller, query.get("worker")),
             ("GET", "/journal"): lambda: hub.journal_view(caller, query),
             ("GET", "/holds"): lambda: hub.holds_view(caller),
+            ("POST", "/plugins/push"): lambda: hub.push_plugin(caller, body, self.door.name),
         }
         if (method, path) in routes:
             return 200, self._run(routes[(method, path)]())

@@ -250,6 +250,13 @@ class Host:
         when it isn't for this worker. Needs a ``gate``."""
         got = self.gate.check(request, band, now)
         if not isinstance(got, Call):
+            # The gate only knows caps it can serve. One that a verified
+            # ticket names but can't run now says why (the announce did too).
+            cap = request.get("cap")
+            if got is not None and got.get("error") == f"unknown capability: {cap}":
+                why = next((p.unavailable[cap] for p in self.plugins.values() if cap in p.unavailable), None)
+                if why is not None:
+                    got["error"] = f"unavailable: {cap}: {why}"
             return got
         call, cap = got, got.ticket["cap"]
         args = request.get("args") or {}

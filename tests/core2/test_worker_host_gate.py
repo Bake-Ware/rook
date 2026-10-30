@@ -126,6 +126,23 @@ def test_handle_runs_verified_calls_and_follows_hot_loads(tmp_path, fs):
     go(body)
 
 
+def test_handle_says_why_a_cap_is_unavailable(tmp_path):
+    lamp = tmp_path / "lamp"
+    lamp.mkdir()
+    (lamp / "plugin.yaml").write_text(
+        "manifest: 1\nplugin: lamp\nversion: 1.0.0\nrequires: { hardware: [lamp] }\n"
+        "caps:\n  on:\n    doc: Light.\n    risk: write\n    scope: local\n    action: { exec: { argv: [\"true\"] } }\n")
+
+    async def body():
+        host = make_host(tmp_path)
+        await host.load(lamp)
+        out = await host.handle(request("lamp.on"), BAND, NOW)
+        assert out["error"] == "unavailable: lamp.on: missing hardware: lamp"
+        assert (await host.handle(request("lamp.off"), BAND, NOW))["error"] == "unknown capability: lamp.off"
+        await host.close()
+    go(body)
+
+
 def test_handle_elevates_may_caps_and_refuses_the_rest(tmp_path, fs):
     asked = []
 
