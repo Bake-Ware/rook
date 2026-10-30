@@ -61,6 +61,7 @@ class Identities:
         self.plugin_grants: dict[str, dict[str, list]] = {}   # preset -> {plugin: [pattern]}
         self.users: dict[str, User] = {}
         self.agents: dict[str, dict] = {}                     # name -> rights
+        self.components: dict[str, dict] = {}                 # system:<name> -> rights beyond core.*
         self._tokens: dict[str, Caller] = {}                  # sha256(token) -> caller
 
     # -- setup -----------------------------------------------------------
@@ -76,6 +77,13 @@ class Identities:
             raise ValueError(f"malformed rights for agent {name!r}")
         self.agents[name] = r
 
+    def add_component(self, name: str, r: dict) -> None:
+        """Rights for ``system:<name>``, a hub component acting on its own (a
+        hub plugin's hooks). Unregistered components get only ``core.*``."""
+        if not rights.valid_rights(r):
+            raise ValueError(f"malformed rights for system:{name}")
+        self.components[name] = r
+
     def add_plugin_presets(self, plugin: str, presets: dict) -> None:
         """A manifest's ``presets:`` section ({preset: {grants: [...]}}).
         Patterns outside the plugin's namespace are dropped when rights are
@@ -88,14 +96,20 @@ class Identities:
         if caller.problem():
             raise ValueError(caller.problem())
         token = secrets.token_urlsafe(32)
-        self._tokens[_digest(token)] = caller
+        self._tokens[digest(token)] = caller
         return token
 
+    def add_token_digest(self, token_digest: str, caller: Caller) -> None:
+        """A token stored earlier, by its :func:`digest` (the hub keeps only those)."""
+        if caller.problem():
+            raise ValueError(caller.problem())
+        self._tokens[token_digest] = caller
+
     def revoke_token(self, token: str) -> None:
-        self._tokens.pop(_digest(token), None)
+        self._tokens.pop(digest(token), None)
 
     def authenticate(self, token: str) -> Caller | None:
-        return self._tokens.get(_digest(token)) if isinstance(token, str) else None
+        return self._tokens.get(digest(token)) if isinstance(token, str) else None
 
     # -- questions dispatch asks ------------------------------------------
 
@@ -124,7 +138,7 @@ class Identities:
     def agent_rights(self, agent: str) -> dict:
         kind, _, name = agent.partition(":")
         if kind == "system":
-            return SYSTEM_RIGHTS
+            return self.components.get(name, SYSTEM_RIGHTS)
         return self.agents.get(name, NONE) if kind == "agent" else NONE
 
     def layers(self, caller: Caller) -> list:
@@ -147,5 +161,5 @@ class Identities:
             u.used.add(cap)
 
 
-def _digest(token: str) -> str:
+def digest(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
