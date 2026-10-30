@@ -46,6 +46,65 @@ their key and are listed under `provides`.
 | camera | camera | capture (Linux, Termux) | list; Windows (ffmpeg dshow needs a device name) |
 | info | - | - | everything is core (`worker.ping`) or binned: nothing left for a plugin |
 
+## The real ports (wave 3)
+
+Plugin-ports agent, 2026-10-30. Five plugins are real 0.5 folders now (`rook/plugins/<name>/`:
+`plugin.yaml`, `docs/manual.md`, scripts only for kvm), tested through the worker host
+(`tests/plugins/`, fake binaries on PATH, a local HTTPS fake kvmd). Their drafts in
+`castling/manifests/` are superseded; the overlays stay as the converter's record.
+
+| 0.5 plugin | Config | `run:` | What changed from the draft |
+|---|---|---|---|
+| torrent | all 9 caps | - | `status` is `deluge-console status` (one command; format from Deluge's source); new `torrent.version` is the `check` (needs no daemon); fail_if checked against real deluge-console 2.2 output (`Could not connect to daemon` / `Password does not match`, exit 0) |
+| kvm | screen.capture, hid.type/key/move, power.* | hid.click, api_get, api_post | hid.key is config via kvmd `send_shortcut` (`join` + `map`); hid.type `enter` and power.off `force` by `map`; hid.click takes the contract's pixel x/y (reads `/api/streamer`, moves, clicks); read caps lose `physical`; no `check` (N4) |
+| battery | status (Linux upower + sysfs fallback, Windows, macOS, Termux) | - | `requires.hardware: [battery]`; no battery is an error, not `null` |
+| notification-desktop | notification.post (Linux, Windows, macOS) | - | text/title bounded; no `check` (N4) |
+| screen-desktop | screen.capture (Linux try-chain, macOS, Windows) | - | `result: {type: file}` (contract); `check` takes one screenshot |
+| info | - | - | nothing to port, by decision: `worker.ping` and `worker.status` are core (N7) |
+
+kvmd behaviour the kvm port relies on, read from kvmd's source (master): `send_shortcut?keys=`
+splits on commas and drops empty items (so no mods sends `,KeyC`), presses in order and releases in
+reverse; `send_mouse_button` without `state` presses and releases; `/api/hid/print` types `\n` as
+Enter; key names are KeyboardEvent codes. So A5 no longer touches hid.key, only hid.click at a pixel.
+
+Contract fit (B4): with core.yaml's contracts every port validates with no errors or warnings.
+What it took: kvm hid.click gained `x`/`y`, hid.type `enter`, hid.key a typed `mods` list,
+power.off `force` (replacing the draft's `mode` enum, which also had YAML 1.1's `off -> false`
+bug), screen.capture `result: {type: file}` (both screen plugins); kvm stops claiming
+`hid.move`/`power.on`/`power.reset`/`power.status` in `provides` (no such contracts).
+
+### What the ports found
+
+- **N1. `returns` can't pick a key that isn't a dotted identifier.** `parse: kv` on
+  `deluge-console status` gives keys like `Total upload`; the schema's `dotted_path` refuses them, so
+  torrent.status parses with a regex instead. Fix if it recurs: a rename map whose values may be any
+  key of the parsed map (no dots = one key).
+- **N2. No mapping on output.** `map` translates the caller's args only; torrent.list returns
+  deluge's state letters (S, D, ...) and the doc lists them. Fix if wanted: `map` on a `result` field.
+- **N3. The worker host can't serve appliance caps.** `Host.handle`/`Host.call` ignore the request's
+  `appliance`, nothing builds `appliance_values(instance, settings)` for an action, and `run:` code
+  has no `ctx.appliance`. Spec 5.7 says "instance settings and credentials travel with the call",
+  but the request table (6.1) carries only the instance name: where the values travel is unspecified.
+  kvm's script reads `ctx.appliance` and its tests stand in for the host
+  (`TODO(castling:worker-host)`). Fix: spec a request field (or a delegate-side instance store) and
+  pass `appliance=` in `Host._exec` and `ctx.appliance` for scripts.
+- **N4. `check` caps are called with `{}` and no appliance, and a failing check rolls back.** An
+  appliance plugin can't have a check at install (kvm has none); a cap with a required arg can't be
+  one (notification-desktop has none); and a check must not depend on outside state (torrent.status
+  fails while the daemon is down, so it would roll back a good install: hence torrent.version).
+  Fix: appliance checks run per instance at onboarding; maybe `check: [{cap, args}]`.
+- **N5. `requires.hardware` has no vocabulary.** battery needs `battery`, the desktop plugins
+  `display`; nothing defines those names or says core reports them in the worker's facts, and until
+  it does these plugins never load. Fix: core.yaml (or the spec's announce facts) lists the hardware
+  values core detects: `display`, `battery`, `pty`, ...
+- **N6. `requires.bins` isn't per OS.** notification-desktop can't say "notify-send on Linux", so a
+  missing tool is a call-time error (`not installed on this worker: notify-send`), not an
+  unavailable cap. Minor.
+- **N7. core.yaml declares no caps yet** (contracts, events and presets only), so `worker.ping` and
+  `worker.status`, where info's caps went, aren't declared or implemented anywhere on castling.
+- Not a gap, a known limit kept from 0.4: on KDE/GNOME Wayland grim fails and scrot may exit 0 with
+  a black frame through XWayland; spectacle and gnome-screenshot come after scrot in the try-chain.
+
 ## Gaps
 
 What a plugin needs that manifest v1 can't say, grouped by section. Each has the plugin that hits it
@@ -70,11 +129,13 @@ and the smallest fix that would cover it. **Bold** = Bake should decide. Status 
 4. **No list rendering.** kvm hid.key `mods` (kvmd wants `keys=ControlLeft,KeyC`), cec operands
    (space-separated bytes). Fix: say how a list arg renders inside a string (e.g. `join: ","` on the
    arg).
-   **Closed:** arg `join:`; cec operands are a list joined by spaces. kvm hid.key still needs A5.
+   **Closed:** arg `join:`; cec operands are a list joined by spaces. kvm hid.key is config too
+   (kvmd's `send_shortcut`, see the real ports).
 5. **No sequences.** kvm key combos (press mods, key, release) and today's mouse click were several
    requests per call. hid.key stays `run:`; hid.click relies on kvmd's press-and-release when `state`
    is omitted (to verify on the PiKVM).
-   **Open by decision:** sequences stay `run:`.
+   **Open by decision:** sequences stay `run:`. Ports: only kvm hid.click at a pixel needs one;
+   kvmd presses and releases a button without `state` (kvmd source).
 6. **No value mapping or conditionals.** deluge state letters (S -> Seeding); pikvm `force=true` ->
    `off_hard` (done as a `mode` enum instead); cec.send "also takes a raw firmware line" (decision)
    can't share one `send` template with the structured frame. Fix options: split caps (cheap), or an
@@ -144,7 +205,8 @@ and the smallest fix that would cover it. **Bold** = Bake should decide. Status 
    screen vs app,params), notification.post (13 phone args / title,text / tv message), power.off
    (kvm mode / tv minutes), screen.capture (quality / preview / region), screen.on, sound.set,
    media.* (phone keeps a package arg), ui.screen.
-   **Open:** the wiring agent writes core's contracts.
+   **Closed for the ports:** core.yaml has the contracts (wiring) and all five ports fit them (see
+   the real ports). Other providers still disagree until they're ported.
 5. **Splits on `run:`.** `run` can't bind a fixed argument, so a split Python cap needs a thin wrapper
    per new name: device.intent (8 names), device.sound (3), media.control (6), voice.speak (2),
    browser.tabs (2), dongle.mouse (3), tv.media (4), tv.screen (2). The converter removes the old
