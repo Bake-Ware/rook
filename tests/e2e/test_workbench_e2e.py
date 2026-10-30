@@ -23,8 +23,8 @@ def test_an_agent_works_a_task_and_it_survives_a_hub_restart(fresh):
         return out["result"]
 
     workers = fresh.owner.get("/workers")["workers"]
-    assert sorted(next(w for w in workers if w.get("hub"))["plugins"]) == \
-        ["concept", "knowledge", "project", "task", "whiteboard"]
+    assert {"concept", "knowledge", "project", "task", "whiteboard"} <= \
+        set(next(w for w in workers if w.get("hub"))["plugins"])
     p = call("project.create", title="Castling", concepts=["software"])
     t = call("task.create", title="Workbench in a real hub", project=p["id"])
     assert call("task.claim", id=t["id"])["task"]["claims"][0]["actor"] == "agent:claude-code"

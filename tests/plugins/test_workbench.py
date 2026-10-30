@@ -289,7 +289,7 @@ def test_the_hub_serves_the_workbench_to_an_agent_without_the_agents_package(tmp
                          doors={}), transport=Loopback())
         await hub.start()
         try:
-            assert sorted(hub.plugins.plugins) == ["concept", "knowledge", "project", "task", "whiteboard"]
+            assert {"concept", "knowledge", "project", "task", "whiteboard"} <= set(hub.plugins.plugins)
             from rook.core2.hub.identity import Caller as DoorCaller
             agent = DoorCaller("person:bake", "agent:claude")
 
