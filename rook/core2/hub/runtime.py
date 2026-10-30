@@ -328,6 +328,7 @@ class Hub:
         self._locks: dict[str, asyncio.Lock] = {}
         self._door_sessions: dict[tuple, str] = {}
         self._component_sessions: dict[str, str] = {}
+        self._acting_sessions: dict[tuple, str] = {}   # (person, agent) -> session for ctx.call_as
         self._seq = 0
         self._last_announce = 0.0
         self.known: dict[str, Known] = {}
@@ -944,7 +945,9 @@ class Hub:
                       target: str | None = None) -> dict:
         """Dispatch a call a hub plugin makes. With a person or agent it runs
         as them: in the call's session, or (a job acting for its creator or
-        persona, ``ctx.call_as``) in their default session. Without (a hook),
+        persona, ``ctx.call_as``) in a session of their own for such calls,
+        apart from their door session so its taint stays there. TODO(castling:jobs):
+        a session per run, tainted by a webhook's body. Without (a hook),
         as ``system:plugin.<name>`` (a dot no plugin name has, so no plugin
         can be ``system:hub``). ``uses`` is the plugin's extra layer;
         ``target`` names the worker (``ctx.call_on``, ``ctx.call_as``), else
@@ -953,7 +956,8 @@ class Hub:
             caller = Caller(who.person, who.agent)
             if caller.problem():
                 return {"ok": False, "error": f"denied: caller: {caller.problem()}"}
-            sid = who.session or self._door_session(caller)
+            sid = who.session or self._session(self._acting_sessions, (caller.person, caller.agent),
+                                               caller, ["*"])
         else:
             component = f"plugin.{who.plugin}" if who.plugin else "hub"
             caller = Caller(agent=f"system:{component}")
