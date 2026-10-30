@@ -1,0 +1,93 @@
+# Files on this worker, in the worker process as the worker's account
+# (scripts/file.py, stdlib). Nothing here starts a process, so nothing can
+# be elevated: elevation is shell.exec's.
+manifest: 1
+plugin: file
+version: 0.5.0
+title: Files
+doc: Read, write, list, search and stat files on this worker.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+caps:
+  read:
+    doc: "A file's content: text in `encoding`, or base64 (encoding=base64) for bytes. Reads at most max_bytes (8 MiB); a longer file says truncated."
+    risk: read
+    scope: local
+    effects: [sensitive]
+    idempotent: true
+    timeout: 60s
+    args:
+      path: { type: path, required: true }
+      encoding: { type: str, default: utf-8, pattern: "^[A-Za-z0-9_-]{1,32}$", doc: "A Python codec (utf-8, latin-1) or base64." }
+      max_bytes: { type: int, default: 8388608, min: 0, max: 67108864 }
+    result:
+      type: map
+      fields:
+        content: { type: str }
+        size: { type: int, doc: The whole file's size. }
+        encoding: { type: str }
+        truncated: { type: bool }
+    run: scripts/file.py:read
+  write:
+    doc: Write content to a file (replacing it, or append=true). encoding=base64 writes bytes. create_parents makes missing directories.
+    risk: exec
+    scope: local
+    timeout: 60s
+    args:
+      path: { type: path, required: true }
+      content: { type: str, required: true }
+      encoding: { type: str, default: utf-8, pattern: "^[A-Za-z0-9_-]{1,32}$" }
+      append: { type: bool, default: false }
+      create_parents: { type: bool, default: false }
+    result:
+      type: map
+      fields:
+        path: { type: str }
+        written: { type: int, doc: Bytes written. }
+    run: scripts/file.py:write
+  list:
+    doc: "A directory's entries: name, type (file, dir, symlink, other), size, modified, mode. recursive adds each entry's relative path."
+    risk: read
+    scope: local
+    idempotent: true
+    timeout: 60s
+    args:
+      path: { type: path, required: true }
+      recursive: { type: bool, default: false }
+      hidden: { type: bool, default: true, doc: Include dot files. }
+      limit: { type: int, default: 5000, min: 1, max: 100000 }
+    run: scripts/file.py:list_
+  search:
+    doc: "Lines matching a regex in the files under path (glob narrows them; binary files are skipped): {matches: [{path, line, text}]}. Stops at limit, or after 50 s, and says truncated."
+    risk: read
+    scope: local
+    effects: [sensitive]
+    idempotent: true
+    timeout: 60s
+    args:
+      pattern: { type: str, required: true }
+      path: { type: path, default: . }
+      recursive: { type: bool, default: true }
+      glob: { type: str, default: "*" }
+      ignore_case: { type: bool, default: false }
+      limit: { type: int, default: 100, min: 1, max: 10000 }
+    run: scripts/file.py:search
+  stat:
+    doc: "Whether a path exists, and if so its type, size, modified time and mode (a symlink is reported as itself)."
+    risk: read
+    scope: local
+    idempotent: true
+    aliases: [file.exists]
+    args:
+      path: { type: path, required: true }
+    result:
+      type: map
+      fields:
+        exists: { type: bool }
+        type: { type: str }
+        size: { type: int }
+        modified: { type: float }
+        mode: { type: str }
+    run: scripts/file.py:stat
+docs: { manual: docs/manual.md }
