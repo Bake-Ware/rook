@@ -107,7 +107,7 @@ def test_agents_on_the_hub(tmp_path):
         try:
             owner = (hub.data / "owner.token").read_text().strip()
             guest = hub.add_token(Caller(person="person:guest"), label="guest")
-            assert sorted(hub.plugins.plugins) == ["agents", "agents-local"]
+            assert {"agents", "agents-local"} <= set(hub.plugins.plugins)     # beside the builtin ones
             out = await call(hub, owner, "agents.list")
             assert out["ok"] and len(out["result"]) == 8, out
 
