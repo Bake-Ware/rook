@@ -13,6 +13,18 @@ agent, or an agent for a person).
     POST /plugins/push    {worker, plugin, why}  owners: sign the library's plugin for that worker and install it
     GET  /health          no token
 
+Enrollment (spec 12; rook.core2.enroll.hub):
+
+    POST /enroll/code     {}  a one-time code and its QR text, for a device to claim
+    POST /enroll/claim    {code, name}       no token: the device's config bundle, once
+    POST /enroll/device   {name}             no token: a device code to poll and a user code to show
+    POST /enroll/poll     {device_code}      no token: pending, refused, or the bundle (once)
+    GET  /enroll/pending  devices waiting for someone to approve their code
+    POST /enroll/approve  {code, decision?}  approve (or refuse) a device's user code
+    GET  /recovery-key    owners, in person: the recovery key
+    POST /bands/invite    {role?, ceiling?}  owners, in person: an invite to this hub's band
+    POST /memberships     {worker, why, invite? | band?, role?, ceiling?}  owners: a worker's other bands
+
 Replies are JSON objects with ``ok``; a refused call is still 200 (the body
 says why). Bind to localhost: put TLS in front before exposing it.
 Options: ``bind: "127.0.0.1:8740"`` (port 0 picks one); ``web:`` the hub
@@ -34,6 +46,7 @@ from .web import Web
 log = logging.getLogger("rook.hub.door.http")
 
 MAX_BODY = 1 << 20
+OPEN = {"/enroll/claim": "claim", "/enroll/device": "device_start", "/enroll/poll": "device_poll"}
 WAIT = 900.0     # longest a request waits for the hub (dispatch has its own timeouts)
 
 
@@ -121,6 +134,8 @@ class _Handler(BaseHTTPRequestHandler):
         hub = self.door.hub
         if method == "GET" and path == "/health":
             return 200, {"ok": True, "hub": hub.hub_id}
+        if method == "POST" and path in OPEN:      # a device enrolling has no token yet
+            return 200, self._run(getattr(hub.enroll, OPEN[path])(self._body()))
         caller = self._run(self._auth())
         body = self._body() if method == "POST" else None
         query = dict(parse_qsl(url.query))
@@ -133,14 +148,26 @@ class _Handler(BaseHTTPRequestHandler):
             ("GET", "/journal"): lambda: hub.journal_view(caller, query),
             ("GET", "/holds"): lambda: hub.holds_view(caller),
             ("POST", "/plugins/push"): lambda: hub.push_plugin(caller, body, self.door.name),
+            ("POST", "/enroll/code"): lambda: hub.enroll.new_code(caller, self._base()),
+            ("GET", "/enroll/pending"): lambda: hub.enroll.pending(caller),
+            ("POST", "/enroll/approve"): lambda: hub.enroll.approve(caller, body),
+            ("GET", "/recovery-key"): lambda: hub.enroll.recovery(caller),
+            ("POST", "/bands/invite"): lambda: hub.enroll.invite(caller, body),
+            ("POST", "/memberships"): lambda: hub.enroll.membership(caller, body, self.door.name),
         }
         if (method, path) in routes:
             return 200, self._run(routes[(method, path)]())
         if method == "POST" and path.startswith("/holds/") and path.count("/") == 2:
             return 200, self._run(hub.decide(caller, unquote(path[len("/holds/"):]), body.get("decision")))
-        if any(p == path for _, p in routes) or path.startswith("/holds/"):
+        if any(p == path for _, p in routes) or path in OPEN or path.startswith("/holds/"):
             raise _Error(405, "method not allowed")
         raise _Error(404, "not found")
+
+    def _base(self) -> str | None:
+        """The address this request came in on, for a QR when the hub has no
+        ``enroll.url`` (plain http: this door has no TLS of its own)."""
+        host = self.headers.get("Host")
+        return f"http://{host}" if host else None
 
     async def _auth(self):
         header = self.headers.get("Authorization", "")
