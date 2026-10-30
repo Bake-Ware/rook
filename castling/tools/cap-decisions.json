@@ -1,0 +1,7099 @@
+{
+ "generated": "2026-10-30",
+ "baseline": "origin/master d15e79bf",
+ "inventory": "inventory-caps3.json",
+ "counts": {
+  "caps": 457,
+  "reshape": 83,
+  "bin": 210,
+  "keep": 164,
+  "live_by_home": {
+   "plugin": 149,
+   "core": 68,
+   "agents": 26,
+   "workbench": 4
+  },
+  "live_by_form": {
+   "python": 130,
+   "core": 58,
+   "records": 34,
+   "yaml": 25
+  },
+  "distinct_05_names_from_inventory": 261,
+  "names_by_home": {
+   "plugin": 134,
+   "core": 72,
+   "agents": 28,
+   "workbench": 27
+  },
+  "namespaces_05": 59
+ },
+ "contracts": {
+  "screen": "capture, on, off, status, keep_on",
+  "hid": "type, key, click, move, drag, scroll, release, status",
+  "ui": "screen, click, scroll, type, wait (accessibility tree)",
+  "power": "on, off, reset, status",
+  "media": "status, play, pause, stop, next, previous, seek",
+  "sound": "status, set, dnd",
+  "battery": "status",
+  "app": "list, launch, open_url, share, settings",
+  "notification": "list, get, post, update, dismiss, act",
+  "clipboard": "get, set",
+  "voice": "speak, ask, stop, voices, replies (device speech out)",
+  "shell": "exec (adb appliances implement it too)"
+ },
+ "namespace_mismatches_raw": 31,
+ "duplicates": [
+  "battery.status",
+  "ccmod.status",
+  "hid.backend",
+  "hid.key_combo",
+  "hid.mouse.click",
+  "hid.mouse.drag",
+  "hid.type",
+  "info.ping",
+  "screenshot.capture",
+  "screenshot.capture_preview"
+ ],
+ "implied_new_caps": [
+  {
+   "home": "core",
+   "caps": "stream.attach",
+   "why": "designed stream API op (wake = attach an agent producer)"
+  },
+  {
+   "home": "core",
+   "caps": "stream.search",
+   "why": "content search across streams; replaces claude-history.search and console search (amendment to the 6-op API)"
+  },
+  {
+   "home": "core",
+   "caps": "stream.delete",
+   "why": "erase a durable stream for good (hard stop); replaces chat.delete (amendment)"
+  },
+  {
+   "home": "core",
+   "caps": "page.create / page.update / page.get / page.list / page.archive / page.restore",
+   "why": "hub pages are their own kind; page actions are caps (castling-dashboard)"
+  },
+  {
+   "home": "core",
+   "caps": "appliance.get",
+   "why": "appliance profile with route and credential reference (castling-workers-appliances)"
+  },
+  {
+   "home": "core",
+   "caps": "journal.search",
+   "why": "reading the journal (owners all, others their own, agents their project)"
+  },
+  {
+   "home": "core",
+   "caps": "llm.complete",
+   "why": "the one LLM client (plugin kit shared service)"
+  },
+  {
+   "home": "core",
+   "caps": "secret.list / secret.set / secret.delete",
+   "why": "vault by name; today only an MCP tool"
+  },
+  {
+   "home": "core",
+   "caps": "worker.add_band / worker.remove_band",
+   "why": "multi-band from the home hub (castling-multiband)"
+  },
+  {
+   "home": "core",
+   "caps": "plugin.get / plugin.remove / plugin.rollback",
+   "why": "band-wide plugin management, previous version kept for rollback"
+  },
+  {
+   "home": "core",
+   "caps": "approval.ask",
+   "why": "a question card from any agent, incl. external MCP agents (call C4)"
+  },
+  {
+   "home": "core",
+   "caps": "change.search",
+   "why": "kit-generated; records searchable and linked"
+  },
+  {
+   "home": "agents",
+   "caps": "notepad.write / notepad.read",
+   "why": "the agent's scratch notes, curated by the dream cycle"
+  },
+  {
+   "home": "agents",
+   "caps": "skill.list / skill.get / skill.search / skill.create / skill.update",
+   "why": "skill library as its own kind"
+  },
+  {
+   "home": "workbench",
+   "caps": "signoff.request / signoff.give",
+   "why": "sign-off replaces merge votes"
+  },
+  {
+   "home": "workbench",
+   "caps": "whiteboard.clear",
+   "why": "erase a task or project whiteboard"
+  },
+  {
+   "home": "workbench",
+   "caps": "project.archive / concept.archive",
+   "why": "kit-generated"
+  }
+ ],
+ "decisions": [
+  {
+   "idx": 0,
+   "cap": "attention.post",
+   "side": "phone",
+   "plugin": "attention_android",
+   "risk": "admin",
+   "decision": "reshape",
+   "home": "plugin:notification-android",
+   "form": "python",
+   "new_names": [
+    "notification.post"
+   ],
+   "replaced_by": null,
+   "reason": "A decision card is a phone notification with actions; one post cap, cards ride on it (attention logic leaves the phone).",
+   "call": null
+  },
+  {
+   "idx": 1,
+   "cap": "attention.remind",
+   "side": "phone",
+   "plugin": "attention_android",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "voice.speak {only_if_quiet}",
+   "reason": "When to remind is the house agent's call; the quiet-room check becomes a voice.speak option.",
+   "call": null
+  },
+  {
+   "idx": 2,
+   "cap": "attention.update",
+   "side": "phone",
+   "plugin": "attention_android",
+   "risk": "admin",
+   "decision": "reshape",
+   "home": "plugin:notification-android",
+   "form": "python",
+   "new_names": [
+    "notification.update"
+   ],
+   "replaced_by": null,
+   "reason": "Show the outcome on a posted card; generic update of a posted notification.",
+   "call": null
+  },
+  {
+   "idx": 3,
+   "cap": "attention.poll",
+   "side": "phone",
+   "plugin": "attention_android",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "internal (phone events arrive as a stream the hub reads)",
+   "reason": "Plumbing between app and hub, not something an agent calls.",
+   "call": null
+  },
+  {
+   "idx": 4,
+   "cap": "attention.feed",
+   "side": "phone",
+   "plugin": "attention_android",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "notification.list + hub attention.list",
+   "reason": "No sorting logic in the phone app (castling-attention); the hub aggregates.",
+   "call": null
+  },
+  {
+   "idx": 5,
+   "cap": "attention.rules_get",
+   "side": "phone",
+   "plugin": "attention_android",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(house agent memory)",
+   "reason": "Hand-written phone sorting rules go; preferences are learned on the hub.",
+   "call": null
+  },
+  {
+   "idx": 6,
+   "cap": "attention.rules_set",
+   "side": "phone",
+   "plugin": "attention_android",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(house agent memory)",
+   "reason": "Same: no logic in the thin phone app.",
+   "call": null
+  },
+  {
+   "idx": 7,
+   "cap": "battery.status",
+   "side": "phone",
+   "plugin": "battery_android",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:battery-android",
+   "form": "python",
+   "new_names": [
+    "battery.status"
+   ],
+   "replaced_by": null,
+   "reason": "Same contract as desktop and adb battery; Android binding stays Python.",
+   "call": "C1"
+  },
+  {
+   "idx": 8,
+   "cap": "calendar.list",
+   "side": "phone",
+   "plugin": "calendar_android",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:calendar",
+   "form": "python",
+   "new_names": [
+    "calendar.list"
+   ],
+   "replaced_by": null,
+   "reason": "Clear, real cap; Android binding.",
+   "call": null
+  },
+  {
+   "idx": 9,
+   "cap": "calendar.create",
+   "side": "phone",
+   "plugin": "calendar_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:calendar",
+   "form": "python",
+   "new_names": [
+    "calendar.create"
+   ],
+   "replaced_by": null,
+   "reason": "Clear, real cap.",
+   "call": null
+  },
+  {
+   "idx": 10,
+   "cap": "calendar.update",
+   "side": "phone",
+   "plugin": "calendar_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:calendar",
+   "form": "python",
+   "new_names": [
+    "calendar.update"
+   ],
+   "replaced_by": null,
+   "reason": "Clear, real cap.",
+   "call": null
+  },
+  {
+   "idx": 11,
+   "cap": "calendar.delete",
+   "side": "phone",
+   "plugin": "calendar_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:calendar",
+   "form": "python",
+   "new_names": [
+    "calendar.delete"
+   ],
+   "replaced_by": null,
+   "reason": "Clear, real cap; deletion stays its own cap for the trust map.",
+   "call": null
+  },
+  {
+   "idx": 12,
+   "cap": "calllog.list",
+   "side": "phone",
+   "plugin": "calllog_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:call",
+   "form": "python",
+   "new_names": [
+    "call.list"
+   ],
+   "replaced_by": null,
+   "reason": "One `call` plugin owns calls: the log plus dialing (from device.intent).",
+   "call": null
+  },
+  {
+   "idx": 13,
+   "cap": "contacts.search",
+   "side": "phone",
+   "plugin": "contacts_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:contact",
+   "form": "python",
+   "new_names": [
+    "contact.search"
+   ],
+   "replaced_by": null,
+   "reason": "Singular namespace; otherwise unchanged.",
+   "call": null
+  },
+  {
+   "idx": 14,
+   "cap": "device.update",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "admin",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "worker.update"
+   ],
+   "replaced_by": null,
+   "reason": "The APK update is this worker's self-update; same cap as every other worker.",
+   "call": null
+  },
+  {
+   "idx": 15,
+   "cap": "device.update_status",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "worker.status",
+   "reason": "Update state is part of core worker status.",
+   "call": null
+  },
+  {
+   "idx": 16,
+   "cap": "device.find",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:phone",
+   "form": "python",
+   "new_names": [
+    "phone.find"
+   ],
+   "replaced_by": null,
+   "reason": "Real, clear, phone-only.",
+   "call": null
+  },
+  {
+   "idx": 17,
+   "cap": "device.find_stop",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:phone",
+   "form": "python",
+   "new_names": [
+    "phone.find_stop"
+   ],
+   "replaced_by": null,
+   "reason": "Distinct verb from find; kept separate.",
+   "call": null
+  },
+  {
+   "idx": 18,
+   "cap": "device.info",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "worker.status",
+   "reason": "Every worker reports model, OS and uptime through core.",
+   "call": null
+  },
+  {
+   "idx": 19,
+   "cap": "device.wake",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "exec",
+   "decision": "reshape",
+   "home": "plugin:screen-android",
+   "form": "python",
+   "new_names": [
+    "screen.on"
+   ],
+   "replaced_by": null,
+   "reason": "Turning a screen on is the screen contract (TVs do the same).",
+   "call": "C1"
+  },
+  {
+   "idx": 20,
+   "cap": "device.unlock",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:phone",
+   "form": "python",
+   "new_names": [
+    "phone.unlock"
+   ],
+   "replaced_by": null,
+   "reason": "Phone-specific; kept as is.",
+   "call": null
+  },
+  {
+   "idx": 21,
+   "cap": "device.unlock_status",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "screen.status",
+   "reason": "Lock state and PIN-saved flag fold into one screen state read.",
+   "call": null
+  },
+  {
+   "idx": 22,
+   "cap": "device.keep_awake",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "exec",
+   "decision": "reshape",
+   "home": "plugin:screen-android",
+   "form": "python",
+   "new_names": [
+    "screen.keep_on"
+   ],
+   "replaced_by": null,
+   "reason": "Keep-awake is a screen behaviour; `off` releases.",
+   "call": "C1"
+  },
+  {
+   "idx": 23,
+   "cap": "device.keep_awake_status",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "plugin:screen-android",
+   "form": "python",
+   "new_names": [
+    "screen.status"
+   ],
+   "replaced_by": null,
+   "reason": "One read for screen power, lock and keep-awake state.",
+   "call": "C1"
+  },
+  {
+   "idx": 24,
+   "cap": "device.keep_awake_settings",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "setting.set (plugin setting)",
+   "reason": "A preference, so a plugin setting, not a cap.",
+   "call": null
+  },
+  {
+   "idx": 25,
+   "cap": "device.vibrate",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:phone",
+   "form": "python",
+   "new_names": [
+    "phone.vibrate"
+   ],
+   "replaced_by": null,
+   "reason": "Real, clear.",
+   "call": null
+  },
+  {
+   "idx": 26,
+   "cap": "device.torch",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:phone",
+   "form": "python",
+   "new_names": [
+    "phone.torch"
+   ],
+   "replaced_by": null,
+   "reason": "Real, clear.",
+   "call": null
+  },
+  {
+   "idx": 27,
+   "cap": "device.clipboard_set",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:clipboard-android",
+   "form": "python",
+   "new_names": [
+    "clipboard.set"
+   ],
+   "replaced_by": null,
+   "reason": "Clipboard is a cross-device contract; namespace says what it does.",
+   "call": "C1"
+  },
+  {
+   "idx": 28,
+   "cap": "device.clipboard_get",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:clipboard-android",
+   "form": "python",
+   "new_names": [
+    "clipboard.get"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": "C1"
+  },
+  {
+   "idx": 29,
+   "cap": "device.open_url",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:app-android",
+   "form": "python",
+   "new_names": [
+    "app.open_url"
+   ],
+   "replaced_by": null,
+   "reason": "Same contract as tv.open_url.",
+   "call": "C1"
+  },
+  {
+   "idx": 30,
+   "cap": "device.launch",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:app-android",
+   "form": "python",
+   "new_names": [
+    "app.launch"
+   ],
+   "replaced_by": null,
+   "reason": "Same contract as tv.launch.",
+   "call": "C1"
+  },
+  {
+   "idx": 31,
+   "cap": "device.apps",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:app-android",
+   "form": "python",
+   "new_names": [
+    "app.list"
+   ],
+   "replaced_by": null,
+   "reason": "Same contract as tv.apps.",
+   "call": "C1"
+  },
+  {
+   "idx": 32,
+   "cap": "device.intent",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "exec",
+   "decision": "reshape",
+   "home": "plugin:app-android",
+   "form": "python",
+   "new_names": [
+    "app.share",
+    "app.settings",
+    "call.dial",
+    "location.navigate",
+    "location.show",
+    "clock.timer",
+    "clock.alarm",
+    "clock.alarms"
+   ],
+   "replaced_by": null,
+   "reason": "Action argument with 13 kinds of different shape: split into real caps; search/email/sms drafts/camera become app.open_url URIs.",
+   "call": null
+  },
+  {
+   "idx": 33,
+   "cap": "device.sound",
+   "side": "phone",
+   "plugin": "device_android",
+   "risk": "exec",
+   "decision": "reshape",
+   "home": "plugin:sound-android",
+   "form": "python",
+   "new_names": [
+    "sound.status",
+    "sound.set",
+    "sound.dnd"
+   ],
+   "replaced_by": null,
+   "reason": "Read vs set and volume vs Do Not Disturb differ in args and risk: three real caps (TVs share sound.*).",
+   "call": "C1"
+  },
+  {
+   "idx": 34,
+   "cap": "hid.backend",
+   "side": "phone",
+   "plugin": "hid_a11y",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "plugin:hid-android",
+   "form": "python",
+   "new_names": [
+    "hid.status"
+   ],
+   "replaced_by": null,
+   "reason": "Backend + enabled is the hid contract's status read.",
+   "call": "C1"
+  },
+  {
+   "idx": 35,
+   "cap": "hid.type",
+   "side": "phone",
+   "plugin": "hid_a11y",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:hid-android",
+   "form": "python",
+   "new_names": [
+    "hid.type"
+   ],
+   "replaced_by": null,
+   "reason": "hid contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 36,
+   "cap": "hid.mouse.click",
+   "side": "phone",
+   "plugin": "hid_a11y",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:hid-android",
+   "form": "python",
+   "new_names": [
+    "hid.click"
+   ],
+   "replaced_by": null,
+   "reason": "hid contract; flatter name.",
+   "call": "C1"
+  },
+  {
+   "idx": 37,
+   "cap": "hid.mouse.drag",
+   "side": "phone",
+   "plugin": "hid_a11y",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:hid-android",
+   "form": "python",
+   "new_names": [
+    "hid.drag"
+   ],
+   "replaced_by": null,
+   "reason": "hid contract; flatter name.",
+   "call": "C1"
+  },
+  {
+   "idx": 38,
+   "cap": "hid.key_combo",
+   "side": "phone",
+   "plugin": "hid_a11y",
+   "risk": "exec",
+   "decision": "reshape",
+   "home": "plugin:hid-android",
+   "form": "python",
+   "new_names": [
+    "hid.key"
+   ],
+   "replaced_by": null,
+   "reason": "hid contract; back/home/recents map to global actions (absorbs ui.back).",
+   "call": "C1"
+  },
+  {
+   "idx": 39,
+   "cap": "location.get",
+   "side": "phone",
+   "plugin": "location_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:location",
+   "form": "python",
+   "new_names": [
+    "location.get"
+   ],
+   "replaced_by": null,
+   "reason": "Real, clear.",
+   "call": null
+  },
+  {
+   "idx": 40,
+   "cap": "media.now",
+   "side": "phone",
+   "plugin": "media_android",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:media-android",
+   "form": "python",
+   "new_names": [
+    "media.status"
+   ],
+   "replaced_by": null,
+   "reason": "media contract; consistent status verb.",
+   "call": "C1"
+  },
+  {
+   "idx": 41,
+   "cap": "media.control",
+   "side": "phone",
+   "plugin": "media_android",
+   "risk": "exec",
+   "decision": "reshape",
+   "home": "plugin:media-android",
+   "form": "python",
+   "new_names": [
+    "media.play",
+    "media.pause",
+    "media.stop",
+    "media.next",
+    "media.previous",
+    "media.seek"
+   ],
+   "replaced_by": null,
+   "reason": "Transport actions are distinct verbs agents call by name: real caps (toggle folds into play/pause, forward/rewind into seek).",
+   "call": "C1"
+  },
+  {
+   "idx": 42,
+   "cap": "notify.list",
+   "side": "phone",
+   "plugin": "notify_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:notification-android",
+   "form": "python",
+   "new_names": [
+    "notification.list"
+   ],
+   "replaced_by": null,
+   "reason": "`notify` meant two things (phone shade vs hub send); the shade becomes `notification`.",
+   "call": "C1"
+  },
+  {
+   "idx": 43,
+   "cap": "notify.dismiss",
+   "side": "phone",
+   "plugin": "notify_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:notification-android",
+   "form": "python",
+   "new_names": [
+    "notification.dismiss"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": "C1"
+  },
+  {
+   "idx": 44,
+   "cap": "notify.actions",
+   "side": "phone",
+   "plugin": "notify_android",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "plugin:notification-android",
+   "form": "python",
+   "new_names": [
+    "notification.get"
+   ],
+   "replaced_by": null,
+   "reason": "One notification with its actions; get is the standard verb.",
+   "call": "C1"
+  },
+  {
+   "idx": 45,
+   "cap": "notify.act",
+   "side": "phone",
+   "plugin": "notify_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:notification-android",
+   "form": "python",
+   "new_names": [
+    "notification.act"
+   ],
+   "replaced_by": null,
+   "reason": "Runs one of a notification's own actions.",
+   "call": "C1"
+  },
+  {
+   "idx": 46,
+   "cap": "notify.post",
+   "side": "phone",
+   "plugin": "notify_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:notification-android",
+   "form": "python",
+   "new_names": [
+    "notification.post"
+   ],
+   "replaced_by": null,
+   "reason": "Absorbs attention.post (actions optional).",
+   "call": "C1"
+  },
+  {
+   "idx": 47,
+   "cap": "screenshot.capture",
+   "side": "phone",
+   "plugin": "screen",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:screen-android",
+   "form": "python",
+   "new_names": [
+    "screen.capture"
+   ],
+   "replaced_by": null,
+   "reason": "screen contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 48,
+   "cap": "screenshot.capture_preview",
+   "side": "phone",
+   "plugin": "screen",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "screen.capture {preview}",
+   "reason": "Same operation, lower quality: an argument, not a cap.",
+   "call": "C1"
+  },
+  {
+   "idx": 49,
+   "cap": "sms.list",
+   "side": "phone",
+   "plugin": "sms_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:sms",
+   "form": "python",
+   "new_names": [
+    "sms.list"
+   ],
+   "replaced_by": null,
+   "reason": "Real, clear.",
+   "call": null
+  },
+  {
+   "idx": 50,
+   "cap": "sms.send",
+   "side": "phone",
+   "plugin": "sms_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:sms",
+   "form": "python",
+   "new_names": [
+    "sms.send"
+   ],
+   "replaced_by": null,
+   "reason": "Real, clear.",
+   "call": null
+  },
+  {
+   "idx": 51,
+   "cap": "voice.speak",
+   "side": "phone",
+   "plugin": "speak_android",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "plugin:voice-android",
+   "form": "python",
+   "new_names": [
+    "voice.speak",
+    "voice.ask"
+   ],
+   "replaced_by": null,
+   "reason": "Speaking and asking-for-an-answer differ in wait, return shape and timeout: split reply=true into voice.ask.",
+   "call": "C1"
+  },
+  {
+   "idx": 52,
+   "cap": "voice.speak_status",
+   "side": "phone",
+   "plugin": "speak_android",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "voice.speak {wait}",
+   "reason": "Waiting is an argument; polling an id is rarely needed.",
+   "call": null
+  },
+  {
+   "idx": 53,
+   "cap": "voice.replies",
+   "side": "phone",
+   "plugin": "speak_android",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:voice-android",
+   "form": "python",
+   "new_names": [
+    "voice.replies"
+   ],
+   "replaced_by": null,
+   "reason": "Late answers to voice.ask.",
+   "call": null
+  },
+  {
+   "idx": 54,
+   "cap": "voice.speak_stop",
+   "side": "phone",
+   "plugin": "speak_android",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:voice-android",
+   "form": "python",
+   "new_names": [
+    "voice.stop"
+   ],
+   "replaced_by": null,
+   "reason": "Shorter, same meaning.",
+   "call": null
+  },
+  {
+   "idx": 55,
+   "cap": "voice.speak_voices",
+   "side": "phone",
+   "plugin": "speak_android",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:voice-android",
+   "form": "python",
+   "new_names": [
+    "voice.voices"
+   ],
+   "replaced_by": null,
+   "reason": "Shorter, same meaning.",
+   "call": null
+  },
+  {
+   "idx": 56,
+   "cap": "ui.text",
+   "side": "phone",
+   "plugin": "ui_android",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "ui.screen",
+   "reason": "ui.screen already returns all text plus what to act on.",
+   "call": "C1"
+  },
+  {
+   "idx": 57,
+   "cap": "ui.nodes",
+   "side": "phone",
+   "plugin": "ui_android",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "ui.screen {all}",
+   "reason": "Raw node dump is an option of ui.screen.",
+   "call": "C1"
+  },
+  {
+   "idx": 58,
+   "cap": "ui.click",
+   "side": "phone",
+   "plugin": "ui_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:ui-android",
+   "form": "python",
+   "new_names": [
+    "ui.click"
+   ],
+   "replaced_by": null,
+   "reason": "ui contract (accessibility tree), shared with adb devices.",
+   "call": "C1"
+  },
+  {
+   "idx": 59,
+   "cap": "ui.scroll",
+   "side": "phone",
+   "plugin": "ui_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:ui-android",
+   "form": "python",
+   "new_names": [
+    "ui.scroll"
+   ],
+   "replaced_by": null,
+   "reason": "ui contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 60,
+   "cap": "ui.back",
+   "side": "phone",
+   "plugin": "ui_android",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "hid.key {key: back}",
+   "reason": "Back is a key; one way to press it.",
+   "call": "C1"
+  },
+  {
+   "idx": 61,
+   "cap": "ui.screen",
+   "side": "phone",
+   "plugin": "ui_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:ui-android",
+   "form": "python",
+   "new_names": [
+    "ui.screen"
+   ],
+   "replaced_by": null,
+   "reason": "The one read for a UI.",
+   "call": "C1"
+  },
+  {
+   "idx": 62,
+   "cap": "ui.wait",
+   "side": "phone",
+   "plugin": "ui_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:ui-android",
+   "form": "python",
+   "new_names": [
+    "ui.wait"
+   ],
+   "replaced_by": null,
+   "reason": "ui contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 63,
+   "cap": "ui.type",
+   "side": "phone",
+   "plugin": "ui_android",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:ui-android",
+   "form": "python",
+   "new_names": [
+    "ui.type"
+   ],
+   "replaced_by": null,
+   "reason": "Field-targeted typing (hid.type types into focus).",
+   "call": "C1"
+  },
+  {
+   "idx": 64,
+   "cap": "users.me",
+   "side": "hub",
+   "plugin": "access",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "user.me"
+   ],
+   "replaced_by": null,
+   "reason": "Singular namespace = plugin name.",
+   "call": null
+  },
+  {
+   "idx": 65,
+   "cap": "users.explain",
+   "side": "hub",
+   "plugin": "access",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "trust.check",
+   "reason": "Three \"may I?\" caps (users.explain, policy.explain, trust.check) become one answer.",
+   "call": null
+  },
+  {
+   "idx": 66,
+   "cap": "users.list",
+   "side": "hub",
+   "plugin": "access",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "user.list"
+   ],
+   "replaced_by": null,
+   "reason": "Gains an online flag (absorbs chat.presence).",
+   "call": null
+  },
+  {
+   "idx": 67,
+   "cap": "users.history",
+   "side": "hub",
+   "plugin": "access",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "records",
+   "new_names": [
+    "user.history"
+   ],
+   "replaced_by": null,
+   "reason": "Kit-generated change history.",
+   "call": null
+  },
+  {
+   "idx": 68,
+   "cap": "users.role",
+   "side": "hub",
+   "plugin": "access",
+   "risk": "admin",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "user.set_role"
+   ],
+   "replaced_by": null,
+   "reason": "Clear verb for the one field that needs the person's words.",
+   "call": null
+  },
+  {
+   "idx": 69,
+   "cap": "users.grant",
+   "side": "hub",
+   "plugin": "access",
+   "risk": "admin",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "user.grant"
+   ],
+   "replaced_by": null,
+   "reason": "Real, clear.",
+   "call": null
+  },
+  {
+   "idx": 70,
+   "cap": "users.revoke",
+   "side": "hub",
+   "plugin": "access",
+   "risk": "admin",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "user.revoke"
+   ],
+   "replaced_by": null,
+   "reason": "Real, clear.",
+   "call": null
+  },
+  {
+   "idx": 71,
+   "cap": "users.request",
+   "side": "hub",
+   "plugin": "access",
+   "risk": "write",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "user.request"
+   ],
+   "replaced_by": null,
+   "reason": "Ask owners for access in your own words.",
+   "call": null
+  },
+  {
+   "idx": 72,
+   "cap": "users.settle",
+   "side": "hub",
+   "plugin": "access",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "approval.decide",
+   "reason": "Access requests and new machines are approval items; one answer path.",
+   "call": null
+  },
+  {
+   "idx": 73,
+   "cap": "users.token",
+   "side": "hub",
+   "plugin": "access",
+   "risk": "admin",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "user.assign_key"
+   ],
+   "replaced_by": null,
+   "reason": "Says what it does: keys belong to a person.",
+   "call": null
+  },
+  {
+   "idx": 74,
+   "cap": "users.link_code",
+   "side": "hub",
+   "plugin": "access",
+   "risk": "write",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "user.link_code"
+   ],
+   "replaced_by": null,
+   "reason": "External identity linking is core identity (any chat bridge).",
+   "call": null
+  },
+  {
+   "idx": 75,
+   "cap": "users.links",
+   "side": "hub",
+   "plugin": "access",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "user.links"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 76,
+   "cap": "users.unlink",
+   "side": "hub",
+   "plugin": "access",
+   "risk": "write",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "user.unlink"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 77,
+   "cap": "users.chat_bot",
+   "side": "hub",
+   "plugin": "access",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "setting.set (telegram/discord plugin setting)",
+   "reason": "Own bot is a plugin setting.",
+   "call": null
+  },
+  {
+   "idx": 78,
+   "cap": "users.spaces",
+   "side": "hub",
+   "plugin": "access",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "user.list (space grants)",
+   "reason": "Shared chat spaces are resources with grants.",
+   "call": null
+  },
+  {
+   "idx": 79,
+   "cap": "users.space",
+   "side": "hub",
+   "plugin": "access",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "setting.set + user.grant {kind: space}",
+   "reason": "Register in the chat plugin's settings; access through grants.",
+   "call": null
+  },
+  {
+   "idx": 80,
+   "cap": "approvals.list",
+   "side": "hub",
+   "plugin": "approvals",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "approval.list"
+   ],
+   "replaced_by": null,
+   "reason": "One approval path (castling-changes); items carry their why.",
+   "call": null
+  },
+  {
+   "idx": 81,
+   "cap": "approvals.relay",
+   "side": "hub",
+   "plugin": "approvals",
+   "risk": "write",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "approval.decide"
+   ],
+   "replaced_by": null,
+   "reason": "One verb for every answer: holds, cards, change requests, access requests, trust proposals.",
+   "call": null
+  },
+  {
+   "idx": 82,
+   "cap": "attention.send",
+   "side": "hub",
+   "plugin": "attention",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "notify.send",
+   "reason": "One send service in core; the house agent picks channel and surface.",
+   "call": null
+  },
+  {
+   "idx": 83,
+   "cap": "attention.status",
+   "side": "hub",
+   "plugin": "attention",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "worker.status",
+   "reason": "A phone is a worker; its state is worker status.",
+   "call": null
+  },
+  {
+   "idx": 84,
+   "cap": "attention.notices",
+   "side": "hub",
+   "plugin": "attention",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "attention.list",
+   "reason": "One curated list.",
+   "call": null
+  },
+  {
+   "idx": 85,
+   "cap": "attention.log",
+   "side": "hub",
+   "plugin": "attention",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "journal.search",
+   "reason": "Decisions are journaled.",
+   "call": null
+  },
+  {
+   "idx": 86,
+   "cap": "attention.stream",
+   "side": "hub",
+   "plugin": "attention",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "agents",
+   "form": "records",
+   "new_names": [
+    "attention.list"
+   ],
+   "replaced_by": null,
+   "reason": "What the house agent's aggregation job curated (castling-attention: attention moves to the hub).",
+   "call": null
+  },
+  {
+   "idx": 87,
+   "cap": "attention.sorting",
+   "side": "hub",
+   "plugin": "attention",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(house agent memory)",
+   "reason": "Preferences are learned, not hand-sorted per app.",
+   "call": null
+  },
+  {
+   "idx": 88,
+   "cap": "ccmod.list",
+   "side": "hub",
+   "plugin": "ccmod",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "plugin:claudecode",
+   "form": "records",
+   "new_names": [
+    "claudecode.rule.list"
+   ],
+   "replaced_by": null,
+   "reason": "Product is the target, not the shipper, so `claudecode` stays; rules become a declared record.",
+   "call": "C6"
+  },
+  {
+   "idx": 89,
+   "cap": "ccmod.get",
+   "side": "hub",
+   "plugin": "ccmod",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:claudecode",
+   "form": "records",
+   "new_names": [
+    "claudecode.rule.get"
+   ],
+   "replaced_by": null,
+   "reason": "Kit-generated.",
+   "call": "C6"
+  },
+  {
+   "idx": 90,
+   "cap": "ccmod.history",
+   "side": "hub",
+   "plugin": "ccmod",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:claudecode",
+   "form": "records",
+   "new_names": [
+    "claudecode.rule.history"
+   ],
+   "replaced_by": null,
+   "reason": "Kit-generated.",
+   "call": "C6"
+  },
+  {
+   "idx": 91,
+   "cap": "ccmod.activity",
+   "side": "hub",
+   "plugin": "ccmod",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "journal.search",
+   "reason": "Rule actions are journaled calls.",
+   "call": "C6"
+  },
+  {
+   "idx": 92,
+   "cap": "ccmod.status",
+   "side": "hub",
+   "plugin": "ccmod",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "claudecode.status (per worker)",
+   "reason": "Duplicate name with the worker cap; the fleet view is plugin.list.",
+   "call": "C6"
+  },
+  {
+   "idx": 93,
+   "cap": "ccmod.preview",
+   "side": "hub",
+   "plugin": "ccmod",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "claudecode.install {dry_run}",
+   "reason": "Preview is a dry run of install.",
+   "call": "C6"
+  },
+  {
+   "idx": 94,
+   "cap": "ccmod.set",
+   "side": "hub",
+   "plugin": "ccmod",
+   "risk": "admin",
+   "decision": "reshape",
+   "home": "plugin:claudecode",
+   "form": "records",
+   "new_names": [
+    "claudecode.rule.create",
+    "claudecode.rule.update"
+   ],
+   "replaced_by": null,
+   "reason": "Upsert split into the kit's create/update; remote actions move to jobs (C6).",
+   "call": "C6"
+  },
+  {
+   "idx": 95,
+   "cap": "ccmod.delete",
+   "side": "hub",
+   "plugin": "ccmod",
+   "risk": "admin",
+   "decision": "keep",
+   "home": "plugin:claudecode",
+   "form": "records",
+   "new_names": [
+    "claudecode.rule.delete"
+   ],
+   "replaced_by": null,
+   "reason": "Kit-generated.",
+   "call": "C6"
+  },
+  {
+   "idx": 96,
+   "cap": "ccmod.push",
+   "side": "hub",
+   "plugin": "ccmod",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "plugin distribution (hub-provided settings) / claudecode.remove",
+   "reason": "Pushing rules is plugin distribution; removing is claudecode.remove.",
+   "call": "C6"
+  },
+  {
+   "idx": 97,
+   "cap": "change.submit",
+   "side": "hub",
+   "plugin": "changes",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "core",
+   "form": "records",
+   "new_names": [
+    "change.create"
+   ],
+   "replaced_by": null,
+   "reason": "A change record (what, why, risk, testing, rollback, steps); ceremony from the project's trust level.",
+   "call": "C2"
+  },
+  {
+   "idx": 98,
+   "cap": "change.get",
+   "side": "hub",
+   "plugin": "changes",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "records",
+   "new_names": [
+    "change.get"
+   ],
+   "replaced_by": null,
+   "reason": "Kit-generated.",
+   "call": null
+  },
+  {
+   "idx": 99,
+   "cap": "change.list",
+   "side": "hub",
+   "plugin": "changes",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "records",
+   "new_names": [
+    "change.list"
+   ],
+   "replaced_by": null,
+   "reason": "Kit adds change.search; records link project, workers and caps.",
+   "call": null
+  },
+  {
+   "idx": 100,
+   "cap": "change.reduce",
+   "side": "hub",
+   "plugin": "changes",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(none)",
+   "reason": "No huddle round; ceremony scales with trust level (castling-changes).",
+   "call": null
+  },
+  {
+   "idx": 101,
+   "cap": "change.irreducible",
+   "side": "hub",
+   "plugin": "changes",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(none)",
+   "reason": "Same.",
+   "call": null
+  },
+  {
+   "idx": 102,
+   "cap": "change.update",
+   "side": "hub",
+   "plugin": "changes",
+   "risk": "write",
+   "decision": "keep",
+   "home": "core",
+   "form": "records",
+   "new_names": [
+    "change.update"
+   ],
+   "replaced_by": null,
+   "reason": "Write the words afterwards.",
+   "call": null
+  },
+  {
+   "idx": 103,
+   "cap": "change.revert",
+   "side": "hub",
+   "plugin": "changes",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "job.run (the record's rollback job)",
+   "reason": "Rollback is executed by a job the record links (C2).",
+   "call": "C2"
+  },
+  {
+   "idx": 104,
+   "cap": "change.catalog",
+   "side": "hub",
+   "plugin": "changes",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(trust levels)",
+   "reason": "Standard-change kinds replaced by trust levels.",
+   "call": null
+  },
+  {
+   "idx": 105,
+   "cap": "change.decide",
+   "side": "hub",
+   "plugin": "changes",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "approval.decide",
+   "reason": "One approval path.",
+   "call": null
+  },
+  {
+   "idx": 106,
+   "cap": "change.digest",
+   "side": "hub",
+   "plugin": "changes",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "change.list",
+   "reason": "The house agent summarises; no canned digest.",
+   "call": null
+  },
+  {
+   "idx": 107,
+   "cap": "decide.run",
+   "side": "hub",
+   "plugin": "decide",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:decide",
+   "form": "python",
+   "new_names": [
+    "decide.run"
+   ],
+   "replaced_by": null,
+   "reason": "Optional GPU decision model (Diffucision): the gate classifier's upgrade path.",
+   "call": "C3"
+  },
+  {
+   "idx": 108,
+   "cap": "decide.health",
+   "side": "hub",
+   "plugin": "decide",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "plugin:decide",
+   "form": "python",
+   "new_names": [
+    "decide.status"
+   ],
+   "replaced_by": null,
+   "reason": "health + info in one status read.",
+   "call": "C3"
+  },
+  {
+   "idx": 109,
+   "cap": "decide.info",
+   "side": "hub",
+   "plugin": "decide",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "decide.status",
+   "reason": "Merged.",
+   "call": "C3"
+  },
+  {
+   "idx": 110,
+   "cap": "decide.drive",
+   "side": "hub",
+   "plugin": "decide",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "agent drives screen.capture + hid.*",
+   "reason": "A screen-driving loop is a harness; anti-harness stance.",
+   "call": "C3"
+  },
+  {
+   "idx": 111,
+   "cap": "decide.runs",
+   "side": "hub",
+   "plugin": "decide",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "journal.search",
+   "reason": "Goes with drive.",
+   "call": "C3"
+  },
+  {
+   "idx": 112,
+   "cap": "decide.confirm",
+   "side": "hub",
+   "plugin": "decide",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "approval.decide",
+   "reason": "Goes with drive; one approval path.",
+   "call": "C3"
+  },
+  {
+   "idx": 113,
+   "cap": "decide.stop",
+   "side": "hub",
+   "plugin": "decide",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(none)",
+   "reason": "Goes with drive.",
+   "call": "C3"
+  },
+  {
+   "idx": 114,
+   "cap": "discord.send",
+   "side": "hub",
+   "plugin": "discord",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "notify.send {channel: discord} / stream.write",
+   "reason": "Send goes through core notify; bridged rooms are streams.",
+   "call": null
+  },
+  {
+   "idx": 115,
+   "cap": "discord.status",
+   "side": "hub",
+   "plugin": "discord",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "notify.channels",
+   "reason": "Channel state in one place.",
+   "call": null
+  },
+  {
+   "idx": 116,
+   "cap": "help",
+   "side": "hub",
+   "plugin": "help",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "help"
+   ],
+   "replaced_by": null,
+   "reason": "Agent help (core model + topics) is the cheapest ergonomics win; absorbs manual.*.",
+   "call": null
+  },
+  {
+   "idx": 117,
+   "cap": "home.ask",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "agents",
+   "form": "python",
+   "new_names": [
+    "agent.ask"
+   ],
+   "replaced_by": null,
+   "reason": "No special house agent: ask any agent (default the house agent).",
+   "call": null
+  },
+  {
+   "idx": 118,
+   "cap": "home.sessions",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "agent.list",
+   "reason": "Per-agent state in agent.list.",
+   "call": null
+  },
+  {
+   "idx": 119,
+   "cap": "home.session_ask",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.write",
+   "reason": "An agent session is a stream.",
+   "call": null
+  },
+  {
+   "idx": 120,
+   "cap": "home.session_flow",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(none)",
+   "reason": "Voice conductor internals (System One), not a cap.",
+   "call": null
+  },
+  {
+   "idx": 121,
+   "cap": "home.voice_models",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "agent.get",
+   "reason": "Backend and model per system live on the agent (castling-inference).",
+   "call": null
+  },
+  {
+   "idx": 122,
+   "cap": "home.voice_models_set",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "agent.update",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 123,
+   "cap": "home.session_compact",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(harness; dream cycle on idle)",
+   "reason": "Harness housekeeping, not an agent cap.",
+   "call": null
+  },
+  {
+   "idx": 124,
+   "cap": "home.session_note",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.write",
+   "reason": "A background note is an input event.",
+   "call": null
+  },
+  {
+   "idx": 125,
+   "cap": "home.digest",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "journal.search",
+   "reason": "What an agent did is in the journal.",
+   "call": null
+  },
+  {
+   "idx": 126,
+   "cap": "home.explain",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "approval.list (items carry their why)",
+   "reason": "No separate explain step.",
+   "call": null
+  },
+  {
+   "idx": 127,
+   "cap": "home.overturn",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(agent learns via notepad/dream; trust.set)",
+   "reason": "Corrections are conversation and memory, trust changes are trust.set.",
+   "call": null
+  },
+  {
+   "idx": 128,
+   "cap": "home.playbook",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "agent.get (persona) + skill.list",
+   "reason": "Playbook becomes persona plus skills.",
+   "call": null
+  },
+  {
+   "idx": 129,
+   "cap": "home.playbook_edit",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "persona.update / skill.update",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 130,
+   "cap": "home.settle",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(persona-level checks)",
+   "reason": "Checks and balances live in personas, not machinery (castling-workbench).",
+   "call": null
+  },
+  {
+   "idx": 131,
+   "cap": "home.ledger",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "change.list",
+   "reason": "Borrowed state is a change record with a rollback.",
+   "call": "C2"
+  },
+  {
+   "idx": 132,
+   "cap": "home.projects",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "project.list",
+   "reason": "Projects are workbench records.",
+   "call": null
+  },
+  {
+   "idx": 133,
+   "cap": "home.restore",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "job.run (rollback job)",
+   "reason": "Restore is a change rollback.",
+   "call": "C2"
+  },
+  {
+   "idx": 134,
+   "cap": "home.status",
+   "side": "hub",
+   "plugin": "home",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "agent.get",
+   "reason": "Agent state.",
+   "call": null
+  },
+  {
+   "idx": 135,
+   "cap": "huddle.read",
+   "side": "hub",
+   "plugin": "huddle",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.read",
+   "reason": "A huddle is a stream.",
+   "call": null
+  },
+  {
+   "idx": 136,
+   "cap": "huddle.write",
+   "side": "hub",
+   "plugin": "huddle",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "whiteboard.write (status) / approval.ask (ask) / stream.write (say)",
+   "reason": "Status = whiteboard, questions = cards, chat = stream.",
+   "call": "C4"
+  },
+  {
+   "idx": 137,
+   "cap": "huddle.list",
+   "side": "hub",
+   "plugin": "huddle",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.list {kind: huddle}",
+   "reason": "Streams index.",
+   "call": null
+  },
+  {
+   "idx": 138,
+   "cap": "huddle.start",
+   "side": "hub",
+   "plugin": "huddle",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "agents",
+   "form": "python",
+   "new_names": [
+    "huddle.start"
+   ],
+   "replaced_by": null,
+   "reason": "The one huddle-specific act: a room with roles; the plugin runs rounds on top of the stream.",
+   "call": null
+  },
+  {
+   "idx": 139,
+   "cap": "huddle.post",
+   "side": "hub",
+   "plugin": "huddle",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.write",
+   "reason": "The huddle plugin reacts to new posts.",
+   "call": null
+  },
+  {
+   "idx": 140,
+   "cap": "huddle.card",
+   "side": "hub",
+   "plugin": "huddle",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "approval.decide",
+   "reason": "One approval path.",
+   "call": null
+  },
+  {
+   "idx": 141,
+   "cap": "huddle.archive",
+   "side": "hub",
+   "plugin": "huddle",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.close",
+   "reason": "Closed streams are kept.",
+   "call": null
+  },
+  {
+   "idx": 142,
+   "cap": "huddle.table",
+   "side": "hub",
+   "plugin": "huddle",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(sign-off)",
+   "reason": "Merge votes dropped (castling-workbench).",
+   "call": null
+  },
+  {
+   "idx": 143,
+   "cap": "huddle.pin",
+   "side": "hub",
+   "plugin": "huddle",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "task.link",
+   "reason": "Artifacts link to the task.",
+   "call": null
+  },
+  {
+   "idx": 144,
+   "cap": "huddle.vote",
+   "side": "hub",
+   "plugin": "huddle",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "signoff.request / signoff.give",
+   "reason": "Sign-off replaces votes.",
+   "call": null
+  },
+  {
+   "idx": 145,
+   "cap": "hub.info",
+   "side": "hub",
+   "plugin": "info",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "hub.status"
+   ],
+   "replaced_by": null,
+   "reason": "Version, plugins summary and ticket/key state in one read.",
+   "call": null
+  },
+  {
+   "idx": 146,
+   "cap": "hub.plugins",
+   "side": "hub",
+   "plugin": "info",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "plugin.list / plugin.get",
+   "reason": "One plugin namespace for hub and workers.",
+   "call": null
+  },
+  {
+   "idx": 147,
+   "cap": "job.read",
+   "side": "hub",
+   "plugin": "jobs",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "core",
+   "form": "records",
+   "new_names": [
+    "job.list",
+    "job.get",
+    "job.history",
+    "job.validate",
+    "job.templates"
+   ],
+   "replaced_by": null,
+   "reason": "Action argument -> real caps; describe_schema/guardrails_preview/next dropped (caps.describe and help cover them).",
+   "call": null
+  },
+  {
+   "idx": 148,
+   "cap": "job.write",
+   "side": "hub",
+   "plugin": "jobs",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "core",
+   "form": "records",
+   "new_names": [
+    "job.create",
+    "job.update",
+    "job.delete",
+    "job.run",
+    "job.cancel"
+   ],
+   "replaced_by": null,
+   "reason": "Real caps; enable/disable are update fields; guardrails and locks go (trust map, creator-only edits); install = create from template.",
+   "call": null
+  },
+  {
+   "idx": 149,
+   "cap": "knowledge.read",
+   "side": "hub",
+   "plugin": "knowledge",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "workbench",
+   "form": "records",
+   "new_names": [
+    "knowledge.search",
+    "knowledge.get",
+    "knowledge.list"
+   ],
+   "replaced_by": null,
+   "reason": "Real caps; status/verification dropped for provenance; deck -> task.list; bands -> core.",
+   "call": null
+  },
+  {
+   "idx": 150,
+   "cap": "knowledge.write",
+   "side": "hub",
+   "plugin": "knowledge",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "workbench",
+   "form": "records",
+   "new_names": [
+    "knowledge.create",
+    "knowledge.update",
+    "knowledge.link",
+    "knowledge.archive"
+   ],
+   "replaced_by": null,
+   "reason": "Real caps; writes carry a provenance `source`; retract = archive.",
+   "call": null
+  },
+  {
+   "idx": 151,
+   "cap": "llm.providers",
+   "side": "hub",
+   "plugin": "llm",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "llm.providers"
+   ],
+   "replaced_by": null,
+   "reason": "Shared LLM service lives in core (plugin kit).",
+   "call": null
+  },
+  {
+   "idx": 152,
+   "cap": "llm.models",
+   "side": "hub",
+   "plugin": "llm",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "llm.models"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 153,
+   "cap": "llm.check",
+   "side": "hub",
+   "plugin": "llm",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "llm.status"
+   ],
+   "replaced_by": null,
+   "reason": "Consistent status verb.",
+   "call": null
+  },
+  {
+   "idx": 154,
+   "cap": "llmanifold.status",
+   "side": "hub",
+   "plugin": "llmanifold",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "llm.status {provider: llmanifold}",
+   "reason": "llmanifold becomes an optional llm provider kind (castling-inference).",
+   "call": null
+  },
+  {
+   "idx": 155,
+   "cap": "manual.status",
+   "side": "hub",
+   "plugin": "manual",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "help",
+   "reason": "The manual ships with the release; help serves it.",
+   "call": null
+  },
+  {
+   "idx": 156,
+   "cap": "manual.list",
+   "side": "hub",
+   "plugin": "manual",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "help (topic menu)",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 157,
+   "cap": "manual.get",
+   "side": "hub",
+   "plugin": "manual",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "help {topic}",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 158,
+   "cap": "manual.update",
+   "side": "hub",
+   "plugin": "manual",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(release)",
+   "reason": "No knowledge copy to keep in sync.",
+   "call": null
+  },
+  {
+   "idx": 159,
+   "cap": "plugin.marketplace.list",
+   "side": "hub",
+   "plugin": "marketplace",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "plugin.catalog"
+   ],
+   "replaced_by": null,
+   "reason": "Two-segment name in the one plugin namespace.",
+   "call": null
+  },
+  {
+   "idx": 160,
+   "cap": "plugin.marketplace.install",
+   "side": "hub",
+   "plugin": "marketplace",
+   "risk": "admin",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "plugin.install"
+   ],
+   "replaced_by": null,
+   "reason": "One install path (signed, pushed over Drop) for catalog, agent-written and local plugins.",
+   "call": null
+  },
+  {
+   "idx": 161,
+   "cap": "memory.recall",
+   "side": "hub",
+   "plugin": "memory",
+   "risk": "read",
+   "decision": "keep",
+   "home": "agents",
+   "form": "records",
+   "new_names": [
+    "memory.search"
+   ],
+   "replaced_by": null,
+   "reason": "Standard search verb.",
+   "call": null
+  },
+  {
+   "idx": 162,
+   "cap": "memory.show",
+   "side": "hub",
+   "plugin": "memory",
+   "risk": "read",
+   "decision": "keep",
+   "home": "agents",
+   "form": "records",
+   "new_names": [
+    "memory.get"
+   ],
+   "replaced_by": null,
+   "reason": "Standard get verb.",
+   "call": null
+  },
+  {
+   "idx": 163,
+   "cap": "memory.list",
+   "side": "hub",
+   "plugin": "memory",
+   "risk": "read",
+   "decision": "keep",
+   "home": "agents",
+   "form": "records",
+   "new_names": [
+    "memory.list"
+   ],
+   "replaced_by": null,
+   "reason": "Unchanged.",
+   "call": null
+  },
+  {
+   "idx": 164,
+   "cap": "memory.status",
+   "side": "hub",
+   "plugin": "memory",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "memory.list {summary}",
+   "reason": "Counts are a list option.",
+   "call": null
+  },
+  {
+   "idx": 165,
+   "cap": "memory.remember",
+   "side": "hub",
+   "plugin": "memory",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "agents",
+   "form": "records",
+   "new_names": [
+    "memory.create"
+   ],
+   "replaced_by": null,
+   "reason": "Written by the dream cycle and people; working agents write the notepad (memory is read-only during work).",
+   "call": null
+  },
+  {
+   "idx": 166,
+   "cap": "memory.edit",
+   "side": "hub",
+   "plugin": "memory",
+   "risk": "write",
+   "decision": "keep",
+   "home": "agents",
+   "form": "records",
+   "new_names": [
+    "memory.update"
+   ],
+   "replaced_by": null,
+   "reason": "Standard verb.",
+   "call": null
+  },
+  {
+   "idx": 167,
+   "cap": "memory.forget",
+   "side": "hub",
+   "plugin": "memory",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "agents",
+   "form": "records",
+   "new_names": [
+    "memory.archive",
+    "memory.delete"
+   ],
+   "replaced_by": null,
+   "reason": "Forget (kept) vs purge (erase for good, a hard stop) differ in risk: two caps.",
+   "call": null
+  },
+  {
+   "idx": 168,
+   "cap": "memory.consolidate",
+   "side": "hub",
+   "plugin": "memory",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(dream cycle when an agent goes idle)",
+   "reason": "System Three runs it; not an agent call.",
+   "call": null
+  },
+  {
+   "idx": 169,
+   "cap": "notify.send",
+   "side": "hub",
+   "plugin": "notify",
+   "risk": "write",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "notify.send"
+   ],
+   "replaced_by": null,
+   "reason": "The one send service (plugin kit); channels are plugins.",
+   "call": null
+  },
+  {
+   "idx": 170,
+   "cap": "notify.channels",
+   "side": "hub",
+   "plugin": "notify",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "notify.channels"
+   ],
+   "replaced_by": null,
+   "reason": "Absorbs telegram/discord status.",
+   "call": null
+  },
+  {
+   "idx": 171,
+   "cap": "persona.get",
+   "side": "hub",
+   "plugin": "persona",
+   "risk": "read",
+   "decision": "keep",
+   "home": "agents",
+   "form": "records",
+   "new_names": [
+    "persona.get"
+   ],
+   "replaced_by": null,
+   "reason": "Personas are a plugin-shippable record; render folds in.",
+   "call": "C5"
+  },
+  {
+   "idx": 172,
+   "cap": "persona.render",
+   "side": "hub",
+   "plugin": "persona",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "persona.get {harness}",
+   "reason": "An option of get.",
+   "call": "C5"
+  },
+  {
+   "idx": 173,
+   "cap": "persona.list",
+   "side": "hub",
+   "plugin": "persona",
+   "risk": "read",
+   "decision": "keep",
+   "home": "agents",
+   "form": "records",
+   "new_names": [
+    "persona.list"
+   ],
+   "replaced_by": null,
+   "reason": "Kit-generated.",
+   "call": "C5"
+  },
+  {
+   "idx": 174,
+   "cap": "persona.history",
+   "side": "hub",
+   "plugin": "persona",
+   "risk": "read",
+   "decision": "keep",
+   "home": "agents",
+   "form": "records",
+   "new_names": [
+    "persona.history"
+   ],
+   "replaced_by": null,
+   "reason": "Kit-generated.",
+   "call": "C5"
+  },
+  {
+   "idx": 175,
+   "cap": "persona.set",
+   "side": "hub",
+   "plugin": "persona",
+   "risk": "admin",
+   "decision": "reshape",
+   "home": "agents",
+   "form": "records",
+   "new_names": [
+    "persona.create",
+    "persona.update"
+   ],
+   "replaced_by": null,
+   "reason": "Upsert split into kit verbs.",
+   "call": "C5"
+  },
+  {
+   "idx": 176,
+   "cap": "persona.assign",
+   "side": "hub",
+   "plugin": "persona",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "agent.update {persona}",
+   "reason": "Personas attach to agents; scope assignment to harness families and bands goes.",
+   "call": "C5"
+  },
+  {
+   "idx": 177,
+   "cap": "persona.delete",
+   "side": "hub",
+   "plugin": "persona",
+   "risk": "admin",
+   "decision": "keep",
+   "home": "agents",
+   "form": "records",
+   "new_names": [
+    "persona.delete"
+   ],
+   "replaced_by": null,
+   "reason": "Kit-generated.",
+   "call": "C5"
+  },
+  {
+   "idx": 178,
+   "cap": "policy.explain",
+   "side": "hub",
+   "plugin": "policy",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "trust.check",
+   "reason": "One explain cap.",
+   "call": null
+  },
+  {
+   "idx": 179,
+   "cap": "policy.get",
+   "side": "hub",
+   "plugin": "policy",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(grants + trust map + ceilings)",
+   "reason": "The policy document is replaced by the 0.5 permission model.",
+   "call": null
+  },
+  {
+   "idx": 180,
+   "cap": "policy.set",
+   "side": "hub",
+   "plugin": "policy",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(grants + trust map + ceilings)",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 181,
+   "cap": "policy.status",
+   "side": "hub",
+   "plugin": "policy",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "hub.status",
+   "reason": "Ticket and key state in hub status.",
+   "call": null
+  },
+  {
+   "idx": 182,
+   "cap": "role.list",
+   "side": "hub",
+   "plugin": "roles",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "agents",
+   "form": "records",
+   "new_names": [
+    "agent.list"
+   ],
+   "replaced_by": null,
+   "reason": "Roles are agents with personas (castling-agents).",
+   "call": null
+  },
+  {
+   "idx": 183,
+   "cap": "role.get",
+   "side": "hub",
+   "plugin": "roles",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "agents",
+   "form": "records",
+   "new_names": [
+    "agent.get"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 184,
+   "cap": "role.history",
+   "side": "hub",
+   "plugin": "roles",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "agents",
+   "form": "records",
+   "new_names": [
+    "agent.history"
+   ],
+   "replaced_by": null,
+   "reason": "Kit-generated.",
+   "call": null
+  },
+  {
+   "idx": 185,
+   "cap": "role.presets",
+   "side": "hub",
+   "plugin": "roles",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(all ready-made roles exist by default)",
+   "reason": "Plugins ship personas; no preset browser.",
+   "call": null
+  },
+  {
+   "idx": 186,
+   "cap": "role.memory",
+   "side": "hub",
+   "plugin": "roles",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "memory.search {agent}",
+   "reason": "One memory system.",
+   "call": null
+  },
+  {
+   "idx": 187,
+   "cap": "role.workspace",
+   "side": "hub",
+   "plugin": "roles",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "file.list / file.read on the agent's host",
+   "reason": "Files are files.",
+   "call": null
+  },
+  {
+   "idx": 188,
+   "cap": "role.sessions",
+   "side": "hub",
+   "plugin": "roles",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.list {agent}",
+   "reason": "Sessions are streams.",
+   "call": null
+  },
+  {
+   "idx": 189,
+   "cap": "role.session_start",
+   "side": "hub",
+   "plugin": "roles",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "agent.ask",
+   "reason": "Give the agent the work; it opens its own branch and session with shell and git.",
+   "call": null
+  },
+  {
+   "idx": 190,
+   "cap": "role.session_send",
+   "side": "hub",
+   "plugin": "roles",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.write",
+   "reason": "Sessions are streams.",
+   "call": null
+  },
+  {
+   "idx": 191,
+   "cap": "role.session_stop",
+   "side": "hub",
+   "plugin": "roles",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.close",
+   "reason": "Sessions are streams.",
+   "call": null
+  },
+  {
+   "idx": 192,
+   "cap": "role.ask",
+   "side": "hub",
+   "plugin": "roles",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "agents",
+   "form": "python",
+   "new_names": [
+    "agent.ask"
+   ],
+   "replaced_by": null,
+   "reason": "One ask for any agent (merges home.ask).",
+   "call": null
+  },
+  {
+   "idx": 193,
+   "cap": "role.set",
+   "side": "hub",
+   "plugin": "roles",
+   "risk": "admin",
+   "decision": "reshape",
+   "home": "agents",
+   "form": "records",
+   "new_names": [
+    "agent.create",
+    "agent.update"
+   ],
+   "replaced_by": null,
+   "reason": "Upsert split into kit verbs.",
+   "call": null
+  },
+  {
+   "idx": 194,
+   "cap": "role.delete",
+   "side": "hub",
+   "plugin": "roles",
+   "risk": "admin",
+   "decision": "keep",
+   "home": "agents",
+   "form": "records",
+   "new_names": [
+    "agent.delete"
+   ],
+   "replaced_by": null,
+   "reason": "Kit-generated.",
+   "call": null
+  },
+  {
+   "idx": 195,
+   "cap": "role.memory_edit",
+   "side": "hub",
+   "plugin": "roles",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "memory.update / memory.archive",
+   "reason": "One memory system.",
+   "call": null
+  },
+  {
+   "idx": 196,
+   "cap": "role.move",
+   "side": "hub",
+   "plugin": "roles",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "agent.update {host}",
+   "reason": "Memory lives on the hub; nothing to pack.",
+   "call": null
+  },
+  {
+   "idx": 197,
+   "cap": "chat.read",
+   "side": "hub",
+   "plugin": "rooms",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.list {kind: room} / stream.read",
+   "reason": "Rooms are streams.",
+   "call": null
+  },
+  {
+   "idx": 198,
+   "cap": "chat.write",
+   "side": "hub",
+   "plugin": "rooms",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.open {kind: room} / stream.write",
+   "reason": "Rooms are streams.",
+   "call": null
+  },
+  {
+   "idx": 199,
+   "cap": "chat.delete",
+   "side": "hub",
+   "plugin": "rooms",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.delete",
+   "reason": "Erasing a durable stream for good is its own cap (hard stop).",
+   "call": null
+  },
+  {
+   "idx": 200,
+   "cap": "chat.presence",
+   "side": "hub",
+   "plugin": "rooms",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "user.list / agent.list (online flag)",
+   "reason": "Presence is a field, not a cap.",
+   "call": null
+  },
+  {
+   "idx": 201,
+   "cap": "routine.security_scan",
+   "side": "hub",
+   "plugin": "routines",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "ready-made job (security triage agent)",
+   "reason": "Routines are jobs.",
+   "call": null
+  },
+  {
+   "idx": 202,
+   "cap": "routine.attention_digest",
+   "side": "hub",
+   "plugin": "routines",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "attention aggregation job",
+   "reason": "Attention moves to a hub job (castling-attention).",
+   "call": null
+  },
+  {
+   "idx": 203,
+   "cap": "routine.camera_review",
+   "side": "hub",
+   "plugin": "routines",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "ready-made job (camera.capture + llm.complete)",
+   "reason": "Routines are jobs.",
+   "call": null
+  },
+  {
+   "idx": 204,
+   "cap": "serves.list",
+   "side": "hub",
+   "plugin": "serves",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "appliance.list"
+   ],
+   "replaced_by": null,
+   "reason": "A hosted service is an appliance whose route is its worker.",
+   "call": null
+  },
+  {
+   "idx": 205,
+   "cap": "serves.set",
+   "side": "hub",
+   "plugin": "serves",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "appliance.add"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 206,
+   "cap": "serves.clear",
+   "side": "hub",
+   "plugin": "serves",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "appliance.remove"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 207,
+   "cap": "settings.describe",
+   "side": "hub",
+   "plugin": "settings",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "setting.describe"
+   ],
+   "replaced_by": null,
+   "reason": "Singular namespace.",
+   "call": null
+  },
+  {
+   "idx": 208,
+   "cap": "settings.get",
+   "side": "hub",
+   "plugin": "settings",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "setting.get"
+   ],
+   "replaced_by": null,
+   "reason": "Singular namespace.",
+   "call": null
+  },
+  {
+   "idx": 209,
+   "cap": "settings.set",
+   "side": "hub",
+   "plugin": "settings",
+   "risk": "admin",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "setting.set"
+   ],
+   "replaced_by": null,
+   "reason": "Scope worker absorbs worker.config_apply.",
+   "call": null
+  },
+  {
+   "idx": 210,
+   "cap": "settings.reset",
+   "side": "hub",
+   "plugin": "settings",
+   "risk": "admin",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "setting.reset"
+   ],
+   "replaced_by": null,
+   "reason": "Singular namespace.",
+   "call": null
+  },
+  {
+   "idx": 211,
+   "cap": "settings.history",
+   "side": "hub",
+   "plugin": "settings",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "setting.history"
+   ],
+   "replaced_by": null,
+   "reason": "Singular namespace.",
+   "call": null
+  },
+  {
+   "idx": 212,
+   "cap": "settings.apply_worker",
+   "side": "hub",
+   "plugin": "settings",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "setting.set {scope: worker}",
+   "reason": "Commit-confirmed push is internal.",
+   "call": null
+  },
+  {
+   "idx": 213,
+   "cap": "settings.fetch",
+   "side": "hub",
+   "plugin": "settings",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(sign-in enrollment config bundle)",
+   "reason": "Services sign in and receive their config (castling-enrollment).",
+   "call": null
+  },
+  {
+   "idx": 214,
+   "cap": "settings.report",
+   "side": "hub",
+   "plugin": "settings",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(announce)",
+   "reason": "Plumbing.",
+   "call": null
+  },
+  {
+   "idx": 215,
+   "cap": "settings.worker_secret",
+   "side": "hub",
+   "plugin": "settings",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(vault: secrets per call by name)",
+   "reason": "Secrets are never fetched to worker disk.",
+   "call": null
+  },
+  {
+   "idx": 216,
+   "cap": "show.present",
+   "side": "hub",
+   "plugin": "show",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "page.show"
+   ],
+   "replaced_by": null,
+   "reason": "Show content (volatile page) or a page/url on the device the agent picks; picking the surface is the agent's job.",
+   "call": null
+  },
+  {
+   "idx": 217,
+   "cap": "show.screens",
+   "side": "hub",
+   "plugin": "show",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(presence skill)",
+   "reason": "Choosing the surface is the house agent's skill.",
+   "call": null
+  },
+  {
+   "idx": 218,
+   "cap": "show.list",
+   "side": "hub",
+   "plugin": "show",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "page.list",
+   "reason": "Shows are volatile pages.",
+   "call": null
+  },
+  {
+   "idx": 219,
+   "cap": "show.close",
+   "side": "hub",
+   "plugin": "show",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "page.archive",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 220,
+   "cap": "task.read",
+   "side": "hub",
+   "plugin": "tasks",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "workbench",
+   "form": "records",
+   "new_names": [
+    "task.list",
+    "task.get",
+    "task.search",
+    "project.list",
+    "project.get",
+    "concept.list",
+    "concept.get",
+    "whiteboard.read"
+   ],
+   "replaced_by": null,
+   "reason": "Action+kind arguments -> real caps per record type; deck = task.list default; hygiene becomes a PM sweep skill.",
+   "call": null
+  },
+  {
+   "idx": 221,
+   "cap": "task.write",
+   "side": "hub",
+   "plugin": "tasks",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "workbench",
+   "form": "records",
+   "new_names": [
+    "task.create",
+    "task.update",
+    "task.claim",
+    "task.release",
+    "task.link",
+    "task.archive",
+    "task.comment",
+    "project.create",
+    "project.update",
+    "concept.create",
+    "concept.update",
+    "whiteboard.write"
+   ],
+   "replaced_by": null,
+   "reason": "Real caps per record type; jot -> notepad.write; batch dropped.",
+   "call": null
+  },
+  {
+   "idx": 222,
+   "cap": "telegram.send",
+   "side": "hub",
+   "plugin": "telegram",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "notify.send {channel: telegram} / stream.write",
+   "reason": "As discord.send.",
+   "call": null
+  },
+  {
+   "idx": 223,
+   "cap": "telegram.status",
+   "side": "hub",
+   "plugin": "telegram",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "notify.channels",
+   "reason": "As discord.status.",
+   "call": null
+  },
+  {
+   "idx": 224,
+   "cap": "trust.get",
+   "side": "hub",
+   "plugin": "trust",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "trust.get"
+   ],
+   "replaced_by": null,
+   "reason": "Unchanged.",
+   "call": null
+  },
+  {
+   "idx": 225,
+   "cap": "trust.check",
+   "side": "hub",
+   "plugin": "trust",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "trust.check"
+   ],
+   "replaced_by": null,
+   "reason": "The one \"will this run, hold or be refused, and why\" answer (absorbs users.explain, policy.explain).",
+   "call": null
+  },
+  {
+   "idx": 226,
+   "cap": "trust.history",
+   "side": "hub",
+   "plugin": "trust",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "records",
+   "new_names": [
+    "trust.history"
+   ],
+   "replaced_by": null,
+   "reason": "Kit-generated.",
+   "call": null
+  },
+  {
+   "idx": 227,
+   "cap": "trust.propose",
+   "side": "hub",
+   "plugin": "trust",
+   "risk": "write",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "trust.propose"
+   ],
+   "replaced_by": null,
+   "reason": "Agents ask; the person decides.",
+   "call": null
+  },
+  {
+   "idx": 228,
+   "cap": "trust.tighten",
+   "side": "hub",
+   "plugin": "trust",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "trust.set"
+   ],
+   "replaced_by": null,
+   "reason": "Person-only; owners tighten or loosen; agents use propose.",
+   "call": null
+  },
+  {
+   "idx": 229,
+   "cap": "updates.status",
+   "side": "hub",
+   "plugin": "updates",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "update.status"
+   ],
+   "replaced_by": null,
+   "reason": "Singular; absorbs check via refresh.",
+   "call": null
+  },
+  {
+   "idx": 230,
+   "cap": "updates.history",
+   "side": "hub",
+   "plugin": "updates",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "update.history"
+   ],
+   "replaced_by": null,
+   "reason": "Singular.",
+   "call": null
+  },
+  {
+   "idx": 231,
+   "cap": "updates.check",
+   "side": "hub",
+   "plugin": "updates",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "update.status {refresh}",
+   "reason": "An option.",
+   "call": null
+  },
+  {
+   "idx": 232,
+   "cap": "updates.apply_hub",
+   "side": "hub",
+   "plugin": "updates",
+   "risk": "admin",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "update.apply_hub"
+   ],
+   "replaced_by": null,
+   "reason": "Singular.",
+   "call": null
+  },
+  {
+   "idx": 233,
+   "cap": "updates.prepare_hub",
+   "side": "hub",
+   "plugin": "updates",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "`rook hub update` CLI",
+   "reason": "Only for installs the hub can't switch itself.",
+   "call": null
+  },
+  {
+   "idx": 234,
+   "cap": "updates.rollout",
+   "side": "hub",
+   "plugin": "updates",
+   "risk": "admin",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "update.rollout"
+   ],
+   "replaced_by": null,
+   "reason": "Singular.",
+   "call": null
+  },
+  {
+   "idx": 235,
+   "cap": "voice.status",
+   "side": "hub",
+   "plugin": "voice",
+   "risk": "read",
+   "decision": "keep",
+   "home": "agents",
+   "form": "python",
+   "new_names": [
+    "voice.status"
+   ],
+   "replaced_by": null,
+   "reason": "The voice motor skill's service status.",
+   "call": null
+  },
+  {
+   "idx": 236,
+   "cap": "android.shell.exec",
+   "side": "worker",
+   "plugin": "adb",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:adb",
+   "form": "python",
+   "new_names": [
+    "shell.exec"
+   ],
+   "replaced_by": null,
+   "reason": "Product prefix goes; adb devices are appliances offering the shell contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 237,
+   "cap": "android.device.info",
+   "side": "worker",
+   "plugin": "adb",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "appliance.get",
+   "reason": "Appliance profile.",
+   "call": null
+  },
+  {
+   "idx": 238,
+   "cap": "android.battery.status",
+   "side": "worker",
+   "plugin": "adb",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:adb",
+   "form": "python",
+   "new_names": [
+    "battery.status"
+   ],
+   "replaced_by": null,
+   "reason": "battery contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 239,
+   "cap": "android.screenshot.capture",
+   "side": "worker",
+   "plugin": "adb",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:adb",
+   "form": "python",
+   "new_names": [
+    "screen.capture"
+   ],
+   "replaced_by": null,
+   "reason": "screen contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 240,
+   "cap": "android.ui.text",
+   "side": "worker",
+   "plugin": "adb",
+   "risk": "exec",
+   "decision": "reshape",
+   "home": "plugin:adb",
+   "form": "python",
+   "new_names": [
+    "ui.screen"
+   ],
+   "replaced_by": null,
+   "reason": "Same structured read as the phone app.",
+   "call": "C1"
+  },
+  {
+   "idx": 241,
+   "cap": "android.hid.type",
+   "side": "worker",
+   "plugin": "adb",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:adb",
+   "form": "python",
+   "new_names": [
+    "hid.type"
+   ],
+   "replaced_by": null,
+   "reason": "hid contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 242,
+   "cap": "android.hid.key_combo",
+   "side": "worker",
+   "plugin": "adb",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:adb",
+   "form": "python",
+   "new_names": [
+    "hid.key"
+   ],
+   "replaced_by": null,
+   "reason": "hid contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 243,
+   "cap": "android.hid.mouse.click",
+   "side": "worker",
+   "plugin": "adb",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:adb",
+   "form": "python",
+   "new_names": [
+    "hid.click"
+   ],
+   "replaced_by": null,
+   "reason": "hid contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 244,
+   "cap": "android.hid.mouse.drag",
+   "side": "worker",
+   "plugin": "adb",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:adb",
+   "form": "python",
+   "new_names": [
+    "hid.drag"
+   ],
+   "replaced_by": null,
+   "reason": "hid contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 245,
+   "cap": "adb.list",
+   "side": "worker",
+   "plugin": "adb",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "appliance.list",
+   "reason": "Appliances are listed in one place.",
+   "call": null
+  },
+  {
+   "idx": 246,
+   "cap": "adb.scan",
+   "side": "worker",
+   "plugin": "adb",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:adb",
+   "form": "python",
+   "new_names": [
+    "adb.scan"
+   ],
+   "replaced_by": null,
+   "reason": "Finds USB/emulated devices to add; adb-specific.",
+   "call": null
+  },
+  {
+   "idx": 247,
+   "cap": "agenthost.status",
+   "side": "worker",
+   "plugin": "agenthost",
+   "risk": "read",
+   "decision": "keep",
+   "home": "agents",
+   "form": "python",
+   "new_names": [
+    "harness.status"
+   ],
+   "replaced_by": null,
+   "reason": "Says what it is: agent harnesses on this host.",
+   "call": null
+  },
+  {
+   "idx": 248,
+   "cap": "agenthost.models",
+   "side": "worker",
+   "plugin": "agenthost",
+   "risk": "read",
+   "decision": "keep",
+   "home": "agents",
+   "form": "python",
+   "new_names": [
+    "harness.models"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 249,
+   "cap": "agenthost.turn",
+   "side": "worker",
+   "plugin": "agenthost",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.write (agent session stream)",
+   "reason": "A turn is input to a session stream; the harness is its producer.",
+   "call": null
+  },
+  {
+   "idx": 250,
+   "cap": "agenthost.cancel",
+   "side": "worker",
+   "plugin": "agenthost",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.write {signal: INT}",
+   "reason": "Signals are input events.",
+   "call": null
+  },
+  {
+   "idx": 251,
+   "cap": "agenthost.roles",
+   "side": "worker",
+   "plugin": "agenthost",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "agent.list",
+   "reason": "Agents are hub records.",
+   "call": null
+  },
+  {
+   "idx": 252,
+   "cap": "agenthost.role_memory",
+   "side": "worker",
+   "plugin": "agenthost",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "memory.search",
+   "reason": "One memory, on the hub.",
+   "call": null
+  },
+  {
+   "idx": 253,
+   "cap": "agenthost.role_memory_edit",
+   "side": "worker",
+   "plugin": "agenthost",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "memory.update",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 254,
+   "cap": "agenthost.role_export",
+   "side": "worker",
+   "plugin": "agenthost",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(none)",
+   "reason": "Memory on the hub; nothing to pack.",
+   "call": null
+  },
+  {
+   "idx": 255,
+   "cap": "agenthost.role_import",
+   "side": "worker",
+   "plugin": "agenthost",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(none)",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 256,
+   "cap": "agenthost.role_set_aside",
+   "side": "worker",
+   "plugin": "agenthost",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(none)",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 257,
+   "cap": "battery.status",
+   "side": "worker",
+   "plugin": "battery",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:battery",
+   "form": "yaml",
+   "new_names": [
+    "battery.status"
+   ],
+   "replaced_by": null,
+   "reason": "Fit review: YAML with per-OS variants.",
+   "call": "C1"
+  },
+  {
+   "idx": 258,
+   "cap": "browser.open",
+   "side": "worker",
+   "plugin": "browser",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:browser",
+   "form": "python",
+   "new_names": [
+    "browser.open"
+   ],
+   "replaced_by": null,
+   "reason": "Playwright stays Python; real caps already.",
+   "call": null
+  },
+  {
+   "idx": 259,
+   "cap": "browser.goto",
+   "side": "worker",
+   "plugin": "browser",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:browser",
+   "form": "python",
+   "new_names": [
+    "browser.goto"
+   ],
+   "replaced_by": null,
+   "reason": "Real cap.",
+   "call": null
+  },
+  {
+   "idx": 260,
+   "cap": "browser.snapshot",
+   "side": "worker",
+   "plugin": "browser",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:browser",
+   "form": "python",
+   "new_names": [
+    "browser.snapshot"
+   ],
+   "replaced_by": null,
+   "reason": "Real cap.",
+   "call": null
+  },
+  {
+   "idx": 261,
+   "cap": "browser.click",
+   "side": "worker",
+   "plugin": "browser",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:browser",
+   "form": "python",
+   "new_names": [
+    "browser.click"
+   ],
+   "replaced_by": null,
+   "reason": "DOM refs, so not the hid contract.",
+   "call": null
+  },
+  {
+   "idx": 262,
+   "cap": "browser.type",
+   "side": "worker",
+   "plugin": "browser",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:browser",
+   "form": "python",
+   "new_names": [
+    "browser.type"
+   ],
+   "replaced_by": null,
+   "reason": "Real cap.",
+   "call": null
+  },
+  {
+   "idx": 263,
+   "cap": "browser.press",
+   "side": "worker",
+   "plugin": "browser",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:browser",
+   "form": "python",
+   "new_names": [
+    "browser.press"
+   ],
+   "replaced_by": null,
+   "reason": "Real cap.",
+   "call": null
+  },
+  {
+   "idx": 264,
+   "cap": "browser.select",
+   "side": "worker",
+   "plugin": "browser",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:browser",
+   "form": "python",
+   "new_names": [
+    "browser.select"
+   ],
+   "replaced_by": null,
+   "reason": "Real cap.",
+   "call": null
+  },
+  {
+   "idx": 265,
+   "cap": "browser.wait",
+   "side": "worker",
+   "plugin": "browser",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:browser",
+   "form": "python",
+   "new_names": [
+    "browser.wait"
+   ],
+   "replaced_by": null,
+   "reason": "Real cap.",
+   "call": null
+  },
+  {
+   "idx": 266,
+   "cap": "browser.read",
+   "side": "worker",
+   "plugin": "browser",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:browser",
+   "form": "python",
+   "new_names": [
+    "browser.read"
+   ],
+   "replaced_by": null,
+   "reason": "Real cap.",
+   "call": null
+  },
+  {
+   "idx": 267,
+   "cap": "browser.screenshot",
+   "side": "worker",
+   "plugin": "browser",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:browser",
+   "form": "python",
+   "new_names": [
+    "browser.screenshot"
+   ],
+   "replaced_by": null,
+   "reason": "A page screenshot, not the machine screen.",
+   "call": null
+  },
+  {
+   "idx": 268,
+   "cap": "browser.eval",
+   "side": "worker",
+   "plugin": "browser",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:browser",
+   "form": "python",
+   "new_names": [
+    "browser.eval"
+   ],
+   "replaced_by": null,
+   "reason": "Real cap (exec risk).",
+   "call": null
+  },
+  {
+   "idx": 269,
+   "cap": "browser.tabs",
+   "side": "worker",
+   "plugin": "browser",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "plugin:browser",
+   "form": "python",
+   "new_names": [
+    "browser.tabs",
+    "browser.switch_tab"
+   ],
+   "replaced_by": null,
+   "reason": "List vs switch split (read vs write); close goes to browser.close {tab}.",
+   "call": null
+  },
+  {
+   "idx": 270,
+   "cap": "browser.sessions",
+   "side": "worker",
+   "plugin": "browser",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:browser",
+   "form": "python",
+   "new_names": [
+    "browser.list"
+   ],
+   "replaced_by": null,
+   "reason": "Standard list verb.",
+   "call": null
+  },
+  {
+   "idx": 271,
+   "cap": "browser.close",
+   "side": "worker",
+   "plugin": "browser",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "plugin:browser",
+   "form": "python",
+   "new_names": [
+    "browser.close"
+   ],
+   "replaced_by": null,
+   "reason": "Gains {tab} to close one tab.",
+   "call": null
+  },
+  {
+   "idx": 272,
+   "cap": "camera.list",
+   "side": "worker",
+   "plugin": "camera",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:camera",
+   "form": "yaml",
+   "new_names": [
+    "camera.list"
+   ],
+   "replaced_by": null,
+   "reason": "Fit review: YAML with per-OS variants.",
+   "call": null
+  },
+  {
+   "idx": 273,
+   "cap": "camera.snap",
+   "side": "worker",
+   "plugin": "camera",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:camera",
+   "form": "yaml",
+   "new_names": [
+    "camera.capture"
+   ],
+   "replaced_by": null,
+   "reason": "Same verb as screen.capture.",
+   "call": null
+  },
+  {
+   "idx": 274,
+   "cap": "ccmod.apply",
+   "side": "worker",
+   "plugin": "ccmod",
+   "risk": "admin",
+   "decision": "reshape",
+   "home": "plugin:claudecode",
+   "form": "python",
+   "new_names": [
+    "claudecode.install"
+   ],
+   "replaced_by": null,
+   "reason": "Install Rook's hooks, status line and rules into Claude Code here.",
+   "call": "C6"
+  },
+  {
+   "idx": 275,
+   "cap": "ccmod.remove",
+   "side": "worker",
+   "plugin": "ccmod",
+   "risk": "admin",
+   "decision": "keep",
+   "home": "plugin:claudecode",
+   "form": "python",
+   "new_names": [
+    "claudecode.remove"
+   ],
+   "replaced_by": null,
+   "reason": "Unchanged.",
+   "call": "C6"
+  },
+  {
+   "idx": 276,
+   "cap": "ccmod.status",
+   "side": "worker",
+   "plugin": "ccmod",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:claudecode",
+   "form": "python",
+   "new_names": [
+    "claudecode.status"
+   ],
+   "replaced_by": null,
+   "reason": "Fixes the hub/worker duplicate.",
+   "call": "C6"
+  },
+  {
+   "idx": 277,
+   "cap": "ccmod.events",
+   "side": "worker",
+   "plugin": "ccmod",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(harness events feed job event triggers)",
+   "reason": "Plumbing.",
+   "call": "C6"
+  },
+  {
+   "idx": 278,
+   "cap": "cec.send",
+   "side": "worker",
+   "plugin": "cec",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "plugin:cec",
+   "form": "yaml",
+   "new_names": [
+    "cec.send"
+   ],
+   "replaced_by": null,
+   "reason": "Fit review: YAML (tcp); also takes a raw firmware line.",
+   "call": null
+  },
+  {
+   "idx": 279,
+   "cap": "cec.raw",
+   "side": "worker",
+   "plugin": "cec",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "cec.send {raw}",
+   "reason": "Same transport.",
+   "call": null
+  },
+  {
+   "idx": 280,
+   "cap": "cec.ping",
+   "side": "worker",
+   "plugin": "cec",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:cec",
+   "form": "yaml",
+   "new_names": [
+    "cec.status"
+   ],
+   "replaced_by": null,
+   "reason": "Consistent status verb.",
+   "call": null
+  },
+  {
+   "idx": 281,
+   "cap": "chat.open",
+   "side": "worker",
+   "plugin": "chat",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.open {kind: room} + desktop app surface",
+   "reason": "Worker chat = a stream with the local human.",
+   "call": null
+  },
+  {
+   "idx": 282,
+   "cap": "chat.send",
+   "side": "worker",
+   "plugin": "chat",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.write",
+   "reason": "No separate JSONL rooms.",
+   "call": null
+  },
+  {
+   "idx": 283,
+   "cap": "chat.rooms",
+   "side": "worker",
+   "plugin": "chat",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.list",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 284,
+   "cap": "chat.poll",
+   "side": "worker",
+   "plugin": "chat",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.read",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 285,
+   "cap": "claude-history.send",
+   "side": "worker",
+   "plugin": "claude_history",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.write",
+   "reason": "History readers become importers into streams.",
+   "call": null
+  },
+  {
+   "idx": 286,
+   "cap": "claude-history.resume",
+   "side": "worker",
+   "plugin": "claude_history",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.open {producer: claude, resume}",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 287,
+   "cap": "claude-history.resumed",
+   "side": "worker",
+   "plugin": "claude_history",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.list",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 288,
+   "cap": "claude-history.pull",
+   "side": "worker",
+   "plugin": "claude_history",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.list {kind: session}",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 289,
+   "cap": "claude-history.read",
+   "side": "worker",
+   "plugin": "claude_history",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.read",
+   "reason": "Five read variants become one.",
+   "call": null
+  },
+  {
+   "idx": 290,
+   "cap": "claude-history.read_page",
+   "side": "worker",
+   "plugin": "claude_history",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.read",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 291,
+   "cap": "claude-history.transcript",
+   "side": "worker",
+   "plugin": "claude_history",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.read {format: transcript}",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 292,
+   "cap": "claude-history.read_snapshot",
+   "side": "worker",
+   "plugin": "claude_history",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.read",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 293,
+   "cap": "claude-history.follow",
+   "side": "worker",
+   "plugin": "claude_history",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.read {wait}",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 294,
+   "cap": "claude-history.search",
+   "side": "worker",
+   "plugin": "claude_history",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.search",
+   "reason": "Content search across all streams.",
+   "call": null
+  },
+  {
+   "idx": 295,
+   "cap": "claude-history.analyze",
+   "side": "worker",
+   "plugin": "claude_history",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(agents analyse with stream.search)",
+   "reason": "Canned pattern extraction is a harness.",
+   "call": null
+  },
+  {
+   "idx": 296,
+   "cap": "claude-history.export",
+   "side": "worker",
+   "plugin": "claude_history",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.read {format}",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 297,
+   "cap": "codex-history.resume",
+   "side": "worker",
+   "plugin": "codex_history",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.open {producer: codex, resume}",
+   "reason": "As claude-history.",
+   "call": null
+  },
+  {
+   "idx": 298,
+   "cap": "worker.config_get",
+   "side": "worker",
+   "plugin": "config",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "setting.get {scope: worker}",
+   "reason": "One settings namespace.",
+   "call": null
+  },
+  {
+   "idx": 299,
+   "cap": "worker.config_apply",
+   "side": "worker",
+   "plugin": "config",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "setting.set {scope: worker}",
+   "reason": "Commit-confirmed restart becomes internal.",
+   "call": null
+  },
+  {
+   "idx": 300,
+   "cap": "worker.config_confirm",
+   "side": "worker",
+   "plugin": "config",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(internal commit-confirm)",
+   "reason": "Protocol step.",
+   "call": null
+  },
+  {
+   "idx": 301,
+   "cap": "worker.config_revert",
+   "side": "worker",
+   "plugin": "config",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "setting.reset / internal auto-revert",
+   "reason": "Protocol step.",
+   "call": null
+  },
+  {
+   "idx": 302,
+   "cap": "deluge.status",
+   "side": "worker",
+   "plugin": "deluge",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:torrent",
+   "form": "yaml",
+   "new_names": [
+    "torrent.status"
+   ],
+   "replaced_by": null,
+   "reason": "No product prefix; fit review: YAML (deluge-console argv).",
+   "call": null
+  },
+  {
+   "idx": 303,
+   "cap": "deluge.list",
+   "side": "worker",
+   "plugin": "deluge",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:torrent",
+   "form": "yaml",
+   "new_names": [
+    "torrent.list"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 304,
+   "cap": "deluge.files",
+   "side": "worker",
+   "plugin": "deluge",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:torrent",
+   "form": "yaml",
+   "new_names": [
+    "torrent.get"
+   ],
+   "replaced_by": null,
+   "reason": "One torrent: save path and files.",
+   "call": null
+  },
+  {
+   "idx": 305,
+   "cap": "deluge.add",
+   "side": "worker",
+   "plugin": "deluge",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:torrent",
+   "form": "yaml",
+   "new_names": [
+    "torrent.add"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 306,
+   "cap": "deluge.pause",
+   "side": "worker",
+   "plugin": "deluge",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:torrent",
+   "form": "yaml",
+   "new_names": [
+    "torrent.pause"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 307,
+   "cap": "deluge.resume",
+   "side": "worker",
+   "plugin": "deluge",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:torrent",
+   "form": "yaml",
+   "new_names": [
+    "torrent.resume"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 308,
+   "cap": "deluge.remove",
+   "side": "worker",
+   "plugin": "deluge",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "plugin:torrent",
+   "form": "yaml",
+   "new_names": [
+    "torrent.remove",
+    "torrent.delete"
+   ],
+   "replaced_by": null,
+   "reason": "data=true erases downloads (hard stop): its own cap.",
+   "call": null
+  },
+  {
+   "idx": 309,
+   "cap": "devkit.define",
+   "side": "worker",
+   "plugin": "devkit",
+   "risk": "admin",
+   "decision": "reshape",
+   "home": "core",
+   "form": "yaml",
+   "new_names": [
+    "appliance.add"
+   ],
+   "replaced_by": null,
+   "reason": "devkit recipes merge into the one YAML engine; adding is a change record.",
+   "call": null
+  },
+  {
+   "idx": 310,
+   "cap": "devkit.test",
+   "side": "worker",
+   "plugin": "devkit",
+   "risk": "exec",
+   "decision": "reshape",
+   "home": "core",
+   "form": "yaml",
+   "new_names": [
+    "appliance.test"
+   ],
+   "replaced_by": null,
+   "reason": "Test one cap from a draft.",
+   "call": null
+  },
+  {
+   "idx": 311,
+   "cap": "devkit.list",
+   "side": "worker",
+   "plugin": "devkit",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "appliance.list"
+   ],
+   "replaced_by": null,
+   "reason": "One appliance registry (absorbs serves, adb.list, webos.list).",
+   "call": null
+  },
+  {
+   "idx": 312,
+   "cap": "devkit.remove",
+   "side": "worker",
+   "plugin": "devkit",
+   "risk": "admin",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "appliance.remove"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 313,
+   "cap": "devkit.discover",
+   "side": "worker",
+   "plugin": "devkit",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "appliance.discover"
+   ],
+   "replaced_by": null,
+   "reason": "mDNS/SSDP from a worker (absorbs webos.discover).",
+   "call": null
+  },
+  {
+   "idx": 314,
+   "cap": "dongle.status",
+   "side": "worker",
+   "plugin": "dongle",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "plugin:dongle",
+   "form": "python",
+   "new_names": [
+    "dongle.status"
+   ],
+   "replaced_by": null,
+   "reason": "Absorbs display_probe.",
+   "call": null
+  },
+  {
+   "idx": 315,
+   "cap": "dongle.display",
+   "side": "worker",
+   "plugin": "dongle",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:dongle",
+   "form": "python",
+   "new_names": [
+    "dongle.display"
+   ],
+   "replaced_by": null,
+   "reason": "Dongle-specific.",
+   "call": null
+  },
+  {
+   "idx": 316,
+   "cap": "dongle.display_probe",
+   "side": "worker",
+   "plugin": "dongle",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "dongle.status",
+   "reason": "Merged.",
+   "call": null
+  },
+  {
+   "idx": 317,
+   "cap": "dongle.keyboard",
+   "side": "worker",
+   "plugin": "dongle",
+   "risk": "exec",
+   "decision": "reshape",
+   "home": "plugin:dongle",
+   "form": "python",
+   "new_names": [
+    "hid.key"
+   ],
+   "replaced_by": null,
+   "reason": "hid contract; usage codes stay an option.",
+   "call": "C1"
+  },
+  {
+   "idx": 318,
+   "cap": "dongle.mouse",
+   "side": "worker",
+   "plugin": "dongle",
+   "risk": "exec",
+   "decision": "reshape",
+   "home": "plugin:dongle",
+   "form": "python",
+   "new_names": [
+    "hid.move",
+    "hid.click",
+    "hid.scroll"
+   ],
+   "replaced_by": null,
+   "reason": "hid contract (relative moves).",
+   "call": "C1"
+  },
+  {
+   "idx": 319,
+   "cap": "dongle.consumer",
+   "side": "worker",
+   "plugin": "dongle",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "plugin:dongle",
+   "form": "python",
+   "new_names": [
+    "hid.key"
+   ],
+   "replaced_by": null,
+   "reason": "Consumer keys (volume_up, play_pause) are key names.",
+   "call": "C1"
+  },
+  {
+   "idx": 320,
+   "cap": "dongle.release",
+   "side": "worker",
+   "plugin": "dongle",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "plugin:dongle",
+   "form": "python",
+   "new_names": [
+    "hid.release"
+   ],
+   "replaced_by": null,
+   "reason": "Optional op of the hid contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 321,
+   "cap": "worker.enrollment_prepare",
+   "side": "worker",
+   "plugin": "enrollment",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(sign-in enrollment protocol)",
+   "reason": "Enrollment moves into core as a protocol, not agent caps.",
+   "call": null
+  },
+  {
+   "idx": 322,
+   "cap": "worker.enrollment_move_prepare",
+   "side": "worker",
+   "plugin": "enrollment",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "worker.add_band (home hub)",
+   "reason": "Multi-band is managed from the home hub.",
+   "call": null
+  },
+  {
+   "idx": 323,
+   "cap": "worker.enrollment_finish",
+   "side": "worker",
+   "plugin": "enrollment",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(sign-in enrollment protocol)",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 324,
+   "cap": "worker.enrollment_status",
+   "side": "worker",
+   "plugin": "enrollment",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "worker.status",
+   "reason": "Status in one read.",
+   "call": null
+  },
+  {
+   "idx": 325,
+   "cap": "worker.enrollment_prove",
+   "side": "worker",
+   "plugin": "enrollment",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(sign-in enrollment protocol)",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 326,
+   "cap": "file.read",
+   "side": "worker",
+   "plugin": "file_ops",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:file",
+   "form": "python",
+   "new_names": [
+    "file.read"
+   ],
+   "replaced_by": null,
+   "reason": "Real cap.",
+   "call": null
+  },
+  {
+   "idx": 327,
+   "cap": "file.write",
+   "side": "worker",
+   "plugin": "file_ops",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:file",
+   "form": "python",
+   "new_names": [
+    "file.write"
+   ],
+   "replaced_by": null,
+   "reason": "Real cap.",
+   "call": null
+  },
+  {
+   "idx": 328,
+   "cap": "file.list",
+   "side": "worker",
+   "plugin": "file_ops",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:file",
+   "form": "python",
+   "new_names": [
+    "file.list"
+   ],
+   "replaced_by": null,
+   "reason": "Real cap.",
+   "call": null
+  },
+  {
+   "idx": 329,
+   "cap": "file.search",
+   "side": "worker",
+   "plugin": "file_ops",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:file",
+   "form": "python",
+   "new_names": [
+    "file.search"
+   ],
+   "replaced_by": null,
+   "reason": "Real cap.",
+   "call": null
+  },
+  {
+   "idx": 330,
+   "cap": "file.exists",
+   "side": "worker",
+   "plugin": "file_ops",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "plugin:file",
+   "form": "python",
+   "new_names": [
+    "file.stat"
+   ],
+   "replaced_by": null,
+   "reason": "Exists plus kind, size, mtime: more useful, standard name.",
+   "call": null
+  },
+  {
+   "idx": 331,
+   "cap": "hermes.chat",
+   "side": "worker",
+   "plugin": "hermes",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(Hermes joins over MCP as an external agent)",
+   "reason": "Rook doesn't drive other agents' internals.",
+   "call": null
+  },
+  {
+   "idx": 332,
+   "cap": "hermes.run",
+   "side": "worker",
+   "plugin": "hermes",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.open {producer: hermes}",
+   "reason": "If wanted, Hermes is a harness producer.",
+   "call": null
+  },
+  {
+   "idx": 333,
+   "cap": "hermes.memory.read",
+   "side": "worker",
+   "plugin": "hermes",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(none)",
+   "reason": "Hermes internals.",
+   "call": null
+  },
+  {
+   "idx": 334,
+   "cap": "hermes.memory.status",
+   "side": "worker",
+   "plugin": "hermes",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(none)",
+   "reason": "Hermes internals.",
+   "call": null
+  },
+  {
+   "idx": 335,
+   "cap": "hermes.skills.list",
+   "side": "worker",
+   "plugin": "hermes",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(none)",
+   "reason": "Hermes internals.",
+   "call": null
+  },
+  {
+   "idx": 336,
+   "cap": "hermes.skills.search",
+   "side": "worker",
+   "plugin": "hermes",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(none)",
+   "reason": "Hermes internals.",
+   "call": null
+  },
+  {
+   "idx": 337,
+   "cap": "hermes.sessions.list",
+   "side": "worker",
+   "plugin": "hermes",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.list (importer)",
+   "reason": "Sessions become streams if imported.",
+   "call": null
+  },
+  {
+   "idx": 338,
+   "cap": "hermes.sessions.read",
+   "side": "worker",
+   "plugin": "hermes",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.read",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 339,
+   "cap": "hermes.status",
+   "side": "worker",
+   "plugin": "hermes",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "harness.status",
+   "reason": "Harness status.",
+   "call": null
+  },
+  {
+   "idx": 340,
+   "cap": "hermes.mcp.list",
+   "side": "worker",
+   "plugin": "hermes",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(none)",
+   "reason": "Hermes internals.",
+   "call": null
+  },
+  {
+   "idx": 341,
+   "cap": "hid.type",
+   "side": "worker",
+   "plugin": "hid",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:hid-desktop",
+   "form": "python",
+   "new_names": [
+    "hid.type"
+   ],
+   "replaced_by": null,
+   "reason": "hid contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 342,
+   "cap": "hid.key_combo",
+   "side": "worker",
+   "plugin": "hid",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:hid-desktop",
+   "form": "python",
+   "new_names": [
+    "hid.key"
+   ],
+   "replaced_by": null,
+   "reason": "Flatter name, same as every hid implementation.",
+   "call": "C1"
+  },
+  {
+   "idx": 343,
+   "cap": "hid.mouse.move",
+   "side": "worker",
+   "plugin": "hid",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:hid-desktop",
+   "form": "python",
+   "new_names": [
+    "hid.move"
+   ],
+   "replaced_by": null,
+   "reason": "Flatter name.",
+   "call": "C1"
+  },
+  {
+   "idx": 344,
+   "cap": "hid.mouse.click",
+   "side": "worker",
+   "plugin": "hid",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:hid-desktop",
+   "form": "python",
+   "new_names": [
+    "hid.click"
+   ],
+   "replaced_by": null,
+   "reason": "Flatter name.",
+   "call": "C1"
+  },
+  {
+   "idx": 345,
+   "cap": "hid.mouse.drag",
+   "side": "worker",
+   "plugin": "hid",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:hid-desktop",
+   "form": "python",
+   "new_names": [
+    "hid.drag"
+   ],
+   "replaced_by": null,
+   "reason": "Flatter name.",
+   "call": "C1"
+  },
+  {
+   "idx": 346,
+   "cap": "hid.backend",
+   "side": "worker",
+   "plugin": "hid",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "plugin:hid-desktop",
+   "form": "python",
+   "new_names": [
+    "hid.status"
+   ],
+   "replaced_by": null,
+   "reason": "Status read of the contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 347,
+   "cap": "ha.status",
+   "side": "worker",
+   "plugin": "homeassistant",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:homeassistant",
+   "form": "python",
+   "new_names": [
+    "homeassistant.status"
+   ],
+   "replaced_by": null,
+   "reason": "Parked: HA out of scope this round (Bake, Oct 28); only the ha./homeassistant. split fixed.",
+   "call": null
+  },
+  {
+   "idx": 348,
+   "cap": "ha.on",
+   "side": "worker",
+   "plugin": "homeassistant",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:homeassistant",
+   "form": "python",
+   "new_names": [
+    "homeassistant.on"
+   ],
+   "replaced_by": null,
+   "reason": "Parked; revisit against the power contract.",
+   "call": null
+  },
+  {
+   "idx": 349,
+   "cap": "ha.off",
+   "side": "worker",
+   "plugin": "homeassistant",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:homeassistant",
+   "form": "python",
+   "new_names": [
+    "homeassistant.off"
+   ],
+   "replaced_by": null,
+   "reason": "Parked; revisit against the power contract.",
+   "call": null
+  },
+  {
+   "idx": 350,
+   "cap": "ha.set",
+   "side": "worker",
+   "plugin": "homeassistant",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:homeassistant",
+   "form": "python",
+   "new_names": [
+    "homeassistant.set"
+   ],
+   "replaced_by": null,
+   "reason": "Parked.",
+   "call": null
+  },
+  {
+   "idx": 351,
+   "cap": "ha.service",
+   "side": "worker",
+   "plugin": "homeassistant",
+   "risk": "admin",
+   "decision": "keep",
+   "home": "plugin:homeassistant",
+   "form": "python",
+   "new_names": [
+    "homeassistant.service"
+   ],
+   "replaced_by": null,
+   "reason": "Parked.",
+   "call": null
+  },
+  {
+   "idx": 352,
+   "cap": "homeassistant.devices",
+   "side": "worker",
+   "plugin": "homeassistant",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:homeassistant",
+   "form": "python",
+   "new_names": [
+    "homeassistant.devices"
+   ],
+   "replaced_by": null,
+   "reason": "Parked.",
+   "call": null
+  },
+  {
+   "idx": 353,
+   "cap": "homeassistant.scenes",
+   "side": "worker",
+   "plugin": "homeassistant",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:homeassistant",
+   "form": "python",
+   "new_names": [
+    "homeassistant.scenes"
+   ],
+   "replaced_by": null,
+   "reason": "Parked.",
+   "call": null
+  },
+  {
+   "idx": 354,
+   "cap": "homeassistant.scene",
+   "side": "worker",
+   "plugin": "homeassistant",
+   "risk": "admin",
+   "decision": "keep",
+   "home": "plugin:homeassistant",
+   "form": "python",
+   "new_names": [
+    "homeassistant.scene"
+   ],
+   "replaced_by": null,
+   "reason": "Parked.",
+   "call": null
+  },
+  {
+   "idx": 355,
+   "cap": "info.host",
+   "side": "worker",
+   "plugin": "info",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "worker.status",
+   "reason": "Core worker status.",
+   "call": null
+  },
+  {
+   "idx": 356,
+   "cap": "info.uptime",
+   "side": "worker",
+   "plugin": "info",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "worker.status",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 357,
+   "cap": "info.ping",
+   "side": "worker",
+   "plugin": "info",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "worker.ping"
+   ],
+   "replaced_by": null,
+   "reason": "One liveness cap in core (fixes the info.ping duplicate).",
+   "call": null
+  },
+  {
+   "idx": 358,
+   "cap": "log.audit",
+   "side": "worker",
+   "plugin": "log",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "worker.log"
+   ],
+   "replaced_by": null,
+   "reason": "Worker-local record of what actually ran (log moves into core).",
+   "call": null
+  },
+  {
+   "idx": 359,
+   "cap": "log.tail",
+   "side": "worker",
+   "plugin": "log",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "worker.log",
+   "reason": "Unfiltered tail is the default of worker.log.",
+   "call": null
+  },
+  {
+   "idx": 360,
+   "cap": "memory.get",
+   "side": "worker",
+   "plugin": "memory",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "memory.get (agents)",
+   "reason": "A second memory system; one memory plus notepad per agent.",
+   "call": null
+  },
+  {
+   "idx": 361,
+   "cap": "memory.put",
+   "side": "worker",
+   "plugin": "memory",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "notepad.write",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 362,
+   "cap": "memory.note",
+   "side": "worker",
+   "plugin": "memory",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "notepad.write",
+   "reason": "Post-its are notepad entries curated by the dream cycle.",
+   "call": null
+  },
+  {
+   "idx": 363,
+   "cap": "memory.search",
+   "side": "worker",
+   "plugin": "memory",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "memory.search (agents)",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 364,
+   "cap": "memory.entities",
+   "side": "worker",
+   "plugin": "memory",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "memory.list {about}",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 365,
+   "cap": "msg.send",
+   "side": "worker",
+   "plugin": "msg",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "plugin:notification-desktop",
+   "form": "yaml",
+   "new_names": [
+    "notification.post"
+   ],
+   "replaced_by": null,
+   "reason": "A desktop pop-up is the notification contract; YAML per-OS variants (fit review).",
+   "call": "C1"
+  },
+  {
+   "idx": 366,
+   "cap": "msg.read",
+   "side": "worker",
+   "plugin": "msg",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(person's inbox stream)",
+   "reason": "No separate inbox file.",
+   "call": null
+  },
+  {
+   "idx": 367,
+   "cap": "msg.clear",
+   "side": "worker",
+   "plugin": "msg",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(none)",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 368,
+   "cap": "persona.apply",
+   "side": "worker",
+   "plugin": "persona",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(agent record persona; help + skills for external agents)",
+   "reason": "Writing managed blocks into harness files is a harness (C5).",
+   "call": "C5"
+  },
+  {
+   "idx": 369,
+   "cap": "persona.status",
+   "side": "worker",
+   "plugin": "persona",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(none)",
+   "reason": "Goes with apply.",
+   "call": "C5"
+  },
+  {
+   "idx": 370,
+   "cap": "pikvm.snap",
+   "side": "worker",
+   "plugin": "pikvm",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:kvm",
+   "form": "yaml",
+   "new_names": [
+    "screen.capture"
+   ],
+   "replaced_by": null,
+   "reason": "PiKVM is an appliance offering the screen contract; fit review: YAML (REST).",
+   "call": "C1"
+  },
+  {
+   "idx": 371,
+   "cap": "pikvm.type",
+   "side": "worker",
+   "plugin": "pikvm",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:kvm",
+   "form": "yaml",
+   "new_names": [
+    "hid.type"
+   ],
+   "replaced_by": null,
+   "reason": "hid contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 372,
+   "cap": "pikvm.key",
+   "side": "worker",
+   "plugin": "pikvm",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:kvm",
+   "form": "yaml",
+   "new_names": [
+    "hid.key"
+   ],
+   "replaced_by": null,
+   "reason": "hid contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 373,
+   "cap": "pikvm.mouse.move",
+   "side": "worker",
+   "plugin": "pikvm",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:kvm",
+   "form": "yaml",
+   "new_names": [
+    "hid.move"
+   ],
+   "replaced_by": null,
+   "reason": "hid contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 374,
+   "cap": "pikvm.mouse.click",
+   "side": "worker",
+   "plugin": "pikvm",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:kvm",
+   "form": "yaml",
+   "new_names": [
+    "hid.click"
+   ],
+   "replaced_by": null,
+   "reason": "hid contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 375,
+   "cap": "pikvm.power",
+   "side": "worker",
+   "plugin": "pikvm",
+   "risk": "exec",
+   "decision": "reshape",
+   "home": "plugin:kvm",
+   "form": "yaml",
+   "new_names": [
+    "power.on",
+    "power.off",
+    "power.reset"
+   ],
+   "replaced_by": null,
+   "reason": "Action argument whose values differ in risk: real caps (hard variants as force=true).",
+   "call": "C1"
+  },
+  {
+   "idx": 376,
+   "cap": "pikvm.power.status",
+   "side": "worker",
+   "plugin": "pikvm",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:kvm",
+   "form": "yaml",
+   "new_names": [
+    "power.status"
+   ],
+   "replaced_by": null,
+   "reason": "power contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 377,
+   "cap": "pikvm.api.get",
+   "side": "worker",
+   "plugin": "pikvm",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:kvm",
+   "form": "yaml",
+   "new_names": [
+    "kvm.api_get"
+   ],
+   "replaced_by": null,
+   "reason": "Raw escape hatch, read.",
+   "call": null
+  },
+  {
+   "idx": 378,
+   "cap": "pikvm.api.post",
+   "side": "worker",
+   "plugin": "pikvm",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:kvm",
+   "form": "yaml",
+   "new_names": [
+    "kvm.api_post"
+   ],
+   "replaced_by": null,
+   "reason": "Raw escape hatch, exec.",
+   "call": null
+  },
+  {
+   "idx": 379,
+   "cap": "proc.start",
+   "side": "worker",
+   "plugin": "proc",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.open {producer: process, pty: false}",
+   "reason": "proc merges into terminals (castling-streams).",
+   "call": null
+  },
+  {
+   "idx": 380,
+   "cap": "proc.read",
+   "side": "worker",
+   "plugin": "proc",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.read",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 381,
+   "cap": "proc.write",
+   "side": "worker",
+   "plugin": "proc",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.write",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 382,
+   "cap": "proc.signal",
+   "side": "worker",
+   "plugin": "proc",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.write {signal}",
+   "reason": "Signals are input events.",
+   "call": null
+  },
+  {
+   "idx": 383,
+   "cap": "proc.close",
+   "side": "worker",
+   "plugin": "proc",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.close",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 384,
+   "cap": "proc.list",
+   "side": "worker",
+   "plugin": "proc",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.list",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 385,
+   "cap": "screenshot.capture",
+   "side": "worker",
+   "plugin": "screenshot",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:screen-desktop",
+   "form": "yaml",
+   "new_names": [
+    "screen.capture"
+   ],
+   "replaced_by": null,
+   "reason": "screen contract; fit review: YAML per-OS variants.",
+   "call": "C1"
+  },
+  {
+   "idx": 386,
+   "cap": "screenshot.capture_region",
+   "side": "worker",
+   "plugin": "screenshot",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "screen.capture {region}",
+   "reason": "An argument.",
+   "call": "C1"
+  },
+  {
+   "idx": 387,
+   "cap": "screenshot.capture_preview",
+   "side": "worker",
+   "plugin": "screenshot",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "screen.capture {preview}",
+   "reason": "An argument.",
+   "call": "C1"
+  },
+  {
+   "idx": 388,
+   "cap": "worker.ota_begin",
+   "side": "worker",
+   "plugin": "selfupdate",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(internal Drop protocol)",
+   "reason": "Plumbing.",
+   "call": null
+  },
+  {
+   "idx": 389,
+   "cap": "worker.check",
+   "side": "worker",
+   "plugin": "selfupdate",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "worker.update {check}",
+   "reason": "One update cap.",
+   "call": null
+  },
+  {
+   "idx": 390,
+   "cap": "worker.apply",
+   "side": "worker",
+   "plugin": "selfupdate",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(internal)",
+   "reason": "Plumbing.",
+   "call": null
+  },
+  {
+   "idx": 391,
+   "cap": "worker.hold",
+   "side": "worker",
+   "plugin": "selfupdate",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "setting.set {update.hold, scope: worker}",
+   "reason": "A setting.",
+   "call": null
+  },
+  {
+   "idx": 392,
+   "cap": "worker.deauth",
+   "side": "worker",
+   "plugin": "selfupdate",
+   "risk": "admin",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "worker.remove"
+   ],
+   "replaced_by": null,
+   "reason": "Hub-side: take a worker off a band; the signed order stays internal.",
+   "call": null
+  },
+  {
+   "idx": 393,
+   "cap": "worker.status",
+   "side": "worker",
+   "plugin": "selfupdate",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "worker.status"
+   ],
+   "replaced_by": null,
+   "reason": "One read: build, update, OS, uptime, enrollment, model.",
+   "call": null
+  },
+  {
+   "idx": 394,
+   "cap": "worker.restart",
+   "side": "worker",
+   "plugin": "selfupdate",
+   "risk": "admin",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "worker.restart"
+   ],
+   "replaced_by": null,
+   "reason": "Unchanged.",
+   "call": null
+  },
+  {
+   "idx": 395,
+   "cap": "worker.reconfigure",
+   "side": "worker",
+   "plugin": "selfupdate",
+   "risk": "admin",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "re-enroll / setting.set {name}",
+   "reason": "Repointing is enrollment; renaming is a setting.",
+   "call": null
+  },
+  {
+   "idx": 396,
+   "cap": "worker.update",
+   "side": "worker",
+   "plugin": "selfupdate",
+   "risk": "admin",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "worker.update"
+   ],
+   "replaced_by": null,
+   "reason": "One cap for desktop and APK; absorbs check.",
+   "call": null
+  },
+  {
+   "idx": 397,
+   "cap": "sessions.mirror",
+   "side": "worker",
+   "plugin": "session_mirror",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.read (mirror becomes an importer)",
+   "reason": "castling-streams.",
+   "call": null
+  },
+  {
+   "idx": 398,
+   "cap": "sessions.shim.install",
+   "side": "worker",
+   "plugin": "session_shim",
+   "risk": "write",
+   "decision": "keep",
+   "home": "agents",
+   "form": "python",
+   "new_names": [
+    "harness.shim.install"
+   ],
+   "replaced_by": null,
+   "reason": "The shim is a harness producer installer.",
+   "call": null
+  },
+  {
+   "idx": 399,
+   "cap": "sessions.shim.uninstall",
+   "side": "worker",
+   "plugin": "session_shim",
+   "risk": "write",
+   "decision": "keep",
+   "home": "agents",
+   "form": "python",
+   "new_names": [
+    "harness.shim.remove"
+   ],
+   "replaced_by": null,
+   "reason": "Consistent remove verb.",
+   "call": null
+  },
+  {
+   "idx": 400,
+   "cap": "sessions.shim.status",
+   "side": "worker",
+   "plugin": "session_shim",
+   "risk": "read",
+   "decision": "keep",
+   "home": "agents",
+   "form": "python",
+   "new_names": [
+    "harness.shim.status"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 401,
+   "cap": "sessions.list",
+   "side": "worker",
+   "plugin": "sessions",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.list {kind: session}",
+   "reason": "Sessions are streams.",
+   "call": null
+  },
+  {
+   "idx": 402,
+   "cap": "sessions.follow",
+   "side": "worker",
+   "plugin": "sessions",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.read",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 403,
+   "cap": "sessions.send",
+   "side": "worker",
+   "plugin": "sessions",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.write",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 404,
+   "cap": "sessions.stop",
+   "side": "worker",
+   "plugin": "sessions",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.close",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 405,
+   "cap": "shell.exec",
+   "side": "worker",
+   "plugin": "shell",
+   "risk": "exec",
+   "decision": "keep",
+   "home": "plugin:shell",
+   "form": "python",
+   "new_names": [
+    "shell.exec"
+   ],
+   "replaced_by": null,
+   "reason": "The most-used cap; exec is the universal verb for shell.",
+   "call": null
+  },
+  {
+   "idx": 406,
+   "cap": "shell.which",
+   "side": "worker",
+   "plugin": "shell",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:shell",
+   "form": "python",
+   "new_names": [
+    "shell.which"
+   ],
+   "replaced_by": null,
+   "reason": "Real cap.",
+   "call": null
+  },
+  {
+   "idx": 407,
+   "cap": "shell.env.get",
+   "side": "worker",
+   "plugin": "shell",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "plugin:shell",
+   "form": "python",
+   "new_names": [
+    "shell.env"
+   ],
+   "replaced_by": null,
+   "reason": "One read: a name, or a prefix to list.",
+   "call": null
+  },
+  {
+   "idx": 408,
+   "cap": "shell.env.list",
+   "side": "worker",
+   "plugin": "shell",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "shell.env {prefix}",
+   "reason": "Merged.",
+   "call": null
+  },
+  {
+   "idx": 409,
+   "cap": "work.stream.open",
+   "side": "worker",
+   "plugin": "terminals",
+   "risk": "exec",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "stream.open"
+   ],
+   "replaced_by": null,
+   "reason": "The stream API (castling-streams); producer = shell, process, claude, codex.",
+   "call": null
+  },
+  {
+   "idx": 410,
+   "cap": "work.stream.read",
+   "side": "worker",
+   "plugin": "terminals",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "stream.read"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 411,
+   "cap": "work.stream.write",
+   "side": "worker",
+   "plugin": "terminals",
+   "risk": "exec",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "stream.write"
+   ],
+   "replaced_by": null,
+   "reason": "As above; signals and resize are input events.",
+   "call": null
+  },
+  {
+   "idx": 412,
+   "cap": "work.stream.resize",
+   "side": "worker",
+   "plugin": "terminals",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.write {resize}",
+   "reason": "Input event.",
+   "call": null
+  },
+  {
+   "idx": 413,
+   "cap": "work.stream.signal",
+   "side": "worker",
+   "plugin": "terminals",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.write {signal}",
+   "reason": "Input event.",
+   "call": null
+  },
+  {
+   "idx": 414,
+   "cap": "work.stream.close",
+   "side": "worker",
+   "plugin": "terminals",
+   "risk": "exec",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "stream.close"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 415,
+   "cap": "work.stream.list",
+   "side": "worker",
+   "plugin": "terminals",
+   "risk": "read",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "stream.list"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 416,
+   "cap": "work.sessions",
+   "side": "worker",
+   "plugin": "terminals",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.list",
+   "reason": "One index.",
+   "call": null
+  },
+  {
+   "idx": 417,
+   "cap": "work.export",
+   "side": "worker",
+   "plugin": "terminals",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.read {format: transcript}",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 418,
+   "cap": "agent.wake",
+   "side": "worker",
+   "plugin": "wake",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.attach {producer: agent}",
+   "reason": "Wake = attaching an agent producer (castling-streams).",
+   "call": null
+  },
+  {
+   "idx": 419,
+   "cap": "agent.wake_info",
+   "side": "worker",
+   "plugin": "wake",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "harness.status",
+   "reason": "Harness status.",
+   "call": null
+  },
+  {
+   "idx": 420,
+   "cap": "tv.status",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:tv",
+   "form": "python",
+   "new_names": [
+    "tv.status"
+   ],
+   "replaced_by": null,
+   "reason": "Fit review: webOS stays Python (SSAP pairing).",
+   "call": null
+  },
+  {
+   "idx": 421,
+   "cap": "tv.apps",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:tv",
+   "form": "python",
+   "new_names": [
+    "app.list"
+   ],
+   "replaced_by": null,
+   "reason": "app contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 422,
+   "cap": "tv.inputs",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "read",
+   "decision": "keep",
+   "home": "plugin:tv",
+   "form": "python",
+   "new_names": [
+    "tv.inputs"
+   ],
+   "replaced_by": null,
+   "reason": "TV-specific.",
+   "call": null
+  },
+  {
+   "idx": 423,
+   "cap": "tv.toast",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:tv",
+   "form": "python",
+   "new_names": [
+    "notification.post"
+   ],
+   "replaced_by": null,
+   "reason": "notification contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 424,
+   "cap": "tv.launch",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:tv",
+   "form": "python",
+   "new_names": [
+    "app.launch"
+   ],
+   "replaced_by": null,
+   "reason": "app contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 425,
+   "cap": "tv.input",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:tv",
+   "form": "python",
+   "new_names": [
+    "tv.set_input"
+   ],
+   "replaced_by": null,
+   "reason": "Verb makes it a write, distinct from tv.inputs.",
+   "call": null
+  },
+  {
+   "idx": 426,
+   "cap": "tv.volume",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "plugin:tv",
+   "form": "python",
+   "new_names": [
+    "sound.set"
+   ],
+   "replaced_by": null,
+   "reason": "sound contract (level or step).",
+   "call": "C1"
+  },
+  {
+   "idx": 427,
+   "cap": "tv.mute",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "sound.set {mute}",
+   "reason": "Same operation.",
+   "call": "C1"
+  },
+  {
+   "idx": 428,
+   "cap": "tv.media",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "plugin:tv",
+   "form": "python",
+   "new_names": [
+    "media.play",
+    "media.pause",
+    "media.stop",
+    "media.seek"
+   ],
+   "replaced_by": null,
+   "reason": "media contract; real caps.",
+   "call": "C1"
+  },
+  {
+   "idx": 429,
+   "cap": "tv.button",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "plugin:tv",
+   "form": "python",
+   "new_names": [
+    "hid.key"
+   ],
+   "replaced_by": null,
+   "reason": "Remote buttons are keys.",
+   "call": "C1"
+  },
+  {
+   "idx": 430,
+   "cap": "tv.type",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:tv",
+   "form": "python",
+   "new_names": [
+    "hid.type"
+   ],
+   "replaced_by": null,
+   "reason": "hid contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 431,
+   "cap": "tv.open_url",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:tv",
+   "form": "python",
+   "new_names": [
+    "app.open_url"
+   ],
+   "replaced_by": null,
+   "reason": "app contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 432,
+   "cap": "tv.screen",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "plugin:tv",
+   "form": "python",
+   "new_names": [
+    "screen.on",
+    "screen.off"
+   ],
+   "replaced_by": null,
+   "reason": "screen contract; on/off are distinct verbs.",
+   "call": "C1"
+  },
+  {
+   "idx": 433,
+   "cap": "tv.power_off",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:tv",
+   "form": "python",
+   "new_names": [
+    "power.off"
+   ],
+   "replaced_by": null,
+   "reason": "power contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 434,
+   "cap": "tv.power_on",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "write",
+   "decision": "keep",
+   "home": "plugin:tv",
+   "form": "python",
+   "new_names": [
+    "power.on"
+   ],
+   "replaced_by": null,
+   "reason": "power contract.",
+   "call": "C1"
+  },
+  {
+   "idx": 435,
+   "cap": "tv.sleep",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "write",
+   "decision": "reshape",
+   "home": "plugin:tv",
+   "form": "python",
+   "new_names": [
+    "power.off"
+   ],
+   "replaced_by": null,
+   "reason": "A sleep timer is a delayed off: power.off {in_minutes}.",
+   "call": "C1"
+  },
+  {
+   "idx": 436,
+   "cap": "tv.pair",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "admin",
+   "decision": "keep",
+   "home": "plugin:tv",
+   "form": "python",
+   "new_names": [
+    "tv.pair"
+   ],
+   "replaced_by": null,
+   "reason": "webOS-specific.",
+   "call": null
+  },
+  {
+   "idx": 437,
+   "cap": "webos.list",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "appliance.list",
+   "reason": "TVs are appliances.",
+   "call": null
+  },
+  {
+   "idx": 438,
+   "cap": "webos.discover",
+   "side": "worker",
+   "plugin": "webos",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "appliance.discover",
+   "reason": "SSDP discovery in one place.",
+   "call": null
+  },
+  {
+   "idx": 439,
+   "cap": "work.create",
+   "side": "worker",
+   "plugin": "work",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.open {producer: codex}",
+   "reason": "Host-owned Codex sessions are streams.",
+   "call": null
+  },
+  {
+   "idx": 440,
+   "cap": "work.command",
+   "side": "worker",
+   "plugin": "work",
+   "risk": "exec",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.write",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 441,
+   "cap": "work.status",
+   "side": "worker",
+   "plugin": "work",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "stream.list",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 442,
+   "cap": "work.view_page",
+   "side": "worker",
+   "plugin": "work",
+   "risk": "read",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(dashboard reads streams)",
+   "reason": "Web plumbing.",
+   "call": null
+  },
+  {
+   "idx": 443,
+   "cap": "work.adopt_page",
+   "side": "worker",
+   "plugin": "work",
+   "risk": "write",
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(none)",
+   "reason": "Legacy migration; 0.5 is a clean cut.",
+   "call": null
+  },
+  {
+   "idx": 444,
+   "cap": "caps.describe",
+   "side": "core",
+   "plugin": "node",
+   "risk": "read",
+   "decision": "keep",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "caps.describe"
+   ],
+   "replaced_by": null,
+   "reason": "Passive discovery answered from the manifest.",
+   "call": null
+  },
+  {
+   "idx": 445,
+   "cap": "hub.plugin.enable",
+   "side": "hub",
+   "plugin": "node",
+   "risk": "admin",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "plugin.enable"
+   ],
+   "replaced_by": null,
+   "reason": "One plugin namespace for hub and worker plugins (target = hub or worker).",
+   "call": null
+  },
+  {
+   "idx": 446,
+   "cap": "hub.plugin.disable",
+   "side": "hub",
+   "plugin": "node",
+   "risk": "admin",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "plugin.disable"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 447,
+   "cap": "hub.plugin.reload",
+   "side": "hub",
+   "plugin": "node",
+   "risk": "admin",
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "plugin.reload"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 448,
+   "cap": "worker.plugin.list",
+   "side": "worker",
+   "plugin": "admin",
+   "risk": null,
+   "decision": "reshape",
+   "home": "core",
+   "form": "core",
+   "new_names": [
+    "plugin.list"
+   ],
+   "replaced_by": null,
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 449,
+   "cap": "worker.plugin.enable",
+   "side": "worker",
+   "plugin": "admin",
+   "risk": null,
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "plugin.enable",
+   "reason": "Merged.",
+   "call": null
+  },
+  {
+   "idx": 450,
+   "cap": "worker.plugin.disable",
+   "side": "worker",
+   "plugin": "admin",
+   "risk": null,
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "plugin.disable",
+   "reason": "Merged.",
+   "call": null
+  },
+  {
+   "idx": 451,
+   "cap": "worker.plugin.reload",
+   "side": "worker",
+   "plugin": "admin",
+   "risk": null,
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "plugin.reload",
+   "reason": "Merged.",
+   "call": null
+  },
+  {
+   "idx": 452,
+   "cap": "customcap.list",
+   "side": "worker",
+   "plugin": "admin",
+   "risk": null,
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "plugin.list",
+   "reason": "Custom caps become YAML plugins.",
+   "call": null
+  },
+  {
+   "idx": 453,
+   "cap": "customcap.add",
+   "side": "worker",
+   "plugin": "admin",
+   "risk": null,
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "plugin.install (YAML)",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 454,
+   "cap": "customcap.remove",
+   "side": "worker",
+   "plugin": "admin",
+   "risk": null,
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "plugin.remove",
+   "reason": "As above.",
+   "call": null
+  },
+  {
+   "idx": 455,
+   "cap": "worker.settings_report",
+   "side": "worker",
+   "plugin": "core",
+   "risk": null,
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "(announce)",
+   "reason": "Plumbing.",
+   "call": null
+  },
+  {
+   "idx": 456,
+   "cap": "info.ping",
+   "side": "worker",
+   "plugin": "devices",
+   "risk": null,
+   "decision": "bin",
+   "home": null,
+   "form": null,
+   "new_names": [],
+   "replaced_by": "worker.ping",
+   "reason": "Duplicate of info.ping.",
+   "call": null
+  }
+ ]
+}
