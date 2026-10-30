@@ -23,8 +23,9 @@ Alarm fatigue is the enemy: every alert path is rare and deduplicated.
 The triage agent (agents package, persona ``security``) is woken for every
 hold this gate makes. It may release one held call with ``security.release``
 when the evidence checks out here, in code: the hold waits only on this
-gate, its session isn't quarantined, the flag wasn't persistence, and the
-call matches the pinned task or a pattern seen clean before. It never
+gate, its session isn't quarantined, the flag wasn't persistence or
+sending data out, and the call matches the pinned task or the same call ran
+from a clean session before. It never
 releases a hard stop, a canary hit or anything outside a ceiling (the hub
 checks rights again on release).
 
@@ -36,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import copy
+import hashlib
 import json
 import logging
 import os
@@ -67,6 +69,10 @@ PERSIST = re.compile(r"authorized_keys|crontab(?!\s+-l\b)|/etc/cron|systemctl\s+
                      r"|useradd|adduser|usermod|net\s+user\s+\S+\s+/add|schtasks|\\run\b|currentversion\\run"
                      r"|launchctl\s+load|launchagents|/etc/rc\.local|\.bashrc|\.profile\b|\.zshrc"
                      r"|/etc/sudoers|systemd/system", re.I)
+# Sending data out or running fetched code: never excused by the pinned task.
+EGRESS = re.compile(r"/dev/tcp|\bnc\b|\bncat\b|\bsocat\b|\bscp\b|\bsftp\b|\|\s*(ba|z)?sh\b|\|\s*ssh\b"
+                    r"|curl\b[^|;&]*\s(-d|--data\S*|-F|--form|-T|--upload-file)\b|wget\b[^|;&]*--post"
+                    r"|base64\s+(-d|--decode)|invoke-webrequest|downloadstring", re.I)
 WORD = re.compile(r"[a-z0-9]+")
 STOP = set("""the and for with from that this into onto then than what when where which while your
 you our are was were has have had not but can will just get got let use using make made run runs
@@ -199,6 +205,8 @@ def _taint(inp: dict, session: dict) -> dict:
     if session.get("tainted"):
         if persist:
             return _flag(inp, 0.9, "persistence")
+        if risky and EGRESS.search(command):
+            return _flag(inp, 0.9, "exfiltration")
         if risky and not near:
             return _flag(inp, 0.8, "intent_mismatch" if near is False else "taint")
         return _verdict("allow", 0.6, "taint") if risky else _verdict("allow", 0.9, "other")
@@ -222,21 +230,13 @@ def _key(sid, cap, why) -> str:
     return f"{sid}|{cap}|{why}"
 
 
-def _head(args) -> str:
-    """The program a shell-ish call runs: argv[0] or the first word of cmd."""
-    if isinstance(args, dict):
-        argv, cmd = args.get("argv"), args.get("cmd")
-        if isinstance(argv, list) and argv and isinstance(argv[0], str):
-            return os.path.basename(argv[0])
-        if isinstance(cmd, str) and cmd.split():
-            return os.path.basename(cmd.split()[0])
-    return ""
-
-
 def _pattern(inp: dict) -> str:
+    """Who ran what where, with exactly these args: a clean run of
+    ``git pull`` vouches for ``git pull``, not ``git pull && curl ...``."""
     c = inp.get("caller") or {}
+    args = json.dumps(inp.get("args"), sort_keys=True, default=str)
     return " ".join([c.get("agent") or c.get("person") or "", inp.get("cap") or "", inp.get("worker") or "",
-                     _head(inp.get("args"))])
+                     hashlib.sha256(args.encode()).hexdigest()[:32]])
 
 
 def _remember_clean(inp: dict) -> None:
@@ -402,7 +402,7 @@ async def on_hold(ctx, event, payload):
     only_us = list(payload.get("reasons") or ()) == [f"gate {PLUGIN}"]
     await _tell(ctx, ctx.settings["triage_agent"],
                 f"Hold {payload['hold']}: the security gate flagged a call ({flag['reason']}). "
-                f"{'You may release it with security.release if the evidence checks out.' if only_us and flag['reason'] != 'persistence' else 'Only the person can release this one.'} "
+                f"{'You may release it with security.release if the evidence checks out.' if only_us and flag['reason'] in ('taint', 'intent_mismatch') else 'Only the person can release this one.'} "
                 f"Follow the security-triage skill.\n" + _text({k: flag[k] for k in ("cap", "worker", "why", "args", "caller", "session")}, 4000))
 
 
@@ -421,8 +421,8 @@ async def release(ctx, hold: str, evidence: str, note: str):
     if list(payload.get("reasons") or ()) != [f"gate {PLUGIN}"]:
         raise KitError(f"{hold} also waits on {', '.join(r for r in payload['reasons'] if r != f'gate {PLUGIN}')}: "
                        "only the person releases it")
-    if flag["reason"] == "persistence":
-        raise KitError("persistence from a tainted session is the person's call")
+    if flag["reason"] in ("persistence", "exfiltration"):
+        raise KitError(f"{flag['reason']} from a tainted session is the person's call")
     caller = flag.get("caller") or {}
     sid = (flag.get("session") or {}).get("id")
     if f"session:{sid}" in S.quarantine or caller.get("agent") in S.quarantine:
@@ -433,7 +433,7 @@ async def release(ctx, hold: str, evidence: str, note: str):
             raise KitError("the call doesn't share a word with its session's pinned task")
     elif evidence == "seen_clean":
         if _pattern(flag) not in S.seen:
-            raise KitError("this caller hasn't run this command there from a clean session")
+            raise KitError("this caller hasn't made this exact call there from a clean session")
     now = time.time()
     if len(S.released) == S.released.maxlen and now - S.released[0] < 3600:
         raise KitError(f"already released {RELEASES_PER_HOUR} calls this hour: the rest wait for the person")

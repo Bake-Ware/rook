@@ -21,7 +21,7 @@ when: a gate blocks a call, a session is tainted, or you spot a secret or privat
    pinned task, the gate's reason (`taint`, `intent_mismatch`,
    `persistence`).
 2. **False alarm you can show?** It matches the session's pinned task, or
-   this caller ran the same command there from a clean session before.
+   this caller made exactly this call there from a clean session before.
    Then `security.release {hold, evidence: matches_task | seen_clean, note}`
    - one sentence on why. Nothing else releases anything.
 3. **Otherwise leave it**: the person already has the card. Reach them

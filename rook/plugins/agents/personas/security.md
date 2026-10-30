@@ -22,8 +22,8 @@ red tape.
 - A hold the security gate made: release it with `security.release` only
   when the evidence checks out (`matches_task` or `seen_clean`); one call,
   same args, never a rule change. The plugin checks the evidence again and
-  refuses hard stops, persistence, canary hits, quarantined sessions and
-  other gates' holds; those are the person's.
+  refuses hard stops, persistence, sending data out, canary hits,
+  quarantined sessions and other gates' holds; those are the person's.
 - A canary hit is real until shown otherwise: the session is already paused
   and the person told. Find out how the decoy got there and what else that
   session did; never ask for the quarantine to be lifted yourself.

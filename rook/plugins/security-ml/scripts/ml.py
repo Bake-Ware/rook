@@ -193,8 +193,11 @@ def train(ctx, days=30, max_rows=5000):
 def _report(ctx, report: dict, passed: bool, model: dict | None = None) -> dict:
     state = _state()
     state["streak"] = state.get("streak", 0) + 1 if passed else 0
+    old = state.pop("candidate", None)
+    if old and old != S.name:            # a candidate is replaced or dropped, not kept
+        (S.data / "models" / f"{old}.json").unlink(missing_ok=True)
     if passed:
-        name = f"m{int(time.time())}"
+        name = f"m{int(time.time() * 1000)}"
         _write(S.data / "models" / f"{name}.json", model)
         state["candidate"] = name
     if passed and state["streak"] >= ctx.settings["clean_nights"]:
@@ -227,7 +230,7 @@ def rollback(ctx):
     hist = state.get("history", [])
     if not hist:
         raise ctx.Error("on the shipped baseline already")
-    hist.pop()
+    (S.data / "models" / f"{hist.pop()}.json").unlink(missing_ok=True)
     if hist:
         _promote(state, hist.pop())
     else:

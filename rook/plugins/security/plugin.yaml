@@ -79,8 +79,9 @@ caps:
   release:
     doc: >-
       The triage agent releases one call this gate held, on evidence checked here: matches_task (it
-      shares words with its session's pinned task) or seen_clean (this caller ran this command there
-      from a clean session before). Never hard stops, canary hits, persistence or other gates' holds.
+      shares words with its session's pinned task) or seen_clean (this caller made this exact call
+      there from a clean session before). Never hard stops, canary hits, persistence, sending data
+      out or other gates' holds.
     risk: write
     scope: multi-user
     run: scripts/security.py:release

@@ -39,8 +39,9 @@ caps with the `taints` effect). From then on:
 - a risky call (exec or admin, or persistence, sensitive or destructive
   effects) waits for you unless it shares words with the session's pinned
   task;
-- persistence (SSH keys, cron, services, new users, autostart entries)
-  always waits.
+- persistence (SSH keys, cron, services, new users, autostart entries) and
+  sending data out or running fetched code (`nc`, `scp`, `curl -d @file`,
+  `| sh`, `base64 -d`) always wait.
 
 From a clean session only a high-impact call (admin, or persistence) that
 has nothing to do with the pinned task waits. Everything else goes through,
@@ -50,10 +51,10 @@ and the gate's reading is journaled with the call.
 
 The `security` agent (agents package) is told about every call this gate
 holds. When it can show a false alarm (the call matches the pinned task, or
-the same caller ran the same command there from a clean session before) it
-releases that one call with `security.release`; the plugin checks the
-evidence itself and refuses hard stops, persistence, canary hits, paused
-sessions and calls other gates also held. At most 5 releases an hour. The
+the same caller made exactly that call there from a clean session before)
+it releases that one call with `security.release`; the plugin checks the
+evidence itself and refuses hard stops, persistence, sending data out,
+canary hits, paused sessions and calls other gates also held. At most 5 releases an hour. The
 rest wait for you on Approvals.
 
 `security.status` shows canaries, paused sessions, holds and recent alerts.
