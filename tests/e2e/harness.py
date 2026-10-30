@@ -189,8 +189,9 @@ class Band:
             "log": {"level": "info", "format": "json"},
         }, indent=1))
         self.worker_dir.mkdir()
-        (self.root / "anchor.json").write_text(json.dumps(
-            {"hub": self.hub_id, "root": wire.pub_text(self.root_key), "band": self.band}))
+        anchor = self.hub_cli("anchor")       # what enrollment will write onto the worker
+        assert json.loads(anchor) == {"hub": self.hub_id, "root": wire.pub_text(self.root_key), "band": self.band}
+        (self.root / "anchor.json").write_text(anchor)
         (self.worker_dir / "worker.yaml").write_text(json.dumps({
             "data": "./data",
             "anchor": "../anchor.json",
@@ -199,13 +200,12 @@ class Band:
             "bands": band,
             "log": {"level": "info", "format": "json"},
         }, indent=1))
-        self.owner_token = self.mint("--person", "bake")
-        self.kid_token = self.mint("--person", "kid")
+        self.owner_token = self.hub_cli("token", "--person", "bake")
+        self.kid_token = self.hub_cli("token", "--person", "kid")
 
-    def mint(self, *who: str) -> str:
+    def hub_cli(self, *args: str) -> str:
         r = subprocess.run([sys.executable, "-m", "rook.core2.hub", "--config", str(self.hub_dir / "hub.yaml"),
-                            "token", *who], cwd=self.hub_dir, env=self.env, capture_output=True, text=True,
-                           timeout=60)
+                            *args], cwd=self.hub_dir, env=self.env, capture_output=True, text=True, timeout=60)
         assert r.returncode == 0, r.stderr
         return r.stdout.strip()
 

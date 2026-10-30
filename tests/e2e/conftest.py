@@ -8,7 +8,10 @@ import signal
 
 import pytest
 
-from harness import E2E_TIMEOUT, Band
+if not hasattr(signal, "SIGALRM"):        # Windows: no SIGALRM or process groups
+    collect_ignore_glob = ["test_*.py"]
+else:
+    from harness import E2E_TIMEOUT, Band
 
 
 @pytest.fixture(autouse=True)
