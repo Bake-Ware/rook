@@ -1,7 +1,5 @@
 """rook.kit.ctx: the call context and the Python contract."""
 
-import asyncio
-
 import pytest
 
 from rook.kit.ctx import Caller, Ctx, FileResult, KitError, allowed, invoke, load_run
@@ -156,6 +154,9 @@ def test_load_run(tmp_path):
     assert load_run(tmp_path, "scripts/x.py:f")(None, 3) == 6
     (tmp_path / "scripts" / "x.py").write_text("def f(ctx, a):\n    return a * 3\n")
     assert load_run(tmp_path, "scripts/x.py:f")(None, 3) == 9   # reload sees new code
+    mods = {}
+    f = load_run(tmp_path, "scripts/x.py:f", mods)
+    assert load_run(tmp_path, "scripts/x.py:f", mods) is f       # one load shares the module
     for bad in ("scripts/x.py", "scripts/x.py:g", "../x.py:f", "scripts/none.py:f"):
         with pytest.raises(KitError):
             load_run(tmp_path, bad)

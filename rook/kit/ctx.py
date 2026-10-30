@@ -175,7 +175,7 @@ class Ctx:
             res = self._dispatch(cap, dict(args), caller)
             if inspect.isawaitable(res):
                 if self._loop is None:
-                    raise KitError("ctx.call from a thread needs the host loop")
+                    raise KitError("ctx.call from a thread needs the host loop") from None
                 return asyncio.run_coroutine_threadsafe(_await(res), self._loop).result()
             return res
         return _await(self._dispatch(cap, dict(args), caller))
@@ -257,8 +257,12 @@ async def invoke(func: Callable[..., Any], ctx: Ctx, args: Mapping | None = None
         ctx.cleanup()
 
 
-def load_run(plugin_dir: str | Path, ref: str) -> Callable[..., Any]:
-    """Resolve a ``run:`` target (``scripts/x.py:func``) under the plugin folder."""
+def load_run(plugin_dir: str | Path, ref: str, modules: dict | None = None) -> Callable[..., Any]:
+    """Resolve a ``run:`` target (``scripts/x.py:func``) under the plugin folder.
+
+    ``modules`` is the cache for one load of the plugin: pass the same dict
+    for all of its caps and hooks so they share module state (a socket opened
+    by ``start``); a fresh dict on reload runs the new code from scratch."""
     path_s, _, name = ref.partition(":")
     if not name:
         raise KitError(f"run target {ref!r} needs file.py:function")
@@ -266,14 +270,16 @@ def load_run(plugin_dir: str | Path, ref: str) -> Callable[..., Any]:
     path = (base / path_s).resolve()
     if base not in path.parents or path.suffix != ".py" or not path.is_file():
         raise KitError(f"run target {ref!r}: no such script in the plugin")
-    # Fresh on every load: a plugin update or reload must not see the old code.
-    mod_name = f"rook_plugin_{base.name}_{path.stem}".replace("-", "_")
-    # Compiled from source, not a .pyc: a cache keyed on mtime can miss a
-    # same-second rewrite.
-    mod = types.ModuleType(mod_name)
-    mod.__file__ = str(path)
-    sys.modules[mod_name] = mod
-    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), mod.__dict__)
+    mod = None if modules is None else modules.get(path)
+    if mod is None:
+        # Compiled from source, not a .pyc: a cache keyed on mtime can miss a
+        # same-second rewrite.
+        mod = types.ModuleType(f"rook_plugin_{base.name}_{path.stem}".replace("-", "_"))
+        mod.__file__ = str(path)
+        sys.modules[mod.__name__] = mod
+        exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), mod.__dict__)
+        if modules is not None:
+            modules[path] = mod
     func = getattr(mod, name, None)
     if not callable(func):
         raise KitError(f"run target {ref!r}: no function {name}")
