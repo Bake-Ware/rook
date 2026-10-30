@@ -153,6 +153,28 @@ def _key(path: Path, max_age: float | None = None, now: float | None = None) -> 
     return sk
 
 
+def home_band(cfg: Config) -> str:
+    """The hub's band: ``band``, else the first transport band's PSK's."""
+    if cfg.band:
+        return cfg.band
+    from rook.core2.transport import band_of
+    bands = (cfg.transport or {}).get("bands") or []
+    psk = bands[0].get("psk") or os.environ.get(bands[0].get("psk_env", ""), "") if bands else ""
+    if not psk:
+        raise ValueError("transport: the first band needs psk or psk_env")
+    return band_of(psk)
+
+
+def anchor(cfg: Config) -> dict:
+    """What a worker of this hub keeps as its anchor (``{hub, root, band}``).
+    The root key is made here on a first run, as at start.
+    TODO(castling:enrollment): enrollment writes this onto the worker."""
+    keys = Path(cfg.data) / "keys"
+    keys.mkdir(parents=True, exist_ok=True, mode=0o700)
+    root = _key(keys / "root.key")
+    return {"hub": wire.key_id(bytes(root.verify_key)), "root": wire.pub_text(root), "band": home_band(cfg)}
+
+
 # -- transport ------------------------------------------------------------------
 
 OnMessage = Callable[[str, dict], Awaitable[None]]
@@ -327,7 +349,7 @@ class Hub:
         self.op = _key(self.data / "keys" / "op.key", OP_KEY_DAYS * DAY, self.clock())
         self.node = self._node_id()
         self.transport = self._transport or make_transport(cfg, self.node)
-        self.band = cfg.band or self._band_from_transport()
+        self.band = home_band(cfg)
         self.grant = self._grant()
 
         self.journal = JournalStore(str(self.data / "journal.db"), clock=self.clock)
@@ -437,14 +459,6 @@ class Hub:
             state["node"] = _secrets.token_hex(16)
             _write_private(path, json.dumps(state))
         return state["node"]
-
-    def _band_from_transport(self) -> str:
-        from rook.core2.transport import band_of   # TODO(castling:transport)
-        bands = (self.cfg.transport or {}).get("bands") or []
-        psk = bands[0].get("psk") or os.environ.get(bands[0].get("psk_env", ""), "") if bands else ""
-        if not psk:
-            raise ValueError("transport: the first band needs psk or psk_env")
-        return band_of(psk)
 
     def _grant(self) -> dict:
         now = int(self.clock())

@@ -1,7 +1,8 @@
-"""Run a 0.5 hub, or mint a door token.
+"""Run a 0.5 hub, mint a door token, or print the anchor its workers keep.
 
     python -m rook.core2.hub --config hub.yaml
     python -m rook.core2.hub --config hub.yaml token --person bake [--agent claude-code] [--label laptop]
+    python -m rook.core2.hub --config hub.yaml anchor > anchor.json   # a worker's {hub, root, band}
 
 A config (paths are relative to the file)::
 
@@ -24,11 +25,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import signal
 import sys
 
 from .identity import Caller
-from .runtime import Hub, add_token, load_config, setup_logging
+from .runtime import Hub, add_token, anchor, load_config, setup_logging
 
 
 async def serve(cfg) -> None:
@@ -55,12 +57,20 @@ def main(argv=None) -> int:
     tok.add_argument("--person", help="the person it calls for (a user in the config)")
     tok.add_argument("--agent", help="the agent that calls (an agent in the config)")
     tok.add_argument("--label", default="")
+    sub.add_parser("anchor", help="print the anchor a worker of this hub keeps ({hub, root, band})")
     args = ap.parse_args(argv)
     try:
         cfg = load_config(args.config)
     except (OSError, ValueError) as e:
         print(f"config: {e}", file=sys.stderr)
         return 2
+    if args.cmd == "anchor":
+        try:
+            print(json.dumps(anchor(cfg)))
+        except ValueError as e:
+            print(f"anchor: {e}", file=sys.stderr)
+            return 2
+        return 0
     if args.cmd == "token":
         if args.person and args.person not in cfg.users:
             print(f"token: no user {args.person!r} in the config", file=sys.stderr)
