@@ -330,7 +330,7 @@ class Worker:
             return
         level = logging.INFO if out["ok"] else logging.WARNING
         log.log(level, "call", extra=_f(cap=msg.get("cap"), band=band[:8], ok=out["ok"],
-                                        **({"error": out["error"]} if not out["ok"] else {}),
+                                        **({"error": _loggable(out["error"])} if not out["ok"] else {}),
                                         **({"elevated": out["elevated"]} if out.get("elevated") else {})))
         try:
             await self.transport.send(band, out)
@@ -565,6 +565,17 @@ class Worker:
         log.info("plugin rolled back", extra=_f(plugin=plugin, version=report["version"]))
         self._spawn(self.reannounce())
         return report
+
+
+# Errors whose text the worker writes itself. Anything else (bad args, a
+# plugin's message) can quote argument values, and the hub substitutes
+# secrets into args: only its first part goes to the local log.
+_OWN_ERRORS = ("denied by worker: ", "unknown capability: ", "elevation: ", "unavailable: ", "busy: ")
+
+
+def _loggable(error: Any) -> str:
+    error = str(error)
+    return error if error.startswith(_OWN_ERRORS) else error.partition(": ")[0]
 
 
 def _version() -> str:

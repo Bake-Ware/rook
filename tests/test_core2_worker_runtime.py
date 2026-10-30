@@ -26,7 +26,7 @@ from nacl.signing import SigningKey  # noqa: E402
 from rook.core2 import CORE_VERSION, wire  # noqa: E402
 from rook.core2.hub import distribute as d  # noqa: E402
 from rook.core2.transport import FEATURES, LoopbackRelay, Transport, band_of  # noqa: E402
-from rook.core2.worker.runtime import Config, Worker, load_config  # noqa: E402
+from rook.core2.worker.runtime import Config, Formatter, Worker, load_config  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 PSK, PSK2 = "worker-runtime-band-one", "worker-runtime-band-two"
@@ -226,8 +226,9 @@ async def up(relay, worker, psk=PSK, root=ROOT, op=OP):
 
 # -- calls --------------------------------------------------------------------
 
-def test_worker_serves_verified_calls_and_refuses_bad_tickets(setup):
+def test_worker_serves_verified_calls_and_refuses_bad_tickets(setup, caplog):
     relay, cfg, make = setup
+    caplog.set_level("INFO", logger="rook.worker")
 
     async def body():
         w = make()
@@ -259,6 +260,11 @@ def test_worker_serves_verified_calls_and_refuses_bad_tickets(setup):
         assert (await hub.send(stranger.request("echo.say", {})))["error"] == "denied by worker: unknown_hub"
         assert (await hub.call("echo.nope"))["error"] == "unknown capability: echo.nope"
         assert (await hub.call("echo.say", {"text": 5}))["error"].startswith("bad args: ")
+        secret = {"text": ["hunter2-sk-live-0123"]}          # the hub substituted a secret into args
+        assert "hunter2" in (await hub.call("echo.say", secret))["error"]
+        logged = "\n".join(Formatter("json").format(r) for r in caplog.records)
+        assert "hunter2" not in logged and '"error": "bad args"' in logged
+        assert '"error": "denied by worker: replay"' in logged
         with pytest.raises(asyncio.TimeoutError):          # not for this worker: silence
             await hub.call("echo.say", {}, target="ab" * 16, timeout=0.3)
 
