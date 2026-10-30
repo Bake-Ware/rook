@@ -1,0 +1,178 @@
+# Torrents through Deluge's own console client. Config only: no scripts.
+#
+# deluge-console takes the whole command as ONE argument and parses it again
+# (it splits on ';' first, quotes don't protect one, then shlex-splits each
+# piece), so argv-slot escaping doesn't protect it. The arg patterns are the
+# injection guard: no ';', quotes, backslashes, control characters or a
+# leading '-' (which would read as an option, rm --remove_data). It also
+# exits 0 when it can't reach the daemon: fail_if turns that into an error.
+manifest: 1
+plugin: torrent
+version: 0.5.0
+title: Torrents (Deluge)
+doc: Manage a Deluge torrent client through deluge-console.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [linux, windows, macos]
+requires: { bins: [deluge-console] }
+settings:
+  console:
+    type: str
+    where: worker
+    default: deluge-console
+    doc: The deluge-console program (a name on PATH or a full path).
+caps:
+  version:
+    doc: The deluge-console and libtorrent versions. Needs no daemon, so it is the post-install check.
+    risk: read
+    scope: local
+    idempotent: true
+    result: { type: map, fields: { deluge: { type: str }, libtorrent: { type: str } } }
+    action:
+      exec: { argv: ["{{settings.console}}", --version], env: { LANG: C } }
+      parse: { regex: '^deluge-console (?P<deluge>\S+)(?:[\s\S]*?^libtorrent: (?P<libtorrent>\S+))?' }
+  status:
+    doc: The daemon's session summary (transfer rates, DHT nodes, torrents per state). Fails when the daemon isn't reachable.
+    risk: read
+    scope: local
+    idempotent: true
+    aliases: [deluge.status]
+    result:
+      type: map
+      fields:
+        upload: { type: str, doc: Total upload rate. }
+        download: { type: str, doc: Total download rate. }
+        dht_nodes: { type: int }
+        torrents: { type: int }
+        downloading: { type: int }
+        seeding: { type: int }
+        paused: { type: int }
+        queued: { type: int }
+        checking: { type: int }
+        error: { type: int }
+    action:
+      exec: { argv: ["{{settings.console}}", status], env: { LANG: C } }
+      fail_if: { regex: '(?i)^\s*(failed to connect|could not connect|connection refused|not connected|password does not match)' }
+      # Deluge prints these lines in this order (console/cmdline/commands/status.py);
+      # the per-state counts are missing when it can't list the torrents.
+      parse:
+        regex: '^Total upload: (?P<upload>.+?)\r?\nTotal download: (?P<download>.+?)\r?\nDHT Nodes: (?P<dht_nodes>\d+)(?:\r?\nTotal torrents: (?P<torrents>\d+)(?:\r?\n Allocating: \d+\r?\n Checking: (?P<checking>\d+)\r?\n Downloading: (?P<downloading>\d+)\r?\n Seeding: (?P<seeding>\d+)\r?\n Paused: (?P<paused>\d+)\r?\n Error: (?P<error>\d+)\r?\n Queued: (?P<queued>\d+))?)?'
+  list:
+    doc: "Current torrents: state letter (S seeding, D downloading, P paused, Q queued, C checking, E error, M moving, U allocating), progress, name, id."
+    risk: read
+    scope: local
+    idempotent: true
+    aliases: [deluge.list]
+    result:
+      type: list
+      items:
+        type: map
+        fields:
+          state: { type: str }
+          progress: { type: float }
+          name: { type: str }
+          id: { type: str }
+    action:
+      exec: { argv: ["{{settings.console}}", info], env: { LANG: C } }
+      fail_if: { regex: '(?i)^\s*(failed to connect|could not connect|connection refused|not connected|password does not match)' }
+      parse: { regex: '^\[(?P<state>.)\]\s+(?P<progress>[\d.]+)%\s+(?P<name>.*?)\s+(?P<id>[0-9a-fA-F]{40})\s*$', each: true }
+  get:
+    doc: One torrent in detail (save path and files); read the files with file.read.
+    risk: read
+    scope: local
+    idempotent: true
+    aliases: [deluge.files]
+    args:
+      torrent_id:
+        type: str
+        required: true
+        pattern: '^([0-9a-fA-F]{1,40}( [0-9a-fA-F]{1,40})*|[^\s;''"\\\x00-\x1f\x7f*-][^\s;''"\\\x00-\x1f\x7f]*)$'
+        doc: Hash (or prefix), several hashes separated by spaces, or a name without spaces.
+    action:
+      exec: { argv: ["{{settings.console}}", "info -v {{args.torrent_id}}"], env: { LANG: C } }
+      fail_if: { regex: '(?i)^\s*(failed to connect|could not connect|connection refused|not connected|password does not match)' }
+      parse: text
+  add:
+    doc: Add a torrent by magnet link, .torrent URL or local path.
+    risk: write
+    scope: local
+    timeout: 45s
+    aliases: [deluge.add]
+    undo: torrent.remove
+    args:
+      torrent:
+        type: str
+        required: true
+        pattern: '^[^\s;''"\\\x00-\x1f\x7f-][^\s;''"\\\x00-\x1f\x7f]*$'
+        doc: Magnet link, .torrent URL or local path (no spaces, quotes or backslashes).
+    action:
+      exec: { argv: ["{{settings.console}}", "add {{args.torrent}}"], env: { LANG: C } }
+      fail_if: { regex: '(?i)^\s*(failed to connect|could not connect|connection refused|not connected|password does not match)' }
+      parse: text
+  pause:
+    doc: Pause a torrent by id or name, or every torrent with `*`.
+    risk: write
+    scope: local
+    idempotent: true
+    aliases: [deluge.pause]
+    undo: torrent.resume
+    args:
+      torrent_id:
+        type: str
+        default: "*"
+        pattern: '^(\*|[0-9a-fA-F]{1,40}( [0-9a-fA-F]{1,40})*|[^\s;''"\\\x00-\x1f\x7f*-][^\s;''"\\\x00-\x1f\x7f]*)$'
+        doc: Hash (or prefix), several hashes separated by spaces, a name without spaces, or `*` for all.
+    action:
+      exec: { argv: ["{{settings.console}}", "pause {{args.torrent_id}}"], env: { LANG: C } }
+      fail_if: { regex: '(?i)^\s*(failed to connect|could not connect|connection refused|not connected|password does not match)' }
+      parse: text
+  resume:
+    doc: Resume a torrent by id or name, or every torrent with `*`.
+    risk: write
+    scope: local
+    idempotent: true
+    aliases: [deluge.resume]
+    undo: torrent.pause
+    args:
+      torrent_id:
+        type: str
+        default: "*"
+        pattern: '^(\*|[0-9a-fA-F]{1,40}( [0-9a-fA-F]{1,40})*|[^\s;''"\\\x00-\x1f\x7f*-][^\s;''"\\\x00-\x1f\x7f]*)$'
+        doc: Hash (or prefix), several hashes separated by spaces, a name without spaces, or `*` for all.
+    action:
+      exec: { argv: ["{{settings.console}}", "resume {{args.torrent_id}}"], env: { LANG: C } }
+      fail_if: { regex: '(?i)^\s*(failed to connect|could not connect|connection refused|not connected|password does not match)' }
+      parse: text
+  remove:
+    doc: Remove a torrent from Deluge and keep its downloaded files.
+    risk: write
+    scope: local
+    aliases: [deluge.remove]
+    args:
+      torrent_id:
+        type: str
+        required: true
+        pattern: '^([0-9a-fA-F]{1,40}( [0-9a-fA-F]{1,40})*|[^\s;''"\\\x00-\x1f\x7f*-][^\s;''"\\\x00-\x1f\x7f]*)$'
+        doc: Hash (or prefix), several hashes separated by spaces, or a name without spaces. Never `*`.
+    action:
+      exec: { argv: ["{{settings.console}}", "rm {{args.torrent_id}}"], env: { LANG: C } }
+      fail_if: { regex: '(?i)^\s*(failed to connect|could not connect|connection refused|not connected|password does not match)' }
+      parse: text
+  delete:
+    doc: Remove a torrent AND erase its downloaded files for good.
+    risk: write
+    scope: local
+    effects: [destructive]
+    args:
+      torrent_id:
+        type: str
+        required: true
+        pattern: '^([0-9a-fA-F]{1,40}( [0-9a-fA-F]{1,40})*|[^\s;''"\\\x00-\x1f\x7f*-][^\s;''"\\\x00-\x1f\x7f]*)$'
+        doc: Hash (or prefix), several hashes separated by spaces, or a name without spaces. Never `*`.
+    action:
+      exec: { argv: ["{{settings.console}}", "rm --remove_data {{args.torrent_id}}"], env: { LANG: C } }
+      fail_if: { regex: '(?i)^\s*(failed to connect|could not connect|connection refused|not connected|password does not match)' }
+      parse: text
+docs: { manual: docs/manual.md }
+check: [torrent.version]

@@ -1,0 +1,49 @@
+# Each capture tool writes the same temp file; a missing or failing tool
+# hands over to the next one (manifest 1.1 try), so grim failing on an X11
+# desktop falls through to scrot. A region group is dropped unless x, y, w
+# and h are all set.
+manifest: 1
+plugin: screen-desktop
+version: 0.5.0
+title: Desktop screenshots
+doc: Capture this worker's screen as a JPEG.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [linux, windows, macos]
+requires: { hardware: [display] }
+caps:
+  screen.capture:
+    doc: The screen (or a region of it) as a JPEG.
+    risk: read
+    scope: local
+    effects: [sensitive]
+    timeout: 30s
+    aliases: [screenshot.capture]
+    args:
+      quality: { type: int, default: 85, min: 1, max: 100, doc: JPEG quality. }
+      x: { type: int, min: 0, doc: "Region left edge (set x, y, w and h together; not on Windows, spectacle or gnome-screenshot)." }
+      y: { type: int, min: 0, doc: Region top edge. }
+      w: { type: int, min: 1, doc: Region width. }
+      h: { type: int, min: 1, doc: Region height. }
+    result: { type: file, doc: A JPEG. }
+    action:
+      exec:
+        try:
+          - argv: [grim, -t, jpeg, -q, "{{args.quality}}", [-g, "{{args.x}},{{args.y}} {{args.w}}x{{args.h}}"], "{{tmp}}/s.jpg"]
+          - argv: [scrot, -q, "{{args.quality}}", -o, [-a, "{{args.x}},{{args.y}},{{args.w}},{{args.h}}"], "{{tmp}}/s.jpg"]
+          - argv: [spectacle, -b, -n, -o, "{{tmp}}/s.jpg"]
+          - argv: [gnome-screenshot, -f, "{{tmp}}/s.jpg"]
+          - argv: [import, -window, root, -quality, "{{args.quality}}", "{{tmp}}/s.jpg"]
+        macos:
+          argv: [screencapture, -x, -t, jpg, [-R, "{{args.x}},{{args.y}},{{args.w}},{{args.h}}"], "{{tmp}}/s.jpg"]
+        windows:
+          argv: [powershell, -NoProfile, -NonInteractive, -Command,
+                 "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $b = [System.Windows.Forms.SystemInformation]::VirtualScreen; $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height; $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size); $bmp.Save($env:ROOK_OUT, [System.Drawing.Imaging.ImageFormat]::Jpeg)"]
+          env: { ROOK_OUT: "{{tmp}}/s.jpg" }
+        output: "{{tmp}}/s.jpg"
+      parse: bytes
+provides:
+  screen.capture: screen-desktop.screen.capture
+docs: { manual: docs/manual.md }
+check: [screen-desktop.screen.capture]

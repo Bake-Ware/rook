@@ -1,0 +1,210 @@
+# PiKVM as an appliance: a delegate worker that can reach the PiKVM carries
+# each call; the host and credentials belong to the appliance instance (spec
+# 5.7). Every cap is one kvmd REST request (config), except hid.click (it
+# moves the pointer first when given a pixel, which needs the screen size)
+# and the raw API escape hatches: those are scripts/kvm.py.
+manifest: 1
+plugin: kvm
+version: 0.5.0
+title: PiKVM
+doc: Drive a PiKVM (screen, keyboard, mouse, ATX power) over its REST API.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+appliance:
+  discover:
+    - http: { url: "https://{{host}}/api/info", match: kvmd }
+  settings:
+    user: { default: admin, doc: PiKVM web user. }
+    password: { secret: true, setup: Ask the user for the PiKVM web password. }
+    verify_tls: { type: bool, default: false, doc: Check the PiKVM's certificate (it ships self-signed). }
+caps:
+  screen.capture:
+    doc: The PiKVM's captured screen as a JPEG. preview (the default) is kvmd's small thumbnail; preview=false is full resolution.
+    risk: read
+    scope: local
+    effects: [sensitive]
+    idempotent: true
+    aliases: [pikvm.snap]
+    args:
+      preview: { type: bool, default: true, doc: "true: kvmd's thumbnail; false: full resolution." }
+      quality: { type: int, min: 1, max: 100, doc: "JPEG quality; blank: the PiKVM's default." }
+    result: { type: file, doc: A JPEG. }
+    action:
+      http:
+        url: "https://{{appliance.host}}/api/streamer/snapshot"
+        query: { save: "0", load: "0", preview: "{{args.preview}}", quality: "{{args.quality}}" }
+        auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
+        tls: { verify: "{{appliance.verify_tls}}" }
+      fail_if: { regex: '\A\s*\{\s*"ok"\s*:\s*false' }   # 200 + a JSON error when there is no video
+      parse: bytes
+  hid.type:
+    doc: Type text on the PiKVM's keyboard (newlines press Enter). slow=true types slowly, for machines that drop keys.
+    risk: exec
+    scope: local
+    effects: [physical]
+    aliases: [pikvm.type]
+    args:
+      text: { type: str, required: true }
+      enter: { type: bool, default: false, doc: Press Enter after the text., map: { "true": "\n", "false": "" } }
+      slow: { type: bool, default: false }
+    action:
+      http:
+        method: POST
+        url: "https://{{appliance.host}}/api/hid/print"
+        query: { limit: "0", slow: "{{args.slow}}" }
+        headers: { Content-Type: text/plain; charset=utf-8 }
+        body: "{{args.text}}{{args.enter}}"
+        auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
+        tls: { verify: "{{appliance.verify_tls}}" }
+  hid.key:
+    doc: Press and release a key with modifiers held (kvmd presses them in order and releases in reverse).
+    risk: exec
+    scope: local
+    effects: [physical]
+    aliases: [pikvm.key]
+    args:
+      key:
+        type: str
+        required: true
+        pattern: "^[A-Za-z0-9]{1,24}$"
+        doc: "enter, escape, tab, backspace, space, delete, insert, home, end, pageup, pagedown, up, down, left, right, printscreen, menu, f1..f12, a letter or digit; or a kvmd key name (KeyA, NumpadEnter)."
+        map:
+          {
+            enter: Enter, escape: Escape, esc: Escape, tab: Tab, backspace: Backspace, space: Space,
+            delete: Delete, insert: Insert, home: Home, end: End, pageup: PageUp, pagedown: PageDown,
+            up: ArrowUp, down: ArrowDown, left: ArrowLeft, right: ArrowRight, printscreen: PrintScreen,
+            menu: ContextMenu, f1: F1, f2: F2, f3: F3, f4: F4, f5: F5, f6: F6, f7: F7, f8: F8, f9: F9,
+            f10: F10, f11: F11, f12: F12, a: KeyA, b: KeyB, c: KeyC, d: KeyD, e: KeyE, f: KeyF, g: KeyG,
+            h: KeyH, i: KeyI, j: KeyJ, k: KeyK, l: KeyL, m: KeyM, n: KeyN, o: KeyO, p: KeyP, q: KeyQ,
+            r: KeyR, s: KeyS, t: KeyT, u: KeyU, v: KeyV, w: KeyW, x: KeyX, y: KeyY, z: KeyZ, "0": Digit0,
+            "1": Digit1, "2": Digit2, "3": Digit3, "4": Digit4, "5": Digit5, "6": Digit6, "7": Digit7,
+            "8": Digit8, "9": Digit9
+          }
+      mods:
+        type: list
+        items: { type: str, enum: [ctrl, shift, alt, meta] }
+        default: []
+        join: ","
+        map: { ctrl: ControlLeft, shift: ShiftLeft, alt: AltLeft, meta: MetaLeft }
+    action:
+      http:
+        method: POST
+        url: "https://{{appliance.host}}/api/hid/events/send_shortcut"
+        query: { keys: "{{args.mods}},{{args.key}}" }   # kvmd drops the empty item when there are no mods
+        auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
+        tls: { verify: "{{appliance.verify_tls}}" }
+  hid.move:
+    doc: Move the pointer to an absolute position in PiKVM units (-32768..32767 across the captured frame, 0 is the centre).
+    risk: exec
+    scope: local
+    effects: [physical]
+    aliases: [pikvm.mouse.move]
+    args:
+      x: { type: int, required: true, min: -32768, max: 32767 }
+      y: { type: int, required: true, min: -32768, max: 32767 }
+    action:
+      http:
+        method: POST
+        url: "https://{{appliance.host}}/api/hid/events/send_mouse_move"
+        query: { to_x: "{{args.x}}", to_y: "{{args.y}}" }
+        auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
+        tls: { verify: "{{appliance.verify_tls}}" }
+  hid.click:
+    doc: Click a mouse button. With x and y, first move the pointer to that pixel of the captured screen (top-left origin).
+    risk: exec
+    scope: local
+    effects: [physical]
+    timeout: 20s
+    aliases: [pikvm.mouse.click]
+    args:
+      x: { type: int, min: 0 }
+      y: { type: int, min: 0 }
+      button: { type: str, enum: [left, right, middle], default: left }
+    run: scripts/kvm.py:click
+  power.on:
+    doc: Press the ATX power button to turn the machine on (nothing happens when it is already on).
+    risk: exec
+    scope: local
+    effects: [physical]
+    action:
+      http:
+        method: POST
+        url: "https://{{appliance.host}}/api/atx/power"
+        query: { action: "on" }
+        auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
+        tls: { verify: "{{appliance.verify_tls}}" }
+  power.off:
+    doc: Turn the machine off with a short ATX power press (the OS shuts down); force=true holds the button (hard off, unsaved work is lost).
+    risk: exec
+    scope: local
+    effects: [destructive, physical]
+    args:
+      force: { type: bool, default: false, doc: Hold the power button instead of a short press., map: { "true": off_hard, "false": "off" } }
+    action:
+      http:
+        method: POST
+        url: "https://{{appliance.host}}/api/atx/power"
+        query: { action: "{{args.force}}" }
+        auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
+        tls: { verify: "{{appliance.verify_tls}}" }
+  power.reset:
+    doc: Press the ATX reset button (hard reset, unsaved work is lost).
+    risk: exec
+    scope: local
+    effects: [destructive, physical]
+    action:
+      http:
+        method: POST
+        url: "https://{{appliance.host}}/api/atx/power"
+        query: { action: reset_hard }
+        auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
+        tls: { verify: "{{appliance.verify_tls}}" }
+  power.status:
+    doc: "ATX state: power and hdd LEDs, and whether a button press is in progress."
+    risk: read
+    scope: local
+    idempotent: true
+    aliases: [pikvm.power.status]
+    result:
+      type: map
+      fields: { power: { type: bool }, hdd: { type: bool }, busy: { type: bool } }
+    action:
+      http:
+        url: "https://{{appliance.host}}/api/atx"
+        auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
+        tls: { verify: "{{appliance.verify_tls}}" }
+      returns: { power: result.leds.power, hdd: result.leds.hdd, busy: result.busy }
+  api_get:
+    doc: GET any /api/ endpoint on the PiKVM. JSON and text bodies come back decoded, anything else as a file.
+    risk: read
+    scope: local
+    effects: [sensitive]
+    timeout: 30s
+    aliases: [pikvm.api.get]
+    args:
+      path: { type: str, required: true, pattern: "^/api/[A-Za-z0-9_./-]*$", doc: "An /api/ path, e.g. /api/info." }
+      query: { type: json, doc: "Query parameters as an object of strings, numbers or bools." }
+    run: scripts/kvm.py:api_get
+  api_post:
+    doc: POST to any /api/ endpoint on the PiKVM. The body is `body` (text) or `body_b64` (bytes).
+    risk: exec
+    scope: local
+    effects: [destructive, physical]
+    timeout: 30s
+    aliases: [pikvm.api.post]
+    args:
+      path: { type: str, required: true, pattern: "^/api/[A-Za-z0-9_./-]*$", doc: "An /api/ path, e.g. /api/hid/events/send_key." }
+      query: { type: json, doc: "Query parameters as an object of strings, numbers or bools." }
+      body: { type: str }
+      body_b64: { type: str }
+      body_type: { type: str, default: application/json, pattern: "^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+(; *[A-Za-z0-9_-]+=[A-Za-z0-9_.-]+)*$" }
+    run: scripts/kvm.py:api_post
+provides:
+  screen.capture: kvm.screen.capture
+  hid.type: kvm.hid.type
+  hid.key: kvm.hid.key
+  hid.click: kvm.hid.click
+  power.off: kvm.power.off
+docs: { manual: docs/manual.md }
+# No check: an install has no appliance instance to call (castling/coverage.md).
