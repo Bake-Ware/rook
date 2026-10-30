@@ -1,0 +1,43 @@
+# An agent.backend provider: one agent turn in the Claude Code CLI on this
+# worker, under the subscription it is signed in with (castling-inference:
+# CLI subscriptions are the common case). `claude -p --output-format json`,
+# resumed by session id; the prompt goes in on stdin. Code: scripts/claude.py.
+manifest: 1
+plugin: agents-claude-code
+version: 0.5.0
+title: Claude Code backend
+doc: Agent turns in the Claude Code CLI, for the agents package.
+package: agents
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [linux, macos, windows]
+settings:
+  claude: { default: claude, doc: "The claude program: a name on PATH or a full path." }
+  model: { default: opus, doc: "System Two's model when the agent names none (opus, sonnet, haiku or a full model id)." }
+  permission_mode: { doc: "Claude Code's --permission-mode for agent turns (default, acceptEdits, plan, ...); blank: its own default." }
+  allowed_tools: { type: list, items: { type: str }, doc: "Tools a turn may use without asking (--allowedTools), e.g. Read, Bash(git status:*)." }
+  mcp_config: { type: path, doc: "An MCP config file for agent turns (--mcp-config), e.g. the Rook MCP door." }
+caps:
+  turn:
+    doc: One agent turn in Claude Code; pass session back to continue the conversation.
+    risk: exec
+    scope: local
+    timeout: 30m
+    run: scripts/claude.py:turn
+    args:
+      prompt: { type: str, required: true }
+      session: { type: str, doc: "The Claude Code session id to resume; blank: a new session." }
+      cwd: { type: str, doc: "The folder Claude Code works in; blank: this plugin's work folder." }
+      model: { type: str, doc: "blank: the model setting." }
+      effort: { type: str, doc: "Not used: Claude Code sets its own reasoning effort." }
+      system: { type: str, doc: Appended to Claude Code's system prompt. }
+      timeout: { type: duration, default: 20m, doc: How long the turn may take. }
+    result:
+      type: map
+      fields:
+        text: { type: str, required: true }
+        session: { type: str, required: true }
+        usage: { type: map, items: { type: int } }
+provides:
+  agent.backend: agents-claude-code.turn
+docs: { manual: docs/manual.md }

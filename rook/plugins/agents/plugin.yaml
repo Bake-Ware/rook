@@ -1,0 +1,235 @@
+# The agents package core (castling-agents): one agent mechanism. An agent is
+# a persona (personas: below, or made by a person) + a backend (the
+# agent.backend contract: Claude Code, Codex, local, API) + a persistent
+# session per party it talks with (a rook.streams session stream) + a private
+# notepad + read-only memory, which a dream cycle (System Three) curates from
+# the notepad when the agent goes idle. Always-on agents never sleep on idle
+# and get a periodic dream pass instead.
+#
+# Every ready-made role below is created on install; its skills are markdown
+# in skills/. Code: scripts/agents.py.
+manifest: 1
+plugin: agents
+version: 0.5.0
+title: Agents
+doc: Agents with a persona, a backend, persistent sessions, a private notepad and curated memory.
+package: agents
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+# agent.backend: the chosen provider; an agent pinned to one backend calls
+# agents-<backend>.turn (the backend plugins of this package).
+uses: ["agent.backend", "agents-claude-code.*", "agents-codex.*", "agents-local.*", "agents-api.*"]
+
+settings:
+  warm: { type: duration, default: 10m, doc: How long an agent that isn't always-on stays awake after its last message. }
+  turn_timeout: { type: duration, default: 20m, doc: Longest one agent turn may take. }
+  dream_every: { type: duration, default: 6h, doc: How often an always-on agent gets a dream pass. }
+  dream_model: { type: str, default: haiku, doc: "System Three's model (the dream cycle), unless the agent names its own model.three." }
+
+caps:
+  list:
+    doc: The agents on this hub, with their role, backend and whether each is awake.
+    risk: read
+    scope: multi-user
+    idempotent: true
+    run: scripts/agents.py:list_agents
+    args:
+      archived: { type: bool, default: false, doc: List archived agents instead. }
+    result: { type: list }
+  get:
+    doc: One agent's settings, prompt and your sessions with it; its memory and notepad only for the agent itself or an owner.
+    risk: read
+    scope: multi-user
+    idempotent: true
+    run: scripts/agents.py:get
+    args:
+      name: { type: str, required: true }
+    result: { type: map }
+  create:
+    doc: Make an agent, from a persona (its defaults) and/or your own prompt, grants and backend.
+    risk: admin
+    scope: multi-user
+    effects: [persists]
+    run: scripts/agents.py:create
+    args:
+      name: { type: str, required: true, pattern: "^[a-z][a-z0-9_-]{0,39}$", doc: "Its name on the band (agent:<name>)." }
+      persona: { type: str, doc: "A persona to start from (house, pm, lead, ...)." }
+      title: { type: str }
+      summary: { type: str, doc: The roster line every agent sees. }
+      prompt: { type: markdown, doc: What the agent is and how it works. }
+      skills: { type: list, items: { type: str } }
+      grants: { type: list, items: { type: str }, doc: "Cap patterns it may use; acting for a person it gets only what both may." }
+      backend: { type: str, enum: [default, claude-code, codex, local, api] }
+      model: { type: map, items: { type: str }, doc: "Per-system model: {two: opus, three: haiku}; default: the backend's." }
+      always_on: { type: bool, doc: "Never sleeps on idle (house, security); others wake when addressed." }
+      cwd: { type: str, doc: "The folder its backend works in; blank: the backend's own." }
+    result: { type: map }
+  update:
+    doc: Change an agent. Your edits win over persona updates from now on.
+    risk: admin
+    scope: multi-user
+    effects: [persists]
+    run: scripts/agents.py:update
+    args:
+      name: { type: str, required: true, pattern: "^[a-z][a-z0-9_-]{0,39}$", doc: "Its name on the band (agent:<name>)." }
+      persona: { type: str, doc: "A persona to start from (house, pm, lead, ...)." }
+      title: { type: str }
+      summary: { type: str, doc: The roster line every agent sees. }
+      prompt: { type: markdown, doc: What the agent is and how it works. }
+      skills: { type: list, items: { type: str } }
+      grants: { type: list, items: { type: str }, doc: "Cap patterns it may use; acting for a person it gets only what both may." }
+      backend: { type: str, enum: [default, claude-code, codex, local, api] }
+      model: { type: map, items: { type: str }, doc: "Per-system model: {two: opus, three: haiku}; default: the backend's." }
+      always_on: { type: bool, doc: "Never sleeps on idle (house, security); others wake when addressed." }
+      cwd: { type: str, doc: "The folder its backend works in; blank: the backend's own." }
+    result: { type: map }
+  archive:
+    doc: Archive an agent (it stops and keeps its sessions, notepad and memory) or bring it back.
+    risk: admin
+    scope: multi-user
+    run: scripts/agents.py:archive
+    args:
+      name: { type: str, required: true }
+      restore: { type: bool, default: false }
+    result: { type: map }
+  wake:
+    doc: Wake an agent so it picks up messages waiting in its sessions.
+    risk: write
+    scope: multi-user
+    run: scripts/agents.py:wake
+    args:
+      name: { type: str, required: true }
+    result: { type: map }
+  sleep:
+    doc: Put an agent to sleep now (it dreams if its notepad has anything new).
+    risk: write
+    scope: multi-user
+    run: scripts/agents.py:sleep
+    args:
+      name: { type: str, required: true }
+    result: { type: map }
+  chat.send:
+    doc: Message an agent in your session with it, waking it if it sleeps; with wait, answers its reply.
+    risk: write
+    scope: multi-user
+    timeout: 30m
+    run: scripts/agents.py:chat_send
+    args:
+      agent: { type: str, required: true }
+      text: { type: str, required: true }
+      wait: { type: bool, default: true, doc: "Wait for the reply; false: answer at once, read it later with agents.chat.read." }
+    result: { type: map }
+  chat.read:
+    doc: Your session with an agent, after a cursor (owners may read anyone's with party).
+    risk: read
+    scope: multi-user
+    idempotent: true
+    run: scripts/agents.py:chat_read
+    args:
+      agent: { type: str, required: true }
+      after: { type: int, default: 0, min: 0, doc: "The last seq you saw; pass back next." }
+      limit: { type: int, default: 50, min: 1, max: 500 }
+      wait: { type: float, default: 0, min: 0, max: 60, doc: Seconds to wait for something new. }
+      party: { type: str, doc: "Owners: whose session (person:<name> or agent:<name>)." }
+    result: { type: map }
+  note:
+    doc: Write to an agent's private notepad (the agent itself, or an owner). Durable things go here; the dream cycle curates them into memory.
+    risk: write
+    scope: self
+    run: scripts/agents.py:note
+    args:
+      agent: { type: str, required: true }
+      text: { type: str, required: true }
+    result: { type: map }
+  dream:
+    doc: Run an agent's dream cycle now; System Three curates its notepad into lasting memory.
+    risk: write
+    scope: self
+    timeout: 30m
+    run: scripts/agents.py:dream
+    args:
+      name: { type: str, required: true }
+    result: { type: map }
+  skill:
+    doc: A skill's playbook (markdown) by name, to read before following it.
+    risk: read
+    scope: self
+    idempotent: true
+    run: scripts/agents.py:skill
+    args:
+      name: { type: str, required: true }
+    result: { type: map }
+
+hooks:
+  start: scripts/agents.py:start
+  stop: scripts/agents.py:stop
+  every: [ { interval: 30m, run: scripts/agents.py:tick } ]
+
+# The ready-made roles (castling-agents "Skills and defaults"): created on
+# install, each with its skills. Lean toward agency: broad grants, and acting
+# for a person an agent gets only what both may.
+personas:
+  house:
+    title: House agent
+    summary: "The person's personal assistant and guardian of the house: knows how and when to reach them."
+    prompt: personas/house.md
+    skills: [reach-the-user, presence, consult, notepad]
+    grants: ["*"]
+    always_on: true
+  pm:
+    title: Project manager
+    summary: Oversight of the work - sweeps tickets, organizes, reports and plans; handoffs that depend on other work go through it.
+    prompt: personas/pm.md
+    skills: [ticket-sweep, handoff, consult, notepad]
+    grants: ["*"]
+  lead:
+    title: Lead developer
+    summary: Owns the coding work in flight - design calls, branches, reviews and technical debt.
+    prompt: personas/lead.md
+    skills: [handoff, consult, notepad]
+    grants: ["*"]
+  qa:
+    title: QA engineer
+    summary: Evidence that things work - tests, regressions, anything called done without proof.
+    prompt: personas/qa.md
+    skills: [verify, handoff, consult, notepad]
+    grants: ["*"]
+  writer:
+    title: Technical writer
+    summary: Keeps the manual, changelog and knowledge true to what actually shipped.
+    prompt: personas/writer.md
+    skills: [handoff, consult, notepad]
+    grants: ["*"]
+  archivist:
+    title: Archivist
+    summary: Keeps the wiki honest - finds stale, duplicate and contradicted pages and fixes them.
+    prompt: personas/archivist.md
+    skills: [wiki-sweep, consult, notepad]
+    grants: ["agents.*", "knowledge.*", "concepts.*", "projects.*", "tasks.*", "journal.*"]
+  producer:
+    title: Producer
+    summary: Gets a release out the door - checklist, rollback plan, staged rollout, the announcement and the check afterwards.
+    prompt: personas/producer.md
+    skills: [handoff, consult, notepad]
+    grants: ["*"]
+  security:
+    title: Security triage
+    summary: Triages security events - blocked calls, exposed secrets, odd journal activity - and proposes safer ways.
+    prompt: personas/security.md
+    skills: [security-triage, consult, notepad]
+    grants: ["*"]
+    always_on: true
+
+skills:
+  reach-the-user: skills/reach-the-user.md
+  presence: skills/presence.md
+  consult: skills/consult.md
+  notepad: skills/notepad.md
+  handoff: skills/handoff.md
+  ticket-sweep: skills/ticket-sweep.md
+  verify: skills/verify.md
+  wiki-sweep: skills/wiki-sweep.md
+  security-triage: skills/security-triage.md
+
+docs: { manual: docs/manual.md }

@@ -7,7 +7,8 @@ from port_helpers import CONTRACTS, PLUGINS, go
 from rook.core2.worker.host import Host
 from rook.kit.manifest import check, load, trust_class
 
-PORTS = sorted(p.parent.name for p in PLUGINS.glob("*/plugin.yaml"))
+# The device ports; other packages' plugins (agents, ...) have their own tests.
+PORTS = sorted(p.parent.name for p in PLUGINS.glob("*/plugin.yaml") if "\npackage: devices\n" in p.read_text())
 
 
 def test_the_ports_are_there():
