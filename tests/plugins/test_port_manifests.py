@@ -11,7 +11,8 @@ PORTS = sorted(p.parent.name for p in PLUGINS.glob("*/plugin.yaml"))
 
 
 def test_the_ports_are_there():
-    assert PORTS == ["battery", "kvm", "notification-desktop", "screen-desktop", "torrent"]
+    assert PORTS == ["adb", "battery", "camera", "cec", "dongle", "file", "hid-desktop", "kvm",
+                     "notification-desktop", "screen-desktop", "shell", "torrent", "tv"]
 
 
 @pytest.mark.parametrize("name", PORTS)
@@ -32,14 +33,26 @@ def test_every_cap_says_risk_scope_and_doc(name):
         assert ("action" in spec) != ("run" in spec), cap
         if spec["risk"] == "read":
             assert "physical" not in spec.get("effects", ()), cap
-        if cap.endswith(("delete", "power.off", "power.reset", "api_post")):
+        # Can lose unsaved work. A TV switched off loses nothing (tv.power.off).
+        if cap.endswith(("delete", "power.reset", "api_post")) or cap == "power.off" and name == "kvm":
             assert "destructive" in spec["effects"], cap
 
 
-def test_only_kvm_carries_code():
+CONFIG_ONLY = {"battery", "cec", "notification-desktop", "screen-desktop", "torrent"}
+
+
+def test_only_config_plugins_are_data():
     # Config-only plugins are data; a plugin with scripts is code (review, signing).
     classes = {name: trust_class(PLUGINS / name) for name in PORTS}
-    assert classes == {**dict.fromkeys(PORTS, "config"), "kvm": "code"}
+    assert classes == {name: "config" if name in CONFIG_ONLY else "code" for name in PORTS}
+
+
+def test_scripts_start_processes_only_through_launch():
+    # Spec 7.1: plugin code starts processes through core's launch path.
+    import re
+    banned = re.compile(r"create_subprocess_|subprocess\.(run|Popen|call|check_)|os\.(system|popen|spawn|exec)")
+    for script in PLUGINS.glob("*/scripts/*.py"):
+        assert not banned.search(script.read_text()), script
 
 
 @pytest.mark.parametrize("name", PORTS)
