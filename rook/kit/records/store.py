@@ -108,8 +108,8 @@ class RecordDef:
         history = bool(block.get("history"))
         # Same defaults as rook.kit.manifest.record_verbs: delete erases for
         # good, so a type opts into it; search and history need their fields.
-        verbs = list(block.get("caps") or [v for v in VERBS if v != "delete" and (v != "search" or search)]
-                     + (["history"] if history else []))
+        verbs = list(block["caps"]) if block.get("caps") is not None else \
+            [v for v in VERBS if v != "delete" and (v != "search" or search)] + (["history"] if history else [])
         bad = [v for v in verbs if v not in VERBS + ("history",)]
         if bad:
             raise KitError(f"{plugin}.{name}: unknown record caps {bad}")

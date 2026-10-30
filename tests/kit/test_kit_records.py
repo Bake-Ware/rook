@@ -349,6 +349,7 @@ def test_default_verbs_and_bare_names():
         + [f"task.label.{v}" for v in ("list", "get", "search", "create", "update", "archive")])
     with pytest.raises(KitError, match="keeps no history"):
         RecordDef.parse("p", "t", {"fields": {"a": {}}, "caps": ["history"]})
+    assert RecordDef.parse("p", "t", {"fields": {"a": {}}, "caps": []}).verbs == []   # none, as in the manifest
 
 
 def test_unregister_keeps_data(store):
