@@ -712,3 +712,48 @@ def test_sub_call_runs_as_the_parent_with_uses(hub):
     assert s.tainted                                   # the sub-call's taint lands on the session
     after = run(hub.sub_call(WID, hub.tx.requests[0]["ticket"], "web.fetch", "kaiju", None, "late"))
     assert after["error"] == "denied: core.call: no such call in flight"
+
+
+def test_gate_result_check_withholds_a_result_it_blocks(hub):
+    """A gate's result check (canaries) sees what came back; block turns the
+    reply into a refusal, journaled with stage: result. Flags only count as
+    journal entries: the call already ran."""
+    seen = []
+
+    def result(inp):
+        seen.append(inp)
+        bad = "AKIAFAKE" in json.dumps(inp["result"])
+        return {"verdict": "block" if bad else "flag", "confidence": 1.0, "reason": "canary"}
+
+    hub.gates = [gates.Gate("canary", lambda inp: {"verdict": "allow", "confidence": 1.0, "reason": "other"},
+                            mode="enforce", result=result),
+                 G("other", "allow")]
+    out, s = call(hub, BAKE, "file.read", {"path": "/x"})
+    assert out["ok"] and out["result"] == {"cap": "file.read"}           # a flag doesn't withhold
+    assert seen[0]["result"] == {"cap": "file.read"} and seen[0]["session"]["id"] == s.id
+    e = calls(hub)[-1]
+    assert [(g["gate"], g.get("stage")) for g in e["gates"]] == [("canary", None), ("other", None),
+                                                                  ("canary", "result")]
+    assert e["ok"] is True
+    hub.tx.answer = lambda req, n: {"id": req["id"], "from": WID, "ok": True, "result": {"key": "AKIAFAKE1"}}
+    out, _ = call(hub, BAKE, "file.read", {"path": "/y"})
+    assert out == {"id": out["id"], "ok": False, "error": "denied: blocked by gate canary: canary"}
+    e = calls(hub)[-1]
+    assert e["ok"] is False and e["error"] == out["error"] and e["gates"][-1]["verdict"] == "block"
+
+
+def test_gate_result_check_shadow_and_failed_calls(hub):
+    hub.gates = [gates.Gate("ml", lambda inp: {"verdict": "allow", "confidence": 1.0, "reason": "other"},
+                            mode="shadow",
+                            result=lambda inp: {"verdict": "block", "confidence": 1.0, "reason": "canary"})]
+    out, _ = call(hub, BAKE, "file.read", {"path": "/x"})
+    assert out["ok"] and calls(hub)[-1]["gates"][-1]["stage"] == "result"    # shadow: journaled only
+    hub.gates[0].mode = "enforce"
+    hub.tx.answer = lambda req, n: {"id": req["id"], "from": WID, "ok": False, "error": "nope"}
+    out, _ = call(hub, BAKE, "file.read", {"path": "/x"})
+    assert out["error"] == "nope" and "stage" not in calls(hub)[-1]["gates"][-1]    # nothing came back
+
+
+def test_gate_from_manifest_with_a_result_check():
+    g = gates.Gate.from_manifest("canary", {"run": "s.py:a", "result": "s.py:b"}, len, str)
+    assert g.check is len and g.result is str

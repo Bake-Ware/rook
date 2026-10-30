@@ -1,0 +1,84 @@
+# The CPU classifier gate (castling-security): isolation forests for each
+# actor's and machine's usual calls, boosted trees for the verdict, pure
+# Python, under a millisecond a call. Ships enabled in SHADOW mode: its
+# verdicts are journaled and never count until an owner turns it to
+# enforce. Retrained nightly from the journal, never from flagged calls,
+# tested on a locked attack set. Code: scripts/ml.py, maths: scripts/model.py.
+manifest: 1
+plugin: security-ml
+version: 0.5.0
+title: Security classifier
+doc: Scores every call against what usually happens on this band; shadow mode until an owner trusts it.
+package: core
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+uses: ["journal.search", "hub.workers"]
+
+settings:
+  min_calls: { type: int, default: 200, min: 1, doc: Clean journal calls a retrain needs. }
+  max_fp: { type: float, default: 0.01, min: 0, max: 1, doc: Share of held-out clean calls a new model may flag. }
+  clean_nights: { type: int, default: 3, min: 1, doc: Passing retrains in a row before a new model replaces the current one. }
+
+gate:
+  run: scripts/ml.py:check
+  budget: 20ms
+  mode: shadow
+
+caps:
+  train:
+    doc: >-
+      Retrain from the journal (owners: it reads every call). Leaves out every session with a flagged,
+      blocked or held call and this plugin family's own; the candidate must flag the whole locked
+      attack set and few held-out clean calls, and replaces the model only after clean_nights passing
+      runs in a row. Returns the check, and a change record when it promoted.
+    risk: write
+    scope: multi-user
+    effects: [sensitive]
+    timeout: 30m
+    run: scripts/ml.py:train
+    args:
+      days: { type: float, default: 30, min: 1, max: 365, doc: How far back to read. }
+      max_rows: { type: int, default: 5000, min: 100, max: 50000 }
+    result: { type: map }
+  rollback:
+    doc: Go back to the previous model (the shipped baseline at the end). Owners only.
+    risk: write
+    scope: multi-user
+    run: scripts/ml.py:rollback
+    result: { type: map }
+  status:
+    doc: Which model is in use, when it was trained, and the last retrain's check.
+    risk: read
+    scope: multi-user
+    idempotent: true
+    run: scripts/ml.py:status
+    result: { type: map }
+  explain:
+    doc: What the classifier says about a call (probability, verdict, reason) without running it.
+    risk: read
+    scope: self
+    idempotent: true
+    run: scripts/ml.py:explain
+    args:
+      cap: { type: str, required: true }
+      worker: { type: str, required: true }
+      args: { type: map }
+      why: { type: str, default: "" }
+      risk: { type: str, enum: [read, write, exec, admin], default: exec }
+      scope: { type: str, enum: [self, local, multi-machine, multi-user, external], default: local }
+      effects: { type: list, items: { type: str } }
+      tainted: { type: bool, default: false }
+    result: { type: map }
+
+jobs:
+  retrain:
+    doc: Nightly retrain from the journal; runs as its creator (an owner).
+    trigger: { cron: "17 3 * * *" }
+    call: security-ml.train
+    as: creator
+
+hooks:
+  start: scripts/ml.py:start
+
+docs: { manual: docs/manual.md }

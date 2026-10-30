@@ -240,10 +240,7 @@ class Dispatcher:
             return deny(f"denied: {refused['layer']}: {refused['reason']}",
                         f"{refused['layer']}: {refused['reason']}")
         # 6. gates
-        results = await gates_mod.run(self.gates, {
-            "cap": name, "args": call.args, "caller": {"person": caller.person, "agent": caller.agent},
-            "worker": w.name, "appliance": call.appliance, "why": why, "risk": entry["risk"],
-            "scope": entry["scope"], "effects": entry["effects"], "session": s.view(), "band": w.band})
+        results = await gates_mod.run(self.gates, _gate_input(caller, s, w, call, entry))
         entry["gates"] = results
         verdict = rights.gate_decision(results)
         if verdict["verdict"] == "block":
@@ -342,8 +339,22 @@ class Dispatcher:
                 out[k] = reply[k]
         if "elevated" in reply:
             entry["lease"] = reply["elevated"]
+        if out["ok"] and any(g.result for g in self.gates):
+            out = await self._check_result(caller, s, w, call, entry, out)
         entry["ok"] = out["ok"]
         return out
+
+    async def _check_result(self, caller: Caller, s: Session, w: Worker, call: Call, entry: dict,
+                            out: dict) -> dict:
+        """Gates' ``result`` checks (gate.py): a block withholds the result."""
+        results = await gates_mod.run_result(self.gates, _gate_input(caller, s, w, call, entry), out.get("result"))
+        entry["gates"] = list(entry.get("gates") or ()) + results
+        verdict = rights.gate_decision(results)
+        if verdict["verdict"] != "block":
+            return out
+        first = next(r for r in results if r["gate"] == verdict["by"][0] and r["mode"] == "enforce")
+        entry["error"] = f"denied: blocked by gate {first['gate']}: {first['reason']}"
+        return {"id": out["id"], "ok": False, "error": entry["error"]}
 
     def _mint(self, cid: str, caller: Caller, s: Session, w: Worker, call: Call, ahash: str) -> dict:
         now = int(self.clock())
@@ -477,6 +488,13 @@ class Dispatcher:
         if s is not None:
             entry.update(session=s.id, project=s.project, person=s.person, agent=s.agent)
         self.journal(entry)
+
+
+def _gate_input(caller: Caller, s: Session, w: Worker, call: Call, entry: dict) -> dict:
+    """What a gate sees (spec 10.2); args with secret references unresolved."""
+    return {"cap": call.cap, "args": call.args, "caller": {"person": caller.person, "agent": caller.agent},
+            "worker": w.name, "appliance": call.appliance, "why": call.why, "risk": entry["risk"],
+            "scope": entry["scope"], "effects": entry["effects"], "session": s.view(), "band": w.band}
 
 
 def _resolve_alias(caps: dict, cap: str) -> str:

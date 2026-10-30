@@ -114,7 +114,8 @@ class HubPlugins:
                 elif "action" in meta:
                     self._add(p, cap, HubCap(meta, action=meta["action"]))
             if data.get("gate"):
-                p.gate = Gate.from_manifest(name, data["gate"], resolve(data["gate"]["run"]))
+                g = data["gate"]
+                p.gate = Gate.from_manifest(name, g, resolve(g["run"]), resolve(g["result"]) if "result" in g else None)
             self.plugins[name] = p          # its hooks' calls need its uses
             if data.get("runs_on") == "hub" and data.get("hooks"):
                 await self.scheduler.start(data, make_ctx=lambda caller: self._ctx(p, caller),

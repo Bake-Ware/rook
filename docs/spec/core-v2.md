@@ -894,6 +894,12 @@ Rules (vectors: `gate.json`):
   wait longer than 200 ms for any gate.
 - Disabling or replacing a gate plugin is a deliberate owner action and is
   journaled.
+- A gate MAY also declare a `result` check, run on a call's result after it
+  ran, with the same input plus `result`. It can only withhold: `block`
+  turns the reply into `denied: blocked by gate <name>: <reason>`; any other
+  verdict is journaled only (a call that already ran can't be held). Its
+  entries are journaled with the call's other gate results, marked
+  `stage: result`. Canary detection uses it.
 
 ### 10.3 Holds and hard stops
 

@@ -996,7 +996,8 @@ class Hub:
             h = self.dispatcher.holds.get(reply["hold"])
             if h is not None:
                 self._emit("hold.created", {"hold": h.name, "cap": h.call.cap, "worker": h.worker.id,
-                                            "person": caller.person, "agent": caller.agent, "why": h.call.why}, "core")
+                                            "person": caller.person, "agent": caller.agent, "why": h.call.why,
+                                            "session": h.session.id, "reasons": h.reasons()}, "core")
         return reply
 
     async def start_session(self, caller: Caller, body: dict) -> dict:
