@@ -73,7 +73,7 @@ class TelestheteLink:
             host, _, p = relay.rpartition(":")
             if not host:
                 host, p = relay, ""
-            port = int(p) if p else DEFAULT_RELAY_PORT
+            host, port = host.strip("[]"), int(p) if p else DEFAULT_RELAY_PORT    # [::1]:7474
         else:
             raise ValueError("a band link needs relay or ws_url")
         self.ws = bool(ws_url)

@@ -424,6 +424,8 @@ def test_from_config_builds_one_link_per_band(monkeypatch):
     t = from_config({"node_id": WORKER, "bands": [{"psk": PSK, "relay": "127.0.0.1:7474"},
                                                   {"psk_env": "ROOK_TEST_PSK", "ws_url": "wss://hub.example/band"}]})
     assert t.bands == [BAND, BAND2] and t.node_id == WORKER
+    assert TelestheteLink(PSK, relay="[::1]:7475").t.hub == ("::1", 7475)
+    assert TelestheteLink(PSK, relay="relay.lan").t.hub == ("relay.lan", 7474)
     assert band_of(PSK) == hashlib.sha256(PSK.encode()).digest()[:16].hex()
     with pytest.raises(ValueError):
         from_config({"node_id": WORKER, "bands": [{"relay": "x:1"}]})
