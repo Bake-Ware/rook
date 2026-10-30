@@ -385,6 +385,8 @@ class Enrollment:
             _write_private(hub.data / "bands.json", json.dumps(self.bands, indent=1))
         else:
             band = body.get("band", hub.band)
+            if not isinstance(band, str):
+                return {"ok": False, "error": "bad request: band is a band id"}
         if band == hub.band:
             member_hub, root = hub.hub_id, wire.pub_text(hub.root)
             if role != "home":

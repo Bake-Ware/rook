@@ -15,7 +15,7 @@ is on this machine (loopback) or ``--insecure`` says so. The hub id from a
 QR is pinned: a bundle from any other hub is refused.
 
 What it writes, beside the config (paths from the config when it has them):
-``anchor.json`` (the home hub's ``{hub, root, band}``, read-only, spec 9.2),
+``anchor.json`` (the home hub's ``{hub, root, band}``, spec 9.2),
 ``<data>/bands.json`` (the home band's PSK and relay; the worker joins every
 band listed there), ``<data>/services.json`` (service endpoints and keys, when
 the bundle has any) and ``<data>/enrollment.json`` (the hub's address, the
@@ -29,7 +29,6 @@ import ipaddress
 import json
 import os
 import socket
-import stat
 import time
 import urllib.error
 import urllib.request
@@ -133,6 +132,8 @@ def sign_in(url: str, name: str, code: str | None = None, pinned: str | None = N
         start = _post(url, "/enroll/device", {"name": name})
         if not start.get("ok"):
             raise EnrollError(f"the hub refused: {start.get('error')}")
+        if not (isinstance(start.get("device_code"), str) and isinstance(start.get("user_code"), str)):
+            raise EnrollError("the hub's answer has no device code")
         pinned = pinned or start.get("hub")
         say(f"To add {name}, approve code {start['user_code']} on hub {start.get('hub')} "
             "(the Rook app, the dashboard, or POST /enroll/approve).")
@@ -143,7 +144,8 @@ def sign_in(url: str, name: str, code: str | None = None, pinned: str | None = N
                 break
             if clock() > deadline:
                 raise EnrollError("the code expired before anyone approved it")
-            sleep(float(got.get("interval") or 2))
+            interval = got.get("interval")
+            sleep(min(max(interval if isinstance(interval, (int, float)) else 2, 1), 10))
     if not got.get("ok"):
         raise EnrollError(f"the hub refused: {got.get('error')}")
     return check_bundle(got.get("bundle"), pinned)
@@ -206,10 +208,10 @@ def install(config: Path, bundle: dict, url: str, force: bool = False) -> dict:
         anchor.unlink()
     data.mkdir(parents=True, exist_ok=True, mode=0o700)
     band, hub = bundle["band"], bundle["hub"]
-    # Read-only: the worker reads it and never writes it. A service install
-    # makes it root's (spec 9.2); this is the best a user install can do.
-    _write(anchor, json.dumps({"hub": hub["hub_id"], "root": hub["root"], "band": band["id"]}) + "\n",
-           stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+    # The worker only reads it. A service install makes it root's (spec 9.2);
+    # a user install can't protect it from the worker's own account, and the
+    # worker says so when it starts.
+    _write(anchor, json.dumps({"hub": hub["hub_id"], "root": hub["root"], "band": band["id"]}) + "\n", 0o644)
     link = {k: band[k] for k in ("psk", "relay", "ws_url") if band.get(k)}
     _write(data / "bands.json", json.dumps({band["id"]: link}, indent=1), 0o600)
     if bundle.get("services"):

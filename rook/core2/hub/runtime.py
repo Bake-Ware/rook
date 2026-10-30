@@ -392,7 +392,11 @@ class Hub:
         if cfg.enroll.get("discover"):
             from ..enroll.mdns import Responder
             self.mdns = Responder(cfg.enroll["url"], self.hub_id)
-            await self.mdns.start()
+            try:
+                await self.mdns.start()
+            except OSError as e:          # the port is taken: devices can still type the address
+                log.warning("not discoverable", extra={"fields": {"error": str(e)}})
+                self.mdns = None
 
     async def stop(self) -> None:
         """Doors first (nothing new comes in), then background work, the band,

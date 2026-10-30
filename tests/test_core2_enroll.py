@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import stat
 import urllib.error
 import urllib.request
@@ -120,7 +119,7 @@ def test_a_qr_code_enrolls_a_device_once_and_install_writes_what_the_worker_read
     assert (raw["name"], raw["worker_id"], raw["anchor"], raw["data"]) == \
         ("laptop", bundle["worker_id"], "anchor.json", "data")
     anchor = cfg_path.parent / "anchor.json"
-    assert not os.access(anchor, os.W_OK) or os.geteuid() == 0
+    assert stat.S_IMODE(anchor.stat().st_mode) == 0o644
     assert stat.S_IMODE((cfg_path.parent / "data" / "bands.json").stat().st_mode) == 0o600
     store = TrustStore(anchor, None, bundle["worker_id"])
     assert (store.home.hub, store.home.band) == (hub.hub_id, BAND)
