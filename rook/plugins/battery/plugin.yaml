@@ -1,0 +1,48 @@
+# One cap, four tools. Each per-OS override brings its own parse (manifest
+# 1.1); Linux's sysfs fallback and the Windows script print upower's shape,
+# so they share the base regex.
+manifest: 1
+plugin: battery
+version: 0.5.0
+title: Battery
+doc: Charge level and charging state of this worker's battery.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [linux, windows, macos, termux]
+requires: { hardware: [battery] }
+caps:
+  status:
+    doc: "The battery's charge in percent and its state: charging, discharging, fully-charged, ... (the OS's own word; Termux says it in capitals)."
+    risk: read
+    scope: local
+    idempotent: true
+    timeout: 10s
+    result:
+      type: map
+      fields:
+        percent: { type: float }
+        status: { type: str }
+    action:
+      exec:
+        env: { LANG: C }
+        try:
+          - argv: [upower, -i, /org/freedesktop/UPower/devices/DisplayDevice]
+          # No upower: the first battery in sysfs, printed like upower does.
+          - argv: [sh, -c, 'for b in /sys/class/power_supply/BAT*; do [ -r "$b/capacity" ] || continue; printf "state: %s\npercentage: %s%%\n" "$(tr "A-Z " "a-z-" < "$b/status")" "$(cat "$b/capacity")"; exit 0; done; exit 3']
+        windows:
+          argv: [powershell, -NoProfile, -NonInteractive, -Command,
+                 "$b = Get-CimInstance Win32_Battery | Select-Object -First 1; if (-not $b) { exit 3 }; $s = @{1='discharging';2='plugged';3='fully-charged';6='charging';7='charging';8='charging';9='charging'}[[int]$b.BatteryStatus]; 'state: ' + $s; 'percentage: ' + $b.EstimatedChargeRemaining + '%'"]
+        macos:
+          argv: [pmset, -g, batt]
+          parse: { regex: '(?P<percent>\d+)%;\s*(?P<status>[^;]+);' }
+        termux:
+          argv: [termux-battery-status]
+          parse: json
+          returns: { percent: percentage, status: status }
+      fail_if: { regex: "battery-missing" }   # upower's DisplayDevice when there is no battery
+      parse: { regex: 'state:\s+(?P<status>[\w-]+)[\s\S]*?percentage:\s+(?P<percent>[\d.]+)%' }
+hooks:
+  status: { call: battery.status }   # rides the heartbeat, no Python needed
+docs: { manual: docs/manual.md }
+check: [battery.status]
