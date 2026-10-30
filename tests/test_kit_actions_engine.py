@@ -4,6 +4,7 @@ http/tcp/ws servers."""
 import asyncio
 import base64
 import datetime
+import functools
 import json
 import os
 import ssl
@@ -29,6 +30,15 @@ def py(code):
 ECHO_ARGV = "import json,sys; print(json.dumps(sys.argv[1:]))"
 
 
+def hard(fn, seconds=20):
+    """An asyncio test that can never hang CI: it fails after ``seconds``."""
+    @functools.wraps(fn)
+    async def wrapper(*a, **kw):
+        async with asyncio.timeout(seconds):
+            return await fn(*a, **kw)
+    return pytest.mark.asyncio(wrapper)
+
+
 async def run(action, args=None, **kw):
     kw.setdefault("worker", LINUX)
     return await run_action(action, args or {}, **kw)
@@ -36,7 +46,7 @@ async def run(action, args=None, **kw):
 
 # --- dispatch -------------------------------------------------------------------
 
-@pytest.mark.asyncio
+@hard
 async def test_unknown_type_is_unavailable_not_a_crash():
     with pytest.raises(Unavailable, match="'serial' isn't supported"):
         await run({"serial": {"port": "/dev/ttyUSB0"}})
@@ -48,7 +58,7 @@ async def test_unknown_type_is_unavailable_not_a_crash():
 
 # --- exec -----------------------------------------------------------------------
 
-@pytest.mark.asyncio
+@hard
 async def test_exec_argv_groups_parse_and_returns():
     action = {"exec": {"argv": py(ECHO_ARGV) + ["info", ["-s", "{{args.state}}"], ["-n", "{{args.n}}"],
                                                 "{{args.evil}}"]},
@@ -57,7 +67,7 @@ async def test_exec_argv_groups_parse_and_returns():
     assert out == ["info", "-s", "Seeding", "$(id); `x` | y"]
 
 
-@pytest.mark.asyncio
+@hard
 async def test_exec_stdin_env_cwd_and_default_cwd_is_tmp(tmp_path):
     code = ("import os,sys,json; print(json.dumps({'in': sys.stdin.read(), 'lang': os.environ.get('LANG'),"
             " 'cwd': os.getcwd(), 'home': 'HOME' in os.environ}))")
@@ -71,7 +81,7 @@ async def test_exec_stdin_env_cwd_and_default_cwd_is_tmp(tmp_path):
     assert (await run(action, {"n": 1}, plugin_data=str(sub)))["cwd"] == str(sub)
 
 
-@pytest.mark.asyncio
+@hard
 async def test_exec_bad_exit_fails_with_stderr_and_redacts_secrets():
     code = "import sys; sys.stderr.write('auth failed for ' + sys.argv[1]); sys.exit(3)"
     action = {"exec": {"argv": py(code) + ["{{secret:pw}}"]}}
@@ -83,7 +93,7 @@ async def test_exec_bad_exit_fails_with_stderr_and_redacts_secrets():
     assert await run(action, secrets={"pw": "hunter22"}) == ""
 
 
-@pytest.mark.asyncio
+@hard
 async def test_exec_secret_setting_redacted_and_async_resolver():
     code = "import sys; sys.stderr.write(' '.join(sys.argv[1:])); sys.exit(1)"
 
@@ -105,14 +115,14 @@ async def test_exec_secret_setting_redacted_and_async_resolver():
         await run({"exec": {"argv": ["x", "{{secret:tok}}"]}}, secrets=broken)
 
 
-@pytest.mark.asyncio
+@hard
 async def test_exec_per_os_override():
     action = {"exec": {"argv": py("print('linux')"), "windows": {"argv": py("print('windows')")}}}
     assert await run(action) == "linux"
     assert await run(action, worker={"os": "windows"}) == "windows"
 
 
-@pytest.mark.asyncio
+@hard
 async def test_exec_try_first_installed_binary(tmp_path):
     action = {"exec": {"try": [{"argv": ["no-such-grim-xyz", "{{tmp}}/s.png"]},
                                {"argv": py("import sys; open(sys.argv[1], 'wb').write(b'\\x89PNG')")
@@ -126,7 +136,7 @@ async def test_exec_try_first_installed_binary(tmp_path):
         await run({"exec": {"argv": ["/nonexistent/bin/tool"]}})
 
 
-@pytest.mark.asyncio
+@hard
 async def test_exec_missing_top_level_arg_fails_cleanly():
     with pytest.raises(ActionError, match=r"\{\{args.path\}\} is not set"):
         await run({"exec": {"argv": ["ls", "{{args.path}}"]}})
@@ -145,7 +155,7 @@ def _alive(pid):
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
-@pytest.mark.asyncio
+@hard
 async def test_exec_timeout_kills_the_process_tree(tmp_path):
     pidfile = tmp_path / "pids"
     code = ("import subprocess,sys,time,os;"
@@ -163,14 +173,14 @@ async def test_exec_timeout_kills_the_process_tree(tmp_path):
     assert not any(map(_alive, pids)), pids
 
 
-@pytest.mark.asyncio
+@hard
 async def test_exec_output_over_limit(monkeypatch):
     monkeypatch.setattr(engine, "MAX_OUTPUT", 1000)
     with pytest.raises(ActionError, match="over 1000 bytes"):
         await run({"exec": {"argv": py("print('x' * 5000)")}})
 
 
-@pytest.mark.asyncio
+@hard
 async def test_exec_parse_variants():
     out = "id=1\nstate=up\n"
     assert await run({"exec": {"argv": py(f"print({out!r}, end='')")}, "parse": "kv"}) == \
@@ -216,10 +226,10 @@ async def http_base():
     await site.start()
     port = site._server.sockets[0].getsockname()[1]
     yield f"127.0.0.1:{port}"
-    await runner.cleanup()
+    await asyncio.wait_for(runner.cleanup(), 10)
 
 
-@pytest.mark.asyncio
+@hard
 async def test_http_query_headers_json_and_escaped_path(http_base):
     action = {"http": {"method": "POST", "url": "http://{{appliance.host}}/echo/{{args.p}}",
                        "query": {"action": "{{args.action}}", "opt": "{{args.opt}}"},
@@ -234,7 +244,7 @@ async def test_http_query_headers_json_and_escaped_path(http_base):
     assert json.loads(out["body"]) == {"n": 3, "name": "a/../b?c"}
 
 
-@pytest.mark.asyncio
+@hard
 async def test_http_auth_form_body(http_base):
     base = f"http://{http_base}/echo/x"
     basic = await run({"http": {"url": base, "auth": {"basic": ["admin", "{{secret:pw}}"]}}},
@@ -249,14 +259,14 @@ async def test_http_auth_form_body(http_base):
     assert body["body"] == "raw x"
 
 
-@pytest.mark.asyncio
+@hard
 async def test_http_header_injection_refused(http_base):
     with pytest.raises(ActionError, match="control character"):
         await run({"http": {"url": f"http://{http_base}/echo/x", "headers": {"X-Thing": "{{args.v}}"}}},
                   {"v": "a\r\nX-Evil: 1"})
 
 
-@pytest.mark.asyncio
+@hard
 async def test_http_status_ok_and_redacted_errors(http_base):
     url = f"http://{http_base}/status/{{{{args.n}}}}"
     action = {"http": {"url": url, "query": {"t": "{{secret:tok}}"}}, "parse": "text"}
@@ -270,14 +280,14 @@ async def test_http_status_ok_and_redacted_errors(http_base):
     assert await run(action, {"n": 404}, secrets={"tok": "x"}) == "status 404 for token x"
 
 
-@pytest.mark.asyncio
+@hard
 async def test_http_bytes_and_empty_json(http_base):
     out = await run({"http": {"url": f"http://{http_base}/snap.png"}, "parse": "bytes"})
     assert out["mime"] == "image/png" and out["bytes"] == 8 and out["name"] == "snap.png"
     assert await run({"http": {"method": "POST", "url": f"http://{http_base}/empty"}}) is None
 
 
-@pytest.mark.asyncio
+@hard
 async def test_http_connection_refused_is_retryable():
     with pytest.raises(ActionError, match="http failed") as e:
         await run({"http": {"url": "http://127.0.0.1:9/x"}})
@@ -309,7 +319,7 @@ def server_tls(tmp_path_factory):
     return ctx
 
 
-@pytest.mark.asyncio
+@hard
 async def test_https_self_signed_needs_verify_false(server_tls):
     app = web.Application()
     async def info(request):
@@ -338,13 +348,15 @@ async def _tcp_server(handler, tls=None):
 
 
 async def _upper_line(reader, writer):
-    line = await reader.readline()
-    writer.write(line.upper() + b"rest-not-read\n")
-    await writer.drain()
-    writer.close()
+    try:
+        line = await reader.readline()
+        writer.write(line.upper() + b"rest-not-read\n")
+        await writer.drain()
+    finally:   # an open server-side socket makes Server.wait_closed() hang (3.12+)
+        writer.close()
 
 
-@pytest.mark.asyncio
+@hard
 async def test_tcp_until_newline_close_and_bytes():
     server, port = await _tcp_server(_upper_line)
     async with server:
@@ -357,12 +369,14 @@ async def test_tcp_until_newline_close_and_bytes():
             await run({"tcp": base}, {"port": port, "state": "on\nreboot"})
 
 
-@pytest.mark.asyncio
+@hard
 async def test_tcp_map_send_is_one_json_line_and_tls(server_tls):
     async def echo(reader, writer):
-        writer.write(await reader.readline())
-        await writer.drain()
-        writer.close()
+        try:
+            writer.write(await reader.readline())
+            await writer.drain()
+        finally:
+            writer.close()
 
     server, port = await _tcp_server(echo, tls=server_tls)
     async with server:
@@ -374,25 +388,27 @@ async def test_tcp_map_send_is_one_json_line_and_tls(server_tls):
             await run(action, {"cmd": "x", "n": 1})
 
 
-@pytest.mark.asyncio
+@hard
 async def test_tcp_refused_and_timeout():
     with pytest.raises(ActionError, match="tcp failed") as e:
         await run({"tcp": {"host": "127.0.0.1", "port": 9, "send": "x\n"}})
     assert e.value.retry
 
     async def silent(reader, writer):
-        await asyncio.sleep(5)
+        try:
+            await reader.read()   # say nothing until the client hangs up
+        finally:
+            writer.close()
 
     server, port = await _tcp_server(silent)
     async with server:
         with pytest.raises(ActionError, match="tcp timed out after 0.3s"):
             await run({"tcp": {"host": "127.0.0.1", "port": port}}, timeout=0.3)
-        server.close()
 
 
 # --- ws ------------------------------------------------------------------------
 
-@pytest.mark.asyncio
+@hard
 async def test_ws_one_message_one_reply():
     import websockets
 
@@ -416,7 +432,7 @@ async def test_ws_one_message_one_reply():
 
 # --- file ----------------------------------------------------------------------
 
-@pytest.mark.asyncio
+@hard
 async def test_file_write_then_read(tmp_path):
     data = str(tmp_path / "data")
     w = await run({"file": {"write": "{{plugin.data}}/{{args.name}}.json", "content": {"v": "{{args.v}}"}}},
