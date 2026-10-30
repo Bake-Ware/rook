@@ -1,0 +1,23 @@
+manifest: 1
+plugin: e2e
+version: 1.0.0
+title: E2E fixture
+doc: Caps the end-to-end tests call on a real worker.
+caps:
+  ping:
+    doc: Answer with who asked and the worker's process id.
+    risk: read
+    scope: self
+    args: { text: { type: str } }
+    run: scripts/e2e.py:ping
+  admin:
+    doc: An administrative change (it changes nothing).
+    risk: admin
+    scope: self
+    run: scripts/e2e.py:admin
+  wipe:
+    doc: Erase the scratch notes for good.
+    risk: write
+    scope: self
+    effects: [destructive]
+    run: scripts/e2e.py:wipe
