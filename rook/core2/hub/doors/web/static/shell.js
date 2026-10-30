@@ -199,6 +199,7 @@ $("#archive-btn").onclick = async () => {
 };
 
 $("#menu").onclick = () => document.body.classList.toggle("nav-open");
+$("#pages").onclick = () => document.body.classList.remove("nav-open");
 
 $("#signout").onclick = async () => {
   await api("/logout", {}).catch(() => {});
