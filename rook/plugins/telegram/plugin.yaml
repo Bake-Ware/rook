@@ -24,7 +24,7 @@ settings:
     doc: The vault name of the bot token from @BotFather.
     setup: Make a bot with @BotFather, store its token in the vault and set this to the vault name.
   api: { type: url, default: "https://api.telegram.org", where: hub, apply: reload, doc: The Bot API base URL. }
-  poll: { type: int, default: 25, min: 0, max: 50, where: hub, apply: reload, doc: Seconds one getUpdates long poll waits. }
+  poll: { type: int, default: 25, min: 1, max: 50, where: hub, apply: reload, doc: Seconds one getUpdates long poll waits. }
 
 caps:
   send:

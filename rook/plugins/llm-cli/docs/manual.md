@@ -9,7 +9,7 @@ completion with tools off, through core's launch path, in a temp folder:
 
 | Tool | Command (prompt on stdin) |
 |---|---|
-| claude | `claude -p --output-format json --tools "" --no-session-persistence --model M --system-prompt S` |
+| claude | `claude -p --output-format json --tools "" --strict-mcp-config --no-session-persistence --model M --system-prompt S` |
 | codex | `codex exec --ephemeral --skip-git-repo-check -s read-only -o FILE -m M -` |
 
 A conversation longer than one message goes in as a labelled transcript;

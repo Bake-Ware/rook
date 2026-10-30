@@ -362,6 +362,8 @@ class Settings:
                         "default": spec.get("default"), "secret": bool(spec.get("secret")),
                         "value": values.get(key, spec.get("default")), "source": source})
         who = self._person(ctx, person)
+        if who and who != ctx.caller.person and not ctx.caller.owner:
+            raise KitError("denied: only an owner reads someone else's settings")
         if who:
             mine = self.settings(who)
             for name, key, spec in self._specs(plugin, "person"):
@@ -404,6 +406,8 @@ class Settings:
             raise KitError("a per-person setting needs a person: give person")
         if who != ctx.caller.person and not ctx.caller.owner:
             raise KitError("denied: only an owner changes someone else's settings")
+        if spec.get("secret"):      # a vault name a person picks could name the band's own secrets
+            raise KitError(f"{plugin}.{key} is a per-person secret: those wait for the vault")
         mine = self.personal.setdefault(who, {}).setdefault(plugin, {})
         if value is None:
             mine.pop(key, None)

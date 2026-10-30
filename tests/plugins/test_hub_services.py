@@ -136,6 +136,9 @@ def test_notify_reaches_people_on_phone_telegram_and_discord(tmp_path, monkeypat
         assert (await call(hub, owner, "setting.set", plugin="notify", key="phone", value="rook"))["ok"]
         out = await call(hub, ann, "setting.set", plugin="notify", key="phone", value="rook", person="bake")
         assert not out["ok"] and "someone else's" in out["error"], out
+        out = await call(hub, ann, "setting.list", plugin="notify", person="bake")
+        assert not out["ok"] and "someone else's" in out["error"], out
+        assert (await call(hub, owner, "setting.list", plugin="notify", person="ann"))["ok"]
         out = await call(hub, owner, "setting.set", plugin="notify", key="reach", value=["fax"])
         assert not out["ok"] and out["error"].startswith("bad value"), out
         listed = (await call(hub, owner, "setting.list", plugin="notify"))["result"]["settings"]

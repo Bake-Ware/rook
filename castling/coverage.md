@@ -198,7 +198,9 @@ Every provider maps `model: one | two | three` (castling-agents' three systems) 
 - **H1. `where: person` settings had no store.** Added: `setting.list/set {person}` (yours;
   owners: anyone's) kept in `<data>/person-settings.json`; `ctx.settings` reads the caller's own,
   `ctx.settings_for(person)` someone else's, `ctx.owners()` the owners. `setting.set` is still
-  `admin`, so a child can't set their own: an owner does.
+  `admin`, so a child can't set their own: an owner does. Reading someone else's is for owners;
+  per-person `secret` settings are refused until the vault (a vault name a person picks could
+  name the band's own secrets).
 - **H2. `ctx.call` couldn't name a worker.** Added `ctx.call_on(worker, cap, **args)` (the hub's
   `call_as(target=)`): a device contract on the person's phone.
 - **H3. A uses grant for a target contract must name the provider.** Rights check the resolved
