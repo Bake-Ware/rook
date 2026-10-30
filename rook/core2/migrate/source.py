@@ -19,6 +19,7 @@ import re
 import sqlite3
 from pathlib import Path
 
+import nacl.exceptions
 import nacl.secret
 
 LIVE = ("/var/lib/rook-band-mcp",)
@@ -159,7 +160,10 @@ class Source:
         path = self.paths.get("trust")
         if path is None:
             return None
-        doc = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except ValueError as e:
+            raise NotACopy(f"{path}: not a trust map ({e})") from None
         return doc if isinstance(doc, dict) else None
 
     # -- vault ------------------------------------------------------------------
@@ -176,7 +180,10 @@ class Source:
             return [], []
         if "vault_key" not in self.paths:
             return [], [f"vault.key is not in the copy: {len(rows)} secrets can't be read (copy it beside vault.db)"]
-        sealed = nacl.secret.SecretBox(self.paths["vault_key"].read_bytes())
+        try:
+            sealed = nacl.secret.SecretBox(self.paths["vault_key"].read_bytes())
+        except (TypeError, ValueError, nacl.exceptions.CryptoError):
+            return [], [f"vault.key in the copy isn't a 0.4 vault key: {len(rows)} secrets can't be read"]
         out, problems = [], []
         for r in rows:
             try:

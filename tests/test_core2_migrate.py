@@ -402,6 +402,12 @@ def test_a_missing_vault_key_is_reported_not_fatal(tmp_path, copy04):
     (copy04 / "vault.key").write_bytes(nacl.utils.random(32))
     r = migrate(copy04, tmp_path / "hub" / "hub.yaml")
     assert r["secrets"] == [] and any("github-pat doesn't decrypt" in n for n in r["notes"])
+    (copy04 / "vault.key").write_bytes(b"short")
+    r = migrate(copy04, tmp_path / "hub" / "hub.yaml")
+    assert any("isn't a 0.4 vault key: 2 secrets" in n for n in r["notes"])
+    (copy04 / "trust.json").write_text("{nope")
+    with pytest.raises(NotACopy, match="not a trust map"):
+        migrate(copy04, tmp_path / "hub" / "hub.yaml")
 
 
 # -- the command ----------------------------------------------------------------------------
