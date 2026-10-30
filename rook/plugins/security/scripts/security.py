@@ -56,6 +56,9 @@ RISKY_EFFECTS = {"persists", "sensitive", "destructive"}
 DECOY_SECS = 600          # a canary's decoy may be written once within this
 RELEASES_PER_HOUR = 5     # a hijacked triage agent can't drain the holds
 SEEN_MAX, FLAGS_MAX, ALERTS_MAX = 5000, 200, 200
+# Reachable from a paused session: looking, and the owner lifting the pause
+# (security.clear checks it is the owner in person).
+UNPAUSED = {f"{PLUGIN}.clear", f"{PLUGIN}.status", f"{PLUGIN}.canary.list"}
 SCAN_MAX = 8 << 20        # characters of a result scanned for canaries
 
 # Persistence markers in command text: keys, scheduled tasks, services, users,
@@ -162,7 +165,7 @@ async def check(inp: dict) -> dict:
     sid, agent = session.get("id"), caller.get("agent")
     if caller.get("agent") == SELF:
         return _verdict("allow", 1.0, "other")
-    if inp.get("cap") == f"{PLUGIN}.clear":     # owners in person only, checked by the cap
+    if inp.get("cap") in UNPAUSED:
         return _verdict("allow", 1.0, "other")
     if f"session:{sid}" in S.quarantine or agent in S.quarantine:
         return _verdict("block", 1.0, "canary")
