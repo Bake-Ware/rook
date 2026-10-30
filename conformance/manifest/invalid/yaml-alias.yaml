@@ -1,0 +1,6 @@
+manifest: 1
+plugin: thing
+version: 1.0.0
+caps:
+  a: &cap { doc: A., risk: read, scope: local, action: { exec: { argv: [a] } } }
+  b: *cap

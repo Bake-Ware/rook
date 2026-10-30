@@ -1,0 +1,30 @@
+# The homework plugin the castling-manifest-2 page sketches: a record type,
+# a bulletin page, and a kid-safe grant for the child preset.
+manifest: 1
+plugin: homework
+version: 0.1.0
+title: Homework
+doc: What's due, for the whole family. Kids can see their list.
+records:
+  item:
+    fields:
+      title: { type: str, required: true }
+      subject: { type: str, enum: [math, reading, science, writing, other] }
+      student: { type: str, doc: Who it's for. }
+      due: { type: time }
+      done: { type: bool, default: false }
+      notes: { type: markdown }
+    index: [due, student]
+    search: [title, notes]
+    history: true
+    caps: [list, get, search, create, update, archive]
+pages:
+  bulletin:
+    title: Homework
+    file: pages/bulletin.html
+    caps: ["homework.item.*"]
+    events: ["homework.*"]
+    sizes: [widget, page]
+    nav: { section: home }
+presets:
+  child: { grants: [homework.item.list] }

@@ -1,0 +1,26 @@
+# Loads, with warnings (forward compatibility and fail-safe defaults).
+manifest: 1
+plugin: gizmo
+version: 1.0.0
+future_section: { anything: true }
+caps:
+  zap:
+    doc: Zap the gizmo.
+    risk: read
+    scope: local
+    effects: [physical, levitates]
+    color: blue
+    action:
+      exec: { argv: [zap] }
+  serial.send:
+    doc: Uses an action type from a later minor version.
+    risk: write
+    scope: local
+    action:
+      serial: { port: /dev/ttyUSB0, send: "hi" }
+emits:
+  zapped: { doc: Not in the plugin's namespace. }
+routes:
+  open: { path: /open, run: scripts/open.py:handle, auth: none }
+presets:
+  teen: { grants: [gizmo.zap] }

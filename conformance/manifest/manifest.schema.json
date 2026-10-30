@@ -1,0 +1,628 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Bake-Ware/rook/conformance/manifest/manifest.schema.json",
+  "title": "Rook plugin manifest (plugin.yaml), format 1",
+  "description": "Structural schema. Unknown keys are allowed here (forward compatibility); validators report them as warnings. Semantic checks (templates, file references, presets, contracts) are in rook.kit.manifest and the vectors beside this file.",
+  "type": "object",
+  "required": ["manifest", "plugin", "version"],
+  "properties": {
+    "manifest": {"const": 1},
+    "plugin": {"$ref": "#/$defs/plugin_name"},
+    "version": {"$ref": "#/$defs/semver"},
+    "title": {"type": "string"},
+    "doc": {"type": "string"},
+    "icon": {"type": "string"},
+    "author": {"type": "string"},
+    "license": {"type": "string"},
+    "source": {"type": "string"},
+    "package": {"enum": ["core", "agents", "workbench", "devices"]},
+    "runs_on": {"$ref": "#/$defs/home"},
+    "builtin": {"type": "boolean"},
+    "platforms": {"$ref": "#/$defs/platforms"},
+    "replaces": {"type": "array", "items": {"$ref": "#/$defs/plugin_name"}},
+    "requires": {"$ref": "#/$defs/requires"},
+    "uses": {"$ref": "#/$defs/globs"},
+    "assets": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["url", "sha256"],
+        "properties": {
+          "url": {"type": "string"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "size": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "settings": {"$ref": "#/$defs/settings"},
+    "caps": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/cap_name"},
+      "additionalProperties": {"$ref": "#/$defs/cap"}
+    },
+    "records": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/record"}
+    },
+    "emits": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/cap_name"},
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "doc": {"type": "string"},
+          "payload": {"$ref": "#/$defs/fields"},
+          "taints": {"type": "boolean"}
+        }
+      }
+    },
+    "hooks": {
+      "type": "object",
+      "properties": {
+        "start": {"$ref": "#/$defs/run_ref"},
+        "stop": {"$ref": "#/$defs/run_ref"},
+        "status": {"$ref": "#/$defs/run_ref"},
+        "every": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["interval", "call"],
+            "properties": {
+              "interval": {"$ref": "#/$defs/duration"},
+              "call": {"$ref": "#/$defs/cap_name"},
+              "args": {"type": "object"}
+            }
+          }
+        },
+        "on": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["event"],
+            "properties": {
+              "event": {"$ref": "#/$defs/glob"},
+              "filter": {"type": "object"},
+              "run": {"$ref": "#/$defs/run_ref"},
+              "call": {"$ref": "#/$defs/cap_name"},
+              "args": {"type": "object"}
+            }
+          }
+        }
+      }
+    },
+    "routes": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["path", "run"],
+        "properties": {
+          "path": {"type": "string", "pattern": "^/"},
+          "methods": {
+            "type": "array",
+            "items": {"enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]}
+          },
+          "run": {"$ref": "#/$defs/run_ref"},
+          "auth": {
+            "anyOf": [
+              {"enum": ["user", "hmac", "token", "none"]},
+              {
+                "type": "object",
+                "minProperties": 1,
+                "maxProperties": 1,
+                "properties": {"hmac": {"type": "string"}, "token": {"type": "string"}}
+              }
+            ]
+          }
+        }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "required": ["run"],
+      "properties": {
+        "run": {"$ref": "#/$defs/run_ref"},
+        "match": {
+          "type": "object",
+          "properties": {
+            "risk": {"type": "array", "items": {"$ref": "#/$defs/risk"}},
+            "effects": {"type": "array", "items": {"$ref": "#/$defs/name"}},
+            "caps": {"$ref": "#/$defs/globs"}
+          }
+        },
+        "budget": {"$ref": "#/$defs/duration"},
+        "mode": {"enum": ["shadow", "enforce"]}
+      }
+    },
+    "contracts": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/cap_name"},
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "doc": {"type": "string"},
+          "args": {"$ref": "#/$defs/fields"},
+          "result": {"$ref": "#/$defs/typespec"}
+        }
+      }
+    },
+    "provides": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/cap_name"},
+      "additionalProperties": {"$ref": "#/$defs/cap_name"}
+    },
+    "appliance": {
+      "type": "object",
+      "properties": {
+        "discover": {"type": "array", "items": {"$ref": "#/$defs/discover"}},
+        "settings": {"$ref": "#/$defs/settings"},
+        "pair": {"$ref": "#/$defs/cap_name"}
+      }
+    },
+    "check": {"type": "array", "items": {"$ref": "#/$defs/cap_name"}},
+    "personas": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/persona"}
+    },
+    "skills": {"$ref": "#/$defs/file_map"},
+    "docs": {"$ref": "#/$defs/file_map"},
+    "concepts": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "doc": {"type": "string"},
+          "roles": {"$ref": "#/$defs/strings"},
+          "skills": {"$ref": "#/$defs/strings"},
+          "signoff": {"type": "string"},
+          "trust": {"type": "string"}
+        }
+      }
+    },
+    "pages": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["file"],
+        "properties": {
+          "title": {"type": "string"},
+          "file": {"$ref": "#/$defs/rel_path"},
+          "caps": {"$ref": "#/$defs/globs"},
+          "events": {"$ref": "#/$defs/globs"},
+          "sizes": {"$ref": "#/$defs/strings"},
+          "nav": {"type": "object", "properties": {"section": {"type": "string"}}}
+        }
+      }
+    },
+    "components": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["file"],
+        "properties": {
+          "file": {"$ref": "#/$defs/rel_path"},
+          "props": {"$ref": "#/$defs/fields"},
+          "caps": {"$ref": "#/$defs/globs"}
+        }
+      }
+    },
+    "jobs": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/job"}
+    },
+    "presets": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "grants": {"$ref": "#/$defs/globs"},
+          "max_risk": {"$ref": "#/$defs/risk"},
+          "effects": {"type": "array", "items": {"$ref": "#/$defs/name"}},
+          "approve_new": {"type": "string"},
+          "expires": {"$ref": "#/$defs/duration"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "name": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
+    "plugin_name": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+    "cap_name": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)*$"},
+    "glob": {"type": "string", "pattern": "^(\\*|[a-z0-9][a-z0-9_-]*)(\\.(\\*|[a-z0-9][a-z0-9_-]*))*$"},
+    "globs": {"type": "array", "items": {"$ref": "#/$defs/glob"}},
+    "strings": {"type": "array", "items": {"type": "string"}},
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "duration": {
+      "description": "A number of seconds, or a number with a unit: ms, s, m, h, d, w.",
+      "type": ["string", "number"],
+      "minimum": 0,
+      "pattern": "^[0-9]+(\\.[0-9]+)?(ms|s|m|h|d|w)$"
+    },
+    "rel_path": {"type": "string", "minLength": 1},
+    "run_ref": {
+      "description": "path/to/file.py:function, relative to the plugin folder.",
+      "type": "string",
+      "pattern": "^[^:]+\\.py:[A-Za-z_][A-Za-z0-9_]*$"
+    },
+    "file_map": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/rel_path"}
+    },
+    "home": {"enum": ["worker", "hub"]},
+    "platforms": {
+      "type": "array",
+      "items": {"enum": ["linux", "windows", "macos", "android", "ios"]}
+    },
+    "risk": {"enum": ["read", "write", "exec", "admin"]},
+    "scope": {"enum": ["self", "local", "multi-machine", "multi-user", "external"]},
+    "requires": {
+      "type": "object",
+      "properties": {
+        "rook": {"type": "string"},
+        "plugins": {
+          "type": "object",
+          "propertyNames": {"$ref": "#/$defs/plugin_name"},
+          "additionalProperties": {"type": "string"}
+        },
+        "python": {"$ref": "#/$defs/strings"},
+        "bins": {"$ref": "#/$defs/strings"},
+        "hardware": {"$ref": "#/$defs/strings"}
+      }
+    },
+    "type_name": {
+      "enum": ["str", "int", "float", "bool", "time", "duration", "markdown", "json",
+               "file", "secret", "ref", "list", "map"]
+    },
+    "typespec": {
+      "description": "The type language. type defaults to str; schema: is raw JSON Schema.",
+      "type": "object",
+      "properties": {
+        "type": {"$ref": "#/$defs/type_name"},
+        "required": {"type": "boolean"},
+        "default": true,
+        "enum": {"type": "array", "minItems": 1},
+        "min": {"type": "number"},
+        "max": {"type": "number"},
+        "pattern": {"type": "string"},
+        "items": {"$ref": "#/$defs/typespec"},
+        "fields": {"$ref": "#/$defs/fields"},
+        "to": {"type": "string"},
+        "doc": {"type": "string"},
+        "schema": {"type": "object"}
+      }
+    },
+    "fields": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/typespec"}
+    },
+    "setting": {
+      "type": "object",
+      "properties": {
+        "type": {"anyOf": [{"$ref": "#/$defs/type_name"}, {"const": "oauth"}]},
+        "required": {"type": "boolean"},
+        "default": true,
+        "enum": {"type": "array", "minItems": 1},
+        "min": {"type": "number"},
+        "max": {"type": "number"},
+        "pattern": {"type": "string"},
+        "items": {"$ref": "#/$defs/typespec"},
+        "fields": {"$ref": "#/$defs/fields"},
+        "to": {"type": "string"},
+        "doc": {"type": "string"},
+        "schema": {"type": "object"},
+        "where": {"enum": ["worker", "hub", "person"]},
+        "secret": {"type": "boolean"},
+        "setup": {"type": "string"},
+        "provider": {"type": "string"},
+        "scopes": {"$ref": "#/$defs/strings"}
+      }
+    },
+    "settings": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {"$ref": "#/$defs/setting"}
+    },
+    "cap": {
+      "type": "object",
+      "required": ["doc", "risk", "scope"],
+      "properties": {
+        "doc": {"type": "string", "minLength": 1},
+        "risk": {"$ref": "#/$defs/risk"},
+        "scope": {"$ref": "#/$defs/scope"},
+        "effects": {"type": "array", "items": {"$ref": "#/$defs/name"}},
+        "tags": {"$ref": "#/$defs/strings"},
+        "tip": {"type": "string"},
+        "examples": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "args": {"type": "object"},
+              "result": true,
+              "doc": {"type": "string"}
+            }
+          }
+        },
+        "args": {"$ref": "#/$defs/fields"},
+        "result": {"$ref": "#/$defs/typespec"},
+        "timeout": {"$ref": "#/$defs/duration"},
+        "idempotent": {"type": "boolean"},
+        "undo": {"$ref": "#/$defs/cap_name"},
+        "elevation": {"enum": ["never", "may", "upfront"]},
+        "exclusive": {"type": "string"},
+        "stream": {
+          "type": "object",
+          "properties": {
+            "types": {"$ref": "#/$defs/strings"},
+            "input": {"type": "boolean"},
+            "durable": {"type": "boolean"}
+          }
+        },
+        "platforms": {"$ref": "#/$defs/platforms"},
+        "requires": {"$ref": "#/$defs/requires"},
+        "on": {"$ref": "#/$defs/home"},
+        "aliases": {"type": "array", "items": {"$ref": "#/$defs/cap_name"}},
+        "deprecated": {"type": "string"},
+        "action": {"$ref": "#/$defs/action"},
+        "run": {"$ref": "#/$defs/run_ref"}
+      }
+    },
+    "action": {
+      "description": "Exactly one action type (exec, http, tcp, ws, file) plus optional parse/returns. Another key is an action type this validator does not know: the cap is unavailable.",
+      "type": "object",
+      "properties": {
+        "exec": {"$ref": "#/$defs/exec"},
+        "http": {"$ref": "#/$defs/http"},
+        "tcp": {"$ref": "#/$defs/tcp"},
+        "ws": {"$ref": "#/$defs/ws"},
+        "file": {"$ref": "#/$defs/file_action"},
+        "parse": {
+          "anyOf": [
+            {"enum": ["text", "lines", "json", "kv", "csv", "bytes"]},
+            {
+              "type": "object",
+              "required": ["regex"],
+              "properties": {"regex": {"type": "string"}, "each": {"type": "boolean"}}
+            }
+          ]
+        },
+        "returns": {
+          "description": "Fields to pick, or a rename map; dotted paths only.",
+          "anyOf": [
+            {"type": "array", "items": {"$ref": "#/$defs/dotted_path"}},
+            {"type": "object", "additionalProperties": {"$ref": "#/$defs/dotted_path"}}
+          ]
+        }
+      }
+    },
+    "argv": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]}
+    },
+    "dotted_path": {"type": "string", "pattern": "^[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*$"},
+    "string_map": {"type": "object", "additionalProperties": {"type": "string"}},
+    "exec_step": {
+      "type": "object",
+      "required": ["argv"],
+      "properties": {
+        "argv": {"$ref": "#/$defs/argv"},
+        "stdin": {"type": "string"},
+        "env": {"$ref": "#/$defs/string_map"},
+        "cwd": {"type": "string"},
+        "ok_exit": {"type": "array", "items": {"type": "integer"}},
+        "output": {"type": "string"}
+      }
+    },
+    "exec": {
+      "type": "object",
+      "properties": {
+        "argv": {"$ref": "#/$defs/argv"},
+        "stdin": {"type": "string"},
+        "env": {"$ref": "#/$defs/string_map"},
+        "cwd": {"type": "string"},
+        "ok_exit": {"type": "array", "items": {"type": "integer"}},
+        "output": {"type": "string"},
+        "linux": {"$ref": "#/$defs/exec_step"},
+        "windows": {"$ref": "#/$defs/exec_step"},
+        "macos": {"$ref": "#/$defs/exec_step"},
+        "android": {"$ref": "#/$defs/exec_step"},
+        "try": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/exec_step"}}
+      },
+      "anyOf": [{"required": ["argv"]}, {"required": ["try"]}, {"required": ["linux"]},
+                {"required": ["windows"]}, {"required": ["macos"]}, {"required": ["android"]}]
+    },
+    "http": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "method": {"enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]},
+        "url": {"type": "string"},
+        "headers": {"$ref": "#/$defs/string_map"},
+        "query": {"$ref": "#/$defs/string_map"},
+        "json": true,
+        "form": {"$ref": "#/$defs/string_map"},
+        "body": {"type": "string"},
+        "auth": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 1,
+          "properties": {
+            "basic": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2},
+            "bearer": {"type": "string"}
+          }
+        },
+        "tls": {"$ref": "#/$defs/tls"},
+        "ok": {"type": "array", "items": {"type": "integer"}}
+      },
+      "not": {"anyOf": [{"required": ["json", "form"]}, {"required": ["json", "body"]},
+                        {"required": ["form", "body"]}]}
+    },
+    "tls": {
+      "anyOf": [
+        {"type": "boolean"},
+        {"type": "object", "properties": {"verify": {"type": "boolean"}}}
+      ]
+    },
+    "tcp": {
+      "type": "object",
+      "required": ["host", "port"],
+      "properties": {
+        "host": {"type": "string"},
+        "port": {"type": ["integer", "string"]},
+        "send": {"type": "string"},
+        "until": {
+          "anyOf": [
+            {"enum": ["newline", "close"]},
+            {"type": "object", "required": ["bytes"], "properties": {"bytes": {"type": "integer", "minimum": 1}}}
+          ]
+        },
+        "tls": {"$ref": "#/$defs/tls"}
+      }
+    },
+    "ws": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": {"type": "string"},
+        "headers": {"$ref": "#/$defs/string_map"},
+        "send": {"type": "string"}
+      }
+    },
+    "file_action": {
+      "type": "object",
+      "properties": {
+        "read": {"type": "string"},
+        "write": {"type": "string"},
+        "content": {"type": "string"}
+      },
+      "oneOf": [
+        {"required": ["read"], "not": {"required": ["write"]}},
+        {"required": ["write", "content"], "not": {"required": ["read"]}}
+      ]
+    },
+    "record": {
+      "type": "object",
+      "required": ["fields"],
+      "properties": {
+        "fields": {
+          "type": "object",
+          "propertyNames": {"$ref": "#/$defs/name"},
+          "additionalProperties": {"$ref": "#/$defs/record_field"}
+        },
+        "index": {"$ref": "#/$defs/strings"},
+        "search": {"$ref": "#/$defs/strings"},
+        "semantic": {"$ref": "#/$defs/strings"},
+        "history": {"type": "boolean"},
+        "private": {"type": "boolean"},
+        "retain": {"$ref": "#/$defs/duration"},
+        "caps": {
+          "type": "array",
+          "items": {"enum": ["list", "get", "search", "create", "update", "archive", "delete"]}
+        },
+        "risk": {
+          "type": "object",
+          "propertyNames": {"enum": ["list", "get", "search", "create", "update", "archive", "delete"]},
+          "additionalProperties": {"$ref": "#/$defs/risk"}
+        },
+        "migrations": {"$ref": "#/$defs/rel_path"}
+      }
+    },
+    "record_field": {
+      "type": "object",
+      "properties": {
+        "type": {"$ref": "#/$defs/type_name"},
+        "required": {"type": "boolean"},
+        "default": true,
+        "enum": {"type": "array", "minItems": 1},
+        "min": {"type": "number"},
+        "max": {"type": "number"},
+        "pattern": {"type": "string"},
+        "items": {"$ref": "#/$defs/typespec"},
+        "fields": {"$ref": "#/$defs/fields"},
+        "to": {"type": "string"},
+        "doc": {"type": "string"},
+        "schema": {"type": "object"},
+        "unique": {"type": "boolean"}
+      }
+    },
+    "discover": {
+      "description": "One hint per entry. Another key is a discovery kind this validator does not know (ignored).",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "mdns": {"type": "string"},
+        "ssdp": {"type": "string"},
+        "http": {
+          "type": "object",
+          "required": ["url"],
+          "properties": {"url": {"type": "string"}, "match": {"type": "string"}}
+        },
+        "usb": {"type": ["string", "object"]},
+        "adb": {"type": ["string", "object", "boolean"]},
+        "ble": {"type": ["string", "object"]},
+        "serial": {"type": ["string", "object"]}
+      }
+    },
+    "persona": {
+      "type": "object",
+      "properties": {
+        "title": {"type": "string"},
+        "summary": {"type": "string"},
+        "prompt": {"$ref": "#/$defs/rel_path"},
+        "skills": {"$ref": "#/$defs/strings"},
+        "grants": {"$ref": "#/$defs/globs"},
+        "always_on": {"type": "boolean"},
+        "backend": {"enum": ["default", "claude-code", "codex", "local", "api"]},
+        "model": {"$ref": "#/$defs/string_map"},
+        "voice": {"type": "string"},
+        "create": {"enum": ["default", "offer"]}
+      }
+    },
+    "job": {
+      "type": "object",
+      "required": ["trigger"],
+      "properties": {
+        "doc": {"type": "string"},
+        "trigger": {
+          "type": "object",
+          "minProperties": 1,
+          "properties": {
+            "cron": {"type": "string"},
+            "every": {"$ref": "#/$defs/duration"},
+            "on": {"$ref": "#/$defs/glob"},
+            "filter": {"type": "object"},
+            "manual": {"type": "boolean"},
+            "webhook": {"type": ["boolean", "string"]}
+          }
+        },
+        "agent": {
+          "type": "object",
+          "required": ["prompt"],
+          "properties": {"persona": {"type": "string"}, "prompt": {"type": "string"}}
+        },
+        "run": {"$ref": "#/$defs/run_ref"},
+        "call": {"$ref": "#/$defs/cap_name"},
+        "args": {"type": "object"},
+        "as": {"enum": ["creator", "persona"]},
+        "enabled": {"type": "boolean"},
+        "retries": {"type": "integer", "minimum": 0},
+        "catch_up": {"type": "boolean"}
+      }
+    }
+  }
+}

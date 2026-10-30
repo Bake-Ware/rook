@@ -1,0 +1,21 @@
+# A builtin manifest (core describes itself): caps carry no action or run,
+# core events need no namespace, core presets set ceilings.
+manifest: 1
+plugin: core
+version: 0.5.0
+package: core
+builtin: true
+caps:
+  info.ping:
+    doc: Is the worker alive?
+    risk: read
+    scope: self
+emits:
+  worker.online: { doc: A worker joined., payload: { worker: { type: str } } }
+contracts:
+  llm.complete: { args: { prompt: { type: str, required: true } }, result: { type: str } }
+presets:
+  owner: { grants: ["*"] }
+  adult: { grants: ["*"], max_risk: admin }
+  child: { grants: ["agents.chat.*", pages.view], max_risk: write, effects: [], approve_new: owner }
+  guest: { grants: ["agents.chat.*"], max_risk: write, effects: [], expires: 7d }

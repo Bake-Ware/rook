@@ -1,0 +1,15 @@
+manifest: 1
+plugin: thing
+version: 1.0.0
+caps:
+  a: { doc: A., risk: read, scope: local, undo: thing.nope, run: ../outside.py:f }
+  c: { doc: C., risk: read, scope: local, run: s.py:f, aliases: [thing.a] }
+appliance:
+  pair: thing.pair
+hooks:
+  every: [ { interval: 5m, call: shell.exec } ]
+  on: [ { event: worker.online } ]
+check: [thing.b]
+skills: { s: /etc/passwd }
+jobs:
+  j: { trigger: { cron: "* * * * *", every: 5m }, run: jobs/j.py:main, call: thing.a }

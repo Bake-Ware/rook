@@ -1,0 +1,6 @@
+manifest: 1
+plugin: thing
+version: 1.0.0
+uses: ["notify.**", "Shell.exec"]
+personas:
+  helper: { grants: ["knowledge..get"] }

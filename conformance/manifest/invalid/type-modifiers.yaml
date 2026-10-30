@@ -1,0 +1,18 @@
+manifest: 1
+plugin: thing
+version: 1.0.0
+settings:
+  port: { type: int, default: eighty }
+  login: { type: oauth, provider: google }
+caps:
+  find:
+    doc: Find.
+    risk: read
+    scope: local
+    args:
+      n: { type: bool, min: 1 }
+      owner: { type: ref }
+      kind: { enum: [a, b], default: c }
+      q: { type: str }
+    examples: [ { args: { q: x, extra: 1 } } ]
+    action: { exec: { argv: [find] } }

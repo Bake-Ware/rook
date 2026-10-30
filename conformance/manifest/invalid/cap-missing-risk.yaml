@@ -1,0 +1,5 @@
+manifest: 1
+plugin: thing
+version: 1.0.0
+caps:
+  go: { doc: Go., scope: local, action: { exec: { argv: [go] } } }

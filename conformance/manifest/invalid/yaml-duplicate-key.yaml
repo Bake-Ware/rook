@@ -1,0 +1,4 @@
+manifest: 1
+plugin: thing
+plugin: other
+version: 1.0.0

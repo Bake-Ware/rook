@@ -1,0 +1,10 @@
+manifest: 1
+plugin: thing
+version: 1.0.0
+caps:
+  door.open: { doc: Open the door., risk: write, scope: local, effects: [physical], action: { http: { method: POST, url: "http://door/open" } } }
+  logs.wipe: { doc: Wipe logs., risk: admin, scope: local, action: { exec: { argv: [wipe] } } }
+  logs.read: { doc: Read logs., risk: read, scope: local, action: { exec: { argv: [cat, log] } } }
+presets:
+  child: { grants: [thing.door.open, thing.logs.read, shell.exec], max_risk: admin }
+  guest: { grants: ["thing.logs.*"] }
