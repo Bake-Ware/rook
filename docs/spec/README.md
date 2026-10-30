@@ -9,7 +9,8 @@ to Python Rook hubs and workers.
 
 | Document | What it is |
 |---|---|
-| [core-v1.md](core-v1.md) | The specification (v1.0), written from the Python reference code. RFC 2119 language, wire examples. |
+| [core-v2.md](core-v2.md) | **Core v2.0 (Castling, Rook 0.5), draft.** Wire and security: versions, announces and heartbeats with manifests, one signed ticket per call, elevation leases, rights and presets, multi-band ownership, the gate hook, the journal. Vectors in [../../conformance/core-v2/](../../conformance/core-v2/README.md). A clean cut: v1 and v2 peers don't interoperate. |
+| [core-v1.md](core-v1.md) | The specification (v1.0), written from the Python reference code. RFC 2119 language, wire examples. Its transport sections stay normative under v2. |
 | [../../conformance/](../../conformance/README.md) | Language-neutral test vectors generated from the reference, and a harness that runs a candidate against a reference hub. |
 | [../../examples/ports/](../../examples/ports/README.md) | Two minimal workers, TypeScript (Node, no runtime dependencies) and Rust, that pass every vector and the live run. |
 

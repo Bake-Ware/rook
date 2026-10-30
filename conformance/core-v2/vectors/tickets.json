@@ -1,0 +1,1557 @@
+{
+ "spec": "2.0",
+ "vector": "tickets",
+ "worker": {
+  "worker_id": "3f0a9c1d2e3f40516273849506a7b8c9",
+  "name": "kaiju",
+  "caps": {
+   "shell.exec": {
+    "risk": "exec",
+    "effects": []
+   },
+   "light.set": {
+    "risk": "write",
+    "effects": [
+     "physical"
+    ]
+   },
+   "core.manifests": {
+    "risk": "read",
+    "effects": []
+   },
+   "core.trust.set": {
+    "risk": "admin",
+    "effects": [
+     "persists"
+    ]
+   }
+  },
+  "trust": {
+   "19c7d7856f775f9a": {
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "role": "home",
+    "keys": {
+     "3c1945587ef004c3": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk="
+    },
+    "ceiling": {
+     "grants": [
+      "*"
+     ]
+    }
+   },
+   "21f7b4340bc96a6c": {
+    "band": "3384db16e75f5d25f75fa3010b904c9f",
+    "role": "guest",
+    "keys": {
+     "3c9277f3747fa1be": "ed25519:uGKvOPc22R/4jxq7epL+EUo/PPqRzkN7Pp0GWcT1dao="
+    },
+    "ceiling": {
+     "grants": [
+      "light.*@lamp-*",
+      "core.*"
+     ],
+     "max_risk": "write"
+    }
+   }
+  }
+ },
+ "skew": 30,
+ "cases": [
+  {
+   "name": "ok",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+   },
+   "reason": "ok"
+  },
+  {
+   "name": "no ticket",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": null,
+   "reason": "no_ticket"
+  },
+  {
+   "name": "missing why",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "4/I7aW+Tz82CD3wrWzS00dOEf2Fn76ERHPdksLNq70gaPYrwaqAsosKhdF74s2pObe1o/Z29yBw/b1BSdZgbBw=="
+   },
+   "reason": "malformed"
+  },
+  {
+   "name": "blank why",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "   ",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "/xNSrcamEmy6iBsVweiX1BpNPaSto2Kn1XaiYAdMRcX5+ZpSFpR/I7ELyTJe3Gzw0aoSYY93Mvq7M6aelW3WCA=="
+   },
+   "reason": "malformed"
+  },
+  {
+   "name": "why over 500 characters",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "OqBvk7ntlhWD5xtt8YGY4OtwWJEqzbU93KNZ8B2+u1i5cAHf6s+yxZ4zHbz+0rHiUM2fBYAkX5I+r/lEzzcKAA=="
+   },
+   "reason": "malformed"
+  },
+  {
+   "name": "neither person nor agent",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "wyPqxPRC0ZjkDfMvHmCtiapxe3y4hUYt1xLZEUZd3twqFMMAUiqOW2JzVwOFqPGrlGUYYruvrQy0VyUjR3rCAg=="
+   },
+   "reason": "malformed"
+  },
+  {
+   "name": "agent alone (unattended)",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "agent": "system:hub",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "wHSLmrcMGNPMFQzB6KTntYoOgN5/31y22TV6vQpcYLJV43CJ/k2BUZZ5Jb9SJ/hBxYHBuuz684oFuizyOLnWAw=="
+   },
+   "reason": "ok"
+  },
+  {
+   "name": "nonce not 32 hex",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "abc",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "GJE2krAl9c6DJYJTM/8Jx0d4Vkj/30wSFVEr/LgSJQcsBTbrGRLR6UI5yPTm6coOoYOo9Y01FK29Tq5zXg1DBg=="
+   },
+   "reason": "malformed"
+  },
+  {
+   "name": "elevate not a boolean",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "elevate": "yes",
+    "kid": "3c1945587ef004c3",
+    "sig": "v7xX2SvvWajg9lWgOhqwVF7TE1/Yu8mhwa063YxdEyXE+e1YGbwaWcVMuSA5N4Pb+GMwxCD0f+/I8t5JLW6CCw=="
+   },
+   "reason": "malformed"
+  },
+  {
+   "name": "elevate up front",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "elevate": true,
+    "kid": "3c1945587ef004c3",
+    "sig": "7Ne9pA825eCd2CJnfqrD9JUoQSaFK33jPReiCj5Mtu92O/s3JhEXZ3jajHQWDik7JJpngFQHRdH5jG9VNztXDA=="
+   },
+   "reason": "ok"
+  },
+  {
+   "name": "wrong v",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 1,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "uZQRqAazuYdFlxMgppqbsOkQz6eZoo3c/JOuWqZSfqsMwsqvJZi4y4bCuJzoshsG8Ut7+OvxuheCeMLszrFpDg=="
+   },
+   "reason": "malformed"
+  },
+  {
+   "name": "kid not a string",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": [
+     "3c1945587ef004c3"
+    ],
+    "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+   },
+   "reason": "malformed"
+  },
+  {
+   "name": "empty args list is not {}",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": []
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "nY9oHDKcu+vCvCeTB5UTqx0pkg1C8UVIkN2qZreb21xtPTgHfKSNZ8SMeOrf4w/T2kos93MdKvBg4Dd8CqGOAw=="
+   },
+   "reason": "wrong_args"
+  },
+  {
+   "name": "unknown hub",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "0000000000000000",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "C2GXPplboc2KnEnGq8h/Uy0eM7awIxEOqVoIipgYYHMcWegVvZqK/Z7NnCvpz2Qgp0bgj+4+TbQaRlH9u4dBDA=="
+   },
+   "reason": "unknown_hub"
+  },
+  {
+   "name": "guest hub's ticket on the home band",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "21f7b4340bc96a6c",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c9277f3747fa1be",
+    "sig": "5KkxhO+Fytrb2el8wjRt4b2GXaVpVFuaX+NwFP/u42w+093RdOzj5k89hVIQgSCE2XMLJPYzGS9Cb+BlW4Q5Cg=="
+   },
+   "reason": "unknown_hub"
+  },
+  {
+   "name": "key the hub never certified",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "7f7970658681bad8",
+    "sig": "NNiZvd5OZadPdIbd7dUYEX4CaA5Xo8fPhOUujxwFM7uLreOo+yLsvU+V0VjsvTnJedSYsjih3A/RavXlEARQDQ=="
+   },
+   "reason": "unknown_key"
+  },
+  {
+   "name": "forged: claims the hub's kid",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "NNiZvd5OZadPdIbd7dUYEX4CaA5Xo8fPhOUujxwFM7uLreOo+yLsvU+V0VjsvTnJedSYsjih3A/RavXlEARQDQ=="
+   },
+   "reason": "bad_signature"
+  },
+  {
+   "name": "tampered after signing",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Delete everything.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+   },
+   "reason": "bad_signature"
+  },
+  {
+   "name": "names another band",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "3384db16e75f5d25f75fa3010b904c9f",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "PawgiRz2ALOWFAQwUPmDgvCUJvovHkr8xkoMEfETJoyW5aLMTU2RnZNeEre1X4vrymdiSTsdLqZrd7/QV+kfAw=="
+   },
+   "reason": "wrong_band"
+  },
+  {
+   "name": "another worker",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "00000000000000000000000000000000",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "g1zJ3h5PKrgjUOxKLAVbBbEIXtbnl2IHJb70Rbg3QDFNGjdI0pBDwNCNW3dH9rjSJZzIMKRn2ebDLMt+62axAg=="
+   },
+   "reason": "wrong_worker"
+  },
+  {
+   "name": "appliance not in the request",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "appliance": "lamp-kitchen",
+    "kid": "3c1945587ef004c3",
+    "sig": "8P26GuRi48IGgWys2h0tWJzHC6xovBHs8h6jm/mk/lq5o3/CMDVivDv74dj6SEC/A8/vH+S60iERjVP08e2qDw=="
+   },
+   "reason": "wrong_appliance"
+  },
+  {
+   "name": "another call id",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "11111111111111111111111111111111",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "Qz9/ooT3FyA9tkFlVV8EJaA6KQojOh+1A6GDb29mJ8zUuIIbYbOZfbav7kfM1BGsBzsqhmYXUiXBQFClVFnyBw=="
+   },
+   "reason": "wrong_call"
+  },
+  {
+   "name": "another cap",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "light.set",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "tpy2HFt1RVR3leDGDno233dy3lnlxAPGIeV0+Sk7rRCfW4rP2V1+OxGOySW/+ntGeCbfux7JBHGHmeinhDlNCg=="
+   },
+   "reason": "wrong_cap"
+  },
+  {
+   "name": "arguments changed",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "rm",
+      "-rf",
+      "/"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+   },
+   "reason": "wrong_args"
+  },
+  {
+   "name": "floats and unicode in args",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "volume": 0.5,
+     "name": "kitchen lamp \u00e9"
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "ZklaHjzfZeajKI7cTpTgtxCxaa8W6CjgBNG5aml1ETw",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "vLWgxOlDMMUfwtza4QvNbWeBJppe2R2O1Ub6fXl+SB6folKbqCqsIETEoxA9saV10JGhBq/VPxU4mjxh8M6ZBw=="
+   },
+   "reason": "ok"
+  },
+  {
+   "name": "lifetime 300 s",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300300,
+    "kid": "3c1945587ef004c3",
+    "sig": "rG9TLC05ZwP48AggcFRbEW4VE0UQ8gipNdOlzJo6Wj8tMzIeGqVHPFVdtkB4Yk/zV7hq4MEQG3mnR/4u8XZpBA=="
+   },
+   "reason": "bad_lifetime"
+  },
+  {
+   "name": "lifetime 30 s",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300030,
+    "kid": "3c1945587ef004c3",
+    "sig": "ywA3qZJbZZ4UkOMPBVbjS6MxqJR8d0yhkJzT1Sdsj79iAMP1T5amJHYq92umyiXxbcNvhalUtQFKlKgbGlqlAA=="
+   },
+   "reason": "bad_lifetime"
+  },
+  {
+   "name": "lifetime 120 s",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300120,
+    "kid": "3c1945587ef004c3",
+    "sig": "J7Mj6t2kh2AFL4pH/ijvjPotvRlFvRUHdAObP62x2cjs35ihrIX8aJ7M6A7i+O2pTQwPWqjQEhBkaSNTN41RDw=="
+   },
+   "reason": "ok"
+  },
+  {
+   "name": "31 s before iat",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793299969,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+   },
+   "reason": "not_yet_valid"
+  },
+  {
+   "name": "30 s before iat",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793299970,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+   },
+   "reason": "ok"
+  },
+  {
+   "name": "31 s after exp",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300091,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+   },
+   "reason": "expired"
+  },
+  {
+   "name": "30 s after exp",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300090,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+   },
+   "reason": "ok"
+  },
+  {
+   "name": "replayed nonce",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [
+    "9b1f2e3d4c5b6a798877665544332211"
+   ],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+   },
+   "reason": "replay"
+  },
+  {
+   "name": "cap the worker doesn't serve",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "nope.nothing",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "nope.nothing",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "uDXhOC/J8ZmgmkJWC2RPh7hjsGPSk6eElkVMqBoAckSAiOwWeC4QIc45jzWRuC8Zk/XSFeOuCh7F5YaK9j7TBw=="
+   },
+   "reason": "unknown_cap"
+  },
+  {
+   "name": "unknown field ignored",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "x_future": 1,
+    "kid": "3c1945587ef004c3",
+    "sig": "DS90i4mnmiNyJfb6jWHoaj6/M54wERNBIanDJgFd+Dnp8XLVyWq6bK0AvggMriKguUWinAPT8DJbGZYq0qTSDw=="
+   },
+   "reason": "ok"
+  },
+  {
+   "name": "hubkey inline",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA==",
+    "hubkey": {
+     "typ": "rook-hubkey",
+     "v": 2,
+     "hub": "19c7d7856f775f9a",
+     "key": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+     "bands": [
+      "e17904e6ed4c664592f64f6f1d02c682"
+     ],
+     "iat": 1793213600,
+     "exp": 1793818400,
+     "kid": "19c7d7856f775f9a",
+     "sig": "2WLOn/+I+K5r8P46W8W+j0aoc1V375Z2FEdbhkTONqwEmZ1UDWrTTiC3Hc8WYrsKQcLodNNF6UFNmjKttqvUAA=="
+    }
+   },
+   "reason": "ok"
+  },
+  {
+   "name": "guest: lamp inside ceiling",
+   "band": "3384db16e75f5d25f75fa3010b904c9f",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "light.set",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "on": false
+    },
+    "appliance": "lamp-kitchen"
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "21f7b4340bc96a6c",
+    "band": "3384db16e75f5d25f75fa3010b904c9f",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "light.set",
+    "args_hash": "-ueis7wHBde9QkSkGFnIIP6VxjcVB-1GDR-dgfzCqWc",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "appliance": "lamp-kitchen",
+    "kid": "3c9277f3747fa1be",
+    "sig": "r3u4F01MyQJXZsbJmqmxML0940oj7N0n4W2FHQhS7xUGhqhCaZ/M6fh5sP4G6VDdVUilBQM09uMoBM8p2Pg2CA=="
+   },
+   "reason": "ok"
+  },
+  {
+   "name": "guest: garage door outside ceiling",
+   "band": "3384db16e75f5d25f75fa3010b904c9f",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "light.set",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "on": false
+    },
+    "appliance": "garage-door"
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "21f7b4340bc96a6c",
+    "band": "3384db16e75f5d25f75fa3010b904c9f",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "light.set",
+    "args_hash": "-ueis7wHBde9QkSkGFnIIP6VxjcVB-1GDR-dgfzCqWc",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "appliance": "garage-door",
+    "kid": "3c9277f3747fa1be",
+    "sig": "HRIREPieEYY3tXJy7LAt+4aFpVP9L9fgkbBIxcFUsvmY9iohvnGa+eSfxqHMXbd4/+OlXkuJGw4B5rMi8W3NCw=="
+   },
+   "reason": "outside_ceiling"
+  },
+  {
+   "name": "guest: shell outside ceiling",
+   "band": "3384db16e75f5d25f75fa3010b904c9f",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "21f7b4340bc96a6c",
+    "band": "3384db16e75f5d25f75fa3010b904c9f",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c9277f3747fa1be",
+    "sig": "KRJZxQbIc+8OWKmKNUKe0Yi+fAQpSsgPU/Ks9y19vx+reo65U8rR9AT7QCARjxyHh0l6Ry5Q1EhZ+qBveD80DA=="
+   },
+   "reason": "outside_ceiling"
+  },
+  {
+   "name": "guest: core.manifests always allowed",
+   "band": "3384db16e75f5d25f75fa3010b904c9f",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "core.manifests",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {}
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "21f7b4340bc96a6c",
+    "band": "3384db16e75f5d25f75fa3010b904c9f",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "core.manifests",
+    "args_hash": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c9277f3747fa1be",
+    "sig": "6cVEHm65k65Tfbs2hviVvV+HEoyt8ZSExQUZi0/ibrK3RDJfSvY4BNWsY+sEfaJvlRXz09jMr1c4dLhsyRrjAw=="
+   },
+   "reason": "ok"
+  },
+  {
+   "name": "guest: core.trust.set is home only",
+   "band": "3384db16e75f5d25f75fa3010b904c9f",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "core.trust.set",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {}
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "21f7b4340bc96a6c",
+    "band": "3384db16e75f5d25f75fa3010b904c9f",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "core.trust.set",
+    "args_hash": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c9277f3747fa1be",
+    "sig": "qtYJpKy26yrWm0pPnE16Nu6ntgRjDT++CFg3p4fB4xmGAo4mIWQauEGh2oPTNX2AIFavX3W8bxw6ziSGUe7OAg=="
+   },
+   "reason": "outside_ceiling"
+  },
+  {
+   "name": "home: core.trust.set",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "core.trust.set",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {}
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "core.trust.set",
+    "args_hash": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c1945587ef004c3",
+    "sig": "8wHmCe67031nJoxPWJ+p7e/LY+akAxszfFoj3TWjK7tRbip2Pwl5EEeTKP+kYcVYgq4zDdFEPHRbfRnklVpNBg=="
+   },
+   "reason": "ok"
+  }
+ ]
+}

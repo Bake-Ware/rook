@@ -1,0 +1,205 @@
+{
+ "spec": "2.0",
+ "vector": "gate",
+ "verdicts": [
+  "allow",
+  "flag",
+  "block"
+ ],
+ "reasons": [
+  "intent_mismatch",
+  "anomaly",
+  "persistence",
+  "exfiltration",
+  "injection",
+  "canary",
+  "taint",
+  "policy",
+  "gate_error",
+  "other"
+ ],
+ "cases": [
+  {
+   "name": "no gates",
+   "results": [],
+   "expect": {
+    "verdict": "allow",
+    "by": []
+   }
+  },
+  {
+   "name": "all allow",
+   "results": [
+    {
+     "gate": "ml",
+     "mode": "enforce",
+     "verdict": "allow",
+     "confidence": 0.9,
+     "reason": "anomaly"
+    },
+    {
+     "gate": "canary",
+     "mode": "enforce",
+     "verdict": "allow",
+     "confidence": 0.9,
+     "reason": "anomaly"
+    }
+   ],
+   "expect": {
+    "verdict": "allow",
+    "by": []
+   }
+  },
+  {
+   "name": "flag",
+   "results": [
+    {
+     "gate": "ml",
+     "mode": "enforce",
+     "verdict": "flag",
+     "confidence": 0.9,
+     "reason": "anomaly"
+    },
+    {
+     "gate": "canary",
+     "mode": "enforce",
+     "verdict": "allow",
+     "confidence": 0.9,
+     "reason": "anomaly"
+    }
+   ],
+   "expect": {
+    "verdict": "flag",
+    "by": [
+     "ml"
+    ]
+   }
+  },
+  {
+   "name": "block wins over flag",
+   "results": [
+    {
+     "gate": "ml",
+     "mode": "enforce",
+     "verdict": "flag",
+     "confidence": 0.9,
+     "reason": "anomaly"
+    },
+    {
+     "gate": "canary",
+     "mode": "enforce",
+     "verdict": "block",
+     "confidence": 0.9,
+     "reason": "anomaly"
+    }
+   ],
+   "expect": {
+    "verdict": "block",
+    "by": [
+     "canary"
+    ]
+   }
+  },
+  {
+   "name": "two blocks",
+   "results": [
+    {
+     "gate": "ml",
+     "mode": "enforce",
+     "verdict": "block",
+     "confidence": 0.9,
+     "reason": "anomaly"
+    },
+    {
+     "gate": "canary",
+     "mode": "enforce",
+     "verdict": "block",
+     "confidence": 0.9,
+     "reason": "anomaly"
+    }
+   ],
+   "expect": {
+    "verdict": "block",
+    "by": [
+     "ml",
+     "canary"
+    ]
+   }
+  },
+  {
+   "name": "shadow never counts",
+   "results": [
+    {
+     "gate": "ml",
+     "mode": "shadow",
+     "verdict": "block",
+     "confidence": 0.9,
+     "reason": "anomaly"
+    }
+   ],
+   "expect": {
+    "verdict": "allow",
+    "by": []
+   }
+  },
+  {
+   "name": "error counts as flag",
+   "results": [
+    {
+     "gate": "ml",
+     "mode": "enforce",
+     "error": "timeout"
+    }
+   ],
+   "expect": {
+    "verdict": "flag",
+    "by": [
+     "ml"
+    ]
+   }
+  },
+  {
+   "name": "unknown verdict counts as flag",
+   "results": [
+    {
+     "gate": "ml",
+     "mode": "enforce",
+     "verdict": "grant",
+     "confidence": 0.9,
+     "reason": "anomaly"
+    }
+   ],
+   "expect": {
+    "verdict": "flag",
+    "by": [
+     "ml"
+    ]
+   }
+  },
+  {
+   "name": "allow can't undo a block",
+   "results": [
+    {
+     "gate": "ml",
+     "mode": "enforce",
+     "verdict": "block",
+     "confidence": 0.9,
+     "reason": "anomaly"
+    },
+    {
+     "gate": "allowlist",
+     "mode": "enforce",
+     "verdict": "allow",
+     "confidence": 1.0,
+     "reason": "anomaly"
+    }
+   ],
+   "expect": {
+    "verdict": "block",
+    "by": [
+     "ml"
+    ]
+   }
+  }
+ ]
+}

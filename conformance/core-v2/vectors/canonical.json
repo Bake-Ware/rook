@@ -1,0 +1,132 @@
+{
+ "spec": "2.0",
+ "vector": "canonical",
+ "cases": [
+  {
+   "name": "empty object",
+   "value": {},
+   "canonical": "{}"
+  },
+  {
+   "name": "sorted keys, nested",
+   "value": {
+    "b": [
+     1,
+     {
+      "d": 1,
+      "c": 2
+     }
+    ],
+    "a": null
+   },
+   "canonical": "{\"a\":null,\"b\":[1,{\"c\":2,\"d\":1}]}"
+  },
+  {
+   "name": "literals",
+   "value": [
+    true,
+    false,
+    null,
+    ""
+   ],
+   "canonical": "[true,false,null,\"\"]"
+  },
+  {
+   "name": "integral float is an integer",
+   "value": {
+    "x": 1.0,
+    "y": -0.0
+   },
+   "canonical": "{\"x\":1,\"y\":0}"
+  },
+  {
+   "name": "ECMAScript numbers",
+   "value": [
+    0.1,
+    1.5,
+    1e+21,
+    1e+20,
+    1e-07,
+    1e-06,
+    4.5e-07,
+    333333333.3333333,
+    1e+23,
+    -2.5
+   ],
+   "canonical": "[0.1,1.5,1e+21,100000000000000000000,1e-7,0.000001,4.5e-7,333333333.3333333,1e+23,-2.5]"
+  },
+  {
+   "name": "largest safe integer",
+   "value": 9007199254740991,
+   "canonical": "9007199254740991"
+  },
+  {
+   "name": "short escapes",
+   "value": "q\"\\\b\f\n\r\t",
+   "canonical": "\"q\\\"\\\\\\b\\f\\n\\r\\t\""
+  },
+  {
+   "name": "other controls as lowercase \\u00xx",
+   "value": "\u0001\u001f",
+   "canonical": "\"\\u0001\\u001f\""
+  },
+  {
+   "name": "slash and DEL literal",
+   "value": "/\u007f",
+   "canonical": "\"/\u007f\""
+  },
+  {
+   "name": "non-ASCII literal UTF-8",
+   "value": "\u00e9\u20ac\ud83d\ude00",
+   "canonical": "\"\u00e9\u20ac\ud83d\ude00\""
+  },
+  {
+   "name": "keys sort by UTF-16 code units",
+   "value": {
+    "\uffff": 1,
+    "\ud83d\ude00": 2,
+    "a": 3
+   },
+   "canonical": "{\"a\":3,\"\ud83d\ude00\":2,\"\uffff\":1}"
+  },
+  {
+   "name": "integer above 2^53-1",
+   "value": 9007199254740992,
+   "error": true
+  },
+  {
+   "name": "lone surrogate",
+   "value": "\ud800",
+   "error": true
+  }
+ ],
+ "args_hash": [
+  {
+   "args": null,
+   "args_hash": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"
+  },
+  {
+   "args": {},
+   "args_hash": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o"
+  },
+  {
+   "args": [],
+   "args_hash": "T1PNoYwrqgwDVLtfmj7L5e0Sq02OEbqHPC8RFhICuUU"
+  },
+  {
+   "args": {
+    "argv": [
+     "uptime"
+    ]
+   },
+   "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM"
+  },
+  {
+   "args": {
+    "volume": 0.5,
+    "name": "kitchen lamp \u00e9"
+   },
+   "args_hash": "ZklaHjzfZeajKI7cTpTgtxCxaa8W6CjgBNG5aml1ETw"
+  }
+ ]
+}

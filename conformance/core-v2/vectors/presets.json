@@ -1,0 +1,369 @@
+{
+ "spec": "2.0",
+ "vector": "presets",
+ "presets": {
+  "owner": {
+   "grants": [
+    "*"
+   ]
+  },
+  "adult": {
+   "grants": [
+    "*"
+   ],
+   "max_risk": "admin"
+  },
+  "child": {
+   "grants": [
+    "agents.chat.*",
+    "pages.view"
+   ],
+   "max_risk": "write",
+   "effects": [],
+   "approve_new": "owner"
+  },
+  "guest": {
+   "grants": [
+    "agents.chat.*"
+   ],
+   "max_risk": "write",
+   "effects": [],
+   "expires": "7d"
+  }
+ },
+ "cases": [
+  {
+   "name": "owner: anything",
+   "preset": "owner",
+   "plugin_grants": [],
+   "user_grants": [],
+   "rights": {
+    "grants": [
+     "*"
+    ]
+   },
+   "call": {
+    "cap": "shell.exec",
+    "risk": "admin",
+    "effects": [
+     "destructive"
+    ],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "name": "adult: admin allowed",
+   "preset": "adult",
+   "plugin_grants": [],
+   "user_grants": [],
+   "rights": {
+    "grants": [
+     "*"
+    ],
+    "max_risk": "admin"
+   },
+   "call": {
+    "cap": "core.trust.set",
+    "risk": "admin",
+    "effects": [
+     "persists"
+    ],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "name": "child: chat",
+   "preset": "child",
+   "plugin_grants": [],
+   "user_grants": [],
+   "rights": {
+    "grants": [
+     "agents.chat.*",
+     "pages.view"
+    ],
+    "max_risk": "write",
+    "effects": []
+   },
+   "call": {
+    "cap": "agents.chat.send",
+    "risk": "write",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "name": "child: page view",
+   "preset": "child",
+   "plugin_grants": [],
+   "user_grants": [],
+   "rights": {
+    "grants": [
+     "agents.chat.*",
+     "pages.view"
+    ],
+    "max_risk": "write",
+    "effects": []
+   },
+   "call": {
+    "cap": "pages.view",
+    "risk": "read",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "name": "child: shell not granted",
+   "preset": "child",
+   "plugin_grants": [],
+   "user_grants": [],
+   "rights": {
+    "grants": [
+     "agents.chat.*",
+     "pages.view"
+    ],
+    "max_risk": "write",
+    "effects": []
+   },
+   "call": {
+    "cap": "shell.exec",
+    "risk": "exec",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "reason": "grants"
+   }
+  },
+  {
+   "name": "child: plugin adds a read cap",
+   "preset": "child",
+   "plugin_grants": {
+    "homework": [
+     "homework.item.list"
+    ]
+   },
+   "user_grants": [],
+   "rights": {
+    "grants": [
+     "agents.chat.*",
+     "pages.view",
+     "homework.item.list"
+    ],
+    "max_risk": "write",
+    "effects": []
+   },
+   "call": {
+    "cap": "homework.item.list",
+    "risk": "read",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "name": "child: plugin can't grant outside its namespace",
+   "preset": "child",
+   "plugin_grants": {
+    "homework": [
+     "shell.*",
+     "*"
+    ]
+   },
+   "user_grants": [],
+   "rights": {
+    "grants": [
+     "agents.chat.*",
+     "pages.view"
+    ],
+    "max_risk": "write",
+    "effects": []
+   },
+   "call": {
+    "cap": "shell.exec",
+    "risk": "write",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "reason": "grants"
+   }
+  },
+  {
+   "name": "child: plugin grant can't pass max_risk",
+   "preset": "child",
+   "plugin_grants": {
+    "homework": [
+     "homework.*"
+    ]
+   },
+   "user_grants": [],
+   "rights": {
+    "grants": [
+     "agents.chat.*",
+     "pages.view",
+     "homework.*"
+    ],
+    "max_risk": "write",
+    "effects": []
+   },
+   "call": {
+    "cap": "homework.item.purge",
+    "risk": "admin",
+    "effects": [
+     "destructive"
+    ],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "reason": "risk"
+   }
+  },
+  {
+   "name": "child: owner grant can't pass effects",
+   "preset": "child",
+   "plugin_grants": [],
+   "user_grants": [
+    "lights.set"
+   ],
+   "rights": {
+    "grants": [
+     "agents.chat.*",
+     "pages.view",
+     "lights.set"
+    ],
+    "max_risk": "write",
+    "effects": []
+   },
+   "call": {
+    "cap": "lights.set",
+    "risk": "write",
+    "effects": [
+     "physical"
+    ],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "reason": "effects"
+   }
+  },
+  {
+   "name": "child: personal data refused",
+   "preset": "child",
+   "plugin_grants": {
+    "phone": [
+     "phone.*"
+    ]
+   },
+   "user_grants": [],
+   "rights": {
+    "grants": [
+     "agents.chat.*",
+     "pages.view",
+     "phone.*"
+    ],
+    "max_risk": "write",
+    "effects": []
+   },
+   "call": {
+    "cap": "phone.sms.list",
+    "risk": "read",
+    "effects": [
+     "personal"
+    ],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "reason": "effects"
+   }
+  },
+  {
+   "name": "guest: chat",
+   "preset": "guest",
+   "plugin_grants": [],
+   "user_grants": [],
+   "rights": {
+    "grants": [
+     "agents.chat.*"
+    ],
+    "max_risk": "write",
+    "effects": []
+   },
+   "call": {
+    "cap": "agents.chat.send",
+    "risk": "write",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "name": "guest: pages not in preset",
+   "preset": "guest",
+   "plugin_grants": [],
+   "user_grants": [],
+   "rights": {
+    "grants": [
+     "agents.chat.*"
+    ],
+    "max_risk": "write",
+    "effects": []
+   },
+   "call": {
+    "cap": "pages.view",
+    "risk": "read",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "reason": "grants"
+   }
+  },
+  {
+   "name": "guest: owner grant within ceilings",
+   "preset": "guest",
+   "plugin_grants": [],
+   "user_grants": [
+    "music.play"
+   ],
+   "rights": {
+    "grants": [
+     "agents.chat.*",
+     "music.play"
+    ],
+    "max_risk": "write",
+    "effects": []
+   },
+   "call": {
+    "cap": "music.play",
+    "risk": "write",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": true
+   }
+  }
+ ]
+}

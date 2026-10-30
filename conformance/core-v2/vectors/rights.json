@@ -1,0 +1,655 @@
+{
+ "spec": "2.0",
+ "vector": "rights",
+ "risks": [
+  "read",
+  "write",
+  "exec",
+  "admin"
+ ],
+ "scopes": [
+  "self",
+  "local",
+  "multi-machine",
+  "multi-user",
+  "external"
+ ],
+ "effects": [
+  "destructive",
+  "sensitive",
+  "personal",
+  "physical",
+  "sends_as",
+  "spends",
+  "persists",
+  "taints"
+ ],
+ "hard_stop_effects": [
+  "destructive",
+  "sends_as",
+  "spends"
+ ],
+ "cases": [
+  {
+   "name": "star grants everything",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "*"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "shell.exec",
+    "risk": "exec",
+    "effects": [
+     "persists"
+    ],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "name": "glob crosses dots",
+   "layers": [
+    [
+     "agent",
+     {
+      "grants": [
+       "phone.*"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "phone.motion.started",
+    "risk": "read",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "name": "glob must match the whole name",
+   "layers": [
+    [
+     "agent",
+     {
+      "grants": [
+       "phone"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "phone.sms.send",
+    "risk": "read",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "layer": "agent",
+    "reason": "grants"
+   }
+  },
+  {
+   "name": "prefix without star is literal",
+   "layers": [
+    [
+     "agent",
+     {
+      "grants": [
+       "deluge."
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "deluge.list",
+    "risk": "read",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "layer": "agent",
+    "reason": "grants"
+   }
+  },
+  {
+   "name": "question mark is literal",
+   "layers": [
+    [
+     "agent",
+     {
+      "grants": [
+       "shell.ex?c"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "shell.exec",
+    "risk": "read",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "layer": "agent",
+    "reason": "grants"
+   }
+  },
+  {
+   "name": "target pattern matches",
+   "layers": [
+    [
+     "ceiling",
+     {
+      "grants": [
+       "light.*@lamp-*"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "light.set",
+    "risk": "write",
+    "effects": [
+     "physical"
+    ],
+    "target": "lamp-kitchen"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "name": "target pattern refuses",
+   "layers": [
+    [
+     "ceiling",
+     {
+      "grants": [
+       "light.*@lamp-*"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "light.set",
+    "risk": "write",
+    "effects": [
+     "physical"
+    ],
+    "target": "garage-door"
+   },
+   "expect": {
+    "ok": false,
+    "layer": "ceiling",
+    "reason": "grants"
+   }
+  },
+  {
+   "name": "risk above max_risk",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "*"
+      ],
+      "max_risk": "write"
+     }
+    ]
+   ],
+   "call": {
+    "cap": "shell.exec",
+    "risk": "exec",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "layer": "person",
+    "reason": "risk"
+   }
+  },
+  {
+   "name": "risk equal to max_risk",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "*"
+      ],
+      "max_risk": "exec"
+     }
+    ]
+   ],
+   "call": {
+    "cap": "shell.exec",
+    "risk": "exec",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "name": "unknown risk counts as admin",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "*"
+      ],
+      "max_risk": "exec"
+     }
+    ]
+   ],
+   "call": {
+    "cap": "x.y",
+    "risk": "sudo",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "layer": "person",
+    "reason": "risk"
+   }
+  },
+  {
+   "name": "effects absent allows all",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "*"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "bank.pay",
+    "risk": "write",
+    "effects": [
+     "spends"
+    ],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "name": "effects [] allows none",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "*"
+      ],
+      "effects": []
+     }
+    ]
+   ],
+   "call": {
+    "cap": "tv.power",
+    "risk": "write",
+    "effects": [
+     "physical"
+    ],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "layer": "person",
+    "reason": "effects"
+   }
+  },
+  {
+   "name": "every effect must be allowed",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "*"
+      ],
+      "effects": [
+       "physical"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "lock.open",
+    "risk": "write",
+    "effects": [
+     "physical",
+     "persists"
+    ],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "layer": "person",
+    "reason": "effects"
+   }
+  },
+  {
+   "name": "unknown effect is outside a listed set",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "*"
+      ],
+      "effects": [
+       "physical"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "x.y",
+    "risk": "write",
+    "effects": [
+     "teleports"
+    ],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "layer": "person",
+    "reason": "effects"
+   }
+  },
+  {
+   "name": "malformed rights refuse",
+   "layers": [
+    [
+     "agent",
+     {
+      "grant": [
+       "*"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "info.ping",
+    "risk": "read",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "layer": "agent",
+    "reason": "grants"
+   }
+  },
+  {
+   "name": "on behalf of: both allow",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "*"
+      ]
+     }
+    ],
+    [
+     "agent",
+     {
+      "grants": [
+       "knowledge.*"
+      ]
+     }
+    ],
+    [
+     "session",
+     {
+      "grants": [
+       "*"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "knowledge.page.get",
+    "risk": "read",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "name": "on behalf of: agent can't exceed its own grants",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "*"
+      ]
+     }
+    ],
+    [
+     "agent",
+     {
+      "grants": [
+       "knowledge.*"
+      ]
+     }
+    ],
+    [
+     "session",
+     {
+      "grants": [
+       "*"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "shell.exec",
+    "risk": "exec",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "layer": "agent",
+    "reason": "grants"
+   }
+  },
+  {
+   "name": "on behalf of: agent can't exceed the person",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "*"
+      ],
+      "max_risk": "write"
+     }
+    ],
+    [
+     "agent",
+     {
+      "grants": [
+       "*"
+      ]
+     }
+    ],
+    [
+     "session",
+     {
+      "grants": [
+       "*"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "shell.exec",
+    "risk": "exec",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "layer": "person",
+    "reason": "risk"
+   }
+  },
+  {
+   "name": "session scope narrows",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "*"
+      ]
+     }
+    ],
+    [
+     "agent",
+     {
+      "grants": [
+       "*"
+      ]
+     }
+    ],
+    [
+     "session",
+     {
+      "grants": [
+       "deluge.*",
+       "info.*"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "shell.exec",
+    "risk": "exec",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "layer": "session",
+    "reason": "grants"
+   }
+  },
+  {
+   "name": "plugin uses narrows",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "*"
+      ]
+     }
+    ],
+    [
+     "session",
+     {
+      "grants": [
+       "*"
+      ]
+     }
+    ],
+    [
+     "uses",
+     {
+      "grants": [
+       "notify.send"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "shell.exec",
+    "risk": "exec",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "layer": "uses",
+    "reason": "grants"
+   }
+  },
+  {
+   "name": "first refusing layer is reported",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "*"
+      ],
+      "max_risk": "read"
+     }
+    ],
+    [
+     "agent",
+     {
+      "grants": [
+       "info.*"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "shell.exec",
+    "risk": "exec",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "layer": "person",
+    "reason": "risk"
+   }
+  },
+  {
+   "name": "no layers refuse nothing",
+   "layers": [],
+   "call": {
+    "cap": "shell.exec",
+    "risk": "exec",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": true
+   }
+  }
+ ]
+}
