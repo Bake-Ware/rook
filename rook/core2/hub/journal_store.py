@@ -72,9 +72,7 @@ BEGIN SELECT RAISE(ABORT, 'checkpoints are never deleted'); END;
 _RANK = ("CASE WHEN risk IS NULL OR risk = 'read' THEN 0 WHEN risk = 'write' THEN 1 "
          "WHEN risk = 'exec' THEN 2 ELSE 3 END")
 
-
-
-PAGE = 2000
+PAGE = 2000  # rows per read when walking a chain
 
 
 class JournalError(Exception):
@@ -102,7 +100,7 @@ class JournalStore:
         for chain, cp in self._db.execute("SELECT chain, hash FROM journal_checkpoints"):
             self._chains[chain] = [cp, cp]
         for chain, head in self._db.execute(
-                "SELECT chain, hash FROM journal j WHERE seq = (SELECT MAX(seq) FROM journal WHERE chain = j.chain)"):
+                "SELECT chain, hash FROM journal WHERE seq IN (SELECT MAX(seq) FROM journal GROUP BY chain)"):
             self._chains.setdefault(chain, [journal.GENESIS, journal.GENESIS])[1] = head
 
     def close(self) -> None:
