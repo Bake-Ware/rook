@@ -39,7 +39,7 @@ from rook.kit.actions.parse import file_result
 from rook.kit.ctx import Caller, Ctx, FileResult, KitError, invoke
 from rook.kit.hooks import Scheduler
 
-from .loader import LoadError, Plugin, load_builtin, load_folder, local_os
+from .loader import LoadError, Plugin, load_builtin, load_folder, local_os, merge_settings
 
 __all__ = ["CallError", "Host", "LoadError"]
 
@@ -132,16 +132,28 @@ class Host:
 
     async def set_settings(self, name: str, *, local: Mapping | None = None,
                            hub: Mapping | None = None) -> None:
-        """New setting values for a plugin (either source, or both). A loaded
-        plugin is rebound so availability (``requires.settings``) and hooks
-        see them."""
+        """New setting values for a plugin (either source, or both). Changes
+        to ``apply: live`` settings (the default) reach the next call as they
+        are; any other ``apply``, or a setting some ``requires.settings``
+        names, rebinds the plugin so availability and hooks see it."""
         if local is not None:
             self._local[name] = dict(local)
         if hub is not None:
             self._hub[name] = dict(hub)
         p = self.plugins.get(name)
-        if p is not None and not p.builtin:
+        if p is None or p.builtin:
+            return
+        decls = p.manifest.get("settings") or {}
+        new = merge_settings(decls, self._local.get(name, {}), self._hub.get(name, {}))
+        changed = {k for k in decls if new.get(k) != p.settings.get(k)}
+        if not changed:
+            return
+        if changed & _required_settings(p.manifest) or \
+                any(decls[k].get("apply", "live") != "live" for k in changed):
             await self.reload(name)
+        else:
+            p.settings.clear()
+            p.settings.update(new)
 
     async def close(self) -> None:
         async with self._admin:
@@ -192,6 +204,7 @@ class Host:
     def _bind(self, folder: Path) -> Plugin:
         return load_folder(folder, os_name=self.os_name, hardware=self.hardware,
                            values=lambda n: (self._local.get(n, {}), self._hub.get(n, {})),
+                           plugin_ctx=lambda p: self._ctx(p, Caller(plugin=p.name, why=f"{p.name} plugin")),
                            contracts=self.contracts)
 
     def _keep(self, p: Plugin) -> None:
@@ -230,12 +243,12 @@ class Host:
                 args[key] = copy.deepcopy(spec["default"])
         args.update(copy.deepcopy(c.bind))
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + c.timeout
+        deadline = None if c.timeout is None else loop.time() + c.timeout
         lock = None
         if c.spec.get("exclusive"):
             lock = self._locks.setdefault(c.spec["exclusive"], asyncio.Lock())
             try:
-                async with asyncio.timeout(c.timeout):   # not wait_for: 3.11 can leak the lock
+                async with asyncio.timeout_at(deadline):   # not wait_for: 3.11 can leak the lock
                     await lock.acquire()
             except TimeoutError:
                 raise CallError(f"busy: {c.spec['exclusive']} is in use", retry=True) from None
@@ -250,7 +263,8 @@ class Host:
         # function's thread can't be stopped, so its task is left to finish.
         stoppable = c.func is None or inspect.iscoroutinefunction(c.func)
         try:
-            done, _ = await asyncio.wait({work}, timeout=max(0.0, deadline - loop.time()))
+            done, _ = await asyncio.wait(
+                {work}, timeout=None if deadline is None else max(0.0, deadline - loop.time()))
         except asyncio.CancelledError:
             if stoppable:
                 work.cancel()
@@ -293,6 +307,8 @@ class Host:
         settings = self._action_settings(p, set(_SETTING_REF.findall(text)))
         tmp = tempfile.TemporaryDirectory(prefix=f"rook-{p.name}-") if _TMP_REF.search(text) else None
         try:
+            # TODO(castling:manifest-v11): pass cap=c.spec once run_action takes it
+            # (arg join/map and result coercion, manifest 1.1).
             return await run_action(
                 c.action, args, settings=settings, worker={"os": self.os_name},
                 secrets=self.resolve_secret, tmp=tmp.name if tmp else None,
@@ -394,6 +410,11 @@ def _retrieve(task: asyncio.Future) -> None:
     """Mark a finished call's exception as seen (a timed-out call ends later)."""
     if not task.cancelled():
         task.exception()
+
+
+def _required_settings(manifest: Mapping) -> set:
+    reqs = [manifest.get("requires") or {}, *((c.get("requires") or {}) for c in manifest["caps"].values())]
+    return {s for r in reqs for s in r.get("settings") or ()}
 
 
 def _redact(text: str, secrets: list[str]) -> str:

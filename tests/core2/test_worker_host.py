@@ -168,6 +168,22 @@ def test_settings_merge_and_requires_settings():
     go(body)
 
 
+def test_live_settings_apply_without_a_reload(tmp_path):
+    async def body():
+        host = Host(os_name="linux")
+        await host.load(counter(tmp_path))
+        st = state(host)
+        await host.set_settings("counter", local={"step": 3})     # apply: live (default)
+        assert await host.call("counter.add", {"n": 1}, ME) == 3
+        assert st["events"] == ["start"]                          # hooks untouched
+        await host.set_settings("counter", local={"step": 3, "mode": "b"})   # apply: reload
+        assert st["events"] == ["start", "stop"]
+        assert state(host)["events"] == ["start"]                 # rebound, fresh state
+        assert await host.call("counter.add", {"n": 1}, ME) == 3
+        await host.close()
+    go(body)
+
+
 def test_merge_settings_rules():
     decls = {"a": {"where": "worker"}, "b": {"where": "hub"}, "c": {"where": "person"}, "d": {}}
     out = merge_settings(decls, {"a": 1, "b": 1, "d": 1, "z": 1}, {"a": 2, "b": 2, "c": 2})
@@ -180,9 +196,11 @@ def test_merge_settings_rules():
 def test_run_plugin_hooks_bind_and_context(tmp_path):
     async def body():
         host = Host(os_name="linux")
-        await host.load(counter(tmp_path))
+        p = await host.load(counter(tmp_path))
         st = state(host)
         assert st["started"] and st["events"] == ["start"]
+        pctx = p.new_ctx()   # what a Class.method class is built with: the plugin, no person
+        assert (pctx.plugin, pctx.caller.plugin, pctx.person) == ("counter", "counter", None)
         assert await host.call("counter.add", {}, ME) == 1          # arg default
         assert await host.call("counter.add", {"n": 4}, ME) == 5
         assert await host.call("counter.add_ten", {}, ME) == 15      # bind: n=10
@@ -249,6 +267,22 @@ def test_timeouts_cancel_async_and_hold_exclusive_locks(tmp_path):
         assert await host.call("counter.poke", {}, ME) == "poked"
         ev = st["events"]
         assert ev.index("hold-end") < ev.index("poke")
+        await host.close()
+    go(body)
+
+
+def test_timeout_none_never_times_out(tmp_path):
+    from rook.core2.worker.loader import DEFAULT_TIMEOUT, _timeout
+    assert _timeout({}) == DEFAULT_TIMEOUT
+    assert _timeout({"timeout": None}) is None
+    assert _timeout({"timeout": "2m"}) == 120
+
+    async def body():
+        host = Host(os_name="linux")
+        p = await host.load(counter(tmp_path))
+        c = p.caps["counter.hold"]
+        c.timeout = None    # what manifest 1.1 normalizes ``timeout: none`` to
+        assert await host.call("counter.hold", {}, ME) is None   # 0.6 s, past its 200 ms
         await host.close()
     go(body)
 
@@ -426,8 +460,9 @@ def test_class_method_run_targets_share_one_instance_per_load(tmp_path):
     (tmp_path / "s.py").write_text(
         "class Tv:\n"
         "    made = 0\n"
-        "    def __init__(self):\n"
+        "    def __init__(self, ctx):\n"
         "        Tv.made += 1\n"
+        "        self.ctx = ctx\n"
         "        self.n = 0\n"
         "    def bump(self, ctx):\n"
         "        self.n += 1\n"
@@ -438,13 +473,16 @@ def test_class_method_run_targets_share_one_instance_per_load(tmp_path):
         "    return 'plain'\n"
         "VALUE = 3\n")
     modules, instances = {}, {}
-    bump = resolve_run(tmp_path, "s.py:Tv.bump", modules, instances)
-    peek = resolve_run(tmp_path, "s.py:Tv.peek", modules, instances)
+    made = []
+    new_ctx = lambda: made.append("ctx") or "plugin-ctx"   # noqa: E731
+    bump = resolve_run(tmp_path, "s.py:Tv.bump", modules, instances, new_ctx)
+    peek = resolve_run(tmp_path, "s.py:Tv.peek", modules, instances, new_ctx)
     assert bump(None) == 1 and bump(None) == 2 and peek(None) == 2
+    assert made == ["ctx"] and next(iter(instances.values())).ctx == "plugin-ctx"
     assert resolve_run(tmp_path, "s.py:plain", modules, instances)(None) == "plain"
     (mod,) = modules.values()
     assert mod.Tv.made == 1
-    fresh = resolve_run(tmp_path, "s.py:Tv.peek", {}, {})   # a new load starts clean
+    fresh = resolve_run(tmp_path, "s.py:Tv.peek", {}, {}, new_ctx)   # a new load starts clean
     assert fresh(None) == 0
     with pytest.raises(Exception, match="not a class"):
         resolve_run(tmp_path, "s.py:plain.x", modules, instances)

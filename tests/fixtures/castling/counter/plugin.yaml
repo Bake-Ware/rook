@@ -6,6 +6,7 @@ version: 1.0.0
 doc: Counts.
 settings:
   step: { type: int, default: 1 }
+  mode: { default: a, apply: reload }
   key: { where: hub, secret: true }
 hooks:
   start: scripts/counter.py:start
