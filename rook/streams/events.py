@@ -20,6 +20,7 @@ import base64
 import json
 import re
 from dataclasses import dataclass, field
+from functools import cached_property
 
 EVENT_TYPES = ("bytes", "text", "turn", "status", "input")
 TURN_ROLES = ("prompt", "reply", "tool")
@@ -132,7 +133,7 @@ class Event:
     by: str                   # who wrote it: a person, an agent, a producer
     body: bytes | dict
 
-    @property
+    @cached_property
     def size(self) -> int:
         """Rough bytes held, for bounded buffers (body plus fixed overhead)."""
         n = len(self.body) if isinstance(self.body, bytes) else len(json.dumps(self.body))

@@ -95,10 +95,12 @@ class MemoryStore:
         for d in (self._meta, self._events, self._held, self._budget):
             d.pop(sid, None)
 
-    def search(self, query: str, limit: int) -> list[tuple[Meta, Event]]:
+    def search(self, query: str, limit: int, kind: str | None = None) -> list[tuple[Meta, Event]]:
         q = query.lower()
         hits = []
         for sid, ring in self._events.items():
+            if kind is not None and self._meta[sid].kind != kind:
+                continue
             hits += [(self._meta[sid], ev) for ev in ring if q in ev.plain().lower()]
         hits.sort(key=lambda h: h[1].at, reverse=True)
         return hits[:limit]
@@ -225,12 +227,16 @@ class SqliteStore:
                 raise StreamError(f"no stream {sid}")
             self._db.execute("DELETE FROM events WHERE stream=?", (sid,))
 
-    def search(self, query: str, limit: int) -> list[tuple[Meta, Event]]:
+    def search(self, query: str, limit: int, kind: str | None = None) -> list[tuple[Meta, Event]]:
         like = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        sql = "SELECT e.stream, e.seq, e.at, e.type, e.by, e.body FROM events e"
+        args: list = []
+        if kind is not None:
+            sql += " JOIN streams s ON s.id = e.stream AND s.kind = ?"
+            args.append(kind)
         with self._lock:
-            rows = self._db.execute(
-                "SELECT stream, seq, at, type, by, body FROM events WHERE text LIKE ? ESCAPE '\\'"
-                " ORDER BY at DESC LIMIT ?", (like, limit)).fetchall()
+            rows = self._db.execute(sql + " WHERE e.text LIKE ? ESCAPE '\\' ORDER BY e.at DESC LIMIT ?",
+                                    (*args, like, limit)).fetchall()
         metas: dict[str, Meta] = {}
         hits = []
         for r in rows:

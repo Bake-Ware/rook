@@ -90,7 +90,7 @@ class Streams:
         meta = store.get(sid)
         if meta.closed:
             return meta
-        store.append(sid, "status", by, {"state": "closed", **status}, self.clock())
+        store.append(sid, "status", by, {**status, "state": "closed"}, self.clock())
         meta = store.get(sid)
         meta.closed = self.clock()
         store.save(meta)
@@ -127,9 +127,9 @@ class Streams:
         read holds up to that many seconds for new events (long-poll)."""
         limit = max(1, min(int(limit), READ_LIMIT))
         types = tuple(types) if types else None
-        changed = self._watch(sid)
+        changed = self._watch(sid) if wait > 0 else None
         out = self._read_now(sid, after, limit, types)
-        if not out["events"] and not out["closed"] and wait > 0:
+        if not out["events"] and not out["closed"] and changed is not None:
             try:
                 await asyncio.wait_for(changed.wait(), wait)
             except asyncio.TimeoutError:
@@ -160,9 +160,8 @@ class Streams:
         """Streams whose events contain ``query`` (case-insensitive), newest first."""
         if not query:
             raise StreamError("search needs a query")
-        hits = self.bounded.search(query, limit * 4) + (
-            self.durable.search(query, limit * 4) if self.durable else [])
-        hits = [h for h in hits if kind is None or h[0].kind == kind]
+        hits = self.bounded.search(query, limit, kind) + (
+            self.durable.search(query, limit, kind) if self.durable else [])
         hits.sort(key=lambda h: h[1].at, reverse=True)
         return [{"stream": m.id, "kind": m.kind, "title": m.title, "seq": ev.seq,
                  "type": ev.type, "by": ev.by, "at": ev.at, "text": ev.plain()[:300]}

@@ -17,7 +17,8 @@ def hub(tmp_path):
 
 
 def run(coro):
-    return asyncio.run(coro)
+    """Every async test gets a hard 10 s ceiling: a hang fails, never stalls CI."""
+    return asyncio.run(asyncio.wait_for(coro, 10))
 
 
 # -- specs and kinds -----------------------------------------------------------
@@ -189,6 +190,10 @@ def test_close_keeps_history_and_refuses_writes(hub):
     with pytest.raises(StreamError, match="closed"):
         hub.append(m.id, "text", {"text": "late"})
     assert hub.list(open_only=True) == []
+    # a caller can't relabel the closing event
+    n = hub.open("room")
+    hub.close(n.id, state="open")
+    assert run(hub.read(n.id))["events"][-1].body == {"state": "closed"}
 
 
 def test_delete_erases(hub):
@@ -231,6 +236,11 @@ def test_search_across_stores(hub):
     assert [h["stream"] for h in hub.search("deploy", kind="room")] == [room.id]
     assert [h["seq"] for h in hub.search("5_pm%")] == [1]     # LIKE wildcards are literal
     assert hub.search("5xpm") == []
+    # the kind filter applies before the limit, so other kinds can't crowd it out
+    huddle = hub.open("huddle")             # same (durable) store as the room
+    for i in range(5):
+        hub.append(huddle.id, "text", {"text": "deploy again %d" % i})
+    assert [h["stream"] for h in hub.search("deploy", limit=1, kind="room")] == [room.id]
     with pytest.raises(StreamError):
         hub.search("")
 
@@ -269,6 +279,33 @@ def test_follow_streams_until_closed(hub):
         await asyncio.wait_for(task, 2)
         assert got == ["one", "two", "three"]
     run(go())
+
+
+def test_follow_and_inputs_end_when_a_stream_is_deleted(hub):
+    async def go():
+        m = hub.open("session")
+        p = hub.attach(m.id, "claude")
+        inputs = asyncio.create_task(_drain(p.inputs()))
+
+        async def follower():
+            async for _ in hub.follow(m.id):
+                pass
+
+        follow = asyncio.create_task(follower())
+        await asyncio.sleep(0.01)
+        hub.delete(m.id)
+        assert await asyncio.wait_for(inputs, 2) == []
+        with pytest.raises(StreamError, match="no stream"):
+            await asyncio.wait_for(follow, 2)
+    run(go())
+
+
+def test_reads_without_wait_leave_no_waiters():
+    s = Streams()
+    m = s.open("terminal")
+    for _ in range(3):
+        run(s.read(m.id))
+    assert s._changed == {}
 
 
 def test_many_followers_see_everything():
