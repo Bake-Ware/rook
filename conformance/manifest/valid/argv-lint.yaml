@@ -1,0 +1,27 @@
+# Warnings where an arg's text could escape its argv slot (manifest 1.1).
+manifest: 1
+plugin: lint
+version: 1.0.0
+caps:
+  remove:
+    doc: Remove a torrent.
+    risk: write
+    scope: local
+    args:
+      id: { type: str, required: true }
+      hash: { type: str, pattern: "^[0-9a-f]{40}$" }
+      count: { type: int }
+      size: { type: int, min: 0 }
+      mode: { type: str, enum: [fast, slow] }
+    action:
+      exec:
+        argv:
+          - deluge-console
+          - "rm {{args.id}}"                 # warning: a re-splitting tool sees "; ..."
+          - "rm {{args.hash}}"               # ok: pattern
+          - "{{args.id}}"                    # warning: could be -x
+          - "{{args.count}}"                 # warning: could be -5
+          - "{{args.size}}"                  # ok: min 0
+          - "{{args.mode}}"                  # ok: enum
+          - "--"
+          - "{{args.id}}"                    # ok: after --

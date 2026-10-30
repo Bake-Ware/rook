@@ -1,5 +1,8 @@
 # Castling coverage: can the v1 manifest say what today's plugins need?
 
+**Update, manifest 1.1 (wave 2, 2026-10-30):** most gaps below are closed by additive 1.1 keys
+(knowledge page castling-manifest-lifecycle lists them). Each gap now says **Closed** or **Open**.
+
 Converter agent, 2026-10-30. Baseline: this branch (cut from origin/castling = master d15e79bf),
 457 caps. Decisions: Rook knowledge castling-caps (`castling/tools/cap-decisions.json`, copied from
 cachyrig `~/rook-backups/castling-caps/decisions.json`), with Bake's C3 amendment applied (decide keeps
@@ -9,22 +12,20 @@ cachyrig `~/rook-backups/castling-caps/decisions.json`), with Bake's C3 amendmen
   decisions and writes `castling/manifests/<plugin>/plugin.yaml`. Rerun it after any change; the test
   `tests/test_castling_convert.py` fails when the committed manifests are stale.
 - Hand-written config actions live in `castling/tools/overlays/<plugin>.yaml` and are merged last.
-- **Validation:** `rook.kit.manifest` had not landed on origin/castling when this was written, so the
-  drafts are checked by a stand-in in `convert.py` (`lint`, marked `TODO(castling:manifest)`), written
-  from the castling-manifest pages: required keys, plugin name, doc/risk/scope, effect vocabulary, one
-  of action/run (none for builtin), arg types, action types, every `{{template}}` names a declared
-  arg/setting/appliance setting, binary-from-arg needs `risk: exec`, `provides` points at own caps,
-  record verbs. All 63 pass. Not checked: the JSON Schema itself and file existence (`scripts/*.py`
-  don't exist yet: every `run:` points at today's function, see gap D7).
+- **Validation:** every draft is read back from its YAML and checked by `rook.kit.manifest` (JSON
+  Schema plus semantic checks); errors fail the converter and its test. All 63 pass with no errors.
+  Warnings left: 88 `unknown-contract` (no contract schemas yet, B4), 12 `unknown-key` (record
+  `aliases`, C5), 11 `effect-risk-mismatch` (read caps tagged `physical` today, E). Not checked: file
+  existence (`scripts/*.py` don't exist yet: every `run:` points at today's function).
 
 ## How the manifests come out
 
 | Mapping | Count | What it means |
 |---|---|---|
 | config (`action:`) | 21 caps in 7 plugins | kvm 8, torrent 7, cec 2, battery, notification-desktop, screen-desktop, camera.capture |
-| run (`run:`) | 184 caps | `scripts/<module>.py:<Class>.<method>`, today's function |
+| run (`run:`) | 187 caps | `scripts/<module>.py:<Class>.<method>`, today's function (31 split caps `bind` the old action argument) |
 | builtin | 37 caps in 12 core namespaces | `builtin: true`, no action/run: caps, hub, help, llm, notify, page, plugin, setting, stream, update, worker, approval |
-| records | 34 old caps -> 13 record types | change, job, trust, user, memory, persona, agent, attention, knowledge, task, project, concept, claudecode.rule |
+| records | 31 old caps -> 13 record types (search stays `run:`, C4) | change, job, trust, user, memory, persona, agent, attention, knowledge, task, project, concept, claudecode.rule |
 | collapses into streams | 59 caps | binned with `stream.*` as replacement: claude_history 12, proc 6, huddle 5, chat/sessions/terminals/work 4 each, rooms/roles/hermes 3, ... |
 | binned otherwise | 151 caps | left out, as decided |
 
@@ -37,9 +38,9 @@ their key and are listed under `provides`.
 | Plugin (today) | 0.5 | Config | Still `run:` and why |
 |---|---|---|---|
 | pikvm | kvm (appliance) | screen.capture, hid.type, hid.move, hid.click, power.on/off/reset/status | hid.key (A4, A5); api_get/api_post (raw path into a URL and a query dict: A3, A12) |
-| deluge | torrent | list, get, add, pause, resume, remove, delete | status (two commands + failure read from output: A7) |
+| deluge | torrent | list, get, add, pause, resume, remove, delete | status (two commands: A5) |
 | msg | notification-desktop | notification.post (Linux, Windows, macOS) | - (inbox read/clear binned) |
-| battery | battery | status (Linux upower, Windows CIM) | macOS and Termux dropped (A1); heartbeat lost (A15) |
+| battery | battery | status (Linux upower, Windows CIM, macOS pmset, Termux) | - (1.1: per-OS parse; heartbeat via `hooks.status: {call}`) |
 | cec | cec (appliance) | send, status | raw line can't share `send` (A6) |
 | screenshot | screen-desktop | screen.capture (Linux try-chain, macOS, Windows) | preview dropped (A11); Windows ignores region |
 | camera | camera | capture (Linux, Termux) | list; Windows (ffmpeg dshow needs a device name) |
@@ -48,7 +49,8 @@ their key and are listed under `provides`.
 ## Gaps
 
 What a plugin needs that manifest v1 can't say, grouped by section. Each has the plugin that hits it
-and the smallest fix that would cover it. **Bold** = Bake should decide.
+and the smallest fix that would cover it. **Bold** = Bake should decide. Status lines are from the
+1.1 pass: the overlays and converter use the new keys where they close a gap.
 
 ### A. Built-in actions
 
@@ -56,64 +58,83 @@ and the smallest fix that would cover it. **Bold** = Bake should decide.
    termux-battery-status print three formats. Windows is made to print upower's shape from its
    script; macOS and Termux had no way, so battery is `platforms: [linux, windows]`. Fix: allow
    `parse` and `returns` inside `linux|windows|macos|android`.
+   **Closed:** per-OS `parse`/`returns`; battery now covers macOS (`pmset`) and Termux.
 2. **`try` only falls back when the binary is missing.** screen-desktop: grim is installed on many
    X11 desktops and fails there; today's code picks grim only under `WAYLAND_DISPLAY`. Fix: fall back
    on non-zero exit too (and say so).
+   **Closed:** `try` falls back on a failing exit too; the last failure is the error.
 3. **Unset optional args outside argv are undefined.** Nested-list dropping exists only for exec argv.
    kvm `quality` (http query), cec `operands` (tcp text). Fix: an unset arg drops its query/json/header
    key; in text it renders empty.
+   **Closed:** an unset arg drops its query/json/header/form key and renders empty in text.
 4. **No list rendering.** kvm hid.key `mods` (kvmd wants `keys=ControlLeft,KeyC`), cec operands
    (space-separated bytes). Fix: say how a list arg renders inside a string (e.g. `join: ","` on the
    arg).
+   **Closed:** arg `join:`; cec operands are a list joined by spaces. kvm hid.key still needs A5.
 5. **No sequences.** kvm key combos (press mods, key, release) and today's mouse click were several
    requests per call. hid.key stays `run:`; hid.click relies on kvmd's press-and-release when `state`
    is omitted (to verify on the PiKVM).
+   **Open by decision:** sequences stay `run:`.
 6. **No value mapping or conditionals.** deluge state letters (S -> Seeding); pikvm `force=true` ->
    `off_hard` (done as a `mode` enum instead); cec.send "also takes a raw firmware line" (decision)
    can't share one `send` template with the structured frame. Fix options: split caps (cheap), or an
    arg-level `map:`.
+   **Closed:** arg `map:` (caller value -> rendered value). cec's raw line still can't share `send` (no conditionals, by design).
 7. **No failure read from output.** deluge-console exits 0 when it can't reach the daemon (torrent.list
    would return an empty list instead of an error); PiKVM's streamer answers 200 with a JSON error
    when there is no video; Pico-CEC replies `ERR ...`. Fix: `fail_if: { regex: ... }` on an action.
+   **Closed:** action `fail_if: {regex}`; used by torrent (daemon down), kvm (streamer error) and cec (`ERR`).
 8. **Argv-slot escaping doesn't protect tools that re-parse an argument.** deluge-console takes the
    whole command as one argument, splits on `;` and shlex-splits it, so `{{args.torrent_id}}` inside
    `"rm {{args.torrent_id}}"` could smuggle `; ...` or `--remove_data`. The overlay guards with arg
    `pattern`s (tested), at the cost of names with spaces and Windows paths. Fix: validator warns when
    an argv item mixes literal text with an arg template and the arg has no `pattern`.
+   **Closed:** the validator warns (`argv-arg-unguarded`) unless the arg has a pattern, an enum or a number type.
 9. **Option injection.** An arg alone in an argv slot that starts with `-` becomes an option
    (notify-send text `-x`). The overlay uses `--`. Fix: validator warns on an arg-only argv item with
    no preceding `--` and no pattern refusing a leading `-`.
+   **Closed:** the validator warns (`argv-option-injection`) unless `--` comes first or the arg has a pattern, a safe enum or a number type with `min >= 0`.
 10. **Parsed values are strings.** Regex captures and text (battery `percent: "87"`). Fix: coerce
     parse output to the cap's `result` field types.
+   **Closed:** parse output is coerced to the cap's `result` types (battery, torrent).
 11. **No post-processing step.** screenshot preview downscaled with ImageMagick after capture;
     `preview` is dropped for screen-desktop (kvm has it natively). spectacle/gnome-screenshot silently
     ignore a region.
+   **Open by decision:** post-processing stays `run:`.
 12. **URL paths and dict args.** kvm api_get/api_post take a raw `/api/...` path and a query dict;
     "URL parts are escaped" breaks slashes and there's no way to spread a dict into `query`. They stay
     `run:` (they're the raw escape hatch anyway).
+   **Open by decision:** raw paths stay `run:`.
 13. **Regex `each` semantics.** torrent.list anchors `^...$` per line; the page doesn't say whether
     `each` matches per line or with MULTILINE over the output. Fix: say per line.
+   **Closed:** `each` matches line by line.
 14. **Appliance `port` vs an instance setting named `port`** (cec defaults 9526): precedence unstated.
     Also `android` in per-OS keys means Termux here, but the APK is a different host (see D6).
     The overlays also assume a per-OS override inherits the base exec's other keys (`env`, `output`)
     and may set its own `env`; the page shows only `argv` in one.
+   **Closed:** instance settings win (`rook.kit.actions.appliance_values`); per-OS overrides inherit the base exec's other keys; Termux is `termux` (D6).
 15. **`hooks.status` needs Python.** battery puts `{percent, charging}` on the heartbeat; with only
     `run:` allowed the config plugin becomes code just for that, so the overlay drops it. Fix:
     `hooks.status: { call: battery.status }`.
+   **Closed:** hooks take `call:` as well as `run:`; battery's heartbeat is `{call: battery.status}`.
 16. `tls.verify` can't come from a setting (pikvm `insecure`). The overlay hardcodes `false`, like the
     page example. Minor.
+   **Closed:** `tls.verify` may be one `{{settings.x}}` or `{{appliance.x}}`; kvm uses `verify_tls`.
 
 ### B. Caps, names and contracts
 
 1. **A cap named just its namespace** (`help`): no key can express it. The converter uses `""`.
    Fix: bless `""` or a top-level shorthand.
+   **Closed:** the cap key `""` is the bare namespace.
 2. **Two routing modes behind `contracts`.** The page routes a contract to one provider chosen by a
    hub setting (llm.complete, notify.send). C1 device contracts route by *target*: `screen.capture` on
    kaiju vs on the TV vs on the phone. Fix: `contracts.<name>.route: provider | target`.
+   **Closed:** `contracts.<name>.route: provider | target`.
 3. **Contract caps get two names.** kvm declares `screen.capture` (full name `kvm.screen.capture`) and
    `provides: {screen.capture: kvm.screen.capture}`. Plugins named after a contract (battery, shell,
    voice) declare it directly with no `provides`. Fix: a plugin that `provides` a contract declares the
    cap under the contract name only.
+   **Open.**
 4. **No contract schemas exist and today's providers disagree** (the validator's "schema
    compatibility" check would fail them all). Someone has to write the 12 contracts into core's
    manifest; the converter doesn't invent them. Disagreements:
@@ -123,21 +144,28 @@ and the smallest fix that would cover it. **Bold** = Bake should decide.
    screen vs app,params), notification.post (13 phone args / title,text / tv message), power.off
    (kvm mode / tv minutes), screen.capture (quality / preview / region), screen.on, sound.set,
    media.* (phone keeps a package arg), ui.screen.
+   **Open:** the wiring agent writes core's contracts.
 5. **Splits on `run:`.** `run` can't bind a fixed argument, so a split Python cap needs a thin wrapper
    per new name: device.intent (8 names), device.sound (3), media.control (6), voice.speak (2),
    browser.tabs (2), dongle.mouse (3), tv.media (4), tv.screen (2). The converter removes the old
    `action`/`kind`/`op` arg from split caps; their `run:` target still expects it.
+   **Closed:** cap-level `bind:`; the converter binds the old argument, its value guessed from the new name (check each when porting; media.seek was forward/rewind).
 6. **Open args.** 22 surviving caps take `**kwargs` (browser.* 14, dongle.* 6, cec 2). Fix: say
    undeclared args are refused (the converter declares only named ones).
+   **Closed:** undeclared args are refused.
 7. **No "never time out".** decide.drive, home.ask/role.ask (agent.ask), worker.update are
    `timeout=None` today. Fix: `timeout: none`.
+   **Closed:** `timeout: none`.
 8. **Paging and projection.** 15 caps today use core-enforced `limit=`/`fields=` (list, history, runs,
    sessions, plugins, ...). No manifest key. Fix: `limit:`/`fields:` on caps, or leave it to records.
+   **Closed by decision:** explicit `limit`/`offset` args, or records.
 9. **Decisions route names outside their plugin.** device.intent splits into call.dial, clock.*,
    location.*; one namespace has one owner, so the converter sends them to plugins `call`, `location`
    (each now draws on two phone files) and a new `clock`. **Bake: confirm.**
+   **Open:** Bake.
 10. **`voice` is both a C1 contract (device speech out) and the hub voice service's namespace**
     (`voice.status` in the agents package). **Bake: rename one** (e.g. the service as `speech`).
+   **Open:** Bake.
 
 ### C. Records
 
@@ -145,39 +173,54 @@ and the smallest fix that would cover it. **Bold** = Bake should decide.
    decisions name most record caps `<plugin>.<verb>` (change.list, task.get, memory.search). The
    converter names the record after its plugin. Fix: a record named like its plugin drops the middle
    segment.
+   **Closed:** a record named like its plugin generates `<plugin>.<verb>`.
 2. **`history` isn't a generated verb.** `history: true` keeps revisions but the caps list on the page
    is list/get/search/create/update/archive/delete; the decisions keep 8 `*.history` caps. Fix:
    add `history`.
+   **Closed:** `history` is generated when `history: true`.
 3. **Non-kit verbs** stay `run:` caps beside the record: job.run/cancel/validate/templates,
    task.claim/release/link/comment, knowledge.link, whiteboard.read/write. `link` shows up twice:
    candidate kit verb.
+   **Open:** they stay `run:` caps.
 4. **Fields aren't derivable.** Schemas live in SQL migrations (6 hub plugins) or ad-hoc tables; the
    converter writes `fields: {}`. The kit agent writes them per type.
+
+   **Open:** also, `search` needs search fields, so the converter keeps today's search as a `run:` cap until the port declares them.
+5. **Generated record caps have no aliases.** Old names of record caps (e.g. `tasks.list`) have
+   no key; the converter writes `aliases` on the record (an unknown key, warned). **Open.**
 
 ### D. Plugin level
 
 1. **Dynamic availability.** 25 plugins override `available()`. Covered: bins/hardware (`requires`),
    appliance instances (pikvm, cec). Not covered: "only where a setting is set" (hub huddle, jobs,
    knowledge, memory, tasks, voice gate on config). Fix: `requires: { settings: [x] }`.
+   **Closed:** `requires.settings` (plugin or cap). The converter can't infer which settings gate a plugin; the port adds them.
 2. **Placement.** 32 hub plugins `run="one"`; `has('pty')`; `os != 'android'`. `runs_on: hub` covers
    the first if one-per-band is implied (say so). `pty` could be a `requires.hardware` value.
+   **Closed:** `runs_on: hub` means one per band; `pty` is a `requires.hardware` value.
 3. **Settings attributes lost:** `apply` (101 settings need reload/restart), legacy env names
    (`env`, `env_aliases`), `overridable` (3), `bootstrap` (2), group/order/advanced, label vs help, and
    types `url`/`path`/`resource` (connection strings, 9). Fix: at least `apply: reload|restart`.
+   **Partly closed:** `apply: live | reload | restart` (the converter carries it) and types `url`, `path`. Env aliases, overridable, bootstrap and grouping are not carried.
 4. **GUIDANCE (13 hub plugins) and SKILL fragments (38).** SKILL maps to `skills:` but describes 0.4
    cap names, so the converter doesn't carry it. GUIDANCE (operator-editable guidance slots) has no
    home.
+   **Open.**
 5. **DEPENDS** (attention -> approvals, huddle -> chat, tasks -> knowledge) hands over the other
    plugin's instance. 0.5 allows caps only: becomes `uses:` + `ctx.call` in the port.
+   **Open:** `uses:` + `ctx.call` in the port.
 6. **Android app vs Termux.** `place(ANDROID_APP)` (14 APK plugins) vs `ANDROID_APP_REPLACED`
    (Termux, 4). `platforms: [android]` can't tell them apart. Fix: `app` facet (`android-app`).
+   **Closed:** platform and per-OS key `termux`; `android` is the app.
 7. **Python contract vs today's functions.** Every `run:` names `Class.method` on a stateful plugin
    instance (`self.settings`, sockets, caches, the hub's own objects), not `func(ctx, **args)`. Also
    27 plugins with live caps have start/stop/heartbeat hooks; background loops inside `start` (jobs
    scheduler, home) should become `hooks.every` or jobs, which the converter can't see. **Decide:**
    allow `Class.method` with one instance per load, or port every cap to module functions + ctx.
+   **Closed:** `run:` may name `file.py:Class.method` (one instance per plugin load, built with the plugin context; castling-manifest-python).
 8. **Hub web pages and HTTP** (access, attention, ccmod, huddle, jobs `web.py`): map to `routes:` and
    `pages:`; not emitted.
+   **Open.**
 
 ### E. Security facts the converter changed or didn't
 
@@ -320,12 +363,12 @@ and the smallest fix that would cover it. **Bold** = Bake should decide.
 | hub | core | 1 | builtin | - | hub:info |
 | huddle | agents | 1 | run 1 | - | hub:huddle |
 | job | core | 4 | records 1 + run 4 | - | hub:jobs |
-| knowledge | workbench | 1 | records 1 + run 1 | - | hub:knowledge |
+| knowledge | workbench | 2 | records 1 + run 2 | - | hub:knowledge |
 | kvm | devices | 11 | config 8 + run 3 | hid.click, hid.key, hid.move, hid.type, power.off, power.on, power.reset, power.status, screen.capture | worker:pikvm |
 | llm | core | 3 | builtin | - | hub:llm |
 | location | devices | 3 | run 3 | - | phone:device_android, phone:location_android |
 | media-android | devices | 7 | run 7 | media.next, media.pause, media.play, media.previous, media.seek, media.status, media.stop | phone:media_android |
-| memory | agents | 0 | records 1 | - | hub:memory |
+| memory | agents | 1 | records 1 + run 1 | - | hub:memory |
 | notification-android | devices | 6 | run 6 | notification.act, notification.dismiss, notification.get, notification.list, notification.post, notification.update | phone:attention_android, phone:notify_android |
 | notification-desktop | devices | 1 | config 1 | notification.post | worker:msg |
 | notify | core | 2 | builtin | - | hub:notify |
@@ -341,7 +384,7 @@ and the smallest fix that would cover it. **Bold** = Bake should decide.
 | sms | devices | 2 | run 2 | - | phone:sms_android |
 | sound-android | devices | 3 | run 3 | sound.dnd, sound.set, sound.status | phone:device_android |
 | stream | core | 5 | builtin | - | worker:terminals |
-| task | workbench | 4 | records 1 + run 4 | - | hub:tasks |
+| task | workbench | 5 | records 1 + run 5 | - | hub:tasks |
 | torrent | devices | 8 | config 7 + run 1 | - | worker:deluge |
 | trust | core | 4 | records 1 + run 4 | - | hub:trust |
 | tv | devices | 19 | run 19 | app.launch, app.list, app.open_url, hid.key, hid.type, media.pause, media.play, media.seek, media.stop, notification.post, power.off, power.on, screen.off, screen.on, sound.set | worker:webos |
@@ -353,5 +396,5 @@ and the smallest fix that would cover it. **Bold** = Bake should decide.
 | whiteboard | workbench | 2 | run 2 | - | hub:tasks |
 | worker | core | 6 | builtin | - | phone:device_android, worker:info, worker:log, worker:selfupdate |
 
-Totals: 457 caps today; keep 165, reshape 83, bin 209; 63 manifests, 242 declared caps, 13 record types.
+Totals: 457 caps today; keep 165, reshape 83, bin 209; 63 manifests, 245 declared caps, 13 record types.
 <!-- generated:end -->

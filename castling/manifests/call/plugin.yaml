@@ -80,8 +80,8 @@ caps:
       screen:
         type: bool
         default: false
-    aliases:
-    - device.intent
     run: scripts/device_android.py:AndroidDevicePlugin._intent
+    bind:
+      kind: dial
 hooks:
   start: scripts/device_android.py:AndroidDevicePlugin.start

@@ -22,10 +22,15 @@ EFFECTS = ("destructive", "sensitive", "personal", "physical", "sends_as", "spen
 # Effects a read cap shouldn't have: they change something.
 _CHANGING = {"destructive", "physical", "sends_as", "spends", "persists"}
 ACTION_TYPES = ("exec", "http", "tcp", "ws", "file")
-RECORD_VERBS = ("list", "get", "search", "create", "update", "archive", "delete")
-# delete erases for good, so a record type opts into it.
+# Keys beside the action type in an action block.
+ACTION_KEYS = ("parse", "returns", "fail_if")
+# Per-OS exec overrides: worker.os values. termux is Termux; android is the app.
+OSES = ("linux", "windows", "macos", "android", "termux")
+RECORD_VERBS = ("list", "get", "search", "create", "update", "archive", "delete", "history")
+# delete erases for good, so a record type opts into it. search needs search
+# fields; history needs history: true.
 DEFAULT_RECORD_CAPS = ("list", "get", "search", "create", "update", "archive")
-_READ_VERBS = {"list", "get", "search"}
+_READ_VERBS = {"list", "get", "search", "history"}
 # Core's four presets as shipped: the ceilings a plugin's preset grants must
 # fit (None = no effects ceiling). Owners can edit presets on the hub; the
 # hub enforces the live values.
@@ -38,6 +43,10 @@ CORE_PRESETS = {
 _SECRET_NAME = re.compile(r"^[A-Za-z0-9_.-]+$")
 _TEMPLATE = re.compile(r"\{\{(.*?)\}\}")
 _ARG_TEMPLATE = re.compile(r"\{\{\s*args\.")
+_ARG_REF = re.compile(r"\{\{\s*args\.([A-Za-z0-9_-]+)[^{}]*\}\}")
+_LONE_TEMPLATE = re.compile(r"\{\{[^{}]*\}\}")
+# Arg types whose text can't carry shell or option syntax.
+_NUMERIC = {"int", "float", "bool", "duration"}
 
 
 @dataclass(frozen=True, order=True)
@@ -129,20 +138,62 @@ def glob_match(glob: str, name: str) -> bool:
     return re.fullmatch(re.escape(glob).replace(r"\*", ".+"), name) is not None
 
 
+def cap_name(plugin: str, rel: str) -> str:
+    """A cap key's full name; the key "" is the bare namespace (``help``)."""
+    return f"{plugin}.{rel}" if rel else plugin
+
+
+def record_verbs(spec: dict) -> list[str]:
+    """A record type's generated verbs: its ``caps`` list, else the defaults
+    (search only with search fields, history only with history: true)."""
+    if "caps" in spec:
+        return list(spec["caps"])
+    return [v for v in DEFAULT_RECORD_CAPS if v != "search" or spec.get("search")] + \
+        (["history"] if spec.get("history") else [])
+
+
 def record_caps(data: dict) -> dict:
-    """The caps a manifest's records generate: <plugin>.<record>.<verb>."""
+    """The caps a manifest's records generate: <plugin>.<record>.<verb>, or
+    <plugin>.<verb> for a record named like its plugin (task.get)."""
     out = {}
     plugin = data["plugin"]
     for rec, spec in (data.get("records") or {}).items():
-        for verb in spec.get("caps", DEFAULT_RECORD_CAPS):
+        prefix = plugin if rec == plugin else f"{plugin}.{rec}"
+        for verb in record_verbs(spec):
             risk = spec.get("risk", {}).get(verb, "read" if verb in _READ_VERBS else "write")
             # TODO(castling:kit): generated caps' args come from the records kit.
-            out[f"{plugin}.{rec}.{verb}"] = {
+            out[f"{prefix}.{verb}"] = {
                 "doc": f"{verb.capitalize()} {rec} records.", "risk": risk, "scope": "local",
                 "effects": ["destructive"] if verb == "delete" else [], "on": "hub",
                 "record": rec, "verb": verb,
             }
     return out
+
+
+def _rendered(spec: dict) -> tuple[dict, list | None]:
+    """What lands in argv for an arg: a list's items, and the values it can
+    take when it has an enum (after map)."""
+    if spec.get("type") == "list":
+        spec = spec.get("items") or {}
+    if "enum" not in spec:
+        return spec, None
+    m = spec.get("map") or {}
+    return spec, [m.get(str(v), v) for v in spec["enum"]]
+
+
+def _guarded(spec: dict) -> bool:
+    spec, values = _rendered(spec)
+    return values is not None or "pattern" in spec or spec.get("type", "str") in _NUMERIC
+
+
+def _could_dash(spec: dict) -> bool:
+    spec, values = _rendered(spec)
+    if values is not None:
+        return any(str(v).startswith("-") for v in values)
+    t = spec.get("type", "str")
+    if t in ("int", "float"):
+        return spec.get("min", -1) < 0
+    return "pattern" not in spec and t not in ("bool", "duration")
 
 
 def hold_effects(cap: dict) -> set:
@@ -162,7 +213,7 @@ class _Checker:
         self.settings = set(data.get("settings") or {})
         app = data.get("appliance")
         self.appliance = None if app is None else {"host", "port", "name"} | set(app.get("settings") or {})
-        self.caps = {f"{self.plugin}.{k}": v for k, v in (data.get("caps") or {}).items()}
+        self.caps = {cap_name(self.plugin, k): v for k, v in (data.get("caps") or {}).items()}
         self.own = set(self.caps) | set(record_caps(data))
 
     def add(self, level, path, code, message):
@@ -268,6 +319,7 @@ class _Checker:
         self.aliases()
         for name, spec in (d.get("settings") or {}).items():
             self.setting(spec, ("settings", name))
+        self.requires(d.get("requires"), ("requires",))
         for rel, cap in (d.get("caps") or {}).items():
             self.cap(rel, cap, ("caps", rel))
         self.records()
@@ -293,6 +345,11 @@ class _Checker:
         self.presets()
         return self.issues
 
+    def requires(self, req, path):
+        for i, name in enumerate((req or {}).get("settings") or ()):
+            if name not in self.settings:
+                self.error(path + ("settings", i), "unknown-setting", f"no setting {name!r} is declared")
+
     def setting(self, spec, path):
         if spec.get("type") == "oauth":
             self.error(path + ("type",), "oauth-unsupported",
@@ -315,6 +372,13 @@ class _Checker:
         if has_run:
             self.run(cap["run"], path + ("run",))
         args = cap.get("args") or {}
+        for name in cap.get("bind") or {}:
+            if not has_run:
+                self.error(path + ("bind", name), "bind-without-run", "bind passes fixed args to a run: target")
+            elif name in args:
+                self.error(path + ("bind", name), "bind-shadows-arg",
+                           f"{name} is both a declared arg and bound")
+        self.requires(cap.get("requires"), path + ("requires",))
         compiled = self.type_(args, path + ("args",), fields=True)
         if compiled is not None:
             for i, ex in enumerate(cap.get("examples") or ()):
@@ -338,21 +402,65 @@ class _Checker:
         kinds = [k for k in ACTION_TYPES if k in action]
         if len(kinds) > 1:
             self.error(path, "multiple-actions", f"one action type per cap, found {', '.join(kinds)}")
-        elif not kinds and not set(action) - {"parse", "returns"}:
+        elif not kinds and not set(action) - set(ACTION_KEYS):
             self.error(path, "no-action", "the action names no action type")
         self.templates(action, path, args=args)
-        exec_ = action.get("exec")
-        if not exec_:
-            return
+        exec_ = action.get("exec") or {}
+        regexes = [(("fail_if",), action.get("fail_if")), (("parse",), action.get("parse"))]
+        regexes += [(("exec", os, "parse"), exec_[os].get("parse")) for os in OSES if os in exec_]
+        for sub, block in regexes:
+            if isinstance(block, dict):
+                try:
+                    re.compile(block["regex"])
+                except re.error as e:
+                    self.error(path + sub + ("regex",), "bad-regex", f"invalid regex: {e}")
+        for kind in ("http", "tcp"):
+            verify = (action.get(kind) or {}).get("tls")
+            verify = verify.get("verify") if isinstance(verify, dict) else None
+            if isinstance(verify, str) and not re.fullmatch(
+                    r"\{\{\s*(settings|appliance)\.[A-Za-z0-9_-]+\s*\}\}", verify):
+                self.error(path + (kind, "tls", "verify"), "tls-verify-template",
+                           "tls.verify is true, false or one {{settings.x}} / {{appliance.x}}")
         steps = [((), exec_)] if "argv" in exec_ else []
-        steps += [((os,), exec_[os]) for os in ("linux", "windows", "macos", "android") if os in exec_]
+        steps += [((os,), exec_[os]) for os in OSES if "argv" in exec_.get(os, {})]
         steps += [(("try", i), s) for i, s in enumerate(exec_.get("try", ()))]
+        steps += [((os, "try", i), s) for os in OSES
+                  for i, s in enumerate(exec_.get(os, {}).get("try", ()))]
         for sub, step in steps:
             first = step["argv"][0]
             if any(_ARG_TEMPLATE.search(s) for s in ([first] if isinstance(first, str) else first)) \
                     and cap["risk"] not in ("exec", "admin"):
                 self.error(path + ("exec",) + sub + ("argv", 0), "argv-binary-from-arg",
                            "the program to run comes from an arg: the cap must be risk exec")
+            self.argv(step["argv"], args, path + ("exec",) + sub + ("argv",))
+
+    def argv(self, argv, args, path):
+        """Warn where an arg's text could break out of its slot: inside a
+        larger argument a tool may re-split (A8), or alone where it could
+        start with - and read as an option (A9)."""
+        items = [((i,), a) for i, a in enumerate(argv) if isinstance(a, str)]
+        items += [((i, j), a) for i, g in enumerate(argv) if isinstance(g, list) for j, a in enumerate(g)]
+        options_end = False
+        for sub, item in sorted(items):
+            if item == "--":
+                options_end = True
+                continue
+            if sub[0] == 0:
+                continue  # the program; argv-binary-from-arg covers it
+            names = _ARG_REF.findall(item)
+            lone = len(names) == 1 and _LONE_TEMPLATE.fullmatch(item.strip()) is not None
+            for name in names:
+                spec = args.get(name)
+                if spec is None:
+                    continue  # template-unknown-arg already
+                if not lone and not _guarded(spec):
+                    self.warn(path + sub, "argv-arg-unguarded",
+                              f"{{{{args.{name}}}}} is inside a larger argument: give {name} a pattern "
+                              "or enum so a tool that re-splits it can't be fed extra syntax")
+                elif lone and not options_end and _could_dash(spec):
+                    self.warn(path + sub, "argv-option-injection",
+                              f"{{{{args.{name}}}}} could start with - and read as an option: "
+                              "put \"--\" before it or give it a pattern")
 
     def records(self):
         generated = record_caps(self.data)
@@ -369,6 +477,11 @@ class _Checker:
                 for i, fname in enumerate(spec.get(key) or ()):
                     if fname not in fields:
                         self.error(path + (key, i), "unknown-field", f"no field {fname!r} in {rec}")
+            for i, verb in enumerate(spec.get("caps") or ()):
+                if verb == "search" and not spec.get("search"):
+                    self.error(path + ("caps", i), "record-verb", "search needs search fields")
+                elif verb == "history" and not spec.get("history"):
+                    self.error(path + ("caps", i), "record-verb", "history needs history: true")
             if "migrations" in spec:
                 self.file(spec["migrations"], path + ("migrations",))
 
@@ -381,19 +494,19 @@ class _Checker:
 
     def hooks(self):
         hooks = self.data.get("hooks") or {}
-        for key in ("start", "stop", "status"):
-            if key in hooks:
-                self.run(hooks[key], ("hooks", key))
-        for key in ("every", "on"):
-            for i, h in enumerate(hooks.get(key) or ()):
-                path = ("hooks", key, i)
-                if key == "on" and ("run" in h) == ("call" in h):
-                    self.error(path, "hook-action", "an on: hook has a run or a call, not both")
-                if "run" in h:
-                    self.run(h["run"], path + ("run",))
-                if "call" in h and not self.callable_(h["call"]):
-                    self.error(path + ("call",), "call-not-in-uses",
-                               f"{h['call']} is not this plugin's cap and not in uses")
+        found = [(("hooks", k), hooks[k]) for k in ("start", "stop", "status") if k in hooks]
+        found += [(("hooks", k, i), h) for k in ("every", "on") for i, h in enumerate(hooks.get(k) or ())]
+        for path, h in found:
+            if isinstance(h, str):
+                self.run(h, path)
+                continue
+            if ("run" in h) == ("call" in h):
+                self.error(path, "hook-action", "a hook has exactly one of run or call")
+            if "run" in h:
+                self.run(h["run"], path + ("run",))
+            if "call" in h and not self.callable_(h["call"]):
+                self.error(path + ("call",), "call-not-in-uses",
+                           f"{h['call']} is not this plugin's cap and not in uses")
 
     def provides(self):
         for contract, cap_name in (self.data.get("provides") or {}).items():

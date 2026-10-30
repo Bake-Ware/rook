@@ -67,9 +67,9 @@ caps:
       screen:
         type: bool
         default: false
-    aliases:
-    - device.intent
     run: scripts/device_android.py:AndroidDevicePlugin._intent
+    bind:
+      kind: timer
   alarm:
     doc: 'Common phone actions in one call. kind: share (text, subject: the share sheet), dial (to: opens
       the dialer with the number, never calls), navigate (to, mode drive|walk|bike|transit: turn-by-turn
@@ -118,9 +118,9 @@ caps:
       screen:
         type: bool
         default: false
-    aliases:
-    - device.intent
     run: scripts/device_android.py:AndroidDevicePlugin._intent
+    bind:
+      kind: alarm
   alarms:
     doc: 'Common phone actions in one call. kind: share (text, subject: the share sheet), dial (to: opens
       the dialer with the number, never calls), navigate (to, mode drive|walk|bike|transit: turn-by-turn
@@ -169,8 +169,8 @@ caps:
       screen:
         type: bool
         default: false
-    aliases:
-    - device.intent
     run: scripts/device_android.py:AndroidDevicePlugin._intent
+    bind:
+      kind: alarms
 hooks:
   start: scripts/device_android.py:AndroidDevicePlugin.start

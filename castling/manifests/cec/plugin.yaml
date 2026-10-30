@@ -30,9 +30,12 @@ caps:
         required: true
         pattern: ^[0-9a-f]{1,2}$
       operands:
-        type: str
-        default: ''
-        pattern: ^([0-9a-f]{1,2}( [0-9a-f]{1,2})*)?$
+        type: list
+        items:
+          type: str
+          pattern: ^[0-9a-f]{1,2}$
+        join: ' '
+        doc: Operand bytes.
     examples:
     - args:
         addr: '0'
@@ -40,7 +43,8 @@ caps:
     - args:
         addr: '5'
         opcode: '44'
-        operands: '41'
+        operands:
+        - '41'
     timeout: 5s
     action:
       tcp:
@@ -50,6 +54,8 @@ caps:
 
           '
         until: newline
+      fail_if:
+        regex: ^ERR
       parse: text
   status:
     doc: Check the Pico-CEC bridge answers; returns its reply (logical/physical address).
@@ -69,6 +75,8 @@ caps:
 
           '
         until: newline
+      fail_if:
+        regex: ^ERR
       parse: text
 check:
 - cec.status

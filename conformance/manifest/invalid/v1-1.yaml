@@ -1,0 +1,35 @@
+# Manifest 1.1 additions used wrongly.
+manifest: 1
+plugin: bad
+version: 1.0.0
+requires: { settings: [nope] }
+settings:
+  verify: { type: bool }
+caps:
+  a:
+    doc: Bind needs a run target.
+    risk: read
+    scope: local
+    bind: { op: a }
+    action: { exec: { argv: [/bin/true] } }
+  b:
+    doc: A bound arg can't also be declared.
+    risk: read
+    scope: local
+    args: { op: { type: str } }
+    bind: { op: b }
+    requires: { settings: [missing] }
+    run: scripts/b.py:B.run
+  c:
+    doc: Bad regex, join on a non-list, tls.verify from an arg.
+    risk: read
+    scope: local
+    args: { x: { type: str, join: "," }, v: { type: bool } }
+    action:
+      http: { url: "https://h/", tls: { verify: "{{args.v}}" } }
+      fail_if: { regex: "(" }
+records:
+  log: { fields: { line: {} }, caps: [list, search, history] }
+hooks:
+  status: { run: scripts/s.py:status, call: bad.a }
+  every: [ { interval: 1m } ]

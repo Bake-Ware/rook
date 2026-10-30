@@ -67,9 +67,9 @@ caps:
       screen:
         type: bool
         default: false
-    aliases:
-    - device.intent
     run: scripts/device_android.py:AndroidDevicePlugin._intent
+    bind:
+      kind: navigate
   show:
     doc: 'Common phone actions in one call. kind: share (text, subject: the share sheet), dial (to: opens
       the dialer with the number, never calls), navigate (to, mode drive|walk|bike|transit: turn-by-turn
@@ -118,9 +118,9 @@ caps:
       screen:
         type: bool
         default: false
-    aliases:
-    - device.intent
     run: scripts/device_android.py:AndroidDevicePlugin._intent
+    bind:
+      kind: show
   get:
     doc: 'Get lat/lon, accuracy, age, stale flag and Maps URL. Timeout: 1–25s.'
     risk: exec

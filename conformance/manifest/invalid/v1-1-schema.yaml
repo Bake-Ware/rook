@@ -1,0 +1,16 @@
+# Manifest 1.1 values out of range.
+manifest: 1
+plugin: odd
+version: 1.0.0
+platforms: [android-app]
+settings:
+  kind: { type: str, apply: sometimes }
+caps:
+  wait:
+    doc: Timeouts are a duration or none.
+    risk: read
+    scope: local
+    timeout: never
+    run: scripts/w.py:Waiter.wait.again
+contracts:
+  speak: { route: anyone }

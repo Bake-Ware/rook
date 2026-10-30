@@ -45,8 +45,6 @@ caps:
       dnd:
         type: str
         default: ''
-    aliases:
-    - device.sound
     run: scripts/device_android.py:AndroidDevicePlugin._sound
   sound.set:
     doc: 'Read or set the volume, ringer and Do Not Disturb. With no change asked, returns the state:
@@ -74,8 +72,6 @@ caps:
       dnd:
         type: str
         default: ''
-    aliases:
-    - device.sound
     run: scripts/device_android.py:AndroidDevicePlugin._sound
   sound.dnd:
     doc: 'Read or set the volume, ringer and Do Not Disturb. With no change asked, returns the state:
@@ -103,8 +99,6 @@ caps:
       dnd:
         type: str
         default: ''
-    aliases:
-    - device.sound
     run: scripts/device_android.py:AndroidDevicePlugin._sound
 provides:
   sound.status: sound-android.sound.status

@@ -34,7 +34,7 @@ caps:
     - camera.snap
     platforms:
     - linux
-    - android
+    - termux
     timeout: 30s
     action:
       exec:
@@ -60,7 +60,7 @@ caps:
           - -frames:v
           - '1'
           - '{{tmp}}/c.jpg'
-        android:
+        termux:
           argv:
           - termux-camera-photo
           - -c

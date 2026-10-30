@@ -154,6 +154,7 @@ caps:
       wait:
         type: float
         default: 0.0
+    timeout: none
     run: scripts/decide.py:Decide.drive
 hooks:
   start: scripts/decide.py:Decide.start

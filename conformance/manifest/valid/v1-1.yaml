@@ -1,0 +1,65 @@
+# The manifest 1.1 additions (still manifest: 1; every key is optional).
+manifest: 1
+plugin: task
+version: 1.1.0
+platforms: [linux, termux]
+requires: { settings: [api] }                 # caps stay hidden until api is set
+settings:
+  api: { type: url, doc: Task server., apply: reload }
+  cache: { type: path, default: /var/cache/task, apply: restart }
+  tls_verify: { type: bool, default: true, apply: live }
+caps:
+  "":                                         # the bare namespace: this cap is "task"
+    doc: What the task plugin can do.
+    risk: read
+    scope: self
+    run: scripts/task.py:Tasks.help           # Class.method: one instance per plugin load
+  claim:
+    doc: Claim a task.
+    risk: write
+    scope: multi-user
+    timeout: none
+    args: { id: { type: str, required: true } }
+    bind: { op: claim }                       # a fixed arg for the run target
+    run: scripts/task.py:Tasks.act
+  release:
+    doc: Release a task.
+    risk: write
+    scope: multi-user
+    args: { id: { type: str, required: true } }
+    bind: { op: release }
+    run: scripts/task.py:Tasks.act
+  battery:
+    doc: Battery level.
+    risk: read
+    scope: local
+    result: { type: map, fields: { percent: { type: int }, charging: { type: bool } } }
+    action:
+      exec:
+        argv: [upower, -i, /org/freedesktop/UPower/devices/DisplayDevice]
+        env: { LANG: C }
+        termux:
+          argv: [termux-battery-status]
+          parse: json
+          returns: { percent: percentage, charging: plugged }
+      parse: { regex: "percentage:\\s+(?P<percent>\\d+)" }
+  remote:
+    doc: Ask the task server.
+    risk: read
+    scope: external
+    args:
+      tags: { type: list, items: { type: str, pattern: "^[a-z]+$" }, join: "," }
+      state: { type: str, enum: [S, D], map: { S: Seeding, D: Downloading } }
+    action:
+      http:
+        url: "{{settings.api}}/tasks"
+        query: { tags: "{{args.tags}}", state: "{{args.state}}" }
+        tls: { verify: "{{settings.tls_verify}}" }
+      fail_if: { regex: "^ERR " }
+records:
+  task: { fields: { title: { required: true } }, history: true }   # task.list ... task.history
+contracts:
+  screen.capture: { doc: A picture of a screen., route: target }
+hooks:
+  status: { call: task.battery }
+  every: [ { interval: 1h, run: scripts/task.py:Tasks.sweep } ]

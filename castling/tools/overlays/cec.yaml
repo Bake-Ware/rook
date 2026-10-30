@@ -1,4 +1,5 @@
 # A Pico-CEC bridge is an appliance: a TCP endpoint the delegate worker reaches.
+# Its port setting wins over the instance's discovered port (manifest 1.1, A14).
 title: HDMI-CEC (Pico-CEC)
 doc: Send HDMI-CEC frames through a network-attached Pico-CEC bridge.
 settings: null
@@ -8,11 +9,11 @@ appliance:
 caps:
   send:
     doc: "Transmit a CEC frame: addr destination (0-f, 0 = TV), opcode byte, optional operand bytes, all bare hex."
-    examples: [{ args: { addr: "0", opcode: "36" } }, { args: { addr: "5", opcode: "44", operands: "41" } }]
+    examples: [{ args: { addr: "0", opcode: "36" } }, { args: { addr: "5", opcode: "44", operands: ["41"] } }]
     args:
       addr: { type: str, required: true, pattern: '^[0-9a-f]$' }
       opcode: { type: str, required: true, pattern: '^[0-9a-f]{1,2}$' }
-      operands: { type: str, default: "", pattern: '^([0-9a-f]{1,2}( [0-9a-f]{1,2})*)?$' }
+      operands: { type: list, items: { type: str, pattern: '^[0-9a-f]{1,2}$' }, join: " ", doc: Operand bytes. }
     timeout: 5s
     action:
       tcp:
@@ -20,11 +21,13 @@ caps:
         port: "{{appliance.port}}"
         send: "send {{args.addr}} {{args.opcode}} {{args.operands}}\n"
         until: newline
+      fail_if: { regex: "^ERR" }
       parse: text
   status:
     timeout: 5s
     idempotent: true
     action:
       tcp: { host: "{{appliance.host}}", port: "{{appliance.port}}", send: "ping\n", until: newline }
+      fail_if: { regex: "^ERR" }
       parse: text
 check: [cec.status]

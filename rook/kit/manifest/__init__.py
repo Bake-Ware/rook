@@ -1,6 +1,7 @@
-"""Plugin manifests (plugin.yaml), format 1.
+"""Plugin manifests (plugin.yaml), format 1 with the 1.1 additions.
 
-Design: knowledge pages castling-manifest and castling-manifest-2. The
+Design: knowledge page castling-manifest and its castling-manifest-* section
+pages (1.1 changes: castling-manifest-lifecycle). The
 structural schema is conformance/manifest/manifest.schema.json; the vectors
 beside it pin the semantic checks for other implementations.
 

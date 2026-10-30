@@ -34,7 +34,7 @@ caps:
     risk: write
     scope: local
     effects: [destructive]
-    args: { id: { type: str, required: true } }
+    args: { id: { type: str, required: true, pattern: "^[0-9a-f]{40}$" } }
     action:
       exec: { argv: ["{{settings.console}}", "rm", "--remove_data", "{{args.id}}"] }
   stats.custom:

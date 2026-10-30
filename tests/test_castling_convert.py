@@ -182,3 +182,18 @@ def test_lint_catches_undeclared_templates():
     assert any("args.nope" in e for e in errs)
     assert any("settings.gone" in e for e in errs)
     assert any("risk exec" in e for e in errs)
+
+
+def test_split_caps_bind_the_old_argument(drafted):
+    """B5: a split cap binds the action argument its run target still takes;
+    the old name has no single heir, so it is no one's alias."""
+    _, _, mans, _ = drafted
+    play = mans["media-android"]["caps"]["media.play"]
+    assert play["bind"] == {"action": "play"} and "action" not in play.get("args", {})
+    assert "aliases" not in play
+
+
+def test_overlays_read_as_yaml_1_2(drafted):
+    """off stays a string (pyyaml's YAML 1.1 would make it false)."""
+    _, _, mans, _ = drafted
+    assert mans["kvm"]["caps"]["power.off"]["args"]["mode"]["enum"] == ["off", "off_hard"]

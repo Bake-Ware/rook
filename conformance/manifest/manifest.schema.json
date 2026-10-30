@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Bake-Ware/rook/conformance/manifest/manifest.schema.json",
   "title": "Rook plugin manifest (plugin.yaml), format 1",
-  "description": "Structural schema. Unknown keys are allowed here (forward compatibility); validators report them as warnings. Semantic checks (templates, file references, presets, contracts) are in rook.kit.manifest and the vectors beside this file.",
+  "description": "Structural schema, format 1 with the 1.1 additions (all optional). Unknown keys are allowed here (forward compatibility); validators report them as warnings. Semantic checks (templates, file references, presets, contracts) are in rook.kit.manifest and the vectors beside this file.",
   "type": "object",
   "required": ["manifest", "plugin", "version"],
   "properties": {
@@ -38,7 +38,7 @@
     "settings": {"$ref": "#/$defs/settings"},
     "caps": {
       "type": "object",
-      "propertyNames": {"$ref": "#/$defs/cap_name"},
+      "propertyNames": {"anyOf": [{"$ref": "#/$defs/cap_name"}, {"const": ""}]},
       "additionalProperties": {"$ref": "#/$defs/cap"}
     },
     "records": {
@@ -61,16 +61,17 @@
     "hooks": {
       "type": "object",
       "properties": {
-        "start": {"$ref": "#/$defs/run_ref"},
-        "stop": {"$ref": "#/$defs/run_ref"},
-        "status": {"$ref": "#/$defs/run_ref"},
+        "start": {"$ref": "#/$defs/hook"},
+        "stop": {"$ref": "#/$defs/hook"},
+        "status": {"$ref": "#/$defs/hook"},
         "every": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["interval", "call"],
+            "required": ["interval"],
             "properties": {
               "interval": {"$ref": "#/$defs/duration"},
+              "run": {"$ref": "#/$defs/run_ref"},
               "call": {"$ref": "#/$defs/cap_name"},
               "args": {"type": "object"}
             }
@@ -144,7 +145,8 @@
         "properties": {
           "doc": {"type": "string"},
           "args": {"$ref": "#/$defs/fields"},
-          "result": {"$ref": "#/$defs/typespec"}
+          "result": {"$ref": "#/$defs/typespec"},
+          "route": {"enum": ["provider", "target"]}
         }
       }
     },
@@ -251,9 +253,23 @@
     },
     "rel_path": {"type": "string", "minLength": 1},
     "run_ref": {
-      "description": "path/to/file.py:function, relative to the plugin folder.",
+      "description": "path/to/file.py:function or path/to/file.py:Class.method, relative to the plugin folder.",
       "type": "string",
-      "pattern": "^[^:]+\\.py:[A-Za-z_][A-Za-z0-9_]*$"
+      "pattern": "^[^:]+\\.py:[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)?$"
+    },
+    "hook": {
+      "description": "A run ref, or {run: ref} or {call: cap, args}.",
+      "anyOf": [
+        {"$ref": "#/$defs/run_ref"},
+        {
+          "type": "object",
+          "properties": {
+            "run": {"$ref": "#/$defs/run_ref"},
+            "call": {"$ref": "#/$defs/cap_name"},
+            "args": {"type": "object"}
+          }
+        }
+      ]
     },
     "file_map": {
       "type": "object",
@@ -263,7 +279,7 @@
     "home": {"enum": ["worker", "hub"]},
     "platforms": {
       "type": "array",
-      "items": {"enum": ["linux", "windows", "macos", "android", "ios"]}
+      "items": {"enum": ["linux", "windows", "macos", "android", "termux", "ios"]}
     },
     "risk": {"enum": ["read", "write", "exec", "admin"]},
     "scope": {"enum": ["self", "local", "multi-machine", "multi-user", "external"]},
@@ -278,12 +294,13 @@
         },
         "python": {"$ref": "#/$defs/strings"},
         "bins": {"$ref": "#/$defs/strings"},
-        "hardware": {"$ref": "#/$defs/strings"}
+        "hardware": {"$ref": "#/$defs/strings"},
+        "settings": {"type": "array", "items": {"$ref": "#/$defs/name"}}
       }
     },
     "type_name": {
       "enum": ["str", "int", "float", "bool", "time", "duration", "markdown", "json",
-               "file", "secret", "ref", "list", "map"]
+               "file", "secret", "ref", "list", "map", "url", "path"]
     },
     "typespec": {
       "description": "The type language. type defaults to str; schema: is raw JSON Schema.",
@@ -308,6 +325,26 @@
       "propertyNames": {"$ref": "#/$defs/name"},
       "additionalProperties": {"$ref": "#/$defs/typespec"}
     },
+    "arg": {
+      "description": "A cap arg: the type language plus how actions render it (join: a list inside a string; map: caller value -> rendered value).",
+      "type": "object",
+      "properties": {
+        "type": {"$ref": "#/$defs/type_name"},
+        "required": {"type": "boolean"},
+        "default": true,
+        "enum": {"type": "array", "minItems": 1},
+        "min": {"type": "number"},
+        "max": {"type": "number"},
+        "pattern": {"type": "string"},
+        "items": {"$ref": "#/$defs/typespec"},
+        "fields": {"$ref": "#/$defs/fields"},
+        "to": {"type": "string"},
+        "doc": {"type": "string"},
+        "schema": {"type": "object"},
+        "join": {"type": "string"},
+        "map": {"type": "object"}
+      }
+    },
     "setting": {
       "type": "object",
       "properties": {
@@ -324,6 +361,7 @@
         "doc": {"type": "string"},
         "schema": {"type": "object"},
         "where": {"enum": ["worker", "hub", "person"]},
+        "apply": {"enum": ["live", "reload", "restart"]},
         "secret": {"type": "boolean"},
         "setup": {"type": "string"},
         "provider": {"type": "string"},
@@ -356,9 +394,14 @@
             }
           }
         },
-        "args": {"$ref": "#/$defs/fields"},
+        "args": {
+          "type": "object",
+          "propertyNames": {"$ref": "#/$defs/name"},
+          "additionalProperties": {"$ref": "#/$defs/arg"}
+        },
+        "bind": {"type": "object", "propertyNames": {"$ref": "#/$defs/name"}},
         "result": {"$ref": "#/$defs/typespec"},
-        "timeout": {"$ref": "#/$defs/duration"},
+        "timeout": {"anyOf": [{"$ref": "#/$defs/duration"}, {"const": "none"}]},
         "idempotent": {"type": "boolean"},
         "undo": {"$ref": "#/$defs/cap_name"},
         "elevation": {"enum": ["never", "may", "upfront"]},
@@ -389,24 +432,32 @@
         "tcp": {"$ref": "#/$defs/tcp"},
         "ws": {"$ref": "#/$defs/ws"},
         "file": {"$ref": "#/$defs/file_action"},
-        "parse": {
-          "anyOf": [
-            {"enum": ["text", "lines", "json", "kv", "csv", "bytes"]},
-            {
-              "type": "object",
-              "required": ["regex"],
-              "properties": {"regex": {"type": "string"}, "each": {"type": "boolean"}}
-            }
-          ]
-        },
-        "returns": {
-          "description": "Fields to pick, or a rename map; dotted paths only.",
-          "anyOf": [
-            {"type": "array", "items": {"$ref": "#/$defs/dotted_path"}},
-            {"type": "object", "additionalProperties": {"$ref": "#/$defs/dotted_path"}}
-          ]
+        "parse": {"$ref": "#/$defs/parse"},
+        "returns": {"$ref": "#/$defs/returns"},
+        "fail_if": {
+          "description": "Output matching this regex makes the call fail.",
+          "type": "object",
+          "required": ["regex"],
+          "properties": {"regex": {"type": "string"}}
         }
       }
+    },
+    "parse": {
+      "anyOf": [
+        {"enum": ["text", "lines", "json", "kv", "csv", "bytes"]},
+        {
+          "type": "object",
+          "required": ["regex"],
+          "properties": {"regex": {"type": "string"}, "each": {"type": "boolean"}}
+        }
+      ]
+    },
+    "returns": {
+      "description": "Fields to pick, or a rename map; dotted paths only.",
+      "anyOf": [
+        {"type": "array", "items": {"$ref": "#/$defs/dotted_path"}},
+        {"type": "object", "additionalProperties": {"$ref": "#/$defs/dotted_path"}}
+      ]
     },
     "argv": {
       "type": "array",
@@ -427,6 +478,21 @@
         "output": {"type": "string"}
       }
     },
+    "os_step": {
+      "description": "A per-OS override: keys it sets replace the base exec's (argv also drops try, and try drops argv); it may set parse and returns.",
+      "type": "object",
+      "properties": {
+        "argv": {"$ref": "#/$defs/argv"},
+        "try": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/exec_step"}},
+        "stdin": {"type": "string"},
+        "env": {"$ref": "#/$defs/string_map"},
+        "cwd": {"type": "string"},
+        "ok_exit": {"type": "array", "items": {"type": "integer"}},
+        "output": {"type": "string"},
+        "parse": {"$ref": "#/$defs/parse"},
+        "returns": {"$ref": "#/$defs/returns"}
+      }
+    },
     "exec": {
       "type": "object",
       "properties": {
@@ -436,14 +502,16 @@
         "cwd": {"type": "string"},
         "ok_exit": {"type": "array", "items": {"type": "integer"}},
         "output": {"type": "string"},
-        "linux": {"$ref": "#/$defs/exec_step"},
-        "windows": {"$ref": "#/$defs/exec_step"},
-        "macos": {"$ref": "#/$defs/exec_step"},
-        "android": {"$ref": "#/$defs/exec_step"},
+        "linux": {"$ref": "#/$defs/os_step"},
+        "windows": {"$ref": "#/$defs/os_step"},
+        "macos": {"$ref": "#/$defs/os_step"},
+        "android": {"$ref": "#/$defs/os_step"},
+        "termux": {"$ref": "#/$defs/os_step"},
         "try": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/exec_step"}}
       },
       "anyOf": [{"required": ["argv"]}, {"required": ["try"]}, {"required": ["linux"]},
-                {"required": ["windows"]}, {"required": ["macos"]}, {"required": ["android"]}]
+                {"required": ["windows"]}, {"required": ["macos"]}, {"required": ["android"]},
+                {"required": ["termux"]}]
     },
     "http": {
       "type": "object",
@@ -474,7 +542,7 @@
     "tls": {
       "anyOf": [
         {"type": "boolean"},
-        {"type": "object", "properties": {"verify": {"type": "boolean"}}}
+        {"type": "object", "properties": {"verify": {"type": ["boolean", "string"]}}}
       ]
     },
     "tcp": {
@@ -531,11 +599,11 @@
         "retain": {"$ref": "#/$defs/duration"},
         "caps": {
           "type": "array",
-          "items": {"enum": ["list", "get", "search", "create", "update", "archive", "delete"]}
+          "items": {"enum": ["list", "get", "search", "create", "update", "archive", "delete", "history"]}
         },
         "risk": {
           "type": "object",
-          "propertyNames": {"enum": ["list", "get", "search", "create", "update", "archive", "delete"]},
+          "propertyNames": {"enum": ["list", "get", "search", "create", "update", "archive", "delete", "history"]},
           "additionalProperties": {"$ref": "#/$defs/risk"}
         },
         "migrations": {"$ref": "#/$defs/rel_path"}

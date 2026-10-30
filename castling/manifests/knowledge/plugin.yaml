@@ -10,26 +10,31 @@ settings:
     type: bool
     where: hub
     default: false
+    apply: restart
     doc: 'Shared wiki plus concept/project/task records and the hygiene nudges. Read at start: restart
       the hub to apply.'
   db_path:
     type: str
     where: hub
+    apply: restart
     doc: 'Empty: knowledge.db beside the hub''s other stores (the journal''s directory).'
   semantic:
     type: bool
     where: hub
     default: true
+    apply: restart
     doc: Blend embedding similarity into search when an embedding service is set; off = keyword search
       only.
   embedder:
     type: str
     where: hub
+    apply: restart
     doc: 'http(s)://host:port/embed (services/knowledge-embeddings) or a band cap such as cap://any/embed.text;
       both take {texts} and return {model, vectors}. Empty: keyword search only.'
   embed_model:
     type: str
     where: hub
+    apply: restart
     doc: Must match the model the embedding service reports.
   hygiene_enabled:
     type: bool
@@ -96,6 +101,23 @@ settings:
       in-progress work, red CI, open PR on a done task. Uses the hub''s GitHub credential (huddle.vote_github_secret)
       when set. 0 = off (marking a task done still checks its PRs).'
 caps:
+  search:
+    doc: 'Read the shared wiki: search|get|list|context|status|bands|deck.'
+    risk: read
+    scope: multi-user
+    args:
+      band:
+        type: str
+      id:
+        type: str
+      query:
+        type: str
+        default: ''
+      data:
+        type: json
+    run: scripts/knowledge.py:Knowledge.read
+    bind:
+      action: search
   link:
     doc: 'Write the shared wiki: create|update|link|retract (needs request_id).'
     risk: write
@@ -109,14 +131,13 @@ caps:
         type: json
       request_id:
         type: str
-    aliases:
-    - knowledge.write
     run: scripts/knowledge.py:Knowledge.write
+    bind:
+      action: link
 records:
   knowledge:
     fields: {}
     caps:
-    - search
     - get
     - list
     - create

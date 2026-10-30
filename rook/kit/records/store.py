@@ -74,6 +74,12 @@ class RecordDef:
     def full(self) -> str:
         return f"{self.plugin}.{self.name}"
 
+    @property
+    def cap_prefix(self) -> str:
+        """Generated caps are <full>.<verb>, or <plugin>.<verb> for a type
+        named like its plugin (task.get, not task.task.get)."""
+        return self.plugin if self.name == self.plugin else self.full
+
     @classmethod
     def parse(cls, plugin: str, name: str, block: Mapping) -> "RecordDef":
         if not _PLUGIN.match(plugin):
@@ -99,15 +105,21 @@ class RecordDef:
         for f in [c for cols in index for c in cols] + search + semantic:
             if f not in fields:
                 raise KitError(f"{plugin}.{name}: index/search names unknown field {f!r}")
-        verbs = list(block.get("caps") or [v for v in VERBS if v != "search" or search])
-        bad = [v for v in verbs if v not in VERBS]
+        history = bool(block.get("history"))
+        # Same defaults as rook.kit.manifest.record_verbs: delete erases for
+        # good, so a type opts into it; search and history need their fields.
+        verbs = list(block["caps"]) if block.get("caps") is not None else \
+            [v for v in VERBS if v != "delete" and (v != "search" or search)] + (["history"] if history else [])
+        bad = [v for v in verbs if v not in VERBS + ("history",)]
         if bad:
             raise KitError(f"{plugin}.{name}: unknown record caps {bad}")
         if "search" in verbs and not search:
             raise KitError(f"{plugin}.{name}: caps lists search but no search fields are declared")
+        if "history" in verbs and not history:
+            raise KitError(f"{plugin}.{name}: caps lists history but the type keeps no history")
         retain = block.get("retain")
         return cls(plugin, name, fields, index, search, semantic,
-                   history=bool(block.get("history")), private=bool(block.get("private")),
+                   history=history, private=bool(block.get("private")),
                    retain=parse_duration(retain) if retain not in (None, "forever") else None,
                    verbs=verbs, risk=dict(block.get("risk") or {}),
                    migrations=block.get("migrations"))

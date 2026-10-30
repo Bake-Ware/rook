@@ -10,14 +10,38 @@ settings:
     type: bool
     where: hub
     default: true
+    apply: restart
     doc: 'Needs Knowledge on. Off keeps the wiki and removes the task tools. Read at start: restart the
       hub to apply.'
 caps:
+  search:
+    doc: 'Read tasks/projects/concepts: deck|search|list|get|context|status|hygiene|whiteboard.'
+    risk: read
+    scope: multi-user
+    args:
+      kind:
+        type: str
+        default: task
+      band:
+        type: str
+      id:
+        type: str
+      query:
+        type: str
+        default: ''
+      data:
+        type: json
+    run: scripts/tasks.py:Tasks.read
+    bind:
+      action: search
   claim:
     doc: 'Write tasks/projects/concepts: create|update|link|retract|claim|release|note|jot|batch.'
     risk: write
     scope: multi-user
     args:
+      kind:
+        type: str
+        default: task
       band:
         type: str
       id:
@@ -26,14 +50,17 @@ caps:
         type: json
       request_id:
         type: str
-    aliases:
-    - task.write
     run: scripts/tasks.py:Tasks.write
+    bind:
+      action: claim
   release:
     doc: 'Write tasks/projects/concepts: create|update|link|retract|claim|release|note|jot|batch.'
     risk: write
     scope: multi-user
     args:
+      kind:
+        type: str
+        default: task
       band:
         type: str
       id:
@@ -42,14 +69,17 @@ caps:
         type: json
       request_id:
         type: str
-    aliases:
-    - task.write
     run: scripts/tasks.py:Tasks.write
+    bind:
+      action: release
   link:
     doc: 'Write tasks/projects/concepts: create|update|link|retract|claim|release|note|jot|batch.'
     risk: write
     scope: multi-user
     args:
+      kind:
+        type: str
+        default: task
       band:
         type: str
       id:
@@ -58,14 +88,17 @@ caps:
         type: json
       request_id:
         type: str
-    aliases:
-    - task.write
     run: scripts/tasks.py:Tasks.write
+    bind:
+      action: link
   comment:
     doc: 'Write tasks/projects/concepts: create|update|link|retract|claim|release|note|jot|batch.'
     risk: write
     scope: multi-user
     args:
+      kind:
+        type: str
+        default: task
       band:
         type: str
       id:
@@ -74,16 +107,15 @@ caps:
         type: json
       request_id:
         type: str
-    aliases:
-    - task.write
     run: scripts/tasks.py:Tasks.write
+    bind:
+      action: comment
 records:
   task:
     fields: {}
     caps:
     - list
     - get
-    - search
     - create
     - update
     - archive

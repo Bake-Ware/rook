@@ -30,9 +30,9 @@ caps:
       package:
         type: str
         default: ''
-    aliases:
-    - media.control
     run: scripts/media_android.py:AndroidMediaPlugin._control
+    bind:
+      action: play
   media.pause:
     doc: Play, pause, toggle, next, previous, stop, forward or rewind. Drives package's session (package
       name or app label), else the one playing, else the most recent. Without notification access it sends
@@ -45,9 +45,9 @@ caps:
       package:
         type: str
         default: ''
-    aliases:
-    - media.control
     run: scripts/media_android.py:AndroidMediaPlugin._control
+    bind:
+      action: pause
   media.stop:
     doc: Play, pause, toggle, next, previous, stop, forward or rewind. Drives package's session (package
       name or app label), else the one playing, else the most recent. Without notification access it sends
@@ -60,9 +60,9 @@ caps:
       package:
         type: str
         default: ''
-    aliases:
-    - media.control
     run: scripts/media_android.py:AndroidMediaPlugin._control
+    bind:
+      action: stop
   media.next:
     doc: Play, pause, toggle, next, previous, stop, forward or rewind. Drives package's session (package
       name or app label), else the one playing, else the most recent. Without notification access it sends
@@ -75,9 +75,9 @@ caps:
       package:
         type: str
         default: ''
-    aliases:
-    - media.control
     run: scripts/media_android.py:AndroidMediaPlugin._control
+    bind:
+      action: next
   media.previous:
     doc: Play, pause, toggle, next, previous, stop, forward or rewind. Drives package's session (package
       name or app label), else the one playing, else the most recent. Without notification access it sends
@@ -90,9 +90,9 @@ caps:
       package:
         type: str
         default: ''
-    aliases:
-    - media.control
     run: scripts/media_android.py:AndroidMediaPlugin._control
+    bind:
+      action: previous
   media.seek:
     doc: Play, pause, toggle, next, previous, stop, forward or rewind. Drives package's session (package
       name or app label), else the one playing, else the most recent. Without notification access it sends
@@ -105,9 +105,9 @@ caps:
       package:
         type: str
         default: ''
-    aliases:
-    - media.control
     run: scripts/media_android.py:AndroidMediaPlugin._control
+    bind:
+      action: seek
 provides:
   media.status: media-android.media.status
   media.play: media-android.media.play

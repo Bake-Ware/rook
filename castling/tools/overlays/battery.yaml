@@ -1,17 +1,28 @@
-# Each OS prints the same "state: ... / percentage: N%" shape so one regex
-# parses all of them (the per-OS override can't carry its own parse).
+# One cap, four tools: each per-OS override brings its own parse (manifest 1.1).
+# Windows prints upower's shape from its script, so it shares the base regex.
 title: Battery
 doc: Charge level and charging state of this worker's battery.
-platforms: [linux, windows]
-hooks: null
+platforms: [linux, windows, macos, termux]
+hooks:
+  start: null
+  stop: null
+  status: { call: battery.status }   # on the heartbeat, no Python needed
 caps:
   status:
     doc: "Current battery: percent and state (charging, discharging, full, ...)."
     idempotent: true
+    result: { type: map, fields: { percent: { type: float }, status: { type: str } } }
     action:
       exec:
         argv: [upower, -i, /org/freedesktop/UPower/devices/DisplayDevice]
         windows:
           argv: [powershell, -NoProfile, -NonInteractive, -Command,
                  "$b = Get-CimInstance Win32_Battery | Select-Object -First 1; if (-not $b) { exit 3 }; $s = @{1='discharging';2='plugged';3='full';6='charging';7='charging';8='charging';9='charging'}[[int]$b.BatteryStatus]; 'state: ' + $s; 'percentage: ' + $b.EstimatedChargeRemaining + '%'"]
+        macos:
+          argv: [pmset, -g, batt]
+          parse: { regex: '(?P<percent>\d+)%;\s*(?P<status>[^;]+);' }
+        termux:
+          argv: [termux-battery-status]
+          parse: json
+          returns: { percent: percentage, status: status }   # status is upper case (DISCHARGING)
       parse: { regex: 'state:\s+(?P<status>[\w-]+)[\s\S]*?percentage:\s+(?P<percent>[\d.]+)%' }
