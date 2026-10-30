@@ -93,7 +93,6 @@ caps:
         - '{{settings.console}}'
         - pause {{args.torrent_id}}
       parse: text
-    undo: torrent.resume
   resume:
     doc: Resume a torrent by id or name, or all with `*`.
     risk: write
@@ -111,7 +110,6 @@ caps:
         - '{{settings.console}}'
         - resume {{args.torrent_id}}
       parse: text
-    undo: torrent.pause
   remove:
     doc: Remove a torrent from Deluge and keep its downloaded files.
     risk: write

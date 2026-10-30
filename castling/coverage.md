@@ -95,6 +95,8 @@ and the smallest fix that would cover it. **Bold** = Bake should decide.
     `each` matches per line or with MULTILINE over the output. Fix: say per line.
 14. **Appliance `port` vs an instance setting named `port`** (cec defaults 9526): precedence unstated.
     Also `android` in per-OS keys means Termux here, but the APK is a different host (see D6).
+    The overlays also assume a per-OS override inherits the base exec's other keys (`env`, `output`)
+    and may set its own `env`; the page shows only `argv` in one.
 15. **`hooks.status` needs Python.** battery puts `{percent, charging}` on the heartbeat; with only
     `run:` allowed the config plugin becomes code just for that, so the overlay drops it. Fix:
     `hooks.status: { call: battery.status }`.

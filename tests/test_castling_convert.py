@@ -159,9 +159,19 @@ def test_scan_reads_decorators_args_and_settings(tmp_path):
 
 
 def test_merge_overlay_rules():
-    base = {"caps": {"x": {"doc": "a", "run": "scripts/x.py:f", "args": {"a": {}, "b": {}}}}}
-    convert.merge(base, {"caps": {"x": {"action": {"exec": {"argv": ["true"]}}, "args": {"b": None}}}})
-    assert base == {"caps": {"x": {"doc": "a", "action": {"exec": {"argv": ["true"]}}, "args": {"a": {}}}}}
+    base = {"caps": {"x": {"doc": "a", "args": {"a": {}, "b": {}}}}}
+    convert.merge(base, {"caps": {"x": {"args": {"b": None, "c": {"type": "int"}}}, "y": {"doc": "y"}}})
+    assert base == {"caps": {"x": {"doc": "a", "args": {"a": {}, "c": {"type": "int"}}},
+                             "y": {"doc": "y"}}}
+
+
+def test_overlay_action_replaces_run(tmp_path):
+    (tmp_path / "demo.yaml").write_text("caps: { x: { action: { exec: { argv: [\"true\"] } } } }\n")
+    mans = {"demo": {"caps": {"x": {"doc": "d", "run": "scripts/x.py:f",
+                                    "args": {"q": {"type": "str"}}}}}}
+    assert convert.apply_overlays(mans, tmp_path) == {"demo"}
+    assert mans["demo"]["caps"]["x"] == {"doc": "d", "args": {"q": {"type": "str"}},
+                                         "action": {"exec": {"argv": ["true"]}}}
 
 
 def test_lint_catches_undeclared_templates():

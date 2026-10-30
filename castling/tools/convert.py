@@ -392,8 +392,7 @@ OVERLAY_DIR = HERE / "overlays"
 
 
 def merge(base: dict, over: dict) -> dict:
-    """Overlay ``over`` onto ``base``: maps merge, a ``null`` deletes, the rest replaces.
-    A cap that gains an ``action`` loses its ``run`` (exactly one of them)."""
+    """Overlay ``over`` onto ``base``: maps merge, a ``null`` deletes, the rest replaces."""
     for k, v in over.items():
         if v is None:
             base.pop(k, None)
@@ -401,10 +400,6 @@ def merge(base: dict, over: dict) -> dict:
             base[k] = merge(base[k] if isinstance(base.get(k), dict) else {}, v)
         else:
             base[k] = v
-    if "action" in over:
-        base.pop("run", None)
-    if "run" in over:
-        base.pop("action", None)
     return base
 
 
@@ -414,7 +409,13 @@ def apply_overlays(mans: dict, overlay_dir: Path = OVERLAY_DIR) -> set[str]:
         name = path.stem
         if name not in mans:
             raise SystemExit(f"overlay {path.name}: no plugin {name!r} in the draft")
-        merge(mans[name], yaml.safe_load(path.read_text()) or {})
+        over = yaml.safe_load(path.read_text()) or {}
+        merge(mans[name], over)
+        for key, cap in (over.get("caps") or {}).items():  # exactly one of action | run
+            if cap and "action" in cap:
+                mans[name]["caps"][key].pop("run", None)
+            elif cap and "run" in cap:
+                mans[name]["caps"][key].pop("action", None)
         done.add(name)
     return done
 

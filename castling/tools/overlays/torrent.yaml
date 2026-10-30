@@ -34,14 +34,12 @@ caps:
     action:
       exec: { argv: ["{{settings.console}}", "pause {{args.torrent_id}}"] }
       parse: text
-    undo: torrent.resume
   resume:
     args:
       torrent_id: { type: str, default: "*", pattern: '^(\*|[0-9a-fA-F]{1,40}( [0-9a-fA-F]{1,40})*|[^\s;''"\\\x00-\x1f\x7f-][^\s;''"\\\x00-\x1f\x7f]*)$' }
     action:
       exec: { argv: ["{{settings.console}}", "resume {{args.torrent_id}}"] }
       parse: text
-    undo: torrent.pause
   remove:
     doc: Remove a torrent from Deluge and keep its downloaded files.
     effects: null
