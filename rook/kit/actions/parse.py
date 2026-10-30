@@ -1,5 +1,5 @@
 """``parse:`` turns an action's raw output into data; ``returns:`` picks or
-renames fields of it."""
+renames fields of it; ``coerce`` fits the result to the cap's result type."""
 
 from __future__ import annotations
 
@@ -47,8 +47,8 @@ def parse(data: bytes | str, how: Any, *, name: str | None = None, mime: str | N
             rx = re.compile(how["regex"], re.MULTILINE)
         except re.error as e:
             raise ActionError(f"parse regex is invalid: {e}") from None
-        if how.get("each"):
-            return [m.groupdict() for m in rx.finditer(s)]
+        if how.get("each"):   # one item per matching line
+            return [m.groupdict() for m in map(rx.search, s.splitlines()) if m]
         m = rx.search(s)
         return m.groupdict() if m else None
     if how == "text":
@@ -81,3 +81,48 @@ def pick(value: Any, returns: Any) -> Any:
     if isinstance(returns, Mapping):
         return {new: dig(value, str(path)) for new, path in returns.items()}
     return {str(path).rsplit(".", 1)[-1]: dig(value, str(path)) for path in returns}
+
+
+_BOOLS = {"true": True, "yes": True, "on": True, "1": True,
+          "false": False, "no": False, "off": False, "0": False}
+
+
+def coerce(value: Any, spec: Mapping | None, where: str = "result") -> Any:
+    """Text from parse into the cap's result types: "87" -> 87 for an int
+    field, "yes" -> True for a bool, 87 -> "87" for a str. Blank text for a
+    number or bool is None. Raw ``schema:`` results are left alone."""
+    if not spec or value is None or "schema" in spec:
+        return value
+    t = spec.get("type", "str")
+    if t == "list" and isinstance(value, list) and spec.get("items"):
+        return [coerce(v, spec["items"], f"{where}.{i}") for i, v in enumerate(value)]
+    if t == "map" and isinstance(value, Mapping):
+        fields, items = spec.get("fields"), spec.get("items")
+        if fields:
+            return {k: coerce(v, fields.get(k), f"{where}.{k}") for k, v in value.items()}
+        return {k: coerce(v, items, f"{where}.{k}") for k, v in value.items()} if items else value
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return value
+    if t in ("str", "markdown", "url", "path") and not isinstance(value, str):
+        return str(value)
+    if t not in ("int", "float", "bool"):
+        return value
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return None
+    try:
+        if t == "bool":
+            return _BOOLS[str(value).lower()]
+        if t == "float":
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                value = float(value)
+        if value != int(value):
+            raise ValueError
+        return int(value)
+    except (KeyError, ValueError, OverflowError):
+        raise ActionError(f"{where}: {value!r} is not {'an' if t == 'int' else 'a'} {t}") from None

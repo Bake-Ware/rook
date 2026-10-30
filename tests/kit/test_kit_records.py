@@ -26,6 +26,7 @@ HOMEWORK = {
             "index": ["due"],
             "search": ["title", "body"],
             "history": True,
+            "caps": ["list", "get", "search", "create", "update", "archive", "delete", "history"],
             "risk": {"delete": "admin"},
         },
         "subject": {"fields": {"name": {"required": True}}, "caps": ["list", "get", "create"]},
@@ -307,15 +308,17 @@ def test_ctx_records_binding(store):
 
 def test_generated_caps(store):
     caps = record_caps(store, "homework")
-    assert set(caps) == {f"homework.item.{v}" for v in ("list", "get", "search", "create", "update", "archive", "delete")} \
+    assert set(caps) == {f"homework.item.{v}" for v in ("list", "get", "search", "create", "update", "archive",
+                                                        "delete", "history")} \
         | {"homework.subject.list", "homework.subject.get", "homework.subject.create"} \
-        | {f"homework.note.{v}" for v in ("list", "get", "create", "update", "archive", "delete")}
+        | {f"homework.note.{v}" for v in ("list", "get", "create", "update", "archive")}
     spec = lambda n: caps[n].spec  # noqa: E731
     assert spec("homework.item.list")["risk"] == "read" and spec("homework.item.list")["idempotent"]
     assert spec("homework.item.create")["risk"] == "write"
     assert spec("homework.item.delete")["risk"] == "admin"                # override
     assert spec("homework.item.delete")["effects"] == ["destructive"]
-    assert spec("homework.note.delete")["risk"] == "write"
+    assert spec("homework.item.history")["risk"] == "read" and spec("homework.item.history")["args"] == {
+        "id": {"type": "str", "required": True, "doc": "Record id."}}
     assert spec("homework.note.list")["scope"] == "self" and spec("homework.item.list")["scope"] == "multi-user"
     assert spec("homework.item.create")["args"]["title"]["required"] is True
     assert "required" not in spec("homework.item.update")["args"]["title"]
@@ -332,6 +335,20 @@ def test_generated_caps(store):
     caps["homework.item.archive"].handler(ctx, id=made["id"], revision=2)
     caps["homework.item.delete"].handler(ctx, id=made["id"])
     assert caps["homework.item.list"].handler(ctx, archived=True) == []
+
+
+def test_default_verbs_and_bare_names():
+    """Defaults: no delete (opt in), search only with search fields, history
+    with history: true; a type named like its plugin drops the middle name."""
+    s = RecordStore()
+    s.register({"plugin": "task", "records": {
+        "task": {"fields": {"title": {}}, "history": True},
+        "label": {"fields": {"name": {}}, "search": ["name"]}}})
+    assert sorted(record_caps(s, "task")) == sorted(
+        [f"task.{v}" for v in ("list", "get", "create", "update", "archive", "history")]
+        + [f"task.label.{v}" for v in ("list", "get", "search", "create", "update", "archive")])
+    with pytest.raises(KitError, match="keeps no history"):
+        RecordDef.parse("p", "t", {"fields": {"a": {}}, "caps": ["history"]})
 
 
 def test_unregister_keeps_data(store):

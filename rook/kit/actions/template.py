@@ -17,8 +17,11 @@ slot:
 
 A string that is exactly one template keeps the value's type (an int stays an
 int in a JSON body). A value that is unset raises ``Missing``: argv groups,
-map keys and list items that hit it are dropped; anywhere else the action
-fails.
+map keys and list items that hit it are dropped; in text (stdin, body, send,
+file content) an unset arg renders empty; anywhere else the action fails.
+
+A list arg declared with ``join: ","`` renders as one joined string wherever
+it becomes text (argv, URLs, headers, text); a JSON body keeps the list.
 """
 
 from __future__ import annotations
@@ -52,8 +55,10 @@ class Scope:
 
     def __init__(self, *, args: Mapping, settings: Mapping, appliance: Mapping | None,
                  worker: Mapping, secrets: Mapping[str, str], tmp: str | None,
-                 plugin_dir: str | None, plugin_data: str | None):
+                 plugin_dir: str | None, plugin_data: str | None,
+                 joins: Mapping[str, str] | None = None):
         self.args = args or {}
+        self.joins = joins or {}
         self.settings = settings or {}
         self.appliance = appliance or {}
         self.worker = worker or {}
@@ -83,6 +88,20 @@ class Scope:
             raise Missing(ref)
         return value
 
+    def value(self, ref: str, *, empty: bool = False, keep_list: bool = False) -> Any:
+        """``lookup`` for rendering: an unset arg is "" when ``empty``; a
+        joined list arg is its joined text unless ``keep_list``."""
+        try:
+            found = self.lookup(ref)
+        except Missing:
+            if empty and ref.startswith("args."):
+                return ""
+            raise
+        sep = self.joins.get(ref[5:]) if ref.startswith("args.") else None
+        if sep is not None and isinstance(found, list) and not keep_list:
+            return sep.join(text(v) for v in found)
+        return found
+
     def redact(self, text: str) -> str:
         for s in sorted(self.hidden, key=len, reverse=True):
             text = text.replace(s, "***")
@@ -99,22 +118,24 @@ def text(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"))
 
 
-def render(value: Any, scope: Scope, pos: str = "raw", *, native: bool = False) -> Any:
+def render(value: Any, scope: Scope, pos: str = "raw", *, native: bool = False,
+           empty: bool = False) -> Any:
     """Fill the templates in one string for position ``pos``. Non-strings
-    pass through. ``native`` keeps a lone template's value type."""
+    pass through. ``native`` keeps a lone template's value type; ``empty``
+    renders unset args as "" (text positions)."""
     if not isinstance(value, str):
         return value
     parts = REF.split(value)
     if len(parts) == 1:
         return value
     if native and len(parts) == 3 and parts[0] == parts[2] == "":
-        found = scope.lookup(parts[1])
+        found = scope.value(parts[1], empty=empty, keep_list=pos == "json")
         if isinstance(found, str):
             _check(found, pos, parts[1])
         return found
     out = parts[0]
     for i in range(1, len(parts), 2):
-        found = text(scope.lookup(parts[i]))
+        found = text(scope.value(parts[i], empty=empty))
         out += _escape(found, pos, out, leading=(i == 1 and parts[0] == ""), ref=parts[i])
         out += parts[i + 1]
     return out
@@ -122,6 +143,11 @@ def render(value: Any, scope: Scope, pos: str = "raw", *, native: bool = False) 
 
 def render_str(value: Any, scope: Scope, pos: str = "raw") -> str:
     return text(render(value, scope, pos, native=True))
+
+
+def render_text(value: Any, scope: Scope, pos: str = "raw") -> str:
+    """Free text (stdin, body, a sent line, file content): unset args are ""."""
+    return text(render(value, scope, pos, native=True, empty=True))
 
 
 def render_argv(items: list, scope: Scope) -> list[str]:
@@ -172,7 +198,7 @@ def render_tree(value: Any, scope: Scope) -> Any:
             except Missing:
                 continue
         return out_list
-    return render(value, scope, "raw", native=True)
+    return render(value, scope, "json", native=True)
 
 
 def secret_names(value: Any) -> set[str]:
@@ -186,7 +212,7 @@ def secret_names(value: Any) -> set[str]:
     return set()
 
 
-_FORBIDDEN = {"raw": "", "argv": "\0", "env": "\0", "path": "\0", "url": "\0",
+_FORBIDDEN = {"raw": "", "json": "", "argv": "\0", "env": "\0", "path": "\0", "url": "\0",
               "header": "\r\n\0", "line": "\r\n\0"}
 
 

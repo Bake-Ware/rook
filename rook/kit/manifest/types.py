@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 
 TYPES = ("str", "int", "float", "bool", "time", "duration", "markdown", "json",
-         "file", "secret", "ref", "list", "map")
+         "file", "secret", "ref", "list", "map", "url", "path")
 
 DURATION_PATTERN = r"^[0-9]+(\.[0-9]+)?(ms|s|m|h|d|w)$"
 
@@ -39,23 +39,25 @@ _BASE = {
     "ref": {"type": "string"},
     "list": {"type": "array"},
     "map": {"type": "object"},
+    # 1.1, for settings that hold connection strings and file locations.
+    "url": {"type": "string", "format": "uri"},
+    "path": {"type": "string"},
 }
+_TEXT = {"str", "markdown", "url", "path"}
 
 # Which modifiers apply to which types (the rest apply to every type).
 _ONLY = {
-    "min": {"str", "markdown", "int", "float", "list", "duration"},
-    "max": {"str", "markdown", "int", "float", "list", "duration"},
-    "pattern": {"str", "markdown", "secret", "ref"},
+    "min": _TEXT | {"int", "float", "list", "duration"},
+    "max": _TEXT | {"int", "float", "list", "duration"},
+    "pattern": _TEXT | {"secret", "ref"},
     "items": {"list", "map"},
     "fields": {"map"},
     "to": {"ref"},
+    # Cap args only: how an action renders a list inside a string.
+    "join": {"list"},
 }
 
-_BOUNDS = {
-    "str": ("minLength", "maxLength"),
-    "markdown": ("minLength", "maxLength"),
-    "list": ("minItems", "maxItems"),
-}
+_BOUNDS = {**{t: ("minLength", "maxLength") for t in _TEXT}, "list": ("minItems", "maxItems")}
 
 
 class TypeSpecError(ValueError):

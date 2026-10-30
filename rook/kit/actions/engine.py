@@ -12,6 +12,7 @@ import base64
 import inspect
 import os
 import platform
+import re
 import shutil
 import signal
 import ssl
@@ -22,12 +23,14 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .errors import ActionError, Unavailable
-from .parse import parse, pick
+from .parse import coerce, parse, pick
 from .template import (Missing, Scope, render, render_argv, render_map, render_str,
-                       render_tree, secret_names, text)
+                       render_text, render_tree, secret_names, text)
 
 MAX_OUTPUT = 64 * 1024 * 1024   # bytes read from a process, response, socket or file
-OSES = ("linux", "windows", "macos", "android")
+# worker.os values; termux is Python under Termux, android the phone app.
+OSES = ("linux", "windows", "macos", "android", "termux")
+ACTION_KEYS = ("parse", "returns", "fail_if")
 
 SecretResolver = Callable[[str], Any] | Mapping[str, str]
 
@@ -36,16 +39,19 @@ async def run_action(action: Mapping, args: Mapping | None = None, *,
                      settings: Mapping | None = None, appliance: Mapping | None = None,
                      worker: Mapping | None = None, secrets: SecretResolver | None = None,
                      tmp: str | None = None, plugin_dir: str | None = None,
-                     plugin_data: str | None = None, timeout: float = 30.0) -> Any:
+                     plugin_data: str | None = None, timeout: float = 30.0,
+                     cap: Mapping | None = None) -> Any:
     """Run one action and return its parsed result.
 
     ``settings``/``appliance`` values may be ``Secret`` (resolved vault
     values) so errors never show them. ``secrets`` resolves
     ``{{secret:NAME}}``: a mapping, or a function of the name (sync or async)
-    returning the value or None. Raises ``ActionError`` (``Unavailable`` when
+    returning the value or None. ``cap`` is the cap's spec: its args' ``map``
+    and ``join`` shape how args render, and its ``result`` type is what the
+    parsed output is coerced to. Raises ``ActionError`` (``Unavailable`` when
     the action can't run on this worker); messages are redacted.
     """
-    kinds = [k for k in action if k not in ("parse", "returns")]
+    kinds = [k for k in action if k not in ACTION_KEYS]
     if not kinds:
         raise ActionError("action has no type")
     if len(kinds) > 1:
@@ -57,15 +63,21 @@ async def run_action(action: Mapping, args: Mapping | None = None, *,
     spec = action[kind] or {}
     worker = dict(worker or {})
     worker.setdefault("os", _local_os())
-    scope = Scope(args=args or {}, settings=settings or {}, appliance=appliance,
+    # A per-OS exec override may bring its own parse and returns.
+    over = (spec.get(worker["os"]) or {}) if kind == "exec" else {}
+    how, returns = over.get("parse", action.get("parse")), over.get("returns", action.get("returns"))
+    arg_specs = (cap or {}).get("args") or {}
+    scope = Scope(args=_mapped(args or {}, arg_specs), settings=settings or {}, appliance=appliance,
                   worker=worker, secrets=await _resolve(secret_names(spec), secrets),
-                  tmp=tmp, plugin_dir=plugin_dir, plugin_data=plugin_data)
+                  tmp=tmp, plugin_dir=plugin_dir, plugin_data=plugin_data,
+                  joins={n: a["join"] for n, a in arg_specs.items() if "join" in a})
     try:
         async with asyncio.timeout(timeout):
             data, default, name, mime = await runner(spec, scope)
         if isinstance(data, (bytes, str)):
-            data = parse(data, action.get("parse") or default, name=name, mime=mime)
-        return pick(data, action.get("returns"))
+            _fail_if(data, action.get("fail_if"))
+            data = parse(data, how or default, name=name, mime=mime)
+        return coerce(pick(data, returns), (cap or {}).get("result"))
     except Missing as e:
         raise ActionError(scope.redact("{{%s}} is not set" % e.ref)) from None
     except Unavailable as e:
@@ -77,6 +89,41 @@ async def run_action(action: Mapping, args: Mapping | None = None, *,
     except Exception as e:   # OSError, aiohttp, websockets, ssl: a clean failure, never a crash
         retry = isinstance(e, ConnectionError) or isinstance(getattr(e, "os_error", None), ConnectionError)
         raise ActionError(scope.redact(f"{kind} failed: {type(e).__name__}: {e}"), retry=retry) from None
+
+
+def _mapped(args: Mapping, specs: Mapping) -> dict:
+    """Args through their ``map:`` (caller value -> rendered value; values
+    not in the map pass through). A list maps item by item."""
+    out = dict(args)
+    for name, spec in specs.items():
+        m = spec.get("map")
+        if m and out.get(name) is not None:
+            v = out[name]
+            out[name] = [m.get(text(i), i) for i in v] if isinstance(v, list) else m.get(text(v), v)
+    return out
+
+
+def _fail_if(data: bytes | str, rule: Mapping | None) -> None:
+    """``fail_if: {regex}``: output that matches is an error, shown by its
+    matching line (tools that exit 0 and print the failure)."""
+    if not rule:
+        return
+    s = data if isinstance(data, str) else data.decode("utf-8", errors="replace")
+    try:
+        m = re.search(rule["regex"], s, re.MULTILINE)
+    except re.error as e:
+        raise ActionError(f"fail_if regex is invalid: {e}") from None
+    if m:
+        start = s.rfind("\n", 0, m.start()) + 1
+        end = s.find("\n", m.end())
+        raise ActionError("failed: " + s[start:end if end >= 0 else None].strip()[:500])
+
+
+def appliance_values(instance: Mapping, settings: Mapping) -> dict:
+    """The ``appliance`` mapping for one instance: its host, port and name
+    from onboarding, then its instance settings (defaults applied by the
+    caller), which win, so a ``port`` setting overrides the discovered port."""
+    return {**instance, **{k: v for k, v in settings.items() if v is not None}}
 
 
 async def _resolve(names: set[str], secrets: SecretResolver | None) -> dict[str, str]:
@@ -99,6 +146,8 @@ async def _resolve(names: set[str], secrets: SecretResolver | None) -> dict[str,
 
 
 def _local_os() -> str:
+    if "TERMUX_VERSION" in os.environ or "com.termux" in os.environ.get("PREFIX", ""):
+        return "termux"
     if "ANDROID_ROOT" in os.environ:
         return "android"
     return {"Windows": "windows", "Darwin": "macos"}.get(platform.system(), "linux")
@@ -117,13 +166,14 @@ async def _read(stream) -> bytes:
 # --- exec ---------------------------------------------------------------------
 
 def _for_os(spec: Mapping, os_name: str) -> dict:
+    """The base exec with this OS's override on top: keys it sets replace the
+    base's (argv or try replace both), the rest are inherited."""
     base = {k: v for k, v in spec.items() if k not in OSES}
-    over = spec.get(os_name)
-    if over:
-        if "argv" in over or "try" in over:
-            base.pop("argv", None)
-            base.pop("try", None)
-        base.update(over)
+    over = {k: v for k, v in (spec.get(os_name) or {}).items() if k not in ACTION_KEYS}
+    if "argv" in over or "try" in over:
+        base.pop("argv", None)
+        base.pop("try", None)
+    base.update(over)
     return base
 
 
@@ -139,22 +189,34 @@ def _kill_tree(proc) -> None:
 
 
 async def _exec(spec: Mapping, scope: Scope):
+    """Run argv, or each ``try`` step in order until one is installed and
+    exits ok: a missing binary or a failing exit falls through to the next."""
     spec = _for_os(spec, scope.worker["os"])
     base = {k: v for k, v in spec.items() if k != "try"}
-    tried = []
+    missing, failed = [], None
     for cand in [{**base, **t} for t in spec["try"]] if spec.get("try") else [base]:
         argv = render_argv(cand.get("argv") or [], scope)
         if not argv:
             raise ActionError("exec has no argv")
         env = {**os.environ, **render_map(cand.get("env"), scope, "env")}
         binary = shutil.which(argv[0], path=env.get("PATH"))
-        if binary:
-            break
-        tried.append(argv[0])
-    else:
-        raise Unavailable(f"not installed on this worker: {', '.join(tried)}")
+        if not binary:
+            missing.append(argv[0])
+            continue
+        try:
+            return await _run(cand, argv, binary, env, scope)
+        except Unavailable:
+            raise
+        except ActionError as e:
+            failed = e
+    if failed:
+        raise failed
+    raise Unavailable(f"not installed on this worker: {', '.join(missing)}")
+
+
+async def _run(cand: Mapping, argv: list[str], binary: str, env: dict, scope: Scope):
     cwd = render_str(cand["cwd"], scope, "path") if cand.get("cwd") else scope.tmp
-    stdin = None if cand.get("stdin") is None else render_str(cand["stdin"], scope).encode()
+    stdin = None if cand.get("stdin") is None else render_text(cand["stdin"], scope).encode()
     ok_exit = cand.get("ok_exit", [0])
     group = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
              else {"start_new_session": True})
@@ -195,12 +257,22 @@ async def _feed(pipe, data: bytes | None) -> None:
 
 # --- http ---------------------------------------------------------------------
 
-def _tls(conf: Any) -> ssl.SSLContext | None:
+def _verify(conf: Any, scope: Scope) -> bool:
+    """``tls: {verify: ...}``: true, false, or one setting's value."""
+    v = render(conf.get("verify", True), scope, native=True) if isinstance(conf, Mapping) else True
+    if isinstance(v, str) and v.strip().lower() in ("true", "false"):
+        v = v.strip().lower() == "true"
+    if not isinstance(v, bool):
+        raise ActionError(f"tls.verify must be true or false, not {v!r}")
+    return v
+
+
+def _tls(conf: Any, scope: Scope) -> ssl.SSLContext | None:
     """``tls: true`` or ``tls: {verify: false}``; None = no TLS asked for."""
     if not conf:
         return None
     ctx = ssl.create_default_context()
-    if isinstance(conf, Mapping) and conf.get("verify") is False:
+    if not _verify(conf, scope):
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
     return ctx
@@ -221,15 +293,14 @@ async def _http(spec: Mapping, scope: Scope):
     elif "form" in spec:
         kw["data"] = render_map(spec["form"], scope, "raw")
     elif "body" in spec:
-        kw["data"] = render_str(spec["body"], scope).encode()
+        kw["data"] = render_text(spec["body"], scope).encode()
     auth = spec.get("auth") or {}
     if "basic" in auth:
         pair = ":".join(render_str(v, scope, "header") for v in auth["basic"])
         headers["Authorization"] = "Basic " + base64.b64encode(pair.encode()).decode()
     elif "bearer" in auth:
         headers["Authorization"] = "Bearer " + render_str(auth["bearer"], scope, "header")
-    tls = spec.get("tls")
-    if isinstance(tls, Mapping) and tls.get("verify") is False:
+    if not _verify(spec.get("tls"), scope):
         kw["ssl"] = False
     ok = spec.get("ok")
     async with aiohttp.ClientSession() as session:
@@ -250,7 +321,7 @@ def _message(send: Any, scope: Scope) -> str:
     written, its values unable to add lines."""
     if isinstance(send, (Mapping, list)):
         return text(render_tree(send, scope))
-    return render_str(send, scope, "line")
+    return render_text(send, scope, "line")
 
 
 async def _tcp(spec: Mapping, scope: Scope):
@@ -258,7 +329,7 @@ async def _tcp(spec: Mapping, scope: Scope):
     port = int(render(spec.get("port"), scope, native=True) or 0)
     if not host or not port:
         raise ActionError("tcp needs host and port")
-    ctx = _tls(spec.get("tls"))
+    ctx = _tls(spec.get("tls"), scope)
     reader, writer = await asyncio.open_connection(host, port, ssl=ctx, limit=MAX_OUTPUT)
     try:
         if spec.get("send") is not None:
@@ -299,7 +370,7 @@ async def _ws(spec: Mapping, scope: Scope):
         params = inspect.signature(websockets.connect).parameters
         kw["additional_headers" if "additional_headers" in params else "extra_headers"] = headers
     if urlsplit(url).scheme == "wss":
-        kw["ssl"] = _tls(spec.get("tls") or True)
+        kw["ssl"] = _tls(spec.get("tls") or True, scope)
     async with websockets.connect(url, **kw) as ws:
         if spec.get("send") is not None:
             await ws.send(_message(spec["send"], scope))
@@ -331,7 +402,8 @@ async def _file(spec: Mapping, scope: Scope):
         return await asyncio.to_thread(_read_file, path), "text", Path(path).name, None
     if spec.get("write"):
         path = render_str(spec["write"], scope, "path")
-        content = render_tree(spec.get("content", ""), scope)
+        content = spec.get("content", "")
+        content = render_text(content, scope) if isinstance(content, str) else render_tree(content, scope)
         return await asyncio.to_thread(_write_file, path, text(content)), "text", None, None
     raise ActionError("file needs read or write")
 

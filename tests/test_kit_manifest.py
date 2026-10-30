@@ -116,9 +116,9 @@ def test_load_normalizes(tmp_path):
     assert set(m.caps) == {"deluge.torrents.list", "deluge.torrents.remove", "deluge.stats.custom"}
     cap = m.caps["deluge.torrents.remove"]
     assert cap["on"] == "worker" and cap["elevation"] == "never" and cap["tags"] == []
-    assert cap["args"]["id"] == {"type": "str", "required": True}
+    assert cap["args"]["id"] == {"type": "str", "required": True, "pattern": "^[0-9a-f]{40}$"}
     assert m.data["settings"]["password"] == {"where": "hub", "secret": True, "type": "secret",
-                                              "required": False}
+                                              "required": False, "apply": "live"}
     assert m.data["settings"]["console"]["where"] == "worker"
     assert m.warnings == []
 

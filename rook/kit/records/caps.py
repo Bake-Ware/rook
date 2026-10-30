@@ -1,4 +1,5 @@
-"""Generated caps for record types: ``<plugin>.<record>.<verb>``.
+"""Generated caps for record types: ``<plugin>.<record>.<verb>`` (or
+``<plugin>.<verb>`` when the record is named like its plugin).
 
 Each verb becomes a real hub cap with a manifest-shaped spec (doc, risk,
 scope, effects, args in the type language, result) and a ``(ctx, **args)``
@@ -20,7 +21,7 @@ from .store import RecordStore, RecordType
 
 __all__ = ["GeneratedCap", "record_caps"]
 
-_RISK = {"list": "read", "get": "read", "search": "read",
+_RISK = {"list": "read", "get": "read", "search": "read", "history": "read",
          "create": "write", "update": "write", "archive": "write", "delete": "write"}
 _FIELD_KEYS = ("type", "doc", "enum", "min", "max", "pattern", "items", "fields", "to", "default")
 
@@ -60,6 +61,8 @@ def _args(rtype: RecordType, verb: str) -> dict:
                 "limit": {"type": "int", "default": 20, "min": 1, "max": 200}}
     if verb == "create":
         return _field_args(rtype, creating=True)
+    if verb == "history":
+        return rid
     revision = {"revision": {"type": "int", "required": rtype.rdef.history,
                              "doc": "Current revision (refused if the record changed since)."}}
     if verb == "update":
@@ -73,7 +76,8 @@ def _args(rtype: RecordType, verb: str) -> dict:
 _DOC = {"list": "List {n} records.", "get": "Get one {n} record.",
         "search": "Find {n} records by words.", "create": "Create a {n} record.",
         "update": "Change a {n} record.", "archive": "Archive (or restore) a {n} record.",
-        "delete": "Delete a {n} record for good."}
+        "delete": "Delete a {n} record for good.",
+        "history": "Past revisions of a {n} record."}
 
 
 def _handler(store: RecordStore, full: str, verb: str) -> Callable[..., Any]:
@@ -89,14 +93,14 @@ def record_caps(store: RecordStore, plugin: str) -> dict[str, GeneratedCap]:
     for rtype in store.types(plugin):
         rdef = rtype.rdef
         for verb in rdef.verbs:
-            name = f"{rdef.full}.{verb}"
+            name = f"{rdef.cap_prefix}.{verb}"
             spec = {"doc": _DOC[verb].format(n=rdef.full),
                     "risk": rdef.risk.get(verb, _RISK[verb]),
                     "scope": "self" if rdef.private else "multi-user",
                     "effects": ["destructive"] if verb == "delete" else [],
                     "args": _args(rtype, verb),
-                    "result": {"type": "list" if verb in ("list", "search") else "map"},
-                    "idempotent": verb in ("list", "get", "search"),
+                    "result": {"type": "list" if verb in ("list", "search", "history") else "map"},
+                    "idempotent": _RISK[verb] == "read",
                     "on": "hub"}
             caps[name] = GeneratedCap(name, spec, _handler(store, rdef.full, verb))
     return caps

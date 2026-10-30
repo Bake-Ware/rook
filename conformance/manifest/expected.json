@@ -47,6 +47,11 @@
   ],
   "invalid/bad-example.yaml": [
     {
+      "level": "warning",
+      "path": "/caps/find/action/exec/argv/1",
+      "code": "argv-option-injection"
+    },
+    {
       "level": "error",
       "path": "/caps/find/examples/0/args",
       "code": "bad-example"
