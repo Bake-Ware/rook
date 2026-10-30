@@ -217,6 +217,7 @@ own `typ`:
 | `rook-ticket` | `rook-ticket-v2\n` | hub operational key | 6.2 |
 | `rook-lease` | `rook-lease-v2\n` | hub operational key | 7.3 |
 | `rook-membership` | `rook-membership-v2\n` | the worker's home hub (root or operational key) | 9.3 |
+| `rook-plugin` | `rook-plugin-v2\n` | hub operational key | 13 |
 
 Times are integer Unix seconds. Identifiers called "32 hex" are 32
 lowercase hex characters drawn from a CSPRNG.
@@ -1031,6 +1032,18 @@ document. Whatever pushes a plugin, a worker loads it only when its
 `plugin.sig` (the hub's signature over the plugin's file-hash list)
 verifies under a hub it trusts with role `home` or `co-owner`; anyone may
 write a plugin, but only those hubs approve it for this machine.
+
+`plugin.sig` is a `rook-plugin` signed object: `hub`, `worker` (the
+`worker_id` it was resolved for), `plugin`, `version`, `files` (posix path
+relative to the plugin folder → hex SHA-256, every file but `plugin.sig`
+itself, assets included at `assets/<name>`), `python` (the pinned
+requirements the hub resolved for that worker, installed before load) and
+`iat`. A worker installs a bundle only when the signature verifies under a
+current operational key of such a hub, `worker` is its own id, and the
+bundle's files are exactly `files` with matching hashes. Once installed, an
+operational key rotating doesn't unload it: at start-up the worker re-checks
+the file hashes and that the signing hub still has role `home` or
+`co-owner`.
 
 ## 14. Conformance
 
