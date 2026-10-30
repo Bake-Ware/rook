@@ -146,9 +146,10 @@ def last(kvmd, n=1):
 def test_screen_capture(kvmd):
     res = call(kvmd, "kvm.screen.capture")
     assert base64.b64decode(res["data"]) == JPEG and res["mime"] == "image/jpeg"
-    assert last(kvmd)["query"] == {"save": "0", "load": "0", "preview": "true"}
-    call(kvmd, "pikvm.snap", {"preview": False, "quality": 70})
-    assert last(kvmd)["query"] == {"save": "0", "load": "0", "preview": "false", "quality": "70"}
+    # Full size by default: its pixels are what hid.click's x and y mean.
+    assert last(kvmd)["query"] == {"save": "0", "load": "0", "preview": "false"}
+    call(kvmd, "pikvm.snap", {"preview": True, "quality": 70})
+    assert last(kvmd)["query"] == {"save": "0", "load": "0", "preview": "true", "quality": "70"}
 
 
 def test_no_video_is_an_error(kvmd):

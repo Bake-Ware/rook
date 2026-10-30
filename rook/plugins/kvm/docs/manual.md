@@ -8,7 +8,7 @@ caps don't take a host.
 
 | Cap | What it does |
 |---|---|
-| `kvm.screen.capture` | The captured screen as a JPEG. `preview` (default) is kvmd's thumbnail; `preview=false` is full size. |
+| `kvm.screen.capture` | The captured screen as a JPEG, full size; its pixels are `hid.click`'s `x`/`y`. `preview=true` is kvmd's small thumbnail (0.4's default). |
 | `kvm.hid.type` | Types text as a keyboard would (newlines press Enter). `enter=true` presses Enter after it; `slow=true` for machines that drop keys. |
 | `kvm.hid.key` | One key with modifiers held: `key=c, mods=[ctrl]`; `key=delete, mods=[ctrl, alt]`. |
 | `kvm.hid.move` | Pointer to an absolute position in kvmd units (-32768..32767, 0 is the centre). |

@@ -65,10 +65,8 @@ def test_macos_and_windows_read_the_text_from_the_environment(bins):
     assert "$env:ROOK_TEXT" in win["argv"][-1]
 
 
-def test_notify_bounds_and_display(bins):
+def test_notify_needs_a_display(bins):
     bins.add("notify-send")
-    with pytest.raises(CallError, match="^bad args: text: "):
-        notify({"text": "x" * 2001})
     with pytest.raises(CallError, match="^unavailable: .*missing hardware: display"):
         run("notification-desktop", "notification-desktop.notification.post", {"text": "x"},
             hardware=())

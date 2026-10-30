@@ -20,14 +20,14 @@ appliance:
     verify_tls: { type: bool, default: false, doc: Check the PiKVM's certificate (it ships self-signed). }
 caps:
   screen.capture:
-    doc: The PiKVM's captured screen as a JPEG. preview (the default) is kvmd's small thumbnail; preview=false is full resolution.
+    doc: The PiKVM's captured screen as a JPEG, full size by default (its pixels are what hid.click's x and y mean); preview=true is kvmd's small thumbnail.
     risk: read
     scope: local
     effects: [sensitive]
     idempotent: true
     aliases: [pikvm.snap]
     args:
-      preview: { type: bool, default: true, doc: "true: kvmd's thumbnail; false: full resolution." }
+      preview: { type: bool, default: false, doc: "true: kvmd's small thumbnail (cheap to look at; not click coordinates)." }
       quality: { type: int, min: 1, max: 100, doc: "JPEG quality; blank: the PiKVM's default." }
     result: { type: file, doc: A JPEG. }
     action:

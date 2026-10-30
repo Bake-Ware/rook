@@ -153,8 +153,8 @@ caps:
       torrent_id:
         type: str
         required: true
-        pattern: '^([0-9a-fA-F]{1,40}( [0-9a-fA-F]{1,40})*|[^\s;''"\\\x00-\x1f\x7f*-][^\s;''"\\\x00-\x1f\x7f]*)$'
-        doc: Hash (or prefix), several hashes separated by spaces, or a name without spaces. Never `*`.
+        pattern: '^([0-9a-fA-F]{1,40}( [0-9a-fA-F]{1,40})*|[^\s;''"\\\x00-\x1f\x7f*-][^\s;''"\\\x00-\x1f\x7f*]*)$'
+        doc: Hash (or prefix), several hashes separated by spaces, or a name without spaces. No `*` anywhere.
     action:
       exec: { argv: ["{{settings.console}}", "rm {{args.torrent_id}}"], env: { LANG: C } }
       fail_if: { regex: '(?i)^\s*(failed to connect|could not connect|connection refused|not connected|password does not match)' }
@@ -168,8 +168,8 @@ caps:
       torrent_id:
         type: str
         required: true
-        pattern: '^([0-9a-fA-F]{1,40}( [0-9a-fA-F]{1,40})*|[^\s;''"\\\x00-\x1f\x7f*-][^\s;''"\\\x00-\x1f\x7f]*)$'
-        doc: Hash (or prefix), several hashes separated by spaces, or a name without spaces. Never `*`.
+        pattern: '^([0-9a-fA-F]{1,40}( [0-9a-fA-F]{1,40})*|[^\s;''"\\\x00-\x1f\x7f*-][^\s;''"\\\x00-\x1f\x7f*]*)$'
+        doc: Hash (or prefix), several hashes separated by spaces, or a name without spaces. No `*` anywhere.
     action:
       exec: { argv: ["{{settings.console}}", "rm --remove_data {{args.torrent_id}}"], env: { LANG: C } }
       fail_if: { regex: '(?i)^\s*(failed to connect|could not connect|connection refused|not connected|password does not match)' }

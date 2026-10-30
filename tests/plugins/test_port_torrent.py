@@ -100,6 +100,8 @@ def test_commands_sent(deluge):
     ("torrent.remove", "--remove_data"),           # an option
     ("torrent.remove", "*"),                       # remove everything
     ("torrent.delete", "*"),
+    ("torrent.delete", "ubuntu*"),                 # a wildcard could take many
+    ("torrent.remove", "a*b"),
     ("torrent.delete", f"{H1};{H2}"),
     ("torrent.pause", "a'b"),                      # unbalanced shlex quoting
     ("torrent.pause", "name\nrm x"),

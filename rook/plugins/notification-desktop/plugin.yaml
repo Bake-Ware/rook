@@ -18,8 +18,8 @@ caps:
     scope: local
     aliases: [msg.send]
     args:
-      text: { type: str, required: true, max: 2000 }
-      title: { type: str, default: Rook, max: 200 }
+      text: { type: str, required: true }
+      title: { type: str, default: Rook }
     action:
       exec:
         argv: [notify-send, -a, rook, --, "{{args.title}}", "{{args.text}}"]
