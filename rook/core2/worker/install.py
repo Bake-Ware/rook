@@ -184,7 +184,9 @@ class Installer:
                 return await self._receive(Path(bundle))
             except InstallError as e:
                 return {"ok": False, "reason": str(e)}
-            except OSError as e:         # disk full, a file where a folder must go
+            except (tarfile.TarError, EOFError) as e:      # truncated or corrupt tar
+                return {"ok": False, "reason": f"not a plugin bundle: {e}"}
+            except (OSError, ValueError, yaml.YAMLError) as e:  # disk full, a file where a folder goes
                 return {"ok": False, "reason": f"install failed: {e}"}
 
     def _unpack(self, bundle: Path) -> tuple[dict, Path]:
@@ -251,7 +253,7 @@ class Installer:
             if not isinstance(data, dict) or (data.get("plugin"), str(data.get("version"))) != (plugin, version):
                 raise InstallError(f"plugin.yaml is not {plugin}@{version}")
             state = self.state(plugin)
-            fresh = True
+            fresh, damaged = True, False
             if target.is_dir() and version in (state["current"], state["previous"]):
                 try:
                     old_files = json.loads((target / SIG_FILE).read_text(encoding="utf-8"))["files"]
@@ -261,7 +263,11 @@ class Installer:
                     raise InstallError(f"{plugin}@{version} is already installed with different files; "
                                        "bump the version")
                 fresh = False
-                if version == state["current"]:
+                try:
+                    damaged = file_hashes(target) != sig["files"]
+                except ValueError:       # a symlink appeared
+                    damaged = True
+                if not damaged and version == state["current"]:
                     return {"ok": True, "plugin": plugin, "version": version,
                             "previous": state["previous"], "unchanged": True}
             if sig["python"]:
@@ -269,8 +275,8 @@ class Installer:
                     await asyncio.to_thread(self.install_python, sig["python"])
                 except Exception as e:
                     raise InstallError(f"python requirements failed to install: {e}") from None
-            if fresh:
-                if target.exists():          # left over from an interrupted install
+            if fresh or damaged:             # a leftover, or files changed on disk: replace
+                if target.exists():
                     shutil.rmtree(target)
                 staging.replace(target)
         finally:

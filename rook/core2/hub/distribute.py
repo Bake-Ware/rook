@@ -60,6 +60,8 @@ FETCH_TIMEOUT = 60       # seconds of socket silence before an asset download fa
 # requirements file (``-e``, ``--index-url``, ``-r``) is an option to uv.
 _REQ = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _VERSION = re.compile(r"[A-Za-z0-9.+!_-]+")
+_PYTHON = re.compile(r"[0-9]+\.[0-9]+(\.[0-9]+)?")
+_PLATFORM = re.compile(r"[a-z0-9][a-z0-9_.-]*")
 
 
 class Refused(Exception):
@@ -158,6 +160,8 @@ def resolve_python(requirements: list[str], env: WorkerEnv, *, run=subprocess.ru
     for req in requirements:
         if not isinstance(req, str) or not _REQ.match(req) or "\n" in req or "\r" in req:
             raise Refused(f"requires.python: {req!r} is not a requirement")
+    if not _PYTHON.fullmatch(env.python or "") or (env.platform and not _PLATFORM.fullmatch(env.platform)):
+        raise Refused(f"worker {env.worker_id} reported a bad python {env.python!r} or platform {env.platform!r}")
     for name, ver in env.packages.items():
         if not _REQ.fullmatch(name) or not isinstance(ver, str) or not _VERSION.fullmatch(ver):
             raise Refused(f"worker {env.worker_id} reported a bad package: {name!r} {ver!r}")
@@ -353,7 +357,10 @@ async def install(folder, env: WorkerEnv | None, transport: Transport, *, signer
         except Exception as e:
             return {"ok": False, "plugin": plan.plugin, "version": plan.version,
                     "reason": f"change record refused: {e}"}
-    report = await push(plan, transport)
+    try:
+        report = await push(plan, transport)
+    except Exception as e:
+        return {"ok": False, "plugin": plan.plugin, "version": plan.version, "reason": f"push failed: {e}"}
     if report.get("ok") and seed is not None:
         seed(plan.content)
     return report

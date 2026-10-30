@@ -204,6 +204,19 @@ def test_same_version_same_files_is_a_noop_and_different_files_refused(tmp_path)
     assert not report["ok"] and "bump the version" in report["reason"]
 
 
+def test_same_version_repairs_a_damaged_folder(tmp_path):
+    inst, host = worker(tmp_path)
+    folder = make_plugin(tmp_path)
+    assert ship(folder, inst)["ok"]
+    dest = tmp_path / "plugins" / "echo" / "1.0.0"
+    (dest / "plugin.yaml").write_text("tampered")
+    (dest / "stray.py").write_text("import os")
+    assert "echo" not in inst.installed()[0]
+    report = ship(folder, inst)
+    assert report["ok"] and not report.get("unchanged") and len(host.calls) == 2
+    assert not (dest / "stray.py").exists() and "echo" in inst.installed()[0]
+
+
 def test_hub_push_back_to_previous_version_reuses_its_folder(tmp_path):
     inst, host = worker(tmp_path)
     v1 = make_plugin(tmp_path, version="1.0.0")
@@ -336,6 +349,19 @@ def test_not_a_tar(tmp_path):
     junk = tmp_path / "junk.tar"
     junk.write_bytes(b"\x00garbage" * 10)
     assert "not a plugin bundle" in run(inst.receive(junk))["reason"]
+    _, bundle = bundle_of(make_plugin(tmp_path), tmp_path)
+    cut = tmp_path / "cut.tar"
+    cut.write_bytes(bundle.read_bytes()[:700])
+    report = run(inst.receive(cut))
+    assert not report["ok"] and "not a plugin bundle" in report["reason"]
+
+
+def test_transport_failure_is_a_report(tmp_path):
+    class Broken:
+        async def push(self, worker_id, bundle):
+            raise ConnectionError("drop timed out")
+    report = run(d.install(make_plugin(tmp_path), ENV, Broken(), signer=HUB_SK, hub=HUB_ID, resolve=no_uv))
+    assert not report["ok"] and "push failed: drop timed out" in report["reason"]
 
 
 # -- hub-side refusals -------------------------------------------------------------------
@@ -445,6 +471,9 @@ def test_resolve_python_refuses_options_bad_packages_and_missing_uv():
         d.resolve_python(["x"], ENV, run=FakeRun(exc=subprocess.TimeoutExpired("uv", 1)))
     with pytest.raises(d.Refused, match="would change httpx"):
         d.resolve_python(["x"], ENV, run=FakeRun(out="httpx==0.30.0\n"))
+    for env in (d.WorkerEnv(WID, "linux", "--index-url=x"), d.WorkerEnv(WID, "linux", "3.11", platform="-x")):
+        with pytest.raises(d.Refused, match="bad python"):
+            d.resolve_python(["x"], env, run=FakeRun())
     assert d.resolve_python([], ENV, run=None) == []
 
 
