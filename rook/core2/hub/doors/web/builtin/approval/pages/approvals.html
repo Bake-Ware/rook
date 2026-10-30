@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Approvals</title>
+<style>
+  .what { font-weight: 600; }
+  .why { margin: 6px 0; }
+  details { margin: 6px 0; }
+</style>
+</head>
+<body>
+<div id="list" class="muted">Loading…</div>
+<script>
+"use strict";
+const list = document.getElementById("list");
+
+function card(h) {
+  const who = [h.agent, h.person].filter(Boolean).join(" for ");
+  return `<div class="card" data-hold="${rook.esc(h.hold)}">
+    <div class="what">${rook.esc(h.cap)} <span class="muted">on ${rook.esc(h.worker)}</span></div>
+    <div class="why">${rook.esc(h.why)}</div>
+    <div class="muted">${rook.esc(who)} · waiting because: ${rook.esc((h.reasons || []).join(", "))}</div>
+    ${h.args && Object.keys(h.args).length ? `<details><summary>Arguments</summary><pre>${rook.esc(JSON.stringify(h.args, null, 2))}</pre></details>` : ""}
+    <div class="row"><button class="primary" data-d="approve">Approve</button><button data-d="refuse">Refuse</button>
+      <span class="out"></span></div>
+  </div>`;
+}
+
+async function load() {
+  try {
+    const holds = (await rook.call("approval.list")).holds;
+    list.className = holds.length ? "" : "muted";
+    list.innerHTML = holds.length ? holds.map(card).join("") : "Nothing is waiting.";
+  } catch (x) {
+    list.className = "bad";
+    list.textContent = x.message;
+  }
+}
+
+list.addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-d]");
+  if (!b) return;
+  const c = b.closest(".card"), out = c.querySelector(".out");
+  c.querySelectorAll("button").forEach((x) => (x.disabled = true));
+  const decision = b.dataset.d;
+  try {
+    const r = await rook.call("approval.decide", { hold: c.dataset.hold, decision },
+      { why: `The person chose ${decision} on the Approvals page.` });
+    out.className = r.ok === false ? "bad" : "ok";
+    out.textContent = r.ok === false ? r.error : decision === "approve" ? "Approved: it ran." : "Refused.";
+  } catch (x) {
+    out.className = "bad";
+    out.textContent = x.message;
+  }
+  setTimeout(load, 1500);
+});
+
+rook.on("hold.*", load);
+load();
+</script>
+</body>
+</html>

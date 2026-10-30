@@ -1,0 +1,39 @@
+# Hub-side plugin settings (manifest `settings:` with where: hub), for pages
+# (castling-dashboard). Values set here are kept in <data>/settings.json and
+# win over the config file's `settings:`. Implemented by the hub
+# (rook.core2.hub.doors.web.caps). TODO(castling:dashboard): worker-side settings.
+manifest: 1
+plugin: setting
+version: 0.5.0
+title: Settings
+doc: The hub plugins' settings.
+package: core
+builtin: true
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+
+caps:
+  list:
+    doc: Every hub-side setting of the hub's plugins, with its type, default and value.
+    on: hub
+    risk: read
+    scope: multi-user
+    idempotent: true
+    args:
+      plugin: { type: str, doc: "Only this plugin's." }
+    result: { type: map }
+  set:
+    doc: Set one hub-side setting (owners only). It applies to the next call; null goes back to the default.
+    on: hub
+    risk: admin
+    scope: multi-user
+    effects: [persists]
+    args:
+      plugin: { type: str, required: true }
+      key: { type: str, required: true }
+      value: { type: json, required: true }
+    result: { type: map }
+
+pages:
+  settings: { title: Settings, file: pages/settings.html, caps: ["hub.status", "setting.*"], nav: { section: Hub } }

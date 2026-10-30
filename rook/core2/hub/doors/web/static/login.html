@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rook: sign in</title>
+<link rel="stylesheet" href="/web/static/shell.css">
+</head>
+<body>
+<form class="login" method="post" action="/login">
+  <div class="brand">Rook</div>
+  <label for="token">Your token</label>
+  <input id="token" name="token" type="password" autocomplete="current-password" required autofocus>
+  <button type="submit">Sign in</button>
+  <div id="failed" class="muted" hidden>That token didn't work. Use a token made for you (not an agent's).</div>
+</form>
+<script src="/web/static/login.js"></script>
+</body>
+</html>

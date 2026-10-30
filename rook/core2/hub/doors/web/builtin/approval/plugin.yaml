@@ -1,0 +1,35 @@
+# Calls waiting for a person (spec 10.3), for pages (castling-dashboard).
+# Implemented by the hub (rook.core2.hub.doors.web.caps).
+manifest: 1
+plugin: approval
+version: 0.5.0
+title: Approvals
+doc: Held calls and the person's answer to them.
+package: core
+builtin: true
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+
+caps:
+  list:
+    doc: Calls waiting for a person. Owners see all; anyone else the ones made for them.
+    on: hub
+    risk: read
+    scope: multi-user
+    effects: [sensitive]
+    idempotent: true
+    result: { type: map }
+  decide:
+    doc: Answer a held call. approve runs exactly that call now; refuse is final.
+    on: hub
+    risk: write
+    scope: multi-user
+    timeout: 15m
+    args:
+      hold: { type: str, required: true }
+      decision: { type: str, required: true, enum: [approve, refuse] }
+    result: { type: map }
+
+pages:
+  approvals: { title: Approvals, file: pages/approvals.html, caps: [approval.list, approval.decide], events: ["hold.*"], nav: { section: Hub } }

@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings</title>
+<style>
+  section { margin-bottom: 20px; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; }
+  dt { color: var(--muted); } dd { margin: 0; word-break: break-all; }
+  .setting { display: grid; grid-template-columns: minmax(140px, 220px) 1fr; gap: 6px 12px; padding: 8px 0;
+    border-bottom: 1px solid var(--line); }
+  .setting textarea { width: 100%; min-height: 60px; }
+  .setting input[type=text], .setting input[type=number] { width: 100%; max-width: 360px; }
+  @media (max-width: 600px) { .setting { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<section><h2>Hub</h2><div id="hub" class="muted">Loading…</div></section>
+<section id="people-box" hidden><h2>People</h2><div class="scroll"><table><thead><tr><th>Name</th><th>Preset</th><th>Extra grants</th></tr></thead>
+  <tbody id="people"></tbody></table></div></section>
+<section><h2>Plugin settings</h2><div id="settings" class="muted">Loading…</div></section>
+<section><h2>Plugins</h2><div class="scroll"><table><thead><tr><th>Plugin</th><th>Version</th><th>Runs on</th><th>Caps</th><th>Pages</th></tr></thead>
+  <tbody id="plugins"></tbody></table></div></section>
+<script>
+"use strict";
+const esc = rook.esc;
+let settings = [];
+
+function input(s, i) {
+  const v = s.value;
+  if (s.type === "bool") return `<input type="checkbox" data-i="${i}" ${v ? "checked" : ""}>`;
+  if (s.type === "int" || s.type === "float") return `<input type="number" data-i="${i}" step="${s.type === "int" ? 1 : "any"}" value="${v == null ? "" : esc(v)}">`;
+  if (["str", "secret", "duration", "time", "url"].includes(s.type)) return `<input type="text" data-i="${i}" value="${v == null ? "" : esc(v)}">`;
+  return `<textarea data-i="${i}">${v == null ? "" : esc(JSON.stringify(v, null, 2))}</textarea>`;
+}
+
+function read(s, box) {
+  const f = box.querySelector("[data-i]");
+  if (s.type === "bool") return f.checked;
+  if (f.value === "") return null;
+  if (s.type === "int") return parseInt(f.value, 10);
+  if (s.type === "float") return parseFloat(f.value);
+  if (f.tagName === "TEXTAREA") return JSON.parse(f.value);
+  return f.value;
+}
+
+function renderSettings() {
+  const box = document.getElementById("settings");
+  if (!settings.length) {
+    box.className = "muted";
+    box.textContent = "No hub plugin has settings.";
+    return;
+  }
+  box.className = "";
+  box.innerHTML = settings.map((s, i) => `<div class="setting" data-i="${i}">
+    <div><div>${esc(s.plugin)}.${esc(s.key)}</div><div class="muted">${esc(s.doc)}</div></div>
+    <div><div class="row">${input(s, i)}<button class="primary" data-act="save">Save</button>
+      ${s.source === "set" ? '<button data-act="reset">Back to default</button>' : ""}<span class="out muted">${esc(s.source)}</span></div></div>
+  </div>`).join("");
+}
+
+document.getElementById("settings").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  const box = b.closest(".setting"), s = settings[Number(box.dataset.i)], out = box.querySelector(".out");
+  let value;
+  try {
+    value = b.dataset.act === "reset" ? null : read(s, box);
+  } catch (x) {
+    out.className = "out bad";
+    out.textContent = "Not valid JSON";
+    return;
+  }
+  try {
+    await rook.call("setting.set", { plugin: s.plugin, key: s.key, value },
+      { why: `The person changed ${s.plugin}.${s.key} on the Settings page.` });
+    await loadSettings();
+  } catch (x) {
+    out.className = "out bad";
+    out.textContent = x.message;
+  }
+});
+
+async function loadSettings() {
+  try {
+    settings = (await rook.call("setting.list")).settings;
+    renderSettings();
+  } catch (x) {
+    const box = document.getElementById("settings");
+    box.className = "bad";
+    box.textContent = x.message;
+  }
+}
+
+async function loadHub() {
+  try {
+    const h = await rook.call("hub.status");
+    document.getElementById("hub").className = "";
+    document.getElementById("hub").innerHTML = `<dl><dt>Hub id</dt><dd>${esc(h.hub)}</dd><dt>Band</dt><dd>${esc(h.band)}</dd>
+      <dt>Core</dt><dd>${esc(h.core)}</dd><dt>Doors</dt><dd>${esc(h.doors.join(", "))}</dd></dl>`;
+    document.getElementById("plugins").innerHTML = h.plugins.map((p) => `<tr><td>${esc(p.title)} <span class="muted">${esc(p.plugin)}</span></td>
+      <td>${esc(p.version)}${p.builtin ? ' <span class="muted">built in</span>' : ""}</td><td>${esc(p.runs_on)}</td>
+      <td>${p.caps}</td><td>${esc(p.pages.join(", "))}</td></tr>`).join("");
+    if (h.people) {
+      document.getElementById("people-box").hidden = false;
+      document.getElementById("people").innerHTML = h.people.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.preset)}</td>
+        <td class="muted">${esc(u.grants.join(", "))}</td></tr>`).join("");
+    }
+  } catch (x) {
+    document.getElementById("hub").className = "bad";
+    document.getElementById("hub").textContent = x.message;
+  }
+}
+
+loadHub();
+loadSettings();
+</script>
+</body>
+</html>

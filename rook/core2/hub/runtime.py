@@ -62,6 +62,7 @@ from .. import CORE_VERSION, rights, wire
 from ..builtin import CORE
 from . import distribute
 from .dispatch import Call, Dispatcher, Worker
+from .doors.web import caps as builtin_caps
 from .identity import Caller, Identities, digest
 from .journal_store import JournalError, JournalStore
 from .plugins import HubPlugins, short_caps
@@ -326,6 +327,7 @@ class Hub:
         self.manifests: dict[str, dict] = {}     # hash -> parsed manifest
         self._norm: dict[str, dict] = {}         # hash -> normalized
         self.doors: list = []
+        self.listeners: list = []                # fn(event, payload, source) for every event
 
     # -- start and stop ---------------------------------------------------------
 
@@ -376,6 +378,8 @@ class Hub:
                                      hubkey=self.grant, clock=self.clock)
         self._sync_hub()
         await self._load_library()
+        builtin_caps.install(self)               # pages, hub, approval, journal, setting
+        self._sync_hub()
         self.dispatcher.gates = self.plugins.gates()
         self._load_manifests()
         self._load_workers()
@@ -891,6 +895,11 @@ class Hub:
     def _emit(self, event: str, payload: dict, source: str | None = None) -> None:
         log.debug("event", extra={"fields": {"event": event, "source": source}})
         self.plugins.scheduler.publish(event, payload, source)
+        for fn in self.listeners:
+            try:
+                fn(event, payload, source)
+            except Exception:
+                log.exception("event listener failed")
 
     # -- sessions -----------------------------------------------------------------
 
@@ -945,8 +954,9 @@ class Hub:
 
     # -- the door API ---------------------------------------------------------------
 
-    async def call(self, caller: Caller, body: dict, door: str) -> dict:
-        """``{worker, cap, args?, why, session?, appliance?, elevate?}`` from a door."""
+    async def call(self, caller: Caller, body: dict, door: str, layers: list | None = None) -> dict:
+        """``{worker, cap, args?, why, session?, appliance?, elevate?}`` from a door.
+        ``layers`` narrows it further (a dashboard page's declared caps)."""
         cap, target = body.get("cap"), body.get("worker")
         args, sid = body.get("args"), body.get("session")
         if not (isinstance(cap, str) and cap and isinstance(target, str) and target):
@@ -959,7 +969,7 @@ class Hub:
         why = body.get("why") if isinstance(body.get("why"), str) else ""
         reply = await self.dispatcher.dispatch(caller, Call(
             cap=cap, target=target, args=args, why=why, session=sid or self._door_session(caller),
-            appliance=appliance, elevate=body.get("elevate") is True, door=door))
+            appliance=appliance, elevate=body.get("elevate") is True, door=door, layers=list(layers or ())))
         if reply.get("held"):
             h = self.dispatcher.holds.get(reply["hold"])
             if h is not None:

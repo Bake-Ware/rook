@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Workers</title>
+<style>
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
+  .dot.on { background: var(--ok); }
+  .detail td { background: var(--card); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; }
+  dt { color: var(--muted); }
+  dd { margin: 0; }
+</style>
+</head>
+<body>
+<div class="scroll">
+<table>
+  <thead><tr><th>Worker</th><th>Plugins</th><th>Last seen</th></tr></thead>
+  <tbody id="rows"><tr><td colspan="3" class="muted">Loading…</td></tr></tbody>
+</table>
+</div>
+<script>
+"use strict";
+const open = new Set();
+let workers = [];
+
+function detail(w) {
+  const items = [["Id", w.id], ["Core", w.core || "incompatible"], ["Version", w.version], ["About", w.description],
+    ["Plugins", (w.plugins || []).join(", ")]];
+  for (const [k, v] of Object.entries(w.facts || {})) items.push([k, typeof v === "object" ? JSON.stringify(v) : v]);
+  for (const [k, v] of Object.entries(w.unavailable || {})) items.push(["Can't serve " + k, v]);
+  if (w.problem) items.push(["Problem", w.problem]);
+  return "<dl>" + items.filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `<dt>${rook.esc(k)}</dt><dd>${rook.esc(v)}</dd>`).join("") + "</dl>";
+}
+
+function render() {
+  const rows = document.getElementById("rows");
+  if (!workers.length) {
+    rows.innerHTML = '<tr><td colspan="3" class="muted">No workers yet.</td></tr>';
+    return;
+  }
+  rows.innerHTML = workers.map((w) => {
+    const state = w.hub ? "the hub" : w.online ? "online" : "offline";
+    const warn = w.problem ? ` <span class="warn" title="${rook.esc(w.problem)}">!</span>` : "";
+    let html = `<tr class="click" data-id="${rook.esc(w.id)}">
+      <td><span class="dot ${w.online ? "on" : ""}" title="${state}"></span>${rook.esc(w.name)}${warn}</td>
+      <td>${(w.plugins || []).length}</td>
+      <td class="muted">${w.hub ? "now" : rook.ago(w.last_seen)}</td></tr>`;
+    if (open.has(w.id)) html += `<tr class="detail"><td colspan="3">${detail(w)}</td></tr>`;
+    return html;
+  }).join("");
+}
+
+document.getElementById("rows").addEventListener("click", (e) => {
+  const tr = e.target.closest("tr.click");
+  if (!tr) return;
+  open.has(tr.dataset.id) ? open.delete(tr.dataset.id) : open.add(tr.dataset.id);
+  render();
+});
+
+async function load() {
+  try {
+    workers = (await rook.call("hub.workers")).workers;
+    render();
+  } catch (x) {
+    document.getElementById("rows").innerHTML = `<tr><td colspan="3" class="bad">${rook.esc(x.message)}</td></tr>`;
+  }
+}
+
+rook.on("worker.*", load);
+rook.on("plugin.*", load);
+setInterval(load, 30000);     // last-seen times
+load();
+</script>
+</body>
+</html>

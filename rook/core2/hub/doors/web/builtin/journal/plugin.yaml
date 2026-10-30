@@ -1,0 +1,36 @@
+# The journal (spec 11), for pages (castling-dashboard).
+# Implemented by the hub (rook.core2.hub.doors.web.caps).
+manifest: 1
+plugin: journal
+version: 0.5.0
+title: Journal
+doc: What was called, by whom, why, and what came of it.
+package: core
+builtin: true
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+
+caps:
+  search:
+    doc: Journal entries, newest first. Owners read everything, an agent its own calls and its projects, a person their own.
+    on: hub
+    risk: read
+    scope: multi-user
+    effects: [sensitive]
+    idempotent: true
+    args:
+      cap: { type: str }
+      worker: { type: str }
+      person: { type: str }
+      agent: { type: str }
+      project: { type: str }
+      kind: { type: str }
+      session: { type: str }
+      since: { type: float }
+      until: { type: float }
+      limit: { type: int, min: 1, max: 500, default: 50 }
+    result: { type: map }
+
+pages:
+  journal: { title: Journal, file: pages/journal.html, caps: [journal.search], nav: { section: Hub } }

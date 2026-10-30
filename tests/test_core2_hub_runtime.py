@@ -443,7 +443,8 @@ def test_hub_plugins_records_contracts_and_hooks(hubs, tmp_path):
     async def go():
         hub, w, token = await hubs(config(tmp_path, library=lib))
         try:
-            assert list(hub.plugins.plugins) == ["notes"]       # broken was refused, the hub runs
+            library = [n for n, p in hub.plugins.plugins.items() if not p.manifest.get("builtin")]
+            assert library == ["notes"]       # broken was refused, the hub runs
             _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "notes.note.create",
                                                        "args": {"text": "milk"}, "why": WHY}, token)
             assert out["ok"] and out["result"]["text"] == "milk", out
