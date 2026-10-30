@@ -3,6 +3,7 @@
 import pytest
 
 from rook.kit.ctx import Caller, Ctx, FileResult, KitError, allowed, invoke, load_run
+from rook.streams import Streams
 
 MANIFEST = {
     "plugin": "tv",
@@ -154,22 +155,51 @@ def test_error_records_and_stream_unavailable():
     with pytest.raises(KitError, match="hub"):
         ctx.records
     with pytest.raises(KitError, match="streams"):
-        ctx.stream(types=["bytes"])
+        ctx.stream()
     with pytest.raises(KitError, match="data dir"):
         ctx.data
 
 
-def test_stream_delegates():
-    opened = []
+STREAMING = {**MANIFEST, "caps": {
+    "tail": {"doc": "Follow a log.", "risk": "read", "scope": "local", "run": "scripts/t.py:tail",
+             "stream": {"types": ["bytes"], "input": True}},
+    "chat": {"doc": "A kept chat.", "risk": "write", "scope": "local", "run": "scripts/t.py:chat",
+             "stream": {"types": ["text"], "durable": True}},
+    "ping": {"doc": "No stream.", "risk": "read", "scope": "local", "run": "scripts/t.py:ping"},
+}}
 
-    class Streams:
-        def open(self, **kw):
-            opened.append(kw)
-            return "st_1"
 
-    ctx = Ctx(MANIFEST, BAKE, streams=Streams())
-    assert ctx.stream(types=["status"], durable=False) == "st_1"
-    assert opened[0]["plugin"] == "tv" and opened[0]["types"] == ["status"]
+@pytest.mark.asyncio
+async def test_stream_opens_the_caps_declared_stream():
+    streams = Streams()
+    ctx = Ctx(STREAMING, BAKE, streams=streams, cap="tail")
+    assert ctx.cap == "tv.tail"
+
+    async def tail(ctx):
+        handle = ctx.stream(title="syslog", attrs={"path": "/var/log/syslog"})
+        handle.append("bytes", b"boot ok\n")
+        return handle
+
+    res = await invoke(tail, ctx)
+    sid = res["stream"]
+    assert list(res) == ["stream"]
+    meta = streams.get(sid)
+    assert (meta.kind, meta.title, meta.producer) == ("process", "syslog", "tv.tail")
+    assert meta.spec.types == ("bytes",) and meta.spec.input and not meta.spec.durable
+    assert meta.participants == ["bake", "claude"] and meta.attrs == {"path": "/var/log/syslog"}
+    assert streams.attached(sid)                       # the code keeps writing after the reply
+    events = (await streams.read(sid, 0))["events"]
+    assert [e.type for e in events] == ["bytes"]
+
+
+def test_stream_needs_a_declaration_and_a_durable_store():
+    # A full cap name works the same as the relative one.
+    with pytest.raises(KitError, match="tv.ping declares no stream"):
+        Ctx(STREAMING, BAKE, streams=Streams(), cap="tv.ping").stream()
+    with pytest.raises(KitError, match="declares no stream"):
+        Ctx(STREAMING, BAKE, streams=Streams()).stream()      # a hook: no cap
+    with pytest.raises(KitError, match="durable"):            # a worker has no durable store
+        Ctx(STREAMING, BAKE, streams=Streams(), cap="chat").stream("room")
 
 
 def test_load_run(tmp_path):

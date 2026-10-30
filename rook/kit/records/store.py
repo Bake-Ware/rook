@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 
 from .._types import check, parse_duration
+from ..manifest.types import TypeSpecError, compile_type
 from ..ctx import Caller, KitError, load_run
 
 __all__ = ["RecordDef", "RecordStore", "RecordType", "VERBS"]
@@ -50,8 +51,6 @@ _PLUGIN = re.compile(r"[a-z][a-z0-9-]*\Z")
 _AFFINITY = {"int": "INTEGER", "bool": "INTEGER", "float": "REAL"}
 _JSON_TYPES = {"json", "list", "map"}
 _SAME_STORAGE = {"str", "markdown"}   # a type change between these is still additive
-_TYPES = {"str", "int", "float", "bool", "time", "duration", "markdown", "json", "file",
-          "secret", "ref", "list", "map"}
 
 
 @dataclass
@@ -88,10 +87,10 @@ class RecordDef:
             if not _NAME.match(f) or f in KIT_COLUMNS:
                 raise KitError(f"{plugin}.{name}: bad or reserved field name {f!r}")
             spec.setdefault("type", "str")
-            if spec["type"] not in _TYPES:
-                raise KitError(f"{plugin}.{name}.{f}: unknown type {spec['type']!r}")
-            if spec["type"] == "ref" and not spec.get("to"):
-                raise KitError(f"{plugin}.{name}.{f}: a ref needs to:")
+            try:
+                compile_type(spec)
+            except TypeSpecError as e:
+                raise KitError(f"{plugin}.{name}.{f}: {e}") from None
             if spec["type"] == "ref" and "." not in spec["to"]:
                 spec["to"] = f"{plugin}.{spec['to']}"
         index = [tuple([i] if isinstance(i, str) else i) for i in block.get("index") or []]

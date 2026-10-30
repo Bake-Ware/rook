@@ -299,8 +299,8 @@ def cap_stream(streams: Streams, block: dict, *, producer: str, kind: str = "pro
     """Open the stream a cap's manifest declares (``stream: {types, input,
     durable}``) and attach the cap's code as its producer. The cap returns
     ``handle.result()`` (``{"stream": id}``) and keeps writing through the
-    handle. TODO(castling:kit): ``ctx.stream(...)`` calls this with the
-    cap's block and the host's :class:`Streams`."""
+    handle. ``ctx.stream(...)`` (rook.kit.ctx) calls this with the cap's
+    block and the host's :class:`Streams`."""
     spec = StreamSpec.from_manifest(block)
     m = streams.open(kind, spec=spec, title=title, producer=producer, **meta)
     return streams.attach(m.id, producer)
