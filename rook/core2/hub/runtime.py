@@ -44,6 +44,7 @@ import os
 import random
 import re
 import secrets as _secrets
+import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -59,6 +60,7 @@ from rook.kit.records import RecordStore
 
 from .. import CORE_VERSION, rights, wire
 from ..builtin import CORE
+from . import distribute
 from .dispatch import Call, Dispatcher, Worker
 from .identity import Caller, Identities, digest
 from .journal_store import JournalError, JournalStore
@@ -1030,6 +1032,67 @@ class Hub:
             self._emit("hold.decided", {"hold": hold, "decision": "approved" if decision == "approve"
                                         else "denied", "by": by}, "core")
         return out
+
+    async def push_plugin(self, caller: Caller, body: dict, door: str) -> dict:
+        """``{worker, plugin, why}``: sign the library's copy of ``plugin``
+        for that worker (plugin.sig, spec 13) and send it with
+        ``core.plugin.install``, which dispatch checks and journals like any
+        call. Approving code for a machine is an owner's act. The worker
+        installs, runs the plugin's checks and rolls back on a failure; the
+        reply carries its report, or why it refused."""
+        if not self.identities.is_owner(caller.person):
+            return {"ok": False, "error": "denied: only an owner pushes plugins"}
+        name, target = body.get("plugin"), body.get("worker")
+        why = body.get("why") if isinstance(body.get("why"), str) else ""
+        if not (isinstance(name, str) and name and isinstance(target, str) and target):
+            return {"ok": False, "error": "bad request: worker and plugin are required"}
+        w = self.dispatcher.resolve(target)
+        k = self.known.get(w.id) if w else None
+        if k is None:
+            return {"ok": False, "error": f"unknown worker: {target}"}
+        folder = self._library_folder(name)
+        if folder is None:
+            return {"ok": False, "error": f"{name} is not in the hub's library"}
+        current = next((self.manifests.get(e["hash"]) for e in k.manifests if e["plugin"] == name), None)
+        env = distribute.WorkerEnv(k.id, os=str(k.facts.get("os", "")), python=str(k.facts.get("python", "")))
+        try:     # uv resolution and asset downloads block: off the loop
+            plan = await asyncio.to_thread(distribute.prepare, folder, env, signer=self.op, hub=self.hub_id,
+                                           current=current, cache=self.data / "assets")
+        except distribute.Refused as e:
+            return {"ok": False, "error": f"refused: {e}"}
+        if plan.sig is None:
+            return {"ok": False, "error": f"{name} has no worker part to push"}
+        # Know the manifest before the worker announces it: else its caps
+        # are gone from dispatch until a core.manifests fetch comes back.
+        raw, _ = check(plan.folder, self._contract_specs())
+        if raw is not None:
+            self._save_manifest(self._cache(raw))
+        blob = await asyncio.to_thread(_bundle_bytes, plan)
+        try:
+            desc = self.transport.offer(w.band, blob, to=w.id)
+        except Exception as e:      # no band (Loopback), too large
+            return {"ok": False, "error": f"bundle not offered: {e}"}
+        return await self.dispatcher.dispatch(caller, Call(
+            cap="core.plugin.install", target=w.id, args={"bundle": desc}, why=why,
+            session=self._door_session(caller), door=door))
+
+    def _library_folder(self, name: str) -> Path | None:
+        """The library folder whose plugin.yaml names ``name``, read now: a
+        new version dropped into the library is pushed without a restart."""
+        lib = self.cfg.library
+        for folder in sorted(lib.iterdir()) if lib and lib.is_dir() else ():
+            try:
+                raw = yaml.safe_load((folder / "plugin.yaml").read_text(encoding="utf-8"))
+            except (OSError, yaml.YAMLError):
+                continue
+            if isinstance(raw, dict) and raw.get("plugin") == name:
+                return folder
+        return None
+
+
+def _bundle_bytes(plan) -> bytes:
+    with tempfile.TemporaryDirectory(prefix="rook-bundle-") as tmp:
+        return distribute.write_bundle(plan, Path(tmp) / "bundle.tar").read_bytes()
 
 
 def _facts(facts: Any) -> dict:
