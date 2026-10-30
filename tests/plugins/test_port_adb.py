@@ -78,13 +78,15 @@ if cmd == "shell" and rest[:2] == ["-T", "--"]:
 sys.stderr.write("fake adb: unexpected " + repr(argv) + "\\n"); sys.exit(99)
 """
 
-PLUGIN = load_folder(PLUGINS / "adb", os_name="linux")
+PLUGIN = None   # bound by the adb fixture, once the fake adb is on PATH (requires.bins)
 
 
 @pytest.fixture
 def adb(bins):
+    global PLUGIN
     bins.add("adb", FAKE_ADB)
     bins.only_these()     # no real ImageMagick: tests add a fake one when they want it
+    PLUGIN = load_folder(PLUGINS / "adb", os_name="linux")
     return bins
 
 
@@ -298,7 +300,7 @@ def test_input_failure_is_an_error(adb):
         call("adb.hid.type", {"text": "fail"})
 
 
-def test_aliases_reach_the_caps():
+def test_aliases_reach_the_caps(adb):
     for old, new in [("android.shell.exec", "adb.shell.exec"), ("android.ui.text", "adb.ui.screen"),
                      ("android.hid.key_combo", "adb.hid.key"), ("android.hid.mouse.click", "adb.hid.click")]:
         assert PLUGIN.caps[old] is PLUGIN.caps[new]
