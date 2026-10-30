@@ -1,0 +1,53 @@
+# One whiteboard per task and per project: the short, current picture of the
+# work (problem, plan, evidence, findings, the step now). Any agent on the
+# task may rewrite or erase it. It is volatile on purpose: no revisions are
+# kept here; the journal has every write.
+manifest: 1
+plugin: whiteboard
+version: 0.5.0
+title: Whiteboards
+doc: The working state of a task or project, written by whoever works on it; its current state is the handoff.
+package: workbench
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+runs_on: hub
+records:
+  board:
+    fields:
+      task: { type: ref, to: task.task, unique: true }
+      project: { type: ref, to: project.project, unique: true }
+      text: { type: markdown }
+      by: { type: str, doc: Who wrote it last. }
+    caps: []
+caps:
+  read:
+    doc: The whiteboard of a task or a project (give one). Empty text when nobody has written it yet.
+    risk: read
+    scope: multi-user
+    idempotent: true
+    args:
+      task: { type: str, doc: Task id. }
+      project: { type: str, doc: Project id. }
+    result: { type: map }
+    run: scripts/whiteboard.py:read
+  write:
+    doc: "Rewrite a whiteboard (text), or add to it (append: a line or a few). Keep it to essentials: the problem, the plan and why, findings, the step now; not logs."
+    risk: write
+    scope: multi-user
+    args:
+      task: { type: str, doc: Task id. }
+      project: { type: str, doc: Project id. }
+      text: { type: markdown, doc: The whole board. }
+      append: { type: markdown, doc: Added at the end. }
+    result: { type: map }
+    run: scripts/whiteboard.py:write
+  clear:
+    doc: Erase a whiteboard ("this isn't working, start over").
+    risk: write
+    scope: multi-user
+    args:
+      task: { type: str, doc: Task id. }
+      project: { type: str, doc: Project id. }
+    result: { type: map }
+    run: scripts/whiteboard.py:clear
+docs: { manual: docs/manual.md }
