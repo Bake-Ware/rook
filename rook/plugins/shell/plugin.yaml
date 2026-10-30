@@ -1,0 +1,89 @@
+# Commands, the environment, and live terminals. All code (scripts/shell.py):
+# every process starts through core's launch path (spec 7.1), which an exec
+# action can't promise yet. shell.open is the producer of terminal and
+# process streams; proc.* merged into it (castling-streams).
+manifest: 1
+plugin: shell
+version: 0.5.0
+title: Shell
+doc: Run commands on this worker, read its environment, and open live terminals.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+caps:
+  exec:
+    doc: >-
+      Run a command and wait for it: argv (a list, no shell; prefer it) or cmd (a string for a
+      shell: sh -c, PowerShell on Windows, or the shell named). Returns ok, code, stdout, stderr;
+      denied=true when it looks like it needed elevation (ask again with elevation; it is never
+      re-run on its own).
+    risk: exec
+    scope: local
+    elevation: may
+    timeout: none            # the timeout arg bounds the process; it is killed at the end
+    args:
+      argv: { type: list, items: { type: str }, doc: "The program and its arguments, e.g. [git, status]." }
+      cmd: { type: str, doc: "A command line for a shell (pipes, redirection, globbing)." }
+      shell: { type: str, enum: [sh, bash, powershell, pwsh, cmd], doc: "The shell for cmd; blank: sh, or PowerShell on Windows." }
+      stdin: { type: str, doc: Text fed to the process's standard input. }
+      timeout: { type: float, default: 30, min: 0.1, max: 3600, doc: Seconds before the process is killed. }
+      cwd: { type: path, doc: Working directory. }
+      env: { type: map, doc: Variables added to the worker's environment (strings). }
+    result:
+      type: map
+      fields:
+        ok: { type: bool }
+        code: { type: int }
+        stdout: { type: str }
+        stderr: { type: str }
+        shell: { type: str, doc: The shell that ran cmd (left out for sh on Linux and macOS). }
+        denied: { type: bool }
+    examples:
+      - args: { argv: [uname, -a] }
+      - args: { cmd: "df -h / | tail -1" }
+    run: scripts/shell.py:exec_
+  which:
+    doc: Full path of a program on this worker's PATH, or null.
+    risk: read
+    scope: local
+    idempotent: true
+    args:
+      name: { type: str, required: true, pattern: "^[^/\\\\\\x00]+$", doc: "A program name, not a path." }
+    run: scripts/shell.py:which
+  env:
+    doc: "One environment variable (name), or all starting with prefix. Credential-like names (TOKEN, SECRET, PASSWORD, *_KEY, ROOK_*) read ***."
+    risk: read
+    scope: local
+    effects: [sensitive]
+    idempotent: true
+    aliases: [shell.env.get]
+    args:
+      name: { type: str }
+      prefix: { type: str }
+      default: { type: str, doc: What a missing name returns. }
+    run: scripts/shell.py:env
+  open:
+    doc: >-
+      Start a command (default: a login shell) as a live stream and return {stream}. pty=true
+      runs it on a terminal (keystrokes, Ctrl-C, resize); pty=false on pipes, output merged
+      (what proc.start was). Read and write it with stream.read / stream.write; it closes when
+      the process exits, with its exit code.
+    risk: exec
+    scope: local
+    elevation: may
+    timeout: 30s
+    stream: { types: [bytes], input: true, durable: false }
+    args:
+      argv: { type: list, items: { type: str } }
+      cmd: { type: str }
+      shell: { type: str, enum: [sh, bash, powershell, pwsh, cmd] }
+      cwd: { type: path }
+      env: { type: map }
+      pty: { type: bool, default: true, doc: "Run on a terminal (not on Windows yet)." }
+      cols: { type: int, default: 120, min: 1, max: 1000 }
+      rows: { type: int, default: 32, min: 1, max: 1000 }
+      title: { type: str, doc: "The stream's title; blank: the command." }
+    run: scripts/shell.py:open_
+hooks:
+  stop: scripts/shell.py:stop
+docs: { manual: docs/manual.md }
