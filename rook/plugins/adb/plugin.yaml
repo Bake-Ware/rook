@@ -1,0 +1,159 @@
+# Android phones and tablets cabled to a worker, driven over adb. Each device
+# is an appliance instance (spec 5.7) and the worker it is plugged into is its
+# delegate; nothing is installed on the device. Every cap is scripts/adb.py:
+# each call checks the device is attached and authorized first, and adb runs
+# through the worker's launch path (normal user, never elevated).
+manifest: 1
+plugin: adb
+version: 0.5.0
+title: Android over adb
+doc: Drive Android phones and tablets cabled to this worker (shell, screen, touch, keys) over adb.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+requires: { bins: [adb] }
+appliance:
+  discover:
+    - adb: true
+  settings:
+    serial:
+      type: str
+      pattern: "^[A-Za-z0-9._:-]{1,64}$"
+      doc: The device's adb serial (adb.scan lists them). Blank uses the instance name as the serial.
+caps:
+  scan:
+    doc: "Every device adb sees on this worker (attached or emulated), to onboard: {items: [{serial, state, model}]}. Includes phones that are only charging here; it never authorizes or changes a device."
+    risk: read
+    scope: local
+    idempotent: true
+    timeout: 20s
+    result:
+      type: map
+      fields:
+        items:
+          type: list
+          items: { type: map, fields: { serial: { type: str }, state: { type: str }, model: { type: str } } }
+    run: scripts/adb.py:scan
+  shell.exec:
+    doc: "Run a command on the device as Android's shell user (it can change settings and read or delete shared storage). argv is quoted for you; cmd is a line for the device's sh (pipes, redirection). Returns {code, stdout, stderr}; output past 1 MiB per stream stops the command (truncated: true)."
+    risk: exec
+    scope: local
+    timeout: 610s
+    aliases: [android.shell.exec]
+    args:
+      argv: { type: list, items: { type: str }, doc: "The command and its arguments; give argv or cmd." }
+      cmd: { type: str, doc: A line for the device's /system/bin/sh. }
+      stdin: { type: str, doc: Fed to the command. }
+      cwd: { type: str, doc: Directory on the device. }
+      env: { type: json, doc: "Environment on the device, an object of strings." }
+      timeout: { type: int, default: 30, min: 1, max: 600, doc: Seconds; the command is ended on the device after it. }
+    result:
+      type: map
+      fields: { code: { type: int }, stdout: { type: str }, stderr: { type: str }, truncated: { type: bool } }
+    run: scripts/adb.py:shell_exec
+  battery.status:
+    doc: "The device's battery: {percent, charging, plugged (ac, usb, wireless or null), status, temp_c}."
+    risk: read
+    scope: local
+    idempotent: true
+    timeout: 20s
+    aliases: [android.battery.status]
+    result:
+      type: map
+      fields:
+        percent: { type: int }
+        charging: { type: bool }
+        plugged: { type: str }
+        status: { type: str }
+        temp_c: { type: float }
+    run: scripts/adb.py:battery_status
+  screen.capture:
+    doc: The device's screen (works with a dead display), as a JPEG when ImageMagick is on this worker, else a PNG. Its pixels are what hid.click's x and y mean.
+    risk: read
+    scope: local
+    effects: [sensitive]
+    idempotent: true
+    timeout: 60s
+    aliases: [android.screenshot.capture]
+    args:
+      quality: { type: int, min: 1, max: 100, doc: "JPEG quality; blank: 85." }
+    result: { type: file, doc: A JPEG or PNG. }
+    run: scripts/adb.py:screen_capture
+  ui.screen:
+    doc: What is on the screen as text, top to bottom, with the centre of each element to tap (hid.click x, y) and the app in front.
+    risk: read
+    scope: local
+    effects: [sensitive]
+    idempotent: true
+    timeout: 45s
+    aliases: [android.ui.text]
+    args:
+      limit: { type: int, min: 1, doc: Most elements to return. }
+    result:
+      type: map
+      fields:
+        app: { type: str, doc: The package in front. }
+        items:
+          type: list
+          items:
+            type: map
+            fields: { text: { type: str }, x: { type: int }, y: { type: int }, clickable: { type: bool } }
+    run: scripts/adb.py:ui_screen
+  hid.type:
+    doc: Type text into whatever has focus on the device. ASCII only (an Android limit); a newline presses Enter, and enter=true presses it after the text.
+    risk: exec
+    scope: local
+    effects: [physical]
+    timeout: 240s
+    aliases: [android.hid.type]
+    args:
+      text: { type: str, required: true, max: 2000 }
+      enter: { type: bool, default: false, doc: Press Enter after the text. }
+    run: scripts/adb.py:hid_type
+  hid.key:
+    doc: "Press a key with modifiers held: home, back, recents, power, wake, enter, escape, tab, backspace, delete, space, up, down, left, right, volume_up, volume_down, mute, notifications, search, menu, a letter or digit, or any KEYCODE_* name."
+    risk: exec
+    scope: local
+    effects: [physical]
+    timeout: 20s
+    aliases: [android.hid.key_combo]
+    args:
+      key: { type: str, required: true, pattern: "^[A-Za-z0-9_]{1,40}$" }
+      mods: { type: list, items: { type: str, enum: [ctrl, shift, alt, meta] }, default: [] }
+    run: scripts/adb.py:hid_key
+  hid.click:
+    doc: Tap the screen at pixel (x, y), top-left origin (ui.screen gives element centres). A touch screen needs x and y and has only the left button.
+    risk: exec
+    scope: local
+    effects: [physical]
+    timeout: 20s
+    aliases: [android.hid.mouse.click]
+    args:
+      x: { type: int, min: 0, max: 20000 }
+      y: { type: int, min: 0, max: 20000 }
+      button: { type: str, enum: [left, right, middle], default: left }
+    run: scripts/adb.py:hid_click
+  hid.drag:
+    doc: Swipe from (x1, y1) to (x2, y2) over duration (50ms to 10s).
+    risk: exec
+    scope: local
+    effects: [physical]
+    timeout: 30s
+    aliases: [android.hid.mouse.drag]
+    args:
+      x1: { type: int, required: true, min: 0, max: 20000 }
+      y1: { type: int, required: true, min: 0, max: 20000 }
+      x2: { type: int, required: true, min: 0, max: 20000 }
+      y2: { type: int, required: true, min: 0, max: 20000 }
+      duration: { type: duration, default: 300ms }
+      button: { type: str, enum: [left, right, middle], default: left }
+    run: scripts/adb.py:hid_drag
+provides:
+  screen.capture: adb.screen.capture
+  ui.screen: adb.ui.screen
+  hid.type: adb.hid.type
+  hid.key: adb.hid.key
+  hid.click: adb.hid.click
+  hid.drag: adb.hid.drag
+docs: { manual: docs/manual.md }
+# No check: an install has no appliance instance to call (castling/coverage.md N4).
