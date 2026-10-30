@@ -184,7 +184,7 @@ class Band:
             "library": "./library",
             "users": {"bake": {"preset": "owner"}, "kid": {"preset": "child", "grants": ["e2e.*"]}},
             "agents": {"claude-code": {"grants": ["*"], "max_risk": "admin"}},
-            "doors": {"http": {"bind": "127.0.0.1:0"}},
+            "doors": {"http": {"bind": "127.0.0.1:0"}, "mcp": {"bind": "127.0.0.1:0"}},
             "transport": {"bands": band},
             "log": {"level": "info", "format": "json"},
         }, indent=1))
@@ -218,9 +218,9 @@ class Band:
     def start_hub(self) -> Proc:
         self.hub = self._spawn("hub", [sys.executable, "-m", "rook.core2.hub", "--config", "hub.yaml"],
                                self.hub_dir)
-        door = self.hub.wait_log("door open")
         self.hub.wait_log("hub started")
-        self.url = f"http://{door['bind']}"
+        doors = {r["door"]: r["bind"] for r in self.hub.records() if r.get("msg") == "door open"}
+        self.url, self.mcp_url = f"http://{doors['http']}", f"http://{doors['mcp']}/mcp"
         self.owner = Door(self.url, self.owner_token)
         self.kid = Door(self.url, self.kid_token)
         return self.hub
