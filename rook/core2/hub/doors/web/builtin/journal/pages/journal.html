@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Journal</title>
+<style>
+  form { margin-bottom: 12px; }
+  form input { width: 140px; }
+  td.why { max-width: 360px; }
+  .detail td { background: var(--card); }
+</style>
+</head>
+<body>
+<form id="filters" class="row">
+  <input name="cap" placeholder="cap">
+  <input name="worker" placeholder="worker">
+  <select name="kind"><option value="">all kinds</option><option>call</option><option>session</option>
+    <option>late_reply</option></select>
+  <button class="primary">Show</button>
+</form>
+<div class="scroll">
+<table>
+  <thead><tr><th>When</th><th>Who</th><th>Call</th><th>Why</th><th>Outcome</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+</div>
+<div class="row" style="margin-top:10px"><button id="more">More</button></div>
+<script>
+"use strict";
+let limit = 50, entries = [];
+const open = new Set();
+
+function outcome(e) {
+  if (e.decision === "held") return '<span class="warn">held</span>';
+  if (e.decision === "deny" || e.ok === false) return `<span class="bad">${rook.esc(e.error || e.decision || "failed")}</span>`;
+  if (e.kind !== "call") return `<span class="muted">${rook.esc(e.event || e.kind)}</span>`;
+  return `<span class="ok">${rook.esc(e.decision || "ok")}</span>`;
+}
+
+function render() {
+  const rows = document.getElementById("rows");
+  if (!entries.length) {
+    rows.innerHTML = '<tr><td colspan="5" class="muted">Nothing here.</td></tr>';
+    return;
+  }
+  rows.innerHTML = entries.map((e, i) => {
+    const who = [e.agent, e.person].filter(Boolean).join(" for ");
+    let html = `<tr class="click" data-i="${i}"><td class="muted" title="${rook.esc(rook.time(e.ts))}">${rook.ago(e.ts)}</td>
+      <td>${rook.esc(who)}</td><td>${rook.esc(e.cap || e.kind)}${e.worker ? ` <span class="muted">@${rook.esc(String(e.worker).slice(0, 8))}</span>` : ""}</td>
+      <td class="why">${rook.esc(e.why)}</td><td>${outcome(e)}</td></tr>`;
+    if (open.has(i)) html += `<tr class="detail"><td colspan="5"><pre>${rook.esc(JSON.stringify(e, null, 2))}</pre></td></tr>`;
+    return html;
+  }).join("");
+}
+
+async function load() {
+  const args = { limit };
+  for (const [k, v] of new FormData(document.getElementById("filters"))) if (v) args[k] = v;
+  try {
+    entries = (await rook.call("journal.search", args)).entries;
+    open.clear();
+    render();
+    document.getElementById("more").hidden = entries.length < limit || limit >= 500;
+  } catch (x) {
+    document.getElementById("rows").innerHTML = `<tr><td colspan="5" class="bad">${rook.esc(x.message)}</td></tr>`;
+  }
+}
+
+document.getElementById("filters").addEventListener("submit", (e) => {
+  e.preventDefault();
+  limit = 50;
+  load();
+});
+document.getElementById("more").onclick = () => {
+  limit = Math.min(500, limit + 100);
+  load();
+};
+document.getElementById("rows").addEventListener("click", (e) => {
+  const tr = e.target.closest("tr.click");
+  if (!tr) return;
+  const i = Number(tr.dataset.i);
+  open.has(i) ? open.delete(i) : open.add(i);
+  render();
+});
+load();
+</script>
+</body>
+</html>

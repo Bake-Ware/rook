@@ -1,0 +1,31 @@
+# What the hub knows about itself and its workers, for pages (castling-dashboard).
+# Implemented by the hub (rook.core2.hub.doors.web.caps).
+manifest: 1
+plugin: hub
+version: 0.5.0
+title: Hub
+doc: The hub and its workers.
+package: core
+builtin: true
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+
+caps:
+  status:
+    doc: "What the hub runs: its id, band, core version, doors, plugins and (for owners) its people."
+    on: hub
+    risk: read
+    scope: multi-user
+    idempotent: true
+    result: { type: map }
+  workers:
+    doc: Every worker the hub knows, online or not, with its plugins and what it can't serve.
+    on: hub
+    risk: read
+    scope: multi-machine
+    idempotent: true
+    result: { type: map }
+
+pages:
+  workers: { title: Workers, file: pages/workers.html, caps: [hub.workers], events: ["worker.*", "plugin.*"], nav: { section: Hub } }

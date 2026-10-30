@@ -62,6 +62,7 @@ from .. import CORE_VERSION, rights, wire
 from ..builtin import CORE
 from . import distribute
 from .dispatch import Call, Dispatcher, Worker
+from .doors.web import caps as builtin_caps
 from .identity import Caller, Identities, digest
 from .journal_store import JournalError, JournalStore
 from .plugins import HubPlugins, short_caps
@@ -326,6 +327,7 @@ class Hub:
         self.manifests: dict[str, dict] = {}     # hash -> parsed manifest
         self._norm: dict[str, dict] = {}         # hash -> normalized
         self.doors: list = []
+        self.listeners: list = []                # fn(event, payload, source) for every event
 
     # -- start and stop ---------------------------------------------------------
 
@@ -371,6 +373,7 @@ class Hub:
         self.plugins = HubPlugins(records=self.records, contracts=self.contracts, call=self.call_as,
                                   emit=self._emit, data_dir=self.data / "plugins", settings=cfg.settings)
         self.plugins.add_core(self.core)
+        builtin_caps.install(self)               # pages, hub, approval, journal, setting: before the library
         self.dispatcher = Dispatcher(hub_id=self.hub_id, op_key=self.op, identities=self.identities,
                                      workers={}, send=self._send, journal=self._journal,
                                      hubkey=self.grant, clock=self.clock)
@@ -891,6 +894,11 @@ class Hub:
     def _emit(self, event: str, payload: dict, source: str | None = None) -> None:
         log.debug("event", extra={"fields": {"event": event, "source": source}})
         self.plugins.scheduler.publish(event, payload, source)
+        for fn in self.listeners:
+            try:
+                fn(event, payload, source)
+            except Exception:
+                log.exception("event listener failed")
 
     # -- sessions -----------------------------------------------------------------
 
@@ -945,8 +953,9 @@ class Hub:
 
     # -- the door API ---------------------------------------------------------------
 
-    async def call(self, caller: Caller, body: dict, door: str) -> dict:
-        """``{worker, cap, args?, why, session?, appliance?, elevate?}`` from a door."""
+    async def call(self, caller: Caller, body: dict, door: str, layers: list | None = None) -> dict:
+        """``{worker, cap, args?, why, session?, appliance?, elevate?}`` from a door.
+        ``layers`` narrows it further (a dashboard page's declared caps)."""
         cap, target = body.get("cap"), body.get("worker")
         args, sid = body.get("args"), body.get("session")
         if not (isinstance(cap, str) and cap and isinstance(target, str) and target):
@@ -959,7 +968,7 @@ class Hub:
         why = body.get("why") if isinstance(body.get("why"), str) else ""
         reply = await self.dispatcher.dispatch(caller, Call(
             cap=cap, target=target, args=args, why=why, session=sid or self._door_session(caller),
-            appliance=appliance, elevate=body.get("elevate") is True, door=door))
+            appliance=appliance, elevate=body.get("elevate") is True, door=door, layers=list(layers or ())))
         if reply.get("held"):
             h = self.dispatcher.holds.get(reply["hold"])
             if h is not None:
@@ -1035,8 +1044,10 @@ class Hub:
             if owner or (caller.person and h.caller.person == caller.person) or h.caller == caller]}
 
     async def decide(self, caller: Caller, hold: str, decision: Any) -> dict:
-        """A person's answer to a hold: ``approve`` runs the exact call, ``refuse`` is final."""
-        by = caller.person or caller.agent
+        """A person's answer to a hold: ``approve`` runs the exact call, ``refuse`` is final.
+        An agent acting for a person answers as the agent, not the person
+        (10.3: nothing but the person releases a hard stop)."""
+        by = caller.agent or caller.person
         if decision == "approve":
             out = await self.dispatcher.release(hold, by)
         elif decision == "refuse":

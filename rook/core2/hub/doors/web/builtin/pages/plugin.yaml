@@ -1,0 +1,98 @@
+# The dashboard's own caps (castling-dashboard): pages are a content kind
+# plugins ship (manifest `pages:`); agents also make pages here, kept in the
+# hub's data folder with a markdown note saying why they exist. Every page
+# action is a cap, so a person, an agent, a job or a trigger can call it.
+# Implemented by the hub (rook.core2.hub.doors.web.caps).
+manifest: 1
+plugin: pages
+version: 0.5.0
+title: Pages
+doc: The hub site's pages. List, open, make, change, archive and restore them.
+package: core
+builtin: true
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+
+caps:
+  list:
+    doc: The pages on the hub site, by section. Archived ones only with archived=true.
+    on: hub
+    risk: read
+    scope: multi-user
+    idempotent: true
+    args:
+      archived: { type: bool, default: false, doc: "List the archived pages instead." }
+    result: { type: map }
+  view:
+    doc: Open a page (the dashboard calls this when a person opens one). Returns what it may call and hear.
+    on: hub
+    risk: read
+    scope: multi-user
+    args:
+      page: { type: str, required: true, doc: "plugin/name, e.g. hub/workers or pages/uptime." }
+    result: { type: map }
+  get:
+    doc: One page's details and, for a page an agent made, its note (why it exists, its history).
+    on: hub
+    risk: read
+    scope: multi-user
+    idempotent: true
+    args:
+      page: { type: str, required: true }
+    result: { type: map }
+  create:
+    doc: >-
+      Make a page on the hub site: one self-contained HTML file (inline script and style). It runs
+      sandboxed and reaches data only through window.rook.call on the caps it declares, as whoever
+      views it and never more than its author may. The note says why it exists.
+    on: hub
+    risk: write
+    scope: multi-user
+    effects: [persists]
+    args:
+      name: { type: str, required: true, doc: "Lowercase letters, digits, - and _; the page is pages/<name>." }
+      title: { type: str, required: true }
+      html: { type: str, required: true }
+      note: { type: str, required: true, doc: "Markdown: why the page exists, who asked, what it watches." }
+      caps: { type: list, items: { type: str }, doc: "Cap patterns the page may call." }
+      events: { type: list, items: { type: str }, doc: "Event patterns the page hears." }
+      section: { type: str, doc: "Sidebar section; blank: Pages." }
+      task: { type: str, doc: "The task this page was built under, where there is one." }
+    result: { type: map }
+  update:
+    doc: Change a page an agent made. Each change is added to its note's history.
+    on: hub
+    risk: write
+    scope: multi-user
+    effects: [persists]
+    args:
+      page: { type: str, required: true }
+      change: { type: str, required: true, doc: "What changed and why, for the history." }
+      title: { type: str }
+      html: { type: str }
+      note: { type: str, doc: "A new note body (the history is kept)." }
+      caps: { type: list, items: { type: str } }
+      events: { type: list, items: { type: str } }
+      section: { type: str }
+    result: { type: map }
+  archive:
+    doc: Take a page off the site. Nothing is lost; restore brings it back.
+    on: hub
+    risk: write
+    scope: multi-user
+    effects: [persists]
+    undo: pages.restore
+    args:
+      page: { type: str, required: true }
+      reason: { type: str }
+    result: { type: map }
+  restore:
+    doc: Put an archived page back on the site.
+    on: hub
+    risk: write
+    scope: multi-user
+    effects: [persists]
+    args:
+      page: { type: str, required: true }
+    result: { type: map }

@@ -60,7 +60,8 @@ EOF
 python -m rook.core2.worker --config worker.yaml &
 ```
 
-Then, as the owner:
+Then, as the owner (or in a browser: open `http://127.0.0.1:8740/` and sign in
+with `hub-data/owner.token`; see docs/castling-dashboard.md):
 
 ```sh
 H="Authorization: Bearer $(cat hub-data/owner.token)"

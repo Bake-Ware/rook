@@ -15,7 +15,9 @@ agent, or an agent for a person).
 
 Replies are JSON objects with ``ok``; a refused call is still 200 (the body
 says why). Bind to localhost: put TLS in front before exposing it.
-Options: ``bind: "127.0.0.1:8740"`` (port 0 picks one).
+Options: ``bind: "127.0.0.1:8740"`` (port 0 picks one); ``web:`` the hub
+site on ``/``, ``/login`` and ``/web/`` (:mod:`.web`; ``false`` turns it off,
+``{secure_cookie: true}`` behind TLS).
 """
 from __future__ import annotations
 
@@ -26,6 +28,8 @@ import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qsl, unquote, urlsplit
+
+from .web import Web
 
 log = logging.getLogger("rook.hub.door.http")
 
@@ -46,6 +50,8 @@ class HttpDoor:
         host, _, port = str(options.get("bind", self.bind)).rpartition(":")
         self.host, self.port = host or "127.0.0.1", int(port)
         self._server: ThreadingHTTPServer | None = None
+        web = options.get("web", {} if self.name == "http" else False)    # the site is on the plain door only
+        self.web = None if web is False else Web(hub, web if isinstance(web, dict) else {})
         self._thread: threading.Thread | None = None
 
     async def start(self) -> None:
@@ -85,19 +91,23 @@ class _Handler(BaseHTTPRequestHandler):
         self._handle("POST")
 
     def _handle(self, method: str) -> None:
+        url = urlsplit(self.path)
         try:
-            status, body = self._route(method)
+            if self.door.web is not None and self.door.web.owns(url.path):
+                status, headers, data = self.door.web.handle(self, method, url.path, url.query)
+            else:
+                status, body = self._route(method)
+                headers, data = _encode(body)
         except _Error as e:
-            status, body = e.status, e.body or {"ok": False, "error": e.message}
+            status, (headers, data) = e.status, _encode(e.body or {"ok": False, "error": e.message})
         except Exception:
             log.exception("door request failed")
-            status, body = 500, {"ok": False, "error": "internal error"}
+            status, (headers, data) = 500, _encode({"ok": False, "error": "internal error"})
         if status >= 400:
             self.close_connection = True    # a body we didn't read must not become the next request
-        data = b"" if body is None else json.dumps(body, default=str).encode("utf-8")
         self.send_response(status)
-        if body is not None:
-            self.send_header("Content-Type", "application/json")
+        for k, v in headers.items():
+            self.send_header(k, v)
         if status == 401:
             self.send_header("WWW-Authenticate", "Bearer")
         self.send_header("Content-Length", str(len(data)))
@@ -164,6 +174,12 @@ class _Handler(BaseHTTPRequestHandler):
             return asyncio.run_coroutine_threadsafe(coro, self.loop).result(WAIT)
         except (concurrent.futures.CancelledError, TimeoutError):
             raise _Error(503, "hub unavailable") from None
+
+
+def _encode(body: dict | None) -> tuple[dict, bytes]:
+    if body is None:
+        return {}, b""
+    return {"Content-Type": "application/json"}, json.dumps(body, default=str).encode("utf-8")
 
 
 class _Error(Exception):

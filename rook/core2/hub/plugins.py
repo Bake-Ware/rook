@@ -127,6 +127,19 @@ class HubPlugins:
                                                         "caps": len(p.caps), "hooks": p.hooks}})
         return p
 
+    def add_builtin(self, folder: str | Path, handlers: dict) -> HubPlugin:
+        """A builtin plugin the hub implements itself (``builtin: true``, no
+        ``run:``): each of its ``on: hub`` caps runs ``handlers[cap](ctx, **args)``."""
+        m = load(folder)
+        if m.plugin in self.plugins:
+            raise KitError(f"{m.plugin} is already loaded on the hub")
+        p = HubPlugin(m.plugin, m.data, m.folder)
+        for cap, meta in m.data["caps"].items():
+            if meta.get("on") == "hub":
+                self._add(p, cap, HubCap(meta, handlers[cap]))
+        self.plugins[p.name] = p
+        return p
+
     async def unload(self, name: str) -> None:
         p = self.plugins.pop(name, None)
         if p is not None:

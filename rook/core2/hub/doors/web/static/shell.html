@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rook</title>
+<link rel="stylesheet" href="/web/static/shell.css">
+</head>
+<body>
+<nav id="nav">
+  <div class="brand">Rook</div>
+  <div id="pages"></div>
+  <details id="archived" hidden><summary>Archived</summary><ul></ul></details>
+  <button id="signout" class="link">Sign out</button>
+</nav>
+<main>
+  <header id="bar">
+    <button id="menu" aria-label="Pages">&#9776;</button>
+    <h1 id="title"></h1>
+    <span class="grow"></span>
+    <button id="note-btn" hidden>About</button>
+    <button id="archive-btn" hidden>Archive</button>
+  </header>
+  <div id="stage"><div id="msg" hidden></div><aside id="note" hidden></aside></div>
+</main>
+<script src="/web/static/shell.js"></script>
+</body>
+</html>
