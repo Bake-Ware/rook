@@ -191,6 +191,28 @@ def test_merge_settings_rules():
     assert merge_settings(decls, {}, {"a": 2}) == {"a": 2}
 
 
+@needs_echo
+def test_actions_get_the_cap_spec(tmp_path):
+    """Arg join/map and result coercion (manifest 1.1) need the cap's spec."""
+    (tmp_path / "plugin.yaml").write_text(
+        "manifest: 1\nplugin: spec\nversion: 1.0.0\ncaps:\n"
+        "  keys:\n    doc: Joined keys.\n    risk: read\n    scope: self\n"
+        "    args: { keys: { type: list, items: { type: str, enum: [a, b] }, join: ',' } }\n"
+        "    action: { exec: { argv: [echo, '{{args.keys}}'] }, parse: text }\n"
+        "  level:\n    doc: A number.\n    risk: read\n    scope: self\n"
+        "    args: { word: { type: str, enum: [one, two], map: { one: '1', two: '2' } } }\n"
+        "    result: { type: int }\n"
+        "    action: { exec: { argv: [echo, '{{args.word}}'] }, parse: text }\n")
+
+    async def body():
+        host = Host(os_name="linux")
+        await host.load(tmp_path)
+        assert await host.call("spec.keys", {"keys": ["a", "b"]}, ME) == "a,b"
+        assert await host.call("spec.level", {"word": "two"}, ME) == 2
+        await host.close()
+    go(body)
+
+
 # -- run: plugin ---------------------------------------------------------------
 
 def test_run_plugin_hooks_bind_and_context(tmp_path):
