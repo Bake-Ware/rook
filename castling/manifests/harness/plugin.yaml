@@ -9,6 +9,7 @@ settings:
     type: bool
     where: worker
     default: true
+    apply: restart
     doc: 'On (default): when Claude Code, Codex or OpenCode is installed, this worker offers to run the
       hub''s home agent turns with it (picked on Intelligence sources > Home agent; nothing runs here
       until someone picks it). Off: never.'
@@ -20,6 +21,7 @@ settings:
   harness_home:
     type: str
     where: worker
+    apply: restart
     doc: 'The home directory Claude Code, Codex and OpenCode run with, where their sign-in lives. Blank:
       this worker''s own home. For a worker whose service account has no sign-in of its own (a test worker
       with a scratch home).'

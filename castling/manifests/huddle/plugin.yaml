@@ -10,6 +10,7 @@ settings:
     type: bool
     where: hub
     default: true
+    apply: restart
     doc: 'Group rooms where agents post status and ask you questions, shown on Work > Huddle. Read at
       start: restart the hub to apply.'
   wake_on_answer:

@@ -8,6 +8,7 @@ settings:
   tvs:
     type: str
     where: worker
+    apply: reload
     doc: name=host pairs, comma-separated (office-tv=192.0.2.10). Each becomes a device worker this worker
       answers for. Blank leaves webos.* off.
 caps:
@@ -98,36 +99,36 @@ caps:
     scope: multi-machine
     effects:
     - physical
-    aliases:
-    - tv.media
     run: scripts/webos.py:WebOSTV._media
+    bind:
+      action: play
   media.pause:
     doc: 'Playback control for the current app: play, pause, stop, rewind, fast_forward.'
     risk: write
     scope: multi-machine
     effects:
     - physical
-    aliases:
-    - tv.media
     run: scripts/webos.py:WebOSTV._media
+    bind:
+      action: pause
   media.stop:
     doc: 'Playback control for the current app: play, pause, stop, rewind, fast_forward.'
     risk: write
     scope: multi-machine
     effects:
     - physical
-    aliases:
-    - tv.media
     run: scripts/webos.py:WebOSTV._media
+    bind:
+      action: stop
   media.seek:
     doc: 'Playback control for the current app: play, pause, stop, rewind, fast_forward.'
     risk: write
     scope: multi-machine
     effects:
     - physical
-    aliases:
-    - tv.media
     run: scripts/webos.py:WebOSTV._media
+    bind:
+      action: seek
   hid.key:
     doc: 'Press a remote button: HOME, BACK, UP, DOWN, LEFT, RIGHT, ENTER, MENU, EXIT, digits…'
     risk: write
@@ -187,8 +188,6 @@ caps:
       'on':
         type: bool
         required: true
-    aliases:
-    - tv.screen
     run: scripts/webos.py:WebOSTV._screen
   screen.off:
     doc: Turn just the screen off (sound keeps playing) or back on.
@@ -200,8 +199,6 @@ caps:
       'on':
         type: bool
         required: true
-    aliases:
-    - tv.screen
     run: scripts/webos.py:WebOSTV._screen
   power.off:
     doc: Turn the TV off. A TV that is already off is not an error.

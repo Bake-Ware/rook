@@ -18,7 +18,8 @@ castling-caps) and writes ``castling/manifests/<plugin>/plugin.yaml``:
 - ``overlays/<plugin>.yaml`` is merged last: hand-written config actions for
   the plugins the fit review says YAML covers.
 
-It also rewrites the generated table in ``castling/coverage.md``.
+Every draft is checked with ``rook.kit.manifest`` (errors fail the run). It
+also rewrites the generated table in ``castling/coverage.md``.
 
 Run from the repo root: ``python3 castling/tools/convert.py``.
 """
@@ -37,6 +38,9 @@ import yaml
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
+sys.path.insert(0, str(REPO))
+from rook.kit.manifest import _yaml  # noqa: E402  (overlays are read as manifests are: YAML 1.2)
+from rook.kit.manifest.load import check_text  # noqa: E402
 OUT = REPO / "castling" / "manifests"
 COVERAGE = REPO / "castling" / "coverage.md"
 
@@ -179,6 +183,8 @@ def _settings(cls) -> dict:
                     s["default"] = kw["default"]
                 if kw.get("choices"):
                     s["enum"] = list(kw["choices"])
+                if kw.get("apply") in ("reload", "restart"):  # live is the default
+                    s["apply"] = kw["apply"]
                 doc = kw.get("help") or kw.get("label")
                 if doc:
                     s["doc"] = doc
@@ -303,9 +309,12 @@ def build(caps: dict, plugins: dict, decisions: list[dict]) -> tuple[dict, list[
             row["to"].append(plugin)
             key_name = local_key(plugin, new)
             m.setdefault("_forms", set()).add(d["form"])
-            if d["form"] == "records" and key_name.split(".")[-1] in RECORD_VERBS:
+            # search needs search fields, which only the port can declare (C4):
+            # until then it stays a run: cap beside the record.
+            if d["form"] == "records" and key_name.split(".")[-1] in RECORD_VERBS \
+                    and not key_name.endswith("search"):
                 # <plugin>.<verb> uses a record named after the plugin (the kit
-                # would call it <plugin>.<plugin>.<verb>: see coverage.md).
+                # generates <plugin>.<verb> for it: manifest 1.1, C1).
                 rec_name, _, verb = key_name.rpartition(".")
                 rec_name = rec_name or plugin
                 rec = m.setdefault("records", {}).setdefault(rec_name, {"fields": {}, "caps": []})
@@ -329,18 +338,26 @@ def build(caps: dict, plugins: dict, decisions: list[dict]) -> tuple[dict, list[
             if tags:
                 cap["tags"] = tags
             args = copy.deepcopy(src["args"])
-            if len(d["new_names"]) > 1:  # a split: the name now says what the argument did
-                for a in SPLIT_ARGS:
-                    args.pop(a, None)
+            bind = {}
+            split = next((a for a in SPLIT_ARGS if a in args), None)
+            if len(d["new_names"]) > 1 and split:  # the name now says what the argument did
+                # The run target still takes it (B5). The value is a guess from
+                # the new name, to check when the cap is ported.
+                del args[split]
+                bind[split] = new.rsplit(".", 1)[-1]
             if args:
                 cap["args"] = args
             t = src["timeout"]
             if isinstance(t, (int, float)) and not isinstance(t, bool):
                 cap["timeout"] = f"{int(t)}s"
-            if d["cap"] != new:
+            elif t is None:
+                cap["timeout"] = "none"
+            if d["cap"] != new and len(d["new_names"]) == 1:  # a split's old name has no one heir
                 cap["aliases"] = [d["cap"]]
             if src["func"]:
                 cap["run"] = f"scripts/{src['module']}.py:{src['func']}"
+                if bind:
+                    cap["bind"] = bind
             if plugin != new.split(".")[0]:  # a shared contract this plugin implements
                 m.setdefault("provides", {})[new] = f"{plugin}.{new}"
             caps_ = m.setdefault("caps", {})
@@ -366,6 +383,7 @@ def _finish(m: dict, plugins: dict) -> None:
         m["builtin"] = True
         for cap in m.get("caps", {}).values():
             cap.pop("run", None)
+            cap.pop("bind", None)
     sides = {s for s, _ in froms}
     if sides == {"hub"}:
         m["runs_on"] = "hub"
@@ -409,11 +427,12 @@ def apply_overlays(mans: dict, overlay_dir: Path = OVERLAY_DIR) -> set[str]:
         name = path.stem
         if name not in mans:
             raise SystemExit(f"overlay {path.name}: no plugin {name!r} in the draft")
-        over = yaml.safe_load(path.read_text()) or {}
+        over = _yaml.loads(path.read_text()) or {}
         merge(mans[name], over)
         for key, cap in (over.get("caps") or {}).items():  # exactly one of action | run
             if cap and "action" in cap:
                 mans[name]["caps"][key].pop("run", None)
+                mans[name]["caps"][key].pop("bind", None)
             elif cap and "run" in cap:
                 mans[name]["caps"][key].pop("action", None)
         done.add(name)
@@ -421,91 +440,15 @@ def apply_overlays(mans: dict, overlay_dir: Path = OVERLAY_DIR) -> set[str]:
 
 
 # ---- check ----------------------------------------------------------------------
-# TODO(castling:manifest): a hand-written stand-in for rook.kit.manifest's
-# semantic checks, written from the castling-manifest pages; switch to the real
-# validator once it lands on origin/castling.
 
-RISKS = {"read", "write", "exec", "admin"}
-SCOPES = {"self", "local", "multi-machine", "multi-user", "external"}
-EFFECTS = {"destructive", "sensitive", "personal", "physical", "sends_as", "spends", "persists", "taints"}
-TYPES = {"str", "int", "float", "bool", "time", "duration", "markdown", "json", "file", "secret",
-         "ref", "list", "map"}
-ACTIONS = {"exec", "http", "tcp", "ws", "file"}
-TEMPLATE = re.compile(r"\{\{\s*([\w.:-]+)\s*\}\}")
-FIXED_VARS = {"tmp", "plugin.dir", "plugin.data", "worker.os", "worker.arch", "worker.name"}
-
-
-def _strings(node):
-    if isinstance(node, str):
-        yield node
-    elif isinstance(node, dict):
-        for v in node.values():
-            yield from _strings(v)
-    elif isinstance(node, list):
-        for v in node:
-            yield from _strings(v)
+def check(m: dict) -> list:
+    """rook.kit.manifest's issues for one draft, read back from its YAML."""
+    return check_text(render(m))[1]
 
 
 def lint(m: dict) -> list[str]:
-    """Problems in one manifest, as ``plugin.cap: message`` lines."""
-    errs = []
-    name = m.get("plugin", "?")
-    for k in ("manifest", "plugin", "version"):
-        if k not in m:
-            errs.append(f"{name}: missing {k}")
-    if not re.fullmatch(r"[a-z][a-z0-9-]*", str(name)):
-        errs.append(f"{name}: bad plugin name")
-    settings = set(m.get("settings") or {})
-    appliance = set((m.get("appliance") or {}).get("settings") or {}) | {"host", "port", "name"}
-    caps = m.get("caps") or {}
-    for key, cap in caps.items():
-        where = f"{name}.{key}"
-        if not cap.get("doc"):
-            errs.append(f"{where}: no doc")
-        if cap.get("risk") not in RISKS:
-            errs.append(f"{where}: risk {cap.get('risk')!r}")
-        if cap.get("scope") not in SCOPES:
-            errs.append(f"{where}: scope {cap.get('scope')!r}")
-        for e in cap.get("effects") or []:
-            if e not in EFFECTS:
-                errs.append(f"{where}: unknown effect {e}")
-        impl = [k for k in ("action", "run") if k in cap]
-        if m.get("builtin") and impl:
-            errs.append(f"{where}: builtin cap with {impl[0]}")
-        if not m.get("builtin") and len(impl) != 1:
-            errs.append(f"{where}: needs exactly one of action | run")
-        args = cap.get("args") or {}
-        for a, spec in args.items():
-            if spec.get("type", "str") not in TYPES:
-                errs.append(f"{where}: arg {a} type {spec.get('type')!r}")
-        act = cap.get("action") or {}
-        kinds = [k for k in act if k not in ("parse", "returns")]
-        if act and (len(kinds) != 1 or kinds[0] not in ACTIONS):
-            errs.append(f"{where}: action types {kinds}")
-        for s in _strings(act):
-            for ref in TEMPLATE.findall(s):
-                head, _, rest = ref.partition(".")
-                ok = (ref in FIXED_VARS or ref.startswith("secret:")
-                      or (head == "args" and rest in args)
-                      or (head == "settings" and rest in settings)
-                      or (head == "appliance" and rest in appliance and "appliance" in m))
-                if not ok:
-                    errs.append(f"{where}: template {{{{{ref}}}}} names nothing declared")
-        ex = act.get("exec") or {}
-        for variant in [ex] + [ex.get(o) or {} for o in ("linux", "windows", "macos", "android")] + list(ex.get("try") or []):
-            argv = variant.get("argv") or []
-            if argv and isinstance(argv[0], str) and "{{args." in argv[0] and cap.get("risk") != "exec":
-                errs.append(f"{where}: binary from an arg needs risk exec")
-    for contract, own in (m.get("provides") or {}).items():
-        if contract.split(".")[0] not in CONTRACTS:
-            errs.append(f"{name}: provides unknown contract {contract}")
-        if not own.startswith(name + ".") or own[len(name) + 1:] not in caps:
-            errs.append(f"{name}: provides {contract} -> {own}, not one of its caps")
-    for rec, spec in (m.get("records") or {}).items():
-        for verb in spec.get("caps") or []:
-            if verb not in RECORD_VERBS:
-                errs.append(f"{name}.{rec}: verb {verb} is not kit-generated")
-    return errs
+    """Errors in one draft, as ``plugin: issue`` lines."""
+    return [f"{m.get('plugin', '?')}: {i}" for i in check(m) if i.level == "error"]
 
 
 # ---- output -------------------------------------------------------------------
@@ -519,7 +462,7 @@ def render(m: dict) -> str:
     clean = {k: m[k] for k in ORDER if k in m}
     clean.update({k: v for k, v in m.items() if k not in clean and not k.startswith("_")})
     head = ["# DRAFT generated by castling/tools/convert.py; edit overlays/, not this file.",
-            "# Converted from: " + ", ".join(sorted(m["_sources"]))]
+            "# Converted from: " + ", ".join(sorted(m.get("_sources", ())))]
     body = yaml.safe_dump(clean, sort_keys=False, allow_unicode=True, width=100)
     return "\n".join(head) + "\n" + body
 
@@ -587,9 +530,13 @@ def main(argv: list[str]) -> int:
     caps, plugins = scan()
     mans, rows = build(caps, plugins, load_decisions())
     apply_overlays(mans)
-    errs = [e for m in mans.values() for e in lint(m)]
+    issues = [(m["plugin"], i) for m in mans.values() for i in check(m)]
+    errs = [f"{p}: {i}" for p, i in issues if i.level == "error"]
     for e in errs:
         print("lint:", e, file=sys.stderr)
+    warned = collections.Counter(i.code for _, i in issues if i.level == "warning")
+    if warned:
+        print("warnings:", ", ".join(f"{c} {n}" for c, n in sorted(warned.items())), file=sys.stderr)
     write(mans)
     write_coverage(coverage_table(mans, rows))
     missing = [r["cap"] for r in rows if r["decision"] != "bin" and not r["found"]]

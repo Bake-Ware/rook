@@ -18,6 +18,10 @@ appliance:
     password:
       secret: true
       setup: Ask the user for the PiKVM web password.
+    verify_tls:
+      type: bool
+      default: false
+      doc: Check the PiKVM's certificate (it ships self-signed).
 caps:
   screen.capture:
     doc: Current screen as a JPEG (preview = 256x144 thumbnail).
@@ -51,7 +55,9 @@ caps:
           - '{{appliance.user}}'
           - '{{appliance.password}}'
         tls:
-          verify: false
+          verify: '{{appliance.verify_tls}}'
+      fail_if:
+        regex: \A\{\s*"ok"\s*:\s*false
       parse: bytes
   hid.type:
     doc: Type a string. `slow=True` adds inter-key delay on the PiKVM side.
@@ -83,7 +89,7 @@ caps:
           - '{{appliance.user}}'
           - '{{appliance.password}}'
         tls:
-          verify: false
+          verify: '{{appliance.verify_tls}}'
   hid.key:
     doc: Press+release a key with optional modifier list (each is a key name).
     risk: exec
@@ -127,7 +133,7 @@ caps:
           - '{{appliance.user}}'
           - '{{appliance.password}}'
         tls:
-          verify: false
+          verify: '{{appliance.verify_tls}}'
   hid.click:
     doc: Click a mouse button (press and release).
     risk: exec
@@ -155,15 +161,13 @@ caps:
           - '{{appliance.user}}'
           - '{{appliance.password}}'
         tls:
-          verify: false
+          verify: '{{appliance.verify_tls}}'
   power.on:
     doc: Press the ATX power button to turn the machine on.
     risk: exec
     scope: local
     effects:
     - physical
-    aliases:
-    - pikvm.power
     action:
       http:
         method: POST
@@ -175,7 +179,7 @@ caps:
           - '{{appliance.user}}'
           - '{{appliance.password}}'
         tls:
-          verify: false
+          verify: '{{appliance.verify_tls}}'
   power.off:
     doc: Turn the machine off (off = soft press, off_hard = hold the button).
     risk: exec
@@ -183,13 +187,11 @@ caps:
     effects:
     - destructive
     - physical
-    aliases:
-    - pikvm.power
     args:
       mode:
         type: str
         enum:
-        - false
+        - 'off'
         - off_hard
         default: 'off'
     action:
@@ -203,7 +205,7 @@ caps:
           - '{{appliance.user}}'
           - '{{appliance.password}}'
         tls:
-          verify: false
+          verify: '{{appliance.verify_tls}}'
   power.reset:
     doc: Press the ATX reset button.
     risk: exec
@@ -211,8 +213,6 @@ caps:
     effects:
     - destructive
     - physical
-    aliases:
-    - pikvm.power
     action:
       http:
         method: POST
@@ -224,7 +224,7 @@ caps:
           - '{{appliance.user}}'
           - '{{appliance.password}}'
         tls:
-          verify: false
+          verify: '{{appliance.verify_tls}}'
   power.status:
     doc: Read ATX state (powered, online, etc).
     risk: read
@@ -241,7 +241,7 @@ caps:
           - '{{appliance.user}}'
           - '{{appliance.password}}'
         tls:
-          verify: false
+          verify: '{{appliance.verify_tls}}'
       returns:
         power: result.leds.power
         hdd: result.leds.hdd

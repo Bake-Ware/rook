@@ -9,6 +9,7 @@ appliance:
   settings:
     user: { default: admin, doc: PiKVM web user. }
     password: { secret: true, setup: Ask the user for the PiKVM web password. }
+    verify_tls: { type: bool, default: false, doc: Check the PiKVM's certificate (it ships self-signed). }
 caps:
   screen.capture:
     doc: Current screen as a JPEG (preview = 256x144 thumbnail).
@@ -20,7 +21,8 @@ caps:
         url: "https://{{appliance.host}}/api/streamer/snapshot"
         query: { save: "0", load: "0", preview: "{{args.preview}}", quality: "{{args.quality}}" }
         auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
-        tls: { verify: false }
+        tls: { verify: "{{appliance.verify_tls}}" }
+      fail_if: { regex: '\A\{\s*"ok"\s*:\s*false' }   # the streamer answers 200 + JSON with no video
       parse: bytes
   hid.type:
     action:
@@ -31,7 +33,7 @@ caps:
         headers: { Content-Type: text/plain; charset=utf-8 }
         body: "{{args.text}}"
         auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
-        tls: { verify: false }
+        tls: { verify: "{{appliance.verify_tls}}" }
   hid.move:
     action:
       http:
@@ -39,7 +41,7 @@ caps:
         url: "https://{{appliance.host}}/api/hid/events/send_mouse_move"
         query: { to_x: "{{args.x}}", to_y: "{{args.y}}" }
         auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
-        tls: { verify: false }
+        tls: { verify: "{{appliance.verify_tls}}" }
   hid.click:
     doc: Click a mouse button (press and release).
     args:
@@ -50,7 +52,7 @@ caps:
         url: "https://{{appliance.host}}/api/hid/events/send_mouse_button"
         query: { button: "{{args.button}}" }   # no state = press and release (kvmd; verify on device)
         auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
-        tls: { verify: false }
+        tls: { verify: "{{appliance.verify_tls}}" }
   power.on:
     doc: Press the ATX power button to turn the machine on.
     effects: [physical]
@@ -60,7 +62,7 @@ caps:
         url: "https://{{appliance.host}}/api/atx/power"
         query: { action: "on" }
         auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
-        tls: { verify: false }
+        tls: { verify: "{{appliance.verify_tls}}" }
   power.off:
     doc: Turn the machine off (off = soft press, off_hard = hold the button).
     args:
@@ -71,7 +73,7 @@ caps:
         url: "https://{{appliance.host}}/api/atx/power"
         query: { action: "{{args.mode}}" }
         auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
-        tls: { verify: false }
+        tls: { verify: "{{appliance.verify_tls}}" }
   power.reset:
     doc: Press the ATX reset button.
     action:
@@ -80,12 +82,12 @@ caps:
         url: "https://{{appliance.host}}/api/atx/power"
         query: { action: reset_hard }
         auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
-        tls: { verify: false }
+        tls: { verify: "{{appliance.verify_tls}}" }
   power.status:
     action:
       http:
         url: "https://{{appliance.host}}/api/atx"
         auth: { basic: ["{{appliance.user}}", "{{appliance.password}}"] }
-        tls: { verify: false }
+        tls: { verify: "{{appliance.verify_tls}}" }
       returns: { power: result.leds.power, hdd: result.leds.hdd, busy: result.busy }
 check: [kvm.power.status]

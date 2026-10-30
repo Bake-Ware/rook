@@ -24,6 +24,7 @@ settings:
   executable:
     type: str
     where: worker
+    apply: restart
     doc: Blank uses Playwright's own Chromium. Set it to use an installed Chromium or Chrome binary; Rook
       still starts it with a fresh throwaway profile, never yours.
   allow_private:
@@ -318,8 +319,6 @@ caps:
         type: int
       close:
         type: int
-    aliases:
-    - browser.tabs
     run: scripts/browser.py:BrowserPlugin.tabs
   list:
     doc: 'The open browser sessions on this worker: name, current url, tab count, headless, who opened

@@ -82,8 +82,6 @@ caps:
       reply_timeout:
         type: int
         default: 8
-    aliases:
-    - voice.speak
     run: scripts/speak_android.py:AndroidSpeakPlugin._speak
   voice.replies:
     doc: 'Recent answers to voice.speak(reply=true), newest last: id (the speech id), text, via (voice/text),

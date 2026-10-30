@@ -10,6 +10,7 @@ settings:
     type: bool
     where: hub
     default: true
+    apply: restart
     doc: 'Needs Knowledge on. Off keeps the wiki and removes the task tools. Read at start: restart the
       hub to apply.'
 caps:
@@ -18,6 +19,9 @@ caps:
     risk: read
     scope: multi-user
     args:
+      kind:
+        type: str
+        default: task
       band:
         type: str
       id:
@@ -27,14 +31,17 @@ caps:
         default: ''
       data:
         type: json
-    aliases:
-    - task.read
     run: scripts/tasks.py:Tasks.read
+    bind:
+      action: read
   write:
     doc: 'Write tasks/projects/concepts: create|update|link|retract|claim|release|note|jot|batch.'
     risk: write
     scope: multi-user
     args:
+      kind:
+        type: str
+        default: task
       band:
         type: str
       id:
@@ -43,6 +50,6 @@ caps:
         type: json
       request_id:
         type: str
-    aliases:
-    - task.write
     run: scripts/tasks.py:Tasks.write
+    bind:
+      action: write

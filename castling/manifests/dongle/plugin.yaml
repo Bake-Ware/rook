@@ -8,6 +8,7 @@ settings:
   port:
     type: str
     where: worker
+    apply: restart
     doc: Blank leaves dongle.* off.
 caps:
   status:
@@ -70,8 +71,6 @@ caps:
       pan:
         type: int
         default: 0
-    aliases:
-    - dongle.mouse
     run: scripts/dongle.py:DonglePlugin.mouse
   hid.click:
     doc: Relative move (-127..127) and/or button tap (bitmask 0..31).
@@ -95,8 +94,6 @@ caps:
       pan:
         type: int
         default: 0
-    aliases:
-    - dongle.mouse
     run: scripts/dongle.py:DonglePlugin.mouse
   hid.scroll:
     doc: Relative move (-127..127) and/or button tap (bitmask 0..31).
@@ -120,8 +117,6 @@ caps:
       pan:
         type: int
         default: 0
-    aliases:
-    - dongle.mouse
     run: scripts/dongle.py:DonglePlugin.mouse
   hid.release:
     doc: Release every key and button the dongle holds on the USB host.

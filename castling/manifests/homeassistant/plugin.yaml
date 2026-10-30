@@ -8,20 +8,24 @@ settings:
   url:
     type: str
     where: worker
+    apply: reload
     doc: e.g. https://192.0.2.20:8123. Blank leaves homeassistant.* off.
   token:
     type: str
     where: worker
     secret: true
+    apply: reload
     doc: 'A long-lived access token (HA: your profile > Security).'
   insecure:
     type: bool
     where: worker
     default: false
+    apply: reload
     doc: For HA's own self-signed certificate (HA OS's default).
   devices:
     type: str
     where: worker
+    apply: reload
     doc: 'HA devices to put on the band, comma-separated: an HA device''s name or id, or band-name=HA
       name. homeassistant.devices lists them.'
 caps:

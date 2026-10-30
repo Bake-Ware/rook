@@ -9,6 +9,7 @@ settings:
   enabled:
     type: bool
     where: hub
+    apply: restart
     doc: 'The home agent remembers people, facts, conversations and skills. Off: it forgets nothing it
       already knows, but reads and writes no memory.'
   auto_remember:
@@ -28,6 +29,7 @@ settings:
   agent_tool:
     type: bool
     where: hub
+    apply: restart
     doc: Lists the rook_memory tool (search, add, forget) for MCP agents. Read when the MCP server starts.
       The memory.* caps work either way.
   deny_patterns:
@@ -105,11 +107,34 @@ settings:
     type: json
     where: hub
     doc: Past it the weakest unpinned memories are archived.
+caps:
+  search:
+    doc: Search memory (keywords, and meaning when embeddings are on).
+    risk: read
+    scope: multi-user
+    effects:
+    - sensitive
+    args:
+      query:
+        type: str
+        default: ''
+      kind:
+        type: str
+      about:
+        type: str
+      limit:
+        type: int
+        default: 5
+      include_archived:
+        type: bool
+        default: false
+    aliases:
+    - memory.recall
+    run: scripts/memory.py:Memory.recall
 records:
   memory:
     fields: {}
     caps:
-    - search
     - get
     - list
     - create
@@ -117,7 +142,6 @@ records:
     - archive
     - delete
     aliases:
-    - memory.recall
     - memory.show
     - memory.remember
     - memory.edit

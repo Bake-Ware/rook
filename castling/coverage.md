@@ -320,12 +320,12 @@ and the smallest fix that would cover it. **Bold** = Bake should decide.
 | hub | core | 1 | builtin | - | hub:info |
 | huddle | agents | 1 | run 1 | - | hub:huddle |
 | job | core | 4 | records 1 + run 4 | - | hub:jobs |
-| knowledge | workbench | 1 | records 1 + run 1 | - | hub:knowledge |
+| knowledge | workbench | 2 | records 1 + run 2 | - | hub:knowledge |
 | kvm | devices | 11 | config 8 + run 3 | hid.click, hid.key, hid.move, hid.type, power.off, power.on, power.reset, power.status, screen.capture | worker:pikvm |
 | llm | core | 3 | builtin | - | hub:llm |
 | location | devices | 3 | run 3 | - | phone:device_android, phone:location_android |
 | media-android | devices | 7 | run 7 | media.next, media.pause, media.play, media.previous, media.seek, media.status, media.stop | phone:media_android |
-| memory | agents | 0 | records 1 | - | hub:memory |
+| memory | agents | 1 | records 1 + run 1 | - | hub:memory |
 | notification-android | devices | 6 | run 6 | notification.act, notification.dismiss, notification.get, notification.list, notification.post, notification.update | phone:attention_android, phone:notify_android |
 | notification-desktop | devices | 1 | config 1 | notification.post | worker:msg |
 | notify | core | 2 | builtin | - | hub:notify |
@@ -341,7 +341,7 @@ and the smallest fix that would cover it. **Bold** = Bake should decide.
 | sms | devices | 2 | run 2 | - | phone:sms_android |
 | sound-android | devices | 3 | run 3 | sound.dnd, sound.set, sound.status | phone:device_android |
 | stream | core | 5 | builtin | - | worker:terminals |
-| task | workbench | 4 | records 1 + run 4 | - | hub:tasks |
+| task | workbench | 5 | records 1 + run 5 | - | hub:tasks |
 | torrent | devices | 8 | config 7 + run 1 | - | worker:deluge |
 | trust | core | 4 | records 1 + run 4 | - | hub:trust |
 | tv | devices | 19 | run 19 | app.launch, app.list, app.open_url, hid.key, hid.type, media.pause, media.play, media.seek, media.stop, notification.post, power.off, power.on, screen.off, screen.on, sound.set | worker:webos |
@@ -353,5 +353,5 @@ and the smallest fix that would cover it. **Bold** = Bake should decide.
 | whiteboard | workbench | 2 | run 2 | - | hub:tasks |
 | worker | core | 6 | builtin | - | phone:device_android, worker:info, worker:log, worker:selfupdate |
 
-Totals: 457 caps today; keep 165, reshape 83, bin 209; 63 manifests, 242 declared caps, 13 record types.
+Totals: 457 caps today; keep 165, reshape 83, bin 209; 63 manifests, 245 declared caps, 13 record types.
 <!-- generated:end -->

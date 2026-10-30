@@ -8,11 +8,13 @@ settings:
   devices:
     type: str
     where: worker
+    apply: reload
     doc: name=serial pairs, comma-separated (playground-tablet=R52N30ABCDE). Each becomes a device worker
       this worker answers for, over adb. Blank leaves adb.* off.
   path:
     type: str
     where: worker
+    apply: reload
     doc: Blank finds adb on PATH.
 caps:
   shell.exec:

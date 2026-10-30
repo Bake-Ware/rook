@@ -9,12 +9,21 @@ package: devices
 platforms:
 - linux
 - windows
+- macos
+- termux
 caps:
   status:
     doc: 'Current battery: percent and state (charging, discharging, full, ...).'
     risk: read
     scope: local
     idempotent: true
+    result:
+      type: map
+      fields:
+        percent:
+          type: float
+        status:
+          type: str
     action:
       exec:
         argv:
@@ -30,5 +39,22 @@ caps:
           - '$b = Get-CimInstance Win32_Battery | Select-Object -First 1; if (-not $b) { exit 3 }; $s
             = @{1=''discharging'';2=''plugged'';3=''full'';6=''charging'';7=''charging'';8=''charging'';9=''charging''}[[int]$b.BatteryStatus];
             ''state: '' + $s; ''percentage: '' + $b.EstimatedChargeRemaining + ''%'''
+        macos:
+          argv:
+          - pmset
+          - -g
+          - batt
+          parse:
+            regex: (?P<percent>\d+)%;\s*(?P<status>[^;]+);
+        termux:
+          argv:
+          - termux-battery-status
+          parse: json
+          returns:
+            percent: percentage
+            status: status
       parse:
         regex: state:\s+(?P<status>[\w-]+)[\s\S]*?percentage:\s+(?P<percent>[\d.]+)%
+hooks:
+  status:
+    call: battery.status
