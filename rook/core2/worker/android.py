@@ -104,5 +104,7 @@ def kick() -> bool:
         running = _running
     if running is None or not running[2].started:
         return False
-    asyncio.run_coroutine_threadsafe(running[2].redial(), running[0])
+    done = asyncio.run_coroutine_threadsafe(running[2].redial(), running[0])
+    done.add_done_callback(lambda f: f.cancelled() or f.exception() is None
+                           or log.error("redial failed: %s", f.exception()))
     return True
