@@ -98,10 +98,6 @@ caps:
     scope: multi-machine
     effects:
     - physical
-    args:
-      action:
-        type: str
-        required: true
     aliases:
     - tv.media
     run: scripts/webos.py:WebOSTV._media
@@ -111,10 +107,6 @@ caps:
     scope: multi-machine
     effects:
     - physical
-    args:
-      action:
-        type: str
-        required: true
     aliases:
     - tv.media
     run: scripts/webos.py:WebOSTV._media
@@ -124,10 +116,6 @@ caps:
     scope: multi-machine
     effects:
     - physical
-    args:
-      action:
-        type: str
-        required: true
     aliases:
     - tv.media
     run: scripts/webos.py:WebOSTV._media
@@ -137,10 +125,6 @@ caps:
     scope: multi-machine
     effects:
     - physical
-    args:
-      action:
-        type: str
-        required: true
     aliases:
     - tv.media
     run: scripts/webos.py:WebOSTV._media

@@ -23,7 +23,7 @@ caps:
     idempotent: true
   add:
     args:
-      torrent: { type: str, required: true, pattern: '^[^\s;''"\\\x00-\x1f\x7f-][^\s;''"\\\x00-\x1f\x7f]*$', doc: Magnet link, .torrent URL or local path (no spaces or backslashes). }
+      torrent: { type: str, required: true, pattern: '^[^\s;''"\\\x00-\x1f\x7f-][^\s;''"\\\x00-\x1f\x7f]*$', doc: "Magnet link, .torrent URL or local path (no spaces or backslashes)." }
     timeout: 45s
     action:
       exec: { argv: ["{{settings.console}}", "add {{args.torrent}}"] }

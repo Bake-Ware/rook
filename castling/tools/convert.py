@@ -68,6 +68,8 @@ CORE_REGISTERED = {
 RECORD_VERBS = ("list", "get", "search", "create", "update", "archive", "delete", "history")
 PY_TYPES = {"str": "str", "int": "int", "float": "float", "bool": "bool", "list": "list",
             "tuple": "list", "dict": "json", "Any": "json", "bytes": "str"}
+# The action-argument a split cap no longer takes (castling-caps rule 1).
+SPLIT_ARGS = ("action", "kind", "op")
 # Args that carry credentials get the type language's `secret` (redacted, vault refs).
 SECRET_ARG = re.compile(r"(token|password|passwd|secret|api_key)$")
 SETTING_WHERE = {"hub": "hub", "band": "hub", "worker": "worker", "user": "person"}
@@ -325,8 +327,12 @@ def build(caps: dict, plugins: dict, decisions: list[dict]) -> tuple[dict, list[
             tags = [t for t in src["tags"] if t not in EFFECT_TAGS]
             if tags:
                 cap["tags"] = tags
-            if src["args"]:
-                cap["args"] = json.loads(json.dumps(src["args"]))
+            args = json.loads(json.dumps(src["args"]))
+            if len(d["new_names"]) > 1:  # a split: the name now says what the argument did
+                for a in SPLIT_ARGS:
+                    args.pop(a, None)
+            if args:
+                cap["args"] = args
             t = src["timeout"]
             if isinstance(t, (int, float)) and not isinstance(t, bool):
                 cap["timeout"] = f"{int(t)}s"
@@ -393,8 +399,8 @@ def merge(base: dict, over: dict) -> dict:
     for k, v in over.items():
         if v is None:
             base.pop(k, None)
-        elif isinstance(v, dict) and isinstance(base.get(k), dict):
-            merge(base[k], v)
+        elif isinstance(v, dict):
+            base[k] = merge(base[k] if isinstance(base.get(k), dict) else {}, v)
         else:
             base[k] = v
     if "action" in over:

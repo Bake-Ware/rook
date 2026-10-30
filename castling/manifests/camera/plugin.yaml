@@ -32,6 +32,9 @@ caps:
         pattern: ^\d{2,5}x\d{2,5}$
     aliases:
     - camera.snap
+    platforms:
+    - linux
+    - android
     timeout: 30s
     action:
       exec:

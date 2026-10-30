@@ -18,12 +18,6 @@ caps:
     risk: read
     scope: multi-user
     args:
-      action:
-        type: str
-        default: deck
-      kind:
-        type: str
-        default: task
       band:
         type: str
       id:
@@ -41,12 +35,6 @@ caps:
     risk: write
     scope: multi-user
     args:
-      action:
-        type: str
-        required: true
-      kind:
-        type: str
-        default: task
       band:
         type: str
       id:

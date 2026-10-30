@@ -66,7 +66,7 @@ caps:
         type: str
         required: true
         pattern: ^[^\s;'"\\\x00-\x1f\x7f-][^\s;'"\\\x00-\x1f\x7f]*$
-        doc: Magnet link
+        doc: Magnet link, .torrent URL or local path (no spaces or backslashes).
     aliases:
     - deluge.add
     timeout: 45s

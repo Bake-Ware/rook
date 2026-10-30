@@ -162,7 +162,6 @@ caps:
     scope: local
     effects:
     - physical
-    args: {}
     aliases:
     - pikvm.power
     action:
@@ -184,6 +183,8 @@ caps:
     effects:
     - destructive
     - physical
+    aliases:
+    - pikvm.power
     args:
       mode:
         type: str
@@ -191,8 +192,6 @@ caps:
         - false
         - off_hard
         default: 'off'
-    aliases:
-    - pikvm.power
     action:
       http:
         method: POST
@@ -212,7 +211,6 @@ caps:
     effects:
     - destructive
     - physical
-    args: {}
     aliases:
     - pikvm.power
     action:

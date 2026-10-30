@@ -54,7 +54,6 @@ caps:
   power.on:
     doc: Press the ATX power button to turn the machine on.
     effects: [physical]
-    args: { action: null }
     action:
       http:
         method: POST
@@ -65,7 +64,6 @@ caps:
   power.off:
     doc: Turn the machine off (off = soft press, off_hard = hold the button).
     args:
-      action: null
       mode: { type: str, enum: [off, off_hard], default: "off" }
     action:
       http:
@@ -76,7 +74,6 @@ caps:
         tls: { verify: false }
   power.reset:
     doc: Press the ATX reset button.
-    args: { action: null }
     action:
       http:
         method: POST

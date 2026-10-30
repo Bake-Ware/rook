@@ -7,6 +7,7 @@ caps:
       camera: { type: int, default: 0, min: 0, doc: Camera index (/dev/video<N> on Linux). }
       quality: null
       resolution: { type: str, default: 1280x720, pattern: '^\d{2,5}x\d{2,5}$' }
+    platforms: [linux, android]   # Windows used ffmpeg dshow with a device name: still Python
     timeout: 30s
     action:
       exec:

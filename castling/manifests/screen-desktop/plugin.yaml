@@ -28,9 +28,7 @@ caps:
         max: 100
       x:
         type: int
-        doc: Region left edge (set x
-        y: null
-        w and h together).: null
+        doc: Region left edge (set x, y, w and h together).
       y:
         type: int
       w:

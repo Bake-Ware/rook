@@ -84,9 +84,6 @@ caps:
     risk: exec
     scope: local
     args:
-      kind:
-        type: str
-        required: true
       text:
         type: str
         default: ''
@@ -138,9 +135,6 @@ caps:
     risk: exec
     scope: local
     args:
-      kind:
-        type: str
-        required: true
       text:
         type: str
         default: ''

@@ -101,9 +101,6 @@ caps:
     risk: write
     scope: multi-user
     args:
-      action:
-        type: str
-        required: true
       band:
         type: str
       id:

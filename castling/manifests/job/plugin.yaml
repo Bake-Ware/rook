@@ -75,9 +75,6 @@ caps:
     risk: read
     scope: multi-user
     args:
-      action:
-        type: str
-        default: list
       id:
         type: str
       query:
@@ -93,9 +90,6 @@ caps:
     risk: read
     scope: multi-user
     args:
-      action:
-        type: str
-        default: list
       id:
         type: str
       query:
@@ -111,9 +105,6 @@ caps:
     risk: write
     scope: multi-user
     args:
-      action:
-        type: str
-        required: true
       id:
         type: str
       data:
@@ -126,9 +117,6 @@ caps:
     risk: write
     scope: multi-user
     args:
-      action:
-        type: str
-        required: true
       id:
         type: str
       data:

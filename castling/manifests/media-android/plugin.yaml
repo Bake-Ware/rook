@@ -27,9 +27,6 @@ caps:
     effects:
     - physical
     args:
-      action:
-        type: str
-        default: toggle
       package:
         type: str
         default: ''
@@ -45,9 +42,6 @@ caps:
     effects:
     - physical
     args:
-      action:
-        type: str
-        default: toggle
       package:
         type: str
         default: ''
@@ -63,9 +57,6 @@ caps:
     effects:
     - physical
     args:
-      action:
-        type: str
-        default: toggle
       package:
         type: str
         default: ''
@@ -81,9 +72,6 @@ caps:
     effects:
     - physical
     args:
-      action:
-        type: str
-        default: toggle
       package:
         type: str
         default: ''
@@ -99,9 +87,6 @@ caps:
     effects:
     - physical
     args:
-      action:
-        type: str
-        default: toggle
       package:
         type: str
         default: ''
@@ -117,9 +102,6 @@ caps:
     effects:
     - physical
     args:
-      action:
-        type: str
-        default: toggle
       package:
         type: str
         default: ''
