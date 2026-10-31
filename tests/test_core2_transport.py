@@ -551,7 +551,7 @@ def test_a_reminted_ticket_for_the_same_call_is_a_new_request(quick_acks):
     arun(main())
 
 
-def test_no_resends_to_a_peer_without_ack_or_after_forget(quick_acks):
+def test_resends_skip_peers_without_ack_and_stop_after_forget(quick_acks):
     async def main():
         relay, hub, worker = await pair()
         worker.serve = None                                # never replies
@@ -561,7 +561,7 @@ def test_no_resends_to_a_peer_without_ack_or_after_forget(quick_acks):
         await hub.t.send(BAND, old)
         await asyncio.sleep(0.4)
         assert sum(1 for m in _msgs(relay) if m.get("id") == old["id"]) == 1
-        hub.t._band(BAND).peers[WORKER].features = FEATURES
+        del hub.t._band(BAND).peers[WORKER]                # not heard yet (a hub that just restarted)
         call = request("shell.exec", {})
         await hub.t.send(BAND, call)
         await until(lambda: sum(1 for m in _msgs(relay) if m.get("id") == call["id"]) >= 3)

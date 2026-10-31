@@ -37,8 +37,8 @@ one connection, one heartbeat and one hub-loss clock per band, 9.4):
   ``ack``. The target of such a request acks it (``{"kind": "ack",
   "from", "ids"}``, batched, after ACK_DELAY unless the reply went out
   first) and resends its reply until the caller acks it; the caller resends
-  a request to a target that announced ``ack`` until it is acked or
-  answered. Both resend after ACK_FIRST, then every ACK_EVERY, for at most
+  a request until it is acked or answered, unless the target announced
+  without ``ack``. Both resend after ACK_FIRST, then every ACK_EVERY, for at most
   ACK_FOR (or until :meth:`forget`), holding at most RESEND_BYTES. A
   request seen again with the same id and ticket nonce is a resend: never
   delivered twice (a re-minted ticket for the same call id is new); a
@@ -294,7 +294,9 @@ class _Band:
                 _remember(self.sent, rid, time.monotonic())
                 self.answered.pop(rid, None)        # sent again (a re-minted ticket): a reply is new
                 self._acked(rid)
-                if peer is not None and "ack" in peer.features:
+                # Unheard peers too: a hub that just restarted calls workers
+                # it remembers before their announce reaches the transport.
+                if peer is None or "ack" in peer.features:
                     resend = rid
             route = self._route_to(target)
             data = _encode(msg)
