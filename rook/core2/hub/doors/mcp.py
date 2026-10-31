@@ -14,10 +14,11 @@ may do. With ``oauth:`` in hub.yaml the door also takes OAuth access tokens
 a 401 names its protected resource metadata
 (``/.well-known/oauth-protected-resource``), which names the hub site as the
 authorization server; a person signs in there and picks the agent the
-connector acts as. Every tool ends at the hub's door API like the HTTP door's routes:
-``call`` goes through dispatch (why, rights, gates, holds, ticket, journal),
-the rest are the hub's read views. The door is stateless: no MCP session
-ids; a caller's calls share their default Rook session unless they start one.
+connector acts as. Every tool ends at the hub's door API like the HTTP
+door's routes: ``call`` goes through dispatch (why, rights, gates, holds,
+ticket, journal), the rest are the hub's read views. The door is stateless:
+no MCP session ids; a caller's calls share their default Rook session unless
+they start one.
 
 Options: ``bind: "127.0.0.1:8741"`` (port 0 picks one), ``path: /mcp``,
 ``origins: [...]``: browser origins allowed in; a request with any other
@@ -273,7 +274,6 @@ class _McpHandler(_Handler):
         except Exception:
             log.exception("mcp request failed")
             return 200, _err(mid, -32603, "internal error")
-
 
     async def _auth(self):
         """A bearer token (tokens.json), else an OAuth access token."""

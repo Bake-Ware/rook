@@ -397,9 +397,10 @@ class Web:
                 return _json(200, oauth.metadata())
             if path == "/oauth/authorize" and method in ("GET", "POST"):
                 return self._authorize(req, method, query)
-            if method != "POST" or path not in ("/oauth/register", "/oauth/token", "/oauth/revoke"):
-                raise _Error(404 if path not in ("/oauth/register", "/oauth/token", "/oauth/revoke") else 405,
-                             "not found" if method == "POST" else "method not allowed")
+            if path not in ("/oauth/register", "/oauth/token", "/oauth/revoke"):
+                raise _Error(404, "not found")
+            if method != "POST":
+                raise _Error(405, "method not allowed")
             if path == "/oauth/register":
                 return _json(201, oauth.register(req._body()))
             form, basic = _form(req), basic_auth(req.headers.get("Authorization", ""))
