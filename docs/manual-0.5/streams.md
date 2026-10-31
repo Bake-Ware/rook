@@ -53,12 +53,30 @@ call worker=rook cap=stream.list args={"kind": "terminal", "open": true} why="Wh
   who takes part. What a stream *says* isn't indexed: read the stream.
 - `stream.get` with `stream` gives one row.
 
-Then read it where it lives: `stream.read` on the row's `worker` (a row with
-`plugin`, such as an agent session, is read through that plugin's caps).
+Then read it where it lives: `stream.read` on the row's `worker`. Rooms,
+huddles, agent and voice sessions live on the hub (`worker: rook`, the row's
+`plugin` says whose), so `stream.read worker=rook` reads them too.
 You see what you could read: owners every stream, a person the ones they
 take part in, an agent acting alone the ones it takes part in that have no
 person. A worker's terminals are gone when it restarts; the index forgets
 them then too.
+
+## Chat rooms
+
+A chat room is a stream on the hub: text from its participants, kept for good.
+
+```
+call worker=rook cap=stream.open args={"title": "Kitchen remodel", "participants": ["person:ann", "agent:house"]} why="..."
+→ {"stream": "s_4a0b…", "kind": "room", …}
+call worker=rook cap=stream.write args={"stream": "s_4a0b…", "body": {"text": "Grey tiles?"}} why="..."
+call worker=rook cap=stream.read args={"stream": "s_4a0b…", "after": 0, "wait": 30} why="..."
+```
+
+You're in the rooms you open; the people and agents you name are in them
+too. Read in a loop with `wait` to follow a room. Whoever opened it (or an
+owner) closes it with `stream.close`; it stays readable. Huddles and agent
+sessions are written through their plugin (`huddle.post`,
+`agents.chat.send`), which also tells the agents involved.
 
 ## What is and isn't there yet
 
@@ -77,5 +95,7 @@ stream: { types: [bytes, status], input: true, durable: false }
 ```
 
 and its `run:` code returns `ctx.stream(...)`, then keeps writing through
-the handle. A hub plugin that keeps streams of its own (`rook.streams.Streams`)
-hands them to `ctx.index_streams(streams)` once, so `stream.list` finds them.
+the handle. A hub plugin opens its streams (sessions, rooms of its own) in
+the hub's one store, `ctx.streams`, with `attrs={"plugin": "<name>", ...}`:
+`stream.list` finds them and `stream.read` reads them, and nothing else
+keeps a store.

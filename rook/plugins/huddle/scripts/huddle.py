@@ -4,8 +4,8 @@ says what they are). One runtime per hub (``_RT``), made by the start hook.
 **Streams.** Each huddle is a durable ``huddle`` stream: posts are ``text``
 events by whoever posted, and the plugin writes ``status`` events for pins,
 calls, gates and outcomes, so the thread is the huddle's whole story.
-The streams live in this plugin's own store (``<data>/huddles.db``) and are
-listed in the hub's stream index (``ctx.index_streams``, ``stream.list``).
+The streams live in the hub's one stream store (``ctx.streams``), so
+``stream.list`` finds them and ``stream.read`` reads them.
 
 **Pins.** Only a person (no agent in the call) or the huddle's chair agent
 (``agent:<chair>``) pins, at an exact version: a PR at its head SHA (a
@@ -50,7 +50,7 @@ import time
 
 from rook.kit._types import parse_duration
 from rook.kit.ctx import Caller, KitError
-from rook.streams import SqliteStore, StreamError, Streams
+from rook.streams import StreamError
 
 log = logging.getLogger("rook.plugin.huddle")
 
@@ -121,8 +121,7 @@ class Runtime:
         self.band = ctx.band
         self.sys = Caller(band=ctx.band, owner=True, plugin="huddle")
         self.sysctx = _with_caller(ctx, self.sys)
-        self.streams = Streams(SqliteStore(str(ctx.data / "huddles.db")), host="hub")
-        ctx.index_streams(self.streams)          # huddles in the hub's stream list (N28)
+        self.streams = ctx.streams               # the hub's one store (castling-streams)
         self.tasks: set[asyncio.Task] = set()
 
     def spawn(self, coro) -> asyncio.Task:
@@ -135,7 +134,6 @@ class Runtime:
         for t in list(self.tasks):
             t.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
-        self.streams.durable.close()
 
     def setting(self, key: str):
         return self.ctx.settings[key]
@@ -484,7 +482,7 @@ async def start(ctx, title, chair=None, project=None):
     if project:
         await rt.level(project)             # refuses a project that doesn't exist
     meta = rt.streams.open("huddle", title=title, producer="huddle", participants=[_actor(ctx)],
-                           attrs={"chair": chair, **({"project": project} if project else {})})
+                           attrs={"plugin": "huddle", "chair": chair, **({"project": project} if project else {})})
     h = ctx.records.huddle.create(title=title, chair=chair, stream=meta.id, state="open",
                                   **({"project": project} if project else {}))
     rt.say(h["id"], f"{_actor(ctx)} opened the huddle; agent:{chair} chairs.", event="started")

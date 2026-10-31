@@ -402,16 +402,17 @@ class Hub:
         self._load_tokens()
 
         self.contracts = Contracts(dict(cfg.contracts))
+        self.streams = hub_streams.HubStreams(self)   # one stream store (ctx.streams) + the index (N28)
         self.plugins = HubPlugins(records=self.records, contracts=self.contracts, call=self.call_as,
                                   emit=self._emit, data_dir=self.data / "plugins", settings=cfg.settings,
                                   resolve_secret=self.vault.setting, band=self.band,
-                                  index_streams=lambda plugin, streams: self.streams.watch(plugin, streams))
+                                  streams=self.streams.streams)
         self.plugins.add_core(self.core)
         builtin_caps.install(self)               # pages, hub, approval, journal, setting: before the library
         vault_caps.install(self)
         backup_caps.install(self)
         self.updates = updates.install(self)     # update.*: core releases and rollouts
-        self.streams = hub_streams.HubStreams(self)   # the stream index (N28): stream.list/get/search
+        self.streams.install()                   # stream.*: the index and the hub's own streams
         self._cache(check(STREAM)[0])            # workers' stream events resolve before any fetch
         self.enroll = Enrollment(self, cfg.enroll)
         self.dispatcher = Dispatcher(hub_id=self.hub_id, op_key=self.op, identities=self.identities,

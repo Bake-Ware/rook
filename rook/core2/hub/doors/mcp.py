@@ -50,7 +50,8 @@ and shown to the person if the call is held.
 - A reply with held: tell the person the hold's name and stop; it runs once they approve \
 (journal call=<id> shows how it went). Never work around a hold or a denial.
 - Caps that answer {"stream": id} (terminals, processes, agent sessions): read and write it with stream. \
-call worker=rook cap=stream.list (or stream.search query=...) finds streams and the worker each is on.
+call worker=rook cap=stream.list (or stream.search query=...) finds streams and the worker each is on; \
+chat rooms live on rook (call worker=rook cap=stream.open args={"title": ...} opens one).
 - Every call is journaled under your token's agent and person; journal reads it back."""
 
 _WHY = {"type": "string", "description": "One plain sentence: why you make this call. Journaled."}
@@ -97,8 +98,9 @@ TOOLS = [
          "project": {"type": "string"}, "task": {"type": "string"},
          "end": {"type": "string", "description": "A session id to end instead."}}}},
     {"name": "stream",
-     "description": "Read a stream a cap opened (from cursor after; pass back next), or write input to it "
-                    "(input={text} keystrokes or a message, {signal: INT}, {resize: [cols, rows]}).",
+     "description": "Read a stream (from cursor after; pass back next), or write input to it "
+                    "(input={text} keystrokes or a message, {signal: INT}, {resize: [cols, rows]}). "
+                    "On worker rook (chat rooms, agent and voice sessions): input={text} says it in a room.",
      "inputSchema": {"type": "object", "required": ["worker", "stream", "why"], "properties": {
          "worker": {"type": "string", "description": "The worker that opened it."},
          "stream": {"type": "string", "description": "The stream id (s_...)."},
@@ -203,8 +205,9 @@ class McpDoor(HttpDoor):
     async def _stream(self, caller, a: dict) -> dict:
         # The worker's stream.read / stream.write (builtin/stream.yaml); stream.list on
         # the hub finds the stream and its worker.
-        if "input" in a:
-            cap, args = "stream.write", {"stream": a.get("stream"), "type": "input", "body": a["input"]}
+        if "input" in a:      # the hub's own streams are rooms: text, not keystrokes
+            kind = "text" if a.get("worker") == "rook" else "input"
+            cap, args = "stream.write", {"stream": a.get("stream"), "type": kind, "body": a["input"]}
         else:
             cap = "stream.read"
             args = {"stream": a.get("stream"), **{k: a[k] for k in ("after", "limit", "wait") if k in a}}

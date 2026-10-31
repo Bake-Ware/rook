@@ -76,8 +76,6 @@ counts as taken when the producer asks for the next one.
 
 ## Not built here
 
-- **`stream.*` caps.** Thin wrappers once the plugin kit (`ctx`, real caps)
-  lands. `ctx.stream(...)` calls `cap_stream` (TODO castling:kit).
 - **Hub relay** (`TODO(castling:relay)`). The design has one fan-out relay
   with one replay buffer, replacing `term_hub`, the console pump and room
   polling; `Meta.wire()` / `Event.wire()` are the shapes it would carry.
@@ -91,9 +89,22 @@ activity, size). `Streams.on_change(sid, change)` hears every change and a
 5 s per stream. A worker sends its rows as `stream.changed` / `stream.deleted`
 events (builtin/stream.yaml) to the hub of the stream's band only
 (`attrs.band`), and all of them again with `stream.synced` after hub contact,
-so a restarted worker's lost terminals leave the index. Hub plugins hand their
-own `Streams` over with `ctx.index_streams(streams)`. A host only changes its
-own rows. The hub serves `stream.list` / `stream.get` / `stream.search`
+so a restarted worker's lost terminals leave the index. A host only changes
+its own rows.
+
+## On the hub: one store
+
+The hub keeps every stream that lives on it in **one** durable `Streams`
+(`<hub data>/stream-events.db`, rook/core2/hub/streams.py), reported straight
+into the index under host `hub`. Hub plugins get it as `ctx.streams` and open
+their streams there with `attrs.plugin` set (agents: `session`, speech:
+`voice`, huddle: `huddle`); none keeps a store of its own. On worker `rook`
+the stream API serves it: `stream.open` (a chat room: kind `room`),
+`stream.read` (by cursor; `wait` long-polls, which is how you follow a
+stream), `stream.write` (a `text` event in a room) and `stream.close`, under
+the index's rights. A stream a plugin owns is written and closed through that
+plugin's caps (`agents.chat.send`, `huddle.post`, `speech.hear`), which do
+their part (wake the agent, tell the roles) besides appending. The hub serves `stream.list` / `stream.get` / `stream.search`
 (rook/core2/hub/streams.py): owners see every row, a person theirs, an agent
 alone its own person-less ones; the same rule the worker applies to reading,
 where the ticket's `owner: true` lets owners in.

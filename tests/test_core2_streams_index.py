@@ -1,8 +1,9 @@
 """The hub's stream index on a real hub and worker (gate R3, N28): a
 worker's streams reach the index as stream.* events for their own band,
-resync after a restart, can't touch another host's rows, hub plugins' own
-streams join through ctx.index_streams, and stream.list / get / search page
-it under each caller's rights. Every test has a hard timeout."""
+resync after a restart, can't touch another host's rows, hub plugins open
+theirs in the hub's one store (ctx.streams), stream.list / get / search page
+it under each caller's rights, and rooms are hub streams (stream.open, read,
+write, close). Every test has a hard timeout."""
 from __future__ import annotations
 
 import asyncio
@@ -21,8 +22,8 @@ from rook.core2.hub.identity import Caller as HubCaller  # noqa: E402
 from rook.core2.hub.runtime import Config as HubConfig, Hub  # noqa: E402
 from rook.core2.transport import LoopbackRelay, Transport, band_of  # noqa: E402
 from rook.core2.worker.runtime import Config, Worker  # noqa: E402
-from rook.kit.ctx import Caller as KitCaller, Ctx  # noqa: E402
-from rook.streams import SqliteStore, StreamIndex, Streams  # noqa: E402
+from rook.kit.ctx import Caller as KitCaller, Ctx, KitError  # noqa: E402
+from rook.streams import StreamIndex  # noqa: E402
 
 PSK = "streams-index-band"
 BAND = band_of(PSK)
@@ -86,7 +87,8 @@ def band(tmp_path):
     cfg = Config(data=tmp_path / "data", anchor=anchor, name="pixel", worker_id=WID,
                  bands=[{"psk": PSK}], plugins=[tmp_path / "local"])
     hub_cfg = HubConfig(data=tmp_path / "hub", band=BAND, users={"bake": {"preset": "owner"},
-                                                                 "ann": {"preset": "adult"}},
+                                                                 "ann": {"preset": "adult"},
+                                                                 "cal": {"preset": "adult"}},
                         agents={"house": {"grants": ["stream.*"]}}, doors={})
 
     def worker():
@@ -231,27 +233,80 @@ def test_worker_rows_stay_its_own_and_its_band(band):
     go(body)
 
 
-def test_hub_plugins_list_their_own_streams_with_ctx_index_streams(band, tmp_path):
+def test_hub_plugins_share_the_hubs_one_store_and_it_is_listed(band):
     async def body():
         hub = band[1]()
         await hub.start()
-        db = SqliteStore(str(tmp_path / "sessions.db"))
-        sessions = Streams(db, host="hub")
-        old = sessions.open("session", title="before the hub listened", participants=[HOUSE])
         ctx = hub.plugins._ctx(hub.plugins.plugins["stream"], KitCaller(plugin="stream"))
-        assert ctx.index_streams(Streams(host="hub"))                   # a hub plugin's ctx reaches it
-        assert hub.streams._reporters.keys() == {"stream"}
-        assert Ctx({"plugin": "x"}, KitCaller()).index_streams(sessions) is False   # no index here
-        hub.streams.watch("agents", sessions)       # what the agents plugin's ctx.index_streams does
-        new = sessions.open("session", title="house with bake", participants=[HOUSE, BAKE])
+        sessions = ctx.streams
+        assert sessions is hub.streams.streams                          # one store, not one per plugin
+        with pytest.raises(KitError):
+            Ctx({"plugin": "x"}, KitCaller()).streams                   # none injected: no streams
+        old = sessions.open("session", title="house alone", participants=[HOUSE], attrs={"plugin": "agents"})
+        new = sessions.open("session", title="house with bake", participants=[HOUSE, BAKE],
+                            attrs={"plugin": "agents"})
         rows = await listed(hub, person=None, agent=HOUSE)
         assert [r["id"] for r in rows] == [old.id]                      # alone: not the one with bake
         assert rows[0]["plugin"] == "agents" and rows[0]["worker"] == "rook" and rows[0]["durable"]
         assert {r["id"] for r in await listed(hub)} == {old.id, new.id}
         assert [r["id"] for r in (await call(hub, "stream.list", {"worker": "rook", "kind": "session",
                                                                   "limit": 1}))["result"]["streams"]] == [new.id]
+        # stream.read reads a plugin's stream under the same rights; writes go through the plugin
+        sessions.append(new.id, "turn", {"role": "reply", "text": "hi bake"}, by="agents.house")
+        got = await call(hub, "stream.read", {"stream": new.id})
+        assert got["ok"] and got["result"]["events"][-1]["data"]["text"] == "hi bake", got
+        assert not (await call(hub, "stream.read", {"stream": new.id}, person=ANN))["ok"]
+        out = await call(hub, "stream.write", {"stream": new.id, "body": {"text": "sneaky"}})
+        assert not out["ok"] and "agents" in out["error"], out
         sessions.delete(old.id)
         assert hub.streams.index.get(old.id) is None
         await hub.stop()
-        db.close()
+        hub = band[1]()                                                 # the store and index outlive the hub
+        await hub.start()
+        assert hub.streams.streams.get(new.id).last_seq == 1
+        assert hub.streams.index.get(new.id)["plugin"] == "agents"
+        await hub.stop()
+    go(body)
+
+
+def test_a_room_is_a_hub_stream(band):
+    async def body():
+        hub = band[1]()
+        await hub.start()
+        out = await call(hub, "stream.open", {"title": "  kitchen   remodel ", "participants": [HOUSE]},
+                         person=ANN)
+        assert out["ok"], out
+        room = out["result"]
+        assert room["kind"] == "room" and room["title"] == "kitchen remodel"
+        assert room["participants"] == [ANN, HOUSE]
+        sid = room["stream"]
+        assert (await call(hub, "stream.write", {"stream": sid, "body": {"text": "tiles?", "mentions": [HOUSE]}},
+                           person=ANN))["result"]["seq"] == 1
+        # follow: a long-poll read wakes on the next write
+        waiting = asyncio.ensure_future(call(hub, "stream.read", {"stream": sid, "after": 1, "wait": 20},
+                                             person=ANN))
+        await asyncio.sleep(0.2)
+        assert not waiting.done()
+        assert (await call(hub, "stream.write", {"stream": sid, "body": {"text": "grey ones"}}, person=None,
+                           agent=HOUSE))["ok"] is False                  # alone, house can't see a person's room
+        assert (await call(hub, "stream.write", {"stream": sid, "body": {"text": "grey ones"}}))["ok"]   # bake: owner
+        got = (await asyncio.wait_for(waiting, 10))["result"]
+        assert [e["data"]["text"] for e in got["events"]] == ["grey ones"] and got["next"] == 2
+        first = (await call(hub, "stream.read", {"stream": sid}, person=ANN))["result"]["events"][0]
+        assert first["by"] == ANN and first["data"] == {"text": "tiles?", "mentions": [HOUSE]}
+        # in the index for its people only
+        assert [r["id"] for r in await listed(hub, person=ANN)] == [sid]
+        assert await listed(hub, person="person:cal") == []
+        assert not (await call(hub, "stream.read", {"stream": sid}, person="person:cal"))["ok"]
+        assert not (await call(hub, "stream.write", {"stream": sid, "body": {"text": "hi"}}, person="person:cal"))["ok"]
+        # bad args are refused before anything opens
+        assert not (await call(hub, "stream.open", {"title": "x", "kind": "session"}, person=ANN))["ok"]
+        assert not (await call(hub, "stream.open", {"title": "x", "participants": ["bob"]}, person=ANN))["ok"]
+        assert not (await call(hub, "stream.open", {"title": "   "}, person=ANN))["ok"]
+        # only its opener (or an owner) closes it; closed rooms stay readable
+        assert not (await call(hub, "stream.close", {"stream": sid}, person=None, agent=HOUSE))["ok"]
+        assert (await call(hub, "stream.close", {"stream": sid}, person=ANN))["result"]["closed"]
+        assert not (await call(hub, "stream.write", {"stream": sid, "body": {"text": "late"}}, person=ANN))["ok"]
+        assert len((await call(hub, "stream.read", {"stream": sid}, person=ANN))["result"]["events"]) == 3
+        await hub.stop()
     go(body)
