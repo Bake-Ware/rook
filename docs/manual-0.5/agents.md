@@ -66,7 +66,7 @@ Agents that need you go through the house agent.
 - On Telegram or Discord: link your account once (`telegram.link` or
   `discord.link`, then send the code to the bot), and a direct message to
   the bot goes to the house agent in your session with it; the bot sends
-  the reply. The `agents.chat_agent` setting picks another agent; blank
+  the reply. The `agent.chat_agent` setting picks another agent; blank
   turns it off.
 
 Each person has their own session with an agent, kept and resumed next
