@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import base64
 import http.client
+import itertools
 import json
 import math
 import os
@@ -91,11 +92,10 @@ class Door:
 
 
 class Mcp(Door):
-    _id = 0
+    _ids = itertools.count(1)
 
     def rpc(self, method: str, params: dict | None = None) -> dict:
-        Mcp._id += 1
-        status, body = self.request("POST", "/mcp", {"jsonrpc": "2.0", "id": Mcp._id, "method": method,
+        status, body = self.request("POST", "/mcp", {"jsonrpc": "2.0", "id": next(Mcp._ids), "method": method,
                                                      "params": params or {}})
         if status != 200 or not isinstance(body, dict):
             return {"ok": False, "error": f"http {status}: {str(body)[:200]}"}
@@ -652,7 +652,9 @@ def run(args) -> int:
             print(f"  {time.strftime('%H:%M:%S')} {rec.count} ops", flush=True)
     except KeyboardInterrupt:
         print("interrupted: stopping", flush=True)
-    stop.set()
+    finally:     # never leave the relay paused
+        stop.set()
+        subprocess.run(["systemctl", "--user", "kill", "--signal=CONT", UNITS["relay"]], timeout=30)
     for t in threads:
         t.join(TIMEOUT + 30)
     rec.event("end")
