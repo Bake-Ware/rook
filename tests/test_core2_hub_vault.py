@@ -175,3 +175,36 @@ def test_cli_sets_lists_deletes_and_recovers(tmp_path):
     assert Vault(b.parent / "data").unlock().get("gh") == "ghp_cli"
     assert cli(b, "secret", "delete", "gh").returncode == 0 and cli(b, "secret", "list").stdout == ""
     assert cli(b, "secret", "delete", "gh").returncode == 2
+
+
+def test_the_recovery_key_owners_see_always_opens_it(tmp_path):
+    data = hub_data(tmp_path)
+    Vault(data).unlock().set("a", "b", by="t")
+    (data / "keys" / "recovery.key").unlink()     # lost, then made again on the next start
+    Vault(data).unlock()
+    shown = recovery_key(data)
+    other = hub_data(tmp_path, "other")
+    (other / "vault.db").write_bytes((data / "vault.db").read_bytes())
+    v = Vault(other)
+    v.recover(shown)
+    assert v.get("a") == "b"
+
+
+def test_two_openers_of_a_new_vault_share_one_key(tmp_path):
+    import threading
+    data = hub_data(tmp_path)
+    vaults, errors = [Vault(data) for _ in range(8)], []
+
+    def go(v):
+        try:
+            v.unlock()
+        except Exception as e:      # noqa: BLE001
+            errors.append(e)
+    threads = [threading.Thread(target=go, args=(v,)) for v in vaults]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=20)
+    assert not errors
+    vaults[0].set("k", "v", by="t")
+    assert all(v.get("k") == "v" for v in vaults)

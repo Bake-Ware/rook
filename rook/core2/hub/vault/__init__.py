@@ -110,15 +110,18 @@ class Vault:
 
     def unlock(self) -> "Vault":
         """Open the data key with the hub's root key; a new vault gets a new
-        data key, kept under the root key and the owner's recovery key
-        (made now if the hub has none yet). Raises :class:`Locked` when the
-        file was sealed by another hub."""
+        data key. The key is kept under the root key and under the recovery
+        key owners are shown (made now if the hub has none yet; re-sealed if
+        that key changed), so the shown key always opens it. Raises
+        :class:`Locked` when the file was sealed by another hub."""
         from rook.core2.enroll.hub import recovery_key
 
         root = root_box(self.data)
         with self._lock:
             db = self._db()
+            db.isolation_level = None
             try:
+                db.execute("BEGIN IMMEDIATE")      # one data key, even if the CLI opens it at the same time
                 wraps = dict(db.execute("SELECT kind, box FROM wraps"))
                 if "root" in wraps:
                     try:
@@ -126,15 +129,22 @@ class Vault:
                     except nacl.exceptions.CryptoError:
                         raise Locked("vault.db was sealed by another hub's root key: run recover-vault "
                                      "with the owner's recovery key") from None
-                    if "recovery" not in wraps:
-                        self._wrap(db, "recovery", recovery_box(recovery_key(self.data)), dek)
+                elif db.execute("SELECT 1 FROM secrets LIMIT 1").fetchone():
+                    raise Locked("vault.db has secrets but no keys: it can't be opened")
                 else:
-                    if db.execute("SELECT 1 FROM secrets LIMIT 1").fetchone():
-                        raise Locked("vault.db has secrets but no keys: it can't be opened")
                     dek = nacl.utils.random(32)
-                    self._wrap(db, "root", root, dek)
-                    self._wrap(db, "recovery", recovery_box(recovery_key(self.data)), dek)
+                    db.execute("INSERT INTO wraps VALUES ('root', ?)", (root.encrypt(dek),))
+                rec = recovery_box(recovery_key(self.data))
+                try:
+                    ok = rec.decrypt(wraps["recovery"]) == dek
+                except (KeyError, nacl.exceptions.CryptoError):
+                    ok = False
+                if not ok:
+                    db.execute("INSERT OR REPLACE INTO wraps VALUES ('recovery', ?)", (rec.encrypt(dek),))
+                db.execute("COMMIT")
             finally:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
                 db.close()
             self._box = nacl.secret.SecretBox(dek)
         return self

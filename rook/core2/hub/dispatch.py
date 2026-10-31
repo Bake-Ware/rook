@@ -682,7 +682,9 @@ def _resolved(before: Any, after: Any) -> list[str]:
     if isinstance(after, str):
         if after == before or not after:
             return []
-        if isinstance(before, str) and REF.search(before):    # "Bearer {{secret:x}}": just the value
+        # "Bearer {{secret:x}}": just the value (a few references per string;
+        # past that the whole string, which keeps the match linear enough).
+        if isinstance(before, str) and 0 < len(REF.findall(before)) <= 3:
             m = re.fullmatch("(.*?)".join(map(re.escape, REF.split(before)[::2])), after, re.DOTALL)
             if m:
                 return [g for g in m.groups() if g]
