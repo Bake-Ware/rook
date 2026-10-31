@@ -69,7 +69,6 @@ caps:
     scope: external
     idempotent: true
     timeout: 30s
-    aliases: [decide.health, decide.info]
     run: scripts/decide.py:status
     result: { type: map }
   drive:

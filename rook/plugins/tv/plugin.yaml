@@ -35,7 +35,6 @@ caps:
     scope: local
     idempotent: true
     timeout: 20s
-    aliases: [tv.apps]
     run: scripts/tv.py:app_list
   inputs:
     doc: "External inputs (HDMI...): {items: [{id, label, app, connected}]}."
@@ -50,7 +49,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 20s
-    aliases: [tv.toast]
     args:
       text: { type: str, required: true, max: 500 }
       title: { type: str, max: 100, doc: Shown before the text. }
@@ -61,7 +59,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 20s
-    aliases: [tv.launch]
     args:
       app: { type: str, required: true, max: 200 }
       params: { type: json }
@@ -72,7 +69,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 20s
-    aliases: [tv.input]
     args:
       input: { type: str, required: true, max: 50 }
     run: scripts/tv.py:set_input
@@ -82,7 +78,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 30s
-    aliases: [tv.volume]
     args:
       level: { type: int, min: 0, max: 100 }
       step: { type: int, min: -20, max: 20 }
@@ -127,7 +122,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 20s
-    aliases: [tv.button]
     args:
       key:
         type: str
@@ -144,7 +138,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 30s
-    aliases: [tv.type]
     args:
       text: { type: str, default: "", max: 500 }
       enter: { type: bool, default: false, doc: Press Enter after the text. }
@@ -157,7 +150,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 20s
-    aliases: [tv.open_url]
     args:
       url: { type: str, required: true, max: 2000, pattern: "^[Hh][Tt][Tt][Pp][Ss]?://" }
     run: scripts/tv.py:open_url
@@ -181,7 +173,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 20s
-    aliases: [tv.power_off]
     args:
       force: { type: bool, default: false }
     run: scripts/tv.py:power_off
@@ -191,7 +182,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 90s
-    aliases: [tv.power_on]
     args:
       wait: { type: int, default: 20, min: 0, max: 60 }
     run: scripts/tv.py:power_on

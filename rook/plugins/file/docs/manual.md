@@ -14,5 +14,3 @@ elevate: for a file the worker can't reach, use `shell.exec` with elevation.
 
 Errors name the path: `not found: /x`, `permission denied: /x`,
 `is a directory: /x`.
-
-Old names: `file.exists` still answers (it is `file.stat`).

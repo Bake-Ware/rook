@@ -39,7 +39,6 @@ caps:
     risk: exec
     scope: local
     timeout: 610s
-    aliases: [android.shell.exec]
     args:
       argv: { type: list, items: { type: str }, doc: "The command and its arguments; give argv or cmd." }
       cmd: { type: str, doc: A line for the device's /system/bin/sh. }
@@ -57,7 +56,6 @@ caps:
     scope: local
     idempotent: true
     timeout: 20s
-    aliases: [android.battery.status]
     result:
       type: map
       fields:
@@ -74,7 +72,6 @@ caps:
     effects: [sensitive]
     idempotent: true
     timeout: 60s
-    aliases: [android.screenshot.capture]
     args:
       quality: { type: int, min: 1, max: 100, doc: "JPEG quality; blank: 85." }
     result: { type: file, doc: A JPEG or PNG. }
@@ -86,7 +83,6 @@ caps:
     effects: [sensitive]
     idempotent: true
     timeout: 45s
-    aliases: [android.ui.text]
     args:
       limit: { type: int, min: 1, doc: Most elements to return. }
     result:
@@ -105,7 +101,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 240s
-    aliases: [android.hid.type]
     args:
       text: { type: str, required: true, max: 2000 }
       enter: { type: bool, default: false, doc: Press Enter after the text. }
@@ -116,7 +111,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 20s
-    aliases: [android.hid.key_combo]
     args:
       key: { type: str, required: true, pattern: "^[A-Za-z0-9_]{1,40}$" }
       mods: { type: list, items: { type: str, enum: [ctrl, shift, alt, meta] }, default: [] }
@@ -127,7 +121,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 20s
-    aliases: [android.hid.mouse.click]
     args:
       x: { type: int, min: 0, max: 20000 }
       y: { type: int, min: 0, max: 20000 }
@@ -139,7 +132,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 30s
-    aliases: [android.hid.mouse.drag]
     args:
       x1: { type: int, required: true, min: 0, max: 20000 }
       y1: { type: int, required: true, min: 0, max: 20000 }

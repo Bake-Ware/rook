@@ -72,7 +72,6 @@ def test_list_parses_each_torrent(deluge):
     assert run("torrent.list") == [
         {"state": "S", "progress": 100.0, "name": "ubuntu-24.04.iso", "id": H1},
         {"state": "D", "progress": 42.5, "name": "Some Show S01E01", "id": H2}]
-    assert run("deluge.list") == run("torrent.list")   # the 0.4 name still works
 
 
 def test_daemon_down_is_an_error_not_an_empty_list(deluge, monkeypatch):

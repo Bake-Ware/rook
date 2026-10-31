@@ -63,7 +63,6 @@ caps:
     effects: [physical]
     exclusive: dongle
     timeout: 10s
-    aliases: [dongle.keyboard, dongle.consumer]
     args:
       keys: { type: list, items: { type: int, min: 0, max: 255 }, max: 6 }
       mods: { type: int, default: 0, min: 0, max: 255 }
@@ -76,7 +75,6 @@ caps:
     effects: [physical]
     exclusive: dongle
     timeout: 10s
-    aliases: [dongle.mouse]
     args:
       x: { type: int, default: 0, min: -2032, max: 2032 }
       y: { type: int, default: 0, min: -2032, max: 2032 }
@@ -112,7 +110,6 @@ caps:
     idempotent: true
     exclusive: dongle
     timeout: 10s
-    aliases: [dongle.release]
     run: scripts/dongle.py:release
 provides: [hid.key, hid.click]
 docs: { manual: docs/manual.md }

@@ -41,9 +41,6 @@ volume_down, mute, notifications, search, a letter or digit.
 - `serial`: the device's adb serial (from `adb.scan`). Blank uses the
   instance's name as the serial.
 
-Old names (`android.shell.exec`, `android.battery.status`,
-`android.screenshot.capture`, `android.ui.text`, `android.hid.type`,
-`android.hid.key_combo`, `android.hid.mouse.click`, `android.hid.mouse.drag`)
-still work for this release. `hid.key_combo`'s `keys="ctrl+a"` is now
+The 0.4 `android.*` names are gone (0.5 is a clean cut). `hid.key_combo`'s `keys="ctrl+a"` is now
 `key=a, mods=[ctrl]`. `adb.list` is gone: devices are listed with the other
 appliances. `device.info` is not ported (use `adb.shell.exec` with `getprop`).

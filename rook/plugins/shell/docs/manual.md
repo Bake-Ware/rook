@@ -49,5 +49,3 @@ keep it.
 
 Windows: `pty=true` isn't available yet (ConPTY isn't ported); `pty=false`
 works.
-
-Old names: `shell.env.get` still answers.

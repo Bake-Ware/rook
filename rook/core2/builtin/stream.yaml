@@ -24,7 +24,6 @@ caps:
     scope: self
     idempotent: true
     timeout: 60s
-    aliases: [work.stream.read]
     args:
       stream: { type: str, required: true, pattern: "^s_[0-9a-f]{16}$" }
       after: { type: int, default: 0, min: 0 }
@@ -39,7 +38,6 @@ caps:
       type, so this is exec.
     risk: exec
     scope: local
-    aliases: [work.stream.write]
     args:
       stream: { type: str, required: true, pattern: "^s_[0-9a-f]{16}$" }
       type: { type: str, enum: [input], default: input }
@@ -55,7 +53,6 @@ caps:
     risk: read
     scope: self
     idempotent: true
-    aliases: [work.stream.list]
     args:
       kind: { type: str, doc: "terminal, process, ..." }
       open: { type: bool, default: false, doc: Only streams still open. }
@@ -69,7 +66,6 @@ caps:
       terminal's process gets SIGHUP).
     risk: write
     scope: self
-    aliases: [work.stream.close]
     args:
       stream: { type: str, required: true, pattern: "^s_[0-9a-f]{16}$" }
     result: { type: map }

@@ -17,7 +17,6 @@ caps:
     effects: [personal]
     idempotent: true
     timeout: 10s
-    aliases: [media.now]
     result: { type: map }
     run: scripts/media.py:status
   media.play:

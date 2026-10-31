@@ -166,7 +166,7 @@ def test_screen_capture(kvmd):
     assert base64.b64decode(res["data"]) == JPEG and res["mime"] == "image/jpeg"
     # Full size by default: its pixels are what hid.click's x and y mean.
     assert last(kvmd)["query"] == {"save": "0", "load": "0", "preview": "false"}
-    call(kvmd, "pikvm.snap", {"preview": True, "quality": 70})
+    call(kvmd, "kvm.screen.capture", {"preview": True, "quality": 70})
     assert last(kvmd)["query"] == {"save": "0", "load": "0", "preview": "true", "quality": "70"}
 
 
@@ -192,7 +192,7 @@ def test_key_names_and_mods(kvmd):
     assert last(kvmd)["query"] == {"keys": "ControlLeft,AltLeft,Delete"}
     call(kvmd, "kvm.hid.key", {"key": "c"})
     assert last(kvmd)["query"] == {"keys": ",KeyC"}   # kvmd drops the empty item
-    call(kvmd, "pikvm.key", {"key": "NumpadEnter", "mods": ["meta"]})   # raw kvmd names pass through
+    call(kvmd, "kvm.hid.key", {"key": "NumpadEnter", "mods": ["meta"]})   # raw kvmd names pass through
     assert last(kvmd)["query"] == {"keys": "MetaLeft,NumpadEnter"}
     call(kvmd, "kvm.hid.key", {"key": "7"})
     assert last(kvmd)["query"] == {"keys": ",Digit7"}
@@ -218,7 +218,7 @@ def test_click_without_and_with_a_pixel(kvmd):
     assert [(s["path"], s["query"]) for s in kvmd.seen] == [
         ("/api/hid/events/send_mouse_button", {"button": "left"})]
     kvmd.seen.clear()
-    call(kvmd, "pikvm.mouse.click", {"button": "right", "x": 1919, "y": 0})
+    call(kvmd, "kvm.hid.click", {"button": "right", "x": 1919, "y": 0})
     assert [(s["method"], s["path"], s["query"]) for s in kvmd.seen] == [
         ("GET", "/api/streamer", {}),
         ("POST", "/api/hid/events/send_mouse_move", {"to_x": "32767", "to_y": "-32768"}),
@@ -253,8 +253,8 @@ def test_raw_api(kvmd):
     assert call(kvmd, "kvm.api_get", {"path": "/api/atx"})["json"]["result"]["leds"]["power"] is True
     assert call(kvmd, "kvm.api_get", {"path": "/api/log"}) == {"status": 200, "text": "kvmd log line\n"}
     assert call(kvmd, "kvm.api_get", {"path": "/api/nope"})["status"] == 404   # passed back, not raised
-    res = call(kvmd, "pikvm.api.post", {"path": "/api/hid/events/send_key",
-                                        "query": {"key": "KeyA", "finish": True}})
+    res = call(kvmd, "kvm.api_post", {"path": "/api/hid/events/send_key",
+                                      "query": {"key": "KeyA", "finish": True}})
     assert res == {"status": 200, "json": {"ok": True, "result": {}}}
     assert last(kvmd)["query"] == {"key": "KeyA", "finish": "true"}
     call(kvmd, "kvm.api_post", {"path": "/api/hid/print", "body_b64": base64.b64encode(b"x").decode(),

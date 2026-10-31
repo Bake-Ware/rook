@@ -25,7 +25,6 @@ caps:
     scope: local
     effects: [sensitive]
     idempotent: true
-    aliases: [pikvm.snap]
     args:
       preview: { type: bool, default: false, doc: "true: kvmd's small thumbnail (cheap to look at; not click coordinates)." }
       quality: { type: int, min: 1, max: 100, doc: "JPEG quality; blank: the PiKVM's default." }
@@ -43,7 +42,6 @@ caps:
     risk: exec
     scope: local
     effects: [physical]
-    aliases: [pikvm.type]
     args:
       text: { type: str, required: true }
       enter: { type: bool, default: false, doc: Press Enter after the text., map: { "true": "\n", "false": "" } }
@@ -62,7 +60,6 @@ caps:
     risk: exec
     scope: local
     effects: [physical]
-    aliases: [pikvm.key]
     args:
       key:
         type: str
@@ -99,7 +96,6 @@ caps:
     risk: exec
     scope: local
     effects: [physical]
-    aliases: [pikvm.mouse.move]
     args:
       x: { type: int, required: true, min: -32768, max: 32767 }
       y: { type: int, required: true, min: -32768, max: 32767 }
@@ -116,7 +112,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 20s
-    aliases: [pikvm.mouse.click]
     args:
       x: { type: int, min: 0 }
       y: { type: int, min: 0 }
@@ -165,7 +160,6 @@ caps:
     risk: read
     scope: local
     idempotent: true
-    aliases: [pikvm.power.status]
     result:
       type: map
       fields: { power: { type: bool }, hdd: { type: bool }, busy: { type: bool } }
@@ -181,7 +175,6 @@ caps:
     scope: local
     effects: [sensitive]
     timeout: 30s
-    aliases: [pikvm.api.get]
     args:
       path: { type: str, required: true, pattern: "^/api/[A-Za-z0-9_./-]*$", doc: "An /api/ path, e.g. /api/info." }
       query: { type: json, doc: "Query parameters as an object of strings, numbers or bools." }
@@ -192,7 +185,6 @@ caps:
     scope: local
     effects: [destructive, physical]
     timeout: 30s
-    aliases: [pikvm.api.post]
     args:
       path: { type: str, required: true, pattern: "^/api/[A-Za-z0-9_./-]*$", doc: "An /api/ path, e.g. /api/hid/events/send_key." }
       query: { type: json, doc: "Query parameters as an object of strings, numbers or bools." }

@@ -42,12 +42,10 @@ def test_notify_send_takes_text_as_data(bins):
     assert two["argv"] == ["-a", "rook", "--", "Rook", "plain"]
 
 
-def test_msg_send_alias(bins):
+def test_unknown_args_are_refused(bins):
     bins.add("notify-send")
-    run("notification-desktop", "msg.send", {"text": "hi"})
-    assert bins.calls("notify-send")[0]["argv"][-1] == "hi"
     with pytest.raises(CallError, match="'sender' was unexpected"):
-        run("notification-desktop", "msg.send", {"text": "hi", "sender": "ops"})
+        notify({"text": "hi", "sender": "ops"})
 
 
 def test_macos_and_windows_read_the_text_from_the_environment(bins):
@@ -129,7 +127,3 @@ def test_windows_powershell_writes_rook_out(bins):
     call = bins.calls("powershell")[0]
     assert call["env"]["ROOK_OUT"].endswith("s.jpg") and "CopyFromScreen" in call["argv"][-1]
 
-
-def test_screenshot_alias(bins):
-    bins.add("grim", WRITE_JPEG)
-    is_jpeg_file(run("screen-desktop", "screenshot.capture", {"quality": 10}))

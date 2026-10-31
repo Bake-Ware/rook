@@ -57,7 +57,6 @@ caps:
     scope: local
     effects: [sensitive]
     idempotent: true
-    aliases: [shell.env.get]
     args:
       name: { type: str }
       prefix: { type: str }

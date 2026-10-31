@@ -31,5 +31,3 @@ an option. Use the hash for a torrent whose name has spaces.
 ## Settings
 
 - `console` (worker): the deluge-console program, default `deluge-console` on PATH.
-
-Old names (`deluge.list`, `deluge.files`, ...) still work for this release.

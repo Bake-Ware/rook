@@ -256,7 +256,7 @@ def test_type_refuses_non_ascii(adb):
 def test_keys(adb):
     call("adb.hid.key", {"key": "home"})
     call("adb.hid.key", {"key": "a", "mods": ["ctrl", "shift", "ctrl"]})
-    call("android.hid.key_combo", {"key": "KEYCODE_CAMERA"})
+    call("adb.hid.key", {"key": "KEYCODE_CAMERA"})
     assert remotes(adb) == ["input keyevent KEYCODE_HOME",
                             "input keycombination KEYCODE_CTRL_LEFT KEYCODE_SHIFT_LEFT KEYCODE_A",
                             "input keyevent KEYCODE_CAMERA"]
@@ -300,10 +300,10 @@ def test_input_failure_is_an_error(adb):
         call("adb.hid.type", {"text": "fail"})
 
 
-def test_aliases_reach_the_caps(adb):
-    for old, new in [("android.shell.exec", "adb.shell.exec"), ("android.ui.text", "adb.ui.screen"),
-                     ("android.hid.key_combo", "adb.hid.key"), ("android.hid.mouse.click", "adb.hid.click")]:
-        assert PLUGIN.caps[old] is PLUGIN.caps[new]
+def test_no_04_names(adb):
+    """castling-protocol (Bake): "Clean cut: no 0.4/0.5 compatibility." """
+    for old in ("android.shell.exec", "android.ui.text", "android.hid.key_combo", "android.hid.mouse.click"):
+        assert old not in PLUGIN.caps
 
 
 def test_adb_missing_makes_the_plugin_unavailable(bins):

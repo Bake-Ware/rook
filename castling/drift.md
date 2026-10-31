@@ -530,7 +530,7 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
   `android.*`, `device.*`, `ccmod.*`, `pikvm.*`, `deluge.*`, `work.stream.*`, `attention.post` ...);
   dispatch resolves them (`_target_for`). The alias rule is for renames within 0.5 releases.
   *Fix:* drop the 0.4 names, or keep them to cutover + 1 release and say so in the switchover
-  decisions.
+  decisions. **Fixed:** PR #349 (c8/ops-cuts): all 91 dropped; the mechanism stays for 0.5 renames.
 - **25. Child `approve_new` (over-built).** castling-design: "Deferred: kids and guest accounts";
   castling-manifest-presets: "Bake, Oct 30: canned, don't overthink." Built: a per-person "first
   call of each cap waits for an owner" queue (`rights.py:26`, `core.yaml:518`, `identity.py:160`,
@@ -548,6 +548,7 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
 - **27. `github` in core (over-built, package).** castling-dashboard: "**Core:** workers, settings,
   approvals ..., journal." `rook/plugins/github/plugin.yaml:12` `package: core` with
   `writers: [huddle]`. *Fix:* `package: workbench`; the sign-off rule (#3) replaces `writers`.
+  **Fixed by** PR #333 (`package: workbench`, `writers` gone).
 - **28. Jobs notify the person directly (over-built, minor).** castling-agents: "**Channels are
   changeable, not fixed rules.** The house agent picks channel, device and timing"; "Other agents
   ... ask the house agent to get word to the stakeholder." `jobs.py:461-487, 605` call
@@ -558,6 +559,7 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
   castling-dashboard: tasks are not core. `desktop/src-tauri/src/hub05.rs:108-135` hard-codes Work
   (`task.list`), Knowledge and Sessions tabs that assume the workbench. Source: wave6
   `desktop.txt`. *Fix:* show holds + `pages.list` + the dock, or show tabs only when the caps exist.
+  **Fix in** PR #352 (c8/ops-desktop): on 0.5 the panel shows holds, pages and the house agent only (split out of #349: its macOS job can't run).
 - **30. No attention job on the hub (missing, known).** castling-attention: "Attention becomes an
   **aggregation job on the hub** run by the house agent". Nothing consumes
   `notification-android.received`/`sms.received`; the 0.5 phone plugin posts through the 0.4
@@ -622,6 +624,9 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
   `<data>/webhook.key` (`jobs.py:870`), not the vault.
 - **Smallest fix.** Freeze the format; mark unused keys "reserved"; drop the unused code paths
   until a plugin needs them; move the jobs webhook onto core route auth (key in the vault).
+- **Partly fixed:** PR #349: format frozen at 1.2, unused keys marked reserved
+  (`conformance/manifest/README.md`, castling-manifest pages); their code and the jobs webhook move
+  are left (vectors shared with other validators; churn without a user).
 
 ## Watch items (ask Bake; not drift yet)
 

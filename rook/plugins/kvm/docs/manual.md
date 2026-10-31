@@ -36,7 +36,5 @@ also works as is.
 
 The host name may carry a port (`kvm.lan:8443`).
 
-Old names (`pikvm.snap`, `pikvm.type`, `pikvm.key`, `pikvm.mouse.move`,
-`pikvm.mouse.click`, `pikvm.power.status`, `pikvm.api.get`, `pikvm.api.post`)
-still work for this release. `pikvm.power` (one cap with an `action`) is now
+The 0.4 `pikvm.*` names are gone (0.5 is a clean cut). `pikvm.power` (one cap with an `action`) is now
 `power.on` / `power.off` / `power.reset`.
