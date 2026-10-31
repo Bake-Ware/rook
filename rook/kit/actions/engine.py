@@ -40,7 +40,7 @@ async def run_action(action: Mapping, args: Mapping | None = None, *,
                      worker: Mapping | None = None, secrets: SecretResolver | None = None,
                      tmp: str | None = None, plugin_dir: str | None = None,
                      plugin_data: str | None = None, timeout: float = 30.0,
-                     cap: Mapping | None = None) -> Any:
+                     cap: Mapping | None = None, launch: Callable | None = None) -> Any:
     """Run one action and return its parsed result.
 
     ``settings``/``appliance`` values may be ``Secret`` (resolved vault
@@ -49,7 +49,9 @@ async def run_action(action: Mapping, args: Mapping | None = None, *,
     returning the value or None. ``cap`` is the cap's spec: its args' ``map``
     and ``join`` shape how args render, and its ``result`` type is what the
     parsed output is coerced to. Raises ``ActionError`` (``Unavailable`` when
-    the action can't run on this worker); messages are redacted.
+    the action can't run on this worker); messages are redacted. ``launch``
+    starts an ``exec`` process (``launch(argv, **subprocess kwargs)``): on a
+    worker, core's launch path with the call's lease (spec 7.1).
     """
     kinds = [k for k in action if k not in ACTION_KEYS]
     if not kinds:
@@ -70,7 +72,7 @@ async def run_action(action: Mapping, args: Mapping | None = None, *,
     scope = Scope(args=_mapped(args or {}, arg_specs), settings=settings or {}, appliance=appliance,
                   worker=worker, secrets=await _resolve(secret_names(spec), secrets),
                   tmp=tmp, plugin_dir=plugin_dir, plugin_data=plugin_data,
-                  joins={n: a["join"] for n, a in arg_specs.items() if "join" in a})
+                  joins={n: a["join"] for n, a in arg_specs.items() if "join" in a}, launch=launch)
     try:
         async with asyncio.timeout(timeout):
             data, default, name, mime = await runner(spec, scope)
@@ -198,7 +200,9 @@ async def _exec(spec: Mapping, scope: Scope):
         argv = render_argv(cand.get("argv") or [], scope)
         if not argv:
             raise ActionError("exec has no argv")
-        env = {**os.environ, **render_map(cand.get("env"), scope, "env")}
+        # Never the vault stand-in's ROOK_SECRET_*: secrets reach a process only by name.
+        env = {**{k: v for k, v in os.environ.items() if not k.startswith("ROOK_SECRET_")},
+               **render_map(cand.get("env"), scope, "env")}
         binary = shutil.which(argv[0], path=env.get("PATH"))
         if not binary:
             missing.append(argv[0])
@@ -220,8 +224,9 @@ async def _run(cand: Mapping, argv: list[str], binary: str, env: dict, scope: Sc
     ok_exit = cand.get("ok_exit", [0])
     group = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
              else {"start_new_session": True})
-    proc = await asyncio.create_subprocess_exec(
-        binary, *argv[1:], cwd=cwd, env=env, stdout=asyncio.subprocess.PIPE,
+    start = scope.launch or (lambda a, **kw: asyncio.create_subprocess_exec(*a, **kw))
+    proc = await start(
+        [binary, *argv[1:]], cwd=cwd, env=env, stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         stdin=asyncio.subprocess.DEVNULL if stdin is None else asyncio.subprocess.PIPE,
         **group)
