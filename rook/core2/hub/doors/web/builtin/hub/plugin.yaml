@@ -41,3 +41,5 @@ pages:
 
 components:
   workers: { title: Workers, file: components/workers.js, doc: "The band's workers: online or not, last seen.", caps: [hub.workers], props: { only: { type: list, items: { type: str }, doc: "Worker names to show; blank: all." } } }
+
+docs: { manual: docs/manual.md }

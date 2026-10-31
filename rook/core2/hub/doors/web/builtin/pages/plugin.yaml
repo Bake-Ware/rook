@@ -146,3 +146,5 @@ components:
       worker: { type: str, doc: "Where the cap runs; blank: wherever the hub finds it." }
       field: { type: str, doc: "A dotted path into the result, e.g. workers or battery.level." }
       every: { type: int, min: 0, doc: "Seconds between refreshes; 0: once." }
+
+docs: { manual: docs/manual.md }

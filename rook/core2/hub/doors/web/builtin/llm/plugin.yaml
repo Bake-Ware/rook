@@ -42,3 +42,5 @@ caps:
     args:
       provider: { type: str, doc: "A provider plugin; blank: every one." }
     result: { type: map }
+
+docs: { manual: docs/manual.md }
