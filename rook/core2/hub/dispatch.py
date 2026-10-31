@@ -447,6 +447,8 @@ class Dispatcher:
             t["appliance"] = call.appliance
         if caller.person:
             t["person"] = caller.person
+            if self.identities.is_owner(caller.person):
+                t["owner"] = True           # the worker can't know the hub's owners (N28)
         if caller.agent:
             t["agent"] = caller.agent
         if call.elevate:

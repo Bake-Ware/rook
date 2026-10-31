@@ -323,6 +323,7 @@ def test_events_wait_for_a_hub_that_is_away(band):
         await w.start()
         await hub.start()
         await until(lambda: "phone.receive" in getattr(hub.dispatcher.workers.get(WID), "caps", {}))
+        await until(lambda: not w.outboxes[(HOME, BAND)].queue, 10)   # the stream index's first sync is in
         seen = []
         await hub.stop()
         await until(lambda: w.transport.lost(BAND), 10)
@@ -330,12 +331,13 @@ def test_events_wait_for_a_hub_that_is_away(band):
             w._emit("phone.moved", {"at": float(i)}, "phone")
         await asyncio.sleep(0.2)
         box = w.outboxes[(HOME, BAND)]
-        assert len(box.queue) == 5
+        assert [ev["event"] for _, ev in box.queue].count("phone.moved") == 5   # (and the stream index's sync)
         hub = make_hub()
         hub.listeners.append(lambda e, p, src: seen.append(p["at"]) if e == "phone.moved" else None)
         await hub.start()
         await until(lambda: len(seen) == 5, 15)
-        assert seen == [0.0, 1.0, 2.0, 3.0, 4.0] and not box.queue
+        await until(lambda: not box.queue, 15)
+        assert seen == [0.0, 1.0, 2.0, 3.0, 4.0]
         await hub.stop()
         await w.stop()
     go(body, 45)

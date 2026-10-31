@@ -19,8 +19,8 @@ with that agent (the one they also type in) and runs with their rights.
 That call runs in the background; ``speech.hear`` answers with System One's
 reply at once.
 
-TODO(castling:streams): sessions live here until the hub keeps one stream
-index (stream.* caps and the relay); then speech.read is stream.read.
+Sessions live here and are listed in the hub's stream index
+(``ctx.index_streams``). TODO(castling:relay): then speech.read is stream.read.
 """
 from __future__ import annotations
 
@@ -79,6 +79,7 @@ def _rt(ctx) -> Runtime:
     global _RT
     if _RT is None:
         _RT = Runtime(ctx.data)
+        ctx.index_streams(_RT.streams)       # voice sessions in the hub's stream list (N28)
     return _RT
 
 

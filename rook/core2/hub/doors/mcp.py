@@ -52,7 +52,8 @@ match=<exact cap> for its arguments). Offline workers are listed too.
 and shown to the person if the call is held.
 - A reply with held: tell the person the hold's name and stop; it runs once they approve \
 (journal call=<id> shows how it went). Never work around a hold or a denial.
-- Caps that answer {"stream": id} (terminals, processes, agent sessions): read and write it with stream.
+- Caps that answer {"stream": id} (terminals, processes, agent sessions): read and write it with stream. \
+call worker=rook cap=stream.list (or stream.search query=...) finds streams and the worker each is on.
 - Every call is journaled under your token's agent and person; journal reads it back."""
 
 _WHY = {"type": "string", "description": "One plain sentence: why you make this call. Journaled."}
@@ -218,8 +219,8 @@ class McpDoor(HttpDoor):
         return await self.hub.start_session(caller, {k: a.get(k) for k in ("caps", "project", "task")})
 
     async def _stream(self, caller, a: dict) -> dict:
-        # TODO(castling:streams): stream.read / stream.write are the castling-streams
-        # caps (rook/streams README); no worker serves them yet. Args follow Streams.read/append.
+        # The worker's stream.read / stream.write (builtin/stream.yaml); stream.list on
+        # the hub finds the stream and its worker.
         if "input" in a:
             cap, args = "stream.write", {"stream": a.get("stream"), "type": "input", "body": a["input"]}
         else:

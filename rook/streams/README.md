@@ -51,9 +51,9 @@ counts as taken when the producer asks for the next one.
 | `stream.read` | `await Streams.read(sid, after, limit, types, wait)` (long-poll); in process, `Streams.follow(...)` |
 | `stream.write` | `Streams.append(sid, type, body, by)`: `input` on an interactive stream, `text` in a room |
 | `stream.attach` | `Streams.attach(sid, producer)` → `Producer` |
-| `stream.list` | `Streams.list(kind, participant, open_only)` |
+| `stream.list` | `Streams.list(kind, participant, open_only)`; band-wide, the hub's `stream.list` (index below) |
 | `stream.close` | `Streams.close(sid, **status)`: kept and readable, takes no more events |
-| `stream.search` | `Streams.search(query, kind)` across both stores |
+| `stream.search` | `Streams.search(query, kind)` across both stores; the hub's searches the index's metadata |
 | `stream.delete` | `Streams.delete(sid)`: erase for good (its own cap, a hard stop) |
 
 ## How today's plugins sit on it (no migration yet)
@@ -78,10 +78,25 @@ counts as taken when the producer asks for the next one.
 
 - **`stream.*` caps.** Thin wrappers once the plugin kit (`ctx`, real caps)
   lands. `ctx.stream(...)` calls `cap_stream` (TODO castling:kit).
-- **Hub index and relay.** The design has one hub index of all streams and
-  one fan-out relay with one replay buffer, replacing `term_hub`, the console
-  pump and room polling. It needs the core v2 wire messages (spec agent);
-  `Meta.wire()` / `Event.wire()` are the shapes it would carry.
+- **Hub relay** (`TODO(castling:relay)`). The design has one fan-out relay
+  with one replay buffer, replacing `term_hub`, the console pump and room
+  polling; `Meta.wire()` / `Event.wire()` are the shapes it would carry.
+
+## The hub index (gate R3, N28)
+
+`index.py`: the hub keeps one row per stream on the band (id, kind, title,
+worker, producer, participants, attrs, durable, created, closed, last
+activity, size). `Streams.on_change(sid, change)` hears every change and a
+`Reporter` turns them into rows: lifecycle at once, appends at most every
+5 s per stream. A worker sends its rows as `stream.changed` / `stream.deleted`
+events (builtin/stream.yaml) to the hub of the stream's band only
+(`attrs.band`), and all of them again with `stream.synced` after hub contact,
+so a restarted worker's lost terminals leave the index. Hub plugins hand their
+own `Streams` over with `ctx.index_streams(streams)`. A host only changes its
+own rows. The hub serves `stream.list` / `stream.get` / `stream.search`
+(rook/core2/hub/streams.py): owners see every row, a person theirs, an agent
+alone its own person-less ones; the same rule the worker applies to reading,
+where the ticket's `owner: true` lets owners in.
 - **Access rules per kind** follow castling-security, to settle with the SDK.
 
 ## Choices made where the design was silent

@@ -336,6 +336,11 @@ Everything else in "Today's plugins -> 0.5" without a 0.5 plugin, and where it w
   (the MCP door already calls them); the castling-streams relay (one index, durable sessions,
   fan-out) is what history importers, the session shim and attention need. Owners can't read
   someone else's stream: workers don't know who the owners are (`Caller.owner` is unset there).
+  *Index resolved (wave 7, gate R3):* workers send `stream.changed/deleted/synced` events for a
+  band's streams to that band's hub, hub plugins hand theirs over with `ctx.index_streams`, and
+  `stream.list/get/search` on the hub page the index under the caller's rights
+  (rook/streams/index.py, rook/core2/hub/streams.py). Tickets carry `owner: true` (spec 6.2), so
+  owners read anyone's stream on a worker. Still open: the relay (`TODO(castling:relay)`).
 - **N29. Spec 13 names core caps `core.*`.** The worker's own `worker.*` and `stream.*` are two more
   builtin manifests (like the hub's), announced with `builtin: true`. Spec 13 could say "core's
   builtin manifests" instead of "the core manifest".

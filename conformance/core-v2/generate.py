@@ -259,6 +259,9 @@ def gen_tickets() -> dict:
          ticket_for(shot, signer="guest-op", hub=GUEST, band=GUEST_BAND), GUEST_BAND, T0, [], "outside_ceiling"),
         ("contract the cap doesn't provide", shot, ticket_for(shot, contract="hid.click"), BAND, T0, [], "unknown_cap"),
         ("contract not a string", shot, ticket_for(shot, contract=5), BAND, T0, [], "malformed"),
+        ("an owner of the hub (owner claim)", r, ticket_for(owner=True), BAND, T0, [], "ok"),
+        ("owner claim without a person", r, ticket_for(owner=True, person=None), BAND, T0, [], "malformed"),
+        ("owner claim not a bool", r, ticket_for(owner="yes"), BAND, T0, [], "malformed"),
     ]
     out = []
     for name, req, t, band, now, seen, expect in cases:

@@ -263,7 +263,7 @@ class Host:
         args = request.get("args") or {}
         info = call.context()
         caller = Caller(person=info["person"], agent=info["agent"], session=info["session"],
-                        band=band, why=info["why"])
+                        band=band, why=info["why"], owner=info["owner"])
 
         async def action(lease):
             if cap == "core.manifests":

@@ -95,7 +95,8 @@ class HubPlugins:
     def __init__(self, *, records: RecordStore, contracts: Contracts, call: CallAs,
                  emit: Callable[[str, dict, str], Any] | None = None, data_dir: str | Path | None = None,
                  settings: dict | None = None, resolve_secret: Callable[[str], Any] | None = None,
-                 hook_timeout: float = 30.0, people: Any = None, band: str = ""):
+                 hook_timeout: float = 30.0, people: Any = None, band: str = "",
+                 index_streams: Callable[[str, Any], None] | None = None):
         self.records, self.contracts, self._call = records, contracts, call
         self.band = band                        # the hub's band: hooks and routes act in it
         self.emit = emit
@@ -103,6 +104,7 @@ class HubPlugins:
         self.settings = settings or {}          # plugin -> {setting: value}
         self.resolve_secret = resolve_secret    # the vault: name -> value (Vault.setting)
         self.people = people                    # owners() and settings(person): ctx.settings_for
+        self.index_streams = index_streams      # ctx.index_streams: the hub's stream index (N28)
         self.scheduler = Scheduler(dispatch=self._hook_call, timeout=hook_timeout)
         self.plugins: dict[str, HubPlugin] = {}
         self._caps: dict[str, HubCap] = {}
@@ -317,7 +319,8 @@ class HubPlugins:
             return _result(await self._call(who, c, a, uses=self.uses(p.name), target=target))
         return Ctx(p.manifest, caller, dispatch=dispatch, settings=self.settings.get(p.name, {}),
                    resolve_secret=self.resolve_secret, records=self.records, emit=self.emit,
-                   data_dir=self._data(p) if self.data_dir else None, cap=cap, people=self.people)
+                   data_dir=self._data(p) if self.data_dir else None, cap=cap, people=self.people,
+                   index_streams=self.index_streams)
 
     async def _hook_call(self, cap: str, args: dict, caller: Caller) -> Any:
         """A hook's ``call:`` target: as the plugin, held to its uses."""

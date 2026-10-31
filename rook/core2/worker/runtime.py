@@ -35,6 +35,11 @@ Plugin events (``ctx.emit``) run this worker's ``on:`` hooks and go to every
 hub whose ceiling grants them, as ``core.event`` batches from a bounded
 queue per hub (:mod:`.events`) that waits out a hub that is away.
 
+Its streams are listed in the hub's stream index (N28): a stream opened for
+a band (``attrs.band``) is reported to that band's hub only, as
+``stream.changed`` / ``stream.deleted`` events, and after hub contact the
+worker sends them all again with ``stream.synced`` (what it holds now).
+
 Plugin code's ``ctx.call`` becomes ``core.call`` on the hub, authenticated
 by the ticket of the call in flight it runs inside (13); hooks have no call
 in flight, so their ``ctx.call`` is refused.
@@ -63,7 +68,7 @@ from rook.kit.manifest import check
 from .. import CORE_VERSION
 from ..builtin import CORE, STREAM, WORKER
 from ..transport import FEATURES, Transport, TransportError, link_from
-from rook.streams import Streams
+from rook.streams import Reporter, Streams
 
 from . import boot, builtins, events
 from .host import Host
@@ -75,6 +80,7 @@ from .security import ELEVATE_TIMEOUT, Call, Member, ReplayStore, TrustStore, Wo
 log = logging.getLogger("rook.worker")
 
 HEX32 = re.compile(r"[0-9a-f]{32}")
+SYNC_IDS = 500                # stream ids one stream.synced lists
 SUB_CALL_TIMEOUT = 300.0      # ctx.call through the hub; the parent cap's timeout ends it sooner
 EVENT_TIMEOUT = 15.0          # core.event: one batch of events to a hub
 PULL_TIMEOUT = 300.0          # a plugin bundle over Drop
@@ -263,6 +269,7 @@ class Worker:
         self.gate = _Gate(self, self.worker_id, self.cfg.name, self.trust, ReplayStore(self.data / "replay"),
                           {}, ask=self._elevate)
         self.streams = Streams(host=self.cfg.name)
+        self.stream_reporter = Reporter(self.streams, self._stream_changed)
         self.ran = builtins.RanLog(self.data / "ran.jsonl")
         self.host = Host(hardware=self.cfg.hardware, dispatch=self._dispatch,
                          store_setting=self._store_setting, emit=self._emit,
@@ -319,6 +326,8 @@ class Worker:
             for t in late:
                 t.cancel()
             await asyncio.gather(*late, return_exceptions=True)
+        if getattr(self, "stream_reporter", None) is not None:
+            self.stream_reporter.close()
         outboxes, self.outboxes = list(self.outboxes.values()), {}
         await asyncio.gather(*(o.stop() for o in outboxes))
         if self.transport is not None:
@@ -418,6 +427,24 @@ class Worker:
         for (_, b), outbox in self.outboxes.items():
             if b == band:
                 outbox.kick()
+        self._sync_streams(band)
+
+    def _stream_changed(self, change: str, row: dict) -> None:
+        """The stream index (N28): a stream opened for a band goes to that
+        band's hub; one opened for none stays off every index."""
+        band = row["attrs"].get("band")
+        if isinstance(band, str) and band:
+            self._queue_event(f"stream.{change}", {"id": row["id"]} if change == "deleted" else row,
+                              "stream", band=band)
+
+    def _sync_streams(self, band: str) -> None:
+        """Every stream of ``band`` again, then which ones there are: the
+        hub may have missed events while it was away, or this worker restarted."""
+        rows = [r for r in self.stream_reporter.rows() if r["attrs"].get("band") == band]
+        for r in rows:
+            self._queue_event("stream.changed", r, "stream", band=band)
+        self._queue_event("stream.synced", {"ids": [r["id"] for r in rows[:SYNC_IDS]],
+                                            "complete": len(rows) <= SYNC_IDS}, "stream", band=band)
 
     async def _announce_on(self, band: str) -> None:
         try:
@@ -520,7 +547,9 @@ class Worker:
             except RuntimeError:            # the loop is closed: stopping
                 pass
 
-    def _queue_event(self, event: str, payload: dict, plugin: str) -> None:
+    def _queue_event(self, event: str, payload: dict, plugin: str, band: str | None = None) -> None:
+        """Queue ``event`` for every hub whose ceiling grants it (only the
+        hubs on ``band`` when given)."""
         if not self.started or self.transport is None:
             return
         try:
@@ -532,10 +561,10 @@ class Worker:
             log.warning("event not sent: too large", extra=_f(event=event, plugin=plugin, bytes=size))
             return
         ev = events.make(event, plugin, payload, size)
-        for band in self.transport.bands:
-            for m in self.trust.members(band):
+        for b in self.transport.bands if band is None else [band]:
+            for m in self.trust.members(b):
                 if self.host.sends(plugin, event, m.ceiling, self.cfg.name):
-                    self._outbox(m.hub, band).put(ev)
+                    self._outbox(m.hub, b).put(ev)
 
     def _outbox(self, hub: str, band: str) -> events.Outbox:
         box = self.outboxes.get((hub, band))

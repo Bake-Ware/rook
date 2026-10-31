@@ -256,6 +256,8 @@ def _ticket_shape(t: Any) -> bool:
         return False
     if "contract" in t and not (isinstance(t["contract"], str) and t["contract"]):
         return False
+    if "owner" in t and not (isinstance(t["owner"], bool) and t.get("person")):
+        return False
     who = [t.get("person"), t.get("agent")]
     return any(who) and all(w is None or (isinstance(w, str) and w) for w in who)
 

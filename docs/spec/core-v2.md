@@ -480,6 +480,7 @@ the hub's operational key:
 | `why` | MUST | the caller's reason in one plain sentence; non-empty after trimming, ≤ 500 characters |
 | `elevate` | MAY | `true`: the caller asked for elevation up front (7.2). Default `false`. |
 | `contract` | MAY | the contract the call was made by (4.1); `cap` provides it |
+| `owner` | MAY | `true`: `person` is an owner of the minting hub (8.5), so the worker may let them at what another person keeps on it for that band (their streams, 13). Only with `person`; a worker honours it only from a hub whose role is `home` or `co-owner` (9.3). Default `false`. |
 | `iat`, `exp` | MUST | issue and expiry time; `60 ≤ exp − iat ≤ 120`; hubs SHOULD use 60 |
 | `sig` | MUST | 3.3 |
 | `hubkey` | MAY | the hub's current `rook-hubkey` grant, unsigned by the ticket (5.2) |
@@ -573,7 +574,7 @@ it.
 ### 6.6 Call context
 
 A worker hands the cap the verified call context from the ticket: `person`,
-`agent`, `session`, `band`, `why`, plus the hub (`hub`), the call id and the
+`agent`, `owner`, `session`, `band`, `why`, plus the hub (`hub`), the call id and the
 cap's `risk` from its manifest (`admin` when running elevated).
 Plugin code reads it as `ctx.person`, `ctx.agent`, … (plugin kit). Nothing
 else on the wire says who a call is for; a worker MUST NOT take identity
