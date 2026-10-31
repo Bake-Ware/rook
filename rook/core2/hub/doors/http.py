@@ -167,7 +167,9 @@ class _Handler(BaseHTTPRequestHandler):
         if (method, path) in routes:
             return 200, self._run(routes[(method, path)]())
         if method == "POST" and path.startswith("/holds/") and path.count("/") == 2:
-            return 200, self._run(hub.decide(caller, unquote(path[len("/holds/"):]), body.get("decision")))
+            # A person's own token: they are here (a hard stop may be answered).
+            return 200, self._run(hub.decide(caller, unquote(path[len("/holds/"):]), body.get("decision"),
+                                             present=True))
         if any(p == path for _, p in routes) or path in OPEN or path.startswith("/holds/"):
             raise _Error(405, "method not allowed")
         raise _Error(404, "not found")

@@ -266,6 +266,8 @@ class Web:
         if page.made and cap == "approval.decide":
             # Agent-written code runs as the viewer: it must never answer the viewer's holds.
             return {"ok": False, "error": "denied: page: a page an agent made can't answer holds"}
+        if cap == "approval.decide":
+            return self._decide(req, caller, page, body.get("args"))
         worker = body.get("worker") if isinstance(body.get("worker"), str) else None
         if worker is None:
             worker = req._run(_target(self.hub, cap)) or "rook"
@@ -275,6 +277,22 @@ class Web:
         return req._run(self.hub.call(_page_caller(page, caller), {
             "worker": worker, "cap": cap, "args": body.get("args"), "why": why,
             "session": t.dispatch}, "web", layers=layers))
+
+    def _decide(self, req, caller: Caller, page, args) -> dict:
+        """The person answering a hold on a page the hub ships (Approvals):
+        signed in here, so they are present and may answer a hard stop (10.3),
+        which the ``approval.decide`` cap never may. Release and refusal are
+        journaled by dispatch."""
+        if not rights.check([["page", {"grants": page.caps}]], {"cap": "approval.decide", "risk": "write",
+                                                                 "effects": []})["ok"]:
+            return {"ok": False, "error": "denied: page: grants"}
+        args = args if isinstance(args, dict) else {}
+        if not isinstance(args.get("hold"), str) or args.get("decision") not in ("approve", "refuse"):
+            return {"ok": False, "error": "bad args: hold, and decision approve or refuse"}
+        out = req._run(self.hub.decide(caller, args["hold"], args.get("decision"), present=True))
+        if not out.get("ok") and "id" not in out:      # unknown hold, not theirs, bad decision
+            return {"ok": False, "error": out["error"]}
+        return {"ok": True, "result": out}
 
     def _authors(self, page) -> list:
         """A page an agent made never does more than any of its authors."""

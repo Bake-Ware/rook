@@ -540,6 +540,17 @@ def test_approvals_page_answers_holds(site):
             out = await c.page(ts, "approval.decide", {"hold": held["hold"], "decision": "approve"})
             assert out["error"] == "denied: page: a page an agent made can't answer holds"
             assert held["hold"] in hub.dispatcher.holds
+            # ... and not the approval.decide cap, even with the person's own
+            # token: a job or hub plugin acting as them dispatches it (review H7)
+            for decision in ("approve", "refuse"):
+                _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "approval.decide", "why": WHY,
+                                                         "args": {"hold": held["hold"], "decision": decision}},
+                                      bearer=tokens["bake"])
+                assert "person:bake may not" in out["error"], out
+            assert held["hold"] in hub.dispatcher.holds
+            # the person at a door where they are there: POST /holds with their token
+            _, out = await c.json("POST", f"/holds/{held['hold']}", {"decision": "approve"}, bearer=tokens["bake"])
+            assert out["ok"] and out["result"] == {"wiped": True}, out
         finally:
             await hub.stop()
     run(go())
