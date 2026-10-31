@@ -19,7 +19,9 @@ title, slug, body, creator and times; then:
   and ``closed_by`` become comments (``task.comment`` records);
 - a task's open whiteboard lines (goal, decisions, open items, notes) and,
   with ``--handoffs`` (a copy of the 0.4 sessions db), its latest handoff
-  become the task's whiteboard.
+  become the task's whiteboard;
+- a project's links (and its latest handoff) go on the project's whiteboard
+  (castling-agents: each project has one "for higher-level concerns").
 
 Claims are not imported: 0.4 agent names mean nothing on 0.5; whoever picks
 a task up claims it again. Re-running skips what an earlier run imported
@@ -186,6 +188,14 @@ class Importer:
             if _date(a.get("due")):
                 fields["due"] = a["due"]
             self._put("project.project", r, fields, archived=r["state"] == "archived")
+        for r in self._of("project"):
+            text = self._project_board(r) if r["id"] in self.fresh else ""
+            if text and not self.store.type("whiteboard.board").list(self._caller(r),
+                                                                    where={"project": self.new[r["id"]]}, limit=1):
+                self.store.clock = lambda r=r: r["updated"]
+                self.store.type("whiteboard.board").create(self._caller(r), project=self.new[r["id"]],
+                                                           text=text, by="import:0.4")
+                self.report["imported"]["board"] = self.report["imported"].get("board", 0) + 1
 
     def pages(self):
         for r in self._parents_first(self._of("knowledge")):
@@ -306,6 +316,15 @@ class Importer:
                     parts.append(f"{title}:\n" + "\n".join(f"- {t}" for t in lines))
         text = "\n\n".join(parts)
         return text if len(text) <= BOARD_MAX else text[:BOARD_MAX - 20].rstrip() + "\n\n(cut on import)"
+
+    def _project_board(self, r) -> str:
+        parts = [self._handoff(r)]
+        links = [self._task_link(x) for x in self.links.get(r["id"], ())]
+        if links:
+            parts.append("Linked in 0.4:\n" + "\n".join(
+                f"- {x['kind']} {x['ref']} ({x['relation']})" + (f": {x['note']}" if x["note"] else "")
+                for x in links))
+        return "\n\n".join(x for x in parts if x)
 
     def _handoff(self, r) -> str:
         if self.handoffs is None:

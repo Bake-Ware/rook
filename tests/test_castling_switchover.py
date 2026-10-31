@@ -60,7 +60,7 @@ def test_snapshot_dry_run_writes_private_reports_and_a_names_free_summary(tmp_pa
         assert stat.S_IMODE((out / name).stat().st_mode) == 0o600, name
     summary = (out / "summary.md").read_text()
     assert capsys.readouterr().out == summary
-    for words in ("stores found: 8 of 9", "people: 3 (1 member-admin, 1 member-write, 1 owner)",
+    for words in ("stores found: 8 of 12", "people: 3 (1 member-admin, 1 member-write, 1 owner)",
                   "vault: 2 secrets", "machines to re-enroll: 3", "1 API keys to mint again"):
         assert words in summary, words
     report = (out / "report.md").read_text()
@@ -73,7 +73,7 @@ def test_snapshot_dry_run_writes_private_reports_and_a_names_free_summary(tmp_pa
 def test_a_folder_copy_works_too_and_a_non_snapshot_is_refused(tmp_path):
     out = tmp_path / "out"
     assert _dryrun().main(["--from", str(make_04(tmp_path)), "--out", str(out)]) == 0
-    assert "stores found: 8 of 9" in (out / "summary.md").read_text()
+    assert "stores found: 8 of 12" in (out / "summary.md").read_text()
     bad = tmp_path / "empty.tar"
     with tarfile.open(bad, "w") as tf:
         _add(tf, "x/readme.txt", b"hi")
