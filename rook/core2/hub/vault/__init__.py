@@ -103,7 +103,7 @@ class Vault:
     def _db(self) -> sqlite3.Connection:
         if not self.path.exists():
             self.data.mkdir(parents=True, exist_ok=True, mode=0o700)
-            os.close(os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+            os.close(os.open(self.path, os.O_WRONLY | os.O_CREAT, 0o600))    # a racing opener is fine
         db = sqlite3.connect(self.path, timeout=10)
         db.executescript(SCHEMA)
         return db
