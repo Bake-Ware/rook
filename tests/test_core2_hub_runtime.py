@@ -314,6 +314,35 @@ def test_door_auth_and_bad_requests(hubs):
     run(go())
 
 
+
+def test_an_unread_body_never_becomes_the_next_request(hubs):
+    # GET /health answers 200 without reading its body: on a kept-alive
+    # connection that body was parsed as a second request (smuggling
+    # behind a shared proxy connection).
+    import socket
+
+    async def go():
+        hub, _, _ = await hubs(worker=False)
+        try:
+            inner = b"GET /health HTTP/1.1\r\nHost: x\r\n\r\n"
+            req = b"GET /health HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\n\r\n%s" % (len(inner), inner)
+
+            def talk():
+                with socket.create_connection(("127.0.0.1", hub.doors[0].port), timeout=5) as c:
+                    c.sendall(req)
+                    got = b""
+                    try:
+                        while chunk := c.recv(65536):
+                            got += chunk
+                    except socket.timeout:
+                        pass
+                    return got
+            return await asyncio.to_thread(talk)
+        finally:
+            await hub.stop()
+    got = run(go())
+    assert got.count(b"HTTP/1.1 200") == 1, got
+
 def test_why_rights_and_holds(hubs):
     async def go():
         hub, w, token = await hubs()

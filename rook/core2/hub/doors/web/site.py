@@ -150,6 +150,7 @@ class Web:
                 raise _Error(411, "Content-Length required") from None
             if n < 0 or n > 4096:
                 raise _Error(413, "body too large")
+            req._read = True
             token = dict(parse_qsl(req.rfile.read(n).decode("utf-8", "replace"))).get("token", "")
             form = True
         else:

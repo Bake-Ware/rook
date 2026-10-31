@@ -97,6 +97,7 @@ class _Handler(BaseHTTPRequestHandler):
     loop: asyncio.AbstractEventLoop
     protocol_version = "HTTP/1.1"
     server_version = "rook-hub"
+    timeout = 60          # seconds a socket may sit idle or half-sent: no thread held forever
 
     def log_message(self, fmt, *args):   # our logger, not stderr
         log.debug("request", extra={"fields": {"line": fmt % args}})
@@ -109,6 +110,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _handle(self, method: str) -> None:
         url = urlsplit(self.path)
+        self._read = False
         try:
             if self.door.web is not None and self.door.web.owns(url.path):
                 status, headers, data = self.door.web.handle(self, method, url.path, url.query)
@@ -120,7 +122,8 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception:
             log.exception("door request failed")
             status, (headers, data) = 500, _encode({"ok": False, "error": "internal error"})
-        if status >= 400:
+        sent = self.headers.get("Content-Length", "0") != "0" or "Transfer-Encoding" in self.headers
+        if status >= 400 or (sent and not self._read):
             self.close_connection = True    # a body we didn't read must not become the next request
         self.send_response(status)
         for k, v in headers.items():
@@ -212,6 +215,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _raw(self) -> bytes:
         if self.command == "GET" and "Content-Length" not in self.headers:
             return b""
+        self._read = True
         try:
             n = int(self.headers.get("Content-Length", ""))
         except ValueError:
