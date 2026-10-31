@@ -26,7 +26,11 @@ curl -s -H "$H" -d '{"code":"BCDF-GHJK"}' https://rook.example/enroll/approve
 curl -s -H "$H" -d '{"code":"BCDF-GHJK","decision":"refuse"}' https://rook.example/enroll/approve
 ```
 
-Codes last 10 minutes. Then start the worker:
+Codes last 10 minutes, and a code its machine stops asking about goes
+after 30 seconds. The waiting list shows each machine's `name` (whatever it
+says it is), the `address` its request came from (and what a proxy in front
+says) and its `age` in seconds: approve only the code your machine printed,
+and only when the address and age fit. Then start the worker:
 
 ```sh
 python -m rook.core2.worker --config worker.yaml

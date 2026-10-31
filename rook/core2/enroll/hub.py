@@ -50,6 +50,7 @@ log = logging.getLogger("rook.hub.enroll")
 
 CODE_SECS = 600               # one-time and device codes
 POLL_EVERY = 2                # seconds between a device's polls
+UNPOLLED_SECS = 30            # a device code nobody polls for this long is gone (a real device polls every 2 s)
 MAX_PENDING = 32              # of each kind of code; the device routes take no token
 USER_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ"     # no vowels (no words), no 0/O or 1/I
 ENROLL = {"cap": "core.enroll", "risk": "admin", "effects": ["persists"], "target": "rook"}
@@ -195,7 +196,7 @@ class Enrollment:
     def _expire(self) -> None:
         now = self.hub.clock()
         for store in (self.codes, self.devices):
-            for k in [k for k, v in store.items() if v["exp"] < now]:
+            for k in [k for k, v in store.items() if v["exp"] < now or now - v.get("seen", now) > UNPOLLED_SECS]:
                 del store[k]
 
     # -- one-time codes (the QR) ------------------------------------------------------
@@ -228,9 +229,11 @@ class Enrollment:
 
     # -- device codes ------------------------------------------------------------------
 
-    async def device_start(self, body: dict) -> dict:
+    async def device_start(self, body: dict, address: str | None = None) -> dict:
         """``{name}`` from the device (no token): a device code to poll with
-        and the user code to show."""
+        and the user code to show. ``address`` (where the request came from,
+        as the door saw it) is shown to whoever approves the code, with its
+        age: the name is whatever the device says."""
         name = body.get("name")
         if not (isinstance(name, str) and NAME.fullmatch(name) and name != "rook"):
             return {"ok": False, "error": "bad request: name is a host-like name (not 'rook')"}
@@ -241,19 +244,22 @@ class Enrollment:
         user = user_code()
         while user in taken:
             user = user_code()
-        device, exp = secrets.token_urlsafe(32), int(self.hub.clock() + CODE_SECS)
-        self.devices[_digest(device)] = {"user_code": user, "name": name, "exp": exp}
-        log.info("device waiting", extra={"fields": {"name": name, "code": user}})
+        now = self.hub.clock()
+        device, exp = secrets.token_urlsafe(32), int(now + CODE_SECS)
+        self.devices[_digest(device)] = {"user_code": user, "name": name, "exp": exp, "started": now, "seen": now,
+                                         "address": str(address)[:200] if address else None}
+        log.info("device waiting", extra={"fields": {"name": name, "code": user, "address": address}})
         return {"ok": True, "device_code": device, "user_code": user, "hub": self.hub.hub_id,
                 "exp": exp, "interval": POLL_EVERY}
 
     async def device_poll(self, body: dict) -> dict:
         """``{device_code}``: still pending, refused, or the bundle (once)."""
         key = _digest(body["device_code"]) if isinstance(body.get("device_code"), str) else None
+        self._expire()
         d = self.devices.get(key) if key else None
-        if d is None or d["exp"] < self.hub.clock():
-            self.devices.pop(key, None)
+        if d is None:
             return {"ok": False, "error": "unknown or expired device code"}
+        d["seen"] = self.hub.clock()
         if d.get("refused"):
             del self.devices[key]
             return {"ok": False, "error": "refused by the person"}
@@ -267,7 +273,9 @@ class Enrollment:
         if (err := self._may_enroll(caller)):
             return {"ok": False, "error": err}
         self._expire()
-        return {"ok": True, "devices": [{"user_code": d["user_code"], "name": d["name"], "exp": d["exp"]}
+        now = self.hub.clock()
+        return {"ok": True, "devices": [{"user_code": d["user_code"], "name": d["name"], "exp": d["exp"],
+                                         "address": d.get("address"), "age": int(now - d.get("started", now))}
                                         for d in self.devices.values() if not d.get("by") and not d.get("refused")]}
 
     async def approve(self, caller, body: dict) -> dict:
