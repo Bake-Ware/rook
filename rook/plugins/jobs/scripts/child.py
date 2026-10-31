@@ -20,8 +20,9 @@ run's result. ``job`` is the workflow library::
   trying later may work).
 - ``job.notify(text, *, title=None, to=None)``: ``notify.send``, by default
   to the job's person (a persona's or plugin's job: the owners).
-- ``job.ask(question, options=None, *, timeout="1h")``: tells the person and
-  waits for ``jobs.answer``; None if nobody answers in time.
+- ``job.ask(question, options=None, *, timeout="1h")``: asks the person
+  (``approval.ask``, as the job's identity; at most an hour) and waits for
+  the answer; None if nobody answers in time.
 - ``job.wait(duration)``, ``job.retry(fn, *, times=3, wait="10s")``,
   ``job.parallel(*fns)`` (threads; results in order, the first error raised),
   ``job.log(*parts)`` (``print`` logs too).

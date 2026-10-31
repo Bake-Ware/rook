@@ -77,6 +77,7 @@ from .. import CORE_VERSION, rights, wire
 from ..builtin import CORE, STREAM
 from ..enroll.hub import Enrollment, check_options as check_enroll, recovery_key
 from . import distribute, streams as hub_streams
+from .asks import Asks
 from .dispatch import Call, Dispatcher, Worker
 from .doors.web import caps as builtin_caps
 from . import updates
@@ -360,6 +361,7 @@ class Hub:
         self._norm: dict[str, dict] = {}         # hash -> normalized
         self.doors: list = []
         self.listeners: list = []                # fn(event, payload, source) for every event
+        self.asks = Asks(self._emit, lambda p: self.identities.is_owner(p), self.clock)   # approval.ask (C4)
 
     # -- start and stop ---------------------------------------------------------
 
@@ -460,6 +462,7 @@ class Hub:
 
     async def _teardown(self) -> None:
         """Close whatever start opened, in reverse; safe after a partial start."""
+        self.asks.close()
         for door in reversed(self.doors):
             try:
                 await door.stop()
@@ -1036,8 +1039,9 @@ class Hub:
     def taints(self, event: str) -> bool:
         """Whether ``event`` brings outside content in: a manifest the hub
         knows declares it with ``taints: true`` (any one: when two disagree,
-        the event taints)."""
-        return any(((m.get("emits") or {}).get(event) or {}).get("taints") for m in self._norm.values())
+        the event taints). The hub's builtin plugins count too (approval.asked)."""
+        known = [*self._norm.values(), *(p.manifest for p in self.plugins.plugins.values())]
+        return any(((m.get("emits") or {}).get(event) or {}).get("taints") for m in known)
 
     async def _send(self, band: str, request: dict) -> dict:
         """Dispatch's ``send``: the hub's own caps run here, the rest go over
@@ -1359,21 +1363,27 @@ class Hub:
         return {"ok": True, "entries": self.journal.query(**q, viewer=viewer, limit=limit)}
 
     async def holds_view(self, caller: Caller) -> dict:
+        """What waits on a person: held calls and questions (approval.ask)."""
         owner = self.identities.is_owner(caller.person)
         return {"ok": True, "holds": [
-            {"hold": h.name, "cap": h.call.cap, "worker": h.worker.name, "why": h.call.why,
+            {"hold": h.name, "kind": "call", "cap": h.call.cap, "worker": h.worker.name, "why": h.call.why,
              "args": h.entry.get("args", h.call.args),
              "person": h.caller.person, "agent": h.caller.agent, "reasons": h.reasons()}
             for h in self.dispatcher.holds.values()
-            if owner or (caller.person and h.caller.person == caller.person) or h.caller == caller]}
+            if owner or (caller.person and h.caller.person == caller.person) or h.caller == caller]
+            + self.asks.view(caller)}
 
-    async def decide(self, caller: Caller, hold: str, decision: Any, present: bool = False) -> dict:
+    async def decide(self, caller: Caller, hold: str, decision: Any, present: bool = False,
+                     answer: Any = None) -> dict:
         """A person's answer to a hold: ``approve`` runs the exact call, ``refuse`` is final.
         An agent acting for a person answers as the agent, not the person.
         ``present``: the answer comes from a door where the person is there
         (the site, ``POST /holds`` with their own token, a phone card), the
         only way a hard stop is answered (10.3); the ``approval.decide`` cap
-        never is, so a job or plugin acting as the person can't."""
+        never is, so a job or plugin acting as the person can't. A question
+        (``q_...``, approval.ask) takes ``answer`` instead of a decision."""
+        if Asks.owns(hold):
+            return self.asks.decide(caller, hold, answer)
         by = caller.agent or caller.person
         present = present and caller.agent is None and caller.person is not None
         held = self.dispatcher.holds.get(hold) if isinstance(hold, str) else None

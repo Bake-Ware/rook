@@ -9,7 +9,7 @@ agent, or an agent for a person).
     GET  /caps[?worker=]  what each worker serves, from its manifests
     GET  /journal[?cap=&worker=&project=&kind=&session=&since=&until=&limit=]
     GET  /holds           calls waiting for a person
-    POST /holds/<name>    {decision: approve | refuse}
+    POST /holds/<name>    {decision: approve | refuse}; a question (q_...): {answer}
     POST /plugins/push    {worker, plugin, why}  owners: sign the library's plugin for that worker and install it
     POST /doors/<name>    {open: bool}  owners: the kill switch (close or open a door; kept across restarts)
     GET  /health          no token
@@ -192,7 +192,7 @@ class _Handler(BaseHTTPRequestHandler):
         if method == "POST" and path.startswith("/holds/") and path.count("/") == 2:
             # A person's own token: they are here (a hard stop may be answered).
             return 200, self._run(hub.decide(caller, unquote(path[len("/holds/"):]), body.get("decision"),
-                                             present=True))
+                                             present=True, answer=body.get("answer")))
         if any(p == path for _, p in routes) or path in OPEN or path.startswith("/holds/"):
             raise _Error(405, "method not allowed")
         raise _Error(404, "not found")

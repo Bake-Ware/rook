@@ -44,7 +44,8 @@ def main(job):
 
 `job.call(cap, args, on=worker, why=...)`, `job.notify(text, title=, to=)`
 (default: the job's person), `job.ask(question, options, timeout="1h")`
-(answered with `jobs.answer`; None on timeout), `job.wait("5m")`,
+(asked with `approval.ask`, so it waits on Approvals and reaches the
+person through the house agent; None on timeout, at most an hour), `job.wait("5m")`,
 `job.retry(fn, times=3, wait="10s")`, `job.parallel(fn, fn, ...)`,
 `job.log(...)` (and `print`). `job.vars`, `job.event` / `job.payload`,
 `job.last` (when the last good run started), `job.trigger`, `job.attempt`.

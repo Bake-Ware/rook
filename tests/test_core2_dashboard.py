@@ -726,7 +726,7 @@ def test_every_builtin_cap_is_known():
         declared |= set(load(folder).data["caps"])
     assert declared == {
         "pages.list", "pages.view", "pages.get", "pages.create", "pages.update", "pages.archive", "pages.restore",
-        "pages.components", "pages.site", "pages.start", "hub.status", "hub.workers", "hub.manifests", "hub.door", "approval.list", "approval.decide", "journal.search", "setting.list",
+        "pages.components", "pages.site", "pages.start", "hub.status", "hub.workers", "hub.manifests", "hub.door", "approval.list", "approval.decide", "approval.ask", "approval.get", "journal.search", "setting.list",
         "setting.set", "llm.providers", "llm.models", "llm.status"}
 
 
@@ -739,6 +739,83 @@ def test_a_library_plugin_cant_take_a_builtin_name(site, tmp_path):
         try:
             assert hub.plugins.plugins["hub"].manifest["builtin"]        # refused, logged; the hub runs
             assert "board" in hub.plugins.plugins
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_approval_ask_is_the_one_question_path(site):
+    """castling-caps C4: any agent asks the person through approval.ask; the
+    question waits beside the holds and is answered with approval.decide."""
+    async def go():
+        hub, tokens = await site()
+        try:
+            async def call(who, cap, **args):
+                _, out = await Client(hub).json("POST", "/call", {"worker": "rook", "cap": cap, "why": WHY,
+                                                                  "args": args}, bearer=tokens[who])
+                return out
+
+            hub.identities.add_agent("solo", {"grants": ["approval.*"]})
+            tokens["solo"] = hub.add_token(Caller(agent="agent:solo"))
+            heard = []
+            hub.listeners.append(lambda e, p, s: heard.append((e, p.get("hold"))) if e.startswith("approval.") else None)
+            out = await call("claude", "approval.ask", question="Ship the docs today?")
+            assert out["ok"] and out["result"]["answered"] is False, out
+            q1 = out["result"]["hold"]
+            assert q1.startswith("q_") and heard == [("approval.asked", q1)]
+            assert hub.taints("approval.asked")               # the asker's words are outside content
+            out = await call("solo", "approval.ask", question="Which disk?", options=["sda", "sdb"])
+            q2 = out["result"]["hold"]                         # nobody behind it: asked of the owners
+
+            _, view = await Client(hub).json("GET", "/holds", bearer=tokens["bake"])
+            asks = {h["hold"]: h for h in view["holds"] if h["kind"] == "ask"}
+            assert asks[q1]["person"] == "person:bake" and asks[q1]["agent"] == "agent:claude"
+            assert asks[q2]["person"] is None and asks[q2]["options"] == ["sda", "sdb"]
+            _, view = await Client(hub).json("GET", "/holds", bearer=tokens["kim"])
+            assert view["holds"] == []                         # not hers
+
+            out = await call("claude", "approval.decide", hold=q1, answer="yes")
+            assert "may not answer" in out["error"]            # never its own question
+            out = await call("kim", "approval.decide", hold=q1, answer="yes")
+            assert not out["ok"]
+            out = await call("claude", "approval.decide", hold=q2, answer="sda")
+            assert "may not answer" in out["error"]            # an owners' question: an owner answers
+            out = await call("bake", "approval.decide", hold=q2, answer="sdc")
+            assert "one of: sda, sdb" in out["error"]
+
+            # the person on the Approvals page
+            c = Client(hub)
+            await c.sign_in(tokens["bake"])
+            t = (await c.open("approval/approvals"))["token"]
+            out = await c.page(t, "approval.decide", {"hold": q1, "answer": "Yes, after lunch"})
+            assert out["ok"] and out["result"] == {"ok": True, "hold": q1, "answered": True,
+                                                   "answer": "Yes, after lunch", "by": "person:bake"}, out
+            out = await call("claude", "approval.get", hold=q1)
+            assert out["result"]["answer"] == "Yes, after lunch" and out["result"]["by"] == "person:bake"
+            assert not (await call("kim", "approval.get", hold=q1))["ok"]
+            assert ("approval.answered", q1) in heard
+            out = await call("bake", "approval.decide", hold=q1, answer="no")
+            assert "answered already" in out["error"]
+            assert (await call("bake", "approval.decide", hold=q2, answer="sdb"))["result"]["answered"]
+
+            # a waiting asker gets the answer as it comes; another agent may relay the person's words
+            hub.identities.add_agent("house", {"grants": ["*"]})
+            house = hub.add_token(Caller(person="person:bake", agent="agent:house"))
+            tokens["house"] = house
+            waiting = asyncio.ensure_future(call("claude", "approval.ask", question="Merge?", options=["yes", "no"],
+                                                 wait=20))
+            for _ in range(200):
+                q3 = next((a.id for a in hub.asks.open.values() if a.question == "Merge?"), None)
+                if q3:
+                    break
+                await asyncio.sleep(0.02)
+            out = await call("house", "approval.decide", hold=q3, answer="yes")
+            assert out["ok"] and out["result"]["by"] == "agent:house for person:bake", out
+            out = await asyncio.wait_for(waiting, 10)
+            assert out["result"] == {"hold": q3, "answered": True, "answer": "yes",
+                                     "by": "agent:house for person:bake"}, out
+            out = await call("claude", "approval.ask", question="  ")
+            assert out["error"].startswith("bad args"), out
         finally:
             await hub.stop()
     run(go())

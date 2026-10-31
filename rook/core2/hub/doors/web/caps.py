@@ -238,7 +238,8 @@ def install(hub) -> None:
                   "pages.start": h.pages_start},
         "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers, "hub.manifests": h.hub_manifests,
                 "hub.door": h.hub_door},
-        "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide},
+        "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide,
+                     "approval.ask": h.approval_ask, "approval.get": h.approval_get},
         "journal": {"journal.search": h.journal_search},
         "setting": {"setting.list": settings.list, "setting.set": settings.set},
         "llm": {"llm.providers": h.llm_providers, "llm.models": h.llm_models, "llm.status": h.llm_status},
@@ -493,11 +494,23 @@ class _Handlers:
     async def approval_list(self, ctx) -> dict:
         return {"holds": (await self.hub.holds_view(_who(ctx)))["holds"]}
 
-    async def approval_decide(self, ctx, hold: str, decision: str) -> dict:
-        out = await self.hub.decide(_who(ctx), hold, decision)
+    async def approval_decide(self, ctx, hold: str, decision: str | None = None, answer: str | None = None) -> dict:
+        out = await self.hub.decide(_who(ctx), hold, decision, answer=answer)
         if not out.get("ok") and "id" not in out:      # unknown hold, not theirs to answer
             raise KitError(out["error"])
         return out          # a released call's own reply, ok or not
+
+    async def approval_ask(self, ctx, question: str, options: list | None = None, wait: int = 0) -> dict:
+        out = await self.hub.asks.ask(_who(ctx), ctx.caller.why, question, options, wait)
+        if not out.pop("ok"):
+            raise KitError(out["error"])
+        return out
+
+    async def approval_get(self, ctx, hold: str) -> dict:
+        out = self.hub.asks.get(_who(ctx), hold)
+        if not out.pop("ok"):
+            raise KitError(out["error"])
+        return out
 
     async def journal_search(self, ctx, limit: int = 50, **filters) -> dict:
         out = await self.hub.journal_view(_who(ctx), {**filters, "limit": limit})

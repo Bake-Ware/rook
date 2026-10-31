@@ -88,7 +88,7 @@ TOOLS = [
          "until": {"type": "number", "description": "Unix time."},
          "limit": {"type": "integer", "description": "Default 20, at most 500."}}}},
     {"name": "holds", "annotations": _READ,
-     "description": "Calls waiting for a person's approval (yours, or all for an owner). Only a person decides.",
+     "description": "What waits on a person: held calls and questions agents asked (approval.ask); yours, or all for an owner. Only a person decides.",
      "inputSchema": {"type": "object", "properties": {}}},
     {"name": "session",
      "description": "Start a session that narrows your calls to some caps and ties them to a project or "

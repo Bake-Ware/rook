@@ -400,12 +400,16 @@ def main(job):
                         what="the ask")
             rec = rig.hub.records.type("jobs.run").get(_owner(), rid)
             assert rec["asking"] == {"question": "Ship it?", "options": ["yes", "no"]}
-            await until(lambda: rig.sent(), what="the ask's message")     # sent just after it waits
-            assert rig.sent()[-1]["text"].startswith("Ship it? (yes / no)\nAnswer with jobs.answer run=")
-            assert not (await rig.pat.call("jobs.answer", run=rid, answer="yes"))["ok"]     # not pat's
-            out = await rig.bake.call("jobs.answer", run=rid, answer="maybe")
+            # The one ask (castling-caps C4): it waits on Approvals for the job's person.
+            asks = [h for h in (await rig.bake.ok("approval.list"))["holds"] if h["kind"] == "ask"]
+            assert [(a["question"], a["options"], a["person"]) for a in asks] == [
+                ("Ship it?", ["yes", "no"], "person:bake")]
+            hold = asks[0]["hold"]
+            assert not (await rig.pat.call("approval.decide", hold=hold, answer="yes"))["ok"]     # not pat's
+            out = await rig.bake.call("approval.decide", hold=hold, answer="maybe")
             assert not out["ok"] and "one of: yes, no" in out["error"]
-            assert (await rig.bake.ok("jobs.answer", run=rid, answer="yes"))["answered"]
+            assert (await rig.bake.ok("approval.decide", hold=hold, answer="yes"))["answered"]
+            assert rig.sent() == []                       # no notice of its own: the ask is the card
             rec = await until(lambda: (r := rig.hub.records.type("jobs.run").get(_owner(), rid))["state"] == "ok"
                               and r, what="the run")
             assert rec["result"] == ["yes", None] and rec["asking"] is None
@@ -556,7 +560,7 @@ def test_security_scan_template(cfg):
         rig = await Rig(cfg).start()
         try:
             for _ in range(3):        # refused: pat may not read amy's job
-                await rig.pat.call("jobs.answer", run="r_nope", answer="x")
+                await rig.pat.call("jobs.cancel", run="r_nope")
                 await rig.bake.call("probe.nope")
             job = await rig.bake.ok("jobs.install", template="jobs/security-scan", vars={"threshold": 2})
             assert job["trigger"] == {"every": "5m"} and job["plugin"] == "jobs"
