@@ -153,7 +153,7 @@ def test_the_agents_package_offers_only_backends_that_exist():
     # An agent's backend is default or one provider's cap (drift #32): never
     # a name the agents plugin turns into a cap.
     agents = load(PLUGINS / "agents", CONTRACTS).data
-    spec = agents["caps"]["agents.create"]["args"]["backend"]
+    spec = agents["caps"]["agent.create"]["args"]["backend"]
     assert "enum" not in spec and spec["pattern"].startswith("^(default|")
     assert "agent.backend" in agents["uses"] and not any(u.startswith("agents-") for u in agents["uses"])
     for name in ("claude-code", "codex"):

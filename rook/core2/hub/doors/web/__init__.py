@@ -5,15 +5,15 @@ HTTP door.
   token can't) and gets a session cookie (``HttpOnly``, ``SameSite=Strict``).
   Requests the shell makes with it also carry the session's CSRF token in
   ``X-Rook-CSRF``. TODO(castling:enrollment): sign-in without pasting a token.
-- **The shell** (``static/``) lists pages (``pages.list``) and opens one at a
-  time, the start page first (``pages.site``). Its own calls are limited to
-  ``pages.*``, plus ``agents.chat.send``/``read`` with the dock agent: with
+- **The shell** (``static/``) lists pages (``page.list``) and opens one at a
+  time, the start page first (``page.site``). Its own calls are limited to
+  ``page.*``, plus ``agent.chat.send``/``read`` with the dock agent: with
   the agents package, the house agent's chat dock sits beside every page
   (castling-dashboard: forefront, not a page of its own).
 - **Pages** run sandboxed: each is its own document served with
   ``Content-Security-Policy: sandbox allow-scripts`` (an opaque origin: no
   cookies, no hub API) and ``connect-src 'none'``. Opening one is a
-  ``pages.view`` call; it mints a page token the shell keeps and a one-time
+  ``page.view`` call; it mints a page token the shell keeps and a one-time
   frame URL. The page talks to the shell with ``postMessage``
   (``window.rook.call``/``rook.on``, from ``static/bridge.js``); the shell
   forwards each call with the page token, and the hub runs it as the signed-in
@@ -28,7 +28,7 @@ Routes (everything else is the JSON API in ``doors/http.py``)::
     POST /logout
     GET  /web/static/<file>
     GET  /web/api/me             {person, csrf}
-    POST /web/api/call           {cap, args?, why?}           pages.* (and the dock's chat), as the person
+    POST /web/api/call           {cap, args?, why?}           page.* (and the dock's chat), as the person
     POST /web/api/open           {page}                       -> {token, frame, page}
     GET  /web/frame/<nonce>      the page's document, once
     POST /web/api/page           {token, cap, args?, why?, worker?}

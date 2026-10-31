@@ -70,7 +70,7 @@ linked.
 - [hub](../../rook/core2/hub/doors/web/builtin/hub/docs/manual.md): the hub and its workers.
 - [journal](../../rook/core2/hub/doors/web/builtin/journal/docs/manual.md): searching the journal.
 - [llm](../../rook/core2/hub/doors/web/builtin/llm/docs/manual.md): which language models the hub can use.
-- [pages](../../rook/core2/hub/doors/web/builtin/pages/docs/manual.md): the hub site's pages.
+- [page](../../rook/core2/hub/doors/web/builtin/page/docs/manual.md): the hub site's pages.
 - [setting](../../rook/core2/hub/doors/web/builtin/setting/docs/manual.md): hub and per-person settings.
 - [backup](../../rook/core2/hub/backup/docs/manual.md): sealed backups of the hub that only the recovery key opens, and restoring one on a new machine.
 
@@ -80,13 +80,13 @@ linked.
 - [telegram](../../rook/plugins/telegram/docs/manual.md) and [discord](../../rook/plugins/discord/docs/manual.md): the band's bots.
 - [llm-anthropic](../../rook/plugins/llm-anthropic/docs/manual.md), [llm-openai](../../rook/plugins/llm-openai/docs/manual.md), [llm-cli](../../rook/plugins/llm-cli/docs/manual.md): model providers.
 - [security](../../rook/plugins/security/docs/manual.md) and [security-ml](../../rook/plugins/security-ml/docs/manual.md): the gates ([Security plugins](security.md)).
-- [jobs](../../rook/plugins/jobs/docs/manual.md): scheduled, event, manual and webhook jobs ([Jobs](jobs.md)).
+- [job](../../rook/plugins/jobs/docs/manual.md): scheduled, event, manual and webhook jobs ([Jobs](jobs.md)).
 - [change](../../rook/plugins/changes/docs/manual.md): change records: what, why, risk, testing, rollback and steps, as full as the project's trust level asks. Records only: they gate and run nothing.
 - [backup-store](../../rook/plugins/backup-store/docs/manual.md): keeps the hub's sealed backups on another worker (backup target `worker:<name>`).
 
 **Agents:**
 
-- [agents](../../rook/plugins/agents/docs/manual.md): the agents runtime and the ready-made personas ([Agents](agents.md)).
+- [agent](../../rook/plugins/agents/docs/manual.md): the agents runtime and the ready-made personas ([Agents](agents.md)).
 - [agents-claude-code](../../rook/plugins/agents-claude-code/docs/manual.md): agent turns in the Claude Code CLI.
 - [agents-codex](../../rook/plugins/agents-codex/docs/manual.md): agent turns in the Codex CLI.
 - [attention](../../rook/plugins/attention/docs/manual.md): the house agent reads what tries to get your attention and keeps what matters in one place.

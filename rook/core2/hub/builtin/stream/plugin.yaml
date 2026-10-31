@@ -106,7 +106,7 @@ caps:
     doc: >-
       Say something in a room you are in: a text event by you, body {text, mentions?}
       (mentions: person:x / agent:y it's addressed to). Answers {stream, seq}. Huddles, agent and
-      voice sessions belong to their plugin: write through its caps (agents.chat.send, ...).
+      voice sessions belong to their plugin: write through its caps (agent.chat.send, ...).
     on: hub
     risk: write
     scope: multi-user

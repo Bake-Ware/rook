@@ -74,7 +74,7 @@ def get(ctx, id):
 
 AGENTS = """\
 manifest: 1
-plugin: agents
+plugin: agent
 version: 1.0.0
 doc: Stand-in for the agents package.
 runs_on: hub
@@ -117,7 +117,7 @@ class H:
     def __init__(self, hub: Hub):
         self.hub = hub
         self.sec = self.module("security")
-        self.sent = self.module("agents").SENT
+        self.sent = self.module("agent").SENT
 
     def module(self, plugin: str):
         return next(iter(self.hub.plugins._modules[plugin].values()))

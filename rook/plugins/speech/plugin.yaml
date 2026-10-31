@@ -7,7 +7,7 @@
 # the person finished or only paused, voice.speaker says who it sounds like
 # (kept on the session, advisory). Then System One, a fast model
 # (llm.complete, model "one"), answers small things at once and hands the
-# rest to the agent's System Two, its real brain (agents.chat.send, in the
+# rest to the agent's System Two, its real brain (agent.chat.send, in the
 # person's own session with that agent), whose reply lands in the stream.
 # Replies are spoken with voice.tts (the speech engine, or a hosted voice
 # such as speech-elevenlabs). Code: scripts/speech.py.
@@ -22,8 +22,8 @@ license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 # The voice contracts (never a provider by name: any engine that provides
 # them plugs in), System One's model and the agent.
-uses: [voice.stt, voice.tts, voice.tts.voices, voice.turn, voice.speaker, llm.complete, agents.chat.send,
-       agents.get]
+uses: [voice.stt, voice.tts, voice.tts.voices, voice.turn, voice.speaker, llm.complete, agent.chat.send,
+       agent.get]
 
 settings:
   agent: { type: str, default: house, doc: "The agent a voice session talks to unless it names another." }

@@ -13,7 +13,7 @@
 //!   rights; nothing here widens them.
 //!
 //! The 0.4 MCP path for quick ask isn't needed: the door runs
-//! `agents.chat.send` as the person, and the reply lands in the same session
+//! `agent.chat.send` as the person, and the reply lands in the same session
 //! the dashboard's dock shows.
 
 use crate::hub::{
@@ -128,23 +128,19 @@ impl Hub05 {
         Ok(out)
     }
 
-    /// The hub's agents, awake ones first (`agents.list`).
+    /// The hub's agents, awake ones first (`agent.list`).
     pub async fn sessions(&self) -> Result<Vec<Session>, HubError> {
         let v = self
-            .hub_call(
-                "agents.list",
-                json!({}),
-                "Desktop app: the Rook panel lists the agents.",
-            )
+            .hub_call("agent.list", json!({}), "Desktop app: the Rook panel lists the agents.")
             .await?;
         Ok(agent_items(&v))
     }
 
-    /// The dashboard's pages by section (`pages.list`), for the tray and the panel.
+    /// The dashboard's pages by section (`page.list`), for the tray and the panel.
     pub async fn pages(&self) -> Result<Vec<Section>, HubError> {
         let v = self
             .hub_call(
-                "pages.list",
+                "page.list",
                 json!({}),
                 "Desktop app: the tray's Dashboard menu lists the hub's pages.",
             )
@@ -158,7 +154,7 @@ impl Hub05 {
         let v = self
             .call(
                 HUB_WORKER,
-                "agents.chat.send",
+                "agent.chat.send",
                 json!({"agent": HOUSE, "text": question, "wait": true}),
                 "Desktop app: the person asks the house agent.",
                 wait,
@@ -393,7 +389,7 @@ pub fn found_items(v: &Value, kind: &str, link: &str) -> Vec<Found> {
         .collect()
 }
 
-/// `agents.list`: live (awake) agents first; archived ones left out.
+/// `agent.list`: live (awake) agents first; archived ones left out.
 pub fn agent_items(v: &Value) -> Vec<Session> {
     let mut out: Vec<Session> = v
         .as_array()
@@ -432,7 +428,7 @@ fn safe_page(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.'))
 }
 
-/// `pages.list` grouped by section, in the hub's order. A page's `hash` is
+/// `page.list` grouped by section, in the hub's order. A page's `hash` is
 /// `/<page id>`, so the dashboard path is `/#/<page id>`.
 pub fn page_sections(v: &Value) -> Vec<Section> {
     let mut out: Vec<Section> = vec![];

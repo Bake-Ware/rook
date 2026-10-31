@@ -255,7 +255,7 @@ def test_apply_writes_the_05_hub_and_reruns_add_nothing(tmp_path, copy04):
         vault.get(data, "github-pat")
     (data / "keys" / "root.key").write_text(root)
     # memory: the house agent's
-    agents = sqlite3.connect(data / "plugins" / "agents" / "agents.db")
+    agents = sqlite3.connect(data / "plugins" / "agent" / "agents.db")
     mem = [r[0] for r in agents.execute("SELECT text FROM memory WHERE agent='house' ORDER BY id")]
     notes = [r[0] for r in agents.execute("SELECT text FROM note WHERE agent='house'")]
     agents.close()

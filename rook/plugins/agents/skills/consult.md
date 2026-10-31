@@ -6,10 +6,10 @@ when: the work touches another role, you are unsure about something another agen
 
 Pulling in other agents is expected. It is not overstepping.
 
-- **Ask** with `agents.chat.send` (agent: their name, text: your question).
+- **Ask** with `agent.chat.send` (agent: their name, text: your question).
   Give them what they need: the task, what you found, what you want back.
   `wait: false` if you don't need the answer to go on; read it later with
-  `agents.chat.read`.
+  `agent.chat.read`.
 - **Who to ask:** your system prompt lists the agents on the band and what
   each is for. Examples: the code contradicts the ticket - ask the engineer
   who did the work; scope is creeping - tell the project manager; you need

@@ -15,9 +15,9 @@ User guide: [desktop-app.md](desktop-app.md#a-rook-05-hub-preview).
 | Waiting on you | `approvals.list` | `GET /holds` |
 | Work | `task.read` deck | `task.list` (in progress, blocked) + `project.list` |
 | Knowledge | `knowledge.read` search | `knowledge.search` + `task.search` |
-| Sessions tab | `/account/work/sessions` | `agents.list` (awake agents first) |
-| Tray Dashboard menu | `ui/sections.json` | the hub's `pages.list`, by section, refreshed every 20 polls |
-| Quick ask | private chat room, or `home.ask` over MCP | `agents.chat.send` to `house`, in the person's own session (the dock's) |
+| Sessions tab | `/account/work/sessions` | `agent.list` (awake agents first) |
+| Tray Dashboard menu | `ui/sections.json` | the hub's `page.list`, by section, refreshed every 20 polls |
+| Quick ask | private chat room, or `home.ask` over MCP | `agent.chat.send` to `house`, in the person's own session (the dock's) |
 | Ask about this page | the @home dock | the site's dock (`#dock-btn`) |
 | Notifications | chat rooms + approvals | holds; agents reach the screen through the worker's `notification.post` |
 | This computer's worker | the 0.4 band worker (service, task or bundle) | `python -m rook.core2.worker`, run by the app from `<settings>/worker05/` |
@@ -41,7 +41,7 @@ Code: `desktop/src-tauri/src/hub05.rs` (door client, pure parsers),
   hidden on 0.5.
 - **Sessions tab lists agents.** The hub's stream index (`stream.list`
   with `kind: session`, gate R3) now lists agent sessions and terminals;
-  the tab still lists the agents (`agents.list`) and can move to it. The
+  the tab still lists the agents (`agent.list`) and can move to it. The
   dashboard dock shows the person's own conversation.
 - **The app approves its own device code.** The person clicked **Add this
   computer** while signed in as themselves, which is the approval spec 12

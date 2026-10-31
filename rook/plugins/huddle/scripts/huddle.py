@@ -1,7 +1,7 @@
 """Huddles: a record and a durable ``huddle`` stream each (plugin.yaml says
 what they are). Posts are ``text`` events by whoever posted; a post naming
 one of the huddle's roles (``@qa``, or ``@all``) also goes to those agents
-through ``agents.chat.send``, as the poster, so the agent acts with no more
+through ``agent.chat.send``, as the poster, so the agent acts with no more
 than the poster may.
 
 The streams live in the hub's one stream store (``ctx.streams``), so
@@ -83,7 +83,7 @@ async def post(ctx, huddle, text):
     note = f"[huddle {h['id']}: {h['title']}] {_actor(ctx)}: {text}\n(Answer with huddle.post huddle={h['id']}.)"
     for role in to:
         try:
-            await ctx.call("agents.chat.send", agent=role, text=note, wait=False)
+            await ctx.call("agent.chat.send", agent=role, text=note, wait=False)
             out["told"].append(role)
         except KitError as e:
             out["not_told"][role] = e.message[:200]

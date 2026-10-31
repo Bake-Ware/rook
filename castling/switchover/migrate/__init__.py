@@ -172,7 +172,7 @@ def _write_config(path: Path, users: dict, presets: dict, sacred: list) -> str |
 
 
 def _write_memory(data: Path, mems: list, jots: list) -> dict:
-    folder = data / "plugins" / "agents"
+    folder = data / "plugins" / "agent"
     folder.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(folder / "agents.db")
     try:

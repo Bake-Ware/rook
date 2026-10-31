@@ -44,7 +44,7 @@ CAPS = {
     "web.fetch": {"risk": "read", "scope": "external", "effects": ["taints"]},
     "light.set": {"risk": "write", "scope": "local", "effects": ["physical"]},
     "homework.item.list": {"risk": "read", "scope": "self", "effects": []},
-    "agents.chat.send": {"risk": "write", "scope": "self", "effects": []},
+    "agent.chat.send": {"risk": "write", "scope": "self", "effects": []},
     "weird.risk": {"risk": "godmode", "scope": "nowhere", "effects": []},
     "pkg.fix": {"risk": "read", "scope": "local", "effects": [], "elevation": "upfront"},
     "core.manifests": {"risk": "read", "scope": "self", "effects": []},
@@ -556,9 +556,9 @@ def test_a_child_gets_what_its_preset_grants_without_a_queue(hub):
 
 def test_guest_expires_after_seven_days(hub):
     visitor = Caller(person="person:visitor")
-    assert call(hub, visitor, "agents.chat.send")[0]["ok"]
+    assert call(hub, visitor, "agent.chat.send")[0]["ok"]
     hub.clock_box[0] = NOW + 7 * 86400
-    assert call(hub, visitor, "agents.chat.send")[0]["error"] == "denied: person: expired"
+    assert call(hub, visitor, "agent.chat.send")[0]["error"] == "denied: person: expired"
 
 
 def test_tokens_authenticate_to_a_caller():

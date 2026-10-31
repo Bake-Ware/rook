@@ -15,15 +15,15 @@
   },
   "child": {
    "grants": [
-    "agents.chat.*",
-    "pages.view"
+    "agent.chat.*",
+    "page.view"
    ],
    "max_risk": "write",
    "effects": []
   },
   "guest": {
    "grants": [
-    "agents.chat.*"
+    "agent.chat.*"
    ],
    "max_risk": "write",
    "effects": [],
@@ -83,14 +83,14 @@
    "user_grants": [],
    "rights": {
     "grants": [
-     "agents.chat.*",
-     "pages.view"
+     "agent.chat.*",
+     "page.view"
     ],
     "max_risk": "write",
     "effects": []
    },
    "call": {
-    "cap": "agents.chat.send",
+    "cap": "agent.chat.send",
     "risk": "write",
     "effects": [],
     "target": "kaiju"
@@ -106,14 +106,14 @@
    "user_grants": [],
    "rights": {
     "grants": [
-     "agents.chat.*",
-     "pages.view"
+     "agent.chat.*",
+     "page.view"
     ],
     "max_risk": "write",
     "effects": []
    },
    "call": {
-    "cap": "pages.view",
+    "cap": "page.view",
     "risk": "read",
     "effects": [],
     "target": "kaiju"
@@ -129,8 +129,8 @@
    "user_grants": [],
    "rights": {
     "grants": [
-     "agents.chat.*",
-     "pages.view"
+     "agent.chat.*",
+     "page.view"
     ],
     "max_risk": "write",
     "effects": []
@@ -157,8 +157,8 @@
    "user_grants": [],
    "rights": {
     "grants": [
-     "agents.chat.*",
-     "pages.view",
+     "agent.chat.*",
+     "page.view",
      "homework.item.list"
     ],
     "max_risk": "write",
@@ -186,8 +186,8 @@
    "user_grants": [],
    "rights": {
     "grants": [
-     "agents.chat.*",
-     "pages.view"
+     "agent.chat.*",
+     "page.view"
     ],
     "max_risk": "write",
     "effects": []
@@ -214,8 +214,8 @@
    "user_grants": [],
    "rights": {
     "grants": [
-     "agents.chat.*",
-     "pages.view",
+     "agent.chat.*",
+     "page.view",
      "homework.*"
     ],
     "max_risk": "write",
@@ -243,8 +243,8 @@
    ],
    "rights": {
     "grants": [
-     "agents.chat.*",
-     "pages.view",
+     "agent.chat.*",
+     "page.view",
      "lights.set"
     ],
     "max_risk": "write",
@@ -274,8 +274,8 @@
    "user_grants": [],
    "rights": {
     "grants": [
-     "agents.chat.*",
-     "pages.view",
+     "agent.chat.*",
+     "page.view",
      "phone.*"
     ],
     "max_risk": "write",
@@ -301,13 +301,13 @@
    "user_grants": [],
    "rights": {
     "grants": [
-     "agents.chat.*"
+     "agent.chat.*"
     ],
     "max_risk": "write",
     "effects": []
    },
    "call": {
-    "cap": "agents.chat.send",
+    "cap": "agent.chat.send",
     "risk": "write",
     "effects": [],
     "target": "kaiju"
@@ -323,13 +323,13 @@
    "user_grants": [],
    "rights": {
     "grants": [
-     "agents.chat.*"
+     "agent.chat.*"
     ],
     "max_risk": "write",
     "effects": []
    },
    "call": {
-    "cap": "pages.view",
+    "cap": "page.view",
     "risk": "read",
     "effects": [],
     "target": "kaiju"
@@ -348,7 +348,7 @@
    ],
    "rights": {
     "grants": [
-     "agents.chat.*",
+     "agent.chat.*",
      "music.play"
     ],
     "max_risk": "write",

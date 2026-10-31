@@ -10,10 +10,10 @@ Python script. One run record covers the whole flow; branching is just code.
 | `{cron: "0 8 * * 1-5"}` | on a five-field schedule in the `timezone` setting (default UTC); `@daily` and friends work |
 | `{every: 5m}` | every interval (1s or more) |
 | `{on: worker.online, filter: {name: kaiju}}` | on an event (a glob); `filter` keys match the payload (dotted paths; a list means any of) |
-| `{manual: true}` | only by `jobs.start` (any job can be started by hand) |
-| `{webhook: true}` | on a signed POST to `/p/jobs/hook?job=<id>` |
+| `{manual: true}` | only by `job.run` (any job can be started by hand) |
+| `{webhook: true}` | on a signed POST to `/p/job/hook?job=<id>` |
 
-Jobs never fire on `jobs.*` events (their own records), so they can't loop
+Jobs never fire on `job.*` events (their own records), so they can't loop
 on themselves.
 
 ## Who it runs as
@@ -76,14 +76,14 @@ package, or with `default_agent` blank, they go straight to `notify.send`.
 
 ## Webhooks
 
-`jobs.webhook` gives the path and the job's key. Sign the raw body:
+`job.webhook` gives the path and the job's key. Sign the raw body:
 `X-Rook-Signature: sha256=<hex HMAC-SHA256>` (GitHub's `X-Hub-Signature-256`
 works as is). The parsed body is the run's `job.payload`.
 
 ## Ready-made jobs
 
-Any plugin can ship jobs in its manifest (`jobs:`). `jobs.templates` lists
-them; `jobs.install template=plugin/job` makes one yours (it runs as you).
+Any plugin can ship jobs in its manifest (`jobs:`). `job.templates` lists
+them; `job.install template=plugin/job` makes one yours (it runs as you).
 A plugin's `enabled: true` job that runs as a persona is installed active;
 edit it and plugin updates leave it alone. This plugin ships
 `jobs/security-scan`: refused and held calls since the last scan, and a

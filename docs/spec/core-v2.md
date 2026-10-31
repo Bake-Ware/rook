@@ -810,8 +810,8 @@ other hub state, and plugins add grants to them in their manifest
 |---|---|---|---|---|
 | `owner` | `["*"]` | none | all | owns every band of the hub; manages people, bands and ceilings |
 | `adult` | `["*"]` | `admin` | all | |
-| `child` | `["agents.chat.*", "pages.view"]` | `write` | `[]` | more only when an owner edits the preset or grants that person more |
-| `guest` | `["agents.chat.*"]` | `write` | `[]` | `expires: 7d` after the account is created |
+| `child` | `["agent.chat.*", "page.view"]` | `write` | `[]` | more only when an owner edits the preset or grants that person more |
+| `guest` | `["agent.chat.*"]` | `write` | `[]` | `expires: 7d` after the account is created |
 
 A person's rights = the preset's `grants`, plus the grants plugins add to
 that preset (a plugin may add only patterns inside its own namespace,

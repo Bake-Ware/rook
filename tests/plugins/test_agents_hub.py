@@ -102,7 +102,7 @@ def test_agents_on_the_hub(tmp_path):
         (lib / folder).symlink_to(PLUGINS / folder, target_is_directory=True)
     cfg = Config(data=tmp_path / "data", band=BAND, library=lib,
                  users={"bake": {"preset": "owner"}, "guest": {"preset": "guest", "created": time.time()}},
-                 settings={"agents": {"warm": "200ms"}}, doors={"http": {"bind": "127.0.0.1:0"}})
+                 settings={"agent": {"warm": "200ms"}}, doors={"http": {"bind": "127.0.0.1:0"}})
 
     async def body():
         hub = Hub(cfg, transport=Loopback())
@@ -110,27 +110,27 @@ def test_agents_on_the_hub(tmp_path):
         try:
             owner = (hub.data / "owner.token").read_text().strip()
             guest = hub.add_token(Caller(person="person:guest"), label="guest")
-            assert {"agents", "agents-local"} <= set(hub.plugins.plugins)     # beside the builtin ones
+            assert {"agent", "agents-local"} <= set(hub.plugins.plugins)     # beside the builtin ones
             # The library loads in name order, agents first: the workbench's
             # personas (castling-dashboard) are made on the next look.
-            out = await call(hub, owner, "agents.list")
+            out = await call(hub, owner, "agent.list")
             assert out["ok"] and {a["name"] for a in out["result"]} >= {"house", "security"}, out
-            rt = next(m for m in hub.plugins._modules["agents"].values() if hasattr(m, "_RT"))._RT
+            rt = next(m for m in hub.plugins._modules["agent"].values() if hasattr(m, "_RT"))._RT
             await rt.ready(force=True)
-            out = await call(hub, owner, "agents.list")
+            out = await call(hub, owner, "agent.list")
             assert out["ok"] and sorted(a["name"] for a in out["result"]) == [
                 "archivist", "house", "lead", "pm", "producer", "qa", "security", "writer"], out
-            got = (await call(hub, owner, "agents.get", name="producer"))["result"]
+            got = (await call(hub, owner, "agent.get", name="producer"))["result"]
             assert got["origin"] == "concept@0.5.0" and "assembling a crew" in got["prompt"], got
-            out = await call(hub, owner, "agents.skill", name="wiki-sweep")
+            out = await call(hub, owner, "agent.skill", name="wiki-sweep")
             assert out["ok"] and out["result"]["text"].startswith("# Wiki sweep"), out
             page = await call(hub, owner, "knowledge.create", title="Test-stitch a pattern", slug="test-stitch",
                               kind="skill", body="1. Stitch a swatch.")
             assert page["ok"], page
-            out = await call(hub, owner, "agents.skill", name="test-stitch")
+            out = await call(hub, owner, "agent.skill", name="test-stitch")
             assert out["ok"] and out["result"]["text"] == "1. Stitch a swatch.", out
 
-            out = await call(hub, owner, "agents.chat.send", agent="house", text="good morning")
+            out = await call(hub, owner, "agent.chat.send", agent="house", text="good morning")
             assert out["ok"] and out["result"]["text"] == "brain: good morning", out
             turn = hub.journal.query(cap="agents-local.turn", limit=1)[0]
             # The agent itself, for the person who sent the message; its turn
@@ -139,28 +139,28 @@ def test_agents_on_the_hub(tmp_path):
             assert turn["contract"] == "agent.backend" and turn["args"]["door"] == "[redacted]"
             outer = hub.journal.query(cap="agent.backend", limit=1)[0]
             assert outer["args"]["door"] == "[redacted]" and outer["agent"] == "agent:house"
-            assert hub.identities.run_by["house"] == "agents" and hub.identities.agents["archivist"]["grants"][-1] \
+            assert hub.identities.run_by["house"] == "agent" and hub.identities.agents["archivist"]["grants"][-1] \
                 == "agent.backend"
             assert hub.identities._turns == {}                                # ended with the turn
 
-            # A guest may chat (agents.chat.*), but the turn runs with the
+            # A guest may chat (agent.chat.*), but the turn runs with the
             # guest's rights, and core's guest preset grants no backend.
-            out = await call(hub, guest, "agents.chat.send", agent="house", text="open the door")
+            out = await call(hub, guest, "agent.chat.send", agent="house", text="open the door")
             assert out == {"id": out["id"], "ok": False, "error": "house: denied: person: grants"}, out
-            assert not (await call(hub, guest, "agents.list"))["ok"]
-            out = await call(hub, guest, "agents.chat.read", agent="house")
+            assert not (await call(hub, guest, "agent.list"))["ok"]
+            out = await call(hub, guest, "agent.chat.read", agent="house")
             assert out["ok"] and "good morning" not in json.dumps(out["result"]), out
 
-            out = await call(hub, owner, "agents.create", name="Bad Name")
+            out = await call(hub, owner, "agent.create", name="Bad Name")
             assert not out["ok"] and out["error"].startswith("bad args"), out
 
             # Idle: the house agent is always on; qa sleeps after warm and
             # dreams as itself, alone.
-            assert (await call(hub, owner, "agents.chat.send", agent="qa", text="tests?"))["ok"]
-            assert (await call(hub, owner, "agents.note", agent="qa", text="CI is green on #12"))["ok"]
+            assert (await call(hub, owner, "agent.chat.send", agent="qa", text="tests?"))["ok"]
+            assert (await call(hub, owner, "agent.note", agent="qa", text="CI is green on #12"))["ok"]
             await until(lambda: [e for e in hub.journal.query(cap="agents-local.turn", agent="agent:qa")
                                  if e["person"] is None])
-            got = (await call(hub, owner, "agents.get", name="qa"))["result"]
+            got = (await call(hub, owner, "agent.get", name="qa"))["result"]
             assert got["memory"][0]["text"] == "learned: three" and got["notepad"] == []
             assert got["awake"] is False
         finally:
@@ -261,7 +261,7 @@ def test_a_linked_persons_direct_message_reaches_the_house_agent(tmp_path):
             # ... and so is the session its harness's calls run in (its turn token's).
             door = hub._door_sessions[("person:bake", "agent:house")]
             assert hub.dispatcher.sessions[door].tainted
-            out = await call(hub, owner, "agents.chat.read", agent="house")     # their one session with it
+            out = await call(hub, owner, "agent.chat.read", agent="house")     # their one session with it
             assert "what's on today?" in json.dumps(out["result"]), out
 
             # Not answered: a group message, an unlinked sender.
@@ -312,7 +312,7 @@ def test_a_signoff_request_wakes_the_agents_asked(tmp_path):
     for name in ("agents", "tasks", "projects", "concepts"):
         (lib / name).symlink_to(PLUGINS / name, target_is_directory=True)
     cfg = Config(data=tmp_path / "data", band=BAND, library=lib, users={"bake": {"preset": "owner"}},
-                 settings={"agents": {"warm": "200ms"}}, doors={"http": {"bind": "127.0.0.1:0"}})
+                 settings={"agent": {"warm": "200ms"}}, doors={"http": {"bind": "127.0.0.1:0"}})
 
     async def body():
         hub = Hub(cfg, transport=Loopback())
@@ -330,7 +330,7 @@ def test_a_signoff_request_wakes_the_agents_asked(tmp_path):
                 read = hub.journal.query(cap="agents-local.turn", limit=5)
                 return [e for e in read if e["person"] == "person:bake"]
             await until(asked)
-            chat = ok(await call(hub, owner, "agents.chat.read", agent="qa"))
+            chat = ok(await call(hub, owner, "agent.chat.read", agent="qa"))
             said = json.dumps(chat["events"])
             assert "asks for your sign-off as role:qa: PR #333" in said and t["id"] in said
         finally:
