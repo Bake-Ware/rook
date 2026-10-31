@@ -18,7 +18,6 @@ caps:
     effects: [personal]
     idempotent: true
     timeout: 20s
-    aliases: [calllog.list]
     args:
       limit: { type: int, default: 30, min: 1, max: 500 }
     result:

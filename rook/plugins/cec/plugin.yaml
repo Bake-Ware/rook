@@ -42,7 +42,6 @@ caps:
     scope: local
     timeout: 5s
     idempotent: true
-    aliases: [cec.ping]
     result: { type: str }
     action:
       tcp: { host: "{{appliance.host}}", port: "{{appliance.port}}", send: "ping\n", until: newline }

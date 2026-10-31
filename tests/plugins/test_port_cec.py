@@ -94,9 +94,9 @@ def test_send_frames(pico):
     assert pico.seen[1] == "send 5 44 41 0f\n"
 
 
-def test_status_and_old_name(pico):
+def test_status(pico):
     assert call(pico, "cec.status") == "pong 4 1.0.0.0"
-    assert "cec.ping" in PLUGIN.caps
+    assert "cec.ping" not in PLUGIN.caps                 # no 0.4 names
     assert pico.seen == ["ping\n"]
 
 

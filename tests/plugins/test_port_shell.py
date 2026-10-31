@@ -147,7 +147,7 @@ def test_env_old_name():
         host = Host(os_name="linux")
         await host.load(PLUGINS / "shell")
         try:
-            return await host.call("shell.env.get", {"name": "PATH"}, ME)
+            return await host.call("shell.env", {"name": "PATH"}, ME)
         finally:
             await host.close()
     assert go(body) == os.environ["PATH"]

@@ -9,7 +9,7 @@ Termux). The screen is `screen.capture`; this is a physical camera.
 | `camera.capture` | A still JPEG. Linux tries `fswebcam`, then `ffmpeg` (v4l2); Termux uses `termux-camera-photo`; Windows uses `ffmpeg` (DirectShow) with `device` (default `Integrated Camera`). `resolution` is `WxH` (1280x720 by default); `quality` applies to fswebcam. |
 
 Capturing a camera is personal data: the hub may ask before an agent takes
-a photo. Old name: `camera.snap` still answers.
+a photo.
 
 Needs one of `fswebcam` or `ffmpeg` on Linux, `termux-api` under Termux, or
 `ffmpeg` on Windows. macOS isn't supported.

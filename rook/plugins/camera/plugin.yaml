@@ -33,7 +33,6 @@ caps:
     scope: local
     effects: [sensitive, personal]
     timeout: 30s
-    aliases: [camera.snap]
     args:
       camera: { type: int, default: 0, min: 0, max: 63, doc: "The camera's number from camera.list (/dev/video<N> on Linux)." }
       device: { type: str, default: Integrated Camera, pattern: '^[^":\x00-\x1f]{1,128}$', doc: "Windows only: the DirectShow device name from camera.list." }

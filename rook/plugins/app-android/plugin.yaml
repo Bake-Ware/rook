@@ -16,7 +16,6 @@ caps:
     scope: local
     idempotent: true
     timeout: 20s
-    aliases: [device.apps]
     args:
       query: { type: str, default: "", max: 100 }
       limit: { type: int, default: 200, min: 1, max: 1000 }
@@ -27,7 +26,6 @@ caps:
     scope: local
     effects: [taints]
     timeout: 20s
-    aliases: [device.launch]
     args:
       app: { type: str, required: true, min: 1, max: 200 }
       params: { type: json, doc: "Intent extras for the launch, an object of strings, numbers and booleans." }
@@ -39,7 +37,6 @@ caps:
     scope: local
     effects: [taints]
     timeout: 20s
-    aliases: [device.open_url]
     args:
       url: { type: str, required: true, min: 1, max: 4000 }
       screen: { type: bool, default: false }

@@ -156,7 +156,7 @@ def test_stat_and_old_name(tmp_path):
     got = run("stat", {"path": str(f)})
     assert got["exists"] is True and got["type"] == "file" and got["size"] == 3
     assert run("stat", {"path": str(tmp_path / "nope")}) == {"exists": False}
-    assert run("file.exists", {"path": str(tmp_path)})["type"] == "dir"
+    assert run("file.stat", {"path": str(tmp_path)})["type"] == "dir"
     if sys.platform != "win32":
         (tmp_path / "link").symlink_to(tmp_path / "gone")
         assert run("stat", {"path": str(tmp_path / "link")})["type"] == "symlink"

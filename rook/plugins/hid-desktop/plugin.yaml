@@ -23,7 +23,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 30s
-    aliases: [hid.type_text]
     args:
       text: { type: str, required: true }
       enter: { type: bool, default: false, doc: Press Enter after the text., map: { "true": "\n", "false": "" } }
@@ -44,7 +43,6 @@ caps:
     risk: exec
     scope: local
     effects: [physical]
-    aliases: [hid.mouse.move]
     args:
       x: { type: int, required: true, min: 0 }
       y: { type: int, required: true, min: 0 }
@@ -64,7 +62,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 10s
-    aliases: [hid.key_combo]
     args:
       key:
         type: str
@@ -79,7 +76,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 10s
-    aliases: [hid.mouse.click]
     args:
       x: { type: int, min: 0 }
       y: { type: int, min: 0 }
@@ -91,7 +87,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 20s
-    aliases: [hid.mouse.drag]
     args:
       x1: { type: int, required: true, min: 0 }
       y1: { type: int, required: true, min: 0 }
@@ -105,7 +100,6 @@ caps:
     risk: read
     scope: local
     idempotent: true
-    aliases: [hid.backend]
     result:
       type: map
       fields: { backend: { type: str }, pointer: { type: str }, platform: { type: str } }

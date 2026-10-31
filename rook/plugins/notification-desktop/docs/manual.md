@@ -14,6 +14,6 @@ The plugin loads only on a worker with a display. The text and title are
 handed to the tool as data (an argument after `--`, or an environment
 variable the script reads), never as code, so any text is safe to send.
 
-Old name: `msg.send` still works for this release (its `sender` argument is
-gone; put it in the title). The inbox caps (`msg.read`, `msg.clear`) were
+0.4's `msg.send` is `notification.post` (no `sender` argument: put it in
+the title). The inbox caps (`msg.read`, `msg.clear`) were
 dropped: use chat.

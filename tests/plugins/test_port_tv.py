@@ -229,7 +229,6 @@ def test_lists(tv):
     items = call(tv, "tv.app.list")["items"]
     assert [i["title"] for i in items] == ["Amazon Music", "Disney+", "Music Hub", "Netflix", "Prime Video", "YouTube"]
     assert call(tv, "tv.inputs")["items"][0]["id"] == "HDMI_1"
-    assert call(tv, "tv.apps")["items"]   # old name
 
 
 # -- writes ---------------------------------------------------------------------
@@ -286,7 +285,7 @@ def test_media(tv):
 def test_buttons(tv):
     call(tv, "tv.hid.key", {"key": "enter"})
     call(tv, "tv.hid.key", {"key": "escape"})
-    call(tv, "tv.button", {"key": "HOME"})
+    call(tv, "tv.hid.key", {"key": "HOME"})
     assert tv.buttons == ["type:button\nname:ENTER\n\n", "type:button\nname:BACK\n\n",
                           "type:button\nname:HOME\n\n"]
     with pytest.raises(KitError, match="no modifier keys"):

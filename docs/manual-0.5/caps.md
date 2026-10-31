@@ -15,8 +15,8 @@ knows them even while the worker is offline.
   `caps match=shell.exec` for one cap's arguments ([MCP for agents](mcp.md)).
 - Over HTTP: `GET /caps?worker=kaiju`.
 
-A renamed cap keeps its old name as an alias for a release or two
-(`deluge.list` still reaches `torrent.list`).
+A cap renamed between 0.5 releases keeps its old name as an alias for a
+release or two. 0.4 names are not aliases: 0.5 is a clean cut.
 
 ## Risk
 

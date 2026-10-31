@@ -48,9 +48,8 @@ and every later call presents it. The key is a credential, so the hub treats
   `tv.status` learns the TV's wired and Wi-Fi MACs while it is on and keeps
   them on the delegate; `tv.power.on` also asks the delegate's ARP table.
 
-Old names (`tv.apps`, `tv.toast`, `tv.launch`, `tv.input`, `tv.volume`,
-`tv.button`, `tv.type`, `tv.open_url`, `tv.power_off`, `tv.power_on`) still
-work for now, with the new argument names (`text`, `key`). Gone: `tv.mute`
+The 0.4 names (`tv.apps`, `tv.button`, `tv.power_on`, ...) are gone (0.5 is
+a clean cut). Also gone: `tv.mute`
 (`tv.sound.set mute=`), `tv.media` (one cap per action), `webos.list` and
 `webos.discover` (the hub lists and discovers appliances), the `webos.tvs`
 worker setting (TVs are onboarded instances), `tv.screen {on}` (two caps)

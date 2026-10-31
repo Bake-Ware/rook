@@ -37,7 +37,7 @@ def test_capture_with_fswebcam(bins):
 def test_falls_back_to_ffmpeg_when_fswebcam_fails(bins):
     bins.add("fswebcam", "sys.exit(1)")
     bins.add("ffmpeg", WRITE_JPEG)
-    res = run("camera.snap", {"resolution": "640x480"})
+    res = run("camera.capture", {"resolution": "640x480"})
     assert base64.b64decode(res["data"]) == JPEG
     argv = bins.calls("ffmpeg")[0]["argv"]
     assert argv[argv.index("-i") + 1] == "/dev/video0" and argv[argv.index("-video_size") + 1] == "640x480"

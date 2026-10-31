@@ -121,9 +121,9 @@ def test_key_maps_names_and_always_releases(dongle):
         one(dongle.path, "hid.key", {"key": "printer"})
 
 
-def test_keycodes_and_old_names(dongle):
+def test_keycodes(dongle):
     one(dongle.path, "keycodes", {"keys": [4, 5], "mods": 2})
-    one(dongle.path, "consumer", {"usage": 0xCD})   # the old dongle.consumer name
+    one(dongle.path, "keycodes", {"usage": 0xCD})
     assert dongle.seen[1] | {"id": 0} == {"cmd": "keyboard", "keys": [4, 5], "mods": 2, "id": 0}
     assert dongle.seen[4]["usage"] == 0xCD
     with pytest.raises(CallError, match="not both"):

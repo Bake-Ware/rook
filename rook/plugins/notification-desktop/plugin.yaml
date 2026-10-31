@@ -16,7 +16,6 @@ caps:
     doc: Show a notification on this worker's desktop.
     risk: write
     scope: local
-    aliases: [msg.send]
     args:
       text: { type: str, required: true }
       title: { type: str, default: Rook }

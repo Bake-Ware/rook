@@ -19,7 +19,6 @@ caps:
     scope: local
     effects: [sensitive]
     timeout: 30s
-    aliases: [screenshot.capture]
     args:
       quality: { type: int, default: 85, min: 1, max: 100, doc: JPEG quality. }
       x: { type: int, min: 0, doc: "Region left edge (set x, y, w and h together; not on Windows, spectacle or gnome-screenshot)." }

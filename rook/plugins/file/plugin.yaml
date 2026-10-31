@@ -78,7 +78,6 @@ caps:
     risk: read
     scope: local
     idempotent: true
-    aliases: [file.exists]
     args:
       path: { type: path, required: true }
     result:

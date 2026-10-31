@@ -16,7 +16,6 @@ caps:
     scope: local
     idempotent: true
     timeout: 10s
-    aliases: [hid.backend]
     result: { type: map, fields: { backend: { type: str }, ready: { type: bool } } }
     run: scripts/hid.py:status
   hid.type:
@@ -35,7 +34,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 15s
-    aliases: [hid.mouse.click]
     args:
       x: { type: int, min: 0, max: 20000 }
       y: { type: int, min: 0, max: 20000 }
@@ -47,7 +45,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 20s
-    aliases: [hid.mouse.drag]
     args:
       x1: { type: int, required: true, min: 0, max: 20000 }
       y1: { type: int, required: true, min: 0, max: 20000 }
@@ -62,7 +59,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 15s
-    aliases: [hid.key_combo]
     args:
       key: { type: str, required: true }
       mods: { type: list, items: { type: str, enum: [ctrl, shift, alt, meta] }, default: [] }

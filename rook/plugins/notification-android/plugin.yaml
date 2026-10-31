@@ -17,7 +17,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 15s
-    aliases: [notify.post, attention.post]
     args:
       text: { type: str, required: true, min: 1, max: 4000 }
       title: { type: str, default: Rook, max: 200 }
@@ -37,7 +36,6 @@ caps:
     risk: write
     scope: local
     timeout: 15s
-    aliases: [attention.update]
     args:
       id: { type: str, required: true, min: 1, max: 64 }
       state: { type: str, required: true, enum: [done, failed, gone] }
@@ -50,7 +48,6 @@ caps:
     effects: [personal, sensitive, taints]
     idempotent: true
     timeout: 15s
-    aliases: [notify.list]
     args:
       limit: { type: int, default: 40, min: 1, max: 200 }
       packages: { type: list, items: { type: str }, default: [] }
@@ -62,7 +59,6 @@ caps:
     effects: [personal, sensitive, taints]
     idempotent: true
     timeout: 15s
-    aliases: [notify.actions]
     args:
       key: { type: str, required: true }
     run: scripts/notification.py:get
@@ -71,7 +67,6 @@ caps:
     risk: write
     scope: local
     timeout: 15s
-    aliases: [notify.dismiss]
     args:
       key: { type: str, required: true }
     run: scripts/notification.py:dismiss
@@ -81,7 +76,6 @@ caps:
     scope: external
     effects: [sends_as]
     timeout: 15s
-    aliases: [notify.act]
     args:
       key: { type: str, required: true }
       action: { type: str, default: "0" }

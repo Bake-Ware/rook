@@ -25,4 +25,4 @@ Common frames:
 - `port`: the firmware's TCP port (default 9526).
 
 0.4's `cec.raw` (a literal firmware line) is gone: send frames with
-`cec.send`. Old names: `cec.ping` still answers (it is `cec.status`).
+`cec.send`.

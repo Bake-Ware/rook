@@ -21,7 +21,6 @@ caps:
     effects: [taints]
     idempotent: true
     timeout: 30s
-    aliases: [devkit.discover]
     args:
       timeout: { type: float, default: 3, min: 1, max: 10, doc: Seconds to listen. }
     result:
@@ -40,7 +39,6 @@ caps:
     scope: external
     effects: [physical]
     timeout: 90s
-    aliases: [devkit.test]
     args:
       manifest: { type: str, required: true, max: 65536, doc: The draft plugin.yaml text. }
       cap: { type: str, required: true, doc: "The cap to run (relative or full name)." }

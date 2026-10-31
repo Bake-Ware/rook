@@ -15,7 +15,6 @@ caps:
     effects: [personal]
     idempotent: true
     timeout: 20s
-    aliases: [contacts.search]
     args:
       query: { type: str, default: "", max: 100 }
       limit: { type: int, default: 40, min: 1, max: 500 }

@@ -61,7 +61,6 @@ caps:
     risk: write
     scope: local
     timeout: 10s
-    aliases: [voice.speak_stop]
     run: scripts/voice.py:stop
   voice.voices:
     doc: "The phone's own text to speech voices: {voices: [{name, locale, quality, network, installed}]}. locale keeps those starting with it (en, en-GB)."
@@ -69,7 +68,6 @@ caps:
     scope: local
     idempotent: true
     timeout: 20s
-    aliases: [voice.speak_voices]
     args:
       locale: { type: str, default: "", max: 20 }
     run: scripts/voice.py:voices

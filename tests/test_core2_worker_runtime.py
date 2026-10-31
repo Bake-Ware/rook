@@ -601,7 +601,7 @@ def test_worker_caps_ping_status_log_restart(setup):
         failed = (await hub.call("worker.log", {"failed": True}))["result"]["entries"]
         assert [e["cap"] for e in failed] == ["echo.boom"]
         assert (await hub.call("worker.log", {"person": "person:nobody"}))["result"]["entries"] == []
-        assert (await hub.call("info.ping"))["ok"]            # the 0.4 name is an alias
+        assert not (await hub.call("info.ping"))["ok"]        # no 0.4 names (castling-protocol: clean cut)
 
         out = await hub.call("worker.restart")
         assert out["ok"] and out["result"] == {"restarting": True}

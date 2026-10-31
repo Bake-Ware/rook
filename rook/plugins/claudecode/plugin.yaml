@@ -42,7 +42,6 @@ records:
     caps: [list, get, search, history, create, update, archive, delete]
     search: [name]
     history: true
-    aliases: { list: [ccmod.list], get: [ccmod.get], history: [ccmod.history], delete: [ccmod.delete] }
 caps:
   install:
     doc: >-
@@ -54,7 +53,6 @@ caps:
     scope: local
     effects: [persists]
     timeout: 60s
-    aliases: [ccmod.apply]
     args:
       dry_run: { type: bool, default: false }
     result: { type: map }
@@ -64,7 +62,6 @@ caps:
     risk: admin
     scope: local
     timeout: 60s
-    aliases: [ccmod.remove]
     args:
       dry_run: { type: bool, default: false }
     result: { type: map }
@@ -74,7 +71,6 @@ caps:
     risk: read
     scope: local
     idempotent: true
-    aliases: [ccmod.status]
     result: { type: map }
     run: scripts/claudecode.py:status
 hooks:

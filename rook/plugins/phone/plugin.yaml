@@ -16,7 +16,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 15s
-    aliases: [device.find]
     args:
       seconds: { type: int, default: 30, min: 1, max: 120 }
     run: scripts/phone.py:find
@@ -26,7 +25,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 15s
-    aliases: [device.find_stop]
     run: scripts/phone.py:find_stop
   unlock:
     doc: "Unlock a PIN lock screen the way a finger would: wake, bring up the pad, tap the digits. Without pin it types the PIN saved in the app (Settings > App > Device unlock PIN), which never leaves the phone. Bypasses nothing: it needs the right PIN, and a phone whose lock screen refuses accessibility taps can't be unlocked this way. {unlocked, pin: saved|given, taps_ok, note?}; the reply never carries digits."
@@ -34,7 +32,6 @@ caps:
     scope: local
     effects: [physical, sensitive]
     timeout: 30s
-    aliases: [device.unlock]
     args:
       pin: { type: secret, pattern: "^[0-9]{4,16}$", doc: "Digits; pass it as a vault reference. Blank: the PIN saved in the app." }
       hold_ms: { type: int, default: 9000, min: 1000, max: 60000, doc: How long the screen stays on for the pad. }
@@ -46,7 +43,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 15s
-    aliases: [device.vibrate]
     args:
       ms: { type: int, default: 300, min: 1, max: 5000 }
     run: scripts/phone.py:vibrate
@@ -56,7 +52,6 @@ caps:
     scope: local
     effects: [physical]
     timeout: 15s
-    aliases: [device.torch]
     args:
       on: { type: bool, default: true }
     run: scripts/phone.py:torch
