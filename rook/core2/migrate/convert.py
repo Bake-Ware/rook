@@ -19,6 +19,9 @@ import copy
 import datetime as _dt
 import fnmatch
 import re
+import shlex
+
+from ..enroll.hub import NAME as WORKER_NAME
 
 TIERS = ("read", "write", "exec", "admin")       # 0.4 tiers == 0.5 risks
 DEFAULT_TIER = "exec"
@@ -154,9 +157,9 @@ def trust(doc: dict | None, workers: list[str]) -> tuple[list, dict, list]:
                     hits = [w for w in workers if fnmatch.fnmatch(w.casefold(), val.casefold())]
                     notes.append(f"trust entry {e.get('id')}: sacred {t} matched {', '.join(hits) or 'no machine'}; "
                                  "0.5's sacred list names machines, so a new one that matches isn't covered")
-                    sacred += hits
+                    sacred += [worker_name(w) for w in hits]
                 else:
-                    sacred.append(val)
+                    sacred.append(worker_name(val))
             elif kind == "worker" and level == "ship-it":
                 pass                              # agents just go: 0.5's default
             else:
@@ -196,13 +199,24 @@ def memory(rows: list[dict], who: dict) -> tuple[list, list, dict]:
     return keep, jot, skipped
 
 
+def worker_name(name: str) -> str:
+    """A 0.4 machine name as a 0.5 worker name (enrollment refuses anything
+    else): apostrophes dropped, other runs of characters 0.5 doesn't allow
+    become ``-`` ("Logan's tablet" -> ``Logans-tablet``)."""
+    if WORKER_NAME.fullmatch(name) and name != HUB:
+        return name
+    out = re.sub(r"[^A-Za-z0-9._-]+", "-", name.replace("'", "")).strip("-._")[:63].rstrip("-._")
+    return out if out and out != HUB else "worker"
+
+
 def checklist(workers: list[dict], sacred: list, hub_url: str) -> list[dict]:
-    """One re-enrollment row per 0.4 machine."""
+    """One re-enrollment row per 0.4 machine; ``name05`` is its 0.5 name."""
     out = []
     for w in workers:
-        last = w["last_seen"]
-        out.append({"name": w["name"], "calls": w["calls"], "sacred": w["name"] in sacred,
+        last, name = w["last_seen"], worker_name(w["name"])
+        out.append({"name": w["name"], "name05": name, "calls": w["calls"], "sacred": name in sacred,
                     "last_seen": _dt.datetime.fromtimestamp(last, _dt.timezone.utc).strftime("%Y-%m-%d")
                     if last else None,
-                    "enroll": f"python -m rook.core2.worker --config worker.yaml enroll {hub_url} --name {w['name']}"})
+                    "enroll": f"python -m rook.core2.worker --config worker.yaml enroll {shlex.quote(hub_url)} "
+                              f"--name {shlex.quote(name)}"})
     return out
