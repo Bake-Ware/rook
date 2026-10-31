@@ -31,8 +31,6 @@ security agent, and not a job or plugin acting as you (the
 **Other holds:**
 
 - A security gate may flag a call that looks out of place ([Security plugins](security.md)).
-- A risky change, or any change in a sacred project, waits for one owner
-  card: its `change.apply` is a hard stop ([change records](../../rook/plugins/changes/docs/manual.md)).
 
 What can't run at all is **denied**, not held: a call outside what the
 person, the agent, the session or the worker's ceiling allows comes back

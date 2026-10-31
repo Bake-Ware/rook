@@ -69,20 +69,20 @@ and the worker refuses it again on its own, whatever a ticket says.
 Plugins update by being pushed again ([Plugins](plugins.md)). The worker's
 own code, its **core**, updates from a release the hub signs:
 
-1. Update the hub (its deploy). Then, as an owner, call `update.prepare` on
-   the hub (`worker=rook`): it packs the code the hub runs into a signed
-   release.
-2. Call `update.rollout {version}`. The first worker (or the `canary` ones
-   you name) goes first; the rest follow a couple at a time. Each worker's
-   update is a change record, like a plugin push, so `change.revert` undoes
-   it later.
+1. Update the hub (its deploy).
+2. As an owner, call `update.rollout` on the hub (`worker=rook`): it packs
+   the code the hub runs into a signed release and sends it out. The first
+   worker (or the `canary` ones you name) goes first; the rest follow a
+   couple at a time. `update.rollout {version}` of a release the hub still
+   holds takes the whole band back to it.
 3. Each worker checks the hub's signature and every file, tries the new code
    in a test run, and restarts into it. If the new core hasn't served a call
    from its home hub within two minutes, or crashes three times at start,
    the worker goes back to the core it had on its own, and the rollout stops
    and says why.
 4. `update.status` follows a rollout; `update.history` lists past ones.
-   `worker.rollback` on a worker goes back one core by hand.
+   `worker.update {version}` on a worker goes back to a core it keeps
+   (`installed`: the one installed with the package) by hand.
 
 A worker with terminals or streams open refuses the update (they would
 end): close them and roll out again. The phone app's worker updates with the

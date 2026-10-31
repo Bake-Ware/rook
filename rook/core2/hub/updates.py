@@ -1,23 +1,23 @@
 """Core updates, hub side (docs/castling-updates.md): the builtin ``update``
-plugin. An owner prepares a signed core release and rolls it out to the
-band's workers, canaries first, one batch at a time; a worker that doesn't
-come back healthy on the new core stops the rollout (and has already rolled
-itself back).
+plugin. An owner rolls a signed core release out to the band's workers,
+canaries first, one batch at a time; a worker that doesn't come back healthy
+on the new core stops the rollout (and has already rolled itself back).
 
-    update.prepare  {version?, source?}           sign a release of the hub's code (or a checkout)
-    update.rollout  {version, canary?, workers?, batch?, gate?}   start the rollout; returns at once
+    update.rollout  {version?, source?, canary?, workers?, batch?, gate?}   returns once it started
     update.status   {}                            releases, the rollout, each worker's core
     update.history  {limit?}                      what happened, newest first
 
-Each worker is updated through a change record (``change.submit``, the
-change plugin, as for plugin pushes) made as the person who started the
-rollout: its one script is ``worker.update`` with the release's Drop
-descriptor, its way back ``worker.rollback`` (``change.revert``), and every
-step goes through dispatch and the journal as that person; the worker pulls, verifies,
-smoke-checks and restarts into it on trial. The hub then waits up to
-``gate`` seconds for the worker to report that release confirmed
-(``worker.status``). Plugins keep updating through distribution
-(``POST /plugins/push``); the hub updates itself by its deploy, not here.
+``update.rollout`` signs the release it needs (the code this hub runs, or a
+checkout on the hub machine) unless the hub already holds that version, so
+going back band-wide is a rollout of an older held version. Each worker gets
+``worker.update`` with the release's Drop descriptor, called through
+dispatch and the journal as the person who started the rollout; the worker
+pulls, verifies, smoke-checks and restarts into it on trial. The hub then
+waits up to ``gate`` seconds for the worker to report that release confirmed
+(``worker.status``). With the change plugin installed the rollout leaves one
+change record when it ends; core never needs it. Plugins keep updating
+through distribution (``POST /plugins/push``); the hub updates itself by its
+deploy, not here.
 
 Files: ``<data>/releases/<version>.tar.gz`` with ``<version>.json`` beside
 it (the newest ``KEEP`` are kept), ``<data>/updates/history.jsonl`` and
@@ -107,7 +107,7 @@ class Updates:
             raise KitError(f"no release {version!r}")
         path = self.releases / f"{version}.tar.gz"
         if not path.is_file():
-            raise KitError(f"no release {version} on this hub; update.prepare makes one")
+            raise KitError(f"no release {version} on this hub")
         return path
 
     # -- caps --------------------------------------------------------------------
@@ -117,10 +117,9 @@ class Updates:
         if not ctx.caller.owner:
             raise KitError("denied: only an owner updates the band's core")
 
-    async def prepare(self, ctx, version: str | None = None, source: str | None = None) -> dict:
+    async def _prepare(self, ctx, version: str | None = None, source: str | None = None) -> dict:
         """Sign a release of ``source`` (a folder holding ``rook/``; default
         the code this hub runs). The same code again is the same release."""
-        self._owner(ctx)
         import rook
         src = Path(source).expanduser() if source else Path(rook.__file__).resolve().parent.parent
         try:
@@ -175,18 +174,28 @@ class Updates:
             out.append(row)
         return out
 
-    async def rollout(self, ctx, version: str, canary: list | None = None, workers: list | None = None,
+    def _holds(self, version: str | None) -> bool:
+        return bool(version) and any(m.get("version") == version for m in self._held())
+
+    async def rollout(self, ctx, version: str | None = None, source: str | None = None,
+                      canary: list | None = None, workers: list | None = None,
                       batch: int = BATCH, gate: int = GATE) -> dict:
         """Start updating the band's workers to ``version``: the canaries
         (default the first worker in line) one by one, then the rest
-        ``batch`` at a time. The first worker that fails stops it."""
+        ``batch`` at a time. The first worker that fails stops it. Without
+        ``version`` the code this hub runs is signed first; with ``source``
+        that checkout is (as ``version``, or named by its digest)."""
         self._owner(ctx)
-        path = self._tarball(version)
         if self.task is not None and not self.task.done():
             raise KitError(f"a rollout to {self.rollout_state.get('version')} is running; wait for it")
-        if "change" not in self.hub.plugins.plugins:
-            raise KitError("refused: core updates go through change records; put the change plugin "
-                           "(rook/plugins/changes) in the hub's library")
+        made = None
+        if source or not version:
+            made = await self._prepare(ctx, version, source)
+            version = made["version"]
+        elif not self._holds(version):
+            raise KitError(f"no release {version} on this hub: leave version blank to release the code it "
+                           "runs, or give a source to sign as it")
+        path = self._tarball(version)
         rows = self._workers(version)
         names = {r["name"] for r in rows}
         for n in [*(canary or ()), *(workers or ())]:
@@ -215,8 +224,8 @@ class Updates:
         who = KitCaller(person=ctx.caller.person, agent=ctx.caller.agent,
                         why=f"Update the core of the band's workers to {version} (rollout {rid}).")
         self.task = asyncio.get_running_loop().create_task(self._run(path, who))
-        return {"rollout": rid, "version": version, "canary": [r["name"] for r in canaries],
-                "rest": [r["name"] for r in rest],
+        return {"rollout": rid, "version": version, "signed": bool(made and made["new"]),
+                "canary": [r["name"] for r in canaries], "rest": [r["name"] for r in rest],
                 "skipped": {r["name"]: r["skip"] for r in wanted if "skip" in r}}
 
     async def status(self, ctx) -> dict:
@@ -274,11 +283,39 @@ class Updates:
             for w in ro["workers"]:
                 if w["state"] in ("waiting", "updating"):
                     w["state"], w["reason"] = "not started", w.get("reason") or "the rollout stopped"
-            ro["status"], ro["ended"] = status, round(time.time(), 3)
-            self._save_rollout()
-            self._history({"event": f"rollout.{status}", "rollout": ro["id"], "version": ro["version"],
-                           "updated": [w["name"] for w in ro["workers"] if w["state"] == "updated"],
-                           "failed": {w["name"]: w.get("reason") for w in ro["workers"] if w["state"] == "failed"}})
+            updated = [w["name"] for w in ro["workers"] if w["state"] == "updated"]
+            failed = {w["name"]: w.get("reason") for w in ro["workers"] if w["state"] == "failed"}
+            try:        # the record first: a rollout that reads as ended has its record
+                if status != "interrupted" and (updated or failed):
+                    ro["change"] = await self._record(ro, who, status, updated, failed)
+            finally:
+                ro["status"], ro["ended"] = status, round(time.time(), 3)
+                self._save_rollout()
+                self._history({"event": f"rollout.{status}", "rollout": ro["id"], "version": ro["version"],
+                               "updated": updated, "failed": failed})
+
+    async def _record(self, ro: dict, who: KitCaller, status: str, updated: list, failed: dict) -> str | None:
+        """The rollout's one change record (when the change plugin is installed)."""
+        froms = sorted({w.get("from") or "the installed core" for w in ro["workers"] if w["name"] in updated
+                        or w["name"] in failed})
+        try:
+            return await self.hub.note_change(who, {
+                "what": f"Update the core of {len(updated) + len(failed)} worker(s) to {ro['version']} "
+                        f"(rollout {ro['id']})",
+                "why": who.why, "category": "update", "workers": [*updated, *failed], "caps": ["worker.update"],
+                "risk": "Each worker restarts on the new core; a core that doesn't serve its home hub is rolled "
+                        "back by the worker itself.",
+                "testing": f"Each worker smoke-checks the release, then must report it confirmed within "
+                           f"{ro.get('gate', GATE)}s; the first that doesn't stops the rollout.",
+                "rollback": f"update.rollout of the version they had ({', '.join(froms)}), or worker.update "
+                            "{version} on one worker.",
+                "steps": "Canaries one by one, then the rest a batch at a time: the hub offers the release over "
+                         "Drop and calls worker.update on each.",
+                "outcome": (f"{status}: updated {', '.join(updated) or 'none'}"
+                            + "".join(f"; {n} failed: {r}" for n, r in failed.items()))[:1000]})
+        except Exception as e:          # the record is best effort; the history and journal have it
+            log.warning("rollout change record not written", extra={"fields": {"error": str(e)}})
+            return None
 
     async def _one(self, w: dict, blob: bytes, who: KitCaller) -> bool:
         """Update one worker and wait for it to come back confirmed."""
@@ -293,27 +330,12 @@ class Updates:
             desc = hub.transport.offer(k.band, blob, to=w["id"])
         except Exception as e:
             return self._done(w, False, f"release not offered: {e}")
-        frm = w.get("from") or "its installed core"
-        reply = await hub.call_as(who, "change.submit", {
-            "what": f"Update the core of {w['name']} to {version} (was {frm})", "why": who.why,
-            "category": "update", "wait": True,
-            "risk": f"{w['name']} restarts on the new core; its terminals and streams would end (it refuses "
-                    "while any are open). A core that doesn't serve its home hub is rolled back by the worker.",
-            "plan": f"The worker pulls the hub-signed release {version}, checks every file, smoke-checks it and "
-                    "restarts into it on trial; the rollout then waits for it to report the release confirmed.",
-            "scripts": [{"worker": w["id"], "cap": "worker.update", "args": {"bundle": desc}, "atomic": True}],
-            "rollback": {"worker": w["id"], "cap": "worker.rollback", "args": {}}}, target=hub.node)
-        rec = reply.get("result") if reply.get("ok") else None
-        if not isinstance(rec, dict):
-            return self._done(w, False, str(reply.get("error") or "change.submit failed"))
-        w["change"] = rec.get("id")
-        if rec.get("state") == "asked":
-            return self._done(w, False, f"change {rec.get('id')} waits for a person's card; once it is "
-                                        "answered the worker updates, and a new rollout skips it")
-        if rec.get("state") != "kept":
-            step = next((e for e in reversed(rec.get("log") or []) if e.get("phase") == "script"), None)
-            return self._done(w, False, str((step or {}).get("error") or rec.get("outcome")
-                                            or f"change {rec.get('state')}"))
+        reply = await hub.call_as(who, "worker.update", {"bundle": desc}, target=w["id"])
+        if reply.get("held"):
+            return self._done(w, False, f"worker.update waits for a person (hold {reply.get('hold')}); once "
+                                        "it is answered the worker updates, and a new rollout skips it")
+        if not reply.get("ok"):
+            return self._done(w, False, str(reply.get("error") or "worker.update failed"))
         deadline = time.monotonic() + gate
         while time.monotonic() < deadline:
             await asyncio.sleep(POLL)
@@ -390,6 +412,6 @@ def desktop_feed(fetch=_latest_release, now: float | None = None) -> dict:
 def install(hub) -> Updates:
     """Register the builtin ``update`` plugin on the hub node."""
     up = Updates(hub)
-    hub.plugins.add_builtin(UPDATE, {"update.prepare": up.prepare, "update.rollout": up.rollout,
-                                       "update.status": up.status, "update.history": up.history})
+    hub.plugins.add_builtin(UPDATE, {"update.rollout": up.rollout, "update.status": up.status,
+                                       "update.history": up.history})
     return up

@@ -147,7 +147,7 @@ and the workbench (`tasks`, `projects`, `knowledge`, `concepts`,
 `whiteboard`: caps `task.*`, `project.*`, ..., no pages yet; a project
 "Try Rook 0.5" with one task is there from the check). The library also
 holds the worker plugins, so `POST /plugins/push` can reinstall them signed,
-and `changes`: every push is a change record (`change.list`).
+and `changes`: every push leaves a change record (`change.list`).
 
 ## What to try first
 

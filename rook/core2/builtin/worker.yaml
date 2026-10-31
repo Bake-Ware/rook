@@ -2,7 +2,7 @@
 # core). Implemented inside the worker binary (rook/core2/worker/builtins.py),
 # announced like any plugin, never pushed. The rest of 0.4's selfupdate is
 # binned or elsewhere: deauth is core.trust.set with a removed membership and
-# hold is a setting. worker.update/rollback: docs/castling-updates.md.
+# hold is a setting. worker.update: docs/castling-updates.md.
 manifest: 1
 plugin: worker
 version: 0.5.0
@@ -65,32 +65,23 @@ caps:
         restarting: { type: bool }
   update:
     doc: >-
-      Update this worker's core to a hub-signed release: pull it, check its signature and files,
-      install its requirements, smoke-check it, then restart into it on trial. The new core must
-      serve a call from its home hub within two minutes (and within three starts), or the worker
-      drops it and restarts on the core it had. Refused while terminals or streams are open here.
+      Change this worker's core. bundle (sent by update.rollout): pull a hub-signed release,
+      check its signature and files, install its requirements, smoke-check it, then restart into
+      it on trial; the new core must serve a call from its home hub within two minutes (and
+      within three starts), or the worker drops it and restarts on the core it had. version:
+      restart on a core this worker already keeps (worker.status release.kept), or "installed"
+      for the installed package: going back by hand. One of the two. Refused while terminals or
+      streams are open here.
     risk: admin
     scope: self
     effects: [persists]
     timeout: 20m
     args:
-      bundle: { type: map, required: true, doc: "The release's Drop descriptor: id, size, sha256." }
-    result:
-      type: map
-      fields:
-        version: { type: str }
-        from: { type: str, doc: "The core it replaces; blank: the installed one." }
-        restarting: { type: bool }
-  rollback:
-    doc: >-
-      Go back to the kept previous core (the installed one when no release was kept) and
-      restart. Refused while terminals or streams are open here.
-    risk: admin
-    scope: self
-    effects: [persists]
+      bundle: { type: map, doc: "The release's Drop descriptor: id, size, sha256." }
+      version: { type: str, doc: "A kept core to go back to, or installed." }
     result:
       type: map
       fields:
         version: { type: str, doc: "The core it restarts on; blank: the installed one." }
-        from: { type: str }
+        from: { type: str, doc: "The core it replaces; blank: the installed one." }
         restarting: { type: bool }

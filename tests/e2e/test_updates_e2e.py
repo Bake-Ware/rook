@@ -25,10 +25,8 @@ def release_of(band) -> dict:
 
 
 def rollout(band, source, version=VERSION, seconds=120.0) -> dict:
-    prepared = call(band, "update.prepare", {"version": version, "source": str(source)}, worker="rook")
-    assert prepared["version"] == version and prepared["files"] > 100
-    started = call(band, "update.rollout", {"version": version, "gate": 60}, worker="rook")
-    assert started["canary"] == ["e2e-worker"]
+    started = call(band, "update.rollout", {"version": version, "source": str(source), "gate": 60}, worker="rook")
+    assert started["canary"] == ["e2e-worker"] and started["version"] == version and started["signed"]
     return until(lambda: (r := call(band, "update.status", worker="rook")["rollout"])["status"] != "running" and r,
                  seconds, "the rollout to end")
 
@@ -69,13 +67,12 @@ def test_a_release_rolls_out_restarts_the_worker_into_it_and_rolls_back_by_hand(
     assert band.owner.call("e2e.ping", {"text": "on the release"})["ok"]
     entries = band.owner.get("/journal?cap=worker.update&limit=5")["entries"]
     assert entries and entries[0]["person"].endswith("bake") and entries[0]["ok"]
-    change = call(band, "change.get", {"id": ro["workers"][0]["change"]}, worker="rook")
-    assert change["state"] == "kept" and change["category"] == "update"
-    assert change["rollback"]["cap"] == "worker.rollback"
+    change = call(band, "change.get", {"id": ro["change"]}, worker="rook")       # one record for the rollout
+    assert change["category"] == "update" and change["outcome"] == "done: updated e2e-worker"
     history = [e["event"] for e in call(band, "update.history", worker="rook")["entries"]]
     assert history[:3] == ["rollout.done", "worker.updated", "rollout.started"]
     # by hand: back to the installed core
-    back = call(band, "worker.rollback")
+    back = call(band, "worker.update", {"version": "installed"})
     assert back["version"] is None and back["from"] == VERSION
     until(lambda: (r := band.owner.call("worker.status", {})).get("ok") and r["result"]["release"]["running"] is None,
           60, "the worker back on its installed core")
