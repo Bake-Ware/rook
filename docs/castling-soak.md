@@ -71,11 +71,11 @@ beside it untouched throughout.
 - **Filtered journal reads slowed with the journal**: a person's or agent's
   newest entries sorted every one of their entries (130 ms at 40,000), under
   the lock every call's journal append waits on. Indexes fixed.
-- Not fixed here (other lanes, or Bake's call): lost band messages are never
-  resent (a call in flight during a blip waits its whole timeout, 20 minutes
-  for a plugin push); a relay restart costs ~20 s; large replies move at
-  ~1 MB/s; the worker's replay cache refuses every call once it averages
-  more than 55 calls/s over 15 minutes. Details below.
+- Left open by that PR, fixed in wave 7 (see "Transport fixes" below): lost
+  band messages were never resent (a call in flight during a blip waited
+  its whole timeout, 20 minutes for a plugin push); a relay restart cost
+  ~20 s; large replies moved at ~1 MB/s; the worker's replay cache refused
+  every call once it averaged more than 55 calls/s over 15 minutes.
 
 ## Throughput
 
@@ -272,6 +272,9 @@ tokens and plugin afterwards.
 
 For their lanes, or for Bake:
 
+Items 1, 2, 4 and 5 are fixed in wave 7 (next section); 3 mostly too: a
+resent request reaches the restarted worker and is answered at once.
+
 1. **Lost band messages are never resent.** A request or reply dropped on
    the band (relay paused: its UDP buffer overflows; relay restarted) is
    only noticed when dispatch's timeout runs out: 15 s + 5 s for most caps,
@@ -311,3 +314,116 @@ For their lanes, or for Bake:
 11. An agent's journal read that includes its projects
     (`agent = ? OR project IN (...)`) still sorts every match; two indexed
     reads merged would not.
+
+## Transport fixes (wave 7)
+
+Four of the findings above, fixed in `rook/core2/transport`,
+`rook/core2/worker/security.py` and the shared Drop receiver
+(`rook/worker/ota_drop.py`, opt-in, 0.4 unchanged). Before: the sidecar at
+castling `1c62dedc`; after: this branch. Same load each time (`run
+--minutes 11 --rate 20 --chaos-every 100 --plugin-every 120`, and `burst
+--seconds 300 --threads 8`). Raw runs: `~/rook-backups/c7-transport2/` on
+cachyrig.
+
+### 1. Replay cache: bounded by live tickets, not by load
+
+The cache kept every nonce 15 minutes and held at most 50,000, so a worker
+averaging more than ~55 calls/s refused everything. A ticket accepted at
+`now` has `exp <= now + 150`, so once `now > accepted + 180` the worker
+refuses any replay of it as `expired` (check 14) before the cache is even
+asked. The store now keeps the 15 minutes while there is room and, when
+full, drops nonces accepted more than 180 s ago, oldest first. It refuses
+only when more than `REPLAY_MAX` (now 100,000, ~15 MB) tickets are live at
+once: ~550 calls/s sustained for 3 minutes. Spec 6.3 is kept: its MUST is
+`exp + 30`; 10-20 minutes is a SHOULD the store follows until memory runs
+out. The store is now an `OrderedDict`: popping a plain dict's front left
+dead slots that every `next(iter())` walked again (19 µs per call at
+50,000 nonces, 0.4 µs now).
+
+| burst, 8 clients, 300 s | calls | ok/s | refused |
+|---|---:|---:|---:|
+| before | 81,701 | 143.5 | 38,645 (`denied by worker: replay`), every call from 186 s on |
+| after | 77,737 | 259.1 | 0 |
+
+Test: `test_replay_store_never_fills_under_sustained_load` (150 calls/s for
+20 minutes against a 30,000 bound; the old store refused from minute 3).
+
+### 2. Acks, bounded resends, dedupe
+
+A new transport extension, `ack` (feature in the announce, `accept` in the
+request; spec 2.1, minor-compatible: peers without it see nothing new):
+
+- The target acks a request (`{"kind": "ack", "from", "ids": [...]}`,
+  batched every 0.2 s) unless its reply goes out first, so a quick call
+  costs one extra small message (the caller's ack of the reply), batched.
+- Caller and target resend an unacked request or reply after 1 s, then
+  every 2 s, for at most 60 s, holding at most 8 MB per band; the hub stops
+  resending a call when dispatch gives up on it.
+- A request seen again with the same id and ticket nonce never runs twice:
+  while running it is acked again, once answered its held reply goes again.
+  A re-minted ticket (6.5) is a new request. A reply seen again is only
+  acked.
+- On the first answer after resends went unanswered, everything still
+  pending goes at once and a worker re-announces.
+
+A plugin push is a call (`core.plugin.install`), so it is covered; its
+bundle already rode Drop's own re-requests. While testing, the hub turned
+out never to journal late replies: `wait_for` cancels the reply future, so
+`_late` never filled. Fixed with the resend cut-off.
+
+### 3. Relay restart
+
+UDP has no connection to lose, so a restarted relay learns about a peer
+only from its next frame. Core v2 UDP links now send their keepalive (a
+route declaration, which also re-registers) every 5 s instead of 20 s; a
+resend that goes unanswered twice re-declares at once; the first answer
+after that re-announces. WebSocket links keep 20 s: they reconnect by
+themselves (jittered backoff) and re-announce on connect.
+
+### 4. Large replies over Drop
+
+On UDP the pacer allowed 2,000 frames/s and every Drop chunk is two frames,
+so ~1 MB/s whatever the link. Core v2 UDP links pace at 20,000 frames/s
+(burst 256; per band `pace: [rate, burst]`), and a pull keeps 8 windows of
+64 chunks in flight instead of one (one REQUEST names several ranges; every
+Drop sender serves them), re-asking for every gap after 0.25 s without
+progress. Memory stays bounded: the receiver holds what it pulls, the
+sender's queue holds at most the requested windows (512 KiB). Two
+processes on localhost, a 4 MiB pull through the UDP relay:
+
+| | MB/s |
+|---|---:|
+| before (2,000 frames/s, 1 window) | 1.0 |
+| unpaced, 1 window | 9.5-11.2 |
+| after (20,000 frames/s, 8 windows) | 9.8-10.2 |
+
+Both ends are then CPU-bound in Python (AEAD and framing per 1 KB frame);
+8 windows matter more on a real link, where one window per round trip caps
+a 20 ms path at ~3 MB/s.
+
+### The chaos run, before and after
+
+| | before | after |
+|---|---|---|
+| operations (11 min) | 10,736 at 16.2/s | 12,460 at 18.9/s |
+| `restart.sh relay` | ok again after 20.1 s; 8 calls waited out the gap, 4 timed out | 1.3 s; none |
+| `restart.sh worker` | 1.1 s; 4 timed out, 1 large reply not pulled, one call 65 s | 1.2 s; none |
+| relay paused 5 s | 5.1 s; 2 slow (max 10.7 s) | 5.1 s; 1 slow (5.0 s) |
+| relay paused 20 s | 20.1 s; 12 slow (max 20.0 s), 0 failed | PAUSE20 |
+| hub restarts | doors refuse ~1-2 s (connection refused), unchanged | same |
+| calls over 25 s | 5 (file_read/write, sleep, streams: a lost message waited a timeout) | 0 |
+| blob_4m (4 MiB reply) p50 / p99 | 6,715 / 11,466 ms | 818 / 2,537 ms |
+| exec_1m (1 MiB of stdout) p50 / p99 | 1,344 / 4,051 ms | 429 / 1,091 ms |
+| stream_2_7m p50 | 686 ms | 359 ms |
+| blob_256k p50 | 309 ms | 58 ms |
+| mcp_blob_64k p50 | 135 ms | 16 ms |
+| worker-call p50 (ping) | 6.7 ms | 7.0 ms |
+| plugin push + rollback | 10, 0 failed | 10, 0 failed |
+
+Failures left in the after run are the doors refusing connections while
+the hub restarts (`restart.sh hub` and `restart.sh`), as before.
+
+Still open: a worker restart answers resent calls with `denied by worker:
+replay` (the nonce is in its persisted cache; the call may have run), which
+is honest but terse; and calls the hub sends to a worker that is gone for
+good still wait their timeout.
