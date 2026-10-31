@@ -36,3 +36,5 @@ pages:
 
 components:
   holds: { title: Waiting for you, file: components/holds.js, doc: "Calls held for a person's answer, with a link to Approvals.", caps: [approval.list] }
+
+docs: { manual: docs/manual.md }

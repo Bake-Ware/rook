@@ -40,3 +40,5 @@ caps:
 
 pages:
   settings: { title: Settings, file: pages/settings.html, caps: ["hub.status", "setting.*"] }
+
+docs: { manual: docs/manual.md }
