@@ -30,7 +30,10 @@ arguments ties the entry to the ticket that ran.
   `chain`, `since`, `until`, `limit`).
 
 Owners read everything. A person reads their own calls. An agent reads its
-own calls and the history of the projects its sessions work for.
+own calls and the history of the projects its sessions work for. A session
+names only a project its caller may see: an owner names any; anyone else
+needs rights to read projects and the project on the workbench (by id or
+slug), else the session is refused (`denied: project: ...`).
 
 `journal call=<id>` is how you find out what happened to a call that timed
 out or was held: a late result is journaled when it arrives.

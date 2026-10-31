@@ -396,6 +396,55 @@ def test_ending_a_session_drops_its_leases_on_the_worker(hubs):
             await hub.stop()
     run(go())
 
+def test_a_session_names_only_a_project_its_caller_may_see(hubs, tmp_path):
+    # Naming a project opens its journal to the session's agent (11.4): the
+    # hub checks access at session start (review H9).
+    import shutil
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    shutil.copytree(Path(runtime.__file__).parents[2] / "plugins" / "projects", lib / "projects")
+
+    async def go():
+        hub, _, token = await hubs(config(tmp_path, library=lib), worker=False)
+        try:
+            _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "project.create", "why": WHY,
+                                                       "args": {"title": "Castling", "slug": "castling"}}, token)
+            assert out["ok"], out
+            pid = out["result"]["id"]
+            claude = hub.add_token(runtime.Caller(agent="agent:claude"))
+            kid = hub.add_token(runtime.Caller(person="person:kid"))
+            for project in ("castling", pid):
+                _, out = await http(hub, "POST", "/session", {"caps": ["*"], "project": project}, claude)
+                assert out["ok"], out
+            _, out = await http(hub, "POST", "/session", {"caps": ["*"], "project": "secret-plans"}, claude)
+            assert out == {"ok": False, "error": "denied: project: no project secret-plans"}
+            _, out = await http(hub, "POST", "/session", {"caps": ["*"], "project": "castling"}, kid)
+            assert out["error"] == "denied: project: you may not read projects"
+            _, out = await http(hub, "POST", "/session", {"caps": ["*"], "project": ["castling"]}, claude)
+            assert out["error"] == "denied: project: a project id or slug"
+            # owners read the whole journal anyway: any project
+            _, out = await http(hub, "POST", "/session", {"caps": ["*"], "project": "secret-plans"}, token)
+            assert out["ok"], out
+            # so an agent's journal view holds only projects it was let into
+            _, out = await http(hub, "GET", "/journal?project=secret-plans", token=claude)
+            assert out["ok"] and out["entries"] == []
+        finally:
+            await hub.stop()
+    run(go())
+
+    async def bare():      # no workbench: no projects to name
+        hub, _, _ = await hubs(config(tmp_path / "bare"), worker=False)
+        try:
+            claude = hub.add_token(runtime.Caller(agent="agent:claude"))
+            _, out = await http(hub, "POST", "/session", {"caps": ["*"], "project": "castling"}, claude)
+            assert out["error"] == "denied: project: no project castling (no projects on this hub)"
+            _, out = await http(hub, "POST", "/session", {"caps": ["*"]}, claude)
+            assert out["ok"]
+        finally:
+            await hub.stop()
+    run(bare())
+
+
 def test_holds_wait_for_the_person(hubs, tmp_path):
     async def go():
         hub, w, token = await hubs(config(tmp_path, sacred=["kaiju"]))
