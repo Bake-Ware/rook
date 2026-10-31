@@ -164,7 +164,7 @@ pub struct Hub {
     http: reqwest::Client,
 }
 
-fn client(timeout: Duration) -> reqwest::Client {
+pub(crate) fn client(timeout: Duration) -> reqwest::Client {
     reqwest::Client::builder()
         // Never follow redirects: a redirect here means "sign in" (or a
         // cookie for some other host), never something to chase with the
@@ -668,11 +668,11 @@ fn unsupported(err: &str) -> bool {
     e.contains("unknown capability") || e.contains("no such capability")
 }
 
-fn text(v: &Value, key: &str) -> String {
+pub(crate) fn text(v: &Value, key: &str) -> String {
     v.get(key).and_then(Value::as_str).unwrap_or("").trim().to_string()
 }
 
-fn first_line(s: &str, max: usize) -> String {
+pub(crate) fn first_line(s: &str, max: usize) -> String {
     let line = s.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
     if line.chars().count() <= max {
         line.to_string()

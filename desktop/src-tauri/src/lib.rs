@@ -12,15 +12,21 @@
 //!   read aloud by the voice server;
 //! * start/stop for this computer's worker, and a hub installer wizard;
 //! * one copy at a time, starting at sign-in if asked, and an update check.
+//!
+//! Settings > Your hub > Rook version picks the hub's API: 0.4 (`hub`,
+//! `worker`) or 0.5, castling (`hub05`, `worker05`). The switch stays until
+//! every hub is on 0.5.
 
 pub mod config;
 pub mod hub;
+pub mod hub05;
 pub mod installer;
 pub mod notify;
 pub mod sections;
 pub mod update;
 pub mod voice;
 pub mod worker;
+pub mod worker05;
 
 use config::{Credentials, Settings, Store};
 use serde::Serialize;
@@ -53,12 +59,22 @@ const OPEN_DOCK_JS: &str = "(function t(n){var b=document.querySelector('.hd-lau
 if(b){var p=document.querySelector('.hd-panel');if(p&&p.hidden)b.click();\
 setTimeout(function(){var i=document.querySelector('.hd-panel textarea');if(i)i.focus();},60);}\
 else if(n>0)setTimeout(function(){t(n-1)},250);})(40);";
+/// The same on a 0.5 hub site: its dock button (rook/core2/hub/doors/web/
+/// static/shell.js) opens the house agent's dock, which knows the page.
+const OPEN_DOCK_JS_05: &str = "(function t(n){var b=document.getElementById('dock-btn');\
+if(b&&!b.hidden){if(!document.body.classList.contains('dock-open'))b.click();\
+setTimeout(function(){var i=document.getElementById('dock-text');if(i)i.focus();},60);}\
+else if(n>0)setTimeout(function(){t(n-1)},250);})(40);";
 
 pub struct App {
     store: Store,
     settings: Mutex<Settings>,
     creds: Mutex<Credentials>,
     worker: Mutex<worker::Controller>,
+    /// This computer's 0.5 worker, run by the app.
+    worker05: Mutex<worker05::Controller>,
+    /// A 0.5 hub's pages by section (`pages.list`), for the tray and panel.
+    pages05: Mutex<Vec<sections::Section>>,
     quick_room: Mutex<Option<String>>,
     shortcuts: Mutex<(Option<Shortcut>, Option<Shortcut>)>,
     /// Bumped on every sign-in attempt, so an older cookie watcher stops.
@@ -92,10 +108,34 @@ fn hub_client(app: &AppHandle) -> Result<hub::Hub, String> {
     let s = settings(app);
     let c = creds(app);
     let origin = config::normalize_hub_url(&s.hub_url)?;
-    if !c.signed_in_to(&origin) {
+    if !c.signed_in_to(&origin, false) {
         return Err(hub::HubError::NotSignedIn.to_string());
     }
     Ok(hub::Hub::new(&origin, &c.cookie))
+}
+
+/// The same for a 0.5 hub: its door, with the person's token.
+fn hub05_client(app: &AppHandle) -> Result<hub05::Hub05, String> {
+    let s = settings(app);
+    let c = creds(app);
+    let origin = config::normalize_hub_url(&s.hub_url)?;
+    if !c.signed_in_to(&origin, true) {
+        return Err(hub::HubError::NotSignedIn.to_string());
+    }
+    Ok(hub05::Hub05::new(&origin, &c.token))
+}
+
+fn v05(app: &AppHandle) -> bool {
+    settings(app).v05()
+}
+
+/// The dashboard's sections: the 0.4 sidebar, or a 0.5 hub's own pages.
+fn current_sections(app: &AppHandle) -> Vec<sections::Section> {
+    if v05(app) {
+        state(app).pages05.lock().unwrap().clone()
+    } else {
+        sections::all()
+    }
 }
 
 fn notify(app: &AppHandle, title: &str, body: &str) {
@@ -185,7 +225,8 @@ fn ask_on_page(app: &AppHandle) -> Result<(), String> {
             tokio::time::sleep(Duration::from_millis(1500)).await;
         }
         if let Some(w) = app.get_webview_window("dashboard") {
-            if let Err(e) = w.eval(OPEN_DOCK_JS) {
+            let js = if v05(&app) { OPEN_DOCK_JS_05 } else { OPEN_DOCK_JS };
+            if let Err(e) = w.eval(js) {
                 log::warn!("couldn't open the dashboard chat: {e}");
             }
         }
@@ -295,10 +336,10 @@ fn open_dashboard(app: &AppHandle, path: &str) -> Result<(), String> {
         })
         .build()
         .map_err(|e| e.to_string())?;
-    // Signed in here already (password sign-in): hand the window the same
-    // session so the dashboard opens signed in.
+    // Signed in here already (password or token sign-in): hand the window
+    // the same session so the dashboard opens signed in.
     let c = creds(app);
-    if c.signed_in_to(&origin) {
+    if c.signed_in_to(&origin, s.v05()) && !c.cookie.is_empty() {
         if let Some(cookie) = session_cookie_for_webview(&origin, &c.cookie) {
             if w.set_cookie(cookie).is_ok() {
                 let _ = w.navigate(target);
@@ -368,7 +409,8 @@ async fn ui_state(app: &AppHandle) -> UiState {
     let (worker, microphone) = system_facts(app).await;
     update_worker_item(app, &worker);
     UiState {
-        signed_in: c.signed_in_to(&origin),
+        signed_in: c.signed_in_to(&origin, s.v05()),
+        sections: current_sections(app),
         principal: c.principal.clone(),
         voice_key_set: !c.voice_key.is_empty(),
         agent_token_set: !c.agent_token.is_empty(),
@@ -382,7 +424,6 @@ async fn ui_state(app: &AppHandle) -> UiState {
         version: env!("CARGO_PKG_VERSION"),
         os: installer::current_os(),
         worker,
-        sections: sections::all(),
         update: state(app).update.lock().unwrap().clone(),
         dashboard_open: app.get_webview_window("dashboard").is_some(),
         speaking: state(app).speaking.lock().unwrap().is_some(),
@@ -391,17 +432,34 @@ async fn ui_state(app: &AppHandle) -> UiState {
 
 async fn system_facts(app: &AppHandle) -> (worker::Info, Option<String>) {
     let a = app.clone();
-    tauri::async_runtime::spawn_blocking(move || (state(&a).worker.lock().unwrap().info(), microphone_name()))
-        .await
-        .unwrap_or_else(|_| (worker::Info::unknown(), None))
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = state(&a);
+        let info = if st.settings.lock().unwrap().v05() {
+            st.worker05.lock().unwrap().info()
+        } else {
+            st.worker.lock().unwrap().info()
+        };
+        (info, microphone_name())
+    })
+    .await
+    .unwrap_or_else(|_| (worker::Info::unknown(), None))
 }
 
 /// Start or stop the worker on a blocking thread.
 async fn worker_do(app: &AppHandle, action: &str) -> Result<worker::Info, String> {
     let a = app.clone();
     let action = action.to_string();
+    let s = settings(app);
     tauri::async_runtime::spawn_blocking(move || {
         let st = state(&a);
+        if s.v05() {
+            let mut w = st.worker05.lock().unwrap();
+            return match action.as_str() {
+                "start" => w.start(&worker05::python(&s.worker_python)),
+                "stop" => w.stop(),
+                _ => Ok(w.info()),
+            };
+        }
         let mut w = st.worker.lock().unwrap();
         match action.as_str() {
             "start" => w.start(),
@@ -565,13 +623,10 @@ async fn ask_impl(app: &AppHandle, question: &str) -> Result<hub::Answer, String
     if q.is_empty() {
         return Err("Type a question first.".into());
     }
-    let h = hub_client(app)?;
-    let token = creds(app).agent_token;
-    let answer = if !token.is_empty() {
-        h.ask_via_mcp(&token, q, ASK_WAIT).await
+    let answer = if v05(app) {
+        hub05_client(app)?.ask(q, ASK_WAIT).await
     } else {
-        let hint = state(app).quick_room.lock().unwrap().clone();
-        h.ask_via_chat(q, hint.as_deref(), ASK_WAIT).await
+        ask_04(app, q).await
     }
     .map_err(|e| e.to_string())?;
     if let Some(room) = &answer.room {
@@ -590,6 +645,17 @@ async fn ask_impl(app: &AppHandle, question: &str) -> Result<hub::Answer, String
         );
     }
     Ok(answer)
+}
+
+async fn ask_04(app: &AppHandle, q: &str) -> Result<hub::Answer, hub::HubError> {
+    let h = hub_client(app).map_err(|_| hub::HubError::NotSignedIn)?;
+    let token = creds(app).agent_token;
+    if !token.is_empty() {
+        h.ask_via_mcp(&token, q, ASK_WAIT).await
+    } else {
+        let hint = state(app).quick_room.lock().unwrap().clone();
+        h.ask_via_chat(q, hint.as_deref(), ASK_WAIT).await
+    }
 }
 
 /// After speech: transcribe, then ask, reporting each step to the overlay.
@@ -794,6 +860,38 @@ fn spawn_poller(app: AppHandle) {
                 let (info, _) = system_facts(&app).await;
                 update_worker_item(&app, &info);
             }
+            if s.v05() {
+                let Ok(h) = hub05_client(&app) else { continue };
+                if h.origin != watched_hub {
+                    watcher = notify::Watcher::new();
+                    watched_hub = h.origin.clone();
+                    warned = false;
+                }
+                // Pages come and go (agents make them); the site session lasts 30 days.
+                if polls % 20 == 0 {
+                    refresh_pages05(&app).await;
+                    keep_web_session(&app).await;
+                }
+                if !s.notifications {
+                    continue;
+                }
+                match h.attention().await {
+                    Ok(items) => {
+                        warned = false;
+                        for n in watcher.attention(items.as_deref()) {
+                            notify(&app, &n.title, &n.body);
+                        }
+                    }
+                    Err(hub::HubError::NotSignedIn) => {
+                        if !warned {
+                            notify(&app, "Rook", "Your hub sign-in expired. Sign in again in Settings.");
+                            warned = true;
+                        }
+                    }
+                    Err(e) => log::debug!("holds: {e}"),
+                }
+                continue;
+            }
             if !s.notifications {
                 continue;
             }
@@ -838,10 +936,52 @@ fn spawn_poller(app: AppHandle) {
     });
 }
 
+/// A 0.5 hub's pages, for the tray's Dashboard menu and the panel.
+async fn refresh_pages05(app: &AppHandle) {
+    let Ok(h) = hub05_client(app) else { return };
+    match h.pages().await {
+        Ok(pages) => {
+            let st = state(app);
+            let changed_now = *st.pages05.lock().unwrap() != pages;
+            if changed_now {
+                *st.pages05.lock().unwrap() = pages;
+                rebuild_tray(app);
+                changed(app);
+            }
+        }
+        Err(e) => log::debug!("pages: {e}"),
+    }
+}
+
+/// Keep the 0.5 site session the dashboard window opens with: a new one
+/// from the token when the hub has forgotten the old.
+async fn keep_web_session(app: &AppHandle) {
+    let c = creds(app);
+    let Ok(origin) = config::normalize_hub_url(&settings(app).hub_url) else {
+        return;
+    };
+    if !c.signed_in_to(&origin, true) {
+        return;
+    }
+    if !c.cookie.is_empty() && hub05::web_me(&origin, &c.cookie).await.is_ok() {
+        return;
+    }
+    match hub05::web_sign_in(&origin, &c.token).await {
+        // Unless the person signed out (or in again) meanwhile.
+        Ok((cookie, person)) if creds(app).token == c.token => save_sign_in05(app, &origin, &c.token, &cookie, person),
+        Ok(_) => {}
+        Err(e) => log::info!("site session: {e}"),
+    }
+}
+
 /// Ask the hub whether a newer app is published; announce each new version
 /// once.
 async fn check_update(app: &AppHandle) {
     let s = settings(app);
+    // TODO(castling:desktop-updates): a 0.5 hub has no /updates/desktop.json yet.
+    if s.v05() {
+        return;
+    }
     let Ok(origin) = config::normalize_hub_url(&s.hub_url) else {
         return;
     };
@@ -934,6 +1074,24 @@ fn save_sign_in(app: &AppHandle, origin: &str, cookie: &str, principal: String) 
     changed(app);
 }
 
+/// A 0.5 sign-in: the person's token, and the site session from it.
+fn save_sign_in05(app: &AppHandle, origin: &str, token: &str, cookie: &str, person: String) {
+    let st = state(app);
+    let mut c = st.creds.lock().unwrap();
+    if c.hub != origin {
+        *c = Credentials::default();
+    }
+    c.hub = origin.to_string();
+    c.token = token.to_string();
+    c.cookie = cookie.to_string();
+    c.principal = person;
+    if let Err(e) = st.store.save_credentials(&c) {
+        log::error!("saving sign-in: {e}");
+    }
+    drop(c);
+    changed(app);
+}
+
 // ---- tray -----------------------------------------------------------------------------
 
 fn worker_label(info: &worker::Info) -> &'static str {
@@ -950,7 +1108,8 @@ fn update_worker_item(app: &AppHandle, info: &worker::Info) {
     }
 }
 
-fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+/// The tray's menu, for the hub version and pages of the moment.
+fn tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let s = settings(app);
     let ask_label = if s.ask_shortcut.is_empty() {
         "Ask the home agent\u{2026}".to_string()
@@ -968,7 +1127,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         None::<&str>,
     )?)?;
     dashboard.append(&PredefinedMenuItem::separator(app)?)?;
-    for section in sections::all() {
+    for section in current_sections(app) {
         let sub = Submenu::with_id(app, format!("section:{}", section.id), &section.title, true)?;
         for page in &section.pages {
             sub.append(&MenuItem::with_id(
@@ -996,22 +1155,33 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let settings_item = MenuItem::with_id(app, "settings", "Settings\u{2026}", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Rook", true, None::<&str>)?;
     let sep = || PredefinedMenuItem::separator(app);
-    let menu = Menu::with_items(
-        app,
-        &[
-            &panel,
-            &dashboard,
-            &ask,
-            &page_ask,
-            &sep()?,
-            &worker,
-            &install,
-            &sep()?,
-            &settings_item,
-            &quit,
-        ],
-    )?;
+    let (sep1, sep2) = (sep()?, sep()?);
+    let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
+        vec![&panel, &dashboard, &ask, &page_ask, &sep1, &worker];
+    // The hub installer sets up a 0.4 hub.
+    if !s.v05() {
+        items.push(&install);
+    }
+    items.extend([&sep2 as &dyn tauri::menu::IsMenuItem<tauri::Wry>, &settings_item, &quit]);
+    let menu = Menu::with_items(app, &items)?;
     *state(app).worker_item.lock().unwrap() = Some(worker);
+    Ok(menu)
+}
+
+/// A new menu after the hub version or a 0.5 hub's pages change.
+fn rebuild_tray(app: &AppHandle) {
+    let Some(tray) = app.tray_by_id("main") else { return };
+    match tray_menu(app) {
+        Ok(menu) => {
+            let _ = tray.set_menu(Some(menu));
+            refresh_worker_item(app);
+        }
+        Err(e) => log::warn!("tray menu: {e}"),
+    }
+}
+
+fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    let menu = tray_menu(app)?;
     let mut tray = TrayIconBuilder::with_id("main")
         .tooltip("Rook")
         .menu(&menu)
@@ -1023,7 +1193,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 }
             }
             id if id.starts_with("page:") => {
-                let opened = sections::path_for(id).map(|p| open_dashboard(app, &p));
+                let opened = sections::path_for(id, &current_sections(app)).map(|p| open_dashboard(app, &p));
                 if !matches!(opened, Some(Ok(()))) {
                     show_settings(app, Some("hub"));
                 }
@@ -1042,7 +1212,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                         "running" => "stop",
                         "stopped" => "start",
                         _ => {
-                            if open_dashboard(&app, "/#install").is_err() {
+                            if v05(&app) || open_dashboard(&app, "/#install").is_err() {
                                 show_settings(&app, Some("worker"));
                             }
                             return;
@@ -1107,6 +1277,13 @@ async fn save_settings(app: AppHandle, mut settings: Settings) -> Result<UiState
     st.store
         .save_settings(&settings)
         .map_err(|e| format!("Couldn't save settings: {e}"))?;
+    if old.hub_version != settings.hub_version {
+        switched_version(&app, old.v05()).await;
+    } else if old.hub_url != settings.hub_url && !st.pages05.lock().unwrap().is_empty() {
+        // Another hub: its pages come with its sign-in.
+        st.pages05.lock().unwrap().clear();
+        rebuild_tray(&app);
+    }
     apply_wake(&app);
     if let Err(e) = apply_start_at_login(&app) {
         changed(&app);
@@ -1114,6 +1291,33 @@ async fn save_settings(app: AppHandle, mut settings: Settings) -> Result<UiState
     }
     changed(&app);
     Ok(ui_state(&app).await)
+}
+
+/// Another hub version: the old sign-in and pages don't carry over, and the
+/// app's 0.5 worker stops when the app goes back to 0.4.
+async fn switched_version(app: &AppHandle, was_05: bool) {
+    let st = state(app);
+    {
+        let mut c = st.creds.lock().unwrap();
+        c.cookie.clear();
+        c.token.clear();
+        c.principal.clear();
+        if let Err(e) = st.store.save_credentials(&c) {
+            log::error!("saving sign-in: {e}");
+        }
+    }
+    st.signin_gen.fetch_add(1, Ordering::SeqCst);
+    *st.quick_room.lock().unwrap() = None;
+    st.pages05.lock().unwrap().clear();
+    if was_05 {
+        let a = app.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || state(&a).worker05.lock().unwrap().shutdown()).await;
+    }
+    if let Some(w) = app.get_webview_window("dashboard") {
+        let _ = w.clear_all_browsing_data();
+        let _ = w.close();
+    }
+    rebuild_tray(app);
 }
 
 /// Make the system's start-at-sign-in entry match the setting (the Run key
@@ -1179,8 +1383,75 @@ async fn sign_in_password(app: AppHandle, hub: String, username: String, passwor
     Ok(ui_state(&app).await)
 }
 
+/// 0.5: sign in with the person's own door token.
+#[tauri::command]
+async fn sign_in_token(app: AppHandle, hub: String, token: String) -> Result<UiState, String> {
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        return Err("Paste your sign-in token first.".into());
+    }
+    let origin = set_hub(&app, &hub)?;
+    let (cookie, person) = hub05::web_sign_in(&origin, &token).await.map_err(|e| e.to_string())?;
+    save_sign_in05(&app, &origin, &token, &cookie, person);
+    refresh_pages05(&app).await;
+    Ok(ui_state(&app).await)
+}
+
+/// 0.5: add this computer as a worker. Enrollment by device code, which the
+/// app approves as the signed-in person (they clicked Add), then start it.
+#[tauri::command]
+async fn worker_add(app: AppHandle) -> Result<UiState, String> {
+    let h = hub05_client(&app)?;
+    let s = settings(&app);
+    let a = app.clone();
+    let said = tauri::async_runtime::spawn_blocking(move || {
+        let layout = state(&a).worker05.lock().unwrap().layout.clone();
+        let python = worker05::python(&s.worker_python);
+        worker05::enroll(&layout, &python, &h.origin, None, |code| {
+            tauri::async_runtime::block_on(h.approve_device(&code)).map_err(|e| e.to_string())
+        })
+    })
+    .await
+    .map_err(|_| "Adding this computer failed.".to_string())??;
+    log::info!("worker enrolled: {said}");
+    use_services(&app);
+    worker_do(&app, "start").await?;
+    notify(&app, "Rook", "This computer is a worker on your hub now.");
+    changed(&app);
+    Ok(ui_state(&app).await)
+}
+
+/// The config bundle's voice service fills the voice settings left empty.
+fn use_services(app: &AppHandle) {
+    let st = state(app);
+    let Some(services) = st.worker05.lock().unwrap().layout.services() else {
+        return;
+    };
+    let voice = &services["voice"];
+    let url = voice["url"].as_str().unwrap_or("").trim().to_string();
+    let key = voice["key"].as_str().unwrap_or("").trim().to_string();
+    let mut s = st.settings.lock().unwrap();
+    if s.voice_url.is_empty() && voice::voice_base(&url).is_ok() {
+        s.voice_url = url;
+        if let Err(e) = st.store.save_settings(&s) {
+            log::error!("saving settings: {e}");
+        }
+        drop(s);
+        let mut c = st.creds.lock().unwrap();
+        if c.voice_key.is_empty() && !key.is_empty() {
+            c.voice_key = key;
+            if let Err(e) = st.store.save_credentials(&c) {
+                log::error!("saving the voice key: {e}");
+            }
+        }
+    }
+}
+
 #[tauri::command]
 fn sign_in_browser(app: AppHandle, hub: String) -> Result<(), String> {
+    if v05(&app) {
+        return Err("A 0.5 hub signs in with your token.".into());
+    }
     let origin = set_hub(&app, &hub)?;
     open_dashboard(&app, "/")?;
     watch_dashboard_sign_in(app, origin);
@@ -1196,15 +1467,23 @@ async fn sign_out(app: AppHandle) -> Result<UiState, String> {
     let old = {
         let mut c = st.creds.lock().unwrap();
         let old = (c.hub.clone(), std::mem::take(&mut c.cookie));
+        c.token.clear();
         c.principal.clear();
         st.store.save_credentials(&c).map_err(|e| e.to_string())?;
         old
     };
     if !old.1.is_empty() {
-        if let Err(e) = hub::Hub::new(&old.0, &old.1).logout().await {
+        let out = if old.1.starts_with(&format!("{}=", hub05::WEB_COOKIE)) {
+            hub05::web_sign_out(&old.0, &old.1).await
+        } else {
+            hub::Hub::new(&old.0, &old.1).logout().await
+        };
+        if let Err(e) = out {
             log::info!("hub logout: {e}");
         }
     }
+    st.pages05.lock().unwrap().clear();
+    rebuild_tray(&app);
     if let Some(w) = app.get_webview_window("dashboard") {
         let _ = w.clear_all_browsing_data();
         let _ = w.close();
@@ -1252,6 +1531,22 @@ fn to_json<T: Serialize>(r: Result<T, hub::HubError>) -> Result<serde_json::Valu
 /// `sessions`. Read-only, as the signed-in person.
 #[tauri::command]
 async fn panel_data(app: AppHandle, kind: String, query: Option<String>) -> Result<serde_json::Value, String> {
+    if v05(&app) {
+        let h = hub05_client(&app)?;
+        return match kind.as_str() {
+            "waiting" => to_json(h.waiting().await),
+            "work" => to_json(h.work().await),
+            "knowledge" => {
+                let q: String = query.unwrap_or_default().trim().chars().take(200).collect();
+                if q.is_empty() {
+                    return Ok(json!([]));
+                }
+                to_json(h.knowledge(&q).await)
+            }
+            "sessions" => to_json(h.sessions().await),
+            _ => Err("unknown list".into()),
+        };
+    }
     let h = hub_client(&app)?;
     match kind.as_str() {
         "waiting" => to_json(h.waiting().await),
@@ -1473,10 +1768,24 @@ fn check(out: Option<&str>) -> i32 {
     let c = store.load_credentials();
     let origin = config::normalize_hub_url(&s.hub_url).unwrap_or_default();
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    let worker = worker::Controller::new(worker::Layout::from_env(&home)).info();
+    let worker = if s.v05() {
+        worker05::Controller::new(worker05::Layout::new(&dir)).info()
+    } else {
+        worker::Controller::new(worker::Layout::from_env(&home)).info()
+    };
     let hub = tauri::async_runtime::block_on(async {
         if origin.is_empty() {
             return json!({"configured": false});
+        }
+        if s.v05() {
+            let mut v = json!({"configured": true, "origin": origin, "version": config::HUB_05});
+            if c.signed_in_to(&origin, true) {
+                v["waiting"] = match hub05::Hub05::new(&origin, &c.token).waiting().await {
+                    Ok(w) => json!({"ok": true, "count": w.len()}),
+                    Err(e) => json!({"ok": false, "error": e.to_string()}),
+                };
+            }
+            return v;
         }
         let downloads = hub::desktop_downloads(&origin, env!("CARGO_PKG_VERSION"), update::platform()).await;
         let mut v = json!({
@@ -1487,7 +1796,7 @@ fn check(out: Option<&str>) -> i32 {
             "update": downloads.ok().and_then(|d| update::pick(&d, env!("CARGO_PKG_VERSION"),
                                                                update::platform(), false)),
         });
-        if c.signed_in_to(&origin) {
+        if c.signed_in_to(&origin, false) {
             let h = hub::Hub::new(&origin, &c.cookie);
             v["whoami"] = match h.whoami().await {
                 Ok(w) => json!({"ok": true, "principal": w.principal}),
@@ -1507,7 +1816,8 @@ fn check(out: Option<&str>) -> i32 {
         "features": {"voice": cfg!(feature = "voice"), "wake_word": cfg!(feature = "wake-word")},
         "config_dir": dir.display().to_string(),
         "settings_saved": dir.join("settings.json").is_file(),
-        "signed_in": c.signed_in_to(&origin),
+        "hub_version": s.hub_version,
+        "signed_in": c.signed_in_to(&origin, s.v05()),
         "principal": c.principal,
         "speak_answers": s.speak_answers,
         "start_at_login": s.start_at_login,
@@ -1515,7 +1825,7 @@ fn check(out: Option<&str>) -> i32 {
         "microphone": microphone_name(),
         "speaker": speaker_name(),
         "webview": tauri::webview_version().ok(),
-        "sections": sections::all().iter().map(|s| s.title.clone()).collect::<Vec<_>>(),
+        "sections": if s.v05() { vec![] } else { sections::all().iter().map(|s| s.title.clone()).collect::<Vec<_>>() },
         "hub": hub,
     });
     let text = serde_json::to_string_pretty(&report).unwrap_or_default();
@@ -1579,6 +1889,8 @@ pub fn run() {
                 settings: Mutex::new(settings),
                 creds: Mutex::new(creds),
                 worker: Mutex::new(worker::Controller::new(worker::Layout::from_env(&home))),
+                worker05: Mutex::new(worker05::Controller::new(worker05::Layout::new(&config_dir(&handle)))),
+                pages05: Mutex::new(Vec::new()),
                 quick_room: Mutex::new(None),
                 shortcuts: Mutex::new((None, None)),
                 signin_gen: AtomicU64::new(0),
@@ -1620,6 +1932,13 @@ pub fn run() {
                 });
             }
             spawn_poller(handle.clone());
+            if v05(&handle) {
+                let h = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    refresh_pages05(&h).await;
+                    keep_web_session(&h).await;
+                });
+            }
             match show.as_deref() {
                 Some(w) => show_requested(&handle, Some(w)),
                 // Without a tray icon the settings window is the way in.
@@ -1636,6 +1955,7 @@ pub fn run() {
             save_secrets,
             sign_in_password,
             sign_in_browser,
+            sign_in_token,
             sign_out,
             open_dashboard_cmd,
             ask,
@@ -1644,6 +1964,7 @@ pub fn run() {
             show_window,
             ptt_toggle,
             worker_action,
+            worker_add,
             test_notification,
             install_plan,
             install_run,
@@ -1660,6 +1981,7 @@ pub fn run() {
         RunEvent::ExitRequested { api, code: None, .. } => api.prevent_exit(),
         RunEvent::Exit => {
             state(app).worker.lock().unwrap().shutdown();
+            state(app).worker05.lock().unwrap().shutdown();
         }
         _ => {}
     });

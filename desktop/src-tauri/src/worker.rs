@@ -147,8 +147,18 @@ pub fn task_running(stdout: &str) -> bool {
 /// install, a dev worker or a test run doesn't match. Windows paths compare
 /// without case.
 pub fn worker_pids(rows: &str, pyz: &Path, windows: bool) -> Vec<u32> {
+    pids_naming(rows, pyz, windows, enrolled_after)
+}
+
+fn enrolled_after(after: &str) -> bool {
+    after.split_whitespace().any(|a| a.trim_matches('"') == "--enrolled")
+}
+
+/// The rows whose command line names `path` as a whole argument, where
+/// `accept` likes what follows it.
+pub fn pids_naming(rows: &str, path: &Path, windows: bool, accept: fn(&str) -> bool) -> Vec<u32> {
     let fold = |s: &str| if windows { s.to_lowercase() } else { s.to_string() };
-    let want = fold(&pyz.display().to_string());
+    let want = fold(&path.display().to_string());
     rows.lines()
         .filter_map(|l| {
             // A byte-order mark may lead the first row (Windows PowerShell).
@@ -160,9 +170,7 @@ pub fn worker_pids(rows: &str, pyz: &Path, windows: bool) -> Vec<u32> {
             let edge = |c: Option<char>| c.map_or(true, |c| c.is_whitespace() || c == '"' || c == '\'');
             let found = cmd.match_indices(want.as_str()).any(|(at, _)| {
                 let (before, after) = (&cmd[..at], &cmd[at + want.len()..]);
-                edge(before.chars().next_back())
-                    && edge(after.chars().next())
-                    && after.split_whitespace().any(|a| a.trim_matches('"') == "--enrolled")
+                edge(before.chars().next_back()) && edge(after.chars().next()) && accept(after)
             });
             found.then_some(())?;
             pid.trim().parse().ok()
@@ -172,6 +180,11 @@ pub fn worker_pids(rows: &str, pyz: &Path, windows: bool) -> Vec<u32> {
 
 /// This install's worker processes running outside the app and its service.
 fn worker_processes(pyz: &Path) -> Vec<u32> {
+    processes_naming(pyz, enrolled_after)
+}
+
+/// Processes whose command line names `path` (see [`pids_naming`]).
+pub fn processes_naming(path: &Path, accept: fn(&str) -> bool) -> Vec<u32> {
     if cfg!(windows) {
         // UTF-8, so a profile path with non-ASCII letters (C:\\Users\\José) matches.
         const SCRIPT: &str = "[Console]::OutputEncoding = New-Object Text.UTF8Encoding $false; \
@@ -188,13 +201,13 @@ fn worker_processes(pyz: &Path) -> Vec<u32> {
                 SCRIPT,
             ],
         ) {
-            Some((true, out)) => worker_pids(&out, pyz, true),
+            Some((true, out)) => pids_naming(&out, path, true, accept),
             _ => vec![],
         }
     } else {
         // -ww: whole command lines (macOS cuts them at the terminal width).
         match run("ps", &["-ww", "-axo", "pid=,args="]) {
-            Some((true, out)) => worker_pids(&out, pyz, false),
+            Some((true, out)) => pids_naming(&out, path, false, accept),
             _ => vec![],
         }
     }

@@ -10,10 +10,12 @@
     "allow-save-secrets",
     "allow-sign-in-password",
     "allow-sign-in-browser",
+    "allow-sign-in-token",
     "allow-sign-out",
     "allow-open-dashboard-cmd",
     "allow-show-window",
     "allow-worker-action",
+    "allow-worker-add",
     "allow-test-notification",
     "allow-open-update",
     "allow-stop-speaking"
