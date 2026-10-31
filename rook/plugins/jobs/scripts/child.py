@@ -18,8 +18,9 @@ run's result. ``job`` is the workflow library::
   the hub as the job's identity through dispatch (rights, gates, holds,
   journal). ``on`` names the worker. Raises ``job.Error`` (``.retry`` says
   trying later may work).
-- ``job.notify(text, *, title=None, to=None)``: ``notify.send``, by default
-  to the job's person (a persona's or plugin's job: the owners).
+- ``job.notify(text, *, title=None, to=None)``: gets word to the job's
+  person (a persona's or plugin's job: the owners) through the house agent,
+  which picks how and when; ``notify.send`` when no agents are installed.
 - ``job.ask(question, options=None, *, timeout="1h")``: asks the person
   (``approval.ask``, as the job's identity; at most an hour) and waits for
   the answer; None if nobody answers in time.
@@ -31,7 +32,7 @@ run's result. ``job`` is the workflow library::
   the last successful run started, or None), ``job.person``.
 
 Protocol: the first stdin line is ``{script, func, job}``. Then JSON lines:
-to the hub ``{op: call|ask, id, ...}``, ``{op: log, text}``, finally ``{op:
+to the hub ``{op: call|ask|notify, id, ...}``, ``{op: log, text}``, finally ``{op:
 done, result}`` or ``{op: error, error}``; from the hub ``{id, ok, result |
 error, retry}``. stdout is the protocol's: anything else written there goes
 to stderr, which the hub keeps in the run's log.
@@ -127,9 +128,7 @@ class Job:
         return self._wire.request({"op": "call", "cap": cap, "args": args or {}, "on": on, "why": why})
 
     def notify(self, text: str, *, title: str | None = None, to: str | None = None):
-        to = to or self.person
-        args = {"text": text, **({"title": title} if title else {}), **({"to": to} if to else {})}
-        return self.call("notify.send", args, why=f"tell {to or 'the owners'}: {title or text[:60]}")
+        return self._wire.request({"op": "notify", "text": text, "title": title, "to": to})
 
     def ask(self, question: str, options: list | None = None, *, timeout="1h"):
         return self._wire.request({"op": "ask", "question": question, "options": options, "timeout": timeout})

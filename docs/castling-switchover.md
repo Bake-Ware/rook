@@ -74,12 +74,13 @@ cutover. They come from castling/coverage.md and the lanes' notes:
 
 - Not built yet, named as Bake's decisions decide them (castling-caps
   and its per-cap table; nothing here is a 0.4 piece to port):
-  - the house agent's **attention job**: a jobs template on the phone's
-    notification and SMS events that runs the house agent with an attention
-    skill, curated into `attention.list` (castling-attention: "Attention
-    becomes an aggregation job on the hub run by the house agent"; the phone
-    stays thin, "no attention service"). The 0.4 reminder rule goes:
-    "When to remind is the house agent's call" (drift #30);
+  - ~~the house agent's **attention job**~~ built (drift #30): the
+    `attention` plugin's ready-made job runs the house agent's attention
+    skill every 15 minutes, which collects through caps and curates into
+    `attention.list` (castling-attention: "periodically collect everything
+    trying to get the user's attention ... via caps"); the 0.5 phone does no
+    sorting. The 0.4 reminder rule goes: "When to remind is the house
+    agent's call";
   - core **`page.show`** (castling-caps rule 10: "show.present becomes core
     page.show"; drift #8);
   - **`trust.check`**, the one "will this run, hold or be refused, and why"

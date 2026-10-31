@@ -313,7 +313,7 @@ Everything else in "Today's plugins -> 0.5" without a 0.5 plugin, and where it w
 | hub: trust, policy, access (-> trust, user) | core config: people, presets and grants are the hub config's `users` (spec 8.5); trust.check ("will this run, hold or be refused, and why") would be a dry run of dispatch, core work. Not a plugin port. |
 | hub: changes (-> change) | change records (castling-changes): rook/plugins/changes, a records hub plugin; plugin pushes go through it. |
 | hub: updates (-> update) | waits for a 0.5 release format, like worker.update (N27). |
-| hub: attention (-> attention) | the house agent's curated list (castling-attention): an agents/jobs record fed by phone events once they reach the hub (N21). Not ported. |
+| hub: attention (-> attention) | the house agent's curated list (castling-attention): the `attention` plugin (package agents): `attention` records + a ready-made job that runs the house agent's attention skill (drift #30). |
 | hub: huddle (-> huddle.start) | `huddle` plugin: a thread with roles on a durable stream (start/post/read/close). The 0.4 table, pins and votes are dropped: work lands by task sign-off + `github.merge` (castling-workbench; R14). |
 | hub: help | core (castling-caps: help absorbs manual.*); every 0.5 plugin ships `docs/manual.md`, which a hub help cap would serve. Not a port. |
 | hub: voice | the speech lane (castling-naming-decisions B10). |

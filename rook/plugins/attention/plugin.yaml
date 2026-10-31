@@ -1,0 +1,47 @@
+# Attention on the hub (castling-attention: "Attention becomes an aggregation
+# job on the hub run by the house agent"). No sorting engine and no rules:
+# a ready-made job wakes the house agent every so often; its attention skill
+# collects what is trying to reach the person through ordinary caps (the
+# phone's notifications and texts, mail, chat), curates what matters into
+# attention records (attention.list: one place), and gets word to the person
+# when it's worth it (the reach-the-user skill). What the person cares about
+# is learned (notepad, then memory), not configured. Workers' events
+# (notification-android.received, sms.received) reach the hub for anyone who
+# wants an instant job on them; this plugin needs none of its own code.
+manifest: 1
+plugin: attention
+version: 0.5.0
+title: Attention
+doc: What is trying to get the person's attention, curated in one place by the house agent.
+package: agents
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+
+records:
+  attention:
+    fields:
+      summary: { type: str, required: true, max: 500, doc: "What it is and what to do about it, in a line or two: the answer, not the raw data." }
+      source: { type: str, max: 200, doc: "Where it came from (e.g. 'phone: Gmail, the school office')." }
+      whose: { type: str, doc: "Whose attention it is for (person:<name>); blank: the owners." }
+      due: { type: float, doc: "When it must be done by or stops mattering (epoch seconds), if it has a date." }
+      told: { type: float, doc: "When the person was told (blank: not yet)." }
+    search: [summary, source]
+    index: [whose]
+    private: true
+    caps: [list, get, search, create, update, archive]
+
+jobs:
+  attention:
+    doc: "Every 15 minutes the house agent looks over what is trying to reach the person and curates it (its attention skill)."
+    trigger: { every: 15m }
+    agent:
+      persona: house
+      prompt: "Attention pass: follow your attention skill (agents.skill attention). Look at what has arrived for the people you look after since your last pass, curate what matters into attention records, and reach them only if something can't wait."
+    as: persona
+    enabled: true
+
+skills:
+  attention: skills/attention.md
+
+docs: { manual: docs/manual.md }
