@@ -282,3 +282,39 @@ def test_only_the_hubs_own_bot_speaks_for_a_person():
     asyncio.run(mod.inbound(ctx, "telegram.message", {**msg, "worker": "laptop"}, source="telegram"))
     asyncio.run(mod.inbound(ctx, "discord.message", msg, source="telegram"))
     assert ctx.calls == []
+
+
+def test_a_signoff_request_wakes_the_agents_asked(tmp_path):
+    """task.request_signoff with no reviewers goes to the project's expert
+    pool; the agents hook messages each agent asked, as the one asking."""
+    lib = tmp_path / "lib"
+    (lib / "agents-local" / "scripts").mkdir(parents=True)
+    (lib / "agents-local" / "plugin.yaml").write_text(BRAIN)
+    (lib / "agents-local" / "scripts" / "brain.py").write_text(BRAIN_PY)
+    for name in ("agents", "tasks", "projects", "concepts"):
+        (lib / name).symlink_to(PLUGINS / name, target_is_directory=True)
+    cfg = Config(data=tmp_path / "data", band=BAND, library=lib, users={"bake": {"preset": "owner"}},
+                 settings={"agents": {"warm": "200ms"}}, doors={"http": {"bind": "127.0.0.1:0"}})
+
+    async def body():
+        hub = Hub(cfg, transport=Loopback())
+        await hub.start()
+        try:
+            owner = (hub.data / "owner.token").read_text().strip()
+            ok = lambda out: out["ok"] and out["result"] or pytest.fail(str(out))  # noqa: E731
+            ok(await call(hub, owner, "concept.create", title="Software", slug="software", roles=["qa", "nobody"]))
+            p = ok(await call(hub, owner, "project.create", title="Rook", slug="rook", concepts=["software"]))
+            t = ok(await call(hub, owner, "task.create", title="Huddles reworked", project=p["id"]))
+            out = ok(await call(hub, owner, "task.request_signoff", id=t["id"], note="PR #333"))
+            assert [s["reviewer"] for s in out["signoff"]] == ["role:qa", "role:nobody"]
+
+            def asked():
+                read = hub.journal.query(cap="agents-local.turn", limit=5)
+                return [e for e in read if e["person"] == "person:bake"]
+            await until(asked)
+            chat = ok(await call(hub, owner, "agents.chat.read", agent="qa"))
+            said = json.dumps(chat["events"])
+            assert "asks for your sign-off as role:qa: PR #333" in said and t["id"] in said
+        finally:
+            await hub.stop()
+    asyncio.run(asyncio.wait_for(body(), 30))

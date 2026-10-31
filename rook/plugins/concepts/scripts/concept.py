@@ -1,6 +1,6 @@
 """concept.pool: what a project tagged with these concepts draws on."""
 
-SIGNOFF = ("none", "experts", "user")          # loosest first
+SIGNOFF = ("none", "experts")                  # loosest first
 TRUST = ("ship-it", "normal", "sacred")
 
 
@@ -24,7 +24,7 @@ def pool(ctx, concepts):
             continue
         roles += [r for r in c["roles"] or () if r not in roles]
         skills += [s for s in c["skills"] or () if s not in skills]
-        signoff = max(signoff, c["signoff"] or "experts", key=SIGNOFF.index)
+        signoff = max(signoff, c["signoff"] if c["signoff"] in SIGNOFF else "experts", key=SIGNOFF.index)
         trust = max(trust, c["trust"] or "normal", key=TRUST.index)
         found.append({"id": c["id"], "slug": c["slug"], "title": c["title"], "doc": c["doc"]})
     out = {"concepts": found, "roles": roles, "skills": skills,

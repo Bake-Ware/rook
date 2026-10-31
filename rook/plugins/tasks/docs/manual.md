@@ -29,10 +29,13 @@ The record caps (`task.list`, `get`, `search`, `create`, `update`,
 task depends on other work.
 
 **Sign-off** (`task.request_signoff reviewers=[...]`): any task can ask for
-sign-off before it is done. Reviewers come from the project's concepts
-(`concept.pool`); the project's trust level says whether the person must be
-one of them. Reviewers answer with `task.signoff approve=true|false`
-(`reviewer=` when they answer a request made to a role);
+sign-off before it is done. With no reviewers named it goes to the expert
+roles of the project's concepts (`concept.pool`), as `role:<name>`; on a
+sacred project (`project.trust`) the owners are added, since the trust level
+decides whether the person signs. With the agents package installed, the
+agents asked are messaged with the request (as the one asking). Reviewers
+answer with `task.signoff approve=true|false` (`reviewer=` when they answer
+a request made to a role), or for a pull request with `github.review`;
 `task.signoff.list where={task: <id>}` shows where it stands. Nobody signs
 for someone else: a person's sign-off comes from that person's own login,
 never from an agent acting for them. Comments and sign-offs are written

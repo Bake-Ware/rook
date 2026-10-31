@@ -178,6 +178,7 @@ hooks:
     - { event: discord.message, run: scripts/agents.py:inbound }
     # castling-caps C4: a question for the person is routed through the house agent.
     - { event: approval.asked, run: scripts/agents.py:on_asked }
+    - { event: task.signoff_requested, run: scripts/agents.py:on_signoff_requested }
 
 # The ready-made roles this package ships (castling-agents "Skills and
 # defaults"): created on install, each with its skills. Any plugin's manifest
@@ -191,7 +192,7 @@ personas:
     title: House agent
     summary: "The person's personal assistant and guardian of the house: knows how and when to reach them."
     prompt: personas/house.md
-    skills: [reach-the-user, presence, hub-pages, consult, chair, notepad, housekeeping]
+    skills: [reach-the-user, presence, hub-pages, consult, notepad, housekeeping]
     grants: ["*"]
     always_on: true
   security:
@@ -210,6 +211,5 @@ skills:
   security-triage: skills/security-triage.md
   hub-pages: skills/hub-pages.md
   housekeeping: skills/housekeeping.md
-  chair: skills/chair.md
 
 docs: { manual: docs/manual.md }

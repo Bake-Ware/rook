@@ -46,8 +46,19 @@ and a citation with no source is refused.
 ## Concepts
 
 A concept is a kind of work (software, hardware, a wedding playlist) and
-the pool of expert roles, skills and sign-off it brings. Projects carry one
-or more; `concept.pool concepts=[...]` gives what they draw on.
+the pool of expert roles, skills and sign-off norm it brings. Projects carry one or more;
+`concept.pool concepts=[...]` gives what they draw on.
+
+## Sign-off
+
+Any task can ask for sign-off before it is done (`task.request_signoff`).
+It goes to the project's expert roles unless you name reviewers, and the
+project's trust level decides whether the person signs too: sacred yes,
+ship-it nobody needs to. For software, reviewers sign off by reviewing the
+pull request as themselves (`github.review`: they check CI, tests and the
+diff), and `github.merge` lands it at the head they signed off
+([github](../../rook/plugins/github/docs/manual.md)). A concept's sign-off
+norm can be `none` (a grocery list needs no reviewers).
 
 With the agents package, nobody has to set this up by hand. When
 something you talk about becomes real work (a deliverable, "let's continue
@@ -72,4 +83,5 @@ stale pages ([Agents and personas](agents.md)).
 [project](../../rook/plugins/projects/docs/manual.md),
 [knowledge](../../rook/plugins/knowledge/docs/manual.md),
 [concept](../../rook/plugins/concepts/docs/manual.md),
-[whiteboard](../../rook/plugins/whiteboard/docs/manual.md).
+[whiteboard](../../rook/plugins/whiteboard/docs/manual.md),
+[github](../../rook/plugins/github/docs/manual.md).

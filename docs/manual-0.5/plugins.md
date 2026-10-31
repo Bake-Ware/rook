@@ -92,8 +92,7 @@ linked.
 - [agents-codex](../../rook/plugins/agents-codex/docs/manual.md): agent turns in the Codex CLI.
 - [claudecode](../../rook/plugins/claudecode/docs/manual.md): Claude Code rules written once on the hub.
 - [decide](../../rook/plugins/decide/docs/manual.md): one-pass decision model for typed questions.
-- [huddle](../../rook/plugins/huddle/docs/manual.md): chaired group threads with a table of pinned artifacts; how agents land pull requests (pin, call a merge with a self-review, the gates, the merge).
-- [github](../../rook/plugins/github/docs/manual.md): GitHub reads for anyone, merges for the huddle only, with the hub's token.
+- [huddle](../../rook/plugins/huddle/docs/manual.md): group threads where people and agents in roles work something out.
 
 **Speech** (talk to your agents by voice; `docs/castling-speech.md` says what
 runs where and what the phone app needs):
@@ -105,6 +104,7 @@ runs where and what the phone app needs):
 **Workbench** (on the hub; [The workbench](workbench.md)):
 
 - [task](../../rook/plugins/tasks/docs/manual.md), [project](../../rook/plugins/projects/docs/manual.md), [knowledge](../../rook/plugins/knowledge/docs/manual.md), [concept](../../rook/plugins/concepts/docs/manual.md), [whiteboard](../../rook/plugins/whiteboard/docs/manual.md).
+- [github](../../rook/plugins/github/docs/manual.md): GitHub reads, `github.review` (sign off on a PR as yourself) and `github.merge` (lands it at the signed-off head once the task's sign-off meets its project's trust level).
 
 **Devices** (on workers):
 

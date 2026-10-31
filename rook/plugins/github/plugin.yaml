@@ -1,27 +1,31 @@
 # GitHub through its REST API (stdlib only): pull requests, commits, checks,
-# diffs and files for whoever may read them, and merge / label / comment for
-# the plugins named in `writers` only (the huddle: a merge happens after its
-# gates, with the hub's credential, never an agent's). The token is a vault
-# name (secret setting); no token means anonymous reads of public repos.
-# Code: scripts/github.py.
+# reviews, diffs and files, and github.merge, which is how work lands on 0.5
+# (castling-workbench: sign-off replaces merge votes). A merge goes through
+# only when the task's sign-off is satisfied for its project's trust level
+# and the gates pass, at the head SHA the caller names, with the hub's token
+# from the vault. Code: scripts/github.py.
 manifest: 1
 plugin: github
 version: 0.5.0
 title: GitHub
-doc: Read pull requests, commits, checks and diffs on GitHub; merges only for the huddle, with the hub's token.
-package: core
+doc: Read pull requests, checks and diffs on GitHub, and merge one once its task is signed off and its gates pass.
+package: workbench
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
+# merge reads the task, its sign-off, its project's trust level and its
+# concepts' sign-off norm as the caller; review records the caller's sign-off.
+uses: ["task.get", "task.link", "task.signoff", "task.signoff.list", "project.get", "project.trust.list", "concept.pool"]
 
 settings:
   token:
     secret: true
     where: hub
-    doc: The vault name of a GitHub token (fine-grained, contents + pull requests write on the repos the huddle merges).
+    doc: The vault name of a GitHub token (fine-grained, contents + pull requests write on the repos it merges).
     setup: Make a fine-grained token on GitHub, store it in the vault and set this to its vault name.
   api: { type: url, default: "https://api.github.com", where: hub, doc: The REST API base URL. }
-  writers: { type: list, items: { type: str }, default: [huddle], where: hub, doc: "The plugins that may merge, label and comment (as themselves, never for a person or agent)." }
+  logins: { type: map, items: { type: str }, default: {}, where: hub, doc: "GitHub login -> who it is on the band (agent:qa, person:bake): an approving PR review by a known login counts as that one's sign-off." }
+  repos: { type: map, items: { type: str }, default: {}, where: hub, doc: "owner/name -> project id: that project's trust level and sign-off norm apply to merges into the repo whatever project the task is in (the stricter of the two)." }
 
 caps:
   pr:
@@ -57,6 +61,34 @@ caps:
       repo: { type: str, required: true }
       sha: { type: str, required: true }
     result: { type: map }
+  reviews:
+    doc: "A pull request's reviews: [{login, who, state, commit, body}] (who: the band identity the logins setting gives)."
+    risk: read
+    scope: external
+    idempotent: true
+    timeout: 60s
+    run: scripts/github.py:reviews
+    args:
+      repo: { type: str, required: true }
+      number: { type: int, required: true, min: 1 }
+    result: { type: list }
+  review:
+    doc: >-
+      Review a pull request for a task as yourself, at the head you read (sha): approve, or ask
+      for changes with what to fix (body). Records your sign-off on the task (answering the request
+      made to you, or to role:<your name>) and posts the review on the pull request.
+    risk: write
+    scope: external
+    timeout: 60s
+    run: scripts/github.py:review
+    args:
+      repo: { type: str, required: true }
+      number: { type: int, required: true, min: 1 }
+      sha: { type: str, required: true, pattern: "^[0-9a-f]{40}$" }
+      task: { type: str, required: true }
+      approve: { type: bool, required: true }
+      body: { type: str, required: true, min: 1, max: 20000, doc: "What you checked, or what to fix." }
+    result: { type: map }
   diff:
     doc: "The unified diff base...head: {text, bytes, truncated} (cut at 8 MB)."
     risk: read
@@ -69,18 +101,6 @@ caps:
       base: { type: str, required: true }
       head: { type: str, required: true }
     result: { type: map }
-  files:
-    doc: "The files changed base...head: [{path, status, additions, deletions}]."
-    risk: read
-    scope: external
-    idempotent: true
-    timeout: 60s
-    run: scripts/github.py:files
-    args:
-      repo: { type: str, required: true }
-      base: { type: str, required: true }
-      head: { type: str, required: true }
-    result: { type: list }
   file:
     doc: "A file's text at a ref: {text, bytes, truncated} (cut at 8 MB)."
     risk: read
@@ -94,40 +114,25 @@ caps:
       ref: { type: str, required: true }
     result: { type: map }
   merge:
-    doc: Merge a pull request only if its head is still sha. Only the plugins in writers call it.
+    doc: >-
+      Land a pull request for a task. Refused, with every reason, unless the PR is open with sha as
+      its head and the task's sign-off is satisfied: the project's trust level decides whether the
+      person signs (sacred) or nobody need (ship-it); otherwise a reviewer other than the author,
+      unless the project's concepts say sign-off: none. A decline, a sign-off still waiting or a
+      GitHub "changes requested" blocks it; GitHub reviews by known logins count. CI, tests and the
+      diff are the reviewers' checks. Merges only at sha with the hub's token and links the merge
+      commit to the task.
     risk: write
     scope: external
     effects: [persists]
-    timeout: 60s
+    timeout: 90s
     run: scripts/github.py:merge
     args:
       repo: { type: str, required: true }
       number: { type: int, required: true, min: 1 }
-      sha: { type: str, required: true, pattern: "^[0-9a-f]{40}$" }
-      title: { type: str, required: true }
+      sha: { type: str, required: true, pattern: "^[0-9a-f]{40}$", doc: The head you checked; GitHub refuses if it moved. }
+      task: { type: str, required: true, doc: The task the work is for (its sign-off decides). }
       method: { type: str, enum: [merge, squash, rebase], default: merge }
-    result: { type: map }
-  label:
-    doc: Add labels to a pull request or issue. Only the plugins in writers call it.
-    risk: write
-    scope: external
-    timeout: 60s
-    run: scripts/github.py:label
-    args:
-      repo: { type: str, required: true }
-      number: { type: int, required: true, min: 1 }
-      labels: { type: list, items: { type: str }, required: true }
-    result: { type: map }
-  comment:
-    doc: Comment on a pull request or issue. Only the plugins in writers call it.
-    risk: write
-    scope: external
-    timeout: 60s
-    run: scripts/github.py:comment
-    args:
-      repo: { type: str, required: true }
-      number: { type: int, required: true, min: 1 }
-      body: { type: str, required: true }
     result: { type: map }
 
 docs: { manual: docs/manual.md }
