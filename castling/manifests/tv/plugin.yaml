@@ -126,9 +126,11 @@ caps:
     scope: multi-machine
     effects:
     - physical
+    args:
+      action:
+        type: str
+        required: true
     run: scripts/webos.py:WebOSTV._media
-    bind:
-      action: seek
   hid.key:
     doc: 'Press a remote button: HOME, BACK, UP, DOWN, LEFT, RIGHT, ENTER, MENU, EXIT, digits…'
     risk: write
@@ -245,21 +247,21 @@ caps:
     timeout: 120s
     run: scripts/webos.py:WebOSTV._pair
 provides:
-  app.list: tv.app.list
-  notification.post: tv.notification.post
-  app.launch: tv.app.launch
-  sound.set: tv.sound.set
-  media.play: tv.media.play
-  media.pause: tv.media.pause
-  media.stop: tv.media.stop
-  media.seek: tv.media.seek
-  hid.key: tv.hid.key
-  hid.type: tv.hid.type
-  app.open_url: tv.app.open_url
-  screen.on: tv.screen.on
-  screen.off: tv.screen.off
-  power.off: tv.power.off
-  power.on: tv.power.on
+- app.list
+- notification.post
+- app.launch
+- sound.set
+- media.play
+- media.pause
+- media.stop
+- media.seek
+- hid.key
+- hid.type
+- app.open_url
+- screen.on
+- screen.off
+- power.off
+- power.on
 hooks:
   start: scripts/webos.py:WebOSTV.start
   stop: scripts/webos.py:WebOSTV.stop

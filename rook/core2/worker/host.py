@@ -234,10 +234,11 @@ class Host:
     # -- calls ------------------------------------------------------------------
 
     def caps(self) -> dict[str, dict]:
-        """``{cap: {"risk", "effects", "elevation"}}`` for every cap served
+        """``{cap: {"risk", "effects", "elevation", "contracts"}}`` for every cap served
         now (aliases included): what the worker gate checks (spec 6.3, 7)."""
         return {name: {"risk": c.spec["risk"], "effects": list(c.spec.get("effects", ())),
-                       "elevation": c.spec.get("elevation", "never")}
+                       "elevation": c.spec.get("elevation", "never"),
+                       **({"contracts": list(c.spec["contracts"])} if c.spec.get("contracts") else {})}
                 for p in self.plugins.values() for name, c in p.caps.items()}
 
     def _sync(self) -> None:
@@ -431,8 +432,9 @@ class Host:
         out = []
         for p in self.plugins.values():
             if ceiling is None or any(
-                    cap in wire.ALWAYS or rights.matches(g.partition("@")[0], cap)
-                    for cap in p.manifest["caps"] for g in ceiling.get("grants") or ()):
+                    cap in wire.ALWAYS or rights.matches(g.partition("@")[0], name)
+                    for cap, spec in p.manifest["caps"].items() for name in [cap, *spec.get("contracts", ())]
+                    for g in ceiling.get("grants") or ()):
                 out.append(p)
         return sorted(out, key=lambda p: p.name)
 

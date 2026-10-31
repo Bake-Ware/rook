@@ -406,11 +406,14 @@ records:
     - update
     - delete
     aliases:
-    - role.list
-    - role.get
-    - role.history
-    - role.set
-    - role.delete
+      list:
+      - role.list
+      get:
+      - role.get
+      history:
+      - role.history
+      delete:
+      - role.delete
     history: true
 hooks:
   start: scripts/home.py:HomeAgent.start

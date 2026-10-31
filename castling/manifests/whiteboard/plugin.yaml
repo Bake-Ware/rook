@@ -33,7 +33,7 @@ caps:
         type: json
     run: scripts/tasks.py:Tasks.read
     bind:
-      action: read
+      action: whiteboard
   write:
     doc: 'Write tasks/projects/concepts: create|update|link|retract|claim|release|note|jot|batch.'
     risk: write
@@ -52,4 +52,4 @@ caps:
         type: str
     run: scripts/tasks.py:Tasks.write
     bind:
-      action: write
+      action: jot

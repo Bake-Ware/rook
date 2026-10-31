@@ -112,8 +112,8 @@ caps:
     - voice.speak_voices
     run: scripts/speak_android.py:AndroidSpeakPlugin._voices
 provides:
-  voice.speak: voice-android.voice.speak
-  voice.ask: voice-android.voice.ask
-  voice.replies: voice-android.voice.replies
-  voice.stop: voice-android.voice.stop
-  voice.voices: voice-android.voice.voices
+- voice.speak
+- voice.ask
+- voice.replies
+- voice.stop
+- voice.voices

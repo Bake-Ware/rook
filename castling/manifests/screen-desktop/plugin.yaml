@@ -98,4 +98,4 @@ caps:
         output: '{{tmp}}/s.jpg'
       parse: bytes
 provides:
-  screen.capture: screen-desktop.screen.capture
+- screen.capture

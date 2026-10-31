@@ -205,18 +205,7 @@ caps:
       key: { type: secret, doc: A key paired elsewhere. }
       timeout: { type: int, default: 60, min: 10, max: 110 }
     run: scripts/tv.py:pair
-provides:
-  notification.post: tv.notification.post
-  app.launch: tv.app.launch
-  sound.set: tv.sound.set
-  media.play: tv.media.play
-  media.pause: tv.media.pause
-  media.stop: tv.media.stop
-  media.seek: tv.media.seek
-  hid.key: tv.hid.key
-  hid.type: tv.hid.type
-  screen.on: tv.screen.on
-  power.off: tv.power.off
+provides: [notification.post, app.launch, sound.set, media.play, media.pause, media.stop, media.seek, hid.key, hid.type, screen.on, power.off]
 hooks:
   stop: scripts/tv.py:stop
 docs: { manual: docs/manual.md }

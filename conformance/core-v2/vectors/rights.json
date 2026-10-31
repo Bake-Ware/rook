@@ -650,6 +650,110 @@
    "expect": {
     "ok": true
    }
+  },
+  {
+   "name": "called by a contract's name: the contract's name matches",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "screen.*"
+      ]
+     }
+    ],
+    [
+     "uses",
+     {
+      "grants": [
+       "screen.capture"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "kvm.screen.capture",
+    "risk": "read",
+    "effects": [],
+    "target": "kaiju",
+    "contract": "screen.capture"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "name": "called by a contract's name: the provider's name still matches",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "kvm.*"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "kvm.screen.capture",
+    "risk": "read",
+    "effects": [],
+    "target": "kaiju",
+    "contract": "screen.capture"
+   },
+   "expect": {
+    "ok": true
+   }
+  },
+  {
+   "name": "the provider called by its own name: the contract's grant doesn't cover it",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "screen.*"
+      ]
+     }
+    ]
+   ],
+   "call": {
+    "cap": "kvm.screen.capture",
+    "risk": "read",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "layer": "person",
+    "reason": "grants"
+   }
+  },
+  {
+   "name": "called by a contract's name: risk still the provider's",
+   "layers": [
+    [
+     "person",
+     {
+      "grants": [
+       "hid.*"
+      ],
+      "max_risk": "write"
+     }
+    ]
+   ],
+   "call": {
+    "cap": "kvm.hid.type",
+    "risk": "exec",
+    "effects": [],
+    "target": "kaiju",
+    "contract": "hid.type"
+   },
+   "expect": {
+    "ok": false,
+    "layer": "person",
+    "reason": "risk"
+   }
   }
  ]
 }

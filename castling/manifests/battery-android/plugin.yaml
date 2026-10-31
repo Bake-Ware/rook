@@ -13,6 +13,6 @@ caps:
     scope: local
     run: scripts/battery_android.py:AndroidBatteryPlugin._status
 provides:
-  battery.status: battery-android.battery.status
+- battery.status
 hooks:
   status: scripts/battery_android.py:AndroidBatteryPlugin.heartbeat

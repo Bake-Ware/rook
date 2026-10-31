@@ -114,9 +114,7 @@ caps:
     timeout: 10s
     aliases: [dongle.release]
     run: scripts/dongle.py:release
-provides:
-  hid.key: dongle.hid.key
-  hid.click: dongle.hid.click
+provides: [hid.key, hid.click]
 docs: { manual: docs/manual.md }
 # No check: an install may come before the dongle is plugged in, and a failing
 # check rolls the install back (castling/coverage.md N4).

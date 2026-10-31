@@ -62,10 +62,5 @@ caps:
       page: { type: str, default: main, enum: [main, wifi, internet, bluetooth, airplane, network, nfc, display, sound, volume, dnd, battery, location, apps, app, notifications, accessibility, date, storage, security, developer] }
       package: { type: str, default: "", max: 200 }
     run: scripts/app.py:settings
-provides:
-  app.list: app-android.app.list
-  app.launch: app-android.app.launch
-  app.open_url: app-android.app.open_url
-  app.share: app-android.app.share
-  app.settings: app-android.app.settings
+provides: [app.list, app.launch, app.open_url, app.share, app.settings]
 docs: { manual: docs/manual.md }

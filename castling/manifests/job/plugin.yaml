@@ -136,9 +136,6 @@ records:
     - create
     - update
     - delete
-    aliases:
-    - job.read
-    - job.write
     history: true
 hooks:
   start: scripts/jobs.py:Jobs.start

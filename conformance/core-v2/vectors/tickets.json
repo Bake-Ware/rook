@@ -24,6 +24,13 @@
     "effects": [
      "persists"
     ]
+   },
+   "kvm.screen.capture": {
+    "risk": "read",
+    "effects": [],
+    "contracts": [
+     "screen.capture"
+    ]
    }
   },
   "trust": {
@@ -48,7 +55,8 @@
     "ceiling": {
      "grants": [
       "light.*@lamp-*",
-      "core.*"
+      "core.*",
+      "screen.capture"
      ],
      "max_risk": "write"
     }
@@ -1552,6 +1560,137 @@
     "sig": "8wHmCe67031nJoxPWJ+p7e/LY+akAxszfFoj3TWjK7tRbip2Pwl5EEeTKP+kYcVYgq4zDdFEPHRbfRnklVpNBg=="
    },
    "reason": "ok"
+  },
+  {
+   "name": "guest: called by a contract's name inside ceiling",
+   "band": "3384db16e75f5d25f75fa3010b904c9f",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "kvm.screen.capture",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {}
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "21f7b4340bc96a6c",
+    "band": "3384db16e75f5d25f75fa3010b904c9f",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "kvm.screen.capture",
+    "args_hash": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "contract": "screen.capture",
+    "kid": "3c9277f3747fa1be",
+    "sig": "Z4J5wnFbfECcxXT7PqWaYdycRx3W0+umDUewcpNFr1kirm39Sfnzwudt2qNT0vviHGsIABEe5PqvShsKrCXMBw=="
+   },
+   "reason": "ok"
+  },
+  {
+   "name": "guest: the provider by its own name outside ceiling",
+   "band": "3384db16e75f5d25f75fa3010b904c9f",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "kvm.screen.capture",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {}
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "21f7b4340bc96a6c",
+    "band": "3384db16e75f5d25f75fa3010b904c9f",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "kvm.screen.capture",
+    "args_hash": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "kid": "3c9277f3747fa1be",
+    "sig": "IGYiEAiaNaLw+0GlZkQa7VwuQ5wpP6pqkAJMzWXErUkaOhBzqGYrGfQk9WaJyVCu8kGhXleZCKvjyOtxAazACA=="
+   },
+   "reason": "outside_ceiling"
+  },
+  {
+   "name": "contract the cap doesn't provide",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "kvm.screen.capture",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {}
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "kvm.screen.capture",
+    "args_hash": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "contract": "hid.click",
+    "kid": "3c1945587ef004c3",
+    "sig": "P3W6M7/w+VRP8VOcTEvcSKzgr/uTZd55MXDOvLmG5UGf33PVqTtM/TjRYTpYfPxaPGAr9q+4BeoZEish6JiXBg=="
+   },
+   "reason": "unknown_cap"
+  },
+  {
+   "name": "contract not a string",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "kvm.screen.capture",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {}
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "kvm.screen.capture",
+    "args_hash": "RBNvo1WzZ4oRRq0W9-hknpT7T8If536DEMBg9hyq_4o",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "contract": 5,
+    "kid": "3c1945587ef004c3",
+    "sig": "zlQsxEJLsqSDURNp+eT259QTy9Jmdc/5cb5vjSP0YMAwzY6JxV4EC17fUmcStEU1UrpVgKsa71Yf+xBn4EAtCg=="
+   },
+   "reason": "malformed"
   }
  ]
 }

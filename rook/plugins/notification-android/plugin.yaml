@@ -110,11 +110,5 @@ hooks:
   every:
     - { interval: 30s, run: scripts/notification.py:watch }
     - { interval: 10s, run: scripts/notification.py:watch_cards }
-provides:
-  notification.post: notification-android.notification.post
-  notification.update: notification-android.notification.update
-  notification.list: notification-android.notification.list
-  notification.get: notification-android.notification.get
-  notification.dismiss: notification-android.notification.dismiss
-  notification.act: notification-android.notification.act
+provides: [notification.post, notification.update, notification.list, notification.get, notification.dismiss, notification.act]
 docs: { manual: docs/manual.md }

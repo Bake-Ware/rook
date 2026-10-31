@@ -174,10 +174,10 @@ caps:
     bind:
       kind: settings
 provides:
-  app.open_url: app-android.app.open_url
-  app.launch: app-android.app.launch
-  app.list: app-android.app.list
-  app.share: app-android.app.share
-  app.settings: app-android.app.settings
+- app.open_url
+- app.launch
+- app.list
+- app.share
+- app.settings
 hooks:
   start: scripts/device_android.py:AndroidDevicePlugin.start

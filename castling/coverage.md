@@ -3,6 +3,13 @@
 **Update, manifest 1.1 (wave 2, 2026-10-30):** most gaps below are closed by additive 1.1 keys
 (knowledge page castling-manifest-lifecycle lists them). Each gap now says **Closed** or **Open**.
 
+**Update, manifest 1.2 (wave 6, 2026-10-31):** the gaps left open after 1.1 and the ports are closed:
+B3 (one name for contract caps), C5 (record-cap aliases), D4 (guidance, by decision), D5 (dependencies),
+D8 (hub HTTP and pages), and every converter-guessed `bind` value was checked against its 0.4 `run:`
+target (B5). Additive again: files still say `manifest: 1` (castling-manifest-lifecycle, "v1.2 changes").
+Still open: A5, A11, A12 (by decision: `run:`), C3, C4 (`run:` caps until a port declares more) and
+D3's leftovers (env aliases, overridable, bootstrap, grouping).
+
 Converter agent, 2026-10-30. Baseline: this branch (cut from origin/castling = master d15e79bf),
 457 caps. Decisions: Rook knowledge castling-caps (`castling/tools/cap-decisions.json`, copied from
 cachyrig `~/rook-backups/castling-caps/decisions.json`), with Bake's C3 amendment applied (decide keeps
@@ -14,8 +21,8 @@ cachyrig `~/rook-backups/castling-caps/decisions.json`), with Bake's C3 amendmen
 - Hand-written config actions live in `castling/tools/overlays/<plugin>.yaml` and are merged last.
 - **Validation:** every draft is read back from its YAML and checked by `rook.kit.manifest` (JSON
   Schema plus semantic checks); errors fail the converter and its test. All 63 pass with no errors.
-  Warnings left: 88 `unknown-contract` (no contract schemas yet, B4), 12 `unknown-key` (record
-  `aliases`, C5), 11 `effect-risk-mismatch` (read caps tagged `physical` today, E). Not checked: file
+  Warnings left: 88 `unknown-contract` (no contract schemas yet, B4) and 11 `effect-risk-mismatch`
+  (read caps tagged `physical` today, E); record `aliases` are a key since 1.2 (C5). Not checked: file
   existence (`scripts/*.py` don't exist yet: every `run:` points at today's function).
 
 ## How the manifests come out
@@ -426,7 +433,15 @@ and the smallest fix that would cover it. **Bold** = Bake should decide. Status 
    `provides: {screen.capture: kvm.screen.capture}`. Plugins named after a contract (battery, shell,
    voice) declare it directly with no `provides`. Fix: a plugin that `provides` a contract declares the
    cap under the contract name only.
-   **Open.**
+   **Closed (1.2):** `provides: [screen.capture, hid.type]` lists contracts whose cap key is the
+   contract's name (the map form stays for a cap named otherwise, `llm.complete: llm-openai.complete`).
+   The two runtime names were the real trouble: a call to `screen.capture` resolved to
+   `kvm.screen.capture` before rights were checked, so a grant, session or `uses` on `screen.*` didn't
+   cover it (decide and notify listed every contract twice, `*.screen.capture`; a session for
+   `notify.send` couldn't reach `telegram.send`). Now a call made by a contract's name keeps it: patterns
+   match the contract's name or the provider's (spec 4.1, 8.2), the ticket carries `contract` and the
+   worker's ceiling honours it (6.2, 6.3); called by its own name, the provider needs its own grant.
+   Several providers on one worker: the call is refused and names them. The ports use the list form.
 4. **No contract schemas exist and today's providers disagree** (the validator's "schema
    compatibility" check would fail them all). Someone has to write the 12 contracts into core's
    manifest; the converter doesn't invent them. Disagreements:
@@ -443,6 +458,12 @@ and the smallest fix that would cover it. **Bold** = Bake should decide. Status 
    browser.tabs (2), dongle.mouse (3), tv.media (4), tv.screen (2). The converter removes the old
    `action`/`kind`/`op` arg from split caps; their `run:` target still expects it.
    **Closed:** cap-level `bind:`; the converter binds the old argument, its value guessed from the new name (check each when porting; media.seek was forward/rewind).
+   **Checked (wave 6):** all 31 guesses against today's functions (`device_android.intent_spec` kinds,
+   `media_android.KEYS`, webos `MEDIA`, the jobs/knowledge/tasks read and write actions). 25 were right;
+   `location.show` is kind `map`, `task.comment` action `note`, `whiteboard.read` action `whiteboard`,
+   `whiteboard.write` action `jot` (the converter now says so), and `media.seek` (tv, media-android) has
+   no single value (forward or rewind by the sign of `by`): the draft keeps the argument. The real ports
+   already got all of these right (location, media-android, tv, workbench rewrote their targets).
 6. **Open args.** 22 surviving caps take `**kwargs` (browser.* 14, dongle.* 6, cec 2). Fix: say
    undeclared args are refused (the converter declares only named ones).
    **Closed:** undeclared args are refused.
@@ -481,7 +502,11 @@ and the smallest fix that would cover it. **Bold** = Bake should decide. Status 
 
    **Open:** also, `search` needs search fields, so the converter keeps today's search as a `run:` cap until the port declares them.
 5. **Generated record caps have no aliases.** Old names of record caps (e.g. `tasks.list`) have
-   no key; the converter writes `aliases` on the record (an unknown key, warned). **Open.**
+   no key; the converter writes `aliases` on the record (an unknown key, warned).
+   **Closed (1.2):** `records.<type>.aliases: {verb: [old names]}` lands on that verb's generated cap
+   (an alias for a verb the type doesn't generate is an error; collisions as for caps). An old action
+   switch (`task.read` with `action=`) has no one heir, so it gets no alias. claudecode keeps
+   `ccmod.list/get/history/delete`.
 
 ### D. Plugin level
 
@@ -499,10 +524,22 @@ and the smallest fix that would cover it. **Bold** = Bake should decide. Status 
 4. **GUIDANCE (13 hub plugins) and SKILL fragments (38).** SKILL maps to `skills:` but describes 0.4
    cap names, so the converter doesn't carry it. GUIDANCE (operator-editable guidance slots) has no
    home.
-   **Open.**
+   **Closed by decision (no new key):** the 13 plugins' slots are of three kinds, and each has a 0.5
+   home. `tool:rook_*` (the text of an MCP tool's description) goes: 0.5's doors have a fixed tool
+   set and plugins add caps, not tools. `cap:<prefix>.` (task., job., knowledge., huddle., trust.,
+   approvals., chat., show.) explained the 0.4 action switches (`task.read` takes rook_task's
+   action...), which 0.5 splits into named caps with their own docs, so they go. Per-cap tips
+   (`decide.run`, `decide.drive`, `memory.remember`, `memory.recall`, `home.ask`, `hub.info`) become
+   that cap's `doc`, which is what `caps` shows an agent; anything longer is a skill (`skills:`).
+   Editable by the operator: skills and docs are content, seeded with the rule that edits win
+   (castling-manifest-content); a cap's doc changes with the plugin (a local version).
 5. **DEPENDS** (attention -> approvals, huddle -> chat, tasks -> knowledge) hands over the other
    plugin's instance. 0.5 allows caps only: becomes `uses:` + `ctx.call` in the port.
-   **Open:** `uses:` + `ctx.call` in the port.
+   **Closed (1.2):** the dependency is the caps a plugin calls: `uses:` + `ctx.call` (or
+   `ctx.call_on` for a device contract), and B3's fix means a contract's name in `uses` is enough.
+   `requires.plugins: {knowledge: ">=0.5,<0.6"}` now does something: the hub refuses to install a
+   plugin when the band runs no matching version (or the range is unreadable; the validator warns
+   `bad-range`). A missing callee at run time is a plain `unknown capability` error.
 6. **Android app vs Termux.** `place(ANDROID_APP)` (14 APK plugins) vs `ANDROID_APP_REPLACED`
    (Termux, 4). `platforms: [android]` can't tell them apart. Fix: `app` facet (`android-app`).
    **Closed:** platform and per-OS key `termux`; `android` is the app.
@@ -514,7 +551,17 @@ and the smallest fix that would cover it. **Bold** = Bake should decide. Status 
    **Closed:** `run:` may name `file.py:Class.method` (one instance per plugin load, built with the plugin context; castling-manifest-python).
 8. **Hub web pages and HTTP** (access, attention, ccmod, huddle, jobs `web.py`): map to `routes:` and
    `pages:`; not emitted.
-   **Open.**
+   **Closed (1.2):** both keys exist and are served: the dashboard's sandboxed `pages:` (castling-dashboard)
+   for screens, `routes:` under `/p/<plugin>/` for HTTP. What was missing was route auth: `hmac` and
+   `token` answered 501. Now `auth: {hmac: "{{settings.x}}"}` checks HMAC-SHA256 of the body
+   (`X-Hub-Signature-256`, `sha256=` optional) and `auth: {token: ...}` a bearer token, each with an
+   optional `header:` (Telegram's `X-Telegram-Bot-Api-Secret-Token`); the secret is one
+   `{{settings.x}}` or `{{secret:NAME}}` (a literal is warned: it's public), and an unset one refuses
+   everything. Today's web.py files (access, attention, ccmod, huddle, jobs, and also knowledge, manual,
+   ui, updates) are account APIs behind their dashboard page: in 0.5 that page is a `pages:` entry
+   calling the plugin's own caps, so no route is needed. Routes are for callers without a Rook sign-in:
+   webhooks (jobs' `/hook`, ported), bot callbacks (`hmac`/`token`), and show's public page by id
+   (`auth: none`, the id is the credential).
 
 ### E. Security facts the converter changed or didn't
 

@@ -286,14 +286,14 @@ caps:
     - pikvm.api.post
     run: scripts/pikvm.py:PiKvmPlugin._api_post
 provides:
-  screen.capture: kvm.screen.capture
-  hid.type: kvm.hid.type
-  hid.key: kvm.hid.key
-  hid.move: kvm.hid.move
-  hid.click: kvm.hid.click
-  power.on: kvm.power.on
-  power.off: kvm.power.off
-  power.reset: kvm.power.reset
-  power.status: kvm.power.status
+- screen.capture
+- hid.type
+- hid.key
+- hid.move
+- hid.click
+- power.on
+- power.off
+- power.reset
+- power.status
 check:
 - kvm.power.status

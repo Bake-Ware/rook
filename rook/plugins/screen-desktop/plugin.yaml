@@ -43,7 +43,6 @@ caps:
           env: { ROOK_OUT: "{{tmp}}/s.jpg" }
         output: "{{tmp}}/s.jpg"
       parse: bytes
-provides:
-  screen.capture: screen-desktop.screen.capture
+provides: [screen.capture]
 docs: { manual: docs/manual.md }
 check: [screen-desktop.screen.capture]

@@ -1,0 +1,25 @@
+# Manifest 1.2 additions used wrongly.
+manifest: 1
+plugin: bad2
+version: 1.0.0
+runs_on: hub
+caps:
+  screen.capture:
+    doc: Declared under the contract's name.
+    risk: read
+    scope: local
+    run: scripts/s.py:capture
+  list_old:
+    doc: Takes a name a record alias wants.
+    risk: read
+    scope: local
+    aliases: [bad2.items]
+    run: scripts/s.py:old
+provides: [screen.capture, hid.click]
+records:
+  item:
+    fields: { name: { type: str } }
+    aliases: { list: [bad2.items], delete: [bad2.drop] }
+routes:
+  bare: { path: /bare, run: scripts/s.py:hook, auth: hmac }
+  literal: { path: /literal, run: scripts/s.py:hook, auth: { token: hunter2 } }

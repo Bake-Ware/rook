@@ -59,6 +59,7 @@ from nacl.signing import SigningKey
 from rook.kit.contracts import Contracts
 from rook.kit.ctx import Caller as KitCaller, KitError
 from rook.kit.manifest import check, normalize, validate
+from rook.kit.manifest.diff import semver_key
 from rook.kit.records import RecordStore
 
 from .. import CORE_VERSION, rights, wire
@@ -629,19 +630,22 @@ class Hub:
             if norm is None or norm["plugin"] != e["plugin"]:
                 continue
             plugin = norm["plugin"]
-            own = {n: dict(m) for n, m in norm["caps"].items() if m.get("on", "worker") == "worker"}
-            for contract, cap in (norm.get("provides") or {}).items():
-                full = cap if cap.startswith(plugin + ".") else f"{plugin}.{cap}"
-                if full in own:   # a contract name reaches the provider on this worker (route: target)
-                    own[full]["aliases"] = [*own[full].get("aliases", ()), contract]
-            caps.update(own)
+            caps.update({n: self._contracted(m) for n, m in norm["caps"].items() if m.get("on", "worker") == "worker"})
             uses[plugin] = list(norm.get("uses") or ())
         ceiling = k.ceiling if rights.valid_rights(k.ceiling) else {"grants": ["*"]}
         self.dispatcher.workers[k.id] = Worker(k.id, k.name, k.band, caps, ceiling, uses=uses,
                                                sacred=k.name in self.cfg.sacred)
 
+    def _contracted(self, meta: dict) -> dict:
+        """A cap's data for dispatch: its ``contracts`` (from provides) only
+        those defined here, so a plugin can't make up a grantable name."""
+        out = dict(meta)
+        if out.get("contracts"):
+            out["contracts"] = [c for c in out["contracts"] if self.contracts.contract(c) is not None]
+        return out
+
     def _sync_hub(self) -> None:
-        caps = self.plugins.caps(self._meta)
+        caps = {n: self._contracted(m) for n, m in self.plugins.caps(self._meta).items()}
         self.dispatcher.workers[self.node] = Worker(self.node, "rook", self.band, caps, {"grants": ["*"]},
                                                     uses={p: self.plugins.uses(p) for p in self.plugins.plugins})
 
@@ -942,7 +946,7 @@ class Hub:
     # -- calls from hub plugins (ctx.call, hooks, contract routing) ---------------
 
     async def call_as(self, who: KitCaller, cap: str, args: dict | None, uses: list | None = None,
-                      target: str | None = None) -> dict:
+                      target: str | None = None, contract: str | None = None) -> dict:
         """Dispatch a call a hub plugin makes. With a person or agent it runs
         as them: in the call's session, or (a job acting for its creator or
         persona, ``ctx.call_as``) in a session of their own for such calls,
@@ -951,7 +955,8 @@ class Hub:
         as ``system:plugin.<name>`` (a dot no plugin name has, so no plugin
         can be ``system:hub``). ``uses`` is the plugin's extra layer;
         ``target`` names the worker (``ctx.call_on``, ``ctx.call_as``), else
-        the one that serves ``cap``."""
+        the one that serves ``cap``; ``contract``: a provider-routed contract's
+        call to its chosen provider, so rights match the contract's name."""
         if who.person or who.agent:
             caller = Caller(who.person, who.agent)
             if caller.problem():
@@ -969,7 +974,22 @@ class Hub:
             return {"ok": False, "error": f"no single worker serves {cap}"}
         return await self.dispatcher.dispatch(caller, Call(
             cap=cap, target=target, args=args, why=who.why or f"{who.plugin or 'hub'} plugin", session=sid,
-            layers=[["uses", {"grants": list(uses)}]] if uses is not None else []))
+            layers=[["uses", {"grants": list(uses)}]] if uses is not None else [], contract=contract))
+
+    def _installed(self) -> dict:
+        """{plugin: version} the band runs: the hub's plugins and every known
+        worker's (the newest when they differ)."""
+        out: dict = {}
+        found = [(n, p.manifest.get("version")) for n, p in self.plugins.plugins.items()]
+        found += [(e["plugin"], (self.manifests.get(e["hash"]) or {}).get("version"))
+                  for k in self.known.values() for e in k.manifests]
+        for name, version in found:
+            try:
+                if isinstance(version, str) and (name not in out or semver_key(version) > semver_key(out[name])):
+                    out[name] = version
+            except ValueError:
+                continue
+        return out
 
     def _target_for(self, cap: str) -> str | None:
         """The hub if it serves ``cap``, else the one worker that does (the
@@ -978,7 +998,8 @@ class Hub:
         if hub and cap in hub.caps:
             return self.node
         serving = [w.id for w in self.dispatcher.workers.values() if w.id != self.node and (
-            cap in w.caps or any(cap in (m.get("aliases") or ()) for m in w.caps.values()))]
+            cap in w.caps or any(cap in (m.get("aliases") or ()) or cap in (m.get("contracts") or ())
+                                 for m in w.caps.values()))]
         if len(serving) > 1:
             serving = [w for w in serving if self.known.get(w) and self.known[w].online]
         return serving[0] if len(serving) == 1 else None
@@ -1046,7 +1067,8 @@ class Hub:
             k = self.known.get(w.id)
             out[w.id if w.name in out else w.name] = {
                 "id": w.id, "online": True if w.id == self.node else bool(k and k.online),
-                "caps": {n: {f: m[f] for f in ("doc", "risk", "scope", "effects", "args", "aliases", "timeout")
+                "caps": {n: {f: m[f] for f in ("doc", "risk", "scope", "effects", "args", "aliases", "contracts",
+                                                 "timeout")
                              if f in m} for n, m in sorted(w.caps.items())},
                 "unavailable": dict(k.unavailable) if k else {}}
         return {"ok": True, "workers": out}
@@ -1121,7 +1143,8 @@ class Hub:
         env = distribute.WorkerEnv(k.id, os=str(k.facts.get("os", "")), python=str(k.facts.get("python", "")))
         try:     # uv resolution and asset downloads block: off the loop
             plan = await asyncio.to_thread(distribute.prepare, folder, env, signer=self.op, hub=self.hub_id,
-                                           current=current, cache=self.data / "assets")
+                                           current=current, cache=self.data / "assets",
+                                           installed=self._installed())
         except distribute.Refused as e:
             return {"ok": False, "error": f"refused: {e}"}
         if plan.sig is None:

@@ -16,7 +16,5 @@ records:
     - update
     - delete
     history: true
-    aliases:
-    - persona.set
 hooks:
   start: scripts/persona.py:PersonaPlugin.start

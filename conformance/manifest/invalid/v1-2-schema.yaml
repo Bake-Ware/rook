@@ -1,0 +1,12 @@
+# Manifest 1.2 shapes the schema refuses.
+manifest: 1
+plugin: bad3
+version: 1.0.0
+provides: [screen.capture, screen.capture]
+records:
+  item:
+    fields: { name: { type: str } }
+    aliases: { fetch: [bad3.get_item], list: bad3.items }
+routes:
+  both: { path: /both, run: scripts/s.py:hook, auth: { hmac: "{{settings.a}}", token: "{{settings.a}}" } }
+  header-only: { path: /h, run: scripts/s.py:hook, auth: { header: X-Sig } }

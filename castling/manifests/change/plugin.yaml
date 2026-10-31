@@ -25,7 +25,8 @@ records:
     - list
     - update
     aliases:
-    - change.submit
+      create:
+      - change.submit
 hooks:
   start: scripts/changes.py:Changes.start
   stop: scripts/changes.py:Changes.stop

@@ -91,6 +91,7 @@ class Call:
     elevate: bool = False
     door: str | None = None
     layers: list = field(default_factory=list)  # extra [[name, rights]]: plugin uses, page caps
+    contract: str | None = None                 # the contract the call is made by (4.1); dispatch sets it
 
 
 @dataclass
@@ -226,13 +227,15 @@ class Dispatcher:
         caps = w.caps if call.appliance is None else w.appliances.get(call.appliance)
         if caps is None:
             return deny(f"unknown appliance: {call.appliance}")
-        name = _resolve_alias(caps, call.cap)
+        name, contract, err = _resolve(caps, call.cap, call.contract)
         meta = caps.get(name)
-        if meta is None:
-            return deny(f"unknown capability: {call.cap}")
-        call.cap = name
+        if err or meta is None:
+            return deny(err or f"unknown capability: {call.cap}")
+        call.cap, call.contract = name, contract
         entry.update(cap=name, worker=w.id, band=w.band, args_hash=_args_hash(call.args),
                      **_call_facts(meta, call.elevate))
+        if contract:
+            entry["contract"] = contract
         if entry["args_hash"] is None:
             return deny("bad args: no canonical JSON form")
         if call.appliance is not None:
@@ -289,6 +292,8 @@ class Dispatcher:
             layers.append(["ceiling", w.ceiling])
         facts = {"cap": call.cap, "risk": entry["risk"], "effects": entry["effects"],
                  "target": call.appliance or w.name}
+        if call.contract:
+            facts["contract"] = call.contract
         out = rights.check(layers, facts)
         return None if out["ok"] else out
 
@@ -382,6 +387,8 @@ class Dispatcher:
             t["agent"] = caller.agent
         if call.elevate:
             t["elevate"] = True
+        if call.contract:
+            t["contract"] = call.contract
         t = wire.sign(self.op_key, t)
         if self.hubkey:
             t["hubkey"] = self.hubkey
@@ -522,14 +529,26 @@ def _gate_input(caller: Caller, s: Session, w: Worker, call: Call, entry: dict) 
     """What a gate sees (spec 10.2); args with secret references unresolved."""
     return {"cap": call.cap, "args": call.args, "caller": {"person": caller.person, "agent": caller.agent},
             "worker": w.name, "appliance": call.appliance, "why": call.why, "risk": entry["risk"],
-            "scope": entry["scope"], "effects": entry["effects"], "session": s.view(), "band": w.band}
+            "scope": entry["scope"], "effects": entry["effects"], "session": s.view(), "band": w.band,
+            **({"contract": call.contract} if call.contract else {})}
 
 
-def _resolve_alias(caps: dict, cap: str) -> str:
+def _resolve(caps: dict, cap: str, contract: str | None = None) -> tuple[str, str | None, str | None]:
+    """(cap, contract, error): an alias resolves to its cap (4.1); a contract's
+    name to the one cap here that provides it, the contract kept so rights
+    can match it. ``contract`` given (a provider-routed contract's call) must
+    be one the cap provides."""
     if cap in caps:
-        return cap
+        if contract and contract not in (caps[cap].get("contracts") or ()):
+            return cap, None, f"{cap} doesn't provide {contract}"
+        return cap, contract, None
     named = [n for n, m in caps.items() if cap in (m.get("aliases") or ())]
-    return named[0] if len(named) == 1 else cap
+    if len(named) == 1:
+        return named[0], None, None
+    named = sorted(n for n, m in caps.items() if cap in (m.get("contracts") or ()))
+    if len(named) > 1:
+        return cap, None, f"several caps here provide {cap} ({', '.join(named)}): call one by name"
+    return (named[0], cap, None) if named else (cap, None, None)
 
 
 def _timeout(meta: dict) -> float:

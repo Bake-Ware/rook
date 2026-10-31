@@ -64,11 +64,7 @@ caps:
       quality: { type: int, min: 1, max: 100, doc: "JPEG quality; blank: 85." }
     result: { type: file, doc: A JPEG. }
     run: scripts/screen.py:capture
-provides:
-  screen.on: screen-android.screen.on
-  screen.keep_on: screen-android.screen.keep_on
-  screen.status: screen-android.screen.status
-  screen.capture: screen-android.screen.capture
+provides: [screen.on, screen.keep_on, screen.status, screen.capture]
 hooks:
   start: scripts/screen.py:start
 docs: { manual: docs/manual.md }

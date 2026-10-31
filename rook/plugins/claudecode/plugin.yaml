@@ -42,6 +42,7 @@ records:
     caps: [list, get, search, history, create, update, archive, delete]
     search: [name]
     history: true
+    aliases: { list: [ccmod.list], get: [ccmod.get], history: [ccmod.history], delete: [ccmod.delete] }
 caps:
   install:
     doc: >-

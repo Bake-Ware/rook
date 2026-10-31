@@ -41,8 +41,5 @@ caps:
       mode: { type: str, required: true, enum: [off, priority, alarms, total] }
     result: { type: map }
     run: scripts/sound.py:dnd
-provides:
-  sound.status: sound-android.sound.status
-  sound.set: sound-android.sound.set
-  sound.dnd: sound-android.sound.dnd
+provides: [sound.status, sound.set, sound.dnd]
 docs: { manual: docs/manual.md }

@@ -235,6 +235,16 @@ they do, not who ships them. A renamed cap keeps its old name as a declared
 alias for a release or two; an alias resolves to the new name at dispatch,
 and tickets carry the resolved name.
 
+A cap MAY provide a **contract**: a shared interface defined once (by
+core or a package) under its own name, such as `screen.capture` or
+`notify.send` (manifest `contracts`/`provides`). Its manifest data lists
+the contracts it provides in `contracts`. A call made by a contract's
+name resolves to the one cap on the target that provides it (more than
+one: the call is refused and names them); the call keeps the contract's
+name beside the resolved cap, so patterns may match either (8.2), and
+its ticket carries it (6.2). The provider's own risk, scope and effects
+apply unchanged.
+
 Every cap is declared ahead of time in its plugin's manifest with `doc`,
 `risk`, `scope`, `effects`, argument and result schemas. The hub answers
 "what does this cap do" from manifests, with the worker offline. **The
@@ -468,6 +478,7 @@ the hub's operational key:
 | `session` | MUST | the session id (8.4) |
 | `why` | MUST | the caller's reason in one plain sentence; non-empty after trimming, ≤ 500 characters |
 | `elevate` | MAY | `true`: the caller asked for elevation up front (7.2). Default `false`. |
+| `contract` | MAY | the contract the call was made by (4.1); `cap` provides it |
 | `iat`, `exp` | MUST | issue and expiry time; `60 ≤ exp − iat ≤ 120`; hubs SHOULD use 60 |
 | `sig` | MUST | 3.3 |
 | `hubkey` | MAY | the hub's current `rook-hubkey` grant, unsigned by the ticket (5.2) |
@@ -500,7 +511,7 @@ refuse on the first failure with the reason code shown (vectors:
 | 13 | `now ≥ iat − 30` | `not_yet_valid` |
 | 14 | `now ≤ exp + 30` | `expired` |
 | 15 | `nonce` is not in the replay cache | `replay` |
-| 16 | the worker serves `cap` on this band | `unknown_cap` |
+| 16 | the worker serves `cap` on this band (with `contract`: and `cap` provides it) | `unknown_cap` |
 | 17 | the call is within this hub's ceiling (9.2) | `outside_ceiling` |
 
 On success the worker records `nonce` in its replay cache and runs the
@@ -517,8 +528,8 @@ file is enough); a worker that can't keep it MUST refuse every ticket for
 150 s after it starts.
 
 The ceiling check (17) uses the worker's own manifest data for the cap
-(`risk`, `effects`) and as target the request's `appliance`, else the
-worker's `name`. Two exceptions: `core.manifests` and `core.lease.drop`
+(`risk`, `effects`), the ticket's `contract` if any (8.2) and as target the
+request's `appliance`, else the worker's `name`. Two exceptions: `core.manifests` and `core.lease.drop`
 are within every ceiling, and `core.trust.set` is accepted only from the
 home hub, whatever the ceilings say.
 
@@ -675,6 +686,9 @@ covers `phone.motion.started`); everything else matches literally; the
 whole name must match. Without `@target` a pattern matches every target;
 with it, the call's target name (the appliance instance, else the worker
 name) must also match. Event names are grantable with the same patterns.
+A call made by a contract's name (4.1) matches a pattern by the contract's
+name or the resolved cap's: `screen.*` covers `kvm.screen.capture` called
+as `screen.capture`, not called by its own name.
 
 `denies(rights, call)` returns the first failing check of `grants`,
 `risk`, `effects`, or nothing. A malformed rights object refuses

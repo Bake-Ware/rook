@@ -73,12 +73,7 @@ caps:
     args:
       locale: { type: str, default: "", max: 20 }
     run: scripts/voice.py:voices
-provides:
-  voice.speak: voice-android.voice.speak
-  voice.ask: voice-android.voice.ask
-  voice.replies: voice-android.voice.replies
-  voice.stop: voice-android.voice.stop
-  voice.voices: voice-android.voice.voices
+provides: [voice.speak, voice.ask, voice.replies, voice.stop, voice.voices]
 hooks:
   start: scripts/voice.py:start
 docs: { manual: docs/manual.md }

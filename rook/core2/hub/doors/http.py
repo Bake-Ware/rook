@@ -13,7 +13,8 @@ agent, or an agent for a person).
     POST /plugins/push    {worker, plugin, why}  owners: sign the library's plugin for that worker and install it
     GET  /health          no token
     *    /p/<plugin><path>  a hub plugin's ``routes:`` entry: ``auth: user`` takes the
-                          bearer token, ``none`` anyone (the plugin checks, e.g. a webhook's HMAC)
+                          bearer token, ``hmac``/``token`` a signature or token under the
+                          route's secret (HubPlugins.route_allows), ``none`` anyone
 
 Enrollment (spec 12; rook.core2.enroll.hub):
 
@@ -187,15 +188,19 @@ class _Handler(BaseHTTPRequestHandler):
             raise _Error(404, "not found")
         if method not in route.methods:
             raise _Error(405, "method not allowed")
-        if route.auth not in ("user", "none"):     # TODO(castling:routes): hmac and token routes
-            raise _Error(501, f"{route.auth} routes are not served yet")
+        if route.auth not in ("user", "none") and route.secret is None:
+            raise _Error(501, f"this {route.auth} route names no secret")
+        body = self._raw()
+        headers = {k.lower(): v for k, v in self.headers.items()}
+        if route.auth in ("hmac", "token") and not hub.plugins.route_allows(plugin, route, headers, body):
+            raise _Error(401, "unauthorized")
         caller = None
         if route.auth == "user":
             who = self._run(self._auth())
             caller = KitCaller(person=who.person, agent=who.agent, band=hub.band, why=f"{plugin} route {path}",
                                owner=hub.identities.is_owner(who.person))
         request = {"method": method, "path": path, "query": dict(parse_qsl(url.query)),
-                   "headers": {k.lower(): v for k, v in self.headers.items()}, "body": self._raw()}
+                   "headers": headers, "body": body}
         try:
             out = self._run(hub.plugins.serve(plugin, path, request, caller))
         except PermissionError as e:

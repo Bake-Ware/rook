@@ -1,0 +1,36 @@
+# Manifest 1.2 additions: provides as a list (the cap is declared under the
+# contract's name), record aliases per verb, hmac/token route secrets.
+manifest: 1
+plugin: kvm2
+version: 1.0.0
+runs_on: hub
+requires: { plugins: { notify: "~1" } }     # warned: not a range this format reads
+settings:
+  hook_secret: { secret: true }
+  bot_token: { secret: true }
+caps:
+  screen.capture:
+    doc: A picture of the screen.
+    risk: read
+    scope: local
+    run: scripts/kvm.py:capture
+  hid.type:
+    doc: Type text.
+    risk: exec
+    scope: local
+    args: { text: { type: str, required: true } }
+    run: scripts/kvm.py:type_
+provides: [screen.capture, hid.type]
+records:
+  macro:
+    fields: { name: { type: str, required: true } }
+    history: true
+    aliases: { list: [kvm2.macros], history: [kvm2.macro_log] }
+routes:
+  push: { path: /push, methods: [POST], run: scripts/kvm.py:push, auth: { hmac: "{{settings.hook_secret}}" } }
+  bot:
+    path: /bot
+    methods: [POST]
+    run: scripts/kvm.py:bot
+    auth: { token: "{{settings.bot_token}}", header: X-Telegram-Bot-Api-Secret-Token }
+  vault: { path: /vault, methods: [POST], run: scripts/kvm.py:push, auth: { token: "{{secret:KVM_TOKEN}}" } }

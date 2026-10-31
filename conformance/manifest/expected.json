@@ -400,6 +400,65 @@
       "code": "unknown-setting"
     }
   ],
+  "invalid/v1-2-schema.yaml": [
+    {
+      "level": "error",
+      "path": "/provides",
+      "code": "schema-anyOf"
+    },
+    {
+      "level": "error",
+      "path": "/records/item/aliases",
+      "code": "schema-enum"
+    },
+    {
+      "level": "error",
+      "path": "/records/item/aliases/list",
+      "code": "schema-type"
+    },
+    {
+      "level": "error",
+      "path": "/routes/both/auth",
+      "code": "schema-anyOf"
+    },
+    {
+      "level": "error",
+      "path": "/routes/header-only/auth",
+      "code": "schema-anyOf"
+    }
+  ],
+  "invalid/v1-2.yaml": [
+    {
+      "level": "warning",
+      "path": "/provides/0",
+      "code": "unknown-contract"
+    },
+    {
+      "level": "error",
+      "path": "/provides/1",
+      "code": "unknown-cap"
+    },
+    {
+      "level": "error",
+      "path": "/records/item/aliases/delete",
+      "code": "record-verb"
+    },
+    {
+      "level": "error",
+      "path": "/records/item/aliases/list/0",
+      "code": "cap-collision"
+    },
+    {
+      "level": "warning",
+      "path": "/routes/bare/auth",
+      "code": "route-auth-secret"
+    },
+    {
+      "level": "warning",
+      "path": "/routes/literal/auth",
+      "code": "route-auth-literal"
+    }
+  ],
   "invalid/yaml-alias.yaml": [
     {
       "level": "error",
@@ -444,6 +503,23 @@
   "valid/homework.yaml": [],
   "valid/pikvm.yaml": [],
   "valid/v1-1.yaml": [],
+  "valid/v1-2.yaml": [
+    {
+      "level": "warning",
+      "path": "/provides/0",
+      "code": "unknown-contract"
+    },
+    {
+      "level": "warning",
+      "path": "/provides/1",
+      "code": "unknown-contract"
+    },
+    {
+      "level": "warning",
+      "path": "/requires/plugins/notify",
+      "code": "bad-range"
+    }
+  ],
   "valid/warnings.yaml": [
     {
       "level": "warning",

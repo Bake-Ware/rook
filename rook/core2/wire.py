@@ -253,6 +253,8 @@ def _ticket_shape(t: Any) -> bool:
         return False
     if "elevate" in t and not isinstance(t["elevate"], bool):
         return False
+    if "contract" in t and not (isinstance(t["contract"], str) and t["contract"]):
+        return False
     who = [t.get("person"), t.get("agent")]
     return any(who) and all(w is None or (isinstance(w, str) and w) for w in who)
 
@@ -262,7 +264,7 @@ def verify_ticket(ticket: Any, request: dict, worker: dict, now: int,
     """Worker-side ticket check (spec 6.3). ``worker`` holds ``worker_id``,
     ``band`` (the band the request arrived on), ``name``, ``trust`` ({hub_id:
     {"band", "role", "keys": {kid: pub}, "ceiling": Rights}}) and ``caps`` ({cap:
-    {"risk", "effects"}}, from its manifests). Returns (ok, reason); the
+    {"risk", "effects", "contracts"}}, from its manifests). Returns (ok, reason); the
     reason is ``ok`` or the first failed check. Records the nonce on success."""
     if ticket is None:
         return False, "no_ticket"
@@ -301,10 +303,12 @@ def verify_ticket(ticket: Any, request: dict, worker: dict, now: int,
     if replay.seen(ticket["nonce"], now):
         return False, "replay"
     meta = worker["caps"].get(ticket["cap"])
-    if meta is None:
+    if meta is None or ("contract" in ticket and ticket["contract"] not in (meta.get("contracts") or ())):
         return False, "unknown_cap"
     call = {"cap": ticket["cap"], "risk": meta["risk"], "effects": meta.get("effects", []),
             "target": request.get("appliance") or worker.get("name", "")}
+    if "contract" in ticket:
+        call["contract"] = ticket["contract"]
     if ticket["cap"] in HOME_ONLY:
         if entry["role"] != "home":
             return False, "outside_ceiling"

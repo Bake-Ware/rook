@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import _yaml
-from .validate import ACTION_KEYS, ACTION_TYPES, Issue, cap_name, record_caps, validate
+from .validate import ACTION_KEYS, ACTION_TYPES, Issue, cap_name, provided, record_caps, validate
 
 MANIFEST_FILE = "plugin.yaml"
 
@@ -109,6 +109,12 @@ def normalize(data: dict) -> dict:
         caps[name] = {"tags": [], "args": {}, "idempotent": c["risk"] == "read",
                       "elevation": "never", "aliases": [], **c}
     out["caps"] = caps
+    # provides as {contract: full cap name}; each such cap lists the
+    # contracts it answers to (a call by a contract's name, spec 4.1).
+    out["provides"] = provided(out)
+    for contract, cap in out["provides"].items():
+        if cap in caps:
+            caps[cap]["contracts"] = sorted({*caps[cap].get("contracts", ()), contract})
     for rec in out.get("records", {}).values():
         _field_defaults(rec["fields"])
     for contract in out.get("contracts", {}).values():

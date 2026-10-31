@@ -135,9 +135,9 @@ caps:
     - notify.act
     run: scripts/notify_android.py:AndroidNotifyPlugin._act
 provides:
-  notification.post: notification-android.notification.post
-  notification.update: notification-android.notification.update
-  notification.list: notification-android.notification.list
-  notification.dismiss: notification-android.notification.dismiss
-  notification.get: notification-android.notification.get
-  notification.act: notification-android.notification.act
+- notification.post
+- notification.update
+- notification.list
+- notification.dismiss
+- notification.get
+- notification.act

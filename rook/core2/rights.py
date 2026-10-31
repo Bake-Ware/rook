@@ -78,11 +78,14 @@ def valid_rights(r: Any) -> bool:
 
 def denies(r: dict, call: dict) -> str | None:
     """Why rights ``r`` refuse ``call`` ({"cap", "risk", "effects",
-    "target"}): ``grants``, ``risk`` or ``effects``; None when permitted.
-    Malformed rights refuse everything (``grants``)."""
+    "target"}, and ``contract`` when the call was made by a contract's name,
+    4.1): ``grants``, ``risk`` or ``effects``; None when permitted.
+    Malformed rights refuse everything (``grants``). A pattern may match the
+    cap or the contract it was called by."""
     if not valid_rights(r):
         return "grants"
-    if not any(matches(g, call["cap"], call.get("target", "")) for g in r["grants"]):
+    names = [call["cap"]] + ([call["contract"]] if call.get("contract") else [])
+    if not any(matches(g, n, call.get("target", "")) for g in r["grants"] for n in names):
         return "grants"
     if "max_risk" in r and risk_rank(call.get("risk")) > risk_rank(r["max_risk"]):
         return "risk"

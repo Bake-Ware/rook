@@ -40,7 +40,7 @@ caps:
     - device.clipboard_get
     run: scripts/device_android.py:AndroidDevicePlugin._clip_get
 provides:
-  clipboard.set: clipboard-android.clipboard.set
-  clipboard.get: clipboard-android.clipboard.get
+- clipboard.set
+- clipboard.get
 hooks:
   start: scripts/device_android.py:AndroidDevicePlugin.start

@@ -21,6 +21,3 @@ records:
     - get
     - create
     - update
-    aliases:
-    - task.read
-    - task.write

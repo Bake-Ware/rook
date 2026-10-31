@@ -13,9 +13,8 @@ license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 requires: { settings: [endpoint] }
 # drive reads screens and sends input through the device contracts, on the
-# worker the caller names (a target contract resolves to <provider>.<cap>).
-uses: ["screen.capture", "*.screen.capture", "ui.screen", "*.ui.screen", "hid.click", "*.hid.click",
-       "hid.key", "*.hid.key", "hid.type", "*.hid.type", "hid.drag", "*.hid.drag"]
+# worker the caller names (a contract's name covers the provider it reaches).
+uses: [screen.capture, ui.screen, hid.click, hid.key, hid.type, hid.drag]
 
 settings:
   endpoint:

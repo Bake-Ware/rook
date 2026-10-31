@@ -5,6 +5,7 @@ and the plugins that provide them (castling-manifest-2, "Contracts and provides"
       notify.send: { doc: Get a message to a person., args: { to: { type: str }, text: { type: str, required: true } } }
     provides:                        # in an implementing plugin
       notify.send: telegram.send
+    provides: [screen.capture]       # or: the cap is declared under the contract's name
 
 The hub serves each contract as a cap of its own name; a call to it is routed
 to the chosen provider: the one picked in the hub setting (house agent or
@@ -27,7 +28,7 @@ import inspect
 from typing import Any, Callable, Mapping, MutableMapping
 
 from .ctx import Caller, KitError
-from .manifest.validate import contract_problems
+from .manifest.validate import contract_problems, provided
 
 __all__ = ["Contracts"]
 
@@ -49,8 +50,8 @@ class Contracts:
         for name, spec in (manifest.get("contracts") or {}).items():
             self.define(name, spec or {}, plugin)
         caps = manifest.get("caps") or {}
-        for contract, cap in (manifest.get("provides") or {}).items():
-            short = cap[len(plugin) + 1:] if cap.startswith(plugin + ".") else cap
+        for contract, cap in provided(manifest).items():
+            short = cap[len(plugin) + 1:]
             if short not in caps:
                 raise KitError(f"{plugin} provides {contract} with {plugin}.{short}, which it doesn't declare")
             self.provide(contract, f"{plugin}.{short}", plugin, caps[short])

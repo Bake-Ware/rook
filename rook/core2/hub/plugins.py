@@ -27,7 +27,10 @@ its ``uses``. A plugin's ``gate:`` becomes a hub gate (rook.core2.hub.gate).
 from __future__ import annotations
 
 import copy
+import hashlib
+import hmac
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -65,8 +68,16 @@ class HubCap:
 class Route:
     path: str
     methods: list
-    auth: str                                     # user | none (hmac, token: not served yet)
+    auth: str                                     # user | none | hmac | token
     handler: Callable[..., Any]                   # handler(ctx, request)
+    secret: str | None = None                     # hmac/token: "{{settings.x}}", "{{secret:NAME}}"
+    header: str | None = None                     # hmac/token: the header that carries it
+
+
+# The header a signature or token arrives in when the route names none:
+# GitHub's for HMAC-SHA256 ("sha256=<hex>"), a bearer token for token.
+ROUTE_HEADERS = {"hmac": "x-hub-signature-256", "token": "authorization"}
+_ONE_TEMPLATE = re.compile(r"\{\{\s*(settings\.([A-Za-z0-9_-]+)|secret:([A-Za-z0-9_.-]+))\s*\}\}")
 
 
 @dataclass
@@ -132,9 +143,11 @@ class HubPlugins:
             if data.get("runs_on") == "hub":
                 for route in (data.get("routes") or {}).values():
                     auth = route.get("auth", "user")
+                    kind = auth if isinstance(auth, str) else ("hmac" if "hmac" in auth else "token")
                     p.routes[route["path"]] = Route(route["path"], list(route.get("methods") or ["GET", "POST"]),
-                                                    auth if isinstance(auth, str) else next(iter(auth)),
-                                                    resolve(route["run"]))
+                                                    kind, resolve(route["run"]),
+                                                    None if isinstance(auth, str) else auth[kind],
+                                                    None if isinstance(auth, str) else auth.get("header"))
             self.plugins[name] = p          # its hooks' calls need its uses
             if data.get("runs_on") == "hub" and data.get("hooks"):
                 await self.scheduler.start(data, make_ctx=lambda caller: self._ctx(p, caller),
@@ -251,10 +264,41 @@ class HubPlugins:
         p = self.plugins.get(plugin)
         return p.routes.get(path) if p else None
 
+    def route_allows(self, plugin: str, route: Route, headers: dict, body: bytes) -> bool:
+        """An ``hmac`` or ``token`` route's check: the request's header
+        (lower-case keys) carries HMAC-SHA256 of the body (hex, ``sha256=``
+        optional) or the token itself (``Bearer `` optional), under the
+        route's secret. A secret that isn't set refuses everything."""
+        try:
+            secret = self._route_secret(plugin, route.secret or "")
+        except (KitError, KeyError, ValueError):
+            return False
+        given = str(headers.get((route.header or ROUTE_HEADERS[route.auth]).lower()) or "").strip()
+        if not secret or not given:
+            return False
+        if route.auth == "hmac":
+            expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+            given = given[7:] if given.lower().startswith("sha256=") else given
+            return hmac.compare_digest(expected.encode(), given.lower().encode())
+        given = given[7:].strip() if given.lower().startswith("bearer ") else given
+        return hmac.compare_digest(secret.encode(), given.encode())
+
+    def _route_secret(self, plugin: str, template: str) -> str:
+        m = _ONE_TEMPLATE.fullmatch(template.strip())
+        if m is None:
+            return template            # a literal (the validator warns: it is public)
+        if m.group(3):
+            if self.resolve_secret is None:
+                raise KitError("no vault")
+            return str(self.resolve_secret(m.group(3)) or "")
+        p = self.plugins[plugin]
+        value = self._ctx(p, Caller(plugin=plugin, band=self.band)).settings[m.group(2)]
+        return "" if value is None else str(value)
+
     async def serve(self, plugin: str, path: str, request: dict, caller: Caller | None = None) -> Any:
         """Run a hub plugin's route for one HTTP request. The door checked the
         method and ``auth``: ``caller`` is the signed-in one for ``user``, None
-        for ``none`` (it runs as the plugin). ``request`` is ``{method, path,
+        for ``none``, ``hmac`` and ``token`` (it runs as the plugin). ``request`` is ``{method, path,
         query, headers, body}``, the body as bytes. The handler answers with
         JSON-able data; KitError or PermissionError refuse."""
         p, route = self.plugins[plugin], self.route(plugin, path)
@@ -262,8 +306,8 @@ class HubPlugins:
         return await invoke(route.handler, self._ctx(p, who), {"request": request})
 
     async def _route(self, contract: str, args: dict, caller: Caller) -> Any:
-        async def dispatch(cap, a, c):
-            return _result(await self._call(c, cap, a))
+        async def dispatch(cap, a, c):    # as the contract: grants on its name cover the provider
+            return _result(await self._call(c, cap, a, contract=contract))
         return await self.contracts.route(contract, args, caller, dispatch)
 
     # -- ctx ------------------------------------------------------------------

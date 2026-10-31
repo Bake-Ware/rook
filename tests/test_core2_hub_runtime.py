@@ -495,15 +495,26 @@ def test_hub_plugins_records_contracts_and_hooks(hubs, tmp_path):
         try:
             library = [n for n, p in hub.plugins.plugins.items() if not p.manifest.get("builtin")]
             assert library == ["notes"]       # broken was refused, the hub runs
+            assert hub._installed()["notes"] == "1.0.0"     # what requires.plugins is checked against
+            # Only defined contracts become grantable names (a plugin can't make one up).
+            assert hub._contracted({"risk": "read", "contracts": ["notify.send", "made.up"]})["contracts"] == ["notify.send"]
             _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "notes.note.create",
                                                        "args": {"text": "milk"}, "why": WHY}, token)
             assert out["ok"] and out["result"]["text"] == "milk", out
             _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "notify.send",
                                                        "args": {"text": "eggs"}, "why": WHY}, token)
             assert out["ok"], out
-            assert [e["cap"] for e in hub.journal.query(cap="notes.*")] == ["notes.tell", "notes.note.create"]
+            # A session for notify.send alone still reaches its provider (spec 8.2).
+            _, s = await http(hub, "POST", "/session", {"caps": ["notify.send"]}, token)
+            _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "notify.send", "session": s["session"],
+                                                       "args": {"text": "jam"}, "why": WHY}, token)
+            assert out["ok"], out
+            told = hub.journal.query(cap="notes.tell", limit=1)[0]
+            assert told["contract"] == "notify.send" and told["session"] == s["session"]
+            assert [e["cap"] for e in hub.journal.query(cap="notes.*")] == ["notes.tell", "notes.tell",
+                                                                          "notes.note.create"]
             _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "notes.count", "why": WHY}, token)
-            assert out["result"] == {"count": 2}
+            assert out["result"] == {"count": 3}
             _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "notes.note.create",
                                                        "args": {"txt": "x"}, "why": WHY}, token)
             assert out["error"].startswith("bad args"), out
@@ -513,7 +524,7 @@ def test_hub_plugins_records_contracts_and_hooks(hubs, tmp_path):
             assert caps["workers"]["rook"]["caps"]["notify.send"]["risk"] == "write"
             await w.announce()
             mod = next(m for m in hub.plugins._modules["notes"].values())
-            await until(lambda: mod.SEEN == [("kaiju", 2)])     # on: worker.online hook ran, and called a cap
+            await until(lambda: mod.SEEN == [("kaiju", 3)])     # on: worker.online hook ran, and called a cap
             hooked = hub.journal.query(cap="notes.count", limit=1)[0]
             assert (hooked["agent"], hooked["person"], hooked["ok"]) == ("system:plugin.notes", None, True)
         finally:
@@ -597,6 +608,61 @@ def test_only_late_replies_to_our_own_calls_are_journaled(hubs):
             await until(lambda: hub.journal.query(kind="late_reply"))
             await asyncio.sleep(0.1)
             assert [(e["call"], e["error"]) for e in hub.journal.query(kind="late_reply")] == [("a" * 32, "slow")]
+        finally:
+            await hub.stop()
+    run(go())
+
+
+BOT = """\
+manifest: 1
+plugin: bot
+version: 1.0.0
+runs_on: hub
+settings:
+  token: { type: str }
+routes:
+  signed: { path: /signed, methods: [POST], run: scripts/bot.py:hook, auth: { hmac: "{{secret:BOT_KEY}}" } }
+  tg: { path: /tg, methods: [POST], run: scripts/bot.py:hook,
+        auth: { token: "{{settings.token}}", header: X-Telegram-Bot-Api-Secret-Token } }
+  bearer: { path: /bearer, methods: [POST], run: scripts/bot.py:hook, auth: { token: "{{settings.token}}" } }
+  bare: { path: /bare, methods: [POST], run: scripts/bot.py:hook, auth: token }
+"""
+
+
+def test_hmac_and_token_routes(hubs, tmp_path, monkeypatch):
+    import hashlib
+    import hmac as hmac_
+    lib = tmp_path / "lib"
+    plugin(lib, "bot", BOT, {"bot.py": "def hook(ctx, request):\n    return {'got': request['body'].decode()}\n"})
+    monkeypatch.setenv("ROOK_SECRET_BOT_KEY", "k3y")
+
+    async def post(hub, path, body: bytes, headers: dict):
+        def go():
+            req = urllib.request.Request(f"http://127.0.0.1:{hub.doors[0].port}/p/bot{path}", data=body,
+                                         method="POST", headers=headers)
+            try:
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    return r.status, json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read())
+        return await asyncio.to_thread(go)
+
+    async def go():
+        hub, _, _ = await hubs(config(tmp_path, library=lib, settings={"bot": {"token": "t0k"}}), worker=False)
+        try:
+            body = b'{"ref": "main"}'
+            sig = "sha256=" + hmac_.new(b"k3y", body, hashlib.sha256).hexdigest()
+            assert await post(hub, "/signed", body, {"X-Hub-Signature-256": sig}) == (200, {"got": body.decode()})
+            assert (await post(hub, "/signed", body + b" ", {"X-Hub-Signature-256": sig}))[0] == 401
+            assert (await post(hub, "/signed", body, {}))[0] == 401
+            assert (await post(hub, "/signed", body, {"X-Hub-Signature-256": "sha256=\u00e9\u00e9"}))[0] == 401
+            assert (await post(hub, "/tg", body, {"X-Telegram-Bot-Api-Secret-Token": "t0k"}))[0] == 200
+            assert (await post(hub, "/tg", body, {"X-Telegram-Bot-Api-Secret-Token": "nope"}))[0] == 401
+            assert (await post(hub, "/bearer", body, {"Authorization": "Bearer t0k"}))[0] == 200
+            assert (await post(hub, "/bearer", body, {"Authorization": "Bearer t0"}))[0] == 401
+            assert (await post(hub, "/bare", body, {}))[0] == 501
+            monkeypatch.delenv("ROOK_SECRET_BOT_KEY")      # an unset secret refuses everything
+            assert (await post(hub, "/signed", body, {"X-Hub-Signature-256": sig}))[0] == 401
         finally:
             await hub.stop()
     run(go())

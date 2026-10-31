@@ -419,6 +419,34 @@ def test_hub_refuses_invalid_builtin_platform_and_breaking(tmp_path):
         d.prepare(gone, ENV, signer=HUB_SK, hub=HUB_ID, current=old, resolve=no_uv)
 
 
+def test_requires_plugins_is_checked_against_what_the_band_runs(tmp_path):
+    needy = make_plugin(tmp_path, name="needy", extra='requires: { plugins: { knowledge: ">=0.5,<0.6" } }\n')
+    with pytest.raises(d.Refused, match="needs knowledge >=0.5,<0.6: not installed"):
+        d.prepare(needy, ENV, signer=HUB_SK, hub=HUB_ID, resolve=no_uv, installed={"tasks": "0.5.0"})
+    with pytest.raises(d.Refused, match="the band has 0.6.1"):
+        d.prepare(needy, ENV, signer=HUB_SK, hub=HUB_ID, resolve=no_uv, installed={"knowledge": "0.6.1"})
+    assert d.prepare(needy, ENV, signer=HUB_SK, hub=HUB_ID, resolve=no_uv, installed={"knowledge": "0.5.3"}).sig
+    assert d.prepare(needy, ENV, signer=HUB_SK, hub=HUB_ID, resolve=no_uv).sig     # nothing to check against
+    odd = make_plugin(tmp_path, name="odd", extra='requires: { plugins: { knowledge: "~0.5" } }\n')
+    with pytest.raises(d.Refused, match="not a version range"):
+        d.prepare(odd, ENV, signer=HUB_SK, hub=HUB_ID, resolve=no_uv, installed={"knowledge": "0.5.0"})
+
+
+@pytest.mark.parametrize("version, spec, ok", [
+    ("0.5.3", ">=0.5,<0.6", True), ("0.6.0", ">=0.5,<0.6", False), ("1.0.0", "1.0", True),
+    ("1.0.1", "==1.0.0", False), ("2.0.0", "", True), ("2.0.0", "*", True), ("1.0.0-beta.1", ">=1.0", False),
+    ("1.2.0", ">1.1.9, <= 1.2", True)])
+def test_satisfies(version, spec, ok):
+    from rook.kit.manifest import satisfies
+    assert satisfies(version, spec) is ok
+
+
+def test_satisfies_reads_the_whole_range_before_answering():
+    from rook.kit.manifest import satisfies
+    with pytest.raises(ValueError):
+        satisfies("0.0.0", ">=1.0,~2")     # the first comparator fails; the second is still unreadable
+
+
 def test_install_reports_refusals_and_change_record(tmp_path):
     inst, host = worker(tmp_path)
     folder = make_plugin(tmp_path, files={"scripts/stats.py": "def collect(ctx): return 1"})

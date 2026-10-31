@@ -84,5 +84,9 @@ says why.
 The hub site is on `/`, `/login` and `/web/` ([The hub site](dashboard.md)).
 A hub plugin's own endpoints (its manifest's `routes:`) are under
 `/p/<plugin>/<path>`: `auth: user` takes the bearer token, `auth: none`
-lets anyone in and the plugin checks (a webhook's signature). `hmac` and
-`token` route auth answer 501 for now.
+lets anyone in and the plugin checks. `auth: {hmac: "{{settings.x}}"}` takes
+a request whose `X-Hub-Signature-256` is the HMAC-SHA256 of its body under
+that secret (GitHub's form, `sha256=<hex>`), `auth: {token: "{{settings.x}}"}`
+one whose `Authorization: Bearer` is the token; `header:` names another
+header (Telegram sends `X-Telegram-Bot-Api-Secret-Token`). Anything else is
+401, and so is every request while the secret isn't set.

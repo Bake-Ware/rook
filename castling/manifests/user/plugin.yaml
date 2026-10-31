@@ -161,4 +161,5 @@ records:
     - history
     history: true
     aliases:
-    - users.history
+      history:
+      - users.history
