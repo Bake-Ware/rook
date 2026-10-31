@@ -405,6 +405,11 @@ def test_only_a_person_or_the_chair_pins(cfg, gh):
         # a pin at a sha that isn't the head is refused (the chair pins what was asked, or nothing)
         out = await rig.house.call("huddle.pin", huddle=h["huddle"], kind="pr", repo=REPO, number=7, sha="d" * 40)
         assert not out["ok"] and "pin the head" in out["error"]
+        # an agent can't make itself a chair (and so pin its own work); a person can name one
+        out = await rig.coder.call("huddle.start", title="Mine", chair="coder")
+        assert not out["ok"] and "only a person names" in out["error"]
+        assert (await rig.coder.ok("huddle.start", title="Default chair"))["chair"] == "house"
+        assert (await rig.bake.ok("huddle.start", title="PM chairs", chair="pm"))["chair"] == "pm"
         # github writes are the huddle's alone
         out = await rig.bake.call("github.merge", repo=REPO, number=7, sha=HEAD, title="sneaky")
         assert not out["ok"] and "only the huddle" in out["error"] and not gh.writes
@@ -624,4 +629,24 @@ def test_no_token_in_the_vault_says_so(tmp_path, gh):
         out = await rig.bake.call("huddle.pin", huddle=h["huddle"], kind="pr", repo=REPO, number=7)
         assert not out["ok"] and "github-hub" in out["error"] and "vault" in out["error"], out
         assert not gh.requests
+    on_rig(cfg, body)
+
+
+def test_a_sacred_repo_asks_in_any_huddle(cfg, gh):
+    cfg.settings["huddle"]["repos"] = {REPO.lower(): "careful"}
+
+    async def body(rig):
+        careful = await rig.bake.ok("project.create", title="Careful", slug="careful")
+        quick = await rig.bake.ok("project.create", title="Quick", slug="quick")
+        await rig.bake.ok("project.trust.create", project=careful["id"], level="sacred")
+        await rig.bake.ok("project.trust.create", project=quick["id"], level="ship-it")
+        for project in (None, "quick"):         # no project, or a ship-it one: the repo's sacred wins
+            h, pin = await huddle_with_pr(rig, **({"project": project} if project else {}))
+            out = await rig.coder.ok("huddle.vote", huddle=h["huddle"], kind="merge", artifact=pin["artifact"],
+                                     self_review=REVIEW)
+            assert out["level"] == "sacred", out
+            m = await until(lambda: (r := rig.motion(out["motion"]))["state"] == "asked" and r, what="the card")
+            assert (await rig.bake.request("POST", f"/holds/{m['hold']}", {"decision": "refuse"}))["ok"]
+            await until(ended(rig, out["motion"]), what="declined")
+        assert not gh.writes
     on_rig(cfg, body)

@@ -40,6 +40,7 @@ settings:
   test_checks: { type: list, items: { type: str }, default: ["*test*"], where: hub, doc: "Check names (globs) that are test runs, for the tests gate." }
   merge_method: { type: str, enum: [merge, squash, rebase], default: merge, where: hub }
   qa_label: { type: str, default: ready-for-qa, where: hub, doc: The label a passed qa call adds. }
+  repos: { type: map, items: { type: str }, default: {}, where: hub, doc: "owner/name -> project id or slug: that project's trust level applies to the repo's pins in any huddle (the stricter of it and the huddle's)." }
 
 records:
   huddle:
@@ -91,7 +92,7 @@ records:
 
 caps:
   start:
-    doc: Open a chaired huddle. chair defaults to the hub's (the house agent); project sets the trust level its merges run under.
+    doc: Open a chaired huddle. chair defaults to the hub's (the house agent); only a person names another. project sets the trust level its calls run under (with the repos setting's, the stricter).
     risk: write
     scope: multi-user
     effects: [persists]

@@ -19,8 +19,10 @@ check on the record). The gates run in the background, reading GitHub as
 this plugin: version (the PR's head is still the pinned SHA), mergeable,
 ci (every check green, waiting up to ``gate_wait`` while they run), tests (a
 check named like ``test_checks`` passed) and secrets (no credential-shaped
-text on the diff's added lines). Then, by the huddle's project trust level
-(``project.trust``; normal without one): sacred asks an owner first
+text on the diff's added lines). Then, by the trust level (``project.trust``
+of the huddle's project and of the project the ``repos`` setting names for
+the artifact's repo, the stricter; normal without either): sacred asks an
+owner first
 (``huddle.carry`` is a hard stop, so the hub holds it as one card); else it
 is carried out at once:
 
@@ -210,6 +212,15 @@ class Runtime:
         except KitError as e:
             raise KitError(f"project {project}: {e.message}") from None
         return trust[0]["level"] if trust else "normal"
+
+    async def strictest(self, project: str | None, a: dict) -> str:
+        """The stricter of the huddle's project and the one the ``repos``
+        setting names for the artifact's repo: a call can't dodge a sacred
+        repo by being made in a huddle without a project."""
+        repo = str((a.get("ref") or {}).get("repo") or "").lower()
+        mapped = next((p for r, p in (self.setting("repos") or {}).items() if r.lower() == repo), None) if repo else None
+        levels = [await self.level(p) for p in (project, mapped) if p] or ["normal"]
+        return min(levels, key=("sacred", "normal", "ship-it").index)
 
     # -- gates ------------------------------------------------------------------------
 
@@ -460,6 +471,8 @@ async def start(ctx, title, chair=None, project=None):
     title = _line(title, 200)
     if not title:
         raise KitError("bad args: title says what the huddle is for")
+    if chair and chair != rt.setting("chair") and (ctx.caller.agent or not ctx.caller.person):
+        raise KitError("denied: only a person names a huddle's chair (the chair may pin)")
     chair = chair or rt.setting("chair")
     if project:
         await rt.level(project)             # refuses a project that doesn't exist
@@ -668,7 +681,7 @@ async def vote(ctx, huddle, action="call", kind=None, artifact=None, reason=None
     for m in rt.rec.motion.list(where={"artifact": a["id"]}, limit=100):
         if m["kind"] == kind and m["state"] in OPEN:
             raise KitError(f"{kind} {m['id']} on this is already {m['state']}")
-    level = await rt.level(h.get("project"))
+    level = await rt.strictest(h.get("project"), a)
     m = ctx.records.motion.create(huddle=h["id"], artifact=a["id"], kind=kind, version=a["version"], level=level,
                                   self_review=str(self_review).strip(), gates=[], state="gating",
                                   **({"reason": _line(reason, 500)} if reason else {}),

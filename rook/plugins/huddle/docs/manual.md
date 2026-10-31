@@ -43,8 +43,10 @@ so the self-review is always required.
 
 ## Trust
 
-The huddle's `project` (set at `huddle.start`) gives the level
-(`project.trust`; normal without one):
+The level is the stricter of the huddle's `project` (set at `huddle.start`)
+and the project the `repos` setting names for the pinned repo
+(`project.trust`; normal without either), so a call can't dodge a sacred repo
+by being made in a huddle without a project:
 
 | Level | After the gates pass |
 |---|---|
@@ -72,7 +74,8 @@ The huddle's `project` (set at `huddle.start`) gives the level
   `doc` (text; version is its SHA-256), `link` (url; `sha256` if you have
   one, else `unhashed`; the hub doesn't fetch it).
 - `huddle.post`, `huddle.read` (cursor `after`, `next`; `wait` long-polls),
-  `huddle.start`, `huddle.close` (its creator or an owner), `huddle.list`,
+  `huddle.start` (only a person names a chair other than the hub's),
+  `huddle.close` (its creator or an owner), `huddle.list`,
   `huddle.get`, `huddle.search`, `huddle.motion.list|get|search`,
   `huddle.artifact.list|get`.
 
@@ -89,3 +92,4 @@ A hub restart ends open calls as `failed`: call again.
 | `test_checks` | `["*test*"]` | check names that are test runs |
 | `merge_method` | `merge` | merge, squash or rebase |
 | `qa_label` | `ready-for-qa` | |
+| `repos` | `{}` | `owner/name` → project id or slug, for its trust level |
