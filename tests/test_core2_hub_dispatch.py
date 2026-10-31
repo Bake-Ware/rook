@@ -46,6 +46,7 @@ CAPS = {
     "homework.item.list": {"risk": "read", "scope": "self", "effects": []},
     "agents.chat.send": {"risk": "write", "scope": "self", "effects": []},
     "weird.risk": {"risk": "godmode", "scope": "nowhere", "effects": []},
+    "pkg.fix": {"risk": "read", "scope": "local", "effects": [], "elevation": "upfront"},
     "core.manifests": {"risk": "read", "scope": "self", "effects": []},
     "core.trust.set": {"risk": "admin", "scope": "self", "effects": ["persists"]},
 }
@@ -297,6 +298,51 @@ def test_elevated_call_counts_as_admin(hub):
     assert out["ok"] and hub.tx.requests[0]["ticket"]["elevate"] is True
     assert calls(hub)[-1]["risk"] == "admin"
 
+
+
+def test_upfront_elevation_counts_as_admin(hub):
+    # It always runs elevated (7.1), so gates, the sacred hold and the journal see admin.
+    out, _ = call(hub, CLAUDE_FOR_BAKE, "pkg.fix")
+    assert out["error"] == "denied: agent: risk"
+    out, _ = call(hub, BAKE, "pkg.fix")
+    assert out["ok"] and calls(hub)[-1]["risk"] == "admin"
+
+
+def test_elevate_keeps_the_calls_own_layers_and_session(hub):
+    got = []
+
+    async def answer(req, n):
+        if n == 1:
+            got.append(hub.elevate(WID, req["ticket"], "access_denied"))
+        return {"id": req["id"], "from": WID, "ok": True, "result": n}
+
+    hub.tx.answer = answer
+    out, s = call(hub, BAKE, "file.read", layers=[["page", {"grants": ["file.read"]}]])
+    assert out["ok"] and got[0] == {"ok": False, "error": "elevation: denied"}     # the page didn't allow it
+    got.clear()
+
+    async def end_then(req, n):
+        hub.end_session(req["ticket"]["session"])
+        got.append(hub.elevate(WID, req["ticket"], "upfront"))
+        return {"id": req["id"], "from": WID, "ok": True, "result": n}
+
+    hub.tx.answer = end_then
+    out, _ = call(hub, BAKE, "file.read")
+    assert got[0] == {"ok": False, "error": "elevation: denied"}               # an ended session gets no lease
+
+
+def test_sub_call_keeps_the_parent_calls_layers(hub):
+    results = []
+
+    async def answer(req, n):
+        if n == 1:
+            results.append(await hub.sub_call(WID, req["ticket"], "web.fetch", "kaiju", None, "warm the cache"))
+        return {"id": req["id"], "from": WID, "ok": True, "result": n}
+
+    hub.tx.answer = answer
+    # file uses web.*; a page that only declared file.read must not reach web.fetch through it
+    out, _ = call(hub, BAKE, "file.read", layers=[["page", {"grants": ["file.read"]}]])
+    assert out["ok"] and results[0]["error"] == "denied: page: grants"
 
 def test_unknown_risk_is_admin_and_unknown_scope_external(hub):
     out, _ = call(hub, CLAUDE_FOR_BAKE, "weird.risk")

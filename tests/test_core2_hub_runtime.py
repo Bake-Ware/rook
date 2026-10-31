@@ -238,6 +238,8 @@ class FakeWorker:
                         "agent": got.ticket.get("agent")}
             if cap == "echo.root":
                 return {"lease": lease["id"]}
+            if cap == "core.lease.drop":
+                return self.gate.drop_leases(got.ticket["hub"], BAND, args)
             if cap == "echo.relay":
                 sub = await self.request("core.call", {"ticket": got.ticket, "cap": "echo.say",
                                                        "target": "kaiju", "args": {"text": "inner"},
@@ -326,12 +328,12 @@ def test_why_rights_and_holds(hubs):
             _, out = await http(hub, "POST", "/call", {"worker": "kaiju", "cap": "echo.say",
                                                        "args": {"text": "x"}, "why": WHY}, kid)
             assert out["error"].startswith("denied: person:")
-            # an agent token with exec ceiling: elevation (admin) is past it, so is root's upfront lease
+            # an agent token with exec ceiling: root always runs elevated (upfront), so it
+            # counts as admin at dispatch, past claude; an elevate the worker asks for
+            # outside the agent's rights is refused and journaled too
             claude = hub.add_token(runtime.Caller(agent="agent:claude"))
             _, out = await http(hub, "POST", "/call", {"worker": "kaiju", "cap": "echo.root", "why": WHY}, claude)
-            assert out == {"id": out["id"], "ok": False, "error": "elevation: denied"}, out
-            elev = hub.journal.query(kind="elevation")
-            assert elev[0]["decision"] == "deny" and elev[0]["agent"] == "agent:claude"
+            assert out == {"id": out["id"], "ok": False, "error": "denied: agent: risk"}, out
             # the owner may elevate: the worker gets a lease, journaled with the call
             _, out = await http(hub, "POST", "/call", {"worker": "kaiju", "cap": "echo.root", "why": WHY}, token)
             assert out["ok"] and out["elevated"] == out["result"]["lease"], out
@@ -345,6 +347,25 @@ def test_why_rights_and_holds(hubs):
             await hub.stop()
     run(go())
 
+
+
+def test_ending_a_session_drops_its_leases_on_the_worker(hubs):
+    async def go():
+        hub, w, token = await hubs()
+        try:
+            await w.announce()
+            await until(lambda: "echo.root" in hub.dispatcher.workers.get(WID, runtime.Worker("", "", "", {}, {})).caps)
+            _, s = await http(hub, "POST", "/session", {"caps": ["*"]}, token)
+            _, out = await http(hub, "POST", "/call", {"worker": "kaiju", "cap": "echo.root", "why": WHY,
+                                                       "session": s["session"]}, token)
+            assert out["ok"] and out["elevated"] in w.gate.leases, out
+            _, end = await http(hub, "POST", "/session/end", {"session": s["session"]}, token)
+            assert end["ok"]
+            await until(lambda: not w.gate.leases and hub.journal.query(cap="core.lease.drop", limit=1))
+            assert hub.journal.query(cap="core.lease.drop", limit=1)[0]["agent"] == "system:hub"
+        finally:
+            await hub.stop()
+    run(go())
 
 def test_holds_wait_for_the_person(hubs, tmp_path):
     async def go():

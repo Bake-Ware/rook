@@ -122,7 +122,8 @@ class Dispatcher:
         self.sessions: dict[str, Session] = {}
         self.holds: dict[str, Hold] = {}
         self.closed_doors: set[str] = set()
-        self._inflight: dict[str, tuple] = {}   # nonce -> (ticket, caller, session id)
+        self._inflight: dict[str, tuple] = {}   # nonce -> (ticket, caller, session id, extra layers)
+        self.leases: dict[str, tuple[str, str, int]] = {}   # lease id -> (worker id, session id, exp)
 
     # -- sessions (8.4) ----------------------------------------------------
 
@@ -144,6 +145,15 @@ class Dispatcher:
         if s and not s.ended:
             s.ended = True
             self._note("session", s, event="end")
+
+    def lease_holders(self, sid: str) -> list[str]:
+        """Workers holding a live lease for session ``sid``, forgotten here:
+        the hub drops them there when the session ends (7.4)."""
+        now = self.clock()
+        for lid in [lid for lid, v in self.leases.items() if v[2] < now]:
+            del self.leases[lid]
+        held = [lid for lid, v in self.leases.items() if v[1] == sid]
+        return sorted({self.leases.pop(lid)[0] for lid in held})
 
     def taint(self, sid: str) -> None:
         """An event with ``taints`` reached the session; never cleared."""
@@ -307,7 +317,7 @@ class Dispatcher:
             request["ticket"] = self._mint(cid, caller, s, w, call, ahash)
             nonce = request["ticket"]["nonce"]
             entry["ticket"].append(nonce)
-            self._inflight[nonce] = (request["ticket"], caller, s.id)
+            self._inflight[nonce] = (request["ticket"], caller, s.id, call.layers)
             try:
                 reply = await asyncio.wait_for(self.send(w.band, request), wait)
             except asyncio.TimeoutError:
@@ -431,19 +441,20 @@ class Dispatcher:
     async def sub_call(self, from_worker: str, ticket: dict, cap: str, target: str,
                        args: dict | None, why: str) -> dict:
         """Dispatch a plugin's ``core.call`` as the parent call's person,
-        agent and session, with the calling plugin's ``uses`` as an extra
-        layer. The parent ticket must be one this hub minted for that worker
-        and still in flight."""
+        agent and session, with the parent's own extra layers (a page's caps,
+        an outer plugin's ``uses``) plus the calling plugin's ``uses``. The
+        parent ticket must be one this hub minted for that worker and still
+        in flight."""
         nonce = ticket.get("nonce") if isinstance(ticket, dict) else None
         held = self._inflight.get(nonce) if isinstance(nonce, str) else None
         if held is None or held[0] != ticket or ticket["worker"] != from_worker:
             return {"ok": False, "error": "denied: core.call: no such call in flight"}
-        parent, caller, sid = held
+        parent, caller, sid, layers = held
         w = self.workers.get(from_worker)
         plugin = parent["cap"].partition(".")[0]
         uses = {"grants": list((w.uses if w else {}).get(plugin, ()))}
         return await self.dispatch(caller, Call(cap=cap, target=target, args=args, why=why,
-                                                session=sid, layers=[["uses", uses]]))
+                                                session=sid, layers=[*layers, ["uses", uses]]))
 
     # -- core.elevate (7.2, 13): a lease for a call in flight -------------
 
@@ -460,8 +471,14 @@ class Dispatcher:
             return {"ok": False, "error": "elevation: denied"}
         caller = held[1]
         target = ticket.get("appliance") or w.name
-        layers = self.identities.layers(caller) + [["session", {"grants": s.caps}], ["ceiling", w.ceiling]]
+        # Every layer the call itself ran under (8.3): a page's caps, a plugin's uses.
+        layers = self.identities.layers(caller) + [["session", {"grants": s.caps}], *held[3],
+                                                   ["ceiling", w.ceiling]]
         out = rights.check(layers, {"cap": "core.elevate", "risk": "admin", "effects": [], "target": target})
+        if s.ended or self.clock() > s.exp:
+            out = {"ok": False, "layer": "session", "reason": "ended"}
+        elif caller.person and self.identities.expired(caller.person, self.clock()):
+            out = {"ok": False, "layer": "person", "reason": "expired"}
         entry = {"kind": "elevation", "ts": self.clock(), "hub": self.hub_id, "call": ticket["call"],
                  "cap": ticket["cap"], "worker": from_worker, "band": ticket["band"], "risk": "admin",
                  "reason": reason if isinstance(reason, str) else None, "session": s.id,
@@ -479,6 +496,7 @@ class Dispatcher:
             if k in ticket:
                 lease[k] = ticket[k]
         lease = wire.sign(self.op_key, lease)
+        self.leases[lease["id"]] = (from_worker, s.id, lease["exp"])
         entry.update(decision="allow", lease=lease["id"])
         self.journal(entry)
         return {"ok": True, "result": {"lease": lease}}
@@ -515,10 +533,12 @@ def _timeout(meta: dict) -> float:
 
 def _call_facts(meta: dict, elevate: bool) -> dict:
     """risk, scope and effects as dispatch sees them: unknown risk is admin,
-    unknown scope external, an elevated call admin (4.2, 4.4, 7.1)."""
+    unknown scope external, an elevated call admin (4.2, 4.4, 7.1), and so is
+    a cap declared ``elevation: upfront`` (it always runs elevated)."""
     risk = meta.get("risk")
     scope = meta.get("scope")
-    return {"risk": "admin" if elevate or risk not in rights.RISKS else risk,
+    elevated = elevate or meta.get("elevation") == "upfront"
+    return {"risk": "admin" if elevated or risk not in rights.RISKS else risk,
             "scope": scope if scope in rights.SCOPES else "external",
             "effects": list(meta.get("effects") or ())}
 

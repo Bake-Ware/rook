@@ -1021,6 +1021,10 @@ class Hub:
         if s is None or (s.person, s.agent) != (caller.person, caller.agent):
             return {"ok": False, "error": "unknown session"}
         self.dispatcher.end_session(sid)
+        for wid in self.dispatcher.lease_holders(sid):      # its elevation ends with it (7.4)
+            self._spawn(self.dispatcher.dispatch(SYSTEM, Call(
+                cap="core.lease.drop", target=wid, args={"session": sid}, session=self._system_session(),
+                why="The session ended: drop its elevation leases.")))
         return {"ok": True}
 
     async def workers_view(self, caller: Caller) -> dict:
