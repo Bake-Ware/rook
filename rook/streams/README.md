@@ -103,7 +103,7 @@ the stream API serves it: `stream.open` (a chat room: kind `room`),
 `stream.read` (by cursor; `wait` long-polls, which is how you follow a
 stream), `stream.write` (a `text` event in a room) and `stream.close`, under
 the index's rights. A stream a plugin owns is written and closed through that
-plugin's caps (`agents.chat.send`, `huddle.post`, `speech.hear`), which do
+plugin's caps (`agent.chat.send`, `huddle.post`, `speech.hear`), which do
 their part (wake the agent, tell the roles) besides appending. The hub serves `stream.list` / `stream.get` / `stream.search`
 (rook/core2/hub/streams.py): owners see every row, a person theirs, an agent
 alone its own person-less ones; the same rule the worker applies to reading,

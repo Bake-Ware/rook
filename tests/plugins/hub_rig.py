@@ -1,7 +1,7 @@
 """A real 0.5 hub in process for the huddle and github plugin tests: a fake
 GitHub (a local HTTP server speaking the REST endpoints the github plugin
 uses), a vault seeded with its token, the workbench plugins, and a stand-in
-for agents.chat.send that writes down what each agent was sent."""
+for agent.chat.send that writes down what each agent was sent."""
 
 import asyncio
 import json
@@ -120,7 +120,7 @@ class FakeGitHub:
 
 AGENTS = """\
 manifest: 1
-plugin: agents
+plugin: agent
 version: 1.0.0
 doc: Stands in for the agents package.
 runs_on: hub
@@ -211,7 +211,7 @@ class Rig:
         return self
 
     def told(self) -> list[dict]:
-        f = self.hub.data / "plugins" / "agents" / "sent.jsonl"
+        f = self.hub.data / "plugins" / "agent" / "sent.jsonl"
         return [json.loads(x) for x in f.read_text().splitlines()] if f.exists() else []
 
     def calls(self, cap: str) -> list[dict]:

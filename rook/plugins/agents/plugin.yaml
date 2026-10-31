@@ -12,7 +12,7 @@
 # (agent:<name>) with its grants: alone it has only them, for a person only
 # what both may. Code: scripts/agents.py.
 manifest: 1
-plugin: agents
+plugin: agent
 version: 0.5.1
 title: Agents
 doc: Agents with a persona, a backend, persistent sessions, a private notepad and curated memory.
@@ -127,7 +127,7 @@ caps:
     args:
       agent: { type: str, required: true }
       text: { type: str, required: true }
-      wait: { type: bool, default: true, doc: "Wait for the reply; false: answer at once, read it later with agents.chat.read." }
+      wait: { type: bool, default: true, doc: "Wait for the reply; false: answer at once, read it later with agent.chat.read." }
     result: { type: map }
   chat.read:
     doc: Your session with an agent, after a cursor (owners may read anyone's with party).

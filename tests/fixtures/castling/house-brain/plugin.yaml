@@ -6,7 +6,7 @@ plugin: agents-local
 version: 1.0.0
 doc: A fake local agent backend that builds hub pages on request.
 runs_on: hub
-uses: ["pages.*"]
+uses: ["page.*"]
 caps:
   turn:
     doc: One fake agent turn.

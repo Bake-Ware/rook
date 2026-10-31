@@ -5,7 +5,7 @@
 # Components are the canned tier any agent arranges into a page (layout).
 # Implemented by the hub (rook.core2.hub.doors.web.caps).
 manifest: 1
-plugin: pages
+plugin: page
 version: 0.5.0
 title: Pages
 doc: The hub site's pages. List, open, make, change, archive and restore them.
@@ -34,7 +34,7 @@ caps:
     risk: read
     scope: multi-user
     args:
-      page: { type: str, required: true, doc: "plugin/name, e.g. hub/workers or pages/uptime." }
+      page: { type: str, required: true, doc: "plugin/name, e.g. hub/workers or page/uptime." }
     result: { type: map }
   get:
     doc: One page's details and, for a page an agent made, its note (why it exists, its history).
@@ -48,7 +48,7 @@ caps:
   create:
     doc: >-
       Make a page on the hub site: either one self-contained HTML file (inline script and style), or a
-      layout of ready-made components (pages.components lists them). It runs sandboxed and reaches data
+      layout of ready-made components (page.components lists them). It runs sandboxed and reaches data
       only through window.rook.call on the caps it declares (a layout: its components' caps), as whoever
       views it and never more than its author may. The note says why it exists. With the workbench,
       the page is linked to the task it was built under (one is made when task is blank).
@@ -57,7 +57,7 @@ caps:
     scope: multi-user
     effects: [persists]
     args:
-      name: { type: str, required: true, doc: "Lowercase letters, digits, - and _; the page is pages/<name>." }
+      name: { type: str, required: true, doc: "Lowercase letters, digits, - and _; the page is page/<name>." }
       title: { type: str, required: true }
       html: { type: str, doc: "The whole page; or give layout instead." }
       layout:
@@ -94,7 +94,7 @@ caps:
     risk: write
     scope: multi-user
     effects: [persists]
-    undo: pages.restore
+    undo: page.restore
     args:
       page: { type: str, required: true }
       reason: { type: str }

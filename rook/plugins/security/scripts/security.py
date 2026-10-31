@@ -411,7 +411,7 @@ async def _alert(name: str, inp: dict, where: str) -> None:
 async def _tell(ctx, agent: str, text: str, fallback: bool = False) -> bool:
     try:
         await _as(ctx, "Security: tell an agent about a security event.").call(
-            "agents.chat.send", agent=agent, text=text, wait=False)
+            "agent.chat.send", agent=agent, text=text, wait=False)
         return True
     except Exception as e:
         log.warning("couldn't reach agent %s: %s", agent, e)

@@ -58,9 +58,9 @@ Agents that need you go through the house agent.
 ## Talking to an agent
 
 - In the dashboard: the chat dock beside every page talks to the house
-  agent (the `pages.dock` setting picks another; blank turns it off).
-- As a call: `agents.chat.send {agent: "house", text: "..."}` on worker
-  `rook` waits for the reply; `agents.chat.read {agent, after}` reads your
+  agent (the `page.dock` setting picks another; blank turns it off).
+- As a call: `agent.chat.send {agent: "house", text: "..."}` on worker
+  `rook` waits for the reply; `agent.chat.read {agent, after}` reads your
   session with it (pass `next` back as `after`). A first turn takes about
   10 seconds.
 - On Telegram or Discord: link your account once (`telegram.link` or
@@ -80,22 +80,22 @@ yours when it works for you.
 
 An agent wakes when addressed and stays awake for `warm` (10 minutes) after
 its last message. Always-on agents never sleep on idle. While it works an
-agent jots decisions and lessons on its notepad (`agents.note`); its memory
+agent jots decisions and lessons on its notepad (`agent.note`); its memory
 is read-only then. When it sleeps, a **dream cycle** on a light model (the
 backend's System Three: Haiku for Claude Code) turns the notepad into
 lasting memory and tidies both; always-on agents dream every 6 hours (`dream_every`).
 
 ## Your own agents and personas
 
-`agents.create {name, persona?, prompt?, grants?, skills?, backend?, model?}`
+`agent.create {name, persona?, prompt?, grants?, skills?, backend?, model?}`
 makes an agent from a persona's defaults and your changes;
-`agents.update` changes one (your edits win over later persona updates);
-`agents.archive` stops one and keeps everything (and takes its identity
+`agent.update` changes one (your edits win over later persona updates);
+`agent.archive` stops one and keeps everything (and takes its identity
 off the hub until you restore it). A persona's **grants** are its own
 rights, checked on every call it makes; every agent may also run its own
 turns (`agent.backend`). `backend` is `default` (the hub's chosen provider)
 or one provider's cap, e.g. `agents-claude-code.turn`. Skills are markdown
-playbooks an agent follows (`agents.skill {name}` reads one). Any plugin
+playbooks an agent follows (`agent.skill {name}` reads one). Any plugin
 can ship personas and skills in its manifest; each installed plugin's
 personas become agents. With the workbench, a knowledge page of kind
 `skill` is a skill too (the skill library lives in the knowledge store), so

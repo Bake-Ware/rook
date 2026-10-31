@@ -42,15 +42,15 @@ def rig_cfg(cfg):
 def test_attention_pass_is_a_house_agent_job(rig_cfg):
     async def body():
         rig = await Rig(rig_cfg).start()
-        inbox = rig.hub.data / "plugins" / "agents" / "inbox.jsonl"
+        inbox = rig.hub.data / "plugins" / "agent" / "inbox.jsonl"
         try:
-            job = (await until(lambda: [j for j in rig.hub.records.type("jobs.jobs").list(_owner())
+            job = (await until(lambda: [j for j in rig.hub.records.type("job.job").list(_owner())
                                         if j["source"] == "attention/attention"], what="the seeded job"))[0]
             assert (job["creator"], job["run_as"], job["persona"], job["enabled"]) == (
                 "plugin:attention", "persona", "house", True)
             assert job["trigger"] == {"every": "15m"} and "attention skill" in job["agent"]["prompt"]
 
-            r = await rig.bake.ok("jobs.start", job=job["id"], wait=True)
+            r = await rig.bake.ok("job.run", job=job["id"], wait=True)
             assert r["state"] == "ok" and r["as_who"] == "agent:house", r
             sent = [json.loads(x) for x in inbox.read_text().splitlines()]
             assert sent[-1]["agent"] == "house" and sent[-1]["from"] == "agent:house"

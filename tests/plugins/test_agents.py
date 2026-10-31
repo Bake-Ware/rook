@@ -89,7 +89,7 @@ class People:
         return {}
 
     def run_agent(self, plugin, name, grants):
-        assert plugin == "agents"
+        assert plugin == "agent"
         if name in self.taken:
             raise KitError(f"agent {name!r} is configured in hub.yaml")
         if grants is None:
@@ -127,10 +127,10 @@ class Rig:
         return await invoke(func, self.ctx(caller, fn.replace("_", ".")), args)
 
     async def start(self):
-        await self.call("start", Caller(plugin="agents", why="agents hook: start"))
+        await self.call("start", Caller(plugin="agent", why="agents hook: start"))
 
     async def stop(self):
-        await self.call("stop", Caller(plugin="agents", why="agents hook: stop"))
+        await self.call("stop", Caller(plugin="agent", why="agents hook: stop"))
         self.modules = {}                  # the next start loads the code afresh, like a reload
 
     @property
@@ -228,7 +228,7 @@ def test_install_makes_the_ready_made_roles_and_edits_win(rig):
         # (and its own turns); the archivist's are narrow.
         assert sorted(rig.people.agents) == ROLES
         assert rig.people.agents["pm"] == ["*", "agent.backend"]
-        assert rig.people.agents["archivist"] == ["agents.*", "knowledge.*", "concept.*", "project.*", "task.*",
+        assert rig.people.agents["archivist"] == ["agent.*", "knowledge.*", "concept.*", "project.*", "task.*",
                                                   "journal.*", "agent.backend"]
         await rig.call("update", name="house", summary="Mine now")
         # pm from an older release, unedited: the next start refreshes it.
@@ -310,7 +310,7 @@ def test_turns_resume_the_backend_session_with_the_agents_system_prompt(rig):
         assert "- qa: QA engineer - Evidence that things work" in system   # roster stub
         assert "- pm:" not in system
         assert "- ticket-sweep: The project manager's periodic sweep" in system
-        assert "agents.note" in system and a1["timeout"] == "20m"
+        assert "agent.note" in system and a1["timeout"] == "20m"
         assert [t for t, _ in await rig.events("pm")] == ["input", "turn", "turn", "input", "turn", "turn"]
         _, reply = (await rig.events("pm"))[2]
         assert reply == {"role": "reply", "text": "echo how are we doing?", "usage": {"input_tokens": 3}}
@@ -517,7 +517,7 @@ def test_an_idle_agent_sleeps_and_dreams(tmp_path):
         await asyncio.sleep(0.6)
         assert rig.rt.awake("house")
         await rig.call("note", agent="house", text="Bake says hi")
-        await rig.call("tick", Caller(plugin="agents", why="agents hook: every 30m"))
+        await rig.call("tick", Caller(plugin="agent", why="agents hook: every 30m"))
         assert rig.rt.notes("house") == [] and rig.rt.awake("house")
     go(lambda: _started(rig, body), 20)
 
@@ -571,12 +571,12 @@ def test_a_question_for_the_person_goes_through_the_house_agent(rig):
     """castling-caps C4: approval.ask is routed through the house agent when
     the agents package is installed."""
     async def body():
-        hook = Caller(plugin="agents", why="agents hook: on approval.asked")
+        hook = Caller(plugin="agent", why="agents hook: on approval.asked")
         payload = {"hold": "q_1", "question": "Ship the docs today?", "options": ["yes", "no"],
                    "why": "The release waits on it.", "person": "person:bake", "agent": "agent:claude"}
         await rig.call("on_asked", hook, event="approval.asked", payload=payload)
         cap, args, who = rig.backend.calls[-1]
-        assert cap == "agents.chat.send" and args["agent"] == "house" and args["wait"] is False
+        assert cap == "agent.chat.send" and args["agent"] == "house" and args["wait"] is False
         # For the person it's for, tainted: house never acts alone on another agent's words.
         assert (who.person, who.agent, who.tainted) == ("person:bake", None, True)
         assert "approval.decide" in args["text"] and "q_1" in args["text"] and "Ship the docs today?" in args["text"]

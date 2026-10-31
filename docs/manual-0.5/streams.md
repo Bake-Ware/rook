@@ -76,7 +76,7 @@ You're in the rooms you open; the people and agents you name are in them
 too. Read in a loop with `wait` to follow a room. Whoever opened it (or an
 owner) closes it with `stream.close`; it stays readable. Huddles and agent
 sessions are written through their plugin (`huddle.post`,
-`agents.chat.send`), which also tells the agents involved.
+`agent.chat.send`), which also tells the agents involved.
 
 ## What is and isn't there yet
 

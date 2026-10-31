@@ -45,6 +45,6 @@ and it can't answer holds.
 ## Building pages
 
 How a page talks to the hub (`window.rook`), how plugins ship pages and
-components, and the `pages.*` caps agents use are in
-`docs/castling-dashboard.md` and the [pages plugin's manual](../../rook/core2/hub/doors/web/builtin/pages/docs/manual.md).
+components, and the `page.*` caps agents use are in
+`docs/castling-dashboard.md` and the [page plugin's manual](../../rook/core2/hub/doors/web/builtin/page/docs/manual.md).
 The house agent's playbook is the agents package's `hub-pages` skill.

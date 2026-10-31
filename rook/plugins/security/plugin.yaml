@@ -15,7 +15,7 @@ package: core
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-uses: ["agents.chat.send", "notify.send", "approval.decide", "task.get"]
+uses: ["agent.chat.send", "notify.send", "approval.decide", "task.get"]
 
 settings:
   house_agent: { type: str, default: house, doc: The agent that reaches the person (canary hits only). }

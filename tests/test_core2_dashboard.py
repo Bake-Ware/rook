@@ -1,4 +1,4 @@
-"""The hub site (rook/core2/hub/doors/web): sign-in, the shell's pages.* calls,
+"""The hub site (rook/core2/hub/doors/web): sign-in, the shell's page.* calls,
 sandboxed pages reaching only their declared caps and events under the
 viewer's rights, agent-made pages with their note, archive and restore, and
 the core pages' caps. A hub runs in-process (loopback band) and every request
@@ -168,8 +168,8 @@ def make_library(tmp_path: Path) -> Path:
 async def start(tmp_path: Path, **over):
     cfg = Config(data=tmp_path / "data", band=BAND, library=make_library(tmp_path),
                  users={"bake": {"preset": "owner"}, "kim": {"preset": "viewer"}},
-                 presets={"viewer": {"grants": ["pages.*", "board.count", "approval.list"], "max_risk": "write"}},
-                 agents={"claude": {"grants": ["*"]}, "narrow": {"grants": ["pages.*", "board.count"]}},
+                 presets={"viewer": {"grants": ["page.*", "board.count", "approval.list"], "max_risk": "write"}},
+                 agents={"claude": {"grants": ["*"]}, "narrow": {"grants": ["page.*", "board.count"]}},
                  **{"doors": {"http": {"bind": "127.0.0.1:0"}}, **over})
     hub = Hub(cfg, transport=Loopback())
     await hub.start()
@@ -229,15 +229,15 @@ def test_sign_in_and_the_session_cookie(site):
             status, me = await c.json("GET", "/web/api/me")
             assert me["person"] == "person:bake" and me["csrf"]
             # POSTs need the CSRF token
-            status, out = await c.json("POST", "/web/api/call", {"cap": "pages.list"})
+            status, out = await c.json("POST", "/web/api/call", {"cap": "page.list"})
             assert status == 403
             c.csrf = me["csrf"]
-            assert (await c.call("pages.list"))["ok"]
-            # the shell calls pages.* only
+            assert (await c.call("page.list"))["ok"]
+            # the shell calls page.* only
             status, out = await c.json("POST", "/web/api/call", {"cap": "hub.workers"})
-            assert status == 403 and "pages.*" in out["error"]
+            assert status == 403 and "page.*" in out["error"]
             # no agents package: no dock, so no chat either
-            status, out = await c.json("POST", "/web/api/call", {"cap": "agents.chat.send",
+            status, out = await c.json("POST", "/web/api/call", {"cap": "agent.chat.send",
                                                                  "args": {"agent": "house", "text": "hi"}})
             assert status == 403
             # static files and no path tricks
@@ -293,7 +293,7 @@ def test_a_page_plugin_renders_sandboxed_with_the_bridge(site):
         try:
             c = Client(hub)
             await c.sign_in(tokens["bake"])
-            listed = (await c.call("pages.list"))["result"]["pages"]
+            listed = (await c.call("page.list"))["result"]["pages"]
             ids = [p["page"] for p in listed]
             assert {"board/board", "hub/workers", "approval/approvals", "journal/journal",
                     "setting/settings"} <= set(ids)
@@ -314,8 +314,8 @@ def test_a_page_plugin_renders_sandboxed_with_the_bridge(site):
             again = await c.open("board/board")
             stranger = Client(hub)
             assert (await stranger.req("GET", again["frame"]))[0] == 404
-            # opening is a journaled pages.view call
-            _, j = await c.json("GET", "/journal?cap=pages.view", bearer=tokens["bake"])
+            # opening is a journaled page.view call
+            _, j = await c.json("GET", "/journal?cap=page.view", bearer=tokens["bake"])
             assert j["entries"] and j["entries"][0]["args"] == {"page": "board/board"}
             # unknown pages
             assert not (await c.open("board/nope"))["ok"]
@@ -333,7 +333,7 @@ def test_a_sandboxed_page_cannot_call_undeclared_caps(site):
             t = (await c.open("board/board"))["token"]
             out = await c.page(t, "board.count")
             assert out["ok"] and out["result"] == {"count": 3}
-            for cap in ("board.secret", "hub.workers", "pages.archive", "journal.search"):
+            for cap in ("board.secret", "hub.workers", "page.archive", "journal.search"):
                 out = await c.page(t, cap, {"page": "board/board"})
                 assert out["error"] == "denied: page: grants", (cap, out)
             # the call ran as the person, in the page's own session, with a why
@@ -359,7 +359,7 @@ def test_pages_run_under_the_viewers_rights(site):
         hub, tokens = await site()
         try:
             kim = Client(hub)
-            await kim.sign_in(tokens["kim"])          # viewer: pages.*, board.count, approval.list
+            await kim.sign_in(tokens["kim"])          # viewer: page.*, board.count, approval.list
             t = (await kim.open("hub/workers"))["token"]
             out = await kim.page(t, "hub.workers")
             assert out["error"] == "denied: person: grants"
@@ -381,19 +381,19 @@ def test_archive_and_restore_are_caps_and_lose_nothing(site):
             c = Client(hub)
             await c.sign_in(tokens["bake"])
             t = (await c.open("board/board"))["token"]
-            out = await c.call("pages.archive", {"page": "board/board", "reason": "done with it"})
+            out = await c.call("page.archive", {"page": "board/board", "reason": "done with it"})
             assert out["ok"], out
-            live = [p["page"] for p in (await c.call("pages.list"))["result"]["pages"]]
-            gone = (await c.call("pages.list", {"archived": True}))["result"]["pages"]
+            live = [p["page"] for p in (await c.call("page.list"))["result"]["pages"]]
+            gone = (await c.call("page.list", {"archived": True}))["result"]["pages"]
             assert "board/board" not in live
             assert gone[0]["page"] == "board/board" and gone[0]["archived"]["by"] == "person:bake"
             assert "archived" in (await c.open("board/board"))["error"]
             assert "archived" in (await c.page(t, "board.count"))["error"]   # open pages stop too
-            assert (await c.call("pages.restore", {"page": "board/board"}))["ok"]
+            assert (await c.call("page.restore", {"page": "board/board"}))["ok"]
             assert (await c.open("board/board"))["ok"]
             assert json.loads((hub.data / "pages.json").read_text()) == {"archived": {}, "start": {}}
             # an agent (or a job) archives the same way, through the HTTP door
-            _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "pages.archive",
+            _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "page.archive",
                                                     "args": {"page": "journal/journal"}, "why": WHY},
                                   bearer=tokens["claude"])
             assert out["ok"], out
@@ -409,41 +409,41 @@ def test_agent_made_pages_keep_a_note_and_never_exceed_their_author(site):
         try:
             c = Client(hub)
             await c.sign_in(tokens["bake"])
-            body = {"worker": "rook", "cap": "pages.create", "why": WHY, "args": {
+            body = {"worker": "rook", "cap": "page.create", "why": WHY, "args": {
                 "name": "uptime", "title": "Uptime", "html": "<html><head></head><body>up</body></html>",
                 "note": "Bake asked to keep an eye on the board.", "caps": ["board.*"], "events": ["board.*"],
                 "task": "t_123"}}
             _, out = await c.json("POST", "/call", body, bearer=tokens["narrow"])
-            assert out["ok"] and out["result"] == {"page": "pages/uptime"}, out
+            assert out["ok"] and out["result"] == {"page": "page/uptime"}, out
             _, out = await c.json("POST", "/call", body, bearer=tokens["narrow"])
             assert "exists" in out["error"]
             note = (hub.data / "pages" / "uptime" / "NOTE.md").read_text()
             assert note.startswith("# Uptime\n\nBake asked to keep an eye on the board.")
             assert "agent:narrow: made the page" in note
-            got = (await c.call("pages.get", {"page": "pages/uptime"}))["result"]
+            got = (await c.call("page.get", {"page": "page/uptime"}))["result"]
             assert got["made"] and got["made_by"]["authors"] == [{"person": None, "agent": "agent:narrow"}]
             assert got["made_by"]["task"] == "t_123"
             assert got["note"] == note
             # viewed by an owner, the page still can't do more than its author (narrow: board.count)
-            t = (await c.open("pages/uptime"))["token"]
+            t = (await c.open("page/uptime"))["token"]
             assert (await c.page(t, "board.count"))["ok"]
             assert (await c.page(t, "board.secret"))["error"] == "denied: agent: grants"
             # changes go into the note's history; plugin pages aren't changed this way
-            _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "pages.update", "why": WHY, "args": {
-                "page": "pages/uptime", "change": "Added the count.", "html": "<p>3</p>"}}, bearer=tokens["claude"])
+            _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "page.update", "why": WHY, "args": {
+                "page": "page/uptime", "change": "Added the count.", "html": "<p>3</p>"}}, bearer=tokens["claude"])
             assert out["ok"], out
             assert "agent:claude for person:bake: Added the count." in (hub.data / "pages/uptime/NOTE.md").read_text()
             # claude (all rights) changed it, but narrow wrote it too: still no more than narrow
             assert (await c.page(t, "board.secret"))["error"] == "denied: agent: grants"
             assert (hub.data / "pages/uptime/page.html").read_text() == "<p>3</p>"
-            _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "pages.update", "why": WHY, "args": {
+            _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "page.update", "why": WHY, "args": {
                 "page": "board/board", "change": "x", "html": "x"}}, bearer=tokens["claude"])
             assert "comes with a plugin" in out["error"]
-            _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "pages.create", "why": WHY, "args": {
+            _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "page.create", "why": WHY, "args": {
                 **body["args"], "name": "../etc"}}, bearer=tokens["claude"])
             assert "bad args" in out["error"]
             # the frame is the page with the bridge (no <head>: one is added)
-            status, headers, html = await c.req("GET", (await c.open("pages/uptime"))["frame"])
+            status, headers, html = await c.req("GET", (await c.open("page/uptime"))["frame"])
             assert status == 200 and html.decode().endswith("<p>3</p>") and "window.rook" in html.decode()
         finally:
             await hub.stop()
@@ -451,24 +451,24 @@ def test_agent_made_pages_keep_a_note_and_never_exceed_their_author(site):
 
 
 def test_a_made_page_cant_launder_its_author_through_a_new_page(site):
-    # narrow makes P1 (caps pages.create); bake opens it; P1 makes P2 with
+    # narrow makes P1 (caps page.create); bake opens it; P1 makes P2 with
     # caps ["*"]. P2 must still carry narrow as an author, never bake alone.
     async def go():
         hub, tokens = await site()
         try:
             c = Client(hub)
             await c.sign_in(tokens["bake"])
-            _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "pages.create", "why": WHY, "args": {
-                "name": "p1", "title": "P1", "html": "<p>1</p>", "note": "n", "caps": ["pages.create"]}},
+            _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "page.create", "why": WHY, "args": {
+                "name": "p1", "title": "P1", "html": "<p>1</p>", "note": "n", "caps": ["page.create"]}},
                 bearer=tokens["narrow"])
             assert out["ok"], out
-            t1 = (await c.open("pages/p1"))["token"]
-            out = await c.page(t1, "pages.create", {"name": "p2", "title": "P2", "html": "<p>2</p>",
+            t1 = (await c.open("page/p1"))["token"]
+            out = await c.page(t1, "page.create", {"name": "p2", "title": "P2", "html": "<p>2</p>",
                                                     "note": "n", "caps": ["*"]})
             assert out["ok"], out
-            got = (await c.call("pages.get", {"page": "pages/p2"}))["result"]
+            got = (await c.call("page.get", {"page": "page/p2"}))["result"]
             assert {"person": "person:bake", "agent": "agent:narrow"} in got["made_by"]["authors"]
-            t2 = (await c.open("pages/p2"))["token"]
+            t2 = (await c.open("page/p2"))["token"]
             assert (await c.page(t2, "board.count"))["ok"]
             assert "denied" in (await c.page(t2, "board.secret"))["error"]
         finally:
@@ -589,11 +589,11 @@ def test_approvals_page_answers_holds(site):
                 _, out = await c.json("POST", path, body, bearer=tokens["claude"])
                 assert "agent:claude may not release" in out["error"], out
             # ... and not a page an agent wrote, even while the person views it
-            _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "pages.create", "why": WHY, "args": {
+            _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "page.create", "why": WHY, "args": {
                 "name": "sneaky", "title": "Sneaky", "html": "<p>hi</p>", "note": "x",
                 "caps": ["approval.*"]}}, bearer=tokens["claude"])
             assert out["ok"], out
-            ts = (await c.open("pages/sneaky"))["token"]
+            ts = (await c.open("page/sneaky"))["token"]
             assert (await c.page(ts, "approval.list"))["ok"]
             out = await c.page(ts, "approval.decide", {"hold": held["hold"], "decision": "approve"})
             assert out["error"] == "denied: page: a page an agent made can't answer holds"
@@ -624,17 +624,17 @@ def test_workers_journal_and_settings_pages(site):
             workers = (await c.page(t, "hub.workers"))["result"]["workers"]
             assert workers[0]["name"] == "rook" and workers[0]["hub"]
             t = (await c.open("journal/journal"))["token"]
-            entries = (await c.page(t, "journal.search", {"cap": "pages.view", "limit": 5}))["result"]["entries"]
-            assert entries and all(e["cap"] == "pages.view" for e in entries)
+            entries = (await c.page(t, "journal.search", {"cap": "page.view", "limit": 5}))["result"]["entries"]
+            assert entries and all(e["cap"] == "page.view" for e in entries)
 
             t = (await c.open("setting/settings"))["token"]
             status = (await c.page(t, "hub.status"))["result"]
             assert status["hub"] == hub.hub_id and status["people"][0]["name"] == "bake"
-            assert {"pages", "hub", "approval", "journal", "setting", "board"} <= {p["plugin"] for p in status["plugins"]}
+            assert {"page", "hub", "approval", "journal", "setting", "board"} <= {p["plugin"] for p in status["plugins"]}
             listed = (await c.page(t, "setting.list"))["result"]["settings"]
             assert {(s["plugin"], s["key"], s["value"], s["source"]) for s in listed} == {
                 ("board", "motto", "hello", "default"), ("board", "size", 3, "default"),
-                ("pages", "dock", "house", "default")}
+                ("page", "dock", "house", "default")}
             out = await c.page(t, "setting.set", {"plugin": "board", "key": "size", "value": "big"})
             assert out["error"].startswith("bad value")
             assert (await c.page(t, "setting.set", {"plugin": "board", "key": "motto", "value": "hi"}))["ok"]
@@ -725,8 +725,8 @@ def test_every_builtin_cap_is_known():
     for folder in web_caps.BUILTIN.iterdir():
         declared |= set(load(folder).data["caps"])
     assert declared == {
-        "pages.list", "pages.view", "pages.get", "pages.create", "pages.update", "pages.archive", "pages.restore",
-        "pages.components", "pages.site", "pages.start", "hub.status", "hub.workers", "hub.manifests", "hub.door", "approval.list", "approval.decide", "approval.ask", "approval.get", "journal.search", "setting.list",
+        "page.list", "page.view", "page.get", "page.create", "page.update", "page.archive", "page.restore",
+        "page.components", "page.site", "page.start", "hub.status", "hub.workers", "hub.manifests", "hub.door", "approval.list", "approval.decide", "approval.ask", "approval.get", "journal.search", "setting.list",
         "setting.set", "llm.providers", "llm.models", "llm.status"}
 
 
