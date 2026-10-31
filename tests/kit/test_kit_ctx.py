@@ -327,8 +327,8 @@ def test_hub_views_of_contracts_and_agents():
         def run_agent(self, plugin, name, grants):
             self.made.append((plugin, name, grants))
 
-        def turn_token(self, plugin, person, name, seconds):
-            return f"{plugin}:{person}:{name}:{seconds}"
+        def turn_token(self, plugin, person, name, seconds, tainted=False):
+            return f"{plugin}:{person}:{name}:{seconds}:{tainted}"
 
         def end_turn_token(self, token):
             self.ended.append(token)
@@ -339,7 +339,7 @@ def test_hub_views_of_contracts_and_agents():
     ctx.run_agent("pm", ("*",))
     assert hub.made == [("tv", "pm", ["*"])]
     token = ctx.turn_token("pm", 60)
-    assert token == "tv:bake:pm:60"                     # this call's person, never one the plugin picks
+    assert token == "tv:bake:pm:60:False"                     # this call's person, never one the plugin picks
     ctx.end_turn_token(token)
     assert hub.ended == [token]
     bare = Ctx(MANIFEST, BAKE)

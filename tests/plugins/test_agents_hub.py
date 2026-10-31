@@ -199,6 +199,8 @@ caps:
       text: { type: str, required: true }
       title: { type: str }
     result: { type: map }
+provides:
+  notify.channel.send: telegram.send
 emits:
   telegram.message:
     doc: Someone wrote to the bot.
@@ -253,6 +255,8 @@ def test_a_linked_persons_direct_message_reaches_the_house_agent(tmp_path):
             turn = hub.journal.query(cap="agents-local.turn", limit=1)[0]
             assert (turn["person"], turn["agent"], turn["ok"]) == ("person:bake", "agent:house", True)
             assert hub.dispatcher.sessions[turn["session"]].tainted            # outside content
+            sent = hub.journal.query(cap="telegram.send", limit=1)[0]
+            assert sent["contract"] == "notify.channel.send"                  # the reply goes by contract
             # ... and so is the session its harness's calls run in (its turn token's).
             door = hub._door_sessions[("person:bake", "agent:house")]
             assert hub.dispatcher.sessions[door].tainted

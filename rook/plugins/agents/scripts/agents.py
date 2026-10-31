@@ -618,6 +618,7 @@ async def tick(ctx):
 
 
 CHANNELS = {"telegram.message": ("telegram", "Telegram"), "discord.message": ("discord", "Discord")}
+CHANNEL = "notify.channel.send"
 
 
 async def inbound(ctx, event, payload, source=None):
@@ -647,9 +648,15 @@ async def inbound(ctx, event, payload, source=None):
     except KitError as e:
         reply = f"{agent} couldn't answer: {e.message}"
     # The reply goes out as this plugin (a guest may not send as themselves),
-    # only ever to the person who wrote.
-    await _why(ctx, f"{agent}'s reply to {person} on {label}").call(
-        f"{plugin}.send", to=person.removeprefix("person:"), text=reply)
+    # only ever to the person who wrote, through the bot's notify channel
+    # (the contract, never its send cap by name).
+    send = next((c for c in ctx.providers(CHANNEL) if c.partition(".")[0] == plugin), None)
+    if send is None:
+        log.warning("no %s channel to answer %s on", plugin, person)
+        return
+    c = _why(ctx, f"{agent}'s reply to {person} on {label}")
+    await c.call_as(replace(c.caller, plugin=c.plugin), CHANNEL, {"to": person.removeprefix("person:"),
+                                                                  "text": reply}, provider=send)
 
 
 async def on_asked(ctx, event, payload):

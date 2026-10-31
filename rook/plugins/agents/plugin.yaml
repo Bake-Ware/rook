@@ -23,10 +23,11 @@ source: https://github.com/Bake-Ware/rook
 # agent.backend only for turns: the hub's chosen provider, or the provider an
 # agent is pinned to (any plugin that provides the contract).
 # A person's direct message to the band's Telegram or Discord bot goes to
-# chat_agent as that person; the reply goes back to them by the same bot.
+# chat_agent as that person; the reply goes back to them by the same bot,
+# through its notify channel (the notify.channel.send contract).
 # hub.manifests: the personas and skills every installed plugin ships;
 # knowledge.get: skills kept as knowledge pages (kind skill), with the workbench.
-uses: ["agent.backend", "telegram.send", "discord.send", "hub.manifests", "knowledge.get"]
+uses: ["agent.backend", "notify.channel.send", "hub.manifests", "knowledge.get"]
 
 settings:
   warm: { type: duration, default: 10m, doc: How long an agent that isn't always-on stays awake after its last message. }
