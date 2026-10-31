@@ -1,0 +1,36 @@
+# The soak test's own plugin: cheap caps for load (no process per call), a
+# sized reply for large results and a held cap. tests/soak/soak.py copies it
+# into the sidecar's hub library with the version it pushes.
+manifest: 1
+plugin: soak
+version: 1.0.0
+title: Soak fixture
+doc: Caps the soak test calls on the sidecar's worker.
+caps:
+  ping:
+    doc: Answer with the text, who asked and the plugin version.
+    risk: read
+    scope: self
+    idempotent: true
+    args: { text: { type: str } }
+    run: scripts/soak.py:ping
+  blob:
+    doc: A reply of size bytes of text.
+    risk: read
+    scope: self
+    args: { size: { type: int, min: 0, max: 33554432 } }
+    run: scripts/soak.py:blob
+  sleep:
+    doc: Wait seconds, then answer.
+    risk: read
+    scope: self
+    timeout: 60s
+    args: { seconds: { type: float, min: 0, max: 50 } }
+    run: scripts/soak.py:sleep
+  wipe:
+    doc: Pretends to erase something for good (it changes nothing), so the call is held.
+    risk: write
+    scope: self
+    effects: [destructive]
+    run: scripts/soak.py:wipe
+check: [soak.ping]
