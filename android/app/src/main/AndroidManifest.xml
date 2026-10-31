@@ -25,6 +25,8 @@
     <uses-permission android:name="android.permission.SEND_SMS" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <!-- Rook 0.5: call.dial places the call the person asked for. -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
     <!-- calendar.list (CalendarContract: Google Calendar, Outlook when it syncs calendars) -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
@@ -137,9 +139,19 @@
 
         <activity
             android:name=".SettingsActivity"
-            android:exported="false"
+            android:exported="true"
+            android:launchMode="singleTop"
             android:label="@string/settings"
-            android:parentActivityName=".MainActivity" />
+            android:parentActivityName=".MainActivity">
+            <!-- Rook 0.5 sign-in QR (rook://enroll?url=…&code=…&hub=…), scanned with the camera:
+                 the screen asks before it signs in. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="rook" android:host="enroll" />
+            </intent-filter>
+        </activity>
 
         <service android:name=".RookAssistantService" android:exported="true" android:enabled="@bool/native_assistant_service_enabled"
             android:permission="android.permission.BIND_VOICE_INTERACTION">

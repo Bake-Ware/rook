@@ -35,7 +35,8 @@ import systems.bake.rook.databinding.ActivitySettingsBinding
  * Everything that isn't the conversation, in four tabs (see [SettingsTabs]):
  *  - Voice: conversation mode + prompt, voice picker, fast voice, show thinking,
  *    wake word, default assistant.
- *  - Band: account sign-in / pairing / saved bands, hub + PSK + name, worker start/stop.
+ *  - Band: Rook 0.4 or 0.5; 0.4: account sign-in / pairing / saved bands, hub + PSK + name;
+ *    0.5: sign in to the home hub (address, or its QR as a rook://enroll link); worker start/stop.
  *  - Permissions: one row per grant with its live state; tap to grant.
  *  - App: version, updates, and the advanced voice connection (server, key, TLS).
  * The status footer is shared by every tab.
@@ -43,6 +44,7 @@ import systems.bake.rook.databinding.ActivitySettingsBinding
 class SettingsActivity : AppCompatActivity() {
 
     private var voiceFetch: Job? = null
+    @Volatile private var signingIn = false
     private var voiceChoices = emptyList<String>()
     private var modeShown = VoiceModes.byId(null)
     private lateinit var b: ActivitySettingsBinding
@@ -82,6 +84,13 @@ class SettingsActivity : AppCompatActivity() {
         setupBand()
         setupApp()
         b.btnGrantPerms.setOnClickListener { request(*BASIC_PERMISSIONS) }
+        enrollLink(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        enrollLink(intent)
     }
 
     // ---- tabs -------------------------------------------------------------
@@ -368,7 +377,33 @@ class SettingsActivity : AppCompatActivity() {
         b.hub.setText(prefs.getString("hub", BuildConfig.DEFAULT_HUB))
         b.psk.setText(prefs.getString("psk", BuildConfig.DEFAULT_PSK))
         b.name.setText(prefs.getString("name", (Build.MODEL ?: "android").replace(' ', '-')))
+        b.coreVersion.check(if (Castling.on(this)) R.id.core05 else R.id.core04)
+        b.coreVersion.setOnCheckedChangeListener { _, id ->
+            val v = if (id == R.id.core05) Castling.V05 else Castling.V04
+            if (v == Castling.version(this)) return@setOnCheckedChangeListener
+            // Two different workers on different bands: stop the running one; Start runs the new one.
+            WorkerService.stop(this)
+            prefs.edit().putBoolean("autostart", false).apply()
+            Castling.setVersion(this, v)
+            status("Rook $v: worker stopped. " + if (v == Castling.V05) "Sign in, then tap Start." else "Tap Start to run it.")
+            showCore()
+        }
+        b.name05.setText(prefs.getString(Castling.NAME_PREF, null) ?: (Build.MODEL ?: "android").replace(' ', '-'))
+        b.btnSignIn05.setOnClickListener { signIn05(b.hub05.text.toString()) }
+        b.btnCancel05.setOnClickListener { cancel05() }
+        showCore()
         b.btnStart.setOnClickListener {
+            if (Castling.on(this)) {
+                lifecycleScope.launch {
+                    val ready = withContext(Dispatchers.IO) {
+                        runCatching { Castling.status(this@SettingsActivity).optBoolean("enrolled") }.getOrDefault(false) }
+                    if (!ready) { status("Sign in to your hub first."); return@launch }
+                    prefs.edit().putBoolean("autostart", true).apply()
+                    WorkerService.start(this@SettingsActivity, "", "", "")
+                    status("Rook 0.5 worker starting")
+                }
+                return@setOnClickListener
+            }
             val hub = b.hub.text.toString().trim()
             val psk = b.psk.text.toString().trim()
             val name = b.name.text.toString().trim().ifEmpty { (Build.MODEL ?: "android").replace(' ', '-') }
@@ -386,6 +421,96 @@ class SettingsActivity : AppCompatActivity() {
             status("worker stopped")
         }
         b.btnStopFind.setOnClickListener { FindDeviceBridge.stop(); status("find-device ring stopped") }
+    }
+
+    // ---- Rook 0.5 ----------------------------------------------------------
+
+    private fun showCore() {
+        val v5 = Castling.on(this)
+        b.connect04.visibility = if (v5) View.GONE else View.VISIBLE
+        b.band04.visibility = if (v5) View.GONE else View.VISIBLE
+        b.connect05.visibility = if (v5) View.VISIBLE else View.GONE
+        if (v5) renderEnrolled()
+    }
+
+    private fun renderEnrolled() {
+        lifecycleScope.launch {
+            val got = withContext(Dispatchers.IO) { runCatching { Castling.status(this@SettingsActivity) } }
+            got.onSuccess { s ->
+                val on = s.optBoolean("enrolled")
+                b.enrolled05.text = if (on) "Signed in as ${s.optString("name")} to hub ${s.optString("hub")} " +
+                    "(${s.optString("url")}), owned by ${s.optString("owner")}." else "Not signed in yet."
+                b.btnSignIn05.text = if (on) "Sign in again" else "Sign in"
+            }.onFailure { b.enrolled05.text = "Rook 0.5 isn't working in this build: ${it.message}" }
+        }
+    }
+
+    /** The sign-in QR, scanned with the phone's camera, opens this screen with a rook://enroll link. */
+    private fun enrollLink(intent: Intent?) {
+        val (url, hub) = Castling.enrollLink(intent?.data) ?: return
+        val link = intent!!.dataString!!
+        intent.data = null
+        b.settingsTabs.getTabAt(SettingsTabs.indexOf("band"))?.select()
+        AlertDialog.Builder(this).setTitle("Sign in to a Rook 0.5 hub?")
+            .setMessage("Hub ${hub ?: "?"} at $url.\n\nThis phone switches to Rook 0.5 and its 0.4 worker stops.")
+            .setPositiveButton("Sign in") { _, _ ->
+                b.coreVersion.check(R.id.core05)
+                b.hub05.setText(link)
+                signIn05(link)
+            }.setNegativeButton("Cancel", null).show()
+    }
+
+    private fun signIn05(target: String) {
+        val text = target.trim()
+        if (text.isEmpty()) { status("Type the hub's address, or scan its sign-in QR with the camera."); return }
+        if (signingIn) return
+        val name = b.name05.text.toString().trim().ifEmpty { (Build.MODEL ?: "android").replace(' ', '-') }
+        lifecycleScope.launch {
+            val now = withContext(Dispatchers.IO) { runCatching { Castling.status(this@SettingsActivity) }.getOrNull() }
+            if (now?.optBoolean("enrolled") == true) {
+                AlertDialog.Builder(this@SettingsActivity).setTitle("Sign in again?")
+                    .setMessage("This phone's home is hub ${now.optString("hub")}. Signing in again makes the new hub " +
+                        "its home and drops every other band.")
+                    .setPositiveButton("Sign in again") { _, _ -> run05(text, name, force = true) }
+                    .setNegativeButton("Cancel", null).show()
+            } else run05(text, name, force = false)
+        }
+    }
+
+    private fun run05(target: String, name: String, force: Boolean) {
+        if (force) WorkerService.stop(this)        // it runs on the old enrollment
+        signingIn = true
+        b.btnSignIn05.isEnabled = false
+        b.btnCancel05.visibility = View.VISIBLE
+        b.code05.visibility = View.GONE
+        status("signing in as $name")
+        val listener = object : Castling.Listener {
+            override fun say(text: String) = runOnUiThread {
+                b.code05.text = text
+                b.code05.visibility = View.VISIBLE
+            }
+        }
+        val app = applicationContext
+        lifecycleScope.launch {
+            val got = withContext(Dispatchers.IO) { runCatching { Castling.enroll(app, target, name, force, listener) } }
+            signingIn = false
+            b.btnSignIn05.isEnabled = true
+            b.btnCancel05.visibility = View.GONE
+            b.code05.visibility = View.GONE
+            got.onSuccess { r ->
+                if (r.optBoolean("ok")) {
+                    prefs.edit().putString(Castling.NAME_PREF, r.optString("name")).apply()
+                    b.hub05.setText(r.optString("url"))      // a QR's code is used up
+                    status("Signed in as ${r.optString("name")}. Tap Start.")
+                } else status(r.optString("error", "sign-in failed"))
+            }.onFailure { status("Sign-in failed: ${it.message}") }
+            renderEnrolled()
+        }
+    }
+
+    private fun cancel05() {
+        val app = applicationContext
+        Thread { runCatching { Castling.cancel(app) } }.start()
     }
 
     private fun fetchBands(google: Boolean) {
@@ -456,6 +581,9 @@ class SettingsActivity : AppCompatActivity() {
             request(Manifest.permission.READ_CONTACTS) },
         Grant("Call log", "Recent calls", { granted(Manifest.permission.READ_CALL_LOG) }) {
             request(Manifest.permission.READ_CALL_LOG) },
+        Grant("Phone calls", "Rook 0.5: place the calls you ask for", {
+            if (Castling.on(this)) granted(Manifest.permission.CALL_PHONE) else null }) {
+            request(Manifest.permission.CALL_PHONE) },
         Grant("Calendar", "Read your events, and add or change them when you ask", {
             granted(Manifest.permission.READ_CALENDAR) && granted(Manifest.permission.WRITE_CALENDAR) }) {
             request(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR) },
@@ -622,6 +750,7 @@ class SettingsActivity : AppCompatActivity() {
     override fun onSupportNavigateUp(): Boolean { finish(); return true }
 
     override fun onDestroy() {
+        if (signingIn) cancel05()
         prefs.unregisterOnSharedPreferenceChangeListener(modelsListener)
         super.onDestroy()
     }
