@@ -253,9 +253,14 @@ def test_membership_requests_are_checked_and_band_keys_resolve_for_owners_only(t
                 out[name] = await http(hub, "POST", "/memberships", {"worker": "kaiju", "why": "test", **body},
                                        tok["bake"])
             ref = "{{secret:band-psk-%s}}" % invite["band"]
-            resolved = hub.enroll.resolve({"connect": {"psk": ref}, "x": [ref, "keep"]}, OWNER)
+            resolved = hub.enroll.resolve({"connect": {"psk": ref}, "x": [ref, "keep"]}, OWNER, "core.trust.set")
             with pytest.raises(ValueError, match="only an owner"):
-                hub.enroll.resolve({"psk": ref}, Caller(person="person:ann"))
+                hub.enroll.resolve({"psk": ref}, Caller(person="person:ann"), "core.trust.set")
+            # an agent acting for the owner, or any other cap, never gets a band key
+            with pytest.raises(ValueError, match="only an owner"):
+                hub.enroll.resolve({"psk": ref}, Caller(person=OWNER.person, agent="agent:claude"), "core.trust.set")
+            with pytest.raises(ValueError, match="only in core.trust.set"):
+                hub.enroll.resolve({"argv": ["echo", ref]}, OWNER, "shell.exec")
             return invite, out, resolved
         finally:
             await other.stop()
