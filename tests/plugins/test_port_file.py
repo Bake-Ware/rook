@@ -142,6 +142,14 @@ def test_a_runaway_pattern_never_stalls_the_worker(tmp_path, monkeypatch):
     assert out["timed_out"] and out["matches"] == []
     assert gap < 0.5 and took < 10
 
+
+def test_search_works_without_a_runnable_interpreter(tmp_path, monkeypatch):
+    # The Android app embeds Python: sys.executable can't be started there.
+    (tmp_path / "a.txt").write_text("needle\n")
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "no-python"))
+    got = run("search", {"pattern": "need", "path": str(tmp_path)})
+    assert [m["text"] for m in got["matches"]] == ["needle"]
+
 def test_stat_and_old_name(tmp_path):
     f = tmp_path / "f"
     f.write_text("abc")

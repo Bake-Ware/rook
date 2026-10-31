@@ -111,7 +111,10 @@ async def search(ctx, pattern, path=".", recursive=True, glob="*", ignore_case=F
     job = json.dumps({"pattern": pattern, "path": str(path), "recursive": recursive, "glob": glob,
                       "ignore_case": ignore_case, "limit": limit, "seconds": SEARCH_SECONDS})
     PIPE = asyncio.subprocess.PIPE
-    proc = await launch([sys.executable, "-I", __file__], None, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    try:
+        proc = await launch([sys.executable, "-I", __file__], None, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    except OSError:      # no runnable interpreter (the Android app's embedded Python): in-process
+        return await asyncio.to_thread(_scan, **json.loads(job))
     try:
         out, err = await asyncio.wait_for(proc.communicate(job.encode("utf-8")), SEARCH_SECONDS + 2)
     except asyncio.TimeoutError:     # stuck inside one match: no partial result to give
