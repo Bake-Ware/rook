@@ -39,11 +39,19 @@ CREATE TABLE IF NOT EXISTS journal (
 CREATE INDEX IF NOT EXISTS journal_chain ON journal (chain, seq);
 CREATE INDEX IF NOT EXISTS journal_call ON journal (call);
 CREATE INDEX IF NOT EXISTS journal_ts ON journal (ts);
-CREATE INDEX IF NOT EXISTS journal_cap ON journal (cap, ts);
-CREATE INDEX IF NOT EXISTS journal_worker ON journal (worker, ts);
-CREATE INDEX IF NOT EXISTS journal_person ON journal (person, ts);
-CREATE INDEX IF NOT EXISTS journal_agent ON journal (agent, ts);
-CREATE INDEX IF NOT EXISTS journal_project ON journal (project, ts);
+-- (column, seq): a filtered read is newest first by seq, so these serve its
+-- order too; (column, ts) made SQLite sort every matching row (soak: 130 ms
+-- for an agent's 40,000 entries, under the lock appends wait on).
+DROP INDEX IF EXISTS journal_cap;
+DROP INDEX IF EXISTS journal_worker;
+DROP INDEX IF EXISTS journal_person;
+DROP INDEX IF EXISTS journal_agent;
+DROP INDEX IF EXISTS journal_project;
+CREATE INDEX IF NOT EXISTS journal_cap_seq ON journal (cap, seq);
+CREATE INDEX IF NOT EXISTS journal_worker_seq ON journal (worker, seq);
+CREATE INDEX IF NOT EXISTS journal_person_seq ON journal (person, seq);
+CREATE INDEX IF NOT EXISTS journal_agent_seq ON journal (agent, seq);
+CREATE INDEX IF NOT EXISTS journal_project_seq ON journal (project, seq);
 
 -- Where a pruned chain now starts: the last pruned entry (seq, hash). It
 -- only moves forward, must name a real entry when it moves, and is never

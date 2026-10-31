@@ -412,3 +412,25 @@ def test_entries_are_copies(store):
     got = store.get(a["id"])
     got["why"] = "changed"
     assert store.get(a["id"]) == a and copy.deepcopy(a) == store.query()[0]
+
+
+def test_filtered_reads_walk_an_index_in_order_and_old_indexes_go(tmp_path):
+    """A person's, agent's, cap's or worker's newest entries come straight off
+    an index: no sort of every matching row under the store's lock."""
+    path = str(tmp_path / "j.db")
+    s = JournalStore(path)
+    s.append({"kind": "call", "cap": "a.b", "person": "person:bake"})
+    for c in ("cap", "worker", "person", "agent", "project"):   # a journal from before: (column, ts)
+        s._db.execute(f"DROP INDEX journal_{c}_seq")
+        s._db.execute(f"CREATE INDEX journal_{c} ON journal ({c}, ts)")
+    s.close()
+    s = JournalStore(path)
+    names = {r[0] for r in s._db.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+    assert {"journal_person_seq", "journal_agent_seq", "journal_cap_seq"} <= names
+    assert not names & {"journal_person", "journal_agent", "journal_cap", "journal_worker", "journal_project"}
+    assert [e["cap"] for e in s.query(person="person:bake")] == ["a.b"]
+    for where in ("person = ?", "agent = ?", "cap = ?", "worker = ?", "project = ?"):
+        plan = " ".join(r[3] for r in s._db.execute(
+            f"EXPLAIN QUERY PLAN SELECT body FROM journal WHERE {where} ORDER BY seq DESC LIMIT 5", ("x",)))
+        assert "TEMP B-TREE" not in plan, (where, plan)
+    s.close()
