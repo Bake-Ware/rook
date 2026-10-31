@@ -19,7 +19,7 @@ settings:
   target:
     type: str
     default: ""
-    doc: "Where backups go: dir:/path (a folder or disk), worker:<name> (that worker's backup-store plugin) or rclone:<remote>:<path> (S3, Google Drive, B2, SFTP through rclone)."
+    doc: "Where backups go: blank (the default) is another of the owners' online workers running backup-store, never the hub's own machine; or dir:/path (a folder or disk), worker:<name> (that worker's backup-store plugin) or rclone:<remote>:<path> (S3, Google Drive, B2, SFTP through rclone)."
   keep:
     type: int
     default: 7
@@ -57,7 +57,7 @@ caps:
 
 jobs:
   nightly:
-    doc: "Every night at 03:40 (the jobs timezone): back up the hub to the target and check the copy. Set backup's target first."
+    doc: "Every night at 03:40 (the jobs timezone): back up the hub to the target (by default another worker running backup-store) and check the copy."
     trigger: { cron: "40 3 * * *" }
     call: backup.run
     catch_up: true

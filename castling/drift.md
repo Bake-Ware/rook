@@ -404,6 +404,8 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
 - **Source.** wave7 `backup.txt` asked for a "configurable target", no default.
 - **Smallest fix.** Blank target = another online worker of the owner's running `backup-store`
   (in the default worker install); a short house-agent skill for the two nudges.
+- **Fixed:** PR #343 (c8/ops-backup): blank target = an owner's online worker with `backup-store`
+  (not the hub's machine); house skill `housekeeping`. No default worker install: the house agent offers it.
 
 ## 16. `core.elevate` skips the gate hook (missing)
 

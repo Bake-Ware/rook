@@ -24,7 +24,8 @@ def test_nightly_backup_to_a_worker_and_restore_elsewhere(fresh):
     store = b.root / "store"
     (b.library / "jobs").symlink_to(PLUGINS_DIR / "jobs", target_is_directory=True)
     cfg = json.loads((b.hub_dir / "hub.yaml").read_text())
-    cfg["settings"] = {"jobs": {"tick": "100ms"}, "backup": {"target": "worker:e2e-worker", "keep": 1}}
+    # no target: the default is another worker of the owner's running backup-store (castling-backup)
+    cfg["settings"] = {"jobs": {"tick": "100ms"}, "backup": {"keep": 1}}
     (b.hub_dir / "hub.yaml").write_text(json.dumps(cfg, indent=1))
     w = json.loads((b.worker_dir / "worker.yaml").read_text())
     w["plugins"].append(str(PLUGINS_DIR / "backup-store"))

@@ -1,7 +1,14 @@
 """The ``backup.*`` hub caps over :mod:`rook.core2.hub.backup`. Owners only
-(in person, through their agents, or a job they made)."""
+(in person, through their agents, or a job they made).
+
+A blank ``target`` is the default (castling-backup, Bake: "Multiple backup
+paths, with a reasonable one by default"; the default is "nightly snapshots
+to another worker on the band (no setup, data stays on own machines)"):
+another online worker of an owner's that runs ``backup-store``, named first
+in order, never one on the hub's own machine."""
 from __future__ import annotations
 
+import socket
 from pathlib import Path
 
 from rook.kit.ctx import KitError
@@ -9,6 +16,21 @@ from rook.kit.ctx import KitError
 from . import KEEP, BackupError, backups, fetch_verify, run, target
 
 MANIFEST = Path(__file__).parent
+STORE = "backup-store.put"
+
+
+def default_worker(hub) -> str | None:
+    """The worker a blank target means: online, an owner's, serving
+    backup-store, and not the hub's own machine (a worker is named after its
+    host unless told otherwise); the first by name, so it stays the same one
+    night after night while it is up."""
+    here = socket.gethostname().lower()
+    for k in sorted(hub.known.values(), key=lambda k: k.name):
+        w = hub.dispatcher.workers.get(k.id)
+        if (k.online and k.id != hub.node and k.name.lower() != here and w is not None and STORE in w.caps
+                and hub.identities.is_owner(hub.enroll.owner_of(k.id))):
+            return k.name
+    return None
 
 
 def install(hub) -> None:
@@ -16,6 +38,13 @@ def install(hub) -> None:
         if not ctx.caller.owner:
             raise KitError("denied: only an owner backs up the hub")
         spec = str(ctx.settings.get("target") or "")
+        if not spec:
+            name = default_worker(hub)
+            if name is None:
+                raise BackupError("no backup target yet: the default is another of your workers running "
+                                  "backup-store, and none is online. Install backup-store on one, or set "
+                                  "backup's target (dir:/path, worker:<name> or rclone:<remote>:<path>)")
+            spec = f"worker:{name}"
         worker = spec.partition(":")[2] if spec.startswith("worker:") else None
 
         def call(cap: str, args: dict):

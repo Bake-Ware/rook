@@ -83,8 +83,9 @@ set `doors: {http: {web: {secure_cookie: true}}}`.
 ## Backups
 
 Everything the hub knows is in its `data:` folder (keys, journal, records,
-tokens, settings). The hub backs itself up: set a target and install the
-nightly job ([Backup](../../rook/core2/hub/backup/docs/manual.md)):
+tokens, settings). The hub backs itself up: install backup-store on another of your machines
+and the nightly job ([Backup](../../rook/core2/hub/backup/docs/manual.md)).
+By default backups go to that worker; to send them elsewhere:
 
     settings:
       backup: { target: "worker:janitor", keep: 7 }   # or dir:/mnt/usb, rclone:remote:path

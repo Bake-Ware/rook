@@ -25,16 +25,21 @@ In `hub.yaml` under `settings: {backup: {...}}`:
 
 | Setting | What |
 |---|---|
-| `target` | Where backups go (below). Nothing is backed up until it is set. |
+| `target` | Where backups go (below). Blank, the default, is another of your workers. |
 | `keep` | How many of this hub's newest backups stay on the target (default 7). The newest is never deleted. |
 
 Targets:
 
+- blank (the default): another of your machines. The hub picks the first
+  online worker, by name, that an owner enrolled and that runs the
+  [backup-store](../../../../plugins/backup-store/docs/manual.md) plugin,
+  never one on the hub's own machine. No setup beyond installing backup-store
+  on one worker, and your data stays on your own machines. If none is
+  online, the run fails and says so; the house agent brings it up.
 - `dir:/mnt/usb/rook`: a folder (a disk, a network mount). Files are 0600 in a 0700 folder.
 - `worker:janitor`: another worker on the band, through its
   [backup-store](../../../../plugins/backup-store/docs/manual.md) plugin
-  (install it there first). The default suggestion: your data stays on
-  your own machines.
+  (install it there first): that worker, always.
 - `rclone:gdrive:rook-backups`: anything [rclone](https://rclone.org) reaches
   (S3, Google Drive, B2, SFTP, ...). Set the remote up with `rclone config`
   as the hub's account; rclone keeps its own credentials.
