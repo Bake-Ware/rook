@@ -67,3 +67,5 @@ archived memories never move.
 Start the 0.5 hub, enroll each machine on the checklist, then keep the 0.4
 hub's data (or this copy) only as long as you want the old journal beside
 the archive.
+
+For the plan to move production (order, rollback, decisions) and a dry run of this tool against a real 0.4 copy, see [castling-switchover.md](castling-switchover.md).
