@@ -41,7 +41,7 @@ def run(coro, timeout=30):
 def config(tmp_path: Path, **over) -> Config:
     return Config(**{"data": tmp_path / "data",
                      "users": {"bake": {"preset": "owner"}, "ann": {"preset": "adult"}, "kid": {"preset": "child"}},
-                     "agents": {"claude": {"grants": ["*"], "max_risk": "exec"}},
+                     "agents": {"claude": {"grants": ["*"], "max_risk": "exec"}, "root": {"grants": ["*"]}},
                      "doors": {"http": {"bind": "127.0.0.1:0"}},
                      "transport": {"bands": [{"psk": PSK, "relay": "127.0.0.1:7474"}]}, **over})
 
@@ -52,7 +52,8 @@ async def started(tmp_path: Path, **over) -> tuple[Hub, dict]:
     tokens = {"bake": (hub.data / "owner.token").read_text().strip()}
     for name, caller in (("ann", Caller(person="person:ann")), ("kid", Caller(person="person:kid")),
                          ("claude", Caller(agent="agent:claude")),
-                         ("claude-for-bake", Caller(person="person:bake", agent="agent:claude"))):
+                         ("claude-for-bake", Caller(person="person:bake", agent="agent:claude")),
+                         ("root-for-bake", Caller(person="person:bake", agent="agent:root"))):
         tokens[name] = hub.add_token(caller)
     return hub, tokens
 
@@ -181,7 +182,7 @@ def test_who_may_enroll_see_the_recovery_key_and_invite(tmp_path):
         hub, tok = await started(tmp_path)
         try:
             out = {}
-            for who in ("bake", "ann", "kid", "claude", "claude-for-bake"):
+            for who in ("bake", "ann", "kid", "claude", "claude-for-bake", "root-for-bake"):
                 out[who] = [(await http(hub, m, p, b, tok[who])).get("error")
                             for m, p, b in (("POST", "/enroll/code", {}), ("GET", "/recovery-key", None),
                                             ("POST", "/bands/invite", {"ceiling": {"grants": ["e2e.*"]}}))]
@@ -197,8 +198,11 @@ def test_who_may_enroll_see_the_recovery_key_and_invite(tmp_path):
     assert out["ann"] == [None, alone, alone]
     assert out["kid"] == ["denied: person may not set up machines", alone, alone]
     assert out["claude"] == ["denied: setting up a machine needs a person", alone, alone]
-    # an agent for an owner gets only what both may (claude stops at exec), and never the key or a PSK
-    assert out["claude-for-bake"] == ["denied: agent may not set up machines", alone, alone]
+    # an agent never sets up a machine, even for an owner with full rights: the
+    # code it gets would claim a bundle holding the band key
+    person = "denied: setting up a machine is for the person, not an agent"
+    assert out["claude-for-bake"] == [person, alone, alone]
+    assert out["root-for-bake"] == [person, alone, alone]
     assert key["recovery_key"] == recovery_key(hub.data) == \
         (hub.data / "keys" / "recovery.key").read_text().strip()
     assert len(key["recovery_key"]) == 39 and key["recovery_key"].count("-") == 7

@@ -173,6 +173,11 @@ class Enrollment:
         ids = self.hub.identities
         if not caller.person or ids.user(caller.person) is None:
             return "denied: setting up a machine needs a person"
+        if caller.agent:
+            # A one-time code claims a bundle holding the band key, and an
+            # approved device code hands one to whatever device asked: the
+            # person decides that, like the recovery key (_owner_alone).
+            return "denied: setting up a machine is for the person, not an agent"
         if ids.expired(caller.person, self.hub.clock()):
             return "denied: expired"
         for layer, r in ids.layers(caller):
