@@ -90,6 +90,31 @@ async def test_multi_chunk_bundle_over_relay():
 
 
 @pytest.mark.asyncio
+async def test_a_finished_transfer_is_freed_without_the_cycle_collector():
+    """Wrapper and Drop receiver/sender must not form a reference cycle: each
+    pulled large reply's chunks (and each served blob) stayed in memory until
+    a full gc, hundreds of MB on a hub under steady large replies (soak)."""
+    import gc
+    import weakref
+    band_id = BandCrypto("ota-psk-gc").band_id
+    data = os.urandom(1024 * 100)
+    relay, sender, receiver = _make_pair(band_id, 9, "gc.pyz", data)
+    receiver.start()
+    sender.offer()
+    assert await receiver.wait(timeout=15.0) and await sender.wait(timeout=2.0)
+    receiver.stop()
+    await asyncio.sleep(0)       # the tick task finishes its cancellation
+    refs = [weakref.ref(o) for o in (sender, receiver, sender._sender, receiver._recv)]
+    gc.disable()
+    try:
+        relay.sender = relay.receiver = None
+        del sender, receiver
+        assert [r() for r in refs] == [None] * 4
+    finally:
+        gc.enable()
+
+
+@pytest.mark.asyncio
 async def test_lossy_relay_recovers_via_rerequest():
     band_id = BandCrypto("ota-psk3").band_id
     data = os.urandom(1024 * 80)  # spans > 1 window
