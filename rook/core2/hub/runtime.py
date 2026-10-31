@@ -630,16 +630,22 @@ class Hub:
             if norm is None or norm["plugin"] != e["plugin"]:
                 continue
             plugin = norm["plugin"]
-            # A contract's name reaches its provider here through the cap's
-            # ``contracts`` (normalize sets them from provides).
-            caps.update({n: dict(m) for n, m in norm["caps"].items() if m.get("on", "worker") == "worker"})
+            caps.update({n: self._contracted(m) for n, m in norm["caps"].items() if m.get("on", "worker") == "worker"})
             uses[plugin] = list(norm.get("uses") or ())
         ceiling = k.ceiling if rights.valid_rights(k.ceiling) else {"grants": ["*"]}
         self.dispatcher.workers[k.id] = Worker(k.id, k.name, k.band, caps, ceiling, uses=uses,
                                                sacred=k.name in self.cfg.sacred)
 
+    def _contracted(self, meta: dict) -> dict:
+        """A cap's data for dispatch: its ``contracts`` (from provides) only
+        those defined here, so a plugin can't make up a grantable name."""
+        out = dict(meta)
+        if out.get("contracts"):
+            out["contracts"] = [c for c in out["contracts"] if self.contracts.contract(c) is not None]
+        return out
+
     def _sync_hub(self) -> None:
-        caps = self.plugins.caps(self._meta)
+        caps = {n: self._contracted(m) for n, m in self.plugins.caps(self._meta).items()}
         self.dispatcher.workers[self.node] = Worker(self.node, "rook", self.band, caps, {"grants": ["*"]},
                                                     uses={p: self.plugins.uses(p) for p in self.plugins.plugins})
 
