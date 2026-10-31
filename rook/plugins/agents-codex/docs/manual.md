@@ -17,7 +17,7 @@ Settings:
 |---|---|---|
 | `codex` | `codex` | The program, on PATH or a full path. |
 | `model` | Codex's | System Two's model when the agent names none. |
-| `model_three` | Codex's | System Three's model, for dream cycles; a fast one (e.g. `gpt-6-luna`) is cheaper. |
+| `model_three` | `gpt-6-luna` | System Three's model, for dream cycles: a light one. Blank: Codex's default. |
 | `sandbox` | Codex's (`read-only`) | The sandbox for commands a turn runs: `read-only`, `workspace-write` or `danger-full-access`. |
 | `config` | none | Extra Codex config, one `key=value` per line, each passed as `-c`. |
 | `isolate` | on | Leave out the signed-in user's own `config.toml` and rules (`--ignore-user-config --ignore-rules`); sign-in still comes from `CODEX_HOME`. Off: turns run with the user's whole Codex setup. |

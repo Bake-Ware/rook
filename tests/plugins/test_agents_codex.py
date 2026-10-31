@@ -49,6 +49,13 @@ elif mode == "slow":
 SETTINGS = {"codex": "codex", "model": "", "model_three": "", "sandbox": "", "config": [], "isolate": True}
 
 
+def test_defaults_follow_castling_inference():
+    m = load(FOLDER, CONTRACTS).data
+    settings = m["settings"]
+    assert "default" not in settings["model"]                      # System Two: Codex's own
+    assert settings["model_three"]["default"] == "gpt-6-luna"     # "Luna for System One and maintenance"
+
+
 def turn(tmp_path, settings=None, **args):
     m = load(FOLDER, CONTRACTS).data
     ctx = Ctx(m, ME, settings={**SETTINGS, **(settings or {})}, data_dir=tmp_path / "data", cap="turn")
