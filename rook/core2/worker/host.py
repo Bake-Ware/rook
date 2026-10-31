@@ -238,7 +238,7 @@ class Host:
         now (aliases included): what the worker gate checks (spec 6.3, 7)."""
         return {name: {"risk": c.spec["risk"], "effects": list(c.spec.get("effects", ())),
                        "elevation": c.spec.get("elevation", "never"),
-                       "contracts": list(c.spec.get("contracts", ()))}
+                       **({"contracts": list(c.spec["contracts"])} if c.spec.get("contracts") else {})}
                 for p in self.plugins.values() for name, c in p.caps.items()}
 
     def _sync(self) -> None:
