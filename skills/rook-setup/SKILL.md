@@ -78,8 +78,8 @@ Then, without ever printing a secret into the chat:
 - Claude Code: Opus for the agents' normal thinking (System Two; they can
   move it down to Sonnet), Haiku for the light curation pass (System Three).
   Already the default.
-- Codex: Codex's own default model for System Two; a fast one (e.g.
-  `gpt-6-luna`) for System Three. Choose it as the agents' backend in
+- Codex: Codex's own default model for System Two, `gpt-6-luna` for
+  System Three (both defaults). Choose it as the agents' backend in
   `~/.rook-castling/hub/hub.yaml`:
 
   ```yaml
