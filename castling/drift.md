@@ -85,7 +85,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 15 | missing | Backup has no default target and no house-agent nudges | `rook/core2/hub/backup` |
 | 16 | missing | `core.elevate` skips the gate hook (**fixed, PR #338**) | `rook/core2/hub/dispatch.py:550` |
 | 17 | contradiction | The security gate ships in enforce mode with heuristic holds (**fixed, PR #338**) | `rook/plugins/security/plugin.yaml:26` |
-| 18 | missing (bug) | The pinned-task check calls a cap that doesn't exist, fails quietly | `security/plugin.yaml:20` |
+| 18 | missing (bug) | The pinned-task check calls a cap that doesn't exist, fails quietly (**fixed, PR #342**) | `security/plugin.yaml:20` |
 | 19 | missing | Telegram/Discord messages reach no agent after cutover. **Fixed: PR #341** | `telegram`, `discord`, switchover step 3 |
 | 20 | missing | No agent-led install path; README and skill are still 0.4 | `README.md`, `skills/rook/` |
 | 21 | missing | Appliance routing and appliance settings on the worker | `dispatch.py`, `worker/host.py` (N3) |
@@ -445,6 +445,7 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
   triage agent's `matches_task` evidence never apply on a real hub. The test fakes `task.get`.
 - **Smallest fix.** `task.get` in `uses` and the default; log at warning; one test against the real
   tasks manifest. (Fixing it makes #17's heuristics fire for real, so do #17 first.)
+- **Fixed** in PR #342 (c8/roles-pin).
 
 ## 19. Telegram/Discord messages reach no agent after cutover (missing) Fixed: PR #341
 
