@@ -92,6 +92,8 @@ linked.
 - [agents-claude-code](../../rook/plugins/agents-claude-code/docs/manual.md): agent turns in the Claude Code CLI.
 - [claudecode](../../rook/plugins/claudecode/docs/manual.md): Claude Code rules written once on the hub.
 - [decide](../../rook/plugins/decide/docs/manual.md): one-pass decision model for typed questions.
+- [huddle](../../rook/plugins/huddle/docs/manual.md): chaired group threads with a table of pinned artifacts; how agents land pull requests (pin, call a merge with a self-review, the gates, the merge).
+- [github](../../rook/plugins/github/docs/manual.md): GitHub reads for anyone, merges for the huddle only, with the hub's token.
 
 **Speech** (talk to your agents by voice; `docs/castling-speech.md` says what
 runs where and what the phone app needs):

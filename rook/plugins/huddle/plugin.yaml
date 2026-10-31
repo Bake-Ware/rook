@@ -1,0 +1,216 @@
+# Chaired huddles (castling-streams, castling-agents): a group thread where
+# agents and people work something out, chaired by an agent (the house agent
+# persona by default). Each huddle is a durable `huddle` stream (text posts,
+# status lines) and a record; its table holds artifacts pinned at exact
+# versions: a pull request or commit at its SHA, a file at a commit, a
+# document or link at its SHA-256.
+#
+# How agents land work (gate R14, the 0.4 flow kept): a person or the chair
+# pins the pull request at its head (huddle.pin); the author calls a merge
+# (huddle.vote action=call kind=merge) with an adversarial self-review of the
+# full diff. The gates run (version, mergeable, ci, tests, secrets); a pass
+# merges through the github plugin with the hub's token, only at the pinned
+# SHA. There are no ballots on 0.5 (castling-workbench: sign-off replaces the
+# merge-votes room), so the self-review on the record is always required. A
+# huddle in a sacred project (project.trust) asks an owner first: one card.
+# qa labels the pull request ready for QA; deploy submits a change record
+# (rook/plugins/changes) as the caller, which tests and rolls back.
+#
+# Code: scripts/huddle.py.
+manifest: 1
+plugin: huddle
+version: 0.5.0
+title: Huddles
+doc: Chaired group threads with a table of pinned artifacts; merges, QA and deploys after their gates and a self-review.
+package: agents
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+# github.*: reads for the gates and the table, the merge itself (github
+# lets only this plugin write). project.*: a huddle's trust level.
+# agents.chat.send: a post that names the chair reaches it. change.submit:
+# deploys, as the caller.
+uses: ["github.*", "project.get", "project.list", "project.trust.list", "agents.chat.send", "change.submit"]
+
+settings:
+  chair: { type: str, default: house, where: hub, doc: "The agent that chairs a new huddle (agents package persona; agent:<name> may pin)." }
+  gate_wait: { type: duration, default: 20m, where: hub, doc: How long the CI and tests gates wait for checks still running. }
+  poll: { type: duration, default: 20s, where: hub, doc: How often a gate looks at running checks again. }
+  require_ci: { type: bool, default: true, where: hub, doc: "A commit with no checks at all fails the ci and tests gates." }
+  test_checks: { type: list, items: { type: str }, default: ["*test*"], where: hub, doc: "Check names (globs) that are test runs, for the tests gate." }
+  merge_method: { type: str, enum: [merge, squash, rebase], default: merge, where: hub }
+  qa_label: { type: str, default: ready-for-qa, where: hub, doc: The label a passed qa call adds. }
+  repos: { type: map, items: { type: str }, default: {}, where: hub, doc: "owner/name -> project id or slug: that project's trust level applies to the repo's pins in any huddle (the stricter of it and the huddle's)." }
+
+records:
+  huddle:
+    fields:
+      title: { type: str, required: true }
+      chair: { type: str, required: true, doc: "The chairing agent's name (agent:<chair>)." }
+      project: { type: str, doc: "The project's id or slug: its trust level (project.trust) decides whether a merge asks an owner." }
+      stream: { type: str, required: true, doc: The huddle's stream (posts and status lines). }
+      state: { type: str, enum: [open, closed], required: true }
+    index: [state]
+    search: [title]
+    caps: [list, get, search]
+  artifact:
+    fields:
+      huddle: { type: ref, to: huddle, required: true }
+      kind: { type: str, enum: [pr, commit, file, doc, link], required: true }
+      title: { type: str, required: true }
+      version: { type: str, required: true, doc: "A commit SHA (pr, commit, file) or a SHA-256 (doc, link with one)." }
+      key: { type: str, required: true, doc: "What it is, apart from its version (pr:owner/name#7): a newer pin of the same key supersedes the older." }
+      ref: { type: map, doc: "repo, number, base, base_sha, head_ref, author, url, path, parent." }
+      content: { type: markdown, doc: A pinned document's text. }
+      note: { type: str }
+      state: { type: str, enum: [pinned, superseded], required: true }
+    index: [huddle, state, key]
+    caps: [list, get]
+  motion:
+    fields:
+      huddle: { type: ref, to: huddle, required: true }
+      artifact: { type: ref, to: artifact, required: true }
+      kind: { type: str, enum: [merge, qa, deploy], required: true }
+      version: { type: str, required: true }
+      level: { type: str, enum: [sacred, normal, ship-it], required: true, doc: The trust level it ran under. }
+      reason: { type: str }
+      self_review: { type: markdown, required: true }
+      change: { type: map, doc: "deploy: the change record's fields (scripts, tests, rollback, ...)." }
+      gates: { type: list, items: { type: map }, doc: "[{id, ok, detail, at}]." }
+      state:
+        type: str
+        enum: [gating, asked, carrying, merged, done, gates_failed, declined, void, failed]
+        required: true
+        doc: "gating: the gates run. asked: an owner's card (sacred). carrying: merging, labelling or submitting the deploy. merged / done: carried out. gates_failed: stopped at a gate. void: the head moved. declined: the owner said no. failed: it broke."
+      hold: { type: str }
+      outcome: { type: str }
+      result: { type: map }
+      ended: { type: float }
+    index: [huddle, state, artifact, hold]
+    search: [reason, self_review, outcome]
+    caps: [list, get, search]
+
+caps:
+  start:
+    doc: Open a chaired huddle. chair defaults to the hub's (the house agent); only a person names another. project sets the trust level its calls run under (with the repos setting's, the stricter).
+    risk: write
+    scope: multi-user
+    effects: [persists]
+    run: scripts/huddle.py:start
+    args:
+      title: { type: str, required: true }
+      chair: { type: str, pattern: "^[a-z][a-z0-9_-]{0,39}$" }
+      project: { type: str }
+    result: { type: map }
+  post:
+    doc: "Say something in a huddle. Naming the chair (@house, or mention=house) sends it to the chair agent too."
+    risk: write
+    scope: multi-user
+    run: scripts/huddle.py:post
+    args:
+      huddle: { type: str, required: true }
+      text: { type: str, required: true, max: 8000 }
+      mention: { type: str, doc: An agent to send it to as well (the chair). }
+    result: { type: map }
+  read:
+    doc: "A huddle's thread after a cursor: {events, next, closed}; pass next back. wait holds an empty read up to that many seconds."
+    risk: read
+    scope: multi-user
+    idempotent: true
+    timeout: 75s
+    run: scripts/huddle.py:read
+    args:
+      huddle: { type: str, required: true }
+      after: { type: int, default: 0, min: 0 }
+      limit: { type: int, default: 100, min: 1, max: 500 }
+      wait: { type: float, default: 0, min: 0, max: 60 }
+    result: { type: map }
+  pin:
+    doc: >-
+      Pin an artifact on a huddle's table at its exact version. Only a person, or the huddle's chair
+      agent. kind pr (repo, number; sha: refuse unless that is the head), commit (repo, sha), file
+      (repo, path, sha), doc (text), link (url, sha256?). Answers {artifact, version, ...}; a newer pin
+      of the same thing supersedes the older.
+    risk: write
+    scope: multi-user
+    effects: [persists]
+    timeout: 60s
+    run: scripts/huddle.py:pin
+    args:
+      huddle: { type: str, required: true }
+      kind: { type: str, enum: [pr, commit, file, doc, link] }
+      repo: { type: str }
+      number: { type: int, min: 1 }
+      sha: { type: str }
+      path: { type: str }
+      url: { type: str }
+      text: { type: str, max: 200000 }
+      sha256: { type: str, pattern: "^[0-9a-f]{64}$" }
+      title: { type: str }
+      note: { type: str }
+    result: { type: map }
+  table:
+    doc: >-
+      The table. action list: the pinned artifacts and calls. action read: one artifact at its pinned
+      version: what summary, diff, files, file (path), checks, content. Long text is paged (offset,
+      next_offset).
+    risk: read
+    scope: multi-user
+    idempotent: true
+    timeout: 60s
+    run: scripts/huddle.py:table
+    args:
+      huddle: { type: str, required: true }
+      action: { type: str, enum: [list, read], default: list }
+      artifact: { type: str }
+      what: { type: str, enum: [summary, diff, files, file, checks, content], default: summary }
+      path: { type: str }
+      offset: { type: int, default: 0, min: 0 }
+      all: { type: bool, default: false, doc: "list: superseded pins too." }
+    result: { type: map }
+  vote:
+    doc: >-
+      action call: merge or qa a pinned pull request, or deploy a pinned pull request or commit
+      (change: the change record's scripts, tests, rollback; "{version}" in their args becomes the
+      pinned SHA). self_review (80+ characters: what you checked in the full diff, what could break,
+      why it is safe) is required and goes on the record. The gates run (merge: version, mergeable,
+      ci, tests, secrets); a pass carries it out at the pinned version, or asks an owner first in a
+      sacred project. Answers at once with the motion; action status (motion) follows it.
+    risk: write
+    scope: external
+    effects: [persists]
+    run: scripts/huddle.py:vote
+    args:
+      huddle: { type: str, required: true }
+      action: { type: str, enum: [call, status], default: call }
+      kind: { type: str, enum: [merge, qa, deploy] }
+      artifact: { type: str }
+      reason: { type: str, max: 500 }
+      self_review: { type: markdown, max: 20000 }
+      change: { type: map }
+      motion: { type: str }
+    result: { type: map }
+  close:
+    doc: Close a huddle (its creator or an owner). Its thread and table stay readable.
+    risk: write
+    scope: multi-user
+    run: scripts/huddle.py:close
+    args:
+      huddle: { type: str, required: true }
+    result: { type: map }
+  carry:
+    doc: "Carry out a motion that waits for an owner's card. Only the huddle plugin calls it; the hub holds it for an owner (a hard stop)."
+    risk: admin
+    scope: external
+    effects: [destructive]
+    run: scripts/huddle.py:carry
+    args:
+      motion: { type: str, required: true }
+    result: { type: map }
+
+hooks:
+  start: scripts/huddle.py:start_hook
+  stop: scripts/huddle.py:stop_hook
+  on: [ { event: hold.decided, run: scripts/huddle.py:on_hold } ]
+
+docs: { manual: docs/manual.md }

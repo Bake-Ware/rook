@@ -175,7 +175,7 @@ personas:
     title: House agent
     summary: "The person's personal assistant and guardian of the house: knows how and when to reach them."
     prompt: personas/house.md
-    skills: [reach-the-user, presence, hub-pages, consult, notepad]
+    skills: [reach-the-user, presence, hub-pages, consult, chair, notepad]
     grants: ["*"]
     always_on: true
   pm:
@@ -233,5 +233,6 @@ skills:
   wiki-sweep: skills/wiki-sweep.md
   security-triage: skills/security-triage.md
   hub-pages: skills/hub-pages.md
+  chair: skills/chair.md
 
 docs: { manual: docs/manual.md }
