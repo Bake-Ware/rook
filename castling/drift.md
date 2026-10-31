@@ -88,8 +88,8 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 18 | missing (bug) | The pinned-task check calls a cap that doesn't exist, fails quietly (**fixed, PR #342**) | `security/plugin.yaml:20` |
 | 19 | missing | Telegram/Discord messages reach no agent after cutover. **Fixed: PR #341** | `telegram`, `discord`, switchover step 3 |
 | 20 | missing | No agent-led install path; README and skill are still 0.4. **Fixed: PR #345** | `README.md`, `skills/rook/` |
-| 21 | missing | Appliance routing and appliance settings on the worker | `dispatch.py`, `worker/host.py` (N3) |
-| 22 | missing | Worker secret settings have no vault path | `worker/host.py:395` |
+| 21 | missing | Appliance routing and appliance settings on the worker (**fixed, PR #356**) | `dispatch.py`, `worker/host.py` (N3) |
+| 22 | missing | Worker secret settings have no vault path (**fixed, PR #356**) | `worker/host.py:395` |
 | 23 | contradiction (source) | Switchover "not ported" list and R2 use retired 0.4 names (huddles, Feed, `show.present`, N23) (**fixed, PR #339**) | `docs/castling-switchover.md` |
 | 24 | over-built (low) | 96 0.4 cap aliases in 27 manifests (**fixed, PR #349**) | `rook/plugins/*/plugin.yaml` |
 | 25 | over-built (low) | Child preset `approve_new` queue for a deferred feature (**fixed, PR #351**) | `rights.py`, `identity.py`, spec 8.5 |
@@ -497,6 +497,11 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
 - **Smallest fix.** N3 first (`ctx.appliance` in the host); then a hub table `appliance ->
   {plugin, delegates[]}` written by `appliance.test`, with dispatch trying the next delegate on a
   transport failure.
+- **Fixed:** PR #356 (c8/appliance): hub registry + `appliance.add/list/remove` (pair cap at
+  onboarding), dispatch routes an appliance's name to its delegates (known-good first, online first,
+  next delegate in the same request, remembers what worked), instance values travel in the request's
+  `carry` bound by the ticket's `carry_hash`; the host renders `{{appliance.*}}` / `ctx.appliance`.
+  Reach scope is not recorded (question left for Bake on the task).
 
 ## 22. Worker secret settings have no vault path (missing, tracked)
 
@@ -507,6 +512,9 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
   worker-local settings, on worker disk. Listed as a gap on castling-vault-built.
 - **Smallest fix.** The hub resolves the target plugin's secret settings at dispatch and sends them
   beside `args`, as it already does for `{{secret:...}}` args.
+- **Fixed:** PR #356 (c8/appliance): `setting.set` keeps worker plugins' secret and `where: hub`
+  settings on the hub (secrets as vault names); dispatch carries them per call, secrets read from the
+  vault then, redacted from results and the journal; the host never uses a secret kept on its disk.
 
 ## 23. The switchover plan's open lists use retired 0.4 names (contradiction, drift source)
 
