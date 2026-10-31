@@ -198,6 +198,9 @@ def restore_cmd(config: Path, src: str | None, spec: str | None, name: str | Non
             fetched.unlink(missing_ok=True)
     print(f"Restored hub {out['hub']} ({out['files']} files, {out['databases']} databases) into {folder}.")
     print("Its recovery key is the one you just used: the recovery-key command shows it again.")
+    if out["env"]:
+        print(f"Its config reads these from the environment (never in a backup): set them before starting it: "
+              f"{', '.join(out['env'])}")
     print(f"Start it:  python -m rook.core2.hub --config {config}")
     return 0
 

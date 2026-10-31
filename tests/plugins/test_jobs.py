@@ -526,7 +526,7 @@ def test_persona_jobs_and_plugin_templates(cfg):
             assert r["state"] == "failed" and r["error"].startswith("denied: agent"), r
 
             seen = {m["plugin"]: m for m in (await rig.amy.ok("hub.manifests", section="jobs"))["manifests"]}
-            assert set(seen) == {"jobs", "probe"} and "folder" not in seen["probe"]     # paths: owners only
+            assert set(seen) == {"backup", "jobs", "probe"} and "folder" not in seen["probe"]     # paths: owners only
             assert seen["probe"]["jobs"]["sweep"]["as"] == "persona"
             seen = (await rig.bake.ok("hub.manifests", section="jobs"))["manifests"]
             assert all(m["folder"] for m in seen)

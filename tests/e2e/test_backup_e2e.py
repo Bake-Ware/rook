@@ -49,6 +49,7 @@ def test_nightly_backup_to_a_worker_and_restore_elsewhere(fresh):
     # every part went through dispatch as the job's creator, with a why
     puts = b.owner.get("/journal?cap=backup-store.put&limit=5")["entries"]
     assert puts and all(e["person"] == "person:bake" and e["decision"] == "allow" for e in puts)
+    assert all(e["args"]["data"] == "[redacted]" for e in puts)       # the journal never keeps the blob
 
     # a second run keeps one (keep: 1): the first is pruned on the worker
     time.sleep(1.1)                         # names have the second in them
@@ -65,6 +66,7 @@ def test_nightly_backup_to_a_worker_and_restore_elsewhere(fresh):
                         str(store / second["name"])], input=rk + "\n", capture_output=True, text=True,
                        timeout=120, env=b.env, cwd=b.root)
     assert r.returncode == 0, r.stderr
+    assert "ROOK_E2E_PSK" in r.stdout                  # the band key came from the environment
     assert (new.parent / "data" / "keys" / "root.key").read_bytes() == \
         (b.hub_dir / "data" / "keys" / "root.key").read_bytes()
     assert (new.parent / "library" / "jobs" / "plugin.yaml").is_file()      # copied, not a link

@@ -53,6 +53,10 @@ download cache (`data/assets/`), `-wal`/`-shm` files (folded into the
 copies), half-written `.tmp` files and the scratch folder `data/.backup/`.
 Library plugins linked from a checkout are copied as files.
 
+One backup runs at a time, and a `dir:` target inside the hub's data or
+library folder is refused (each backup would hold the ones before it).
+Old backups are pruned only after the new one is checked.
+
 Nothing unsealed leaves the data folder: copies and checks are made in
 `data/.backup/` (0700) and removed straight away. Names on the target show
 only the hub id and the time: `rook-hub-<hub>-<UTC time>.rookbak`.
@@ -74,6 +78,11 @@ never overwrites: the folder must not hold a hub already. The restored hub
 has the same id, keys, people and workers; start it and the workers find it
 on the band again. A wrong key or a damaged file is refused before anything
 is written.
+
+A value the config takes from the environment (`psk_env: ROOK_PSK`,
+`key_env: ...`) was never in the file, so it isn't in the backup either:
+`restore` names them, and you set them before starting the hub. A config
+written by `init` keeps the band key in the file, so there is nothing to set.
 
 The same without the hub running: `python -m rook.core2.hub --config
 hub.yaml backup [run | list | verify [NAME]] [--target dir:/path]` (dir and

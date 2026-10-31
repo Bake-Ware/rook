@@ -27,7 +27,9 @@ caps:
     args:
       name: { type: str, required: true, pattern: "^rook-hub-[0-9a-f]{8,64}-[0-9]{8}T[0-9]{6}Z\\.rookbak$" }
       offset: { type: int, required: true, min: 0 }
-      data: { type: str, required: true, max: 8000000, doc: "Base64: at most 4 MiB of bytes." }
+      # type secret: journaled as [redacted]. It is a sealed blob, and the
+      # journal would otherwise keep every backup a second time.
+      data: { type: secret, required: true, doc: "Base64 of the sealed bytes, at most 4 MiB (journaled as [redacted])." }
       sha256: { type: str, pattern: "^[0-9a-f]{64}$", doc: "The whole file's hash: this part is the last." }
     result: { type: map }
     run: scripts/store.py:put

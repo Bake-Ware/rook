@@ -325,6 +325,29 @@ def test_retention_keeps_the_newest_of_this_hub_only(tmp_path):
             bk.target(spec)
 
 
+def test_guards_one_at_a_time_no_target_inside_data_env_names(tmp_path):
+    cfg = make_hub(tmp_path / "hub", library=False)
+    data = cfg.parent / "data"
+    with pytest.raises(bk.BackupError, match="inside the hub's data"):
+        bk.run(config=cfg, data=data, library=None, spec=f"dir:{data / 'backups'}")
+    assert bk._ONE.acquire(blocking=False)
+    try:
+        with pytest.raises(bk.BackupError, match="running already"):
+            bk.run(config=cfg, data=data, library=None, spec=f"dir:{tmp_path / 'usb'}")
+    finally:
+        bk._ONE.release()
+    with pytest.raises(bk.BackupError, match="remote:path"):
+        bk.target("rclone:--config=/etc/x:y")
+    assert bk.env_names({"transport": {"bands": [{"psk_env": "ROOK_PSK"}, {"psk": "x"}]},
+                         "enroll": {"services": {"voice": {"key_env": "VOICE_KEY"}}}}) == ["ROOK_PSK", "VOICE_KEY"]
+    raw = yaml.safe_load(cfg.read_text())
+    raw["transport"]["bands"] = [{"psk_env": "ROOK_PSK", "relay": "127.0.0.1:1"}]
+    cfg.write_text(yaml.safe_dump(raw))
+    path, _ = bk.make(cfg, data, None)
+    out = bk.restore(path, recovery_key(data), tmp_path / "new" / "hub.yaml")
+    assert out["env"] == ["ROOK_PSK"]
+
+
 def store_call(tmp_path: Path):
     """``call(cap, args)`` into the real backup-store plugin, in a worker host."""
     folder = tmp_path / "store"
@@ -363,6 +386,14 @@ def test_a_worker_target_stores_through_backup_store(tmp_path, monkeypatch):
     with pytest.raises(CallError, match="sha256 doesn't match"):
         call("backup-store.put", {"name": other, "offset": 3, "data": "", "sha256": "0" * 64})
     assert os.listdir(folder) == [kept]
+    # an upload cut off leaves a .part; the hub's next upload drops it
+    call("backup-store.put", {"name": other, "offset": 0, "data": base64.b64encode(b"abc").decode()})
+    newer = other.replace("T0", "T1")
+    call("backup-store.put", {"name": newer, "offset": 0, "data": base64.b64encode(b"x").decode()})
+    assert sorted(os.listdir(folder)) == sorted([kept, newer + ".part"])
+    (folder / (newer + ".part")).unlink()
+    with pytest.raises(CallError, match="too big"):
+        call("backup-store.put", {"name": newer, "offset": 0, "data": "A" * (7 << 20)})
     with pytest.raises(CallError, match="is here already"):
         call("backup-store.put", {"name": kept, "offset": 0, "data": ""})
     for bad in ("../x.rookbak", "rook-hub-zz-1.rookbak"):

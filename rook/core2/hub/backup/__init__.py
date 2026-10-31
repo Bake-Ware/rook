@@ -52,6 +52,7 @@ import sqlite3
 import struct
 import subprocess
 import tarfile
+import threading
 import time
 from contextlib import suppress
 from pathlib import Path
@@ -74,6 +75,7 @@ MANIFEST = "rook-backup.json"
 KEEP = 7
 PART = 4 << 20                       # bytes per worker-target call (base64 ~5.6 MB)
 RCLONE_SECS = 3600
+_ONE = threading.Lock()              # one backup at a time in this process
 
 
 class BackupError(Exception):
@@ -289,7 +291,7 @@ def write_backup(out, *, config: Path, data: Path, library: Path | None, key: by
             for p in _files(root, top, skip=lib if top else None):
                 name = f"{prefix}/{p.relative_to(root).as_posix()}"
                 if _is_sqlite(p):
-                    tmp = work / f"db-{os.getpid()}.copy"
+                    tmp = work / f"db-{os.getpid()}-{time.time_ns()}.copy"
                     try:
                         _db_copy(p, tmp)
                         with open(tmp, "rb") as f:
@@ -453,6 +455,17 @@ def check(dest: Path, manifest: dict) -> dict:
             "databases": dbs, "bytes": sum(f["size"] for f in manifest["files"].values())}
 
 
+def env_names(raw: Any) -> list[str]:
+    """Environment variables a config reads (``psk_env``, ``key_env``, ...):
+    their values were never in the file, so a backup doesn't hold them."""
+    if isinstance(raw, dict):
+        return sorted({v for k, v in raw.items() if k.endswith("_env") and isinstance(v, str)}
+                      | {n for v in raw.values() for n in env_names(v)})
+    if isinstance(raw, list):
+        return sorted({n for v in raw for n in env_names(v)})
+    return []
+
+
 def restore(src: Path, recovery_key: str, config: Path) -> dict:
     """Restore a hub on a fresh machine: open ``src`` beside ``config``
     (``data/``, ``library/``), check it, then write ``config`` pointing at
@@ -475,7 +488,7 @@ def restore(src: Path, recovery_key: str, config: Path) -> dict:
         _write_new(config, _config_text(original, folder, folder / "data", lib))
     finally:
         shutil.rmtree(stage, ignore_errors=True)
-    return summary
+    return {**summary, "env": env_names(yaml.safe_load(original))}
 
 
 def verify(src: Path, data: Path) -> dict:
@@ -579,7 +592,7 @@ class RcloneTarget:
     remote's credentials; nothing unsealed goes to it."""
 
     def __init__(self, remote: str, binary: str = "rclone"):
-        if ":" not in remote:
+        if ":" not in remote or remote.startswith("-"):
             raise BackupError(f"rclone target is remote:path, not {remote!r}")
         self.remote, self.bin = remote.rstrip("/"), binary
         self.label = f"rclone:{remote}"
@@ -654,24 +667,34 @@ def run(*, config: Path, data: Path, library: Path | None, spec: str, keep: int 
     """Make a backup, push it to the target, verify the pushed copy by
     restoring it (fetched back from the target) into scratch, then prune."""
     t = target(spec, call)
-    path, manifest = make(config, data, library, now)
-    size = path.stat().st_size
+    if isinstance(t, DirTarget):
+        for inside in (data, library):
+            if inside is not None and t.path.resolve().is_relative_to(Path(inside).resolve()):
+                raise BackupError(f"{t.label} is inside the hub's {'data' if inside == data else 'library'} "
+                                  "folder: each backup would hold the ones before it")
+    if not _ONE.acquire(blocking=False):
+        raise BackupError("a backup is running already")
     try:
-        t.put(path, path.name)
+        path, manifest = make(config, data, library, now)
+        size = path.stat().st_size
+        try:
+            t.put(path, path.name)
+        finally:
+            path.unlink(missing_ok=True)
+        out = {"name": path.name, "target": t.label, "size": size, "files": len(manifest["files"])}
+        if check_after:
+            out["verified"] = fetch_verify(t, path.name, data)
+        out["pruned"] = prune(t, manifest["hub"], keep)       # only after the new one checked out
+        return out
     finally:
-        path.unlink(missing_ok=True)
-    out = {"name": path.name, "target": t.label, "size": size, "files": len(manifest["files"])}
-    if check_after:
-        out["verified"] = fetch_verify(t, path.name, data)
-    out["pruned"] = prune(t, manifest["hub"], keep)
-    return out
+        _ONE.release()
 
 
 def fetch_verify(t, name: str, data: Path) -> dict:
     """Fetch ``name`` back from the target and verify it by restoring it."""
     if not NAME.fullmatch(name):
         raise BackupError(f"not a backup name: {name!r}")
-    local = _work(data) / f"fetch-{os.getpid()}-{name}"
+    local = _work(data) / f"fetch-{os.getpid()}-{time.time_ns()}-{name}"
     try:
         t.get(name, local)
         return verify(local, data)
