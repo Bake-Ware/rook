@@ -30,8 +30,11 @@ from a clean session before. It never
 releases a hard stop, a canary hit or anything outside a ceiling (the hub
 checks rights again on release).
 
-TODO(castling:vault): canaries live in this plugin's data folder; once the
-hub has a vault their names should list there too, so they look real.
+TODO(castling:security): canaries live in this plugin's data folder. The hub
+has a vault now (rook.core2.hub.vault); listing their names in secret.list,
+so they look real, needs a way to write a decoy row there for the default
+canary made at start (no person to call secret.set as). A referenced
+canary is blocked by this gate before the vault is asked.
 """
 from __future__ import annotations
 

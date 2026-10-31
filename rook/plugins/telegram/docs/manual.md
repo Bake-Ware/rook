@@ -9,8 +9,7 @@ the bot into `telegram.message` events the house agent and jobs can act on.
 1. Make a bot with @BotFather and copy its token.
 2. Put the token in the vault and set `telegram.token` to the vault name
    (`setting.set {plugin: telegram, key: token, value: telegram-bot}`).
-   Until the hub has its vault, the hub reads the value from the environment:
-   `ROOK_SECRET_TELEGRAM_BOT` for the name `telegram-bot`.
+   Store the bot token in the vault first: `secret.set {name: telegram-bot, value: ...}`.
 3. Each person links their account: `telegram.link` gives a code; they send
    `/link CODE` to the bot in a direct message within 10 minutes. The bot
    answers "Linked". A typed chat id is never accepted: the code proves the

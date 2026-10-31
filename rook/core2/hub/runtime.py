@@ -51,6 +51,7 @@ import os
 import random
 import re
 import secrets as _secrets
+import sqlite3
 import tempfile
 import time
 from dataclasses import asdict, dataclass, field
@@ -76,7 +77,7 @@ from .doors.web import caps as builtin_caps
 from .identity import Caller, Identities, digest
 from .journal_store import JournalError, JournalStore
 from .plugins import HubPlugins, short_caps
-from .vault import Locked, Vault, resolver
+from .vault import Vault, VaultError, resolver
 from .vault import caps as vault_caps
 
 log = logging.getLogger("rook.hub")
@@ -378,7 +379,7 @@ class Hub:
         self.vault = Vault(self.data)
         try:
             self.vault.unlock()
-        except Locked as e:          # the hub runs; calls that use a secret fail until recover-vault
+        except (VaultError, sqlite3.Error) as e:    # the hub runs; calls that use a secret fail
             log.error("vault locked", extra={"fields": {"error": str(e)}})
         self.journal = JournalStore(str(self.data / "journal.db"), clock=self.clock)
         self.records = RecordStore(str(self.data / "records.db"), emit=self._emit, clock=self.clock)
