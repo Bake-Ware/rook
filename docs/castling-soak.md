@@ -325,28 +325,28 @@ castling `1c62dedc`; after: this branch. Same load each time (`run
 --seconds 300 --threads 8`). Raw runs: `~/rook-backups/c7-transport2/` on
 cachyrig.
 
-### 1. Replay cache: bounded by live tickets, not by load
+### 1. Replay cache: bounded by memory, not by load
 
 The cache kept every nonce 15 minutes and held at most 50,000, so a worker
-averaging more than ~55 calls/s refused everything. A ticket accepted at
-`now` has `exp <= now + 150`, so once `now > accepted + 180` the worker
-refuses any replay of it as `expired` (check 14) before the cache is even
-asked. The store now keeps the 15 minutes while there is room and, when
-full, drops nonces accepted more than 180 s ago, oldest first. It refuses
-only when more than `REPLAY_MAX` (now 100,000, ~15 MB) tickets are live at
-once: ~550 calls/s sustained for 3 minutes. Spec 6.3 is kept: its MUST is
-`exp + 30`; 10-20 minutes is a SHOULD the store follows until memory runs
-out. The store is now an `OrderedDict`: popping a plain dict's front left
-dead slots that every `next(iter())` walked again (19 µs per call at
-50,000 nonces, 0.4 µs now).
+averaging more than ~55 calls/s refused everything. Bake's decision
+(castling-protocol): "the worker remembers used ticket nonces for 10-20
+minutes (well past the one-minute expiry plus clock drift)". The store now
+keeps nonces in sets per 10 s of expiry, as 128-bit ints (~90 bytes each
+instead of ~200), holds up to 200,000 (~18 MB), and when full drops whole
+sets whose nonces are all at least 10 minutes old: 15 minutes while there
+is room, 10 always. It refuses only beyond 200,000 nonces younger than 10
+minutes, ~330 calls/s sustained for 10 minutes, faster than one worker
+served here (259/s). Spec 6.3's MUST (`exp + 30`) is far inside that.
 
 | burst, 8 clients, 300 s | calls | ok/s | refused |
 |---|---:|---:|---:|
 | before | 81,701 | 143.5 | 38,645 (`denied by worker: replay`), every call from 186 s on |
 | after | 77,737 | 259.1 | 0 |
 
-Test: `test_replay_store_never_fills_under_sustained_load` (150 calls/s for
-20 minutes against a 30,000 bound; the old store refused from minute 3).
+Tests: `test_replay_store_never_fills_under_sustained_load` (40 calls/s for
+20 minutes against a 30,000 bound: the old store refused from minute 12;
+every nonce younger than 10 minutes is still caught) and
+`test_replay_store_refuses_only_nonces_younger_than_its_floor`.
 
 ### 2. Acks, bounded resends, dedupe
 

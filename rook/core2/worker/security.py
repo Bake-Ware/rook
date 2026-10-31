@@ -23,7 +23,6 @@ with ``drop_leases`` and calls ``tick`` from its heartbeat loop.
 from __future__ import annotations
 
 import asyncio
-import collections
 import json
 import os
 import re
@@ -40,11 +39,9 @@ HUB_LOST = 90            # seconds without hub contact before the hub is lost (5
 ANNOUNCE_SKEW = 90       # |now - ts| allowed on a hub announce (5.4)
 ELEVATE_TIMEOUT = 10     # seconds to wait for core.elevate (7.2)
 COLD_START = 150         # refuse every ticket this long when the replay cache was lost (6.3)
-REPLAY_MAX = 100_000     # nonces held at most (~15 MB); see ReplayStore
-# An accepted ticket has iat <= now + SKEW and exp <= iat + MAX_LIFETIME, so
-# check 14 refuses it for good once now > accepted + LIVE: no need to keep
-# its nonce past that, whatever REPLAY_KEEP says.
-LIVE = wire.MAX_LIFETIME + 2 * wire.SKEW
+REPLAY_MAX = 200_000     # nonces held at most (~18 MB); see ReplayStore
+REPLAY_FLOOR = 600       # a nonce is kept at least this long, full or not
+BUCKET = 10              # seconds of expiry per replay-cache set
 ELEVATIONS = ("never", "may", "upfront")
 
 _HEX32 = re.compile(r"[0-9a-f]{32}")
@@ -68,19 +65,19 @@ def _write_atomic(path: Path, text: str) -> None:
 # -- replay cache (6.3) ------------------------------------------------------
 
 class ReplayStore:
-    """Accepted nonces, each kept until ``max(exp + SKEW, now + REPLAY_KEEP)``.
+    """Accepted nonces, each kept until about ``max(exp + SKEW, now +
+    REPLAY_KEEP)``: in sets per BUCKET seconds of that time (a nonce is a
+    128-bit int, ~90 bytes held), appended to ``path`` as ``<nonce> <until>``
+    lines, compacted when the file holds mostly dead lines. ``path=None``
+    keeps memory only. Same ``seen``/``add`` interface as
+    ``wire.ReplayCache``.
 
-    Same ``seen``/``add`` interface as ``wire.ReplayCache``. Entries live in
-    an insertion-ordered dict (their expiry only grows with ``now``, so
-    pruning pops from the front) and are appended to ``path`` as
-    ``<nonce> <until>`` lines, compacted when the file holds mostly dead
-    lines. ``path=None`` keeps memory only.
-
-    Bounded by ``max_entries``, never by load: when full, the oldest entries
-    accepted more than LIVE seconds ago go first (their tickets are expired
-    for good, 6.3 only requires keeping a nonce until ``exp + 30``); the
-    REPLAY_KEEP margin is kept while there is room. Only more than
-    ``max_entries`` live tickets (~550 calls/s for 3 minutes) is refused.
+    Bounded by ``max_entries``, not by load: when full, whole buckets whose
+    nonces are all at least REPLAY_FLOOR (10 minutes) old go, oldest first.
+    The 15 minutes are kept while there is room, 10 always (castling-protocol:
+    "remembers used ticket nonces for 10-20 minutes"), well past spec 6.3's
+    MUST of ``exp + 30``. Refused only beyond ``max_entries`` nonces younger
+    than 10 minutes: ~330 calls/s sustained for 10 minutes at 200,000.
 
     The store refuses (``seen`` is True) for COLD_START seconds after it
     starts when it can't vouch for earlier nonces: memory only, or a file
@@ -92,9 +89,8 @@ class ReplayStore:
         now = _now(now)
         self.path = Path(path) if path is not None else None
         self.max = max_entries
-        # Ordered: popping a plain dict's front leaves dead slots that every
-        # next(iter()) walks again, O(n) per call under steady churn.
-        self.until: collections.OrderedDict[str, int] = collections.OrderedDict()
+        self.buckets: dict[int, set[int]] = {}      # until // BUCKET -> nonces
+        self.size = 0
         self.ready_at = now + COLD_START
         self._lines = 0
         if self.path is None:
@@ -109,8 +105,8 @@ class ReplayStore:
             if not _HEX32.fullmatch(nonce) or not until.isdigit():
                 whole = False
                 continue
-            if int(until) > now:
-                self.until[nonce] = max(int(until), self.until.pop(nonce, 0))
+            if int(until) > now and not self._has(int(nonce, 16)):
+                self._put(int(nonce, 16), int(until))
         if whole:
             self.ready_at = now
         try:
@@ -118,26 +114,34 @@ class ReplayStore:
         except OSError:
             pass                 # add() fails too, so every call is refused
 
+    def _has(self, n: int) -> bool:
+        return any(n in s for s in self.buckets.values())
+
+    def _put(self, n: int, until: int) -> None:
+        self.buckets.setdefault(until // BUCKET, set()).add(n)
+        self.size += 1
+
+    def _drop(self, b: int) -> None:
+        self.size -= len(self.buckets.pop(b))
+
     def _prune(self, now: int) -> None:
-        while self.until:
-            first = next(iter(self.until))
-            if self.until[first] > now:
-                break
-            del self.until[first]
+        for b in [b for b in self.buckets if (b + 1) * BUCKET <= now]:
+            self._drop(b)
 
     def seen(self, nonce: str, now: int) -> bool:
         if now < self.ready_at:
             return True
         self._prune(now)
-        return nonce in self.until
+        return self._has(int(nonce, 16))
 
     def add(self, nonce: str, exp: int, now: int) -> None:
         self._prune(now)
-        while len(self.until) >= self.max:
-            first = next(iter(self.until), None)
-            if first is None or self.until[first] - wire.REPLAY_KEEP + LIVE >= now:
+        while self.size >= self.max:
+            # Every nonce in bucket b was accepted at or before its end - KEEP.
+            oldest = min(self.buckets, default=None)
+            if oldest is None or (oldest + 1) * BUCKET - wire.REPLAY_KEEP + REPLAY_FLOOR > now:
                 raise OverflowError("replay cache full")
-            del self.until[first]
+            self._drop(oldest)
         until = max(exp + wire.SKEW, now + wire.REPLAY_KEEP)
         if self.path is not None:
             with open(self.path, "a", encoding="ascii") as f:
@@ -145,15 +149,16 @@ class ReplayStore:
                 f.flush()
                 os.fsync(f.fileno())     # a fast reboot must not reopen the window
             self._lines += 1
-        self.until[nonce] = until
-        if self._lines > 2 * len(self.until) + 1024:
+        self._put(int(nonce, 16), until)
+        if self._lines > 2 * self.size + 1024:
             self._compact()
 
     def _compact(self) -> None:
         if self.path is None:
             return
-        _write_atomic(self.path, "".join(f"{n} {u}\n" for n, u in self.until.items()))
-        self._lines = len(self.until)
+        _write_atomic(self.path, "".join(f"{n:032x} {(b + 1) * BUCKET}\n"
+                                         for b, ns in self.buckets.items() for n in ns))
+        self._lines = self.size
 
 
 # -- trust store (9.2, 9.3) --------------------------------------------------

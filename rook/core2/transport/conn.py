@@ -464,14 +464,21 @@ class _Band:
                 ticket = msg.get("ticket")
                 nonce = ticket.get("nonce") if isinstance(ticket, dict) else None
                 seen = self.inbound.get(rid)
-                if seen is not None and seen[3] == nonce:       # a resend: never run twice
-                    held = self.unacked.get(rid)
-                    if seen[4] and held is not None:
-                        await self._quiet(held[0], held[1])     # our reply was lost: again, now
-                    elif not seen[4] and "ack" in accept:
+                held = self.unacked.get(rid)
+                if (seen is not None and seen[3] == nonce and seen[0] == rr
+                        and (held is not None or not seen[4])):
+                    # A resend (same ticket, same caller route): never run
+                    # twice. Running: ack again; answered and not yet acked:
+                    # the reply again. A copy from another node, or after the
+                    # caller acked the reply (it has no reason to resend),
+                    # goes to the gate, which refuses it (replay).
+                    if seen[4]:
+                        await self._quiet(held[0], held[1])
+                    elif "ack" in accept:
                         self._ack(rr, rid)
                     return
-                _remember(self.inbound, rid, [rr, accept, now, nonce, False])
+                if seen is None or seen[3] != nonce:        # new, or a re-minted ticket (not a stranger's copy)
+                    _remember(self.inbound, rid, [rr, accept, now, nonce, False])
                 if "ack" in accept:
                     self._ack(rr, rid)
         elif msg.get("kind") == "ack":

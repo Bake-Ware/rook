@@ -539,13 +539,13 @@ def test_a_reminted_ticket_for_the_same_call_is_a_new_request(quick_acks):
         call = request("shell.exec", {"argv": ["uptime"]})
         await hub.t.send(BAND, call)
         await until(lambda: hub.reply(call["id"]) and not worker.t._band(BAND).unacked)
-        await hub.t.send(BAND, call)                       # the same request again: a resend
-        await asyncio.sleep(0.2)
+        await hub.t.send(BAND, call)                       # a copy after the reply was acked
+        await until(lambda: len(runs) == 2)
         again = {**call, "ticket": ticket(call["id"], call["cap"], call["args"])}
         await hub.t.send(BAND, again)                      # same id, fresh nonce: runs
-        await until(lambda: len(runs) == 2)
-        assert runs == [call["ticket"]["nonce"], again["ticket"]["nonce"]]
-        await until(lambda: len([m for _, m in hub.got if m.get("id") == call["id"]]) == 2)
+        await until(lambda: len(runs) == 3)
+        first, fresh = call["ticket"]["nonce"], again["ticket"]["nonce"]
+        assert runs == [first, first, fresh]               # the late copy reached the app (a worker's gate refuses it)
         await hub.t.close()
         await worker.t.close()
     arun(main())

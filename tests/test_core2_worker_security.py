@@ -242,7 +242,7 @@ def test_replay_survives_restart(tmp_path):
     a.add("a" * 32, NOW + 60, NOW)
     b = sec.ReplayStore(p, NOW + 10)
     assert b.seen("a" * 32, NOW + 10) and not b.seen("b" * 32, NOW + 10)
-    assert not b.seen("a" * 32, NOW + wire.REPLAY_KEEP + 1)       # aged out
+    assert not b.seen("a" * 32, NOW + wire.REPLAY_KEEP + sec.BUCKET)   # aged out (kept to its 10 s set end)
 
 
 def test_replay_cold_start_when_unknown(tmp_path):
@@ -264,7 +264,7 @@ def test_replay_store_is_bounded_and_compacts(tmp_path):
         s.add("f" * 32, NOW, NOW)
     later = NOW + wire.REPLAY_KEEP + 1
     s.add("e" * 32, later, later)                 # old entries pruned, room again
-    assert list(s.until) == ["e" * 32]
+    assert s.size == 1 and s.seen("e" * 32, later)
     for i in range(1100):
         s.max = 10**6
         s.add(f"{i + 100:032x}", later, later + 2000 + i * 1000)   # each one ages out the last
@@ -272,14 +272,15 @@ def test_replay_store_is_bounded_and_compacts(tmp_path):
 
 
 def test_replay_store_never_fills_under_sustained_load(tmp_path):
-    """150 calls/s for 20 minutes against a 30,000 bound: the old store
-    (every nonce for 15 minutes) refused everything from minute 3. Now only
-    live tickets count against the bound, and a replay of one is caught."""
+    """40 calls/s for 20 minutes against a 30,000 bound: the old store (every
+    nonce 15 minutes, refused when full) refused everything from minute 12.
+    Now nonces older than 10 minutes make room, and every nonce younger than
+    that is still caught."""
     s = sec.ReplayStore(None, NOW - sec.COLD_START, max_entries=30_000)    # memory only: no fsyncs
     refused, n = 0, 0
     for second in range(20 * 60):
         now = NOW + second
-        for _ in range(150):
+        for _ in range(40):
             nonce = f"{n:032x}"
             n += 1
             assert not s.seen(nonce, now)
@@ -287,19 +288,20 @@ def test_replay_store_never_fills_under_sustained_load(tmp_path):
                 s.add(nonce, now + 60, now)
             except OverflowError:
                 refused += 1
-        if second >= sec.LIVE:                      # accepted LIVE - 1 seconds ago: still held
-            assert s.seen(f"{n - 150 * (sec.LIVE - 1):032x}", now)
-    assert refused == 0 and len(s.until) <= 30_000
+        if second >= sec.REPLAY_FLOOR:              # accepted 10 minutes ago: still held
+            assert s.seen(f"{n - 40 * sec.REPLAY_FLOOR:032x}", now)
+    assert refused == 0 and s.size <= 30_000
 
 
-def test_replay_store_refuses_only_beyond_its_live_bound(tmp_path):
+def test_replay_store_refuses_only_nonces_younger_than_its_floor(tmp_path):
     s = sec.ReplayStore(None, NOW - sec.COLD_START, max_entries=3)
     for i in range(3):
         s.add(f"{i:032x}", NOW + 60, NOW)
-    with pytest.raises(OverflowError):            # all three still live
-        s.add("f" * 32, NOW + 60, NOW + sec.LIVE)
-    s.add("f" * 32, NOW + 60, NOW + sec.LIVE + 1)   # the oldest is expired for good: it goes
-    assert list(s.until) == ["1".zfill(32), "2".zfill(32), "f" * 32]
+    with pytest.raises(OverflowError):            # all three younger than 10 minutes
+        s.add("f" * 32, NOW + 60, NOW + sec.REPLAY_FLOOR - 1)
+    later = NOW + sec.REPLAY_FLOOR + sec.BUCKET
+    s.add("f" * 32, NOW + 60, later)              # their bucket is old enough: it goes
+    assert s.size == 1 and s.seen("f" * 32, later) and not s.seen("0" * 32, later)
 
 
 def test_full_replay_store_refuses_the_call(tmp_path):
