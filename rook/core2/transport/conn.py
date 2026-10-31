@@ -403,9 +403,12 @@ class _Band:
 
     def _heard_back(self) -> None:
         """An ack or reply came: if resends had gone unanswered, the band is
-        back, so announce at once (the far end may have lost us)."""
+        back, so resend what is pending and announce at once (the far end
+        may have lost us)."""
         if self.stale:
             self.stale = False
+            for held in self.unacked.values():      # everything still pending goes now, not at its slot
+                held[2] = 0.0
             if self.t.hello is not None:
                 self._spawn(self._emit(self.t.hello))
 

@@ -589,8 +589,13 @@ def test_unanswered_resends_refresh_the_link_and_recovery_re_announces(quick_ack
         call = request("shell.exec", {})
         await hub.t.send(BAND, call)
         await until(lambda: refreshed)
+        late = request("shell.exec", {})                   # sent during the outage too
+        await hub.t.send(BAND, late)
+        b = hub.t._band(BAND)
+        b.unacked[late["id"]][2] = asyncio.get_running_loop().time() + 60     # its next slot: far off
         relay.lose = None                                  # back
         await until(lambda: hub.reply(call["id"]))
+        await until(lambda: hub.reply(late["id"]), 2)      # resent at once, not at its slot
         await until(lambda: len(worker.kinds("announce")) > announces)
         assert len(refreshed) == 1
         await hub.t.close()
