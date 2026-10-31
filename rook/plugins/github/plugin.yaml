@@ -1,0 +1,133 @@
+# GitHub through its REST API (stdlib only): pull requests, commits, checks,
+# diffs and files for whoever may read them, and merge / label / comment for
+# the plugins named in `writers` only (the huddle: a merge happens after its
+# gates, with the hub's credential, never an agent's). The token is a vault
+# name (secret setting); no token means anonymous reads of public repos.
+# Code: scripts/github.py.
+manifest: 1
+plugin: github
+version: 0.5.0
+title: GitHub
+doc: Read pull requests, commits, checks and diffs on GitHub; merges only for the huddle, with the hub's token.
+package: core
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+
+settings:
+  token:
+    secret: true
+    where: hub
+    doc: The vault name of a GitHub token (fine-grained, contents + pull requests write on the repos the huddle merges).
+    setup: Make a fine-grained token on GitHub, store it in the vault and set this to its vault name.
+  api: { type: url, default: "https://api.github.com", where: hub, doc: The REST API base URL. }
+  writers: { type: list, items: { type: str }, default: [huddle], where: hub, doc: "The plugins that may merge, label and comment (as themselves, never for a person or agent)." }
+
+caps:
+  pr:
+    doc: "A pull request: {number, title, body, state, merged, draft, mergeable, mergeable_state, head, head_ref, base, base_sha, author, url, merge_sha}."
+    risk: read
+    scope: external
+    idempotent: true
+    timeout: 60s
+    run: scripts/github.py:pr
+    args:
+      repo: { type: str, required: true, doc: "owner/name" }
+      number: { type: int, required: true, min: 1 }
+    result: { type: map }
+  commit:
+    doc: "A commit by sha or ref: {sha, message, author, parents, files}."
+    risk: read
+    scope: external
+    idempotent: true
+    timeout: 60s
+    run: scripts/github.py:commit
+    args:
+      repo: { type: str, required: true }
+      ref: { type: str, required: true }
+    result: { type: map }
+  checks:
+    doc: "A commit's check runs and commit statuses: {runs: [{name, status, conclusion}], statuses: [{context, state}], state}."
+    risk: read
+    scope: external
+    idempotent: true
+    timeout: 60s
+    run: scripts/github.py:checks
+    args:
+      repo: { type: str, required: true }
+      sha: { type: str, required: true }
+    result: { type: map }
+  diff:
+    doc: "The unified diff base...head: {text, bytes, truncated} (cut at 8 MB)."
+    risk: read
+    scope: external
+    idempotent: true
+    timeout: 60s
+    run: scripts/github.py:diff
+    args:
+      repo: { type: str, required: true }
+      base: { type: str, required: true }
+      head: { type: str, required: true }
+    result: { type: map }
+  files:
+    doc: "The files changed base...head: [{path, status, additions, deletions}]."
+    risk: read
+    scope: external
+    idempotent: true
+    timeout: 60s
+    run: scripts/github.py:files
+    args:
+      repo: { type: str, required: true }
+      base: { type: str, required: true }
+      head: { type: str, required: true }
+    result: { type: list }
+  file:
+    doc: "A file's text at a ref: {text, bytes, truncated} (cut at 8 MB)."
+    risk: read
+    scope: external
+    idempotent: true
+    timeout: 60s
+    run: scripts/github.py:file
+    args:
+      repo: { type: str, required: true }
+      path: { type: str, required: true }
+      ref: { type: str, required: true }
+    result: { type: map }
+  merge:
+    doc: Merge a pull request only if its head is still sha. Only the plugins in writers call it.
+    risk: write
+    scope: external
+    effects: [persists]
+    timeout: 60s
+    run: scripts/github.py:merge
+    args:
+      repo: { type: str, required: true }
+      number: { type: int, required: true, min: 1 }
+      sha: { type: str, required: true, pattern: "^[0-9a-f]{40}$" }
+      title: { type: str, required: true }
+      method: { type: str, enum: [merge, squash, rebase], default: merge }
+    result: { type: map }
+  label:
+    doc: Add labels to a pull request or issue. Only the plugins in writers call it.
+    risk: write
+    scope: external
+    timeout: 60s
+    run: scripts/github.py:label
+    args:
+      repo: { type: str, required: true }
+      number: { type: int, required: true, min: 1 }
+      labels: { type: list, items: { type: str }, required: true }
+    result: { type: map }
+  comment:
+    doc: Comment on a pull request or issue. Only the plugins in writers call it.
+    risk: write
+    scope: external
+    timeout: 60s
+    run: scripts/github.py:comment
+    args:
+      repo: { type: str, required: true }
+      number: { type: int, required: true, min: 1 }
+      body: { type: str, required: true }
+    result: { type: map }
+
+docs: { manual: docs/manual.md }
