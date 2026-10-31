@@ -76,5 +76,5 @@ rest wait for you on Approvals.
 |---|---|---|
 | `house_agent` | `house` | who reaches you about canary hits (else `notify.send`) |
 | `triage_agent` | `security` | who is woken on holds; the only caller of `security.release` |
-| `task_cap` | `task.task.get` | how a session's pinned task is read |
+| `task_cap` | `task.get` | how a session's pinned task is read |
 | `heuristics` | `shadow` | `enforce` makes taint and pinned-task flags wait for you; `shadow` only journals them |

@@ -15,12 +15,12 @@ package: core
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-uses: ["agents.chat.send", "notify.send", "approval.decide", "task.task.get"]
+uses: ["agents.chat.send", "notify.send", "approval.decide", "task.get"]
 
 settings:
   house_agent: { type: str, default: house, doc: The agent that reaches the person (canary hits only). }
   triage_agent: { type: str, default: security, doc: "The agent woken on this gate's holds; the only one security.release takes." }
-  task_cap: { type: str, default: task.task.get, doc: "How the gate reads a session's pinned task (title and body)." }
+  task_cap: { type: str, default: task.get, doc: "How the gate reads a session's pinned task (title and body)." }
   heuristics:
     type: str
     enum: [shadow, enforce]

@@ -340,7 +340,8 @@ async def _fetch_task(task: str) -> None:
         got = await _as(ctx, "Read the pinned task to compare calls with it.").call(
             ctx.settings["task_cap"], id=task)
     except Exception as e:      # an unknown task stays unknown: no intent check
-        log.info("pinned task %s not readable: %s", task, e)
+        log.warning("pinned task %s not readable with %s, so calls aren't checked against it: %s",
+                    task, ctx.settings["task_cap"], e)
         S.tasks[task] = set()
         return
     got = got if isinstance(got, dict) else {}
