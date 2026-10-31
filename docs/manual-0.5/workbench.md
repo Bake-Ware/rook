@@ -49,6 +49,23 @@ A concept is a kind of work (software, hardware, a wedding playlist) and
 the pool of expert roles, skills and sign-off it brings. Projects carry one
 or more; `concept.pool concepts=[...]` gives what they draw on.
 
+With the agents package, nobody has to set this up by hand. When
+something you talk about becomes real work (a deliverable, "let's continue
+tomorrow", a topic that keeps coming up), the house agent offers to make a
+project and asks what you're working on to tag it with concepts. The first
+time a new kind of work comes up, the **producer** asks how you like to
+work, looks into how people who do it work, and writes the concept: expert
+roles, skills (knowledge pages of kind `skill`) and sign-off.
+
+## Team roles
+
+The workbench ships its team roles as personas; with the agents package
+they become agents: `pm`, `lead`, `qa` (plugin `task`), `writer`,
+`archivist` (`knowledge`) and `producer` (`concept`). The archivist sweeps
+the wiki like a diligent Wikipedia editor: it challenges statements without
+a source, fixes wrong pages and cites why, merges duplicates and prunes
+stale pages ([Agents and personas](agents.md)).
+
 ## Each plugin's manual
 
 [task](../../rook/plugins/tasks/docs/manual.md),

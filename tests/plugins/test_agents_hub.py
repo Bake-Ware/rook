@@ -97,6 +97,8 @@ def test_agents_on_the_hub(tmp_path):
     (lib / "agents-local" / "plugin.yaml").write_text(BRAIN)
     (lib / "agents-local" / "scripts" / "brain.py").write_text(BRAIN_PY)
     (lib / "agents").symlink_to(PLUGINS / "agents", target_is_directory=True)
+    for folder in ("tasks", "knowledge", "concepts"):     # the workbench ships its team roles
+        (lib / folder).symlink_to(PLUGINS / folder, target_is_directory=True)
     cfg = Config(data=tmp_path / "data", band=BAND, library=lib,
                  users={"bake": {"preset": "owner"}, "guest": {"preset": "guest", "created": time.time()}},
                  settings={"agents": {"warm": "200ms"}}, doors={"http": {"bind": "127.0.0.1:0"}})
@@ -108,8 +110,24 @@ def test_agents_on_the_hub(tmp_path):
             owner = (hub.data / "owner.token").read_text().strip()
             guest = hub.add_token(Caller(person="person:guest"), label="guest")
             assert {"agents", "agents-local"} <= set(hub.plugins.plugins)     # beside the builtin ones
+            # The library loads in name order, agents first: the workbench's
+            # personas (castling-dashboard) are made on the next look.
             out = await call(hub, owner, "agents.list")
-            assert out["ok"] and len(out["result"]) == 8, out
+            assert out["ok"] and {a["name"] for a in out["result"]} >= {"house", "security"}, out
+            rt = next(m for m in hub.plugins._modules["agents"].values() if hasattr(m, "_RT"))._RT
+            await rt.ready(force=True)
+            out = await call(hub, owner, "agents.list")
+            assert out["ok"] and sorted(a["name"] for a in out["result"]) == [
+                "archivist", "house", "lead", "pm", "producer", "qa", "security", "writer"], out
+            got = (await call(hub, owner, "agents.get", name="producer"))["result"]
+            assert got["origin"] == "concept@0.5.0" and "assembling a crew" in got["prompt"], got
+            out = await call(hub, owner, "agents.skill", name="wiki-sweep")
+            assert out["ok"] and out["result"]["text"].startswith("# Wiki sweep"), out
+            page = await call(hub, owner, "knowledge.create", title="Test-stitch a pattern", slug="test-stitch",
+                              kind="skill", body="1. Stitch a swatch.")
+            assert page["ok"], page
+            out = await call(hub, owner, "agents.skill", name="test-stitch")
+            assert out["ok"] and out["result"]["text"] == "1. Stitch a swatch.", out
 
             out = await call(hub, owner, "agents.chat.send", agent="house", text="good morning")
             assert out["ok"] and out["result"]["text"] == "brain: good morning", out

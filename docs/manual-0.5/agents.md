@@ -33,16 +33,24 @@ Put `agents` in the hub's library, and a backend:
 
 ## The ready-made agents
 
+The agents package makes these:
+
 | Agent | Role |
 |---|---|
-| `house` | your personal assistant and the guardian of the house; knows how and when to reach you. Always on |
-| `pm` | project manager: sweeps the work, organizes, reports, plans |
-| `lead` | lead developer: design calls, branches, reviews, debt |
-| `qa` | evidence that things work |
-| `writer` | docs true to what shipped |
-| `archivist` | keeps the wiki honest |
-| `producer` | gets releases out the door |
+| `house` | your personal assistant and the guardian of the house; knows how and when to reach you, and offers to set up a project when something has become real work. Always on |
 | `security` | triages security events, proposes safer ways. Always on |
+
+With the workbench installed, its team roles come too (the workbench's
+plugins ship them as personas):
+
+| Agent | Role | Shipped by |
+|---|---|---|
+| `pm` | project manager: sweeps the work, organizes, reports, plans | `task` |
+| `lead` | lead developer: design calls, branches, reviews, debt | `task` |
+| `qa` | evidence that things work | `task` |
+| `writer` | docs true to what shipped | `knowledge` |
+| `archivist` | sweeps the wiki like a diligent Wikipedia editor: sources, duplicates, stale pages | `knowledge` |
+| `producer` | sets up a new kind of work the first time it becomes real: asks how you like to work, researches how it is done, writes the concept | `concept` |
 
 Every agent knows the others and is told that pulling one in is expected.
 Agents that need you go through the house agent.
@@ -81,7 +89,10 @@ makes an agent from a persona's defaults and your changes;
 `agents.update` changes one (your edits win over later persona updates);
 `agents.archive` stops one and keeps everything. A persona's **grants** are
 its own rights: unattended, an agent can do only those. Skills are markdown
-playbooks an agent follows (`agents.skill {name}` reads one); plugins ship
-personas and skills in their manifest.
+playbooks an agent follows (`agents.skill {name}` reads one). Any plugin
+can ship personas and skills in its manifest; each installed plugin's
+personas become agents. With the workbench, a knowledge page of kind
+`skill` is a skill too (the skill library lives in the knowledge store), so
+a concept's skills can be written as pages.
 
 The full cap list and settings: [the agents plugin's manual](../../rook/plugins/agents/docs/manual.md).

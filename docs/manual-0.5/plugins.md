@@ -56,10 +56,9 @@ Installed plugins load again when the worker restarts, re-checked. A
 worker's own `plugins:` folders (in `worker.yaml`) load without a push:
 they are trusted because the machine's owner put them there.
 
-A plugin's content (personas, skills, docs, pages) is meant to be copied
-into the hub's stores on install; that step isn't wired yet, so today each
-hub plugin reads its own folder (the agents plugin its personas and
-skills, page plugins their pages).
+A plugin's content (personas, skills, docs, pages) is read from where the
+hub holds the plugin: the agents plugin reads every installed plugin's
+personas and skills (`hub.manifests`), page plugins their pages.
 
 ## Every plugin
 

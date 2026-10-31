@@ -13,13 +13,18 @@ Installing the agents package makes these, each with its skills:
 | Agent | Role | Always on |
 |---|---|---|
 | `house` | Your personal assistant and guardian of the house; knows how and when to reach you | yes |
-| `pm` | Project manager: sweeps the work, organizes, reports, plans | |
-| `lead` | Lead developer: design calls, branches, reviews, debt | |
-| `qa` | QA engineer: evidence that things work | |
-| `writer` | Technical writer: docs true to what shipped | |
-| `archivist` | Keeps the wiki honest | |
-| `producer` | Gets releases out the door | |
 | `security` | Triages security events, proposes safer ways | yes |
+
+Any plugin's manifest can ship personas and skills (`personas:`,
+`skills:`). The runtime reads every installed plugin's (`hub.manifests`, at
+most a minute old) and makes an agent of each persona, so the workbench's
+team roles come with the workbench: `pm`, `lead` and `qa` (plugin `task`),
+`writer` and `archivist` (`knowledge`), `producer` (`concept`). Edits to an
+agent win over later persona updates. On a persona name two plugins ship,
+the first by plugin name wins (this plugin's own come first).
+
+`agents.skill {name}` reads a skill from the manifest that ships it, else
+the knowledge page of kind `skill` with that slug (with the workbench).
 
 Every agent knows the others (a roster in its prompt) and is told that
 pulling in another agent is expected, not overstepping. Agents that need you

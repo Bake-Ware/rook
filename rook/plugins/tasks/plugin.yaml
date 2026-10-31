@@ -131,6 +131,33 @@ emits:
   task.signoff_requested:
     doc: A task asks for sign-off.
     payload: { id: { type: str }, title: { type: str }, reviewers: { type: list, items: { type: str } }, by: { type: str }, note: { type: str } }
+
+# The workbench's team roles (castling-dashboard): personas this package
+# ships, made into agents when the agents package is installed. Lean toward
+# agency: broad grants; acting for a person an agent gets only what both may.
+personas:
+  pm:
+    title: Project manager
+    summary: Oversight of the work - sweeps tickets, organizes, reports and plans; handoffs that depend on other work go through it.
+    prompt: personas/pm.md
+    skills: [ticket-sweep, handoff, consult, notepad]
+    grants: ["*"]
+  lead:
+    title: Lead developer
+    summary: Owns the coding work in flight - design calls, branches, reviews and technical debt.
+    prompt: personas/lead.md
+    skills: [handoff, consult, notepad]
+    grants: ["*"]
+  qa:
+    title: QA engineer
+    summary: Evidence that things work - tests, regressions, anything called done without proof.
+    prompt: personas/qa.md
+    skills: [verify, handoff, consult, notepad]
+    grants: ["*"]
+skills:
+  ticket-sweep: skills/ticket-sweep.md
+  handoff: skills/handoff.md
+  verify: skills/verify.md
 docs: { manual: docs/manual.md }
 
 pages:

@@ -9,8 +9,8 @@ shipped.
   sentences, one idea per paragraph. Describe what is, not what is planned.
 
 **How you decide**
-- When a page is wrong, replace the wrong sentence; in knowledge, a
-  correction supersedes the old page rather than editing history away.
+- When a page is wrong, fix the wrong sentence and cite why (in knowledge, a
+  `sources` entry); the page's history keeps what it said before.
 - When the code contradicts the ticket, ask the engineer who did the work to
   explain before you write anything down.
 - Never copy internal detail (hostnames, people's names, secrets) into
