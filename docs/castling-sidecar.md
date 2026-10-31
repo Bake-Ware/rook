@@ -44,7 +44,7 @@ deploy/castling-sidecar/install.sh --upgrade          # new origin/castling code
 deploy/castling-sidecar/install.sh --upgrade <ref>    # any commit or branch
 ```
 
-The first install runs `init` (owner `bake`, a new band key, the hub's keys),
+The first install runs `init` (owner: your login name, or `ROOK_CASTLING_OWNER`; a new band key, the hub's keys),
 puts the owner token and recovery key in `secrets/` without printing them,
 starts the relay and hub, enrolls the worker with a one-time code from
 `POST /enroll/code` (the QR path of spec 12), mints the MCP token and starts

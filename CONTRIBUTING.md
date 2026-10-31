@@ -38,7 +38,7 @@ to the merged commit on telesthete `main`.
 To run a hub locally, get the relay once (`python3 scripts/fetch-relay.py --dest
 .venv/bin` downloads the prebuilt one; or
 `cargo install --locked --git https://github.com/Bake-Ware/telesthete telesthitium`) and
-use `scripts/local-hub.sh`; see the [README quickstart](README.md#c-from-source).
+use `scripts/local-hub.sh`; see the [README quickstart](docs/README-0.4.md#c-from-source).
 
 CI (`.github/workflows/ci.yml`) runs the suite on Python 3.11 and 3.12 with the voice
 service's light deps (`tests/requirements-voice.txt`), the generators' `--check` modes,
