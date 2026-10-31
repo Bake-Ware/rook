@@ -3,7 +3,8 @@ site's first-visit note, else an echo."""
 import json
 
 
-async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, system=None, timeout=None):
+async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, system=None, timeout=None,
+               door=None):
     if system and "curate an agent's memory" in system:
         return {"text": json.dumps({"add": []}), "session": "dream"}
     said = prompt.strip().splitlines()[-1].strip()

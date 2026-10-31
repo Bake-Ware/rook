@@ -1,6 +1,6 @@
 # A fake agent.backend for the hub site tests: the house agent "thinks" by
-# reading the last line of the message and calling page caps as the person
-# who sent it (tests/test_core2_worksurface.py, tests/e2e/test_dashboard_e2e.py).
+# reading the last line of the message and calling page caps as the agent
+# for the person who sent it (tests/test_core2_worksurface.py, tests/e2e/test_dashboard_e2e.py).
 manifest: 1
 plugin: agents-local
 version: 1.0.0
@@ -22,6 +22,7 @@ caps:
       effort: { type: str }
       system: { type: str }
       timeout: { type: duration }
+      door: { type: secret }
     result:
       type: map
       fields:

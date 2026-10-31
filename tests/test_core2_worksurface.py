@@ -288,7 +288,7 @@ def test_the_house_agent_builds_and_archives_a_page_from_the_dock(tmp_path):
         s = (await c.call("pages.site"))["result"]
         assert s["start"] == "pages/uptime"
         page = (await c.call("pages.get", {"page": "pages/uptime"}))["result"]
-        assert page["made_by"]["authors"] == [{"person": "person:bake", "agent": None}]
+        assert page["made_by"]["authors"] == [{"person": "person:bake", "agent": "agent:house"}]   # the agent, for bake
         assert page["made_by"]["task"] and "asked for a uptime page" in page["note"]
         assert set(page["caps"]) == {"hub.workers", "task.list"}
         t = (await c.open("pages/uptime"))["token"]
