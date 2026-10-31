@@ -218,6 +218,7 @@ own `typ`:
 | `rook-lease` | `rook-lease-v2\n` | hub operational key | 7.3 |
 | `rook-membership` | `rook-membership-v2\n` | the worker's home hub (root or operational key) | 9.3 |
 | `rook-plugin` | `rook-plugin-v2\n` | hub operational key | 13 |
+| `rook-release` | `rook-release-v2\n` | hub operational key | 13 |
 
 Times are integer Unix seconds. Identifiers called "32 hex" are 32
 lowercase hex characters drawn from a CSPRNG.
@@ -1087,6 +1088,20 @@ bundle's files are exactly `files` with matching hashes. Once installed, an
 operational key rotating doesn't unload it: at start-up the worker re-checks
 the file hashes and that the signing hub still has role `home` or
 `co-owner`.
+
+A core release (the worker's own code, `worker.update`) carries
+`release.sig`, a `rook-release` signed object: `hub`, `version` (semver),
+`core` (the core version the code speaks), `files` (posix path relative to
+the release root → hex SHA-256, every file but `release.sig`; the root holds
+the `rook/` package), `requires` (PEP 508 requirements installed before the
+switch) and `iat`. It names no worker: one release is signed once for every
+worker. A worker runs a release only when the signature verifies under a
+current operational key of a hub with role `home` or `co-owner`, the files
+are exactly `files` with matching hashes, and `core` negotiates (2.2) with
+its own. At every start it re-checks the release's file hashes, and that
+the signing hub still has one of those roles. The update procedure (trial,
+confirmation, rollback) is the core manifest's, not this document's
+(docs/castling-updates.md).
 
 ## 14. Conformance
 

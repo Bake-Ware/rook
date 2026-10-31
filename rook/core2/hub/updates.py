@@ -27,7 +27,9 @@ import asyncio
 import json
 import logging
 import secrets
+import threading
 import time
+import urllib.request
 from pathlib import Path
 
 from rook.kit.ctx import Caller as KitCaller, KitError
@@ -315,6 +317,48 @@ class Updates:
         if self.task is not None and not self.task.done():
             self.task.cancel()
             await asyncio.gather(self.task, return_exceptions=True)
+
+
+# -- the desktop app's update check (R10) -------------------------------------------------
+
+RELEASES_API = "https://api.github.com/repos/Bake-Ware/rook/releases/latest"
+DESKTOP_PREFIX = "rook-desktop-"
+FEED_SECS = 6 * 3600          # GitHub is asked at most this often
+FEED_TIMEOUT = 15
+FEED_RETRY = 600            # after a failed fetch
+_feed: dict = {"at": 0.0, "body": None}
+_feed_lock = threading.Lock()
+
+
+def _latest_release() -> dict:
+    req = urllib.request.Request(RELEASES_API, headers={"Accept": "application/vnd.github+json",
+                                                        "User-Agent": "rook-hub"})
+    with urllib.request.urlopen(req, timeout=FEED_TIMEOUT) as r:
+        return json.loads(r.read(4 << 20))
+
+
+def desktop_feed(fetch=_latest_release, now: float | None = None) -> dict:
+    """``GET /updates/desktop.json``: the desktop app's files in Rook's latest
+    GitHub release (the app picks its platform's and compares versions, and
+    only takes links into Rook's releases). Cached; a failed fetch serves the
+    last good answer, else an empty list."""
+    now = time.time() if now is None else now
+    with _feed_lock:
+        if _feed["body"] is not None and now - _feed["at"] < FEED_SECS:
+            return _feed["body"]
+        try:
+            rel = fetch()
+            downloads = [{"name": a["name"], "url": a["browser_download_url"]} for a in rel.get("assets") or ()
+                         if isinstance(a, dict) and str(a.get("name", "")).startswith(DESKTOP_PREFIX)
+                         and isinstance(a.get("browser_download_url"), str)]
+            body = {"ok": True, "release": str(rel.get("tag_name") or ""), "downloads": downloads}
+        except Exception as e:       # offline, rate-limited, a bad reply: try again in a while
+            log.info("desktop update feed not fetched", extra={"fields": {"error": str(e)[:200]}})
+            _feed.update(at=now - FEED_SECS + FEED_RETRY,
+                         body=_feed["body"] or {"ok": True, "release": "", "downloads": []})
+            return _feed["body"]
+        _feed.update(at=now, body=body)
+        return body
 
 
 def install(hub) -> Updates:

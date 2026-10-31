@@ -46,8 +46,10 @@ Code: `desktop/src-tauri/src/hub05.rs` (door client, pure parsers),
 - **The app approves its own device code.** The person clicked **Add this
   computer** while signed in as themselves, which is the approval spec 12
   asks for; the code never leaves the app.
-- **Update check off on 0.5** (TODO(castling:desktop-updates)): a 0.5 hub has
-  no `/updates/desktop.json`.
+- **Update check on 0.5** works like on 0.4: the 0.5 hub serves
+  `/updates/desktop.json` (no token) from Rook's latest GitHub release, cached
+  for six hours (docs/castling-updates.md). The installers still come only
+  from Rook's GitHub releases and aren't signed yet.
 
 ## Tests
 

@@ -328,8 +328,10 @@ Everything else in "Today's plugins -> 0.5" without a 0.5 plugin, and where it w
   nothing fills it: there are no onboarding, define, list or remove caps, no delegate routes, and
   instance values still don't travel with a call (N3). `appliance.test` is the only way to try a
   device recipe; shipping one is a plugin push (`POST /plugins/push`, no cap yet).
-- **N27. No 0.5 release format,** so `worker.update` and `update.*` (status, history, apply_hub,
-  rollout) have nothing to fetch or verify. The sidecar install (#286) is a uv venv.
+- **N27. No 0.5 release format.** Closed in wave 7: a `rook-release` signed tarball of the `rook`
+  package, `worker.update`/`worker.rollback` (trial boot, smoke check, automatic rollback) and the
+  hub's `update.prepare/rollout/status/history` (docs/castling-updates.md). `apply_hub` stays the
+  hub's deploy.
 - **N28. Streams have no hub index.** A worker's streams are read through its `stream.*` caps
   (the MCP door already calls them); the castling-streams relay (one index, durable sessions,
   fan-out) is what history importers, the session shim and attention need. Owners can't read

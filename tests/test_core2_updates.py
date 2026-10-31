@@ -479,3 +479,27 @@ def test_old_releases_are_pruned(tmp_path, monkeypatch):
     asyncio.run(go())
     assert sorted(p.name for p in (tmp_path / "hub" / "releases").glob("*.tar.gz")) == \
         [f"0.5.{i}.tar.gz" for i in range(2, updates.KEEP + 2)]
+
+
+# -- the desktop app's update check (R10) -------------------------------------------------
+
+def test_the_desktop_feed_lists_the_apps_files_and_caches(monkeypatch):
+    monkeypatch.setattr(updates, "_feed", {"at": 0.0, "body": None})
+    asked = []
+
+    def fetch():
+        asked.append(1)
+        return {"tag_name": "v0.5.0", "assets": [
+            {"name": "rook-desktop-0.3.0-x64-setup.exe",
+             "browser_download_url": "https://github.com/Bake-Ware/rook/releases/download/v0.5.0/rook-desktop-0.3.0-x64-setup.exe"},
+            {"name": "rook-worker.apk", "browser_download_url": "https://example/apk"}]}
+    got = updates.desktop_feed(fetch, now=1000.0)
+    assert got["release"] == "v0.5.0" and [d["name"] for d in got["downloads"]] == ["rook-desktop-0.3.0-x64-setup.exe"]
+    assert updates.desktop_feed(fetch, now=2000.0) == got and len(asked) == 1     # cached
+
+    def down():
+        raise OSError("offline")
+    assert updates.desktop_feed(down, now=1000.0 + updates.FEED_SECS + 1) == got   # the last good answer
+    monkeypatch.setattr(updates, "_feed", {"at": 0.0, "body": None})
+    assert updates.desktop_feed(down, now=5.0) == {"ok": True, "release": "", "downloads": []}
+    assert updates.desktop_feed(fetch, now=5.0 + updates.FEED_RETRY + 1)["downloads"]   # retried soon after a failure

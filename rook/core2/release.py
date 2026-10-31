@@ -104,6 +104,8 @@ def _listed(source: Path, path: str) -> list[str]:
     top = source / path
     if top.is_file() or top.is_symlink():
         return [path]
+    if not top.is_dir():
+        return []
     rels = []
     for p in sorted(top.rglob("*")):
         parts = p.relative_to(source).parts
