@@ -62,7 +62,7 @@ SEEN_MAX, FLAGS_MAX, ALERTS_MAX = 5000, 200, 200
 # Reachable from a paused session: looking, and the owner lifting the pause
 # (security.clear checks it is the owner in person).
 UNPAUSED = {f"{PLUGIN}.clear", f"{PLUGIN}.status", f"{PLUGIN}.canary.list"}
-SCAN_MAX = 8 << 20        # characters of a result scanned for canaries
+SCAN_MAX = 8 << 20        # characters scanned for canaries: half from the head, half from the tail
 
 # Persistence markers in command text: keys, scheduled tasks, services, users,
 # autostart. (security-ml has its own copy among its features.)
@@ -155,12 +155,32 @@ def _encodings(tok: str) -> list:
     return out
 
 
-def _text(value, limit: int = SCAN_MAX) -> str:
+def _dump(value) -> str:
     try:
-        s = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
     except (TypeError, ValueError):
-        s = str(value)
-    return s[:limit]
+        return str(value)
+
+
+def _text(value, limit: int = SCAN_MAX) -> str:
+    return _dump(value)[:limit]
+
+
+def _ends(s: str, limit: int = SCAN_MAX) -> str:
+    """What a canary scan reads of ``s``: all of it, or its head and its
+    tail (padding in front no longer hides a canary at the end)."""
+    return s if len(s) <= limit else s[:limit // 2] + "\n" + s[-(limit // 2):]
+
+
+def _scan_call(args, why: str, worker: str) -> tuple[str, str | None]:
+    """The args dumped once, and a canary in them or the why. CPU-bound on a
+    big call: runs in a thread, off the hub's loop."""
+    text = _dump(args)
+    return text, S.canary_in(_ends(text) + "\n" + _ends(why), worker)
+
+
+def _scan_result(result) -> str | None:
+    return S.canary_in(_ends(_dump(result)))
 
 
 # -- the gate ---------------------------------------------------------------------
@@ -186,34 +206,34 @@ async def check(inp: dict) -> dict:
         return _verdict("block", 1.0, "canary")
     if _own(inp):
         return _verdict("allow", 1.0, "other")
-    text = _text(inp.get("args")) + "\n" + _text(inp.get("why") or "")
-    hit = S.canary_in(text, inp.get("worker") or "")
+    args, hit = await asyncio.to_thread(_scan_call, inp.get("args"), str(inp.get("why") or ""),
+                                        inp.get("worker") or "")
     if hit and not _decoy_write(hit, inp):
         _hit(hit, inp, "args")
         return _verdict("block", 1.0, "canary")
     if not str(agent or "").startswith("agent:"):   # injection steers agents, not people or plugin code
         _remember_clean(inp)
         return _verdict("allow", 0.9, "other")
-    return _taint(inp, session)
+    return _taint(inp, session, args)
 
 
 async def seen(inp: dict) -> dict:
     """The ``result`` check: a canary in what a call returned."""
     if _own(inp):
         return _verdict("allow", 1.0, "other")
-    hit = S.canary_in(_text(inp.get("result")))
+    hit = await asyncio.to_thread(_scan_result, inp.get("result"))
     if hit:
         _hit(hit, inp, "result")
         return _verdict("block", 1.0, "canary")
     return _verdict("allow", 1.0, "other")
 
 
-def _taint(inp: dict, session: dict) -> dict:
+def _taint(inp: dict, session: dict, args: str) -> dict:
     risk, effects = inp.get("risk"), set(inp.get("effects") or ())
-    command = _text(inp.get("args"), 4096)
+    command = args[:4096]
     persist = "persists" in effects or bool(PERSIST.search(command))
     risky = risk in ("exec", "admin") or bool(effects & RISKY_EFFECTS) or persist
-    near = _near(inp, session.get("task"))          # None: no pinned task (or not fetched yet)
+    near = _near(inp, session.get("task"), args)    # None: no pinned task (or not fetched yet)
     if session.get("tainted"):
         if persist:
             return _flag(inp, 0.9, "persistence")
@@ -274,7 +294,7 @@ def words(text: str) -> set:
     return out
 
 
-def _near(inp: dict, task: str | None) -> bool | None:
+def _near(inp: dict, task: str | None, args: str | None = None) -> bool | None:
     """Does the call share a content word with its session's pinned task?
     None when there is no task or its text isn't known yet (fetched in the
     background, so a gate never waits on it)."""
@@ -288,7 +308,7 @@ def _near(inp: dict, task: str | None) -> bool | None:
     if known is None:
         return None
     call = words(" ".join([inp.get("why") or "", (inp.get("cap") or "").replace(".", " "),
-                           _text(inp.get("args"), 2048)]))
+                           (_dump(inp.get("args")) if args is None else args)[:2048]]))
     return bool(call & known)
 
 
