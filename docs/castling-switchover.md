@@ -335,7 +335,8 @@ Done in one sitting. Rook is down from 2.1 until the 0.5 hub answers in 2.3 (abo
    It checks the hub answers and the moved stores serve their items: rooms
    and huddles (`stream.list`, `huddle.list`, a huddle read back with
    `stream.read`), `jobs.list`, `change.list`, `knowledge.list`,
-   `task.list`, `project.list`, `secret.list`. All `[ok]`.
+   `task.list`, `project.list`, `secret.list` (it names the record caps from the checkout's
+   manifests, so plugin renames follow). All `[ok]`.
 4. **Bands and workers.** On each machine on the report's re-enroll
    checklist, the 0.5 worker beside the 0.4 one (its own venv, data and
    unit `rook05-worker`, as the sidecar), enrolled with the device code Bake

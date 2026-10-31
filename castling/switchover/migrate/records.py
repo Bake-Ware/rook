@@ -27,6 +27,7 @@ import sqlite3
 
 from rook.kit.ctx import Caller
 
+from . import names
 from .source import _tables
 
 JOB_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -67,7 +68,7 @@ def jobs(db: sqlite3.Connection | None, store, band: str, owner: str) -> dict:
     report = {"jobs": 0, "skipped": 0, "renamed": []}
     if db is None or "jobs" not in _tables(db):
         return report
-    rtype = store.type("jobs.jobs")
+    rtype = store.type(names.record("jobs"))
     caller = Caller(person=owner, band=band, owner=True, why="import from 0.4")
     taken = {r["name"] for r in _all(rtype, caller)}
     triggers = {}
@@ -101,7 +102,7 @@ def changes(db: sqlite3.Connection | None, store, band: str, tasks: dict) -> dic
     report = {"changes": 0, "skipped": 0}
     if db is None or "changes" not in _tables(db):
         return report
-    rtype = store.type("change.change")
+    rtype = store.type(names.record("changes"))
     for c in db.execute("SELECT * FROM changes ORDER BY created, id"):
         rec = _json(c["record"], {})
         caller = Caller(agent=c["author"] or "import:0.4", band=band, owner=True, why="import from 0.4")

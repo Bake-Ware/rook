@@ -317,3 +317,49 @@ def test_copy04_takes_a_consistent_copy_without_touching_the_hub(tmp_path):
         _copy04().copy(str(live), str(live / "inside"))
     from castling.switchover.migrate.source import Source
     Source(dest).close()                                          # migrate takes it as a copy
+
+
+# -- names follow the manifests (drift #33: singular namespaces) -----------------------------
+
+def test_the_move_follows_singular_plugin_names(tmp_path, full04, monkeypatch):
+    """With #353's names (plugin job, record job; plugin agent) the move and
+    verify use them: no plural name is spelled in the tool."""
+    import shutil
+
+    import castling.switchover.migrate as mig
+    from castling.switchover.migrate import names
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    for p in names.PLUGINS.iterdir():
+        if p.is_dir() and p.name not in ("jobs", "agents"):
+            (plugins / p.name).symlink_to(p, target_is_directory=True)
+    for folder, old, new, rec_old, rec_new in (("jobs", "jobs", "job", "jobs", "job"),
+                                               ("agents", "agents", "agent", None, None)):
+        shutil.copytree(names.PLUGINS / folder, plugins / folder)
+        y = plugins / folder / "plugin.yaml"
+        text = y.read_text().replace(f"\nplugin: {old}\n", f"\nplugin: {new}\n")
+        if rec_old:
+            text = text.replace(f"\n  {rec_old}:\n    fields:", f"\n  {rec_new}:\n    fields:") \
+                       .replace(f"to: {rec_old},", f"to: {rec_new},")
+        y.write_text(text)
+    monkeypatch.setattr(names, "PLUGINS", plugins)
+    monkeypatch.setattr(mig, "PLUGINS", plugins)
+    monkeypatch.setattr(mig, "AGENTS", plugins / "agents")
+    names.manifest.cache_clear()
+    try:
+        assert (names.record("jobs"), names.cap("jobs", "list"), names.record("agents", "memory")) == (
+            "job.job", "job.list", "agent.memory")
+        cfg = make_05(tmp_path)
+        migrate(full04, cfg, apply=True)
+        rec = sqlite3.connect(cfg.parent / "data" / "records.db")
+        tables = {r[0] for r in rec.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        rec.close()
+        assert {"r:job.job", "r:agent.memory"} <= tables
+        assert not {"r:jobs.jobs", "r:agents.memory", "r:agents.note"} & tables
+        v = verify.verify(full04, cfg)
+        assert v["ok"], verify.render(v)
+        assert _kinds(v)["jobs (disabled, 0.4 definition kept)"]["moved"] == 2
+        assert _kinds(v)["house agent memory (active -> memory or notepad)"]["moved"] == 4
+        assert "job.list" in [c for c, *_ in _smoke().CHECKS]        # the smoke checks name the same caps
+    finally:
+        names.manifest.cache_clear()

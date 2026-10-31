@@ -27,19 +27,25 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))       # run from a checkout
+
+from castling.switchover.migrate import names  # noqa: E402
 
 WHY = "Cutover smoke check: read-only."
 PAGE = 200
-# cap, args, the result's list key, verify kind whose "moved" it should reach
+# cap, args, the result's list key, verify kind whose "moved" it should reach. Record caps
+# are named from this checkout's manifests (castling/switchover/migrate/names.py).
 CHECKS = [
     ("stream.list", {"kind": "room", "limit": PAGE}, "streams", None),
     ("stream.list", {"kind": "huddle", "limit": PAGE}, "streams", None),
-    ("huddle.list", {"limit": PAGE}, "records", None),
-    ("jobs.list", {"limit": PAGE}, "records", "jobs (disabled, 0.4 definition kept)"),
-    ("change.list", {"limit": PAGE}, "records", "change records"),
-    ("knowledge.list", {"limit": PAGE}, "records", "knowledge pages"),
-    ("task.list", {"limit": PAGE}, "records", "tasks"),
-    ("project.list", {"limit": PAGE}, "records", "projects"),
+    (names.cap("huddle", "list"), {"limit": PAGE}, "records", None),
+    (names.cap("jobs", "list"), {"limit": PAGE}, "records", "jobs (disabled, 0.4 definition kept)"),
+    (names.cap("changes", "list"), {"limit": PAGE}, "records", "change records"),
+    (names.cap("knowledge", "list"), {"limit": PAGE}, "records", "knowledge pages"),
+    (names.cap("tasks", "list"), {"limit": PAGE}, "records", "tasks"),
+    (names.cap("projects", "list"), {"limit": PAGE}, "records", "projects"),
     ("secret.list", {}, "secrets", "secrets (names + value hashes)"),
 ]
 

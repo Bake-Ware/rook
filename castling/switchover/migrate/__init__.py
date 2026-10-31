@@ -55,7 +55,7 @@ from rook.kit.ctx import Caller
 from rook.kit.manifest import load as load_manifest
 from rook.kit.records import RecordStore
 
-from . import archive, convert, records, rooms, vault
+from . import archive, convert, names, records, rooms, vault
 from .source import NotACopy, Source, _tables
 
 IMPORTER = Path(__file__).resolve().parent.parent / "import_04.py"
@@ -194,7 +194,7 @@ def _write_memory(data: Path, band: str, mems: list, jots: list) -> dict:
         store.register(m.data, plugin_dir=m.folder)
         who = Caller(agent="import:0.4", band=band, why="import from 0.4")
         every = Caller(band=band, owner=True, why="import from 0.4")      # memory is private: see all of it
-        memory, note = store.type("agents.memory"), store.type("agents.note")
+        memory, note = store.type(names.record("agents", "memory")), store.type(names.record("agents", "note"))
         have = {r["text"] for t in (memory, note) for gone in (False, True)
                 for r in t.list(every, where={"agent": HOUSE}, archived=gone, limit=10000)}
         mems = [x for x in mems if x["text"] not in have]

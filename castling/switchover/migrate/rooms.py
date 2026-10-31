@@ -34,6 +34,7 @@ import sqlite3
 from rook.kit.ctx import Caller
 from rook.streams import SqliteStore, Streams
 
+from . import names
 from .source import _tables
 
 TABLES = {"rooms", "messages"}
@@ -145,7 +146,7 @@ def _room(db, streams: Streams, store, band: str, projects: dict, room: dict, hu
             streams.clock = lambda: huddle["archived"]
             streams.close(meta.id, by="import:0.4")
         store.clock = lambda: huddle["created"]
-        store.type("huddle.huddle").create(
+        store.type(names.record("huddle")).create(
             Caller(agent=huddle["creator"] or "import:0.4", band=band, why="import from 0.4"),
             title=title, roles=attrs["roles"], stream=meta.id, state="closed" if huddle["archived"] else "open",
             **({"project": project} if project else {}))

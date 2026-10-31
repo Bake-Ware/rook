@@ -31,7 +31,7 @@ from pathlib import Path
 
 from rook.core2.hub.runtime import load_config
 
-from . import archive, rooms
+from . import archive, names, rooms
 from .source import Source, _tables, open_ro
 
 ARCHIVE_WHY = ("castling-design", "Migration from 0.4 is not a product feature ... export knowledge, projects/tasks, "
@@ -436,7 +436,7 @@ def _chat(source: Source, dest: Dest) -> list:
                 streams[a["from04"]] = s["id"]
     huddles = {h["room"]: h for h in db.execute("SELECT room, archived FROM huddles")} \
         if "huddles" in _tables(db) else {}
-    hud_recs = {r["stream"] for r in dest.records("huddle.huddle")}
+    hud_recs = {r["stream"] for r in dest.records(names.record("huddle"))}
     miss_rooms, miss_msgs, miss_posts, n_msgs, n_posts = [], [], [], 0, 0
     for room in db.execute("SELECT id FROM rooms"):
         rid = room["id"]
@@ -479,7 +479,7 @@ def _jobs_changes(source: Source, dest: Dest) -> list:
     jdb = source.db("jobs")
     if jdb is not None and "jobs" in _tables(jdb):
         have = {}
-        for r in dest.records("jobs.jobs"):
+        for r in dest.records(names.record("jobs")):
             v = _json(r.get("vars"), {})
             if v.get("id04"):
                 have[v["id04"]] = (v, r)
@@ -491,7 +491,7 @@ def _jobs_changes(source: Source, dest: Dest) -> list:
         rows.append(_row("job runs and history", runs, 0, runs, why=WHY["archive"]))
     cdb = source.db("changes")
     if cdb is not None and "changes" in _tables(cdb):
-        have = {(r["what"], r["created"]) for r in dest.records("change.change")}
+        have = {(r["what"], r["created"]) for r in dest.records(names.record("changes"))}
         miss = []
         for c in cdb.execute("SELECT id, record, created FROM changes"):
             what = str(_json(c["record"], {}).get("what") or f"0.4 change {c['id']}")[:500]
@@ -506,7 +506,7 @@ def _memory(source: Source, dest: Dest) -> list:
     mems = source.memories()
     if not mems:
         return []
-    have = {r["text"] for full in ("agents.memory", "agents.note") for r in dest.records(full)
+    have = {r["text"] for full in (names.record("agents", "memory"), names.record("agents", "note")) for r in dest.records(full)
             if r.get("agent") == "house"}
     active = [m for m in mems if m["state"] == "active"]
     miss = [m["id"] for m in active                  # a person's memory moves as "About <name>: <text>"
