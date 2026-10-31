@@ -109,7 +109,7 @@ def status(files_dir: str) -> str:
         if done.is_file():
             got = json.loads(done.read_text(encoding="utf-8"))
             out.update({k: got.get(k) for k in ("hub", "url", "owner")})
-    except (OSError, ValueError, AttributeError) as e:
+    except (OSError, ValueError, AttributeError, yaml.YAMLError) as e:
         out["error"] = f"can't read the 0.5 config: {e}"
     return json.dumps(out)
 

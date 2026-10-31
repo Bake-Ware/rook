@@ -82,8 +82,10 @@ def stage_castling(rook_dst: Path) -> list[Path]:
     src = REPO_ROOT / "rook"
     if (rook_dst / "core2").exists():
         shutil.rmtree(rook_dst / "core2")
+    junk = shutil.ignore_patterns("__pycache__", "*.pyc")
     shutil.copytree(src / "core2", rook_dst / "core2",
-                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", *CORE2_SKIP))
+                    ignore=lambda d, names: [*junk(d, names),
+                                             *(n for n in names if Path(d) == src / "core2" and n in CORE2_SKIP)])
     for pkg in ("kit", "streams"):
         _copy_pkg(src / pkg, rook_dst / pkg)
     # rook/kit/manifest/validate.py looks for the schema here in an installed copy.

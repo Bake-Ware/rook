@@ -84,7 +84,7 @@ class SettingsActivity : AppCompatActivity() {
         setupBand()
         setupApp()
         b.btnGrantPerms.setOnClickListener { request(*BASIC_PERMISSIONS) }
-        enrollLink(intent)
+        if (savedInstanceState == null) enrollLink(intent)     // not again after a rotation
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -438,6 +438,7 @@ class SettingsActivity : AppCompatActivity() {
             val got = withContext(Dispatchers.IO) { runCatching { Castling.status(this@SettingsActivity) } }
             got.onSuccess { s ->
                 val on = s.optBoolean("enrolled")
+                if (on) prefs.edit().putString(Castling.NAME_PREF, s.optString("name")).apply()
                 b.enrolled05.text = if (on) "Signed in as ${s.optString("name")} to hub ${s.optString("hub")} " +
                     "(${s.optString("url")}), owned by ${s.optString("owner")}." else "Not signed in yet."
                 b.btnSignIn05.text = if (on) "Sign in again" else "Sign in"
@@ -499,7 +500,6 @@ class SettingsActivity : AppCompatActivity() {
             b.code05.visibility = View.GONE
             got.onSuccess { r ->
                 if (r.optBoolean("ok")) {
-                    prefs.edit().putString(Castling.NAME_PREF, r.optString("name")).apply()
                     b.hub05.setText(r.optString("url"))      // a QR's code is used up
                     status("Signed in as ${r.optString("name")}. Tap Start.")
                 } else status(r.optString("error", "sign-in failed"))
