@@ -83,6 +83,8 @@ linked.
 
 - [agents](../../rook/plugins/agents/docs/manual.md): the agents runtime and the ready-made personas ([Agents](agents.md)).
 - [agents-claude-code](../../rook/plugins/agents-claude-code/docs/manual.md): agent turns in the Claude Code CLI.
+- [claudecode](../../rook/plugins/claudecode/docs/manual.md): Claude Code rules written once on the hub.
+- [decide](../../rook/plugins/decide/docs/manual.md): one-pass decision model for typed questions.
 
 **Workbench** (on the hub; [The workbench](workbench.md)):
 
@@ -92,15 +94,16 @@ linked.
 
 - [shell](../../rook/plugins/shell/docs/manual.md): commands, environment, live terminals.
 - [file](../../rook/plugins/file/docs/manual.md): read, write, list, search files.
+- [browser](../../rook/plugins/browser/docs/manual.md): throwaway headless Chromium sessions.
 - [screen-desktop](../../rook/plugins/screen-desktop/docs/manual.md), [hid-desktop](../../rook/plugins/hid-desktop/docs/manual.md), [notification-desktop](../../rook/plugins/notification-desktop/docs/manual.md): the desktop's screen, keyboard and mouse, notifications.
 - [camera](../../rook/plugins/camera/docs/manual.md), [battery](../../rook/plugins/battery/docs/manual.md).
 - [torrent](../../rook/plugins/torrent/docs/manual.md): Deluge.
 - [dongle](../../rook/plugins/dongle/docs/manual.md): the Rook RP2040 USB dongle.
-- Appliances ([what that means](workers.md#appliances)): [kvm](../../rook/plugins/kvm/docs/manual.md) (PiKVM), [tv](../../rook/plugins/tv/docs/manual.md) (LG webOS), [adb](../../rook/plugins/adb/docs/manual.md) (Android over adb), [cec](../../rook/plugins/cec/docs/manual.md) (Pico-CEC).
+- Appliances ([what that means](workers.md#appliances)): [kvm](../../rook/plugins/kvm/docs/manual.md) (PiKVM), [tv](../../rook/plugins/tv/docs/manual.md) (LG webOS), [adb](../../rook/plugins/adb/docs/manual.md) (Android over adb), [cec](../../rook/plugins/cec/docs/manual.md) (Pico-CEC); [appliance](../../rook/plugins/appliance/docs/manual.md) is the delegate worker's side.
 
 **Phone** (in the Rook Android app, which runs the 0.5 worker under
-Chaquopy; the app itself doesn't switch to 0.5 yet: `docs/castling-phone.md`
-says what it needs):
+Chaquopy once Settings > Band > Rook version says 0.5; 0.4 stays the default,
+and `docs/castling-phone.md` says what is still 0.4):
 
 - Messages and people: [sms](../../rook/plugins/sms/docs/manual.md) (texts), [call](../../rook/plugins/call/docs/manual.md) (the call log, placing calls), [contact](../../rook/plugins/contact/docs/manual.md).
 - Places and time: [location](../../rook/plugins/location/docs/manual.md), [clock](../../rook/plugins/clock/docs/manual.md) (timers and alarms), [calendar](../../rook/plugins/calendar/docs/manual.md).
@@ -108,9 +111,7 @@ says what it needs):
 - Sound: [sound-android](../../rook/plugins/sound-android/docs/manual.md) (volume, Do Not Disturb), [media-android](../../rook/plugins/media-android/docs/manual.md) (what is playing), [voice-android](../../rook/plugins/voice-android/docs/manual.md) (speak aloud, ask and hear the answer).
 - The phone itself: [phone](../../rook/plugins/phone/docs/manual.md) (find, unlock, vibrate, flashlight), [battery-android](../../rook/plugins/battery-android/docs/manual.md), [notification-android](../../rook/plugins/notification-android/docs/manual.md) (notifications and decision cards).
 
-Speech and a third batch of ports (browser, decide, claudecode, the
-worker's own `worker.*` and `stream.*` caps) are on their way in separate
-pull requests; each brings its own manual page.
+Speech is on its way in a separate pull request, with its own manual page.
 
 ## Writing your own
 

@@ -45,6 +45,14 @@ The QR text also pins the hub's id, so the machine can't be talked into
 joining a different hub. `--code <code>` with a plain address does the same
 without the pin.
 
+## A phone
+
+In the Rook Android app, Settings > Band > Rook version: pick **0.5 preview**
+(0.4 stays the default). Then either type the hub's address and tap
+**Sign in**: the phone shows a code to approve, as above. Or scan the hub's
+QR text (`rook://enroll?…`) with the phone's camera: the app opens, names the
+hub and asks before it signs in. Tap **Start worker** once signed in.
+
 ## Finding the hub on the local network
 
 A hub whose config has `enroll: {discover: true}` answers local network
