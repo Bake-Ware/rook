@@ -81,6 +81,26 @@ async def test_exec_stdin_env_cwd_and_default_cwd_is_tmp(tmp_path):
     assert (await run(action, {"n": 1}, plugin_data=str(sub)))["cwd"] == str(sub)
 
 
+
+@hard
+async def test_exec_children_never_see_the_vault_environment(monkeypatch):
+    # the hub's vault stand-in keeps secrets in ROOK_SECRET_*: no action child inherits them
+    monkeypatch.setenv("ROOK_SECRET_TELEGRAM", "123:abc")
+    code = "import os,json; print(json.dumps(sorted(k for k in os.environ if k.startswith('ROOK_SECRET_'))))"
+    assert await run({"exec": {"argv": py(code)}, "parse": "json"}) == []
+
+
+@hard
+async def test_exec_starts_its_process_through_the_launch_path_it_is_given():
+    # spec 7.1: every plugin process goes through core's launch (normal user, or the lease)
+    seen = []
+
+    async def launch(argv, **kw):
+        seen.append(argv)
+        return await asyncio.create_subprocess_exec(*argv, **kw)
+    out = await run({"exec": {"argv": py("print(42)")}, "parse": "json"}, launch=launch)
+    assert out == 42 and seen and seen[0][1:] == py("print(42)")[1:]
+
 @hard
 async def test_exec_bad_exit_fails_with_stderr_and_redacts_secrets():
     code = "import sys; sys.stderr.write('auth failed for ' + sys.argv[1]); sys.exit(3)"

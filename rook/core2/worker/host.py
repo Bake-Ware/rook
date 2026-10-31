@@ -41,7 +41,7 @@ from rook.kit.ctx import Caller, Ctx, FileResult, KitError, invoke
 from rook.kit.hooks import Scheduler
 
 from .loader import LoadError, Plugin, load_builtin, load_folder, local_os, merge_settings
-from .security import Call, NeedsElevation, WorkerGate, reply
+from .security import Call, NeedsElevation, WorkerGate, launch, reply
 
 __all__ = ["CallError", "Host", "LoadError"]
 
@@ -375,7 +375,7 @@ class Host:
                 secrets=self.resolve_secret, tmp=tmp.name if tmp else None,
                 plugin_dir=str(p.folder) if p.folder else None,
                 plugin_data=str(self._data_dir(p)) if self.data_root else None,
-                timeout=c.timeout, cap=c.spec)
+                timeout=c.timeout, cap=c.spec, launch=partial(launch, lease=lease))
         finally:
             if tmp is not None:
                 tmp.cleanup()

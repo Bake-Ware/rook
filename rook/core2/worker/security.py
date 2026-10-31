@@ -19,8 +19,6 @@ coroutine that carries ``core.elevate`` to the hub.
 TODO(castling:worker-host): the host routes every request through
 ``WorkerGate.check`` and ``WorkerGate.execute``, answers ``core.lease.drop``
 with ``drop_leases`` and calls ``tick`` from its heartbeat loop.
-TODO(castling:manifest-v11): rook.kit.actions' exec action starts its
-process through :func:`launch`.
 """
 from __future__ import annotations
 

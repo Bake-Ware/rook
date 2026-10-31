@@ -56,8 +56,9 @@ class Scope:
     def __init__(self, *, args: Mapping, settings: Mapping, appliance: Mapping | None,
                  worker: Mapping, secrets: Mapping[str, str], tmp: str | None,
                  plugin_dir: str | None, plugin_data: str | None,
-                 joins: Mapping[str, str] | None = None):
+                 joins: Mapping[str, str] | None = None, launch=None):
         self.args = args or {}
+        self.launch = launch          # how exec starts its process (the engine's run_action)
         self.joins = joins or {}
         self.settings = settings or {}
         self.appliance = appliance or {}

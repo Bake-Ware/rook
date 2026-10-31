@@ -67,6 +67,26 @@ def test_yaml_plugin_calls_and_aliases():
     go(body)
 
 
+
+@needs_echo
+def test_action_processes_go_through_core_launch(monkeypatch):
+    # spec 7.1: a root worker with no normal account refuses to launch, actions included
+    from rook.core2.worker import security
+
+    def refuse(argv, lease, **kw):
+        raise security.LaunchRefused("worker runs as root but no normal account (run_as) is set")
+    monkeypatch.setattr(security, "launch_plan", refuse)
+
+    async def body():
+        host = Host(os_name="linux")
+        await host.load(FIX / "echo")
+        try:
+            with pytest.raises(CallError, match="LaunchRefused"):
+                await host.call("echo.say", {"text": "hi"}, ME)
+        finally:
+            await host.close()
+    go(body)
+
 @needs_echo
 def test_bad_args_and_unknown_cap():
     async def body():
