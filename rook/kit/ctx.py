@@ -23,13 +23,17 @@ fakes and the kit never imports the hub.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import fnmatch
+import functools
 import inspect
 import logging
 import shutil
 import sys
 import tempfile
+import threading
 import types
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
@@ -334,16 +338,35 @@ async def _await_call(dispatch: Dispatch, cap: str, args: dict, caller: Caller,
     return await res if inspect.isawaitable(res) else res
 
 
+PLUGIN_THREADS = 8          # sync calls of one plugin running at once
+_executors: dict[str, ThreadPoolExecutor] = {}
+_executors_lock = threading.Lock()
+
+
+def plugin_executor(plugin: str) -> ThreadPoolExecutor:
+    """The plugin's own bounded thread pool for sync code. A call that hangs
+    keeps its thread after it times out; with a pool per plugin, a plugin
+    that hangs only queues its own calls, never every other plugin's or the
+    loop's default executor (getaddrinfo, to_thread)."""
+    with _executors_lock:
+        ex = _executors.get(plugin)
+        if ex is None:
+            ex = _executors[plugin] = ThreadPoolExecutor(PLUGIN_THREADS, thread_name_prefix=f"rook-{plugin}")
+        return ex
+
+
 async def invoke(func: Callable[..., Any], ctx: Ctx, args: Mapping | None = None) -> Any:
-    """Run a plugin function: await it if async, else in a thread (so it may
-    block and use sync ``ctx.call``). The tmp dir goes when it returns."""
+    """Run a plugin function: await it if async, else in a thread of the
+    plugin's own pool (so it may block and use sync ``ctx.call``). The tmp
+    dir goes when it returns."""
     if ctx._loop is None:
         ctx._loop = asyncio.get_running_loop()
     try:
         if inspect.iscoroutinefunction(func):
             res = await func(ctx, **(args or {}))
         else:
-            res = await asyncio.to_thread(func, ctx, **(args or {}))
+            run = functools.partial(contextvars.copy_context().run, func, ctx, **(args or {}))
+            res = await asyncio.get_running_loop().run_in_executor(plugin_executor(ctx.plugin), run)
             if inspect.isawaitable(res):
                 res = await res
         return res.result() if isinstance(res, Producer) else res

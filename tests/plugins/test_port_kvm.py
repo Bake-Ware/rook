@@ -79,6 +79,18 @@ class FakeKvmd(BaseHTTPRequestHandler):
         if (self.command, url.path) == ("GET", "/api/atx"):
             return self._send(200, {"ok": True, "result": {"enabled": True, "busy": False,
                                                            "leds": {"power": True, "hdd": False}}})
+        if (self.command, url.path) == ("GET", "/api/log") and "follow=1" in (url.query or ""):
+            self.send_response(200)          # a follow stream: lines until the client goes
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            try:
+                for _ in range(2000):
+                    self.wfile.write(b"kvmd log line\n")
+                    self.wfile.flush()
+                    __import__("time").sleep(0.005)
+            except OSError:
+                pass
+            return None
         if (self.command, url.path) == ("GET", "/api/log"):
             return self._send(200, b"kvmd log line\n", "text/plain")
         if self.command == "POST" and url.path.startswith(("/api/hid/", "/api/atx/")):
@@ -284,3 +296,16 @@ def test_no_instance(kvmd):
         call(kvmd, "kvm.power.status")
     with pytest.raises(KitError, match="no appliance instance"):
         call(kvmd, "kvm.hid.click")
+
+
+def test_a_follow_stream_is_cut_off_not_read_forever(kvmd, monkeypatch):
+    # Review K2: kvm.api_get with a follow query read forever.
+    script = vars(__import__("sys").modules[PLUGIN.caps["kvm.api_get"].func.__module__])
+    monkeypatch.setitem(script, "READ_SECS", 1)
+    t0 = __import__("time").monotonic()
+    with pytest.raises(KitError, match="kept sending"):
+        call(kvmd, "kvm.api_get", {"path": "/api/log", "query": {"follow": "1"}})
+    assert __import__("time").monotonic() - t0 < 8
+    monkeypatch.setitem(script, "READ_MAX", 100)
+    with pytest.raises(KitError, match="larger than"):
+        call(kvmd, "kvm.api_get", {"path": "/api/log", "query": {"follow": "1"}})
