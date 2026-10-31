@@ -523,7 +523,9 @@ class Hub:
             log.info("recovery key made: an owner sees it with the recovery-key command or GET /recovery-key")
             return
         self._tokens_mtime = path.stat().st_mtime
-        for d, rec in json.loads(path.read_text(encoding="utf-8")).items():
+        stored = json.loads(path.read_text(encoding="utf-8"))
+        self.identities.keep_tokens(stored)     # one taken out of the file is revoked now
+        for d, rec in stored.items():
             try:
                 self.identities.add_token_digest(d, Caller(rec.get("person"), rec.get("agent")))
             except ValueError as e:
@@ -534,15 +536,24 @@ class Hub:
         return add_token(self.data, caller, label, self.identities)
 
     def authenticate(self, token: str) -> Caller | None:
-        """A door's bearer token to its caller; picks up tokens minted by
-        ``python -m rook.core2.hub token`` while the hub runs."""
-        caller = self.identities.authenticate(token)
-        if caller is None and self._tokens_path.exists() and \
-                self._tokens_path.stat().st_mtime != getattr(self, "_tokens_mtime", None):
+        """A door's bearer token to its caller. ``tokens.json`` is re-read
+        when it changes, so tokens minted by ``python -m rook.core2.hub
+        token`` work, and one taken out of it stops working, while the hub
+        runs. A person or agent no longer configured is nobody."""
+        try:
+            mtime = self._tokens_path.stat().st_mtime
+        except OSError:
+            mtime = None
+        if mtime is not None and mtime != getattr(self, "_tokens_mtime", None):
             self._load_tokens()
-            caller = self.identities.authenticate(token)
-        if caller is not None and caller.person and self.identities.user(caller.person) is None:
+        caller = self.identities.authenticate(token)
+        if caller is None:
+            return None
+        if caller.person and self.identities.user(caller.person) is None:
             return None          # a person no longer in the config
+        agent = caller.agent or ""
+        if agent.startswith("agent:") and agent[len("agent:"):] not in self.identities.agents:
+            return None          # an agent no longer in the config
         return caller
 
     # -- the library and manifests --------------------------------------------------

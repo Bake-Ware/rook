@@ -13,7 +13,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from urllib.parse import parse_qsl, unquote
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from rook.core2 import rights
 from rook.core2.hub.identity import NONE, Caller
@@ -142,6 +142,12 @@ class Web:
     # -- sign-in ----------------------------------------------------------------
 
     def _login(self, req):
+        # Login CSRF: a form on another site must not sign this browser in
+        # as someone else. The browser says where a request comes from.
+        site, origin = req.headers.get("Sec-Fetch-Site"), req.headers.get("Origin")
+        if site not in (None, "same-origin", "none") or \
+                (origin is not None and urlsplit(origin).netloc != req.headers.get("Host", "")):
+            raise _Error(403, "sign in from this hub's own page")
         ctype = req.headers.get("Content-Type", "")
         if ctype.startswith("application/x-www-form-urlencoded"):
             try:
@@ -347,7 +353,8 @@ class Web:
             page = self.hub.pages.openable(t.page)
         except Exception as e:
             raise _Error(403, str(getattr(e, "message", e))) from None
-        person = self.sessions[sid].person if sid in self.sessions else None
+        with self._lock:
+            person = self.sessions[sid].person if sid in self.sessions else None
         owner = self.hub.identities.is_owner(person)
         layers = [["person", self.hub.identities.person_rights(person) if person else NONE],
                   ["page", {"grants": page.events}], *self._authors(page)]
