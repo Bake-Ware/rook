@@ -58,7 +58,9 @@ The huddle's `project` (set at `huddle.start`) gives the level
 - `kind=deploy` (a pinned PR or commit): gates version, ci, tests, secrets;
   then `change.submit` **as you**, with `change` holding the change record's
   fields (scripts, tests, rollback, risk, plan). `{version}` in their args
-  becomes the pinned SHA. The change record tests it and rolls back.
+  becomes the pinned SHA, and the huddle's project goes on it. The change
+  record tests it and rolls back; in a sacred project its card is the one an
+  owner gets.
 
 ## The table and the thread
 

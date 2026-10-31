@@ -28,7 +28,9 @@ is carried out at once:
   github allows), so GitHub refuses if the head moved;
 - qa: the ``qa_label`` label and a comment;
 - deploy: ``change.submit`` as the caller (their rights, the change record's
-  tests and rollback), with ``{version}`` in its steps' args filled in.
+  tests and rollback), with ``{version}`` in its steps' args filled in and
+  the huddle's project on it, so in a sacred project the change record's own
+  card is the one an owner gets (the huddle doesn't ask first).
 
 Every call through dispatch is journaled with its why (the motion's id); the
 motion record keeps the gates, the self-review and the outcome. A hub restart
@@ -130,6 +132,7 @@ class Runtime:
         for t in list(self.tasks):
             t.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
+        self.streams.durable.close()
 
     def setting(self, key: str):
         return self.ctx.settings[key]
@@ -335,7 +338,7 @@ class Runtime:
         self.set(mid, gates=gates)
         self.say(m["huddle"], f"{m['kind']} {mid}: gates passed ({', '.join(g['id'] for g in gates)}).",
                  event="gates", motion=mid, ok=True)
-        if m["level"] == "sacred":
+        if m["level"] == "sacred" and m["kind"] != "deploy":     # a deploy's change record asks instead
             await self.ask(mid)
         else:
             await self.carry(mid)
@@ -393,8 +396,8 @@ class Runtime:
         spec = fill(dict(m["change"] or {}), m["version"])
         spec.setdefault("what", f"Deploy {a['title']} at {short(m['version'])}")
         spec.setdefault("why", (m.get("reason") or f"Huddle deploy, motion {m['id']}")[:400])
-        if h.get("project"):
-            spec.setdefault("project", h["project"])
+        if h.get("project"):            # the huddle's level holds: a sacred project's change asks an owner
+            spec["project"] = h["project"]
         creator, person = m.get("creator") or "", m.get("person")
         who = Caller(person=person, agent=creator if creator and creator != person else None,
                      band=self.band, why=f"Deploy for huddle motion {m['id']}")
