@@ -441,6 +441,12 @@ def test_satisfies(version, spec, ok):
     assert satisfies(version, spec) is ok
 
 
+def test_satisfies_reads_the_whole_range_before_answering():
+    from rook.kit.manifest import satisfies
+    with pytest.raises(ValueError):
+        satisfies("0.0.0", ">=1.0,~2")     # the first comparator fails; the second is still unreadable
+
+
 def test_install_reports_refusals_and_change_record(tmp_path):
     inst, host = worker(tmp_path)
     folder = make_plugin(tmp_path, files={"scripts/stats.py": "def collect(ctx): return 1"})

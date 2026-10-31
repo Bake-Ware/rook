@@ -118,14 +118,13 @@ def satisfies(version: str, spec: str) -> bool:
     spec = spec.strip()
     if spec in ("", "*"):
         return True
+    parts = [_COMPARATOR.match(part.strip()) for part in spec.split(",")]
+    if not all(parts):
+        raise ValueError(f"not a version range: {spec!r}")
     have = semver_key(version)
-    for part in spec.split(","):
-        m = _COMPARATOR.match(part.strip())
-        if not m:
-            raise ValueError(f"not a version range: {spec!r}")
+    for m in parts:
         op, want = m.group(1) or "==", semver_key(_padded(m.group(2)))
-        ok = {">=": have >= want, ">": have > want, "<=": have <= want, "<": have < want,
-              "==": have == want, "=": have == want}[op]
-        if not ok:
+        if not {">=": have >= want, ">": have > want, "<=": have <= want, "<": have < want,
+                "==": have == want, "=": have == want}[op]:
             return False
     return True
