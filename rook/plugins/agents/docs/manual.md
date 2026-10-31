@@ -1,10 +1,10 @@
 # Agents
 
 Every agent on Rook is the same thing: a **persona** (what it is and how it
-works), a **backend** (what it thinks with: Claude Code, Codex, a local
-model, an API), a **session** with each person or agent it talks to, a
-private **notepad** and a **memory**. The house agent is just one agent with
-a broader persona; there is no special one.
+works), a **backend** (what it thinks with: Claude Code or Codex), a
+**session** with each person or agent it talks to, a private **notepad**
+and a **memory**. The house agent is just one agent with a broader persona;
+there is no special one.
 
 ## Ready-made roles
 
@@ -52,9 +52,9 @@ sleep on idle. `agents.wake` and `agents.sleep` do it by hand.
 
 While it works, an agent jots what it decides, learns and is told on its
 private notepad (`agents.note`). Its memory is read-only while it works. When
-it goes to sleep, a **dream cycle** - a light model (`dream_model`, Haiku by
-default) - turns the notepad into lasting memory and prunes and corrects
-both. Always-on agents dream every `dream_every` (6 hours). `agents.dream`
+it goes to sleep, a **dream cycle** - a light model (the backend's System
+Three: Haiku for Claude Code) - turns the notepad into lasting memory and
+prunes and corrects both. Always-on agents dream every `dream_every` (6 hours). `agents.dream`
 runs one now. `agents.get` shows memory and notepad to the agent itself and
 to owners.
 
@@ -70,6 +70,8 @@ everything; `restore: true` brings it back. Skills are markdown playbooks;
 ## Backends
 
 An agent with backend `default` uses the hub's chosen `agent.backend`
-provider; `claude-code` (or another name) pins it to that backend plugin
-(`agents-claude-code`). Settings: `warm`, `turn_timeout`, `dream_every`,
-`dream_model`, `chat_agent`.
+provider; `claude-code` or `codex` pins it to that backend plugin
+(`agents-claude-code`, `agents-codex`). Each backend has its own System Two
+and System Three models (its `model` and `model_three` settings); an agent's
+`model: {two, three}` overrides them. Settings: `warm`, `turn_timeout`,
+`dream_every`, `chat_agent`.

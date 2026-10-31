@@ -1,6 +1,6 @@
 # The agents package core (castling-agents): one agent mechanism. An agent is
 # a persona (personas: below, or made by a person) + a backend (the
-# agent.backend contract: Claude Code, Codex, local, API) + a persistent
+# agent.backend contract: Claude Code or Codex) + a persistent
 # session per party it talks with (a rook.streams session stream) + a private
 # notepad + read-only memory, which a dream cycle (System Three) curates from
 # the notepad when the agent goes idle. Always-on agents never sleep on idle
@@ -21,14 +21,13 @@ source: https://github.com/Bake-Ware/rook
 # agents-<backend>.turn (the backend plugins of this package).
 # A person's direct message to the band's Telegram or Discord bot goes to
 # chat_agent as that person; the reply goes back to them by the same bot.
-uses: ["agent.backend", "telegram.send", "discord.send", "agents-claude-code.*", "agents-codex.*", "agents-local.*", "agents-api.*"]
+uses: ["agent.backend", "agents-claude-code.turn", "agents-codex.turn", "telegram.send", "discord.send"]
 
 settings:
   warm: { type: duration, default: 10m, doc: How long an agent that isn't always-on stays awake after its last message. }
   turn_timeout: { type: duration, default: 20m, doc: Longest one agent turn may take. }
   dream_every: { type: duration, default: 6h, doc: How often an always-on agent gets a dream pass. }
   chat_agent: { default: house, doc: "The agent that answers people's direct messages to the band's Telegram and Discord bots (once they linked their account); blank: none does." }
-  dream_model: { type: str, default: haiku, doc: "System Three's model (the dream cycle), unless the agent names its own model.three." }
 
 caps:
   list:
@@ -63,8 +62,8 @@ caps:
       prompt: { type: markdown, doc: What the agent is and how it works. }
       skills: { type: list, items: { type: str } }
       grants: { type: list, items: { type: str }, doc: "Cap patterns it may use; acting for a person it gets only what both may." }
-      backend: { type: str, enum: [default, claude-code, codex, local, api] }
-      model: { type: map, items: { type: str }, doc: "Per-system model: {two: opus, three: haiku}; default: the backend's." }
+      backend: { type: str, enum: [default, claude-code, codex] }
+      model: { type: map, items: { type: str }, doc: "Per-system model: {two: opus, three: haiku}; default: the backend's model and model_three settings." }
       always_on: { type: bool, doc: "Never sleeps on idle (house, security); others wake when addressed." }
       cwd: { type: str, doc: "The folder its backend works in; blank: the backend's own." }
     result: { type: map }
@@ -82,8 +81,8 @@ caps:
       prompt: { type: markdown, doc: What the agent is and how it works. }
       skills: { type: list, items: { type: str } }
       grants: { type: list, items: { type: str }, doc: "Cap patterns it may use; acting for a person it gets only what both may." }
-      backend: { type: str, enum: [default, claude-code, codex, local, api] }
-      model: { type: map, items: { type: str }, doc: "Per-system model: {two: opus, three: haiku}; default: the backend's." }
+      backend: { type: str, enum: [default, claude-code, codex] }
+      model: { type: map, items: { type: str }, doc: "Per-system model: {two: opus, three: haiku}; default: the backend's model and model_three settings." }
       always_on: { type: bool, doc: "Never sleeps on idle (house, security); others wake when addressed." }
       cwd: { type: str, doc: "The folder its backend works in; blank: the backend's own." }
     result: { type: map }

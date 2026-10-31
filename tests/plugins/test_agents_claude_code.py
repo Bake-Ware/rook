@@ -120,3 +120,12 @@ def test_it_provides_the_agent_backend_contract():
     assert m["provides"] == {"agent.backend": "agents-claude-code.turn"}
     assert json.dumps(m["caps"]["agents-claude-code.turn"]["result"]["fields"]["session"]) == \
         json.dumps({"type": "str", "required": True})
+
+
+def test_system_three_is_its_model_three_setting(tmp_path, bins):
+    bins.add("claude", CLAUDE)
+    turn(tmp_path, prompt="x", model="three")
+    turn(tmp_path, {"model_three": "claude-haiku-5-5"}, prompt="x", model="three")
+    turn(tmp_path, prompt="x", model="two")
+    models = [c["argv"][c["argv"].index("--model") + 1] for c in bins.calls("claude")]
+    assert models == ["haiku", "claude-haiku-5-5", "opus"]

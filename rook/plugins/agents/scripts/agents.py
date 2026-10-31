@@ -366,7 +366,7 @@ class Runtime:
             mems = self.memories(name)
             data = json.dumps({"memories": [{"id": m["id"], "text": m["text"]} for m in mems],
                                "notes": [{"id": n["id"], "text": n["text"]} for n in notes]}, indent=1)
-            model = (a.get("model") or {}).get("three") or self.settings["dream_model"]
+            model = (a.get("model") or {}).get("three") or "three"     # the backend's own System Three
             ctx = ctx or self.ctx
             if ctx is None:
                 raise KitError("agents hasn't started yet")
