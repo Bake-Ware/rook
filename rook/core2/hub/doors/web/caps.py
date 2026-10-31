@@ -4,7 +4,7 @@ and run in-process on the hub node like any hub cap (dispatch, rights,
 journal). :func:`install` registers them at hub start.
 
 Pages are a content kind: a plugin ships them in its manifest (``pages:``),
-and agents make them with ``pages.create``. An agent-made page lives in
+and agents make them with ``page.create``. An agent-made page lives in
 ``<data>/pages/<name>/`` as ``page.html``, ``meta.json`` and ``NOTE.md`` (why
 it exists and its history: the provenance note shown beside it). Archiving
 is reversible and kept in ``<data>/pages.json``.
@@ -37,7 +37,7 @@ from rook.core2 import CORE_VERSION
 from rook.core2.hub.identity import Caller
 
 BUILTIN = Path(__file__).with_name("builtin")
-MADE = "pages"                       # agent-made pages are pages/<name>
+MADE = "page"                        # agent-made pages are page/<name>
 NAME = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 MAX_HTML = 512 * 1024
 MAX_NOTE = 64 * 1024
@@ -193,10 +193,10 @@ class Pages:
 
 
 def dock_agent(hub) -> str | None:
-    """The agent in the site's chat dock: the ``pages.dock`` setting, when
+    """The agent in the site's chat dock: the ``page.dock`` setting, when
     the agents package is installed."""
-    name = hub.plugins.settings.get("pages", {}).get("dock", "house")
-    return name if name and "agents" in hub.plugins.plugins else None
+    name = hub.plugins.settings.get("page", {}).get("dock", "house")
+    return name if name and "agent" in hub.plugins.plugins else None
 
 
 def _plugin_folder(hub, pid: str) -> Path:
@@ -231,11 +231,11 @@ def install(hub) -> None:
     settings = Settings(hub)
     h = _Handlers(hub, settings)
     table = {
-        "pages": {"pages.list": h.pages_list, "pages.view": h.pages_view, "pages.get": h.pages_get,
-                  "pages.create": h.pages_create, "pages.update": h.pages_update,
-                  "pages.archive": h.pages_archive, "pages.restore": h.pages_restore,
-                  "pages.components": h.pages_components, "pages.site": h.pages_site,
-                  "pages.start": h.pages_start},
+        "page": {"page.list": h.pages_list, "page.view": h.pages_view, "page.get": h.pages_get,
+                  "page.create": h.pages_create, "page.update": h.pages_update,
+                  "page.archive": h.pages_archive, "page.restore": h.pages_restore,
+                  "page.components": h.pages_components, "page.site": h.pages_site,
+                  "page.start": h.pages_start},
         "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers, "hub.manifests": h.hub_manifests,
                 "hub.door": h.hub_door},
         "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide,
@@ -292,9 +292,9 @@ class _Handlers:
             raise KitError("bad args: name is lowercase letters, digits, - and _ (64 at most)")
         folder = self.hub.pages.folder / name
         if (folder / "meta.json").exists():
-            raise KitError(f"{MADE}/{name} exists: change it with pages.update")
+            raise KitError(f"{MADE}/{name} exists: change it with page.update")
         if (html is None) == (layout is None):
-            raise KitError("bad args: give the page's html or a layout of components (pages.components lists them)")
+            raise KitError("bad args: give the page's html or a layout of components (page.components lists them)")
         _check_sizes(html or "", note)
         meta = {"title": title, "caps": _patterns(caps), "events": _patterns(events), "section": section or "Pages",
                 "layout": self._layout(layout), "authors": [_author(ctx)], "created": time.time(), "task": task,
@@ -352,10 +352,10 @@ class _Handlers:
         out = []
         for i, item in enumerate(layout):
             if not isinstance(item, dict) or not isinstance(item.get("component"), str):
-                raise KitError(f"bad args: layout[{i}] needs a component (pages.components lists them)")
+                raise KitError(f"bad args: layout[{i}] needs a component (page.components lists them)")
             c = components.get(item["component"])
             if c is None:
-                raise KitError(f"bad args: layout[{i}]: no component {item['component']} (pages.components lists them)")
+                raise KitError(f"bad args: layout[{i}]: no component {item['component']} (page.components lists them)")
             extra = set(item) - {"component", "props", "title", "wide"}
             if extra:
                 raise KitError(f"bad args: layout[{i}]: unknown {', '.join(sorted(extra))}")

@@ -29,7 +29,7 @@ FRAME_SECS = 60
 TOKENS_PER_SESSION = 32
 POLL_SECS = 20.0
 EVENTS_KEPT = 500
-DOCK_CAPS = ("agents.chat.send", "agents.chat.read")     # the shell's chat dock, with the dock agent only
+DOCK_CAPS = ("agent.chat.send", "agent.chat.read")     # the shell's chat dock, with the dock agent only
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
          ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml"}
 
@@ -128,12 +128,12 @@ class Web:
             cap, args = body.get("cap"), body.get("args") or {}
             agent = dock_agent(self.hub)
             dock = agent is not None and cap in DOCK_CAPS and isinstance(args, dict) and args.get("agent") == agent
-            if not (isinstance(cap, str) and cap.startswith("pages.") or dock):
-                raise _Error(403, "the shell calls pages.* (and the dock agent's chat) only")
+            if not (isinstance(cap, str) and cap.startswith("page.") or dock):
+                raise _Error(403, "the shell calls page.* (and the dock agent's chat) only")
             why = body.get("why") if isinstance(body.get("why"), str) and body["why"].strip() else \
                 "Talking with the agent in the site's dock." if dock else "Using the hub site."
             # A message to the dock agent runs in the person's own door session:
-            # the agent's turn works with their rights, not the shell's pages.*.
+            # the agent's turn works with their rights, not the shell's page.*.
             session = req._run(self._dock_session(caller) if dock else self._shell_session(caller))
             return _json(200, req._run(self.hub.call(caller, {
                 "worker": "rook", "cap": cap, "args": args, "why": why, "session": session}, "web")))
@@ -213,12 +213,12 @@ class Web:
     # -- pages --------------------------------------------------------------------
 
     def _open(self, req, sid: str, caller: Caller, pid) -> dict:
-        """``pages.view`` as the person (rights, journal); on success a page
+        """``page.view`` as the person (rights, journal); on success a page
         token for the shell and a one-time frame URL."""
         if not isinstance(pid, str) or not pid:
             raise _Error(400, "page is required")
         reply = req._run(self.hub.call(caller, {
-            "worker": "rook", "cap": "pages.view", "args": {"page": pid}, "why": f"Opening the page {pid}.",
+            "worker": "rook", "cap": "page.view", "args": {"page": pid}, "why": f"Opening the page {pid}.",
             "session": req._run(self._shell_session(caller))}, "web"))
         if not reply.get("ok"):
             return reply
@@ -318,8 +318,8 @@ class Web:
         return out
 
     async def _shell_session(self, caller: Caller) -> str:
-        """The shell's dispatch session: pages.* only."""
-        return self.hub._session(self.hub._door_sessions, ("web", caller.person), caller, ["pages.*"])
+        """The shell's dispatch session: page.* only."""
+        return self.hub._session(self.hub._door_sessions, ("web", caller.person), caller, ["page.*"])
 
     async def _dock_session(self, caller: Caller) -> str:
         return self.hub._door_session(caller)

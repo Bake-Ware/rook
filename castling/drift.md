@@ -100,7 +100,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 30 | missing (known) | No attention job on the hub; phone keeps the 0.4 attention store (**fixed, PR #355**) | `notification-android`, `docs/castling-phone.md:111` |
 | 31 | over-built | Hub plugins rebuild storage instead of declaring records (**fixed, PR #348**; pages wait for the dashboard rework) | `agents.py:110`, `telegram`/`discord` `links.json`, hub pages |
 | 32 | contradiction (mild) | Core service plugins call providers by plugin name, not contract. **Fixed: PR #344 (agents), PR #357 (notify, speech, agents' chat reply)** | `notify`, `speech`, `agents` |
-| 33 | renamed (low) | Plural namespaces `jobs.*`, `agents.*`, `pages.*`; `jobs.start` not `job.run` | `jobs`, `agents`, hub pages |
+| 33 | renamed (low) | Plural namespaces `jobs.*`, `agents.*`, `pages.*`; `jobs.start` not `job.run` (**fixed, PR #353**) | `jobs`, `agents`, hub pages |
 | 34 | over-built (low) | Manifest 1.1/1.2 features nothing uses; jobs rolls its own webhook HMAC (**partly fixed, PR #349**: format frozen, unused keys reserved; code and the jobs webhook left) | `rook/kit/manifest`, `hub/plugins.py`, `jobs.py:870` |
 
 Watch items (ask Bake, not drift yet) are after the findings.
@@ -640,6 +640,8 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
   meant to fix ("ergonomic for agents").
 - **Smallest fix.** Rename to `job`, `agent`, `page` before switchover, while there are no 0.5
   users to alias for.
+- **Fixed** in PR #353 (c8/roles-names): plugins `agent`, `job`, `page`; `jobs.start` is `job.run`;
+  #348's records are `agent.*` (the kit's same-name rule) and `agent.memory.*`; no aliases.
 
 ## 34. Manifest features nothing uses (over-built, low)
 

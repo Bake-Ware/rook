@@ -11,7 +11,7 @@ never nag.
 **Backups.** Call `backup.list`. It fails when there's nowhere to put them:
 by default backups go to another of the owner's machines running the
 `backup-store` plugin, and none is online. Or the list is empty, or the
-newest backup is days old, or the nightly job isn't installed (`jobs.list`).
+newest backup is days old, or the nightly job isn't installed (`job.list`).
 Say it plainly, e.g. "Your hub isn't backed up anywhere yet. Want me to set
 up nightly backups to your NAS?", and offer what fits: install
 `backup-store` on a machine that's always on, install the backup plugin's

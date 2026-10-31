@@ -334,7 +334,7 @@ Done in one sitting. Rook is down from 2.1 until the 0.5 hub answers in 2.3 (abo
    `ROOK_TOKEN=... python castling/switchover/smoke.py --url https://rook05.bakeforge.com --verify-json verify.json`.
    It checks the hub answers and the moved stores serve their items: rooms
    and huddles (`stream.list`, `huddle.list`, a huddle read back with
-   `stream.read`), `jobs.list`, `change.list`, `knowledge.list`,
+   `stream.read`), `job.list`, `change.list`, `knowledge.list`,
    `task.list`, `project.list`, `secret.list` (it names the record caps from the checkout's
    manifests, so plugin renames follow). All `[ok]`.
 4. **Bands and workers.** On each machine on the report's re-enroll
@@ -354,7 +354,7 @@ Done in one sitting. Rook is down from 2.1 until the 0.5 hub answers in 2.3 (abo
    `claude mcp add --transport http rook05 https://rook05.bakeforge.com/mcp --header "Authorization: Bearer <token>"`,
    then a `worker.ping` on cachyrig through it. claude.ai: a custom connector
    at `https://rook05.bakeforge.com/mcp` with the token as client secret
-   (R13). The house agent: `agents.chat.send` `{agent: house, text: "say ok"}`
+   (R13). The house agent: `agent.chat.send` `{agent: house, text: "say ok"}`
    answers. Landing work: a task's sign-off, then `github.merge` (R14).
 6. **Chat bots.** Telegram and Discord on 0.5 (one hub per bot token; 0.4
    is stopped), then Bake relinks with `/link`.

@@ -49,7 +49,7 @@ standalone 0.4 server keeps serving 0.4 clients.
    anything else gets a short acknowledgement and goes to the agent. No
    provider, `talker: false` or an unreadable answer: everything goes to
    the agent.
-5. System Two: `agents.chat.send` as the person, so the request lands in
+5. System Two: `agent.chat.send` as the person, so the request lands in
    their persistent session with that agent (the one they type in) and runs
    with their rights (the intersection rule). It runs in the background; the
    reply is a `turn {role: reply, system: two}` event.

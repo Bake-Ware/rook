@@ -1,7 +1,7 @@
 # Huddles (castling-streams, castling-agents): a group thread where people
 # and agents in roles work something out. A huddle is a durable `huddle`
 # stream plus a record (title, roles, project). A post that names a role
-# (@qa) also goes to that agent through agents.chat.send, sent as the poster.
+# (@qa) also goes to that agent through agent.chat.send, sent as the poster.
 #
 # No chair, pins or votes: work lands by sign-off on its task and
 # github.merge (rook/plugins/github; castling-workbench).
@@ -16,7 +16,7 @@ package: agents
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-uses: ["agents.chat.send"]
+uses: ["agent.chat.send"]
 
 records:
   huddle:

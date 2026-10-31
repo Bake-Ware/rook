@@ -12,7 +12,7 @@
 # (agent:<name>) with its grants: alone it has only them, for a person only
 # what both may. Code: scripts/agents.py.
 manifest: 1
-plugin: agents
+plugin: agent
 version: 0.5.1
 title: Agents
 doc: Agents with a persona, a backend, persistent sessions, a private notepad and curated memory.
@@ -37,8 +37,8 @@ settings:
   house: { type: str, default: house, doc: "The agent that reaches the person: questions agents ask them (approval.ask) go to it; blank: they wait on the Approvals page only." }
 
 # Stored as kit records (castling-plugins "Records"; castling-caps rule 6):
-# the kit gives the storage, history and the agents.agent.* and
-# agents.memory.* caps. Notes have no caps of their own: agents.note writes
+# the kit gives the storage, history and the agent.* and
+# agent.memory.* caps. Notes have no caps of their own: agent.note writes
 # one, and only the agent itself sees its notepad (in its prompt).
 records:
   agent:
@@ -102,7 +102,7 @@ caps:
     args:
       agent: { type: str, required: true }
       text: { type: str, required: true }
-      wait: { type: bool, default: true, doc: "Wait for the reply; false: answer at once, read it later with agents.chat.read." }
+      wait: { type: bool, default: true, doc: "Wait for the reply; false: answer at once, read it later with agent.chat.read." }
     result: { type: map }
   chat.read:
     doc: Your session with an agent, after a cursor (owners may read anyone's with party).
@@ -119,7 +119,7 @@ caps:
       party: { type: str, doc: "Owners: whose session (person:<name> or agent:<name>)." }
     result: { type: map }
   note:
-    doc: Write to an agent's private notepad (the agent itself, or an owner). Durable things go here; the dream cycle curates them into memory (agents.memory.*).
+    doc: Write to an agent's private notepad (the agent itself, or an owner). Durable things go here; the dream cycle curates them into memory (agent.memory.*).
     risk: write
     scope: self
     run: scripts/agents.py:note
@@ -156,9 +156,9 @@ hooks:
     # castling-caps C4: a question for the person is routed through the house agent.
     - { event: approval.asked, run: scripts/agents.py:on_asked }
     - { event: task.signoff_requested, run: scripts/agents.py:on_signoff_requested }
-    - { event: agents.agent.created, run: scripts/agents.py:on_created }
-    - { event: agents.agent.updated, run: scripts/agents.py:on_updated }
-    - { event: agents.agent.archived, run: scripts/agents.py:on_archived }
+    - { event: agent.agent.created, run: scripts/agents.py:on_created }
+    - { event: agent.agent.updated, run: scripts/agents.py:on_updated }
+    - { event: agent.agent.archived, run: scripts/agents.py:on_archived }
 
 # The ready-made roles this package ships (castling-agents "Skills and
 # defaults"): created on install, each with its skills. Any plugin's manifest

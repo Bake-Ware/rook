@@ -23,7 +23,7 @@ team roles come with the workbench: `pm`, `lead` and `qa` (plugin `task`),
 agent win over later persona updates. On a persona name two plugins ship,
 the first by plugin name wins (this plugin's own come first).
 
-`agents.skill {name}` reads a skill from the manifest that ships it, else
+`agent.skill {name}` reads a skill from the manifest that ships it, else
 the knowledge page of kind `skill` with that slug (with the workbench).
 
 Every agent knows the others (a roster in its prompt) and is told that
@@ -32,9 +32,9 @@ go through the house agent.
 
 ## Talking to an agent
 
-- `agents.chat.send {agent, text}` messages it and waits for the reply
+- `agent.chat.send {agent, text}` messages it and waits for the reply
   (`wait: false` answers at once). It wakes the agent if it sleeps.
-- `agents.chat.read {agent, after}` reads your session with it; pass `next`
+- `agent.chat.read {agent, after}` reads your session with it; pass `next`
   back as `after`.
 - A direct message to the band's Telegram or Discord bot, once you linked
   your account (`telegram.link`, `discord.link`), goes to the `chat_agent`
@@ -51,32 +51,32 @@ agent works for you it can do only what both of you may.
 
 An agent wakes when addressed and stays warm for `warm` (10 minutes) after
 its last message, then sleeps. Always-on agents (`house`, `security`) never
-sleep on idle. `agents.wake` and `agents.sleep` do it by hand.
+sleep on idle. `agent.wake` and `agent.sleep` do it by hand.
 
 ## Notepad, memory and dreams
 
 While it works, an agent jots what it decides, learns and is told on its
-private notepad (`agents.note`). Its memory is read-only while it works. When
+private notepad (`agent.note`). Its memory is read-only while it works. When
 it goes to sleep, a **dream cycle** - a light model (the backend's System
 Three: Haiku for Claude Code) - turns the notepad into lasting memory and
 prunes and corrects both. Always-on agents dream every `dream_every` (6
-hours). `agents.dream` runs one now. Memories are private records owners
-curate with `agents.memory.list/get/search/create/update/archive/delete`;
+hours). `agent.dream` runs one now. Memories are private records owners
+curate with `agent.memory.list/get/search/create/update/archive/delete`;
 the notepad is the agent's own (it sees it in its prompt) and has no caps
 to read it. Your sessions with an agent are streams: `stream.list
 kind=session` on worker `rook` lists them and `stream.read` reads them.
 
 ## Making and changing agents
 
-Agents are records: `agents.agent.list` (with `awake`), `get`, `search`,
+Agents are records: `agent.list` (with `awake`), `get`, `search`,
 `history`, and for admins `create`, `update`, `archive`, `delete` (for good).
-`agents.agent.create {name, persona?, ...}` makes one; what you leave out
+`agent.create {name, persona?, ...}` makes one; what you leave out
 comes from the persona's defaults (prompt, grants, skills, backend, models
-like `model: {two: opus, three: haiku}`). `agents.agent.update {id,
+like `model: {two: opus, three: haiku}`). `agent.update {id,
 revision, ...}` changes one; once anyone but the plugin has changed an agent,
-later persona updates no longer touch it. `agents.agent.archive` stops one and
+later persona updates no longer touch it. `agent.archive` stops one and
 keeps everything; `restore: true` brings it back. Skills are markdown
-playbooks; `agents.skill {name}` reads one.
+playbooks; `agent.skill {name}` reads one.
 
 ## Backends
 

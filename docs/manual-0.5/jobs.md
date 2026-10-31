@@ -11,13 +11,13 @@ library to use them.
 | `{cron: "0 8 * * 1-5"}` | on a schedule, in the `timezone` setting (default UTC) |
 | `{every: 5m}` | every interval |
 | `{on: worker.online, filter: {name: kaiju}}` | on an event; `filter` matches the event's payload |
-| `{manual: true}` | only when started by hand (`jobs.start`); any job can be |
-| `{webhook: true}` | on a signed POST to the hub (`jobs.webhook` gives the address and key) |
+| `{manual: true}` | only when started by hand (`job.run`); any job can be |
+| `{webhook: true}` | on a signed POST to the hub (`job.webhook` gives the address and key) |
 
 ## Making one
 
 ```
-call worker=rook cap=jobs.create args={
+call worker=rook cap=job.create args={
   "name": "kaiju-disk",
   "trigger": {"cron": "0 7 * * *"},
   "call": "shell.exec", "worker": "kaiju", "args": {"argv": ["df", "-h", "/"]}
@@ -31,8 +31,8 @@ prompt}`: ask an agent) or `script` (Python, owners only). Options:
 `never`), `timeout` (default 10 minutes), `catch_up` (run once at start if
 a scheduled slot was missed while the hub was down).
 
-`jobs.list`, `jobs.get`, `jobs.update` (with the current revision),
-`jobs.start`, `jobs.cancel` and `jobs.run.list` manage them.
+`job.list`, `job.get`, `job.update` (with the current revision),
+`job.run`, `job.cancel` and `job.run.list` manage them.
 
 ## Who a job runs as
 
@@ -64,8 +64,8 @@ restart is marked failed and retried.
 
 ## Ready-made jobs
 
-Plugins ship jobs in their manifest; `jobs.templates` lists them and
-`jobs.install template=<plugin>/<job>` makes one yours:
+Plugins ship jobs in their manifest; `job.templates` lists them and
+`job.install template=<plugin>/<job>` makes one yours:
 
 ```yaml
 manifest: 1

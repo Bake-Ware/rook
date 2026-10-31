@@ -831,7 +831,7 @@
   }
  },
  {
-  "cap": "agents.chat.send",
+  "cap": "agent.chat.send",
   "risk": "write",
   "scope": "multi-user",
   "effects": [],

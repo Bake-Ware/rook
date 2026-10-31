@@ -4,7 +4,7 @@ when: you decide something, learn something, or the person tells you something y
 ---
 # Your notepad
 
-`agents.note` (agent: your name, text: the note) writes to your private
+`agent.note` (agent: your name, text: the note) writes to your private
 notepad. Write freely - it is cheap and gets curated:
 
 - decisions you made and why;

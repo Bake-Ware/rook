@@ -14,7 +14,7 @@ with any half-finished utterance (``pending``) while voice.turn says the
 person only paused.
 
 System Two is the agent's normal brain: speech hands it the request with
-``agents.chat.send`` as the person, so it lands in their persistent session
+``agent.chat.send`` as the person, so it lands in their persistent session
 with that agent (the one they also type in) and runs with their rights.
 That call runs in the background; ``speech.hear`` answers with System One's
 reply at once.
@@ -96,7 +96,7 @@ async def stop(ctx):
 async def open_session(ctx, agent=None, voice=None, device=None, title=None):
     who = _who(ctx)
     agent = agent or ctx.settings["agent"]
-    if not await ctx.call("agents.agent.list", where={"name": agent}, limit=1):
+    if not await ctx.call("agent.list", where={"name": agent}, limit=1):
         raise ctx.Error(f"no agent {agent}")        # fails here, not mid-conversation
     voice = voice if voice is not None else ctx.settings["voice"]
     attrs = {"plugin": "speech", "agent": agent, "voice": voice or "", **({"device": device} if device else {})}
@@ -244,7 +244,7 @@ def parse_plan(text: str) -> tuple[str, str] | None:
 async def _think(ctx, rt: Runtime, stream: str, agent: str, request: str) -> None:
     """System Two: the agent answers as itself, in the person's session with it."""
     try:
-        got = await ctx.call("agents.chat.send", agent=agent, text=SPOKEN.format(text=request), wait=True)
+        got = await ctx.call("agent.chat.send", agent=agent, text=SPOKEN.format(text=request), wait=True)
         reply = (got.get("text") or "").strip()
         if reply:
             rt.streams.append(stream, "turn", {"role": "reply", "text": reply, "system": "two"},

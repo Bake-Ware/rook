@@ -110,7 +110,7 @@ personas:
     summary: Sweeps the wiki like a diligent Wikipedia editor - challenges unsupported claims, checks sources, merges duplicates, prunes stale pages.
     prompt: personas/archivist.md
     skills: [wiki-sweep, consult, notepad]
-    grants: ["agents.*", "knowledge.*", "concept.*", "project.*", "task.*", "journal.*"]
+    grants: ["agent.*", "knowledge.*", "concept.*", "project.*", "task.*", "journal.*"]
   writer:
     title: Technical writer
     summary: Keeps the manual, changelog and knowledge true to what actually shipped.

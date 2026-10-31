@@ -37,9 +37,9 @@ plugin: lab
 version: 1.0.0
 doc: Runs experiments.
 runs_on: hub
-uses: [pages.archive]
+uses: [page.archive]
 hooks:
-  on: [ { event: lab.experiment.ended, call: pages.archive, args: { page: pages/run, reason: The experiment ended. } } ]
+  on: [ { event: lab.experiment.ended, call: page.archive, args: { page: page/run, reason: The experiment ended. } } ]
 """
 
 
@@ -59,9 +59,9 @@ def library(tmp_path: Path, packages=()) -> Path:
 async def start(tmp_path: Path, packages=()):
     cfg = Config(data=tmp_path / "data", band=BAND, library=library(tmp_path, packages),
                  users={"bake": {"preset": "owner"}, "kim": {"preset": "viewer"}},
-                 presets={"viewer": {"grants": ["pages.*", "board.count", "agents.chat.*"], "max_risk": "write"}},
-                 agents={"narrow": {"grants": ["pages.*", "board.count"]}},
-                 settings={"agents": {"warm": "300ms"}},
+                 presets={"viewer": {"grants": ["page.*", "board.count", "agent.chat.*"], "max_risk": "write"}},
+                 agents={"narrow": {"grants": ["page.*", "board.count"]}},
+                 settings={"agent": {"warm": "300ms"}},
                  doors={"http": {"bind": "127.0.0.1:0"}})
     hub = Hub(cfg, transport=Loopback())
     await hub.start()
@@ -107,12 +107,12 @@ def test_every_install_combination(tmp_path, combo):
     async def go(hub, tokens):
         c = Client(hub)
         await c.sign_in(tokens["bake"])
-        s = (await c.call("pages.site"))["result"]
+        s = (await c.call("page.site"))["result"]
         assert s == {"person": "person:bake", "start": None, "dock": "house" if agents else None,
                      "workbench": workbench}
 
         # a lean sidebar: workers and approvals (+ what packages add); journal and settings by address
-        listed = {p["page"]: p for p in (await c.call("pages.list"))["result"]["pages"]}
+        listed = {p["page"]: p for p in (await c.call("page.list"))["result"]["pages"]}
         nav = {pid for pid, p in listed.items() if p["nav"]}
         work = {"task/tasks", "project/projects", "knowledge/knowledge"}
         assert nav == {"hub/workers", "approval/approvals", "board/board"} | (work if workbench else set())
@@ -120,13 +120,13 @@ def test_every_install_combination(tmp_path, combo):
         for pid in ("journal/journal", "setting/settings"):
             assert (await c.open(pid))["ok"]
 
-        comps = {x["component"] for x in (await c.call("pages.components"))["result"]["components"]}
-        assert {"pages/text", "pages/value", "hub/workers", "approval/holds", "journal/recent"} <= comps
+        comps = {x["component"] for x in (await c.call("page.components"))["result"]["components"]}
+        assert {"page/text", "page/value", "hub/workers", "approval/holds", "journal/recent"} <= comps
         assert ("task/list" in comps) == workbench
 
         # a page build: with the workbench it is a task linked to the page
         layout = [{"component": "hub/workers"}] + ([{"component": "task/list"}] if workbench else [])
-        made = await bearer(c, tokens["bake"], "pages.create", name="home", title="Home", layout=layout,
+        made = await bearer(c, tokens["bake"], "page.create", name="home", title="Home", layout=layout,
                             note="Bake wants the workers at a glance.")
         assert made["ok"], made
         if workbench:
@@ -136,22 +136,22 @@ def test_every_install_combination(tmp_path, combo):
             assert t["result"]["title"] == "Page: Home" and t["result"]["state"] == "in_progress"
             assert t["result"]["assignee"] == "person:bake"
             assert [(x["kind"], x["ref"], x["relation"]) for x in t["result"]["links"]] == \
-                [("page", "pages/home", "produced")]
-            assert (await c.call("pages.get", {"page": "pages/home"}))["result"]["made_by"]["task"] == task
+                [("page", "page/home", "produced")]
+            assert (await c.call("page.get", {"page": "page/home"}))["result"]["made_by"]["task"] == task
             # every later change is noted on the build record
-            assert (await bearer(c, tokens["bake"], "pages.update", page="pages/home", change="Narrowed it.",
+            assert (await bearer(c, tokens["bake"], "page.update", page="page/home", change="Narrowed it.",
                                  layout=[{"component": "hub/workers"}]))["ok"]
             notes = await bearer(c, tokens["bake"], "task.comment.list", where={"task": task})
-            assert [n["text"] for n in notes["result"]] == ["Changed the page pages/home: Narrowed it."]
+            assert [n["text"] for n in notes["result"]] == ["Changed the page page/home: Narrowed it."]
         else:
-            assert made["result"] == {"page": "pages/home"}           # tasks are not core
+            assert made["result"] == {"page": "page/home"}           # tasks are not core
 
-        # the dock's chat is the shell's only way past pages.*, and only with the dock agent
-        status, out = await c.json("POST", "/web/api/call", {"cap": "agents.chat.read", "args": {"agent": "house"}})
+        # the dock's chat is the shell's only way past page.*, and only with the dock agent
+        status, out = await c.json("POST", "/web/api/call", {"cap": "agent.chat.read", "args": {"agent": "house"}})
         assert (status, out.get("ok")) == ((200, True) if agents else (403, False)), out
         for args in ({"agent": "pm"}, {}, {"agent": ["house"]}):
-            assert (await c.json("POST", "/web/api/call", {"cap": "agents.chat.read", "args": args}))[0] == 403
-        assert (await c.json("POST", "/web/api/call", {"cap": "agents.agent.list", "args": {"agent": "house"}}))[0] == 403
+            assert (await c.json("POST", "/web/api/call", {"cap": "agent.chat.read", "args": args}))[0] == 403
+        assert (await c.json("POST", "/web/api/call", {"cap": "agent.list", "args": {"agent": "house"}}))[0] == 403
     serve(tmp_path, go, packages)
 
 
@@ -164,19 +164,19 @@ def test_layout_pages_are_checked_and_arranged_in_the_sandbox(tmp_path):
         base = {"name": "glance", "title": "At a glance", "note": "x"}
         for bad, why in (({}, "html or a layout"), ({"html": "<p>", "layout": [{"component": "hub/workers"}]}, "html or"),
                          ({"layout": []}, "1 to 50"), ({"layout": [{"component": "nope/nope"}]}, "no component"),
-                         ({"layout": [{"component": "pages/text"}]}, "required"),
-                         ({"layout": [{"component": "pages/text", "props": {"text": 3}}]}, "props"),
+                         ({"layout": [{"component": "page/text"}]}, "required"),
+                         ({"layout": [{"component": "page/text", "props": {"text": 3}}]}, "props"),
                          ({"layout": [{"component": "hub/workers", "colour": "red"}]}, "unknown colour")):
-            out = await bearer(c, tokens["bake"], "pages.create", **base, **bad)
+            out = await bearer(c, tokens["bake"], "page.create", **base, **bad)
             assert why in out["error"], (bad, out)
-        layout = [{"component": "pages/text", "props": {"text": "Hello </script><b>there</b>"}, "title": "<i>Hi</i>"},
+        layout = [{"component": "page/text", "props": {"text": "Hello </script><b>there</b>"}, "title": "<i>Hi</i>"},
                   {"component": "hub/workers", "wide": True}, {"component": "hub/workers"}]
-        assert (await bearer(c, tokens["narrow"], "pages.create", **base, layout=layout, caps=["board.count"]))["ok"]
+        assert (await bearer(c, tokens["narrow"], "page.create", **base, layout=layout, caps=["board.count"]))["ok"]
 
-        page = (await c.call("pages.get", {"page": "pages/glance"}))["result"]
+        page = (await c.call("page.get", {"page": "page/glance"}))["result"]
         assert page["caps"] == ["board.count", "hub.workers"]           # its own plus its components'
         assert page["layout"] == layout                                 # what an agent changes next
-        opened = await c.open("pages/glance")
+        opened = await c.open("page/glance")
         status, headers, body = await c.req("GET", opened["frame"])
         assert status == 200 and headers["Content-Security-Policy"] == PAGE_CSP
         doc = body.decode()
@@ -184,7 +184,7 @@ def test_layout_pages_are_checked_and_arranged_in_the_sandbox(tmp_path):
         assert doc.count('rook._as("hub/workers")') == 1               # one script per component
         assert '<h3>&lt;i&gt;Hi&lt;/i&gt;</h3>' in doc and 'class="card part wide"' in doc
         assert "</script><b>" not in doc and "\\u003c/script>\\u003cb>there" in doc   # props can't close the script
-        assert doc.index('rook._as("pages/text")') < doc.index("rook._mount(")
+        assert doc.index('rook._as("page/text")') < doc.index("rook._mount(")
 
         # the sandbox scope: its components' caps, never more than its author (narrow)
         t = opened["token"]
@@ -192,17 +192,17 @@ def test_layout_pages_are_checked_and_arranged_in_the_sandbox(tmp_path):
         assert (await c.page(t, "board.count"))["ok"]
         assert (await c.page(t, "board.secret"))["error"] == "denied: agent: grants"   # narrow is the caller now; the page layer refuses too
         # a layout written by the owner may call what its components call
-        assert (await bearer(c, tokens["bake"], "pages.create", **{**base, "name": "mine"},
+        assert (await bearer(c, tokens["bake"], "page.create", **{**base, "name": "mine"},
                              layout=[{"component": "hub/workers"}]))["ok"]
-        t = (await c.open("pages/mine"))["token"]
+        t = (await c.open("page/mine"))["token"]
         assert (await c.page(t, "hub.workers"))["ok"]
         assert (await c.page(t, "board.count"))["error"] == "denied: page: grants"
         # html replaces the layout
-        assert (await bearer(c, tokens["bake"], "pages.update", page="pages/mine", change="Hand-written now.",
+        assert (await bearer(c, tokens["bake"], "page.update", page="page/mine", change="Hand-written now.",
                              html="<p>mine</p>"))["ok"]
-        status, _, body = await c.req("GET", (await c.open("pages/mine"))["frame"])
+        status, _, body = await c.req("GET", (await c.open("page/mine"))["frame"])
         assert body.decode().endswith("<p>mine</p>")
-        assert (await c.call("pages.get", {"page": "pages/mine"}))["result"]["caps"] == []
+        assert (await c.call("page.get", {"page": "page/mine"}))["result"]["caps"] == []
     serve(tmp_path, go)
 
 
@@ -218,13 +218,13 @@ def test_a_component_file_stays_inside_its_plugin(tmp_path):
     async def go(hub, tokens):
         c = Client(hub)
         await c.sign_in(tokens["bake"])
-        comps = {x["component"] for x in (await c.call("pages.components"))["result"]["components"]}
+        comps = {x["component"] for x in (await c.call("page.components"))["result"]["components"]}
         assert "sneak/it" not in comps and "gone/it" in comps         # refused at load: its file is outside
-        assert (await bearer(c, tokens["bake"], "pages.create", name="s", title="S", note="x",
-                             layout=[{"component": "gone/it"}, {"component": "pages/text", "props": {"text": "hi"}}]))["ok"]
+        assert (await bearer(c, tokens["bake"], "page.create", name="s", title="S", note="x",
+                             layout=[{"component": "gone/it"}, {"component": "page/text", "props": {"text": "hi"}}]))["ok"]
         (lib / "gone" / "components" / "gone.js").unlink()            # the plugin changed under the page
-        status, _, body = await c.req("GET", (await c.open("pages/s"))["frame"])
-        assert status == 200 and "gone/it: its file is missing" in body.decode() and 'rook._as("pages/text")' in body.decode()
+        status, _, body = await c.req("GET", (await c.open("page/s"))["frame"])
+        assert status == 200 and "gone/it: its file is missing" in body.decode() and 'rook._as("page/text")' in body.decode()
     serve(tmp_path, go)
 
 
@@ -235,19 +235,19 @@ def test_start_page_per_person_and_the_hubs_own(tmp_path):
         bake, kim = Client(hub), Client(hub)
         await bake.sign_in(tokens["bake"])
         await kim.sign_in(tokens["kim"])
-        assert (await bake.call("pages.start", {"page": "nope/nope"}))["error"] == "no page nope/nope"
-        out = await bake.call("pages.start", {"page": "board/board"})
+        assert (await bake.call("page.start", {"page": "nope/nope"}))["error"] == "no page nope/nope"
+        out = await bake.call("page.start", {"page": "board/board"})
         assert out["result"] == {"start": "board/board", "for": "person:bake"}
-        assert (await kim.call("pages.site"))["result"]["start"] is None
+        assert (await kim.call("page.site"))["result"]["start"] is None
         # an agent or job acting alone sets the hub's own: everyone without one of their own
-        assert (await bearer(bake, tokens["narrow"], "pages.start", page="approval/approvals"))["result"]["for"] == "*"
-        assert (await kim.call("pages.site"))["result"]["start"] == "approval/approvals"
-        assert (await bake.call("pages.site"))["result"]["start"] == "board/board"
+        assert (await bearer(bake, tokens["narrow"], "page.start", page="approval/approvals"))["result"]["for"] == "*"
+        assert (await kim.call("page.site"))["result"]["start"] == "approval/approvals"
+        assert (await bake.call("page.site"))["result"]["start"] == "board/board"
         # an archived start page doesn't count
-        await bake.call("pages.archive", {"page": "board/board"})
-        assert (await bake.call("pages.site"))["result"]["start"] == "approval/approvals"
-        await bake.call("pages.restore", {"page": "board/board"})
-        assert (await bake.call("pages.start", {}))["result"] == {"start": "approval/approvals", "for": "person:bake"}
+        await bake.call("page.archive", {"page": "board/board"})
+        assert (await bake.call("page.site"))["result"]["start"] == "approval/approvals"
+        await bake.call("page.restore", {"page": "board/board"})
+        assert (await bake.call("page.start", {}))["result"] == {"start": "approval/approvals", "for": "person:bake"}
         assert web_caps._read_json(hub.data / "pages.json")["start"] == {"*": "approval/approvals"}
     serve(tmp_path, go)
 
@@ -258,14 +258,14 @@ def test_a_trigger_archives_a_page_when_the_experiment_ends(tmp_path):
     async def go(hub, tokens):
         c = Client(hub)
         await c.sign_in(tokens["bake"])
-        assert (await bearer(c, tokens["narrow"], "pages.create", name="run", title="Run", html="<p>loss</p>",
+        assert (await bearer(c, tokens["narrow"], "page.create", name="run", title="Run", html="<p>loss</p>",
                              note="Watch the training run; archive it when the experiment ends."))["ok"]
         hub._emit("lab.experiment.ended", {"run": 7}, "lab")
-        await until(lambda: "pages/run" in hub.pages.archived)
-        assert hub.pages.archived["pages/run"] == {**hub.pages.archived["pages/run"],
+        await until(lambda: "page/run" in hub.pages.archived)
+        assert hub.pages.archived["page/run"] == {**hub.pages.archived["page/run"],
                                                    "by": "system:plugin.lab", "reason": "The experiment ended."}
-        assert (await c.call("pages.restore", {"page": "pages/run"}))["ok"]       # and a person brings it back
-        assert (await c.open("pages/run"))["ok"]
+        assert (await c.call("page.restore", {"page": "page/run"}))["ok"]       # and a person brings it back
+        assert (await c.open("page/run"))["ok"]
     serve(tmp_path, go)
 
 
@@ -277,33 +277,33 @@ def test_the_house_agent_builds_and_archives_a_page_from_the_dock(tmp_path):
         await c.sign_in(tokens["bake"])
 
         async def say(text):
-            out = await c.call("agents.chat.send", {"agent": "house", "text": text})
+            out = await c.call("agent.chat.send", {"agent": "house", "text": text})
             assert out["ok"], out
             return out["result"]["text"]
 
-        assert (await c.call("agents.chat.read", {"agent": "house"}))["result"]["events"] == []   # first run
+        assert (await c.call("agent.chat.read", {"agent": "house"}))["result"]["events"] == []   # first run
         assert "How do you want to use the site?" in await say("[site] First visit to the hub site. Ask me.")
         reply = await say("[site] The person is on the page hub/workers (Workers).\nmake a page uptime")
-        assert reply.startswith("Made pages/uptime (task r_")
-        s = (await c.call("pages.site"))["result"]
-        assert s["start"] == "pages/uptime"
-        page = (await c.call("pages.get", {"page": "pages/uptime"}))["result"]
+        assert reply.startswith("Made page/uptime (task r_")
+        s = (await c.call("page.site"))["result"]
+        assert s["start"] == "page/uptime"
+        page = (await c.call("page.get", {"page": "page/uptime"}))["result"]
         assert page["made_by"]["authors"] == [{"person": "person:bake", "agent": "agent:house"}]   # the agent, for bake
         assert page["made_by"]["task"] and "asked for a uptime page" in page["note"]
         assert set(page["caps"]) == {"hub.workers", "task.list"}
-        t = (await c.open("pages/uptime"))["token"]
+        t = (await c.open("page/uptime"))["token"]
         assert (await c.page(t, "task.list", {"limit": 5}))["ok"]
 
-        assert "Archived pages/uptime" in await say("[site] The person is on the page pages/uptime.\n"
-                                                     "archive pages/uptime")
-        assert "pages/uptime" in hub.pages.archived
-        assert (await c.call("pages.site"))["result"]["start"] is None
+        assert "Archived page/uptime" in await say("[site] The person is on the page page/uptime.\n"
+                                                     "archive page/uptime")
+        assert "page/uptime" in hub.pages.archived
+        assert (await c.call("page.site"))["result"]["start"] is None
         # the conversation is the person's own session with the house agent
-        events = (await c.call("agents.chat.read", {"agent": "house", "limit": 100}))["result"]["events"]
-        assert [e["data"]["text"].splitlines()[-1] for e in events if e["type"] == "input"][-1] == "archive pages/uptime"
+        events = (await c.call("agent.chat.read", {"agent": "house", "limit": 100}))["result"]["events"]
+        assert [e["data"]["text"].splitlines()[-1] for e in events if e["type"] == "input"][-1] == "archive page/uptime"
         kim = Client(hub)
         await kim.sign_in(tokens["kim"])
-        assert (await kim.call("agents.chat.read", {"agent": "house"}))["result"]["events"] == []
+        assert (await kim.call("agent.chat.read", {"agent": "house"}))["result"]["events"] == []
     serve(tmp_path, go, ("agents", "workbench"))
 
 
@@ -343,6 +343,6 @@ def test_workbench_manifests_with_pages_are_valid():
 def test_the_docks_long_poll_fits_the_chat_read_timeout():
     from rook.kit._types import parse_duration
     from rook.kit.manifest import load
-    read = load(PLUGINS / "agents").data["caps"]["agents.chat.read"]
+    read = load(PLUGINS / "agents").data["caps"]["agent.chat.read"]
     js = (Path(web_caps.__file__).with_name("static") / "shell.js").read_text()
     assert "await read(55)" in js and parse_duration(read["timeout"]) > read["args"]["wait"]["max"] >= 55

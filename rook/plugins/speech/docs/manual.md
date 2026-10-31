@@ -29,7 +29,7 @@ decides nothing itself.
    `final: true` skips that check (push-to-talk released).
 3. When System One hands off (`handoff: true`), the agent answers in the
    background, as you, in your own session with it (the same one you type
-   in with `agents.chat.send`). `speech.read {stream, after, wait, audio:
+   in with `agent.chat.send`). `speech.read {stream, after, wait, audio:
    true}` long-polls the session; each reply comes with its audio clips.
 4. `speech.close {stream}` when done; the history stays.
 

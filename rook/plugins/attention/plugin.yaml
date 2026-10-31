@@ -37,7 +37,7 @@ jobs:
     trigger: { every: 15m }
     agent:
       persona: house
-      prompt: "Attention pass: follow your attention skill (agents.skill attention). Look at what has arrived for the people you look after since your last pass, curate what matters into attention records, and reach them only if something can't wait."
+      prompt: "Attention pass: follow your attention skill (agent.skill attention). Look at what has arrived for the people you look after since your last pass, curate what matters into attention records, and reach them only if something can't wait."
     as: persona
     enabled: true
 
