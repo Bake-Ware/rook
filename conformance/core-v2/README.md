@@ -21,6 +21,7 @@ reference passes them in `tests/test_core2_vectors.py`.
 | `canonical.json` | RFC 8785 canonical JSON: `cases` (`value` → `canonical`, or `error: true` when there is no canonical form) and `args_hash` | 3.2 |
 | `signatures.json` | test `keys` (Ed25519 seeds, `ed25519:` public keys, `kid`), the per-`typ` `prefixes`, one `signing_input` spelled out, `hubkey` grant checks (`key` = the certified operational key or `null`), and `verify` cases (`valid`) | 3.3, 5.2 |
 | `tickets.json` | the worker check order: a `worker` state plus `cases` with the band the request arrived on, `now`, nonces already `seen`, the `request`, the `ticket` and the expected `reason` (`ok` or the reason code) | 6.2, 6.3 |
+| `requests.json` | the hub's check of a worker's signed `core.call` / `core.elevate`: the hub's `hub` and `band`, the pinned worker `keys` (`worker_id` → public key), and `cases` with `now`, nonces already `seen` and the `request` (its `proof` inside) → `reason` | 5.8, 13.1 |
 | `leases.json` | elevation leases checked against the `ticket` of the call they elevate | 7.3 |
 | `memberships.json` | membership documents checked against the home hub's id (`home_hub`) and keys | 9.3 |
 | `version.json` | `negotiate(mine, theirs)` → `speak` (`null` = no common version); symmetric | 2.2 |
@@ -42,6 +43,7 @@ by an earlier call.
 | Object | Codes |
 |---|---|
 | ticket (spec 6.3, in check order) | `no_ticket`, `malformed`, `unknown_hub`, `unknown_key`, `bad_signature`, `wrong_band`, `wrong_worker`, `wrong_appliance`, `wrong_call`, `wrong_cap`, `wrong_args`, `bad_lifetime`, `not_yet_valid`, `expired`, `replay`, `unknown_cap`, `outside_ceiling` |
+| worker request (spec 13.1, in check order) | `no_proof`, `malformed`, `unknown_worker`, `unknown_key`, `bad_signature`, `wrong_hub`, `wrong_band`, `wrong_call`, `wrong_cap`, `wrong_args`, `wrong_parent`, `wrong_worker`, `stale`, `replay` |
 | lease | `malformed`, `unknown_key`, `bad_signature`, `wrong_hub`, `wrong_band`, `wrong_worker`, `wrong_session`, `wrong_identity`, `bad_lifetime`, `expired` |
 | membership | `malformed`, `unknown_key`, `bad_signature`, `wrong_worker`, `wrong_root`, `bad_role`, `bad_ceiling` |
 | rights layer | `grants`, `risk`, `effects` |

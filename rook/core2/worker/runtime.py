@@ -43,6 +43,11 @@ worker sends them all again with ``stream.synced`` (what it holds now).
 Plugin code's ``ctx.call`` becomes ``core.call`` on the hub, authenticated
 by the ticket of the call in flight it runs inside (13); hooks have no call
 in flight, so their ``ctx.call`` is refused.
+
+The worker's own key (spec 5.8) is ``<data>/worker.key``, made on
+first start (or by enrollment) and never sent anywhere: its public half goes
+in every announce, and every ``core.call`` and ``core.elevate`` it sends a
+hub carries a ``rook-request`` proof signed with it (13.1).
 """
 from __future__ import annotations
 
@@ -62,10 +67,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from nacl.signing import SigningKey
+
 from rook.kit.ctx import Caller, KitError
 from rook.kit.manifest import check
 
-from .. import CORE_VERSION
+from .. import CORE_VERSION, wire
 from ..builtin import CORE, STREAM, WORKER
 from ..transport import FEATURES, Transport, TransportError, link_from
 from rook.streams import Reporter, Streams
@@ -260,6 +267,7 @@ class Worker:
     async def _open(self) -> None:
         self.data.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.worker_id = self._worker_id()
+        self.key = worker_key(self.data / KEY_FILE)
         self.trust = TrustStore(self.cfg.anchor, self.cfg.memberships or self.data / "memberships.json",
                                 self.worker_id)
         for why in self.trust.skipped:
@@ -464,7 +472,7 @@ class Worker:
         """The full announce (5.3) for one band's filtered view."""
         member, ceiling = self._view(band)
         msg = {"kind": "announce", "worker_id": self.worker_id, "name": self.cfg.name, "core": CORE_VERSION,
-               "version": _version(), "facts": _facts(), **await self.host.announce(ceiling),
+               "key": wire.pub_text(self.key), "version": _version(), "facts": _facts(), **await self.host.announce(ceiling),
                "ceiling": ceiling, "features": FEATURES}
         if member is not None:
             msg["role"] = member.role
@@ -491,8 +499,11 @@ class Worker:
         node = self.hub_nodes.get((hub, band))
         if node is None:
             raise TransportError(f"hub {hub} not heard on band {band[:8]} yet")
-        return await self.transport.request(
-            band, {"id": secrets.token_hex(16), "cap": cap, "target": node, "args": args}, timeout)
+        req = {"id": secrets.token_hex(16), "cap": cap, "target": node, "args": args}
+        if cap in ("core.call", "core.elevate"):        # 13.1: the hub checks it is this worker's
+            req["proof"] = wire.request_proof(self.key, req, worker=self.worker_id, hub=hub, band=band,
+                                              nonce=secrets.token_hex(16), ts=int(time.time()))
+        return await self.transport.request(band, req, timeout)
 
     async def _elevate(self, band: str, args: dict) -> dict:
         """The gate's ``ask``: ``core.elevate`` to the hub that minted the ticket."""
@@ -807,6 +818,30 @@ _OWN_ERRORS = ("denied by worker: ", "unknown capability: ", "elevation: ", "una
 def _loggable(error: Any) -> str:
     error = str(error)
     return error if error.startswith(_OWN_ERRORS) else error.partition(": ")[0]
+
+
+KEY_FILE = "worker.key"
+
+
+def worker_key(path: Path) -> SigningKey:
+    """The worker's own Ed25519 key (5.8): the 32-byte seed in hex, private
+    to the worker's account; made the first time (a 2.0 worker upgrading
+    gets its key here, and the hub pins it at its next announce)."""
+    try:
+        seed = bytes.fromhex(path.read_text(encoding="ascii").strip())
+        if len(seed) == 32:
+            return SigningKey(seed)
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError, UnicodeDecodeError) as e:
+        # Never replace a key that is there but unreadable: the hub pinned it.
+        raise RuntimeError(f"{path}: not a worker key ({e}); move it aside and enroll again") from None
+    else:
+        raise RuntimeError(f"{path}: not a worker key; move it aside and enroll again")
+    sk = SigningKey.generate()
+    _write_atomic(path, bytes(sk).hex() + "\n")
+    log.info("worker key made", extra=_f(key=wire.key_id(wire.pub_text(sk))))
+    return sk
 
 
 def _version() -> str:

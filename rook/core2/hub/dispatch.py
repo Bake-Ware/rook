@@ -52,6 +52,7 @@ SESSION_SECS = 12 * 3600
 TICKET_SECS = 60
 DEFAULT_TIMEOUT = 15.0
 TIMEOUT_GRACE = 5.0
+SUB_CALLS = 32         # core.call sub-calls one call in flight may make (13.1)
 REMINT = ("denied by worker: expired", "denied by worker: not_yet_valid")
 NO_RETRY = {"destructive", "physical"}
 # The one component that may release a gate flag on its own: the security
@@ -103,6 +104,7 @@ class Call:
     door: str | None = None
     layers: list = field(default_factory=list)  # extra [[name, rights]]: plugin uses, page caps
     contract: str | None = None                 # the contract the call is made by (4.1); dispatch sets it
+    parent: str | None = None                   # a core.call sub-call: the call id it runs inside
 
 
 @dataclass
@@ -138,6 +140,7 @@ class Dispatcher:
         # nonce -> (ticket, caller, session id, extra layers, door, call, {risk, scope, effects})
         self._inflight: dict[str, tuple] = {}
         self.leases: dict[str, tuple[str, str, int]] = {}   # lease id -> (worker id, session id, exp)
+        self.sub_calls: dict[str, int] = {}     # call id in flight -> core.call sub-calls it made
 
     # -- sessions (8.4) ----------------------------------------------------
 
@@ -229,6 +232,8 @@ class Dispatcher:
         entry = {"kind": "call", "ts": self.clock(), "call": cid, "hub": self.hub_id,
                  "cap": call.cap, "person": caller.person, "agent": caller.agent,
                  "session": call.session, "why": call.why, "args": call.args}
+        if call.parent:
+            entry["parent"] = call.parent
         out = {"id": cid, "ok": False, "error": "internal error"}
         try:
             out = await self._dispatch(caller, call, entry)
@@ -379,31 +384,34 @@ class Dispatcher:
         may_retry = bool(meta.get("idempotent")) and not NO_RETRY & set(_hold_effects(meta))
         entry["ticket"], reminted, retried = [], False, False
         start = time.monotonic()
-        while True:
-            request["ticket"] = self._mint(cid, caller, s, w, call, ahash)
-            nonce = request["ticket"]["nonce"]
-            entry["ticket"].append(nonce)
-            self._inflight[nonce] = (request["ticket"], caller, s.id, call.layers, call.door, call,
-                                     {k: entry[k] for k in ("risk", "scope", "effects")})
-            try:
-                reply = await asyncio.wait_for(self.send(w.band, request), wait)
-            except asyncio.TimeoutError:
-                if may_retry and not retried:
-                    retried = True
+        try:
+            while True:
+                request["ticket"] = self._mint(cid, caller, s, w, call, ahash)
+                nonce = request["ticket"]["nonce"]
+                entry["ticket"].append(nonce)
+                self._inflight[nonce] = (request["ticket"], caller, s.id, call.layers, call.door, call,
+                                         {k: entry[k] for k in ("risk", "scope", "effects")})
+                try:
+                    reply = await asyncio.wait_for(self.send(w.band, request), wait)
+                except asyncio.TimeoutError:
+                    if may_retry and not retried:
+                        retried = True
+                        continue
+                    reply = {"ok": False, "error": "timeout: the call may still be running"}
+                except Exception as e:
+                    reply = {"ok": False, "error": f"send failed: {e}"}
+                finally:
+                    self._inflight.pop(nonce, None)
+                if not isinstance(reply, dict) or not isinstance(reply.get("ok"), bool):
+                    reply = {"ok": False, "error": "malformed reply"}
+                elif "from" in reply and reply["from"] != w.id:
+                    reply = {"ok": False, "error": "reply from the wrong worker"}
+                if not reminted and not reply.get("ok") and reply.get("error") in REMINT:
+                    reminted = True
                     continue
-                reply = {"ok": False, "error": "timeout: the call may still be running"}
-            except Exception as e:
-                reply = {"ok": False, "error": f"send failed: {e}"}
-            finally:
-                self._inflight.pop(nonce, None)
-            if not isinstance(reply, dict) or not isinstance(reply.get("ok"), bool):
-                reply = {"ok": False, "error": "malformed reply"}
-            elif "from" in reply and reply["from"] != w.id:
-                reply = {"ok": False, "error": "reply from the wrong worker"}
-            if not reminted and not reply.get("ok") and reply.get("error") in REMINT:
-                reminted = True
-                continue
-            break
+                break
+        finally:
+            self.sub_calls.pop(cid, None)
         entry["ms"] = int((time.monotonic() - start) * 1000)
         out = {"id": cid, "ok": reply["ok"]}
         shown = _resolved(call.args, args)
@@ -537,17 +545,26 @@ class Dispatcher:
         an outer plugin's ``uses``) plus the calling plugin's ``uses``, and
         through the parent's door (closing it stops the work started there).
         The parent ticket must be one this hub minted for that worker and
-        still in flight."""
+        still in flight; ``from_worker`` is who signed the request (13.1).
+        One call makes at most ``SUB_CALLS`` sub-calls; each is journaled
+        with ``parent`` = the call it runs inside."""
         nonce = ticket.get("nonce") if isinstance(ticket, dict) else None
         held = self._inflight.get(nonce) if isinstance(nonce, str) else None
         if held is None or held[0] != ticket or ticket["worker"] != from_worker:
             return {"ok": False, "error": "denied: core.call: no such call in flight"}
         parent, caller, sid, layers, door = held[:5]
+        n = self.sub_calls[parent["call"]] = self.sub_calls.get(parent["call"], 0) + 1
+        if n > SUB_CALLS:
+            if n == SUB_CALLS + 1:      # once per call: the rest are refused the same way
+                self._note("sub_call_limit", self.sessions.get(sid), call=parent["call"], cap=parent["cap"],
+                           worker=from_worker, limit=SUB_CALLS)
+            return {"ok": False, "error": f"denied: core.call: more than {SUB_CALLS} sub-calls in one call"}
         w = self.workers.get(from_worker)
         plugin = parent["cap"].partition(".")[0]
         uses = {"grants": list((w.uses if w else {}).get(plugin, ()))}
-        return await self.dispatch(caller, Call(cap=cap, target=target, args=args, why=why,
-                                                session=sid, layers=[*layers, ["uses", uses]], door=door))
+        return await self.dispatch(caller, Call(cap=cap, target=target, args=args, why=why, session=sid,
+                                                layers=[*layers, ["uses", uses]], door=door,
+                                                parent=parent["call"]))
 
     # -- core.elevate (7.2, 13): a lease for a call in flight -------------
 

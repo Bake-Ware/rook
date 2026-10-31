@@ -110,6 +110,7 @@ class FakeHub:
         self.issued: dict[str, dict] = {}
         self.got: list[dict] = []
         self.sub_calls: list[dict] = []
+        self.replay = wire.ReplayCache()
         self.t = Transport(self.node, [relay.link(psk)], hello=self.announce, beat=self.announce, every=0.05)
 
     def announce(self, band):
@@ -130,7 +131,13 @@ class FakeHub:
     async def answer(self, band, req):
         args, out = req.get("args") or {}, {"id": req["id"], "from": self.node}
         ticket = args.get("ticket") or {}
-        if self.issued.get(ticket.get("nonce")) != ticket:
+        # 13.1: signed by the worker with the key it announced
+        key = next((m["key"] for m in reversed(self.announces()) if m.get("key")), None)
+        ok, why = wire.verify_request(req.get("proof"), req, hub=self.hub, band=band,
+                                      keys={WID: key} if key else {}, now=int(time.time()), replay=self.replay)
+        if not ok:
+            out.update(ok=False, error=f"denied: worker request: {why}")
+        elif self.issued.get(ticket.get("nonce")) != ticket:
             out.update(ok=False, error="denied: no such call in flight")
         elif req["cap"] == "core.elevate":
             now = int(time.time())
@@ -289,6 +296,36 @@ def test_worker_serves_verified_calls_and_refuses_bad_tickets(setup, caplog):
 
         await w.stop()
         await hub.t.close()
+    go(body)
+
+
+def test_the_worker_signs_with_its_own_key(setup):
+    """Spec 5.8, 13.1: <data>/worker.key, made once and kept; its
+    public half in every announce; its core.call carries a proof the hub
+    checks against it. Replies stay unsigned."""
+    relay, cfg, make = setup
+
+    async def body():
+        w = make()
+        hub = await up(relay, w)
+        key_file = cfg.data / "worker.key"
+        assert oct(key_file.stat().st_mode & 0o777) == "0o600"
+        pub = wire.pub_text(SigningKey(bytes.fromhex(key_file.read_text().strip())))
+        assert hub.announces()[-1]["key"] == pub
+        out = await hub.send(hub.request("core.manifests", {"plugins": ["echo"]}))
+        assert out["ok"] and "proof" not in out
+        out = await hub.send(hub.request("echo.relay"))
+        assert out["ok"] and out["result"]["inner"]["cap"] == "echo.say"     # FakeHub checked the proof
+        await w.stop()
+        await hub.t.close()
+        w2 = make()                                # the same key after a restart
+        hub2 = await up(relay, w2)
+        assert hub2.announces()[-1]["key"] == pub
+        await w2.stop()
+        await hub2.t.close()
+        key_file.write_text("not a key\n")          # never replaced: the hub pinned it
+        with pytest.raises(RuntimeError, match="not a worker key"):
+            await make().start()
     go(body)
 
 

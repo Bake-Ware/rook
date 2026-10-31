@@ -18,8 +18,10 @@ What it writes, beside the config (paths from the config when it has them):
 ``anchor.json`` (the home hub's ``{hub, root, band}``, spec 9.2),
 ``<data>/bands.json`` (the home band's PSK and relay; the worker joins every
 band listed there), ``<data>/services.json`` (service endpoints and keys, when
-the bundle has any) and ``<data>/enrollment.json`` (the hub's address, the
-owner). The config gets ``data``, ``anchor``, ``name`` and ``worker_id``;
+the bundle has any), ``<data>/enrollment.json`` (the hub's address, the
+owner) and ``<data>/worker.key`` (the worker's own key, spec 5.8: the hub
+recorded its public half at sign-in; enrolling again with ``force`` makes a
+new one). The config gets ``data``, ``anchor``, ``name`` and ``worker_id``;
 everything else in it is kept. Enrolling again needs ``force``, which
 re-anchors the worker and drops every other band (9.5).
 """
@@ -37,9 +39,12 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlsplit
 
 import yaml
+from nacl.signing import SigningKey
 
 from .. import wire
 from .hub import CODE_SECS, NAME
+
+KEY_FILE = "worker.key"           # rook.core2.worker.runtime reads it
 
 HTTP_SECS = 30.0
 
@@ -122,14 +127,17 @@ def check_bundle(bundle: Any, pinned: str | None) -> dict:
 
 
 def sign_in(url: str, name: str, code: str | None = None, pinned: str | None = None, *,
-            say: Callable[[str], None] = print, sleep: Callable[[float], None] = time.sleep,
+            key: str | None = None, say: Callable[[str], None] = print,
+            sleep: Callable[[float], None] = time.sleep,
             clock: Callable[[], float] = time.monotonic) -> dict:
     """Claim the one-time ``code``, or wait for the person to approve a
-    device code; returns the checked bundle."""
+    device code; returns the checked bundle. ``key`` is the worker's public
+    key (:func:`signing_key`), recorded by the hub with the worker id."""
+    who = {"name": name, **({"key": key} if key else {})}
     if code:
-        got = _post(url, "/enroll/claim", {"code": code, "name": name})
+        got = _post(url, "/enroll/claim", {"code": code, **who})
     else:
-        start = _post(url, "/enroll/device", {"name": name})
+        start = _post(url, "/enroll/device", who)
         if not start.get("ok"):
             raise EnrollError(f"the hub refused: {start.get('error')}")
         if not (isinstance(start.get("device_code"), str) and isinstance(start.get("user_code"), str)):
@@ -193,8 +201,27 @@ def already(hub: str | None) -> str:
             "its home and drops every other band")
 
 
-def install(config: Path, bundle: dict, url: str, force: bool = False) -> dict:
-    """Write the anchor, the home band and the config; returns the paths."""
+def _data(config: Path) -> Path:
+    return config.resolve().parent / (_config(config).get("data") or "data")
+
+
+def signing_key(config: Path, force: bool = False) -> SigningKey:
+    """The worker's key to enroll with: the one in ``<data>/worker.key``, or
+    a new one (always new with ``force``). Written by :func:`install`, once
+    the hub has accepted it."""
+    if not force:
+        try:
+            seed = bytes.fromhex((_data(config) / KEY_FILE).read_text(encoding="ascii").strip())
+            if len(seed) == 32:
+                return SigningKey(seed)
+        except (OSError, ValueError, UnicodeDecodeError):
+            pass
+    return SigningKey.generate()
+
+
+def install(config: Path, bundle: dict, url: str, force: bool = False, key: SigningKey | None = None) -> dict:
+    """Write the anchor, the home band, the worker's key and the config;
+    returns the paths."""
     raw = _config(config)
     base = config.resolve().parent
     data = base / (raw.get("data") or "data")
@@ -214,6 +241,8 @@ def install(config: Path, bundle: dict, url: str, force: bool = False) -> dict:
     _write(anchor, json.dumps({"hub": hub["hub_id"], "root": hub["root"], "band": band["id"]}) + "\n", 0o644)
     link = {k: band[k] for k in ("psk", "relay", "ws_url") if band.get(k)}
     _write(data / "bands.json", json.dumps({band["id"]: link}, indent=1), 0o600)
+    if key is not None:
+        _write(data / KEY_FILE, bytes(key).hex() + "\n", 0o600)
     if bundle.get("services"):
         _write(data / "services.json", json.dumps(bundle["services"], indent=1), 0o600)
     _write(data / "enrollment.json", json.dumps({"hub": hub["hub_id"], "url": hub.get("url") or url,

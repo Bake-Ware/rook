@@ -53,23 +53,14 @@ unusual setup or a second step; **low** = hardening.
 | K2 (general) | medium | Sync plugin code ran on the loop's shared default executor. Each plugin has its own bounded pool; kvm reads are capped (16 MiB, 30 s). | #319 |
 | D9, D11 (part) | low | Tokens are revoked live (`tokens.json` is the whole list), a removed agent's token is nobody, `POST /login` refuses cross-site browser requests (login CSRF), `_poll` reads the session under the lock. | #320 |
 | K9 (part) | low | `shell.exec` keeps at most 8 MiB per stream; kvm, llm-anthropic and llm-openai refuse redirects (urllib re-sent the password/key to any host). | #323 |
+| H2 | high | `core.call`/`core.elevate` took a bearer ticket: any PSK holder who read a ticket in flight got sub-calls and elevation as the call's person. Folded into core 2.0 (Claude's call: 2.0 never shipped beyond the cachyrig sidecar, which re-keys on upgrade): workers have their own key (pinned per hub at enrollment, else first announce) and sign these two requests over the request, the parent ticket's nonce, a fresh nonce and the time; the hub checks sender = ticket's worker, refuses replays, caps sub-calls at 32 per parent call, each journaled with `parent`. | #327 |
 | CI | — | `test_ask_answer_cancel_and_timeout` (jobs) raced on CI py3.12 and failed unrelated PRs. | #304 |
 
 ## Open
 
 ### High
 
-- **H2: `core.call`/`core.elevate` take a bearer ticket.** The hub reads the
-  sender's worker id from the ticket itself (`runtime.py` `_band_request`),
-  so `ticket["worker"] != from_worker` never fails. Anyone with the band PSK
-  reads every ticket on the band and, while that call is in flight, can send
-  their own `core.call` with it: the hub dispatches it as the parent's
-  person, agent and session (bounded by the parent plugin's `uses`) and the
-  reply goes out on the band. This contradicts spec 15 ("cannot make a v2
-  worker run anything"). Transport senders are not authenticated, so there
-  is no small fix: give workers a key (sign `core.call`/`core.elevate`
-  requests), or at least cap sub-calls per parent ticket and journal them
-  loudly. Needs a spec decision (core v2.1).
+None.
 
 ### Medium
 
@@ -114,8 +105,9 @@ unusual setup or a second step; **low** = hardening.
   between two plugins of the same version with the same script name
   (known, castling-worker-host follow-up).
 - **Replies are unauthenticated** on the band (spec 15 accepts it): a PSK
-  holder can answer a request id it saw. Worker keys (H2) would close it
-  too.
+  holder can answer a request id it saw, including results the hub acts on
+  (`core.manifests`, install reports, an update's `worker.status`). The worker
+  key could sign them; kept out of H2's fix (Bake decides).
 - **Plugin `python` pins** install from PyPI without hashes: the hub signs
   names and versions, not artifacts.
 - **CI flakes seen while landing these** (unrelated to the fixes, rerun

@@ -89,6 +89,8 @@ async def until(pred, timeout=10.0):
 
 
 def test_a_qr_code_enrolls_a_device_once_and_install_writes_what_the_worker_reads(tmp_path):
+    sk = device.signing_key(tmp_path / "nowhere.yaml")
+
     async def go():
         hub, tok = await started(tmp_path)
         try:
@@ -96,7 +98,7 @@ def test_a_qr_code_enrolls_a_device_once_and_install_writes_what_the_worker_read
             assert got["ok"] and got["hub"] == hub.hub_id and got["qr"].startswith("rook://enroll?")
             target, code, pinned = device.parse_target(got["qr"])
             assert (target, code, pinned) == (url(hub), got["code"], hub.hub_id)
-            bundle = await asyncio.to_thread(device.sign_in, target, "laptop", code, pinned)
+            bundle = await asyncio.to_thread(device.sign_in, target, "laptop", code, pinned, key=wire.pub_text(sk))
             again = await http(hub, "POST", "/enroll/claim", {"code": code, "name": "laptop"})
             enrolled = json.loads((hub.data / "enrolled.json").read_text())
             entries = hub.journal.query(kind="enroll", viewer={"owner": True}, limit=5)
@@ -110,12 +112,14 @@ def test_a_qr_code_enrolls_a_device_once_and_install_writes_what_the_worker_read
     assert bundle["owner"] == "person:bake" and bundle["name"] == "laptop" and bundle["core"] == "2.0"
     assert again == {"ok": False, "error": "unknown or expired code"}         # one use
     assert enrolled[bundle["worker_id"]]["owner"] == "person:bake"
+    assert enrolled[bundle["worker_id"]]["key"] == wire.pub_text(sk)            # the hub pins it (5.8)
+    assert entries[0]["key"] == wire.key_id(wire.pub_text(sk))
     assert entries[0]["worker"] == bundle["worker_id"] and entries[0]["person"] == "person:bake"
 
     cfg_path = tmp_path / "w" / "worker.yaml"
     cfg_path.parent.mkdir()
     cfg_path.write_text("plugins: [./plugins]\nlog: {format: json}\n")          # kept
-    device.install(cfg_path, bundle, "http://hub")
+    device.install(cfg_path, bundle, "http://hub", key=sk)
     raw = yaml.safe_load(cfg_path.read_text())
     assert raw["plugins"] == ["./plugins"] and raw["log"] == {"format": "json"}
     assert (raw["name"], raw["worker_id"], raw["anchor"], raw["data"]) == \
@@ -123,6 +127,11 @@ def test_a_qr_code_enrolls_a_device_once_and_install_writes_what_the_worker_read
     anchor = cfg_path.parent / "anchor.json"
     assert stat.S_IMODE(anchor.stat().st_mode) == 0o644
     assert stat.S_IMODE((cfg_path.parent / "data" / "bands.json").stat().st_mode) == 0o600
+    key_file = cfg_path.parent / "data" / "worker.key"
+    assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
+    assert worker_runtime.worker_key(key_file).verify_key == sk.verify_key       # what the worker signs with
+    assert device.signing_key(cfg_path).verify_key == sk.verify_key              # enrolling again keeps it
+    assert device.signing_key(cfg_path, force=True).verify_key != sk.verify_key  # --force makes a new one
     store = TrustStore(anchor, None, bundle["worker_id"])
     assert (store.home.hub, store.home.band) == (hub.hub_id, BAND)
     cfg = worker_runtime.load_config(cfg_path)
@@ -146,7 +155,8 @@ def test_a_device_code_waits_for_the_person_and_can_be_refused(tmp_path):
         hub, tok = await started(tmp_path)
         try:
             task = asyncio.create_task(asyncio.to_thread(
-                device.sign_in, url(hub), "tablet", say=said.append, sleep=lambda s: __import__("time").sleep(0.05)))
+                device.sign_in, url(hub), "tablet", key=wire.pub_text(sk), say=said.append,
+                sleep=lambda s: __import__("time").sleep(0.05)))
             async def listed():   # the device prints the code only once the hub's answer is back
                 return said and await _pending(hub, tok["ann"])
             pending = await until(listed)
@@ -165,10 +175,15 @@ def test_a_device_code_waits_for_the_person_and_can_be_refused(tmp_path):
             with pytest.raises(device.EnrollError, match="refused by the person"):
                 await refused
             unknown = await http(hub, "POST", "/enroll/approve", {"code": "BCDF-GHJK"}, tok["bake"])
-            return kid, ok, bundle, no, unknown
+            bad = [await http(hub, "POST", path, {"name": "box", "code": "x", "key": "ed25519:short"})
+                   for path in ("/enroll/device", "/enroll/claim")]
+            return kid, ok, bundle, no, unknown, bad, hub.worker_key(bundle["worker_id"])
         finally:
             await hub.stop()
-    kid, ok, bundle, no, unknown = run(go())
+    sk = device.signing_key(tmp_path / "nowhere.yaml")
+    kid, ok, bundle, no, unknown, bad, pinned = run(go())
+    assert pinned == wire.pub_text(sk)                 # recorded with the worker id it was given
+    assert [b["error"] for b in bad] == ["bad request: key is an ed25519: public key"] * 2
     assert kid == {"ok": False, "error": "denied: person may not set up machines"}
     assert ok == {"ok": True, "name": "tablet", "decision": "approve"}
     assert bundle["owner"] == "person:ann" and bundle["name"] == "tablet"    # the approver owns it

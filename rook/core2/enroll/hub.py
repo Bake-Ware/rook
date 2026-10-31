@@ -26,8 +26,14 @@ picks the role and ceiling (:meth:`membership`), which signs a
 like any call. The same route narrows the home band's ceiling (role
 ``home``) or takes a worker off a band (``removed``).
 
+The device sends its public key (``key``, spec 5.8) with the claim or the
+device-code request; the hub records it with the worker id it issues, and
+from then on takes only requests that key signed from that worker. A
+device enrolled without one (before worker keys) gets its key pinned at
+its first announce that carries one.
+
 State: pending codes live in memory (a restart drops them; the device asks
-again). In ``<data>``: ``enrolled.json`` (each enrolled device: name, owner),
+again). In ``<data>``: ``enrolled.json`` (each enrolled device: name, owner, key),
 ``bands.json`` (other hubs' bands from accepted invites, with their PSKs:
 private), ``memberships.json`` (the documents this hub signed).
 """
@@ -164,7 +170,7 @@ class Enrollment:
         self.hub, self.opts = hub, dict(options or {})
         self.codes: dict[str, dict] = {}      # digest(code) -> {person, exp}
         self.devices: dict[str, dict] = {}    # digest(device code) -> {user_code, name, exp, by?, refused?}
-        self.enrolled = _load(hub.data / "enrolled.json")       # worker_id -> {name, owner, at, via}
+        self.enrolled = _load(hub.data / "enrolled.json")       # worker_id -> {name, owner, at, via, key?}
         self.bands = _load(hub.data / "bands.json")             # band -> {hub, root, psk, relay?, ws_url?}
         self.issued = _load(hub.data / "memberships.json")      # worker_id -> {"<hub> <band>": doc}
 
@@ -218,25 +224,29 @@ class Enrollment:
         return {"ok": True, "code": code, "exp": exp, "url": url, "hub": self.hub.hub_id, "qr": qr}
 
     async def claim(self, body: dict) -> dict:
-        """``{code, name}`` from the device (no token): the bundle, once."""
-        name, code = body.get("name"), body.get("code")
+        """``{code, name, key?}`` from the device (no token): the bundle, once."""
+        name, code, key = body.get("name"), body.get("code"), body.get("key")
         if not (isinstance(name, str) and NAME.fullmatch(name) and name != "rook"):
             return {"ok": False, "error": "bad request: name is a host-like name (not 'rook')"}
+        if key is not None and not wire.valid_pub(key):
+            return {"ok": False, "error": "bad request: key is an ed25519: public key"}
         rec = self.codes.pop(_digest(code), None) if isinstance(code, str) else None
         if rec is None or rec["exp"] < self.hub.clock():
             return {"ok": False, "error": "unknown or expired code"}
-        return self._bundle(rec["person"], name, "code")
+        return self._bundle(rec["person"], name, "code", key)
 
     # -- device codes ------------------------------------------------------------------
 
     async def device_start(self, body: dict, address: str | None = None) -> dict:
-        """``{name}`` from the device (no token): a device code to poll with
-        and the user code to show. ``address`` (where the request came from,
-        as the door saw it) is shown to whoever approves the code, with its
-        age: the name is whatever the device says."""
-        name = body.get("name")
+        """``{name, key?}`` from the device (no token): a device code to poll
+        with and the user code to show. ``address`` (where the request came
+        from, as the door saw it) is shown to whoever approves the code, with
+        its age: the name is whatever the device says."""
+        name, key = body.get("name"), body.get("key")
         if not (isinstance(name, str) and NAME.fullmatch(name) and name != "rook"):
             return {"ok": False, "error": "bad request: name is a host-like name (not 'rook')"}
+        if key is not None and not wire.valid_pub(key):
+            return {"ok": False, "error": "bad request: key is an ed25519: public key"}
         self._expire()
         if len(self.devices) >= MAX_PENDING:
             return {"ok": False, "error": "busy: too many devices waiting; try again in a few minutes"}
@@ -247,7 +257,7 @@ class Enrollment:
         now = self.hub.clock()
         device, exp = secrets.token_urlsafe(32), int(now + CODE_SECS)
         self.devices[_digest(device)] = {"user_code": user, "name": name, "exp": exp, "started": now, "seen": now,
-                                         "address": str(address)[:200] if address else None}
+                                         "address": str(address)[:200] if address else None, "key": key}
         log.info("device waiting", extra={"fields": {"name": name, "code": user, "address": address}})
         return {"ok": True, "device_code": device, "user_code": user, "hub": self.hub.hub_id,
                 "exp": exp, "interval": POLL_EVERY}
@@ -266,7 +276,7 @@ class Enrollment:
         if not d.get("by"):
             return {"ok": True, "pending": True, "interval": POLL_EVERY}
         del self.devices[key]
-        return self._bundle(d["by"], d["name"], "device code")
+        return self._bundle(d["by"], d["name"], "device code", d.get("key"))
 
     async def pending(self, caller) -> dict:
         """Devices waiting for someone to approve their code."""
@@ -324,7 +334,7 @@ class Enrollment:
             out[name] = {"url": s["url"], **({"key": key} if key else {})}
         return out
 
-    def _bundle(self, person: str, name: str, via: str) -> dict:
+    def _bundle(self, person: str, name: str, via: str, key: str | None = None) -> dict:
         from ..hub.identity import Caller
         if (err := self._may_enroll(Caller(person=person))):      # rights may have changed since
             return {"ok": False, "error": err}
@@ -333,10 +343,10 @@ class Enrollment:
         except ValueError as e:
             return {"ok": False, "error": str(e)}
         wid, now = secrets.token_hex(16), int(self.hub.clock())
-        self.enrolled[wid] = {"name": name, "owner": person, "at": now, "via": via}
+        self.enrolled[wid] = {"name": name, "owner": person, "at": now, "via": via, **({"key": key} if key else {})}
         _write_private(self.hub.data / "enrolled.json", json.dumps(self.enrolled, indent=1))
         self.hub._journal({"kind": "enroll", "ts": now, "person": person, "worker": wid,
-                           "name": name, "via": via, "ok": True})
+                           "name": name, "via": via, "ok": True, **({"key": wire.key_id(key)} if key else {})})
         log.info("device enrolled", extra={"fields": {"worker": wid, "name": name, "owner": person, "via": via}})
         return {"ok": True, "bundle": {
             "hub": {"hub_id": self.hub.hub_id, "root": wire.pub_text(self.hub.root), "url": self.opts.get("url")},

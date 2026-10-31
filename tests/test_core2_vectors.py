@@ -94,6 +94,27 @@ def test_leases():
         assert wire.verify_lease(c["lease"], v["ticket"], v["keys"], c["now"])[1] == c["reason"], c["name"]
 
 
+def test_worker_requests():
+    v = vec("requests")
+    for c in v["cases"]:
+        cache = wire.ReplayCache()
+        for n in c["seen"]:
+            cache.add(n, c["now"], c["now"])
+        got = wire.verify_request(c["request"].get("proof"), c["request"], hub=v["hub"], band=v["band"],
+                                  keys=v["keys"], now=c["now"], replay=cache)
+        assert got == (c["reason"] == "ok", c["reason"]), c["name"]
+
+
+def test_worker_request_is_single_use():
+    v = vec("requests")
+    c = next(c for c in v["cases"] if c["name"] == "ok: core.call")
+    cache, req = wire.ReplayCache(), c["request"]
+    kw = dict(hub=v["hub"], band=v["band"], keys=v["keys"], replay=cache)
+    assert wire.verify_request(req["proof"], req, now=c["now"], **kw) == (True, "ok")
+    assert wire.verify_request(req["proof"], req, now=c["now"] + 1, **kw) == (False, "replay")
+    assert cache.until[req["proof"]["nonce"]] >= req["proof"]["ts"] + wire.REQUEST_SKEW
+
+
 def test_memberships():
     v = vec("memberships")
     for c in v["cases"]:

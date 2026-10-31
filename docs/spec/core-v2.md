@@ -5,8 +5,8 @@ Status: **2.0 draft** for Castling (Rook 0.5). A clean cut from
 machine of a band moves together. Companion material:
 
 - `conformance/core-v2/vectors/*.json`: test vectors for the pure functions
-  (canonical JSON, signed objects, ticket checks, version negotiation,
-  rights, presets, gate verdicts, journal chains). Where prose and vectors
+  (canonical JSON, signed objects, ticket checks, worker requests, version
+  negotiation, rights, presets, gate verdicts, journal chains). Where prose and vectors
   disagree, the vectors win and the prose is a bug.
 - `rook/core2/`: the Python reference for those functions.
 - `conformance/manifest/manifest.schema.json`: the plugin manifest schema.
@@ -219,6 +219,7 @@ own `typ`:
 | `rook-membership` | `rook-membership-v2\n` | the worker's home hub (root or operational key) | 9.3 |
 | `rook-plugin` | `rook-plugin-v2\n` | hub operational key | 13 |
 | `rook-release` | `rook-release-v2\n` | hub operational key | 13 |
+| `rook-request` | `rook-request-v2\n` | the worker's own key (5.8) | 13.1 |
 
 Times are integer Unix seconds. Identifiers called "32 hex" are 32
 lowercase hex characters drawn from a CSPRNG.
@@ -308,6 +309,7 @@ An unknown scope MUST be treated as `external`.
 | `worker_id` | a worker; persisted, survives restarts; the same on every band the worker joins | 32 hex |
 | `hub_id` | a hub: `key_id` of its root key | 16 hex |
 | `band` | a band: its `band_id` | 32 hex (16 bytes) |
+| worker key | a worker's own Ed25519 key (5.8); hubs pin its public half per `worker_id` | `ed25519:…` |
 
 The hub appears on its band as a node named `rook`. A client MUST resolve
 the name `rook` only to a node whose announce verifies as a hub announce
@@ -342,7 +344,7 @@ after every transport reconnect, and whenever anything in it changes.
 
 ```json
 {"kind": "announce", "worker_id": "3f0a…", "name": "kaiju", "core": "2.0",
- "version": "1300.brisk.otter", "description": "GPU box in the rack",
+ "key": "ed25519:…", "version": "1300.brisk.otter", "description": "GPU box in the rack",
  "facts": {"os": "linux", "arch": "x86_64", "cpus": 16, "gpu": [{"vendor": "nvidia"}]},
  "manifests": [{"plugin": "core", "version": "2.0.0", "hash": "9c1e…", "builtin": true},
                {"plugin": "shell", "version": "1.0.0", "hash": "51ab…"}],
@@ -357,6 +359,7 @@ after every transport reconnect, and whenever anything in it changes.
 | `worker_id` | MUST | 5.1 |
 | `name` | MUST | human name, usually the hostname; `rook` is reserved |
 | `core` | MUST | the worker's core version (2.2) |
+| `key` | MUST | the worker's public key (5.8) |
 | `manifests` | MUST | what it runs, filtered for this band (9.4): one entry per plugin, sorted by `plugin` |
 | `manifests_hash` | MUST | hex SHA-256 of `canonical(manifests)` |
 | `version` | SHOULD | worker software build |
@@ -432,6 +435,34 @@ delegate with `target` = the delegate's `worker_id` and `appliance` = the
 instance name. The ticket binds both. Instance settings and credentials
 travel with the call (secrets resolved by the hub per call). A delegate
 answers with `from` = its own `worker_id`.
+
+### 5.8 Worker keys
+
+Every worker has its own Ed25519 key. It signs the
+worker's `core.call` and `core.elevate` requests to a hub (13.1), so no
+other band member can ask for those in its name. It grants nothing by itself:
+calls to the worker still need tickets, and the worker's trust store (9.2)
+is still signed by its home hub.
+
+- **Made on the machine.** The worker generates the key (at enrollment, or
+  the first time it starts without one) and keeps the private
+  half in its data folder, readable only by its own account. It never
+  leaves the machine. A key file that is there but unreadable is an error,
+  never silently replaced.
+- **Pinned per hub.** Each hub records the public key with the worker's
+  `worker_id`; a worker uses one key on every band, and every hub it serves
+  pins it on its own. A hub learns it, in order of preference: from
+  enrollment (12: the device sends `key` with its claim or device-code
+  request and the hub records it with the `worker_id` it issues), else
+  from the first announce of that `worker_id` that carries `key` (trust on
+  first use: how a guest hub that never enrolled the worker learns it, and
+  how a worker enrolled before worker keys gets one). The hub journals each pin
+  (`worker_key`, with `via`: `enrollment` or `announce`).
+- **Never replaced over the band.** Once a hub has a key for a `worker_id`,
+  it refuses announces carrying another key (an impostor, or a machine that
+  lost its key), and keeps the key if the worker later announces without
+  one. A machine that lost its key
+  enrolls again and gets a new `worker_id`.
 
 ## 6. The call
 
@@ -791,7 +822,8 @@ A worker keeps one **anchor** and a set of **memberships**:
   signed by the home hub (9.3), naming the hub, its root key, the band, the
   role and the per-hub **ceiling** (a rights object, 8.2).
 
-The worker holds no signing key, so it cannot create or widen an entry.
+The worker's own key (5.8) signs only its requests to hubs; nothing the
+worker signs can create or widen a trust entry.
 Without a membership for the home band, the home ceiling is everything. A
 hub is trusted for a band exactly when the trust store has a membership
 (or the anchor) for that pair. Ceilings bind the hub: nothing it signs gets
@@ -1026,6 +1058,10 @@ result is a **config bundle**, scoped to what that person may do:
 | `services` | service endpoints the device needs (for example the voice server) with their keys |
 | `core` | the hub's core version |
 
+The device sends its public key (5.8) as `key` with the claim or the
+device-code request; the hub records it with the `worker_id` it issues,
+before the device ever joins the band.
+
 The bundle is shown once and travels only over TLS to the device that
 claimed the code. Secrets in it are the device's own (band PSK, service
 keys); other secrets stay in the vault and travel per call. Plugin
@@ -1049,13 +1085,14 @@ for the ones it makes on its own.
 The hub serves three caps to its band's workers. They are the only
 band-originated requests a hub serves, and they carry no ticket of their
 own. `core.elevate` and `core.call` are each authenticated by the **ticket
-of a call still in flight**, which the hub minted itself, for that worker.
-`core.event` is only as good as the band key, like an announce (15).
+of a call still in flight**, which the hub minted itself, for that worker,
+and **signed by that worker** (13.1). `core.event` is only as good as
+the band key, like an announce (15).
 
 | Cap (on the hub node) | Arguments | Result |
 |---|---|---|
 | `core.elevate` | `ticket` (the call's), `reason` (`upfront` or `access_denied`) | `{"lease": <rook-lease>}`, or an error: `elevation: denied`, `elevation: outside ceiling` |
-| `core.call` | `ticket` (the parent call's), `cap`, `target`, `args`, `why` | the sub-call's reply. The hub dispatches it (10.1) as the parent's `person`, `agent` and `session`, with the calling plugin's `uses` as an extra layer. |
+| `core.call` | `ticket` (the parent call's), `cap`, `target`, `args`, `why` | the sub-call's reply. The hub dispatches it (10.1) as the parent's `person`, `agent` and `session`, with the calling plugin's `uses` as an extra layer. At most 32 sub-calls per parent call (across the tickets minted for it); each is journaled with `parent` = the call it runs inside. |
 | `core.event` | `worker_id`, `events` (at most 100 of `{id, event, plugin, payload}`), `dropped` (optional count) | `{"taken": n}`; `unknown worker` with `retry` when the hub holds no announce for that worker on this band |
 
 **Events.** A worker sends the events its plugins emit (`emits`) to every
@@ -1111,14 +1148,56 @@ the signing hub still has one of those roles. The update procedure (trial,
 confirmation, rollback) is the core manifest's, not this document's
 (docs/castling-updates.md).
 
+### 13.1 Signed worker requests
+
+A bearer ticket alone doesn't say who sent the request: any band member
+reads every ticket while its call is in flight. So a worker puts a `proof` on each `core.call` and `core.elevate` it sends a
+hub, a `rook-request` signed with its own key (5.8):
+
+```json
+{"typ": "rook-request", "v": 2, "worker": "<worker_id>", "hub": "<hub_id>", "band": "<band>",
+ "id": "<request id>", "cap": "core.call", "args_hash": "<args_hash of the request's args>",
+ "parent": "<the parent ticket's nonce>", "nonce": "<32 hex, fresh>", "ts": 1793300005,
+ "kid": "<key_id of the worker key>", "sig": "<b64>"}
+```
+
+`parent` is the nonce of the parent ticket in the request's `args`. The
+hub checks, in this order, refusing on the first failure
+with `denied: worker request: <reason>` (`elevation: denied: worker
+request: <reason>` for `core.elevate`; vectors: `requests.json`):
+
+| # | Check | Reason |
+|---|---|---|
+| 1 | a `proof` is present | `no_proof` |
+| 2 | it has every field above, of the right type and form | `malformed` |
+| 3 | the hub has a key pinned for `worker` | `unknown_worker` |
+| 4 | `kid` is that key's `key_id` | `unknown_key` |
+| 5 | the signature verifies | `bad_signature` |
+| 6 | `hub` is this hub | `wrong_hub` |
+| 7 | `band` is the band the request arrived on | `wrong_band` |
+| 8 | `id` is the request `id` | `wrong_call` |
+| 9 | `cap` is the request `cap` | `wrong_cap` |
+| 10 | `args_hash` matches the request's `args` (parent ticket included) | `wrong_args` |
+| 11 | `parent` equals `args.ticket.nonce` | `wrong_parent` |
+| 12 | `args.ticket.worker` is `worker` | `wrong_worker` |
+| 13 | `ts` is within 60 s of now either way | `stale` |
+| 14 | `nonce` is not in the hub's replay cache | `replay` |
+
+Then the checks of section 13 apply as before: the parent ticket is one
+the hub minted for `worker` and still in flight, and the call's rights
+permit what is asked. The hub records each accepted `nonce` for at least
+`ts + 60` (the reference keeps 15 minutes). A replay cache lost in a
+restart opens nothing: the tickets of calls from before the restart are
+no longer in flight.
+
 ## 14. Conformance
 
 | Profile | Requires | Vectors |
 |---|---|---|
 | **wire** | 2.1 (core v1 transport sections) | v1 `band_crypto`, `fragments`, `frames` |
 | **encoding** | 3.2, 3.3 | `canonical`, `signatures` |
-| **worker** | wire, encoding, 2.2, 5.3, 5.5, 6, 7.3, 9.3, 13 | `version`, `tickets`, `leases`, `memberships` |
-| **hub** | wire, encoding, all of the above plus 8, 10, 11 | `rights`, `presets`, `gate`, `journal` |
+| **worker** | wire, encoding, 2.2, 5.3, 5.5, 5.8, 6, 7.3, 9.3, 13 | `version`, `tickets`, `leases`, `memberships`, `requests` (making proofs) |
+| **hub** | wire, encoding, all of the above plus 8, 10, 11, 13.1 | `rights`, `presets`, `gate`, `journal`, `requests` (checking proofs) |
 
 `conformance/core-v2/README.md` describes the vector files. The Python
 reference (`rook/core2`) passes them all; `generate.py` checks hand-written
@@ -1136,15 +1215,19 @@ signatures).
   within a grant lifetime) and revocation lag (closed for the dangerous case
   by elevation, which is checked online and dropped on access change).
 - **The PSK is band membership.** Anyone holding it reads all of the band's
-  traffic, including secret values sent with calls, and can announce
-  anything. It cannot mint tickets, so it cannot make a v2 worker run
-  anything. It can send events as any worker the hub knows on the band,
-  but only events that worker announced, within its ceiling; they count
-  as that worker's owner's data and, when declared `taints`, taint
-  whatever acts on them. Workers have no keys of their own in v2.0, so an impostor
-  worker on the band can receive calls meant for the name it claims;
-  calls are bound to `worker_id`, and hubs SHOULD alert when a known
-  `worker_id` appears from a second address.
+  traffic, including secret values sent with calls and the tickets of
+  calls in flight, and can announce anything. It cannot mint tickets, so it
+  cannot make a v2 worker run anything, and a ticket it read is no use to
+  it: `core.call` and `core.elevate` must be signed by the ticket's worker
+  (13.1). It can send events as any worker the hub knows
+  on the band, but only events that worker announced, within its ceiling;
+  they count as that worker's owner's data and, when declared `taints`,
+  taint whatever acts on them. A band member can still receive calls sent
+  to a `worker_id` it impersonates and answer them first (replies are
+  unsigned), and a hub pinning a key on first announce trusts whoever
+  announces that `worker_id` first; enrollment pins the key out of band,
+  and hubs SHOULD alert when a known `worker_id` appears from a second
+  address.
 - **Ceilings live on the worker** and are signed by the home hub; the
   worker can't edit its trust store or widen a ceiling. Only the anchor
   depends on local file protection.
@@ -1209,13 +1292,27 @@ The same request replayed a minute later:
 ```
 
 An elevation inside a call (`elevation: may`, the first run hit access
-denied):
+denied), signed by the worker (13.1):
 
 ```json
 worker → hub: {"id": "<32 hex>", "cap": "core.elevate", "target": "<hub node id>",
-               "args": {"ticket": {…the call's ticket…}, "reason": "access_denied"}}
+               "args": {"ticket": {…the call's ticket…}, "reason": "access_denied"},
+               "proof": {"typ": "rook-request", "v": 2, "worker": "3f0a…", "hub": "…", "band": "…",
+                         "id": "<same>", "cap": "core.elevate", "args_hash": "…",
+                         "parent": "<the ticket's nonce>", "nonce": "<32 hex>", "ts": 1793300012,
+                         "kid": "…", "sig": "…"}}
 hub → worker: {"id": "<same>", "from": "<hub node id>", "ok": true,
                "result": {"lease": {"typ": "rook-lease", "v": 2, "id": "…", "…": "…"}}}
 worker → hub (reply to the original call, after the elevated re-run):
               {"id": "5d1c…", "from": "3f0a…", "ok": true, "result": {…}, "elevated": "<lease id>"}
+```
+
+Another band member that read that ticket and asks for a sub-call with it
+(`conformance/core-v2/vectors/requests.json`, the `no_proof` and
+`unknown_key` cases):
+
+```json
+→ {"id": "<32 hex>", "cap": "core.call", "target": "<hub node id>",
+   "args": {"ticket": {…}, "cap": "shell.exec", "target": "kaiju", "args": {…}, "why": "…"}}
+← {"id": "<same>", "from": "<hub node id>", "ok": false, "error": "denied: worker request: no_proof"}
 ```

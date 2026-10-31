@@ -1,4 +1,5 @@
 import os
+import time
 
 
 def ping(ctx, text=""):
@@ -16,3 +17,8 @@ def wipe(ctx):
 def receive(ctx, **text):
     ctx.emit("e2e.sms.received", text)
     return {"emitted": True}
+
+
+def relay(ctx, wait=0):
+    time.sleep(wait)
+    return ctx.call("e2e.ping", text="inner")
