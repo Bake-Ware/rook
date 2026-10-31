@@ -403,7 +403,15 @@ class Dispatcher:
             return {"ok": False, "error": f"{by} may not release {name}"}
         del self.holds[name]
         entry = {**hold.entry, "ts": self.clock(), "decision": "released", "by": by}
-        refused = self._rights(hold.caller, hold.session, hold.worker, hold.call, entry)
+        # The worker and the cap as they are now: a re-announce (new effects)
+        # or a machine made sacred since must not ride on an approval given
+        # for less (a gate flag triage may release is not a hard stop).
+        w = self.workers.get(hold.worker.id)
+        caps = None if w is None else w.caps if hold.call.appliance is None else w.appliances.get(hold.call.appliance)
+        meta = (caps or {}).get(hold.call.cap)
+        refused = None if meta is None else self._rights(hold.caller, hold.session, w, hold.call, entry)
+        if meta != hold.meta or set(_hard_stops(meta, w, entry["risk"])) - set(hold.hard):
+            refused = {"layer": "hold", "reason": f"{hold.call.cap} changed since it was held; call it again"}
         if hold.session.ended:
             refused = {"layer": "session", "reason": "ended"}
         if refused:
