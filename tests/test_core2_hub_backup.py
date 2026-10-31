@@ -113,7 +113,8 @@ def test_seal_round_trips_across_chunk_edges(size):
     blob = os.urandom(size)
     sealed = seal(blob, key)
     assert sealed.startswith(bk.MAGIC) and unseal(sealed, key) == blob
-    assert blob[:64] not in sealed or size == 0
+    # a byte or a few can turn up in any ciphertext by chance; 16+ bytes can't
+    assert size < 16 or blob[:64] not in sealed
 
 
 def recovery_key_text() -> str:
