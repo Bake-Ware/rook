@@ -673,12 +673,12 @@ def burst(args) -> int:
     out.mkdir(parents=True, exist_ok=True)
     rec = Recorder(out)
     stop = threading.Event()
+    cargs = json.loads(args.args) if args.args else {"text": "b"} if args.cap == "soak.ping" else {}
 
     def go(i):
         d = Door(HTTP, token("owner.token"))
         while not stop.is_set():
-            timed(rec, f"burst_{args.cap}", "owner", lambda: call(d, WORKER, args.cap, {"text": "b"} if
-                                                                  args.cap == "soak.ping" else {}), ok)
+            timed(rec, f"burst_{args.cap}", "owner", lambda: call(d, WORKER, args.cap, cargs), ok)
         d.close()
     threads = [threading.Thread(target=go, args=(i,), daemon=True) for i in range(args.threads)]
     t0 = time.monotonic()
@@ -694,6 +694,9 @@ def burst(args) -> int:
     good = [c for c in calls if c["ok"]]
     print(f"{len(calls)} calls in {took:.1f}s with {args.threads} threads: {len(good) / took:.1f} ok/s, "
           f"{len(calls) - len(good)} failed")
+    if len(good) < len(calls):
+        first = min(c["t"] for c in calls if not c["ok"]) - min(c["t"] - c["ms"] / 1000 for c in calls)
+        print(f"first failure {first:.0f}s in")
     print(table(latencies(calls)))
     errs = defaultdict(int)
     for c in calls:
@@ -846,6 +849,7 @@ def main(argv=None) -> int:
     b.add_argument("--seconds", type=float, default=30)
     b.add_argument("--threads", type=int, default=8)
     b.add_argument("--cap", default="soak.ping")
+    b.add_argument("--args", help="the cap's args as JSON (soak.ping: {\"text\": \"b\"})")
     b.add_argument("--out", required=True)
     p = sub.add_parser("report")
     p.add_argument("out")
