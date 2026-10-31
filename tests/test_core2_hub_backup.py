@@ -28,6 +28,7 @@ from rook.core2.enroll.hub import recovery_key  # noqa: E402
 from rook.core2.hub import backup as bk  # noqa: E402
 from rook.core2.hub.identity import Caller as HubCaller  # noqa: E402
 from rook.core2.hub.runtime import Hub, Loopback, _key, load_config  # noqa: E402
+from rook.core2.hub.vault import Vault  # noqa: E402
 from rook.core2.worker.host import CallError, Host  # noqa: E402
 from rook.kit.ctx import Caller  # noqa: E402
 from rook.kit.manifest import check as check_manifest  # noqa: E402
@@ -36,6 +37,7 @@ REPO = Path(__file__).resolve().parents[1]
 BAND = "e17904e6ed4c664592f64f6f1d02c682"
 WHY = "Check the hub backup."
 PSK = "9c1d2e3f40516273849506a7b8c9d0e1f2a3b4c5d6e7f809"
+SECRET = "ghp_n0tInTheClearAnywhere"
 
 
 def go(coro, timeout=60):
@@ -60,11 +62,7 @@ def make_hub(root: Path, library: bool = True) -> Path:
     db.executemany("INSERT INTO calls VALUES (?, ?)", [(i, "x" * 200) for i in range(5000)])
     db.commit()
     db.close()
-    v = sqlite3.connect(data / "vault.db")
-    v.execute("CREATE TABLE secrets (name TEXT, value BLOB)")
-    v.execute("INSERT INTO secrets VALUES ('gh', ?)", (os.urandom(48),))
-    v.commit()
-    v.close()
+    Vault(data).unlock().set("gh-token", SECRET, by="person:bake")
     (data / "plugins" / "agents").mkdir(parents=True)
     sqlite3.connect(data / "plugins" / "agents" / "agents.db").execute("CREATE TABLE a (x)").connection.close()
     (data / "plugins" / "agents" / "notes.json").write_text('{"n": 1}')
@@ -172,8 +170,11 @@ def test_full_round_trip_restores_a_working_hub(tmp_path):
         assert restored[name_] == original[name_]
     # databases are whole copies, the WAL folded in
     assert rows(new.parent / "data" / "journal.db", "SELECT count(*) FROM calls") == [(5000,)]
-    assert rows(new.parent / "data" / "vault.db", "SELECT value FROM secrets") == \
-        rows(old / "vault.db", "SELECT value FROM secrets")
+    # the vault came back as it was, and opens with the restored root key
+    for table in ("secrets", "wraps"):
+        assert rows(new.parent / "data" / "vault.db", f"SELECT * FROM {table}") == \
+            rows(old / "vault.db", f"SELECT * FROM {table}")
+    assert Vault(new.parent / "data").unlock().get("gh-token") == SECRET
     # the library came back as files, not links into a checkout
     lib = new.parent / "library" / "file"
     assert not lib.is_symlink() and (lib / "plugin.yaml").read_bytes() == \
@@ -203,7 +204,7 @@ def test_the_backup_holds_no_secret_in_the_clear(tmp_path):
     data = cfg.parent / "data"
     path, manifest = bk.make(cfg, data, None)
     sealed = path.read_bytes()
-    for secret in ((data / "keys" / "root.key").read_text().strip(), PSK, recovery_key(data)):
+    for secret in ((data / "keys" / "root.key").read_text().strip(), PSK, recovery_key(data), SECRET):
         assert secret.encode() not in sealed
     assert b"journal.db" not in sealed and b"calls" not in sealed      # names are sealed too
     assert manifest["library"] is None and "hub.yaml" in manifest["files"]
