@@ -206,7 +206,8 @@ async def test_stream_opens_the_caps_declared_stream():
     meta = streams.get(sid)
     assert (meta.kind, meta.title, meta.producer) == ("process", "syslog", "tv.tail")
     assert meta.spec.types == ("bytes",) and meta.spec.input and not meta.spec.durable
-    assert meta.participants == ["bake", "claude"] and meta.attrs == {"path": "/var/log/syslog"}
+    # the band rides along: identities are per hub
+    assert meta.participants == ["bake", "claude"] and meta.attrs == {"path": "/var/log/syslog", "band": "b1"}
     assert streams.attached(sid)                       # the code keeps writing after the reply
     events = (await streams.read(sid, 0))["events"]
     assert [e.type for e in events] == ["bytes"]
