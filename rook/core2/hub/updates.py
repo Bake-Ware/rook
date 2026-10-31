@@ -36,6 +36,7 @@ from rook.kit.ctx import Caller as KitCaller, KitError
 
 from rook.core2 import release
 from rook.core2.builtin import UPDATE
+from rook.core2.transport.conn import BULK_MAX
 
 log = logging.getLogger("rook.hub.updates")
 
@@ -117,6 +118,8 @@ class Updates:
     async def prepare(self, ctx, version: str | None = None, source: str | None = None) -> dict:
         """Sign a release of ``source`` (a folder holding ``rook/``; default
         the code this hub runs). The same code again is the same release."""
+        # TODO(castling:changes): an agent preparing or rolling out a release (code for every
+        # worker) goes through a change record, like an agent's plugin push.
         self._owner(ctx)
         import rook
         src = Path(source).expanduser() if source else Path(rook.__file__).resolve().parent.parent
@@ -249,7 +252,9 @@ class Updates:
                 ok = await self._one(w, blob, who)
                 if not ok:
                     break
-            step = max(1, int(ro.get("batch") or BATCH))
+            # Drop serves at most BULK_MAX per band at once (oldest offers go first): never
+            # offer more copies at a time than fit, or one is gone before its worker pulls it.
+            step = max(1, min(int(ro.get("batch") or BATCH), BULK_MAX // max(1, len(blob))))
             for i in range(0, len(rest), step):
                 if not ok:
                     break
@@ -286,6 +291,9 @@ class Updates:
         except Exception as e:
             return self._done(w, False, f"release not offered: {e}")
         reply = await hub.call_as(who, "worker.update", {"bundle": desc}, target=w["id"])
+        if reply.get("held"):
+            return self._done(w, False, f"waiting for a person (hold {reply.get('hold')}); "
+                                        "once it is answered, roll out again")
         if not reply.get("ok"):
             return self._done(w, False, str(reply.get("error") or "worker.update failed"))
         deadline = time.monotonic() + gate

@@ -27,9 +27,11 @@ Code: `rook/core2/release.py` (the format), `rook/core2/worker/boot.py`
 5. The worker pulls it, checks it (below), installs requirements it lacks,
    runs the new core's smoke check in a child process, and restarts into it
    on **trial**.
-6. The new process confirms the trial at its first contact with its home hub.
-   The hub polls `worker.status` until the worker reports the release running
-   and confirmed, for up to `gate` seconds (default 300).
+6. The new process confirms the trial when it has served a call from its
+   home hub all the way through (ticket, gate, host, plugin), not merely
+   heard it. The hub polls `worker.status`, which is such a call, until the
+   worker reports the release running and confirmed, for up to `gate`
+   seconds (default 300).
 7. `update.status` follows it; `update.history` keeps every release,
    rollout and per-worker outcome.
 
@@ -86,8 +88,9 @@ release isn't run (the previous one, else the base, is).
 
 The trial is dropped and the worker goes back to the core it had when:
 
-- it doesn't reach its home hub within `ROOK_UPDATE_TRIAL_SECS` (120 s) of
-  starting: the worker restarts itself into `current`;
+- it serves no call from its home hub within `ROOK_UPDATE_TRIAL_SECS`
+  (120 s) of starting (a hub outage counts too: nothing proved the new core):
+  the worker restarts itself into `current`;
 - it fails to start `MAX_BOOTS` (3) times: each start that picks the trial
   counts, and the fourth runs `current`. **This needs a service manager that
   restarts the worker when it exits** (systemd `Restart=always` or
@@ -115,6 +118,8 @@ releases are kept on a worker; the hub keeps its three newest releases.
   and roll out again.
 - A worker that can't re-exec itself (the phone app's) refuses: its core
   comes with its app.
+- A rollout never offers more copies of a release at once than Drop holds
+  per band (64 MiB), whatever `batch` says.
 - A rollout cut short by a hub restart is recorded as `interrupted`; start it
   again (workers already on the release are skipped).
 
@@ -132,9 +137,9 @@ nothing changes in how far it trusts the hub.
   it.
 - Release channels, maintenance windows and auto mode: a person starts each
   rollout.
-- Windows: `os.execv` starts a new process there and the old one exits, so
-  the worker needs its service manager to keep it running (the desktop app
-  does). Not yet run on Windows.
+- Windows: `worker.update` refuses there for now. `os.execv` starts a new
+  process and the old one exits, so whatever runs the worker (the desktop
+  app) sees it end; that needs trying on a Windows machine first.
 - The phone app's 0.5 mode updates through the APK feed (R8 and step 4 of
   docs/castling-switchover.md).
 

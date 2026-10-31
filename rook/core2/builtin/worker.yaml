@@ -69,8 +69,8 @@ caps:
     doc: >-
       Update this worker's core to a hub-signed release: pull it, check its signature and files,
       install its requirements, smoke-check it, then restart into it on trial. The new core must
-      reach its home hub within two minutes (and within three starts), or the worker drops it
-      and restarts on the core it had. Refused while terminals or streams are open here.
+      serve a call from its home hub within two minutes (and within three starts), or the worker
+      drops it and restarts on the core it had. Refused while terminals or streams are open here.
     risk: admin
     scope: self
     effects: [persists]

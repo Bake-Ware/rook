@@ -91,8 +91,8 @@ def test_the_desktop_update_check_is_served_without_a_token(band):
     # crashes at start: the supervisor restarts it until boot drops the trial
     ("async def _broken(self):\n    raise RuntimeError('broken on purpose')\nWorker.start = _broken",
      "did not come up"),
-    # runs, but never confirms: the trial clock rolls it back in-process
-    ("Worker._regained = lambda self, band: None", "no contact with the home hub"),
+    # runs, but its calls never prove it: the trial clock rolls it back in-process
+    ("Worker._served = lambda self, band: None", "no call from the home hub"),
 ])
 def test_a_release_that_does_not_come_up_is_rolled_back_by_the_worker(fresh, monkeypatch, patch, reason):
     b = fresh

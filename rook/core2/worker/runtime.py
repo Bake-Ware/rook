@@ -22,8 +22,8 @@ What it wires together:
   at start-up, re-checked.
 - **Updater** (:mod:`.update`): ``worker.update`` pulls a hub-signed core
   release over Drop, verifies and smoke-checks it and restarts into it as a
-  trial (:mod:`.boot`); the trial is confirmed at the first home-hub
-  contact, else dropped after ``ROOK_UPDATE_TRIAL_SECS`` and the worker
+  trial (:mod:`.boot`); the trial is confirmed by the first call from the
+  home hub it serves, else dropped after ``ROOK_UPDATE_TRIAL_SECS`` and the worker
   restarts on the core it had. ``worker.rollback`` goes back by hand.
 - **Transport** (:mod:`rook.core2.transport`): one connection per band, each
   with its own announce, heartbeat and hub-loss clock (9.4). Bands come from
@@ -193,6 +193,8 @@ class _Gate(WorkerGate):
         started, out = time.time(), {"ok": False, "error": "worker error"}
         try:
             out = await super().execute(call, action, now)
+            if out.get("ok") and self.worker.on_trial:
+                self.worker._served(call.band)
             return out
         except Exception as e:             # Host.handle turns it into the error reply
             out = {"ok": False, "error": getattr(e, "message", None) or str(e) or type(e).__name__}
@@ -219,6 +221,7 @@ class Worker:
         self.config_path = config_path        # for the smoke check of a core update
         self.trial_secs = float(os.environ.get("ROOK_UPDATE_TRIAL_SECS") or TRIAL_SECS)
         self._trial_timer: asyncio.TimerHandle | None = None
+        self.on_trial = False                 # running a core update that hasn't proved itself yet
         self.extra_builtins = list(extra_builtins)
         self.data = Path(cfg.data)
         self.make_link = make_link
@@ -411,10 +414,6 @@ class Worker:
         """First hub contact on ``band``, or contact after losing it: the hub
         may have (re)started since this worker last announced, so announce."""
         log.info("hub contact", extra=_f(band=band[:8]))
-        if band == self.trust.home.band and self.updater.in_trial() and self.updater.confirm():
-            if self._trial_timer is not None:
-                self._trial_timer.cancel()
-                self._trial_timer = None
         self._spawn(self._announce_on(band))
         for (_, b), outbox in self.outboxes.items():
             if b == band:
@@ -697,13 +696,26 @@ class Worker:
             up.refuse_running(f"hub {hub} no longer approves code on this machine")
             self._restart_soon()
         elif up.in_trial():
+            self.on_trial = True
             self._trial_timer = self.loop.call_later(self.trial_secs, self._trial_expired)
             log.info("core update on trial", extra=_f(version=up.running, seconds=self.trial_secs))
 
+    def _served(self, band: str) -> None:
+        """A call from the home hub went all the way through this core
+        (ticket, gate, host, plugin): the trial has proved itself."""
+        if band != self.trust.home.band or not self.on_trial:
+            return
+        self.on_trial = False
+        if self._trial_timer is not None:
+            self._trial_timer.cancel()
+            self._trial_timer = None
+        self.updater.confirm()
+
     def _trial_expired(self) -> None:
         self._trial_timer = None
-        if self.updater.in_trial():
-            self.updater.abandon(f"no contact with the home hub within {self.trial_secs:g}s")
+        if self.on_trial and self.updater.in_trial():
+            self.on_trial = False
+            self.updater.abandon(f"no call from the home hub served within {self.trial_secs:g}s")
             self._restart_soon()
 
     def _restart_soon(self) -> None:
@@ -721,6 +733,10 @@ class Worker:
     async def _core_update(self, ctx, bundle: dict) -> dict:
         """worker.update: pull the release over Drop from the hub that sent the
         call, verify, unpack, smoke-check, then restart into it on trial."""
+        if os.name == "nt":
+            # execv starts a new process there and the old one exits: whatever runs the
+            # worker would see it end. Not tried yet (docs/castling-updates.md).
+            raise KitError("core updates over the band aren't supported on Windows yet")
         self._restartable()
         band = ctx.caller.band
         parent = self._parent(ctx.caller, "worker.update")

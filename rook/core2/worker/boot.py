@@ -12,7 +12,7 @@ rook.core2.worker``; stdlib only.
 
 A trial is a release that hasn't proved itself yet. Every process start
 that picks it counts a boot; after ``MAX_BOOTS`` starts without the worker
-confirming it (hub contact, :mod:`.update`), the next start drops it and runs
+confirming it (a call from its home hub served, :mod:`.update`), the next start drops it and runs
 ``current`` again. That needs a supervisor that restarts the worker when it
 exits (systemd ``Restart=always``, the desktop app): a worker run by hand that
 crashes stays down until it is started again, then rolls back.
@@ -76,10 +76,10 @@ def intact(folder: Path) -> str | None:
         found = {}
         for p in Path(folder).rglob("*"):
             rel = p.relative_to(folder).as_posix()
-            if rel == SIG_FILE or "__pycache__" in p.parts or p.suffix == ".pyc" or p.is_dir():
-                continue
             if p.is_symlink():
                 return f"{rel} is a symlink"
+            if rel == SIG_FILE or "__pycache__" in p.parts or p.suffix == ".pyc" or p.is_dir():
+                continue
             found[rel] = p
         if set(found) != set(files):
             return "files added or removed since install"
@@ -128,7 +128,7 @@ def choose(root: Path, hop: str | None = None, now: float | None = None) -> str 
             return v
         why = intact(root / v)
         if why is None and int(trial.get("boots") or 0) >= MAX_BOOTS:
-            why = f"did not come up: {MAX_BOOTS} starts without hub contact"
+            why = f"did not come up: {MAX_BOOTS} starts without serving a call from the home hub"
         if why is None:
             trial["boots"] = int(trial.get("boots") or 0) + 1
             write_state(root, state)

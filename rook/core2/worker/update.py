@@ -1,12 +1,12 @@
 """Core updates, worker side (docs/castling-updates.md): receive a hub-signed
 release, verify it like a plugin bundle, smoke-check it, and make it the
-trial for the next start; confirm it once the new process has hub contact,
-or drop it and go back to the core it replaced.
+trial for the next start; confirm it once the new process serves a call from
+its home hub, or drop it and go back to the core it replaced.
 
     up = Updater(data / "core", keys=approver_keys, running=boot.running())
     report = await up.receive(tarball)   # verified, unpacked, smoke-checked: restart next
-    up.confirm()                         # the trial process reached its home hub
-    up.abandon("no hub contact")         # the trial didn't make it: restart next
+    up.confirm()                         # the trial process served its home hub
+    up.abandon("no call served")         # the trial didn't make it: restart next
     up.rollback()                        # back to the kept previous core: restart next
 
 Releases live in ``<data>/core/<version>/`` beside :mod:`.boot`'s
@@ -33,7 +33,7 @@ from rook.core2.worker.install import pip_install
 log = logging.getLogger("rook.worker.update")
 
 SMOKE_TIMEOUT = 120.0        # seconds for the new core to import and check itself
-TRIAL_SECS = 120.0           # a trial start has this long to reach its home hub
+TRIAL_SECS = 120.0           # a trial start has this long to serve a call from its home hub
 
 
 class UpdateError(Exception):
@@ -190,7 +190,7 @@ class Updater:
     # -- after the restart ----------------------------------------------------------
 
     def confirm(self) -> bool:
-        """The trial process reached its home hub: it becomes current."""
+        """The trial process served a call from its home hub: it becomes current."""
         state = self.state()
         trial = state["trial"]
         if not (isinstance(trial, dict) and trial.get("version") == self.running and self.running):
