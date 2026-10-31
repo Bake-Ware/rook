@@ -200,11 +200,6 @@ caps:
       body_b64: { type: str }
       body_type: { type: str, default: application/json, pattern: "^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+(; *[A-Za-z0-9_-]+=[A-Za-z0-9_.-]+)*$" }
     run: scripts/kvm.py:api_post
-provides:
-  screen.capture: kvm.screen.capture
-  hid.type: kvm.hid.type
-  hid.key: kvm.hid.key
-  hid.click: kvm.hid.click
-  power.off: kvm.power.off
+provides: [screen.capture, hid.type, hid.key, hid.click, power.off]
 docs: { manual: docs/manual.md }
 # No check: an install has no appliance instance to call (castling/coverage.md).

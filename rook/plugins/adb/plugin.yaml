@@ -148,12 +148,6 @@ caps:
       duration: { type: duration, default: 300ms }
       button: { type: str, enum: [left, right, middle], default: left }
     run: scripts/adb.py:hid_drag
-provides:
-  screen.capture: adb.screen.capture
-  ui.screen: adb.ui.screen
-  hid.type: adb.hid.type
-  hid.key: adb.hid.key
-  hid.click: adb.hid.click
-  hid.drag: adb.hid.drag
+provides: [screen.capture, ui.screen, hid.type, hid.key, hid.click, hid.drag]
 docs: { manual: docs/manual.md }
 # No check: an install has no appliance instance to call (castling/coverage.md N4).

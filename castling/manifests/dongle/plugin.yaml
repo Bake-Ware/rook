@@ -128,8 +128,8 @@ caps:
     - dongle.release
     run: scripts/dongle.py:DonglePlugin.release
 provides:
-  hid.key: dongle.hid.key
-  hid.move: dongle.hid.move
-  hid.click: dongle.hid.click
-  hid.scroll: dongle.hid.scroll
-  hid.release: dongle.hid.release
+- hid.key
+- hid.move
+- hid.click
+- hid.scroll
+- hid.release

@@ -100,9 +100,9 @@ caps:
     - hid.backend
     run: scripts/hid.py:HidPlugin._backend_info
 provides:
-  hid.type: hid-desktop.hid.type
-  hid.key: hid-desktop.hid.key
-  hid.move: hid-desktop.hid.move
-  hid.click: hid-desktop.hid.click
-  hid.drag: hid-desktop.hid.drag
-  hid.status: hid-desktop.hid.status
+- hid.type
+- hid.key
+- hid.move
+- hid.click
+- hid.drag
+- hid.status

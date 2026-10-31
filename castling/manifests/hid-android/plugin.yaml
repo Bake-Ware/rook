@@ -80,8 +80,8 @@ caps:
     - hid.key_combo
     run: scripts/hid_a11y.py:AndroidHidPlugin._key_combo
 provides:
-  hid.status: hid-android.hid.status
-  hid.type: hid-android.hid.type
-  hid.click: hid-android.hid.click
-  hid.drag: hid-android.hid.drag
-  hid.key: hid-android.hid.key
+- hid.status
+- hid.type
+- hid.click
+- hid.drag
+- hid.key

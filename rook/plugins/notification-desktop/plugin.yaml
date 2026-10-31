@@ -30,6 +30,5 @@ caps:
         macos:
           argv: [osascript, -e, 'display notification (system attribute "ROOK_TEXT") with title (system attribute "ROOK_TITLE")']
       parse: text
-provides:
-  notification.post: notification-desktop.notification.post
+provides: [notification.post]
 docs: { manual: docs/manual.md }

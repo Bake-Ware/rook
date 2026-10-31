@@ -143,9 +143,6 @@ records:
     - create
     - update
     - archive
-    aliases:
-    - knowledge.read
-    - knowledge.write
 hooks:
   start: scripts/knowledge.py:Knowledge.start
   stop: scripts/knowledge.py:Knowledge.stop

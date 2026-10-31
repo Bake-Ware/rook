@@ -10,7 +10,8 @@ castling-caps) and writes ``castling/manifests/<plugin>/plugin.yaml``:
 - one manifest per 0.5 plugin; core, agents and workbench caps get one
   manifest per namespace (core ones ``builtin: true``);
 - caps in one of the shared contracts (decision C1) that a plugin implements
-  keep the contract name as their key and are listed under ``provides``;
+  keep the contract name as their key and are listed under ``provides`` (the
+  list form: one name);
 - ``form: records`` caps become a ``records:`` entry; verbs the kit can't
   generate stay caps with ``run:``;
 - everything else is ``run: scripts/<module>.py:<Class>.<method>``, pointing at
@@ -75,6 +76,12 @@ PY_TYPES = {"str": "str", "int": "int", "float": "float", "bool": "bool", "list"
             "tuple": "list", "dict": "json", "Any": "json", "bytes": "str"}
 # The action-argument a split cap no longer takes (castling-caps rule 1).
 SPLIT_ARGS = ("action", "kind", "op")
+# The bound value is the new name's last segment, except where today's
+# function spells it otherwise (checked against each run: target). None: no
+# single value (seek is forward or rewind by the sign of `by`), so the draft
+# keeps the argument and the port maps it.
+BIND_VALUES = {"location.show": "map", "task.comment": "note", "whiteboard.read": "whiteboard",
+               "whiteboard.write": "jot", "media.seek": None}
 # Args that carry credentials get the type language's `secret` (redacted, vault refs).
 SECRET_ARG = re.compile(r"(token|password|passwd|secret|api_key)$")
 SETTING_WHERE = {"hub": "hub", "band": "hub", "worker": "worker", "user": "person"}
@@ -322,10 +329,10 @@ def build(caps: dict, plugins: dict, decisions: list[dict]) -> tuple[dict, list[
                     rec["history"] = True
                 if verb not in rec["caps"]:
                     rec["caps"].append(verb)
-                if d["cap"] != new:
-                    rec.setdefault("aliases", [])
-                    if d["cap"] not in rec["aliases"]:
-                        rec["aliases"].append(d["cap"])
+                if d["cap"] != new and len(d["new_names"]) == 1:  # a split's old name has no one heir
+                    old = rec.setdefault("aliases", {}).setdefault(verb, [])
+                    if d["cap"] not in old:
+                        old.append(d["cap"])
                 continue
             cap = {"doc": (src["doc"] or f"TODO: document {new}.").replace("``", "`"),
                    "risk": src["risk"] or "exec", "scope": src["scope"] or "local"}
@@ -340,11 +347,11 @@ def build(caps: dict, plugins: dict, decisions: list[dict]) -> tuple[dict, list[
             args = copy.deepcopy(src["args"])
             bind = {}
             split = next((a for a in SPLIT_ARGS if a in args), None)
-            if len(d["new_names"]) > 1 and split:  # the name now says what the argument did
-                # The run target still takes it (B5). The value is a guess from
-                # the new name, to check when the cap is ported.
+            value = BIND_VALUES.get(new, new.rsplit(".", 1)[-1])
+            if len(d["new_names"]) > 1 and split and value is not None:  # the name now says what the argument did
+                # The run target still takes it (B5).
                 del args[split]
-                bind[split] = new.rsplit(".", 1)[-1]
+                bind[split] = value
             if args:
                 cap["args"] = args
             t = src["timeout"]
@@ -359,7 +366,8 @@ def build(caps: dict, plugins: dict, decisions: list[dict]) -> tuple[dict, list[
                 if bind:
                     cap["bind"] = bind
             if plugin != new.split(".")[0]:  # a shared contract this plugin implements
-                m.setdefault("provides", {})[new] = f"{plugin}.{new}"
+                if new not in m.setdefault("provides", []):   # declared under the contract's name (B3)
+                    m["provides"].append(new)
             caps_ = m.setdefault("caps", {})
             if key_name in caps_:  # a merge: several old caps into one new name
                 kept = caps_[key_name]

@@ -83,7 +83,8 @@ records:
     caps:
     - list
     aliases:
-    - attention.stream
+      list:
+      - attention.stream
 hooks:
   start: scripts/attention.py:Attention.start
   stop: scripts/attention.py:Attention.stop

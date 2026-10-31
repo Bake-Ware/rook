@@ -67,10 +67,5 @@ caps:
       key: { type: str, required: true }
       mods: { type: list, items: { type: str, enum: [ctrl, shift, alt, meta] }, default: [] }
     run: scripts/hid.py:key
-provides:
-  hid.status: hid-android.hid.status
-  hid.type: hid-android.hid.type
-  hid.click: hid-android.hid.click
-  hid.drag: hid-android.hid.drag
-  hid.key: hid-android.hid.key
+provides: [hid.status, hid.type, hid.click, hid.drag, hid.key]
 docs: { manual: docs/manual.md }

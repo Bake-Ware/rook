@@ -102,17 +102,18 @@ caps:
     effects:
     - physical
     args:
+      action:
+        type: str
+        default: toggle
       package:
         type: str
         default: ''
     run: scripts/media_android.py:AndroidMediaPlugin._control
-    bind:
-      action: seek
 provides:
-  media.status: media-android.media.status
-  media.play: media-android.media.play
-  media.pause: media-android.media.pause
-  media.stop: media-android.media.stop
-  media.next: media-android.media.next
-  media.previous: media-android.media.previous
-  media.seek: media-android.media.seek
+- media.status
+- media.play
+- media.pause
+- media.stop
+- media.next
+- media.previous
+- media.seek

@@ -25,7 +25,5 @@ caps:
     args:
       text: { type: str, required: true, max: 100000 }
     run: scripts/clipboard.py:set_text
-provides:
-  clipboard.get: clipboard-android.clipboard.get
-  clipboard.set: clipboard-android.clipboard.set
+provides: [clipboard.get, clipboard.set]
 docs: { manual: docs/manual.md }

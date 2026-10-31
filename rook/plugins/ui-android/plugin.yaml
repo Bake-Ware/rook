@@ -96,10 +96,5 @@ caps:
       timeout: { type: float, default: 8, min: 0, max: 60 }
       screen: { type: bool, default: true }
     run: scripts/ui.py:wait
-provides:
-  ui.screen: ui-android.ui.screen
-  ui.click: ui-android.ui.click
-  ui.scroll: ui-android.ui.scroll
-  ui.type: ui-android.ui.type
-  ui.wait: ui-android.ui.wait
+provides: [ui.screen, ui.click, ui.scroll, ui.type, ui.wait]
 docs: { manual: docs/manual.md }

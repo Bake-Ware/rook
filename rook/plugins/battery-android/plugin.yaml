@@ -25,8 +25,7 @@ caps:
         plugged: { type: bool }
         temp_c: { type: float }
     run: scripts/battery.py:status
-provides:
-  battery.status: battery-android.battery.status
+provides: [battery.status]
 hooks:
   status: scripts/battery.py:status   # rides the heartbeat (a run hook: a worker's call hooks need a hub call in flight)
 docs: { manual: docs/manual.md }

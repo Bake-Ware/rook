@@ -142,10 +142,12 @@ records:
     - archive
     - delete
     aliases:
-    - memory.show
-    - memory.remember
-    - memory.edit
-    - memory.forget
+      get:
+      - memory.show
+      create:
+      - memory.remember
+      update:
+      - memory.edit
 hooks:
   start: scripts/memory.py:Memory.start
   stop: scripts/memory.py:Memory.stop

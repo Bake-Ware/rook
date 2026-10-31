@@ -167,8 +167,8 @@ caps:
         default: false
     run: scripts/ui_android.py:AndroidUiPlugin._type
 provides:
-  ui.click: ui-android.ui.click
-  ui.scroll: ui-android.ui.scroll
-  ui.screen: ui-android.ui.screen
-  ui.wait: ui-android.ui.wait
-  ui.type: ui-android.ui.type
+- ui.click
+- ui.scroll
+- ui.screen
+- ui.wait
+- ui.type

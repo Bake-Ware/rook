@@ -109,7 +109,7 @@ caps:
         type: str
     run: scripts/tasks.py:Tasks.write
     bind:
-      action: comment
+      action: note
 records:
   task:
     fields: {}
@@ -119,6 +119,3 @@ records:
     - create
     - update
     - archive
-    aliases:
-    - task.read
-    - task.write

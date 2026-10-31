@@ -143,6 +143,17 @@ def cap_name(plugin: str, rel: str) -> str:
     return f"{plugin}.{rel}" if rel else plugin
 
 
+def provided(data: dict) -> dict:
+    """``provides`` as {contract: full cap name}. The list form (1.2) names
+    contracts whose cap is declared under the contract's own name
+    (``provides: [screen.capture]`` with cap key ``screen.capture``); in the
+    map form a value is a full cap name or one relative to the plugin."""
+    plugin, prov = data["plugin"], data.get("provides") or {}
+    if isinstance(prov, list):
+        return {c: f"{plugin}.{c}" for c in prov}
+    return {c: v if v == plugin or v.startswith(plugin + ".") else f"{plugin}.{v}" for c, v in prov.items()}
+
+
 def record_verbs(spec: dict) -> list[str]:
     """A record type's generated verbs: its ``caps`` list, else the defaults
     (search only with search fields, history only with history: true)."""
@@ -165,7 +176,7 @@ def record_caps(data: dict) -> dict:
             out[f"{prefix}.{verb}"] = {
                 "doc": f"{verb.capitalize()} {rec} records.", "risk": risk, "scope": "local",
                 "effects": ["destructive"] if verb == "delete" else [], "on": "hub",
-                "record": rec, "verb": verb,
+                "record": rec, "verb": verb, "aliases": list((spec.get("aliases") or {}).get(verb, ())),
             }
     return out
 
@@ -307,12 +318,19 @@ class _Checker:
 
     def aliases(self):
         names = set(self.own)
-        for rel, cap in (self.data.get("caps") or {}).items():
-            for i, alias in enumerate(cap.get("aliases") or ()):
-                if alias in names:
-                    self.error(("caps", rel, "aliases", i), "cap-collision",
-                               f"alias {alias} is already a cap or another alias")
-                names.add(alias)
+        found = [(("caps", rel, "aliases", i), a) for rel, cap in (self.data.get("caps") or {}).items()
+                 for i, a in enumerate(cap.get("aliases") or ())]
+        for rec, spec in (self.data.get("records") or {}).items():
+            verbs = record_verbs(spec)
+            for verb, old in (spec.get("aliases") or {}).items():
+                path = ("records", rec, "aliases", verb)
+                if verb not in verbs:
+                    self.error(path, "record-verb", f"{rec} doesn't generate {verb}")
+                found += [(path + (i,), a) for i, a in enumerate(old)]
+        for path, alias in found:
+            if alias in names:
+                self.error(path, "cap-collision", f"alias {alias} is already a cap or another alias")
+            names.add(alias)
 
     def check(self) -> list[Issue]:
         d = self.data
@@ -328,9 +346,18 @@ class _Checker:
         for name, route in (d.get("routes") or {}).items():
             path = ("routes", name)
             self.run(route["run"], path + ("run",))
-            if route.get("auth") == "none":  # omitted = user
+            auth = route.get("auth")
+            if auth == "none":  # omitted = user
                 self.warn(path + ("auth",), "route-auth-none", "this route takes requests from anyone")
-            self.templates(route.get("auth"), path + ("auth",))
+            elif auth in ("hmac", "token"):
+                self.warn(path + ("auth",), "route-auth-secret",
+                          f"name the secret ({{{auth}: \"{{{{settings.x}}}}\"}}): this route is not served")
+            elif isinstance(auth, dict):
+                secret = auth.get("hmac", auth.get("token", ""))
+                if not _LONE_TEMPLATE.fullmatch(secret.strip()):
+                    self.warn(path + ("auth",), "route-auth-literal",
+                              "a secret written in the manifest is public: use {{settings.x}} or {{secret:NAME}}")
+            self.templates(auth, path + ("auth",))
         if "gate" in d:
             self.run(d["gate"]["run"], ("gate", "run"))
             if "result" in d["gate"]:
@@ -511,8 +538,9 @@ class _Checker:
                            f"{h['call']} is not this plugin's cap and not in uses")
 
     def provides(self):
-        for contract, cap_name in (self.data.get("provides") or {}).items():
-            path = ("provides", contract)
+        listed = isinstance(self.data.get("provides"), list)
+        for i, (contract, cap_name) in enumerate(provided(self.data).items()):
+            path = ("provides", i if listed else contract)
             if cap_name not in self.own:
                 self.own_cap(cap_name, path)
                 continue

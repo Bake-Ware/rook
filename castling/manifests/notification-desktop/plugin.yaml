@@ -54,4 +54,4 @@ caps:
           - display notification (system attribute "ROOK_TEXT") with title (system attribute "ROOK_TITLE")
       parse: text
 provides:
-  notification.post: notification-desktop.notification.post
+- notification.post

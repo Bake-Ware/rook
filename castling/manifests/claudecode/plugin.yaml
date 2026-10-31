@@ -74,11 +74,14 @@ records:
     - update
     - delete
     aliases:
-    - ccmod.list
-    - ccmod.get
-    - ccmod.history
-    - ccmod.set
-    - ccmod.delete
+      list:
+      - ccmod.list
+      get:
+      - ccmod.get
+      history:
+      - ccmod.history
+      delete:
+      - ccmod.delete
     history: true
 hooks:
   start: scripts/ccmod.py:ClaudeCodeRules.start

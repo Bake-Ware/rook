@@ -150,14 +150,14 @@ caps:
     scope: multi-machine
     run: scripts/adb.py:AdbPlugin._scan
 provides:
-  shell.exec: adb.shell.exec
-  battery.status: adb.battery.status
-  screen.capture: adb.screen.capture
-  ui.screen: adb.ui.screen
-  hid.type: adb.hid.type
-  hid.key: adb.hid.key
-  hid.click: adb.hid.click
-  hid.drag: adb.hid.drag
+- shell.exec
+- battery.status
+- screen.capture
+- ui.screen
+- hid.type
+- hid.key
+- hid.click
+- hid.drag
 hooks:
   start: scripts/adb.py:AndroidDevice.start
   stop: scripts/adb.py:AndroidDevice.stop

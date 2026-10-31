@@ -79,9 +79,9 @@ caps:
     - screenshot.capture
     run: scripts/screen.py:AndroidScreenPlugin._capture
 provides:
-  screen.on: screen-android.screen.on
-  screen.keep_on: screen-android.screen.keep_on
-  screen.status: screen-android.screen.status
-  screen.capture: screen-android.screen.capture
+- screen.on
+- screen.keep_on
+- screen.status
+- screen.capture
 hooks:
   start: scripts/device_android.py:AndroidDevicePlugin.start

@@ -273,6 +273,32 @@ def test_system_identities_only_core_caps(hub):
     assert call(hub, sys_hub, "shell.exec")[0]["error"] == "denied: agent: grants"
 
 
+def test_a_contract_name_resolves_and_grants_on_it_cover_the_provider(hub):
+    # spec 4.1, 8.2: kvm.screen.capture provides screen.capture.
+    cap = {"risk": "read", "scope": "local", "effects": [], "contracts": ["screen.capture"]}
+    hub.worker.caps["kvm.screen.capture"] = cap
+    hub.tx.worker["caps"]["kvm.screen.capture"] = {"risk": "read", "effects": [], "contracts": ["screen.capture"]}
+    hub.tx.worker["trust"][hub.hub_id]["ceiling"] = {"grants": ["screen.capture"]}   # the worker's own check
+    nightly = ["uses", {"grants": ["screen.capture"]}]
+    out, _ = call(hub, BAKE, "screen.capture", caps=("screen.*",), layers=[nightly])
+    assert out["ok"] and hub.tx.verdicts == ["ok"]
+    req = hub.tx.requests[-1]
+    assert req["cap"] == "kvm.screen.capture" and req["ticket"]["contract"] == "screen.capture"
+    assert calls(hub)[-1]["cap"] == "kvm.screen.capture" and calls(hub)[-1]["contract"] == "screen.capture"
+    # By its own name the contract's grant doesn't reach it.
+    assert call(hub, BAKE, "kvm.screen.capture", caps=("screen.*",))[0]["error"] == "denied: session: grants"
+    # Two providers on one worker: say which.
+    hub.worker.caps["vnc.screen.capture"] = dict(cap)
+    out, _ = call(hub, BAKE, "screen.capture")
+    assert out["error"] == ("several caps here provide screen.capture "
+                            "(kvm.screen.capture, vnc.screen.capture): call one by name")
+
+
+def test_a_given_contract_must_be_one_the_cap_provides(hub):
+    out, _ = call(hub, BAKE, "file.read", contract="notify.send")
+    assert out["error"] == "file.read doesn't provide notify.send" and not hub.tx.requests
+
+
 def test_extra_layers_page_and_uses(hub):
     page = ["page", {"grants": ["file.read"]}]
     assert call(hub, BAKE, "file.read", layers=[page])[0]["ok"]

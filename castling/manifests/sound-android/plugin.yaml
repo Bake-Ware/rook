@@ -101,8 +101,8 @@ caps:
         default: ''
     run: scripts/device_android.py:AndroidDevicePlugin._sound
 provides:
-  sound.status: sound-android.sound.status
-  sound.set: sound-android.sound.set
-  sound.dnd: sound-android.sound.dnd
+- sound.status
+- sound.set
+- sound.dnd
 hooks:
   start: scripts/device_android.py:AndroidDevicePlugin.start

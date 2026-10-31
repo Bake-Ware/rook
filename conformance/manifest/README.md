@@ -7,7 +7,9 @@ reference validator is `rook.kit.manifest`
 
 Format 1.1 adds optional keys only, so files still say `manifest: 1`; the
 list of additions is on `castling-manifest-lifecycle`. `valid/v1-1.yaml`,
-`valid/argv-lint.yaml` and `invalid/v1-1*.yaml` cover them.
+`valid/argv-lint.yaml` and `invalid/v1-1*.yaml` cover them. Format 1.2
+(also additive: `provides` as a list, record `aliases`, route `hmac`/`token`
+secrets and `header`) is covered by `valid/v1-2.yaml` and `invalid/v1-2*.yaml`.
 
 | File | What |
 |---|---|

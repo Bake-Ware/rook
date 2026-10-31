@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Bake-Ware/rook/conformance/manifest/manifest.schema.json",
   "title": "Rook plugin manifest (plugin.yaml), format 1",
-  "description": "Structural schema, format 1 with the 1.1 additions (all optional). Unknown keys are allowed here (forward compatibility); validators report them as warnings. Semantic checks (templates, file references, presets, contracts) are in rook.kit.manifest and the vectors beside this file.",
+  "description": "Structural schema, format 1 with the 1.1 and 1.2 additions (all optional). Unknown keys are allowed here (forward compatibility); validators report them as warnings. Semantic checks (templates, file references, presets, contracts) are in rook.kit.manifest and the vectors beside this file.",
   "type": "object",
   "required": ["manifest", "plugin", "version"],
   "properties": {
@@ -111,9 +111,8 @@
               {"enum": ["user", "hmac", "token", "none"]},
               {
                 "type": "object",
-                "minProperties": 1,
-                "maxProperties": 1,
-                "properties": {"hmac": {"type": "string"}, "token": {"type": "string"}}
+                "oneOf": [{"required": ["hmac"]}, {"required": ["token"]}],
+                "properties": {"hmac": {"type": "string"}, "token": {"type": "string"}, "header": {"type": "string", "pattern": "^[A-Za-z0-9-]+$"}}
               }
             ]
           }
@@ -152,9 +151,14 @@
       }
     },
     "provides": {
-      "type": "object",
-      "propertyNames": {"$ref": "#/$defs/cap_name"},
-      "additionalProperties": {"$ref": "#/$defs/cap_name"}
+      "anyOf": [
+        {
+          "type": "object",
+          "propertyNames": {"$ref": "#/$defs/cap_name"},
+          "additionalProperties": {"$ref": "#/$defs/cap_name"}
+        },
+        {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/cap_name"}}
+      ]
     },
     "appliance": {
       "type": "object",
@@ -609,7 +613,12 @@
           "propertyNames": {"enum": ["list", "get", "search", "create", "update", "archive", "delete", "history"]},
           "additionalProperties": {"$ref": "#/$defs/risk"}
         },
-        "migrations": {"$ref": "#/$defs/rel_path"}
+        "migrations": {"$ref": "#/$defs/rel_path"},
+        "aliases": {
+          "type": "object",
+          "propertyNames": {"enum": ["list", "get", "search", "create", "update", "archive", "delete", "history"]},
+          "additionalProperties": {"type": "array", "items": {"$ref": "#/$defs/cap_name"}}
+        }
       }
     },
     "record_field": {

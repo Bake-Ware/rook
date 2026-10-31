@@ -154,6 +154,7 @@ CAPS = {
     "light.set": {"risk": "write", "effects": ["physical"]},
     "core.manifests": {"risk": "read", "effects": []},
     "core.trust.set": {"risk": "admin", "effects": ["persists"]},
+    "kvm.screen.capture": {"risk": "read", "effects": [], "contracts": ["screen.capture"]},
 }
 WORKER_STATE = {
     "worker_id": WORKER, "name": "kaiju", "caps": CAPS,
@@ -161,7 +162,7 @@ WORKER_STATE = {
         HOME: {"band": BAND, "role": "home", "keys": {KID["home-op"]: PUB["home-op"]},
                "ceiling": {"grants": ["*"]}},
         GUEST: {"band": GUEST_BAND, "role": "guest", "keys": {KID["guest-op"]: PUB["guest-op"]},
-                "ceiling": {"grants": ["light.*@lamp-*", "core.*"], "max_risk": "write"}},
+                "ceiling": {"grants": ["light.*@lamp-*", "core.*", "screen.capture"], "max_risk": "write"}},
     },
 }
 
@@ -191,6 +192,7 @@ def gen_tickets() -> dict:
     lamp = request("light.set", {"on": False}, appliance="lamp-kitchen")
     door = request("light.set", {"on": False}, appliance="garage-door")
     forged = {**ticket_for(signer="attacker"), "kid": KID["home-op"]}
+    shot = request("kvm.screen.capture", {})
     cases = [
         ("ok", r, ticket_for(), BAND, T0, [], "ok"),
         ("no ticket", r, None, BAND, T0, [], "no_ticket"),
@@ -245,6 +247,13 @@ def gen_tickets() -> dict:
          GUEST_BAND, T0, [], "outside_ceiling"),
         ("home: core.trust.set", request("core.trust.set", {}), ticket_for(request("core.trust.set", {})),
          BAND, T0, [], "ok"),
+        ("guest: called by a contract's name inside ceiling", shot,
+         ticket_for(shot, signer="guest-op", hub=GUEST, band=GUEST_BAND, contract="screen.capture"),
+         GUEST_BAND, T0, [], "ok"),
+        ("guest: the provider by its own name outside ceiling", shot,
+         ticket_for(shot, signer="guest-op", hub=GUEST, band=GUEST_BAND), GUEST_BAND, T0, [], "outside_ceiling"),
+        ("contract the cap doesn't provide", shot, ticket_for(shot, contract="hid.click"), BAND, T0, [], "unknown_cap"),
+        ("contract not a string", shot, ticket_for(shot, contract=5), BAND, T0, [], "malformed"),
     ]
     out = []
     for name, req, t, band, now, seen, expect in cases:
@@ -391,6 +400,17 @@ RIGHTS = [
                                           ["agent", {"grants": ["info.*"]}]],
      call("shell.exec", "exec"), {"ok": False, "layer": "person", "reason": "risk"}),
     ("no layers refuse nothing", [], call("shell.exec", "exec"), {"ok": True}),
+    ("called by a contract's name: the contract's name matches",
+     [["person", {"grants": ["screen.*"]}], ["uses", {"grants": ["screen.capture"]}]],
+     {**call("kvm.screen.capture"), "contract": "screen.capture"}, {"ok": True}),
+    ("called by a contract's name: the provider's name still matches",
+     [["person", {"grants": ["kvm.*"]}]], {**call("kvm.screen.capture"), "contract": "screen.capture"}, {"ok": True}),
+    ("the provider called by its own name: the contract's grant doesn't cover it",
+     [["person", {"grants": ["screen.*"]}]], call("kvm.screen.capture"),
+     {"ok": False, "layer": "person", "reason": "grants"}),
+    ("called by a contract's name: risk still the provider's",
+     [["person", {"grants": ["hid.*"], "max_risk": "write"}]],
+     {**call("kvm.hid.type", "exec"), "contract": "hid.type"}, {"ok": False, "layer": "person", "reason": "risk"}),
 ]
 
 

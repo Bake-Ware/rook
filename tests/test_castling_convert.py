@@ -51,7 +51,7 @@ def test_every_new_name_lands_and_binned_names_do_not(drafted):
             prefix = name if rec == name else f"{name}.{rec}"
             declared |= {f"{prefix}.{verb}" for verb in spec["caps"]}
     wanted = {n for d in decisions if d["decision"] != "bin" for n in d["new_names"]}
-    # Contract caps are declared twice (plugin.contract.verb and the contract name).
+    # A contract cap is declared once, under the contract's name (provides: [...]).
     assert wanted - declared == set()
     survivors = {n for d in decisions if d["decision"] != "bin" for n in d["new_names"]}
     binned_only = {d["cap"] for d in decisions if d["decision"] == "bin"} - survivors
@@ -79,8 +79,9 @@ def test_aliases_follow_the_decisions(drafted):
                 assert full in routes[a], (a, full)
         for rec, spec in m.get("records", {}).items():
             prefix = name if rec == name else f"{name}.{rec}"
-            for a in spec.get("aliases", []):
-                assert any(n.startswith(prefix + ".") for n in routes[a]), (a, prefix)
+            for verb, old in spec.get("aliases", {}).items():
+                for a in old:
+                    assert routes[a] == {f"{prefix}.{verb}"}, (a, prefix, verb)
 
 
 def test_tags_become_effects_and_destructive_splits(drafted):
@@ -100,7 +101,7 @@ def test_easy_plugins_are_config(drafted):
               if any("action" in c for c in m.get("caps", {}).values())}
     assert {"kvm", "torrent", "notification-desktop", "battery", "cec", "screen-desktop",
             "camera"} <= config
-    assert mans["kvm"]["provides"]["screen.capture"] == "kvm.screen.capture"
+    assert "screen.capture" in mans["kvm"]["provides"] and "screen.capture" in mans["kvm"]["caps"]
     assert "appliance" in mans["kvm"] and "settings" not in mans["kvm"]
 
 
@@ -197,3 +198,26 @@ def test_overlays_read_as_yaml_1_2(drafted):
     """off stays a string (pyyaml's YAML 1.1 would make it false)."""
     _, _, mans, _ = drafted
     assert mans["kvm"]["caps"]["power.off"]["args"]["mode"]["enum"] == ["off", "off_hard"]
+
+
+def test_bind_values_match_todays_functions(drafted):
+    # Each split cap's bound value is one today's run: target accepts (checked
+    # by hand against device_android.intent_spec, media_android.KEYS,
+    # webos MEDIA, jobs/knowledge/tasks read+write actions).
+    _, _, mans, _ = drafted
+    binds = {f"{p}.{k}": c["bind"] for p, m in mans.items() for k, c in m.get("caps", {}).items() if c.get("bind")}
+    assert len(binds) == 29
+    assert binds["location.show"] == {"kind": "map"}
+    assert binds["task.comment"] == {"action": "note"}
+    assert binds["whiteboard.read"] == {"action": "whiteboard"}
+    assert binds["whiteboard.write"] == {"action": "jot"}
+    for p in ("tv", "media-android"):   # forward or rewind: no single value, the port maps it
+        seek = mans[p]["caps"]["media.seek"]
+        assert "bind" not in seek and "action" in seek["args"]
+
+
+def test_record_aliases_name_one_verb(drafted):
+    _, _, mans, _ = drafted
+    assert mans["claudecode"]["records"]["rule"]["aliases"]["list"] == ["ccmod.list"]
+    # task.read was an action switch over several verbs: no one heir, no alias.
+    assert "aliases" not in mans["task"]["records"]["task"]

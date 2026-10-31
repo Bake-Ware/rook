@@ -14,9 +14,9 @@ package: core
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-# The channels it may reach, as the caller (*.notification.post: a device's
-# provider of the contract, by the provider naming convention).
-uses: [notification.post, "*.notification.post", telegram.send, telegram.status, discord.send, discord.status]
+# The channels it may reach, as the caller (notification.post covers the
+# device's provider of the contract it reaches).
+uses: [notification.post, telegram.send, telegram.status, discord.send, discord.status]
 
 settings:
   channels:

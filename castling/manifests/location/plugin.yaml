@@ -120,7 +120,7 @@ caps:
         default: false
     run: scripts/device_android.py:AndroidDevicePlugin._intent
     bind:
-      kind: show
+      kind: map
   get:
     doc: 'Get lat/lon, accuracy, age, stale flag and Maps URL. Timeout: 1–25s.'
     risk: exec
