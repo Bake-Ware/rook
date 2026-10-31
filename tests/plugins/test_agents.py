@@ -1,7 +1,7 @@
 """The agents package core (rook/plugins/agents): the runtime driven through
 its caps and hooks with a real Ctx, a fake agent.backend behind the ctx's
-dispatcher, the plugin's own SQLite and the hub's one stream store
-(ctx.streams) in tmp."""
+dispatcher, a fake hub people view (agent identities, turn tokens), the plugin's own
+SQLite and the hub's one stream store (ctx.streams) in tmp."""
 
 import asyncio
 import json
@@ -33,8 +33,9 @@ class Backend:
         self.fail = None
         self.hold = None                   # an asyncio.Event a turn waits on
         self.dream = {"add": [], "keep": []}
+        self.contracts = []
 
-    async def __call__(self, cap, args, caller):
+    async def __call__(self, cap, args, caller, target=None, contract=None):
         if cap == "hub.manifests":         # the hub's builtin, as it answers the plugin itself
             out = []
             for plugin, folder in sorted(self.installed.items()):
@@ -48,6 +49,7 @@ class Backend:
                 raise KitError(f"no page {args['id']}")
             return self.pages[args["id"]]
         self.calls.append((cap, args, caller))
+        self.contracts.append(contract)
         if self.hold is not None:
             await self.hold.wait()
         if self.fail:
@@ -70,18 +72,55 @@ def _dreaming(args):
     return "curate an agent's memory" in args.get("system", "")
 
 
+class People:
+    """The hub's view the agents plugin gets: who the owners are, the agent
+    identities it runs and the turn tokens it mints for them."""
+
+    def __init__(self):
+        self.agents = {}                   # name -> grants
+        self.tokens = {}                   # token -> (person, agent)
+        self.ended = []
+        self.taken = set()                 # names hub.yaml already has
+
+    def owners(self):
+        return ["person:bake"]
+
+    def settings(self, person):
+        return {}
+
+    def run_agent(self, plugin, name, grants):
+        assert plugin == "agents"
+        if name in self.taken:
+            raise KitError(f"agent {name!r} is configured in hub.yaml")
+        if grants is None:
+            self.agents.pop(name, None)
+        else:
+            self.agents[name] = grants
+
+    def turn_token(self, plugin, person, name, seconds, tainted=False):
+        if name not in self.agents:
+            raise KitError(f"{plugin} doesn't run agent {name}")
+        token = f"tok{len(self.tokens)}"
+        self.tokens[token] = (person, f"agent:{name}")
+        return token
+
+    def end_turn_token(self, token):
+        self.ended.append(token)
+
+
 class Rig:
     def __init__(self, tmp_path, **settings):
         self.manifest = load(AGENTS, CONTRACTS).data
         self.data = tmp_path / "agents"
         self.settings = {"warm": "10s", **settings}
         self.backend = Backend()
+        self.people = People()
         self.modules = {}
         self.streams = Streams(SqliteStore(str(tmp_path / "stream-events.db")), host="hub")   # the hub's
 
     def ctx(self, caller, cap=None):
         return Ctx(self.manifest, caller, dispatch=self.backend, settings=self.settings,
-                   data_dir=self.data, cap=cap, streams=self.streams)
+                   data_dir=self.data, cap=cap, streams=self.streams, people=self.people)
 
     async def call(self, fn, caller=BAKE, **args):
         func = load_run(AGENTS, f"scripts/agents.py:{fn}", self.modules)
@@ -185,6 +224,12 @@ def test_install_makes_the_ready_made_roles_and_edits_win(rig):
         assert {a["name"] for a in listed if a["always_on"]} == {"house", "security"}
         pm = await rig.call("get", name="pm")
         assert pm["origin"] == "task@0.5.0" and "keep the work moving" in pm["prompt"]
+        # Every role is its own identity on the hub, with its persona's grants
+        # (and its own turns); the archivist's are narrow.
+        assert sorted(rig.people.agents) == ROLES
+        assert rig.people.agents["pm"] == ["*", "agent.backend"]
+        assert rig.people.agents["archivist"] == ["agents.*", "knowledge.*", "concept.*", "project.*", "task.*",
+                                                  "journal.*", "agent.backend"]
         await rig.call("update", name="house", summary="Mine now")
         # pm from an older release, unedited: the next start refreshes it.
         a = rig.rt.agent("pm")
@@ -200,10 +245,11 @@ def test_install_makes_the_ready_made_roles_and_edits_win(rig):
 def test_create_update_archive(rig):
     async def body():
         made = await rig.call("create", name="re", persona="lead", title="Reverse engineer",
-                              backend="claude-code", model={"two": "sonnet"})
+                              backend="agents-claude-code.turn", model={"two": "sonnet"}, grants=["shell.*"])
         assert made == {"name": "re", "title": "Reverse engineer", "summary": rig.rt.agent("lead")["summary"],
-                        "persona": "lead", "backend": "claude-code", "always_on": False,
+                        "persona": "lead", "backend": "agents-claude-code.turn", "always_on": False,
                         "archived": None, "awake": False}
+        assert rig.people.agents["re"] == ["shell.*", "agent.backend"]
         assert rig.rt.agent("re")["creator"] == "person:bake"
         for args, error in (({"name": "re"}, "already exists"), ({"name": "x", "persona": "nope"}, "no persona")):
             with pytest.raises(KitError, match=error):
@@ -213,18 +259,30 @@ def test_create_update_archive(rig):
         out = await rig.call("chat_send", agent="re", text="what is this binary?")
         assert out["text"] == "echo what is this binary?"
         cap, args, _ = rig.backend.turns()[-1]
+        # Pinned to one provider, still called as the contract.
         assert (cap, args["model"]) == ("agents-claude-code.turn", "sonnet")
+        assert rig.backend.contracts[-1] == "agent.backend"
+        await rig.call("update", name="re", grants=["shell.exec", "file.*"])
+        assert rig.people.agents["re"] == ["shell.exec", "file.*", "agent.backend"]
         sid = out["stream"]
         assert rig.rt.streams.get(sid).attrs["harness"]
         await rig.call("update", name="re", backend="default")
         assert rig.rt.streams.get(sid).attrs["harness"] is None      # another harness can't resume it
         assert (await rig.call("archive", name="re"))["archived"]
         assert "re" not in [a["name"] for a in await rig.call("list_agents")]
+        assert "re" not in rig.people.agents                           # archived: no identity
         with pytest.raises(KitError, match="no agent re"):
             await rig.call("chat_send", agent="re", text="hello?")
         await rig.call("archive", name="re", restore=True)
         out = await rig.call("chat_send", agent="re", text="back?")
         assert out["text"] == "echo back?" and rig.backend.turns()[-1][0] == "agent.backend"
+        assert rig.backend.contracts[-1] is None and "re" in rig.people.agents
+        # A name hub.yaml already has is never made a Rook-run agent.
+        rig.people.taken.add("claude-code")
+        with pytest.raises(KitError, match="configured in hub.yaml"):
+            await rig.call("create", name="claude-code")
+        with pytest.raises(KitError, match="no agent claude-code"):
+            await rig.call("get", name="claude-code")
     run(rig, body)
 
 
@@ -239,7 +297,11 @@ def test_turns_resume_the_backend_session_with_the_agents_system_prompt(rig):
         (_, a1, c1), (_, a2, _) = rig.backend.turns()
         assert a1["prompt"] == "Message from person:bake:\n\nhow are we doing?"
         assert "session" not in a1 and a2["session"] == "h1"           # resumed
-        assert c1.person == "person:bake" and c1.plugin == "agents"     # runs as the sender
+        # The agent itself, acting for the person behind the message.
+        assert (c1.person, c1.agent) == ("person:bake", "agent:pm") and c1.why == "agent pm answers person:bake"
+        # Its harness reaches the hub with a token for that pair, ended after the turn.
+        assert rig.people.tokens[a1["door"]] == ("person:bake", "agent:pm")
+        assert rig.people.ended == [a1["door"], a2["door"]]
         system = a1["system"]
         assert system.startswith('You are Project manager, the agent "pm"')
         assert "keep the work moving" in system                         # the persona
@@ -263,7 +325,8 @@ def test_each_party_has_its_own_session(rig):
         mine = await rig.call("chat_send", agent="house", text="my bank pin is in the drawer")
         theirs = await rig.call("chat_send", GUEST, agent="house", text="hello")
         assert mine["stream"] != theirs["stream"]
-        assert rig.backend.turns()[-1][2].person == "person:guest"     # the guest's own rights
+        c = rig.backend.turns()[-1][2]
+        assert (c.person, c.agent) == ("person:guest", "agent:house")   # what both the guest and house may
         seen = await rig.events("house", GUEST)
         assert "drawer" not in json.dumps(seen) and len(seen) == 3
         with pytest.raises(KitError, match="only owners"):
@@ -274,8 +337,15 @@ def test_each_party_has_its_own_session(rig):
         assert len((await rig.call("get", name="house"))["sessions"]) == 2
         out = await rig.call("chat_send", PM, agent="qa", text="is #12 verified?")
         assert rig.rt.streams.get(out["stream"]).participants == ["agent:qa", "agent:pm"]
+        c = rig.backend.turns()[-1][2]
+        assert (c.person, c.agent) == (None, "agent:qa")               # pm acted alone, so qa does too
+        assert rig.people.tokens[rig.backend.turns()[-1][1]["door"]] == (None, "agent:qa")
+        # pm alone (a persona job) may prompt itself; for a person it may not.
+        assert (await rig.call("chat_send", PM, agent="pm", text="weekly sweep"))["text"] == "echo weekly sweep"
+        assert rig.backend.turns()[-1][2].agent == "agent:pm"
         with pytest.raises(KitError, match="can't message itself"):
-            await rig.call("chat_send", PM, agent="pm", text="hi me")
+            await rig.call("chat_send", Caller(person="person:bake", agent="agent:pm", band="b1", why="x"),
+                           agent="pm", text="hi me")
         empty = await rig.call("chat_read", GUEST, agent="pm")
         assert empty == {"stream": None, "events": [], "next": 0, "closed": False}
     run(rig, body)
@@ -398,6 +468,7 @@ def test_dream_curates_the_notepad_into_memory(rig):
         cap, args, caller = rig.backend.dreams()[0]
         assert cap == "agent.backend" and args["model"] == "three" and "session" not in args
         assert "Bake wants burn-downs" in args["prompt"] and caller.why == "agents: dream cycle for pm"
+        assert (caller.person, caller.agent) == (None, "agent:pm") and "door" not in args   # its own upkeep
         assert rt.agent("pm")["dreamed"]
         # The memory is in the prompt the next time pm wakes, read-only; the kept note too.
         await rig.call("chat_send", agent="pm", text="status?")
@@ -440,7 +511,7 @@ def test_an_idle_agent_sleeps_and_dreams(tmp_path):
         await until(lambda: rig.rt.memories("writer"))
         assert rig.rt.notes("writer") == []
         caller = rig.backend.dreams()[0][2]
-        assert caller.plugin == "agents" and caller.person is None     # the plugin itself, no person
+        assert (caller.person, caller.agent) == (None, "agent:writer")    # the agent alone, no person
         # The house agent is always on: it stays awake and dreams on the clock.
         await rig.call("chat_send", agent="house", text="hello")
         await asyncio.sleep(0.6)
@@ -504,8 +575,10 @@ def test_a_question_for_the_person_goes_through_the_house_agent(rig):
         payload = {"hold": "q_1", "question": "Ship the docs today?", "options": ["yes", "no"],
                    "why": "The release waits on it.", "person": "person:bake", "agent": "agent:claude"}
         await rig.call("on_asked", hook, event="approval.asked", payload=payload)
-        cap, args, _ = rig.backend.calls[-1]
+        cap, args, who = rig.backend.calls[-1]
         assert cap == "agents.chat.send" and args["agent"] == "house" and args["wait"] is False
+        # For the person it's for, tainted: house never acts alone on another agent's words.
+        assert (who.person, who.agent, who.tainted) == ("person:bake", None, True)
         assert "approval.decide" in args["text"] and "q_1" in args["text"] and "Ship the docs today?" in args["text"]
         assert "one of: yes, no" in args["text"] and "never answer it yourself" in args["text"]
         n = len(rig.backend.calls)
@@ -514,4 +587,28 @@ def test_a_question_for_the_person_goes_through_the_house_agent(rig):
         rig.settings["house"] = ""
         await rig.call("on_asked", hook, event="approval.asked", payload=payload)
         assert len(rig.backend.calls) == n
+    run(rig, body)
+
+
+def test_an_agent_acting_alone_never_waits_on_itself(rig):
+    async def body():
+        rig.backend.hold = asyncio.Event()
+        sweep = asyncio.ensure_future(rig.call("chat_send", PM, agent="pm", text="weekly sweep"))
+        await until(lambda: rig.backend.turns())
+        # From inside that turn (its harness, as pm alone) it can't prompt itself:
+        # the turn would wait on its own lock.
+        with pytest.raises(KitError, match="can't message itself"):
+            await rig.call("chat_send", PM, agent="pm", text="and again")
+        rig.backend.hold.set()
+        assert (await sweep)["text"] == "echo weekly sweep"
+        assert rig.rt.alone["pm"] == 0
+    run(rig, body)
+
+
+def test_a_turn_fails_closed_without_an_identity(rig):
+    async def body():
+        rig.people.agents.pop("qa")          # e.g. hub.yaml took the name
+        with pytest.raises(KitError, match="doesn't run agent qa"):
+            await rig.call("chat_send", agent="qa", text="hi")
+        assert rig.backend.turns() == []
     run(rig, body)

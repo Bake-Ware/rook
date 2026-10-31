@@ -5,7 +5,7 @@
 # stdin. Code: scripts/codex.py.
 manifest: 1
 plugin: agents-codex
-version: 0.5.0
+version: 0.5.1
 title: Codex backend
 doc: Agent turns in the Codex CLI, for the agents package.
 package: agents
@@ -17,7 +17,8 @@ settings:
   model: { doc: "System Two's model when the agent names none (a Codex model id); blank: Codex's own default." }
   model_three: { default: gpt-6-luna, doc: "System Three's model (dream cycles): a light one; blank: Codex's own default." }
   sandbox: { enum: [read-only, workspace-write, danger-full-access], doc: "Codex's sandbox for the commands a turn runs; blank: its own default (read-only)." }
-  config: { type: list, items: { type: str }, doc: "Extra Codex config overrides, one key=value each (passed as -c), e.g. the Rook MCP door: mcp_servers.rook.url=\"http://hub:8751/mcp\"." }
+  door_url: { type: url, default: "http://127.0.0.1:8741/mcp", doc: "The hub's MCP door as this worker reaches it. Each turn reaches it with that turn's own token (the agent, for the person behind it)." }
+  config: { type: list, items: { type: str }, doc: "Extra Codex config overrides, one key=value each (passed as -c), e.g. other MCP servers. Rook itself comes from door_url, with the turn's token." }
   isolate: { type: bool, default: true, doc: "Leave out the signed-in user's own Codex config and rules (--ignore-user-config --ignore-rules; sign-in still comes from CODEX_HOME): a turn reaches only what config gives it." }
 caps:
   turn:
@@ -34,6 +35,7 @@ caps:
       effort: { type: str, doc: "Codex's model_reasoning_effort (minimal, low, medium, high, xhigh); blank: its own." }
       system: { type: str, doc: Codex's developer instructions for the turn. }
       timeout: { type: duration, default: 20m, doc: How long the turn may take. }
+      door: { type: secret, doc: "The turn's door token, from the agents runtime: the turn's Rook MCP server uses it. Never journaled." }
     result:
       type: map
       fields:

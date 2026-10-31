@@ -129,3 +129,24 @@ def test_system_three_is_its_model_three_setting(tmp_path, bins):
     turn(tmp_path, prompt="x", model="two")
     models = [c["argv"][c["argv"].index("--model") + 1] for c in bins.calls("claude")]
     assert models == ["haiku", "claude-haiku-5-5", "opus"]
+
+
+def test_a_turn_reaches_rook_with_its_own_door_token(tmp_path, bins):
+    bins.add("claude", CLAUDE + """
+cfg = argv[argv.index("--mcp-config") + 1:]
+with open(os.path.join(os.path.dirname(sys.argv[0]), "mcp.seen"), "w") as f:
+    json.dump([[p, oct(os.stat(p).st_mode & 0o777), json.load(open(p))] for p in cfg if p.endswith(".json")], f)
+""")
+    turn(tmp_path, {"mcp_config": "/dev/null"}, prompt="hi", door="tok-123")
+    argv = bins.calls("claude")[0]["argv"]
+    i = argv.index("--mcp-config")
+    assert argv[i + 1] == "/dev/null" and argv[i + 2].endswith("rook-mcp.json") and argv[i + 3] == "--setting-sources"
+    seen = json.loads((bins.dir / "mcp.seen").read_text())
+    (path, mode, cfg), = seen
+    assert mode == "0o600" and cfg == {"mcpServers": {"rook": {
+        "type": "http", "url": "http://127.0.0.1:8741/mcp", "headers": {"Authorization": "Bearer tok-123"}}}}
+    assert "tok-123" not in " ".join(argv)                # never on the command line
+    import os
+    assert not os.path.exists(path)                       # gone with the call's temp folder
+    with pytest.raises(KitError, match="door_url"):
+        turn(tmp_path, {"door_url": ""}, prompt="hi", door="tok-123")

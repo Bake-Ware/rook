@@ -208,6 +208,29 @@ class Ctx:
             raise KitError("no people here: the hub knows its owners")
         return list(self._people.owners())
 
+    # -- agents this plugin runs (the hub) ----------------------------------------
+
+    def run_agent(self, name: str, grants: list | None) -> None:
+        """Hub only: the identity ``agent:<name>`` of an agent this plugin runs,
+        with its own grants (None drops it). Dispatch holds the agent to them:
+        alone it has only these, for a person only what both may."""
+        if self._people is None or not hasattr(self._people, "run_agent"):
+            raise KitError("no agent identities here: the hub keeps them")
+        self._people.run_agent(self.plugin, name, None if grants is None else list(grants))
+
+    def turn_token(self, agent: str, seconds: float) -> str:
+        """Hub only: a door token for one turn of ``agent`` (one this plugin
+        runs), acting for this call's person, or alone when it has none;
+        tainted when this call is. It dies after ``seconds``; end it sooner
+        with :meth:`end_turn_token`."""
+        if self._people is None or not hasattr(self._people, "turn_token"):
+            raise KitError("no turn tokens here: the hub mints them")
+        return self._people.turn_token(self.plugin, self.caller.person, agent, seconds, self.caller.tainted)
+
+    def end_turn_token(self, token: str) -> None:
+        if self._people is not None and hasattr(self._people, "end_turn_token"):
+            self._people.end_turn_token(token)
+
     # -- calls ----------------------------------------------------------------
 
     def call(self, cap: str, /, **args: Any) -> Any:
@@ -223,25 +246,35 @@ class Ctx:
         return self._call(cap, args, target)
 
     def call_as(self, caller: Caller, cap: str, args: Mapping | None = None, *,
-                target: str | None = None) -> Any:
+                target: str | None = None, provider: str | None = None) -> Any:
         """Call a cap as ``caller`` rather than this call's caller, on
         ``target`` (a worker; None: wherever the host finds it). For hub
         plugins that act for someone else: a job runs as its creator, its
-        persona or the plugin that ships it (spec 8.1, 10.1). Still held to
-        this plugin's ``uses``; dispatch checks ``caller``'s own rights."""
-        return self._call(cap, dict(args or {}), target, caller)
+        persona or the plugin that ships it; an agent as itself (spec 8.1,
+        10.1). Still held to this plugin's ``uses``; dispatch checks
+        ``caller``'s own rights. ``provider``: ``cap`` is a contract and the
+        call goes to this one of its providers (a cap), not the hub's choice
+        (an agent pinned to one backend); rights and ``uses`` match the
+        contract, and the hub refuses a cap that doesn't provide it."""
+        return self._call(cap, dict(args or {}), target, caller, provider)
 
-    def _call(self, cap: str, args: dict, target: str | None, caller: Caller | None = None) -> Any:
+    def _call(self, cap: str, args: dict, target: str | None, caller: Caller | None = None,
+              provider: str | None = None) -> Any:
         if not allowed(self.plugin, self._uses, cap):
             raise KitError(f"{self.plugin} may not call {cap}: not in its manifest's uses")
         if self._dispatch is None:
             raise KitError("no dispatcher: ctx.call is unavailable here")
         caller = caller or replace(self.caller, plugin=self.plugin)
+        extra = {}
+        if provider:
+            if not isinstance(provider, str) or provider == cap:
+                raise KitError(f"bad provider {provider!r} for {cap}")
+            cap, extra = provider, {"contract": cap}
         try:
             asyncio.get_running_loop()
         except RuntimeError:
             if self._loop is None:      # no host loop (a plain script, a test)
-                res = _dispatch(self._dispatch, cap, dict(args), caller, target)
+                res = _dispatch(self._dispatch, cap, dict(args), caller, target, **extra)
                 if inspect.isawaitable(res):
                     if inspect.iscoroutine(res):
                         res.close()
@@ -250,8 +283,8 @@ class Ctx:
             # Sync plugin code in a worker thread: the dispatcher runs on the
             # host loop, where the hub's state lives, and this thread waits.
             return asyncio.run_coroutine_threadsafe(
-                _await_call(self._dispatch, cap, dict(args), caller, target), self._loop).result()
-        return _await_call(self._dispatch, cap, dict(args), caller, target)
+                _await_call(self._dispatch, cap, dict(args), caller, target, **extra), self._loop).result()
+        return _await_call(self._dispatch, cap, dict(args), caller, target, **extra)
 
     def emit(self, event: str, payload: Mapping | None = None) -> None:
         """Publish an event this plugin declared under ``emits`` (or a record's auto event)."""
@@ -336,19 +369,23 @@ class Ctx:
             raise KitError(str(e)) from None
 
 
-def _dispatch(dispatch: Dispatch, cap: str, args: dict, caller: Caller, target: str | None) -> Any:
-    if target is None:
+def _dispatch(dispatch: Dispatch, cap: str, args: dict, caller: Caller, target: str | None,
+              **extra: Any) -> Any:
+    if target is None and not extra:
         return dispatch(cap, args, caller)
+    if target is not None:
+        extra["target"] = target
     try:
-        inspect.signature(dispatch).bind(cap, args, caller, target=target)
+        inspect.signature(dispatch).bind(cap, args, caller, **extra)
     except TypeError:
-        raise KitError("this host can't call a named worker") from None
-    return dispatch(cap, args, caller, target=target)
+        raise KitError("this host can't " + ("pick a contract's provider" if "contract" in extra
+                                             else "call a named worker")) from None
+    return dispatch(cap, args, caller, **extra)
 
 
 async def _await_call(dispatch: Dispatch, cap: str, args: dict, caller: Caller,
-                      target: str | None = None) -> Any:
-    res = _dispatch(dispatch, cap, args, caller, target)
+                      target: str | None = None, **extra: Any) -> Any:
+    res = _dispatch(dispatch, cap, args, caller, target, **extra)
     return await res if inspect.isawaitable(res) else res
 
 

@@ -180,6 +180,7 @@ caps:
       effort: { type: str }
       system: { type: str }
       timeout: { type: duration }
+      door: { type: secret }
     result:
       type: map
       fields:
@@ -191,7 +192,8 @@ provides:
 """
 
 BRAIN_PY = """\
-def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, system=None, timeout=None):
+def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, system=None, timeout=None,
+         door=None):
     asked = [l for l in prompt.splitlines() if l.startswith("(Spoken")]
     return {"text": "brain: " + (asked[-1] if asked else prompt.splitlines()[-1]), "session": session or "s1"}
 """

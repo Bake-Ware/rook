@@ -592,7 +592,7 @@ class Hub:
             mtime = None
         if mtime is not None and mtime != getattr(self, "_tokens_mtime", None):
             self._load_tokens()
-        caller = self.identities.authenticate(token)
+        caller = self.identities.authenticate(token, self.clock())
         if caller is None:
             return None
         if caller.person and self.identities.user(caller.person) is None:
@@ -601,6 +601,54 @@ class Hub:
         if agent.startswith("agent:") and agent[len("agent:"):] not in self.identities.agents:
             return None          # an agent no longer in the config
         return caller
+
+    # -- Rook-run agents (castling-agents, castling-protocol) ----------------------
+
+    def run_agent(self, plugin: str, name: str, grants: list | None) -> None:
+        """The hub plugin that runs agent ``name`` (the agents runtime) sets
+        its identity, ``agent:<name>``, with its own grants, or drops it
+        (None: archived). Dispatch then holds the agent to those grants: alone
+        it has only them, for a person only what both may. Never a hub.yaml
+        agent's or another plugin's name. Journaled."""
+        if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", name):
+            raise KitError(f"bad agent name {name!r}")
+        before = self.identities.agents.get(name) if self.identities.run_by.get(name) == plugin else None
+        try:
+            if grants is None:
+                if name not in self.identities.run_by:
+                    return
+                self.identities.drop_agent(name, plugin)
+            else:
+                r = {"grants": list(grants)}
+                if r == before:
+                    return
+                self.identities.add_agent(name, r, run_by=plugin)
+        except ValueError as e:
+            raise KitError(str(e)) from None
+        self.dispatcher._note("agent", None, by=f"system:plugin.{plugin}", agent=f"agent:{name}",
+                              grants=None if grants is None else list(grants))
+
+    def turn_token(self, plugin: str, person: str | None, name: str, seconds: float,
+                   tainted: bool = False) -> str:
+        """A door token for one turn of Rook-run agent ``name``, acting for
+        ``person`` (the caller whose message it answers) or alone. Only the
+        plugin that runs the agent gets one; it lives ``seconds`` at most, in
+        memory, and :meth:`end_turn_token` kills it when the turn ends. A
+        ``tainted`` turn (answering outside content) taints the pair's door
+        session, where its harness's calls run (8.4: taint only restricts)."""
+        if self.identities.run_by.get(name) != plugin:
+            raise KitError(f"{plugin} doesn't run agent {name}")
+        now, caller = self.clock(), Caller(person, f"agent:{name}")
+        try:
+            token = self.identities.add_turn_token(caller, now + max(1.0, seconds), now)
+        except ValueError as e:
+            raise KitError(str(e)) from None
+        if tainted:
+            self.dispatcher.taint(self._door_session(caller))
+        return token
+
+    def end_turn_token(self, token: str) -> None:
+        self.identities.revoke_token(token)
 
     # -- the library and manifests --------------------------------------------------
 
@@ -1069,8 +1117,10 @@ class Hub:
         this process, so it is read, not verified; who it is for comes only
         from it (6.6)."""
         t = req["ticket"]
+        s = self.dispatcher.sessions.get(t["session"])
         caller = KitCaller(person=t.get("person"), agent=t.get("agent"), session=t["session"], band=t["band"],
-                           why=t["why"], owner=self.identities.is_owner(t.get("person")))
+                           why=t["why"], owner=self.identities.is_owner(t.get("person")),
+                           tainted=bool(s and s.tainted))     # a call in a tainted session acts on outside content
         out = {"id": req["id"], "from": self.node}
         # The layers the door put on this call (a page's caps, its authors) and
         # the door ride on its ctx.call; plugin ``uses`` don't compose: each

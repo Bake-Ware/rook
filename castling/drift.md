@@ -71,7 +71,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 1 | contradiction, over-built | Change records rebuilt as the 0.4 CR runner | #322 `rook/plugins/changes` |
 | 2 | contradiction | Core refuses plugin pushes and worker updates without the change plugin | `rook/core2/hub/runtime.py:1354`, #326 |
 | 3 | missing | Sign-off (the decided replacement) is storage only; agents can't review PRs | `rook/plugins/tasks`, `rook/plugins/github` |
-| 4 | missing | Rook-run agents have no identity of their own; persona grants are decorative | `agents/scripts/agents.py:26`, `agents-claude-code` |
+| 4 | missing | Rook-run agents have no identity of their own; persona grants are decorative. **Fixed: PR #344** | `agents/scripts/agents.py:26`, `agents-claude-code` |
 | 5 | renamed, missing | "Producer" became a release manager; the house agent doesn't tag work or offer projects (**fixed, PR #340**) | `agents/personas/producer.md`, `house.md` |
 | 6 | contradiction | Archivist and wiki-sweep teach 0.4 verification and supersede (**fixed, PR #340**) | `agents/personas/archivist.md`, `skills/wiki-sweep.md` |
 | 7 | over-built | The one-off 0.4 migration ships as a product tool in core | `rook/core2/migrate`, `knowledge/scripts/import_04.py` |
@@ -99,7 +99,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 29 | over-built (low) | Desktop app ports 0.4 Work/Knowledge/Sessions panels | `desktop/src-tauri/src/hub05.rs:108` |
 | 30 | missing (known) | No attention job on the hub; phone keeps the 0.4 attention store | `notification-android`, `docs/castling-phone.md:111` |
 | 31 | over-built | Hub plugins rebuild storage instead of declaring records | `agents.py:110`, `telegram`/`discord` `links.json`, hub pages |
-| 32 | contradiction (mild) | Core service plugins call providers by plugin name, not contract | `notify`, `speech`, `agents` |
+| 32 | contradiction (mild) | Core service plugins call providers by plugin name, not contract. **agents fixed: PR #344**; notify, speech: follow-up | `notify`, `speech`, `agents` |
 | 33 | renamed (low) | Plural namespaces `jobs.*`, `agents.*`, `pages.*`; `jobs.start` not `job.run` | `jobs`, `agents`, hub pages |
 | 34 | over-built (low) | Manifest 1.1/1.2 features nothing uses; jobs rolls its own webhook HMAC | `rook/kit/manifest`, `hub/plugins.py`, `jobs.py:870` |
 
@@ -195,7 +195,7 @@ Watch items (ask Bake, not drift yet) are after the findings.
   an agents `on:` hook that wakes the named reviewer. Let project trust alone decide whether the
   person signs (drop `concept.signoff=user`). This is what the R14 rework should land.
 
-## 4. Rook-run agents have no identity of their own (missing, security-relevant)
+## 4. Rook-run agents have no identity of their own (missing, security-relevant). Fixed: PR #344
 
 - **Decision.** castling-agents: "**Every agent:** ... caps for every action, gated by
   permissions"; tighten "by narrowing that role's grants or persona". castling-workbench: reviews
@@ -584,7 +584,7 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
 - **Smallest fix.** Declare `agent`, `note`, `memory` as kit records; chat links as `where: person`
   settings; pages as records when the dashboard is next touched.
 
-## 32. Core service plugins call providers by name, not by contract (contradiction, mild)
+## 32. Core service plugins call providers by name, not by contract (contradiction, mild). agents fixed: PR #344
 
 - **Decision.** castling-design: "Cap names say what they do, not who ships them"; "Discovery is
   passive". castling-manifest-contracts: provider routing exists so "a session declared for

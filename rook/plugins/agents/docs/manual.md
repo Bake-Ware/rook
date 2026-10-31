@@ -74,9 +74,22 @@ everything; `restore: true` brings it back. Skills are markdown playbooks;
 
 ## Backends
 
-An agent with backend `default` uses the hub's chosen `agent.backend`
-provider; `claude-code` or `codex` pins it to that backend plugin
-(`agents-claude-code`, `agents-codex`). Each backend has its own System Two
-and System Three models (its `model` and `model_three` settings); an agent's
+Turns go only through the `agent.backend` contract. An agent with backend
+`default` uses the hub's chosen provider; naming one provider's cap
+(`agents-claude-code.turn`, `agents-codex.turn`, or any plugin that provides
+the contract) pins it there. Each backend has its own System Two and System
+Three models (its `model` and `model_three` settings); an agent's
 `model: {two, three}` overrides them. Settings: `warm`, `turn_timeout`,
 `dream_every`, `chat_agent`.
+
+## Identity
+
+Each agent is `agent:<name>` on the hub, with its own grants plus
+`agent.backend` (its own turns). A turn runs as the agent for the person
+whose message it answers, so it gets only what both may; with no person
+behind the message (a persona job, another agent acting alone) it acts
+alone, with its own grants. The backend gets a token for that same pair,
+good for that turn only (the `door` arg), so every Rook call the agent makes
+from its harness is journaled as the agent and checked the same way. Dreams
+run as the agent alone, without a token. Archiving an agent takes its
+identity off the hub; a name hub.yaml already uses is refused.

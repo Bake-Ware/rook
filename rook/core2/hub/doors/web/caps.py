@@ -573,7 +573,8 @@ class Settings:
     voice). Values set with ``setting.set`` are kept in ``<data>/settings.json``
     and ``<data>/person-settings.json`` and win over the config file; the
     plugins read them on their next call. This is also the hub plugins'
-    view of people (``ctx.settings_for``, ``ctx.owners``)."""
+    view of people (``ctx.settings_for``, ``ctx.owners``) and of the agents
+    they run (``ctx.run_agent``, ``ctx.turn_token``)."""
 
     def __init__(self, hub):
         self.hub = hub
@@ -593,6 +594,16 @@ class Settings:
 
     def settings(self, person: str) -> dict:
         return self.personal.get(person) or {}
+
+    # Rook-run agents' identities and turn tokens (ctx.run_agent, ctx.turn_token).
+    def run_agent(self, plugin: str, name: str, grants: list | None) -> None:
+        self.hub.run_agent(plugin, name, grants)
+
+    def turn_token(self, plugin: str, person: str | None, name: str, seconds: float, tainted: bool = False) -> str:
+        return self.hub.turn_token(plugin, person, name, seconds, tainted)
+
+    def end_turn_token(self, token: str) -> None:
+        self.hub.end_turn_token(token)
 
     # -- caps -------------------------------------------------------------------
 

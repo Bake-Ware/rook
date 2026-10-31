@@ -315,8 +315,9 @@ class HubPlugins:
     # -- ctx ------------------------------------------------------------------
 
     def _ctx(self, p: HubPlugin, caller: Caller, cap: str | None = None) -> Ctx:
-        async def dispatch(c: str, a: dict, who: Caller, target: str | None = None) -> Any:
-            return _result(await self._call(who, c, a, uses=self.uses(p.name), target=target))
+        async def dispatch(c: str, a: dict, who: Caller, target: str | None = None,
+                           contract: str | None = None) -> Any:
+            return _result(await self._call(who, c, a, uses=self.uses(p.name), target=target, contract=contract))
         return Ctx(p.manifest, caller, dispatch=dispatch, settings=self.settings.get(p.name, {}),
                    resolve_secret=self.resolve_secret, records=self.records, emit=self.emit,
                    data_dir=self._data(p) if self.data_dir else None, cap=cap, people=self.people,

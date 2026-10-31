@@ -1,8 +1,8 @@
 """The agents plugin on a real 0.5 hub (rook.core2.hub.runtime) with a fake
 agent.backend provider in the library, called through the HTTP door: the
-roles are made on start, a turn reaches the provider as the person who sent
-the message (so a guest gets only a guest's rights), and the dream cycle
-runs as the plugin."""
+roles are made on start as identities of their own, a turn reaches the
+provider as the agent for the person who sent the message (so a guest gets
+only what a guest may), and the dream cycle runs as the agent alone."""
 
 import asyncio
 import json
@@ -43,6 +43,7 @@ caps:
       effort: { type: str }
       system: { type: str }
       timeout: { type: duration }
+      door: { type: secret }
     result:
       type: map
       fields:
@@ -56,7 +57,7 @@ provides:
 BRAIN_PY = """\
 import json
 
-def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, system=None, timeout=None):
+def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, system=None, timeout=None, door=None):
     if system and "curate an agent's memory" in system:
         return {"text": json.dumps({"add": ["learned: " + model]}), "session": "dream"}
     return {"text": "brain: " + prompt.splitlines()[-1], "session": session or "s1"}
@@ -132,7 +133,15 @@ def test_agents_on_the_hub(tmp_path):
             out = await call(hub, owner, "agents.chat.send", agent="house", text="good morning")
             assert out["ok"] and out["result"]["text"] == "brain: good morning", out
             turn = hub.journal.query(cap="agents-local.turn", limit=1)[0]
-            assert (turn["person"], turn["ok"]) == ("person:bake", True)      # as the sender
+            # The agent itself, for the person who sent the message; its turn
+            # token is never journaled.
+            assert (turn["person"], turn["agent"], turn["ok"]) == ("person:bake", "agent:house", True)
+            assert turn["contract"] == "agent.backend" and turn["args"]["door"] == "[redacted]"
+            outer = hub.journal.query(cap="agent.backend", limit=1)[0]
+            assert outer["args"]["door"] == "[redacted]" and outer["agent"] == "agent:house"
+            assert hub.identities.run_by["house"] == "agents" and hub.identities.agents["archivist"]["grants"][-1] \
+                == "agent.backend"
+            assert hub.identities._turns == {}                                # ended with the turn
 
             # A guest may chat (agents.chat.*), but the turn runs with the
             # guest's rights, and core's guest preset grants no backend.
@@ -146,10 +155,11 @@ def test_agents_on_the_hub(tmp_path):
             assert not out["ok"] and out["error"].startswith("bad args"), out
 
             # Idle: the house agent is always on; qa sleeps after warm and
-            # dreams as the plugin itself.
+            # dreams as itself, alone.
             assert (await call(hub, owner, "agents.chat.send", agent="qa", text="tests?"))["ok"]
             assert (await call(hub, owner, "agents.note", agent="qa", text="CI is green on #12"))["ok"]
-            await until(lambda: hub.journal.query(cap="agents-local.turn", agent="system:plugin.agents"))
+            await until(lambda: [e for e in hub.journal.query(cap="agents-local.turn", agent="agent:qa")
+                                 if e["person"] is None])
             got = (await call(hub, owner, "agents.get", name="qa"))["result"]
             assert got["memory"][0]["text"] == "learned: three" and got["notepad"] == []
             assert got["awake"] is False
@@ -241,8 +251,11 @@ def test_a_linked_persons_direct_message_reaches_the_house_agent(tmp_path):
             await until(lambda: outbox())
             assert outbox() == [{"to": "bake", "text": "brain: (on Telegram) what's on today?", "by": None}]
             turn = hub.journal.query(cap="agents-local.turn", limit=1)[0]
-            assert (turn["person"], turn["ok"]) == ("person:bake", True)        # as the person who wrote
+            assert (turn["person"], turn["agent"], turn["ok"]) == ("person:bake", "agent:house", True)
             assert hub.dispatcher.sessions[turn["session"]].tainted            # outside content
+            # ... and so is the session its harness's calls run in (its turn token's).
+            door = hub._door_sessions[("person:bake", "agent:house")]
+            assert hub.dispatcher.sessions[door].tainted
             out = await call(hub, owner, "agents.chat.read", agent="house")     # their one session with it
             assert "what's on today?" in json.dumps(out["result"]), out
 
