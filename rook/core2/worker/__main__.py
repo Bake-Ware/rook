@@ -4,6 +4,11 @@
     python -m rook.core2.worker --config worker.yaml enroll 'rook://enroll?url=…&code=…&hub=…'
     python -m rook.core2.worker --config worker.yaml enroll --discover
     python -m rook.core2.worker --config worker.yaml
+    python -m rook.core2.worker --config worker.yaml check   # the smoke check of a core update
+
+Running, it first picks its core (rook.core2.worker.boot): the installed
+package, or the release a hub installed under ``<data>/core/``, and execs into
+it when that isn't the code already running.
 
 ``enroll`` (spec 12; rook.core2.enroll.device) signs the machine in as a
 person: with the QR's one-time code, else by showing a short code the person
@@ -77,6 +82,30 @@ def enroll(args) -> int:
     return 0
 
 
+def check(args) -> int:
+    """Import this core, read the config and validate core's own manifests;
+    print where the code came from. A core update runs it from the new
+    release before switching (rook.core2.worker.update.smoke)."""
+    import json
+    from rook.kit.manifest import check as check_manifest
+    from ..builtin import CORE, STREAM, WORKER
+    from . import boot, builtins, host, install, runtime, update  # noqa: F401  (imports are the check)
+    try:
+        load_config(args.config)
+    except (OSError, ValueError) as e:
+        print(f"config: {e}", file=sys.stderr)
+        return 2
+    for path in (CORE, WORKER, STREAM):
+        data, issues = check_manifest(path)
+        errors = [str(i) for i in issues if i.level == "error"]
+        if data is None or errors:
+            print(f"{path.name}: {errors}", file=sys.stderr)
+            return 1
+    folder = boot.running_folder()
+    print(json.dumps({"ok": True, "folder": str(folder) if folder else None, "version": boot.running()}))
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="python -m rook.core2.worker", description="Rook 0.5 worker")
     ap.add_argument("--config", required=True, help="the worker's YAML config")
@@ -88,17 +117,25 @@ def main(argv=None) -> int:
     en.add_argument("--name", help="this machine's name on the band (default: the config's, else the hostname)")
     en.add_argument("--insecure", action="store_true", help="allow a plain http hub address off this machine")
     en.add_argument("--force", action="store_true", help="enroll again: a new home hub, every other band dropped")
+    sub.add_parser("check", help="import this core and check the config and core's manifests (update smoke check)")
     args = ap.parse_args(argv)
     if args.cmd == "enroll":
         return enroll(args)
+    if args.cmd == "check":
+        return check(args)
     try:
         cfg = load_config(args.config)
     except (OSError, ValueError) as e:
         print(f"config: {e}", file=sys.stderr)
         return 2
     setup_logging(cfg.log)
+    from . import boot
     try:
-        asyncio.run(serve(Worker(cfg)))
+        boot.select(cfg.data)             # may exec into another core and not return
+    except OSError as e:                  # an unreadable core folder: run what is here
+        print(f"worker: core release not switched: {e}", file=sys.stderr)
+    try:
+        asyncio.run(serve(Worker(cfg, config_path=Path(args.config).resolve())))
     except KeyboardInterrupt:
         pass
     except (OSError, ValueError, RuntimeError) as e:     # a bad anchor, an unwritable data folder

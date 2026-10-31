@@ -132,7 +132,8 @@ def handlers(worker: Any, streams: Streams, ran: RanLog, *, restart: Callable[[]
                 "started": round(up, 3), "uptime_s": int(time.time() - up), "band": link,
                 "plugins": sorted(f"{p.name}@{p.version}" for p in visible if not p.builtin),
                 "unavailable": {cap: why for p in visible for cap, why in sorted(p.unavailable.items())},
-                "streams_open": sum(1 for m in streams.list(open_only=True) if m.attrs.get("band") == band)}
+                "streams_open": sum(1 for m in streams.list(open_only=True) if m.attrs.get("band") == band),
+                "release": worker.updater.status()}
 
     async def log(ctx, limit=50, cap=None, person=None, agent=None, since=None, failed=False) -> dict:
         # Only the calls this band's hubs made: another band's activity isn't theirs to read.

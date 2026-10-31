@@ -1,0 +1,61 @@
+# Core updates for the band's workers (docs/castling-updates.md).
+# Implemented by the hub (rook.core2.hub.updates).
+manifest: 1
+plugin: update
+version: 0.5.0
+title: Updates
+doc: Signed core releases and staged rollouts to the band's workers.
+package: core
+builtin: true
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+
+caps:
+  prepare:
+    doc: >-
+      Make a signed core release of the code this hub runs (or of a checkout on the hub
+      machine): the rook package, its requirements, signed with the hub's key. The same code
+      again is the same release. Owners.
+    on: hub
+    risk: admin
+    scope: multi-machine
+    effects: [persists]
+    timeout: 5m
+    args:
+      version: { type: str, doc: "Semver, like 0.5.1; blank: the package's version plus the code's digest." }
+      source: { type: str, doc: "A folder on the hub machine that holds rook/ (a checkout); blank: the hub's own code." }
+    result: { type: map }
+  rollout:
+    doc: >-
+      Update the band's workers to a prepared release: the canaries one by one, then the rest a
+      batch at a time. Each worker restarts on the new core and must come back confirmed within
+      the gate, or it rolls itself back and the rollout stops. Returns at once; update.status
+      follows it. Owners.
+    on: hub
+    risk: admin
+    scope: multi-machine
+    effects: [persists]
+    args:
+      version: { type: str, required: true }
+      canary: { type: list, items: { type: str }, doc: "Worker names that go first; blank: the first in line." }
+      workers: { type: list, items: { type: str }, doc: "Only these workers; blank: every one that can take it." }
+      batch: { type: int, default: 2, min: 1, max: 50, doc: Workers updated at once after the canaries. }
+      gate: { type: int, default: 300, min: 30, max: 3600, doc: "Seconds a worker has to come back confirmed." }
+    result: { type: map }
+  status:
+    doc: The releases this hub holds, the current or last rollout, and the core each worker runs.
+    on: hub
+    risk: read
+    scope: multi-machine
+    idempotent: true
+    result: { type: map }
+  history:
+    doc: "What happened to the band's core: releases prepared, rollouts and each worker's outcome, newest first."
+    on: hub
+    risk: read
+    scope: multi-machine
+    idempotent: true
+    args:
+      limit: { type: int, default: 50, min: 1, max: 500 }
+    result: { type: map }

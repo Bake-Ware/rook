@@ -1,0 +1,325 @@
+"""Core updates, hub side (docs/castling-updates.md): the builtin ``update``
+plugin. An owner prepares a signed core release and rolls it out to the
+band's workers, canaries first, one batch at a time; a worker that doesn't
+come back healthy on the new core stops the rollout (and has already rolled
+itself back).
+
+    update.prepare  {version?, source?}           sign a release of the hub's code (or a checkout)
+    update.rollout  {version, canary?, workers?, batch?, gate?}   start the rollout; returns at once
+    update.status   {}                            releases, the rollout, each worker's core
+    update.history  {limit?}                      what happened, newest first
+
+Each worker is updated with a ``worker.update`` call made as the person who
+started the rollout (dispatch checks it and the journal shows it like any
+call), carrying the release's Drop descriptor; the worker pulls, verifies,
+smoke-checks and restarts into it on trial. The hub then waits up to
+``gate`` seconds for the worker to report that release confirmed
+(``worker.status``). Plugins keep updating through distribution
+(``POST /plugins/push``); the hub updates itself by its deploy, not here.
+
+Files: ``<data>/releases/<version>.tar.gz`` with ``<version>.json`` beside
+it (the newest ``KEEP`` are kept), ``<data>/updates/history.jsonl`` and
+``<data>/updates/rollout.json`` (the current or last rollout).
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import secrets
+import time
+from pathlib import Path
+
+from rook.kit.ctx import Caller as KitCaller, KitError
+
+from rook.core2 import release
+from rook.core2.builtin import UPDATE
+
+log = logging.getLogger("rook.hub.updates")
+
+KEEP = 3                     # releases kept on the hub
+GATE = 300                   # seconds a worker has to come back confirmed on the new core
+BATCH = 2                    # workers updated at once after the canaries
+POLL = 2.0                   # seconds between status checks while a worker restarts
+HISTORY_MAX = 1 << 20        # history.jsonl rotates past this
+
+
+class Updates:
+    def __init__(self, hub):
+        self.hub = hub
+        self.releases = Path(hub.data) / "releases"
+        self.folder = Path(hub.data) / "updates"
+        self.task: asyncio.Task | None = None
+        self.rollout_state: dict | None = self._read(self.folder / "rollout.json")
+        if (self.rollout_state or {}).get("status") == "running":      # the hub stopped mid-rollout
+            self.rollout_state["status"] = "interrupted"
+            self.rollout_state["ended"] = round(time.time(), 3)
+            self._save_rollout()
+            self._history({"event": "rollout.interrupted", "rollout": self.rollout_state.get("id"),
+                           "version": self.rollout_state.get("version")})
+
+    # -- files -------------------------------------------------------------------
+
+    @staticmethod
+    def _read(path: Path) -> dict | None:
+        try:
+            got = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return got if isinstance(got, dict) else None
+
+    def _write(self, path: Path, data: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(data, indent=1, sort_keys=True), encoding="utf-8")
+        tmp.replace(path)
+
+    def _save_rollout(self) -> None:
+        self._write(self.folder / "rollout.json", self.rollout_state)
+
+    def _history(self, entry: dict) -> None:
+        self.folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+        path = self.folder / "history.jsonl"
+        try:
+            if path.exists() and path.stat().st_size > HISTORY_MAX:
+                path.replace(path.with_name("history.jsonl.1"))
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"at": round(time.time(), 3), **entry}, default=str) + "\n")
+        except OSError as e:
+            log.warning("update history not written", extra={"fields": {"error": str(e)}})
+        log.info(entry.get("event", "update"), extra={"fields": {k: v for k, v in entry.items() if k != "event"}})
+
+    def _held(self) -> list[dict]:
+        out = []
+        for meta in sorted(self.releases.glob("*.json")) if self.releases.is_dir() else ():
+            m = self._read(meta)
+            if m and (self.releases / f"{m.get('version')}.tar.gz").is_file():
+                out.append(m)
+        return sorted(out, key=lambda m: m.get("at") or 0, reverse=True)
+
+    def _tarball(self, version: str) -> Path:
+        if not (isinstance(version, str) and release.SEMVER.fullmatch(version)):
+            raise KitError(f"no release {version!r}")
+        path = self.releases / f"{version}.tar.gz"
+        if not path.is_file():
+            raise KitError(f"no release {version} on this hub; update.prepare makes one")
+        return path
+
+    # -- caps --------------------------------------------------------------------
+
+    @staticmethod
+    def _owner(ctx) -> None:
+        if not ctx.caller.owner:
+            raise KitError("denied: only an owner updates the band's core")
+
+    async def prepare(self, ctx, version: str | None = None, source: str | None = None) -> dict:
+        """Sign a release of ``source`` (a folder holding ``rook/``; default
+        the code this hub runs). The same code again is the same release."""
+        self._owner(ctx)
+        import rook
+        src = Path(source).expanduser() if source else Path(rook.__file__).resolve().parent.parent
+        try:
+            version, _, hashes, _ = await asyncio.to_thread(release.plan, src, version)
+        except release.ReleaseError as e:
+            raise KitError(f"refused: {e}") from None
+        digest = release.digest(hashes)
+        meta_path = self.releases / f"{version}.json"
+        held = self._read(meta_path)
+        if held and (self.releases / f"{version}.tar.gz").is_file():
+            if held.get("digest") != digest:
+                raise KitError(f"refused: release {version} exists with other code; pick a new version")
+            return {**held, "new": False}
+        self.releases.mkdir(parents=True, exist_ok=True, mode=0o700)
+        dest = self.releases / f"{version}.tar.gz"
+        try:
+            sig = await asyncio.to_thread(release.build, src, dest, signer=self.hub.op, hub=self.hub.hub_id,
+                                          version=version)
+        except (release.ReleaseError, OSError) as e:
+            raise KitError(f"refused: {e}") from None
+        if release.digest(sig["files"]) != digest:       # the code changed between plan and build
+            dest.unlink(missing_ok=True)
+            raise KitError("refused: the source changed while the release was built; try again")
+        meta = {"version": version, "digest": digest, "files": len(sig["files"]), "size": dest.stat().st_size,
+                "sha256": release.sha256_file(dest), "core": sig["core"], "requires": sig["requires"],
+                "source": str(src.resolve()), "at": round(time.time(), 3), "by": ctx.caller.person}
+        self._write(meta_path, meta)
+        self._history({"event": "prepared", "version": version, "by": ctx.caller.person,
+                       "agent": ctx.caller.agent, "size": meta["size"]})
+        self._prune()
+        return {**meta, "new": True}
+
+    def _prune(self) -> None:
+        busy = (self.rollout_state or {}).get("version") if self.task and not self.task.done() else None
+        for m in self._held()[KEEP:]:
+            if m.get("version") != busy:
+                (self.releases / f"{m['version']}.tar.gz").unlink(missing_ok=True)
+                (self.releases / f"{m['version']}.json").unlink(missing_ok=True)
+
+    def _workers(self, version: str) -> list[dict]:
+        """Every known worker with its core and whether a rollout can take it."""
+        hub, out = self.hub, []
+        for k in sorted(hub.known.values(), key=lambda k: k.name):
+            w = hub.dispatcher.workers.get(k.id)
+            row = {"name": k.name, "id": k.id, "version": k.version, "online": k.online}
+            if not k.online:
+                row["skip"] = "offline"
+            elif w is None or "worker.update" not in w.caps:
+                row["skip"] = "can't update its core over the band (an app's worker, or an older core)"
+            elif k.version == version:
+                row["skip"] = f"already on {version}"
+            out.append(row)
+        return out
+
+    async def rollout(self, ctx, version: str, canary: list | None = None, workers: list | None = None,
+                      batch: int = BATCH, gate: int = GATE) -> dict:
+        """Start updating the band's workers to ``version``: the canaries
+        (default the first worker in line) one by one, then the rest
+        ``batch`` at a time. The first worker that fails stops it."""
+        self._owner(ctx)
+        path = self._tarball(version)
+        if self.task is not None and not self.task.done():
+            raise KitError(f"a rollout to {self.rollout_state.get('version')} is running; wait for it")
+        rows = self._workers(version)
+        names = {r["name"] for r in rows}
+        for n in [*(canary or ()), *(workers or ())]:
+            if n not in names:
+                raise KitError(f"unknown worker: {n}")
+        wanted = [r for r in rows if not workers or r["name"] in workers]
+        ready = [r for r in wanted if "skip" not in r]
+        if not ready:
+            raise KitError("no worker to update: " + "; ".join(f"{r['name']}: {r['skip']}" for r in wanted)
+                           if wanted else "no worker to update")
+        canaries = [r for r in ready if r["name"] in (canary or ())] or ready[:1]
+        rest = [r for r in ready if r not in canaries]
+        rid = secrets.token_hex(6)
+        self.rollout_state = {
+            "id": rid, "version": version, "status": "running", "by": ctx.caller.person,
+            "agent": ctx.caller.agent, "started": round(time.time(), 3), "batch": batch, "gate": gate,
+            "workers": [{"name": r["name"], "id": r["id"], "from": r["version"],
+                         "canary": r in canaries, "state": "waiting"} for r in canaries + rest]
+                       + [{"name": r["name"], "id": r["id"], "from": r["version"], "state": "skipped",
+                           "reason": r["skip"]} for r in wanted if "skip" in r],
+        }
+        self._save_rollout()
+        self._history({"event": "rollout.started", "rollout": rid, "version": version,
+                       "by": ctx.caller.person, "agent": ctx.caller.agent,
+                       "canary": [r["name"] for r in canaries], "rest": [r["name"] for r in rest]})
+        who = KitCaller(person=ctx.caller.person, agent=ctx.caller.agent,
+                        why=f"Update the core of the band's workers to {version} (rollout {rid}).")
+        self.task = asyncio.get_running_loop().create_task(self._run(path, who))
+        return {"rollout": rid, "version": version, "canary": [r["name"] for r in canaries],
+                "rest": [r["name"] for r in rest],
+                "skipped": {r["name"]: r["skip"] for r in wanted if "skip" in r}}
+
+    async def status(self, ctx) -> dict:
+        ro = self.rollout_state
+        version = (ro or {}).get("version") or ""
+        return {"releases": self._held(), "rollout": ro,
+                "workers": [{k: v for k, v in r.items() if k != "skip"} for r in self._workers(version)]}
+
+    async def history(self, ctx, limit: int = 50) -> dict:
+        lines = []
+        for name in ("history.jsonl.1", "history.jsonl"):
+            try:
+                lines += (self.folder / name).read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+        out = []
+        for line in reversed(lines):
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                continue
+            if len(out) >= limit:
+                break
+        return {"entries": out}
+
+    # -- the rollout ---------------------------------------------------------------
+
+    async def _run(self, path: Path, who: KitCaller) -> None:
+        ro = self.rollout_state
+        queue = [w for w in ro["workers"] if w["state"] == "waiting"]
+        canaries, rest = [w for w in queue if w.get("canary")], [w for w in queue if not w.get("canary")]
+        try:
+            blob = await asyncio.to_thread(path.read_bytes)
+            ok = True
+            for w in canaries:
+                ok = await self._one(w, blob, who)
+                if not ok:
+                    break
+            step = max(1, int(ro.get("batch") or BATCH))
+            for i in range(0, len(rest), step):
+                if not ok:
+                    break
+                ok = all(await asyncio.gather(*(self._one(w, blob, who) for w in rest[i:i + step])))
+            status = "done" if ok else "failed"
+        except asyncio.CancelledError:
+            status = "interrupted"
+            raise
+        except Exception as e:          # a bug must still end the rollout on record
+            log.exception("rollout failed")
+            ro["error"] = f"{type(e).__name__}: {e}"
+            status = "failed"
+        finally:
+            for w in ro["workers"]:
+                if w["state"] in ("waiting", "updating"):
+                    w["state"], w["reason"] = "not started", w.get("reason") or "the rollout stopped"
+            ro["status"], ro["ended"] = status, round(time.time(), 3)
+            self._save_rollout()
+            self._history({"event": f"rollout.{status}", "rollout": ro["id"], "version": ro["version"],
+                           "updated": [w["name"] for w in ro["workers"] if w["state"] == "updated"],
+                           "failed": {w["name"]: w.get("reason") for w in ro["workers"] if w["state"] == "failed"}})
+
+    async def _one(self, w: dict, blob: bytes, who: KitCaller) -> bool:
+        """Update one worker and wait for it to come back confirmed."""
+        hub, ro = self.hub, self.rollout_state
+        version, gate = ro["version"], float(ro.get("gate", GATE))
+        w["state"], w["at"] = "updating", round(time.time(), 3)
+        self._save_rollout()
+        k = hub.known.get(w["id"])
+        if k is None:
+            return self._done(w, False, "no longer known to the hub")
+        try:
+            desc = hub.transport.offer(k.band, blob, to=w["id"])
+        except Exception as e:
+            return self._done(w, False, f"release not offered: {e}")
+        reply = await hub.call_as(who, "worker.update", {"bundle": desc}, target=w["id"])
+        if not reply.get("ok"):
+            return self._done(w, False, str(reply.get("error") or "worker.update failed"))
+        deadline = time.monotonic() + gate
+        while time.monotonic() < deadline:
+            await asyncio.sleep(POLL)
+            st = await hub.call_as(who, "worker.status", {}, target=w["id"])
+            rel = (st.get("result") or {}).get("release") if st.get("ok") else None
+            if not isinstance(rel, dict):
+                continue                      # still restarting
+            failed = rel.get("failed") or {}
+            if failed.get("version") == version and rel.get("running") != version:
+                return self._done(w, False, f"rolled back on the worker: {failed.get('reason')}")
+            if rel.get("running") == version and not rel.get("trial"):
+                return self._done(w, True)
+        return self._done(w, False, f"not back on {version} within {gate:g}s")
+
+    def _done(self, w: dict, ok: bool, reason: str | None = None) -> bool:
+        w["state"] = "updated" if ok else "failed"
+        if reason:
+            w["reason"] = reason
+        w["ended"] = round(time.time(), 3)
+        self._save_rollout()
+        self._history({"event": "worker.updated" if ok else "worker.failed", "rollout": self.rollout_state["id"],
+                       "worker": w["name"], "version": self.rollout_state["version"],
+                       **({"reason": reason} if reason else {})})
+        return ok
+
+    async def close(self) -> None:
+        if self.task is not None and not self.task.done():
+            self.task.cancel()
+            await asyncio.gather(self.task, return_exceptions=True)
+
+
+def install(hub) -> Updates:
+    """Register the builtin ``update`` plugin on the hub node."""
+    up = Updates(hub)
+    hub.plugins.add_builtin(UPDATE, {"update.prepare": up.prepare, "update.rollout": up.rollout,
+                                       "update.status": up.status, "update.history": up.history})
+    return up
