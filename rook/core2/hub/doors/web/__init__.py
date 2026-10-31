@@ -33,16 +33,6 @@ Routes (everything else is the JSON API in ``doors/http.py``)::
     GET  /web/frame/<nonce>      the page's document, once
     POST /web/api/page           {token, cap, args?, why?, worker?}
     GET  /web/api/events?token=&since=   long poll, up to 20 s
-
-With ``oauth:`` in hub.yaml the site is also the OAuth authorization server
-for remote MCP clients (:mod:`rook.core2.hub.oauth`)::
-
-    GET  /.well-known/oauth-authorization-server
-    POST /oauth/register         dynamic client registration (open)
-    GET  /oauth/authorize        sign in (``/login?next=``), then the consent page
-    POST /oauth/authorize        {consent, csrf, agent, decision}: the person's answer
-    POST /oauth/token            authorization_code (PKCE S256) or refresh_token
-    POST /oauth/revoke           RFC 7009
 """
 from .site import Web
 

@@ -69,7 +69,6 @@ linked.
 **Core** (the hub itself; always there):
 
 - [approval](../../rook/core2/hub/doors/web/builtin/approval/docs/manual.md): held calls and your answers.
-- [connector](../../rook/core2/hub/doors/web/builtin/connector/docs/manual.md): apps you allowed through OAuth (claude.ai's connectors), and revoking them.
 - [hub](../../rook/core2/hub/doors/web/builtin/hub/docs/manual.md): the hub and its workers.
 - [journal](../../rook/core2/hub/doors/web/builtin/journal/docs/manual.md): searching the journal.
 - [llm](../../rook/core2/hub/doors/web/builtin/llm/docs/manual.md): which language models the hub can use.

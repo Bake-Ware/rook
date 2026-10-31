@@ -34,6 +34,7 @@ A config (paths are relative to the file)::
     doors:
       http: { bind: "127.0.0.1:8740" }
       mcp: { bind: "127.0.0.1:8741" }   # agents: http://127.0.0.1:8741/mcp with an --agent token
+                                        # (oauth: https://rook.example lets claude.ai connectors in, doors/mcp_oauth.py)
     transport:                    # rook.core2.transport options; leave out for no band
       bands: [ { psk_env: ROOK_PSK, relay: "relay.example:7474" } ]
     enroll:                       # what enrolling devices are told (rook.core2.enroll.hub)
@@ -41,9 +42,6 @@ A config (paths are relative to the file)::
       relay: rook.example:7474    # the band relay as devices reach it, if not the transport's
       discover: true              # answer local network discovery (mDNS _rook-hub._tcp)
       services: { voice: { url: "https://voice.example", key_env: VOICE_KEY, presets: [owner, adult] } }
-    oauth:                        # remote MCP clients (claude.ai connectors) sign in here (rook.core2.hub.oauth)
-      issuer: https://rook.example          # the hub site (http door), behind TLS
-      resource: https://rook.example/mcp    # the MCP door as clients reach it
     log: { level: info, format: json }
 
 SIGINT or SIGTERM stops it cleanly.

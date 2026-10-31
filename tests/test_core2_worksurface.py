@@ -116,7 +116,7 @@ def test_every_install_combination(tmp_path, combo):
         nav = {pid for pid, p in listed.items() if p["nav"]}
         work = {"task/tasks", "project/projects", "knowledge/knowledge"}
         assert nav == {"hub/workers", "approval/approvals", "board/board"} | (work if workbench else set())
-        assert {"journal/journal", "setting/settings", "connector/connectors"} <= set(listed) - nav
+        assert {"journal/journal", "setting/settings"} <= set(listed) - nav
         for pid in ("journal/journal", "setting/settings"):
             assert (await c.open(pid))["ok"]
 

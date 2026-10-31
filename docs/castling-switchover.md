@@ -59,7 +59,7 @@ the final cutover doesn't hold up the earlier side-by-side steps.
 | R10 | The desktop app updates on 0.5 | Without it, a desktop fix means reinstalling by hand. | 5 |
 | R11 | Soak results written up (`docs/castling-soak.md`) | see "Soak bars" | 1 |
 | R12 | The hardening review's report (`castling/review.md`) | see "Review findings" | 1 |
-| R13 | The MCP door speaks OAuth | Done (wave 7, `rook/core2/hub/oauth.py`): with `oauth: {issuer, resource}` in hub.yaml the hub site is the authorization server (registration, PKCE, sign-in and agent choice, 1 h access + rotating refresh) and the door takes its tokens beside bearer tokens. Needs the site and the door reachable over public HTTPS. | 2 (for claude.ai) |
+| R13 | The MCP door speaks OAuth | Done (`rook/core2/hub/doors/mcp_oauth.py`, the 0.4 shim's shape): with `oauth: <public address>` on the `mcp` door, claude.ai's connector uses an agent token as its client secret and that token as its access token. Needs the door reachable over public HTTPS. | 2 (for claude.ai) |
 | R14 | Huddles with a merge vote | Agents land PRs today through the 0.4 huddle's `huddle.vote` and the chair's pin. That flow ends when the 0.4 hub stops. | 5 |
 
 These are also open and should be done or explicitly dropped before the
@@ -245,10 +245,10 @@ Needs step 1; R13 for claude.ai.
   door as a second MCP server, named `rook05` as on the sidecar, next to
   `rook`. Bake's own Claude Code sessions go first, then the CC mod hosts,
   opencode, Hermes, the pianobar DJ, openwebui and bakedash.
-- claude.ai web and mobile (R13): set `oauth:` (issuer: the hub site's public
-  address, resource: the MCP door's), add a custom connector with the door's
-  address, sign in on the hub site and choose the agent it acts as. Rollback:
-  revoke it under More > Connectors and remove the connector.
+- claude.ai web and mobile (R13): set `oauth:` on the `mcp` door (its
+  public address), mint a `--agent claude-web` token, and add a custom
+  connector with the door's `/mcp` address and the token as client secret.
+  Rollback: remove the connector and take the token out of `tokens.json`.
 - Agents do real reads on 0.5 and keep their writes on 0.4 until step 5. That
   way 0.4 stays the record and nothing splits.
 

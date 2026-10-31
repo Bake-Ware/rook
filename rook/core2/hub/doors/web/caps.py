@@ -240,7 +240,6 @@ def install(hub) -> None:
                 "hub.door": h.hub_door},
         "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide},
         "journal": {"journal.search": h.journal_search},
-        "connector": {"connector.list": h.connector_list, "connector.revoke": h.connector_revoke},
         "setting": {"setting.list": settings.list, "setting.set": settings.set},
         "llm": {"llm.providers": h.llm_providers, "llm.models": h.llm_models, "llm.status": h.llm_status},
     }
@@ -506,24 +505,6 @@ class _Handlers:
             raise KitError(out["error"])
         return {"entries": out["entries"]}
 
-
-    # -- connectors: OAuth grants for remote MCP clients (rook.core2.hub.oauth) -----
-
-    async def connector_list(self, ctx) -> dict:
-        oauth = self.hub.oauth
-        if oauth is None:
-            return {"enabled": False, "connectors": []}
-        if ctx.caller.owner:
-            return {"enabled": True, "connectors": oauth.connectors()}
-        person = ctx.caller.person
-        return {"enabled": True, "connectors": oauth.connectors(person) if person else []}
-
-    async def connector_revoke(self, ctx, id: str) -> dict:
-        oauth = self.hub.oauth
-        grant = oauth.get(id) if oauth else None
-        if grant is None or not (ctx.caller.owner or grant["person"] == ctx.caller.person):
-            raise KitError(f"no connector {id}")
-        return {"revoked": oauth.revoke(id, ctx.caller.agent or ctx.caller.person or "?")}
 
     # -- llm: the llm.complete providers ------------------------------------------
 
