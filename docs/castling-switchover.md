@@ -50,7 +50,14 @@ leaves the 0.4 code paths as they are.
 
 `python castling/switchover/readiness.py` checks these against the checkout.
 Each step in "Order of moves" names the gates it needs. A gate that blocks
-the final cutover doesn't hold up the earlier side-by-side steps.
+the final cutover doesn't hold up the earlier side-by-side steps. Only
+R1–R5, R10 and R14 hold the cutover (D5: "cutover held for gates R1-R5, R10
+and R14; the rest can follow"). The other gates, the soak, the review
+findings and the on-device checks are follow-ups: they hold no step and no
+waiting period, and are built after cutover, on 0.5. Bake (castling-switchover-
+decisions, "Fly it"): "as long as all the artifacts survive transfer and the
+hub and bands work correctly we can build the rest of the plane while we're
+flying it".
 
 | Gate | What must be true | Why it matters | Blocks step |
 |---|---|---|---|
@@ -64,8 +71,8 @@ the final cutover doesn't hold up the earlier side-by-side steps.
 | R8 | The phone app runs 0.5 | The phone is the main surface. | 4 |
 | R9 | The desktop app runs 0.5 | Laptops add themselves through it. Passes today. | 3 |
 | R10 | The desktop app updates on 0.5 | Without it, a desktop fix means reinstalling by hand. | 5 |
-| R11 | Soak results written up (`docs/castling-soak.md`) | see "Soak bars" | 1 |
-| R12 | The hardening review's report (`castling/review.md`) | see "Review findings" | 1 |
+| R11 | Soak results written up (`docs/castling-soak.md`) | see "Soak bars" | none (follow-up, D5) |
+| R12 | The hardening review's report (`castling/review.md`) | see "Review findings" | none (follow-up, D5) |
 | R13 | The MCP door speaks OAuth | Done (`rook/core2/hub/doors/mcp_oauth.py`, the 0.4 shim's shape): with `oauth: <public address>` on the `mcp` door, claude.ai's connector uses an agent token as its client secret and that token as its access token. Needs the door reachable over public HTTPS. | 2 (for claude.ai) |
 | R14 | Agents land work on 0.5 without 0.4: a task's sign-off (by its project's trust level), then `github.merge` at the signed-off head | Agents land PRs today through the 0.4 huddle's `huddle.vote` and the chair's pin. That flow ends when the 0.4 hub stops. On 0.5 sign-off replaces merge votes (castling-workbench). | 5 |
 
@@ -97,12 +104,12 @@ cutover. They come from castling/coverage.md and the lanes' notes:
   back to the name `worker` (`rook.core2.enroll.device.default_name`).
 - Guests get no `agent.backend` and no `speech.*` (Bake decides; #280, #287).
 
-### Soak bars (for Bake to set; proposed)
+### Soak bars (follow-up; proposed)
 
 Soak PR #297 is still running its 45-minute pass. It has already found two
 hub problems: sessions piled up, and the journal chain check stalled the
-doors. Both are fixed on that branch. Proposed bars before step 1 puts real
-traffic on a 0.5 hub:
+doors. Both are fixed on that branch. Proposed bars for the write-up. They
+don't hold step 1 or the cutover (D5):
 
 - 24 hours on the sidecar with real use after the scripted soak: no lost or
   duplicated calls, and the journal chains still verify at the end.
@@ -112,22 +119,22 @@ traffic on a 0.5 hub:
 - Door latency at p95 for a read cap on a LAN worker: set from #297's numbers
   once they land.
 
-### Review findings
+### Review findings (follow-up)
 
 Every finding in `castling/review.md` is either merged or accepted in
 writing by Bake. The fix PRs open on 2026-10-31 are #292 (plugin rollback
 re-verifies), #293 (linear glob), #294 (agent-made pages), #295 (secret
 scope), #296 (enrollment is for people), #299 (elevation layers), #300
 (hold release re-checks), #301 (argv/URL injection), #302 (file robustness)
-and #303 (HTTP door bodies and timeouts).
+and #303 (HTTP door bodies and timeouts). They land as they're ready and
+don't hold a step (D5).
 
-### On-device checks (a person ticks these)
+### On-device checks (follow-ups a person ticks; they hold nothing, D5)
 
 - The phone's 0.5 mode on bakephone: sign-in, worker online, a call each to
   battery, sms (refused without a grant), notification, voice.
 - The watch through the phone on 0.5.
 - The desktop app's "Add this computer" on one Linux and one Windows machine.
-- A Windows 0.5 worker that has run for a week.
 
 ## The data move, rehearsed
 
@@ -217,10 +224,11 @@ Merge the open castling PRs once they're green: review fixes, soak (#297),
 speech (#287), phone app (#298), watch, and this one. Then run
 `readiness.py --prs`.
 
-`castling` → `master` (D1). Recommended: fast-forward `master` to `castling`
-at the end of step 2, when the 0.5 hub has run for a week. Push a
-`release/0.4` branch at d15e79bf first, so 0.4 hotfixes and the 0.4 APK and
-bundle builds still have a base. Until the switch, the phone and desktop
+`castling` → `master` (D1: "`castling` becomes `master` at the end of
+switchover step 2"): fast-forward `master` to `castling` once step 2 is
+done, with no waiting period after it. Push a `release/0.4` branch at
+d15e79bf first, so 0.4 hotfixes and the 0.4 APK and bundle builds still have
+a base. Until the switch, the phone and desktop
 apps default to 0.4, so a 0.4 release built from the new master behaves as
 before. Keep the 0.4 code in the tree until step 6. The 0.5 transport still
 imports `rook.worker` (`TODO(castling:transport)`).
@@ -230,7 +238,8 @@ deploying 0.4 from `release/0.4`.
 
 ### Step 1: a production 0.5 hub, side by side
 
-Needs R11, R12, the soak bars and the review fixes.
+Needs the 0.5 hub code on `castling`. The soak, the review fixes and R11/R12
+follow (D5).
 
 - Where (D2). Recommended: bakenetcanada, next to 0.4, as its own system
   user and unit (`rook05-hub`), with data in `/var/lib/rook-castling`. It
@@ -303,7 +312,9 @@ every agent on the machine.
 
 ### Step 4: kaiju, Windows, phones, watch (wave B)
 
-Needs R2, R6, R7, R8, plus the on-device checks.
+Each machine moves when what it runs is there: R2 for events, R6 for
+updates, R7 for kaiju's speech, R8 for the phone. The on-device checks follow
+(D5).
 
 - **kaiju** (pinned on 0.4): run the `speech-engine` voice worker (#287)
   beside the running 0.4 voice service, on its own ports. Switch the
@@ -326,13 +337,19 @@ Needs R2, R6, R7, R8, plus the on-device checks.
 
 ### Step 5: cutover
 
-Needs R1, R3, R4, R5, R10, R14, a week of steps 2–4 under real use, and
-Bake's go (D5).
+Needs R1–R5, R10 and R14, and nothing else (D5: "cutover held for gates
+R1-R5, R10 and R14; the rest can follow"). Accepting D5 was Bake's go. No
+waiting period: on the plan's old week-long waits Bake asked "Why a week?".
+The bar is that every 0.4 artifact is there after the move and the 0.5 hub
+and bands work (item 2).
 
 1. Announce a quiet window. Pause 0.4 jobs and stop agent writes on 0.4.
 2. Take a fresh 0.4 copy, then the one move: `migrate` dry run, then
    `--apply` with the 0.5 hub stopped. Whatever the move leaves rough, an
    agent reshapes on 0.5 (castling-design); the tool gets no more features.
+   Then check that every artifact the dry run counted (knowledge, tasks,
+   secrets, chat and rooms, journal, jobs, trust, accounts, plugin data) is
+   on the 0.5 hub, and that workers, MCP and agents work on it.
 3. Move the chat bots. A Telegram or Discord bot token can only be served by
    one hub at a time (Telegram's getUpdates conflicts, and Discord would
    answer twice). Turn telegram and discord off on 0.4, then on in 0.5. Bake
