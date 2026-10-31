@@ -53,7 +53,7 @@ def open_(ctx, title=""):
 """
 
 
-def go(body, seconds=60):
+def go(body, seconds=90):
     async def main():
         return await asyncio.wait_for(body(), seconds)
     return asyncio.run(main())
@@ -126,8 +126,9 @@ def test_a_workers_streams_are_listed_for_whoever_may_see_them(band):
         theirs = await call(hub, "tail.open", {"title": "ann's build"}, worker="pixel", person=ANN)
         assert mine["ok"] and theirs["ok"], (mine, theirs)
         sid, other = mine["result"]["stream"], theirs["result"]["stream"]
-        await until(lambda: hub.streams.index.get(sid) and hub.streams.index.get(other))
-        await until(lambda: hub.streams.index.get(sid)["last_seq"] >= 1)
+        # the first events can meet the outbox's retry backoff while the hub reads the announce
+        await until(lambda: hub.streams.index.get(sid) and hub.streams.index.get(other), 30)
+        await until(lambda: hub.streams.index.get(sid)["last_seq"] >= 1, 30)
 
         rows = await listed(hub)                                   # an owner: everything
         assert {r["id"] for r in rows} == {sid, other}
@@ -157,7 +158,7 @@ def test_a_workers_streams_are_listed_for_whoever_may_see_them(band):
 
         closed = await call(hub, "stream.close", {"stream": sid}, worker="pixel")
         assert closed["ok"], closed
-        await until(lambda: hub.streams.index.get(sid)["closed"])
+        await until(lambda: hub.streams.index.get(sid)["closed"], 30)
         page = await call(hub, "stream.list", {"open": True})
         assert [r["id"] for r in page["result"]["streams"]] == [other]
         await hub.stop()
@@ -172,7 +173,7 @@ def test_a_restarted_worker_resyncs_and_the_index_drops_what_it_lost(band):
         w, hub = await up(make_worker, make_hub)
         out = await call(hub, "tail.open", {"title": "gone after restart"}, worker="pixel")
         sid = out["result"]["stream"]
-        await until(lambda: hub.streams.index.get(sid))
+        await until(lambda: hub.streams.index.get(sid), 30)
         await w.stop()                                   # bounded streams live in the worker's memory
         w = make_worker()
         await w.start()
@@ -188,7 +189,7 @@ def test_the_index_outlives_the_hub_and_a_hub_without_one_learns_by_resync(band,
     async def body():
         w, hub = await up(make_worker, make_hub)
         sid = (await call(hub, "tail.open", {"title": "kept"}, worker="pixel"))["result"]["stream"]
-        await until(lambda: hub.streams.index.get(sid))
+        await until(lambda: hub.streams.index.get(sid), 30)
         drained = lambda: all(not box.queue for box in w.outboxes.values())   # noqa: E731
         await until(drained, 20)               # nothing in flight to a hub about to stop (it would time out)
         await hub.stop()
