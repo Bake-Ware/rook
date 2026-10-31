@@ -21,8 +21,9 @@ per person, with them.
    how the person likes it done (`doc`), the expert roles to draw on
    (`roles`: personas; make new ones with `agents.create` when no existing
    persona fits), the skills (`skills`: knowledge pages of kind skill; write
-   them with `knowledge.create`), the sign-off norm (`signoff`: none,
-   experts, or the person too) and a suggested trust level.
+   them with `knowledge.create`), the sign-off norm (`signoff`: none or
+   experts) and a suggested trust level (a sacred project makes the person
+   a reviewer).
 4. Tag the project with it. Projects tagged with the concept draw on that
    pool from now on.
 
@@ -35,5 +36,5 @@ per person, with them.
 - Reuse what exists: check `concept.list` and the agents on the band before
   making new ones.
 
-**Ask the person when** how they like to work is unclear, or a sign-off
-norm would make them a reviewer.
+**Ask the person when** how they like to work is unclear, or the work
+looks like it needs a sacred trust level.
