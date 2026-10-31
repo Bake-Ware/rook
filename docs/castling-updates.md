@@ -14,21 +14,23 @@ Code: `rook/core2/release.py` (the format), `rook/core2/worker/boot.py`
 ## The flow
 
 1. Upgrade the hub (its deploy). The hub now runs the code to release.
-2. `update.prepare` (owners): the hub signs a release of the code it runs
-   (or of a checkout on the hub machine, `source`). Without `version` the
-   release is called `<pyproject version>+<digest of the code>`, so the
-   same code is the same release and preparing it again is a no-op.
-3. `update.rollout {version}` (owners): returns at once. Canaries first
-   (`canary`, default the first worker in line), one at a time, then the rest
-   `batch` at a time (default 2). The first worker that fails stops it.
-4. For each worker the hub offers the release over Drop and submits a
-   **change record** (`change.submit`, as for plugin pushes) **as the person
-   who started the rollout**: its one script is `worker.update {bundle}`, its
-   way back `worker.rollback` (so `change.revert` undoes a kept update), and
-   dispatch and the journal see every step. A change that waits for a card
-   (a risky change) stops the rollout; once it is answered the worker updates,
-   and the next rollout skips it. Without the change plugin in the hub's
-   library a rollout is refused, like a push.
+2. `update.rollout` (owners): the hub signs a release of the code it runs
+   (or of a checkout on the hub machine, `source`), called
+   `<pyproject version>+<digest of the code>` unless `version` names it, so
+   the same code is the same release. `update.rollout {version}` alone rolls
+   out a release the hub already holds: that is how the band goes back. It
+   returns once the rollout has started. Canaries first (`canary`, default
+   the first worker in line), one at a time, then the rest `batch` at a time
+   (default 2). The first worker that fails stops it.
+3. For each worker the hub offers the release over Drop and calls
+   `worker.update {bundle}` **as the person who started the rollout**, through
+   dispatch and the journal like any call. A held call (a sacred machine)
+   stops the rollout; once it is answered the worker updates, and the next
+   rollout skips it.
+4. When the rollout ends, and the change plugin is installed, the hub writes
+   one change record for it (`category: update`, its outcome, the workers it
+   touched; `update.status` names it). Core never needs that plugin: without
+   it the history and the journal are the trail.
 5. The worker pulls it, checks it (below), installs requirements it lacks,
    runs the new core's smoke check in a child process, and restarts into it
    on **trial**.
@@ -42,8 +44,7 @@ Code: `rook/core2/release.py` (the format), `rook/core2/worker/boot.py`
 
 ```sh
 H="Authorization: Bearer $TOKEN"
-curl -s -H "$H" -d '{"worker":"rook","cap":"update.prepare","args":{},"why":"Release the hub code to the workers."}' localhost:8740/call
-curl -s -H "$H" -d '{"worker":"rook","cap":"update.rollout","args":{"version":"0.5.0+3f0a9c1d2e3f","canary":["cachyrig"]},"why":"Roll out the new core."}' localhost:8740/call
+curl -s -H "$H" -d '{"worker":"rook","cap":"update.rollout","args":{"canary":["cachyrig"]},"why":"Roll out the new core."}' localhost:8740/call
 curl -s -H "$H" -d '{"worker":"rook","cap":"update.status","why":"Follow the rollout."}' localhost:8740/call
 ```
 
@@ -109,16 +110,17 @@ At start a release whose signing hub no longer approves code on the machine
 (re-enrolled elsewhere, the band removed) is refused and the worker restarts
 on its installed core.
 
-`worker.rollback` swaps `current` and `previous` (the installed core when
-nothing else is kept) and restarts. Only the current, previous and trial
+`worker.update {version}` goes back by hand: it makes a core the worker
+keeps (`previous`, or `installed` for the installed package) current, the
+one it replaces becomes `previous`, and restarts. Only the current, previous and trial
 releases are kept on a worker; the hub keeps its three newest releases.
 
 ## Safety
 
-- `worker.update` and `worker.rollback` are `admin`, `scope: self`,
-  `persists`: the worker's ceiling and elevation apply as for any admin cap.
-  `update.prepare` and `update.rollout` are owners only.
-- Both refuse while terminals or streams are open on the worker (they would
+- `worker.update` is `admin`, `scope: self`, `persists`: the worker's
+  ceiling and elevation apply as for any admin cap. `update.rollout` is
+  owners only.
+- It refuses while terminals or streams are open on the worker (they would
   end) with a `busy:` error; the rollout marks that worker failed. Close them
   and roll out again.
 - A worker that can't re-exec itself (the phone app's) refuses: its core
@@ -158,6 +160,6 @@ fails since GitHub's macOS 14 brownout (the image retires on 2026-11-02).
 
 `tests/test_core2_updates.py` (format, boot selection, updater, hub rollout,
 the desktop feed) and `tests/e2e/test_updates_e2e.py`: a real hub and worker,
-a release of this checkout rolled out and confirmed, `worker.rollback` by
-hand, and two broken releases (one crashes at start under a supervisor, one
+a release of this checkout rolled out and confirmed, `worker.update
+{version: installed}` by hand, and two broken releases (one crashes at start under a supervisor, one
 never confirms) that the worker rolls back by itself.

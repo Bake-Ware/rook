@@ -1,120 +1,83 @@
-# Change records (castling-changes; spec 10.3). A lasting change gets a record:
-# what, why, what could break, the plan, and the caps that do it, test it and
-# undo it. Writing one is the preparation ritual; the records are the audit
-# trail later agents read. How much the record must say follows the project's
-# trust level (project.trust): sacred and normal want the full record, ship-it
-# a one-line note. A change with no project is normal.
+# Change records (castling-changes; castling-caps C2): records, not a runner.
 #
-# standard changes (routine, reversible) the hub runs, tests and rolls back by
-# itself. risky ones (permanent, or anything in a sacred project) get one
-# card: the hub holds change.apply, a hard stop only an owner answers, and
-# approving it runs the change. Every step is a cap call through dispatch as
-# the change's author, so their rights, gates and the journal apply.
+# A lasting change gets a record: what changes, why, what could break, how it
+# was tested, how to undo it, and the steps someone else could follow.
+# Writing one is the preparation ritual; the records are the audit trail
+# later agents read to learn why things are the way they are. Gating is the
+# least of it: the change then goes ahead as ordinary calls, and the hub's
+# one hold path (sacred machines, hard stops, the security gate) applies to
+# those calls as to any other.
 #
-# Plugin pushes (POST /plugins/push) are change records too: the install is
-# the one script, core.plugin.rollback the way back.
+# How much a record must say follows the project's trust level
+# (project.trust): sacred and normal want the full record, ship-it a
+# one-line note. No project, or no workbench: normal.
+#
+# Applying, testing and rolling back are not this plugin's job: when they are
+# automated they are a job (the jobs plugin) the record links with `job` and
+# `rollback_job`; running the rollback is job.run on that job.
+#
+# Core writes a record here for plugin pushes and core rollouts when this
+# plugin is installed; core never needs it.
 #
 # Code: scripts/changes.py.
 manifest: 1
 plugin: change
-version: 0.5.0
+version: 0.6.0
 title: Change records
-doc: "Lasting changes get a record (what, why, risk, plan, scripts, tests, rollback); the hub runs standard ones and rolls them back when a test fails, risky ones wait for one card."
+doc: "Lasting changes get a record (what, why, risk, testing, rollback, steps), as full as the project's trust level asks; searchable, linked to project, task, workers and caps."
 package: core
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-# Steps run as their author: dispatch bounds them by the author's rights, not
-# by this list.
-uses: ["*"]
-
-settings:
-  rejoin: { type: duration, default: 5m, doc: "How long a step waits for its worker to be on the band (a deploy may restart it)." }
+uses: ["project.get", "project.list", "project.trust.list"]
 
 records:
   change:
     fields:
       what: { type: str, required: true, doc: "What changes, in a line." }
       why: { type: str, required: true }
-      kind: { type: str, enum: [standard, risky], default: standard }
-      category: { type: str, doc: "deploy, config, database, plugin, ... (free text, for finding similar changes)." }
+      risk: { type: str, doc: What could break. }
+      testing: { type: markdown, doc: "How it was (or will be) tested." }
+      rollback: { type: markdown, doc: "How to undo it, or why it can't be undone." }
+      steps: { type: markdown, doc: "The steps, so someone else could follow them." }
+      category: { type: str, doc: "deploy, config, database, plugin, update, ... (free text, for finding similar changes)." }
       project: { type: str, doc: The project's id or slug; its trust level sets the ceremony. }
       task: { type: str, doc: The task this change is for. }
       level: { type: str, enum: [sacred, normal, ship-it], doc: "The ceremony it got (from the project; normal without one)." }
-      risk: { type: str, doc: What could break. }
-      plan: { type: markdown, doc: "The steps in words, so someone else could follow them." }
-      machines: { type: list, items: { type: str }, doc: The workers its steps run on. }
-      caps: { type: list, items: { type: str }, doc: The caps its steps call. }
-      checks: { type: list, items: { type: map }, doc: "Run first; a failure changes nothing: [{worker, cap, args, expect?}]." }
-      scripts: { type: list, items: { type: map }, doc: "The change: [{worker, cap, args, atomic?}]." }
-      tests: { type: list, items: { type: map }, doc: "After the scripts; a failure rolls back: [{worker, cap, args, expect?}]." }
-      rollback: { type: map, doc: "{worker, cap, args}: the way back." }
-      state:
-        type: str
-        enum: [noted, asked, running, kept, rolled_back, failed, refused, declined, reverted]
-        required: true
-        doc: "noted: a record only. asked: waits for the card. kept: tests passed. rolled_back: a step failed and the rollback ran. failed: it broke and the way back did not work (or there was none). refused: nothing changed (a check failed). declined: the person said no."
-      hold: { type: str, doc: The hold waiting for the person (risky changes). }
-      by: { type: str, doc: Who decided or reverted it. }
-      outcome: { type: str, doc: One line on how it ended. }
-      log: { type: list, items: { type: map }, doc: "[{phase, step, worker, cap, ok, result | error, at}]." }
-      ended: { type: float }
-    index: [state, project, hold, task]
-    search: [what, why, risk, plan, category, outcome]
-    # No history: only this plugin writes a change, and its log says what happened when.
-    caps: [list, get, search]
+      workers: { type: list, items: { type: str }, doc: The workers it touches. }
+      caps: { type: list, items: { type: str }, doc: The caps it calls. }
+      job: { type: str, doc: "The job that applies and tests it, when that is automated." }
+      rollback_job: { type: str, doc: "The job that undoes it (job.run it to roll back)." }
+      outcome: { type: str, doc: "How it went, written afterwards (change.update)." }
+    index: [project, task, category]
+    search: [what, why, risk, testing, rollback, steps, category, outcome]
+    history: true
+    caps: [list, get, search, update, history]
 
 caps:
-  submit:
+  create:
     doc: >-
-      Record a lasting change and run it. what, why (and, unless the project is ship-it, risk and
-      plan). With scripts: tests and a rollback too (a risky change may have no way back). kind
-      standard: checks, scripts, tests run now as you; a failed test rolls back. kind risky, or a
-      sacred project: one card to an owner first. No scripts: a record of a change made by hand.
-      wait: answer when it ends (not for risky ones).
+      Record a lasting change before you make it. what and why always; unless the project is
+      ship-it, also risk, testing, rollback and steps (a sentence each, at least). The record
+      gates nothing: make the change with ordinary calls, then change.update its outcome.
     risk: write
-    scope: multi-machine
-    effects: [persists]
-    timeout: 30m
-    run: scripts/changes.py:submit
+    scope: multi-user
+    run: scripts/changes.py:create
     args:
       what: { type: str, required: true }
       why: { type: str, required: true }
-      kind: { type: str, enum: [standard, risky], default: standard, doc: "standard: routine and reversible. risky: permanent, or could hurt." }
-      category: { type: str }
-      project: { type: str }
-      task: { type: str }
       risk: { type: str, doc: What could break. }
-      plan: { type: markdown }
-      checks: { type: list, items: { type: map }, doc: "[{worker, cap, args?, expect?}]: e.g. the backup exists." }
-      scripts: { type: list, items: { type: map }, doc: "[{worker, cap, args?, atomic?}]. atomic: a failure of this step changes nothing (it undoes itself, like core.plugin.install)." }
-      tests: { type: list, items: { type: map }, doc: "[{worker, cap, args?, expect?}]. A step fails when the call fails or its result says ok: false; expect is text the result must contain." }
-      rollback: { type: map, doc: "{worker, cap, args?}" }
-      wait: { type: bool, default: false }
+      testing: { type: markdown, doc: How it is tested. }
+      rollback: { type: markdown, doc: "How to undo it, or why it can't be." }
+      steps: { type: markdown, doc: The steps someone else could follow. }
+      category: { type: str }
+      project: { type: str, doc: "Project id or slug (its trust level sets what the record needs)." }
+      task: { type: str }
+      workers: { type: list, items: { type: str } }
+      caps: { type: list, items: { type: str } }
+      job: { type: str }
+      rollback_job: { type: str }
+      outcome: { type: str, doc: "For a change already made (written up afterwards)." }
     result: { type: map }
-  apply:
-    doc: "Run a risky change that waits for the card. Only the change plugin calls it; the hub holds it for an owner (a hard stop)."
-    risk: admin
-    scope: multi-machine
-    effects: [destructive]
-    run: scripts/changes.py:apply
-    args:
-      id: { type: str, required: true }
-    result: { type: map }
-  revert:
-    doc: Undo a kept change with its rollback, as you. Its author or an owner.
-    risk: write
-    scope: multi-machine
-    effects: [persists]
-    timeout: 30m
-    run: scripts/changes.py:revert
-    args:
-      id: { type: str, required: true }
-    result: { type: map }
-
-hooks:
-  start: scripts/changes.py:start
-  stop: scripts/changes.py:stop
-  on: [ { event: hold.decided, run: scripts/changes.py:on_hold } ]
 
 docs: { manual: docs/manual.md }

@@ -274,12 +274,17 @@ def test_abandon_and_rollback(tmp_path):
     s = trial2.state()
     assert s["current"] == "0.5.1" and s["trial"] is None and s["failed"]["version"] == "0.5.2"
     assert boot.choose(tmp_path / "core") == "0.5.1"
-    # by hand: back to the installed core, and forward again
-    assert updater(tmp_path, running="0.5.1").rollback() == {"version": None, "from": "0.5.1", "restarting": True}
+    # by hand (worker.update {version}): back to the installed core, and forward again
+    assert updater(tmp_path, running="0.5.1").switch("installed") == \
+        {"version": None, "from": "0.5.1", "restarting": True}
     assert boot.choose(tmp_path / "core") is None
-    assert updater(tmp_path).rollback()["version"] == "0.5.1"
-    with pytest.raises(UpdateError, match="no other core"):
-        updater(tmp_path / "empty").rollback()
+    with pytest.raises(UpdateError, match="already on installed"):
+        updater(tmp_path).switch("installed")
+    with pytest.raises(UpdateError, match=r"0.5.2 isn't kept here \(kept: 0.5.1, installed\)"):
+        updater(tmp_path).switch("0.5.2")
+    assert updater(tmp_path).switch("0.5.1")["version"] == "0.5.1"
+    with pytest.raises(UpdateError, match="isn't kept"):
+        updater(tmp_path / "empty").switch("0.5.1")
 
 
 def test_refuse_running_falls_back_to_the_installed_core(tmp_path):
@@ -325,7 +330,7 @@ class FakeHub:
     def __init__(self, data: Path, workers: dict):
         self.data, self.op, self.hub_id, self.node = data, OP, HUB, "hubnode"
         self.plugins = SimpleNamespace(plugins={"change": object()})
-        self.changes: list = []
+        self.changes: list = []          # change records the rollouts left (Hub.note_change)
         self.known = {n: SimpleNamespace(id=n, name=n, version="0.5.0", online=True, band="b") for n in workers}
         self.dispatcher = SimpleNamespace(workers={n: SimpleNamespace(caps={"worker.update": {}} if up else {})
                                                    for n, up in workers.items()})
@@ -334,21 +339,17 @@ class FakeHub:
         self.calls: list = []
         self.cores = {n: {"running": None, "trial": None, "failed": None} for n in workers}
 
+    async def note_change(self, who, record):
+        if "change" not in self.plugins.plugins:
+            return None
+        self.changes.append((who.person, record))
+        return f"c{len(self.changes)}"
+
     async def call_as(self, who, cap, args, target=None, **kw):
-        if cap == "change.submit":
-            # the change plugin runs the one script as the same person
-            assert target == "hubnode" and args["rollback"]["cap"] == "worker.rollback"
-            self.changes.append(args)
-            step = args["scripts"][0]
-            if self.fail.get(step["worker"]) == "ask":
-                return {"ok": True, "result": {"id": "c-asked", "state": "asked", "log": []}}
-            got = await self.call_as(who, step["cap"], step["args"], target=step["worker"])
-            entry = {"phase": "script", "ok": got["ok"], **({"result": got["result"]} if got["ok"]
-                                                            else {"error": got["error"]})}
-            return {"ok": True, "result": {"id": f"c{len(self.changes)}", "log": [entry],
-                                           "state": "kept" if got["ok"] else "refused"}}
         self.calls.append((cap, target, who.person))
         if cap == "worker.update":
+            if self.fail.get(target) == "held":
+                return {"ok": False, "held": True, "hold": "h_1", "error": "held: sacred machine (hold h_1)"}
             if self.fail.get(target) == "refuse":
                 return {"ok": False, "error": "update refused: smoke check failed"}
             self._version = args
@@ -376,18 +377,16 @@ def make(tmp_path, monkeypatch, workers):
     return hub, updates.Updates(hub)
 
 
-def test_prepare_signs_a_release_once_and_only_for_owners(tmp_path, monkeypatch):
+def test_a_release_is_signed_once(tmp_path, monkeypatch):
     hub, up = make(tmp_path, monkeypatch, {})
     src = source(tmp_path)
 
     async def go():
-        with pytest.raises(KitError, match="only an owner"):
-            await up.prepare(ctx(owner=False), source=str(src))
-        a = await up.prepare(ctx(), version="0.5.1", source=str(src))
-        b = await up.prepare(ctx(), version="0.5.1", source=str(src))
+        a = await up._prepare(ctx(), version="0.5.1", source=str(src))
+        b = await up._prepare(ctx(), version="0.5.1", source=str(src))
         (src / "rook" / "core2" / "thing.py").write_text("X = 2\n")
         with pytest.raises(KitError, match="other code"):
-            await up.prepare(ctx(), version="0.5.1", source=str(src))
+            await up._prepare(ctx(), version="0.5.1", source=str(src))
         return a, b
     a, b = asyncio.run(go())
     assert a["new"] and not b["new"] and a["sha256"] == b["sha256"] and a["files"] == 2
@@ -401,18 +400,20 @@ def test_rollout_goes_canary_first_then_batches_and_skips_what_it_cannot_update(
     hub._target = "0.5.1"
 
     async def go():
-        await up.prepare(ctx(), version="0.5.1", source=str(source(tmp_path)))
-        started = await up.rollout(ctx(), "0.5.1", canary=["c"])
+        started = await up.rollout(ctx(), "0.5.1", source=str(source(tmp_path)), canary=["c"])
         await finish(up)
         return started, await up.status(ctx()), await up.history(ctx())
     started, status, history = asyncio.run(go())
-    assert started["canary"] == ["c"] and started["rest"] == ["a", "b"]
+    assert started["canary"] == ["c"] and started["rest"] == ["a", "b"] and started["signed"]
     assert set(started["skipped"]) == {"d", "phone"}
     assert [t for cap, t, _ in hub.calls if cap == "worker.update"][0] == "c"
     assert all(p == "bake" for _, _, p in hub.calls)                     # as the person who started it
-    assert [c["scripts"][0]["worker"] for c in hub.changes] == ["c", "a", "b"]   # one change record each
-    assert {w["name"]: w.get("change") for w in status["rollout"]["workers"] if w["state"] == "updated"} == \
-        {"c": "c1", "a": "c2", "b": "c3"}
+    assert [(cap, t) for cap, t, _ in hub.calls if cap == "worker.update"][1:] == \
+        [("worker.update", "a"), ("worker.update", "b")]
+    # one change record for the whole rollout, as the person, written when it ended
+    [(by, rec)] = hub.changes
+    assert by == "bake" and rec["category"] == "update" and rec["workers"] == ["c", "a", "b"]
+    assert rec["outcome"] == "done: updated c, a, b" and status["rollout"]["change"] == "c1"
     assert status["rollout"]["status"] == "done"
     assert {w["name"]: w["state"] for w in status["rollout"]["workers"]} == \
         {"c": "updated", "a": "updated", "b": "updated", "d": "skipped", "phone": "skipped"}
@@ -426,8 +427,7 @@ def test_a_failing_canary_stops_the_rollout(tmp_path, monkeypatch):
     hub.fail["a"] = "rollback"
 
     async def go():
-        await up.prepare(ctx(), version="0.5.1", source=str(source(tmp_path)))
-        await up.rollout(ctx(), "0.5.1")
+        await up.rollout(ctx(), "0.5.1", source=str(source(tmp_path)))
         await finish(up)
         return await up.status(ctx())
     st = asyncio.run(go())["rollout"]
@@ -436,6 +436,7 @@ def test_a_failing_canary_stops_the_rollout(tmp_path, monkeypatch):
     assert states["a"] == ("failed", "rolled back on the worker: did not come up")
     assert states["b"][0] == states["c"][0] == "not started"
     assert [t for cap, t, _ in hub.calls if cap == "worker.update"] == ["a"]
+    assert hub.changes[0][1]["outcome"] == "failed: updated none; a failed: rolled back on the worker: did not come up"
 
 
 def test_a_refused_update_and_a_worker_that_never_comes_back_fail(tmp_path, monkeypatch):
@@ -444,8 +445,7 @@ def test_a_refused_update_and_a_worker_that_never_comes_back_fail(tmp_path, monk
     hub.fail["a"] = "refuse"
 
     async def go():
-        await up.prepare(ctx(), version="0.5.1", source=str(source(tmp_path)))
-        await up.rollout(ctx(), "0.5.1", workers=["a"])
+        await up.rollout(ctx(), "0.5.1", source=str(source(tmp_path)), workers=["a"])
         await finish(up)
         first = (await up.status(ctx()))["rollout"]
         hub.fail.clear()
@@ -464,33 +464,44 @@ def test_rollout_refusals(tmp_path, monkeypatch):
     async def go():
         with pytest.raises(KitError, match="no release"):
             await up.rollout(ctx(), "9.9.9")
-        await up.prepare(ctx(), version="0.5.1", source=str(source(tmp_path)))
+        src = str(source(tmp_path))
         with pytest.raises(KitError, match="only an owner"):
-            await up.rollout(ctx(owner=False), "0.5.1")
+            await up.rollout(ctx(owner=False), "0.5.1", source=src)
+        await up._prepare(ctx(), version="0.5.1", source=src)
         with pytest.raises(KitError, match="unknown worker"):
             await up.rollout(ctx(), "0.5.1", canary=["nope"])
         hub.known["a"].version = "0.5.1"
         with pytest.raises(KitError, match="already on 0.5.1"):
             await up.rollout(ctx(), "0.5.1")
-        hub.plugins.plugins.clear()
-        with pytest.raises(KitError, match="change records"):
-            await up.rollout(ctx(), "0.5.1")
     asyncio.run(go())
 
 
-def test_a_change_waiting_for_a_card_stops_the_rollout(tmp_path, monkeypatch):
-    hub, up = make(tmp_path, monkeypatch, {"a": True, "b": True})
+def test_a_rollout_needs_no_change_plugin(tmp_path, monkeypatch):
+    hub, up = make(tmp_path, monkeypatch, {"a": True})
     hub._target = "0.5.1"
-    hub.fail["a"] = "ask"
+    hub.plugins.plugins.clear()
 
     async def go():
-        await up.prepare(ctx(), version="0.5.1", source=str(source(tmp_path)))
-        await up.rollout(ctx(), "0.5.1")
+        await up.rollout(ctx(), "0.5.1", source=str(source(tmp_path)))
         await finish(up)
         return (await up.status(ctx()))["rollout"]
     ro = asyncio.run(go())
-    assert ro["status"] == "failed" and "c-asked waits for a person" in ro["workers"][0]["reason"]
-    assert not [c for c in hub.calls if c[0] == "worker.update"]
+    assert ro["status"] == "done" and ro["change"] is None and not hub.changes
+    assert [t for cap, t, _ in hub.calls if cap == "worker.update"] == ["a"]
+
+
+def test_a_held_update_stops_the_rollout(tmp_path, monkeypatch):
+    hub, up = make(tmp_path, monkeypatch, {"a": True, "b": True})
+    hub._target = "0.5.1"
+    hub.fail["a"] = "held"
+
+    async def go():
+        await up.rollout(ctx(), "0.5.1", source=str(source(tmp_path)))
+        await finish(up)
+        return (await up.status(ctx()))["rollout"]
+    ro = asyncio.run(go())
+    assert ro["status"] == "failed" and "waits for a person (hold h_1)" in ro["workers"][0]["reason"]
+    assert ro["workers"][1]["state"] == "not started"
 
 
 def test_a_rollout_cut_short_by_a_hub_restart_is_recorded(tmp_path, monkeypatch):
@@ -509,7 +520,7 @@ def test_old_releases_are_pruned(tmp_path, monkeypatch):
     async def go():
         for i in range(updates.KEEP + 2):
             (src / "rook" / "core2" / "thing.py").write_text(f"X = {i}\n")
-            await up.prepare(ctx(), version=f"0.5.{i}", source=str(src))
+            await up._prepare(ctx(), version=f"0.5.{i}", source=str(src))
             await asyncio.sleep(0.01)
     asyncio.run(go())
     assert sorted(p.name for p in (tmp_path / "hub" / "releases").glob("*.tar.gz")) == \

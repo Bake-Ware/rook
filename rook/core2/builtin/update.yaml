@@ -4,7 +4,7 @@ manifest: 1
 plugin: update
 version: 0.5.0
 title: Updates
-doc: Signed core releases and staged rollouts to the band's workers.
+doc: Signed core releases rolled out to the band's workers.
 package: core
 builtin: true
 runs_on: hub
@@ -12,32 +12,22 @@ license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 
 caps:
-  prepare:
+  rollout:
     doc: >-
-      Make a signed core release of the code this hub runs (or of a checkout on the hub
-      machine): the rook package, its requirements, signed with the hub's key. The same code
-      again is the same release. Owners.
+      Update the band's workers to a signed core release: the canaries one by one, then the
+      rest a batch at a time. Each worker restarts on the new core and must come back confirmed
+      within the gate, or it rolls itself back and the rollout stops. No version: the hub signs
+      the code it runs now (the same code is the same release). version alone: a release the
+      hub holds (update.status), which is how the band goes back. source: sign that checkout
+      first. Returns once it has started; update.status follows it. Owners.
     on: hub
     risk: admin
     scope: multi-machine
     effects: [persists]
     timeout: 5m
     args:
-      version: { type: str, doc: "Semver, like 0.5.1; blank: the package's version plus the code's digest." }
-      source: { type: str, doc: "A folder on the hub machine that holds rook/ (a checkout); blank: the hub's own code." }
-    result: { type: map }
-  rollout:
-    doc: >-
-      Update the band's workers to a prepared release: the canaries one by one, then the rest a
-      batch at a time. Each worker restarts on the new core and must come back confirmed within
-      the gate, or it rolls itself back and the rollout stops. Returns at once; update.status
-      follows it. Owners.
-    on: hub
-    risk: admin
-    scope: multi-machine
-    effects: [persists]
-    args:
-      version: { type: str, required: true }
+      version: { type: str, doc: "A held release, or (with source) the name to sign it as; blank: the package's version plus the code's digest." }
+      source: { type: str, doc: "A folder on the hub machine that holds rook/ (a checkout) to sign; blank: the hub's own code." }
       canary: { type: list, items: { type: str }, doc: "Worker names that go first; blank: the first in line." }
       workers: { type: list, items: { type: str }, doc: "Only these workers; blank: every one that can take it." }
       batch: { type: int, default: 2, min: 1, max: 50, doc: Workers updated at once after the canaries. }

@@ -311,7 +311,7 @@ Everything else in "Today's plugins -> 0.5" without a 0.5 plugin, and where it w
 | worker: admin; hub: node, marketplace (-> plugin) | core hub administration (one plugin namespace for hub and workers: list, enable, disable, reload, marketplace); today's path is the hub's `POST /plugins/push` + `core.plugin.install/rollback`. Core, not a port. |
 | hub: info, settings, approvals, show (-> hub, setting, approval, page) | the dashboard's hub builtins (#279): hub.status, setting.list/set (settings.describe/get fold into list; reset is set to the default; history is the journal), approval.list/decide. show.present needs a device "show this page" contract that nothing provides yet. |
 | hub: trust, policy, access (-> trust, user) | core config: people, presets and grants are the hub config's `users` (spec 8.5); trust.check ("will this run, hold or be refused, and why") would be a dry run of dispatch, core work. Not a plugin port. |
-| hub: changes (-> change) | change records (castling-changes): rook/plugins/changes, a records hub plugin; plugin pushes go through it. |
+| hub: changes (-> change) | change records (castling-changes, castling-caps C2): rook/plugins/changes, records only; plugin pushes and rollouts leave one when it is installed. |
 | hub: updates (-> update) | waits for a 0.5 release format, like worker.update (N27). |
 | hub: attention (-> attention) | the house agent's curated list (castling-attention): an agents/jobs record fed by phone events once they reach the hub (N21). Not ported. |
 | hub: huddle (-> huddle.start) | `huddle` plugin: a thread with roles on a durable stream (start/post/read/close). The 0.4 table, pins and votes are dropped: work lands by task sign-off + `github.merge` (castling-workbench; R14). |
@@ -329,9 +329,9 @@ Everything else in "Today's plugins -> 0.5" without a 0.5 plugin, and where it w
   instance values still don't travel with a call (N3). `appliance.test` is the only way to try a
   device recipe; shipping one is a plugin push (`POST /plugins/push`, no cap yet).
 - **N27. No 0.5 release format.** Closed in wave 7: a `rook-release` signed tarball of the `rook`
-  package, `worker.update`/`worker.rollback` (trial boot, smoke check, automatic rollback) and the
-  hub's `update.prepare/rollout/status/history` (docs/castling-updates.md). `apply_hub` stays the
-  hub's deploy.
+  package, `worker.update` (trial boot, smoke check, automatic rollback; `{version}` goes back by
+  hand) and the hub's `update.rollout/status/history` (docs/castling-updates.md). `apply_hub` stays
+  the hub's deploy.
 - **N28. Streams have no hub index.** A worker's streams are read through its `stream.*` caps
   (the MCP door already calls them); the castling-streams relay (one index, durable sessions,
   fan-out) is what history importers, the session shim and attention need. Owners can't read

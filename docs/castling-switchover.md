@@ -291,7 +291,7 @@ The sacred list is empty on 0.4. If D3 makes any machine sacred on 0.5, add
 it to `sacred:` before that machine enrolls.
 
 Wave B (everything after this) needed R6, now on `castling`: a core fix is
-`update.prepare` then `update.rollout` (canaries first), and each worker
+`update.rollout` (canaries first), and each worker
 rolls itself back if the new core doesn't come up (docs/castling-updates.md).
 Workers need a service manager that restarts them (the sidecar's unit does).
 Plugin fixes are pushed as before.

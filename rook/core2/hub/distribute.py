@@ -23,10 +23,10 @@ nothing. A plugin whose caps and hooks all run on the hub has no worker
 part. Content sections (personas, skills, docs, ...) are seeded into hub
 stores from the hub's own copy (:attr:`Plan.content`).
 
-Pushes go through a change record (castling-changes): the hub's
-``POST /plugins/push`` submits one to the change plugin
-(rook/plugins/changes), whose script is ``core.plugin.install``. Code that
-calls :func:`install` directly passes ``change_record``: it gets the
+The hub's ``POST /plugins/push`` sends the bundle with
+``core.plugin.install`` and, when the change plugin is installed, leaves a
+change record (castling-changes); core never needs that plugin. Code that
+calls :func:`install` directly may pass ``change_record``: it gets the
 :class:`Plan` before anything is pushed and refuses the install by raising.
 """
 

@@ -7,7 +7,7 @@ its home hub, or drop it and go back to the core it replaced.
     report = await up.receive(tarball)   # verified, unpacked, smoke-checked: restart next
     up.confirm()                         # the trial process served its home hub
     up.abandon("no call served")         # the trial didn't make it: restart next
-    up.rollback()                        # back to the kept previous core: restart next
+    up.switch("0.5.1")                   # back to a kept core ("installed": the package): restart next
 
 Releases live in ``<data>/core/<version>/`` beside :mod:`.boot`'s
 ``state.json``; only ``current``, ``previous`` and the trial are kept.
@@ -32,6 +32,7 @@ from rook.core2.worker.install import pip_install
 
 log = logging.getLogger("rook.worker.update")
 
+INSTALLED = "installed"      # worker.update {version}: the installed package, not a release
 SMOKE_TIMEOUT = 120.0        # seconds for the new core to import and check itself
 TRIAL_SECS = 120.0           # a trial start has this long to serve a call from its home hub
 
@@ -217,20 +218,28 @@ class Updater:
         self._save(state)
         log.error("core update rolled back", extra={"fields": {"version": trial.get("version"), "reason": reason}})
 
-    def rollback(self) -> dict:
-        """Swap current and previous (None is the installed core). The caller restarts."""
+    def switch(self, version: str) -> dict:
+        """Make a core this worker keeps current (``installed``: the
+        installed package); the one it replaces becomes previous. The caller
+        restarts."""
         state = self.state()
         if state["trial"]:
             raise UpdateError("an update is waiting for its restart; restart or let it finish first")
-        cur, prev = state["current"], state["previous"]
-        if cur is None and prev is None:
-            raise UpdateError("no other core is kept to go back to")
-        if prev is not None and boot.intact(self.root / prev) is not None:
-            raise UpdateError(f"the kept core {prev} can't run: {boot.intact(self.root / prev)}")
-        state["current"], state["previous"] = prev, cur
+        to = None if version == INSTALLED else version
+        cur = state["current"]
+        if to == cur:
+            raise UpdateError(f"already on {version}")
+        if to is not None:
+            if to != state["previous"]:
+                kept = [v for v in (cur, state["previous"]) if v] + [INSTALLED]
+                raise UpdateError(f"{version} isn't kept here (kept: {', '.join(kept)}); update.rollout sends it")
+            bad = boot.intact(self.root / to)
+            if bad is not None:
+                raise UpdateError(f"the kept core {to} can't run: {bad}")
+        state["current"], state["previous"] = to, cur
         self._save(state)
-        log.warning("core rolled back", extra={"fields": {"to": prev or "base", "from": cur or "base"}})
-        return {"version": prev, "from": cur, "restarting": True}
+        log.warning("core switched", extra={"fields": {"to": to or "base", "from": cur or "base"}})
+        return {"version": to, "from": cur, "restarting": True}
 
     def refuse_running(self, reason: str) -> None:
         """The running release may not run any more (its hub no longer

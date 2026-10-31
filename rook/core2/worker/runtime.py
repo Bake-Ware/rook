@@ -24,7 +24,7 @@ What it wires together:
   release over Drop, verifies and smoke-checks it and restarts into it as a
   trial (:mod:`.boot`); the trial is confirmed by the first call from the
   home hub it serves, else dropped after ``ROOK_UPDATE_TRIAL_SECS`` and the worker
-  restarts on the core it had. ``worker.rollback`` goes back by hand.
+  restarts on the core it had. ``worker.update {version}`` goes back by hand.
 - **Transport** (:mod:`rook.core2.transport`): one connection per band, each
   with its own announce, heartbeat and hub-loss clock (9.4). Bands come from
   the config, enrollment and ``core.trust.set`` (the last two kept in
@@ -284,7 +284,7 @@ class Worker:
                          data_root=self.data / "plugin-data", gate=self.gate, streams=self.streams)
         own = builtins.handlers(self, self.streams, self.ran,
                                 restart=self._restart if self.reexec is not None else None)
-        own.update({"worker.update": self._core_update, "worker.rollback": self._core_rollback})
+        own["worker.update"] = self._core_update
         for path, caps in ((CORE, {"core.trust.set": self._trust_set, "core.trust.get": self._trust_get,
                                    "core.plugin.install": self._plugin_install,
                                    "core.plugin.rollback": self._plugin_rollback}),
@@ -770,9 +770,20 @@ class Worker:
             raise KitError(f"busy: {len(busy)} terminal or stream(s) open here would end; "
                            "close them, or update this worker later", retry=True)
 
-    async def _core_update(self, ctx, bundle: dict) -> dict:
-        """worker.update: pull the release over Drop from the hub that sent the
-        call, verify, unpack, smoke-check, then restart into it on trial."""
+    async def _core_update(self, ctx, bundle: dict | None = None, version: str | None = None) -> dict:
+        """worker.update: with ``bundle``, pull the release over Drop from the
+        hub that sent the call, verify, unpack, smoke-check, then restart into
+        it on trial; with ``version``, restart on a core this worker keeps."""
+        if (bundle is None) == (version is None):
+            raise KitError("bad args: bundle (a release from update.rollout) or version (a kept core), one of them")
+        if version is not None:
+            self._restartable()
+            try:
+                report = self.updater.switch(version)
+            except UpdateError as e:
+                raise KitError(str(e)) from None
+            self._restart_soon()
+            return report
         if os.name == "nt":
             # execv starts a new process there and the old one exits: whatever runs the
             # worker would see it end. Not tried yet (docs/castling-updates.md).
@@ -796,15 +807,6 @@ class Worker:
             raise KitError(f"update refused: {e}") from None
         finally:
             path.unlink(missing_ok=True)
-        self._restart_soon()
-        return report
-
-    async def _core_rollback(self, ctx) -> dict:
-        self._restartable()
-        try:
-            report = self.updater.rollback()
-        except UpdateError as e:
-            raise KitError(str(e)) from None
         self._restart_soon()
         return report
 
