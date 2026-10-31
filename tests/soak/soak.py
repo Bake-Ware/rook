@@ -22,8 +22,10 @@ the rook-castling-* units, through the sidecar's own scripts (restart.sh).
 from __future__ import annotations
 
 import argparse
+import base64
 import http.client
 import json
+import math
 import os
 import random
 import shutil
@@ -277,6 +279,51 @@ def teardown(_args) -> int:
 
 # -- the load --------------------------------------------------------------------
 
+def drain(read, sid: str, want: bytes | None = None, seconds: float = 90) -> dict:
+    """Read a stream from the start until it closes (or ``want`` shows up):
+    {ok, bytes, dropped, closed, events}."""
+    after, got, dropped, n = 0, bytearray(), 0, 0
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        out = read({"stream": sid, "after": after, "limit": 1000, "wait": 2})
+        if not out.get("ok"):
+            return out
+        r = out["result"]
+        after, dropped, n = r["next"], dropped + (r.get("dropped") or 0), n + len(r["events"])
+        for e in r["events"]:
+            if "b64" in e:
+                got += base64.b64decode(e["b64"])
+        if r.get("closed") or (want and want in got):
+            return {"ok": True, "bytes": len(got), "dropped": dropped, "closed": bool(r.get("closed")),
+                    "events": n, "data": bytes(got[-4096:])}
+    return {"ok": False, "error": f"stream {sid} still open after {seconds:g}s ({len(got)} bytes)"}
+
+
+def stream_ops(d: Door, w: str):
+    read = lambda a: call(d, w, "stream.read", a)
+
+    def big():
+        # ~2.7 MB of output: more than the bounded store keeps (256 KiB), so a
+        # reader that starts late sees dropped events, never an error.
+        o = call(d, w, "shell.open", {"cmd": "head -c 2000000 /dev/urandom | base64", "pty": False})
+        return drain(read, o["result"]["stream"]) if o.get("ok") else o
+
+    def term():
+        o = call(d, w, "shell.open", {"argv": ["sh"], "pty": True})
+        if not o.get("ok"):
+            return o
+        sid = o["result"]["stream"]
+        wr = call(d, w, "stream.write", {"stream": sid, "body": {"text": "echo soak-$((6*7))\r"}})
+        got = drain(read, sid, b"soak-42", 30) if wr.get("ok") else wr
+        closed = call(d, w, "stream.close", {"stream": sid})
+        return got if not got.get("ok") else closed
+
+    return [
+        (1, "stream_2_7m", big, lambda o: ok(o) or (None if o["closed"] else "not closed")),
+        (1, "stream_term", term, ok),
+    ]
+
+
 def owner_ops(d: Door, rec: Recorder, scratch: Path):
     w = WORKER
     big = 1 << 20
@@ -305,7 +352,7 @@ def owner_ops(d: Door, rec: Recorder, scratch: Path):
                                                             "content": "soak " * 100}), ok),
         (3, "hub_status", lambda: call(d, "rook", "hub.status"), ok),
         (3, "task_list", lambda: call(d, "rook", "task.list"), ok),
-        (1, "journal_search", lambda: call(d, "rook", "journal.search", {"query": "soak"}), ok),
+        (1, "journal_search", lambda: call(d, "rook", "journal.search", {"cap": "soak.wipe", "limit": 20}), ok),
         (3, "view_workers", lambda: get(d, "/workers"), ok),
         (2, "view_caps", lambda: get(d, "/caps"), ok),
         (3, "view_journal", lambda: get(d, "/journal?limit=50"), ok),
@@ -313,6 +360,8 @@ def owner_ops(d: Door, rec: Recorder, scratch: Path):
         (1, "unknown_cap", lambda: call(d, w, "soak.nope"), refused("unknown capability")),
         (1, "held_refused", held_then_refused, ok),
         (1, "sleep_2s", lambda: call(d, w, "soak.sleep", {"seconds": 2}), ok),
+        (3, "hub_workers", lambda: call(d, "rook", "hub.workers"), ok),
+        *stream_ops(d, w),
     ]
 
 
@@ -354,7 +403,15 @@ def agent_ops(m: Mcp, rec: Recorder, scratch: Path):
             return {"ok": False, "error": f"outside the session: {_err(outside)}"}
         return end
 
+    def stream_cycle():
+        o = m.tool("call", worker=w, cap="shell.open", args={"argv": ["seq", "1", "50000"], "pty": False}, why=WHY)
+        if not o.get("ok"):
+            return o
+        got = drain(lambda a: m.tool("stream", worker=w, why=WHY, **a), o["result"]["stream"])
+        return got if not got.get("ok") or got["closed"] else {"ok": False, "error": "not closed"}
+
     return [
+        (1, "mcp_stream_seq", stream_cycle, ok),
         (20, "mcp_ping", lambda: m.tool("call", worker=w, cap="soak.ping", args={"text": "agent"}, why=WHY), ok),
         (5, "mcp_exec", lambda: m.tool("call", worker=w, cap="shell.exec", args={"argv": ["uname", "-n"]},
                                        why=WHY), ok),
@@ -445,10 +502,10 @@ def chaos_loop(rec: Recorder, every: float, stop: threading.Event) -> None:
                 sidecar("restart.sh")
             else:
                 sidecar("restart.sh", kind.split("_", 1)[1])
-            back = wait_online(d, 180)
-            rec.event("chaos", what=kind, ok=True, took=round(time.time() - t0, 1), recovered_after=round(back, 1))
+            wait_online(d, 180)
+            rec.event("chaos", what=kind, ok=True, start=t0, took=round(time.time() - t0, 1))
         except Exception as e:
-            rec.event("chaos", what=kind, ok=False, error=str(e)[:300])
+            rec.event("chaos", what=kind, ok=False, start=t0, error=str(e)[:300])
             if kind.startswith("pause_relay_"):
                 subprocess.run(["systemctl", "--user", "kill", "--signal=CONT", UNITS["relay"]], timeout=30)
 
@@ -507,6 +564,7 @@ def verify_journal(scratch: Path) -> dict:
 def sampler(rec: Recorder, scratch: Path, every: float, verify_every: float, stop: threading.Event) -> None:
     hub, worker = ROOT / "hub" / "data", ROOT / "worker" / "data"
     last_verify = 0.0
+    status_door = Door(HTTP, token("owner.token"))
     while True:
         s = {"t": round(time.time(), 1), "calls": rec.count}
         for part in UNITS:
@@ -519,6 +577,12 @@ def sampler(rec: Recorder, scratch: Path, every: float, verify_every: float, sto
             s["replay_lines"] = replay.read_bytes().count(b"\n")
         except OSError:
             s["replay_lines"] = None
+        try:
+            st = call(status_door, WORKER, "worker.status")
+            s["worker_status"] = {k: v for k, v in (st.get("result") or {}).items()
+                                  if isinstance(v, (int, float)) and not isinstance(v, bool)}
+        except Exception:
+            status_door.close()
         if time.monotonic() - last_verify >= verify_every:
             last_verify = time.monotonic()
             try:
@@ -642,7 +706,7 @@ def pct(sorted_ms: list, p: float) -> float:
     """The p-th percentile (nearest rank) of an ascending list."""
     if not sorted_ms:
         return float("nan")
-    k = max(0, min(len(sorted_ms) - 1, int(round(p / 100 * len(sorted_ms) + 0.5)) - 1))
+    k = max(0, min(len(sorted_ms) - 1, math.ceil(p / 100 * len(sorted_ms)) - 1))
     return sorted_ms[k]
 
 
@@ -681,6 +745,23 @@ def segments(samples: list[dict], part: str) -> list[list[dict]]:
             pid = p["pid"]
         segs[-1].append({"t": s["t"], **p})
     return segs
+
+
+WORKER_OPS = {"ping", "mcp_ping", "exec", "mcp_exec", "blob_16k", "file_stat", "file_read"}
+
+
+def recovery(calls: list[dict], start: float) -> tuple[float | None, int]:
+    """After a disruption that began at ``start``: seconds until a quick
+    worker call sent after it came back ok, and how many worker calls in
+    flight or sent until then failed or took over 5 s."""
+    back = None
+    for c in calls:
+        sent = c["t"] - c["ms"] / 1000
+        if c["op"] in WORKER_OPS and sent >= start and c["ok"] and c["ms"] < 2000:
+            back = c["t"] if back is None else min(back, c["t"])
+    hurt = sum(1 for c in calls if c["op"] in WORKER_OPS and (not c["ok"] or c["ms"] > 5000)
+               and c["t"] >= start and c["t"] - c["ms"] / 1000 <= (back or start))
+    return (None if back is None else back - start), hurt
 
 
 def report(out: Path) -> str:
@@ -731,8 +812,12 @@ def report(out: Path) -> str:
         for e in chaos:
             when = time.strftime("%H:%M:%S", time.localtime(e["t"]))
             if e["kind"] == "chaos":
-                lines.append(f"- {when} {e['what']}: " + (f"took {e['took']} s, soak.ping back after "
-                                                          f"{e['recovered_after']} s" if e["ok"] else f"FAILED {e['error']}"))
+                back, hurt = recovery(calls, e["start"])
+                when = time.strftime("%H:%M:%S", time.localtime(e["start"]))
+                lines.append(f"- {when} {e['what']}: " + (
+                    f"the script took {e['took']} s; worker calls ok again after "
+                    f"{'never' if back is None else f'{back:.1f} s'}; {hurt} calls failed or took > 5 s"
+                    if e["ok"] else f"FAILED {e['error']}"))
         pushes = [e for e in chaos if e["kind"] != "chaos"]
         bad = [e for e in pushes if not e["ok"]]
         lines.append(f"- plugin push/rollback: {len(pushes)} ({len(bad)} failed"
