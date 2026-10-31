@@ -182,6 +182,7 @@ def test_door_refuses_before_dispatch(mcp_hub):
 def test_holds_show_and_wait_for_the_person(mcp_hub):
     async def go():
         hub, _, url, token = await mcp_hub(sacred=["kaiju"])
+        hub.identities.add_agent("claude", {"grants": ["*"]})     # echo.root runs elevated: admin
         try:
             err, out = await tool(url, token, "call", worker="kaiju", cap="echo.root", why=WHY)
             assert not err and out["held"] and "sacred machine" in out["error"]
