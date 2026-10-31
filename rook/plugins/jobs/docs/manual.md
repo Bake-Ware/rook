@@ -43,7 +43,7 @@ def main(job):
 ```
 
 `job.call(cap, args, on=worker, why=...)`, `job.notify(text, title=, to=)`
-(default: the job's person), `job.ask(question, options, timeout="1h")`
+(default: the job's person; see "Notices"), `job.ask(question, options, timeout="1h")`
 (asked with `approval.ask`, so it waits on Approvals and reaches the
 person through the house agent; None on timeout, at most an hour), `job.wait("5m")`,
 `job.retry(fn, times=3, wait="10s")`, `job.parallel(fn, fn, ...)`,
@@ -53,6 +53,14 @@ A failed call raises `job.Error`. The return value is the run's result.
 
 The script runs in its own Python process (standard library only), as the
 hub's normal account, in a scratch folder that goes when it ends.
+
+## Notices
+
+A job doesn't pick how to reach the person. Its notices (`notify:` and
+`job.notify`) go to the house agent (the `default_agent` setting), which
+gets word to them the way and at the time that fits: a voice note, the
+desktop, a chat, or holding it until morning. On a hub without the agents
+package, or with `default_agent` blank, they go straight to `notify.send`.
 
 ## Failures
 

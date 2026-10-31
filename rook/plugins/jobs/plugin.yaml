@@ -30,7 +30,7 @@ settings:
   timezone: { type: str, default: UTC, doc: "IANA zone for cron schedules (e.g. America/Chicago)." }
   timeout: { type: duration, default: 10m, doc: How long a run may take unless the job says otherwise. }
   retry_after: { type: duration, default: 1m, doc: "Wait before a failed run's retry (doubles each attempt)." }
-  default_agent: { type: str, default: house, doc: The agent an agent job asks when it names no persona. }
+  default_agent: { type: str, default: house, doc: "The house agent: an agent job asks it when it names no persona, and job notices go to it to get to the person (castling-agents); blank, or no agents installed: notices go by notify.send." }
   tick: { type: duration, default: 1s, doc: How often the scheduler looks for due jobs. }
 
 records:
@@ -190,9 +190,8 @@ hooks:
 routes:
   hook: { path: /hook, methods: [POST], run: scripts/jobs.py:webhook, auth: none }
 
-# Ready-made (castling-jobs). The other 0.4 ready-mades wait for their caps:
-# attention-digest (no attention plugin in 0.5 yet), camera-review
-# (llm.complete takes no images).
+# Ready-made (castling-jobs). The attention pass is the attention plugin's
+# job; camera-review waits for its caps (llm.complete takes no images).
 jobs:
   security-scan:
     doc: "Every 5 minutes: refused and held calls in the journal since the last scan; tells the owners when refusals pile up (vars.threshold, default 10)."

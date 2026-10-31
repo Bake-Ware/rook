@@ -178,7 +178,7 @@ def test_every_role_has_a_prompt_and_its_skills():
     workbench's plugins ship its team roles (castling-dashboard). Every
     persona's skills exist in some installed manifest."""
     found, skills = {}, {}
-    for folder in ["agents", *WORKBENCH.values()]:
+    for folder in ["agents", "attention", *WORKBENCH.values()]:
         m = load(PLUGINS / folder, CONTRACTS).data
         for name, p in (m.get("personas") or {}).items():
             assert name not in found, name

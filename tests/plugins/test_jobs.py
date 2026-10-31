@@ -455,6 +455,66 @@ def test_retries_then_notice(cfg):
     run(body)
 
 
+HOUSE = """\
+manifest: 1
+plugin: agents
+version: 1.0.0
+doc: A stand-in for the agents package (the house agent's inbox, written to a file).
+runs_on: hub
+caps:
+  chat.send:
+    doc: Write the message down.
+    risk: write
+    scope: multi-user
+    on: hub
+    run: scripts/house.py:send
+    args:
+      agent: { type: str, required: true }
+      text: { type: str, required: true }
+      wait: { type: bool, default: true }
+"""
+
+HOUSE_PY = """\
+import json
+
+def send(ctx, agent, text, wait=True):
+    with open(ctx.data / "inbox.jsonl", "a") as f:
+        f.write(json.dumps({"agent": agent, "text": text, "wait": wait, "from": ctx.person or ctx.agent}) + "\\n")
+    return {"sent": True}
+"""
+
+
+def test_notices_go_through_the_house_agent(cfg):
+    """castling-agents "Reaching the user": jobs don't pick a channel; the
+    house agent gets word to the person. notify.send only without agents."""
+    plugin(cfg.library, "agents", HOUSE, {"house.py": HOUSE_PY})
+    script = "def main(job):\n    job.notify('backup missing', title='Backups')\n"
+
+    async def body():
+        rig = await Rig(cfg).start()
+        inbox = rig.hub.data / "plugins" / "agents" / "inbox.jsonl"
+        told = lambda: [json.loads(x) for x in inbox.read_text().splitlines()] if inbox.exists() else []  # noqa: E731
+        try:
+            await rig.amy.ok("jobs.create", name="broken", trigger={"manual": True}, call="probe.flaky",
+                             args={"key": "h1", "fails": 5})
+            await rig.amy.ok("jobs.start", job="broken")
+            got = (await until(told, what="the house agent's notice"))[0]
+            assert got["agent"] == "house" and got["wait"] is False and got["from"] == "system:plugin.jobs"
+            assert "for amy (Job broken)" in got["text"] and got["text"].endswith("Job broken failed: not yet (1)")
+            await rig.bake.ok("jobs.create", name="s", trigger={"manual": True}, script=script, notify="never")
+            r = await rig.bake.ok("jobs.start", job="s", wait=True)
+            assert r["state"] == "ok", r
+            got = told()[-1]
+            assert got["from"] == "person:bake" and "for bake (Backups)" in got["text"]
+            assert got["text"].endswith("backup missing")
+            assert rig.sent() == []                       # never straight to a channel
+            assert {e["why"] for e in rig.calls("agents.chat.send")} >= {
+                "job broken: tell amy", "job s: tell bake: Backups"}
+        finally:
+            await rig.stop()
+    run(body)
+
+
 def test_event_jobs_with_filters(cfg):
     async def body():
         rig = await Rig(cfg).start()
