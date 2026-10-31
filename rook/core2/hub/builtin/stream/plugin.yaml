@@ -1,13 +1,13 @@
-# The hub's index of every stream on the band (castling-streams, N28):
-# terminals and processes on workers, agent and voice sessions in hub
-# plugins. Implemented by the hub (rook/core2/hub/streams.py, index in
-# rook/streams/index.py). Read a stream itself where it lives: stream.read
-# on its worker, or its plugin's caps for a hub one (row.plugin).
+# The hub's streams (castling-streams): the index of every stream on the
+# band (N28: terminals and processes on workers, rooms, huddles, agent and
+# voice sessions on the hub) and the stream API over the hub's own streams.
+# Implemented by the hub (rook/core2/hub/streams.py, index in
+# rook/streams/index.py). A worker's stream is read on that worker.
 manifest: 1
 plugin: stream
 version: 0.5.0
 title: Streams
-doc: Find any stream on the band (terminals, processes, agent and voice sessions) and where it lives.
+doc: Find any stream on the band and where it lives; open, read, write and close the hub's own (chat rooms, huddles, agent and voice sessions).
 package: core
 builtin: true
 runs_on: hub
@@ -67,3 +67,69 @@ caps:
       fields:
         streams: { type: list }
         next: { type: int }
+  open:
+    doc: >-
+      Open a chat room: a durable stream of text events from its participants (you, plus the
+      people and agents you name). Answers {stream, kind, title, participants}.
+    on: hub
+    risk: write
+    scope: multi-user
+    effects: [persists]
+    args:
+      title: { type: str, required: true, min: 1, max: 200 }
+      participants:
+        type: list
+        max: 100
+        items: { type: str, pattern: "^(person|agent):[A-Za-z0-9_.@-]{1,100}$" }
+        doc: "Who else is in it: person:<name>, agent:<name>."
+      kind: { type: str, enum: [room], default: room }
+    result: { type: map }
+  read:
+    doc: >-
+      Events of a stream on the hub (a room, huddle, agent or voice session) after the cursor
+      `after` (start at 0, pass back `next`): {events, next, dropped, closed}. wait > 0 holds an
+      empty read up to that many seconds (long-poll): call it in a loop to follow the stream.
+      A terminal or process is read on its worker (stream.get says which).
+    on: hub
+    risk: read
+    scope: multi-user
+    idempotent: true
+    timeout: 60s
+    args:
+      stream: { type: str, required: true, pattern: "^s_[0-9a-f]{16}$" }
+      after: { type: int, default: 0, min: 0 }
+      limit: { type: int, default: 200, min: 1, max: 1000 }
+      wait: { type: float, default: 0, min: 0, max: 50 }
+      types: { type: list, items: { type: str }, doc: "Only these event types (text, turn, status, ...)." }
+    result: { type: map }
+  write:
+    doc: >-
+      Say something in a room you are in: a text event by you, body {text, mentions?}
+      (mentions: person:x / agent:y it's addressed to). Answers {stream, seq}. Huddles, agent and
+      voice sessions belong to their plugin: write through its caps (agents.chat.send, ...).
+    on: hub
+    risk: write
+    scope: multi-user
+    args:
+      stream: { type: str, required: true, pattern: "^s_[0-9a-f]{16}$" }
+      type: { type: str, enum: [text], default: text }
+      body:
+        type: map
+        required: true
+        fields:
+          text: { type: str, required: true, min: 1, max: 20000 }
+          mentions: { type: list, max: 50, items: { type: str } }
+    result:
+      type: map
+      fields:
+        stream: { type: str }
+        seq: { type: int }
+  close:
+    doc: >-
+      Close a room you opened (owners: any room). It stays readable and takes no more events.
+    on: hub
+    risk: write
+    scope: multi-user
+    args:
+      stream: { type: str, required: true, pattern: "^s_[0-9a-f]{16}$" }
+    result: { type: map }

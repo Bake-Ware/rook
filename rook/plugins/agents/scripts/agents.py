@@ -27,9 +27,8 @@ TODO(castling:identity): run turns as Caller(person, agent:<name>) once the
 hub registers agent identities from here (Identities.add_agent with the
 agent's grants) and opens their sessions; the backend then hands its harness
 an MCP door token for that pair (TODO(castling:mcp-door)).
-Session streams live in this plugin's own store; ``ctx.index_streams`` lists
-them in the hub's stream index (``stream.list``). TODO(castling:relay): read
-through the hub relay once there is one.
+Session streams live in the hub's one stream store (``ctx.streams``), so
+``stream.list`` finds them and ``stream.read`` reads them.
 TODO(castling:workbench): skills are served from manifests here; they move
 to the knowledge store as their own kind.
 """
@@ -48,7 +47,7 @@ from pathlib import Path
 from rook.kit._types import parse_duration
 from rook.kit.ctx import Caller, KitError
 from rook.kit.manifest import _yaml
-from rook.streams import StreamError, Streams, SqliteStore
+from rook.streams import StreamError
 
 log = logging.getLogger("rook.plugin.agents")
 
@@ -100,13 +99,12 @@ _RT: "Runtime | None" = None
 def _rt(ctx) -> "Runtime":
     global _RT
     if _RT is None:
-        _RT = Runtime(ctx.data, ctx.settings)
-        ctx.index_streams(_RT.streams)       # agent sessions in the hub's stream list (N28)
+        _RT = Runtime(ctx.data, ctx.settings, ctx.streams)
     return _RT
 
 
 class Runtime:
-    def __init__(self, data: Path, settings):
+    def __init__(self, data: Path, settings, streams):
         data.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(str(data / "agents.db"), isolation_level=None, check_same_thread=False)
         self.db.executescript("""
@@ -116,7 +114,7 @@ class Runtime:
             CREATE TABLE IF NOT EXISTS memory (id INTEGER PRIMARY KEY, agent TEXT NOT NULL, text TEXT,
                                                created REAL, updated REAL);
         """)
-        self.streams = Streams(SqliteStore(str(data / "sessions.db")), host="hub")
+        self.streams = streams                           # the hub's one store (ctx.streams)
         self.settings = settings
         self.ctx = None                                  # the plugin's own (hooks): dreams
         self.runners: dict[str, asyncio.Task] = {}       # stream -> runner
@@ -194,7 +192,7 @@ class Runtime:
             return None
         return self.streams.open("session", title=f"{name} with {party}", producer=f"agents.{name}",
                                  participants=[f"agent:{name}", party],
-                                 attrs={"agent": name, "party": party}).id
+                                 attrs={"plugin": "agents", "agent": name, "party": party}).id
 
     def sessions(self, name: str, party: str | None = None) -> list:
         return [m for m in self.streams.list(kind="session", participant=party, open_only=True)

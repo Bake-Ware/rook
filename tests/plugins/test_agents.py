@@ -1,6 +1,7 @@
 """The agents package core (rook/plugins/agents): the runtime driven through
 its caps and hooks with a real Ctx, a fake agent.backend behind the ctx's
-dispatcher, and the plugin's own SQLite and stream stores in tmp."""
+dispatcher, the plugin's own SQLite and the hub's one stream store
+(ctx.streams) in tmp."""
 
 import asyncio
 import json
@@ -10,6 +11,7 @@ import pytest
 from port_helpers import CONTRACTS, PLUGINS, go
 from rook.kit.ctx import Caller, Ctx, KitError, invoke, load_run
 from rook.kit.manifest import check, load
+from rook.streams import SqliteStore, Streams
 
 AGENTS = PLUGINS / "agents"
 ROLES = ["archivist", "house", "lead", "pm", "producer", "qa", "security", "writer"]
@@ -59,10 +61,11 @@ class Rig:
         self.settings = {"warm": "10s", **settings}
         self.backend = Backend()
         self.modules = {}
+        self.streams = Streams(SqliteStore(str(tmp_path / "stream-events.db")), host="hub")   # the hub's
 
     def ctx(self, caller, cap=None):
         return Ctx(self.manifest, caller, dispatch=self.backend, settings=self.settings,
-                   data_dir=self.data, cap=cap)
+                   data_dir=self.data, cap=cap, streams=self.streams)
 
     async def call(self, fn, caller=BAKE, **args):
         func = load_run(AGENTS, f"scripts/agents.py:{fn}", self.modules)

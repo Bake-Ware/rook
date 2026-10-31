@@ -1,7 +1,7 @@
 """The speech runtime: voice sessions as streams, System One in front of the agent.
 
-A voice session is a durable ``voice`` stream (rook.streams) in this
-plugin's own store, with the person and ``agent:<name>`` as participants.
+A voice session is a durable ``voice`` stream in the hub's one stream store
+(``ctx.streams``), with the person and ``agent:<name>`` as participants.
 Its events:
 
 - ``turn`` ``{role: prompt, text, speaker}``: what the person said;
@@ -19,8 +19,8 @@ with that agent (the one they also type in) and runs with their rights.
 That call runs in the background; ``speech.hear`` answers with System One's
 reply at once.
 
-Sessions live here and are listed in the hub's stream index
-(``ctx.index_streams``). TODO(castling:relay): then speech.read is stream.read.
+``stream.list`` finds the sessions and ``stream.read`` reads them;
+``speech.read`` adds the spoken audio.
 """
 from __future__ import annotations
 
@@ -29,10 +29,9 @@ import json
 import logging
 import re
 from collections import OrderedDict
-from pathlib import Path
 
 from rook.kit.ctx import KitError
-from rook.streams import SqliteStore, StreamError, Streams
+from rook.streams import StreamError
 
 log = logging.getLogger("rook.plugin.speech")
 
@@ -64,9 +63,8 @@ Your reply is read aloud: a few plain spoken sentences, no markdown, lists or li
 
 
 class Runtime:
-    def __init__(self, data: Path):
-        data.mkdir(parents=True, exist_ok=True)
-        self.streams = Streams(SqliteStore(str(data / "sessions.db")), host="hub")
+    def __init__(self, streams):
+        self.streams = streams                    # the hub's one store (ctx.streams)
         self.locks: dict[str, asyncio.Lock] = {}
         self.audio: OrderedDict = OrderedDict()   # (stream, seq) -> file map
         self.tasks: set[asyncio.Task] = set()
@@ -78,8 +76,7 @@ _RT: Runtime | None = None
 def _rt(ctx) -> Runtime:
     global _RT
     if _RT is None:
-        _RT = Runtime(ctx.data)
-        ctx.index_streams(_RT.streams)       # voice sessions in the hub's stream list (N28)
+        _RT = Runtime(ctx.streams)
     return _RT
 
 
@@ -91,7 +88,6 @@ async def stop(ctx):
     for t in list(rt.tasks):
         t.cancel()
     await asyncio.gather(*rt.tasks, return_exceptions=True)
-    rt.streams.durable.close()
 
 
 # -- the caps --------------------------------------------------------------------
@@ -101,7 +97,7 @@ async def open_session(ctx, agent=None, voice=None, device=None, title=None):
     agent = agent or ctx.settings["agent"]
     await ctx.call("agents.get", name=agent)        # a missing agent fails here, not mid-conversation
     voice = voice if voice is not None else ctx.settings["voice"]
-    attrs = {"agent": agent, "voice": voice or "", **({"device": device} if device else {})}
+    attrs = {"plugin": "speech", "agent": agent, "voice": voice or "", **({"device": device} if device else {})}
     meta = _rt(ctx).streams.open("voice", title=title or f"Voice: {_name(who)} and {agent}",
                                  producer="speech", participants=[who, f"agent:{agent}"], attrs=attrs)
     return {"stream": meta.id, "agent": agent, "voice": voice or ""}

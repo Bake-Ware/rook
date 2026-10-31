@@ -76,7 +76,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 6 | contradiction | Archivist and wiki-sweep teach 0.4 verification and supersede | `agents/personas/archivist.md`, `skills/wiki-sweep.md` |
 | 7 | over-built | The one-off 0.4 migration ships as a product tool in core | `rook/core2/migrate`, `knowledge/scripts/import_04.py` |
 | 8 | missing | C4 `approval.ask` not built; plugins built their own asks; `page.show` absent | builtin `approval`, `jobs`, `huddle carry`, `changes` |
-| 9 | contradiction (partial) | Streams: three private hub stores, no hub `stream.read/write`, no chat rooms | `agents`, `speech`, `huddle`, #331 |
+| 9 | contradiction (partial) | Streams: three private hub stores, no hub `stream.read/write`, no chat rooms (**fixed, PR #347**) | `agents`, `speech`, `huddle`, #331 |
 | 10 | missing, package | Personas only from the agents manifest; workbench roles in agents; skills not in the knowledge store | `agents.py:158,416,464` |
 | 11 | missing | No Codex backend, while the enum and manuals offer codex/local/api | `rook/plugins/agents*` |
 | 12 | contradiction, over-built | Core "2.1" is breaking but labelled minor; extras beyond H2 | #327 |
@@ -303,6 +303,11 @@ Watch items (ask Bake, not drift yet) are after the findings.
 - **Smallest fix.** In #331, index huddles. Follow-up: one hub `Streams` store handed to hub plugins
   through ctx, with hub `stream.read/write` serving it under #331's rights rule; plugin verbs
   become aliases; a room is `stream.open kind=room`.
+- **Fixed: PR #347.** One durable hub `Streams` (`ctx.streams`) for agents, speech and huddle,
+  reported into #331's index; hub `stream.open` (rooms), `stream.read` (long-poll = follow),
+  `stream.write` (text in a room) and `stream.close` under the index's rights. Plugin-owned
+  streams are read with `stream.read` and written through their plugin's verbs (they do more
+  than append). No relay yet (`TODO(castling:relay)`).
 
 ## 10. Personas and skills: one plugin, one store (missing + package drift)
 

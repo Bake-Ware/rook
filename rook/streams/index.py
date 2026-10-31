@@ -9,12 +9,12 @@ importers and the dashboard can find a stream without asking every host.
   index rows: opening, closing, retitling and deleting at once, activity
   (appends) at most every ``every`` seconds per stream.
 * :class:`StreamIndex` keeps the rows in SQLite, one per stream id, each
-  under the host that reported it (a worker id, or ``hub:<plugin>``). A host
+  under the host that reported it (a worker id, or ``hub``). A host
   only ever changes its own rows.
 
 On a worker the reporter's rows travel to the hub as ``stream.*`` events
-(builtin/stream.yaml ``emits``, spec 13 ``core.event``); on the hub a
-plugin's ``ctx.index_streams(streams)`` reports straight to the index.
+(builtin/stream.yaml ``emits``, spec 13 ``core.event``); the hub's own
+store (``ctx.streams``, every hub plugin's) reports straight to the index.
 Who may see a row is :func:`visible`'s rule, the same as a worker's for
 reading the stream: owners see every stream; a person the ones they take
 part in; an agent alone the ones it takes part in that have no person.

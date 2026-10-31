@@ -150,7 +150,7 @@ class Ctx:
                  records: Any = None, emit: Callable[[str, dict, str], Any] | None = None,
                  data_dir: str | Path | None = None, streams: Any = None,
                  loop: asyncio.AbstractEventLoop | None = None, cap: str | None = None,
-                 people: Any = None, index_streams: Callable[[str, Any], None] | None = None):
+                 people: Any = None):
         self.plugin = manifest["plugin"]
         self.caller = caller
         # The cap this call runs (full or relative name); None for hooks.
@@ -176,7 +176,6 @@ class Ctx:
         self._emit = emit
         self._data_dir = Path(data_dir) if data_dir else None
         self._streams = streams
-        self._index_streams = index_streams
         self._loop = loop
         self._tmp: Path | None = None
         self.log = logging.getLogger(f"rook.plugin.{self.plugin}")
@@ -302,16 +301,16 @@ class Ctx:
             raise KitError(f"no such file: {p}")
         return FileResult(p, data, name or (p.name if p else None), mime)
 
-    def index_streams(self, streams: Any) -> bool:
-        """List a :class:`rook.streams.Streams` this plugin keeps itself (agent
-        or voice sessions on the hub) in the hub's stream index, so
-        ``stream.list`` finds them. Call it once per process, when the plugin
-        makes its Streams; it takes the Streams' ``on_change``. False where
-        there is no index (a worker's own streams are listed already)."""
-        if self._index_streams is None:
-            return False
-        self._index_streams(self.plugin, streams)
-        return True
+    @property
+    def streams(self) -> Any:
+        """The host's :class:`rook.streams.Streams`. On the hub it is the one
+        durable store every hub plugin shares (rooms, huddles, agent and voice
+        sessions; castling-streams): open yours there with ``attrs.plugin``
+        set to this plugin, and the hub's index and ``stream.*`` caps see
+        them. On a worker it holds the bounded terminals and processes."""
+        if self._streams is None:
+            raise KitError("streams are not available here")
+        return self._streams
 
     def stream(self, kind: str = "process", *, title: str = "",
                attrs: Mapping | None = None) -> Producer:
