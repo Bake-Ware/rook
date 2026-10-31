@@ -233,12 +233,12 @@ def _escape(value: str, pos: str, before: str, *, leading: bool, ref: str) -> st
             if not _HOST.fullmatch(value):
                 raise ActionError("{{%s}} is not a host name" % ref)
             return value
-        return _dots(quote(value, safe=""))
+        if value in (".", "..") and not re.search(r"[?#]", before):
+            # %2E%2E is no escape: URL libraries (yarl) decode and resolve it
+            raise ActionError("{{%s}} can't be a . or .. path segment" % ref)
+        return quote(value, safe="")
     if pos == "path" and not leading:
         if any(c in value for c in "/\\") or value in (".", ".."):
             raise ActionError("{{%s}} must be a single file name" % ref)
     return value
 
-
-def _dots(s: str) -> str:
-    return s.replace(".", "%2E") if s in (".", "..") else s

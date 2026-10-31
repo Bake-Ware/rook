@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 
 from rook.core2.worker.security import launch
 from rook.kit._types import parse_duration
 
+# A session id or model name, never an option: ``--resume`` takes an optional
+# value, so "--dangerously-skip-permissions" there would be parsed as a flag.
+_WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,127}")
 USAGE = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 
 
@@ -43,6 +47,9 @@ async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, sys
         work.mkdir(parents=True, exist_ok=True)
     elif not work.is_dir():
         raise ctx.Error(f"no folder {work}")
+    for name, value in (("session", session), ("model", model)):
+        if value and not _WORD.fullmatch(value):
+            raise ctx.Error(f"bad args: {name} is an id or a name, not {value[:40]!r}")
     cmd = argv(ctx.settings, session=session, model=model, system=system)
     try:
         proc = await launch(cmd, getattr(ctx, "lease", None), cwd=str(work), stdin=asyncio.subprocess.PIPE,

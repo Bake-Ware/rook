@@ -94,7 +94,10 @@ def test_url_parts_escaped():
     s = scope(args={"q": "a&b=c d", "p": "../x/y?z", "dots": ".."}, appliance={"host": "10.0.0.5:8443"})
     assert render("https://{{appliance.host}}/api/{{args.p}}?v={{args.q}}", s, "url") == \
         "https://10.0.0.5:8443/api/..%2Fx%2Fy%3Fz?v=a%26b%3Dc%20d"
-    assert render("http://h/{{args.dots}}/k", s, "url") == "http://h/%2E%2E/k"
+    # a dot segment can't climb: %2E%2E would be decoded and resolved by the URL library
+    with pytest.raises(ActionError, match="path segment"):
+        render("http://h/{{args.dots}}/k", s, "url")
+    assert render("http://h/k?d={{args.dots}}", s, "url") == "http://h/k?d=.."
 
 
 def test_url_host_slot_rejects_injection():
