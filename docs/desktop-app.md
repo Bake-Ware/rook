@@ -37,6 +37,38 @@ not signed yet, so your system may ask you to confirm before opening it.
 
 No hub yet? Click **Install a hub on this computer** (see below).
 
+## A Rook 0.5 hub (preview)
+
+Rook 0.5 (castling) is being tried beside 0.4. The app speaks to either:
+Settings > Your hub > **Rook version** picks one (0.4 until you change it).
+On 0.5:
+
+- **Sign in** with your own sign-in token, the one you paste on the hub
+  site's sign-in page. An agent's token is refused: the app acts as you.
+  The dashboard window opens signed in.
+- The tray's **Dashboard** menu and the panel list the hub's own pages (they
+  change as agents make pages).
+- **The panel**: calls waiting for your approval, tasks in progress or
+  blocked, a knowledge (and task) search, and the hub's agents (awake ones
+  first). Each opens the dashboard page that handles it.
+- **Quick ask** talks to the house agent in your own conversation with it,
+  the same one the dashboard's dock shows. **Ask about this page** opens
+  that dock.
+- **Notifications** tell you when a call waits for your approval. Agents
+  reach you on this screen through this computer's worker
+  (`notification.post`).
+- **This computer's worker**: **Add this computer** makes it a worker on
+  your hub. The app runs `python -m rook.core2.worker` from a Python with
+  Rook installed (Settings > This computer's worker > Python; empty is
+  `python3`), enrolls it with a device code and approves that code as you,
+  then starts it. It loads the shell, file, notification and screenshot
+  plugins and runs while the app is open. Its files are in the app's
+  settings folder, under `worker05/`. A voice server in the hub's config
+  bundle fills the voice settings you left empty.
+- Not on 0.5 yet: the update check, the hub installer, the 0.4 agent-token
+  option. Off this computer the hub needs https for **Add this computer**
+  (the band key travels in the bundle).
+
 Opening the app again (the Start menu, a shortcut) shows the Rook panel of
 the copy already running; only one copy runs at a time. To have Rook start
 when you sign in to the computer, tick **Start Rook when I sign in** in
@@ -217,6 +249,14 @@ All with the dashboard session, as the signed-in person:
   (`action=search`), `home.status`;
 - `/account/work/sessions?live_only=1` (the Sessions page's list);
 - `/updates/desktop.json` (public): the release's `rook-desktop-*` files.
+
+On a 0.5 hub, with the person's token on the HTTP door (`Authorization:
+Bearer`): `GET /holds`, and `POST /call` on the hub's node with a why for
+`task.list`, `project.list`, `knowledge.search`, `task.search`,
+`agents.list`, `pages.list` and `agents.chat.send`; `POST /enroll/approve`
+for its own worker's device code. The hub site's `/login` (the token, once)
+gives the dashboard window's session; `/web/api/me` names the person.
+tests/test_desktop_contract05.py checks these against the castling code.
 
 tests/test_desktop_contract.py checks these, the dashboard links the panel
 opens (`#work?t=`, `#knowledge?p=`, `#sessions?key=`), the @home dock's

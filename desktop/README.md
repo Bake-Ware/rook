@@ -60,14 +60,17 @@ desktop/
     src/lib.rs        tray, windows, hotkeys, commands, background polling
     src/config.rs     settings.json and credentials.json (0600)
     src/hub.rs        sign-in, home agent (chat or MCP), chat rooms, the panel's lists, updates
+    src/hub05.rs      the same on a 0.5 hub: token sign-in, the HTTP door, holds, pages
     src/notify.rs     what deserves a notification (pure)
     src/sections.rs   the dashboard's sections for the tray menu (ui/sections.json)
     src/update.rs     which published file is a newer app for this install (pure)
     src/worker.rs     find and start/stop this computer's worker
+    src/worker05.rs   this computer's 0.5 worker: enroll by device code, run as a child
     src/installer.rs  the hub installer wizard's plan, arguments and output parsing
     src/voice/        audio helpers, transcription, capture and playback (cpal),
                       speech pieces and WAV (speak.rs), wake word (tract)
     tests/live_hub.rs end-to-end against a running hub (ignored by default)
+    tests/live_hub05.rs  the same against a 0.5 hub, adding a worker too
 ```
 
 The dashboard window loads the hub's own site and stays there:
@@ -82,6 +85,17 @@ The dashboard window loads the hub's own site and stays there:
 - **Navigation guard.** It may navigate only within the hub's origin. Links
   elsewhere, popups and `target=_blank` open in the system browser (the
   opener plugin); other schemes are dropped.
+
+## 0.4 and 0.5
+
+Settings > Your hub > Rook version switches between a 0.4 hub (`hub.rs`,
+`worker.rs`, below) and a Rook 0.5 hub (castling: `hub05.rs`,
+`worker05.rs`). The switch stays until every hub is on 0.5; the 0.4 paths
+are unchanged. On 0.5 the app signs in with the person's door token (the hub
+site's `/login` checks it is a person's and gives the dashboard window its
+session), calls the HTTP door as that person, and runs this computer's 0.5
+worker itself: "Add this computer" runs the worker's `enroll` (device code)
+and approves the code with the token. Details: [docs/castling-desktop.md](../docs/castling-desktop.md).
 
 ## Talking to the hub
 
@@ -156,6 +170,9 @@ cargo clippy --features wake-word --all-targets
 # against a local hub (scripts/local-hub.sh) with the home agent on:
 ROOK_TEST_HUB=http://127.0.0.1:7005 ROOK_TEST_PASS=... ROOK_TEST_MCP_TOKEN=... \
   cargo test --test live_hub -- --ignored
+# against a 0.5 hub (docs/castling-e2e.md, "A 0.5 hub and worker by hand"):
+ROOK_TEST_HUB05=http://127.0.0.1:8740 ROOK_TEST_TOKEN05=<a person's token> \
+  ROOK_TEST_PYTHON05=<python with rook + telesthete> cargo test --test live_hub05 -- --ignored
 ```
 
 CI (`.github/workflows/desktop.yml`) runs fmt, clippy and the tests on Linux
