@@ -39,10 +39,10 @@ Code: `desktop/src-tauri/src/hub05.rs` (door client, pure parsers),
   acting for a person. The app acts as the person, and the HTTP door runs
   everything the panel and quick ask need, so the 0.4 agent-token option is
   hidden on 0.5.
-- **No stream list yet.** Agent sessions are `rook.streams` streams, but no
-  cap lists streams or reads them over a door yet (TODO(castling:streams) in
-  the MCP door). The Sessions tab lists the agents instead; the dashboard dock
-  shows the person's own conversation.
+- **Sessions tab lists agents.** The hub's stream index (`stream.list`
+  with `kind: session`, gate R3) now lists agent sessions and terminals;
+  the tab still lists the agents (`agents.list`) and can move to it. The
+  dashboard dock shows the person's own conversation.
 - **The app approves its own device code.** The person clicked **Add this
   computer** while signed in as themselves, which is the approval spec 12
   asks for; the code never leaves the app.

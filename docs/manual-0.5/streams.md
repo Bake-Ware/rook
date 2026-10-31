@@ -31,19 +31,42 @@ Agents use the MCP `stream` tool ([MCP for agents](mcp.md)):
 - **write**: `input={"text": "ls -l\n"}` types; `{"signal": "INT"}` is
   Ctrl-C; `{"resize": [120, 40]}` sets the window size.
 
-A stream belongs to the people and agents it was opened for; others can't
-read it. Closing keeps it readable; it just takes no more events.
+A stream belongs to the people and agents it was opened for, and to the
+hub's owners; others can't read it. Closing keeps it readable; it just
+takes no more events.
+
+## Finding one
+
+The hub keeps an index of every stream on the band: terminals and
+processes on every worker, agent and voice sessions on the hub. Ask the
+hub (`worker=rook`):
+
+```
+call worker=rook cap=stream.list args={"kind": "terminal", "open": true} why="Which terminals are open?"
+→ {"streams": [{"id": "s_7c1e…", "worker": "kaiju", "kind": "terminal", "title": "/bin/bash -l",
+                "person": "person:bake", "last_at": …, "size": 18234, "online": true, …}], "next": null}
+```
+
+- `stream.list` filters by `kind`, `worker`, `participant` and `open`, latest
+  activity first; `limit` and `offset` page it (pass `next` back as `offset`).
+- `stream.search` with `query` matches titles, commands, working folders and
+  who takes part. What a stream *says* isn't indexed: read the stream.
+- `stream.get` with `stream` gives one row.
+
+Then read it where it lives: `stream.read` on the row's `worker` (a row with
+`plugin`, such as an agent session, is read through that plugin's caps).
+You see what you could read: owners every stream, a person the ones they
+take part in, an agent acting alone the ones it takes part in that have no
+person. A worker's terminals are gone when it restarts; the index forgets
+them then too.
 
 ## What is and isn't there yet
 
-Not on `castling` yet: a worker has no stream store, so `shell.open`
-answers `streams are not available here`, and no worker serves the
-`stream.read` and `stream.write` caps the `stream` tool calls. Both arrive
-with the worker's `stream.*` caps in their own pull request (#289); this
-page describes how they work then. A hub index of every stream and a
-dashboard view of terminals and sessions come later. The model, the event
-types and how 0.4's terminals, consoles, chat and agent sessions map onto
-streams are in `rook/streams/README.md`.
+Not on `castling` yet: the hub relay (one fan-out replay for every reader,
+replacing 0.4's terminal hub and console pump) and a dashboard view of
+terminals and sessions. The model, the event types and how 0.4's terminals,
+consoles, chat and agent sessions map onto streams are in
+`rook/streams/README.md`.
 
 ## For plugin authors
 
@@ -54,4 +77,5 @@ stream: { types: [bytes, status], input: true, durable: false }
 ```
 
 and its `run:` code returns `ctx.stream(...)`, then keeps writing through
-the handle.
+the handle. A hub plugin that keeps streams of its own (`rook.streams.Streams`)
+hands them to `ctx.index_streams(streams)` once, so `stream.list` finds them.

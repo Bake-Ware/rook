@@ -27,8 +27,9 @@ TODO(castling:identity): run turns as Caller(person, agent:<name>) once the
 hub registers agent identities from here (Identities.add_agent with the
 agent's grants) and opens their sessions; the backend then hands its harness
 an MCP door token for that pair (TODO(castling:mcp-door)).
-TODO(castling:streams): session streams live in this plugin's own store
-until the hub keeps one stream index (stream.* caps, relay).
+Session streams live in this plugin's own store; ``ctx.index_streams`` lists
+them in the hub's stream index (``stream.list``). TODO(castling:relay): read
+through the hub relay once there is one.
 TODO(castling:workbench): skills are served from manifests here; they move
 to the knowledge store as their own kind.
 """

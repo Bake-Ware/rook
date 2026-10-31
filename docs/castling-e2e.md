@@ -31,6 +31,7 @@ What they prove:
 | Real ports | the worker also loads `rook/plugins/battery`, `torrent`, `shell` and `file`; what the machine can't serve is listed as unavailable, with the reason, and a call says why; `shell.exec` runs through the ticket, the worker gate and core's launch path, and `file.read` reads its output back |
 | Events | a text arriving on the worker (`e2e.sms.received`, `taints`, emitted like the phone's `sms.received`) reaches the hub over `core.event` with `person` and `worker` set; it fires an owner's job filtered on the text, whose call goes back to that worker, and shows on a live page made with `events: [e2e.*]` |
 | Core updates | the hub signs a release of this checkout and rolls it out; the worker restarts into it and confirms it; `worker.rollback` goes back by hand; a release that crashes at start (under `supervise.py`) or never reaches its hub is rolled back by the worker and the rollout says why (docs/castling-updates.md) |
+| Stream index | a second worker process enrolls; each opens a `shell.open` process; the hub's `stream.list` lists both with their worker, `stream.search` and paging find one, a child is refused, activity and closing reach the index, and a restarted worker's resync drops the stream it lost |
 | Jobs | `rook/plugins/jobs` in the hub library: a job every second calls `e2e.ping` on the worker as its creator; an owner's script job fires on `hold.created` (filtered to `e2e.wipe`) and its call reaches the worker through dispatch with the script's why |
 
 ## A 0.5 hub and worker by hand
