@@ -179,10 +179,10 @@ curl -s -H "$H" '127.0.0.1:8750/journal?limit=5'
 - After the relay restarts (`stop`/`start`, `--upgrade`), the worker reaches
   the hub at its next keepalive (every 5 s on UDP); a call sent meanwhile is
   resent and goes through then. `check.sh` waits for it.
-- Agents can't reach the band themselves yet: their turns run with no MCP
-  servers. To give them one, set `agents-claude-code.mcp_config` in
-  `worker.yaml` (`settings:`) to an MCP config like `claude-mcp.json`; every
-  turn then shares that token.
+- Each agent turn reaches the band as that agent, with a token the hub
+  makes for the turn. The sidecar's MCP door is on 8751, not the default
+  8741: set `agents-claude-code.door_url: http://127.0.0.1:8751/mcp` in
+  `worker.yaml` (`settings:`). No shared token to set up.
 - The worker warns "anchor is writable by the worker": it runs as bake and
   owns its own folder. Harmless here.
 
