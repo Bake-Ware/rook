@@ -992,9 +992,11 @@ class Hub:
         parent = _PARENT.get()
         if parent and sid == parent[0]:     # inside the call it runs in: that call's layers and door too
             layers, door = [*parent[1], *layers], parent[2]
-        return await self.dispatcher.dispatch(caller, Call(
+        reply = await self.dispatcher.dispatch(caller, Call(
             cap=cap, target=target, args=args, why=who.why or f"{who.plugin or 'hub'} plugin", session=sid,
             layers=layers, door=door, contract=contract))
+        self._announce(reply)
+        return reply
 
     def _installed(self) -> dict:
         """{plugin: version} the band runs: the hub's plugins and every known
@@ -1042,13 +1044,17 @@ class Hub:
         reply = await self.dispatcher.dispatch(caller, Call(
             cap=cap, target=target, args=args, why=why, session=sid or self._door_session(caller),
             appliance=appliance, elevate=body.get("elevate") is True, door=door, layers=list(layers or ())))
-        if reply.get("held"):
-            h = self.dispatcher.holds.get(reply["hold"])
-            if h is not None:
-                self._emit("hold.created", {"hold": h.name, "cap": h.call.cap, "worker": h.worker.id,
-                                            "person": caller.person, "agent": caller.agent, "why": h.call.why,
-                                            "session": h.session.id, "reasons": h.reasons()}, "core")
+        self._announce(reply)
         return reply
+
+    def _announce(self, reply: dict) -> None:
+        """A held call becomes a card: ``hold.created`` (for door calls and
+        hub plugins' own, such as a risky change's ``change.apply``)."""
+        h = self.dispatcher.holds.get(reply["hold"]) if reply.get("held") else None
+        if h is not None:
+            self._emit("hold.created", {"hold": h.name, "cap": h.call.cap, "worker": h.worker.id,
+                                        "person": h.caller.person, "agent": h.caller.agent, "why": h.call.why,
+                                        "session": h.session.id, "reasons": h.reasons()}, "core")
 
     async def start_session(self, caller: Caller, body: dict) -> dict:
         project = body.get("project")
@@ -1105,7 +1111,7 @@ class Hub:
                         "core": k.core, "version": k.version, "description": k.description,
                         "facts": k.facts, "plugins": [e["plugin"] for e in k.manifests],
                         "unavailable": k.unavailable, "status": k.status, "problem": k.problem,
-                        "owner": self.enroll.owner_of(k.id)})
+                        "owner": self.enroll.owner_of(k.id), "sacred": k.name in self.cfg.sacred})
         return {"ok": True, "workers": out}
 
     async def caps_view(self, caller: Caller, worker: str | None = None) -> dict:
@@ -1169,9 +1175,11 @@ class Hub:
         else:
             return {"ok": False, "error": "bad request: decision is approve or refuse"}
         if not str(out.get("error", "")).startswith(("unknown hold", f"{by} may not")):
+            ran = {"ok": bool(out.get("ok")), **({} if out.get("ok") else {"error": str(out.get("error", ""))[:300]})}
             self._emit("hold.decided", {"hold": hold, "decision": "approved" if decision == "approve"
                                         else "denied", "by": by,
-                                        "person": held.caller.person if held else None}, "core")
+                                        "person": held.caller.person if held else None,
+                                        **(ran if decision == "approve" else {})}, "core")
         return out
 
     def door_refused(self, caller: Caller, door: str) -> str | None:
@@ -1196,13 +1204,18 @@ class Hub:
 
     async def push_plugin(self, caller: Caller, body: dict, door: str) -> dict:
         """``{worker, plugin, why}``: sign the library's copy of ``plugin``
-        for that worker (plugin.sig, spec 13) and send it with
+        for that worker (plugin.sig, spec 13) and install it through a change
+        record (``change.submit``, the change plugin): its one script is
         ``core.plugin.install``, which dispatch checks and journals like any
-        call. Approving code for a machine is an owner's act. The worker
-        installs, runs the plugin's checks and rolls back on a failure; the
-        reply carries its report, or why it refused."""
+        call, and ``core.plugin.rollback`` is its way back (``change.revert``).
+        Approving code for a machine is an owner's act. The worker installs,
+        runs the plugin's checks and rolls back on a failure; the reply
+        carries its report, or why it refused, and the change's id."""
         if not self.identities.is_owner(caller.person):
             return {"ok": False, "error": "denied: only an owner pushes plugins"}
+        if "change" not in self.plugins.plugins:
+            return {"ok": False, "error": "refused: plugin pushes go through change records; put the change "
+                                          "plugin (rook/plugins/changes) in the hub's library"}
         name, target = body.get("plugin"), body.get("worker")
         why = body.get("why") if isinstance(body.get("why"), str) else ""
         if not (isinstance(name, str) and name and isinstance(target, str) and target):
@@ -1234,9 +1247,26 @@ class Hub:
             desc = self.transport.offer(w.band, blob, to=w.id)
         except Exception as e:      # no band (Loopback), too large
             return {"ok": False, "error": f"bundle not offered: {e}"}
-        return await self.dispatcher.dispatch(caller, Call(
-            cap="core.plugin.install", target=w.id, args={"bundle": desc}, why=why,
-            session=self._door_session(caller), door=door))
+        was = (current or {}).get("version")
+        reply = await self.dispatcher.dispatch(caller, Call(
+            cap="change.submit", target=self.node, why=why, session=self._door_session(caller), door=door,
+            args={"what": f"Install plugin {name} {plan.version} on {w.name}" + (f" (was {was})" if was else ""),
+                  "why": why, "category": "plugin", "wait": True,
+                  "risk": f"{name}'s caps on {w.name} change; a version that breaks them stays until it is "
+                          "rolled back.",
+                  "plan": f"The hub signs {name} {plan.version} ({plan.trust}) for {w.name}; the worker "
+                          "installs it, runs its checks and puts the previous version back when they fail.",
+                  "scripts": [{"worker": w.id, "cap": "core.plugin.install", "args": {"bundle": desc},
+                               "atomic": True}],
+                  "rollback": {"worker": w.id, "cap": "core.plugin.rollback", "args": {"plugin": name}}}))
+        rec = reply.get("result") if reply.get("ok") else None
+        if not isinstance(rec, dict):
+            return reply
+        step = next((e for e in reversed(rec.get("log") or []) if e.get("phase") == "script"), None)
+        if rec.get("state") == "kept" and step:
+            return {"ok": True, "result": step.get("result"), "change": rec["id"]}
+        return {"ok": False, "change": rec["id"],
+                "error": (step or {}).get("error") or rec.get("outcome") or f"change {rec.get('state')}"}
 
     def _library_folder(self, name: str) -> Path | None:
         """The library folder whose plugin.yaml names ``name``, read now: a

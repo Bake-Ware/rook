@@ -171,6 +171,8 @@ class Band:
         keys = self.hub_dir / "data" / "keys"
         keys.mkdir(parents=True, mode=0o700)
         self.library.mkdir()
+        # plugin pushes go through change records (rook/plugins/changes)
+        (self.library / "changes").symlink_to(REPO / "rook" / "plugins" / "changes", target_is_directory=True)
         for name, key in (("root.key", self.root_key), ("op.key", self.op_key)):
             (keys / name).write_text(bytes(key).hex() + "\n")
             (keys / name).chmod(0o600)

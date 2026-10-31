@@ -490,6 +490,8 @@ emits:
       decision: { type: str, required: true, enum: [approved, denied] }
       by: { type: str }
       person: { type: str, doc: "Who the held call was for (a page shows it to them and owners only)." }
+      ok: { type: bool, doc: "Approved: whether the call then ran and succeeded (its result goes to whoever approved)." }
+      error: { type: str, doc: "Approved but it failed: why." }
   session.started:
     doc: An agent session began.
     payload:

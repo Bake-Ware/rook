@@ -34,8 +34,12 @@ What happens:
    reason instead of breaking the worker), fetches its large assets and
    checks their hashes.
 2. It signs the list of the plugin's file hashes **for that worker**
-   (`plugin.sig`) and sends the bundle with the cap `core.plugin.install`,
-   which is dispatched and journaled like any call.
+   (`plugin.sig`) and writes a **change record** for the push
+   ([change](../../rook/plugins/changes/docs/manual.md)): its script sends
+   the bundle with the cap `core.plugin.install`, dispatched and journaled
+   like any call, and `core.plugin.rollback` is its way back
+   (`change.revert`). The reply names the change (`"change": "r_…"`). A hub
+   without the change plugin in its library refuses pushes.
 3. The worker installs it only when the signature is from a hub that may
    approve plugins there (its home hub or a co-owner) and every file
    matches. It loads the new version **without restarting** (nothing
@@ -78,6 +82,7 @@ linked.
 - [llm-anthropic](../../rook/plugins/llm-anthropic/docs/manual.md), [llm-openai](../../rook/plugins/llm-openai/docs/manual.md), [llm-cli](../../rook/plugins/llm-cli/docs/manual.md): model providers.
 - [security](../../rook/plugins/security/docs/manual.md) and [security-ml](../../rook/plugins/security-ml/docs/manual.md): the gates ([Security plugins](security.md)).
 - [jobs](../../rook/plugins/jobs/docs/manual.md): scheduled, event, manual and webhook jobs ([Jobs](jobs.md)).
+- [change](../../rook/plugins/changes/docs/manual.md): change records: what, why, risk, plan, scripts, tests and rollback; the hub runs standard changes and rolls them back, risky ones wait for one card. Plugin pushes need it.
 
 **Agents:**
 

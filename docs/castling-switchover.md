@@ -50,7 +50,7 @@ the final cutover doesn't hold up the earlier side-by-side steps.
 | R1 | The hub has a vault: `{{secret:}}` and secret settings read `<data>/vault.db` | The migration re-seals all 65 secrets into a file that nothing reads yet. Jobs, bots and plugins that need a secret can't run without it. | 5 |
 | R2 | Worker events reach the hub (`TODO(castling:events)`) | Attention and the Feed, `sms.received`, phone notifications and claudecode remote rules all depend on events. Without them the phone is a remote, not an assistant. | 4 |
 | R3 | Streams have a hub index (N28) | The sessions list, history importers, the desktop Sessions tab, and owners reading each other's streams. | 5 |
-| R4 | Change records exist (`TODO(castling:changes)`) | Plugin pushes and risky changes go through them. Without them nothing replaces the 0.4 CR runner. | 5 |
+| R4 | Change records exist (`TODO(castling:changes)`; passes: rook/plugins/changes) | Plugin pushes and risky changes go through them. Without them nothing replaces the 0.4 CR runner. | 5 |
 | R5 | Off-site hub backup, sealed with the recovery key | 0.5's only backup today is "stop the hub and copy the folder". That isn't enough once the band depends on this hub. | 5 |
 | R6 | A 0.5 release format: `worker.update`, `update.*` (N27) | Without it, every core fix means reinstalling by hand on every machine. Plugins can already be pushed. | 3 (wave B onwards) |
 | R7 | Speech on the hub | The voice assistant. | 4 |
