@@ -1,0 +1,35 @@
+# Remote MCP clients a person allowed through OAuth (rook.core2.hub.oauth), for pages.
+# Implemented by the hub (rook.core2.hub.doors.web.caps).
+manifest: 1
+plugin: connector
+version: 0.5.0
+title: Connectors
+doc: Apps (claude.ai's connectors and other remote MCP clients) a person allowed to use the hub as an agent.
+package: core
+builtin: true
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+
+caps:
+  list:
+    doc: "The connectors people allowed: the app, who allowed it, the agent it acts as, when it was last refreshed. Owners see all; anyone else their own."
+    on: hub
+    risk: read
+    scope: multi-user
+    idempotent: true
+    result: { type: map }
+  revoke:
+    doc: "End a connector now: its tokens stop working and the app must be allowed again. Your own, or any for an owner."
+    on: hub
+    risk: write
+    scope: multi-user
+    effects: [persists]
+    args:
+      id: { type: str, required: true, doc: "The connector's id (g_...), from connector.list." }
+    result: { type: map }
+
+pages:
+  connectors: { title: Connectors, file: pages/connectors.html, caps: [connector.list, connector.revoke] }
+
+docs: { manual: docs/manual.md }

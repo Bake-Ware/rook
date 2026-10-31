@@ -87,6 +87,10 @@ class HttpDoor:
         self._thread.start()
         log.info("door open", extra={"fields": {"door": self.name, "bind": f"{self.host}:{self.port}"}})
 
+    def challenge(self) -> str:
+        """The ``WWW-Authenticate`` a 401 carries."""
+        return "Bearer"
+
     async def stop(self) -> None:
         if self._server is not None:
             await asyncio.to_thread(self._server.shutdown)
@@ -134,8 +138,8 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         for k, v in headers.items():
             self.send_header(k, v)
-        if status == 401:
-            self.send_header("WWW-Authenticate", "Bearer")
+        if status == 401 and "WWW-Authenticate" not in headers:
+            self.send_header("WWW-Authenticate", self.door.challenge())
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()

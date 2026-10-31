@@ -35,6 +35,13 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .login { margin: auto; width: min(360px, 100% - 32px); display: flex; flex-direction: column; gap: 10px; }
 .login input { font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
 .login button { background: var(--accent); color: #fff; border-color: var(--accent); padding: 8px; }
+.login button.link { background: none; color: var(--muted); border: 0; text-align: center; }
+.consent { margin-top: 10vh; }
+.consent p { margin: 0; }
+.consent fieldset { border: 1px solid var(--line); border-radius: 6px; display: flex; flex-direction: column; gap: 6px; }
+.consent .choice { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.consent .bad { color: var(--bad); }
+.consent .muted { color: var(--muted); }
 [hidden] { display: none !important; }
 @media (max-width: 720px) {
   #menu { display: inline-block; }
