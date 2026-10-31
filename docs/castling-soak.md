@@ -380,6 +380,12 @@ resend that goes unanswered twice re-declares at once; the first answer
 after that re-announces. WebSocket links keep 20 s: they reconnect by
 themselves (jittered backoff) and re-announce on connect.
 
+A restarted hub calls the workers it remembers before their announce
+reaches its transport, so resends also go to peers not heard yet (only a
+peer that announced without `ack` gets none). Before that, the first call
+after `install.sh --upgrade` was lost and waited out its timeout: the
+sidecar answered `soak.ping` 20.0 s after an upgrade, now 1.1 s.
+
 ### 4. Large replies over Drop
 
 On UDP the pacer allowed 2,000 frames/s and every Drop chunk is two frames,
