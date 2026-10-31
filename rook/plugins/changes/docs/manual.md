@@ -53,10 +53,10 @@ text its result must contain.
   (`declined`).
 - **no scripts**: the record is the change (`noted`): something done by hand.
 
-A machine on the sacred list can't be in a change: every call there waits for
-the person on its own. A step that comes back held stops the change where it
-is (`failed`, nothing rolled back, since that call may still run when someone
-answers it).
+A step that is a hard stop (a call on a sacred machine, a destructive cap)
+waits for the person's answer to that exact call, like any held call: once
+approved and run, the change goes on; refused, that step failed (it never
+ran).
 
 ## Afterwards
 

@@ -24,8 +24,9 @@ the step names; the plugin's own rights are never lent to it. A standard
 change runs in the session it was submitted in, so a session narrowed to a
 few caps can't reach others through a change; a risky one, which an owner
 approved, runs in the author's own session for such calls. A step that
-comes back held stops the change where it is: that call may still run once
-someone answers it, so nothing is rolled back under it.
+comes back held (a hard stop: a sacred machine, a destructive cap) waits
+for the person's answer to that exact call (``hold.decided``): approved and
+it succeeded, the change goes on; otherwise the step failed.
 
 After a hub restart (holds live in memory, runs in tasks): an ``asked``
 change is asked again, and a ``running`` one is rolled back when a script
@@ -181,6 +182,7 @@ class Runtime:
         self.rejoin = parse_duration(ctx.settings["rejoin"])
         self.tasks: set[asyncio.Task] = set()
         self.runs: dict[str, asyncio.Task] = {}
+        self.waiting: dict[str, asyncio.Future] = {}       # hold -> its hold.decided payload
         self.roster: tuple[float, list] = (0.0, [])
 
     def spawn(self, coro) -> asyncio.Task:
@@ -258,16 +260,10 @@ class Runtime:
         return known
 
     async def check_machines(self, machines: list[str]) -> None:
-        if not machines:
-            return
-        known = await self.workers(fresh=True)
+        known = await self.workers(fresh=True) if machines else []
         for m in machines:
-            w = next((w for w in known if m in (w.get("id"), w.get("name"))), None)
-            if w is None:
+            if not any(m in (w.get("id"), w.get("name")) for w in known):
                 raise KitError(f"{m} is not on the band")
-            if w.get("sacred"):
-                raise KitError(f"{m} is sacred: every change there waits for the person, call by call. "
-                               "Make it by hand (each call holds for them), or ask them first.")
 
     async def online(self, worker: str) -> bool:
         """Wait (up to the ``rejoin`` setting) for ``worker`` to be on the band:
@@ -346,7 +342,9 @@ class Runtime:
                 held = _HOLD.search(e.message)
                 entry.update(ok=False, ran=not _never_ran(e.message), error=e.message[:1000])
                 if held:
-                    entry["hold"] = held.group(1)
+                    entry.update(await self.answered(rec, entry, held.group(1)))
+                    if entry["error"] is None:
+                        del entry["error"]
             else:
                 ok = not (isinstance(res, dict) and res.get("ok") is False)
                 entry.update(ok=ok, ran=True, result=_clip(res))
@@ -356,6 +354,24 @@ class Runtime:
                     entry.update(ok=False, error=f"the result does not contain {s['expect']!r}")
         self.note(rec["id"], entry, done=True)
         return entry
+
+    async def answered(self, rec: dict, entry: dict, hold: str) -> dict:
+        """A held step: wait for the person's answer to that exact call."""
+        self.note(rec["id"], {**entry, "ok": None, "hold": hold, "error": f"waits for a person: hold {hold}"},
+                  done=True)
+        fut = self.waiting[hold] = asyncio.get_running_loop().create_future()
+        try:
+            got = await fut
+        finally:
+            self.waiting.pop(hold, None)
+        by = got.get("by") or "the person"
+        if got.get("decision") != "approved":
+            return {"hold": hold, "ok": False, "ran": False, "error": f"hold {hold} refused by {by}"}
+        if got.get("ok"):
+            return {"hold": hold, "ok": True, "ran": True, "error": None, "result": None, "by": by}
+        error = str(got.get("error") or "it failed")
+        return {"hold": hold, "ok": False, "ran": not _never_ran(error), "by": by,
+                "error": f"approved by {by}, then: {error}"}
 
     async def run(self, cid: str, session: str | None = None) -> dict:
         rec = self.update(cid, state="running")
@@ -372,8 +388,6 @@ class Runtime:
                 changed = True
                 continue
             where = f"script {i + 1} on {s['worker']} failed ({got['error']})"
-            if got.get("hold"):
-                return self.stuck(rec, i, got)
             if not changed and (not got["ran"] or s.get("atomic")):
                 return self.end(cid, "refused", f"nothing changed: {where}")
             return await self.rollback(rec, who, where)
@@ -382,11 +396,6 @@ class Runtime:
             if not got["ok"]:
                 return await self.rollback(rec, who, f"test {i + 1} on {s['worker']} failed ({got['error']})")
         return self.end(cid, "kept", "tests passed" if rec["tests"] else "done")
-
-    def stuck(self, rec: dict, i: int, got: dict) -> dict:
-        return self.end(rec["id"], "failed", f"script {i + 1} waits for a person as hold {got['hold']}: the "
-                                             "change stopped there and nothing was rolled back, since that call "
-                                             "may still run. Answer the hold, then finish or revert by hand.")
 
     async def rollback(self, rec: dict, who: Caller, why: str) -> dict:
         rb = rec.get("rollback")
@@ -451,6 +460,11 @@ async def on_hold(ctx, event, payload):
     change.apply already, so only who decided is written down."""
     rt = _RT
     if rt is None or not isinstance(payload, dict) or not payload.get("hold"):
+        return
+    waiting = rt.waiting.get(payload["hold"])
+    if waiting is not None:             # a held step of a running change
+        if not waiting.done():
+            waiting.set_result(dict(payload))
         return
     found = rt.sys.records.change.list(where={"hold": payload["hold"]}, limit=1)
     if not found:

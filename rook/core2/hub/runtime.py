@@ -1175,9 +1175,11 @@ class Hub:
         else:
             return {"ok": False, "error": "bad request: decision is approve or refuse"}
         if not str(out.get("error", "")).startswith(("unknown hold", f"{by} may not")):
+            ran = {"ok": bool(out.get("ok")), **({} if out.get("ok") else {"error": str(out.get("error", ""))[:300]})}
             self._emit("hold.decided", {"hold": hold, "decision": "approved" if decision == "approve"
                                         else "denied", "by": by,
-                                        "person": held.caller.person if held else None}, "core")
+                                        "person": held.caller.person if held else None,
+                                        **(ran if decision == "approve" else {})}, "core")
         return out
 
     def door_refused(self, caller: Caller, door: str) -> str | None:

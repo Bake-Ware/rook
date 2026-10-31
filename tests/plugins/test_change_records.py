@@ -76,7 +76,7 @@ caps:
     scope: self
     effects: [destructive]
     on: hub
-    run: scripts/probe.py:fail
+    run: scripts/probe.py:wipe
 """
 
 PROBE_PY = """\
@@ -98,6 +98,12 @@ def get(ctx, key):
 
 def fail(ctx):
     return {"ok": False, "code": 1, "stderr": "nope"}
+
+def wipe(ctx):
+    s = _load(ctx)
+    s["wiped"] = True
+    (ctx.data / "state.json").write_text(json.dumps(s))
+    return {"wiped": True}
 
 async def slow(ctx, key, value):
     set_(ctx, key, value)
@@ -432,28 +438,38 @@ def test_revert_a_kept_change(cfg):
     on_rig(cfg, body)
 
 
-def test_machines_must_be_on_the_band_and_not_sacred(cfg):
+def test_machines_must_be_on_the_band(cfg):
     async def body(rig):
         out = await rig.amy.call("change.submit", **change(scripts=[{"worker": "nas", "cap": "shell.exec"}]))
         assert not out["ok"] and "nas is not on the band" in out["error"]
     on_rig(cfg, body)
 
-    # a sacred machine (hub.workers says so): every call there holds for the
-    # person anyway, so a change runs nothing there on its own
-    async def workers(fresh=False):
-        return [{"id": "w1", "name": "kaiju", "online": True, "sacred": True},
-                {"id": "w2", "name": "nas", "online": True}]
-    fake = type("Fake", (), {"workers": staticmethod(workers)})()
-    run(lambda: mod.Runtime.check_machines(fake, ["nas", "w2"]))
-    with pytest.raises(KitError, match="kaiju is sacred"):
-        run(lambda: mod.Runtime.check_machines(fake, ["nas", "kaiju"]))
 
-
-def test_a_held_step_stops_the_change_without_rolling_back(cfg):
+def test_a_held_step_waits_for_the_persons_answer(cfg):
+    """A step that is a hard stop (a destructive cap here; a sacred machine
+    the same) holds that exact call for the person; the change waits."""
     async def body(rig):
-        rec = await rig.amy.ok("change.submit", **change(scripts=[S("set", key="x", value="2"), S("wipe")]), wait=True)
-        assert rec["state"] == "failed" and "waits for a person as hold h_" in rec["outcome"], rec
-        assert [e["phase"] for e in rec["log"]] == ["script", "script"] and rig.state()["x"] == "2"
+        def waiting(cid):
+            return lambda: [e for e in rig.change(cid)["log"] if e.get("hold") and e["ok"] is None]
+
+        rec = await rig.amy.ok("change.submit", **change(scripts=[S("set", key="x", value="2"), S("wipe")]))
+        hold = (await until(waiting(rec["id"]), what="the held step"))[0]["hold"]
+        card = next(p for e, p in rig.events if e == "hold.created" and p["hold"] == hold)
+        assert card["cap"] == "probe.wipe" and card["person"] == "person:amy"
+        assert rig.change(rec["id"])["state"] == "running" and "wiped" not in rig.state()
+        assert (await rig.amy.request("POST", f"/holds/{hold}", {"decision": "approve"}))["ok"]
+        done = await until(ended(rig, rec["id"]), what="the change to end")
+        assert done["state"] == "kept" and rig.state()["wiped"] is True, done
+        assert done["log"][1]["by"] == "person:amy" and done["log"][1]["ok"]
+        # refused: that step never ran, but the first did: roll back
+        no = await rig.amy.ok("change.submit", **change(scripts=[S("set", key="x", value="3"), S("wipe")]))
+        hold = (await until(waiting(no["id"]), what="the second held step"))[0]["hold"]
+        # (a hard stop on amy's call: only amy answers it, not even an owner)
+        assert not (await rig.bake.request("POST", f"/holds/{hold}", {"decision": "refuse"}))["ok"]
+        assert (await rig.amy.request("POST", f"/holds/{hold}", {"decision": "refuse"}))["ok"]
+        back = await until(ended(rig, no["id"]), what="the rollback")
+        assert back["state"] == "rolled_back" and f"hold {hold} refused by person:amy" in back["outcome"], back
+        assert rig.state()["x"] == "1"
     on_rig(cfg, body)
 
 
