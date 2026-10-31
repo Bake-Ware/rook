@@ -1,4 +1,4 @@
-"""The 0.4 -> 0.5 migration (rook.core2.migrate) against a synthetic 0.4 hub
+"""The one-off 0.4 -> 0.5 migration (castling/switchover/migrate, repo tooling) against a synthetic 0.4 hub
 data folder built from master's schemas, plus one built with the 0.4 stores'
 own classes while they are still in the tree."""
 from __future__ import annotations
@@ -19,10 +19,10 @@ import nacl.utils
 import pytest
 import yaml
 
-from rook.core2.hub.runtime import load_config
-from rook.core2.hub.vault import Locked
-from rook.core2.migrate import IMPORTER, MigrateError, NotACopy, convert, migrate, render, vault
-from rook.core2.migrate.source import Source
+from rook.core2.hub.runtime import _key, load_config
+from rook.core2.hub.vault import Locked, Vault
+from castling.switchover.migrate import IMPORTER, MigrateError, NotACopy, convert, migrate, render, vault
+from castling.switchover.migrate.source import Source
 
 REPO = Path(__file__).resolve().parents[1]
 KNOWLEDGE = REPO / "tests" / "fixtures" / "knowledge_v2.db"
@@ -336,7 +336,7 @@ def test_apply_imports_the_workbench_and_project_trust(tmp_path, copy04):
 
 
 def test_without_the_workbench_importer_it_says_so(tmp_path, copy04, monkeypatch):
-    import rook.core2.migrate as m
+    import castling.switchover.migrate as m
     monkeypatch.setattr(m, "IMPORTER", tmp_path / "missing.py")
     r = migrate(copy04, make_05(tmp_path))
     assert r["workbench"] == {"not_imported": "no workbench importer in this checkout"}
@@ -415,7 +415,7 @@ def test_a_missing_vault_key_is_reported_not_fatal(tmp_path, copy04):
 
 def test_command_line(tmp_path, copy04):
     cfg = make_05(tmp_path)
-    run = [sys.executable, "-m", "rook.core2.migrate", "--from", str(copy04), "--to", str(cfg)]
+    run = [sys.executable, "-m", "castling.switchover.migrate", "--from", str(copy04), "--to", str(cfg)]
     env = {**os.environ, "PYTHONPATH": str(REPO)}
     p = subprocess.run(run, capture_output=True, text=True, timeout=120, cwd=REPO, env=env)
     assert p.returncode == 0, p.stderr
@@ -516,3 +516,19 @@ def test_checklist_names_machines_as_0_5_enrollment_takes_them():
     assert [r["name05"] for r in rows] == ["Logans-tablet", "Logans-tablet-2", "Logans-tablet-3"]
     sacred, _, _ = convert.trust({"entries": [{"id": "t", "level": "sacred", "targets": ["worker:Mom's phone"]}]}, [])
     assert sacred == ["Moms-phone"]                                    # the sacred list uses the 0.5 name
+
+
+# -- the vault ------------------------------------------------------------------------
+
+def test_the_migration_writes_what_the_hub_reads(tmp_path):
+    data = tmp_path / "data"
+    (data / "keys").mkdir(parents=True)
+    _key(data / "keys" / "root.key")
+    written = vault.put(data, [{"name": "github-pat", "value": "ghp_1", "description": "pat",
+                                        "created": 5.0, "set_by": "import:0.4"}])
+    assert written == ["github-pat"]
+    assert vault.put(data, [{"name": "github-pat", "value": "other"}]) == []    # kept
+    v = Vault(data).unlock()
+    assert v.get("github-pat") == "ghp_1" and v.list()[0]["created"] == 5.0
+    v.set("new-one", "n", by="person:bake")
+    assert vault.names(data) == ["github-pat", "new-one"] and vault.get(data, "new-one") == "n"

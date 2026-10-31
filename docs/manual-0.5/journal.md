@@ -53,6 +53,3 @@ The `general` chain is pruned a day at a time once the day is 90 days
 old, whatever was in it. Project chains are meant to go whole, some time after the project
 closes; that step isn't wired to the workbench yet, so project chains are
 kept for now.
-
-A 0.4 journal brought over by the migration is kept read-only beside the
-0.5 chains ([Moving from 0.4](migrating.md)).

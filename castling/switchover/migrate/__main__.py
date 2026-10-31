@@ -1,4 +1,4 @@
-"""python -m rook.core2.migrate --from <0.4 data copy> --to <0.5 hub.yaml> [--apply] [--json]
+"""python -m castling.switchover.migrate --from <0.4 data copy> --to <0.5 hub.yaml> [--apply] [--json]
 
 Copy the 0.4 hub's data folder first, each database with
 ``sqlite3 <db> ".backup <copy>"`` (plus ``trust.json`` and ``vault.key``).
@@ -16,7 +16,7 @@ from .convert import NAME
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="python -m rook.core2.migrate", description="Move a 0.4 hub's state to 0.5.")
+    ap = argparse.ArgumentParser(prog="python -m castling.switchover.migrate", description="Move a 0.4 hub's state to 0.5.")
     ap.add_argument("--from", dest="src", required=True, help="a copy of the 0.4 hub's data folder (never the live one)")
     ap.add_argument("--to", dest="config", required=True, help="the 0.5 hub's config (hub.yaml)")
     ap.add_argument("--apply", action="store_true", help="write (the 0.5 hub stopped); default: report only")

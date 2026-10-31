@@ -27,11 +27,17 @@ SCAN = ("rook", "android", "desktop", "services", "deploy")
 # (gate id, what must be true, check): ("file", path) exists | ("todo", owner) has no markers
 # left | ("cap", "manifest.yaml:name") the manifest declares that cap | ("grep", "folder:word")
 # a file under the folder mentions the word | ("plugin", "name:cap") a plugin in rook/plugins declares it
+# | ("nocap", "name:cap") no plugin of that name declares it | ("record", "name:type") the plugin
+# declares that record type | ("all", [checks]) every one passes. Gates say what Bake's decisions
+# ask for, never "the 0.4 X exists on 0.5".
 GATES = [
     ("R1", "the hub has a vault: {{secret:NAME}} and secret settings read <data>/vault.db", ("todo", "vault")),
-    ("R2", "worker events reach the hub (attention, Feed, sms.received, claudecode remote rules)", ("todo", "events")),
-    ("R3", "streams have a hub index (sessions list, history importers, desktop Sessions tab)", ("todo", "streams")),
-    ("R4", "change records exist (plugin push and risky changes go through them)", ("todo", "changes")),
+    ("R2", "worker events reach the hub (the attention job, sms.received, claudecode rules)", ("todo", "events")),
+    ("R3", "streams have a hub index (stream.list / stream.search over every stream)", ("todo", "streams")),
+    # R4: castling-caps C2, "records only, with apply, test and rollback as a job the record links".
+    ("R4", "change records are records (C2): a declared change record, no apply/revert runner",
+     ("all", [("todo", "changes"), ("record", "change:change"), ("nocap", "change:apply"),
+              ("nocap", "change:revert")])),
     ("R5", "off-site hub backup, sealed with the recovery key", ("todo", "backup")),
     ("R6", "a 0.5 release format: workers and apps update without a person at each machine",
      ("cap", "rook/core2/builtin/worker.yaml:update")),
@@ -43,8 +49,8 @@ GATES = [
     ("R12", "the hardening review's report is in", ("file", "castling/review.md")),
     ("R13", "the MCP door speaks OAuth (claude.ai web and mobile connectors can't send a bare bearer)",
      ("grep", "rook/core2/hub/doors:oauth")),
-    ("R14", "huddles with a merge vote (how agents land PRs and change requests today)",
-     ("plugin", "huddle:vote")),
+    ("R14", "agents land work on 0.5 without 0.4: task sign-off, then github.merge at the signed-off head",
+     ("plugin", "github:merge")),
 ]
 PERSON = [
     "soak numbers meet the bars in the plan (docs/castling-soak.md)",
@@ -69,32 +75,46 @@ def todos() -> dict:
     return out
 
 
+def _manifests() -> list:
+    return [yaml.safe_load(f.read_text(encoding="utf-8")) or {} for f in (REPO / "rook/plugins").glob("*/plugin.yaml")]
+
+
+def _one(kind: str, arg, found: dict) -> tuple:
+    """One check -> (ok, why)."""
+    if kind == "all":
+        parts = [_one(k, a, found) for k, a in arg]
+        return all(ok for ok, _ in parts), "; ".join(("" if ok else "NOT: ") + why for ok, why in parts)
+    if kind in ("plugin", "nocap", "record"):
+        name, _, item = arg.partition(":")
+        mine = [m for m in _manifests() if m.get("plugin") == name]
+        if kind == "record":
+            return (any(item in (m.get("records") or {}) for m in mine),
+                    f"plugin {name} declares record {item}")
+        has = any(item in (m.get("caps") or {}) for m in mine)
+        if kind == "nocap":
+            return not has, f"plugin {name} has no cap {item}"
+        return has, f"plugin {name} with cap {item} in rook/plugins/"
+    if kind == "file":
+        return (REPO / arg).exists(), arg
+    if kind == "cap":
+        path, _, cap = arg.partition(":")
+        caps = (yaml.safe_load((REPO / path).read_text(encoding="utf-8")) or {}).get("caps") or {}
+        return cap in caps, f"cap {cap} in {path}"
+    if kind == "grep":
+        folder, _, word = arg.partition(":")
+        hits = [f for f in (REPO / folder).rglob("*") if f.is_file() and f.suffix in (".py", ".yaml")
+                and word in f.read_text(encoding="utf-8", errors="replace")]
+        return bool(hits), f"{word!r} under {folder}/"
+    left = found.get(arg, [])
+    return not left, f"{len(left)} TODO(castling:{arg})" + (f" e.g. {left[0]}" if left else "")
+
+
 def check(found: dict) -> list:
     rows = []
     for gate, what, (kind, arg) in GATES:
-        if kind == "file":
-            ok, why = (REPO / arg).exists(), arg
-        elif kind == "cap":
-            path, _, cap = arg.partition(":")
-            caps = (yaml.safe_load((REPO / path).read_text(encoding="utf-8")) or {}).get("caps") or {}
-            ok, why = cap in caps, f"cap {cap} in {path}"
-        elif kind == "plugin":
-            name, _, cap = arg.partition(":")
-            ok = any((m.get("plugin") == name and cap in (m.get("caps") or {}))
-                     for m in (yaml.safe_load(f.read_text(encoding="utf-8")) or {}
-                               for f in (REPO / "rook/plugins").glob("*/plugin.yaml")))
-            why = f"plugin {name} with cap {cap} in rook/plugins/"
-        elif kind == "grep":
-            folder, _, word = arg.partition(":")
-            hits = [f for f in (REPO / folder).rglob("*") if f.is_file() and f.suffix in (".py", ".yaml")
-                    and word in f.read_text(encoding="utf-8", errors="replace")]
-            ok, why = bool(hits), f"{word!r} under {folder}/"
-        else:
-            left = found.get(arg, [])
-            ok, why = not left, f"{len(left)} TODO(castling:{arg})" + (f" e.g. {left[0]}" if left else "")
+        ok, why = _one(kind, arg, found)
         rows.append((gate, ok, what, why))
     return rows
-
 
 def open_prs() -> list:
     out = subprocess.run(["gh", "pr", "list", "--base", "castling", "--state", "open", "--limit", "100",

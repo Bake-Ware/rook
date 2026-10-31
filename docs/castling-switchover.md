@@ -13,6 +13,13 @@ Scripts in `castling/switchover/`:
   summary that has counts only.
 - `readiness.py` lists which code gates below this checkout meets.
   `--prs` also lists the PRs still open into `castling`.
+- `migrate/` (`python -m castling.switchover.migrate`, how-to in
+  `migrate.md`) and `import_04.py`: the one-off 0.4 move. castling-design
+  (Bake, Oct 30): "Migration from 0.4 is not a product feature ... a one-off
+  move ... an agent imports and reshapes them into 0.5". So it is repo
+  tooling here, not shipped in the `rook` package, run once at step 5 and
+  deleted at step 6. It gets no more features: whatever the move leaves
+  rough, an agent reshapes on 0.5.
 
 ## Where things stand
 
@@ -28,7 +35,7 @@ Scripts in `castling/switchover/`:
 | Desktop app | 0.2 | 0.4/0.5 switch, token sign-in, worker05 | merged (#290); the 0.5 hub serves `/updates/desktop.json`, the app's 0.5 switch is a follow-up PR |
 | Watch | 0.2.1 through the phone | wave 6 lane in progress | not on 0.5 |
 | Security | trust map, hard stops | `security` (canary + taint) and `security-ml` (shadow) | merged (#284) |
-| Agents | house agent, huddles, CR runner, sessions | `agents` + `agents-claude-code`, 8 personas | merged (#280, #288); huddles: `huddle` + `github` plugins (R14) |
+| Agents | house agent, huddles, CR runner, sessions | `agents` + `agents-claude-code`, 8 personas | merged (#280, #288); huddles are plain streams; work lands by sign-off + `github.merge` (R14) |
 | Soak | n/a | tests/soak on the sidecar | PR #297 open, numbers pending |
 | Review | n/a | hardening review: fix PRs #292–#296, #299–#303 | open; `castling/review.md` not in yet |
 
@@ -48,9 +55,9 @@ the final cutover doesn't hold up the earlier side-by-side steps.
 | Gate | What must be true | Why it matters | Blocks step |
 |---|---|---|---|
 | R1 | The hub has a vault: `{{secret:}}` and secret settings read `<data>/vault.db` | The migration re-seals all 65 secrets into a file that nothing reads yet. Jobs, bots and plugins that need a secret can't run without it. | 5 |
-| R2 | Worker events reach the hub (`TODO(castling:events)`) | Attention and the Feed, `sms.received`, phone notifications and claudecode remote rules all depend on events. Without them the phone is a remote, not an assistant. | 4 |
-| R3 | Streams have a hub index (N28) | The sessions list, history importers, the desktop Sessions tab, and owners reading each other's streams. | 5 |
-| R4 | Change records exist (`TODO(castling:changes)`; passes: rook/plugins/changes) | Plugin pushes and risky changes go through them. Without them nothing replaces the 0.4 CR runner. | 5 |
+| R2 | Worker events reach the hub (`TODO(castling:events)`) | The house agent's attention job on the hub (castling-attention: "an aggregation job on the hub run by the house agent"), `sms.received`, phone notifications and claudecode rules all depend on events. | 4 |
+| R3 | Streams have a hub index (N28) | `stream.list`/`stream.search` over every stream (castling-caps rule 7: sessions, terminals, rooms and history readers become `stream.*`), and owners reading each other's streams. | 5 |
+| R4 | Change records are records: the `change` plugin declares a `change` record and has no apply/revert runner | castling-caps C2 (Bake, Oct 30): "records only, with apply, test and rollback as a job the record links"; castling-changes: a lasting change gets a record (what, why, risk, testing, rollback, steps), "the change then proceeds", and ceremony scales with the project's trust level. Core's plugin pushes and worker updates don't depend on the plugin (drift #2). | 5 |
 | R5 | Off-site hub backup, sealed with the recovery key | 0.5's only backup today is "stop the hub and copy the folder". That isn't enough once the band depends on this hub. | 5 |
 | R6 | A 0.5 release format: `worker.update`, `update.*` (N27) | Without it, every core fix means reinstalling by hand on every machine. Plugins can already be pushed. | 3 (wave B onwards) |
 | R7 | Speech on the hub | The voice assistant. | 4 |
@@ -60,15 +67,29 @@ the final cutover doesn't hold up the earlier side-by-side steps.
 | R11 | Soak results written up (`docs/castling-soak.md`) | see "Soak bars" | 1 |
 | R12 | The hardening review's report (`castling/review.md`) | see "Review findings" | 1 |
 | R13 | The MCP door speaks OAuth | Done (`rook/core2/hub/doors/mcp_oauth.py`, the 0.4 shim's shape): with `oauth: <public address>` on the `mcp` door, claude.ai's connector uses an agent token as its client secret and that token as its access token. Needs the door reachable over public HTTPS. | 2 (for claude.ai) |
-| R14 | Huddles with a merge vote | Agents land PRs today through the 0.4 huddle's `huddle.vote` and the chair's pin. That flow ends when the 0.4 hub stops. | 5 |
+| R14 | Agents land work on 0.5 without 0.4: a task's sign-off (by its project's trust level), then `github.merge` at the signed-off head | Agents land PRs today through the 0.4 huddle's `huddle.vote` and the chair's pin. That flow ends when the 0.4 hub stops. On 0.5 sign-off replaces merge votes (castling-workbench). | 5 |
 
 These are also open and should be done or explicitly dropped before the
 cutover. They come from castling/coverage.md and the lanes' notes:
 
-- Not ported: attention (N21/N23), `show.present`, `trust.check`,
-  the appliance registry on the hub (N26), the 0.4 history importers, the
-  session shim, conversation modes, streaming TTS, and speaker enrollment
-  caps (#287).
+- Not built yet, named as Bake's decisions decide them (castling-caps
+  and its per-cap table; nothing here is a 0.4 piece to port):
+  - the house agent's **attention job**: a jobs template on the phone's
+    notification and SMS events that runs the house agent with an attention
+    skill, curated into `attention.list` (castling-attention: "Attention
+    becomes an aggregation job on the hub run by the house agent"; the phone
+    stays thin, "no attention service"). The 0.4 reminder rule goes:
+    "When to remind is the house agent's call" (drift #30);
+  - core **`page.show`** (castling-caps rule 10: "show.present becomes core
+    page.show"; drift #8);
+  - **`trust.check`**, the one "will this run, hold or be refused, and why"
+    answer (castling-caps rule 10);
+  - core **`appliance.*`** on the YAML engine (castling-caps rule 7: "devkit
+    and serves become core appliance.*"; N26, drift #21);
+  - history readers as importers into **`stream.*`** (castling-caps rule 7),
+    and the shim as `harness.shim.install/remove/status`;
+  - speech's conversation modes, streaming TTS and speaker enrollment caps
+    (#287 notes; no Bake decision names them yet).
 - Windows: the 0.5 e2e suite is POSIX only, ConPTY isn't ported (N19), and
   the desktop app's 0.5 worker has never run on Windows.
 - No in-app QR scanner on the phone. Android device names with spaces fall
@@ -109,7 +130,7 @@ and #303 (HTTP door bodies and timeouts).
 
 ## The data move, rehearsed
 
-The migration tool (`rook.core2.migrate`, dry run only) was run against the
+The migration tool (`castling/switchover/migrate`, dry run only) was run against the
 newest 0.4 hub copy on cachyrig. This copy was not pulled from the live hub:
 
 - `~/rook-backups/hub-offload/consolewin-live-20261027.tar` (sha256
@@ -164,15 +185,15 @@ What the migration doesn't move, counted in the same copy:
 The dry run turned up one bug, fixed in this PR. The re-enroll checklist
 printed names that 0.5 enrollment refuses, in commands that broke on the
 apostrophe. Each machine now gets a valid 0.5 name, shell-quoted, and the
-sacred list uses the same names (`rook/core2/migrate/convert.py`
-`worker_name`, tests in `tests/test_core2_migrate.py`).
+sacred list uses the same names (`castling/switchover/migrate/convert.py`
+`worker_name`, tests in `tests/test_castling_migrate.py`).
 
 ### The copy for the real move
 
 The 2026-10-27 copy is fine for rehearsal but stale for the move, since 0.4
-has kept running. Step 1 and step 5 each need a fresh copy, made on the live
+has kept running. Step 5 needs a fresh copy, made on the live
 hub by Bake, or by the house agent through a change request on 0.4, using
-the commands in `docs/castling-migrate.md` §1: an `sqlite3 .backup` of every
+the commands in `castling/switchover/migrate.md` §1: an `sqlite3 .backup` of every
 `*.db`, plus `trust.json` and `vault.key`, into a 0700 folder. It is then
 moved to the new hub and deleted afterwards. The existing hub-offload tars
 are mode 0644. Only the home folder's permissions keep them private, and
@@ -224,10 +245,10 @@ Needs R11, R12, the soak bars and the review fixes.
   remote (`rclone:<remote>:rook05`); from step 3, `worker:cachyrig` with
   `backup-store` installed there. Run `backup.run` once and check
   `backup.verify` before migrating anything in.
-- Migrate from a fresh copy: dry run, then `--apply` with the hub stopped.
-  This gives 0.5 the real knowledge, tasks and memory to work with. Workbench
-  records changed later on 0.4 don't follow, but a re-run at step 5 adds what
-  is new.
+- No migration into this hub yet: the move is one-off and happens once, at
+  step 5. Rehearse it with `dryrun.py` (or `--apply` into a throwaway hub)
+  as often as wanted. Until step 5, 0.4 stays the record for knowledge,
+  tasks and memory.
 - Load the library: agents, agents-claude-code or llm-cli, workbench, notify,
   security, security-ml, speech once it has merged. Leave telegram and
   discord off (see step 5).
@@ -308,9 +329,9 @@ Needs R1, R3, R4, R5, R10, R14, a week of steps 2–4 under real use, and
 Bake's go (D5).
 
 1. Announce a quiet window. Pause 0.4 jobs and stop agent writes on 0.4.
-2. Take a fresh 0.4 copy, then `migrate` dry run and `--apply` again. This
-   adds what is new since step 1. Records edited on both sides keep the 0.5
-   version.
+2. Take a fresh 0.4 copy, then the one move: `migrate` dry run, then
+   `--apply` with the 0.5 hub stopped. Whatever the move leaves rough, an
+   agent reshapes on 0.5 (castling-design); the tool gets no more features.
 3. Move the chat bots. A Telegram or Discord bot token can only be served by
    one hub at a time (Telegram's getUpdates conflicts, and Discord would
    answer twice). Turn telegram and discord off on 0.4, then on in 0.5. Bake
@@ -338,7 +359,8 @@ is no 0.5 → 0.4 path. After 30 days, rollback means restoring the snapshot.
 - Retire the 0.4-only secrets, after reading the private report.
 - Rotate the credentials whose vault notes say they were reused or passed
   through chats. That is Bake's call.
-- Delete the migration copies. Optionally point `rook.bakeforge.com` at the
+- Delete the migration copies and `castling/switchover/migrate`,
+  `import_04.py` and `migrate.md` with them. Optionally point `rook.bakeforge.com` at the
   0.5 door.
 
 ## Rollback summary
@@ -361,7 +383,7 @@ is no 0.5 → 0.4 path. After 30 days, rollback means restoring the snapshot.
 | D2 | Where the 0.5 hub runs, and its hostnames | bakenetcanada next to 0.4 if disk allows (else bakenetus); new `rook05.` names, no DNS swap |
 | D3 | Sacred machines on 0.5 (0.4 has none today) | Decide before step 3, since the list names machines |
 | D4 | APK channel order and when family devices flip | beta (bakephone) → stable with 0.4 default → family devices after cutover, in person |
-| D5 | Go for cutover, plus the soak bars, the review acceptances and the not-ported list (attention, huddles, `show.present`, history importers) | Hold the cutover for R1–R5, R10 and R14; the rest can follow |
+| D5 | Go for cutover, plus the soak bars, the review acceptances and the not-ported list (attention, huddles, `show.present`, history importers; in the decisions' terms since the drift audit: the attention job, sign-off, `page.show`, `stream.*`) | Hold the cutover for R1–R5, R10 and R14; the rest can follow |
 | D6 | Which of the ~14 service containers still need a worker | Keep only the ones agents actually act on; the rest become appliances or nothing |
 | D7 | The cachyrig sidecar after step 1 | Keep it as staging for 0.5 releases |
 | D8 | Whether the 16 or so 0.4-only secrets move at all | Move everything (the tool does), retire them after cutover |

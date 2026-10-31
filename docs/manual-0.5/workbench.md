@@ -56,6 +56,3 @@ or more; `concept.pool concepts=[...]` gives what they draw on.
 [knowledge](../../rook/plugins/knowledge/docs/manual.md),
 [concept](../../rook/plugins/concepts/docs/manual.md),
 [whiteboard](../../rook/plugins/whiteboard/docs/manual.md).
-
-The 0.4 knowledge, projects, tasks and concepts move over with the
-migration ([Moving from 0.4](migrating.md)).

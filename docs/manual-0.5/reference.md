@@ -54,7 +54,6 @@ Paths are relative to the file. An unknown key is an error.
 | `python -m rook.core2.worker --config worker.yaml enroll <hub \| qr text> [--name] [--code] [--discover] [--insecure] [--force]` | sign this machine in with its home hub |
 | `python -m rook.core2.worker --config worker.yaml` | run the worker |
 | `python -m rook.core2.worker --config worker.yaml check` | import this core and check the config and core's manifests (what a core update runs before it switches; [Workers](workers.md#keeping-workers-up-to-date)) |
-| `python -m rook.core2.migrate --from <0.4 copy> --to hub.yaml [--apply] [--rename OLD=NEW] [--json]` | move a 0.4 hub ([Moving from 0.4](migrating.md)) |
 | `python -m rook.kit.manifest validate <folder>` / `diff <old> <new>` | check a plugin ([Writing a plugin](authoring.md#checking-and-trying-it)) |
 | `python -m rook.core2.hub.doors.mcp_stdio [--url] [--token-file]` | the MCP door over stdio, for agents that need it |
 

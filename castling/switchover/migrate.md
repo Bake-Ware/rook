@@ -1,7 +1,10 @@
 # Moving a 0.4 hub to 0.5
 
-A one-off move, not a product feature (knowledge page castling-design):
-`python -m rook.core2.migrate` reads a **copy** of the 0.4 hub's data folder
+A one-off move, not a product feature (knowledge page castling-design). This is
+repo tooling for the switchover, not part of the shipped `rook` package; run it
+from a checkout's root, and delete it after cutover.
+
+`python -m castling.switchover.migrate` reads a **copy** of the 0.4 hub's data folder
 and writes a 0.5 hub's config and stores. It never touches the 0.4 hub.
 
 ## 1. Copy the 0.4 data
@@ -34,8 +37,8 @@ and leave the hub stopped.
 ## 3. Dry run, then apply
 
 ```sh
-python -m rook.core2.migrate --from ~/rook-04-copy --to hub/hub.yaml          # report only
-python -m rook.core2.migrate --from ~/rook-04-copy --to hub/hub.yaml --apply  # write
+python -m castling.switchover.migrate --from ~/rook-04-copy --to hub/hub.yaml          # report only
+python -m castling.switchover.migrate --from ~/rook-04-copy --to hub/hub.yaml --apply  # write
 ```
 
 `--rename u_3f2a=autumn` (a 0.4 account id or the derived name, repeatable)
@@ -51,7 +54,7 @@ what is missing.
 | trust map: project levels | `project.trust` records (sacred, guarded -> normal, ship-it) |
 | vault | `<data>/vault.db`, re-sealed under a key derived from the hub's root key |
 | the home agent's memory | the house agent's memory; learned procedures nobody approved go on its notepad |
-| knowledge, concepts, projects, tasks | workbench records (the workbench's `import_04.py`) |
+| knowledge, concepts, projects, tasks | workbench records (`castling/switchover/import_04.py`) |
 | journal | `<data>/archive/0.4/journal.db`, read-only, not part of the 0.5 chains |
 | machines | a re-enrollment checklist: on each, `python -m rook.core2.worker --config worker.yaml enroll <hub>` |
 

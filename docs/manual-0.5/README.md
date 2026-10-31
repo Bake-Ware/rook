@@ -7,7 +7,7 @@ Rook 0.5 ("Castling"). The 0.4 manual is in `docs/manual/` and stays as it
 is until 0.5 ships.
 
 0.5 is a clean cut from 0.4: no 0.4 machine talks to a 0.5 one, and a band
-moves over all at once ([Moving from 0.4](migrating.md)).
+moves over all at once.
 
 ## For people
 
@@ -27,7 +27,6 @@ moves over all at once ([Moving from 0.4](migrating.md)).
 14. [Jobs](jobs.md): things that run on a schedule or an event.
 15. [Streams](streams.md): terminals, processes and other live things.
 16. [Security plugins](security.md): the gates that watch every call.
-17. [Moving from 0.4](migrating.md): the one-off move of a 0.4 hub.
 
 ## For agents
 

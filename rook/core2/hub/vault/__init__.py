@@ -15,7 +15,7 @@ reference in a call to a worker (:func:`resolver`), a hub plugin's secret
 setting (:meth:`Vault.setting`), or ``secret.reveal``, a hard stop. Nothing
 here caches a value, so the CLI can change the file while the hub runs.
 
-The migration tool (:mod:`rook.core2.migrate`) writes through :meth:`Vault.put`.
+The one-off 0.4 migration (``castling/switchover/migrate``) writes through :meth:`Vault.put`.
 """
 from __future__ import annotations
 
