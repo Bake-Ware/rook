@@ -1,0 +1,80 @@
+# Claude Code rules (0.4 ccmod): written once on the hub as records, put into
+# effect by claudecode.install on each worker where Claude Code runs (hooks
+# and a status line merged into the person's settings.json, never replacing
+# theirs). Code: scripts/claudecode.py (install, the settings merge) and
+# scripts/hook.py (the command Claude Code runs; stdlib only).
+manifest: 1
+plugin: claudecode
+version: 0.5.0
+title: Claude Code rules
+doc: Rules that block, add instructions to, or set the status line of Claude Code sessions on your workers.
+package: agents
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [linux, macos, windows]
+uses: [claudecode.list]
+records:
+  # One rule: when a Claude Code hook event matches (tool, text, project or
+  # agent), do its actions. A rule's text reaches Claude inside people's
+  # sessions (inject is as good as running code there): writing rules is admin.
+  claudecode:
+    fields:
+      name: { type: str, required: true, max: 80 }
+      enabled: { type: bool, default: true }
+      event:
+        type: str
+        required: true
+        enum: [SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop, SubagentStop, PreCompact, SessionEnd]
+      matcher: { type: str, max: 200, doc: "PreToolUse/PostToolUse: a tool name pattern (Bash, Edit|Write, mcp__.*)." }
+      contains: { type: str, max: 200, doc: "Text the tool input, prompt or notification must contain (case-insensitive)." }
+      scope: { type: str, enum: [all, project, agent], default: all }
+      target: { type: str, max: 300, doc: "project: a folder name anywhere in the session's path, or an absolute path prefix; agent: the session's ROOK_AGENT." }
+      actions:
+        type: list
+        required: true
+        max: 8
+        items:
+          type: map
+          fields:
+            type: { type: str, enum: [block, inject, statusline], required: true }
+            text: { type: str, max: 4000, doc: "block: the reason shown; inject: the instructions; statusline: the text. Takes {tool}, {project}, {cwd}, {session}, {agent}, {prompt}, {message}, {event}, {worker}, {band}." }
+    risk: { create: admin, update: admin, archive: admin, delete: admin }
+    caps: [list, get, search, history, create, update, archive, delete]
+    search: [name]
+    history: true
+caps:
+  install:
+    doc: >-
+      Put the hub's enabled Claude Code rules into effect on this worker: Rook's hooks (and its
+      status line, when you have none) merged into every Claude Code installation's settings.json
+      here, a backup kept before each write. No enabled rules takes Rook's part out. dry_run shows
+      each file's diff without writing.
+    risk: admin
+    scope: local
+    effects: [persists]
+    timeout: 60s
+    aliases: [ccmod.apply]
+    args:
+      dry_run: { type: bool, default: false }
+    result: { type: map }
+    run: scripts/claudecode.py:install
+  remove:
+    doc: Take Rook's hooks and status line out of every Claude Code installation here and drop its rules (your own settings stay; an untouched file comes back byte for byte).
+    risk: admin
+    scope: local
+    timeout: 60s
+    aliases: [ccmod.remove]
+    args:
+      dry_run: { type: bool, default: false }
+    result: { type: map }
+    run: scripts/claudecode.py:remove
+  status:
+    doc: Which Claude Code installations here carry Rook's hooks, and how many rules this worker holds.
+    risk: read
+    scope: local
+    idempotent: true
+    aliases: [ccmod.status]
+    result: { type: map }
+    run: scripts/claudecode.py:status
+docs: { manual: docs/manual.md }
+check: [claudecode.status]
