@@ -21,7 +21,8 @@ pytest.importorskip("jsonschema")
 
 from rook.core2 import wire  # noqa: E402
 from rook.core2.enroll import device, mdns  # noqa: E402
-from rook.core2.enroll.hub import CODE_SECS, MAX_PENDING, Enrollment, check_options, recovery_key  # noqa: E402
+from rook.core2.enroll.hub import (CODE_SECS, MAX_PENDING, UNPOLLED_SECS, Enrollment, check_options,  # noqa: E402
+                                   recovery_key)
 from rook.core2.hub.__main__ import main as hub_main  # noqa: E402
 from rook.core2.hub.identity import Caller  # noqa: E402
 from rook.core2.hub.runtime import Config, Hub, Loopback, load_config  # noqa: E402
@@ -151,6 +152,8 @@ def test_a_device_code_waits_for_the_person_and_can_be_refused(tmp_path):
             pending = await until(listed)
             code = pending[0]["user_code"]
             assert pending[0]["name"] == "tablet" and said and code in said[0] and hub.hub_id in said[0]
+            # the approver sees where the request came from and how old it is (review D4)
+            assert pending[0]["address"] == "127.0.0.1" and isinstance(pending[0]["age"], int)
             kid = await http(hub, "POST", "/enroll/approve", {"code": code}, tok["kid"])
             ok = await http(hub, "POST", "/enroll/approve", {"code": code.lower().replace("-", " ")}, tok["ann"])
             bundle = await task
@@ -233,6 +236,31 @@ def test_codes_expire_and_waiting_devices_are_bounded(tmp_path):
     assert late["error"] == "unknown or expired code"
     assert poll["error"] == "unknown or expired device code"
     assert busy["error"].startswith("busy:")
+
+
+def test_unpolled_device_codes_go_fast_so_a_flood_cannot_hold_the_queue(tmp_path):
+    # /enroll/device takes no token: codes nobody polls must not fill the
+    # queue for ten minutes (review D4).
+    now = [1_800_000_000.0]
+    hub = Hub(config(tmp_path), transport=Loopback(), clock=lambda: now[0])
+    hub.data, hub.hub_id = Path(tmp_path / "data"), "0" * 16
+    hub.data.mkdir()
+    e = Enrollment(hub, {})
+    hub.identities = __import__("rook.core2.hub.identity", fromlist=["x"]).Identities()
+    hub.identities.add_user("bake", "owner")
+
+    async def go():
+        real = await e.device_start({"name": "laptop"}, address="10.0.0.7")
+        for _ in range(MAX_PENDING - 1):
+            assert (await e.device_start({"name": "bake-laptop"}, address="203.0.113.9"))["ok"]
+        assert (await e.device_start({"name": "x"}))["error"].startswith("busy:")
+        for _ in range(4):                     # the real device keeps polling; the flood doesn't
+            now[0] += UNPOLLED_SECS / 3
+            assert (await e.device_poll({"device_code": real["device_code"]}))["pending"]
+        pending = (await e.pending(OWNER))["devices"]
+        assert [(d["name"], d["address"], d["age"]) for d in pending] == [("laptop", "10.0.0.7", int(UNPOLLED_SECS * 4 / 3))]
+        return await e.device_start({"name": "tablet"})
+    assert run(go())["ok"]
 
 
 def test_membership_requests_are_checked_and_band_keys_resolve_for_owners_only(tmp_path):

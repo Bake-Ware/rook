@@ -143,7 +143,8 @@ class _Handler(BaseHTTPRequestHandler):
         if method == "GET" and path == "/health":
             return 200, {"ok": True, "hub": hub.hub_id}
         if method == "POST" and path in OPEN:      # a device enrolling has no token yet
-            return 200, self._run(getattr(hub.enroll, OPEN[path])(self._body()))
+            extra = {"address": self._address()} if OPEN[path] == "device_start" else {}
+            return 200, self._run(getattr(hub.enroll, OPEN[path])(self._body(), **extra))
         if path.startswith("/p/"):
             return self._plugin_route(method, url)
         caller = self._run(self._auth())
@@ -174,6 +175,14 @@ class _Handler(BaseHTTPRequestHandler):
         if any(p == path for _, p in routes) or path in OPEN or path.startswith("/holds/"):
             raise _Error(405, "method not allowed")
         raise _Error(404, "not found")
+
+    def _address(self) -> str:
+        """Where a request came from, for a person to judge: the peer, and
+        what a proxy in front says (X-Forwarded-For, as sent: a client
+        without a proxy can write anything there)."""
+        peer = self.client_address[0] if self.client_address else "?"
+        fwd = self.headers.get("X-Forwarded-For", "").strip()
+        return f"{peer} (forwarded for {fwd[:100]})" if fwd else peer
 
     def _base(self) -> str | None:
         """The address this request came in on, for a QR when the hub has no
