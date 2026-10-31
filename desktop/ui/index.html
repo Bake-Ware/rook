@@ -25,8 +25,15 @@
       </div>
       <span class="pill" id="signin-pill">Not signed in</span>
     </div>
-    <label class="field"><span>Hub address</span>
-      <input type="url" id="hub_url" placeholder="https://rook.example.com" autocomplete="url" spellcheck="false"></label>
+    <div class="row2">
+      <label class="field"><span>Hub address</span>
+        <input type="url" id="hub_url" placeholder="https://rook.example.com" autocomplete="url" spellcheck="false"></label>
+      <label class="field"><span>Rook version</span>
+        <select id="hub_version">
+          <option value="0.4">0.4</option>
+          <option value="0.5">0.5 (preview)</option>
+        </select></label>
+    </div>
     <p class="note" id="signin-note"></p>
     <div class="actions">
       <button class="primary" id="signin-window">Sign in</button>
@@ -42,6 +49,11 @@
       <p class="note">Your account's login, or the dashboard password (any user name).</p>
       <div class="actions"><button class="primary" type="submit">Sign in</button></div>
     </form>
+    <form id="token-form" hidden>
+      <label class="field"><span>Sign-in token</span><input type="password" id="token" autocomplete="off" spellcheck="false"></label>
+      <p class="note">The token you sign in to your hub's site with. Agent tokens won't do: this app acts as you.</p>
+      <div class="actions"><button class="primary" type="submit">Sign in</button></div>
+    </form>
     <p class="msg" id="hub-msg"></p>
   </section>
 
@@ -51,7 +63,7 @@
     <label class="field"><span>Shortcut</span>
       <span class="shortcut"><input type="text" id="ask_shortcut" spellcheck="false"><button type="button" data-record="ask_shortcut">Change</button></span></label>
     <div class="actions"><button id="try-ask">Try it</button></div>
-    <details>
+    <details id="ask-advanced">
       <summary>Advanced</summary>
       <label class="field"><span>Agent token (optional)</span>
         <input type="password" id="agent_token" placeholder="Leave empty to ask in a private chat" autocomplete="off"></label>
@@ -132,6 +144,8 @@
       <button id="worker-add">Add this computer…</button>
     </div>
     <label class="check" id="autostart-box"><input type="checkbox" id="worker_autostart"> Start it when Rook starts</label>
+    <label class="field" id="python-box"><span>Python with Rook installed</span>
+      <input type="text" id="worker_python" placeholder="python3" spellcheck="false"></label>
   </section>
 
   <section class="card" id="install-hub">
