@@ -930,7 +930,7 @@ class Hub:
         if not isinstance(payload, dict):
             return "payload is not an object"
         try:
-            if len(json.dumps(payload, ensure_ascii=False, allow_nan=False)) > EVENT_BYTES:
+            if len(json.dumps(payload, allow_nan=False)) > EVENT_BYTES:     # ASCII: characters are bytes
                 return f"payload over {EVENT_BYTES} bytes"
             check_type(name, {"type": "map", "fields": found[1].get("payload") or {}}, payload)
         except ValueError as e:

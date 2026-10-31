@@ -1047,7 +1047,7 @@ of a call still in flight**, which the hub minted itself, for that worker.
 |---|---|---|
 | `core.elevate` | `ticket` (the call's), `reason` (`upfront` or `access_denied`) | `{"lease": <rook-lease>}`, or an error: `elevation: denied`, `elevation: outside ceiling` |
 | `core.call` | `ticket` (the parent call's), `cap`, `target`, `args`, `why` | the sub-call's reply. The hub dispatches it (10.1) as the parent's `person`, `agent` and `session`, with the calling plugin's `uses` as an extra layer. |
-| `core.event` | `worker_id`, `events` (at most 100 of `{id, event, plugin, ts, payload}`), `dropped` (optional count) | `{"taken": n}`; `unknown worker` with `retry` when the hub holds no announce for that worker on this band |
+| `core.event` | `worker_id`, `events` (at most 100 of `{id, event, plugin, payload}`), `dropped` (optional count) | `{"taken": n}`; `unknown worker` with `retry` when the hub holds no announce for that worker on this band |
 
 **Events.** A worker sends the events its plugins emit (`emits`) to every
 hub whose ceiling grants the event's name, in `core.event` batches, one
@@ -1058,7 +1058,7 @@ the same event `id`s (random, per event), and the hub drops ids it has
 seen. The hub takes an event only when the worker is known on the band the
 request came on, a manifest it announced declares the event (by that
 `plugin`), its ceiling grants the name (with the worker's name as target)
-and the payload fits the declared fields (no others; at most 16 KiB). A
+and the payload fits the declared fields (no others; at most 16 KiB as ASCII JSON). A
 worker's events are its owner's data: the hub sets `person` (the person who
 owns the worker, null when none is known) and `worker` (its name) on the
 payload, replacing whatever the worker sent there. Refused events are

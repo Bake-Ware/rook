@@ -505,7 +505,7 @@ class Worker:
         if not self.started or self.transport is None:
             return
         try:
-            size = len(json.dumps(payload, ensure_ascii=False, allow_nan=False))
+            size = len(json.dumps(payload, allow_nan=False))     # ASCII: characters are bytes
         except (TypeError, ValueError):
             log.warning("event not sent: payload is not JSON", extra=_f(event=event, plugin=plugin))
             return

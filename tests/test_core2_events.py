@@ -130,6 +130,31 @@ def test_outbox_is_bounded_and_counts_what_it_dropped():
     go(body)
 
 
+def test_an_evicted_batch_that_fails_counts_as_dropped():
+    async def body():
+        sent, gate, tries = [], asyncio.Event(), []
+
+        async def send(batch, dropped):
+            tries.append(1)
+            await gate.wait()
+            if len(tries) == 1:
+                raise ConnectionError("lost on the way")
+            sent.append(([e["payload"]["i"] for e in batch], dropped))
+
+        box = events.Outbox("hub", send, max_queued=2)
+        box._backoff.base = 0.01
+        box.start()
+        box.put(_ev(0))
+        await asyncio.sleep(0.02)
+        box.put(_ev(1))
+        box.put(_ev(2))                      # evicts 0, which is in flight
+        gate.set()
+        await until(lambda: sent)
+        assert sent == [([1, 2], 1)]         # 0's send failed and it had left the queue: dropped
+        await box.stop()
+    go(body)
+
+
 def test_outbox_sends_one_batch_at_a_time_and_retries_until_the_hub_answers():
     async def body():
         tries, inflight, most = [], 0, 0
@@ -328,8 +353,7 @@ def test_the_hub_refuses_events_it_cannot_vouch_for(band):
         hub.listeners.append(lambda e, p, src: seen.append((e, p)))
 
         def ev(name, payload, plugin="phone", eid=None):
-            return {"id": eid or secrets.token_hex(8), "event": name, "plugin": plugin, "ts": 1.0,
-                    "payload": payload}
+            return {"id": eid or secrets.token_hex(8), "event": name, "plugin": plugin, "payload": payload}
 
         def take(*evs, worker=WID, band_=BAND):
             return hub._worker_events(band_, {"worker_id": worker, "events": list(evs)})

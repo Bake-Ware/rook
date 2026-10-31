@@ -17,7 +17,6 @@ import asyncio
 import collections
 import logging
 import secrets
-import time
 from typing import Awaitable, Callable
 
 from rook.core.backoff import Backoff
@@ -34,8 +33,7 @@ Send = Callable[[list, int], Awaitable[None]]
 
 def make(event: str, plugin: str, payload: dict, size: int) -> dict:
     """The wire form of one event (``size`` is its payload's JSON length)."""
-    return {"id": secrets.token_hex(8), "event": event, "plugin": plugin, "ts": round(time.time(), 3),
-            "payload": payload, "_size": size}
+    return {"id": secrets.token_hex(8), "event": event, "plugin": plugin, "payload": payload, "_size": size}
 
 
 class Outbox:
@@ -47,6 +45,7 @@ class Outbox:
         self.dropped = 0
         self._seq = 0
         self._sending = 0                  # the last seq of the batch in flight
+        self._evicted = 0                  # of those, how many the overflow took from the queue
         self._wake = asyncio.Event()       # something queued
         self._kicked = asyncio.Event()     # hub contact: retry now
         self._backoff = Backoff(base=1.0, cap=retry_cap)
@@ -65,7 +64,8 @@ class Outbox:
         """Queue one event (from the loop's thread)."""
         if len(self.queue) >= self.max:
             seq, _ = self.queue.popleft()
-            if seq <= self._sending:           # in flight: it may still arrive
+            if seq <= self._sending:           # in flight: dropped only if this send fails
+                self._evicted += 1
                 return self._append(ev)
             self.dropped += 1
             if self.dropped == 1 or self.dropped % 100 == 0:
@@ -99,13 +99,15 @@ class Outbox:
             while self.queue:
                 batch = self._batch()
                 dropped = self.dropped
-                self._sending = batch[-1][0]
+                self._sending, self._evicted = batch[-1][0], 0
                 self._kicked.clear()
                 try:
                     await self.send([{k: v for k, v in ev.items() if k != "_size"} for _, ev in batch], dropped)
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
+                    self.dropped += self._evicted
+                    self._sending = self._evicted = 0
                     delay = self._backoff.next()
                     log.debug("events not delivered %s", str(e) or type(e).__name__, extra={"fields": {
                         "hub": self.label, "queued": len(self.queue), "error": str(e) or type(e).__name__,
