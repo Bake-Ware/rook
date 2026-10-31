@@ -828,7 +828,8 @@ def test_vault_references_reach_only_the_worker(hubs, tmp_path):
             _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "secret.set", "why": WHY, "args": {
                 "name": "gh", "value": "ghp_v4lue", "description": "{{secret:gh}} stays text on the hub"}}, token)
             assert out["ok"] and out["result"]["name"] == "gh", out
-            assert hub.journal.query(call=out["id"])[0]["args"]["value"] == "[redacted]"
+            entry = hub.journal.query(call=out["id"])[0]
+            assert entry["args"]["value"] == "[redacted]" and entry["args_hash"] == wire.args_hash(entry["args"])
             assert hub.vault.list()[0]["description"] == "{{secret:gh}} stays text on the hub"
             _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "secret.list", "why": WHY}, claude)
             assert [s["name"] for s in out["result"]["secrets"]] == ["gh"] and "ghp_v4lue" not in json.dumps(out)

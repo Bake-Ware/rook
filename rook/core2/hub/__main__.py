@@ -119,9 +119,10 @@ def _read(prompt: str) -> str:
 def vault_cmd(cfg, args) -> int:
     """``secret ...`` and ``recover-vault``: the vault from the hub's machine.
     Nothing caches a value, so the hub may be running."""
-    (cfg.data / "keys").mkdir(parents=True, exist_ok=True, mode=0o700)
-    _key(cfg.data / "keys" / "root.key")      # as the hub's first start would
     v = Vault(cfg.data)
+    if args.cmd == "recover-vault" or args.action == "set":
+        (cfg.data / "keys").mkdir(parents=True, exist_ok=True, mode=0o700)
+        _key(cfg.data / "keys" / "root.key")      # as the hub's first start would
     try:
         if args.cmd == "recover-vault":
             v.recover(_read("Recovery key: "))

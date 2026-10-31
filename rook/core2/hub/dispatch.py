@@ -289,11 +289,14 @@ class Dispatcher:
         if err or meta is None:
             return deny(err or f"unknown capability: {call.cap}")
         call.cap, call.contract = name, contract
-        entry.update(cap=name, worker=w.id, band=w.band, args_hash=_args_hash(call.args),
-                     args=journal_args(call.args, meta.get("args")), **_call_facts(meta, call.elevate))
+        # The journal keeps the args (and their hash) with secret values
+        # redacted (11.1): a hash of a short PIN would give it away.
+        kept = journal_args(call.args, meta.get("args"))
+        entry.update(cap=name, worker=w.id, band=w.band, args_hash=_args_hash(kept), args=kept,
+                     **_call_facts(meta, call.elevate))
         if contract:
             entry["contract"] = contract
-        if entry["args_hash"] is None:
+        if entry["args_hash"] is None or (kept is not call.args and _args_hash(call.args) is None):
             return deny("bad args: no canonical JSON form")
         if call.appliance is not None:
             entry["appliance"] = call.appliance
