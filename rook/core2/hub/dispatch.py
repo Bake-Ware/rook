@@ -288,7 +288,7 @@ class Dispatcher:
                    entry: dict) -> dict:
         cid = entry["call"]
         try:
-            args = self.secrets(call.args, caller) if self.secrets else call.args
+            args = self.secrets(call.args, caller, call.cap) if self.secrets else call.args
             ahash = wire.args_hash(args)
         except Exception as e:
             entry.update(ok=False, error=f"secret: {e}")
@@ -332,7 +332,9 @@ class Dispatcher:
         if reply["ok"]:
             out["result"] = reply.get("result")
         else:
-            out["error"] = str(reply.get("error", "failed"))
+            # Secret values never come back in error text (6.4): a schema
+            # error quotes the argument, and only the hub knows what it resolved.
+            out["error"] = _redact(str(reply.get("error", "failed")), _resolved(call.args, args))
             entry["error"] = out["error"]
         for k in ("retry", "elevated"):
             if k in reply:
@@ -552,3 +554,22 @@ def _args_hash(args: Any) -> str | None:
         return wire.args_hash(args)
     except (ValueError, RecursionError):
         return None
+
+
+def _resolved(before: Any, after: Any) -> list[str]:
+    """The strings the secret step put into ``after`` in place of ``before``."""
+    if isinstance(after, str):
+        return [after] if after != before and after else []
+    if isinstance(after, dict):
+        b = before if isinstance(before, dict) else {}
+        return [x for k, v in after.items() for x in _resolved(b.get(k), v)]
+    if isinstance(after, list):
+        b = before if isinstance(before, list) else []
+        return [x for i, v in enumerate(after) for x in _resolved(b[i] if i < len(b) else None, v)]
+    return []
+
+
+def _redact(text: str, values: list[str]) -> str:
+    for v in sorted(set(values), key=len, reverse=True):
+        text = text.replace(v, "[redacted]")
+    return text

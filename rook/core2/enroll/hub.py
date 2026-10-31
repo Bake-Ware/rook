@@ -427,18 +427,23 @@ class Enrollment:
             cap="core.trust.set", target=w.id, args=args, why=body.get("why") if isinstance(body.get("why"), str)
             else "", session=hub._door_session(caller), door=door))
 
-    def resolve(self, args: Any, caller) -> Any:
+    def resolve(self, args: Any, caller, cap: str | None = None) -> Any:
         """Dispatch's secret step: ``{{secret:band-psk-<band>}}`` becomes the
-        PSK of a band this hub accepted an invite for, in an owner's calls
-        only (the journal keeps the reference).
+        PSK of a band this hub accepted an invite for, only in
+        ``core.trust.set`` made by an owner in person (the membership flow;
+        the journal keeps the reference). Anywhere else the key would reach
+        whoever reads the call's output: an agent acting for the owner could
+        ``shell.exec echo`` it.
         TODO(castling:vault): the vault resolves every reference."""
         def walk(v: Any) -> Any:
             if isinstance(v, str):
                 m = PSK_REF.fullmatch(v)
                 if not m:
                     return v
-                if not self.hub.identities.is_owner(caller.person):
-                    raise ValueError("only an owner's calls carry band keys")
+                if not self.hub.identities.is_owner(caller.person) or caller.agent:
+                    raise ValueError("only an owner's own calls carry band keys")
+                if cap != "core.trust.set":
+                    raise ValueError("band keys travel only in core.trust.set")
                 if m[1] not in self.bands:
                     raise ValueError(f"no key for band {m[1][:8]}")
                 return self.bands[m[1]]["psk"]
