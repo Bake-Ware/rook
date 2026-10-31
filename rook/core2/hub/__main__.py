@@ -4,6 +4,13 @@
     python -m rook.core2.hub --config hub.yaml
     python -m rook.core2.hub --config hub.yaml token --person bake [--agent claude-code] [--label laptop]
     python -m rook.core2.hub --config hub.yaml recovery-key
+    python -m rook.core2.hub --config hub.yaml secret list | set NAME [--description TEXT] | delete NAME
+    python -m rook.core2.hub --config hub.yaml recover-vault
+
+``secret set`` reads the value from stdin (never the command line, which
+other users of the machine can see). ``recover-vault`` opens a ``vault.db``
+copied from a hub that died, with the owner's recovery key (typed, or on
+stdin), and seals it under this hub's root key.
 
 ``init`` is the owner hub's first run: it writes the config (with a new band
 key), makes the hub's keys, and prints the owner's sign-in token and the
@@ -37,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import getpass
 import secrets
 import signal
 import sys
@@ -48,6 +56,7 @@ from .. import wire
 from ..enroll.hub import recovery_key
 from .identity import Caller
 from .runtime import Hub, _key, _write_private, add_token, home_band, load_config, setup_logging
+from .vault import Vault, VaultError
 
 
 async def serve(cfg) -> None:
@@ -101,6 +110,43 @@ def init(path: Path, owner: str, relay: str | None, ws_url: str | None, url: str
     return 0
 
 
+def _read(prompt: str) -> str:
+    if sys.stdin.isatty():
+        return getpass.getpass(prompt)
+    return sys.stdin.read().rstrip("\r\n")
+
+
+def vault_cmd(cfg, args) -> int:
+    """``secret ...`` and ``recover-vault``: the vault from the hub's machine.
+    Nothing caches a value, so the hub may be running."""
+    (cfg.data / "keys").mkdir(parents=True, exist_ok=True, mode=0o700)
+    _key(cfg.data / "keys" / "root.key")      # as the hub's first start would
+    v = Vault(cfg.data)
+    try:
+        if args.cmd == "recover-vault":
+            v.recover(_read("Recovery key: "))
+            print(f"vault recovered: {len(v.names())} secrets, now sealed under this hub's root key; "
+                  "the recovery key you typed is this hub's recovery key")
+            return 0
+        if args.action == "list":
+            for s in v.list():
+                print(f"{s['name']}\t{s['description']}")
+            return 0
+        if not args.name:
+            print(f"secret {args.action}: give a NAME", file=sys.stderr)
+            return 2
+        if args.action == "delete":
+            if not v.delete(args.name):
+                print(f"secret delete: {args.name} is not in the vault", file=sys.stderr)
+                return 2
+            return 0
+        v.unlock().set(args.name, _read(f"Value for {args.name}: "), by="cli", description=args.description)
+        return 0
+    except VaultError as e:
+        print(f"{args.cmd}: {e}", file=sys.stderr)
+        return 2
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="python -m rook.core2.hub", description="Rook 0.5 hub")
     ap.add_argument("--config", required=True, help="the hub's YAML config")
@@ -116,6 +162,11 @@ def main(argv=None) -> int:
     ini.add_argument("--url", help="where devices reach this hub's door (https://...), for enrollment")
     ini.add_argument("--bind", default="127.0.0.1:8740", help="the HTTP door's address (default %(default)s)")
     sub.add_parser("recovery-key", help="show the owner's recovery key")
+    sec = sub.add_parser("secret", help="the hub's vault: list, set (value on stdin) or delete a secret")
+    sec.add_argument("action", choices=["list", "set", "delete"])
+    sec.add_argument("name", nargs="?")
+    sec.add_argument("--description")
+    sub.add_parser("recover-vault", help="open a vault.db from a hub that died, with the owner's recovery key")
     args = ap.parse_args(argv)
     if args.cmd == "init":
         return init(Path(args.config), args.owner, args.relay, args.ws_url, args.url, args.bind)
@@ -127,6 +178,8 @@ def main(argv=None) -> int:
     if args.cmd == "recovery-key":
         print(recovery_key(cfg.data))
         return 0
+    if args.cmd in ("secret", "recover-vault"):
+        return vault_cmd(cfg, args)
     if args.cmd == "token":
         if args.person and args.person not in cfg.users:
             print(f"token: no user {args.person!r} in the config", file=sys.stderr)

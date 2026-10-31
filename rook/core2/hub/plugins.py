@@ -101,7 +101,7 @@ class HubPlugins:
         self.emit = emit
         self.data_dir = Path(data_dir) if data_dir else None
         self.settings = settings or {}          # plugin -> {setting: value}
-        self.resolve_secret = resolve_secret    # TODO(castling:vault)
+        self.resolve_secret = resolve_secret    # the vault: name -> value (Vault.setting)
         self.people = people                    # owners() and settings(person): ctx.settings_for
         self.scheduler = Scheduler(dispatch=self._hook_call, timeout=hook_timeout)
         self.plugins: dict[str, HubPlugin] = {}

@@ -19,7 +19,8 @@ pytest.importorskip("aiohttp")
 from fake_services import FakeClaude, FakeDiscord, FakeOpenAI, FakeTelegram, serve  # noqa: E402
 from port_helpers import PLUGINS  # noqa: E402
 from rook.core2.hub.identity import Caller  # noqa: E402
-from rook.core2.hub.runtime import Config, Hub, Loopback  # noqa: E402
+from rook.core2.hub.runtime import Config, Hub, Loopback, _key  # noqa: E402
+from rook.core2.hub.vault import Vault  # noqa: E402
 
 BAND = "e17904e6ed4c664592f64f6f1d02c682"
 WHY = "Check the hub service plugins."
@@ -110,14 +111,22 @@ def run_hub(cfg, body, timeout=40):
     asyncio.run(asyncio.wait_for(main(), timeout))
 
 
+def seed_vault(data, **values):
+    """Secrets in the hub's vault before it starts (as ``secret set`` would)."""
+    (data / "keys").mkdir(parents=True, exist_ok=True)
+    _key(data / "keys" / "root.key")
+    v = Vault(data).unlock()
+    for name, value in values.items():
+        v.set(name, value, by="test")
+
+
 def users():
     return {"bake": {"preset": "owner"}, "ann": {"preset": "adult"},
             "kid": {"preset": "child", "created": time.time()}}
 
 
-def test_notify_reaches_people_on_phone_telegram_and_discord(tmp_path, monkeypatch):
-    monkeypatch.setenv("ROOK_SECRET_TG_BOT", TG_TOKEN)
-    monkeypatch.setenv("ROOK_SECRET_DC_BOT", DC_TOKEN)
+def test_notify_reaches_people_on_phone_telegram_and_discord(tmp_path):
+    seed_vault(tmp_path / "data", **{"tg-bot": TG_TOKEN, "dc-bot": DC_TOKEN})
     tg, dc = FakeTelegram(TG_TOKEN), FakeDiscord(DC_TOKEN)
 
     async def body(hub, owner):
@@ -249,9 +258,8 @@ def test_notify_reaches_people_on_phone_telegram_and_discord(tmp_path, monkeypat
     asyncio.run(asyncio.wait_for(main(), 60))
 
 
-def test_a_channel_that_fails_falls_through(tmp_path, monkeypatch):
-    # No token in the environment: telegram can't send; the phone still works.
-    monkeypatch.delenv("ROOK_SECRET_TG_BOT", raising=False)
+def test_a_channel_that_fails_falls_through(tmp_path):
+    # No token in the vault: telegram can't send; the phone still works.
     cfg = Config(data=tmp_path / "data", band=BAND, library=library(tmp_path, "notify", "telegram"), users=users(),
                  doors={"http": {"bind": "127.0.0.1:0"}},
                  settings={"telegram": {"token": "tg-bot", "api": "http://127.0.0.1:9", "poll": 1},
@@ -263,7 +271,7 @@ def test_a_channel_that_fails_falls_through(tmp_path, monkeypatch):
         assert out["result"]["sent"] == [{"to": "person:bake", "channel": "phone"}]
         assert "telegram" in out["result"]["errors"]["person:bake"]
         st = (await call(hub, owner, "telegram.status"))["result"]
-        assert st["connected"] is False and "ROOK_SECRET_TG_BOT" in (st["error"] or "")
+        assert st["connected"] is False and "tg-bot is not in the vault" in (st["error"] or "")
         # A worker that isn't there: the phone channel says so.
         assert (await call(hub, owner, "setting.set", plugin="notify", key="phone", value="no-such-phone"))["ok"]
         out = await call(hub, owner, "notify.send", text="hi", channel="phone")
@@ -271,8 +279,8 @@ def test_a_channel_that_fails_falls_through(tmp_path, monkeypatch):
     run_hub(cfg, body)
 
 
-def test_llm_complete_routes_to_the_chosen_provider(tmp_path, monkeypatch):
-    monkeypatch.setenv("ROOK_SECRET_CLAUDE_API", "sk-ant-test")
+def test_llm_complete_routes_to_the_chosen_provider(tmp_path):
+    seed_vault(tmp_path / "data", **{"claude-api": "sk-ant-test"})
     oa, cl = FakeOpenAI(), FakeClaude(key="sk-ant-test")
 
     async def main():

@@ -20,6 +20,7 @@ import pytest
 import yaml
 
 from rook.core2.hub.runtime import load_config
+from rook.core2.hub.vault import Locked
 from rook.core2.migrate import IMPORTER, MigrateError, NotACopy, convert, migrate, render, vault
 from rook.core2.migrate.source import Source
 
@@ -250,7 +251,7 @@ def test_apply_writes_the_05_hub_and_reruns_add_nothing(tmp_path, copy04):
     assert stat.S_IMODE((data / "vault.db").stat().st_mode) == 0o600
     root = (data / "keys" / "root.key").read_text()
     (data / "keys" / "root.key").write_text(os.urandom(32).hex())
-    with pytest.raises(nacl.exceptions.CryptoError):
+    with pytest.raises(Locked):
         vault.get(data, "github-pat")
     (data / "keys" / "root.key").write_text(root)
     # memory: the house agent's

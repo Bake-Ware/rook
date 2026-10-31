@@ -28,6 +28,9 @@ What it owns:
 - **The hub node**: calls to ``rook`` (the hub's own caps) are dispatched like
   any other and run in-process; the band's ``core.elevate`` and ``core.call``
   requests are answered here (13).
+- **The vault** (:mod:`.vault`): ``<data>/vault.db``, unlocked on start
+  with the root key; ``{{secret:NAME}}`` in calls to workers and hub
+  plugins' secret settings read it; ``secret.*`` caps for owners.
 - **Enrollment** (:mod:`rook.core2.enroll.hub`): devices signing in as a
   person, the config bundle, the owner's recovery key, other hubs' invites
   and the memberships this hub signs for its workers (spec 9, 12).
@@ -73,6 +76,8 @@ from .doors.web import caps as builtin_caps
 from .identity import Caller, Identities, digest
 from .journal_store import JournalError, JournalStore
 from .plugins import HubPlugins, short_caps
+from .vault import Locked, Vault, resolver
+from .vault import caps as vault_caps
 
 log = logging.getLogger("rook.hub")
 
@@ -168,18 +173,6 @@ def _key(path: Path, max_age: float | None = None, now: float | None = None) -> 
     _write_private(path, bytes(sk).hex() + "\n")
     log.info("new key", extra={"fields": {"key": path.name, "kid": wire.key_id(bytes(sk.verify_key))}})
     return sk
-
-
-def env_secret(name: str) -> str:
-    """A hub plugin's secret setting, by vault name. TODO(castling:vault):
-    stand-in until the hub has its vault: the value comes from the hub
-    process's environment, ``ROOK_SECRET_<NAME>`` (upper case, anything not a
-    letter or digit as ``_``), so it is never in a config file."""
-    var = "ROOK_SECRET_" + re.sub(r"[^A-Z0-9]", "_", str(name).upper())
-    value = os.environ.get(var)
-    if not value:
-        raise KitError(f"secret {name} is not set (no vault yet: set {var} for the hub)")
-    return value
 
 
 def home_band(cfg: Config) -> str:
@@ -382,6 +375,11 @@ class Hub:
         self.band = home_band(cfg)
         self.grant = self._grant()
 
+        self.vault = Vault(self.data)
+        try:
+            self.vault.unlock()
+        except Locked as e:          # the hub runs; calls that use a secret fail until recover-vault
+            log.error("vault locked", extra={"fields": {"error": str(e)}})
         self.journal = JournalStore(str(self.data / "journal.db"), clock=self.clock)
         self.records = RecordStore(str(self.data / "records.db"), emit=self._emit, clock=self.clock)
         core_raw, issues = check(CORE)
@@ -399,13 +397,14 @@ class Hub:
         self.contracts = Contracts(dict(cfg.contracts))
         self.plugins = HubPlugins(records=self.records, contracts=self.contracts, call=self.call_as,
                                   emit=self._emit, data_dir=self.data / "plugins", settings=cfg.settings,
-                                  resolve_secret=env_secret, band=self.band)
+                                  resolve_secret=self.vault.setting, band=self.band)
         self.plugins.add_core(self.core)
         builtin_caps.install(self)               # pages, hub, approval, journal, setting: before the library
+        vault_caps.install(self)
         self.enroll = Enrollment(self, cfg.enroll)
         self.dispatcher = Dispatcher(hub_id=self.hub_id, op_key=self.op, identities=self.identities,
                                      workers={}, send=self._send, journal=self._journal,
-                                     hubkey=self.grant, clock=self.clock, secrets=self.enroll.resolve)
+                                     hubkey=self.grant, clock=self.clock, secrets=self._secret_step)
         self.dispatcher.closed_doors = set(_read_doors(self.data))
         self._sync_hub()
         await self._load_library()
@@ -544,6 +543,16 @@ class Hub:
                 self.identities.add_token_digest(d, Caller(rec.get("person"), rec.get("agent")))
             except ValueError as e:
                 log.warning("bad token entry", extra={"fields": {"error": str(e)}})
+
+    def _secret_step(self, args: Any, caller: Caller, cap: str, target: str | None = None) -> Any:
+        """Dispatch's secret step. Band keys go by enrollment's rule (an
+        owner's own ``core.trust.set``); every other ``{{secret:NAME}}`` is
+        the vault's, and only in a call to a worker: the hub's own caps keep
+        the reference as text, so a page, task or record never stores a value."""
+        args = self.enroll.resolve(args, caller, cap)
+        if target == self.node:
+            return args
+        return resolver(self.vault, self.identities.is_owner)(args, caller)
 
     def add_token(self, caller: Caller, label: str = "") -> str:
         """A new door token for ``caller``, stored by hash. Returned once."""
@@ -1274,7 +1283,8 @@ class Hub:
     async def holds_view(self, caller: Caller) -> dict:
         owner = self.identities.is_owner(caller.person)
         return {"ok": True, "holds": [
-            {"hold": h.name, "cap": h.call.cap, "worker": h.worker.name, "why": h.call.why, "args": h.call.args,
+            {"hold": h.name, "cap": h.call.cap, "worker": h.worker.name, "why": h.call.why,
+             "args": h.entry.get("args", h.call.args),
              "person": h.caller.person, "agent": h.caller.agent, "reasons": h.reasons()}
             for h in self.dispatcher.holds.values()
             if owner or (caller.person and h.caller.person == caller.person) or h.caller == caller]}

@@ -1,0 +1,53 @@
+# The hub's vault (castling gate R1): <data>/vault.db, sealed under a key
+# derived from the hub's root key and the owner's recovery key.
+# Implemented by the hub (rook.core2.hub.vault.caps). Owners only.
+manifest: 1
+plugin: secret
+version: 0.5.0
+title: Secrets
+doc: The hub's vault. Calls use a secret as {{secret:NAME}} in their args; the value goes only to the worker that runs the call.
+package: core
+builtin: true
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+
+caps:
+  list:
+    doc: Every secret's name, description, when it was set and by whom. Never a value.
+    on: hub
+    risk: read
+    scope: multi-user
+    idempotent: true
+    result: { type: map }
+  set:
+    doc: Store a secret, or replace one's value. The value is kept sealed and never journaled.
+    on: hub
+    risk: admin
+    scope: multi-user
+    effects: [persists]
+    args:
+      name: { type: str, required: true, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" }
+      value: { type: secret, required: true, doc: "The value itself (journaled as [redacted])." }
+      description: { type: str, max: 500, doc: "What it is for; blank: keep the old one." }
+    result: { type: map }
+  delete:
+    doc: Erase a secret for good. The person answers first.
+    on: hub
+    risk: admin
+    scope: multi-user
+    effects: [destructive]
+    args:
+      name: { type: str, required: true }
+    result: { type: map }
+  reveal:
+    doc: Show a secret's value. The person answers first, every time.
+    on: hub
+    risk: read
+    scope: multi-user
+    effects: [sensitive]
+    args:
+      name: { type: str, required: true }
+    result: { type: map, fields: { name: { type: str }, value: { type: secret } } }
+
+docs: { manual: docs/manual.md }

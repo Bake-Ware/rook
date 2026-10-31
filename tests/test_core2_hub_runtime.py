@@ -191,6 +191,7 @@ class FakeWorker:
         self.pending: dict[str, asyncio.Future] = {}
         self.verified: list[dict] = []
         self.refused: list[dict] = []
+        self.args_seen: list[dict] = []
         self.announces = 0
 
     def entries(self):
@@ -235,6 +236,7 @@ class FakeWorker:
             return
         self.verified.append(got.ticket)
         args = msg.get("args") or {}
+        self.args_seen.append(args)
 
         async def action(lease):
             cap = got.ticket["cap"]
@@ -744,12 +746,11 @@ routes:
 """
 
 
-def test_hmac_and_token_routes(hubs, tmp_path, monkeypatch):
+def test_hmac_and_token_routes(hubs, tmp_path):
     import hashlib
     import hmac as hmac_
     lib = tmp_path / "lib"
     plugin(lib, "bot", BOT, {"bot.py": "def hook(ctx, request):\n    return {'got': request['body'].decode()}\n"})
-    monkeypatch.setenv("ROOK_SECRET_BOT_KEY", "k3y")
 
     async def post(hub, path, body: bytes, headers: dict):
         def go():
@@ -765,6 +766,7 @@ def test_hmac_and_token_routes(hubs, tmp_path, monkeypatch):
     async def go():
         hub, _, _ = await hubs(config(tmp_path, library=lib, settings={"bot": {"token": "t0k"}}), worker=False)
         try:
+            hub.vault.set("BOT_KEY", "k3y", by="person:bake")
             body = b'{"ref": "main"}'
             sig = "sha256=" + hmac_.new(b"k3y", body, hashlib.sha256).hexdigest()
             assert await post(hub, "/signed", body, {"X-Hub-Signature-256": sig}) == (200, {"got": body.decode()})
@@ -776,7 +778,7 @@ def test_hmac_and_token_routes(hubs, tmp_path, monkeypatch):
             assert (await post(hub, "/bearer", body, {"Authorization": "Bearer t0k"}))[0] == 200
             assert (await post(hub, "/bearer", body, {"Authorization": "Bearer t0"}))[0] == 401
             assert (await post(hub, "/bare", body, {}))[0] == 501
-            monkeypatch.delenv("ROOK_SECRET_BOT_KEY")      # an unset secret refuses everything
+            hub.vault.delete("BOT_KEY")                     # an unset secret refuses everything
             assert (await post(hub, "/signed", body, {"X-Hub-Signature-256": sig}))[0] == 401
         finally:
             await hub.stop()
@@ -811,6 +813,66 @@ def test_hourly_check_runs_off_the_loop_and_prunes_sessions(hubs):
     run(go())
 
 
+def test_vault_references_reach_only_the_worker(hubs, tmp_path):
+    cfg = Config(data=tmp_path / "data", band=BAND, users={"bake": {"preset": "owner"}, "ann": {"preset": "adult"}},
+                 agents={"claude": {"grants": ["*"], "max_risk": "exec"}}, doors={"http": {"bind": "127.0.0.1:0"}})
+
+    async def go():
+        hub, w, token = await hubs(cfg)
+        claude = hub.add_token(runtime.Caller(person="person:bake", agent="agent:claude"))
+        ann = hub.add_token(runtime.Caller(person="person:ann"))
+        try:
+            await w.announce()
+            await until(lambda: "echo.say" in hub.dispatcher.workers.get(WID, runtime.Worker("", "", "", {}, {})).caps)
+            # secret.set: the value is sealed, journaled as [redacted]
+            _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "secret.set", "why": WHY, "args": {
+                "name": "gh", "value": "ghp_v4lue", "description": "{{secret:gh}} stays text on the hub"}}, token)
+            assert out["ok"] and out["result"]["name"] == "gh", out
+            assert hub.journal.query(call=out["id"])[0]["args"]["value"] == "[redacted]"
+            assert hub.vault.list()[0]["description"] == "{{secret:gh}} stays text on the hub"
+            _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "secret.list", "why": WHY}, claude)
+            assert [s["name"] for s in out["result"]["secrets"]] == ["gh"] and "ghp_v4lue" not in json.dumps(out)
+
+            # A reference: the worker gets the value; the caller and the journal never do.
+            _, out = await http(hub, "POST", "/call", {"worker": "kaiju", "cap": "echo.say", "why": WHY,
+                                                       "args": {"text": "Bearer {{secret:gh}}"}}, claude)
+            assert out["ok"] and out["result"]["said"] == "Bearer [redacted]", out
+            assert w.args_seen[-1] == {"text": "Bearer ghp_v4lue"}
+            entry = hub.journal.query(call=out["id"])[0]
+            assert entry["args"] == {"text": "Bearer {{secret:gh}}"} and "ghp_v4lue" not in json.dumps(entry)
+            assert w.verified[-1]["args_hash"] == wire.args_hash({"text": "Bearer ghp_v4lue"})
+
+            # Not an owner, an unknown name: refused before anything is sent.
+            sent = len(w.args_seen)
+            _, out = await http(hub, "POST", "/call", {"worker": "kaiju", "cap": "echo.say", "why": WHY,
+                                                       "args": {"text": "{{secret:gh}}"}}, ann)
+            assert not out["ok"] and "only an owner" in out["error"], out
+            _, out = await http(hub, "POST", "/call", {"worker": "kaiju", "cap": "echo.say", "why": WHY,
+                                                       "args": {"text": "{{secret:nope}}"}}, token)
+            assert out["error"] == "secret: nope is not in the vault"
+            _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "secret.list", "why": WHY}, ann)
+            assert not out["ok"] and "only an owner" in out["error"], out
+            assert len(w.args_seen) == sent
+
+            # reveal and delete are hard stops: only the person, there, answers.
+            _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "secret.reveal", "why": WHY,
+                                                       "args": {"name": "gh"}}, claude)
+            assert out["held"] and "reveals a secret" in out["error"], out
+            _, refused = await http(hub, "POST", f"/holds/{out['hold']}", {"decision": "approve"}, claude)
+            assert not refused["ok"]
+            _, done = await http(hub, "POST", f"/holds/{out['hold']}", {"decision": "approve"}, token)
+            assert done["ok"] and done["result"] == {"name": "gh", "value": "ghp_v4lue"}, done
+            _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "secret.delete", "why": WHY,
+                                                       "args": {"name": "gh"}}, token)
+            assert out["held"] and "destructive" in out["error"], out
+            assert hub.vault.names() == ["gh"]
+            _, done = await http(hub, "POST", f"/holds/{out['hold']}", {"decision": "approve"}, token)
+            assert done["ok"] and hub.vault.names() == []
+        finally:
+            await hub.stop()
+    run(go())
+
+
 def test_keep_alive_requests_do_not_wait_for_delayed_acks(hubs):
     """The door writes headers and body separately; with Nagle on, each reply
     on a reused connection waited ~40 ms for the client's delayed ACK."""
@@ -831,6 +893,30 @@ def test_keep_alive_requests_do_not_wait_for_delayed_acks(hubs):
                 c.close()
                 return statistics.median(ms[5:])
             assert await asyncio.to_thread(timed) < 20
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_the_vault_survives_a_restart_and_a_foreign_one_stays_locked(hubs, tmp_path):
+    async def go():
+        hub, _, _ = await hubs(worker=False)
+        hub.vault.set("k", "v", by="person:bake")
+        await hub.stop()
+        hub, _, _ = await hubs(worker=False)
+        try:
+            assert hub.vault.get("k") == "v"
+        finally:
+            await hub.stop()
+        other = tmp_path / "other"
+        (other / "data").mkdir(parents=True)
+        (other / "data" / "vault.db").write_bytes((tmp_path / "data" / "vault.db").read_bytes())
+        hub, _, token = await hubs(config(other), worker=False)
+        try:                              # the hub runs; the vault waits for recover-vault
+            assert hub.vault.locked and hub.vault.names() == ["k"]
+            _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "secret.set", "why": WHY,
+                                                       "args": {"name": "x", "value": "y"}}, token)
+            assert not out["ok"] and "locked" in out["error"], out
         finally:
             await hub.stop()
     run(go())

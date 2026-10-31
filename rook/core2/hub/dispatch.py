@@ -22,14 +22,18 @@ database:
   and returns the reply. TODO(castling:wiring): the band connection.
 - ``journal(entry)``: stores an entry; the store assigns ``id``, ``chain``,
   ``prev`` and ``hash`` (11.3). TODO(castling:journal): journal_store.append.
-- ``secrets(args, caller) -> args``: substitutes secret references for the
-  wire; the gates and the journal only ever see the unresolved args.
+- ``secrets(args, caller, cap, target) -> args``: substitutes secret
+  references for the wire; the gates and the journal only ever see the
+  unresolved args, and values come back as ``[redacted]`` in the call's
+  error and result. The journal also redacts args the cap declares
+  ``type: secret`` (:func:`.vault.journal_args`).
 """
 from __future__ import annotations
 
 import asyncio
 import copy
 import logging
+import re
 import secrets as _secrets
 import time
 from dataclasses import dataclass, field, replace
@@ -40,6 +44,7 @@ from rook.kit._types import parse_duration
 from .. import rights, wire
 from . import gate as gates_mod
 from .identity import Caller, Identities
+from .vault import REF, journal_args, secret_values
 
 log = logging.getLogger("rook.hub.dispatch")
 
@@ -285,7 +290,7 @@ class Dispatcher:
             return deny(err or f"unknown capability: {call.cap}")
         call.cap, call.contract = name, contract
         entry.update(cap=name, worker=w.id, band=w.band, args_hash=_args_hash(call.args),
-                     **_call_facts(meta, call.elevate))
+                     args=journal_args(call.args, meta.get("args")), **_call_facts(meta, call.elevate))
         if contract:
             entry["contract"] = contract
         if entry["args_hash"] is None:
@@ -355,7 +360,7 @@ class Dispatcher:
                    entry: dict) -> dict:
         cid = entry["call"]
         try:
-            args = self.secrets(call.args, caller, call.cap) if self.secrets else call.args
+            args = self.secrets(call.args, caller, call.cap, w.id) if self.secrets else call.args
             ahash = wire.args_hash(args)
         except Exception as e:
             entry.update(ok=False, error=f"secret: {e}")
@@ -396,12 +401,16 @@ class Dispatcher:
             break
         entry["ms"] = int((time.monotonic() - start) * 1000)
         out = {"id": cid, "ok": reply["ok"]}
+        shown = _resolved(call.args, args)
         if reply["ok"]:
-            out["result"] = reply.get("result")
+            # A value the hub put in never comes back to the caller (an
+            # ``echo`` of it, a reply that quotes its input).
+            out["result"] = _redact_all(reply.get("result"), shown) if shown else reply.get("result")
         else:
             # Secret values never come back in error text (6.4): a schema
             # error quotes the argument, and only the hub knows what it resolved.
-            out["error"] = _redact(str(reply.get("error", "failed")), _resolved(call.args, args))
+            out["error"] = _redact(str(reply.get("error", "failed")),
+                                   shown + secret_values(call.args, meta.get("args")))
             entry["error"] = out["error"]
         for k in ("retry", "elevated"):
             if k in reply:
@@ -668,7 +677,13 @@ def _args_hash(args: Any) -> str | None:
 def _resolved(before: Any, after: Any) -> list[str]:
     """The strings the secret step put into ``after`` in place of ``before``."""
     if isinstance(after, str):
-        return [after] if after != before and after else []
+        if after == before or not after:
+            return []
+        if isinstance(before, str) and REF.search(before):    # "Bearer {{secret:x}}": just the value
+            m = re.fullmatch("(.*?)".join(map(re.escape, REF.split(before)[::2])), after, re.DOTALL)
+            if m:
+                return [g for g in m.groups() if g]
+        return [after]
     if isinstance(after, dict):
         b = before if isinstance(before, dict) else {}
         return [x for k, v in after.items() for x in _resolved(b.get(k), v)]
@@ -676,6 +691,16 @@ def _resolved(before: Any, after: Any) -> list[str]:
         b = before if isinstance(before, list) else []
         return [x for i, v in enumerate(after) for x in _resolved(b[i] if i < len(b) else None, v)]
     return []
+
+
+def _redact_all(value: Any, values: list[str]) -> Any:
+    if isinstance(value, str):
+        return _redact(value, values)
+    if isinstance(value, dict):
+        return {k: _redact_all(v, values) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_all(v, values) for v in value]
+    return value
 
 
 def _redact(text: str, values: list[str]) -> str:
