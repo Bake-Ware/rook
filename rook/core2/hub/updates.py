@@ -283,15 +283,16 @@ class Updates:
             for w in ro["workers"]:
                 if w["state"] in ("waiting", "updating"):
                     w["state"], w["reason"] = "not started", w.get("reason") or "the rollout stopped"
-            ro["status"], ro["ended"] = status, round(time.time(), 3)
-            self._save_rollout()
             updated = [w["name"] for w in ro["workers"] if w["state"] == "updated"]
             failed = {w["name"]: w.get("reason") for w in ro["workers"] if w["state"] == "failed"}
-            self._history({"event": f"rollout.{status}", "rollout": ro["id"], "version": ro["version"],
-                           "updated": updated, "failed": failed})
-            if status != "interrupted" and (updated or failed):
-                ro["change"] = await self._record(ro, who, status, updated, failed)
+            try:        # the record first: a rollout that reads as ended has its record
+                if status != "interrupted" and (updated or failed):
+                    ro["change"] = await self._record(ro, who, status, updated, failed)
+            finally:
+                ro["status"], ro["ended"] = status, round(time.time(), 3)
                 self._save_rollout()
+                self._history({"event": f"rollout.{status}", "rollout": ro["id"], "version": ro["version"],
+                               "updated": updated, "failed": failed})
 
     async def _record(self, ro: dict, who: KitCaller, status: str, updated: list, failed: dict) -> str | None:
         """The rollout's one change record (when the change plugin is installed)."""
