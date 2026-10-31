@@ -64,9 +64,12 @@ def test_the_app_signs_in_with_a_device_code_and_runs_the_phone_plugins(request,
 
         until(lambda: any(w["name"] == "testphone" and w["online"] for w in bake.get("/workers")["workers"]),
               30, "the hub to see the phone")
-        caps = until(lambda: (bake.get("/caps?worker=testphone").get("workers", {}).get("testphone") or {})
-                     .get("caps"), 30, "the phone's caps")
-        assert {"sms.send", "call.dial", "battery-android.battery.status", "notification-android.notification.post"} <= set(caps), sorted(caps)
+        phone_caps = {"sms.send", "call.dial", "battery-android.battery.status", "notification-android.notification.post"}
+
+        def listed():      # core's caps come with the announce, the plugins' once the hub has the manifests
+            caps = (bake.get("/caps?worker=testphone").get("workers", {}).get("testphone") or {}).get("caps") or {}
+            return phone_caps <= set(caps)
+        until(listed, 30, "the hub to list the phone plugins' caps")
         got = bake.call("battery.status", worker="testphone")
         assert not got["ok"] and "not an Android host" in got["error"], got
         assert (files / "rook05" / "plugins" / "battery-android" / "plugin.yaml").is_file()
