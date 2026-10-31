@@ -2,8 +2,9 @@
 
 The Rook Android app is a worker: its foreground service runs Python under
 Chaquopy, and in 0.5 that Python is the ordinary 0.5 worker
-(`rook.core2.worker`) with the phone plugins. Nothing in the app changes
-yet; this page says what runs and what the app will need to switch over.
+(`rook.core2.worker`) with the phone plugins, chosen in Settings > Band (0.4
+stays the default). This page says what runs, how the app switches, and what
+is still 0.4.
 
 ## What runs
 
@@ -61,42 +62,69 @@ very first run announces nothing old):
 Until events travel to the hub (`TODO(castling:events)` in the worker
 runtime) they reach only this worker's `on:` hooks.
 
-## What the app needs to switch over
+## The app's 0.4/0.5 switch
 
-1. **Stage 0.5 into the APK.** `android/stage_worker.py` copies `rook/worker`
-   and `rook/core` today; it also needs `rook/core2`, `rook/kit`,
-   `rook/streams` and the phone plugin folders. Chaquopy serves Python from
-   inside the APK, but the 0.5 loader reads plugin folders from disk
-   (plugin.yaml, scripts, docs): extract them (Chaquopy's `extractPackages`,
-   or copy them into the app's files at first start) and name that folder
-   under `plugins:` in the config.
-2. **Python packages.** Add `pyyaml` and `jsonschema` to the Chaquopy `pip`
-   block (pynacl is there). Recent jsonschema pulls in `rpds-py`, a Rust
-   extension Chaquopy may have no wheel for: pin `jsonschema<4.18` if the
-   build can't find one.
-3. **Enrollment.** The app signs the phone in through
-   `rook.core2.enroll.device` (`sign_in` with the QR's one-time code, else
-   the short code the person approves; then `install`, which writes the
-   anchor, the home band and the config). That replaces the 0.4 pairing
-   code and Google sign-in flow (castling-enrollment).
-4. **The service.** `WorkerService.kt` calls `rook.core2.worker.android`
-   (`start`, `stop`, `kick`) instead of `worker_entry`. The 0.4 extras go:
-   worker.restart and worker.status become core's, the Workers tab's roster
-   reads hub announces, and APK updates become `worker.update`.
-5. **Permissions.** `call.dial` places calls, so the manifest needs
-   `android.permission.CALL_PHONE` and the app's permission screen should ask
-   for it. Everything else the plugins use is already granted today.
-6. **Retire the 0.4 plugins** in `rook_android/plugins` and the attention
-   service (sorting rules, feed, poll): the hub's attention job takes over
-   (castling-attention).
+The app runs 0.4 or 0.5, never both: Settings > Band > **Rook version**.
+0.4 is the default, and nothing about 0.4 changed (its pairing, Google
+sign-in, hub/key fields, the stable and beta update channels). Switching
+stops the running worker; Start runs the chosen one.
+
+- **Signing in (0.5).** Settings > Band shows "Sign in to your hub": the hub's
+  address and this phone's name. Sign in asks the hub for a device code and
+  shows it ("approve code BCDF-GHJK on hub …"); the person approves it on the
+  dashboard (`GET /enroll/pending`, `POST /enroll/approve`). Or the person
+  scans the hub's sign-in QR with the phone's camera: the
+  `rook://enroll?url=…&code=…&hub=…` link opens the app, which names the hub
+  and asks before it signs in (one-time code, hub id pinned). Signing in again
+  says the new hub becomes home and every other band goes. Plain `http://` is
+  refused except to the phone itself (`adb reverse` in testing).
+- **What runs.** `castling_entry.py` (Chaquopy) is the 0.5 entry, beside the
+  0.4 `worker_entry.py`. It enrolls with `rook.core2.enroll.device` (as
+  `python -m rook.core2.worker enroll` does), and its `start(files_dir)`
+  unpacks the phone plugins and runs `rook.core2.worker.android`. Everything
+  0.5 keeps is in the app's `files/rook05/`: `worker.yaml`, `anchor.json`,
+  `data/` (bands.json, enrollment.json, the replay cache) and `plugins/`.
+  `WorkerService.kt` calls `start`, `stop` and `kick(reason)` on whichever
+  entry the switch names.
+- **The APK.** `android/stage_worker.py` stages `rook/core2` (less `hub` and
+  `migrate`), `rook/kit`, `rook/streams`, the manifest schema
+  (`rook/_conformance`) and zips every plugin folder with `android` in
+  `platforms` into `castling_plugins.zip` (the 0.5 loader reads folders from
+  disk; the app unpacks them into `files/rook05/plugins` when the zip
+  changes). Chaquopy's pip block gains `pyyaml` and `jsonschema<4.18`
+  (4.18+ needs rpds-py, a Rust wheel Chaquopy lacks). `CALL_PHONE` is in the
+  manifest for `call.dial`, with a "Phone calls" row on the Permissions tab
+  in 0.5.
+
+### Still on 0.4, and what each needs for 0.5
+
+The phone's own features keep working in 0.5 mode, but they still talk to
+0.4 services:
+
+| Feature | Today (both modes) | For 0.5 |
+|---|---|---|
+| Voice (conversation, wake word, Talk button) | the 0.4 voice server's WebSocket (Settings > App) | a client for the hub's `speech` plugin (PR #287): `speech.open` / `speech.hear` with 16 kHz audio clips, `speech.read` for replies; the URL and key from the enrollment bundle's `services` (`data/services.json`) instead of typed settings |
+| Watch (Wear OS) | streams its mic to the phone, which relays to the 0.4 voice server | nothing on the watch: it follows the phone's voice client |
+| Widgets (Talk, Waiting, Chat) | Talk and Chat use the 0.4 voice session; Waiting reads the 0.4 attention cards | Talk and Chat follow the voice client; Waiting reads the hub's cards, which reach the phone as `notification.post` with an `id` (castling-attention) |
+| Decision cards, attention feed | the 0.4 attention service and sorting rules | the hub's attention job; answers already travel back as `notification-android.card` events once events reach the hub (`TODO(castling:events)`) |
+| APK updates | the 0.4 site's feed, stable or beta | `worker.update` from the hub |
+| Workers tab roster | 0.4 hub roster | the hub's announces |
+
+Until then the 0.4 bits in `rook_android/plugins` stay: they are the 0.4
+worker's.
 
 ## Tests
 
 Off the phone, with Chaquopy's `java` module faked:
 
 ```sh
-rook-pytest tests/plugins/test_port_phone.py tests/test_core2_worker_android.py -q
+rook-pytest tests/plugins/test_port_phone.py tests/test_core2_worker_android.py \
+    tests/test_android_castling_entry.py tests/e2e/test_phone_app_e2e.py -q
 ```
+
+`tests/e2e/test_phone_app_e2e.py` runs `castling_entry` as the app does
+(sign in with a device code a real hub's owner approves, then start) and calls
+a phone cap through the hub.
 
 `tests/plugins/phone_fakes.py` hands out one MagicMock per Java class, a
 context whose permissions and content provider queries answer from the

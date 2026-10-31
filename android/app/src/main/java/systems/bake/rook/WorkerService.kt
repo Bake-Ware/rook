@@ -23,6 +23,8 @@ import kotlin.concurrent.thread
  * The actual worker is `rook.worker` (staged into the Chaquopy python source by
  * stage_worker.py). We call `worker_entry.start(hub, psk, name)` on a dedicated
  * thread; it owns its own asyncio loop and blocks until [stopWorker] is called.
+ * With Rook 0.5 chosen ([Castling]) it is `castling_entry.start(files dir)`
+ * instead: the hub, keys and name come from the phone's enrollment.
  */
 class WorkerService : Service() {
 
@@ -93,7 +95,8 @@ class WorkerService : Service() {
         when (intent?.action) {
             ACTION_START_CAPTURE -> {
                 wantProjection = true
-                if (lastName.isEmpty()) lastName = prefs.getString("name", defaultName()) ?: defaultName()
+                if (lastName.isEmpty()) lastName = (if (Castling.on(this)) prefs.getString(Castling.NAME_PREF, null) else null)
+                    ?: prefs.getString("name", defaultName()) ?: defaultName()
                 startForegroundCompat(NOTIF_ID, buildNotification("on band as $lastName · screen"))
                 acquireWakeLock()
                 val code = intent.getIntExtra(EXTRA_CODE, android.app.Activity.RESULT_CANCELED)
@@ -128,7 +131,8 @@ class WorkerService : Service() {
             ?: prefs.getString("hub", BuildConfig.DEFAULT_HUB) ?: BuildConfig.DEFAULT_HUB
         val psk = intent?.getStringExtra(EXTRA_PSK)
             ?: prefs.getString("psk", BuildConfig.DEFAULT_PSK) ?: BuildConfig.DEFAULT_PSK
-        val name = intent?.getStringExtra(EXTRA_NAME)
+        val name = (if (Castling.on(this)) prefs.getString(Castling.NAME_PREF, null) else null)
+            ?: intent?.getStringExtra(EXTRA_NAME)
             ?: prefs.getString("name", defaultName()) ?: defaultName()
         lastName = name
         wantProjection = ScreenCaptureBridge.hasSession()
@@ -144,10 +148,16 @@ class WorkerService : Service() {
         workerThread = thread(name = "rook-worker", isDaemon = true) {
             try {
                 val py = PythonHost.ensureStarted(applicationContext)
-                entry = py.getModule("worker_entry")
                 // Blocks until the worker stops (entry installs its own SIGTERM-
-                // equivalent stop Event, triggered from stopWorker()).
-                entry?.callAttr("start", hub, psk, name)
+                // equivalent stop Event, triggered from stopWorker()). Both entries
+                // have stop() and kick(reason).
+                if (Castling.on(applicationContext)) {
+                    entry = py.getModule("castling_entry")
+                    entry?.callAttr("start", applicationContext.filesDir.absolutePath)
+                } else {
+                    entry = py.getModule("worker_entry")
+                    entry?.callAttr("start", hub, psk, name)
+                }
             } catch (t: Throwable) {
                 Log.e(TAG, "worker crashed", t)
             }

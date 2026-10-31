@@ -58,6 +58,11 @@ cd android
 ```
 
 > Re-run `stage_worker.py` whenever `rook.worker` or `telesthete.protocol` change.
+> It needs a python3 with `pyyaml` (it reads the plugin manifests to pick the
+> phone plugins for Rook 0.5).
+
+Rook 0.5 (Castling) rides in the same APK behind Settings > Band > Rook
+version; 0.4 stays the default. See [docs/castling-phone.md](../docs/castling-phone.md).
 
 ## Deployment settings
 

@@ -65,6 +65,24 @@
       <!-- ===== Band ===== -->
       <LinearLayout android:id="@+id/pageBand" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
         <LinearLayout style="@style/RookPanel">
+          <TextView style="@style/RookSectionLabel" android:text="ROOK VERSION" />
+          <RadioGroup android:id="@+id/coreVersion" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+            <RadioButton android:id="@+id/core04" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="0.4" />
+            <RadioButton android:id="@+id/core05" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="0.5 preview" />
+          </RadioGroup>
+        </LinearLayout>
+        <LinearLayout android:id="@+id/connect05" style="@style/RookPanel" android:visibility="gone">
+          <TextView style="@style/RookSectionLabel" android:text="SIGN IN TO YOUR HUB" />
+          <TextView android:id="@+id/enrolled05" style="@style/RookHelp" />
+          <TextView style="@style/RookFieldLabel" android:text="Hub address, or scan its sign-in QR with the camera" />
+          <EditText android:id="@+id/hub05" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="https://rook.example.com" android:inputType="textUri" />
+          <TextView style="@style/RookFieldLabel" android:text="@string/hint_name" />
+          <EditText android:id="@+id/name05" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_name" android:inputType="textNoSuggestions" />
+          <Button android:id="@+id/btnSignIn05" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Sign in" />
+          <TextView android:id="@+id/code05" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingTop="8dp" android:textSize="16sp" android:textColor="@color/rook_fg" android:textIsSelectable="true" android:visibility="gone" />
+          <Button android:id="@+id/btnCancel05" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Cancel sign-in" android:visibility="gone" style="@style/RookOutlinedButton" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/connect04" style="@style/RookPanel">
           <TextView style="@style/RookSectionLabel" android:text="CONNECT" />
           <TextView style="@style/RookFieldLabel" android:text="Rook server" />
           <EditText android:id="@+id/accountServer" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="https://rook.example.com" android:inputType="textUri" />
@@ -76,12 +94,14 @@
         </LinearLayout>
         <LinearLayout style="@style/RookPanel">
           <TextView style="@style/RookSectionLabel" android:text="THIS DEVICE" />
+          <LinearLayout android:id="@+id/band04" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
           <TextView style="@style/RookFieldLabel" android:text="@string/hint_hub" />
           <EditText android:id="@+id/hub" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_hub" android:inputType="textNoSuggestions" />
           <TextView style="@style/RookFieldLabel" android:text="@string/hint_psk" />
           <EditText android:id="@+id/psk" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_psk" android:inputType="textPassword" />
           <TextView style="@style/RookFieldLabel" android:text="@string/hint_name" />
           <EditText android:id="@+id/name" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="@string/hint_name" android:inputType="textNoSuggestions" />
+          </LinearLayout>
           <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="8dp">
             <Button android:id="@+id/btnStart" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:layout_marginEnd="6dp" android:text="@string/start" />
             <Button android:id="@+id/btnStop" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:text="@string/stop" style="@style/RookOutlinedButton" />

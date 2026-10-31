@@ -1,6 +1,7 @@
 # Staged in by stage_worker.py — generated, not source.
 app/src/main/python/rook/
 app/src/main/python/telesthete/
+app/src/main/python/castling_plugins.zip
 
 # Gradle / Android Studio
 .gradle/
