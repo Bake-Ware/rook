@@ -49,8 +49,8 @@ The merge-vote case and most findings below share one path:
    ("archivist, producer") without pointing at the page that defines them.
 5. **The build process itself runs the 0.4 flow.** Every prompt's LANDING section (pin via the
    house agent, `huddle.vote` call kind merge, `self_review` 80+ chars) is the live 0.4 production
-   process and is not drift by itself. But ~50 castling merges went through it ("no vote,
-   ship-it" on every merge commit: no ballot ever happened), and the 0.5 huddle copied it to the
+   process and is not drift by itself. But all 73 merges on castling went through it, and every
+   merge commit reads "no vote, ship-it" (no ballot ever happened), and the 0.5 huddle copied it to the
    letter (chair pins, 80-character `self_review`, `call kind=merge`). The same goes for the live
    0.4 MCP server instructions every agent has in context ("standard ones the hub checks, runs,
    tests and rolls back by itself; risky ... one card"): the changes lane rebuilt them almost
@@ -296,7 +296,7 @@ Watch items (ask Bake, not drift yet) are after the findings.
   agents `Streams(SqliteStore(sessions.db))` (`agents.py:117`, `agents.chat.read/send`), speech a
   second `sessions.db` (`speech.py:69`, `speech.read/hear`), huddle `huddles.db`
   (`huddle.py:124`, `huddle.read/post`). A voice turn is written twice. No `attach`. No chat-room
-  plugin on 0.5 (the switchover maps the 37 rooms to "Nothing"). Open #331 adds a hub
+  plugin on 0.5 (and the switchover carries none of 0.4's 37 rooms over). Open #331 adds a hub
   `stream.list/get/search` index (metadata only); its builtin says to read a hub stream through
   "its plugin's caps", and huddles don't call `ctx.index_streams`, so they are missing from it.
 - **Source.** #280, #287, #329 each built a store with a TODO; #331 inherited the layout.
@@ -443,8 +443,9 @@ Watch items (ask Bake, not drift yet) are after the findings.
   participant, or a person's inbox stream." "Message into a running agent: an `input` event."
   castling-design lists Telegram/Discord under Rook Assistant.
 - **Built instead.** `rook/plugins/telegram` and `discord` emit `telegram.message` /
-  `discord.message` events; nothing in `rook/plugins` subscribes to them (grep), and agents hooks
-  only `start`, `stop`, `every`. `docs/castling-switchover.md` step 3 moves both bots to 0.5, and
+  `discord.message` events; nothing in `rook/plugins` subscribes to them by name (grep), agents
+  hooks only `start`, `stop`, `every`, and jobs' catch-all `on:` fires only for a job someone made
+  with that trigger - no ready-made one ships. `docs/castling-switchover.md` step 3 moves both bots to 0.5, and
   today Bake reaches Sojourn through Discord: after cutover a message to the bot reaches no
   agent. Not on the D5 not-ported list.
 - **Smallest fix.** An agents `on: telegram.message|discord.message` hook that appends an `input`
@@ -502,8 +503,9 @@ Watch items (ask Bake, not drift yet) are after the findings.
 ## 24-30. Lower severity
 
 - **24. 0.4 cap aliases (over-built).** castling-protocol (Bake): "**Clean cut:** no 0.4/0.5
-  compatibility." 96 `aliases:` entries in 27 manifests map 0.4 names (`devkit.*`, `android.*`,
-  `device.*`, `ccmod.*`, `hid.mouse.*` ...). The alias rule is for renames within 0.5 releases.
+  compatibility." 96 `aliases:` entries in 27 manifests, all of them 0.4 names (`devkit.*`,
+  `android.*`, `device.*`, `ccmod.*`, `pikvm.*`, `deluge.*`, `work.stream.*`, `attention.post` ...);
+  dispatch resolves them (`_target_for`). The alias rule is for renames within 0.5 releases.
   *Fix:* drop the 0.4 names, or keep them to cutover + 1 release and say so in the switchover
   decisions.
 - **25. Child `approve_new` (over-built).** castling-design: "Deferred: kids and guest accounts";
