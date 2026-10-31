@@ -55,7 +55,7 @@ the final cutover doesn't hold up the earlier side-by-side steps.
 | R6 | A 0.5 release format: `worker.update`, `update.*` (N27) | Without it, every core fix means reinstalling by hand on every machine. Plugins can already be pushed. | 3 (wave B onwards) |
 | R7 | Speech on the hub | The voice assistant. | 4 |
 | R8 | The phone app runs 0.5 | The phone is the main surface. | 4 |
-| R9 | The desktop app runs 0.5 | passes | 3 |
+| R9 | The desktop app runs 0.5 | Laptops add themselves through it. Passes today. | 3 |
 | R10 | The desktop app updates on 0.5 | Without it, a desktop fix means reinstalling by hand. | 5 |
 | R11 | Soak results written up (`docs/castling-soak.md`) | see "Soak bars" | 1 |
 | R12 | The hardening review's report (`castling/review.md`) | see "Review findings" | 1 |
@@ -142,8 +142,8 @@ Summary (counts only):
 - **House agent memory:** 12 memories and 5 notepad items (unapproved
   procedures). 12 superseded memories stay behind.
 - **Journal:** 20,117 calls, 2026-10-23 to 2026-10-27, archived read-only.
-  0.4 had already pruned everything older. The hub snapshots hold the rest
-  if it's ever wanted.
+  The copy's journal starts on 2026-10-23, so older rows were pruned or
+  rotated out on 0.4. Older hub snapshots hold them if they're ever wanted.
 - **Machines:** 38 to re-enroll. 4 need a new name, because 0.5 refuses
   spaces and apostrophes. About 14 of the 38 are service containers whose
   calls are almost all the same periodic sweep (~186 calls each in four
@@ -361,7 +361,7 @@ is no 0.5 → 0.4 path. After 30 days, rollback means restoring the snapshot.
 ```sh
 python castling/switchover/readiness.py --prs
 python castling/switchover/dryrun.py --snapshot ~/rook-backups/hub-offload/<newest>.tar \
-    --out ~/rook-backups/castling-switchover/dryrun-$(date +%Y%m%d)
+    --out ~/rook-backups/castling-switchover/dryrun-$(date +%Y%m%d) [--hub-url https://<0.5 hub>]
 ```
 
 Use a Python with the repo's dependencies, such as the sidecar's

@@ -316,7 +316,8 @@ def render(r: dict) -> str:
         out.append("- no journal.db in the copy")
     out.append("\n## Re-enroll these machines\n\nOn each machine, with the 0.5 worker installed:\n")
     for w in r["workers"]:
-        flag = (" (sacred)" if w["sacred"] else "") + (f" (0.5 name `{w['name05']}`)" if w["name05"] != w["name"] else "")
+        flag = " (sacred)" if w["sacred"] else ""
+        flag += f" (0.5 name `{w['name05']}`)" if w["name05"] != w["name"] else ""
         seen = f", last seen {w['last_seen']}" if w["last_seen"] else ""
         out.append(f"- [ ] **{w['name']}**{flag}: calls in the 0.4 journal: {w['calls']}{seen}\n"
                    f"      `{w['enroll']}`")

@@ -210,11 +210,17 @@ def worker_name(name: str) -> str:
 
 
 def checklist(workers: list[dict], sacred: list, hub_url: str) -> list[dict]:
-    """One re-enrollment row per 0.4 machine; ``name05`` is its 0.5 name."""
-    out = []
+    """One re-enrollment row per 0.4 machine; ``name05`` is its 0.5 name
+    (``-2``, ``-3``... when two 0.4 names come out the same)."""
+    out, taken = [], {w["name"].casefold() for w in workers if worker_name(w["name"]) == w["name"]}
     for w in workers:
-        last, name = w["last_seen"], worker_name(w["name"])
-        out.append({"name": w["name"], "name05": name, "calls": w["calls"], "sacred": name in sacred,
+        last, base = w["last_seen"], worker_name(w["name"])
+        name, n = base, 1
+        while base != w["name"] and name.casefold() in taken:
+            n += 1
+            name = f"{base}-{n}"
+        taken.add(name.casefold())
+        out.append({"name": w["name"], "name05": name, "calls": w["calls"], "sacred": base in sacred,
                     "last_seen": _dt.datetime.fromtimestamp(last, _dt.timezone.utc).strftime("%Y-%m-%d")
                     if last else None,
                     "enroll": f"python -m rook.core2.worker --config worker.yaml enroll {shlex.quote(hub_url)} "

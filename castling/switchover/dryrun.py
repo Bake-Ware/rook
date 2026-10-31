@@ -69,13 +69,14 @@ def _write(root: Path, parts: list, src) -> None:
         shutil.copyfileobj(src, out)
 
 
-def throwaway_hub(folder: Path, owner: str) -> Path:
+def throwaway_hub(folder: Path, owner: str, url: str) -> Path:
     """A 0.5 hub config made by ``init`` (its token and recovery key are
-    discarded: this hub never runs)."""
+    discarded: this hub never runs). ``url`` is what the re-enroll checklist
+    tells machines."""
     cfg = folder / "hub05" / "hub.yaml"
     cfg.parent.mkdir(mode=0o700)
     subprocess.run([sys.executable, "-m", "rook.core2.hub", "--config", str(cfg), "init", "--owner", owner,
-                    "--relay", "127.0.0.1:9", "--bind", "127.0.0.1:9"], cwd=REPO, check=True,
+                    "--relay", "127.0.0.1:9", "--bind", "127.0.0.1:9", "--url", url], cwd=REPO, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=INIT_SECS)
     return cfg
 
@@ -134,13 +135,14 @@ def main(argv=None) -> int:
     src.add_argument("--from", dest="copy", type=Path, help="a copy of the 0.4 hub's data folder")
     ap.add_argument("--out", type=Path, required=True, help="where the reports go (made private)")
     ap.add_argument("--owner", default="bake", help="the 0.5 owner's user name (as on 0.4)")
+    ap.add_argument("--hub-url", default="https://HUB", help="the 0.5 hub's address, for the re-enroll lines")
     a = ap.parse_args(argv)
     a.out.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(a.out, 0o700)
     with tempfile.TemporaryDirectory(prefix="rook-switchover-") as tmp:   # 0700; holds vault.key while it lives
         work = Path(tmp)
         copy = unpack(a.snapshot, work / "copy04") if a.snapshot else a.copy
-        report = migrate(copy, throwaway_hub(work, a.owner), apply=False)
+        report = migrate(copy, throwaway_hub(work, a.owner, a.hub_url), apply=False)
     report["from"] = str(a.snapshot or a.copy)
     report["to"] = "(a throwaway 0.5 hub config, deleted)"
     _private(a.out / "report.json", json.dumps(report, indent=2) + "\n")

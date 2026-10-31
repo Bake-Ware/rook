@@ -510,5 +510,8 @@ def test_checklist_names_machines_as_0_5_enrollment_takes_them():
     assert rows[0]["sacred"] and not rows[1]["sacred"]
     assert rows[0]["enroll"].endswith("enroll http://hub.example:8740 --name Logans-tablet")
     assert convert.worker_name("rook") == "worker"                     # the hub's own name is taken
+    rows = convert.checklist([{"name": n, "calls": 0, "last_seen": None}
+                              for n in ("Logans-tablet", "Logan's tablet", "Logans tablet")], [], "http://h")
+    assert [r["name05"] for r in rows] == ["Logans-tablet", "Logans-tablet-2", "Logans-tablet-3"]
     sacred, _, _ = convert.trust({"entries": [{"id": "t", "level": "sacred", "targets": ["worker:Mom's phone"]}]}, [])
     assert sacred == ["Moms-phone"]                                    # the sacred list uses the 0.5 name

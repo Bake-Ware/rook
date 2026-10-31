@@ -65,6 +65,7 @@ def test_snapshot_dry_run_writes_private_reports_and_a_names_free_summary(tmp_pa
         assert words in summary, words
     report = (out / "report.md").read_text()
     assert "github-pat" in report and "github-pat" not in summary          # names stay in the private report
+    assert "enroll https://HUB --name nas" in report                       # not the throwaway hub's address
     for text in (summary, report, (out / "report.json").read_text()):
         assert SECRET not in text and "kvm-pass-123" not in text
 
@@ -97,3 +98,5 @@ def test_readiness_gates_read_this_checkout():
     rows = {gate: ok for gate, ok, _, _ in mod.check({"vault": ["rook/x.py"]})}
     assert rows["R1"] is False
     assert [g for g, *_ in mod.GATES] == [f"R{i}" for i in range(1, len(mod.GATES) + 1)]
+    mod.GATES = [("X1", "", ("plugin", "task:claim")), ("X2", "", ("plugin", "task:nope"))]
+    assert [ok for _, ok, _, _ in mod.check({})] == [True, False]

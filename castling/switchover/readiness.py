@@ -26,7 +26,7 @@ SCAN = ("rook", "android", "desktop", "services", "deploy")
 
 # (gate id, what must be true, check): ("file", path) exists | ("todo", owner) has no markers
 # left | ("cap", "manifest.yaml:name") the manifest declares that cap | ("grep", "folder:word")
-# a file under the folder mentions the word
+# a file under the folder mentions the word | ("plugin", "name:cap") a plugin in rook/plugins declares it
 GATES = [
     ("R1", "the hub has a vault: {{secret:NAME}} and secret settings read <data>/vault.db", ("todo", "vault")),
     ("R2", "worker events reach the hub (attention, Feed, sms.received, claudecode remote rules)", ("todo", "events")),
@@ -44,7 +44,7 @@ GATES = [
     ("R13", "the MCP door speaks OAuth (claude.ai web and mobile connectors can't send a bare bearer)",
      ("grep", "rook/core2/hub/doors:oauth")),
     ("R14", "huddles with a merge vote (how agents land PRs and change requests today)",
-     ("grep", "rook/plugins:huddle.vote")),
+     ("plugin", "huddle:vote")),
 ]
 PERSON = [
     "soak numbers meet the bars in the plan (docs/castling-soak.md)",
@@ -78,6 +78,12 @@ def check(found: dict) -> list:
             path, _, cap = arg.partition(":")
             caps = (yaml.safe_load((REPO / path).read_text(encoding="utf-8")) or {}).get("caps") or {}
             ok, why = cap in caps, f"cap {cap} in {path}"
+        elif kind == "plugin":
+            name, _, cap = arg.partition(":")
+            ok = any((m.get("plugin") == name and cap in (m.get("caps") or {}))
+                     for m in (yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+                               for f in (REPO / "rook/plugins").glob("*/plugin.yaml")))
+            why = f"plugin {name} with cap {cap} in rook/plugins/"
         elif kind == "grep":
             folder, _, word = arg.partition(":")
             hits = [f for f in (REPO / folder).rglob("*") if f.is_file() and f.suffix in (".py", ".yaml")
