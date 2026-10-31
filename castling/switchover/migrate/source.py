@@ -25,7 +25,8 @@ import nacl.secret
 LIVE = ("/var/lib/rook-band-mcp",)
 FILES = {"access": "access.db", "accounts": "enrollment.db", "trust": "trust.json", "vault": "vault.db",
          "vault_key": "vault.key", "memory": "memory.db", "journal": "journal.db",
-         "knowledge": "knowledge.db", "sessions": "sessions.db"}
+         "knowledge": "knowledge.db", "sessions": "sessions.db", "chat": "chat.db", "jobs": "jobs.db",
+         "changes": "changes.db"}
 HEX_ID = re.compile(r"[0-9a-f]{32}")
 HUB_NAMES = {"rook"}
 
@@ -100,6 +101,10 @@ class Source:
             if hits:
                 self.paths[key] = hits[0]
         self._dbs: dict[str, sqlite3.Connection] = {}
+
+    def files(self) -> list[Path]:
+        """Every file in the copy, sorted: what the archive keeps."""
+        return sorted(p for p in self.root.rglob("*") if p.is_file())
 
     def found(self) -> dict:
         return {k: str(self.paths[k].relative_to(self.root)) if k in self.paths else None for k in FILES}

@@ -17,9 +17,12 @@ Scripts in `castling/switchover/`:
   `migrate.md`) and `import_04.py`: the one-off 0.4 move. castling-design
   (Bake, Oct 30): "Migration from 0.4 is not a product feature ... a one-off
   move ... an agent imports and reshapes them into 0.5". So it is repo
-  tooling here, not shipped in the `rook` package, run once at step 5 and
-  deleted at step 6. It gets no more features: whatever the move leaves
-  rough, an agent reshapes on 0.5.
+  tooling here, not shipped in the `rook` package, run once in step 2 and
+  deleted after cutover. It moves what "Fly it" says must survive and
+  `--verify` proves it; whatever the move leaves rough, an agent reshapes
+  on 0.5.
+- `copy04.py` takes the read-only 0.4 copy; `smoke.py` checks a running
+  0.5 hub serves the moved data and its workers answer.
 
 ## Where things stand
 
@@ -61,20 +64,20 @@ flying it".
 
 | Gate | What must be true | Why it matters | Blocks step |
 |---|---|---|---|
-| R1 | The hub has a vault: `{{secret:}}` and secret settings read `<data>/vault.db` | The migration re-seals all 65 secrets into a file that nothing reads yet. Jobs, bots and plugins that need a secret can't run without it. | 5 |
-| R2 | Worker events reach the hub (`TODO(castling:events)`) | The house agent's attention job on the hub (castling-attention: "an aggregation job on the hub run by the house agent"), `sms.received`, phone notifications and claudecode rules all depend on events. | 4 |
-| R3 | Streams have a hub index (N28) | `stream.list`/`stream.search` over every stream (castling-caps rule 7: sessions, terminals, rooms and history readers become `stream.*`), and owners reading each other's streams. | 5 |
-| R4 | Change records are records: the `change` plugin declares a `change` record and has no apply/revert runner | castling-caps C2 (Bake, Oct 30): "records only, with apply, test and rollback as a job the record links"; castling-changes: a lasting change gets a record (what, why, risk, testing, rollback, steps), "the change then proceeds", and ceremony scales with the project's trust level. Core's plugin pushes and worker updates don't depend on the plugin (drift #2). | 5 |
-| R5 | Off-site hub backup, sealed with the recovery key | 0.5's only backup today is "stop the hub and copy the folder". That isn't enough once the band depends on this hub. | 5 |
-| R6 | A 0.5 release format: `worker.update`, `update.*` (N27) | Without it, every core fix means reinstalling by hand on every machine. Plugins can already be pushed. | 3 (wave B onwards) |
-| R7 | Speech on the hub | The voice assistant. | 4 |
-| R8 | The phone app runs 0.5 | The phone is the main surface. | 4 |
-| R9 | The desktop app runs 0.5 | Laptops add themselves through it. Passes today. | 3 |
-| R10 | The desktop app updates on 0.5 | Without it, a desktop fix means reinstalling by hand. | 5 |
+| R1 | The hub has a vault: `{{secret:}}` and secret settings read `<data>/vault.db` | The migration re-seals all 65 secrets into a file that nothing reads yet. Jobs, bots and plugins that need a secret can't run without it. | 2 (the move) |
+| R2 | Worker events reach the hub (`TODO(castling:events)`) | The house agent's attention job on the hub (castling-attention: "an aggregation job on the hub run by the house agent"), `sms.received`, phone notifications and claudecode rules all depend on events. | 2 (the move) |
+| R3 | Streams have a hub index (N28) | `stream.list`/`stream.search` over every stream (castling-caps rule 7: sessions, terminals, rooms and history readers become `stream.*`), and owners reading each other's streams. | 2 (the move) |
+| R4 | Change records are records: the `change` plugin declares a `change` record and has no apply/revert runner | castling-caps C2 (Bake, Oct 30): "records only, with apply, test and rollback as a job the record links"; castling-changes: a lasting change gets a record (what, why, risk, testing, rollback, steps), "the change then proceeds", and ceremony scales with the project's trust level. Core's plugin pushes and worker updates don't depend on the plugin (drift #2). | 2 (the move) |
+| R5 | Off-site hub backup, sealed with the recovery key | 0.5's only backup today is "stop the hub and copy the folder". That isn't enough once the band depends on this hub. | 2 (the move) |
+| R6 | A 0.5 release format: `worker.update`, `update.*` (N27) | Without it, every core fix means reinstalling by hand on every machine. Plugins can already be pushed. | none; 2.4 for worker updates |
+| R7 | Speech on the hub | The voice assistant. | none; 2.4 for kaiju's speech |
+| R8 | The phone app runs 0.5 | The phone is the main surface. | none; 2.4 for bakephone |
+| R9 | The desktop app runs 0.5 | Laptops add themselves through it. Passes today. | none; 2.4 for laptops |
+| R10 | The desktop app updates on 0.5 | Without it, a desktop fix means reinstalling by hand. | 2 (the move) |
 | R11 | Soak results written up (`docs/castling-soak.md`) | see "Soak bars" | none (follow-up, D5) |
 | R12 | The hardening review's report (`castling/review.md`) | see "Review findings" | none (follow-up, D5) |
-| R13 | The MCP door speaks OAuth | Done (`rook/core2/hub/doors/mcp_oauth.py`, the 0.4 shim's shape): with `oauth: <public address>` on the `mcp` door, claude.ai's connector uses an agent token as its client secret and that token as its access token. Needs the door reachable over public HTTPS. | 2 (for claude.ai) |
-| R14 | Agents land work on 0.5 without 0.4: a task's sign-off (by its project's trust level), then `github.merge` at the signed-off head | Agents land PRs today through the 0.4 huddle's `huddle.vote` and the chair's pin. That flow ends when the 0.4 hub stops. On 0.5 sign-off replaces merge votes (castling-workbench). | 5 |
+| R13 | The MCP door speaks OAuth | Done (`rook/core2/hub/doors/mcp_oauth.py`, the 0.4 shim's shape): with `oauth: <public address>` on the `mcp` door, claude.ai's connector uses an agent token as its client secret and that token as its access token. Needs the door reachable over public HTTPS. | 2.5 (for claude.ai) |
+| R14 | Agents land work on 0.5 without 0.4: a task's sign-off (by its project's trust level), then `github.merge` at the signed-off head | Agents land PRs today through the 0.4 huddle's `huddle.vote` and the chair's pin. That flow ends when the 0.4 hub stops. On 0.5 sign-off replaces merge votes (castling-workbench). | 2 (the move) |
 
 These are also open and should be done or explicitly dropped before the
 cutover. They come from castling/coverage.md and the lanes' notes:
@@ -180,218 +183,224 @@ Summary (counts only):
 - **For a person:** 16 API keys to mint again as 0.5 tokens, 1 Telegram
   link, and 3 trust notes (above).
 
-What the migration doesn't move, counted in the same copy:
+That rehearsal left jobs, settings, chat, huddles, console rooms, roles and
+approvals behind. Since the fly-it rework every one of them is moved or
+kept in the 0.5 hub's archive, and `--verify` proves it: see "The fresh
+copy, verified" below.
 
-| 0.4 store | Rows | On 0.5 |
-|---|---|---|
-| jobs | 12 jobs, 11 triggers, 367 runs | Recreate the wanted jobs in the 0.5 jobs plugin (#283). Run history stays in the snapshot. |
-| hub settings | 56 settings | Re-enter the ones that matter (voice engine, front door, timezone) as 0.5 settings |
-| chat + huddles | 37 rooms, 1,568 messages, 25 huddles | Nothing (0.5 huddles start fresh). Readable in the snapshot. |
-| console rooms | 546 rooms, 238k lines | Nothing (streams start fresh) |
-| roles, guidance, approvals, work sessions | 25 roles, 1 guidance override, 10 holds, 1,515 work sessions | Nothing. Personas replace roles. |
-
-The dry run turned up one bug, fixed in this PR. The re-enroll checklist
+That dry run turned up one bug, fixed in #307. The re-enroll checklist
 printed names that 0.5 enrollment refuses, in commands that broke on the
 apostrophe. Each machine now gets a valid 0.5 name, shell-quoted, and the
 sacred list uses the same names (`castling/switchover/migrate/convert.py`
 `worker_name`, tests in `tests/test_castling_migrate.py`).
 
-### The copy for the real move
+### The fresh copy, verified (2026-10-31)
 
-The 2026-10-27 copy is fine for rehearsal but stale for the move, since 0.4
-has kept running. Step 5 needs a fresh copy, made on the live
-hub by Bake, or by the house agent through a change request on 0.4, using
-the commands in `castling/switchover/migrate.md` §1: an `sqlite3 .backup` of every
-`*.db`, plus `trust.json` and `vault.key`, into a 0700 folder. It is then
-moved to the new hub and deleted afterwards. The existing hub-offload tars
-are mode 0644. Only the home folder's permissions keep them private, and
-they hold `vault.key` beside `vault.db`, so `chmod 600` them.
+The real move needs a copy taken in the move itself (step 2). It was
+rehearsed end to end on a fresh one, read-only:
+`castling/switchover/copy04.py` on bakenetcanada at 2026-10-31 22:21Z
+(release 1248.grumpy.badger; 71 files, 425 MB; the 24 worker bundles and
+APKs under `updates/` not copied, GitHub releases have them), migrated into
+a scratch 0.5 hub on cachyrig (`--apply`, 10 s) and checked with
+`--verify`: **0 missing**. The private copy, reports and scratch hub are in
+`~/rook-backups/castling-cutover/` on cachyrig (0700). Started on that data,
+the 0.5 hub served all of it through its caps (`castling/switchover/smoke.py`).
+
+The rehearsal found and fixed what didn't survive: chat rooms, huddles,
+jobs and change records weren't moved, project links were dropped, nothing
+but the journal was archived, and `migrate.md` §1 needed a `sqlite3`
+command bakenetcanada doesn't have (and its WAL-mode copies grew `-wal`
+files on any open, which migrate then refused).
+
+| 0.4 artifact | 0.4 | moved | left, archived | why left |
+|---|---:|---:|---:|---|
+| knowledge pages / tasks / projects / concepts | 390 / 297 / 14 / 8 | all | 0 | |
+| knowledge, task and project links | 1,260 | all | 0 | |
+| task notes -> comments | 575 | all | 0 | |
+| open whiteboard lines -> whiteboards | 230 | all | 0 | |
+| handoffs | 298 | 76 (each task's latest open one, on its whiteboard) | 222 | castling-agents: the whiteboard "is the automatic handoff, but it is never a record" |
+| whiteboard activity lines (calls, consoles) | 1,145 | 0 | 1,145 | castling-agents: "Essentials only, not full session context or raw output" |
+| claims / hygiene findings | 231 / 469 | 0 | all | castling-workbench: "Drop verification flags and claims."; hygiene is "candidate for the PM's periodic sweeps" |
+| secrets (name + value hash) | 65 | 65 | 0 | |
+| people / accounts | 1 / 2 | 1 / 1 | 0 / 1 | castling-design: "Bake helps the other user directly." |
+| API keys / chat links | 16 / 1 | 0 | all | castling-design: "a clean cut"; clients get 0.5 tokens, Bake relinks |
+| workers | 38 | 38 on the re-enroll checklist | | castling-design: "workers re-enroll" |
+| trust: project levels / other entries | 1 / 9 | 1 / 0 | 0 / 9 | 0.5's trust map is sacred machines and project levels (castling-changes) |
+| chat rooms and huddles -> streams | 38 | 38 | 0 | |
+| chat messages / huddle posts | 2,158 / 99 | all | 0 | |
+| merge votes (motions, rounds, ballots, cards) | 793 | 0 | all | castling-workbench: "Drop the merge-votes room" |
+| jobs | 12 | 12 (disabled, 0.4 definition kept) | 0 | |
+| job runs | 396 | 0 | all | history: archived like the journal |
+| change records | 27 | 27 | 0 | |
+| house agent memory: active / superseded | 22 / 14 | 22 / 0 | 0 / 14 | castling-agents: the dream cycle "prunes/corrects" memories |
+| journal | 20,092 calls | | all | castling-design: "old journal kept read-only as an archive" |
+| console rooms and lines | 238,769 | | all | castling-streams: terminals are bounded, "with an optional export to a durable stream or file" |
+| settings, roles, approvals, front door, attention feed, work sessions, enrollment | 6,313 rows | | all | each named with its decision in the verify report |
+| files of the copy, byte for byte | 72 | 71 | 1 (the 0.4 vault key: secrets are re-sealed, D8) | |
+
+"Left, archived" means it is in `<data>/archive/0.4/` on the 0.5 hub,
+byte for byte and read-only, for an agent to reshape later (castling-design:
+"export knowledge, projects/tasks, memory, vault as plain files; an agent
+imports and reshapes them into 0.5"). Nothing 0.4 has is dropped.
 
 ## Order of moves
 
-The rules for every step:
+Bake, Oct 31 16:57 CDT (castling-switchover-decisions, "Fly it"): "Yeah so
+as long as all the artifacts survive transfer and the hub and bands work
+correctly we can build the rest of the plane while we're flying it. 0.4 is
+holding back dev with decision checks and shit". D5: "cutover held for
+gates R1-R5, R10 and R14; the rest can follow." So: no soak periods, no
+waves held for time. Two bars, both checked by script: `migrate --verify`
+exits 0, and the smoke checks pass. Everything else follows on 0.5 (see
+"After cutover").
 
-- 0.4 and 0.5 can't talk to each other, but a machine can run both. The
-  sidecar proves this on cachyrig: separate code, venv, data, units and band.
-- Nothing of 0.4 stops until its 0.5 replacement has carried real use for a
-  while.
-- Rolling back is always "stop the 0.5 piece", because 0.4 was never stopped.
-- **Hub first:** a worker can only enroll with a hub that exists.
+Rules for every step:
+
+- Never leave Rook unusable. 0.4 keeps running untouched until step 2 and
+  is then kept stopped, not deleted, as the rollback.
+- 0.4 and 0.5 can't talk to each other, but a machine can run both (the
+  cachyrig sidecar proves it). The 0.5 band shares 0.4's relay
+  (telesthete-hub on bakenetcanada) under its own band id: never stop it.
+- Whoever runs step 2 works over SSH to bakenetcanada, not through the 0.4
+  Rook MCP: the 0.4 hub is stopped during the move.
 
 ### Step 0: land the code
 
-Merge the open castling PRs once they're green: review fixes, soak (#297),
-speech (#287), phone app (#298), watch, and this one. Then run
-`readiness.py --prs`.
+1. Merge the green castling PRs (`python castling/switchover/readiness.py --prs`
+   lists the open ones). `python3 castling/switchover/readiness.py` exits 0
+   when R1–R5, R10 and R14 pass (they do as of 2026-10-31).
+2. `git push origin d15e79bf:refs/heads/release/0.4`: the base for 0.4
+   hotfixes and its APK and bundle builds (D1).
 
-`castling` → `master` (D1: "`castling` becomes `master` at the end of
-switchover step 2"): fast-forward `master` to `castling` once step 2 is
-done, with no waiting period after it. Push a `release/0.4` branch at
-d15e79bf first, so 0.4 hotfixes and the 0.4 APK and bundle builds still have
-a base. Until the switch, the phone and desktop
-apps default to 0.4, so a 0.4 release built from the new master behaves as
-before. Keep the 0.4 code in the tree until step 6. The 0.5 transport still
-imports `rook.worker` (`TODO(castling:transport)`).
+Rollback: nothing is deployed.
 
-Rollback: reset `master` to d15e79bf (nothing has built on it yet), or keep
-deploying 0.4 from `release/0.4`.
+### Step 1: the production 0.5 hub, side by side (D2)
 
-### Step 1: a production 0.5 hub, side by side
+On bakenetcanada next to 0.4 (`df -h /`: 8.1 GB free on 2026-10-31; the hub
+plus the archive needs about 1 GB; if it is short, use bakenetus):
 
-Needs the 0.5 hub code on `castling`. The soak, the review fixes and R11/R12
-follow (D5).
+1. A system user `rook05`; the code at `/opt/rook05/src` (an export of
+   `castling` at its head, as `deploy/castling-sidecar/install.sh` does), a
+   venv at `/opt/rook05/venv` (`pip install -e /opt/rook05/src` plus the
+   telesthete commit `pyproject.toml` pins); data and config in
+   `/var/lib/rook05` (0700, owned by `rook05`).
+2. `python -m rook.core2.hub --config /var/lib/rook05/hub.yaml init --owner bake --relay 127.0.0.1:7474 --bind 127.0.0.1:8750 --url https://rook05.bakeforge.com`.
+   The recovery key goes off the VM (Bake's password manager).
+3. Doors: `http` on `127.0.0.1:8750` with `secure_cookie: true`, `mcp` on
+   `127.0.0.1:8751` with `oauth: https://rook05.bakeforge.com` (R13).
+   Library (`/var/lib/rook05/library`, symlinks into `/opt/rook05/src/rook/plugins`):
+   tasks, projects, knowledge, concepts, whiteboard, huddle, jobs, changes,
+   github, agents, agents-claude-code, notify, security, security-ml,
+   attention, speech, backup-store; telegram and discord stay out until
+   step 2.
+4. A system unit `rook05-hub.service` (`User=rook05`, `ExecStart=/opt/rook05/venv/bin/python -m rook.core2.hub --config /var/lib/rook05/hub.yaml`,
+   `Restart=on-failure`). Cloudflared: an ingress rule for
+   `rook05.bakeforge.com` -> `127.0.0.1:8750` (and `/mcp` -> `127.0.0.1:8751`)
+   above the catch-all, `cloudflared tunnel --config /etc/cloudflared/config.yml ingress validate`,
+   `cloudflared tunnel route dns <tunnel> rook05.bakeforge.com`, then
+   restart cloudflared (0.4's public routes blink for a few seconds).
+5. Start it, then backups (R5): `settings.backup.target` (an rclone remote
+   until a 0.5 worker off the VM has `backup-store`), then
+   `python -m rook.core2.hub --config /var/lib/rook05/hub.yaml backup run` and `... backup verify`.
+   Stop the hub again (`systemctl stop rook05-hub`): `migrate --apply` needs it stopped.
 
-- Where (D2). Recommended: bakenetcanada, next to 0.4, as its own system
-  user and unit (`rook05-hub`), with data in `/var/lib/rook-castling`. It
-  gets a new band on the same telesthete relay (its own band id, so neither
-  side sees the other), and new hostnames through the existing cloudflared
-  tunnel, e.g. `rook05.bakeforge.com` for the door and dashboard. Cloudflare
-  provides TLS, and the door gets `secure_cookie: true`. The VM ran at
-  95–98% disk in late October, so check the headroom first. If it is short,
-  use bakenetus.
-- `init` with owner `bake`. Put the recovery key somewhere off the VM.
-- Backups (R5): set `settings.backup.target` and install the backup plugin's
-  nightly job. Until a 0.5 worker off the VM is enrolled, use an rclone
-  remote (`rclone:<remote>:rook05`); from step 3, `worker:cachyrig` with
-  `backup-store` installed there. Run `backup.run` once and check
-  `backup.verify` before migrating anything in.
-- No migration into this hub yet: the move is one-off and happens once, at
-  step 5. Rehearse it with `dryrun.py` (or `--apply` into a throwaway hub)
-  as often as wanted. Until step 5, 0.4 stays the record for knowledge,
-  tasks and memory.
-- Load the library: agents, agents-claude-code or llm-cli, workbench, notify,
-  security, security-ml, speech once it has merged. Leave telegram and
-  discord off (see step 5).
+Rollback: `sudo systemctl disable --now rook05-hub`, remove the ingress
+lines, restart cloudflared. Nothing of 0.4 changed.
 
-Rollback: `systemctl stop rook05-hub`, drop the hostname route. Nothing on 0.4
-changed.
+### Step 2: the one move
 
-### Step 2: agents and MCP clients, side by side
+Done in one sitting. Rook is down from 2.1 until the 0.5 hub answers in 2.3 (about 15 minutes).
 
-Needs step 1; R13 for claude.ai.
+1. **Freeze 0.4.** Say so in the castling huddle. On bakenetcanada:
+   `sudo systemctl stop rook-band-mcp`. Nothing can write to 0.4 now, so
+   the copy is final. Leave `telesthete-hub`, `cloudflared` and
+   `rook-remote` running.
+2. **Copy, move, verify.**
+   ```sh
+   python3 /opt/rook05/src/castling/switchover/copy04.py /home/ubuntu/rook04-final     # as ubuntu: reads only
+   sudo chown -R rook05: /home/ubuntu/rook04-final && sudo mv /home/ubuntu/rook04-final /var/lib/rook05/
+   cd /opt/rook05/src     # as rook05
+   M="/opt/rook05/venv/bin/python -m castling.switchover.migrate --from /var/lib/rook05/rook04-final/data --to /var/lib/rook05/hub.yaml"
+   $M                     # dry run: read the report
+   $M --apply             # the move (hub stopped)
+   $M --verify            # must say VERIFIED and exit 0
+   $M --verify --json > /var/lib/rook05/data/migrate/verify.json
+   ```
+   If verify isn't clean: stop here, `sudo systemctl start rook-band-mcp`,
+   fix the move in `castling/switchover/migrate`, start again from 2.1.
+3. **Start 0.5 and smoke it.** `sudo systemctl enable --now rook05-hub`,
+   then from anywhere, with an owner token
+   (`... hub token --person bake`):
+   `ROOK_TOKEN=... python castling/switchover/smoke.py --url https://rook05.bakeforge.com --verify-json verify.json`.
+   It checks the hub answers and the moved stores serve their items: rooms
+   and huddles (`stream.list`, `huddle.list`, a huddle read back with
+   `stream.read`), `jobs.list`, `change.list`, `knowledge.list`,
+   `task.list`, `project.list`, `secret.list` (it names the record caps from the checkout's
+   manifests, so plugin renames follow). All `[ok]`.
+4. **Bands and workers.** On each machine on the report's re-enroll
+   checklist, the 0.5 worker beside the 0.4 one (its own venv, data and
+   unit `rook05-worker`, as the sidecar), enrolled with the device code Bake
+   approves on the dashboard. First cachyrig (its sidecar worker
+   re-enrolls; the sidecar hub stays as staging, D7), then janitor,
+   soundwave, sojourn, kaiju (with `speech-engine`, D6 for the service
+   containers), bakephone (flip to 0.5 in the app, D4), Windows machines
+   through the desktop app. Smoke:
+   `smoke.py --url ... --worker cachyrig --worker janitor --worker soundwave --worker sojourn --worker kaiju`:
+   each online and answering `worker.ping`. Then one real call per kind of
+   worker: `shell.exec` `["echo", "ok"]` on cachyrig, `battery.status` on
+   bakephone.
+5. **MCP and agents.** Each 0.4 API key on the report's list gets a 0.5
+   token: `... hub token --person bake --agent <name>`. Claude Code:
+   `claude mcp add --transport http rook05 https://rook05.bakeforge.com/mcp --header "Authorization: Bearer <token>"`,
+   then a `worker.ping` on cachyrig through it. claude.ai: a custom connector
+   at `https://rook05.bakeforge.com/mcp` with the token as client secret
+   (R13). The house agent: `agents.chat.send` `{agent: house, text: "say ok"}`
+   answers. Landing work: a task's sign-off, then `github.merge` (R14).
+6. **Chat bots.** Telegram and Discord on 0.5 (one hub per bot token; 0.4
+   is stopped), then Bake relinks with `/link`.
+7. **`castling` becomes `master` (D1).** Fast-forward `master` to
+   `castling`. 0.4 hotfixes build from `release/0.4`.
+8. **0.4 stays stopped, intact.** `sudo systemctl disable rook-band-mcp`
+   (stopped in 2.1; its data, `/opt/rook-band-mcp`, `/etc/rook-band-mcp.env`
+   and the 0.4 API keys stay as they are). Each machine's 0.4 worker is
+   disabled once its 0.5 worker is online (`systemctl --user disable --now rook-band-worker`
+   or the machine's equivalent); cachyrig's goes last, at a time Bake picks
+   when no agent sessions run under it.
 
-- Each 0.4 API key (16) gets its own 0.5 token: `... hub token --person bake
-  --agent <name>`, with an `agents:` entry naming its grants. Every client
-  needs a new token anyway, so a new URL costs nothing. Clients add the 0.5
-  door as a second MCP server, named `rook05` as on the sidecar, next to
-  `rook`. Bake's own Claude Code sessions go first, then the CC mod hosts,
-  opencode, Hermes, the pianobar DJ, openwebui and bakedash.
-- claude.ai web and mobile (R13): set `oauth:` on the `mcp` door (its
-  public address), mint a `--agent claude-web` token, and add a custom
-  connector with the door's `/mcp` address and the token as client secret.
-  Rollback: remove the connector and take the token out of `tokens.json`.
-- Agents do real reads on 0.5 and keep their writes on 0.4 until step 5. That
-  way 0.4 stays the record and nothing splits.
+**Rollback** (any time, any sub-step): on bakenetcanada
 
-Rollback: remove the `rook05` server from a client and revoke its token.
+```sh
+sudo systemctl disable --now rook05-hub
+sudo systemctl enable --now rook-band-mcp      # 0.4 as it was at 2.1: the copy only read it
+```
 
-### Step 3: Linux workers, wave A
+then re-enable each 0.4 worker that was disabled
+(`systemctl --user enable --now rook-band-worker`), turn the bots back
+on in 0.4, and point clients back at the `rook` MCP server (their 0.4 keys
+were never revoked). Work done on 0.5 meanwhile stays on 0.5 (there is no
+0.5 -> 0.4 path); `/var/lib/rook05` keeps it. Rolling `master` back:
+`git push --force-with-lease origin d15e79bf:master` (Bake's call).
 
-Needs step 1; R9.
+### After cutover (built on 0.5, holding nothing)
 
-Each machine gets the 0.5 worker beside its 0.4 worker, with its own venv,
-config, data folder and user unit (`rook05-worker`), like the sidecar. It
-enrolls with the device code that the owner approves on the dashboard.
-
-Order: cachyrig first. Its sidecar worker re-enrolls to the production hub,
-and the sidecar hub becomes staging (D7). Then janitor, soundwave and sojourn.
-Then whichever service containers D6 keeps.
-
-The sacred list is empty on 0.4. If D3 makes any machine sacred on 0.5, add
-it to `sacred:` before that machine enrolls.
-
-Wave B (everything after this) needed R6, now on `castling`: a core fix is
-`update.rollout` (canaries first), and each worker
-rolls itself back if the new core doesn't come up (docs/castling-updates.md).
-Workers need a service manager that restarts them (the sidecar's unit does).
-Plugin fixes are pushed as before.
-
-Rollback per machine: `systemctl --user disable --now rook05-worker`. The
-0.4 worker never stopped. Never restart cachyrig's 0.4 worker: it kills
-every agent on the machine.
-
-### Step 4: kaiju, Windows, phones, watch (wave B)
-
-Each machine moves when what it runs is there: R2 for events, R6 for
-updates, R7 for kaiju's speech, R8 for the phone. The on-device checks follow
-(D5).
-
-- **kaiju** (pinned on 0.4): run the `speech-engine` voice worker (#287)
-  beside the running 0.4 voice service, on its own ports. Switch the
-  assistant's voice only after the phone has passed on 0.5 speech. Rollback:
-  stop the 0.5 voice worker.
-- **Windows** (DESKTOP-M4VJVUR, the FA laptops): enroll through the desktop
-  app's "Add this computer". Owner-only. The work laptop keeps the rules it
-  has today (no CC mod).
-- **Phone APK channels** (D4). The 0.4/0.5 switch build goes to the beta
-  channel first. The next phone version code is ≥ 48, and the APK updater
-  can't downgrade, so every build counts up. Bake flips bakephone to
-  "0.5 preview". The phone runs one worker at a time, so this is the one
-  place with no side by side. Rollback is flipping back to 0.4, and the 0.4
-  enrollment is kept (checked on the emulator in #298). The stable channel
-  gets the same build, still defaulting to 0.4. Family tablets and phones
-  flip last, after step 5, with Bake there in person. The APKs keep updating
-  from the 0.4 feed until R6 gives 0.5 one. After that, the app's 0.5 mode
-  reads the 0.5 feed.
-- **Watch**: follows the phone.
-
-### Step 5: cutover
-
-Needs R1–R5, R10 and R14, and nothing else (D5: "cutover held for gates
-R1-R5, R10 and R14; the rest can follow"). Accepting D5 was Bake's go. No
-waiting period: on the plan's old week-long waits Bake asked "Why a week?".
-The bar is that every 0.4 artifact is there after the move and the 0.5 hub
-and bands work (item 2).
-
-1. Announce a quiet window. Pause 0.4 jobs and stop agent writes on 0.4.
-2. Take a fresh 0.4 copy, then the one move: `migrate` dry run, then
-   `--apply` with the 0.5 hub stopped. Whatever the move leaves rough, an
-   agent reshapes on 0.5 (castling-design); the tool gets no more features.
-   Then check that every artifact the dry run counted (knowledge, tasks,
-   secrets, chat and rooms, journal, jobs, trust, accounts, plugin data) is
-   on the 0.5 hub, and that workers, MCP and agents work on it.
-3. Move the chat bots. A Telegram or Discord bot token can only be served by
-   one hub at a time (Telegram's getUpdates conflicts, and Discord would
-   answer twice). Turn telegram and discord off on 0.4, then on in 0.5. Bake
-   relinks (`/link`).
-4. Agents switch writes to `rook05`. Remove the `rook` MCP server from each
-   client and revoke its 0.4 key.
-5. Recreate the 0.4 jobs that are still wanted, and re-enter settings.
-6. Stop 0.4 workers machine by machine: `disable --now`, no uninstall.
-   cachyrig's goes last, at a time Bake picks when no agent sessions run
-   under it.
-7. Stop the 0.4 hub last: disable its units, keep its data and a final
-   snapshot for 30 days, and keep the hostname pointing at it read-only or
-   at nothing.
-
-Rollback (during the 30 days): start the 0.4 units again and move the bots
-and agents back. Any work done on 0.5 meanwhile stays on 0.5, because there
-is no 0.5 → 0.4 path. After 30 days, rollback means restoring the snapshot.
-
-### Step 6: after
-
-- Tag `v0.5.0` from `master`.
-- Once the transport modules have moved under `rook/core2/transport`, remove
-  the 0.4 code (`rook/worker`, `rook/band_mcp`, `server/`, the 0.4 halves of
-  the apps and their switches) in one PR.
-- Retire the 0.4-only secrets, after reading the private report.
-- Rotate the credentials whose vault notes say they were reused or passed
-  through chats. That is Bake's call.
+- Reshape the 12 imported jobs (disabled; `vars.definition04` holds each
+  0.4 definition). Only `soundwave-lxc-traffic-audit` was enabled on 0.4.
+- Re-enter the hub settings that matter (timezone, voice engine, front
+  door) as 0.5 settings; the archive has `settings.db`.
+- Windows: ConPTY (N19), the desktop app's 0.5 worker on Windows; the watch
+  on 0.5; the on-device checks above.
+- The soak bars, the review findings, the not-ported list above
+  (`page.show`, `trust.check`, `appliance.*`, history importers into
+  `stream.*`, speech modes), D3 sacred machines, D6 service containers.
+- Retire the 0.4-only secrets (D8) and rotate the reused ones (Bake's call).
+- The archive (`<data>/archive/0.4`, about 0.45 GB, 0.4's API tokens and
+  OAuth client files among it) rides in every hub backup. Once agents have
+  reshaped what they need from it, moving it out is Bake's call.
+- Tag `v0.5.0`; remove the 0.4 code in one PR once the transport no longer
+  imports `rook.worker`.
 - Delete the migration copies and `castling/switchover/migrate`,
-  `import_04.py` and `migrate.md` with them. Optionally point `rook.bakeforge.com` at the
-  0.5 door.
-
-## Rollback summary
-
-| Step | Undo | Cost |
-|---|---|---|
-| 0 | reset `master` to d15e79bf; 0.4 builds from `release/0.4` | none |
-| 1 | stop `rook05-hub`, drop its route | the 0.5 hub's own data |
-| 2 | remove `rook05` from a client, revoke its token | none |
-| 3 | `disable --now rook05-worker` on that machine | none |
-| 4 | phone: flip to 0.4; kaiju: stop the 0.5 voice worker | none |
-| 5 | start 0.4 units, move bots and agents back (30 days) | work done on 0.5 stays there |
-| 6 | restore the 0.4 snapshot | days of 0.5 history |
+  `import_04.py`, `copy04.py` and `migrate.md` with them. Keep 0.4 stopped
+  and intact until Bake says it can go.
 
 ## What Bake decides
 
@@ -399,7 +408,7 @@ is no 0.5 → 0.4 path. After 30 days, rollback means restoring the snapshot.
 |---|---|---|
 | D1 | When `castling` becomes `master` | At the end of step 2, with `release/0.4` at d15e79bf for 0.4 hotfixes |
 | D2 | Where the 0.5 hub runs, and its hostnames | bakenetcanada next to 0.4 if disk allows (else bakenetus); new `rook05.` names, no DNS swap |
-| D3 | Sacred machines on 0.5 (0.4 has none today) | Decide before step 3, since the list names machines |
+| D3 | Sacred machines on 0.5 (0.4 has none today) | Decide before step 2.4, since the list names machines |
 | D4 | APK channel order and when family devices flip | beta (bakephone) → stable with 0.4 default → family devices after cutover, in person |
 | D5 | Go for cutover, plus the soak bars, the review acceptances and the not-ported list (attention, huddles, `show.present`, history importers; in the decisions' terms since the drift audit: the attention job, sign-off, `page.show`, `stream.*`) | Hold the cutover for R1–R5, R10 and R14; the rest can follow |
 | D6 | Which of the ~14 service containers still need a worker | Keep only the ones agents actually act on; the rest become appliances or nothing |
@@ -411,6 +420,9 @@ is no 0.5 → 0.4 path. After 30 days, rollback means restoring the snapshot.
 
 ```sh
 python castling/switchover/readiness.py --prs
+python3 castling/switchover/copy04.py <empty folder>          # on the 0.4 hub: a read-only copy
+python -m castling.switchover.migrate --from <copy> --to <0.5 hub.yaml> [--apply | --verify]
+ROOK_TOKEN=... python castling/switchover/smoke.py --url <0.5 door> [--worker NAME ...] [--verify-json FILE]
 python castling/switchover/dryrun.py --snapshot ~/rook-backups/hub-offload/<newest>.tar \
     --out ~/rook-backups/castling-switchover/dryrun-$(date +%Y%m%d) [--hub-url https://<0.5 hub>]
 ```
@@ -418,4 +430,5 @@ python castling/switchover/dryrun.py --snapshot ~/rook-backups/hub-offload/<newe
 Use a Python with the repo's dependencies, such as the sidecar's
 `~/.rook-castling/venv/bin/python` or `rook-pytest`'s venv. `dryrun.py`
 also takes `--from <copy folder>`. Tests are in
-`tests/test_castling_switchover.py`.
+`tests/test_castling_switchover.py`, `tests/test_castling_migrate.py` and
+`tests/test_castling_migrate_verify.py`.

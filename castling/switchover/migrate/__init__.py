@@ -21,9 +21,17 @@ hub.yaml init``):
   memory (unapproved learned procedures -> its notepad);
 - **knowledge, projects, tasks, concepts** -> workbench records, by the
   0.4 workbench importer beside this package (``castling/switchover/import_04.py``);
-- **journal**: copied whole to ``<data>/archive/0.4/journal.db``, read-only;
-  never replayed into the 0.5 chains;
+- **chat rooms and huddles** -> the hub's streams, full history
+  (:mod:`.rooms`); **jobs** -> disabled 0.5 jobs holding their 0.4
+  definition, **change records** -> ``change`` records (:mod:`.records`);
+- **the whole copy** (every store and file, the journal too) -> ``<data>/archive/0.4/``,
+  byte for byte and read-only (:mod:`.archive`); the journal is never
+  replayed into the 0.5 chains;
 - **workers**: a re-enrollment checklist (every machine enrolls again).
+
+``python -m castling.switchover.migrate --verify`` then checks the move
+(:mod:`.verify`): every 0.4 artifact moved, archived, or left out for a
+reason a castling-* decision gives.
 
 Every step skips what an earlier run wrote, so a re-run after a fix only adds
 what is missing. The report (``<data>/migrate/report.md`` and ``.json`` after
@@ -32,11 +40,9 @@ what is missing. The report (``<data>/migrate/report.md`` and ``.json`` after
 from __future__ import annotations
 
 import datetime as _dt
-import hashlib
 import importlib.util
 import itertools
 import json
-import os
 import shutil
 import socket
 import sqlite3
@@ -48,10 +54,13 @@ from rook.core2.hub.runtime import _key, _write_private, home_band, load_config
 from rook.kit.ctx import Caller
 from rook.kit.manifest import load as load_manifest
 from rook.kit.records import RecordStore
-from . import convert, vault
+
+from . import archive, convert, names, records, rooms, vault
 from .source import NotACopy, Source, _tables
 
 IMPORTER = Path(__file__).resolve().parent.parent / "import_04.py"
+PLUGINS = Path(__file__).resolve().parents[3] / "rook" / "plugins"
+CARRIED = ("huddle", "jobs", "changes")            # plugin folders whose records the move writes
 HOUSE = "house"                                   # the house agent (rook/plugins/agents)
 AGENTS = Path(__file__).resolve().parents[3] / "rook" / "plugins" / "agents"   # its records: memory, note
 
@@ -112,14 +121,20 @@ def _run(source: Source, cfg, cfg_path: Path, band: str, apply: bool, rename: di
     if apply:
         cfg.data.mkdir(parents=True, exist_ok=True, mode=0o700)
         report["config_backup"] = _write_config(cfg_path, users, report["presets"], sacred)
-    report["workbench"] = _workbench(source, cfg, band, apply, levels, notes)
+    report["workbench"], new_ids = _workbench(source, cfg, band, apply, levels, notes)
+    owner = next((p["name"] for p in mapping if p["preset"] == "owner"),
+                 next((n for n, u in cfg.users.items() if (u or {}).get("preset") == "owner"), "owner"))
+    _carry(source, cfg, band, apply, new_ids, owner, report)
     if apply:
         (cfg.data / "keys").mkdir(exist_ok=True, mode=0o700)
         _key(cfg.data / "keys" / "root.key")      # as the hub's first start would: the vault's key is derived from it
         report["secrets_written"] = vault.put(cfg.data, secrets)
         report["memory"]["written"] = _write_memory(cfg.data, band, mems, jots)
+        report["archive"] = archive.put(source.root, source.files(), cfg.data)
         if report["journal"]:
-            report["journal"]["archive"] = _archive_journal(source, cfg.data)
+            rel = source.paths["journal"].relative_to(source.root).as_posix()
+            report["journal"]["archive"] = {"path": str(cfg.data / archive.DIR / rel),
+                                            "sha256": archive.sha256(cfg.data / archive.DIR / rel)}
         out = cfg.data / "migrate"
         out.mkdir(exist_ok=True, mode=0o700)
         _write_private(out / "report.json", json.dumps(report, indent=2) + "\n")
@@ -179,7 +194,7 @@ def _write_memory(data: Path, band: str, mems: list, jots: list) -> dict:
         store.register(m.data, plugin_dir=m.folder)
         who = Caller(agent="import:0.4", band=band, why="import from 0.4")
         every = Caller(band=band, owner=True, why="import from 0.4")      # memory is private: see all of it
-        memory, note = store.type("agents.memory"), store.type("agents.note")
+        memory, note = store.type(names.record("agents", "memory")), store.type(names.record("agents", "note"))
         have = {r["text"] for t in (memory, note) for gone in (False, True)
                 for r in t.list(every, where={"agent": HOUSE}, archived=gone, limit=10000)}
         mems = [x for x in mems if x["text"] not in have]
@@ -191,27 +206,6 @@ def _write_memory(data: Path, band: str, mems: list, jots: list) -> dict:
     finally:
         store.close()
     return {"memory": len(mems), "notepad": len(jots)}
-
-
-def _archive_journal(source: Source, data: Path) -> dict:
-    """The 0.4 journal, whole and read-only, beside the 0.5 hub's data."""
-    dest = data / "archive" / "0.4" / "journal.db"
-    if not dest.exists():
-        dest.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        tmp = dest.with_name("journal.db.tmp")
-        tmp.unlink(missing_ok=True)
-        out = sqlite3.connect(tmp)
-        try:
-            source.db("journal").backup(out)
-        finally:
-            out.close()
-        os.chmod(tmp, 0o444)
-        os.replace(tmp, dest)
-    digest = hashlib.sha256()
-    with dest.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            digest.update(chunk)
-    return {"path": str(dest), "sha256": digest.hexdigest()}
 
 
 # -- workbench ------------------------------------------------------------------
@@ -233,11 +227,11 @@ def _workbench(source: Source, cfg, band: str, apply: bool, levels: dict, notes:
         if levels:
             notes.append(f"trust: no 0.4 knowledge.db in the copy, so project levels ({', '.join(levels)}) "
                          "have no project to go on")
-        return {"not_imported": "no 0.4 knowledge.db in the copy"}
+        return {"not_imported": "no 0.4 knowledge.db in the copy"}, {}
     mod = _importer()
     if mod is None:
         notes.append("knowledge, projects and tasks: the workbench importer isn't in this checkout: not imported")
-        return {"not_imported": "no workbench importer in this checkout"}
+        return {"not_imported": "no workbench importer in this checkout"}, {}
     sessions = source.db("sessions")
     if sessions is not None and "handoffs" not in _tables(sessions):
         sessions = None
@@ -246,9 +240,27 @@ def _workbench(source: Source, cfg, band: str, apply: bool, levels: dict, notes:
         imp = mod.Importer(source.db("knowledge"), store, band, None, sessions)
         out = imp.run()
         out["trust"] = _project_trust(mod, imp, store, band, levels, notes)
+        new_ids = dict(imp.new)
+        new_ids.update({r["slug"]: imp.new[i] for i, r in imp.rows.items() if r["slug"] and i in imp.new})
     finally:
         store.close()
-    return out
+    return out, new_ids
+
+
+def _carry(source: Source, cfg, band: str, apply: bool, new_ids: dict, owner: str, report: dict) -> None:
+    """Chat rooms and huddles -> streams, jobs and changes -> records (into
+    memory on a dry run, to count them)."""
+    store = RecordStore(str(cfg.data / "records.db") if apply else ":memory:")
+    try:
+        for folder in CARRIED:
+            m = load_manifest(PLUGINS / folder)
+            store.register(m.data, plugin_dir=m.folder)
+        report["rooms"] = rooms.put(source.db("chat"), str(cfg.data / "stream-events.db") if apply else ":memory:",
+                                    store, band, new_ids)
+        report["jobs"] = records.jobs(source.db("jobs"), store, band, owner)
+        report["changes"] = records.changes(source.db("changes"), store, band, new_ids)
+    finally:
+        store.close()
 
 
 def _project_trust(mod, imp, store, band: str, levels: dict, notes: list) -> list:
@@ -307,6 +319,19 @@ def render(r: dict) -> str:
     m = r["memory"]
     out.append(f"\n## Memory\n\n- house agent: memories {m['memory']}, notepad items {m['notepad']}"
                + (f"; not moved: {json.dumps(m['skipped'])}" if m["skipped"] else ""))
+    rm, jb, ch = r.get("rooms") or {}, r.get("jobs") or {}, r.get("changes") or {}
+    out.append("\n## Chat, jobs and change records\n")
+    out.append(f"- rooms {rm.get('rooms', 0)} and huddles {rm.get('huddles', 0)} as streams: {rm.get('messages', 0)} "
+               f"messages, {rm.get('posts', 0)} huddle posts; already there: {rm.get('skipped', 0)}")
+    out.append(f"- jobs {jb.get('jobs', 0)} (disabled; each keeps its 0.4 definition in vars.definition04); "
+               f"already there: {jb.get('skipped', 0)}")
+    out += [f"  - job `{x['from']}` is now `{x['to']}`" for x in jb.get("renamed") or ()]
+    out.append(f"- change records {ch.get('changes', 0)}; already there: {ch.get('skipped', 0)}")
+    a = r.get("archive")
+    if a:
+        out.append(f"\n## Archive\n\n- every file of the copy but the 0.4 vault key, read-only: `{a['path']}` "
+                   f"({a['files']} files, {a['written']} new; MANIFEST.json has each sha256)")
+        out += [f"- {c}: a different file is already archived under this name; kept it" for c in a["clashes"]]
     out.append("\n## Journal\n")
     j = r["journal"]
     if j:
