@@ -13,7 +13,9 @@ Each target is a ``run:`` function (``def f(ctx, **args)``) or a ``call:`` to
 a cap (with optional ``args:``). ``start``/``stop``/``status`` may be given as
 a bare run target. Hooks run as the plugin, without a person: a ``call:`` is
 held to the plugin's ``uses`` like ``ctx.call``. ``on`` run functions get
-``event=`` and ``payload=``; ``on`` calls get only their declared ``args``.
+``event=`` and ``payload=``, and ``source=`` (the plugin or ``core`` that
+published it) when they take a ``source`` parameter; ``on`` calls get only
+their declared ``args``.
 An event published with ``taints=True`` (outside content) runs its hooks
 with ``ctx.caller.tainted`` set, so whatever they call is tainted too.
 
@@ -162,15 +164,17 @@ class Scheduler:
         ``RecordStore(emit=...)``."""
         if self._loop is None or self._loop.is_closed():
             return
-        self._loop.call_soon_threadsafe(self._fan_out, event, dict(payload or {}), taints)
+        self._loop.call_soon_threadsafe(self._fan_out, event, dict(payload or {}), taints, source)
 
-    def _fan_out(self, event: str, payload: dict, taints: bool = False) -> None:
+    def _fan_out(self, event: str, payload: dict, taints: bool = False, source: str | None = None) -> None:
         for p in list(self._plugins.values()):
             if p.on and self.may_receive is not None and not self.may_receive(p.name, event):
                 continue
             for pattern, target in p.on:
                 if fnmatch.fnmatchcase(event, pattern):
                     args = {"event": event, "payload": payload} if target.func else {}
+                    if target.func and _takes(target.func, "source"):
+                        args["source"] = source
                     self._spawn(p, self._safe(p, target, args, taints))
 
     # -- running --------------------------------------------------------------
@@ -207,6 +211,13 @@ class Scheduler:
                 await asyncio.to_thread(target.func)
             return await res if inspect.isawaitable(res) else res
         return await invoke(target.func, p.make_ctx(caller), args)
+
+
+def _takes(func: Callable[..., Any], name: str) -> bool:
+    try:
+        return name in inspect.signature(func).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def _has_run(hooks: Mapping) -> bool:

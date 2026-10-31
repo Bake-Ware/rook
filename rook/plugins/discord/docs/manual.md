@@ -34,6 +34,10 @@ linked their account, `person`. The event is marked `taints`: a session that
 receives it is tainted, since the text comes from outside. `!link` messages are
 handled by the plugin and are not events.
 
+A linked person's direct message is also answered: the agents package hands
+it to the house agent (its `chat_agent` setting) as that person and sends
+the reply back through this bot.
+
 ## Settings
 
 | Setting | Meaning |

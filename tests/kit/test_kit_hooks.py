@@ -208,3 +208,18 @@ async def test_may_receive_filters_events():
     await asyncio.sleep(0.03)
     assert got == ["worker.online"]
     await s.close()
+
+
+async def test_on_hooks_that_ask_get_the_events_source():
+    got = []
+    s = Scheduler()
+    funcs = {"a.py:f": lambda ctx, event, payload, source=None: got.append(("asks", event, source)),
+             "a.py:g": lambda ctx, event, payload: got.append(("plain", event))}
+    await s.start({"plugin": "w", "hooks": {"on": [{"event": "*", "run": "a.py:f"}, {"event": "*", "run": "a.py:g"}]}},
+                  resolve=funcs.__getitem__)
+    s.publish("telegram.message", {"text": "hi"}, "telegram")
+    s.publish("worker.online")
+    await until(lambda: len(got) == 4)
+    assert sorted(got, key=str) == sorted([("asks", "telegram.message", "telegram"), ("plain", "telegram.message"),
+                                           ("asks", "worker.online", None), ("plain", "worker.online")], key=str)
+    await s.close()
