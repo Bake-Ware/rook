@@ -61,7 +61,7 @@ version: 1.0.0
 doc: Stand-in for the workbench tasks.
 runs_on: hub
 caps:
-  task.get: { doc: One task., risk: read, scope: multi-user, run: "scripts/task.py:get", args: { id: { type: str, required: true } } }
+  get: { doc: One task., risk: read, scope: multi-user, run: "scripts/task.py:get", args: { id: { type: str, required: true } } }
 """
 TASK_PY = """\
 TASKS = {"t_docs": {"title": "Rebuild the docs site", "body": "Run mkdocs and publish the manual."}}
@@ -294,6 +294,32 @@ def test_taint_flags_risky_calls_unless_they_match_the_pinned_task(tmp_path, lib
                            why="Publish the docs site.")                   # on task, but it sends data out
         assert out["held"] and h.entry(out)["gates"][0]["reason"] == "exfiltration"
         assert (await h.call(CLAUDE, "tools.leak", {"text": "x"}, sid))["ok"]          # reads still go
+    with_hub(tmp_path, lib, body)
+
+
+def test_the_pinned_task_is_read_from_the_real_task_plugin(tmp_path, lib):
+    """Drift #18: the gate's task cap is the one the workbench's task plugin
+    really serves (a record type named like its plugin: task.get), not a
+    stand-in's."""
+    shutil.rmtree(lib / "task")
+    for folder in ("tasks", "projects"):
+        (lib / folder).symlink_to(REPO / "rook" / "plugins" / folder, target_is_directory=True)
+
+    async def body(h):
+        assert "task.get" in h.hub.plugins._caps
+        made = await h.call(BAKE, "task.create", {"title": "Rebuild the docs site",
+                                                  "body": "Run mkdocs and publish the manual."})
+        assert made["ok"], made
+        tid = made["result"]["id"]
+        sid = await h.session(CLAUDE, task=tid)
+        assert (await h.call(CLAUDE, "tools.fetch", {"text": "a web page"}, sid))["ok"]
+        await h.settle(lambda: h.sec.S.tasks.get(tid))                     # read through task.get
+        assert {"doc", "site"} <= h.sec.S.tasks[tid]
+        out = await h.call(CLAUDE, "tools.run", {"argv": ["mkdocs", "build"]}, sid, why="Build the docs site.")
+        assert out["ok"], out
+        out = await h.call(CLAUDE, "tools.run", {"argv": ["rsync", "-a", "/home", "/mnt/usb"]}, sid,
+                           why="Copy the home folder off.")
+        assert out["held"] and h.entry(out)["gates"][0]["reason"] == "intent_mismatch", out
     with_hub(tmp_path, lib, body)
 
 
