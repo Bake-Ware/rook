@@ -40,6 +40,7 @@ def post(ctx, text, title=None):
 
 class BotAPI(BaseHTTPRequestHandler):
     sent: list = []
+    updates: list = []          # what the next getUpdates hands the bot (then cleared)
 
     def do_POST(self):          # noqa: N802
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
@@ -47,7 +48,8 @@ class BotAPI(BaseHTTPRequestHandler):
         ok = self.path.startswith(f"/bot{TOKEN}/")
         if ok and method == "sendMessage":
             BotAPI.sent.append(body)
-        result = {"getMe": {"id": 1, "username": "rook_bot"}, "getUpdates": [],
+        updates, BotAPI.updates = (BotAPI.updates, []) if ok and method == "getUpdates" else ([], BotAPI.updates)
+        result = {"getMe": {"id": 1, "username": "rook_bot"}, "getUpdates": updates,
                   "sendMessage": {"message_id": 9}}.get(method)
         data = json.dumps({"ok": ok, "result": result} if ok else
                           {"ok": False, "error_code": 401, "description": "Unauthorized"}).encode()
@@ -71,9 +73,6 @@ def test_notify_send_reaches_a_worker_and_telegram(fresh, tmp_path):
         cfg = json.loads(hub_yaml.read_text())
         cfg["settings"] = {"telegram": {"token": "tg-bot", "api": f"http://127.0.0.1:{api.server_port}", "poll": 1}}
         hub_yaml.write_text(json.dumps(cfg))
-        links = fresh.hub_dir / "data" / "plugins" / "telegram" / "links.json"
-        links.parent.mkdir(parents=True)        # bake linked earlier (/link CODE)
-        links.write_text(json.dumps({"person:bake": {"chat": "42", "user": "42", "name": "bk"}}))
         phone = tmp_path / "phone"
         (phone / "scripts").mkdir(parents=True)
         (phone / "plugin.yaml").write_text(PHONE)
@@ -90,6 +89,13 @@ def test_notify_send_reaches_a_worker_and_telegram(fresh, tmp_path):
         until(lambda: (c := fresh.caps()).get("online") and "phone.notification.post" in c.get("caps", {}),
               30, "the worker online with its phone cap")
         hub = fresh.owner
+        # bake links Telegram the way a person does: a code, then /link CODE to the bot.
+        out = hub.call("telegram.link", {}, worker="rook")
+        assert out["ok"], out
+        BotAPI.updates.append({"update_id": 1, "message": {
+            "message_id": 1, "chat": {"id": 42, "type": "private"}, "from": {"id": 42, "first_name": "bk"},
+            "text": f"/link {out['result']['code']}"}})
+        until(lambda: any(m.get("text", "").startswith("Linked:") for m in BotAPI.sent), 30, "bake linked")
         assert hub.call("setting.set", {"plugin": "notify", "key": "phone", "value": "e2e-worker"},
                         worker="rook")["ok"]
 

@@ -128,12 +128,12 @@ impl Hub05 {
         Ok(out)
     }
 
-    /// The hub's agents, awake ones first (`agents.list`).
+    /// The hub's agents, awake ones first (`agents.agent.list`, kit records).
     pub async fn sessions(&self) -> Result<Vec<Session>, HubError> {
         let v = self
             .hub_call(
-                "agents.list",
-                json!({}),
+                "agents.agent.list",
+                json!({"limit": 200}),
                 "Desktop app: the Rook panel lists the agents.",
             )
             .await?;
@@ -393,7 +393,7 @@ pub fn found_items(v: &Value, kind: &str, link: &str) -> Vec<Found> {
         .collect()
 }
 
-/// `agents.list`: live (awake) agents first; archived ones left out.
+/// `agents.agent.list`: live (awake) agents first; archived ones left out.
 pub fn agent_items(v: &Value) -> Vec<Session> {
     let mut out: Vec<Session> = v
         .as_array()

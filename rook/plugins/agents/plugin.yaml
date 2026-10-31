@@ -36,72 +36,47 @@ settings:
   chat_agent: { default: house, doc: "The agent that answers people's direct messages to the band's Telegram and Discord bots (once they linked their account); blank: none does." }
   house: { type: str, default: house, doc: "The agent that reaches the person: questions agents ask them (approval.ask) go to it; blank: they wait on the Approvals page only." }
 
+# Stored as kit records (castling-plugins "Records"; castling-caps rule 6):
+# the kit gives the storage, history and the agents.agent.* and
+# agents.memory.* caps. Notes have no caps of their own: agents.note writes
+# one, and only the agent itself sees its notepad (in its prompt).
+records:
+  agent:
+    fields:
+      name: { type: str, required: true, unique: true, pattern: "^[a-z][a-z0-9_-]{0,39}$", doc: "Its name on the band (agent:<name>)." }
+      persona: { type: str, doc: "The persona it started from (house, pm, lead, ...): its defaults fill what you leave out." }
+      title: { type: str }
+      summary: { type: str, doc: The roster line every agent sees. }
+      prompt: { type: markdown, doc: What the agent is and how it works. }
+      skills: { type: list, items: { type: str } }
+      grants: { type: list, items: { type: str }, doc: "Cap patterns it may use as agent:<name> (plus agent.backend, its own turns); acting for a person it gets only what both may, alone only these." }
+      backend: { type: str, pattern: "^(default|[a-z][a-z0-9-]*\\.[a-z][a-z0-9_.]*)$", doc: "default (the hub's chosen agent.backend provider) or one provider's cap, e.g. agents-claude-code.turn." }
+      model: { type: map, items: { type: str }, doc: "Per-system model: {two: opus, three: haiku}; default: the backend's model and model_three settings." }
+      always_on: { type: bool, doc: "Never sleeps on idle (house, security); others wake when addressed." }
+      cwd: { type: str, doc: "The folder its backend works in; blank: the backend's own." }
+      awake: { type: bool, doc: "Whether it is awake now (the agents plugin keeps this)." }
+      dreamed: { type: float, doc: "When its last dream cycle ran (the agents plugin keeps this)." }
+    search: [name, title, summary]
+    history: true
+    caps: [list, get, search, create, update, archive, delete, history]
+    risk: { create: admin, update: admin, archive: admin, delete: admin }
+  note:
+    fields:
+      agent: { type: str, required: true }
+      text: { type: str, required: true }
+    index: [agent]
+    caps: []
+  memory:
+    fields:
+      agent: { type: str, required: true, doc: The agent it belongs to. }
+      text: { type: str, required: true }
+    index: [agent]
+    search: [text]
+    private: true
+    caps: [list, get, search, create, update, archive, delete]
+    risk: { create: admin, update: admin, archive: admin, delete: admin }
+
 caps:
-  list:
-    doc: The agents on this hub, with their role, backend and whether each is awake.
-    risk: read
-    scope: multi-user
-    idempotent: true
-    run: scripts/agents.py:list_agents
-    args:
-      archived: { type: bool, default: false, doc: List archived agents instead. }
-    result: { type: list }
-  get:
-    doc: One agent's settings, prompt and your sessions with it; its memory and notepad only for the agent itself or an owner.
-    risk: read
-    scope: multi-user
-    idempotent: true
-    run: scripts/agents.py:get
-    args:
-      name: { type: str, required: true }
-    result: { type: map }
-  create:
-    doc: Make an agent, from a persona (its defaults) and/or your own prompt, grants and backend.
-    risk: admin
-    scope: multi-user
-    effects: [persists]
-    run: scripts/agents.py:create
-    args:
-      name: { type: str, required: true, pattern: "^[a-z][a-z0-9_-]{0,39}$", doc: "Its name on the band (agent:<name>)." }
-      persona: { type: str, doc: "A persona to start from (house, pm, lead, ...)." }
-      title: { type: str }
-      summary: { type: str, doc: The roster line every agent sees. }
-      prompt: { type: markdown, doc: What the agent is and how it works. }
-      skills: { type: list, items: { type: str } }
-      grants: { type: list, items: { type: str }, doc: "Cap patterns it may use as agent:<name> (plus agent.backend, its own turns); acting for a person it gets only what both may, alone only these." }
-      backend: { type: str, pattern: "^(default|[a-z][a-z0-9-]*\\.[a-z][a-z0-9_.]*)$", doc: "default (the hub's chosen agent.backend provider) or one provider's cap, e.g. agents-claude-code.turn." }
-      model: { type: map, items: { type: str }, doc: "Per-system model: {two: opus, three: haiku}; default: the backend's model and model_three settings." }
-      always_on: { type: bool, doc: "Never sleeps on idle (house, security); others wake when addressed." }
-      cwd: { type: str, doc: "The folder its backend works in; blank: the backend's own." }
-    result: { type: map }
-  update:
-    doc: Change an agent. Your edits win over persona updates from now on.
-    risk: admin
-    scope: multi-user
-    effects: [persists]
-    run: scripts/agents.py:update
-    args:
-      name: { type: str, required: true, pattern: "^[a-z][a-z0-9_-]{0,39}$", doc: "Its name on the band (agent:<name>)." }
-      persona: { type: str, doc: "A persona to start from (house, pm, lead, ...)." }
-      title: { type: str }
-      summary: { type: str, doc: The roster line every agent sees. }
-      prompt: { type: markdown, doc: What the agent is and how it works. }
-      skills: { type: list, items: { type: str } }
-      grants: { type: list, items: { type: str }, doc: "Cap patterns it may use as agent:<name> (plus agent.backend, its own turns); acting for a person it gets only what both may, alone only these." }
-      backend: { type: str, pattern: "^(default|[a-z][a-z0-9-]*\\.[a-z][a-z0-9_.]*)$", doc: "default (the hub's chosen agent.backend provider) or one provider's cap, e.g. agents-claude-code.turn." }
-      model: { type: map, items: { type: str }, doc: "Per-system model: {two: opus, three: haiku}; default: the backend's model and model_three settings." }
-      always_on: { type: bool, doc: "Never sleeps on idle (house, security); others wake when addressed." }
-      cwd: { type: str, doc: "The folder its backend works in; blank: the backend's own." }
-    result: { type: map }
-  archive:
-    doc: Archive an agent (it stops and keeps its sessions, notepad and memory) or bring it back.
-    risk: admin
-    scope: multi-user
-    run: scripts/agents.py:archive
-    args:
-      name: { type: str, required: true }
-      restore: { type: bool, default: false }
-    result: { type: map }
   wake:
     doc: Wake an agent so it picks up messages waiting in its sessions.
     risk: write
@@ -144,7 +119,7 @@ caps:
       party: { type: str, doc: "Owners: whose session (person:<name> or agent:<name>)." }
     result: { type: map }
   note:
-    doc: Write to an agent's private notepad (the agent itself, or an owner). Durable things go here; the dream cycle curates them into memory.
+    doc: Write to an agent's private notepad (the agent itself, or an owner). Durable things go here; the dream cycle curates them into memory (agents.memory.*).
     risk: write
     scope: self
     run: scripts/agents.py:note
@@ -181,6 +156,9 @@ hooks:
     # castling-caps C4: a question for the person is routed through the house agent.
     - { event: approval.asked, run: scripts/agents.py:on_asked }
     - { event: task.signoff_requested, run: scripts/agents.py:on_signoff_requested }
+    - { event: agents.agent.created, run: scripts/agents.py:on_created }
+    - { event: agents.agent.updated, run: scripts/agents.py:on_updated }
+    - { event: agents.agent.archived, run: scripts/agents.py:on_archived }
 
 # The ready-made roles this package ships (castling-agents "Skills and
 # defaults"): created on install, each with its skills. Any plugin's manifest

@@ -253,7 +253,7 @@ All with the dashboard session, as the signed-in person:
 On a 0.5 hub, with the person's token on the HTTP door (`Authorization:
 Bearer`): `GET /holds`, and `POST /call` on the hub's node with a why for
 `task.list`, `project.list`, `knowledge.search`, `task.search`,
-`agents.list`, `pages.list` and `agents.chat.send`; `POST /enroll/approve`
+`agents.agent.list`, `pages.list` and `agents.chat.send`; `POST /enroll/approve`
 for its own worker's device code. The hub site's `/login` (the token, once)
 gives the dashboard window's session; `/web/api/me` names the person.
 tests/test_desktop_contract05.py checks these against the castling code.

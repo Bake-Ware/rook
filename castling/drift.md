@@ -98,7 +98,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 28 | over-built (low) | Jobs notify the person directly with a fixed channel order (**fixed, PR #355**) | `jobs.py:461-487,605`, `notify` |
 | 29 | over-built (low) | Desktop app ports 0.4 Work/Knowledge/Sessions panels | `desktop/src-tauri/src/hub05.rs:108` |
 | 30 | missing (known) | No attention job on the hub; phone keeps the 0.4 attention store (**fixed, PR #355**) | `notification-android`, `docs/castling-phone.md:111` |
-| 31 | over-built | Hub plugins rebuild storage instead of declaring records | `agents.py:110`, `telegram`/`discord` `links.json`, hub pages |
+| 31 | over-built | Hub plugins rebuild storage instead of declaring records (**fixed, PR #348**; pages wait for the dashboard rework) | `agents.py:110`, `telegram`/`discord` `links.json`, hub pages |
 | 32 | contradiction (mild) | Core service plugins call providers by plugin name, not contract. **Fixed: PR #344 (agents), PR #357 (notify, speech, agents' chat reply)** | `notify`, `speech`, `agents` |
 | 33 | renamed (low) | Plural namespaces `jobs.*`, `agents.*`, `pages.*`; `jobs.start` not `job.run` | `jobs`, `agents`, hub pages |
 | 34 | over-built (low) | Manifest 1.1/1.2 features nothing uses; jobs rolls its own webhook HMAC (**partly fixed, PR #349**: format frozen, unused keys reserved; code and the jobs webhook left) | `rook/kit/manifest`, `hub/plugins.py`, `jobs.py:870` |
@@ -605,6 +605,13 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
   prompt asked for streams and records.
 - **Smallest fix.** Declare `agent`, `note`, `memory` as kit records; chat links as `where: person`
   settings; pages as records when the dashboard is next touched.
+- **Fixed: PR #348.** agents declares `agent` (`agents.agent.*`, presence as its `awake` field,
+  persona defaults filled on create, persona updates only for agents nobody else changed),
+  `memory` (private, `agents.memory.*`) and `note` (no caps) records; the raw tables and the
+  hand-written list/get/create/update/archive are gone. Telegram/Discord links are `link`
+  records rather than `where: person` settings: a hub plugin can't write a person's settings or
+  look a person up by account, and records need no new core machinery. Pages wait for the
+  dashboard rework.
 
 ## 32. Core service plugins call providers by name, not by contract (contradiction, mild). Fixed: PR #344, PR #357
 
