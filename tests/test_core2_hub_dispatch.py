@@ -883,3 +883,40 @@ def test_gate_result_check_shadow_and_failed_calls(hub):
 def test_gate_from_manifest_with_a_result_check():
     g = gates.Gate.from_manifest("canary", {"run": "s.py:a", "result": "s.py:b"}, len, str)
     assert g.check is len and g.result is str
+
+
+# -- crash guard (review H11) --------------------------------------------------
+
+def test_a_crash_inside_dispatch_is_an_error_reply_and_still_journaled(hub):
+    hub.worker.caps["bad.cap"] = ["not", "a", "mapping"]          # malformed cap data
+    out, s = call(hub, BAKE, "bad.cap")
+    assert out == {"id": out["id"], "ok": False, "error": "internal error"}
+    e = calls(hub)[-1]
+    assert (e["call"], e["ok"], e["error"], e["decision"], e["session"]) == (out["id"], False, "internal", "deny", s.id)
+
+    def boom(person, cap):
+        raise RuntimeError("identities broke")
+    hub.identities.needs_approval = boom
+    out, _ = call(hub, BAKE, "file.read")
+    assert out["error"] == "internal error" and calls(hub)[-1]["error"] == "internal"
+
+
+def test_a_failing_journal_never_hides_a_result_that_ran(hub):
+    def broken(entry):
+        raise OSError("disk full")
+    hub.journal = broken
+    out, _ = call(hub, BAKE, "file.read")
+    assert out["ok"] and out["result"] == {"cap": "file.read"} and len(hub.tx.requests) == 1
+
+
+def test_a_crash_while_releasing_is_journaled(hub):
+    hub.gates = [G("ml", "flag")]
+    out, _ = call(hub, BAKE, "shell.exec")
+
+    def boom(*a):
+        raise RuntimeError("mint broke")
+    hub._mint = boom
+    rel = run(hub.release(out["hold"], "person:bake"))
+    assert rel == {"id": out["id"], "ok": False, "error": "internal error"}
+    e = calls(hub)[-1]
+    assert (e["decision"], e["ok"], e["error"]) == ("released", False, "internal")

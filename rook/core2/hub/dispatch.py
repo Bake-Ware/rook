@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import logging
 import secrets as _secrets
 import time
 from dataclasses import dataclass, field, replace
@@ -39,6 +40,8 @@ from rook.kit._types import parse_duration
 from .. import rights, wire
 from . import gate as gates_mod
 from .identity import Caller, Identities
+
+log = logging.getLogger("rook.hub.dispatch")
 
 SESSION_SECS = 12 * 3600
 TICKET_SECS = 60
@@ -194,9 +197,28 @@ class Dispatcher:
         entry = {"kind": "call", "ts": self.clock(), "call": cid, "hub": self.hub_id,
                  "cap": call.cap, "person": caller.person, "agent": caller.agent,
                  "session": call.session, "why": call.why, "args": call.args}
-        out = await self._dispatch(caller, call, entry)
-        self.journal(entry)
+        out = {"id": cid, "ok": False, "error": "internal error"}
+        try:
+            out = await self._dispatch(caller, call, entry)
+        except Exception:
+            # A bug or malformed state (cap data, a gate, the identities)
+            # never reaches the caller as a traceback, and the call is still
+            # journaled.
+            log.exception("dispatch failed", extra={"fields": {"call": cid, "cap": entry.get("cap")}})
+            entry.update(ok=False, error="internal")
+            entry.setdefault("decision", "deny")
+        finally:
+            self._record(entry)
         return out
+
+    def _record(self, entry: dict) -> None:
+        """Journal one entry; a failing store is logged, never a crash for
+        the caller (the call may already have run)."""
+        try:
+            self.journal(entry)
+        except Exception:
+            log.critical("journal append failed", exc_info=True,
+                         extra={"fields": {"call": entry.get("call"), "kind": entry.get("kind")}})
 
     async def _dispatch(self, caller: Caller, call: Call, entry: dict) -> dict:
         cid = entry["call"]
@@ -443,8 +465,13 @@ class Dispatcher:
                          error=f"denied: {refused['layer']}: {refused['reason']}")
             out = {"id": entry["call"], "ok": False, "error": entry["error"]}
         else:
-            out = await self._run(hold.caller, hold.session, hold.worker, hold.call, hold.meta, entry)
-        self.journal(entry)
+            out = {"id": entry["call"], "ok": False, "error": "internal error"}
+            try:
+                out = await self._run(hold.caller, hold.session, hold.worker, hold.call, hold.meta, entry)
+            except Exception:
+                log.exception("release failed", extra={"fields": {"call": entry["call"], "hold": name}})
+                entry.update(ok=False, error="internal")
+        self._record(entry)
         return out
 
     def refuse(self, name: str, by: str, present: bool = False) -> dict:
@@ -455,7 +482,7 @@ class Dispatcher:
         if not self.may_release(hold, by, present):
             return {"ok": False, "error": f"{by} may not refuse {name}"}
         del self.holds[name]
-        self.journal({**hold.entry, "ts": self.clock(), "decision": "refused", "by": by})
+        self._record({**hold.entry, "ts": self.clock(), "decision": "refused", "by": by})
         return {"ok": True}
 
     # -- core.call (13): a plugin's sub-call inside a call in flight -------
@@ -507,7 +534,7 @@ class Dispatcher:
                  "project": s.project, "person": caller.person, "agent": caller.agent}
         if not out["ok"]:
             entry.update(decision="deny", layer=f"{out['layer']}: {out['reason']}")
-            self.journal(entry)
+            self._record(entry)
             return {"ok": False, "error": "elevation: outside ceiling" if out["layer"] == "ceiling"
                     else "elevation: denied"}
         now = int(self.clock())
@@ -520,7 +547,7 @@ class Dispatcher:
         lease = wire.sign(self.op_key, lease)
         self.leases[lease["id"]] = (from_worker, s.id, lease["exp"])
         entry.update(decision="allow", lease=lease["id"])
-        self.journal(entry)
+        self._record(entry)
         return {"ok": True, "result": {"lease": lease}}
 
     # -- journal -----------------------------------------------------------
@@ -529,7 +556,7 @@ class Dispatcher:
         entry = {"kind": kind, "ts": self.clock(), "hub": self.hub_id, **fields}
         if s is not None:
             entry.update(session=s.id, project=s.project, person=s.person, agent=s.agent)
-        self.journal(entry)
+        self._record(entry)
 
 
 def _gate_input(caller: Caller, s: Session, w: Worker, call: Call, entry: dict) -> dict:
