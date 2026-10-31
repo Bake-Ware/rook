@@ -108,9 +108,11 @@ class Client:
         self.cookie = ""
         self.csrf = ""
 
-    async def req(self, method, path, body=None, *, form=None, bearer=None, csrf=True, timeout=10):
+    async def req(self, method, path, body=None, *, form=None, bearer=None, csrf=True, timeout=10, headers=None):
+        extra = dict(headers or {})
+
         def go():
-            data, headers = None, {}
+            data, headers = None, dict(extra)
             if form is not None:
                 data = form.encode()
                 headers["Content-Type"] = "application/x-www-form-urlencoded"
@@ -212,7 +214,12 @@ def test_sign_in_and_the_session_cookie(site):
                 assert (await c.req("POST", "/login", {"token": bad}))[0] == 401
             status, headers, _ = await c.req("POST", "/login", form="token=nope")
             assert status == 303 and headers["Location"] == "/login?failed=1"
-            status, headers, _ = await c.req("POST", "/login", form=f"token={tokens['bake']}")
+            # login CSRF: another site's form can't sign this browser in (review D11)
+            for bad in ({"Origin": "http://evil.example"}, {"Origin": "null"}, {"Sec-Fetch-Site": "cross-site"}):
+                status, headers, _ = await c.req("POST", "/login", form=f"token={tokens['bake']}", headers=bad)
+                assert status == 403 and "Set-Cookie" not in headers, bad
+            own = {"Origin": f"http://127.0.0.1:{c.port}", "Sec-Fetch-Site": "same-origin"}
+            status, headers, _ = await c.req("POST", "/login", form=f"token={tokens['bake']}", headers=own)
             assert status == 303 and headers["Location"] == "/"
             cookie = headers["Set-Cookie"]
             assert "HttpOnly" in cookie and "SameSite=Strict" in cookie and "Secure" not in cookie

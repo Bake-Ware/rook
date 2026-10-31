@@ -105,6 +105,12 @@ class Identities:
             raise ValueError(caller.problem())
         self._tokens[token_digest] = caller
 
+    def keep_tokens(self, digests) -> None:
+        """Forget every token not in ``digests`` (the store's list now)."""
+        keep = set(digests)
+        for d in [d for d in self._tokens if d not in keep]:
+            del self._tokens[d]
+
     def revoke_token(self, token: str) -> None:
         self._tokens.pop(digest(token), None)
 

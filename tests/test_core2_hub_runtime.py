@@ -623,6 +623,30 @@ def test_hub_caps_carry_the_parent_calls_layers_and_door(hubs, tmp_path):
     run(go())
 
 
+def test_a_token_taken_out_of_the_store_or_a_removed_agent_stops_working(hubs):
+    # Review D9: reload only added tokens, and a deleted agent's token still
+    # answered /workers and /caps.
+    async def go():
+        hub, _, owner = await hubs(worker=False)
+        try:
+            kid = hub.add_token(runtime.Caller(person="person:kid"))
+            claude = hub.add_token(runtime.Caller(agent="agent:claude"))
+            for t in (kid, claude):
+                assert (await http(hub, "GET", "/workers", token=t))[0] == 200
+            path = hub.data / "tokens.json"
+            stored = json.loads(path.read_text())
+            del stored[runtime.digest(kid)]
+            path.write_text(json.dumps(stored))
+            os.utime(path, (time.time() + 5, time.time() + 5))      # a new mtime, whatever the clock's grain
+            assert (await http(hub, "GET", "/workers", token=kid))[0] == 401
+            del hub.identities.agents["claude"]
+            assert (await http(hub, "GET", "/workers", token=claude))[0] == 401
+            assert (await http(hub, "GET", "/workers", token=owner))[0] == 200
+        finally:
+            await hub.stop()
+    run(go())
+
+
 def test_config_file_and_token_command(tmp_path, capsys):
     path = tmp_path / "hub.yaml"
     path.write_text(textwrap.dedent(f"""\
