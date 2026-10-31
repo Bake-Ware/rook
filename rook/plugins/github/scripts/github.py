@@ -1,16 +1,20 @@
 """GitHub's REST API with the stdlib (plugin.yaml says what each cap does).
 
-Reads go to anyone the hub lets call them; ``merge``, ``label`` and
-``comment`` only to the plugins in the ``writers`` setting, calling as
-themselves (``system:plugin.<name>``, no person): the huddle merges after its
-gates with the hub's token, so an agent with broad grants can't use that
-token to merge around them. The token goes in an unredirected header: a
-redirect never carries it to another host.
+``merge`` is how work lands on 0.5 (castling-workbench: sign-off replaces
+merge votes). It checks, as the caller, the task's sign-off against what its
+project's trust level asks for (:func:`signoff_problems`), runs the gates
+against GitHub (:func:`gate_problems`), and only then merges at the head SHA
+the caller named, with the hub's token. The call is journaled like any
+other, with its args and why; the reply says who signed and which gates
+passed. The token goes in an unredirected header, so a redirect never
+carries it to another host.
 """
 from __future__ import annotations
 
+import fnmatch
 import json
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -20,8 +24,17 @@ from rook.kit.ctx import KitError
 TIMEOUT = 20.0
 TEXT_MAX = 8 * 1024 * 1024
 JSON = "application/vnd.github+json"
+PASSING = ("success", "neutral", "skipped")
+NEED = ("none", "experts", "user")                  # loosest first
+LEVEL_NEEDS = {"ship-it": "none", "normal": "experts", "sacred": "user"}
+MERGEABLE_TRIES, MERGEABLE_WAIT = 3, 1.0
 _REPO = re.compile(r"[\w.-]+/[\w.-]+")
 _SHA = re.compile(r"[0-9a-f]{40}")
+# Credential shapes (as 0.4's huddle table).
+SECRET_SHAPES = re.compile(
+    r"(gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|AKIA[0-9A-Z]{16}|"
+    r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----|xox[abposr]-[A-Za-z0-9-]{10,}|"
+    r"sk-(?:ant-)?[A-Za-z0-9_-]{32,}|AIza[0-9A-Za-z_-]{35})")
 
 
 def _repo(repo: str) -> str:
@@ -38,11 +51,9 @@ def _ref(ref: str, what: str = "ref") -> str:
     return ref
 
 
-def _req(ctx, method: str, path: str, body: dict | None = None, accept: str = JSON,
-         raw: bool = False):
+def _req(ctx, method: str, path: str, body: dict | None = None, accept: str = JSON, raw: bool = False):
     url = str(ctx.settings["api"]).rstrip("/") + path
-    req = urllib.request.Request(url, method=method,
-                                 data=None if body is None else json.dumps(body).encode())
+    req = urllib.request.Request(url, method=method, data=None if body is None else json.dumps(body).encode())
     req.add_header("Accept", accept)
     req.add_header("X-GitHub-Api-Version", "2022-11-28")
     req.add_header("User-Agent", "rook-hub")
@@ -72,16 +83,19 @@ def _req(ctx, method: str, path: str, body: dict | None = None, accept: str = JS
 
 
 def _text(data: bytes) -> dict:
-    cut = len(data) > TEXT_MAX
     return {"text": data[:TEXT_MAX].decode("utf-8", "replace"), "bytes": min(len(data), TEXT_MAX),
-            "truncated": cut}
+            "truncated": len(data) > TEXT_MAX}
 
 
-def _writer(ctx) -> None:
-    allowed = {f"system:plugin.{w}" for w in ctx.settings["writers"] or []}
-    if ctx.caller.person or ctx.caller.agent not in allowed:
-        raise KitError("denied: only the huddle writes to GitHub with the hub's token "
-                       "(pin the pull request in a huddle and call a merge vote)")
+def secret_hits(diff: str) -> list[str]:
+    """Credential-looking strings on a diff's added lines: where, never the value."""
+    hits = []
+    for i, line in enumerate(str(diff or "").splitlines(), 1):
+        if line.startswith("+") and not line.startswith("+++"):
+            m = SECRET_SHAPES.search(line)
+            if m:
+                hits.append(f"line {i}: looks like a credential ({m.group(0)[:4]}...)")
+    return hits[:20]
 
 
 # -- reads -------------------------------------------------------------------------
@@ -120,18 +134,19 @@ def checks(ctx, repo, sha):
             "state": status.get("state")}
 
 
-def _compare(repo, base, head) -> str:
-    return f"/repos/{_repo(repo)}/compare/{_ref(base, 'base')}...{_ref(head, 'head')}"
+def reviews(ctx, repo, number):
+    logins = {k.lower(): v for k, v in (ctx.settings["logins"] or {}).items()}
+    out = []
+    for r in _req(ctx, "GET", f"/repos/{_repo(repo)}/pulls/{int(number)}/reviews?per_page=100") or []:
+        login = (r.get("user") or {}).get("login") or ""
+        out.append({"login": login, "who": logins.get(login.lower()), "state": r.get("state"),
+                    "commit": r.get("commit_id"), "body": (r.get("body") or "")[:2000]})
+    return out
 
 
 def diff(ctx, repo, base, head):
-    return _text(_req(ctx, "GET", _compare(repo, base, head), accept="application/vnd.github.diff", raw=True))
-
-
-def files(ctx, repo, base, head):
-    c = _req(ctx, "GET", _compare(repo, base, head)) or {}
-    return [{"path": f.get("filename"), "status": f.get("status"),
-             "additions": f.get("additions"), "deletions": f.get("deletions")} for f in c.get("files") or []]
+    path = f"/repos/{_repo(repo)}/compare/{_ref(base, 'base')}...{_ref(head, 'head')}"
+    return _text(_req(ctx, "GET", path, accept="application/vnd.github.diff", raw=True))
 
 
 def file(ctx, repo, path, ref):
@@ -139,30 +154,136 @@ def file(ctx, repo, path, ref):
     if not path or ".." in path.split("/"):
         raise KitError(f"bad args: path {path!r}")
     q = urllib.parse.quote(path) + "?ref=" + urllib.parse.quote(_ref(ref), safe="")
-    return _text(_req(ctx, "GET", f"/repos/{_repo(repo)}/contents/{q}",
-                      accept="application/vnd.github.raw", raw=True))
+    return _text(_req(ctx, "GET", f"/repos/{_repo(repo)}/contents/{q}", accept="application/vnd.github.raw", raw=True))
 
 
-# -- writes (writers only) ---------------------------------------------------------
+# -- landing -----------------------------------------------------------------------
 
-def merge(ctx, repo, number, sha, title, method="merge"):
-    _writer(ctx)
+def signoff_problems(level: str, pool_need: str | None, rows: list, revs: list, head: str,
+                     author: str | None, caller_agent: str | None, owners: list) -> tuple[list, dict]:
+    """What keeps a task's sign-off from being satisfied (empty: it is), and
+    who signed. ``rows``: task.signoff records; ``revs``: :func:`reviews`
+    (the latest review per login counts; an approval counts only at
+    ``head``). The author (the PR's mapped login) and the calling agent
+    don't sign their own work."""
+    need = max(LEVEL_NEEDS.get(level, "experts"), pool_need or "none", key=NEED.index)
+    own = {author, caller_agent} - {None}
+    signers, problems = [], []
+    for r in rows:
+        who = r.get("by") or r["reviewer"]
+        if r["state"] == "declined":
+            problems.append(f"{r['reviewer']} declined" + (f": {r['note']}" if r.get("note") else ""))
+        elif r["state"] == "requested":
+            problems.append(f"{r['reviewer']} has not signed off yet")
+        elif who not in own:
+            signers.append(who)
+    latest = {}
+    for r in revs:                      # GitHub lists reviews oldest first
+        if r["state"] in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            latest[r["login"].lower()] = r
+    for r in latest.values():
+        if r["state"] == "CHANGES_REQUESTED":
+            problems.append(f"{r['login']} requested changes on GitHub")
+        elif r["state"] == "APPROVED" and r["commit"] == head and r["who"] and r["who"] not in own:
+            signers.append(r["who"])
+    signers = list(dict.fromkeys(signers))
+    if need != "none" and not signers:
+        problems.append(f"no sign-off yet: a {level} project needs a reviewer other than the author "
+                        "(task.request_signoff, then task.signoff; or an approving GitHub review at the head)")
+    if need == "user" and not set(signers) & set(owners):
+        problems.append(f"an owner ({', '.join(owners) or 'the person'}) must sign off too "
+                        f"({'a concept asks for the user' if level != 'sacred' else 'the project is sacred'})")
+    return problems, {"level": level, "need": need, "signers": signers}
+
+
+def gate_problems(ctx, repo: str, p: dict, sha: str) -> tuple[list, list]:
+    """The gates, in order: (problems, [{id, ok, detail}])."""
+    gates: list = []
+
+    def gate(gid, ok, detail):
+        gates.append({"id": gid, "ok": bool(ok), "detail": detail})
+    if p["state"] != "open":
+        gate("version", False, f"the pull request is {'merged' if p['merged'] else p['state']}")
+    elif p["draft"]:
+        gate("version", False, "the pull request is a draft")
+    elif p["head"] != sha:
+        gate("version", False, f"the head is {p['head'][:7]}, not {sha[:7]}: check the new head, then call again")
+    else:
+        gate("version", True, f"head is {sha[:7]}")
+    if gates[0]["ok"]:
+        for i in range(MERGEABLE_TRIES):
+            if p["mergeable"] is not None or i + 1 == MERGEABLE_TRIES:
+                break
+            time.sleep(MERGEABLE_WAIT)
+            p = pr(ctx, repo, p["number"])
+        gate("mergeable", p["mergeable"] is True,
+             f"merges cleanly into {p['base']}" if p["mergeable"] else
+             f"conflicts with {p['base']} ({p['mergeable_state']}); rebase it" if p["mergeable"] is False else
+             "GitHub has not worked out whether it merges cleanly yet; call again")
+        c = checks(ctx, repo, sha)
+        running = [r["name"] for r in c["runs"] if r["status"] != "completed"] + \
+            [s["context"] for s in c["statuses"] if s["state"] == "pending"]
+        bad = [f"{r['name']}: {r['conclusion']}" for r in c["runs"]
+               if r["status"] == "completed" and r["conclusion"] not in PASSING]
+        bad += [f"{s['context']}: {s['state']}" for s in c["statuses"] if s["state"] not in ("success", "pending")]
+        none = not c["runs"] and not c["statuses"]
+        gate("ci", not (running or bad or (none and ctx.settings["require_ci"])),
+             f"still running: {', '.join(running[:6])}; call again when CI is done" if running else
+             "CI is not green: " + "; ".join(bad[:6]) if bad else
+             f"no CI ran on {sha[:7]}" if none and ctx.settings["require_ci"] else
+             f"{len(c['runs']) + len(c['statuses'])} checks green")
+        pats = [x.lower() for x in ctx.settings["test_checks"] or ["*test*"]]
+        tests = [r for r in c["runs"] if any(fnmatch.fnmatchcase(str(r["name"]).lower(), x) for x in pats)]
+        failed = [r["name"] for r in tests if r["conclusion"] != "success"]
+        gate("tests", (tests and not failed) or (none and not ctx.settings["require_ci"]),
+             "tests did not pass: " + ", ".join(failed) if failed else
+             ", ".join(r["name"] for r in tests) + " passed" if tests else
+             f"no test run among the checks (test_checks: {pats})")
+        d = diff(ctx, repo, p["base_sha"], sha)
+        hits = [] if d["truncated"] else secret_hits(d["text"])
+        gate("secrets", not d["truncated"] and not hits,
+             "the diff is over 8 MB: too big to check for secrets" if d["truncated"] else
+             "the diff has secrets in it: " + "; ".join(hits[:5]) if hits else "no secrets in the diff")
+    return [f"{g['id']}: {g['detail']}" for g in gates if not g["ok"]], gates
+
+
+def _level(ctx, project) -> tuple[str, str | None]:
+    """The project's trust level (normal without one) and its concepts' sign-off norm."""
+    if not project:
+        return "normal", None
+    p = ctx.call("project.get", id=project)
+    trust = ctx.call("project.trust.list", where={"project": p["id"]}, limit=1)
+    pool = ctx.call("concept.pool", concepts=p["concepts"]) if p.get("concepts") else {}
+    return (trust[0]["level"] if trust else "normal"), pool.get("signoff")
+
+
+def merge(ctx, repo, number, sha, task, method="merge"):
+    repo = _repo(repo)
     if not _SHA.fullmatch(str(sha)):
-        raise KitError("bad args: sha is the full 40-character head the merge is for")
-    r = _req(ctx, "PUT", f"/repos/{_repo(repo)}/pulls/{int(number)}/merge",
-             {"sha": sha, "merge_method": method, "commit_title": str(title)[:250]}) or {}
+        raise KitError("bad args: sha is the full 40-character head you checked")
+    t = ctx.call("task.get", id=task)
+    level, pool_need = _level(ctx, t.get("project"))
+    rows = ctx.call("task.signoff.list", where={"task": t["id"]}, limit=500)
+    p = pr(ctx, repo, number)
+    logins = {k.lower(): v for k, v in (ctx.settings["logins"] or {}).items()}
+    problems, signed = signoff_problems(level, pool_need, rows, reviews(ctx, repo, number), sha,
+                                        logins.get(p["author"].lower()), ctx.caller.agent, ctx.owners())
+    gate_bad, gates = gate_problems(ctx, repo, p, sha)
+    problems += gate_bad
+    if problems:
+        raise KitError(f"not merged ({repo}#{number} for task {t['id']}): " + "; ".join(problems))
+    signers = ", ".join(signed["signers"]) or f"no sign-off, {level}"
+    r = _req(ctx, "PUT", f"/repos/{repo}/pulls/{int(number)}/merge",
+             {"sha": sha, "merge_method": method,
+              "commit_title": f"Merge pull request #{int(number)} from {p['head_ref'] or sha[:7]} "
+                              f"(task {t.get('name') or t['id']}, signed: {signers})"[:250]}) or {}
     if not r.get("merged"):
         raise KitError(f"GitHub did not merge it: {r.get('message') or 'no reason given'}")
-    return {"merged": True, "sha": r.get("sha") or ""}
-
-
-def label(ctx, repo, number, labels):
-    _writer(ctx)
-    _req(ctx, "POST", f"/repos/{_repo(repo)}/issues/{int(number)}/labels", {"labels": [str(x) for x in labels]})
-    return {"labels": [str(x) for x in labels]}
-
-
-def comment(ctx, repo, number, body):
-    _writer(ctx)
-    r = _req(ctx, "POST", f"/repos/{_repo(repo)}/issues/{int(number)}/comments", {"body": str(body)[:60000]}) or {}
-    return {"id": r.get("id"), "url": r.get("html_url") or ""}
+    out = {"merged": True, "sha": r.get("sha") or "", "task": t["id"], "signoff": signed,
+           "gates": [g["id"] for g in gates]}
+    try:
+        ctx.call("task.link", id=t["id"], kind="commit", ref=out["sha"], relation="produced",
+                 note=f"{repo}#{number} merged at {sha[:7]}")
+    except KitError as e:
+        out["link"] = f"not linked: {e.message[:200]}"
+    return out
