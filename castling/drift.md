@@ -78,7 +78,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 8 | missing | C4 `approval.ask` not built; plugins built their own asks; `page.show` absent | builtin `approval`, `jobs`, `huddle carry`, `changes` |
 | 9 | contradiction (partial) | Streams: three private hub stores, no hub `stream.read/write`, no chat rooms (**fixed, PR #347**) | `agents`, `speech`, `huddle`, #331 |
 | 10 | missing, package | Personas only from the agents manifest; workbench roles in agents; skills not in the knowledge store | `agents.py:158,416,464` |
-| 11 | missing | No Codex backend, while the enum and manuals offer codex/local/api | `rook/plugins/agents*` |
+| 11 | missing | No Codex backend, while the enum and manuals offer codex/local/api. **Fixed: PR #336** | `rook/plugins/agents*` |
 | 12 | contradiction, over-built | Core "2.1" is breaking but labelled minor; extras beyond H2 | #327 |
 | 13 | over-built | Worker updates port 0.4 OTA as caps, including caps Bake's pass binned | #326 |
 | 14 | over-built | OAuth door is a full authorization server; 0.4 cut that back to a shim | #332 (**fixed in #337**) |
@@ -327,7 +327,7 @@ Watch items (ask Bake, not drift yet) are after the findings.
   their skills into a workbench manifest; `agents.skill` falls back to knowledge pages of kind
   skill.
 
-## 11. No Codex backend, but the enum and manuals offer it (missing)
+## 11. No Codex backend, but the enum and manuals offer it (missing). Fixed: PR #336
 
 - **Decision.** castling-inference: "**Day one: support Claude Code and Codex** as backends."
   castling-agents: "backend chosen when the agent is created (Claude Code, local model, API)".

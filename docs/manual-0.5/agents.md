@@ -23,6 +23,10 @@ Put `agents` in the hub's library, and a backend:
   Give it an `mcp_config` setting pointing at the hub's MCP door if the
   agents should reach the band themselves; without it their turns have no
   Rook tools.
+- or `agents-codex` on a worker that has Codex installed and signed in
+  (`codex login`): turns run `codex exec` under that ChatGPT subscription
+  ([its manual](../../rook/plugins/agents-codex/docs/manual.md)). Its
+  `config` setting points Codex at the MCP door the same way.
 - `llm-cli`, `llm-anthropic` or `llm-openai` if other plugins need plain
   completions (`llm.complete`); agents themselves think through
   `agent.backend`.
@@ -66,9 +70,9 @@ of you may, and every call it makes is journaled with its name and yours.
 An agent wakes when addressed and stays awake for `warm` (10 minutes) after
 its last message. Always-on agents never sleep on idle. While it works an
 agent jots decisions and lessons on its notepad (`agents.note`); its memory
-is read-only then. When it sleeps, a **dream cycle** on a light model
-(`dream_model`, Haiku by default) turns the notepad into lasting memory and
-tidies both; always-on agents dream every 6 hours (`dream_every`).
+is read-only then. When it sleeps, a **dream cycle** on a light model (the
+backend's System Three: Haiku for Claude Code) turns the notepad into
+lasting memory and tidies both; always-on agents dream every 6 hours (`dream_every`).
 
 ## Your own agents and personas
 

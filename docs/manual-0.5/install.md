@@ -62,7 +62,7 @@ The hub loads every plugin folder in its **library** (`library:` in
 `hub.yaml`) at start. Point it at the plugins you want, for example
 symlinks into `rook/plugins/`:
 
-- `agents` and `agents-claude-code` (or `llm-cli`): the house agent and the
+- `agents` and `agents-claude-code` or `agents-codex`: the house agent and the
   other ready-made agents ([Agents](agents.md)).
 - `tasks`, `projects`, `knowledge`, `concepts`, `whiteboard`: the workbench
   ([The workbench](workbench.md)).

@@ -133,7 +133,7 @@ def test_agents_on_the_hub(tmp_path):
             assert (await call(hub, owner, "agents.note", agent="qa", text="CI is green on #12"))["ok"]
             await until(lambda: hub.journal.query(cap="agents-local.turn", agent="system:plugin.agents"))
             got = (await call(hub, owner, "agents.get", name="qa"))["result"]
-            assert got["memory"][0]["text"] == "learned: haiku" and got["notepad"] == []
+            assert got["memory"][0]["text"] == "learned: three" and got["notepad"] == []
             assert got["awake"] is False
         finally:
             await hub.stop()

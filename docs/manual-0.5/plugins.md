@@ -90,6 +90,7 @@ linked.
 
 - [agents](../../rook/plugins/agents/docs/manual.md): the agents runtime and the ready-made personas ([Agents](agents.md)).
 - [agents-claude-code](../../rook/plugins/agents-claude-code/docs/manual.md): agent turns in the Claude Code CLI.
+- [agents-codex](../../rook/plugins/agents-codex/docs/manual.md): agent turns in the Codex CLI.
 - [claudecode](../../rook/plugins/claudecode/docs/manual.md): Claude Code rules written once on the hub.
 - [decide](../../rook/plugins/decide/docs/manual.md): one-pass decision model for typed questions.
 - [huddle](../../rook/plugins/huddle/docs/manual.md): chaired group threads with a table of pinned artifacts; how agents land pull requests (pin, call a merge with a self-review, the gates, the merge).

@@ -25,7 +25,10 @@ def argv(settings, *, session=None, model=None, system=None) -> list[str]:
     out = [settings["claude"] or "claude", "-p", "--output-format", "json"]
     if session:
         out += ["--resume", session]
-    model = model or settings["model"]
+    if model == "three":                 # System Three (dream cycles); blank or two: System Two
+        model = settings["model_three"]
+    elif not model or model == "two":
+        model = settings["model"]
     if model:
         out += ["--model", model]
     if system:

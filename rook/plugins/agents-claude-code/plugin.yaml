@@ -14,6 +14,7 @@ platforms: [linux, macos, windows]
 settings:
   claude: { default: claude, doc: "The claude program: a name on PATH or a full path." }
   model: { default: opus, doc: "System Two's model when the agent names none (opus, sonnet, haiku or a full model id)." }
+  model_three: { default: haiku, doc: "System Three's model (dream cycles)." }
   permission_mode: { doc: "Claude Code's --permission-mode for agent turns (default, acceptEdits, plan, ...); blank: its own default." }
   allowed_tools: { type: list, items: { type: str }, doc: "Tools a turn may use without asking (--allowedTools), e.g. Read, Bash(git status:*)." }
   mcp_config: { type: path, doc: "An MCP config file for agent turns (--mcp-config), e.g. the Rook MCP door." }
@@ -29,7 +30,7 @@ caps:
       prompt: { type: str, required: true }
       session: { type: str, doc: "The Claude Code session id to resume; blank: a new session." }
       cwd: { type: str, doc: "The folder Claude Code works in; blank: this plugin's work folder." }
-      model: { type: str, doc: "blank: the model setting." }
+      model: { type: str, doc: "A model, or two/three for System Two/Three; blank: the model setting." }
       effort: { type: str, doc: "Not used: Claude Code sets its own reasoning effort." }
       system: { type: str, doc: Appended to Claude Code's system prompt. }
       timeout: { type: duration, default: 20m, doc: How long the turn may take. }

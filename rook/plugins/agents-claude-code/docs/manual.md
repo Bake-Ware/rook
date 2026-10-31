@@ -16,7 +16,8 @@ Settings:
 | Setting | Default | What |
 |---|---|---|
 | `claude` | `claude` | The program, on PATH or a full path. |
-| `model` | `opus` | System Two's model when the agent names none. Dream cycles ask for `haiku`. |
+| `model` | `opus` | System Two's model when the agent names none. |
+| `model_three` | `haiku` | System Three's model, for dream cycles. |
 | `permission_mode` | Claude Code's | `--permission-mode` for turns. |
 | `allowed_tools` | none | `--allowedTools`: tools a turn may use without asking. |
 | `mcp_config` | none | `--mcp-config`: how the agent reaches Rook (the MCP door). |

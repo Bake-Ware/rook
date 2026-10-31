@@ -351,7 +351,7 @@ def test_dream_curates_the_notepad_into_memory(rig):
         assert [m["text"] for m in rt.memories("qa")] == ["Not pm"]       # another agent's memory is untouchable
         assert [n["id"] for n in rt.notes("pm")] == [n2]
         cap, args, caller = rig.backend.dreams()[0]
-        assert cap == "agent.backend" and args["model"] == "haiku" and "session" not in args
+        assert cap == "agent.backend" and args["model"] == "three" and "session" not in args
         assert "Bake wants burn-downs" in args["prompt"] and caller.why == "agents: dream cycle for pm"
         assert rt.agent("pm")["dreamed"]
         # The memory is in the prompt the next time pm wakes, read-only; the kept note too.
