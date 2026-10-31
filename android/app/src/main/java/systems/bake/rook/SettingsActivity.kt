@@ -21,6 +21,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.tabs.TabLayout
 import kotlinx.coroutines.CancellationException
@@ -391,6 +392,8 @@ class SettingsActivity : AppCompatActivity() {
         b.name05.setText(prefs.getString(Castling.NAME_PREF, null) ?: (Build.MODEL ?: "android").replace(' ', '-'))
         b.btnSignIn05.setOnClickListener { signIn05(b.hub05.text.toString()) }
         b.btnCancel05.setOnClickListener { cancel05() }
+        b.token05.setText(prefs.getString(Castling.TOKEN_PREF, ""))
+        b.token05.doAfterTextChanged { prefs.edit().putString(Castling.TOKEN_PREF, it.toString().trim()).apply() }
         showCore()
         b.btnStart.setOnClickListener {
             if (Castling.on(this)) {
