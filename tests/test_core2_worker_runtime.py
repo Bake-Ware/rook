@@ -246,6 +246,13 @@ def test_worker_serves_verified_calls_and_refuses_bad_tickets(setup, caplog):
         assert out == {"id": req["id"], "from": WID, "ok": True,
                        "result": {"text": "hi", "person": "person:bake", "agent": "agent:claude-code",
                                   "why": "Testing the worker."}}
+        # The same request again is a band resend: the transport answers it
+        # with the reply it holds and never runs it twice. Once the
+        # transport has forgotten it, the gate's replay cache still refuses.
+        assert await hub.send(req) == out
+        for b in w.transport._bands.values():
+            b.inbound.clear()
+            b.unacked.clear()
         assert (await hub.send(req))["error"] == "denied by worker: replay"
 
         old = int(time.time()) - 300

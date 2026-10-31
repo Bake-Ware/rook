@@ -33,6 +33,17 @@ one connection, one heartbeat and one hub-loss clock per band, 9.4):
   all, served over Drop and pulled receiver-driven with a SHA-256 check. A
   plugin push is a ticketed call whose args carry the descriptor, so the
   ticket's ``args_hash`` binds the bundle's hash.
+- **Acks and resends** (feature ``ack``): requests sent here accept
+  ``ack``. The target of such a request acks it (``{"kind": "ack",
+  "from", "ids"}``, batched, after ACK_DELAY unless the reply went out
+  first) and resends its reply until the caller acks it; the caller resends
+  a request to a target that announced ``ack`` until it is acked or
+  answered. Both resend after ACK_FIRST, then every ACK_EVERY, for at most
+  ACK_FOR (or until :meth:`forget`), holding at most RESEND_BYTES. A
+  request seen again with the same id and ticket nonce is a resend: never
+  delivered twice (a re-minted ticket for the same call id is new); a
+  reply seen again is only acked. Resends going unanswered refresh our
+  relay registration and route (a restarted relay forgot them).
 - **Hub loss** (5.4, 7.4): the host calls :meth:`contact` whenever it
   accepts hub contact on a band (a verified hub announce or ticket; the
   transport can't verify signatures). After ``lost_after`` seconds without
@@ -65,7 +76,7 @@ from .links import Link
 
 log = logging.getLogger("rook.core2.transport")
 
-FEATURES = ["drop", "route"]    # what this transport speaks; put it in announces (2.1)
+FEATURES = ["drop", "route", "ack"]    # what this transport speaks; put it in announces (2.1)
 BEAT_SECS = 30.0                # announce/heartbeat period, +-20 % (5.4, 5.5)
 LOST_SECS = 90.0                # no hub contact this long: hub lost (5.4)
 PEER_SECS = 90.0                # roster eviction (5.5)
@@ -74,8 +85,16 @@ MAX_MESSAGE = 32 * 1024 * 1024  # largest inline message (the codec's reassembly
 BULK_MAX = 64 * 1024 * 1024     # bytes served over Drop at once, per band
 BULK_TTL = 300.0                # seconds an unpulled offer stays served
 PULL_SECS = 60.0                # default time to pull a large reply or a bundle
-KEEP_SECS = 900.0               # request ids remembered (for rr, accept and drop pulls)
+PULL_WINDOWS = 8                # 64-chunk Drop windows a pull keeps in flight
+KEEP_SECS = 900.0               # request ids remembered (for rr, accept, drop pulls, resends)
 KEEP_MAX = 10_000
+ACK_DELAY = 0.2                 # acks wait this long, batched: a quick reply acks its request itself
+ACK_FIRST = 1.0                 # an unacked request or reply goes again after this long,
+ACK_EVERY = 2.0                 # then this often,
+ACK_FOR = 60.0                  # for at most this long
+ACK_IDS = 24                    # ids per ack message (one frame)
+RESEND_BYTES = 8 * 1024 * 1024  # unacked messages held for resending, per band
+TICK = 0.25                     # the band loop's period (resends, hub loss)
 
 OnMessage = Callable[[str, dict], Awaitable[None]]
 Make = Callable[[str], "dict | None | Awaitable[dict | None]"]
@@ -135,8 +154,14 @@ class _Band:
     def __init__(self, t: "Transport", link: Link):
         self.t, self.link, self.band = t, link, link.band
         self.peers: dict[str, Peer] = {}
-        self.sent: dict[str, float] = {}                    # our request id -> when
-        self.inbound: dict[str, tuple[int, tuple, float]] = {}  # their request id -> (rr, accept, when)
+        self.sent: dict[str, float] = {}                    # our request id -> when, until answered
+        self.answered: dict[str, float] = {}                # our request id -> when its reply came
+        self.inbound: dict[str, list] = {}                  # their request id -> [rr, accept, when, nonce, replied]
+        self.unacked: dict[str, list] = {}                  # id -> [data, route, due, resends, until]
+        self.unacked_bytes = 0
+        self.acks: dict[int, set[str]] = {}                 # route -> ids to ack
+        self.ack_timer: asyncio.TimerHandle | None = None
+        self.stale = False                                  # resends going unanswered
         self.waiting: dict[str, tuple[str | None, asyncio.Future]] = {}
         self.server = DropReplyServer(link.band_id, self._raw, worker_id=t.node_id,
                                       ttl=BULK_TTL, max_bytes=BULK_MAX)
@@ -166,7 +191,7 @@ class _Band:
                 await asyncio.sleep(delay)
         every = self.t.every
         next_beat = time.monotonic() + every * random.uniform(0.8, 1.2)
-        tick = min(1.0, self.t.lost_after / 4, every / 4)
+        tick = min(TICK, self.t.lost_after / 4, every / 4)
         while True:
             now = time.monotonic()
             if now >= next_beat:
@@ -177,12 +202,15 @@ class _Band:
                 self.lost = True
                 self._fire(self.t.on_lost)
             self._prune(now)
+            await self._resend(now)
             await asyncio.sleep(max(0.01, min(tick, next_beat - now)))
 
     async def stop(self) -> None:
         tasks = [self.task, *self.tasks] if self.task else list(self.tasks)
         for task in tasks:
             task.cancel()
+        if self.ack_timer is not None:
+            self.ack_timer.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         for _, fut in self.waiting.values():
             if not fut.done():
@@ -221,7 +249,7 @@ class _Band:
         task.add_done_callback(self.tasks.discard)
 
     def _prune(self, now: float) -> None:
-        for table, at in ((self.sent, lambda v: v), (self.inbound, lambda v: v[2])):
+        for table, at in ((self.sent, lambda v: v), (self.answered, lambda v: v), (self.inbound, lambda v: v[2])):
             while table and now - at(next(iter(table.values()))) > KEEP_SECS:
                 table.pop(next(iter(table)))
         for nid in [n for n, p in self.peers.items() if now - p.last_heard > KEEP_SECS]:
@@ -252,22 +280,33 @@ class _Band:
     async def send(self, msg: dict) -> None:
         if not isinstance(msg, dict):
             raise TransportError("a message is a JSON object")
-        route = 0
+        route, resend, reply = 0, None, False
         if _is_request(msg):
             target = msg.get("target")
             peer = self.peers.get(target) if isinstance(target, str) else None
             if peer and not peer.compatible:
                 raise TransportError(f"incompatible: {target} speaks core {peer.stated!r}")
             accept = list(msg.get("accept") or [])
-            msg = {**msg, "accept": accept if "drop" in accept else accept + ["drop"]}
+            msg = {**msg, "accept": accept + [f for f in ("drop", "ack") if f not in accept]}
             if self.link.route and "rr" not in msg:
                 msg["rr"] = self.link.route
-            if isinstance(msg.get("id"), str):
-                _remember(self.sent, msg["id"], time.monotonic())
+            rid = msg.get("id") if isinstance(msg.get("id"), str) else None
+            if rid is not None:
+                _remember(self.sent, rid, time.monotonic())
+                self.answered.pop(rid, None)        # sent again (a re-minted ticket): a reply is new
+                self._acked(rid)
+                if peer is not None and "ack" in peer.features:
+                    resend = rid
             route = self._route_to(target)
             data = _encode(msg)
         elif _is_reply(msg) and isinstance(msg.get("id"), str):
-            rr, accept, _ = self.inbound.pop(msg["id"], (0, (), 0.0))
+            reply = True
+            seen = self.inbound.get(msg["id"])
+            rr, accept = (seen[0], seen[1]) if seen else (0, ())
+            if seen:
+                seen[4] = True
+                if "ack" in accept:
+                    resend = msg["id"]
             route = rr
             data = _encode(msg)
             if len(data) > DROP_THRESHOLD and "drop" in accept:
@@ -282,7 +321,11 @@ class _Band:
             data = _encode(msg)
         if len(data) > MAX_MESSAGE:
             raise TransportError(f"message too large: {len(data)} bytes")
+        if resend is not None and reply:
+            self._hold(resend, data, route)         # held first: a reply the link refused goes later
         await self._raw(data, route)
+        if resend is not None and not reply and resend not in self.answered:    # answered meanwhile
+            self._hold(resend, data, route)
 
     async def request(self, msg: dict, timeout: float) -> dict:
         rid = msg.get("id")
@@ -295,6 +338,76 @@ class _Band:
             return await asyncio.wait_for(fut, timeout)
         finally:
             self.waiting.pop(rid, None)
+            self._acked(rid)
+
+    # -- acks and resends --------------------------------------------------------
+
+    def _hold(self, rid: str, data: bytes, route: int) -> None:
+        """Keep ``data`` to send again until ``rid`` is acked."""
+        self._acked(rid)
+        if len(data) > RESEND_BYTES:
+            return
+        now = time.monotonic()
+        self.unacked[rid] = [data, route, now + ACK_FIRST, 0, now + ACK_FOR]
+        self.unacked_bytes += len(data)
+        while self.unacked_bytes > RESEND_BYTES:
+            self._acked(next(iter(self.unacked)))
+
+    def _acked(self, rid: Any) -> None:
+        held = self.unacked.pop(rid, None)
+        if held is not None:
+            self.unacked_bytes -= len(held[0])
+
+    async def _resend(self, now: float) -> None:
+        unanswered = False
+        for rid, held in list(self.unacked.items()):
+            if now >= held[4]:
+                self._acked(rid)
+            elif now >= held[2]:
+                held[3] += 1
+                held[2] = now + ACK_EVERY
+                unanswered = unanswered or held[3] >= 2             # its second resend or later
+                try:
+                    await self._raw(held[0], held[1])
+                except TransportError:
+                    pass
+        if unanswered and not self.stale:
+            # A relay that restarted knows neither us nor our route until we
+            # tell it: say both now rather than at the next keepalive.
+            self.stale = True
+            refresh = getattr(self.link, "refresh", None)
+            if refresh is not None:
+                self._spawn(refresh())
+
+    def _ack(self, route: int, rid: str) -> None:
+        """Ack ``rid`` soon, batched with others to the same route."""
+        self.acks.setdefault(route, set()).add(rid)
+        if self.ack_timer is None:
+            self.ack_timer = asyncio.get_running_loop().call_later(ACK_DELAY, self._flush_acks)
+
+    def _flush_acks(self) -> None:
+        self.ack_timer = None
+        acks, self.acks = self.acks, {}
+        for route, ids in acks.items():
+            # A request that was answered meanwhile is acked by its reply.
+            ids = [i for i in ids if not (self.inbound.get(i) or (0, 0, 0, 0, False))[4]]
+            for at in range(0, len(ids), ACK_IDS):
+                data = _encode({"kind": "ack", "from": self.t.node_id, "ids": ids[at:at + ACK_IDS]})
+                self._spawn(self._quiet(data, route))
+
+    async def _quiet(self, data: bytes, route: int) -> None:
+        try:
+            await self._raw(data, route)
+        except TransportError:
+            pass
+
+    def _heard_back(self) -> None:
+        """An ack or reply came: if resends had gone unanswered, the band is
+        back, so announce at once (the far end may have lost us)."""
+        if self.stale:
+            self.stale = False
+            if self.t.hello is not None:
+                self._spawn(self._emit(self.t.hello))
 
     def offer(self, blob: bytes, to: str | None = None) -> dict:
         desc = self.server.serve(secrets.token_hex(16), bytes(blob), route=self._route_to(to))
@@ -309,7 +422,7 @@ class _Band:
         if not self.link.connected:
             raise TransportError(f"band {self.band[:8]}: link down")
         data = await pull_reply(self.link.band_id, parsed, self._raw, route=self._route_to(source),
-                                timeout=timeout, register=self._register)
+                                timeout=timeout, register=self._register, windows=PULL_WINDOWS)
         if data is None:
             raise TransportError(f"drop {parsed[0]}: not pulled within {timeout:g}s or hash mismatch")
         return data
@@ -342,15 +455,45 @@ class _Band:
             rr, accept = msg.get("rr"), msg.get("accept")
             rr = rr if isinstance(rr, int) and not isinstance(rr, bool) and 0 < rr <= 0xFFFF else 0
             accept = tuple(a for a in accept if isinstance(a, str)) if isinstance(accept, list) else ()
-            if isinstance(msg.get("id"), str):
-                _remember(self.inbound, msg["id"], (rr, accept, now))
+            rid = msg.get("id")
+            if isinstance(rid, str):
+                ticket = msg.get("ticket")
+                nonce = ticket.get("nonce") if isinstance(ticket, dict) else None
+                seen = self.inbound.get(rid)
+                if seen is not None and seen[3] == nonce:       # a resend: never run twice
+                    held = self.unacked.get(rid)
+                    if seen[4] and held is not None:
+                        await self._quiet(held[0], held[1])     # our reply was lost: again, now
+                    elif not seen[4] and "ack" in accept:
+                        self._ack(rr, rid)
+                    return
+                _remember(self.inbound, rid, [rr, accept, now, nonce, False])
+                if "ack" in accept:
+                    self._ack(rr, rid)
+        elif msg.get("kind") == "ack":
+            ids = msg.get("ids")
+            if isinstance(ids, list):
+                for rid in ids[:4 * ACK_IDS]:
+                    if isinstance(rid, str):
+                        self._acked(rid)
+                self._heard_back()
+            return
         elif msg.get("kind") in ("announce", "heartbeat"):
             self._heard(msg.get("worker_id"), now, msg)
         elif _is_reply(msg):
             self._heard(msg.get("from"), now)
-            if "drop" in msg and msg.get("id") in self.sent:
-                self._spawn(self._pull_reply(msg))
-                return
+            rid = msg.get("id")
+            if isinstance(rid, str) and (rid in self.sent or rid in self.answered):
+                self._ack(self._route_to(msg.get("from")), rid)
+                self._heard_back()
+                if rid in self.answered:            # a resend of a reply we have
+                    return
+                del self.sent[rid]
+                _remember(self.answered, rid, now)
+                self._acked(rid)                    # the reply acks the request
+                if "drop" in msg:
+                    self._spawn(self._pull_reply(msg))
+                    return
             if self._answer(msg):
                 return
         elif not isinstance(msg.get("kind"), str):
@@ -410,6 +553,7 @@ class Transport:
         self.hello, self.beat, self.every = hello, beat, every
         self.on_lost, self.on_contact, self.lost_after = on_lost, on_contact, lost_after
         self.backoff_base = backoff_base
+        self.features = list(FEATURES)      # for this node's announces
         self.on_message: OnMessage | None = None
         self._bands: dict[str, _Band] = {}
         self._started = False
@@ -464,6 +608,12 @@ class Transport:
         """Send a request and wait for the reply from its ``target`` (which
         then skips ``on_message``). Raises TransportError or TimeoutError."""
         return await self._band(band).request(msg, timeout)
+
+    def forget(self, band: str, rid: str) -> None:
+        """Stop resending request ``rid``: the caller gave up on it."""
+        b = self._bands.get(band)
+        if b is not None:
+            b._acked(rid)
 
     def offer(self, band: str, blob: bytes, to: str | None = None) -> dict:
         """Serve ``blob`` over Drop on ``band``; returns the descriptor

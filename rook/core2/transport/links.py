@@ -15,6 +15,8 @@ A link is the Telesthete profile of spec 2.1 for one band (one PSK):
 - ``send(payload, route=0)``: one payload, broadcast (route 0) or ADDRESSED
   to a declared route id. Raises when the link is down.
 - ``stop()``.
+- ``refresh()`` (optional): tell the relay about us again now (sends that
+  went unanswered: a restarted relay forgot us and our route).
 
 :class:`TelestheteLink` wraps the band transport today's workers run
 (``rook.worker.transports.telesthete_hub``: UDP or WebSocket to the relay,
@@ -34,12 +36,22 @@ import hashlib
 from typing import Awaitable, Callable, Protocol
 from urllib.parse import urlsplit
 
-from rook.worker.wire.codec import route_id_for
+from rook.worker.wire.codec import KEEPALIVE_PAYLOAD, route_id_for
 
 OnPayload = Callable[[bytes], Awaitable[None]]
 OnConnect = Callable[[], Awaitable[None]]
 
 DEFAULT_RELAY_PORT = 7474
+# UDP has no connection to lose: a relay that restarted learns about us from
+# our next frame and our route from our next declaration, both sent every
+# keepalive. 5 s bounds a quiet worker's absence after a relay restart; WS
+# reconnects by itself, so it keeps the transport's 20 s.
+UDP_KEEPALIVE = 5.0
+# Bulk pacing on UDP (frames/s, burst). The 0.4 default (2,000/s, 2 frames
+# per Drop chunk) held large replies to ~1 MB/s; the relay's egress queue
+# (1,024 slots in telesthitium) sees at most the burst at once, and Drop
+# re-requests whatever an overflow loses.
+UDP_PACE = (20_000.0, 256)
 
 
 def band_of(psk: str) -> str:
@@ -62,9 +74,12 @@ class Link(Protocol):
 
 class TelestheteLink:
     """One band over a Telesthete relay: ``relay="host:port"`` (UDP) or
-    ``ws_url`` (WebSocket, e.g. the hub's ``/band`` bridge)."""
+    ``ws_url`` (WebSocket, e.g. the hub's ``/band`` bridge). ``keepalive``
+    (seconds) and ``pace`` (``[frames/s, burst]``, rate 0 = unpaced) apply
+    to UDP."""
 
-    def __init__(self, psk: str, relay: str | None = None, ws_url: str | None = None):
+    def __init__(self, psk: str, relay: str | None = None, ws_url: str | None = None,
+                 keepalive: float | None = None, pace: tuple[float, int] | None = None):
         from rook.worker.transports.telesthete_hub import TelestheteHubTransport
 
         if ws_url:
@@ -77,7 +92,12 @@ class TelestheteLink:
         else:
             raise ValueError("a band link needs relay or ws_url")
         self.ws = bool(ws_url)
-        self.t = TelestheteHubTransport(psk, host, port, ws_url=ws_url or None)
+        if self.ws:
+            self.t = TelestheteHubTransport(psk, host, port, ws_url=ws_url)
+        else:
+            rate, burst = pace if pace is not None else UDP_PACE
+            self.t = TelestheteHubTransport(psk, host, port, pace=(float(rate), int(burst)),
+                                            keepalive_secs=float(keepalive or UDP_KEEPALIVE))
         self.band_id = self.t.band_id
         self.band = self.band_id.hex()
 
@@ -112,6 +132,14 @@ class TelestheteLink:
     async def stop(self) -> None:
         await self.t.stop()
 
+    async def refresh(self) -> None:
+        if not self.ws and self.connected:
+            try:
+                await self.t.send(KEEPALIVE_PAYLOAD)
+                await self.t.declare_route()
+            except Exception:
+                pass                 # the next resend or keepalive tries again
+
 
 class LoopbackRelay:
     """An in-memory relay: ``relay.link(psk)`` gives a :class:`LoopbackLink`
@@ -121,6 +149,7 @@ class LoopbackRelay:
     def __init__(self):
         self.links: list[LoopbackLink] = []
         self.sent: list[tuple[str, bytes, int]] = []    # (band, payload, route), for tests
+        self.lose: Callable[[bytes], bool] | None = None   # tests: True drops that payload
         self._tasks: set[asyncio.Task] = set()
 
     def link(self, psk: str) -> "LoopbackLink":
@@ -130,6 +159,8 @@ class LoopbackRelay:
 
     def _forward(self, src: "LoopbackLink", payload: bytes, route: int) -> None:
         self.sent.append((src.band, payload, route))
+        if self.lose is not None and self.lose(payload):
+            return
         peers = [x for x in self.links if x is not src and x.band == src.band and x.connected]
         if route:
             declared = [x for x in peers if x.route == route]

@@ -385,8 +385,12 @@ class TelestheteHubTransport:
         bind_port: int = 0,
         use_ws: bool = False,
         ws_url: str | None = None,
+        pace: tuple[float, int] | None = None,
     ) -> None:
         self.codec = BandCodec(psk)
+        # UDP bulk pacing ``(frames/s, burst)``, rate 0 = off; None: from the
+        # environment (udp_pacer_from_env).
+        self._pace = pace
         self.band_id = self.codec.band_id
         self._crypto = self.codec.crypto        # kept for existing callers/tests
         self._seq_source = self.codec.seq
@@ -494,8 +498,9 @@ class TelestheteHubTransport:
             link = UdpLink(self._hub, self._bind_port)
             link.open()
             self.link = link
-            self.writer = FrameWriter(self.codec.split, self.codec.seal, link.write,
-                                      pacer=udp_pacer_from_env())
+            pacer = udp_pacer_from_env() if self._pace is None else (
+                TokenBucket(self._pace[0], self._pace[1]) if self._pace[0] > 0 else None)
+            self.writer = FrameWriter(self.codec.split, self.codec.seal, link.write, pacer=pacer)
             self.writer.start()
             log.info("telesthete-hub transport up: hub=%s:%d band_id=%s local=%s "
                      "frag_overhead=%dB", self._hub[0], self._hub[1],

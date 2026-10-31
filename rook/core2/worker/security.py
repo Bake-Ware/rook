@@ -23,6 +23,7 @@ with ``drop_leases`` and calls ``tick`` from its heartbeat loop.
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import os
 import re
@@ -39,7 +40,11 @@ HUB_LOST = 90            # seconds without hub contact before the hub is lost (5
 ANNOUNCE_SKEW = 90       # |now - ts| allowed on a hub announce (5.4)
 ELEVATE_TIMEOUT = 10     # seconds to wait for core.elevate (7.2)
 COLD_START = 150         # refuse every ticket this long when the replay cache was lost (6.3)
-REPLAY_MAX = 50_000      # nonces held at most; at 15 min that is ~55 calls/s
+REPLAY_MAX = 100_000     # nonces held at most (~15 MB); see ReplayStore
+# An accepted ticket has iat <= now + SKEW and exp <= iat + MAX_LIFETIME, so
+# check 14 refuses it for good once now > accepted + LIVE: no need to keep
+# its nonce past that, whatever REPLAY_KEEP says.
+LIVE = wire.MAX_LIFETIME + 2 * wire.SKEW
 ELEVATIONS = ("never", "may", "upfront")
 
 _HEX32 = re.compile(r"[0-9a-f]{32}")
@@ -71,6 +76,12 @@ class ReplayStore:
     ``<nonce> <until>`` lines, compacted when the file holds mostly dead
     lines. ``path=None`` keeps memory only.
 
+    Bounded by ``max_entries``, never by load: when full, the oldest entries
+    accepted more than LIVE seconds ago go first (their tickets are expired
+    for good, 6.3 only requires keeping a nonce until ``exp + 30``); the
+    REPLAY_KEEP margin is kept while there is room. Only more than
+    ``max_entries`` live tickets (~550 calls/s for 3 minutes) is refused.
+
     The store refuses (``seen`` is True) for COLD_START seconds after it
     starts when it can't vouch for earlier nonces: memory only, or a file
     that couldn't be read whole (a torn last line counts). ``add`` raises
@@ -81,7 +92,9 @@ class ReplayStore:
         now = _now(now)
         self.path = Path(path) if path is not None else None
         self.max = max_entries
-        self.until: dict[str, int] = {}
+        # Ordered: popping a plain dict's front leaves dead slots that every
+        # next(iter()) walks again, O(n) per call under steady churn.
+        self.until: collections.OrderedDict[str, int] = collections.OrderedDict()
         self.ready_at = now + COLD_START
         self._lines = 0
         if self.path is None:
@@ -120,8 +133,11 @@ class ReplayStore:
 
     def add(self, nonce: str, exp: int, now: int) -> None:
         self._prune(now)
-        if len(self.until) >= self.max:
-            raise OverflowError("replay cache full")
+        while len(self.until) >= self.max:
+            first = next(iter(self.until), None)
+            if first is None or self.until[first] - wire.REPLAY_KEEP + LIVE >= now:
+                raise OverflowError("replay cache full")
+            del self.until[first]
         until = max(exp + wire.SKEW, now + wire.REPLAY_KEEP)
         if self.path is not None:
             with open(self.path, "a", encoding="ascii") as f:

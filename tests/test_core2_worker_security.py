@@ -271,6 +271,37 @@ def test_replay_store_is_bounded_and_compacts(tmp_path):
     assert len(p.read_text().splitlines()) < 1100
 
 
+def test_replay_store_never_fills_under_sustained_load(tmp_path):
+    """150 calls/s for 20 minutes against a 30,000 bound: the old store
+    (every nonce for 15 minutes) refused everything from minute 3. Now only
+    live tickets count against the bound, and a replay of one is caught."""
+    s = sec.ReplayStore(None, NOW - sec.COLD_START, max_entries=30_000)    # memory only: no fsyncs
+    refused, n = 0, 0
+    for second in range(20 * 60):
+        now = NOW + second
+        for _ in range(150):
+            nonce = f"{n:032x}"
+            n += 1
+            assert not s.seen(nonce, now)
+            try:
+                s.add(nonce, now + 60, now)
+            except OverflowError:
+                refused += 1
+        if second >= sec.LIVE:                      # accepted LIVE - 1 seconds ago: still held
+            assert s.seen(f"{n - 150 * (sec.LIVE - 1):032x}", now)
+    assert refused == 0 and len(s.until) <= 30_000
+
+
+def test_replay_store_refuses_only_beyond_its_live_bound(tmp_path):
+    s = sec.ReplayStore(None, NOW - sec.COLD_START, max_entries=3)
+    for i in range(3):
+        s.add(f"{i:032x}", NOW + 60, NOW)
+    with pytest.raises(OverflowError):            # all three still live
+        s.add("f" * 32, NOW + 60, NOW + sec.LIVE)
+    s.add("f" * 32, NOW + 60, NOW + sec.LIVE + 1)   # the oldest is expired for good: it goes
+    assert list(s.until) == ["1".zfill(32), "2".zfill(32), "f" * 32]
+
+
 def test_full_replay_store_refuses_the_call(tmp_path):
     gate = make_gate(tmp_path)
     gate.replay.max = 0

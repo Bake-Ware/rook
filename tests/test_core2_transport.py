@@ -417,6 +417,201 @@ def test_plugin_bundle_is_offered_and_pulled_with_its_hash_checked():
     arun(main(), 20)
 
 
+# -- acks and resends ------------------------------------------------------------------
+
+@pytest.fixture
+def quick_acks(monkeypatch):
+    monkeypatch.setattr(conn_mod, "ACK_DELAY", 0.02)
+    monkeypatch.setattr(conn_mod, "ACK_FIRST", 0.1)
+    monkeypatch.setattr(conn_mod, "ACK_EVERY", 0.1)
+    monkeypatch.setattr(conn_mod, "TICK", 0.02)
+
+
+def _msgs(relay, sender=None):
+    out = []
+    for _, p, _ in relay.sent:
+        if p[:1] == b"{":
+            m = json.loads(p)
+            if sender is None or m.get("from") == sender:
+                out.append(m)
+    return out
+
+
+def _lose_first(pred):
+    """A relay ``lose`` hook that drops the first payload matching ``pred``."""
+    lost = []
+
+    def lose(payload):
+        if not lost and payload[:1] == b"{" and pred(json.loads(payload)):
+            lost.append(payload)
+            return True
+        return False
+    return lose, lost
+
+
+def test_a_lost_request_is_resent_and_runs_once(quick_acks):
+    async def main():
+        relay, hub, worker = await pair()
+        runs = []
+        worker.serve = lambda band, msg: asyncio.sleep(0, runs.append(msg["id"]) or ok(msg, "up"))
+        call = request("shell.exec", {"argv": ["uptime"]})
+        relay.lose, lost = _lose_first(lambda m: m.get("id") == call["id"] and "cap" in m)
+        t0 = asyncio.get_running_loop().time()
+        await hub.t.send(BAND, call)
+        await until(lambda: hub.reply(call["id"]))
+        assert lost and runs == [call["id"]]
+        assert asyncio.get_running_loop().time() - t0 < 1.0      # ACK_FIRST, not a call timeout
+        await asyncio.sleep(0.3)                                   # nothing more goes
+        assert runs == [call["id"]] and not hub.t._band(BAND).unacked
+        await hub.t.close()
+        await worker.t.close()
+    arun(main())
+
+
+def test_a_lost_reply_is_resent_without_running_the_call_again(quick_acks):
+    async def main():
+        relay, hub, worker = await pair()
+        runs = []
+        worker.serve = lambda band, msg: asyncio.sleep(0, runs.append(msg["id"]) or ok(msg, "up"))
+        call = request("shell.exec", {"argv": ["uptime"]})
+        relay.lose, lost = _lose_first(lambda m: m.get("id") == call["id"] and "ok" in m)
+        await hub.t.send(BAND, call)
+        await until(lambda: hub.reply(call["id"]))
+        assert lost and runs == [call["id"]]
+        await asyncio.sleep(0.3)
+        # the hub saw the reply once, and both sides stopped resending
+        assert len([m for _, m in hub.got if m.get("id") == call["id"]]) == 1
+        assert not hub.t._band(BAND).unacked and not worker.t._band(BAND).unacked
+        await hub.t.close()
+        await worker.t.close()
+    arun(main())
+
+
+def test_a_long_call_is_acked_and_its_lost_reply_still_arrives(quick_acks):
+    async def main():
+        relay, hub, worker = await pair()
+        go = asyncio.Event()
+
+        async def serve(band, msg):
+            await go.wait()
+            return ok(msg, "done")
+        worker.serve = serve
+        call = request("soak.sleep", {})
+        await hub.t.send(BAND, call)
+        await until(lambda: any(call["id"] in m.get("ids", ()) for m in _msgs(relay, WORKER)
+                                if m.get("kind") == "ack"))
+        await asyncio.sleep(0.3)                    # acked: the request is not sent again
+        assert sum(1 for m in _msgs(relay) if m.get("id") == call["id"] and "cap" in m) == 1
+        relay.lose, lost = _lose_first(lambda m: m.get("id") == call["id"] and "ok" in m)
+        go.set()
+        await until(lambda: hub.reply(call["id"]))
+        assert lost and hub.reply(call["id"])["result"] == "done"
+        await hub.t.close()
+        await worker.t.close()
+    arun(main())
+
+
+def test_quick_replies_need_no_request_ack_and_acks_are_batched(quick_acks):
+    async def main():
+        relay, hub, worker = await pair()
+        worker.serve = lambda band, msg: asyncio.sleep(0, ok(msg, "up"))
+        calls = [request("shell.exec", {"n": i}) for i in range(30)]
+        await asyncio.gather(*(hub.t.send(BAND, c) for c in calls))
+        await until(lambda: all(hub.reply(c["id"]) for c in calls))
+        await asyncio.sleep(0.2)
+        acks_from_worker = [m for m in _msgs(relay, WORKER) if m.get("kind") == "ack"]
+        acks_from_hub = [m for m in _msgs(relay, HUB) if m.get("kind") == "ack"]
+        assert not acks_from_worker                        # every reply beat its ack
+        acked = [i for m in acks_from_hub for i in m["ids"]]
+        assert sorted(acked) == sorted(c["id"] for c in calls)
+        assert len(acks_from_hub) <= 4                     # batched, ACK_IDS per message
+        assert not worker.t._band(BAND).unacked
+        await hub.t.close()
+        await worker.t.close()
+    arun(main())
+
+
+def test_a_reminted_ticket_for_the_same_call_is_a_new_request(quick_acks):
+    async def main():
+        relay, hub, worker = await pair()
+        runs = []
+        worker.serve = lambda band, msg: asyncio.sleep(0, runs.append(msg["ticket"]["nonce"]) or ok(msg, "up"))
+        call = request("shell.exec", {"argv": ["uptime"]})
+        await hub.t.send(BAND, call)
+        await until(lambda: hub.reply(call["id"]) and not worker.t._band(BAND).unacked)
+        await hub.t.send(BAND, call)                       # the same request again: a resend
+        await asyncio.sleep(0.2)
+        again = {**call, "ticket": ticket(call["id"], call["cap"], call["args"])}
+        await hub.t.send(BAND, again)                      # same id, fresh nonce: runs
+        await until(lambda: len(runs) == 2)
+        assert runs == [call["ticket"]["nonce"], again["ticket"]["nonce"]]
+        await until(lambda: len([m for _, m in hub.got if m.get("id") == call["id"]]) == 2)
+        await hub.t.close()
+        await worker.t.close()
+    arun(main())
+
+
+def test_no_resends_to_a_peer_without_ack_or_after_forget(quick_acks):
+    async def main():
+        relay, hub, worker = await pair()
+        worker.serve = None                                # never replies
+        old = request("shell.exec", {})
+        hub.t._band(BAND).peers[WORKER].features = ["drop", "route"]
+        relay.lose = lambda p: p[:1] == b"{" and json.loads(p).get("kind") == "ack"
+        await hub.t.send(BAND, old)
+        await asyncio.sleep(0.4)
+        assert sum(1 for m in _msgs(relay) if m.get("id") == old["id"]) == 1
+        hub.t._band(BAND).peers[WORKER].features = FEATURES
+        call = request("shell.exec", {})
+        await hub.t.send(BAND, call)
+        await until(lambda: sum(1 for m in _msgs(relay) if m.get("id") == call["id"]) >= 3)
+        hub.t.forget(BAND, call["id"])
+        n = sum(1 for m in _msgs(relay) if m.get("id") == call["id"])
+        await asyncio.sleep(0.4)
+        assert sum(1 for m in _msgs(relay) if m.get("id") == call["id"]) == n
+        await hub.t.close()
+        await worker.t.close()
+    arun(main())
+
+
+def test_unanswered_resends_refresh_the_link_and_recovery_re_announces(quick_acks):
+    async def main():
+        relay, hub, worker = await pair()
+        link = hub.t._band(BAND).link
+        refreshed = []
+
+        async def refresh():
+            refreshed.append(1)
+        link.refresh = refresh
+        worker.serve = lambda band, msg: asyncio.sleep(0, ok(msg, "up"))
+        announces = len(worker.kinds("announce"))
+        relay.lose = lambda p: True                        # the relay is gone
+        call = request("shell.exec", {})
+        await hub.t.send(BAND, call)
+        await until(lambda: refreshed)
+        relay.lose = None                                  # back
+        await until(lambda: hub.reply(call["id"]))
+        await until(lambda: len(worker.kinds("announce")) > announces)
+        assert len(refreshed) == 1
+        await hub.t.close()
+        await worker.t.close()
+    arun(main())
+
+
+def test_a_large_reply_pulls_through_lost_drop_packets(monkeypatch):
+    async def main():
+        relay, hub, worker = await pair()
+        blob = os.urandom(400 * 1024).hex()
+        worker.serve = lambda band, msg: asyncio.sleep(0, ok(msg, {"data": blob}))
+        n = iter(range(10**9))
+        relay.lose = lambda p: p[:1] != b"{" and next(n) % 17 == 5       # ~6 % of Drop packets
+        answer = await hub.t.request(BAND, request("file.read", {"path": "/big"}), timeout=15)
+        assert answer["result"]["data"] == blob
+        await hub.t.close()
+        await worker.t.close()
+    arun(main(), 30)
+
+
 # -- config -------------------------------------------------------------------------
 
 def test_from_config_builds_one_link_per_band(monkeypatch):
