@@ -52,6 +52,17 @@ def test_exec_cmd_stdin_env_cwd(tmp_path):
     assert run("exec", {"cmd": "echo $0", "shell": "bash"})["shell"] == "bash"
 
 
+def test_exec_keeps_a_bounded_amount_of_output():
+    # Review K9: unbounded output in memory (yes for 30 s could run the worker
+    # out of memory). Each stream keeps its first OUT_MAX bytes; the process runs on.
+    r = run("exec", {"cmd": "head -c 20000000 /dev/zero | tr '\\0' y; head -c 9000000 /dev/zero >&2; echo done >&2",
+                     "timeout": 60})
+    assert r["ok"] and r["truncated"] is True
+    assert len(r["stdout"]) == 8 << 20 and set(r["stdout"]) == {"y"}
+    assert len(r["stderr"]) == 8 << 20          # the 'done' after 9 MB was dropped, the command still finished
+    assert "truncated" not in run("exec", {"argv": ["echo", "hi"]})
+
+
 def test_exec_bad_args():
     with pytest.raises(CallError, match="give argv or cmd, not both"):
         run("exec", {"argv": ["true"], "cmd": "true"})

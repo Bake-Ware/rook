@@ -180,3 +180,34 @@ def test_cli_failures(tmp_path, bins, monkeypatch):
     with pytest.raises(KitError, match="not found"):
         run("llm-cli", "complete", {"program": str(tmp_path / "nope")}, {"messages": MSGS}, tmp_path)
     assert json.loads(json.dumps(bins.calls("claude")))      # the fake ran
+
+
+def test_a_redirect_never_carries_the_key_to_another_host(tmp_path):
+    # Review K9: urllib re-sends every header on a redirect, to any host.
+    from aiohttp import web
+    from fake_services import Fake
+
+    other = Fake()
+
+    async def record(request):
+        await other.record(request)
+        return web.json_response({})
+    other.app.router.add_route("*", "/{tail:.*}", record)
+
+    async def body():
+        async with serve(other.app) as evil:
+            async def move(request):
+                raise web.HTTPTemporaryRedirect(evil + request.path)
+            mover = web.Application()
+            mover.router.add_route("*", "/{tail:.*}", move)
+            async with serve(mover) as base:
+                for plugin, url in (("llm-anthropic", base), ("llm-openai", base + "/v1")):
+                    m = load(PLUGINS / plugin, CONTRACTS).data
+                    for cap, args in (("complete", {"messages": MSGS}), ("models", {})):     # POST and GET
+                        ctx = Ctx(m, ME, settings={"url": url, "key": "k"}, resolve_secret=lambda n: "sk-secret",
+                                  data_dir=tmp_path / "data", cap=cap)
+                        script = load_run(PLUGINS / plugin, m["caps"][f"{plugin}.{cap}"]["run"], {})
+                        with pytest.raises(KitError, match="HTTP 307"):
+                            await invoke(script, ctx, args)
+    go(body)
+    assert other.requests == []

@@ -52,6 +52,14 @@ def system_model(settings, model: str | None) -> str:
     return model
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib re-sends every header on a redirect, to any host: the key would
+    go along. These APIs don't redirect; a 3xx comes back as an error."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
 def _http(ctx, method: str, path: str, body: dict | None = None) -> dict:
     if not ctx.settings["key"]:
         raise KitError("llm-anthropic.key is not set (the vault name of an API key)")
@@ -60,7 +68,8 @@ def _http(ctx, method: str, path: str, body: dict | None = None) -> dict:
                                  headers={"Content-Type": "application/json", "anthropic-version": VERSION,
                                           "x-api-key": ctx.settings["key"]})
     try:
-        with urllib.request.urlopen(req, timeout=parse_duration(ctx.settings["timeout"])) as r:
+        opener = urllib.request.build_opener(_NoRedirect)
+        with opener.open(req, timeout=parse_duration(ctx.settings["timeout"])) as r:
             return json.loads(r.read() or b"{}")
     except urllib.error.HTTPError as e:
         # 429 rate limit, 5xx and 529 overloaded: worth trying again later.

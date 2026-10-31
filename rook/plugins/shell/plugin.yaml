@@ -36,6 +36,7 @@ caps:
         code: { type: int }
         stdout: { type: str }
         stderr: { type: str }
+        truncated: { type: bool, doc: "Output past 8 MiB per stream was dropped (the process ran on)." }
         shell: { type: str, doc: The shell that ran cmd (left out for sh on Linux and macOS). }
         denied: { type: bool }
     examples:
