@@ -23,7 +23,7 @@ source: https://github.com/Bake-Ware/rook
 # The voice contracts (never a provider by name: any engine that provides
 # them plugs in), System One's model and the agent.
 uses: [voice.stt, voice.tts, voice.tts.voices, voice.turn, voice.speaker, llm.complete, agents.chat.send,
-       agents.get]
+       agents.agent.list]
 
 settings:
   agent: { type: str, default: house, doc: "The agent a voice session talks to unless it names another." }

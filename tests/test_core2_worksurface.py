@@ -151,7 +151,7 @@ def test_every_install_combination(tmp_path, combo):
         assert (status, out.get("ok")) == ((200, True) if agents else (403, False)), out
         for args in ({"agent": "pm"}, {}, {"agent": ["house"]}):
             assert (await c.json("POST", "/web/api/call", {"cap": "agents.chat.read", "args": args}))[0] == 403
-        assert (await c.json("POST", "/web/api/call", {"cap": "agents.list", "args": {"agent": "house"}}))[0] == 403
+        assert (await c.json("POST", "/web/api/call", {"cap": "agents.agent.list", "args": {"agent": "house"}}))[0] == 403
     serve(tmp_path, go, packages)
 
 

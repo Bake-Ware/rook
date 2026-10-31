@@ -96,7 +96,8 @@ async def stop(ctx):
 async def open_session(ctx, agent=None, voice=None, device=None, title=None):
     who = _who(ctx)
     agent = agent or ctx.settings["agent"]
-    await ctx.call("agents.get", name=agent)        # a missing agent fails here, not mid-conversation
+    if not await ctx.call("agents.agent.list", where={"name": agent}, limit=1):
+        raise ctx.Error(f"no agent {agent}")        # fails here, not mid-conversation
     voice = voice if voice is not None else ctx.settings["voice"]
     attrs = {"plugin": "speech", "agent": agent, "voice": voice or "", **({"device": device} if device else {})}
     meta = _rt(ctx).streams.open("voice", title=title or f"Voice: {_name(who)} and {agent}",

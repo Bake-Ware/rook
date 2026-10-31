@@ -55,11 +55,11 @@ def test_caps_the_app_calls_exist():
     def caps(name):
         m = yaml.safe_load((ROOT / "rook/plugins" / name / "plugin.yaml").read_text())
         return m["plugin"], set(m.get("caps") or {}), set(m.get("records") or {})
-    plugin, own, _ = caps("agents")
-    assert plugin == "agents" and {"chat.send", "list"} <= own
+    plugin, own, records = caps("agents")
+    assert plugin == "agents" and "chat.send" in own and "agent" in records   # agents.agent.list
     for name, record in (("tasks", "task"), ("knowledge", "knowledge"), ("projects", "project")):
         assert record in caps(name)[2], name                 # records give <record>.list/.search
-    for cap in ('"agents.chat.send"', '"agents.list"', '"task.list"', '"task.search"', '"knowledge.search"',
+    for cap in ('"agents.chat.send"', '"agents.agent.list"', '"task.list"', '"task.search"', '"knowledge.search"',
                 '"project.list"', '"pages.list"'):
         assert cap in HUB05, cap
     assert rust_const("HOUSE") in (ROOT / "rook/plugins/agents/plugin.yaml").read_text()

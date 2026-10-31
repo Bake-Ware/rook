@@ -21,6 +21,7 @@ from port_helpers import PLUGINS  # noqa: E402
 from rook.core2.hub.identity import Caller  # noqa: E402
 from rook.core2.hub.runtime import Config, Hub, Loopback, _key  # noqa: E402
 from rook.core2.hub.vault import Vault  # noqa: E402
+from rook.kit.ctx import Caller as KitCaller  # noqa: E402
 
 BAND = "e17904e6ed4c664592f64f6f1d02c682"
 WHY = "Check the hub service plugins."
@@ -175,6 +176,10 @@ def test_notify_reaches_people_on_phone_telegram_and_discord(tmp_path):
                  "text": f"/link {link['code']}"})
         await tg.wait(lambda: any("Linked: you are bake" in r["body"]["text"] for r in tg.sent("/sendMessage")))
         assert not [e for e in events if e[0] == "telegram.message"]          # /link isn't an event
+        # The link is a kit record of bake's (drift #31), not a file in the plugin's data.
+        rows = hub.records.type("telegram.link").list(KitCaller(band=hub.band, owner=True))
+        assert [(r["person"], r["user"], r["chat"], r["name"]) for r in rows] == [("person:bake", "42", "42", "bk")]
+        assert not list(hub.data.rglob("links.json"))
 
         out = await call(hub, owner, "notify.send", text="Deploy waits on you", to="bake", channel="telegram")
         assert out["result"]["sent"] == [{"to": "person:bake", "channel": "telegram"}], out
