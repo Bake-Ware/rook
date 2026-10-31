@@ -51,6 +51,7 @@ TRIGGERS = ("cron", "every", "on", "manual", "webhook")
 KINDS = ("call", "agent", "script", "run")
 SEED_EVERY = 3600.0                 # re-read other plugins' manifest jobs this often (and on worker events)
 MAX_LOG, MAX_LINE, MAX_RESULT = 200, 2000, 64_000
+MAX_ASK = 3600               # approval.ask waits at most an hour
 FIELDS = ("name", "doc", "trigger", "call", "worker", "args", "agent", "script", "persona", "vars",
           "enabled", "retries", "catch_up", "timeout", "notify")
 
@@ -245,7 +246,6 @@ class Live:
         self.log: list[str] = []
         self.task: asyncio.Task | None = None
         self.proc = None
-        self.answer: asyncio.Future | None = None
         self.asking: dict | None = None
         self.cancelled = False
         self.done: asyncio.Future = asyncio.get_running_loop().create_future()
@@ -566,7 +566,7 @@ class Runtime:
         """One request from a script: a call (as the job) or a question."""
         try:
             if msg["op"] == "ask":
-                result = await self.ask(live, msg)
+                result = await self.ask(live, who, msg)
             else:
                 cap, args, on = msg.get("cap"), msg.get("args") or {}, msg.get("on")
                 if not (isinstance(cap, str) and isinstance(args, dict) and (on is None or isinstance(on, str))):
@@ -586,30 +586,31 @@ class Runtime:
             except (OSError, RuntimeError):     # it went meanwhile
                 pass
 
-    async def ask(self, live: Live, msg: dict):
+    async def ask(self, live: Live, who: Caller, msg: dict):
+        """A script's question for the person: the one ask (approval.ask,
+        castling-caps C4), asked as the job's identity. None on timeout (the
+        question stays on Approvals; an answer after that goes nowhere)."""
         q, options = msg.get("question"), msg.get("options")
         if not (isinstance(q, str) and q):
             raise KitError("ask takes a question")
         if options is not None and not (isinstance(options, list) and all(isinstance(o, str) for o in options)):
             raise KitError("options are a list of answers")
-        if live.answer is not None:
+        if live.asking is not None:
             raise KitError("this run is already waiting for an answer")
         try:
             wait = parse_duration(msg.get("timeout") or "1h")
         except ValueError:
             raise KitError("timeout is a duration") from None
-        asking = live.asking = {"question": q, **({"options": options} if options else {})}
-        live.answer = asyncio.get_running_loop().create_future()
-        self.sys.records.run.update(live.id, state="waiting", asking=asking)
         job = live.job
-        await self.notify(job, f"Job {job['name']} asks", f"{q}" + (f" ({' / '.join(options)})" if options else "")
-                          + f"\nAnswer with jobs.answer run={live.id}.")
+        asking = live.asking = {"question": q, **({"options": options} if options else {})}
+        self.sys.records.run.update(live.id, state="waiting", asking=asking)
         try:
-            return await asyncio.wait_for(asyncio.shield(live.answer), wait)
-        except asyncio.TimeoutError:
-            return None
+            got = await self.ctx.call_as(replace(who, why=f"job {job['name']}: ask the person"), "approval.ask",
+                                         {"question": q, **({"options": options} if options else {}),
+                                          "wait": max(1, min(int(wait), MAX_ASK))})
+            return got.get("answer") if got.get("answered") else None
         finally:
-            live.answer = live.asking = None
+            live.asking = None
             self.sys.records.run.update(live.id, state="running", asking=None)
 
     # -- other plugins' jobs ---------------------------------------------------------
@@ -806,19 +807,6 @@ async def cancel(ctx, run):
     live.task.cancel()
     await asyncio.shield(live.done)
     return {"run": run, "state": "cancelled"}
-
-
-async def answer(ctx, run, answer):
-    rt = _rt()
-    ctx.records.run.get(run)
-    live = rt.runs.get(run)
-    if live is None or live.answer is None or live.answer.done():
-        raise KitError(f"run {run} isn't waiting for an answer")
-    options = (live.asking or {}).get("options")
-    if options and answer not in options:
-        raise KitError(f"answer one of: {', '.join(options)}")
-    live.answer.set_result(answer)
-    return {"run": run, "answered": True}
 
 
 async def templates(ctx):

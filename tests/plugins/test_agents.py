@@ -199,7 +199,7 @@ def test_turns_resume_the_backend_session_with_the_agents_system_prompt(rig):
         assert system.startswith('You are Project manager, the agent "pm"')
         assert "keep the work moving" in system                         # the persona
         assert "expected and okay, not overstepping" in system          # the directive
-        assert "ask the house agent" in system
+        assert "tell the house agent" in system and "approval.ask" in system
         assert "- qa: QA engineer - Evidence that things work" in system   # roster stub
         assert "- pm:" not in system
         assert "- ticket-sweep: The project manager's periodic sweep" in system
@@ -209,7 +209,7 @@ def test_turns_resume_the_backend_session_with_the_agents_system_prompt(rig):
         assert reply == {"role": "reply", "text": "echo how are we doing?", "usage": {"input_tokens": 3}}
         house = (await rig.call("chat_send", agent="house", text="hi"))
         assert house["stream"] != one["stream"]
-        assert "ask the house agent" not in rig.backend.turns()[-1][1]["system"]
+        assert "tell the house agent" not in rig.backend.turns()[-1][1]["system"]
     run(rig, body)
 
 
@@ -437,4 +437,25 @@ def test_skills_are_markdown_playbooks(rig):
         assert s["when"] and s["text"].startswith("# Reaching the person")
         with pytest.raises(KitError, match="no skill nope"):
             await rig.call("skill", name="nope")
+    run(rig, body)
+
+
+def test_a_question_for_the_person_goes_through_the_house_agent(rig):
+    """castling-caps C4: approval.ask is routed through the house agent when
+    the agents package is installed."""
+    async def body():
+        hook = Caller(plugin="agents", why="agents hook: on approval.asked")
+        payload = {"hold": "q_1", "question": "Ship the docs today?", "options": ["yes", "no"],
+                   "why": "The release waits on it.", "person": "person:bake", "agent": "agent:claude"}
+        await rig.call("on_asked", hook, event="approval.asked", payload=payload)
+        cap, args, _ = rig.backend.calls[-1]
+        assert cap == "agents.chat.send" and args["agent"] == "house" and args["wait"] is False
+        assert "approval.decide" in args["text"] and "q_1" in args["text"] and "Ship the docs today?" in args["text"]
+        assert "one of: yes, no" in args["text"] and "never answer it yourself" in args["text"]
+        n = len(rig.backend.calls)
+        await rig.call("on_asked", hook, event="approval.asked", payload={**payload, "agent": "agent:house"})
+        assert len(rig.backend.calls) == n                  # the house agent asked: it waits on Approvals
+        rig.settings["house"] = ""
+        await rig.call("on_asked", hook, event="approval.asked", payload=payload)
+        assert len(rig.backend.calls) == n
     run(rig, body)

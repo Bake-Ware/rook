@@ -297,9 +297,12 @@ class Web:
                                                                  "effects": []})["ok"]:
             return {"ok": False, "error": "denied: page: grants"}
         args = args if isinstance(args, dict) else {}
-        if not isinstance(args.get("hold"), str) or args.get("decision") not in ("approve", "refuse"):
-            return {"ok": False, "error": "bad args: hold, and decision approve or refuse"}
-        out = req._run(self.hub.decide(caller, args["hold"], args.get("decision"), present=True))
+        question = isinstance(args.get("hold"), str) and args["hold"].startswith("q_")
+        if not isinstance(args.get("hold"), str) or not (
+                isinstance(args.get("answer"), str) if question else args.get("decision") in ("approve", "refuse")):
+            return {"ok": False, "error": "bad args: hold, and decision approve or refuse (a question: answer)"}
+        out = req._run(self.hub.decide(caller, args["hold"], args.get("decision"), present=True,
+                                       answer=args.get("answer")))
         if not out.get("ok") and "id" not in out:      # unknown hold, not theirs, bad decision
             return {"ok": False, "error": out["error"]}
         return {"ok": True, "result": out}

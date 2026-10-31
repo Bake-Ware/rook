@@ -1,4 +1,5 @@
-# Calls waiting for a person (spec 10.3), for pages (castling-dashboard).
+# Calls waiting for a person (spec 10.3) and questions for them (castling-caps C4:
+# approval.ask), for pages (castling-dashboard).
 # Implemented by the hub (rook.core2.hub.doors.web.caps).
 manifest: 1
 plugin: approval
@@ -13,26 +14,71 @@ source: https://github.com/Bake-Ware/rook
 
 caps:
   list:
-    doc: Calls waiting for a person. Owners see all; anyone else the ones made for them.
+    doc: "What waits on a person: held calls and questions agents asked (approval.ask). Owners see all; anyone else the ones made for them or by them."
     on: hub
     risk: read
     scope: multi-user
     effects: [sensitive]
     idempotent: true
     result: { type: map }
+  ask:
+    doc: >-
+      Ask the person a question and wait (up to wait seconds) for the answer. It waits beside the held
+      calls (Approvals) and, with the agents package, the house agent gets it to them the way that fits.
+      Nothing runs on the answer: it comes back to you, now or later with approval.get. Asked of the
+      person you act for; with nobody behind you, of the owners. Questions don't expire.
+    on: hub
+    risk: write
+    scope: multi-user
+    timeout: 61m
+    args:
+      question: { type: str, required: true, doc: "One self-contained question: the context, what you need decided." }
+      options: { type: list, max: 10, items: { type: str }, doc: "The answers to choose from; blank: free text." }
+      wait: { type: int, default: 0, min: 0, max: 3600, doc: "Seconds to wait for the answer; 0: answer at once with the id." }
+    result: { type: map }
+  get:
+    doc: One of your questions (approval.ask) by its id, with the answer once there is one.
+    on: hub
+    risk: read
+    scope: multi-user
+    idempotent: true
+    args:
+      hold: { type: str, required: true, doc: "The question's id (q_...)." }
+    result: { type: map }
   decide:
-    doc: Answer a held call. approve runs exactly that call now; refuse is final.
+    doc: "Answer what waits on a person. A held call: decision approve runs exactly that call now; refuse is final. A question: its answer (one of its options, if it has them)."
     on: hub
     risk: write
     scope: multi-user
     timeout: 15m
     args:
       hold: { type: str, required: true }
-      decision: { type: str, required: true, enum: [approve, refuse] }
+      decision: { type: str, enum: [approve, refuse], doc: A held call's answer. }
+      answer: { type: str, doc: "A question's answer, in the person's words." }
     result: { type: map }
 
+emits:
+  approval.asked:
+    doc: An agent asked a person a question (approval.ask). The question is the asker's words.
+    taints: true
+    payload:
+      hold: { type: str, required: true }
+      question: { type: str, required: true }
+      options: { type: list, items: { type: str } }
+      why: { type: str }
+      person: { type: str, doc: "Who it is asked of; blank: the owners." }
+      agent: { type: str, doc: Who asks. }
+  approval.answered:
+    doc: A question was answered.
+    payload:
+      hold: { type: str, required: true }
+      answer: { type: str, required: true }
+      by: { type: str }
+      person: { type: str }
+      agent: { type: str, doc: Who asked. }
+
 pages:
-  approvals: { title: Approvals, file: pages/approvals.html, caps: [approval.list, approval.decide], events: ["hold.*"], nav: { section: Hub } }
+  approvals: { title: Approvals, file: pages/approvals.html, caps: [approval.list, approval.decide], events: ["hold.*", "approval.*"], nav: { section: Hub } }
 
 components:
   holds: { title: Waiting for you, file: components/holds.js, doc: "Calls held for a person's answer, with a link to Approvals.", caps: [approval.list] }

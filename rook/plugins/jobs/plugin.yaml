@@ -76,7 +76,7 @@ records:
       result: { type: json }
       error: { type: str }
       log: { type: list, items: { type: str } }
-      asking: { type: map, doc: "What it waits on a person for: {question, options}." }
+      asking: { type: map, doc: "What it waits on a person for: {question, options} (asked with approval.ask)." }
       event: { type: map, doc: "{name, payload, taints?}: the event or webhook that started it; taints: outside content, so the run's calls were tainted." }
     index: [job, state]
     private: true
@@ -152,15 +152,6 @@ caps:
     run: scripts/jobs.py:cancel
     args:
       run: { type: str, required: true }
-    result: { type: map }
-  answer:
-    doc: Answer a run that asked a person something (job.ask).
-    risk: write
-    scope: multi-user
-    run: scripts/jobs.py:answer
-    args:
-      run: { type: str, required: true }
-      answer: { type: str, required: true }
     result: { type: map }
   templates:
     doc: Ready-made jobs from every plugin's manifest, with whether each is installed.

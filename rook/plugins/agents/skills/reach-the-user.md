@@ -23,7 +23,12 @@ directly. Your job is to pick the channel, the device and the moment.
    need, not the raw data. For a decision, say the options and what you
    recommend.
 5. **Follow through.** Note what you sent and when; if the decision comes
-   back, relay it to the agent that asked with the person's own words.
+   back, relay it to the agent that asked with the person's own words. A
+   question that came as `approval.ask` (a `q_...` id) is answered with
+   `approval.decide {hold, answer}`; the person can also answer it on the
+   Approvals page themselves.
+6. **An agent needs a decision from the person?** It asks with
+   `approval.ask`, and the question reaches you; never answer one yourself.
 
 What they told you about how they want to be reached beats all of this; keep
 it in your notepad.

@@ -28,6 +28,7 @@ settings:
   turn_timeout: { type: duration, default: 20m, doc: Longest one agent turn may take. }
   dream_every: { type: duration, default: 6h, doc: How often an always-on agent gets a dream pass. }
   chat_agent: { default: house, doc: "The agent that answers people's direct messages to the band's Telegram and Discord bots (once they linked their account); blank: none does." }
+  house: { type: str, default: house, doc: "The agent that reaches the person: questions agents ask them (approval.ask) go to it; blank: they wait on the Approvals page only." }
 
 caps:
   list:
@@ -171,6 +172,8 @@ hooks:
   on:
     - { event: telegram.message, run: scripts/agents.py:inbound }
     - { event: discord.message, run: scripts/agents.py:inbound }
+    # castling-caps C4: a question for the person is routed through the house agent.
+    - { event: approval.asked, run: scripts/agents.py:on_asked }
 
 # The ready-made roles (castling-agents "Skills and defaults"): created on
 # install, each with its skills. Lean toward agency: broad grants, and acting

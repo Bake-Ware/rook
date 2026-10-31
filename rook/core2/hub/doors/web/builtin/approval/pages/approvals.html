@@ -15,7 +15,21 @@
 "use strict";
 const list = document.getElementById("list");
 
+function question(h) {
+  const who = h.agent || h.person || "";
+  const answers = (h.options || []).length
+    ? h.options.map((o) => `<button data-a="${rook.esc(o)}">${rook.esc(o)}</button>`).join("")
+    : `<input class="answer" placeholder="Your answer"><button class="primary" data-a="">Answer</button>`;
+  return `<div class="card" data-hold="${rook.esc(h.hold)}">
+    <div class="what">${rook.esc(h.question)}</div>
+    ${h.why ? `<div class="why">${rook.esc(h.why)}</div>` : ""}
+    <div class="muted">${rook.esc(who)} asks</div>
+    <div class="row">${answers}<span class="out"></span></div>
+  </div>`;
+}
+
 function card(h) {
+  if (h.kind === "ask") return question(h);
   const who = [h.agent, h.person].filter(Boolean).join(" for ");
   return `<div class="card" data-hold="${rook.esc(h.hold)}">
     <div class="what">${rook.esc(h.cap)} <span class="muted">on ${rook.esc(h.worker)}</span></div>
@@ -39,6 +53,8 @@ async function load() {
 }
 
 list.addEventListener("click", async (e) => {
+  const q = e.target.closest("button[data-a]");
+  if (q) return answer(q);
   const b = e.target.closest("button[data-d]");
   if (!b) return;
   const c = b.closest(".card"), out = c.querySelector(".out");
@@ -56,7 +72,25 @@ list.addEventListener("click", async (e) => {
   setTimeout(load, 1500);
 });
 
+async function answer(b) {
+  const c = b.closest(".card"), out = c.querySelector(".out"), input = c.querySelector(".answer");
+  const text = input ? input.value.trim() : b.dataset.a;
+  if (!text) return;
+  c.querySelectorAll("button, input").forEach((x) => (x.disabled = true));
+  try {
+    const r = await rook.call("approval.decide", { hold: c.dataset.hold, answer: text },
+      { why: "The person answered a question on the Approvals page." });
+    out.className = r.ok === false ? "bad" : "ok";
+    out.textContent = r.ok === false ? r.error : "Answered.";
+  } catch (x) {
+    out.className = "bad";
+    out.textContent = x.message;
+  }
+  setTimeout(load, 1500);
+}
+
 rook.on("hold.*", load);
+rook.on("approval.*", load);
 load();
 </script>
 </body>
