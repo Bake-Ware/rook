@@ -155,7 +155,7 @@ def test_ok_then_replay_and_context(tmp_path):
     assert isinstance(call, sec.Call) and call.member.role == "home"
     ctx = call.context()
     assert ctx["person"] == "person:bake" and ctx["risk"] == "exec" and ctx["hub"] == HOME
-    assert call.context("l1")["risk"] == "admin"
+    assert call.context("l1")["risk"] == "admin" and ctx["owner"] is False
     again = gate.check(request(t, {"argv": ["uptime"]}), HOME_BAND, NOW + 5)
     assert again["error"] == "denied by worker: replay"
     assert not gate.lost(HOME, HOME_BAND, NOW + 90) and gate.lost(HOME, HOME_BAND, NOW + 91)

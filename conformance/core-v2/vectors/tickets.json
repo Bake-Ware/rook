@@ -1691,6 +1691,116 @@
     "sig": "zlQsxEJLsqSDURNp+eT259QTy9Jmdc/5cb5vjSP0YMAwzY6JxV4EC17fUmcStEU1UrpVgKsa71Yf+xBn4EAtCg=="
    },
    "reason": "malformed"
+  },
+  {
+   "name": "an owner of the hub (owner claim)",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "owner": true,
+    "kid": "3c1945587ef004c3",
+    "sig": "xPk1p9P/2acP8b8hZ6VJ4+vrhn+JWNtKnU8fyGC34C0q5hjQWAya9z20tCloqfMtVF7vsDkkVI+kN6tv9wHUBA=="
+   },
+   "reason": "ok"
+  },
+  {
+   "name": "owner claim without a person",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "owner": true,
+    "kid": "3c1945587ef004c3",
+    "sig": "chdBoDMhA9jorvjA5oO34fkK6Dsyp8KlZChh/aK82HDBQHfEf3sc2DNFF4E8sgSjzflpxw66JTWpHD8aVsF/BQ=="
+   },
+   "reason": "malformed"
+  },
+  {
+   "name": "owner claim not a bool",
+   "band": "e17904e6ed4c664592f64f6f1d02c682",
+   "now": 1793300000,
+   "seen": [],
+   "request": {
+    "id": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "cap": "shell.exec",
+    "target": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "args": {
+     "argv": [
+      "uptime"
+     ]
+    }
+   },
+   "ticket": {
+    "typ": "rook-ticket",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "band": "e17904e6ed4c664592f64f6f1d02c682",
+    "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+    "nonce": "9b1f2e3d4c5b6a798877665544332211",
+    "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+    "cap": "shell.exec",
+    "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+    "person": "person:bake",
+    "agent": "agent:claude-code",
+    "session": "s_7c1e",
+    "why": "Check how long kaiju has been up.",
+    "iat": 1793300000,
+    "exp": 1793300060,
+    "owner": "yes",
+    "kid": "3c1945587ef004c3",
+    "sig": "p2wGjgAVwgMR1ceG8zW62EWg+zpJ9KGU2JwpC3QdKFNAL2BACij3TJiBG3Qe648fldertxPOo6tNiXH0sjR1Aw=="
+   },
+   "reason": "malformed"
   }
  ]
 }

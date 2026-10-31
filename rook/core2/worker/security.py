@@ -304,7 +304,8 @@ class Call:
     def context(self, lease: str | None = None) -> dict:
         """The verified call context handed to the cap (6.6)."""
         t = self.ticket
-        return {"person": t.get("person"), "agent": t.get("agent"), "session": t["session"],
+        return {"person": t.get("person"), "agent": t.get("agent"), "owner": t.get("owner") is True,
+                "session": t["session"],
                 "band": self.band, "why": t["why"], "hub": t["hub"], "call": t["call"],
                 "risk": "admin" if lease else self.meta.get("risk", "admin"), "lease": lease}
 

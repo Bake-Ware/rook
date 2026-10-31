@@ -144,9 +144,16 @@ def test_a_workers_streams_are_listed_for_whoever_may_see_them(band):
         assert not got["ok"] and "you can see" in got["error"]
         assert (await call(hub, "stream.get", {"stream": sid}))["result"]["id"] == sid
 
-        # the stream itself is still read where it lives
+        # the stream itself is still read where it lives; the hub's ticket tells the worker
+        # who its owners are, so an owner reads someone else's too (N28)
         read = await call(hub, "stream.read", {"stream": sid}, worker="pixel")
         assert read["ok"] and read["result"]["events"], read
+        theirs_read = await call(hub, "stream.read", {"stream": other}, worker="pixel")
+        assert theirs_read["ok"] and theirs_read["result"]["events"], theirs_read
+        refused = await call(hub, "stream.read", {"stream": sid}, worker="pixel", person=ANN)
+        assert not refused["ok"] and "of yours" in refused["error"], refused
+        on_worker = await call(hub, "stream.list", worker="pixel")
+        assert {r["id"] for r in on_worker["result"]["streams"]} == {sid, other}
 
         closed = await call(hub, "stream.close", {"stream": sid}, worker="pixel")
         assert closed["ok"], closed

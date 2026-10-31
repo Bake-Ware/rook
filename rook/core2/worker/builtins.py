@@ -88,10 +88,13 @@ def entry(ctx: dict, cap: str, started: float, reply: dict) -> dict:
 
 
 def _mine(meta, caller) -> bool:
-    # Identities are per hub, so only on the band it was opened on; there the
+    # Identities are per hub, so only on the band it was opened on; there an
+    # owner of that hub (the ticket says so) may see every stream, else the
     # person decides when there is one, agents alone only for person-less streams.
     if meta.attrs.get("band", "") != (caller.band or ""):
         return False
+    if caller.owner and caller.person:
+        return True
     if caller.person:
         return caller.person in meta.participants
     return bool(caller.agent) and caller.agent in meta.participants and not any(
