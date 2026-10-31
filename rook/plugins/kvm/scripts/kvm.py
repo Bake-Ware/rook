@@ -8,10 +8,13 @@ import base64
 import json
 import re
 import ssl
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
+READ_MAX = 16 << 20        # bytes of one kvmd answer
+READ_SECS = 30             # seconds one answer may keep coming
 _HOST = re.compile(r"(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._~-]+)(:\d{1,5})?")
 
 
@@ -78,14 +81,28 @@ def _request(ctx, method: str, path: str, query: dict | None = None, data: bytes
         tls.verify_mode = ssl.CERT_NONE
     try:
         with urllib.request.urlopen(req, context=tls, timeout=15) as r:
-            return r.status, r.headers.get("Content-Type", ""), r.read()
+            return r.status, r.headers.get("Content-Type", ""), _read(ctx, r)
     except urllib.error.HTTPError as e:
         if raw:
-            return e.code, e.headers.get("Content-Type", ""), e.read()
+            return e.code, e.headers.get("Content-Type", ""), _read(ctx, e)
         raise ctx.Error(f"PiKVM answered {e.code} {e.reason} to {method} {path}") from None
     except (urllib.error.URLError, OSError) as e:
         reason = getattr(e, "reason", e)
         raise ctx.Error(f"PiKVM unreachable: {reason}", retry=True) from None
+
+
+def _read(ctx, r) -> bytes:
+    """The body, at most READ_MAX bytes within READ_SECS: a follow or stream
+    query (kvmd's /api/log?follow=1) would read forever."""
+    out, deadline = bytearray(), time.monotonic() + READ_SECS
+    read = getattr(r, "read1", r.read)        # what has arrived, not a full 64 KiB
+    while chunk := read(65536):
+        out += chunk
+        if len(out) > READ_MAX:
+            raise ctx.Error(f"PiKVM's answer is larger than {READ_MAX >> 20} MiB (a stream?)")
+        if time.monotonic() > deadline:
+            raise ctx.Error(f"PiKVM kept sending for over {READ_SECS} s (a stream?)")
+    return bytes(out)
 
 
 def _json(ctx, body: bytes, what: str):
