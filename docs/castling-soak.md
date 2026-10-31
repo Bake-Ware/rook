@@ -341,7 +341,8 @@ served here (259/s). Spec 6.3's MUST (`exp + 30`) is far inside that.
 | burst, 8 clients, 300 s | calls | ok/s | refused |
 |---|---:|---:|---:|
 | before | 81,701 | 143.5 | 38,645 (`denied by worker: replay`), every call from 186 s on |
-| after | 77,737 | 259.1 | 0 |
+| after (first cut: nonces dropped after 3 min when full) | 77,737 | 259.1 | 0 |
+| after (final: never under 10 min; machine busier) | 66,960 | 223.2 | 0 |
 
 Tests: `test_replay_store_never_fills_under_sustained_load` (40 calls/s for
 20 minutes against a 30,000 bound: the old store refused from minute 12;
