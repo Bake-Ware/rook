@@ -522,7 +522,7 @@ ARCHIVE_ONLY = [
     ("console rooms and lines", "console.db", ["rooms", "lines"], "terminal", ""),
     ("vault access log", "vault.db", ["access"], "archive", ""),
     ("access history", "access.db", ["history", "requests"], "archive", ""),
-    ("bands, devices, enrollment", "enrollment.db", None, "reenroll", "users counted under accounts"),
+    ("bands, devices, enrollment", "enrollment.db", ["-users"], "reenroll", "accounts are counted above"),
     ("approvals history (holds, relays)", "approvals.db", None, "holds", "a hold is one call, not a lasting record"),
     ("hub settings", "settings.db", None, "clean", "re-enter the ones that matter as 0.5 settings (report lists them)"),
     ("roles, guidance, personas", "roles.db", None, "roles", "0.5 ships its ready-made personas"),
@@ -549,7 +549,9 @@ def _archived_only(source: Source, archived: set, mig: dict) -> list:
         rel = hits[0].relative_to(source.root).as_posix()
         db = open_ro(hits[0])
         try:
-            names = tables or [t for t in _tables(db) if not SHADOW.search(t)]
+            drop = {t[1:] for t in tables or () if t.startswith("-")}
+            names = [t for t in tables or () if not t.startswith("-")] or \
+                [t for t in _tables(db) if not SHADOW.search(t) and t not in drop]
             n = sum(_count(db, t) for t in names if t in _tables(db))
         finally:
             db.close()
