@@ -21,6 +21,9 @@ import yaml
 
 from rook.core2.hub.runtime import _key, load_config
 from rook.core2.hub.vault import Locked, Vault
+from rook.kit.ctx import Caller as KitCaller
+from rook.kit.manifest import load
+from rook.kit.records import RecordStore
 from castling.switchover.migrate import IMPORTER, MigrateError, NotACopy, convert, migrate, render, vault
 from castling.switchover.migrate.source import Source
 
@@ -255,10 +258,14 @@ def test_apply_writes_the_05_hub_and_reruns_add_nothing(tmp_path, copy04):
         vault.get(data, "github-pat")
     (data / "keys" / "root.key").write_text(root)
     # memory: the house agent's
-    agents = sqlite3.connect(data / "plugins" / "agents" / "agents.db")
-    mem = [r[0] for r in agents.execute("SELECT text FROM memory WHERE agent='house' ORDER BY id")]
-    notes = [r[0] for r in agents.execute("SELECT text FROM note WHERE agent='house'")]
-    agents.close()
+    # (agents.memory / agents.note kit records, as the agents plugin reads them: drift #31)
+    store = RecordStore(str(data / "records.db"))
+    store.register(load(REPO / "rook" / "plugins" / "agents").data, plugin_dir=REPO / "rook" / "plugins" / "agents")
+    every = KitCaller(band=BAND, owner=True)
+    mem = [r["text"] for r in store.type("agents.memory").list(every, where={"agent": "house"}, order="created")]
+    notes = [r["text"] for r in store.type("agents.note").list(every, where={"agent": "house"})]
+    assert {r["creator"] for r in store.type("agents.memory").list(every)} == {"import:0.4"}
+    store.close()
     assert mem == ["The NAS is in the closet.", "About bake: Likes dark mode.", "Back up before deploys."]
     assert notes == ["Restart the TV with cec."]
     # the journal: whole, read-only, outside the 0.5 chains

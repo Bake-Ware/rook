@@ -45,17 +45,15 @@ from pathlib import Path
 import yaml
 
 from rook.core2.hub.runtime import _key, _write_private, home_band, load_config
+from rook.kit.ctx import Caller
+from rook.kit.manifest import load as load_manifest
+from rook.kit.records import RecordStore
 from . import convert, vault
 from .source import NotACopy, Source, _tables
 
 IMPORTER = Path(__file__).resolve().parent.parent / "import_04.py"
 HOUSE = "house"                                   # the house agent (rook/plugins/agents)
-AGENTS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS agent (name TEXT PRIMARY KEY, data TEXT NOT NULL, archived REAL);
-CREATE TABLE IF NOT EXISTS note (id INTEGER PRIMARY KEY, agent TEXT NOT NULL, at REAL, text TEXT);
-CREATE TABLE IF NOT EXISTS memory (id INTEGER PRIMARY KEY, agent TEXT NOT NULL, text TEXT,
-                                   created REAL, updated REAL);
-"""
+AGENTS = Path(__file__).resolve().parents[3] / "rook" / "plugins" / "agents"   # its records: memory, note
 
 __all__ = ["MigrateError", "NotACopy", "migrate", "render"]
 
@@ -119,7 +117,7 @@ def _run(source: Source, cfg, cfg_path: Path, band: str, apply: bool, rename: di
         (cfg.data / "keys").mkdir(exist_ok=True, mode=0o700)
         _key(cfg.data / "keys" / "root.key")      # as the hub's first start would: the vault's key is derived from it
         report["secrets_written"] = vault.put(cfg.data, secrets)
-        report["memory"]["written"] = _write_memory(cfg.data, mems, jots)
+        report["memory"]["written"] = _write_memory(cfg.data, band, mems, jots)
         if report["journal"]:
             report["journal"]["archive"] = _archive_journal(source, cfg.data)
         out = cfg.data / "migrate"
@@ -171,23 +169,27 @@ def _write_config(path: Path, users: dict, presets: dict, sacred: list) -> str |
     return str(backup)
 
 
-def _write_memory(data: Path, mems: list, jots: list) -> dict:
-    folder = data / "plugins" / "agents"
-    folder.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(folder / "agents.db")
+def _write_memory(data: Path, band: str, mems: list, jots: list) -> dict:
+    """The house agent's memory and notepad as the agents plugin's kit
+    records (``agents.memory``, ``agents.note``) in the hub's records.db.
+    A text already there is not written twice."""
+    store = RecordStore(str(data / "records.db"))
     try:
-        db.executescript(AGENTS_SCHEMA)
-        have = {r[0] for r in db.execute("SELECT text FROM memory WHERE agent=? UNION "
-                                         "SELECT text FROM note WHERE agent=?", (HOUSE, HOUSE))}
-        mems = [m for m in mems if m["text"] not in have]
-        jots = [m for m in jots if m["text"] not in have]
-        with db:
-            db.executemany("INSERT INTO memory (agent, text, created, updated) VALUES (?,?,?,?)",
-                           [(HOUSE, m["text"], m["created"], m["updated"]) for m in mems])
-            db.executemany("INSERT INTO note (agent, at, text) VALUES (?,?,?)",
-                           [(HOUSE, m["created"], m["text"]) for m in jots])
+        m = load_manifest(AGENTS)
+        store.register(m.data, plugin_dir=m.folder)
+        who = Caller(agent="import:0.4", band=band, why="import from 0.4")
+        every = Caller(band=band, owner=True, why="import from 0.4")      # memory is private: see all of it
+        memory, note = store.type("agents.memory"), store.type("agents.note")
+        have = {r["text"] for t in (memory, note) for gone in (False, True)
+                for r in t.list(every, where={"agent": HOUSE}, archived=gone, limit=10000)}
+        mems = [x for x in mems if x["text"] not in have]
+        jots = [x for x in jots if x["text"] not in have]
+        for x in mems:          # oldest first, as 0.4 had them: the newest stay in the prompt
+            memory.create(who, agent=HOUSE, text=x["text"])
+        for x in jots:
+            note.create(who, agent=HOUSE, text=x["text"])
     finally:
-        db.close()
+        store.close()
     return {"memory": len(mems), "notepad": len(jots)}
 
 
