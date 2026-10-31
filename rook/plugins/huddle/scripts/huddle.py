@@ -31,8 +31,8 @@ is carried out at once:
 - qa: the ``qa_label`` label and a comment;
 - deploy: ``change.submit`` as the caller (their rights, the change record's
   tests and rollback), with ``{version}`` in its steps' args filled in and
-  the huddle's project on it, so in a sacred project the change record's own
-  card is the one an owner gets (the huddle doesn't ask first).
+  the huddle's project on it; at sacred it is a risky change, so the change
+  record's own card is the one an owner gets (the huddle doesn't ask first).
 
 Every call through dispatch is journaled with its why (the motion's id); the
 motion record keeps the gates, the self-review and the outcome. A hub restart
@@ -407,11 +407,17 @@ class Runtime:
         spec = fill(dict(m["change"] or {}), m["version"])
         spec.setdefault("what", f"Deploy {a['title']} at {short(m['version'])}")
         spec.setdefault("why", (m.get("reason") or f"Huddle deploy, motion {m['id']}")[:400])
-        if h.get("project"):            # the huddle's level holds: a sacred project's change asks an owner
+        if h.get("project"):
             spec["project"] = h["project"]
+        if m["level"] == "sacred":      # however it got sacred (huddle or repo): the change asks an owner
+            spec["kind"] = "risky"
         creator, person = m.get("creator") or "", m.get("person")
-        who = Caller(person=person, agent=creator if creator and creator != person else None,
-                     band=self.band, why=f"Deploy for huddle motion {m['id']}")
+        why = f"Deploy for huddle motion {m['id']}"
+        if creator.startswith("plugin:") and not person:
+            who = Caller(band=self.band, plugin=creator[7:], why=why)
+        else:
+            who = Caller(person=person, agent=creator if creator and creator != person else None,
+                         band=self.band, why=why)
         rec = await self.ctx.call_as(who, "change.submit", spec)
         return self.end(m["id"], "done", f"change {rec['id']} submitted ({rec['state']})",
                         result={"change": rec["id"], "change_state": rec["state"]})
@@ -420,7 +426,7 @@ class Runtime:
         """Motions a restart cut off end as failed: call again."""
         for state in OPEN:
             for m in self.rec.motion.list(where={"state": state}, limit=500):
-                self.end(m["id"], "failed", "the hub restarted mid-call; call it again")
+                self.end(m["id"], "failed", "the hub restarted mid-call; check the pull request, then call again")
 
 
 def _with_caller(ctx, caller):

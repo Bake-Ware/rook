@@ -649,4 +649,15 @@ def test_a_sacred_repo_asks_in_any_huddle(cfg, gh):
             assert (await rig.bake.request("POST", f"/holds/{m['hold']}", {"decision": "refuse"}))["ok"]
             await until(ended(rig, out["motion"]), what="declined")
         assert not gh.writes
+        # a deploy at sacred: one card, the change record's (a risky change)
+        commit = await rig.house.ok("huddle.pin", huddle=h["huddle"], kind="commit", repo=REPO, sha=HEAD)
+        step = {"worker": "rook", "cap": "probe.set", "args": {"key": "deployed", "value": "{version}"}}
+        out = await rig.coder.ok("huddle.vote", huddle=h["huddle"], kind="deploy", artifact=commit["artifact"],
+                                 self_review=REVIEW, change={"risk": "The probe changes.", "plan": "Set it and check.",
+                                                             "scripts": [step],
+                                                             "tests": [{"worker": "rook", "cap": "probe.get",
+                                                                        "args": {"key": "deployed"}}]})
+        m = await until(ended(rig, out["motion"]), what="the deploy submitted")
+        assert m["state"] == "done" and m["result"]["change_state"] == "asked" and not m.get("hold"), m["outcome"]
+        assert "deployed" not in rig.probe()
     on_rig(cfg, body)
