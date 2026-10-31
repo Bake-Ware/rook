@@ -244,7 +244,7 @@ $("#signout").onclick = async () => {
 // -- the dock: the house agent beside every page ----------------------------------
 
 const SITE = "[site]";      // a line the site adds for the agent: where the person is
-const dock = { agent: null, next: 0, shown: 0, waiting: false };
+const dock = { agent: null, next: 0, shown: 0 };
 
 function dockOpen(open) {
   document.body.classList.toggle("dock-open", open);
@@ -260,7 +260,6 @@ function bubble(cls, text) {
 }
 
 function thinking(on) {
-  dock.waiting = on;
   $("#dock").classList.toggle("thinking", on);
 }
 
@@ -278,7 +277,6 @@ function show(ev) {
   } else if (ev.type === "turn" && d.role === "reply") {
     bubble("them", d.text);
     thinking(false);
-    refresh();                      // the agent may have made, archived or started a page
   } else if (ev.type === "status" && d.state === "error") {
     bubble("bad", d.error || "Something went wrong.");
     thinking(false);
@@ -300,6 +298,7 @@ async function read(wait) {
   const r = await call("agents.chat.read", { agent: dock.agent, after: dock.next, limit: 500, wait },
     "Reading the conversation in the site's dock.");
   for (const ev of r.events) show(ev);
+  if (wait && r.events.some((ev) => ev.type === "turn")) refresh();   // it may have made, archived or started a page
   dock.shown += r.events.length;
   dock.next = r.next;
   return r.events.length;
@@ -323,7 +322,12 @@ async function startDock(agent) {
   $("#dock").hidden = $("#dock-btn").hidden = false;
   let open = true;
   try { open = localStorage.getItem("rook.dock") !== "0" && innerWidth > 720; } catch (x) { /* private mode */ }
-  while ((await read(0)) >= 500) { /* catch up on a long conversation */ }
+  try {
+    while ((await read(0)) >= 500) { /* catch up on a long conversation */ }
+  } catch (x) {                     // not someone who may talk to it: no dock
+    $("#dock").hidden = $("#dock-btn").hidden = true;
+    return;
+  }
   if (dock.shown === 0) {           // first run: the agent asks how the person wants to use the site
     open = true;
     await say("First visit to the hub site. Welcome the person, ask how they want to use the site, " +
@@ -348,7 +352,10 @@ $("#dock-form").onsubmit = (e) => {
   say(text, false);
 };
 $("#dock-text").onkeydown = (e) => {
-  if (e.key === "Enter" && !e.shiftKey) $("#dock-form").requestSubmit();
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    $("#dock-form").requestSubmit();
+  }
 };
 $("#dock-btn").onclick = () => dockOpen(!document.body.classList.contains("dock-open"));
 $("#dock-close").onclick = () => dockOpen(false);

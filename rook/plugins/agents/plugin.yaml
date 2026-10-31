@@ -125,6 +125,7 @@ caps:
     risk: read
     scope: multi-user
     idempotent: true
+    timeout: 75s          # wait may hold the call up to 60 s
     run: scripts/agents.py:chat_read
     args:
       agent: { type: str, required: true }

@@ -175,6 +175,7 @@ def test_layout_pages_are_checked_and_arranged_in_the_sandbox(tmp_path):
 
         page = (await c.call("pages.get", {"page": "pages/glance"}))["result"]
         assert page["caps"] == ["board.count", "hub.workers"]           # its own plus its components'
+        assert page["layout"] == layout                                 # what an agent changes next
         opened = await c.open("pages/glance")
         status, headers, body = await c.req("GET", opened["frame"])
         assert status == 200 and headers["Content-Security-Policy"] == PAGE_CSP
@@ -337,3 +338,11 @@ def test_workbench_manifests_with_pages_are_valid():
         raw, issues = check(PLUGINS / folder)
         assert raw is not None and not [i for i in issues if i.level == "error"], [str(i) for i in issues]
         assert raw["pages"] and not [i for i in issues if i.code == "unknown-key"]
+
+
+def test_the_docks_long_poll_fits_the_chat_read_timeout():
+    from rook.kit._types import parse_duration
+    from rook.kit.manifest import load
+    read = load(PLUGINS / "agents").data["caps"]["agents.chat.read"]
+    js = (Path(web_caps.__file__).with_name("static") / "shell.js").read_text()
+    assert "await read(55)" in js and parse_duration(read["timeout"]) > read["args"]["wait"]["max"] >= 55

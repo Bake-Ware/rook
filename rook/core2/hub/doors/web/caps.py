@@ -276,7 +276,7 @@ class _Handlers:
         p = pages.get(page)
         out = {**p.view(), "archived": pages.archived.get(page)}
         if p.made:
-            out.update(made_by=p.made, note=pages.note(p))
+            out.update(made_by=p.made, note=pages.note(p), layout=p.layout)
         else:
             plugin = self.hub.plugins.plugins[page.partition("/")[0]].manifest
             out["plugin"] = {"name": plugin["plugin"], "version": str(plugin["version"]),
