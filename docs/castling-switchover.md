@@ -28,7 +28,7 @@ Scripts in `castling/switchover/`:
 | Desktop app | 0.2 | 0.4/0.5 switch, token sign-in, worker05 | merged (#290); no update check on 0.5 |
 | Watch | 0.2.1 through the phone | wave 6 lane in progress | not on 0.5 |
 | Security | trust map, hard stops | `security` (canary + taint) and `security-ml` (shadow) | merged (#284) |
-| Agents | house agent, huddles, CR runner, sessions | `agents` + `agents-claude-code`, 8 personas | merged (#280, #288); huddles not ported |
+| Agents | house agent, huddles, CR runner, sessions | `agents` + `agents-claude-code`, 8 personas | merged (#280, #288); huddles: `huddle` + `github` plugins (R14) |
 | Soak | n/a | tests/soak on the sidecar | PR #297 open, numbers pending |
 | Review | n/a | hardening review: fix PRs #292–#296, #299–#303 | open; `castling/review.md` not in yet |
 
@@ -65,7 +65,7 @@ the final cutover doesn't hold up the earlier side-by-side steps.
 These are also open and should be done or explicitly dropped before the
 cutover. They come from castling/coverage.md and the lanes' notes:
 
-- Not ported: attention (N21/N23), huddles, `show.present`, `trust.check`,
+- Not ported: attention (N21/N23), `show.present`, `trust.check`,
   the appliance registry on the hub (N26), the 0.4 history importers, the
   session shim, conversation modes, streaming TTS, and speaker enrollment
   caps (#287).
@@ -157,7 +157,7 @@ What the migration doesn't move, counted in the same copy:
 |---|---|---|
 | jobs | 12 jobs, 11 triggers, 367 runs | Recreate the wanted jobs in the 0.5 jobs plugin (#283). Run history stays in the snapshot. |
 | hub settings | 56 settings | Re-enter the ones that matter (voice engine, front door, timezone) as 0.5 settings |
-| chat + huddles | 37 rooms, 1,568 messages, 25 huddles | Nothing (huddles aren't ported). Readable in the snapshot. |
+| chat + huddles | 37 rooms, 1,568 messages, 25 huddles | Nothing (0.5 huddles start fresh). Readable in the snapshot. |
 | console rooms | 546 rooms, 238k lines | Nothing (streams start fresh) |
 | roles, guidance, approvals, work sessions | 25 roles, 1 guidance override, 10 holds, 1,515 work sessions | Nothing. Personas replace roles. |
 
