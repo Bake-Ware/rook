@@ -54,6 +54,15 @@ def test_streams_report_every_change_and_summaries_carry_size_and_activity(tmp_p
     db.close()
 
 
+def test_a_summary_stays_small_enough_to_travel_and_keeps_its_band():
+    s = Streams()
+    attrs = {f"k{i}": i for i in range(100)}
+    attrs["band"] = "b" * 32
+    m = s.open("process", participants=[f"person:p{i}" for i in range(300)], attrs=attrs)
+    row = s.summary(m.id)
+    assert len(row["participants"]) == 100 and len(row["attrs"]) == 33 and row["attrs"]["band"] == "b" * 32
+
+
 def test_a_bounded_store_reports_the_finished_streams_it_prunes():
     s = Streams(bounded=MemoryStore(keep_closed=1))
     gone = []

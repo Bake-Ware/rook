@@ -161,6 +161,17 @@ def test_ok_then_replay_and_context(tmp_path):
     assert not gate.lost(HOME, HOME_BAND, NOW + 90) and gate.lost(HOME, HOME_BAND, NOW + 91)
 
 
+def test_the_owner_claim_counts_only_from_a_hub_that_manages_the_worker(tmp_path):
+    gate = make_gate(tmp_path)
+    home = gate.check(request(ticket("shell.exec", owner=True)), HOME_BAND, NOW)
+    assert home.context()["owner"] is True
+    guest = gate.check(request(ticket("core.manifests", op=GUEST_OP, root=GUEST_ROOT, band=GUEST_BAND,
+                                      owner=True)), GUEST_BAND, NOW)
+    assert isinstance(guest, sec.Call) and guest.context()["owner"] is False   # a guest hub's owners aren't ours
+    nobody = gate.check(request(ticket("shell.exec", owner=True, person=None)), HOME_BAND, NOW)
+    assert nobody["error"] == "denied by worker: malformed"
+
+
 def test_unknown_hub_key_and_forgery(tmp_path):
     gate = make_gate(tmp_path)
     # an attacker on the band signs as itself, and inline-attaches its own grant

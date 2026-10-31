@@ -302,10 +302,11 @@ class Call:
     meta: dict          # the cap's manifest data: risk, effects, elevation
 
     def context(self, lease: str | None = None) -> dict:
-        """The verified call context handed to the cap (6.6)."""
+        """The verified call context handed to the cap (6.6). ``owner`` counts
+        only from a hub that manages this worker (home or co-owner), not a guest."""
         t = self.ticket
-        return {"person": t.get("person"), "agent": t.get("agent"), "owner": t.get("owner") is True,
-                "session": t["session"],
+        owner = t.get("owner") is True and self.member.role in ("home", "co-owner")
+        return {"person": t.get("person"), "agent": t.get("agent"), "owner": owner, "session": t["session"],
                 "band": self.band, "why": t["why"], "hub": t["hub"], "call": t["call"],
                 "risk": "admin" if lease else self.meta.get("risk", "admin"), "lease": lease}
 

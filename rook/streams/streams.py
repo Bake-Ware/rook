@@ -35,6 +35,8 @@ from .store import DEFAULT_BUDGET, MemoryStore, SqliteStore
 
 READ_LIMIT = 1000
 ATTR_TEXT = 200               # longest attr string a summary keeps
+SUMMARY_ATTRS = 32            # attrs a summary keeps
+SUMMARY_PARTIES = 100         # participants a summary lists
 
 log = logging.getLogger("rook.streams")
 
@@ -231,12 +233,15 @@ class Streams:
         ``last_at`` (the newest event, else when it opened)."""
         meta = self.get(sid)
         size, last_at = self._store(sid).stats(sid)
-        attrs = {k: (v[:ATTR_TEXT] if isinstance(v, str) else v) for k, v in meta.attrs.items()
+        plain = [(k, v[:ATTR_TEXT] if isinstance(v, str) else v) for k, v in meta.attrs.items()
                  if isinstance(k, str) and len(k) <= 64 and (isinstance(v, (str, int, bool)) or (
-                     isinstance(v, float) and math.isfinite(v)))}
+                     isinstance(v, float) and math.isfinite(v)))]
+        attrs = dict(plain[:SUMMARY_ATTRS])
+        if "band" in meta.attrs:               # which hub's index it belongs in: always kept
+            attrs["band"] = meta.attrs["band"]
         out = {"id": meta.id, "kind": meta.kind, "title": meta.title, "producer": meta.producer,
-               "participants": list(meta.participants), "attrs": attrs, "types": list(meta.spec.types),
-               "input": meta.spec.input, "durable": meta.spec.durable, "created": meta.created,
+               "participants": list(meta.participants)[:SUMMARY_PARTIES], "attrs": attrs,
+               "types": list(meta.spec.types), "input": meta.spec.input, "durable": meta.spec.durable, "created": meta.created,
                "last_seq": meta.last_seq, "last_at": last_at if last_at is not None else meta.created,
                "size": size}
         if meta.closed is not None:
