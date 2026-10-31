@@ -32,7 +32,7 @@ Scripts in `castling/switchover/`:
 | Vault | 65 secrets | `<data>/vault.db` sealed under the root and recovery keys; `{{secret:NAME}}` and hub plugins' secret settings read it; `secret.*` caps | worker-side secret settings have no vault path yet |
 | Speech / voice | kaiju Chatterbox + Whisper, voice front | `speech` + `speech-engine` + `speech-elevenlabs` | PR #287 open |
 | Phone app | APK 0.4.23 stable, beta channel | 0.4/0.5 switch, 0.5 runs in Chaquopy | PR #298 open, emulator only |
-| Desktop app | 0.2 | 0.4/0.5 switch, token sign-in, worker05 | merged (#290); the 0.5 hub serves `/updates/desktop.json`, the app's 0.5 switch is a follow-up PR |
+| Desktop app | 0.2 | 0.4/0.5 switch, token sign-in, worker05 | merged (#290); update check on 0.5 (`/updates/desktop.json`) |
 | Watch | 0.2.1 through the phone | wave 6 lane in progress | not on 0.5 |
 | Security | trust map, hard stops | `security` (canary + taint) and `security-ml` (shadow) | merged (#284) |
 | Agents | house agent, huddles, CR runner, sessions | `agents` + `agents-claude-code`, 8 personas | merged (#280, #288); huddles are plain streams; work lands by sign-off + `github.merge` (R14) |

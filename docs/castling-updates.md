@@ -138,11 +138,8 @@ releases are kept on a worker; the hub keeps its three newest releases.
 compares versions and only offers links into Rook's GitHub releases, so
 nothing changes in how far it trusts the hub.
 
-The app's side is one line in `desktop/src-tauri/src/lib.rs` (`check_update`
-stops returning early in 0.5 mode). It is a separate PR because every PR that
-touches `desktop/` runs the desktop workflow, whose `macos-14` bundle job
-fails since GitHub's macOS 14 brownout (the image retires on 2026-11-02).
-`.github/workflows/desktop.yml` has to move to a newer macOS image first.
+The app runs this check in 0.5 mode as in 0.4 (`check_update` in
+`desktop/src-tauri/src/lib.rs`).
 
 ## Not here (yet)
 
