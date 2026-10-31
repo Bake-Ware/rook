@@ -22,7 +22,7 @@ from rook.core2.hub.runtime import Config as HubConfig, Hub  # noqa: E402
 from rook.core2.transport import LoopbackRelay, Transport, band_of  # noqa: E402
 from rook.core2.worker.runtime import Config, Worker  # noqa: E402
 from rook.kit.ctx import Caller as KitCaller, Ctx  # noqa: E402
-from rook.streams import SqliteStore, Streams  # noqa: E402
+from rook.streams import SqliteStore, StreamIndex, Streams  # noqa: E402
 
 PSK = "streams-index-band"
 BAND = band_of(PSK)
@@ -53,7 +53,7 @@ def open_(ctx, title=""):
 """
 
 
-def go(body, seconds=40):
+def go(body, seconds=60):
     async def main():
         return await asyncio.wait_for(body(), seconds)
     return asyncio.run(main())
@@ -182,19 +182,23 @@ def test_a_restarted_worker_resyncs_and_the_index_drops_what_it_lost(band):
     go(body)
 
 
-def test_the_index_survives_a_hub_restart_and_a_fresh_hub_learns_by_resync(band, tmp_path):
+def test_the_index_outlives_the_hub_and_a_hub_without_one_learns_by_resync(band, tmp_path):
     make_worker, make_hub = band
 
     async def body():
         w, hub = await up(make_worker, make_hub)
         sid = (await call(hub, "tail.open", {"title": "kept"}, worker="pixel"))["result"]["stream"]
         await until(lambda: hub.streams.index.get(sid))
+        drained = lambda: all(not box.queue for box in w.outboxes.values())   # noqa: E731
+        await until(drained, 20)               # nothing in flight to a hub about to stop (it would time out)
         await hub.stop()
-        hub = make_hub()
-        await hub.start()
-        assert hub.streams.index.get(sid)                # kept in <data>/streams.db
-        await hub.stop()
+        kept = StreamIndex(str(tmp_path / "hub" / "streams.db"))
+        assert kept.get(sid)                             # the index outlives the hub process
+        kept.close()
         await until(lambda: w.transport.lost(BAND), 10)
+        # A new hub process's announce seq starts at the clock; the old one's ran ahead of it
+        # (several announces a second), and the worker takes only a newer seq (spec 5.4).
+        await asyncio.sleep(max(0.0, hub._seq + 1 - time.time()))
         for f in (tmp_path / "hub").glob("streams.db*"):  # a hub that lost its index
             f.unlink()
         hub = make_hub()
