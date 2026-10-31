@@ -5,6 +5,7 @@ Every test runs under a hard asyncio timeout.
 """
 
 import asyncio
+import json
 import hashlib
 import shutil
 from pathlib import Path
@@ -143,27 +144,26 @@ def test_plugin_level_requirements_disable_every_cap_and_hooks(tmp_path):
 
 
 @needs_echo
-def test_secret_settings_resolve_per_call():
+def test_secret_settings_come_from_the_hub_per_call(tmp_path):
+    """castling-enrollment (Bake): "Secrets: referenced only by vault name;
+    the hub sends the value with each call; never written to worker disk."
+    The hub carries the resolved value beside the args; a vault name kept on
+    the worker is never used, and nothing is written."""
     async def body():
-        vault = {"echo-token": "s3cret-1"}
         asked = []
-
-        def resolve(name):
-            asked.append(name)
-            return vault.get(name)
-
-        host = Host(os_name="linux", resolve_secret=resolve)
-        await host.set_settings("echo", hub={"token": "echo-token"})
+        host = Host(os_name="linux", resolve_secret=lambda n: asked.append(n) or "from-a-worker-vault",
+                    data_root=tmp_path / "data")
+        await host.set_settings("echo", local={"token": "echo-token"}, hub={"token": "echo-token"})
         await host.load(FIX / "echo")
-        assert (await host.call("echo.secret", {}, ME)).strip() == "s3cret-1"
-        vault["echo-token"] = "s3cret-2"   # rotated in the vault: the next call sees it
-        assert (await host.call("echo.secret", {}, ME)).strip() == "s3cret-2"
-        assert asked == ["echo-token", "echo-token"]
-        await host.call("echo.greet", {}, ME)   # doesn't name the secret: not fetched
-        assert len(asked) == 2
-        del vault["echo-token"]
-        with pytest.raises(CallError, match="not in the vault"):
+        assert (await host.call("echo.secret", {}, ME, carry={"settings": {"token": "s3cret-1"}})).strip() == "s3cret-1"
+        # rotated in the vault: the next call carries the new value
+        assert (await host.call("echo.secret", {}, ME, carry={"settings": {"token": "s3cret-2"}})).strip() == "s3cret-2"
+        with pytest.raises(CallError, match="the hub sent none"):
             await host.call("echo.secret", {}, ME)
+        await host.call("echo.greet", {}, ME)   # doesn't name the secret: nothing needed
+        assert asked == []
+        assert "s3cret" not in json.dumps(host.plugins["echo"].settings)
+        assert not any("s3cret" in f.read_text(errors="replace") for f in tmp_path.rglob("*") if f.is_file())
         await host.close()
     go(body)
 
@@ -279,15 +279,13 @@ def test_plugin_failures_never_take_the_host_down(tmp_path):
 
 def test_secrets_are_redacted_from_run_cap_errors(tmp_path):
     async def body():
-        vault = {"tv": "tv-pairing-key"}
-        host = Host(os_name="linux", resolve_secret=vault.get)
+        host = Host(os_name="linux")
         await host.set_settings("counter", hub={"key": "tv"})
         await host.load(counter(tmp_path))
         with pytest.raises(CallError, match=r"^tv refused \[redacted\]$"):
-            await host.call("counter.leak", {}, ME)
-        vault["tv"] = "other-key"
+            await host.call("counter.leak", {}, ME, carry={"settings": {"key": "tv-pairing-key"}})
         with pytest.raises(CallError, match=r"^counter.leak failed: ValueError: bad key \[redacted\]$"):
-            await host.call("counter.leak", {}, ME)
+            await host.call("counter.leak", {}, ME, carry={"settings": {"key": "other-key"}})
         await host.close()
     go(body)
 
@@ -547,3 +545,86 @@ def test_load_folder_skips_hub_caps_and_refuses_builtin(tmp_path):
     (b / "plugin.yaml").write_text("manifest: 1\nplugin: b\nversion: 1.0.0\nbuiltin: true\n")
     with pytest.raises(LoadError, match="builtin"):
         load_folder(b, os_name="linux")
+
+
+# -- appliances (spec 5.7) --------------------------------------------------------
+
+LAMP_YAML = """\
+manifest: 1
+plugin: lamp
+version: 1.0.0
+doc: A lamp.
+appliance:
+  settings:
+    key: { secret: true, doc: Its pairing key. }
+    port: { type: int, default: 9 }
+caps:
+  url:
+    doc: The URL it would call.
+    risk: read
+    scope: local
+    action:
+      exec: { argv: [echo, "http://{{appliance.host}}:{{appliance.port}}/{{appliance.name}}"] }
+  leak:
+    doc: Says its key.
+    risk: read
+    scope: local
+    action:
+      exec: { argv: [sh, -c, "echo key {{appliance.key}} >&2; exit 3"] }
+  seen:
+    doc: What ctx.appliance holds.
+    risk: read
+    scope: local
+    run: scripts/lamp.py:seen
+"""
+
+LAMP_PY = """\
+def seen(ctx):
+    a = dict(ctx.appliance)
+    return {"name": a["name"], "host": a["host"], "port": a["port"], "key": "set" if a["key"] else None,
+            "secret": type(a["key"]).__name__}
+"""
+
+
+def lamp(tmp_path):
+    d = tmp_path / "lamp"
+    (d / "scripts").mkdir(parents=True)
+    (d / "plugin.yaml").write_text(LAMP_YAML)
+    (d / "scripts" / "lamp.py").write_text(LAMP_PY)
+    return d
+
+
+@needs_echo
+def test_appliance_instances_render_from_what_the_hub_carries(tmp_path):
+    """castling-manifest-appliance: "{{appliance.x}} sees the instance's host,
+    port and name from onboarding with its instance settings on top"."""
+    async def body():
+        host = Host(os_name="linux")
+        await host.load(lamp(tmp_path))
+        carry = {"instance": {"name": "den-lamp", "host": "10.0.0.9", "port": 80, "settings": {"key": "k3y-v4lue"}}}
+        out = await host.call("lamp.url", {}, ME, carry=carry, appliance="den-lamp")
+        assert out.strip() == "http://10.0.0.9:9/den-lamp"   # the port setting's default wins over discovery
+        carry["instance"]["settings"]["port"] = 8080
+        out = await host.call("lamp.url", {}, ME, carry=carry, appliance="den-lamp")
+        assert out.strip() == "http://10.0.0.9:8080/den-lamp"
+        got = await host.call("lamp.seen", {}, ME, carry=carry, appliance="den-lamp")
+        assert got == {"name": "den-lamp", "host": "10.0.0.9", "port": 8080, "key": "set", "secret": "Secret"}
+        with pytest.raises(CallError) as e:
+            await host.call("lamp.leak", {}, ME, carry=carry, appliance="den-lamp")
+        assert "k3y-v4lue" not in e.value.message
+        # No instance: an appliance template has nothing to fill.
+        with pytest.raises(CallError):
+            await host.call("lamp.url", {}, ME)
+        await host.close()
+    go(body)
+
+
+@needs_echo
+def test_an_appliance_call_needs_an_appliance_plugin():
+    async def body():
+        host = Host(os_name="linux")
+        await host.load(FIX / "echo")
+        with pytest.raises(CallError, match="has no appliance section"):
+            await host.call("echo.greet", {}, ME, carry={"instance": {"name": "x"}}, appliance="x")
+        await host.close()
+    go(body)

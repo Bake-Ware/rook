@@ -448,8 +448,20 @@ hub state recorded when the appliance is onboarded. An agent targets the
 appliance by name; the hub resolves the route and sends the request to the
 delegate with `target` = the delegate's `worker_id` and `appliance` = the
 instance name. The ticket binds both. Instance settings and credentials
-travel with the call (secrets resolved by the hub per call). A delegate
-answers with `from` = its own `worker_id`.
+travel with the call in `carry` (secrets resolved by the hub per call, bound
+by the ticket's `carry_hash`). A delegate answers with `from` = its own
+`worker_id`.
+
+The hub records instances with core `appliance.add` (it runs the plugin's
+`pair` cap first, through that worker, when the manifest declares one),
+`appliance.list` and `appliance.remove`. The first delegate is the
+known-good route: dispatch sends to it when it is online, else to the next
+online delegate, and with none online still tries them in order (status is
+only a hint). A send that fails before it reaches a delegate, or a call safe
+to repeat (`idempotent`, not `physical` or `destructive`) that timed out or
+failed with `retry`, goes to the next delegate in the same request when that
+one passes rights and gates too. The delegate that answers becomes the
+known-good one. An appliance call reaches only its plugin's caps.
 
 ### 5.8 Worker keys
 
@@ -496,6 +508,7 @@ is still signed by its home hub.
 | `target` | MUST | the `worker_id` that should answer. There are no open calls. |
 | `args` | MAY | keyword arguments as a JSON object, secrets already substituted; absent means `{}` |
 | `appliance` | MAY | appliance instance name, on a call through a delegate (5.7) |
+| `carry` | MAY | what the hub sends beside `args` for this call only, never stored by the worker: `settings` (the target plugin's hub-kept settings, `where: hub` and every secret one, secrets already resolved) and `instance` (`name`, `host`, `port` and `settings` of the appliance, secrets resolved) |
 | `ticket` | MUST | 6.2 |
 | `rr`, `accept` | MAY | transport extensions (core v1 section 14) |
 
@@ -520,6 +533,7 @@ the hub's operational key:
 | `appliance` | MAY | appliance instance name; present exactly when the request has `appliance` |
 | `cap` | MUST | cap name |
 | `args_hash` | MUST | `args_hash` of the request's `args` (3.2) |
+| `carry_hash` | MAY | `args_hash` of the request's `carry`; present exactly when the request has `carry` |
 | `person` | one of | the person the call is for: `person:<name>`, or absent |
 | `agent` | one of | the agent making it: `agent:<name>` or `system:<component>`, or absent. At least one of `person` and `agent` MUST be present. |
 | `session` | MUST | the session id (8.4) |
@@ -554,7 +568,7 @@ refuse on the first failure with the reason code shown (vectors:
 | 8 | `appliance` equals the request's `appliance` (both absent counts as equal) | `wrong_appliance` |
 | 9 | `call` is the request `id` | `wrong_call` |
 | 10 | `cap` is the request `cap` | `wrong_cap` |
-| 11 | `args_hash` equals `args_hash` of the arguments as received | `wrong_args` |
+| 11 | `args_hash` equals `args_hash` of the arguments as received, and `carry_hash` that of `carry` (both absent counts as equal) | `wrong_args` |
 | 12 | `60 ≤ exp − iat ≤ 120` | `bad_lifetime` |
 | 13 | `now ≥ iat − 30` | `not_yet_valid` |
 | 14 | `now ≤ exp + 30` | `expired` |

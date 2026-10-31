@@ -176,16 +176,23 @@ class FakeWorker:
     """A worker on the loopback band: announces core + echo, verifies every
     ticket with WorkerGate and runs echo's caps inline."""
 
-    def __init__(self, hub: Hub, band: Loopback, tmp: Path, core: str = "2.0"):
+    def __init__(self, hub: Hub, band: Loopback, tmp: Path, core: str = "2.0", extra: dict | None = None):
         self.hub, self.core = hub, core
         self.key = SigningKey.generate()    # its own key: signs its core.call / core.elevate (13.1)
         folder = plugin(tmp, "echo", ECHO, {"echo.py": "def say(ctx, text): return text\n"})
         self.echo_raw, _ = check(folder)
         self.core_raw, _ = check(CORE)
+        # More plugins: {manifest text: {cap: fn(request) -> result}}
+        self.extra_raw, self.extra = [], {}
+        for text, fns in (extra or {}).items():
+            raw, issues = check(plugin(tmp, f"x{len(self.extra_raw)}", text, {}))
+            assert raw is not None, [str(i) for i in issues]
+            self.extra_raw.append(raw)
+            self.extra.update(fns)
         anchor = tmp / "anchor.json"
         anchor.write_text(json.dumps({"hub": hub.hub_id, "root": wire.pub_text(hub.root), "band": BAND}))
         caps = {n: {"risk": m["risk"], "effects": m["effects"], "elevation": m["elevation"]}
-                for raw in (self.core_raw, self.echo_raw) for n, m in normalize(raw)["caps"].items()
+                for raw in (self.core_raw, self.echo_raw, *self.extra_raw) for n, m in normalize(raw)["caps"].items()
                 if m.get("on") == "worker"}
         self.gate = WorkerGate(WID, "kaiju", TrustStore(anchor, None, WID),
                                ReplayStore(tmp / "replay.txt"), caps, ask=self.ask)
@@ -201,7 +208,7 @@ class FakeWorker:
     def entries(self):
         return sorted(({"plugin": r["plugin"], "version": r["version"], "hash": wire.manifest_hash(r),
                         **({"builtin": True} if r.get("builtin") else {})}
-                       for r in (self.core_raw, self.echo_raw)), key=lambda e: e["plugin"])
+                       for r in (self.core_raw, self.echo_raw, *self.extra_raw)), key=lambda e: e["plugin"])
 
     async def announce(self, **over):
         e = self.entries()
@@ -252,8 +259,10 @@ class FakeWorker:
         async def action(lease):
             cap = got.ticket["cap"]
             if cap == "core.manifests":
-                return {"manifests": [r for r in (self.core_raw, self.echo_raw)
+                return {"manifests": [r for r in (self.core_raw, self.echo_raw, *self.extra_raw)
                                       if not args.get("plugins") or r["plugin"] in args["plugins"]]}
+            if cap in self.extra:
+                return self.extra[cap](msg)
             if cap == "echo.say":
                 return {"said": args["text"], "person": got.ticket.get("person"),
                         "agent": got.ticket.get("agent")}
@@ -278,13 +287,13 @@ def hubs(tmp_path):
     """(start, stop) helpers around one hub with a loopback band."""
     state = {}
 
-    async def start(cfg=None, worker=True):
+    async def start(cfg=None, worker=True, extra=None):
         band = Loopback()
         hub = Hub(cfg or config(tmp_path), transport=band)
         await hub.start()
         state["hub"] = hub
         token = (hub.data / "owner.token").read_text().strip() if (hub.data / "owner.token").exists() else None
-        w = FakeWorker(hub, band, tmp_path / f"w{len(state)}") if worker else None
+        w = FakeWorker(hub, band, tmp_path / f"w{len(state)}", extra=extra) if worker else None
         return hub, w, token
     return start
 
@@ -1232,6 +1241,123 @@ def test_rook_run_agents_have_their_own_identity_and_turn_tokens(hubs, tmp_path)
             assert out["ok"] and "scribe" not in hub.identities.agents
             assert hub.authenticate(token) is None
             assert (await http(hub, "GET", "/workers", token=token))[0] == 401
+
+
+LAMP = """\
+manifest: 1
+plugin: lamp
+version: 1.0.0
+doc: A lamp on the LAN.
+settings:
+  cloud: { secret: true, where: hub, doc: The vendor cloud token. }
+appliance:
+  settings:
+    key: { secret: true, doc: Written by lamp.pair. }
+    level: { type: int, default: 50 }
+  pair: lamp.pair
+caps:
+  pair:
+    doc: Pair with it.
+    risk: admin
+    scope: local
+    effects: [persists]
+    run: scripts/lamp.py:pair
+  on:
+    doc: Switch it on.
+    risk: write
+    scope: local
+    effects: [physical]
+    run: scripts/lamp.py:on
+"""
+
+
+def test_appliances_are_onboarded_called_by_name_and_carry_their_settings(hubs, tmp_path):
+    """castling-workers-appliances (Bake): "The agent only targets a name ... the
+    hub looks up the appliance's profile, which records its proxy (delegate)
+    route"; castling-manifest-appliance: "Each instance gets its own name and
+    is called like a worker"; castling-enrollment: "Secrets: referenced only
+    by vault name; the hub sends the value with each call; never written to
+    worker disk." """
+    seen = []
+
+    def pair(msg):
+        seen.append(msg)
+        return {"paired": True, "settings": {"key": "pair-k3y"}}
+
+    def on(msg):
+        seen.append(msg)
+        return {"carry": msg.get("carry")}
+
+    cfg = Config(data=tmp_path / "data", band=BAND, users={"bake": {"preset": "owner"}, "ann": {"preset": "adult"}},
+                 agents={"claude": {"grants": ["*"], "max_risk": "admin"}}, doors={"http": {"bind": "127.0.0.1:0"}})
+
+    async def go():
+        hub, w, token = await hubs(cfg, extra={LAMP: {"lamp.pair": pair, "lamp.on": on}})
+        ann = hub.add_token(runtime.Caller(person="person:ann"))
+        try:
+            await w.announce()
+            await until(lambda: "lamp.on" in hub.dispatcher.workers.get(WID, runtime.Worker("", "", "", {}, {})).caps)
+
+            async def rc(cap, args=None, tok=token, worker="rook"):
+                return (await http(hub, "POST", "/call", {"worker": worker, "cap": cap, "why": WHY,
+                                                          "args": args or {}}, tok))[1]
+
+            assert (await rc("secret.set", {"name": "lamp-cloud", "value": "cl0ud-v4lue"}))["ok"]
+            out = await rc("setting.set", {"plugin": "lamp", "key": "cloud", "value": "{{secret:lamp-cloud}}"})
+            assert out["ok"] and out["result"]["value"] == "lamp-cloud", out
+            out = await rc("setting.set", {"plugin": "lamp", "key": "cloud", "value": "not a name!"})
+            assert not out["ok"] and "vault name" in out["error"]
+
+            out = await rc("appliance.add", {"name": "den-lamp", "plugin": "echo", "worker": "kaiju"})
+            assert not out["ok"] and "no appliance section" in out["error"]
+            out = await rc("appliance.add", {"name": "den-lamp", "plugin": "lamp", "worker": "kaiju"}, tok=ann)
+            assert not out["ok"] and "only an owner" in out["error"]
+            out = await rc("appliance.add", {"name": "den-lamp", "plugin": "lamp", "worker": "kaiju",
+                                             "host": "192.168.1.9", "settings": {"level": 80}})
+            assert out["ok"] and out["result"]["added"] and out["result"]["paired"] == {"paired": True}, out
+            assert "pair-k3y" not in json.dumps(out)
+            assert seen[0]["cap"] == "lamp.pair" and seen[0]["appliance"] == "den-lamp"
+            assert hub.vault.get("appliance.den-lamp.key") == "pair-k3y"
+            rec = hub.appliances.get("den-lamp")
+            assert rec["delegates"] == [WID] and rec["settings"] == {"level": 80, "key": "appliance.den-lamp.key"}
+
+            # Called by name, like a worker: the delegate gets the instance and settings, resolved.
+            out = await rc("lamp.on", worker="den-lamp")
+            assert out["ok"], out
+            req = seen[-1]
+            assert req["target"] == WID and req["appliance"] == "den-lamp"
+            assert req["carry"] == {"settings": {"cloud": "cl0ud-v4lue"},
+                                    "instance": {"name": "den-lamp", "host": "192.168.1.9",
+                                                 "settings": {"level": 80, "key": "pair-k3y"}}}
+            t = w.verified[-1]
+            assert t["appliance"] == "den-lamp" and t["carry_hash"] == wire.args_hash(req["carry"])
+            # values never come back to the caller nor reach the journal
+            assert "cl0ud-v4lue" not in json.dumps(out) and "pair-k3y" not in json.dumps(out)
+            assert out["result"]["carry"]["settings"]["cloud"] == "[redacted]"
+            entry = hub.journal.query(call=out["id"])[0]
+            assert entry["appliance"] == "den-lamp" and entry["worker"] == WID
+            assert "cl0ud-v4lue" not in json.dumps(hub.journal.query()) and "pair-k3y" not in json.dumps(hub.journal.query())
+
+            # Only its plugin's caps; the delegate's own caps stay its own.
+            out = await rc("echo.say", {"text": "hi"}, worker="den-lamp")
+            assert out["error"] == "unknown capability: echo.say"
+            # Listing shows vault names, never values.
+            out = await rc("appliance.list")
+            [a] = out["result"]["appliances"]
+            assert a["delegates"] == [{"id": WID, "name": "kaiju", "online": True}]
+            assert "pair-k3y" not in json.dumps(out)
+
+            # A secret that left the vault fails the call before anything is sent.
+            hub.vault.delete("lamp-cloud")
+            n = len(seen)
+            out = await rc("lamp.on", worker="den-lamp")
+            assert not out["ok"] and "lamp-cloud is not in the vault" in out["error"], out
+            assert len(seen) == n
+
+            out = await rc("appliance.remove", {"name": "den-lamp"})
+            assert out["ok"]
+            assert (await rc("lamp.on", worker="den-lamp"))["error"] == "unknown worker: den-lamp"
+            assert "pair-k3y" not in (hub.data / "appliances.json").read_text()
         finally:
             await hub.stop()
     run(go())

@@ -241,9 +241,8 @@ class Client:
 
 class _TV:
     def __init__(self, ctx):
-        # TODO(castling:worker-host): the host doesn't hand run: code the
-        # appliance instance yet (spec 5.7); ctx.appliance stands in:
-        # {name, host, port, client_key, mac}.
+        # The instance the hub carried with the call (spec 5.7): {name, host,
+        # port, client_key, mac}, the key resolved from the vault.
         a = getattr(ctx, "appliance", None) or {}
         self.host = str(a.get("host") or "")
         if not _HOST.fullmatch(self.host):

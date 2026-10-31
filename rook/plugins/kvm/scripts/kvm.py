@@ -53,9 +53,8 @@ def api_post(ctx, path: str, query=None, body: str | None = None, body_b64: str 
 # -- helpers ----------------------------------------------------------------------
 
 def _appliance(ctx) -> dict:
-    # TODO(castling:worker-host): the host doesn't hand run: code the
-    # appliance instance yet (spec 5.7: instance settings travel with the
-    # call); ctx.appliance stands in: {host, user, password, verify_tls}.
+    # The instance the hub carried with the call (spec 5.7): {name, host,
+    # port, user, password, verify_tls}, the password resolved from the vault.
     a = getattr(ctx, "appliance", None) or {}
     if not _HOST.fullmatch(str(a.get("host") or "")):
         raise ctx.Error("kvm: this call has no appliance instance (or its host is not a host name)")

@@ -107,6 +107,32 @@ def hub():
     return d
 
 
+class Registry:
+    """The hub's appliance registry as dispatch sees it (get, worked)."""
+
+    def __init__(self):
+        self.items, self.worked_calls = {}, []
+
+    def get(self, name):
+        rec = self.items.get(name)
+        return json.loads(json.dumps(rec)) if rec else None
+
+    def worked(self, name, wid):
+        self.worked_calls.append((name, wid))
+        d = self.items[name]["delegates"]
+        d.remove(wid)
+        d.insert(0, wid)
+
+
+def lamps(d, *names, delegates=(WID,)):
+    """Light appliances of a ``light`` plugin on kaiju."""
+    d.worker.plugins["light"] = ["light.set"]
+    if d.appliances is None:
+        d.appliances = Registry()
+    for n in names:
+        d.appliances.items[n] = {"name": n, "plugin": "light", "delegates": list(delegates), "settings": {}}
+
+
 def call(d, caller, cap, args=None, caps=("*",), why="because the test says so", **kw):
     s = d.start_session(caller, list(caps), project=kw.pop("project", None), task=kw.pop("task", None))
     return run(d.dispatch(caller, Call(cap=cap, target=kw.pop("target", "kaiju"), args=args, why=why,
@@ -326,8 +352,7 @@ def test_ceiling_with_target_patterns(hub):
     hub.worker.ceiling = {"grants": ["light.*@downstairs-*", "file.*"], "max_risk": "write"}
     assert call(hub, BAKE, "file.read")[0]["ok"]
     assert call(hub, BAKE, "shell.exec")[0]["error"] == "denied: ceiling: grants"
-    hub.worker.appliances["downstairs-lamp"] = {"light.set": CAPS["light.set"]}
-    hub.worker.appliances["attic-lamp"] = {"light.set": CAPS["light.set"]}
+    lamps(hub, "downstairs-lamp", "attic-lamp")
     assert call(hub, BAKE, "light.set", appliance="downstairs-lamp")[0]["ok"]
     assert call(hub, BAKE, "light.set", appliance="attic-lamp")[0]["error"] == "denied: ceiling: grants"
     t = hub.tx.requests[-1]["ticket"]
@@ -1048,3 +1073,129 @@ def test_a_crash_while_releasing_is_journaled(hub):
     assert rel == {"id": out["id"], "ok": False, "error": "internal error"}
     e = calls(hub)[-1]
     assert (e["decision"], e["ok"], e["error"]) == ("released", False, "internal")
+
+
+# -- appliances (5.7): by name, delegates, carry ------------------------------
+
+WID2 = "4f0a9c1d2e3f40516273849506a7b8c9"
+
+
+def two_delegates(hub):
+    """den-lamp, delegated by kaiju (known-good) and janitor; both verify tickets."""
+    w2 = Worker(WID2, "janitor", BAND, dict(CAPS), {"grants": ["*"]}, plugins={"light": ["light.set"]})
+    hub.workers[WID2] = w2
+    lamps(hub, "den-lamp", delegates=(WID, WID2))
+    janitor = dict(hub.tx.worker, worker_id=WID2, name="janitor")
+    replay = wire.ReplayCache()
+
+    async def send(band, request):
+        if request["target"] == WID2:
+            hub.tx.requests.append(json.loads(json.dumps(request)))
+            ok, reason = wire.verify_ticket(request["ticket"], request, janitor, int(NOW), replay)
+            hub.tx.verdicts.append(reason)
+            return {"id": request["id"], "from": WID2, "ok": True, "result": {"by": "janitor"}}
+        return await hub.tx(band, request)
+    hub.send = send
+    return w2
+
+
+def test_an_appliance_is_called_by_name_through_its_delegate(hub):
+    lamps(hub, "den-lamp")
+    hub.carry = lambda w, cap, app: ({"instance": {"name": app, "host": "10.0.0.9", "settings": {"key": "k3y"}}},
+                                     ["k3y"])
+    hub.tx.answer = lambda req, n: {"id": req["id"], "from": WID, "ok": True, "result": {"echo": "k3y"}}
+    out, _ = call(hub, BAKE, "light.set", target="den-lamp")
+    assert out["ok"] and out["result"] == {"echo": "[redacted]"}, out
+    req = hub.tx.requests[-1]
+    assert req["target"] == WID and req["appliance"] == "den-lamp" and hub.tx.verdicts[-1] == "ok"
+    assert req["ticket"]["carry_hash"] == wire.args_hash(req["carry"])
+    [e] = calls(hub)
+    assert e["appliance"] == "den-lamp" and "k3y" not in json.dumps(e)
+    # only the appliance plugin's caps
+    assert call(hub, BAKE, "shell.exec", target="den-lamp")[0]["error"] == "unknown capability: shell.exec"
+    assert call(hub, BAKE, "light.set", target="nowhere")[0]["error"] == "unknown worker: nowhere"
+
+
+def test_a_carry_the_worker_didnt_get_is_refused(hub):
+    req = {"id": "a" * 32, "cap": "light.set", "args": {}, "appliance": "den-lamp",
+           "carry": {"instance": {"name": "den-lamp"}}}
+    lamps(hub, "den-lamp")
+    hub.carry = lambda w, cap, app: (req["carry"], [])
+    out, _ = call(hub, BAKE, "light.set", target="den-lamp")
+    sent = hub.tx.requests[-1]
+    ok, reason = wire.verify_ticket(sent["ticket"], {**sent, "carry": {"instance": {"name": "evil"}}},
+                                    hub.tx.worker, int(NOW), wire.ReplayCache())
+    assert (ok, reason) == (False, "wrong_args")
+    ok, reason = wire.verify_ticket(sent["ticket"], {k: v for k, v in sent.items() if k != "carry"},
+                                    hub.tx.worker, int(NOW), wire.ReplayCache())
+    assert (ok, reason) == (False, "wrong_args")
+
+
+def test_a_secret_the_carry_step_cant_find_fails_before_sending(hub):
+    lamps(hub, "den-lamp")
+
+    def carry(w, cap, app):
+        raise ValueError("setting light.cloud: secret nope is not in the vault")
+    hub.carry = carry
+    out, _ = call(hub, BAKE, "light.set", target="den-lamp")
+    assert out["error"] == "secret: setting light.cloud: secret nope is not in the vault"
+    assert not hub.tx.requests
+
+
+def test_offline_known_good_delegate_is_tried_last_and_what_worked_is_remembered(hub):
+    two_delegates(hub)
+    hub.online = lambda wid: wid != WID
+    out, _ = call(hub, BAKE, "light.set", target="den-lamp")
+    assert out["ok"] and out["result"] == {"by": "janitor"}
+    assert hub.appliances.items["den-lamp"]["delegates"] == [WID2, WID]
+    # none online: still tried, known-good first (status is only a hint)
+    hub.online = lambda wid: False
+    assert call(hub, BAKE, "light.set", target="den-lamp")[0]["ok"]
+    assert hub.tx.requests[-1]["target"] == WID2
+
+
+def test_a_failed_send_moves_on_to_the_next_delegate_in_the_same_request(hub):
+    two_delegates(hub)
+    hub.tx.answer = lambda req, n: OSError("no route")
+    out, _ = call(hub, BAKE, "light.set", target="den-lamp")
+    assert out["ok"] and out["result"] == {"by": "janitor"}, out
+    [e] = calls(hub)
+    assert e["routes"] == [WID, WID2] and e["worker"] == WID2 and len(e["ticket"]) == 2
+    assert hub.tx.requests[-1]["ticket"]["worker"] == WID2 and hub.tx.verdicts[-1] == "ok"
+    assert hub.appliances.worked_calls == [("den-lamp", WID2)]
+
+
+def test_a_physical_call_that_timed_out_is_not_sent_again(hub):
+    two_delegates(hub)
+    CAPS_T = dict(CAPS["light.set"], timeout="1s")
+    for w in hub.workers.values():
+        w.caps["light.set"] = CAPS_T
+
+    async def slow(req, n):
+        await asyncio.sleep(10)
+    hub.tx.answer = slow
+    out, _ = call(hub, BAKE, "light.set", target="den-lamp")
+    assert out["error"] == "timeout: the call may still be running"
+    assert [r["target"] for r in hub.tx.requests] == [WID]
+
+
+def test_the_next_delegate_must_pass_rights_too(hub):
+    w2 = two_delegates(hub)
+    w2.ceiling = {"grants": ["file.*"]}
+    hub.tx.answer = lambda req, n: OSError("no route")
+    out, _ = call(hub, BAKE, "light.set", target="den-lamp")
+    assert out["error"] == "send failed: no route"
+    assert [r["target"] for r in hub.tx.requests] == [WID]
+
+
+def test_a_delegate_can_be_pinned_and_only_a_delegate(hub):
+    two_delegates(hub)
+    assert call(hub, BAKE, "light.set", target="janitor", appliance="den-lamp")[0]["result"] == {"by": "janitor"}
+    hub.workers["9" * 32] = Worker("9" * 32, "attic", BAND, dict(CAPS), {"grants": ["*"]},
+                                   plugins={"light": ["light.set"]})
+    out, _ = call(hub, BAKE, "light.set", target="attic", appliance="den-lamp")
+    assert out["error"] == "attic is not a delegate of appliance den-lamp"
+    hub.workers[WID].plugins.clear()
+    hub.workers[WID2].plugins.clear()
+    assert call(hub, BAKE, "light.set", target="den-lamp")[0]["error"] == \
+        "appliance den-lamp: no delegate serves light now"

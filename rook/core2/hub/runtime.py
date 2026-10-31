@@ -84,8 +84,10 @@ from . import updates
 from .identity import Caller, Identities, digest
 from .journal_store import JournalError, JournalStore
 from .plugins import HubPlugins, short_caps
-from .vault import Vault, VaultError, resolver
+from .vault import LONE_REF, Locked, Vault, VaultError, resolver
 from .vault import caps as vault_caps
+from .appliance import Appliances, secret_decl
+from .appliance import caps as appliance_caps
 from .backup import caps as backup_caps
 
 log = logging.getLogger("rook.hub")
@@ -417,6 +419,8 @@ class Hub:
         self.plugins.add_core(self.core)
         builtin_caps.install(self)               # pages, hub, approval, journal, setting: before the library
         vault_caps.install(self)
+        self.appliances = Appliances(self.data)
+        appliance_caps.install(self)             # appliance.*: the registry dispatch routes by
         backup_caps.install(self)
         self.updates = updates.install(self)     # update.*: core releases and rollouts
         self.streams.install()                   # stream.*: the index and the hub's own streams
@@ -424,7 +428,9 @@ class Hub:
         self.enroll = Enrollment(self, cfg.enroll)
         self.dispatcher = Dispatcher(hub_id=self.hub_id, op_key=self.op, identities=self.identities,
                                      workers={}, send=self._send, journal=self._journal,
-                                     hubkey=self.grant, clock=self.clock, secrets=self._secret_step)
+                                     hubkey=self.grant, clock=self.clock, secrets=self._secret_step,
+                                     appliances=self.appliances, carry=self._carry,
+                                     online=lambda wid: bool(self.known.get(wid) and self.known[wid].online))
         self.dispatcher.closed_doors = set(_read_doors(self.data))
         self._sync_hub()
         await self._load_library()
@@ -734,17 +740,76 @@ class Hub:
             self.dispatcher.workers.pop(k.id, None)
             return
         caps = {n: m for n, m in self.core["caps"].items() if m.get("on") == "worker"}
-        uses = {}
+        uses, plugins = {}, {}
         for e in k.manifests:
             norm = self._norm.get(e["hash"])
             if norm is None or norm["plugin"] != e["plugin"]:
                 continue
             plugin = norm["plugin"]
-            caps.update({n: self._contracted(m) for n, m in norm["caps"].items() if m.get("on", "worker") == "worker"})
+            mine = {n: self._contracted(m) for n, m in norm["caps"].items() if m.get("on", "worker") == "worker"}
+            caps.update(mine)
             uses[plugin] = list(norm.get("uses") or ())
+            plugins[plugin] = sorted(mine)
         ceiling = k.ceiling if rights.valid_rights(k.ceiling) else {"grants": ["*"]}
         self.dispatcher.workers[k.id] = Worker(k.id, k.name, k.band, caps, ceiling, uses=uses,
-                                               sacred=k.name in self.cfg.sacred)
+                                               plugins=plugins, sacred=k.name in self.cfg.sacred)
+
+    def worker_manifest(self, wid: str, plugin: str) -> dict | None:
+        """The normalized manifest of ``plugin`` as worker ``wid`` runs it."""
+        k = self.known.get(wid)
+        for e in k.manifests if k else ():
+            norm = self._norm.get(e["hash"])
+            if e["plugin"] == plugin and norm is not None and norm["plugin"] == plugin:
+                return norm
+        return None
+
+    def _carry(self, w: Worker, cap: str, appliance: str | None) -> tuple[dict | None, list]:
+        """Dispatch's carry step (spec 5.7; castling-enrollment, Bake:
+        "Secrets: referenced only by vault name; the hub sends the value with
+        each call; never written to worker disk."): what the hub sends beside
+        a call's args. ``settings``: the target plugin's hub-kept settings
+        (``where: hub`` and every secret one, set with ``setting.set``),
+        secret ones read from the vault now; ``instance``: the appliance's
+        name, address and instance settings, secrets resolved the same way.
+        Returns (carry or None, the secret values in it). Raises ValueError
+        when a secret it needs isn't in the vault."""
+        plugin = next((p for p, names in w.plugins.items() if cap in names), None)
+        norm = self.worker_manifest(w.id, plugin) if plugin else None
+        if norm is None:
+            return None, []
+        shown: list = []
+
+        def value(ref, what: str) -> str:
+            m = LONE_REF.fullmatch(ref) if isinstance(ref, str) else None
+            name = m[1] if m else ref
+            try:
+                got = self.vault.get(str(name))
+            except KeyError:
+                raise ValueError(f"{what}: secret {name} is not in the vault") from None
+            except (Locked, VaultError) as e:
+                raise ValueError(f"{what}: {e}") from None
+            shown.append(got)
+            return got
+
+        out: dict = {}
+        kept = self.plugins.settings.get(plugin) or {}
+        settings = {}
+        for key, decl in (norm.get("settings") or {}).items():
+            if key not in kept or not (decl.get("where") == "hub" or secret_decl(decl)):
+                continue
+            settings[key] = value(kept[key], f"setting {plugin}.{key}") if secret_decl(decl) else kept[key]
+        if settings:
+            out["settings"] = settings
+        if appliance is not None:
+            rec = self.appliances.get(appliance)
+            if rec is None or rec["plugin"] != plugin:
+                raise ValueError(f"{appliance} is not a {plugin} appliance")
+            decls = (norm.get("appliance") or {}).get("settings") or {}
+            inst = {"name": appliance, **{k: rec[k] for k in ("host", "port") if k in rec}}
+            inst["settings"] = {k: value(v, f"{appliance} setting {k}") if secret_decl(decls.get(k)) else v
+                                for k, v in rec["settings"].items() if k in decls}
+            out["instance"] = inst
+        return out or None, shown
 
     def _contracted(self, meta: dict) -> dict:
         """A cap's data for dispatch: its ``contracts`` (from provides) only

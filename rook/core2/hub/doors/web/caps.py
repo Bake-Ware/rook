@@ -614,6 +614,18 @@ class Settings:
             for key, spec in (p.manifest.get("settings") or {}).items():
                 if spec.get("where") == where:
                     yield p.name, key, spec
+        if where != "hub":
+            return
+        # Worker plugins' hub-kept settings: ``where: hub`` ones and every
+        # secret one (a vault name; castling-enrollment: "Secrets: referenced
+        # only by vault name; the hub sends the value with each call; never
+        # written to worker disk"). Dispatch carries them with each call.
+        for name, manifest in sorted(_worker_manifests(self.hub).items()):
+            if (plugin and name != plugin) or name in self.hub.plugins.plugins:
+                continue
+            for key, spec in (manifest.get("settings") or {}).items():
+                if spec.get("where") == "hub" or spec.get("secret") is True or spec.get("type") == "secret":
+                    yield name, key, spec
 
     async def list(self, ctx, plugin: str | None = None, person: str | None = None) -> dict:
         out = []
@@ -656,7 +668,10 @@ class Settings:
             else:
                 live.pop(key, None)
         else:
-            _check_value(key, spec, value)
+            if spec.get("secret") is True or spec.get("type") == "secret":
+                value = _vault_name(key, value)
+            else:
+                _check_value(key, spec, value)
             self.stored.setdefault(plugin, {})[key] = value
             live[key] = copy.deepcopy(value)
         self.stored = {p: v for p, v in self.stored.items() if v}
@@ -690,6 +705,33 @@ class Settings:
         if self.hub.identities.user(who) is None:
             raise KitError(f"no person {person} on this hub")
         return who
+
+
+def _worker_manifests(hub) -> dict:
+    """``{plugin: normalized manifest}`` of the plugins workers announce
+    (the newest version of each the hub has)."""
+    from rook.kit.manifest.diff import semver_key
+
+    out: dict = {}
+    for norm in getattr(hub, "_norm", {}).values():
+        name = norm.get("plugin")
+        try:
+            if name and (name not in out or semver_key(norm["version"]) > semver_key(out[name]["version"])):
+                out[name] = norm
+        except (KeyError, ValueError):
+            continue
+    return out
+
+
+def _vault_name(key: str, value) -> str:
+    """A secret setting's value: a vault name (``{{secret:NAME}}`` or NAME), never the secret."""
+    from rook.core2.hub.vault import LONE_REF, NAME
+
+    m = LONE_REF.fullmatch(value) if isinstance(value, str) else None
+    name = m[1] if m else value
+    if not (isinstance(name, str) and NAME.fullmatch(name)):
+        raise KitError(f"setting {key} is a secret: give a vault name ({{{{secret:NAME}}}}), not a value")
+    return name
 
 
 def _check_value(key: str, spec: dict, value) -> None:
