@@ -137,8 +137,12 @@ def install(hub) -> None:
                         raise KitError(f"pairing {name}: the vault refused {key}: {e}") from None
                     rec["settings"][key] = vname
                 else:
-                    rec["settings"].update(instance_settings(plugin, decls.get("settings") or {}, {key: value}))
-            reg.put(rec)
+                    try:
+                        rec["settings"].update(instance_settings(plugin, decls.get("settings") or {}, {key: value}))
+                    except KitError:
+                        reg.remove(name)
+                        raise
+            # What pairing returned stays out of the reply: secret values went to the vault.
             paired = {k: v for k, v in paired.items() if k != "settings"} if isinstance(paired, dict) else paired
         reg.put(rec)
         out = {"appliance": view(rec), "added": True}

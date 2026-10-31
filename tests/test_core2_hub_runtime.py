@@ -1241,6 +1241,9 @@ def test_rook_run_agents_have_their_own_identity_and_turn_tokens(hubs, tmp_path)
             assert out["ok"] and "scribe" not in hub.identities.agents
             assert hub.authenticate(token) is None
             assert (await http(hub, "GET", "/workers", token=token))[0] == 401
+        finally:
+            await hub.stop()
+    run(go())
 
 
 LAMP = """\
