@@ -3,6 +3,7 @@ the real Telesthete transport (see harness.py and docs/castling-e2e.md)."""
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import secrets
@@ -44,7 +45,7 @@ def test_the_hub_lists_what_the_worker_announces(band):
     workers = {w["name"]: w for w in band.owner.get("/workers")["workers"]}
     w = workers["e2e-worker"]
     assert w["id"] == band.worker_id and w["online"] and w["core"] == "2.0" and w["problem"] is None
-    assert set(w["plugins"]) == {"core", "e2e", *PORTS} and w["facts"]["os"] == local_os()
+    assert set(w["plugins"]) == {"core", "stream", "worker", "e2e", *PORTS} and w["facts"]["os"] == local_os()
     caps = band.caps()["caps"]
     assert caps["e2e.wipe"]["effects"] == ["destructive"] and caps["e2e.admin"]["risk"] == "admin"
     assert {"core.manifests", "core.trust.set", "core.plugin.install"} <= set(caps)
@@ -63,7 +64,7 @@ def test_caps_stay_known_while_the_worker_is_offline_and_across_hub_restarts(fre
     assert b.hub.stop() == 0
     b.start_hub()
     w = next(w for w in b.owner.get("/workers")["workers"] if w["name"] == "e2e-worker")
-    assert not w["online"] and set(w["plugins"]) == {"core", "e2e", *PORTS}
+    assert not w["online"] and set(w["plugins"]) == {"core", "stream", "worker", "e2e", *PORTS}
     offline = b.caps()
     assert not offline["online"] and "e2e.ping" in offline["caps"]
     b.start_worker()
@@ -107,9 +108,27 @@ def test_shell_and_file_run_on_the_real_worker(band, tmp_path):
     got = band.owner.call("file.read", {"path": str(target)})
     assert got["ok"] and got["result"]["content"] == "made by shell", got
     assert band.owner.call("file.stat", {"path": str(tmp_path / "nope")})["result"] == {"exists": False}
-    # shell.open needs the worker's streams, which core doesn't wire yet (coverage N8)
-    opened = band.owner.call("shell.open", {"argv": ["true"]})
-    assert opened["error"] == "streams are not available here", opened
+    # shell.open's terminal is a stream on the worker, read and written through the hub.
+    opened = band.owner.call("shell.open", {"argv": ["cat"], "pty": False})
+    assert opened["ok"], opened
+    sid = opened["result"]["stream"]
+    wrote = band.owner.call("stream.write", {"stream": sid, "body": {"text": "castling\n"}})
+    assert wrote["ok"], wrote
+    seen, after = b"", 0
+    for _ in range(20):
+        got = band.owner.call("stream.read", {"stream": sid, "after": after, "wait": 1})
+        assert got["ok"], got
+        after = got["result"]["next"]
+        seen += b"".join(base64.b64decode(e["b64"]) for e in got["result"]["events"] if "b64" in e)
+        if b"castling" in seen:
+            break
+    assert b"castling" in seen
+    closed = band.owner.call("stream.close", {"stream": sid})
+    assert closed["ok"] and closed["result"]["closed"], closed
+    st = band.owner.call("worker.status")
+    assert st["ok"] and st["result"]["streams_open"] == 0, st
+    ran = band.owner.call("worker.log", {"cap": "shell."})
+    assert [e["cap"] for e in ran["result"]["entries"]][-2:] == ["shell.exec", "shell.open"], ran
 
 
 # -- 3. a call, end to end ------------------------------------------------------------------

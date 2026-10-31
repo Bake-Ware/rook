@@ -222,10 +222,11 @@ async def _pump(handle, proc, master) -> None:
             while chunk := await proc.stdout.read(CHUNK):
                 handle.append("bytes", chunk)
         code = await proc.wait()
-    except asyncio.CancelledError:
+    except BaseException as e:   # cancelled, or the stream was closed under it (stream.close)
         await _kill(proc)
         code = proc.returncode
-        raise
+        if not isinstance(e, Exception):
+            raise
     finally:
         feeder.cancel()
         await asyncio.gather(feeder, return_exceptions=True)

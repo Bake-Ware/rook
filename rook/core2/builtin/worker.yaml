@@ -1,0 +1,66 @@
+# The worker's own caps (castling-caps: info, log and selfupdate move into
+# core). Implemented inside the worker binary (rook/core2/worker/builtins.py),
+# announced like any plugin, never pushed. The rest of 0.4's selfupdate is
+# binned or elsewhere: deauth is core.trust.set with a removed membership,
+# hold is a setting, and worker.update waits for the 0.5 release format.
+manifest: 1
+plugin: worker
+version: 0.5.0
+title: Worker
+doc: Liveness, status, the local record of calls this worker ran, and restart.
+package: core
+builtin: true
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+caps:
+  ping:
+    doc: Liveness check. Answers {pong, at} (the worker's clock).
+    risk: read
+    scope: self
+    idempotent: true
+    aliases: [info.ping]
+    result:
+      type: map
+      fields:
+        pong: { type: bool }
+        at: { type: float }
+  status:
+    doc: >-
+      One read of this worker: name, id, version, core, OS facts, uptime, the bands it is on
+      (with hub contact), plugins loaded and caps unavailable (with why), open streams.
+    risk: read
+    scope: self
+    idempotent: true
+    result: { type: map }
+  log:
+    doc: >-
+      What this worker actually ran, from its own record (newest last): one entry per call a hub
+      ticket let through, with cap, person, agent, session, why, ok or the error, and how long it
+      took. Filter by cap prefix, person, agent, since (epoch seconds) or failures only.
+    risk: read
+    scope: self
+    effects: [sensitive]
+    idempotent: true
+    aliases: [log.audit]
+    args:
+      limit: { type: int, default: 50, min: 1, max: 500 }
+      cap: { type: str, doc: "Only caps starting with this (shell., tv.power)." }
+      person: { type: str }
+      agent: { type: str }
+      since: { type: float, min: 0 }
+      failed: { type: bool, default: false, doc: Only calls that failed. }
+    result:
+      type: map
+      fields:
+        entries: { type: list }
+  restart:
+    doc: >-
+      Restart this worker process in place with its current config. Every live terminal, process
+      and browser session on it ends, so whoever runs them loses their work.
+    risk: admin
+    scope: local
+    effects: [destructive]
+    result:
+      type: map
+      fields:
+        restarting: { type: bool }

@@ -52,8 +52,11 @@ from rook.kit.ctx import Caller, KitError
 from rook.kit.manifest import check
 
 from .. import CORE_VERSION
-from ..builtin import CORE
+from ..builtin import CORE, STREAM, WORKER
 from ..transport import FEATURES, Transport, TransportError, link_from
+from rook.streams import Streams
+
+from . import builtins
 from .host import Host
 from .install import Installer
 from .loader import LoadError, local_os
@@ -176,10 +179,17 @@ class _Gate(WorkerGate):
     async def execute(self, call: Call, action, now: int | None = None) -> dict:
         self.worker._contact(call.band)
         self.worker.inflight.append(call)
+        started, out = time.time(), {"ok": False, "error": "worker error"}
         try:
-            return await super().execute(call, action, now)
+            out = await super().execute(call, action, now)
+            return out
+        except Exception as e:             # Host.handle turns it into the error reply
+            out = {"ok": False, "error": getattr(e, "message", None) or str(e) or type(e).__name__}
+            raise
         finally:
             self.worker.inflight.remove(call)
+            if call.ticket["cap"] not in builtins.UNLOGGED:
+                self.worker.ran.add(builtins.entry(call.context(), call.ticket["cap"], started, out))
 
 
 class Worker:
@@ -196,6 +206,8 @@ class Worker:
         self.make_link = make_link
         self.transport_opts = dict(transport_opts or {})
         self.inflight: list[Call] = []
+        # worker.restart's last step; tests replace it, None where a process can't exec itself.
+        self.reexec: Callable[[], None] | None = builtins.reexec
         self.hub_nodes: dict[tuple[str, str], str] = {}     # (hub_id, band) -> the hub's node id there
         self.started = False
         self._tasks: set[asyncio.Task] = set()
@@ -228,15 +240,21 @@ class Worker:
             log.warning("anchor is writable by the worker", extra=_f(anchor=str(self.trust.anchor_path)))
         self.gate = _Gate(self, self.worker_id, self.cfg.name, self.trust, ReplayStore(self.data / "replay"),
                           {}, ask=self._elevate)
+        self.streams = Streams(host=self.cfg.name)
+        self.ran = builtins.RanLog(self.data / "ran.jsonl")
         self.host = Host(hardware=self.cfg.hardware, dispatch=self._dispatch,
                          store_setting=self._store_setting, emit=self._emit,
-                         data_root=self.data / "plugin-data", gate=self.gate)
-        core, issues = check(CORE)
-        if core is None or any(i.level == "error" for i in issues):
-            raise RuntimeError(f"core.yaml is invalid: {[str(i) for i in issues]}")
-        self.host.add_builtin(core, {"core.trust.set": self._trust_set, "core.trust.get": self._trust_get,
-                                     "core.plugin.install": self._plugin_install,
-                                     "core.plugin.rollback": self._plugin_rollback})
+                         data_root=self.data / "plugin-data", gate=self.gate, streams=self.streams)
+        own = builtins.handlers(self, self.streams, self.ran,
+                                restart=self._restart if self.reexec is not None else None)
+        for path, caps in ((CORE, {"core.trust.set": self._trust_set, "core.trust.get": self._trust_get,
+                                   "core.plugin.install": self._plugin_install,
+                                   "core.plugin.rollback": self._plugin_rollback}),
+                           (WORKER, own), (STREAM, own)):
+            data, issues = check(path)
+            if data is None or any(i.level == "error" for i in issues):
+                raise RuntimeError(f"{path.name} is invalid: {[str(i) for i in issues]}")
+            self.host.add_builtin(data, {c: f for c, f in caps.items() if c.startswith(data["plugin"] + ".")})
         self.installer = Installer(self.data / "plugins", worker_id=self.worker_id, host=self.host,
                                    keys=self._approver_keys, approves=lambda hub: bool(self._approver_bands(hub)))
         for name, values in self._local_settings().items():
@@ -274,6 +292,16 @@ class Worker:
             await self.transport.close()
         if self.host is not None:
             await self.host.close()
+
+    def _restart(self) -> None:
+        """worker.restart: stop cleanly (in-flight calls get their grace),
+        then re-exec on the same command line."""
+        async def go():
+            try:
+                await self.stop()
+            finally:                    # a stop that fails must not leave a worker that serves nothing
+                self.reexec()
+        self._restarting = self.loop.create_task(go())
 
     def _worker_id(self) -> str:
         path = self.data / "worker_id"

@@ -273,6 +273,69 @@ shares.
 - **N24. Keep-awake has no "before every call" hook in 0.5.** Screen-driving scripts call
   `rook.kit.android.screen.awake(cap)` themselves (0.4 wrapped the registry).
 
+## The real ports, batch 3 (wave 6)
+
+Plugin-ports agent, 2026-10-30 (PR on branch c6/ports3): every row of "Today's plugins -> 0.5"
+that had no 0.5 plugin and isn't another lane's (phone, security, jobs, speech, agents,
+workbench, dashboard). Ported plugins validate against core's contracts with no issues and are
+tested through the worker host or HubPlugins with fakes (a Playwright fake and real Chromium
+where installed, a fake decision service, fake device contracts, scratch Claude Code configs);
+their drafts in `castling/manifests/` are superseded.
+
+| 0.5 plugin | Caps | What changed from 0.4 |
+|---|---|---|
+| worker (core builtin, `rook/core2/builtin/worker.yaml`) | ping, status, log, restart | info.ping, selfupdate's status/restart and log.audit move into core (N7 closed): `worker.status` is one read (version, facts, bands with hub contact, plugins, unavailable caps, open streams); `worker.log` reads the worker's own record of the calls it ran (`<data>/ran.jsonl`, one line per call a ticket let through, rotated at 2 MiB, two files kept; `core.manifests` and `stream.read` aren't logged); `worker.restart` stops cleanly and re-execs on the same command line (`destructive`: every terminal on the worker ends). Binned or elsewhere: deauth is `core.trust.set` with a removed membership, hold is a setting, `worker.update` waits for a 0.5 release format (N27). |
+| stream (core builtin, `rook/core2/builtin/stream.yaml`) | read, write, list, close | terminals collapse into streams (N8 closed on the worker): every worker has a bounded `Streams` (in memory) handed to its Host, so `shell.open` works end to end through the MCP door's `stream` tool. A stream is only its participants' (the person, else the agent, that opened it) on the band it was opened on: identities are per hub, so `ctx.stream` now records the band in the stream's attrs. `worker.status` and `worker.log` show the calling band's view only (spec 9.4). `write` is `exec` (typing into a shell runs it). `close` sends the producer `{signal: HUP}`, gives it 3 s to end its process, then closes; shell now kills a process whose stream was closed under it instead of leaking it. |
+| browser | open, goto, snapshot, click, type, press, select, wait, read, screenshot, eval, tabs, tab, sessions, close | Playwright stays Python (`scripts/browser.py:Browser.*`, one instance per load); `tabs {switch, close}` split into `tabs` (read) and `tab {index}`, closing a tab is `close {session, tab}`; screenshot is a PNG file result (0.4: a path plus inline JPEG); page caps carry `taints`, page actions are `scope: external`; idle reaping is an `every: 30s` hook; `requires.python: [playwright>=1.40]`, a missing Chromium is a plain error from `open`. No `check` (N4). |
+| appliance (`package: core`) | discover, test | From devkit: `discover` is SSDP/UPnP + mDNS (absorbs webos.discover); `test` runs one cap of a draft `plugin.yaml` (text) against a device, http/tcp/ws actions only (exec and file run as the worker outside launch, N9), no vault reads from the draft (secret values come in the call's args). devkit.define/list/remove and serves.* are the hub's appliance registry, which doesn't exist yet (N26). |
+| decide (hub, `package: agents`) | run, status, drive | run keeps 0.4's question/answer normalisation and batch splitting; status = health + info; drive (kept by Bake's C3 amendment) runs inside its call on the device contracts (`screen.capture`, `ui.screen`, `hid.click/key/type/drag`, `touch` for touch screens) instead of backend-specific caps and `hid.backend`; a gated step ends the drive as `needs_confirmation` with the exact hid calls, an input the hub holds ends it as `held` (one approval path, N30); runs/confirm/stop and the `cap://` endpoint are gone. |
+| claudecode (`package: agents`) | install, remove, status + record `claudecode` (list, get, search, history, create, update, archive, delete) | Rules are hub records (`ccmod.set` is create/update), writing them is `admin` (record `risk:` overrides); `install` on a worker reads the enabled rules from the hub as the caller (`ctx.call claudecode.list`) and merges Rook's hooks into the Claude Code installations there: the settings merge, symlink guards, backups and byte-for-byte restore are 0.4's, with the same marker and file names, so a 0.4-managed file is updated in place. Local actions only (block, inject, statusline); remote actions (post, notify, cap) and Idle wait for worker events to reach the hub (N21 in the phone ports, #285); band and worker scopes are gone (a rule reaches a worker when someone installs there). |
+
+Everything else in "Today's plugins -> 0.5" without a 0.5 plugin, and where it went:
+
+| Today | Disposition |
+|---|---|
+| worker: config, core, devices, enrollment, memory, persona; hub: llmanifold, manual, policy, rooms, routines | binned by decision (castling-caps); enrollment is core protocol (#278), worker memory/persona are the agents package's notepad and personas (#280) |
+| worker: chat, hermes, proc, session_mirror, sessions, wake, work | streams (castling-streams): `shell.open` produces terminal/process streams, read through `stream.*` above; agent sessions and wake are the agents package's |
+| worker: claude_history, codex_history | importers that write `turn` events into durable `session` streams: they need the hub's stream index and durable store (the castling-streams relay), not a worker plugin. Not ported. |
+| worker: agenthost, session_shim (-> harness) | agenthost.status/models are the agent.backend providers' business (agents-claude-code); the session shim is a `terminal` stream whose producer is the person's own CLI, which needs the hub stream index too. Not ported. |
+| worker: homeassistant | parked by Bake ("out of scope for this round", castling-plugins, Oct 28). Not ported. |
+| worker: admin; hub: node, marketplace (-> plugin) | core hub administration (one plugin namespace for hub and workers: list, enable, disable, reload, marketplace); today's path is the hub's `POST /plugins/push` + `core.plugin.install/rollback`. Core, not a port. |
+| hub: info, settings, approvals, show (-> hub, setting, approval, page) | the dashboard's hub builtins (#279): hub.status, setting.list/set (settings.describe/get fold into list; reset is set to the default; history is the journal), approval.list/decide. show.present needs a device "show this page" contract that nothing provides yet. |
+| hub: trust, policy, access (-> trust, user) | core config: people, presets and grants are the hub config's `users` (spec 8.5); trust.check ("will this run, hold or be refused, and why") would be a dry run of dispatch, core work. Not a plugin port. |
+| hub: changes (-> change) | change records (castling-changes) belong with the gate and journal (core/security); not built. |
+| hub: updates (-> update) | waits for a 0.5 release format, like worker.update (N27). |
+| hub: attention (-> attention) | the house agent's curated list (castling-attention): an agents/jobs record fed by phone events once they reach the hub (N21). Not ported. |
+| hub: huddle (-> huddle.start) | a room with roles on a stream: agents package. Not ported here. |
+| hub: help | core (castling-caps: help absorbs manual.*); every 0.5 plugin ships `docs/manual.md`, which a hub help cap would serve. Not a port. |
+| hub: voice | the speech lane (castling-naming-decisions B10). |
+
+### What batch 3 found
+
+- **N25. Playwright starts its own processes.** The driver (node) and Chromium are spawned by the
+  library, not through core's launch path (spec 7.1), so on a root worker Chromium runs as root
+  (and needs `sandbox: false`). Fix if it matters: run browser workers as a normal user, or a
+  launch-aware Playwright `executable` wrapper.
+- **N26. No appliance registry on the hub.** The dispatcher has `Worker.appliances` (spec 5.7) but
+  nothing fills it: there are no onboarding, define, list or remove caps, no delegate routes, and
+  instance values still don't travel with a call (N3). `appliance.test` is the only way to try a
+  device recipe; shipping one is a plugin push (`POST /plugins/push`, no cap yet).
+- **N27. No 0.5 release format,** so `worker.update` and `update.*` (status, history, apply_hub,
+  rollout) have nothing to fetch or verify. The sidecar install (#286) is a uv venv.
+- **N28. Streams have no hub index.** A worker's streams are read through its `stream.*` caps
+  (the MCP door already calls them); the castling-streams relay (one index, durable sessions,
+  fan-out) is what history importers, the session shim and attention need. Owners can't read
+  someone else's stream: workers don't know who the owners are (`Caller.owner` is unset there).
+- **N29. Spec 13 names core caps `core.*`.** The worker's own `worker.*` and `stream.*` are two more
+  builtin manifests (like the hub's), announced with `builtin: true`. Spec 13 could say "core's
+  builtin manifests" instead of "the core manifest".
+- **N30. A plugin can't ask a person to approve its own step.** Holds come from the gate and the
+  trust map; decide.drive therefore hands a gated step back to the caller. If wanted: an
+  `approval.ask` builtin that holds a step until a person answers. Related: a call's
+  `ctx.settings` is a snapshot of its start, so a kill-switch setting can't stop a long-running
+  cap (decide.drive reads `halt` at start and is bounded by `max_seconds`).
+- **N31. `ctx` doesn't carry the worker's name.** claudecode fills `{worker}` with the host name.
+
 ## Gaps
 
 What a plugin needs that manifest v1 can't say, grouped by section. Each has the plugin that hits it

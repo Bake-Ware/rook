@@ -236,7 +236,7 @@ def test_worker_serves_verified_calls_and_refuses_bad_tickets(setup, caplog):
         a = hub.announces()[-1]
         assert a["name"] == "kaiju" and a["core"] == CORE_VERSION and a["role"] == "home"
         assert a["ceiling"] == {"grants": ["*"]}
-        assert [m["plugin"] for m in a["manifests"]] == ["core", "echo"]
+        assert [m["plugin"] for m in a["manifests"]] == ["core", "echo", "stream", "worker"]
         assert a["manifests"][0]["builtin"] is True and a["facts"]["os"]
         await until(lambda: any(m.get("kind") == "heartbeat" and m["manifests_hash"] == a["manifests_hash"]
                                 for m in hub.got))
@@ -528,3 +528,136 @@ def test_the_real_hub_drives_the_worker_over_the_transport(setup, tmp_path):
         await hub.stop()
         await w.stop()
     go(body, 30)
+
+
+# -- the worker's own caps: worker.* and stream.* ------------------------------
+
+def test_worker_caps_ping_status_log_restart(setup):
+    relay, cfg, make = setup
+
+    async def body():
+        w = make()
+        restarted = asyncio.Event()
+        w.reexec = restarted.set
+        hub = await up(relay, w)
+        pong = await hub.call("worker.ping")
+        assert pong["ok"] and pong["result"]["pong"] is True, pong
+        st = (await hub.call("worker.status"))["result"]
+        assert st["name"] == "kaiju" and st["worker_id"] == WID and st["core"] == CORE_VERSION
+        assert st["band"] == {"connected": True, "hub_contact": True}
+        assert st["plugins"] == ["echo@1.0.0"] and st["streams_open"] == 0
+
+        await hub.call("echo.say", {"text": "hi"})
+        await hub.call("echo.boom")
+        await hub.call("core.manifests")                  # not worth a line
+        got = (await hub.call("worker.log", {"cap": "echo."}))["result"]["entries"]
+        assert [(e["cap"], e["ok"], e["person"]) for e in got] == [
+            ("echo.say", True, "person:bake"), ("echo.boom", False, "person:bake")]
+        assert got[1]["error"].endswith("kaboom") and got[0]["why"] == "Testing the worker."
+        failed = (await hub.call("worker.log", {"failed": True}))["result"]["entries"]
+        assert [e["cap"] for e in failed] == ["echo.boom"]
+        assert (await hub.call("worker.log", {"person": "person:nobody"}))["result"]["entries"] == []
+        assert (await hub.call("info.ping"))["ok"]            # the 0.4 name is an alias
+
+        out = await hub.call("worker.restart")
+        assert out["ok"] and out["result"] == {"restarting": True}
+        await asyncio.wait_for(restarted.wait(), 10)
+        assert not w.started                                  # stopped cleanly before the re-exec
+    go(body)
+
+
+def test_ran_log_rotates_and_reads_both_files(tmp_path):
+    from rook.core2.worker.builtins import RanLog
+    ran = RanLog(tmp_path / "ran.jsonl", max_bytes=100)
+    for i in range(12):
+        ran.add({"at": i, "cap": f"x.{i}", "ok": i % 2 == 0})
+    assert (tmp_path / "ran.jsonl.1").exists()
+    got = ran.read(limit=500)
+    assert [e["at"] for e in got] == sorted(e["at"] for e in got) and got[-1]["at"] == 11
+    assert len(got) < 12                                      # the oldest went with the rotation
+    assert [e["at"] for e in ran.read(limit=2)] == [10, 11]
+    assert all(not e["ok"] for e in ran.read(failed=True)) and ran.read(since=11)[0]["at"] == 11
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the shell's PTY is POSIX")
+def test_stream_caps_drive_a_shell_terminal(setup):
+    relay, cfg, make = setup
+    cfg.plugins.append(REPO / "rook" / "plugins" / "shell")
+
+    async def body():
+        w = make()
+        hub = await up(relay, w)
+        opened = await hub.call("shell.open", {"argv": ["/bin/sh"], "pty": True})
+        assert opened["ok"], opened
+        sid = opened["result"]["stream"]
+        mine = (await hub.call("stream.list", {"kind": "terminal"}))["result"]["streams"]
+        assert [s["id"] for s in mine] == [sid] and "participants" not in mine[0]
+
+        wrote = await hub.call("stream.write", {"stream": sid, "body": {"text": "echo castl''ing\r"}})
+        assert wrote["ok"], wrote
+        seen, after = b"", 0
+        for _ in range(50):
+            got = (await hub.call("stream.read", {"stream": sid, "after": after, "wait": 1}))["result"]
+            after = got["next"]
+            seen += b"".join(__import__("base64").b64decode(e["b64"]) for e in got["events"] if "b64" in e)
+            if b"castling" in seen:
+                break
+        assert b"castling" in seen
+
+        # Someone else's stream doesn't exist for them.
+        other = await hub.call("stream.read", {"stream": sid}, person="person:mallory")
+        assert not other["ok"] and "no stream" in other["error"]
+        assert (await hub.call("stream.list", {}, person="person:mallory"))["result"]["streams"] == []
+        assert not (await hub.call("stream.close", {"stream": sid}, person="person:mallory"))["ok"]
+
+        closed = await hub.call("stream.close", {"stream": sid})
+        assert closed["ok"] and closed["result"]["closed"], closed
+        end = (await hub.call("stream.read", {"stream": sid, "after": after}))["result"]
+        assert end["closed"] and end["events"][-1]["data"]["state"] == "closed"
+        assert (await hub.call("worker.status"))["result"]["streams_open"] == 0
+        await w.stop()
+    go(body, 30)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the shell's PTY is POSIX")
+def test_worker_and_stream_caps_keep_bands_apart(setup):
+    """A guest band's hub sees its own calls, plugins and streams only (spec
+    9.4): person:bake on the guest hub is not the home hub's person:bake."""
+    relay, cfg, make = setup
+    cfg.plugins.append(REPO / "rook" / "plugins" / "shell")
+
+    async def body():
+        w = make()
+        home = await up(relay, w)
+        guest = FakeHub(relay, PSK2, G_ROOT, G_OP)
+        await guest.start()
+        now = int(time.time())
+        doc = wire.sign(ROOT, {"typ": "rook-membership", "v": 2, "serial": secrets.token_hex(16), "worker": WID,
+                               "hub": GUEST, "root": wire.pub_text(G_ROOT), "band": BAND2, "role": "guest",
+                               "by": "person:bake", "iat": now,
+                               "ceiling": {"grants": ["echo.say", "worker.*", "stream.*"]}})
+        assert (await home.call("core.trust.set", {"membership": doc, "connect": {"psk": PSK2}}))["ok"]
+        await until(lambda: (GUEST, BAND2) in w.hub_nodes and guest.announces())
+
+        opened = await home.call("shell.open", {"argv": ["cat"], "pty": False})
+        sid = opened["result"]["stream"]
+        await home.call("echo.say", {"text": "home"})
+        await guest.call("echo.say", {"text": "guest"})
+
+        log = (await guest.call("worker.log"))["result"]["entries"]
+        assert [(e["cap"], e["band"]) for e in log] == [("echo.say", BAND2)]
+        assert {e["cap"] for e in (await home.call("worker.log"))["result"]["entries"]} >= {"shell.open", "echo.say"}
+        st = (await guest.call("worker.status"))["result"]
+        assert st["plugins"] == ["echo@1.0.0"] and st["streams_open"] == 0      # no shell: outside its ceiling
+        assert "shell.exec" not in st["unavailable"]
+        assert (await home.call("worker.status"))["result"]["streams_open"] == 1
+        # the same person name on another hub is someone else
+        assert (await guest.call("stream.list"))["result"]["streams"] == []
+        stolen = await guest.call("stream.read", {"stream": sid})
+        assert not stolen["ok"] and "no stream" in stolen["error"]
+        assert (await home.call("stream.close", {"stream": sid}))["ok"]
+        await w.stop()
+        await home.t.close()
+        await guest.t.close()
+    go(body, 30)
+
