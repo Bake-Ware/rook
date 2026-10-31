@@ -112,6 +112,9 @@ def test_install_merges_beside_the_users_hooks_and_remove_restores_them(tmp_path
 
     again, _ = run(tmp_path, "install")
     assert again["installations"][0]["action"] == "unchanged"
+    script.write_text("# an older hook\n")
+    run(tmp_path, "status")                                            # a load refreshes the hook
+    assert script.read_text() == (PLUGINS / "claudecode" / "scripts" / "hook.py").read_text()
 
     gone, _ = run(tmp_path, "remove")
     assert gone["installations"][0].get("restored_original")

@@ -281,12 +281,14 @@ async def private_host(host: str) -> bool:
     return any(_not_public(info[4][0]) for info in infos)
 
 
-def _who(ctx) -> str | None:
-    return ctx.person or ctx.agent
+def _who(ctx) -> tuple[str, str]:
+    """Whose a session is: the person (else the agent) on the band they called
+    from. Identities are per hub, so the band is part of it."""
+    return ctx.band or "", ctx.person or ctx.agent or ""
 
 
 class _Session:
-    def __init__(self, name: str, browser: Any, context: Any, headless: bool, owner: str | None):
+    def __init__(self, name: str, browser: Any, context: Any, headless: bool, owner: tuple[str, str]):
         self.name = name
         self.browser = browser
         self.context = context
@@ -369,7 +371,7 @@ class Browser:
             have = ", ".join(sorted(n for n, x in self._sessions.items() if self._yours(ctx, x))) or "none"
             raise ctx.Error(f"no browser session {name!r} (yours open: {have}); browser.open starts one")
         if not self._yours(ctx, s):
-            raise ctx.Error(f"session {name} belongs to {s.owner}; open your own with browser.open")
+            raise ctx.Error(f"session {name} is someone else's; open your own with browser.open")
         if not s.browser.is_connected():
             # Chromium crashed or was killed: drop the husk so the name is free again.
             self._sessions.pop(name, None)
@@ -379,8 +381,7 @@ class Browser:
 
     @staticmethod
     def _yours(ctx, s: _Session) -> bool:
-        who = _who(ctx)
-        return not (s.owner and who and who != s.owner)
+        return s.owner == _who(ctx)
 
     async def _close(self, name: str) -> bool:
         s = self._sessions.pop(name, None)
@@ -753,11 +754,13 @@ class Browser:
     async def sessions(self, ctx) -> dict:
         now = time.monotonic()
         items = []
-        for s in self._sessions.values():
+        mine = [s for s in self._sessions.values() if self._yours(ctx, s)]
+        for s in mine:
             page = s.page if s.page is not None and not s.page.is_closed() else None
             items.append({"session": s.name, "url": page.url if page else "", "tabs": len(s.pages()),
-                          "headless": s.headless, "opened_by": s.owner, "idle_s": int(now - s.used)})
-        return {"sessions": items, "max": int(ctx.settings.get("max_sessions") or 3),
+                          "headless": s.headless, "opened_by": s.owner[1], "idle_s": int(now - s.used)})
+        return {"sessions": items, "others": len(self._sessions) - len(mine),
+                "max": int(ctx.settings.get("max_sessions") or 3),
                 "idle_timeout": int(ctx.settings.get("idle_timeout") or 600)}
 
     async def close(self, ctx, session=None, tab=None, all=False) -> dict:

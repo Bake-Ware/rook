@@ -35,7 +35,9 @@ worker. It is a dry run unless `dry_run: false` (the **dry_run** setting):
 it reports the calls it would make.
 
 It ends when the goal is reached, the model asks to stop, a budget runs out,
-**halt** (the kill switch) is on, or an input fails. Two ends need you:
+or an input fails. **halt** (the kill switch) stops new drives; a running one
+ends at its `max_seconds`, and each input it sends goes through the gate like
+any call. Two ends need you:
 
 - `needs_confirmation`: its gates flagged the next action (blind, low
   confidence, destructive-looking words or keys, the model's own flag, or

@@ -72,6 +72,17 @@ def install(ctx, dry_run=False) -> dict:
     return Rules(ctx.data).apply(cfg, bool(dry_run))
 
 
+def start(ctx) -> None:
+    """Plugin load: a newer plugin ships a newer hook, so refresh the copy the
+    settings files run while there are rules."""
+    try:
+        r = Rules(ctx.data)
+    except KitError:                # no data dir here: nothing installed either
+        return
+    if r.rules_path.exists():
+        r._write_script()
+
+
 def remove(ctx, dry_run=False) -> dict:
     return Rules(ctx.data).apply({"v": 1, "rules": []}, bool(dry_run))
 

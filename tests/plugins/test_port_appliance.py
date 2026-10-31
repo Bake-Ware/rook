@@ -100,6 +100,14 @@ def test_a_draft_cap_runs_against_the_device(lamp):
     assert got[-1][0] == "/v2/set"
 
 
+def test_a_secret_never_shows_in_an_error_and_timeouts_are_durations():
+    draft = DRAFT.replace("    effects: [physical]\n    args:", "    effects: [physical]\n    timeout: 2s\n    args:")
+    with pytest.raises(CallError) as e:
+        call("test", {"manifest": draft, "cap": "set", "args": {"level": 1},
+                      "instance": {"host": "127.0.0.1", "port": 9, "token": "hunter2-secret"}})
+    assert "hunter2-secret" not in str(e.value) and "lamp.set" in str(e.value)
+
+
 def test_a_draft_is_refused_for_what_it_cant_do(lamp):
     port, _ = lamp
     inst = {"host": "127.0.0.1", "port": port}

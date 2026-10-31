@@ -499,10 +499,12 @@ def _brief(action: dict) -> str:
 
 async def drive(ctx, goal, screen_worker, input_worker=None, touch=False, dry_run=None, max_steps=None,
                 max_seconds=120.0, texts=None, keys=None, screen_size=None) -> dict:
-    """The loop runs inside this call. It ends on done, abort, a budget, the
-    kill switch, a failed action, an action its gates say a person should
-    confirm (returned as pending: do it yourself through hid.*, or ask
-    first, then drive again), or an input call the hub holds (hold)."""
+    """The loop runs inside this call. It ends on done, abort, a budget, a
+    failed action, an action its gates say a person should confirm (returned
+    as pending: do it yourself through hid.*, or ask first, then drive
+    again), or a call the hub holds (hold). The kill switch is read when the
+    drive starts: ctx settings are a snapshot of the call's start, so a
+    running drive is bounded by max_seconds and by the gate on every input."""
     s = ctx.settings
     if s.get("halt"):
         raise KitError("decide.halt (the kill switch) is on; turn it off to drive")
@@ -531,13 +533,16 @@ async def drive(ctx, goal, screen_worker, input_worker=None, touch=False, dry_ru
                 "log": rows_out[-KEEP_STEPS:], **extra}
 
     while True:
-        if s.get("halt"):
-            return end("stopped", "halted (kill switch)")
         if time.monotonic() - started > max_seconds:
             return end("stopped", "time budget")
         if len(rows_out) >= steps_max:
             return end("finished", "step budget")
-        shot = await ctx.call_on(screen_worker, "screen.capture", quality=60)
+        try:
+            shot = await ctx.call_on(screen_worker, "screen.capture", quality=60)
+        except KitError as e:
+            if "(hold " in e.message:
+                return end("held", e.message, hold=e.message.rpartition("(hold ")[2].rstrip(")"))
+            raise
         raw = base64.b64decode(shot["data"]) if isinstance(shot, dict) and shot.get("data") else b""
         dims = jpeg_size(raw) or size
         if dims is None:

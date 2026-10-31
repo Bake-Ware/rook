@@ -148,19 +148,24 @@ def test_sessions_belong_to_who_opened_them(tmp_path, fake_pw):
         assert opened == {"session": "b1", "url": "https://example.com", "title": "title of https://example.com"}
         assert _PW.launched == [{"headless": True, "chromium_sandbox": True}]
         # bob can't use or close bake's session, and doesn't see it in his error
-        with pytest.raises(CallError, match="belongs to person:bake"):
+        with pytest.raises(CallError, match="someone else's"):
             await host.call("browser.goto", {"session": "b1", "url": "example.org"}, BOB)
         with pytest.raises(CallError, match=r"yours open: none"):
             await host.call("browser.read", {"session": "zz"}, BOB)
         assert (await host.call("browser.close", {"all": True}, BOB)) == {"closed": []}
         # an agent acting for bake is bake
-        again = await host.call("browser.open", {"session": "b1"}, Caller(person="person:bake"))
+        again = await host.call("browser.open", {"session": "b1"}, Caller(person="person:bake", band="b1"))
         assert again["reused"] is True
         await host.call("browser.open", {"session": "work"}, BOB)
         with pytest.raises(CallError, match=r"2 browser sessions are open"):
             await host.call("browser.open", {}, BAKE)
-        listed = (await host.call("browser.sessions", {}, BAKE))["sessions"]
-        assert {(s["session"], s["opened_by"]) for s in listed} == {("b1", "person:bake"), ("work", "person:bob")}
+        listed = await host.call("browser.sessions", {}, BAKE)
+        assert [(s["session"], s["opened_by"]) for s in listed["sessions"]] == [("b1", "person:bake")]
+        assert listed["others"] == 1                    # bob's url is his own business
+        # the same person name from another band's hub is someone else
+        elsewhere = Caller(person="person:bake", band="b2", why="testing a plugin port")
+        with pytest.raises(CallError, match="someone else's"):
+            await host.call("browser.read", {"session": "b1"}, elsewhere)
         assert (await host.call("browser.close", {"all": True}, BAKE)) == {"closed": ["b1"]}
         assert (await host.call("browser.close", {"session": "work"}, BOB)) == {"closed": ["work"]}
         assert _PW.stopped == 1                     # Playwright stops with the last session

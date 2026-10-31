@@ -52,7 +52,8 @@ class RanLog:
                 pass        # a full disk must not fail the call that already ran
 
     def read(self, limit: int = 50, cap: str | None = None, person: str | None = None,
-             agent: str | None = None, since: float | None = None, failed: bool = False) -> list[dict]:
+             agent: str | None = None, since: float | None = None, failed: bool = False,
+             band: str | None = None) -> list[dict]:
         out: list[dict] = []
         with self._lock:
             for path in (self.path.with_name(self.path.name + ".1"), self.path):
@@ -65,7 +66,8 @@ class RanLog:
                         e = json.loads(line)
                     except ValueError:
                         continue
-                    if (cap and not str(e.get("cap", "")).startswith(cap)) or \
+                    if (band is not None and e.get("band") != band) or \
+                            (cap and not str(e.get("cap", "")).startswith(cap)) or \
                             (person and e.get("person") != person) or (agent and e.get("agent") != agent) or \
                             (since and float(e.get("at") or 0) < since) or (failed and e.get("ok")):
                         continue
@@ -86,7 +88,10 @@ def entry(ctx: dict, cap: str, started: float, reply: dict) -> dict:
 
 
 def _mine(meta, caller) -> bool:
-    # The person decides when there is one; agents alone only for person-less streams.
+    # Identities are per hub, so only on the band it was opened on; there the
+    # person decides when there is one, agents alone only for person-less streams.
+    if meta.attrs.get("band", "") != (caller.band or ""):
+        return False
     if caller.person:
         return caller.person in meta.participants
     return bool(caller.agent) and caller.agent in meta.participants and not any(
@@ -112,26 +117,27 @@ def handlers(worker: Any, streams: Streams, ran: RanLog, *, restart: Callable[[]
         return {"pong": True, "at": time.time()}
 
     async def status(ctx) -> dict:
+        """The calling band's view only (spec 9.4): its plugins, its streams,
+        its own connection; other bands this worker is on aren't named."""
         from .runtime import _facts, _version
         from .. import CORE_VERSION
-        t = worker.transport
-        bands = []
-        for b in (t.bands if t is not None else ()):
-            try:
-                bands.append({"band": b[:8], "connected": t.connected(b), "hub_contact": not t.lost(b)})
-            except Exception:       # left the band meanwhile
-                continue
-        host = worker.host
-        unavailable = {cap: why for p in host.plugins.values() for cap, why in sorted(p.unavailable.items())}
+        band, t = ctx.caller.band, worker.transport
+        try:
+            link = {"connected": t.connected(band), "hub_contact": not t.lost(band)}
+        except Exception:           # left the band meanwhile
+            link = {"connected": False, "hub_contact": False}
+        visible = worker.host._visible(worker._view(band)[1])
         return {"name": worker.cfg.name, "worker_id": worker.worker_id, "version": _version(),
                 "core": CORE_VERSION, "facts": _facts(), "pid": os.getpid(),
-                "started": round(up, 3), "uptime_s": int(time.time() - up), "bands": bands,
-                "plugins": sorted(f"{p.name}@{p.version}" for p in host.plugins.values() if not p.builtin),
-                "unavailable": unavailable, "calls_in_flight": len(worker.inflight),
-                "streams_open": len(streams.list(open_only=True))}
+                "started": round(up, 3), "uptime_s": int(time.time() - up), "band": link,
+                "plugins": sorted(f"{p.name}@{p.version}" for p in visible if not p.builtin),
+                "unavailable": {cap: why for p in visible for cap, why in sorted(p.unavailable.items())},
+                "streams_open": sum(1 for m in streams.list(open_only=True) if m.attrs.get("band") == band)}
 
     async def log(ctx, limit=50, cap=None, person=None, agent=None, since=None, failed=False) -> dict:
-        return {"entries": await asyncio.to_thread(ran.read, limit, cap, person, agent, since, failed)}
+        # Only the calls this band's hubs made: another band's activity isn't theirs to read.
+        return {"entries": await asyncio.to_thread(ran.read, limit, cap, person, agent, since, failed,
+                                                   ctx.caller.band)}
 
     async def do_restart(ctx) -> dict:
         if restart is None:

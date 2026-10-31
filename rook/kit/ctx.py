@@ -309,9 +309,11 @@ class Ctx:
         if block is None:
             raise KitError(f"{self.cap or self.plugin} declares no stream: in its manifest")
         who = [p for p in (self.caller.person, self.caller.agent) if p]
+        # Identities are per hub: the band says whose person:x this is.
+        extra = {"band": self.caller.band} if self.caller.band else {}
         try:
             return cap_stream(self._streams, block, producer=self.cap, kind=kind, title=title,
-                              participants=who, attrs=dict(attrs or {}))
+                              participants=who, attrs={**(attrs or {}), **extra})
         except StreamError as e:
             raise KitError(str(e)) from None
 

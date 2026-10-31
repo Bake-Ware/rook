@@ -76,5 +76,7 @@ caps:
     aliases: [ccmod.status]
     result: { type: map }
     run: scripts/claudecode.py:status
+hooks:
+  start: scripts/claudecode.py:start
 docs: { manual: docs/manual.md }
 check: [claudecode.status]

@@ -295,8 +295,10 @@ class Worker:
         """worker.restart: stop cleanly (in-flight calls get their grace),
         then re-exec on the same command line."""
         async def go():
-            await self.stop()
-            self.reexec()
+            try:
+                await self.stop()
+            finally:                    # a stop that fails must not leave a worker that serves nothing
+                self.reexec()
         self._restarting = self.loop.create_task(go())
 
     def _worker_id(self) -> str:

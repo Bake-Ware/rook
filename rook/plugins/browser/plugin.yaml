@@ -242,7 +242,7 @@ caps:
     result: { type: map }
   sessions:
     run: scripts/browser.py:Browser.sessions
-    doc: "The open sessions on this worker: name, current url, tab count, headless, who opened it, seconds idle."
+    doc: "Your open sessions on this worker (name, current url, tab count, headless, seconds idle), and how many others have open."
     risk: read
     scope: local
     idempotent: true

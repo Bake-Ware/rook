@@ -21,8 +21,8 @@ import socket
 import struct
 import time
 
-from rook.kit._types import check as check_value
-from rook.kit.actions import run_action
+from rook.kit._types import check as check_value, parse_duration
+from rook.kit.actions import Secret, run_action
 from rook.kit.actions.template import secret_names
 from rook.kit.manifest.load import check_text, normalize
 
@@ -75,9 +75,10 @@ async def test(ctx, manifest, cap, args=None, instance=None, settings=None) -> d
                  **{k: v for k, v in (instance or {}).items() if k in ("host", "port", "name")}} \
         if "appliance" in m else None
     call_args = _fill(ctx, spec["args"], args or {}, "args", required=True)
+    timeout = min(parse_duration(spec["timeout"]) if spec.get("timeout") else 30.0, 80.0)
     try:
         result = await run_action(action, call_args, settings=values, appliance=appliance, secrets=None,
-                                  tmp=str(ctx.tmp), timeout=float(spec.get("timeout") or 30), cap=spec)
+                                  tmp=str(ctx.tmp), timeout=timeout, cap=spec)
     except Exception as e:
         raise ctx.Error(f"{full}: {getattr(e, 'message', None) or e}") from None
     return {"cap": full, "risk": spec["risk"], "effects": spec["effects"], "result": result}
@@ -96,7 +97,9 @@ def _fill(ctx, decls: dict, given: dict, what: str, required: bool = False) -> d
                 check_value(f"{what}.{key}", decl, given[key])
             except ValueError as e:
                 raise ctx.Error(str(e)) from None
-            out[key] = given[key]
+            # A secret value (resolved by the hub from the caller's reference) is
+            # marked so the engine's errors never show it.
+            out[key] = Secret(given[key]) if decl.get("secret") and isinstance(given[key], str) else given[key]
         elif decl.get("default") is not None:
             out[key] = decl["default"]
         elif required and decl.get("required"):
