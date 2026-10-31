@@ -135,7 +135,8 @@ class Dispatcher:
         self.projects: dict[str, set[str]] = {}       # agent -> projects its sessions were for
         self.holds: dict[str, Hold] = {}
         self.closed_doors: set[str] = set()
-        self._inflight: dict[str, tuple] = {}   # nonce -> (ticket, caller, session id, extra layers, door)
+        # nonce -> (ticket, caller, session id, extra layers, door, call, {risk, scope, effects})
+        self._inflight: dict[str, tuple] = {}
         self.leases: dict[str, tuple[str, str, int]] = {}   # lease id -> (worker id, session id, exp)
 
     # -- sessions (8.4) ----------------------------------------------------
@@ -382,7 +383,8 @@ class Dispatcher:
             request["ticket"] = self._mint(cid, caller, s, w, call, ahash)
             nonce = request["ticket"]["nonce"]
             entry["ticket"].append(nonce)
-            self._inflight[nonce] = (request["ticket"], caller, s.id, call.layers, call.door)
+            self._inflight[nonce] = (request["ticket"], caller, s.id, call.layers, call.door, call,
+                                     {k: entry[k] for k in ("risk", "scope", "effects")})
             try:
                 reply = await asyncio.wait_for(self.send(w.band, request), wait)
             except asyncio.TimeoutError:
@@ -538,7 +540,7 @@ class Dispatcher:
         held = self._inflight.get(nonce) if isinstance(nonce, str) else None
         if held is None or held[0] != ticket or ticket["worker"] != from_worker:
             return {"ok": False, "error": "denied: core.call: no such call in flight"}
-        parent, caller, sid, layers, door = held
+        parent, caller, sid, layers, door = held[:5]
         w = self.workers.get(from_worker)
         plugin = parent["cap"].partition(".")[0]
         uses = {"grants": list((w.uses if w else {}).get(plugin, ()))}
@@ -547,31 +549,54 @@ class Dispatcher:
 
     # -- core.elevate (7.2, 13): a lease for a call in flight -------------
 
-    def elevate(self, from_worker: str, ticket: dict, reason: str) -> dict:
+    async def elevate(self, from_worker: str, ticket: dict, reason: str) -> dict:
         """Answer a worker's ``core.elevate``: the ticket must be one this hub
-        minted for that worker and still in flight, and the call's rights
+        minted for that worker and still in flight, the call's rights
         (person, agent, session, the worker's ceiling) must permit
-        ``core.elevate`` there. Journals the outcome; returns the reply body."""
+        ``core.elevate`` there, and the gates must pass it as an admin call
+        (castling-security: "elevation must pass"). A gate's flag can't wait
+        for a person inside a running call, so it refuses; asking for
+        elevation up front gets the gates' reading before the ticket, where a
+        flag is a hold. Journals the outcome; returns the reply body."""
         nonce = ticket.get("nonce") if isinstance(ticket, dict) else None
         held = self._inflight.get(nonce) if isinstance(nonce, str) else None
         w = self.workers.get(from_worker)
         s = self.sessions.get(held[2]) if held else None
         if held is None or held[0] != ticket or ticket["worker"] != from_worker or w is None or s is None:
             return {"ok": False, "error": "elevation: denied"}
-        caller = held[1]
+        caller, call, facts = held[1], held[5], held[6]
         target = ticket.get("appliance") or w.name
-        # Every layer the call itself ran under (8.3): a page's caps, a plugin's uses.
-        layers = self.identities.layers(caller) + [["session", {"grants": s.caps}], *held[3],
-                                                   ["ceiling", w.ceiling]]
-        out = rights.check(layers, {"cap": "core.elevate", "risk": "admin", "effects": [], "target": target})
-        if s.ended or self.clock() > s.exp:
-            out = {"ok": False, "layer": "session", "reason": "ended"}
-        elif caller.person and self.identities.expired(caller.person, self.clock()):
-            out = {"ok": False, "layer": "person", "reason": "expired"}
+
+        def refused() -> dict:
+            if self._inflight.get(nonce) is not held:
+                return {"ok": False, "layer": "call", "reason": "not in flight"}
+            if s.ended or self.clock() > s.exp:
+                return {"ok": False, "layer": "session", "reason": "ended"}
+            if caller.person and self.identities.expired(caller.person, self.clock()):
+                return {"ok": False, "layer": "person", "reason": "expired"}
+            # Every layer the call itself ran under (8.3): a page's caps, a plugin's uses.
+            layers = self.identities.layers(caller) + [["session", {"grants": s.caps}], *held[3],
+                                                       ["ceiling", w.ceiling]]
+            return rights.check(layers, {"cap": "core.elevate", "risk": "admin", "effects": [], "target": target})
+
+        out, results = refused(), None
+        # An admin call (elevate up front, an ``upfront`` cap) met the gates
+        # as admin at dispatch, where a person may have released its hold.
+        if out["ok"] and facts["risk"] != "admin":
+            inp = _gate_input(caller, s, w, call, {**facts, "risk": "admin"})
+            inp["elevation"] = reason if reason in ("upfront", "access_denied") else "access_denied"
+            results = await gates_mod.run(self.gates, inp)
+            verdict = rights.gate_decision(results)
+            if verdict["verdict"] != "allow":
+                out = {"ok": False, "layer": "gate", "reason": f"{verdict['verdict']} by {', '.join(verdict['by'])}"}
+            else:
+                out = refused()     # rights may have changed while the gates ran
         entry = {"kind": "elevation", "ts": self.clock(), "hub": self.hub_id, "call": ticket["call"],
                  "cap": ticket["cap"], "worker": from_worker, "band": ticket["band"], "risk": "admin",
                  "reason": reason if isinstance(reason, str) else None, "session": s.id,
                  "project": s.project, "person": caller.person, "agent": caller.agent}
+        if results is not None:
+            entry["gates"] = results
         if not out["ok"]:
             entry.update(decision="deny", layer=f"{out['layer']}: {out['reason']}")
             self._record(entry)

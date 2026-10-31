@@ -13,11 +13,16 @@ One gate, enforced at hub dispatch (spec 10.2), cheapest checks first:
 2. **Taint and the pinned task** (agents only: injection steers agents, not
    people or plugin code). A session is tainted once it read outside
    content (spec 8.4). From a tainted session, a risky call (exec or admin,
-   or persistence, sensitive or destructive effects) is flagged (held for
-   the person) unless it matches the session's pinned task; persistence from
-   a tainted session is always flagged. From a clean session, only a
-   high-impact call (admin, or persistence) far from the pinned task is
-   flagged. Everything else passes, with the signal journaled.
+   or persistence, sensitive or destructive effects) is flagged unless it
+   matches the session's pinned task; persistence from a tainted session is
+   always flagged. From a clean session, only a high-impact call (admin, or
+   persistence) far from the pinned task is flagged. Everything else passes,
+   with the signal journaled. These are heuristics with unmeasured false
+   positives, so they ship in shadow (castling-security: "Ship in shadow
+   mode first"): a flag is journaled as an ``allow`` with its reason and
+   counted in ``security.status``, and the call goes. With the
+   ``heuristics`` setting at ``enforce`` a flag holds the call for the
+   person.
 
 Alarm fatigue is the enemy: every alert path is rare and deduplicated.
 
@@ -96,6 +101,7 @@ class State:
         self.tasks: dict = {}        # task id -> its words (None while fetching)
         self.decoys: dict = {}       # canary name -> (decoy text, until)
         self.released: deque = deque(maxlen=RELEASES_PER_HOUR)
+        self.shadowed: deque = deque(maxlen=FLAGS_MAX)   # what the heuristics would have held
         self.pending: set = set()    # background tasks (alerts, task fetches)
         self._finder: tuple | None = None
 
@@ -251,8 +257,18 @@ def _taint(inp: dict, session: dict, args: str) -> dict:
     return _verdict("allow", 0.6, "intent_mismatch") if near is False else _verdict("allow", 0.9, "other")
 
 
+def _enforced() -> bool:
+    """The taint and pinned-task heuristics hold calls only when an owner
+    set ``heuristics: enforce``; canaries always block."""
+    return S.ctx is not None and S.ctx.settings.get("heuristics") == "enforce"
+
+
 def _flag(inp: dict, confidence: float, reason: str) -> dict:
     sid = (inp.get("session") or {}).get("id")
+    if not _enforced():
+        S.shadowed.append({"reason": reason, "cap": inp.get("cap"), "worker": inp.get("worker"),
+                           "session": sid, "agent": (inp.get("caller") or {}).get("agent"), "ts": time.time()})
+        return _verdict("allow", confidence, reason)
     S.flags[_key(sid, inp.get("cap"), inp.get("why"))] = {
         "reason": reason, "cap": inp.get("cap"), "worker": inp.get("worker"), "args": inp.get("args"),
         "why": inp.get("why"), "session": inp.get("session"), "caller": inp.get("caller"), "ts": time.time()}
@@ -559,9 +575,11 @@ def clear(ctx, session=None, agent=None):
 
 def status(ctx):
     out = {"canaries": sum(not c.get("retired") for c in S.canaries.values()),
-           "quarantined": len(S.quarantine), "holds": len(S.holds), "alerts": len(S.alerts)}
+           "quarantined": len(S.quarantine), "holds": len(S.holds), "alerts": len(S.alerts),
+           "heuristics": "enforce" if _enforced() else "shadow", "would_hold": len(S.shadowed)}
     if ctx.caller.owner:
-        out.update(quarantine=S.quarantine, recent=list(S.alerts)[-20:], holds=sorted(S.holds))
+        out.update(quarantine=S.quarantine, recent=list(S.alerts)[-20:], holds=sorted(S.holds),
+                   would_have_held=list(S.shadowed)[-20:])
     return out
 
 

@@ -356,7 +356,7 @@ def test_elevate_keeps_the_calls_own_layers_and_session(hub):
 
     async def answer(req, n):
         if n == 1:
-            got.append(hub.elevate(WID, req["ticket"], "access_denied"))
+            got.append(await hub.elevate(WID, req["ticket"], "access_denied"))
         return {"id": req["id"], "from": WID, "ok": True, "result": n}
 
     hub.tx.answer = answer
@@ -366,12 +366,96 @@ def test_elevate_keeps_the_calls_own_layers_and_session(hub):
 
     async def end_then(req, n):
         hub.end_session(req["ticket"]["session"])
-        got.append(hub.elevate(WID, req["ticket"], "upfront"))
+        got.append(await hub.elevate(WID, req["ticket"], "upfront"))
         return {"id": req["id"], "from": WID, "ok": True, "result": n}
 
     hub.tx.answer = end_then
     out, _ = call(hub, BAKE, "file.read")
     assert got[0] == {"ok": False, "error": "elevation: denied"}               # an ended session gets no lease
+
+
+def _elevating(hub, reason="access_denied", before=None):
+    """The worker asks for a lease during the call's first run."""
+    got = []
+
+    async def answer(req, n):
+        if n == 1:
+            if before:
+                before(req)
+            got.append(await hub.elevate(WID, req["ticket"], reason))
+        return {"id": req["id"], "from": WID, "ok": True, "result": n}
+
+    hub.tx.answer = answer
+    return got
+
+
+def elevations(d):
+    return [e for e in d.log if e["kind"] == "elevation"]
+
+
+def test_elevation_goes_through_the_gates_as_admin(hub):
+    # castling-security: the gate hook sits before ticket minting on every
+    # door, and "elevation must pass" (drift #16).
+    seen = []
+    hub.gates = [gates.Gate("spy", lambda inp: seen.append(inp) or
+                            {"verdict": "allow", "confidence": 1, "reason": "other"}, mode="enforce")]
+    got = _elevating(hub)
+    out, s = call(hub, BAKE, "file.read", {"path": "/etc/shadow"}, why="read the shadow file")
+    assert out["ok"] and got[0]["ok"] and "lease" in got[0]["result"]
+    at_dispatch, at_elevation = seen
+    assert at_dispatch["risk"] == "read" and "elevation" not in at_dispatch
+    assert at_elevation["risk"] == "admin" and at_elevation["elevation"] == "access_denied"
+    assert (at_elevation["cap"], at_elevation["args"], at_elevation["why"], at_elevation["session"]["id"]) == (
+        "file.read", {"path": "/etc/shadow"}, "read the shadow file", s.id)
+    [e] = elevations(hub)
+    assert e["decision"] == "allow" and e["gates"][0]["gate"] == "spy"
+
+
+@pytest.mark.parametrize("verdict", ["flag", "block"])
+def test_elevation_a_gate_does_not_pass_is_refused(hub, verdict):
+    # A flag can't wait for a person inside a running call: no lease.
+    hub.gates = [G("security", verdict, match={"risk": ["admin"]})]
+    got = _elevating(hub)
+    out, _ = call(hub, BAKE, "shell.exec")      # exec: the gate doesn't select it at dispatch
+    assert out["ok"] and got == [{"ok": False, "error": "elevation: denied"}]
+    [e] = elevations(hub)
+    assert e["decision"] == "deny" and e["layer"] == f"gate: {verdict} by security"
+    assert e["gates"][0]["verdict"] == verdict and not hub.leases
+
+
+def test_elevation_shadow_gates_are_recorded_only(hub):
+    hub.gates = [G("ml", "block", mode="shadow")]
+    got = _elevating(hub)
+    out, _ = call(hub, BAKE, "shell.exec")
+    assert out["ok"] and got[0]["ok"]
+    [e] = elevations(hub)
+    assert e["decision"] == "allow" and e["gates"][0]["verdict"] == "block"
+
+
+def test_elevation_of_an_admin_call_is_not_gated_twice(hub):
+    # Asked up front, the call met the gates as admin before its ticket, and
+    # a person may have released that hold; the elevation doesn't undo it.
+    hub.gates = [G("security", "flag", match={"risk": ["admin"]})]
+    got = _elevating(hub, "upfront")
+    out, _ = call(hub, BAKE, "pkg.fix")
+    assert out["held"]
+    rel = run(hub.release(out["hold"], "person:bake", present=True))
+    assert rel["ok"] and got[0]["ok"]
+    [e] = elevations(hub)
+    assert e["decision"] == "allow" and "gates" not in e
+
+
+def test_elevation_rechecks_rights_after_the_gates(hub):
+    async def slow(inp):
+        await asyncio.sleep(0.01)
+        hub.end_session(inp["session"]["id"])           # access changed while the gate ran
+        return {"verdict": "allow", "confidence": 1, "reason": "other"}
+
+    hub.gates = [gates.Gate("slow", slow, budget=1, mode="enforce", match={"risk": ["admin"]})]
+    got = _elevating(hub)
+    call(hub, BAKE, "shell.exec")
+    assert got == [{"ok": False, "error": "elevation: denied"}] and not hub.leases
+    assert elevations(hub)[0]["layer"] == "session: ended"
 
 
 def test_sub_call_keeps_the_parent_calls_layers(hub):

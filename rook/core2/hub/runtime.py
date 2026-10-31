@@ -907,7 +907,7 @@ class Hub:
         ticket = args.get("ticket")
         worker = ticket.get("worker") if isinstance(ticket, dict) else None
         if req["cap"] == "core.elevate":
-            out = self.dispatcher.elevate(worker, ticket, args.get("reason"))
+            out = await self.dispatcher.elevate(worker, ticket, args.get("reason"))
         elif req["cap"] == "core.event":
             out = self._worker_events(band, args)
         elif req["cap"] == "core.call":

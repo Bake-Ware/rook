@@ -49,9 +49,8 @@ on the hub's machine.
 
 ## How long it is kept
 
-The `general` chain is pruned a day at a time once a day's riskiest entry
-is past its retention: 30 days for read and write, 60 for exec, 90 for
-admin. Project chains are meant to go whole, some time after the project
+The `general` chain is pruned a day at a time once the day is 90 days
+old, whatever was in it. Project chains are meant to go whole, some time after the project
 closes; that step isn't wired to the workbench yet, so project chains are
 kept for now.
 

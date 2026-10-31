@@ -64,15 +64,13 @@ def test_chain_names_and_stamp():
     assert (e["chain"], e["project"]) == ("general", None) and "session" not in e
 
 
-def test_tiers_and_expiry():
-    assert [journal.tier(r) for r in (None, "read", "write", "exec", "admin", "bogus")] == \
-        ["read", "read", "write", "exec", "admin", "admin"]
+def test_expiry_is_one_age():
+    # castling-journal: "pruned by age (~30-90 days)"; one number, no tiers.
+    assert 30 <= journal.RETENTION_DAYS <= 90
     days = journal.RETENTION_DAYS
-    assert 30 <= min(days.values()) and max(days.values()) <= 90  # spec 11.4: 30 to 90 days
-    assert not journal.expired(0, "read", 30 * DAY - 1)
-    assert journal.expired(0, "read", 30 * DAY)
-    assert not journal.expired(0, "admin", 89 * DAY)
-    assert journal.expired(0, "admin", 7 * DAY, {"admin": 7})
+    assert not journal.expired(0, days * DAY - 1)
+    assert journal.expired(0, days * DAY)
+    assert journal.expired(0, 7 * DAY, 7)
 
 
 def test_first_break_takes_a_head_and_any_iterable():
@@ -328,33 +326,30 @@ def test_queries(store):
 
 # -- retention --------------------------------------------------------------------
 
-def test_general_chain_prunes_whole_days_by_tier(store):
+def test_general_chain_prunes_whole_days_by_age(store):
     clock = store.clock
+    days = journal.RETENTION_DAYS
     day0 = T0 - T0 % DAY
     clock.t = day0 + 100
     d1 = [store.append(call(risk="read"), S_NONE) for _ in range(2)]
     clock.t = day0 + DAY + 100
     d2 = [store.append(call(risk="admin"), S_NONE), store.append(call(risk="read"), S_NONE)]
-    clock.t = day0 + 2 * DAY + 100
-    d3 = [store.append(call(risk="read"), S_NONE)]
     store.append(call(), S_CASTLING)
 
-    clock.t = day0 + 31 * DAY - 1  # day 1 ends at day0 + DAY, kept 30 days
+    clock.t = day0 + (days + 1) * DAY - 1  # day 1 ends at day0 + DAY, kept `days` days
     assert store.prune() == []
-    clock.t = day0 + 31 * DAY  # day 1 goes; day 2 kept (admin, 90)
+    clock.t = day0 + (days + 1) * DAY  # day 1 goes, whatever its risk; day 2 stays
     [p] = store.prune()
     assert (p["kind"], p["chain"], p["pruned"], p["reason"], p["count"]) == ("prune", "general", "general", "age", 2)
     assert (p["through"], p["through_hash"], p["from_ts"]) == (d1[-1]["id"], d1[-1]["hash"], d1[0]["ts"])
     left = [e["id"] for e in store.entries("general")]
-    assert left == [e["id"] for e in d2 + d3] + [p["id"]]
+    assert left == [e["id"] for e in d2] + [p["id"]]
     assert store.check() == []
 
-    clock.t = day0 + 60 * DAY  # day 3 is past 30 days but day 2 still holds it: no gaps
-    assert store.prune() == []
-    clock.t = day0 + 92 * DAY  # day 2 goes, then day 3 and the first prune entry (read tier) with it
+    clock.t = day0 + (days + 2) * DAY  # day 2 goes (its admin entry too); the prune entry's day stays
     [p2] = store.prune()
-    assert p2["count"] == 4 and p2["through"] == p["id"]
-    assert [e["id"] for e in store.entries("general")] == [p2["id"]]
+    assert p2["count"] == 2 and p2["through"] == d2[-1]["id"]
+    assert [e["id"] for e in store.entries("general")] == [p["id"], p2["id"]]
     assert store.check() == []
     # Rows past the checkpoint stay write-once.
     with pytest.raises(sqlite3.DatabaseError, match="write-once"):
@@ -363,13 +358,27 @@ def test_general_chain_prunes_whole_days_by_tier(store):
     assert len(list(store.entries("project:castling"))) == 1
 
 
+def test_general_chain_never_gaps_when_the_clock_steps_back(store):
+    clock = store.clock
+    days = journal.RETENTION_DAYS
+    day0 = T0 - T0 % DAY
+    clock.t = day0 + 5 * DAY
+    kept = store.append(call(), S_NONE)
+    clock.t = day0 + 100        # the clock stepped back a few days
+    late = store.append(call(), S_NONE)
+    clock.t = day0 + (days + 2) * DAY
+    assert store.prune() == []  # the old entry sits after a kept one: nothing goes
+    assert [e["id"] for e in store.entries("general")] == [kept["id"], late["id"]]
+
+
 def test_closed_project_chain_goes_whole(store):
     clock = store.clock
+    days = journal.RETENTION_DAYS
     a = [store.append(call(risk="exec"), S_CASTLING) for _ in range(3)]
     closed = {"castling": T0 + DAY}
-    clock.t = T0 + DAY + 59 * DAY
-    assert store.prune(closed=closed) == []  # exec tier: 60 days after close
-    clock.t = T0 + DAY + 60 * DAY
+    clock.t = T0 + DAY + days * DAY - 1
+    assert store.prune(closed=closed) == []
+    clock.t = T0 + DAY + days * DAY
     [p] = store.prune(closed=closed)
     assert (p["pruned"], p["reason"], p["count"], p["through"]) == ("project:castling", "project closed", 3,
                                                                      a[-1]["id"])
@@ -381,10 +390,10 @@ def test_closed_project_chain_goes_whole(store):
     assert late["prev"] == a[-1]["hash"] and store.check() == []
 
 
-def test_unclosed_projects_and_custom_tiers(tmp_path):
+def test_unclosed_projects_and_custom_retention(tmp_path):
     clock = Clock()
-    s = JournalStore(str(tmp_path / "j.sqlite3"), clock=clock, retention={"read": 1, "write": 1, "exec": 1})
-    s.append(call(risk="read"), S_NONE)
+    s = JournalStore(str(tmp_path / "j.sqlite3"), clock=clock, retention_days=1)
+    s.append(call(risk="admin"), S_NONE)
     s.append(call(risk="read"), S_CASTLING)
     clock.t += 3 * DAY
     [p] = s.prune()

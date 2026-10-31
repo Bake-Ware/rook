@@ -608,7 +608,13 @@ call**: the agent sees one call and one result.
    `core.elevate` on the hub (13) with the call's ticket.
 3. The hub checks that the ticket is its own and the call is still in
    flight, and that the call's rights (8.3) permit `core.elevate` on that
-   worker. It journals the elevation and returns a lease, or refuses.
+   worker. Unless the call already met the gates as `admin` at dispatch
+   (asked up front, or an `upfront` cap), it runs the gates (10.2) on the
+   call as `admin`, with `elevation` set to the reason: elevation must
+   pass, so a `flag` refuses as well as a `block` (nothing can wait for a
+   person inside a running call; asking up front lets a flag become a
+   hold). It journals the elevation, with the gates' readings, and returns
+   a lease, or refuses.
 4. **Fail closed:** no answer from the hub within 10 s, or a refusal, and
    the call fails with `elevation: <reason>` (`hub unreachable`,
    `denied`, `outside ceiling`).
@@ -888,6 +894,7 @@ Input:
 | `risk`, `scope`, `effects` | from the manifest (an elevated call is `admin`) |
 | `session` | `{id, caps, project, task, tainted}` |
 | `band` | the band |
+| `elevation` | only on `core.elevate` (7.2): `upfront` or `access_denied` |
 
 Output:
 

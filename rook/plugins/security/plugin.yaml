@@ -1,13 +1,16 @@
 # The security gate (castling-security): canary secrets, taint and the
-# pinned task, enforced at hub dispatch, plus the triage agent's one-call
-# release. Ships enabled and is replaceable: disabling or swapping it is a
-# deliberate owner action (spec 10.2). The CPU classifier is its own plugin
-# (security-ml), shadow first. Code: scripts/security.py.
+# pinned task at hub dispatch, plus the triage agent's one-call release.
+# Ships enabled and is replaceable: disabling or swapping it is a deliberate
+# owner action (spec 10.2). Canary hits block (near-zero false positives);
+# the taint and pinned-task heuristics only journal what they would have
+# held until an owner sets heuristics: enforce ("ship in shadow mode first",
+# no alarm fatigue). The CPU classifier is its own plugin (security-ml),
+# shadow first. Code: scripts/security.py.
 manifest: 1
 plugin: security
 version: 0.5.0
 title: Security
-doc: Canary secrets, taint and pinned-task checks on every call; tells the person only when it matters.
+doc: Canary secrets block every call they show up in; taint checks journal first; tells the person only when it matters.
 package: core
 runs_on: hub
 license: Apache-2.0
@@ -18,6 +21,13 @@ settings:
   house_agent: { type: str, default: house, doc: The agent that reaches the person (canary hits only). }
   triage_agent: { type: str, default: security, doc: "The agent woken on this gate's holds; the only one security.release takes." }
   task_cap: { type: str, default: task.task.get, doc: "How the gate reads a session's pinned task (title and body)." }
+  heuristics:
+    type: str
+    enum: [shadow, enforce]
+    default: shadow
+    doc: >-
+      shadow: taint and pinned-task checks journal what they would have held and the call goes
+      (security.status counts them); enforce: those calls wait for a person. Canary hits always block.
 
 gate:
   run: scripts/security.py:check
