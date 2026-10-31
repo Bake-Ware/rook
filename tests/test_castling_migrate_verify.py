@@ -264,3 +264,45 @@ def test_smoke_checks_the_moved_stores_and_workers():
     assert all(cap != "shell.exec" for _, cap, _ in door.calls)                      # read-only
     res = mod.run(FakeDoor({}, []), ["kaiju"], {})
     assert any(not ok and "kaiju" in line for ok, line in res)
+
+
+# -- the copy ----------------------------------------------------------------------------------
+
+def _copy04():
+    spec = importlib.util.spec_from_file_location("switchover_copy04", REPO / "castling/switchover/copy04.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_copy04_takes_a_consistent_copy_without_touching_the_hub(tmp_path):
+    live = tmp_path / "live"
+    (live / "updates" / "worker" / "1244").mkdir(parents=True)
+    (live / "updates" / "worker" / "1244" / "band-worker.pyz").write_bytes(b"x" * 100)
+    (live / "updates" / "worker" / "1244" / "band-worker.json").write_text("{}")
+    (live / "trust.json").write_text('{"entries": []}')
+    hub = sqlite3.connect(live / "journal.db")                 # a running hub: WAL, rows not checkpointed
+    hub.execute("PRAGMA journal_mode=WAL")
+    hub.execute("PRAGMA wal_autocheckpoint=0")
+    hub.execute("CREATE TABLE calls (seq INTEGER PRIMARY KEY, cap TEXT)")
+    hub.executemany("INSERT INTO calls (cap) VALUES (?)", [("shell.exec",)] * 5)
+    hub.commit()
+    assert (live / "journal.db-wal").stat().st_size > 0
+    dest = tmp_path / "copy"
+    info = _copy04().copy(str(live), str(dest))
+    hub.close()
+    assert sorted(info["files"]) == ["journal.db", "trust.json", "updates/worker/1244/band-worker.json"]
+    assert info["not_copied"] == [{"path": "updates/worker/1244/band-worker.pyz", "size": 100}]
+    db = sqlite3.connect(f"file:{dest / 'journal.db'}?mode=ro&immutable=1", uri=True)
+    assert db.execute("SELECT count(*) FROM calls").fetchone()[0] == 5
+    assert db.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+    db.close()
+    assert not list(dest.rglob("*-wal")) and not list(dest.rglob("*-shm"))
+    assert stat.S_IMODE(dest.stat().st_mode) == 0o700
+    assert json.loads((dest / "COPY-INFO.json").read_text())["files"]["trust.json"]["sha256"]
+    with pytest.raises(SystemExit):
+        _copy04().copy(str(live), str(dest))                      # never over an earlier copy
+    with pytest.raises(SystemExit):
+        _copy04().copy(str(live), str(live / "inside"))
+    from castling.switchover.migrate.source import Source
+    Source(dest).close()                                          # migrate takes it as a copy
