@@ -1,0 +1,65 @@
+# Off-site hub backup (castling gate R5): the hub's config, data folder and
+# plugin library, sealed under a key derived from the owner's recovery key,
+# pushed to a target, checked by restoring it, old ones pruned.
+# Implemented by the hub (rook.core2.hub.backup.caps). Owners only.
+manifest: 1
+plugin: backup
+version: 0.5.0
+title: Backup
+doc: Sealed backups of this hub, which only the owner's recovery key opens.
+package: core
+builtin: true
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+# A worker target is that worker's backup-store plugin.
+uses: ["backup-store.*"]
+
+settings:
+  target:
+    type: str
+    default: ""
+    doc: "Where backups go: dir:/path (a folder or disk), worker:<name> (that worker's backup-store plugin) or rclone:<remote>:<path> (S3, Google Drive, B2, SFTP through rclone)."
+  keep:
+    type: int
+    default: 7
+    min: 1
+    max: 365
+    doc: How many of this hub's newest backups stay on the target.
+
+caps:
+  run:
+    doc: "Back up the hub now: seal it, push it to the target, fetch it back and restore it into scratch to check it, then delete backups past keep."
+    on: hub
+    risk: admin
+    scope: multi-user
+    effects: [persists]
+    timeout: 60m
+    result: { type: map }
+  list:
+    doc: This hub's backups on the target, newest first.
+    on: hub
+    risk: read
+    scope: multi-user
+    idempotent: true
+    timeout: 5m
+    result: { type: map }
+  verify:
+    doc: "Fetch a backup (the newest, unless name) from the target and restore it into scratch with this hub's recovery key: every file against its hash, the root key, the config and each database's check."
+    on: hub
+    risk: read
+    scope: multi-user
+    idempotent: true
+    timeout: 60m
+    args:
+      name: { type: str, pattern: "^rook-hub-[0-9a-f]{8,64}-[0-9]{8}T[0-9]{6}Z\\.rookbak$", doc: "A backup from backup.list; blank: the newest." }
+    result: { type: map }
+
+jobs:
+  nightly:
+    doc: "Every night at 03:40 (the jobs timezone): back up the hub to the target and check the copy. Set backup's target first."
+    trigger: { cron: "40 3 * * *" }
+    call: backup.run
+    catch_up: true
+
+docs: { manual: docs/manual.md }

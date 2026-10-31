@@ -31,6 +31,8 @@ What it owns:
 - **The vault** (:mod:`.vault`): ``<data>/vault.db``, unlocked on start
   with the root key; ``{{secret:NAME}}`` in calls to workers and hub
   plugins' secret settings read it; ``secret.*`` caps for owners.
+- **Backups** (:mod:`.backup`): ``backup.*`` caps for owners, sealed
+  under the recovery key, pushed to the ``backup`` plugin's target.
 - **Enrollment** (:mod:`rook.core2.enroll.hub`): devices signing in as a
   person, the config bundle, the owner's recovery key, other hubs' invites
   and the memberships this hub signs for its workers (spec 9, 12).
@@ -79,6 +81,7 @@ from .journal_store import JournalError, JournalStore
 from .plugins import HubPlugins, short_caps
 from .vault import Vault, VaultError, resolver
 from .vault import caps as vault_caps
+from .backup import caps as backup_caps
 
 log = logging.getLogger("rook.hub")
 
@@ -115,6 +118,7 @@ class Config:
     transport: dict | None = None                   # rook.core2.transport.hub_transport options
     enroll: dict = field(default_factory=dict)      # rook.core2.enroll.hub: url, relay, ws_url, discover, services
     log: dict = field(default_factory=dict)         # {level, format: text|json}
+    file = None    # not a key: the YAML file it was read from, set by load_config (backups copy it)
 
 
 def load_config(path: str | Path) -> Config:
@@ -134,6 +138,7 @@ def load_config(path: str | Path) -> Config:
     if raw.get("library"):
         raw["library"] = base / raw["library"]
     cfg = Config(**{k: v for k, v in raw.items() if v is not None})
+    cfg.file = path.resolve()
     check_config(cfg)
     return cfg
 
@@ -402,6 +407,7 @@ class Hub:
         self.plugins.add_core(self.core)
         builtin_caps.install(self)               # pages, hub, approval, journal, setting: before the library
         vault_caps.install(self)
+        backup_caps.install(self)
         self.enroll = Enrollment(self, cfg.enroll)
         self.dispatcher = Dispatcher(hub_id=self.hub_id, op_key=self.op, identities=self.identities,
                                      workers={}, send=self._send, journal=self._journal,

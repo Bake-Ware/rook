@@ -49,6 +49,8 @@ Paths are relative to the file. An unknown key is an error.
 | `python -m rook.core2.hub --config hub.yaml recovery-key` | show the owner's recovery key |
 | `python -m rook.core2.hub --config hub.yaml secret list \| set NAME [--description text] \| delete NAME` | the hub's vault; `set` reads the value from stdin ([Settings](settings.md#secrets)) |
 | `python -m rook.core2.hub --config hub.yaml recover-vault` | open a `vault.db` from a hub that died with the recovery key (typed, or on stdin) |
+| `python -m rook.core2.hub --config hub.yaml backup [run \| list \| verify [NAME]] [--target dir:/path \| rclone:remote:path]` | make, list or check sealed backups without the hub running ([Backup](../../rook/core2/hub/backup/docs/manual.md)) |
+| `python -m rook.core2.hub --config hub.yaml restore (FILE \| --target T [--name NAME])` | rebuild a hub on a new machine from a backup; asks for the recovery key, writes this (new) config with `data/` and `library/` beside it |
 | `python -m rook.core2.worker --config worker.yaml enroll <hub \| qr text> [--name] [--code] [--discover] [--insecure] [--force]` | sign this machine in with its home hub |
 | `python -m rook.core2.worker --config worker.yaml` | run the worker |
 | `python -m rook.core2.migrate --from <0.4 copy> --to hub.yaml [--apply] [--rename OLD=NEW] [--json]` | move a 0.4 hub ([Moving from 0.4](migrating.md)) |
