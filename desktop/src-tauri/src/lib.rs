@@ -967,7 +967,9 @@ async fn keep_web_session(app: &AppHandle) {
         return;
     }
     match hub05::web_sign_in(&origin, &c.token).await {
-        Ok((cookie, person)) => save_sign_in05(app, &origin, &c.token, &cookie, person),
+        // Unless the person signed out (or in again) meanwhile.
+        Ok((cookie, person)) if creds(app).token == c.token => save_sign_in05(app, &origin, &c.token, &cookie, person),
+        Ok(_) => {}
         Err(e) => log::info!("site session: {e}"),
     }
 }
@@ -1277,6 +1279,10 @@ async fn save_settings(app: AppHandle, mut settings: Settings) -> Result<UiState
         .map_err(|e| format!("Couldn't save settings: {e}"))?;
     if old.hub_version != settings.hub_version {
         switched_version(&app, old.v05()).await;
+    } else if old.hub_url != settings.hub_url && !st.pages05.lock().unwrap().is_empty() {
+        // Another hub: its pages come with its sign-in.
+        st.pages05.lock().unwrap().clear();
+        rebuild_tray(&app);
     }
     apply_wake(&app);
     if let Err(e) = apply_start_at_login(&app) {

@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::worker::Info;
+use crate::worker::{processes_naming, Info};
 
 /// Plugins from `rook/plugins` the desktop's worker loads: commands and
 /// terminals, files, notifications on this screen, screenshots.
@@ -212,7 +212,16 @@ pub fn enroll(
     Err(format!("Couldn't add this computer: {why}"))
 }
 
-/// Starts and stops the app's 0.5 worker (its child process).
+/// `python -m rook.core2.worker --config <config>`, nothing after it: a
+/// running worker (not an enrollment, which has `enroll ...` after).
+fn runs_worker(after: &str) -> bool {
+    after
+        .trim_matches(|c: char| c == '"' || c == '\'' || c.is_whitespace())
+        .is_empty()
+}
+
+/// Starts and stops the app's 0.5 worker: its child process, or one an
+/// earlier run of the app left running (found by its config path).
 pub struct Controller {
     pub layout: Layout,
     child: Option<Child>,
@@ -234,6 +243,10 @@ impl Controller {
         }
     }
 
+    fn strays(&self) -> Vec<u32> {
+        processes_naming(&self.layout.config(), runs_worker)
+    }
+
     pub fn info(&mut self) -> Info {
         if !self.layout.enrolled() {
             return Info {
@@ -245,12 +258,15 @@ impl Controller {
                 can_stop: false,
             };
         }
-        let up = self.alive();
+        let ours = self.alive();
+        let up = ours || !self.strays().is_empty();
         Info {
             mode: "core2",
             status: if up { "running" } else { "stopped" },
-            detail: if up {
+            detail: if ours {
                 format!("Running from the app. Log: {}", self.layout.log_file().display())
+            } else if up {
+                "Running (left by an earlier run of the app).".into()
             } else {
                 "Added; runs while the app is open.".into()
             },
@@ -263,7 +279,7 @@ impl Controller {
         if !self.layout.enrolled() {
             return Err("Add this computer first.".into());
         }
-        if !self.alive() {
+        if !self.alive() && self.strays().is_empty() {
             let log = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -295,6 +311,15 @@ impl Controller {
             }
             let _ = c.kill();
             let _ = c.wait();
+        } else {
+            for pid in self.strays() {
+                let pid = pid.to_string();
+                let _ = if cfg!(windows) {
+                    quiet(&mut Command::new("taskkill")).args(["/PID", &pid, "/F"]).status()
+                } else {
+                    quiet(&mut Command::new("kill")).arg(&pid).status()
+                };
+            }
         }
         Ok(self.info())
     }
@@ -336,6 +361,16 @@ mod tests {
         assert_eq!(plugins.len(), DESKTOP_PLUGINS.len());
         assert!(plugins[2].ends_with("notification-desktop"));
         assert!(initial_config(Path::new("/x"), None).find("\"name\"").is_none());
+    }
+
+    #[test]
+    fn strays_are_running_workers_with_this_config() {
+        let cfg = Path::new("/home/me/.config/rook/worker05/worker.yaml");
+        let rows = "  10 /usr/bin/python3 -m rook.core2.worker --config /home/me/.config/rook/worker05/worker.yaml\n\
+                    11 /usr/bin/python3 -m rook.core2.worker --config /home/me/.config/rook/worker05/worker.yaml enroll https://h\n\
+                    12 /usr/bin/python3 -m rook.core2.worker --config /home/me/.config/rook/worker05/worker.yaml.bak\n\
+                    13 /usr/bin/python3 -m rook.core2.worker --config /other/worker05/worker.yaml\n";
+        assert_eq!(crate::worker::pids_naming(rows, cfg, false, runs_worker), vec![10]);
     }
 
     #[test]
