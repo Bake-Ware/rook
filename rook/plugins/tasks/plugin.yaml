@@ -106,7 +106,7 @@ caps:
     result: { type: map }
     run: scripts/task.py:handoff
   request_signoff:
-    doc: "Ask reviewers to sign off before the task is done (event task.signoff_requested; task.signoff.list where={task} shows where it stands). No reviewers: the expert roles of the project's concepts (concept.pool), as role:<name>. A sacred project (project.trust) adds its owners. The agents package wakes the agents asked (agent:<name>, or role:<name> for the agent of that name), as you."
+    doc: "Ask reviewers to sign off before the task is done (event task.signoff_requested; task.signoff.list where={task} shows where it stands). No reviewers: the expert roles of the project's concepts (concept.pool), as role:<name>, unless their sign-off norm is none or the project is ship-it (then it notes that none is needed). A sacred project (project.trust) adds its owners. The agents package wakes the agents asked (agent:<name>, or role:<name> for the agent of that name), as you."
     risk: write
     scope: multi-user
     args:

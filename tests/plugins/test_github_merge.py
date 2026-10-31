@@ -57,8 +57,8 @@ def test_signoff_rules():
                                                                  "commit": commit, "who": who}
     owners = ["person:bake"]
 
-    def problems(level, rows=(), revs=(), author="agent:coder", caller="agent:coder"):
-        return mod.signoff_problems(level, list(rows), list(revs), HEAD, author, caller, owners)[0]
+    def problems(level, rows=(), revs=(), norm="experts", author="agent:coder", caller="agent:coder"):
+        return mod.signoff_problems(level, norm, list(rows), list(revs), HEAD, author, caller, owners)[0]
     assert problems("ship-it") == []
     assert "no sign-off yet" in problems("normal")[0]
     assert problems("normal", [row("agent:qa")]) == []
@@ -67,6 +67,10 @@ def test_signoff_rules():
     assert "declined" in problems("ship-it", [row("agent:qa", "declined")])[0]       # a no blocks even ship-it
     assert "an owner" in problems("sacred", [row("agent:qa")])[0]
     assert problems("sacred", [row("agent:qa"), row("person:bake")]) == []
+    # a concept norm of none (a grocery list): no reviewer, only the owner when sacred
+    assert problems("normal", norm="none") == []
+    assert ["an owner" in p for p in problems("sacred", norm="none")] == [True]
+    assert problems("sacred", [row("person:bake")], norm="none") == []
     # GitHub reviews: the latest per login, approvals only at the head and only by known logins
     assert problems("normal", revs=[rev("claude-qa", who="agent:qa")]) == []
     assert problems("normal", revs=[rev("claude-qa", commit=BASE, who="agent:qa")])
@@ -85,8 +89,8 @@ def test_a_ship_it_task_lands_with_the_gates_alone(tmp_path, gh):
         out = await merge(rig, tid)
         assert out["ok"], out
         r = out["result"]
-        assert r["merged"] and r["sha"] == "c" * 40 and r["signoff"] == {"level": "ship-it", "signers": []}
-        assert r["gates"] == ["version", "mergeable", "ci", "tests", "secrets"]
+        assert r["merged"] and r["sha"] == "c" * 40
+        assert r["signoff"] == {"level": "ship-it", "norm": "experts", "signers": []}
         assert gh.writes[0][2]["sha"] == HEAD and gh.writes[0][2]["commit_title"].startswith(
             "Merge pull request #7 from c7/work (task ")
         assert all(auth == f"Bearer {TOKEN}" for *_, auth in gh.requests)       # the hub's token, on every call
@@ -174,38 +178,23 @@ def test_github_reviews_are_sign_off(tmp_path, gh):
     on_rig(config(tmp_path, gh, logins=LOGINS), body)
 
 
-def test_the_gates(tmp_path, gh):
+def test_only_the_head_is_checked_in_machinery(tmp_path, gh):
+    """castling-workbench: checks and balances live at persona level. The hub
+    only makes sure the merge is of the head that was signed off; CI, tests
+    and the diff are the reviewers' checklist (the signoff skill)."""
     async def body(rig):
         tid = await task_in(rig, "ship-it")
 
-        async def refused(*want, sha=HEAD):
+        async def refused(want, sha=HEAD):
             out = await merge(rig, tid, sha=sha)
-            assert not out["ok"], out
-            for w in want:
-                assert w in out["error"], (w, out["error"])
-            return out["error"]
-        await refused("version: the head is aaaaaaa, not eeeeeee", sha="e" * 40)
-        gh.runs[HEAD] = [{"name": "pytest", "status": "in_progress", "conclusion": None}]
-        await refused("ci: still running: pytest; call again when CI is done", "tests did not pass: pytest")
-        gh.runs[HEAD] = [{"name": "pytest", "status": "completed", "conclusion": "failure"},
-                         {"name": "build", "status": "completed", "conclusion": "success"}]
-        await refused("CI is not green: pytest: failure", "tests did not pass: pytest")
-        gh.runs[HEAD] = [{"name": "build", "status": "completed", "conclusion": "success"}]
-        await refused("tests: no test run among the checks")
-        gh.runs[HEAD] = []
-        await refused("ci: no CI ran on aaaaaaa")
-        gh.runs[HEAD] = [{"name": "pytest", "status": "completed", "conclusion": "success"}]
-        gh.diffs[(BASE, HEAD)] = f"+++ b/x\n+token = '{TOKEN}'\n"
-        err = await refused("secrets: the diff has secrets in it")
-        assert TOKEN not in err
-        gh.diffs[(BASE, HEAD)] = "+fine\n"
-        gh.prs[7]["mergeable"], gh.prs[7]["mergeable_state"] = False, "dirty"
-        await refused("mergeable: conflicts with castling (dirty); rebase it")
-        gh.prs[7]["mergeable"], gh.prs[7]["draft"] = True, True
-        await refused("version: the pull request is a draft")
+            assert not out["ok"] and want in out["error"], out
+        await refused("the head is aaaaaaa, not eeeeeee: the sign-off and reviews must be for the new head",
+                      sha="e" * 40)
+        gh.prs[7]["draft"] = True
+        await refused("the pull request is a draft")
         gh.prs[7]["draft"] = False
         assert not gh.writes
-        # the head moves between the gates and the merge: GitHub refuses
+        # the head moves between the check and the merge: GitHub refuses
         real = gh.handle
 
         def moving(h, method):
@@ -216,8 +205,21 @@ def test_the_gates(tmp_path, gh):
         await refused("GitHub 409")
         gh.handle = real
         gh.prs[7]["head"]["sha"] = HEAD
+        # red CI is the reviewers' call, not the hub's
+        gh.runs[HEAD] = [{"name": "pytest", "status": "completed", "conclusion": "failure"}]
         assert (await merge(rig, tid))["ok"]
-        await refused("version: the pull request is merged")
+        await refused("the pull request is merged")
+    on_rig(config(tmp_path, gh), body)
+
+
+def test_a_none_norm_needs_no_reviewer(tmp_path, gh):
+    async def body(rig):
+        await rig.bake.ok("concept.create", title="Groceries", slug="groceries", signoff="none", roles=["pm"])
+        tid = await task_in(rig, concepts=["groceries"])                     # normal, norm none
+        out = await rig.coder.ok("task.request_signoff", id=tid)
+        assert out == {"id": tid, "signoff": [], "needed": False}
+        out = await merge(rig, tid)
+        assert out["ok"] and out["result"]["signoff"]["norm"] == "none", out
     on_rig(config(tmp_path, gh), body)
 
 

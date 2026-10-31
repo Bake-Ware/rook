@@ -286,12 +286,13 @@ def test_concept_pool_and_project_tags():
     async def body(b):
         await b("concept.create", title="Software", slug="software", roles=["lead", "qa"], skills=["git-flow"])
         await b("concept.create", title="Hardware", slug="hardware", roles=["hardware-review", "qa"],
-                trust="sacred")
+                signoff="none", trust="sacred")
         p = await b("project.create", title="ESP32 firmware", concepts=["software", "hardware"])
         pool = await b("concept.pool", concepts=p["concepts"] + ["crochet"])
-        assert (pool["roles"], pool["skills"], pool["trust"], pool["missing"]) == \
-            (["lead", "qa", "hardware-review"], ["git-flow"], "sacred", ["crochet"])
-        assert (await b("concept.pool", concepts=["crochet"]))["trust"] is None
+        assert (pool["roles"], pool["skills"], pool["signoff"], pool["trust"], pool["missing"]) == \
+            (["lead", "qa", "hardware-review"], ["git-flow"], "experts", "sacred", ["crochet"])
+        assert (await b("concept.pool", concepts=["hardware"]))["signoff"] == "none"
+        assert (await b("concept.pool", concepts=["crochet"]))["signoff"] is None
         trust = await b("project.trust.create", BAKE, project=p["id"], level="ship-it", note="no users yet")
         assert trust["level"] == "ship-it"
         with pytest.raises(KitError, match="already used"):

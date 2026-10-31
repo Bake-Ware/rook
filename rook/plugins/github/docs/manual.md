@@ -38,18 +38,18 @@ ship-it project can't land work in a sacred project's repo:
 | `normal` | one reviewer other than the author |
 | `sacred` | that, and an owner |
 
-Only the trust level decides whether an owner signs. A sign-off that was declined or is still waiting blocks the merge at any
+Only the trust level decides whether an owner signs. A project whose
+concepts' sign-off norm is `none` (a grocery list) needs no reviewer, only
+the owner when it is sacred. A sign-off that was declined or is still waiting blocks the merge at any
 level, and so does a GitHub "changes requested". The author (the PR's
 login) and the calling agent can't sign off their own work. A person signs
 off from their own login, never through an agent.
 
-**The gates pass**:
-- `version`: `sha` is the open, non-draft PR's head.
-- `mergeable`: GitHub says it merges cleanly.
-- `ci`: every check has finished and is green. A check still running
-  refuses; call again when CI is done.
-- `tests`: a check named like `test_checks` passed.
-- `secrets`: nothing credential-shaped is on the diff's added lines.
+**The head is the one signed off**: the PR is open, not a draft, and `sha`
+is its head. That is the only check the hub makes itself. CI, tests,
+conflicts and credentials in the diff are the reviewers' checklist (the
+`signoff` skill; castling-workbench: checks and balances at persona level),
+and GitHub refuses a merge that conflicts or that branch protection blocks.
 
 The merge then happens only at `sha`, with the hub's token; if the head
 moved in between, GitHub refuses (409). The call is journaled with its why.
@@ -73,8 +73,6 @@ the task (relation `produced`).
 | `api` | `https://api.github.com` | the REST API base URL |
 | `logins` | `{}` | GitHub login → band identity, for reviews as sign-off |
 | `repos` | `{}` | `owner/name` → project id, whose level and norms also apply |
-| `require_ci` | `true` | no checks at all fails ci and tests |
-| `test_checks` | `["*test*"]` | check names that are test runs |
 
 The token goes in an unredirected header, so a redirect never carries it to
 another host.

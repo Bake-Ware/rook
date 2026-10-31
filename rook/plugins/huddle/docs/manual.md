@@ -18,6 +18,11 @@ huddle.close huddle=<id>               (its creator or an owner)
   you, so they act with no more than you may. The reply says who was told.
 - `huddle.list`, `huddle.get` and `huddle.search` find huddles.
 
+Not yet: question events (a question that waits for the person), which
+come with `approval.ask` (castling C4). `huddle.post` and `huddle.read`
+stand in for `stream.write` / `stream.read` on the hub, and become their
+aliases once the hub serves those (castling-caps).
+
 There are no chairs, pins or votes. Work lands by sign-off on its task and
 [`github.merge`](../../github/docs/manual.md) (castling-workbench: sign-off
 replaces merge votes).

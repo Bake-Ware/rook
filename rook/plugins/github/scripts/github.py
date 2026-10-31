@@ -2,20 +2,18 @@
 
 ``merge`` is how work lands on 0.5 (castling-workbench: sign-off replaces
 merge votes). It checks, as the caller, the task's sign-off against what its
-project's trust level asks for, or the repo's project's when the ``repos``
-setting names a stricter one (:func:`signoff_problems`), runs the gates
-against GitHub (:func:`gate_problems`), and only then merges at the head SHA
-the caller named, with the hub's token. The call is journaled like any
-other, with its args and why; the reply says who signed and which gates
-passed. The token goes in an unredirected header, so a redirect never
+project asks for (trust level and concept norm; the ``repos`` setting can
+name a stricter project for the repo: :func:`signoff_problems`) and that the
+head is the SHA the caller named (:func:`head_problem`), and only then
+merges at that SHA with the hub's token. CI, tests and the diff are the
+reviewers' checks, not machinery here. The call is journaled like any other,
+with its args and why; the reply says who signed. The token goes in an unredirected header, so a redirect never
 carries it to another host.
 """
 from __future__ import annotations
 
-import fnmatch
 import json
 import re
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,16 +23,9 @@ from rook.kit.ctx import KitError
 TIMEOUT = 20.0
 TEXT_MAX = 8 * 1024 * 1024
 JSON = "application/vnd.github+json"
-PASSING = ("success", "neutral", "skipped")
 LEVELS = ("ship-it", "normal", "sacred")             # loosest first
-MERGEABLE_TRIES, MERGEABLE_WAIT = 3, 1.0
 _REPO = re.compile(r"[\w.-]+/[\w.-]+")
 _SHA = re.compile(r"[0-9a-f]{40}")
-# Credential shapes (as 0.4's huddle table).
-SECRET_SHAPES = re.compile(
-    r"(gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|AKIA[0-9A-Z]{16}|"
-    r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----|xox[abposr]-[A-Za-z0-9-]{10,}|"
-    r"sk-(?:ant-)?[A-Za-z0-9_-]{32,}|AIza[0-9A-Za-z_-]{35})")
 
 
 def _repo(repo: str) -> str:
@@ -85,17 +76,6 @@ def _req(ctx, method: str, path: str, body: dict | None = None, accept: str = JS
 def _text(data: bytes) -> dict:
     return {"text": data[:TEXT_MAX].decode("utf-8", "replace"), "bytes": min(len(data), TEXT_MAX),
             "truncated": len(data) > TEXT_MAX}
-
-
-def secret_hits(diff: str) -> list[str]:
-    """Credential-looking strings on a diff's added lines: where, never the value."""
-    hits = []
-    for i, line in enumerate(str(diff or "").splitlines(), 1):
-        if line.startswith("+") and not line.startswith("+++"):
-            m = SECRET_SHAPES.search(line)
-            if m:
-                hits.append(f"line {i}: looks like a credential ({m.group(0)[:4]}...)")
-    return hits[:20]
 
 
 # -- reads -------------------------------------------------------------------------
@@ -159,13 +139,15 @@ def file(ctx, repo, path, ref):
 
 # -- landing -----------------------------------------------------------------------
 
-def signoff_problems(level: str, rows: list, revs: list, head: str, author: str | None,
+def signoff_problems(level: str, norm: str, rows: list, revs: list, head: str, author: str | None,
                      caller_agent: str | None, owners: list) -> tuple[list, dict]:
     """What keeps a task's sign-off from being satisfied (empty: it is), and
-    who signed. ``rows``: task.signoff records; ``revs``: :func:`reviews`
-    (the latest review per login counts; an approval counts only at
-    ``head``). The author (the PR's mapped login) and the calling agent
-    don't sign their own work."""
+    who signed. ``level``: the project's trust level (whether the person
+    signs: sacred); ``norm``: its concepts' sign-off norm (``none`` or
+    ``experts``: whether reviewers sign at all, unless the level is
+    ship-it). ``rows``: task.signoff records; ``revs``: :func:`reviews` (the
+    latest per login counts; an approval only at ``head``). The author (the
+    PR's mapped login) and the calling agent don't sign their own work."""
     own = {author, caller_agent} - {None}
     signers, problems = [], []
     for r in rows:
@@ -186,81 +168,46 @@ def signoff_problems(level: str, rows: list, revs: list, head: str, author: str 
         elif r["state"] == "APPROVED" and r["commit"] == head and r["who"] and r["who"] not in own:
             signers.append(r["who"])
     signers = list(dict.fromkeys(signers))
-    if level != "ship-it" and not signers:
+    if level != "ship-it" and norm != "none" and not signers:
         problems.append(f"no sign-off yet: a {level} project needs a reviewer other than the author "
-                        "(task.request_signoff, then task.signoff; or an approving GitHub review at the head)")
+                        "(task.request_signoff, then github.review or task.signoff)")
     if level == "sacred" and not set(signers) & set(owners):
         problems.append(f"an owner ({', '.join(owners) or 'the person'}) must sign off too (the project is sacred)")
-    return problems, {"level": level, "signers": signers}
+    return problems, {"level": level, "norm": norm, "signers": signers}
 
 
-def gate_problems(ctx, repo: str, p: dict, sha: str) -> tuple[list, list]:
-    """The gates, in order: (problems, [{id, ok, detail}])."""
-    gates: list = []
-
-    def gate(gid, ok, detail):
-        gates.append({"id": gid, "ok": bool(ok), "detail": detail})
+def head_problem(p: dict, sha: str) -> str | None:
+    """The one check in machinery: the PR is open and its head is the sha the
+    sign-off was for. CI, tests and the diff are the reviewers' checklist
+    (castling-workbench: checks and balances at persona level); GitHub
+    refuses a merge that conflicts or that branch protection blocks."""
     if p["state"] != "open":
-        gate("version", False, f"the pull request is {'merged' if p['merged'] else p['state']}")
-    elif p["draft"]:
-        gate("version", False, "the pull request is a draft")
-    elif p["head"] != sha:
-        gate("version", False, f"the head is {p['head'][:7]}, not {sha[:7]}: check the new head, then call again")
-    else:
-        gate("version", True, f"head is {sha[:7]}")
-    if gates[0]["ok"]:
-        for i in range(MERGEABLE_TRIES):
-            if p["mergeable"] is not None or i + 1 == MERGEABLE_TRIES:
-                break
-            time.sleep(MERGEABLE_WAIT)
-            p = pr(ctx, repo, p["number"])
-        gate("mergeable", p["mergeable"] is True,
-             f"merges cleanly into {p['base']}" if p["mergeable"] else
-             f"conflicts with {p['base']} ({p['mergeable_state']}); rebase it" if p["mergeable"] is False else
-             "GitHub has not worked out whether it merges cleanly yet; call again")
-        c = checks(ctx, repo, sha)
-        running = [r["name"] for r in c["runs"] if r["status"] != "completed"] + \
-            [s["context"] for s in c["statuses"] if s["state"] == "pending"]
-        bad = [f"{r['name']}: {r['conclusion']}" for r in c["runs"]
-               if r["status"] == "completed" and r["conclusion"] not in PASSING]
-        bad += [f"{s['context']}: {s['state']}" for s in c["statuses"] if s["state"] not in ("success", "pending")]
-        none = not c["runs"] and not c["statuses"]
-        gate("ci", not (running or bad or (none and ctx.settings["require_ci"])),
-             f"still running: {', '.join(running[:6])}; call again when CI is done" if running else
-             "CI is not green: " + "; ".join(bad[:6]) if bad else
-             f"no CI ran on {sha[:7]}" if none and ctx.settings["require_ci"] else
-             f"{len(c['runs']) + len(c['statuses'])} checks green")
-        pats = [x.lower() for x in ctx.settings["test_checks"] or ["*test*"]]
-        tests = [r for r in c["runs"] if any(fnmatch.fnmatchcase(str(r["name"]).lower(), x) for x in pats)]
-        failed = [r["name"] for r in tests if r["conclusion"] != "success"]
-        gate("tests", (tests and not failed) or (none and not ctx.settings["require_ci"]),
-             "tests did not pass: " + ", ".join(failed) if failed else
-             ", ".join(r["name"] for r in tests) + " passed" if tests else
-             f"no test run among the checks (test_checks: {pats})")
-        d = diff(ctx, repo, p["base_sha"], sha)
-        hits = [] if d["truncated"] else secret_hits(d["text"])
-        gate("secrets", not d["truncated"] and not hits,
-             "the diff is over 8 MB: too big to check for secrets" if d["truncated"] else
-             "the diff has secrets in it: " + "; ".join(hits[:5]) if hits else "no secrets in the diff")
-    return [f"{g['id']}: {g['detail']}" for g in gates if not g["ok"]], gates
+        return f"the pull request is {'merged' if p['merged'] else p['state']}"
+    if p["draft"]:
+        return "the pull request is a draft"
+    if p["head"] != sha:
+        return f"the head is {p['head'][:7]}, not {sha[:7]}: the sign-off and reviews must be for the new head"
+    return None
 
 
-def _level(ctx, project) -> str:
-    """The project's trust level (project.trust); normal without one."""
+def _level(ctx, project) -> tuple[str, str]:
+    """(trust level, sign-off norm) of a project: normal and experts without one."""
     if not project:
-        return "normal"
+        return "normal", "experts"
     p = ctx.call("project.get", id=project)
     trust = ctx.call("project.trust.list", where={"project": p["id"]}, limit=1)
-    return trust[0]["level"] if trust else "normal"
+    norm = (ctx.call("concept.pool", concepts=p["concepts"]).get("signoff") if p.get("concepts") else None)
+    return (trust[0]["level"] if trust else "normal"), norm or "experts"
 
 
-def _strictest(ctx, task_project, repo) -> str:
+def _strictest(ctx, task_project, repo) -> tuple[str, str]:
     """The stricter of the task's project and the one the ``repos`` setting
     names for the repo: a task in a ship-it project can't land work in a
     repo that belongs to a sacred one."""
     mapped = next((p for r, p in (ctx.settings["repos"] or {}).items() if r.lower() == repo.lower()), None)
-    return max([_level(ctx, p) for p in dict.fromkeys([task_project, mapped]) if p] or ["normal"],
-               key=LEVELS.index)
+    found = [_level(ctx, p) for p in dict.fromkeys([task_project, mapped]) if p] or [("normal", "experts")]
+    return (max((lv for lv, _ in found), key=LEVELS.index),
+            "experts" if any(n == "experts" for _, n in found) else "none")
 
 
 def review(ctx, repo, number, sha, task, approve, body):
@@ -299,14 +246,15 @@ def merge(ctx, repo, number, sha, task, method="merge"):
     if not _SHA.fullmatch(str(sha)):
         raise KitError("bad args: sha is the full 40-character head you checked")
     t = ctx.call("task.get", id=task)
-    level = _strictest(ctx, t.get("project"), repo)
+    level, norm = _strictest(ctx, t.get("project"), repo)
     rows = ctx.call("task.signoff.list", where={"task": t["id"]}, limit=500)
     p = pr(ctx, repo, number)
     logins = {k.lower(): v for k, v in (ctx.settings["logins"] or {}).items()}
-    problems, signed = signoff_problems(level, rows, reviews(ctx, repo, number), sha,
+    problems, signed = signoff_problems(level, norm, rows, reviews(ctx, repo, number), sha,
                                         logins.get(p["author"].lower()), ctx.caller.agent, ctx.owners())
-    gate_bad, gates = gate_problems(ctx, repo, p, sha)
-    problems += gate_bad
+    head = head_problem(p, sha)
+    if head:
+        problems.insert(0, head)
     if problems:
         raise KitError(f"not merged ({repo}#{number} for task {t['id']}): " + "; ".join(problems))
     signers = ", ".join(signed["signers"]) or f"no sign-off, {level}"
@@ -316,8 +264,7 @@ def merge(ctx, repo, number, sha, task, method="merge"):
                               f"(task {t.get('name') or t['id']}, signed: {signers})"[:250]}) or {}
     if not r.get("merged"):
         raise KitError(f"GitHub did not merge it: {r.get('message') or 'no reason given'}")
-    out = {"merged": True, "sha": r.get("sha") or "", "task": t["id"], "signoff": signed,
-           "gates": [g["id"] for g in gates]}
+    out = {"merged": True, "sha": r.get("sha") or "", "task": t["id"], "signoff": signed}
     try:
         ctx.call("task.link", id=t["id"], kind="commit", ref=out["sha"], relation="produced",
                  note=f"{repo}#{number} merged at {sha[:7]}")

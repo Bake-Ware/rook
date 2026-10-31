@@ -125,13 +125,13 @@ def _view(s):
 
 
 def _project(ctx, t):
-    """(trust level, expert roles) of the task's project; normal and none without one."""
+    """(trust level, expert pool) of the task's project; normal and no pool without one."""
     if not t.get("project"):
-        return "normal", []
+        return "normal", {}
     p = ctx.call("project.get", id=t["project"])
     trust = ctx.call("project.trust.list", where={"project": p["id"]}, limit=1)
-    roles = ctx.call("concept.pool", concepts=p["concepts"])["roles"] if p.get("concepts") else []
-    return (trust[0]["level"] if trust else "normal"), roles
+    pool = ctx.call("concept.pool", concepts=p["concepts"]) if p.get("concepts") else {}
+    return (trust[0]["level"] if trust else "normal"), pool
 
 
 def request_signoff(ctx, id, reviewers=None, note=None):
@@ -139,12 +139,18 @@ def request_signoff(ctx, id, reviewers=None, note=None):
     if t["archived"] or t["state"] not in OPEN:
         raise ctx.Error(f"task {id} is {'archived' if t['archived'] else t['state']}; "
                         "reopen it before asking for sign-off")
-    level, roles = _project(ctx, t)
-    reviewers = list(dict.fromkeys(reviewers or [f"role:{r}" for r in roles]))
-    if not reviewers:
-        raise ctx.Error("name reviewers: the task's project has no concepts with expert roles")
+    level, pool = _project(ctx, t)
+    experts = [] if reviewers or pool.get("signoff") == "none" else [f"role:{r}" for r in pool.get("roles") or []]
+    reviewers = list(dict.fromkeys(reviewers or experts))
     if level == "sacred":           # the project's trust level decides whether the person signs
         reviewers += [o for o in ctx.owners() if o not in reviewers]
+    if not reviewers:
+        if pool.get("signoff") == "none" or level == "ship-it":
+            ctx.records.comment.create(task=id, text="No sign-off needed: "
+                                       + ("the project is ship-it." if level == "ship-it" else
+                                          "its concepts say sign-off: none."))
+            return {"id": id, "signoff": [], "needed": False}
+        raise ctx.Error("name reviewers: the task's project has no concepts with expert roles")
     for r in reviewers:
         _set_signoff(ctx, id, r, state="requested", note=note or "", by=me)
     # The agents package wakes the agents asked (its on: hook), as the one asking.

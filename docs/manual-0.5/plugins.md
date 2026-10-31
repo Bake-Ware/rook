@@ -104,7 +104,7 @@ runs where and what the phone app needs):
 **Workbench** (on the hub; [The workbench](workbench.md)):
 
 - [task](../../rook/plugins/tasks/docs/manual.md), [project](../../rook/plugins/projects/docs/manual.md), [knowledge](../../rook/plugins/knowledge/docs/manual.md), [concept](../../rook/plugins/concepts/docs/manual.md), [whiteboard](../../rook/plugins/whiteboard/docs/manual.md).
-- [github](../../rook/plugins/github/docs/manual.md): GitHub reads, `github.review` (sign off on a PR as yourself) and `github.merge` (lands it once the task's sign-off meets its project's trust level and the gates pass).
+- [github](../../rook/plugins/github/docs/manual.md): GitHub reads, `github.review` (sign off on a PR as yourself) and `github.merge` (lands it at the signed-off head once the task's sign-off meets its project's trust level).
 
 **Devices** (on workers):
 
