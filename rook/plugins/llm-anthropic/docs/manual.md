@@ -6,9 +6,8 @@ API, version 2026-10-21, over HTTPS; no SDK).
 ## Set up
 
 Make an API key in the Claude Console, store it in the vault and set
-`llm-anthropic.key` to the vault name. Until the hub has its vault the hub
-reads it from its environment: `ROOK_SECRET_CLAUDE_API` for the name
-`claude-api`.
+`llm-anthropic.key` to the vault name (`secret.set {name: claude-api, value: ...}`,
+then `claude-api`).
 
 ## The three systems
 

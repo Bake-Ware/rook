@@ -47,6 +47,8 @@ Paths are relative to the file. An unknown key is an error.
 | `python -m rook.core2.hub --config hub.yaml` | run the hub (SIGINT or SIGTERM stops it) |
 | `python -m rook.core2.hub --config hub.yaml token --person <name> [--agent <name>] [--label text]` | mint a door token |
 | `python -m rook.core2.hub --config hub.yaml recovery-key` | show the owner's recovery key |
+| `python -m rook.core2.hub --config hub.yaml secret list \| set NAME [--description text] \| delete NAME` | the hub's vault; `set` reads the value from stdin ([Settings](settings.md#secrets)) |
+| `python -m rook.core2.hub --config hub.yaml recover-vault` | open a `vault.db` from a hub that died with the recovery key (typed, or on stdin) |
 | `python -m rook.core2.worker --config worker.yaml enroll <hub \| qr text> [--name] [--code] [--discover] [--insecure] [--force]` | sign this machine in with its home hub |
 | `python -m rook.core2.worker --config worker.yaml` | run the worker |
 | `python -m rook.core2.migrate --from <0.4 copy> --to hub.yaml [--apply] [--rename OLD=NEW] [--json]` | move a 0.4 hub ([Moving from 0.4](migrating.md)) |

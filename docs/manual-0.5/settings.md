@@ -49,16 +49,24 @@ value. Its value is fetched when a call needs it, and redacted from errors
 and the journal. In call arguments and manifests a secret is written as a
 reference: `{{secret:NAME}}`.
 
-0.5 has no vault yet. Until it does:
+The values live in the hub's vault, `<data>/vault.db` (owners only):
 
-- a hub plugin's secret comes from the hub process's environment, as
-  `ROOK_SECRET_<NAME>` (upper case, anything not a letter or digit as `_`),
-  so it is never in a config file: with `telegram: {token: telegram-bot}`
-  in `hub.yaml`'s settings, the bot token is read from
-  `ROOK_SECRET_TELEGRAM_BOT`;
-- in call arguments, the hub resolves only the band keys it keeps for other
-  bands (`{{secret:band-psk-<band>}}`, owners' calls only). Any other
-  reference reaches the worker as written.
+- store one with `secret.set {name, value}`, or on the hub's machine with
+  `python -m rook.core2.hub --config hub.yaml secret set NAME` (the value on
+  stdin); `secret.list` shows names, never values;
+- a hub plugin's secret setting reads its value from the vault when the
+  plugin needs it: with `telegram: {token: telegram-bot}` in `hub.yaml`'s
+  settings, the bot token is the vault's `telegram-bot`;
+- in the args of a call to a worker, `{{secret:NAME}}` (alone or inside a
+  string) becomes the value for that call only; the journal keeps the
+  reference, and the value comes back as `[redacted]`. Calls to the hub's
+  own caps keep the reference as text. Band keys
+  (`{{secret:band-psk-<band>}}`) travel only in an owner's own
+  `core.trust.set`.
+
+Worker-side secret settings (a worker plugin's `secret: true` setting) have
+no path from the vault yet: pass the secret as a reference in the call.
 
 `python -m rook.core2.migrate` carries a 0.4 vault over into
-`<data>/vault.db` for when the vault lands ([Moving from 0.4](migrating.md)).
+`<data>/vault.db` ([Moving from 0.4](migrating.md)). If the hub dies, copy
+`vault.db` to the new hub and run `recover-vault` with the recovery key.

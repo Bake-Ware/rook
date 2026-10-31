@@ -9,8 +9,7 @@ One endpoint per hub.
 
 Set `llm-openai.url` to the API base up to `/v1` (for example
 `http://kaiju:8080/v1`). If the endpoint needs a key, store it in the vault and
-set `llm-openai.key` to the vault name (until the hub has its vault, the hub
-reads `ROOK_SECRET_<NAME>` from its environment). `llm.status` says whether it
+set `llm-openai.key` to the vault name (`secret.set` stores it). `llm.status` says whether it
 answers; `llm.models {provider: llm-openai}` lists what it serves.
 
 ## The three systems

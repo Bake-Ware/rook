@@ -10,8 +10,7 @@ the bot (over the Gateway websocket) into `discord.message` events the house age
    **Message Content** intent, copy the bot token and invite the bot to your server.
 2. Put the token in the vault and set `discord.token` to the vault name
    (`setting.set {plugin: discord, key: token, value: discord-bot}`).
-   Until the hub has its vault, the hub reads the value from the environment:
-   `ROOK_SECRET_DISCORD_BOT` for the name `discord-bot`.
+   Store the bot token in the vault first: `secret.set {name: discord-bot, value: ...}`.
 3. Each person links their account: `discord.link` gives a code; they send
    `!link CODE` to the bot in a direct message within 10 minutes. The bot
    answers "Linked". A typed chat id is never accepted: the code proves the

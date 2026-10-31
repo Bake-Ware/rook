@@ -22,7 +22,7 @@ Scripts in `castling/switchover/`:
 | Band relay | telesthete-hub behind mcp.bakeforge.com:443 | the same Telesthete wire (`TelestheteLink` reuses `rook.worker`'s transport) | a 0.5 band can share the live relay under its own band id |
 | Workers | ~38 machines with OTA updates | `python -m rook.core2.worker`, enroll by device code | cachyrig only; no update path (N27) |
 | Plugins | 63 | 50 plugin folders in `rook/plugins/`, the rest binned or core (castling/coverage.md) | see "Not ported" below |
-| Vault | 65 secrets | `{{secret:NAME}}` reads `ROOK_SECRET_*` from the hub's environment as a stand-in | **no vault yet** |
+| Vault | 65 secrets | `<data>/vault.db` sealed under the root and recovery keys; `{{secret:NAME}}` and hub plugins' secret settings read it; `secret.*` caps | worker-side secret settings have no vault path yet |
 | Speech / voice | kaiju Chatterbox + Whisper, voice front | `speech` + `speech-engine` + `speech-elevenlabs` | PR #287 open |
 | Phone app | APK 0.4.23 stable, beta channel | 0.4/0.5 switch, 0.5 runs in Chaquopy | PR #298 open, emulator only |
 | Desktop app | 0.2 | 0.4/0.5 switch, token sign-in, worker05 | merged (#290); no update check on 0.5 |

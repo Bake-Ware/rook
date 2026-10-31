@@ -82,7 +82,8 @@ def test_notify_send_reaches_a_worker_and_telegram(fresh, tmp_path):
         wcfg = json.loads(worker_yaml.read_text())
         wcfg["plugins"].append(str(phone))
         worker_yaml.write_text(json.dumps(wcfg))
-        fresh.env["ROOK_SECRET_TG_BOT"] = TOKEN
+        fresh.hub_cli("secret", "set", "tg-bot", "--description", "the e2e bot", input=TOKEN)
+        assert fresh.hub_cli("secret", "list") == "tg-bot\tthe e2e bot"
 
         fresh.start_hub()
         fresh.start_worker()

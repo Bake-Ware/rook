@@ -9,9 +9,8 @@ characters.
 ## Set up
 
 Make an API key in your ElevenLabs profile, store it in the vault and set
-`speech-elevenlabs.key` to the vault name. Until the hub has its vault it
-reads it from its environment: `ROOK_SECRET_ELEVENLABS` for the name
-`elevenlabs`.
+`speech-elevenlabs.key` to the vault name (`secret.set {name: elevenlabs, value: ...}`,
+then `elevenlabs`).
 
 - `voices`: the voices to offer, `Name=voice_id` comma separated; blank: the
   account's voices (up to 40). Each is `eleven_<name>`, as in 0.4.

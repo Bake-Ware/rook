@@ -646,7 +646,7 @@ class Settings:
         if who != ctx.caller.person and not ctx.caller.owner:
             raise KitError("denied: only an owner changes someone else's settings")
         if spec.get("secret"):      # a vault name a person picks could name the band's own secrets
-            raise KitError(f"{plugin}.{key} is a per-person secret: those wait for the vault")
+            raise KitError(f"{plugin}.{key} is a per-person secret: not supported yet (vault names are the band's, owners only)")
         mine = self.personal.setdefault(who, {}).setdefault(plugin, {})
         if value is None:
             mine.pop(key, None)

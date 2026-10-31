@@ -156,7 +156,7 @@ def test_core_manifests_and_trust_set_ignore_the_ceiling(hub):
 
 
 def test_secrets_resolved_for_the_wire_only(hub):
-    hub.secrets = lambda args, caller, cap: {**args, "pw": "hunter2"} if args else args
+    hub.secrets = lambda args, caller, cap, target=None: {**args, "pw": "hunter2"} if args else args
     seen = []
     hub.gates = [gates.Gate("spy", lambda inp: seen.append(inp) or
                             {"verdict": "allow", "confidence": 1, "reason": "other"}, mode="enforce")]
@@ -172,7 +172,7 @@ def test_secrets_resolved_for_the_wire_only(hub):
 
 def test_secret_values_never_come_back_in_error_text(hub):
     # A worker's schema error quotes the argument it got: the resolved value.
-    hub.secrets = lambda args, caller, cap: {**args, "n": "hunter2"} if args else args
+    hub.secrets = lambda args, caller, cap, target=None: {**args, "n": "hunter2"} if args else args
     hub.tx.answer = lambda req, n: {"id": req["id"], "from": WID, "ok": False,
                                     "error": f"bad args: n: {req['args']['n']!r} is not of type 'integer'"}
     out, _ = call(hub, BAKE, "file.read", {"n": "{{secret:pw}}"})
@@ -826,7 +826,7 @@ def test_send_errors_and_bad_replies(hub):
 
 
 def test_secret_resolution_failure_is_reported_not_sent(hub):
-    def fail(args, caller, cap):
+    def fail(args, caller, cap, target=None):
         raise KeyError("pw")
     hub.secrets = fail
     out, _ = call(hub, BAKE, "file.read", {"pw": "{{secret:pw}}"})
@@ -834,7 +834,7 @@ def test_secret_resolution_failure_is_reported_not_sent(hub):
 
 
 def test_resolved_args_without_canonical_form_are_reported(hub):
-    hub.secrets = lambda args, caller, cap: {"x": float("inf")}
+    hub.secrets = lambda args, caller, cap, target=None: {"x": float("inf")}
     out, _ = call(hub, BAKE, "file.read", {"x": "{{secret:x}}"})
     assert out["error"].startswith("secret:") and not hub.tx.requests
 

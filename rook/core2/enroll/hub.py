@@ -441,8 +441,8 @@ class Enrollment:
         ``core.trust.set`` made by an owner in person (the membership flow;
         the journal keeps the reference). Anywhere else the key would reach
         whoever reads the call's output: an agent acting for the owner could
-        ``shell.exec echo`` it.
-        TODO(castling:vault): the vault resolves every reference."""
+        ``shell.exec echo`` it. Every other reference is the vault's
+        (:meth:`rook.core2.hub.runtime.Hub._secret_step`)."""
         def walk(v: Any) -> Any:
             if isinstance(v, str):
                 m = PSK_REF.fullmatch(v)

@@ -205,9 +205,10 @@ class Band:
         self.relay_addr = f"127.0.0.1:{int(port)}"
         return self.relay_addr
 
-    def hub_cli(self, *args: str) -> str:
+    def hub_cli(self, *args: str, input: str | None = None) -> str:
         r = subprocess.run([sys.executable, "-m", "rook.core2.hub", "--config", str(self.hub_dir / "hub.yaml"),
-                            *args], cwd=self.hub_dir, env=self.env, capture_output=True, text=True, timeout=60)
+                            *args], cwd=self.hub_dir, env=self.env, capture_output=True, text=True, timeout=60,
+                           input=input if input is not None else "")
         assert r.returncode == 0, r.stderr
         return r.stdout.strip()
 
