@@ -54,7 +54,10 @@ the final cutover doesn't hold up the earlier side-by-side steps. Only
 R1–R5, R10 and R14 hold the cutover (D5: "cutover held for gates R1-R5, R10
 and R14; the rest can follow"). The other gates, the soak, the review
 findings and the on-device checks are follow-ups: they hold no step and no
-waiting period.
+waiting period, and are built after cutover, on 0.5. Bake (castling-switchover-
+decisions, "Fly it"): "as long as all the artifacts survive transfer and the
+hub and bands work correctly we can build the rest of the plane while we're
+flying it".
 
 | Gate | What must be true | Why it matters | Blocks step |
 |---|---|---|---|
@@ -335,12 +338,18 @@ updates, R7 for kaiju's speech, R8 for the phone. The on-device checks follow
 ### Step 5: cutover
 
 Needs R1–R5, R10 and R14, and nothing else (D5: "cutover held for gates
-R1-R5, R10 and R14; the rest can follow"). Accepting D5 was Bake's go.
+R1-R5, R10 and R14; the rest can follow"). Accepting D5 was Bake's go. No
+waiting period: on the plan's old week-long waits Bake asked "Why a week?".
+The bar is that every 0.4 artifact is there after the move and the 0.5 hub
+and bands work (item 2).
 
 1. Announce a quiet window. Pause 0.4 jobs and stop agent writes on 0.4.
 2. Take a fresh 0.4 copy, then the one move: `migrate` dry run, then
    `--apply` with the 0.5 hub stopped. Whatever the move leaves rough, an
    agent reshapes on 0.5 (castling-design); the tool gets no more features.
+   Then check that every artifact the dry run counted (knowledge, tasks,
+   secrets, chat and rooms, journal, jobs, trust, accounts, plugin data) is
+   on the 0.5 hub, and that workers, MCP and agents work on it.
 3. Move the chat bots. A Telegram or Discord bot token can only be served by
    one hub at a time (Telegram's getUpdates conflicts, and Discord would
    answer twice). Turn telegram and discord off on 0.4, then on in 0.5. Bake
