@@ -141,6 +141,26 @@ contracts:
         session: { type: str, required: true, doc: Pass back to continue the conversation. }
         usage: { type: map, items: { type: int } }
 
+  # A notify channel (Telegram, Discord, any chat or messenger plugin):
+  # notify.send tries the person's channels in their order, each through
+  # the plugin that provides these (castling-design: cap names say what they
+  # do, not who ships them).
+  notify.channel.send:
+    doc: Deliver a message to a person on this channel (their linked account).
+    route: provider
+    args:
+      to: { type: str, required: true, doc: The person (their name). }
+      text: { type: str, required: true }
+      title: { type: str, doc: "A first line, as a heading." }
+    result: { type: map }
+
+  notify.channel.status:
+    doc: Whether this channel is up and whether a person has linked it.
+    route: provider
+    args:
+      to: { type: str, doc: "The person; blank: you." }
+    result: { type: map }
+
   # The voice motor skill (castling-agents): speech in, speech out, turn
   # detection, speaker ID. Bake's B10 (castling-naming-decisions): `voice` is
   # the speech contracts' namespace (these four, and a device speaking aloud);
@@ -154,6 +174,11 @@ contracts:
       text: { type: str, required: true }
       voice: { type: str, doc: "A voice the provider offers; blank: the band's default." }
     result: { type: file, doc: "The audio (its mime type says the format)." }
+
+  voice.tts.voices:
+    doc: The voices a text-to-speech provider offers, and its default.
+    route: provider
+    result: { type: map }
 
   voice.stt:
     doc: Speech to text.

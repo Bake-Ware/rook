@@ -13,17 +13,16 @@
 # such as speech-elevenlabs). Code: scripts/speech.py.
 manifest: 1
 plugin: speech
-version: 0.5.0
+version: 0.5.1
 title: Speech
 doc: Talk to your agents by voice - sessions, a fast front talker, the agent's brain behind it.
 package: agents
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-# The voice contracts and their providers (contract routing re-dispatches
-# the provider as the same caller), System One's model and the agent.
-uses: [voice.stt, voice.tts, voice.turn, voice.speaker, "speech-engine.*", "speech-elevenlabs.*",
-       llm.complete, llm-openai.complete, llm-anthropic.complete, llm-cli.complete, agents.chat.send,
+# The voice contracts (never a provider by name: any engine that provides
+# them plugs in), System One's model and the agent.
+uses: [voice.stt, voice.tts, voice.tts.voices, voice.turn, voice.speaker, llm.complete, agents.chat.send,
        agents.get]
 
 settings:
@@ -90,14 +89,14 @@ caps:
       stream: { type: str, required: true }
     result: { type: map }
   voices:
-    doc: The voices sessions can speak in (the speech engine's, and hosted ones when installed).
+    doc: The voices sessions can speak in, from every text-to-speech provider (voice.tts.voices), by plugin.
     risk: read
     scope: multi-user
     idempotent: true
     run: scripts/speech.py:voices
     result: { type: map }
   status:
-    doc: Your open voice sessions, the default agent, whether System One is on, and the speech engine's state.
+    doc: "Your open voice sessions, the default agent, whether System One is on, and which plugins provide each voice contract (engines: {voice.stt: [...], ...})."
     risk: read
     scope: multi-user
     idempotent: true

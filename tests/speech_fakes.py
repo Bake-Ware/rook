@@ -69,6 +69,7 @@ provides:
   voice.tts: speech-engine.tts
   voice.turn: speech-engine.turn
   voice.speaker: speech-engine.speaker
+  voice.tts.voices: speech-engine.voices
 """
 
 ENGINE_PY = """\

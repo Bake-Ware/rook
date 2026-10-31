@@ -99,7 +99,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 29 | over-built (low) | Desktop app ports 0.4 Work/Knowledge/Sessions panels | `desktop/src-tauri/src/hub05.rs:108` |
 | 30 | missing (known) | No attention job on the hub; phone keeps the 0.4 attention store (**fixed, PR #355**) | `notification-android`, `docs/castling-phone.md:111` |
 | 31 | over-built | Hub plugins rebuild storage instead of declaring records | `agents.py:110`, `telegram`/`discord` `links.json`, hub pages |
-| 32 | contradiction (mild) | Core service plugins call providers by plugin name, not contract. **agents fixed: PR #344**; notify, speech: follow-up | `notify`, `speech`, `agents` |
+| 32 | contradiction (mild) | Core service plugins call providers by plugin name, not contract. **Fixed: PR #344 (agents), PR #357 (notify, speech, agents' chat reply)** | `notify`, `speech`, `agents` |
 | 33 | renamed (low) | Plural namespaces `jobs.*`, `agents.*`, `pages.*`; `jobs.start` not `job.run` | `jobs`, `agents`, hub pages |
 | 34 | over-built (low) | Manifest 1.1/1.2 features nothing uses; jobs rolls its own webhook HMAC (**partly fixed, PR #349**: format frozen, unused keys reserved; code and the jobs webhook left) | `rook/kit/manifest`, `hub/plugins.py`, `jobs.py:870` |
 
@@ -589,7 +589,7 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
 - **Smallest fix.** Declare `agent`, `note`, `memory` as kit records; chat links as `where: person`
   settings; pages as records when the dashboard is next touched.
 
-## 32. Core service plugins call providers by name, not by contract (contradiction, mild). agents fixed: PR #344
+## 32. Core service plugins call providers by name, not by contract (contradiction, mild). Fixed: PR #344, PR #357
 
 - **Decision.** castling-design: "Cap names say what they do, not who ships them"; "Discovery is
   passive". castling-manifest-contracts: provider routing exists so "a session declared for

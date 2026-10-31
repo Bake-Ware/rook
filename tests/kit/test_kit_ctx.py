@@ -287,3 +287,62 @@ def test_call_on_names_the_worker():
     asyncio.run(asyncio.wait_for(body(), 10))
     assert got == [("notification.post", {"text": "hi"}, "pixel", "tv"),
                    ("notification.post", {"text": "yo"}, None, "tv")]
+
+
+def test_call_as_through_one_provider_of_a_contract():
+    # A contract called through the provider the caller picks (an agent pinned
+    # to one backend, a notify channel): held to uses by the contract's name;
+    # the host gets the provider cap with the contract (castling-manifest-contracts).
+    got = []
+
+    async def dispatch(cap, args, caller, target=None, contract=None):
+        got.append((cap, contract, target))
+        return "sent"
+
+    async def body():
+        ctx = Ctx(MANIFEST, BAKE, dispatch=dispatch)
+        assert await ctx.call_as(BAKE, "notify.send", {"text": "hi"}, provider="telegram.send") == "sent"
+        with pytest.raises(KitError, match="uses"):
+            ctx.call_as(BAKE, "telegram.send", {"text": "hi"}, provider="telegram.send")
+        with pytest.raises(KitError, match="bad provider"):
+            ctx.call_as(BAKE, "notify.send", {}, provider="notify.send")
+        old = Ctx(MANIFEST, BAKE, dispatch=lambda cap, args, caller, target=None: "x")
+        with pytest.raises(KitError, match="can't pick a contract's provider"):
+            await old.call_as(BAKE, "notify.send", {}, provider="telegram.send")
+    asyncio.run(asyncio.wait_for(body(), 10))
+    assert got == [("telegram.send", "notify.send", None)]
+
+
+def test_hub_views_of_contracts_and_agents():
+    class Hub:
+        def __init__(self):
+            self.made, self.ended = [], []
+
+        def settings(self, person):
+            return {}
+
+        def providers(self, contract):
+            return ["telegram.send", "discord.send"] if contract == "notify.channel.send" else []
+
+        def run_agent(self, plugin, name, grants):
+            self.made.append((plugin, name, grants))
+
+        def turn_token(self, plugin, person, name, seconds, tainted=False):
+            return f"{plugin}:{person}:{name}:{seconds}:{tainted}"
+
+        def end_turn_token(self, token):
+            self.ended.append(token)
+
+    hub = Hub()
+    ctx = Ctx(MANIFEST, BAKE, people=hub)
+    assert ctx.providers("notify.channel.send") == ["telegram.send", "discord.send"]
+    ctx.run_agent("pm", ("*",))
+    assert hub.made == [("tv", "pm", ["*"])]
+    token = ctx.turn_token("pm", 60)
+    assert token == "tv:bake:pm:60:False"                     # this call's person, never one the plugin picks
+    ctx.end_turn_token(token)
+    assert hub.ended == [token]
+    bare = Ctx(MANIFEST, BAKE)
+    for fn, args in ((bare.providers, ("x",)), (bare.run_agent, ("pm", [])), (bare.turn_token, ("pm", 1))):
+        with pytest.raises(KitError, match="hub"):
+            fn(*args)

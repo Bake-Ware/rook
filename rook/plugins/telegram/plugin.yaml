@@ -7,7 +7,7 @@
 # getUpdates; no Telegram library. Code: scripts/telegram.py.
 manifest: 1
 plugin: telegram
-version: 0.5.0
+version: 0.5.1
 title: Telegram
 doc: The band's Telegram bot, a notify channel; inbound messages become events.
 package: core
@@ -94,4 +94,8 @@ emits:
 hooks:
   start: scripts/telegram.py:start
   stop: scripts/telegram.py:stop
+# A notify channel: notify.send reaches people here through the contracts.
+provides:
+  notify.channel.send: telegram.send
+  notify.channel.status: telegram.status
 docs: { manual: docs/manual.md }

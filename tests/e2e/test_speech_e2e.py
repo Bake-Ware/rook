@@ -71,4 +71,4 @@ def test_a_voice_session_over_the_band(fresh):
     assert spoken(e["audio"]) == e["data"]["text"]
 
     st = hub.call("speech.status", {}, worker="rook")["result"]
-    assert st["engine"] == {"stt": True, "fake": True} and [s["id"] for s in st["sessions"]] == [sid]
+    assert st["engines"]["voice.stt"] == ["speech-engine.stt"] and [s["id"] for s in st["sessions"]] == [sid]

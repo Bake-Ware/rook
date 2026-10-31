@@ -11,7 +11,7 @@
 # audio/wav.
 manifest: 1
 plugin: speech-engine
-version: 0.5.0
+version: 0.5.1
 title: Speech engine
 doc: Speech recognition, spoken voices, end-of-turn detection and speaker ID from the voice service.
 package: agents
@@ -88,5 +88,6 @@ provides:
   voice.tts: speech-engine.tts
   voice.turn: speech-engine.turn
   voice.speaker: speech-engine.speaker
+  voice.tts.voices: speech-engine.voices
 
 docs: { manual: docs/manual.md }

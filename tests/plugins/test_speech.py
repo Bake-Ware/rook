@@ -99,7 +99,7 @@ def test_manifests_are_clean():
         assert [str(w) for w in m.warnings] == [], name
     engine = load(PLUGINS / "speech-engine", CONTRACTS).data
     assert engine["builtin"] and all("run" not in c for c in engine["caps"].values())
-    assert set(engine["provides"]) == {"voice.stt", "voice.tts", "voice.turn", "voice.speaker"}
+    assert set(engine["provides"]) == {"voice.stt", "voice.tts", "voice.tts.voices", "voice.turn", "voice.speaker"}
 
 
 def test_a_voice_session(tmp_path):
@@ -170,10 +170,11 @@ def test_a_voice_session(tmp_path):
 
         out = await call(hub, owner, "speech.status")
         assert [s["id"] for s in out["result"]["sessions"]] == [sid] and out["result"]["talker"] is True
-        assert out["result"]["engine"] == {"stt": True, "turn": True}
+        assert out["result"]["engines"] == {c: [f"speech-engine.{c[6:]}"]
+                                            for c in ("voice.stt", "voice.tts", "voice.turn", "voice.speaker")}
         out = await call(hub, owner, "speech.voices")
         assert out["result"]["voices"]["speech-engine"]["default"] == "af_heart"
-        assert "speech-elevenlabs" in out["result"]["errors"]                 # not installed
+        assert "errors" not in out["result"]                       # only installed providers are asked
 
         assert (await call(hub, owner, "speech.close", stream=sid))["ok"]
         out = await call(hub, owner, "speech.hear", stream=sid, text="hello")

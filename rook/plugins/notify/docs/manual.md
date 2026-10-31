@@ -10,6 +10,11 @@ house agent decides when and how to reach someone and can name the channel.
 | `phone` | `notification.post` on their device (any worker that provides it: the phone app, a desktop, a TV) | their `phone` setting: the worker's name |
 | `telegram` | a direct message from the band's bot | the telegram plugin, and the person linked (`telegram.link`) |
 | `discord` | a direct message from the band's bot | the discord plugin, and the person linked (`discord.link`) |
+| any other | whatever plugin provides `notify.channel.send` (named by its plugin) | that plugin |
+
+A channel plugin provides the `notify.channel.send` and `notify.channel.status`
+contracts; notify finds it in the hub's registry and calls it through them, so
+a new channel needs no change here.
 
 ## Calling it
 
@@ -25,9 +30,9 @@ notify.send {text: "Deploy is waiting on you", channel: all}      # every channe
   takes it. `channel: all` sends on every channel that works.
 - The result lists `sent` (`{to, channel}`) and `errors` (why a channel didn't
   go). If nothing went anywhere the call fails with those reasons.
-- Every channel call runs as the caller, so their rights apply: an agent that
-  may call `notify.send` but not `telegram.send` can't reach anyone by
-  Telegram.
+- Every channel call runs as the caller, through the contract, so their
+  rights apply: a grant of `notify.channel.send` (or `telegram.send`) lets
+  them reach people by Telegram; without one they can't.
 
 `notify.channels {to}` shows the order and, per channel, whether it is
 installed and can reach that person now (linked, connected).
@@ -36,7 +41,7 @@ installed and can reach that person now (linked, connected).
 
 | Setting | Where | Meaning |
 |---|---|---|
-| `channels` | hub | the order for people who haven't set one (default phone, telegram, discord) |
+| `channels` | hub | the order for people who haven't set one (blank: phone, then every installed channel) |
 | `reach` | person | your own order |
 | `phone` | person | your phone's worker name |
 

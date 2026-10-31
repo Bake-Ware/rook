@@ -74,7 +74,7 @@ def run(func, settings, **args):
 def test_a_clean_provider():
     m = load(PLUGINS / "speech-elevenlabs", CONTRACTS)
     assert [str(w) for w in m.warnings] == []
-    assert m.data["provides"] == {"voice.tts": "speech-elevenlabs.tts"}
+    assert m.data["provides"] == {"voice.tts": "speech-elevenlabs.tts", "voice.tts.voices": "speech-elevenlabs.voices"}
 
 
 def test_voices_and_speech(api):

@@ -8,7 +8,7 @@
 # intent to read messages in servers. Code: scripts/discord.py.
 manifest: 1
 plugin: discord
-version: 0.5.0
+version: 0.5.1
 title: Discord
 doc: The band's Discord bot, a notify channel; inbound messages become events.
 package: core
@@ -95,4 +95,8 @@ emits:
 hooks:
   start: scripts/discord.py:start
   stop: scripts/discord.py:stop
+# A notify channel: notify.send reaches people here through the contracts.
+provides:
+  notify.channel.send: discord.send
+  notify.channel.status: discord.status
 docs: { manual: docs/manual.md }

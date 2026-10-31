@@ -6,7 +6,7 @@
 # Raw HTTPS with the stdlib. Code: scripts/elevenlabs.py.
 manifest: 1
 plugin: speech-elevenlabs
-version: 0.5.0
+version: 0.5.1
 title: ElevenLabs voices
 doc: Spoken replies in ElevenLabs voices, with an API key.
 package: agents
@@ -54,4 +54,5 @@ caps:
 
 provides:
   voice.tts: speech-elevenlabs.tts
+  voice.tts.voices: speech-elevenlabs.voices
 docs: { manual: docs/manual.md }
