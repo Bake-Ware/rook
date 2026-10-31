@@ -16,7 +16,7 @@ Rook version, docs/castling-phone.md).
 | Audio up | 20 ms frames streamed; the server finds turns | the phone's VAD (`SpeechDetector`) cuts utterances (`Segmenter`); each is one `speech.hear` (L16 16 kHz, 20 s at most: the door takes 1 MiB) |
 | Replies | streamed PCM | System One's clips come with `speech.hear`; the agent's (System Two) arrive through a `speech.read` long poll, and their audio is fetched with `speech.read {after: seq-1, limit: 1, audio: true}`. WAV clips go to the watch in 200 ms pieces, at most 2 s ahead of real time |
 | History on the watch | the phone app's chat (`VoiceBus`) | the session's own turns. The phone keeps one session for the watch (per hub address) and returns to it, so a reply that lands after the watch hung up shows next time. The phone's 0.4 chat is left alone |
-| Rook icon (status) | the server's state | `listening`, `thinking` (an utterance in `speech.hear`, a reply waiting for its audio, or `status: thinking` until the agent answers) and `speaking` while a reply plays. A `status: error` shows as a note |
+| Rook icon (status) | the server's state | `listening`, `thinking` (an utterance in `speech.hear`, a reply waiting for its audio, or `status: thinking` until the agent answers; after 3 min without an answer it stops counting) and `speaking` while a reply plays. A `status: error` shows as a note |
 | Stop (tap) | the server stops the reply | local: playback is flushed, and later replies are shown but not spoken until the person talks again. The agent still finishes its turn on the hub |
 | Barge-in | the server's echo guard | none: half duplex. The mic is ignored while a reply plays and for 0.4 s after it, because a watch speaker would talk over itself. Tap to stop |
 

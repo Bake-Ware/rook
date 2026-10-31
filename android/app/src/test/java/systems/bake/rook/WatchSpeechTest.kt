@@ -115,7 +115,8 @@ class WatchSpeechTest {
         talk(s)
         // The reply may start playing before hear's thread says it's done thinking: speaking, then listening.
         val seen = heard.until("state:speaking")
-        assertEquals(listOf("state:thinking", "heard:hello there", "reply:Hi Bake!", "done"), seen.take(4))
+        // Talking re-says "listening" (the bridge's idle close counts it as activity).
+        assertEquals(listOf("state:listening", "state:thinking", "heard:hello there", "reply:Hi Bake!", "done"), seen.take(5))
         heard.until("state:listening")
         val hear = hub.calls.first { it.cap == "speech.hear" }.args
         assertEquals("s1", hear.getString("stream"))
@@ -241,6 +242,25 @@ class WatchSpeechTest {
         heard.until("state:listening")
         Thread.sleep(200)
         assertEquals(1, hub.count("speech.hear"))
+    }
+
+    @Test(timeout = 15_000) fun anAgentThatNeverAnswersStopsCountingAsThinking() {
+        hub.answer = { cap, _ ->
+            when (cap) {
+                "speech.open" -> JSONObject().put("stream", "s1")
+                "speech.hear" -> JSONObject().put("heard", "is the build green").put("complete", true).put("handoff", true)
+                else -> error(cap)
+            }
+        }
+        val clock = java.util.concurrent.atomic.AtomicLong(1_000_000)
+        val s = WatchSpeech(hub, "p", heard, sink, Store(), history = {}, now = { clock.get() }).also { speech = it; it.connect() }
+        heard.until("state:listening")
+        talk(s)
+        heard.until("heard:is the build green")
+        Thread.sleep(400)
+        assertTrue("still thinking", heard.events.none { it == "state:listening" })
+        clock.addAndGet(WatchSpeech.THINK_MS + 1)
+        heard.until("state:listening")
     }
 
     @Test(timeout = 20_000) fun losingTheHubEndsTheConversation() {

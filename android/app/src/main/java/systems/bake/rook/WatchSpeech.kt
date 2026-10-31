@@ -62,6 +62,8 @@ class WatchSpeech(
         const val TAIL_MS = 400L
         const val CHUNK_MS = 200
         const val WAIT_S = 25
+        /** An agent that said "thinking" and then nothing (a hub restart loses its turn) stops counting. */
+        const val THINK_MS = 180_000L
         private const val BACKLOG = 60
         private const val PAGE = 200
         private const val FAILS = 3
@@ -80,7 +82,8 @@ class WatchSpeech(
     @Volatile private var generation = 0
     @Volatile private var speakingUntil = 0L
     @Volatile private var hearing = 0
-    @Volatile private var agentThinking = false
+    /** When the agent started thinking (its `status: thinking`, or a hand-off); 0: it isn't. */
+    @Volatile private var thinkingAt = 0L
     /** Replies queued or in the play thread's hands (fetching their audio, or playing). */
     private val pending = AtomicInteger()
     private var lastState = ""
@@ -106,7 +109,7 @@ class WatchSpeech(
         var sid = store.stream
         if (sid.isNotEmpty()) {
             try { cursor = backlog(sid, maxOf(0, store.seq - BACKLOG), lines) }
-            catch (e: HubDoor.Refused) { sid = ""; lines.clear(); agentThinking = false }   // closed, or gone with an old hub
+            catch (e: HubDoor.Refused) { sid = ""; lines.clear() }   // closed, someone else's, or gone with an old hub
         }
         if (sid.isEmpty()) {
             sid = hub.call("speech.open", JSONObject().put("device", device), WHY_OPEN, 20_000).getString("stream")
@@ -131,11 +134,10 @@ class WatchSpeech(
                 val e = events!!.getJSONObject(i)
                 val d = e.optJSONObject("data") ?: continue
                 when (e.optString("type")) {
+                    // A "thinking" left from before isn't trusted: its reply, if it comes, still plays.
                     "turn" -> d.optString("text").takeIf { it.isNotBlank() }?.let {
                         lines += Transcript.Line(if (d.optString("role") == "prompt") Transcript.Who.USER else Transcript.Who.ROOK, it)
-                        if (d.optString("role") == "reply" && d.optString("system") != "one") agentThinking = false
                     }
-                    "status" -> agentThinking = d.optString("state") == "thinking"
                 }
             }
             after = r.optInt("next", after)
@@ -150,7 +152,8 @@ class WatchSpeech(
         if (!open || stream.isEmpty()) return
         if (now() < speakingUntil + TAIL_MS) { segmenter.reset(); return }
         when (val out = segmenter.feed(frame, speech)) {
-            Segmenter.Out.Started -> muted = false
+            // Talking counts as activity (the bridge's idle close), though the state stays listening.
+            Segmenter.Out.Started -> { muted = false; state(force = true) }
             is Segmenter.Out.Utterance -> if (!utterances.offer(out.pcm)) warn("watch speech: utterances backed up; dropped one", null)
             null -> {}
         }
@@ -166,7 +169,7 @@ class WatchSpeech(
                 if (!open) return
                 val heard = r.optString("heard")
                 if (r.optBoolean("complete", true) && heard.isNotBlank()) listener.onTranscript(heard)
-                if (r.optBoolean("handoff")) agentThinking = true
+                if (r.optBoolean("handoff")) thinkingAt = now()
                 r.optJSONObject("say")?.let { say ->
                     val text = say.optString("text")
                     if (text.isNotBlank()) { listener.onAssistantDelta(text); listener.onAssistantDone() }
@@ -212,7 +215,7 @@ class WatchSpeech(
         when (e.optString("type")) {
             // The person's words and System One's came back with speech.hear.
             "turn" -> if (d.optString("role") == "reply" && d.optString("system") != "one") {
-                agentThinking = false
+                thinkingAt = 0
                 val text = d.optString("text")
                 if (text.isNotBlank()) {
                     listener.onAssistantDelta(text); listener.onAssistantDone()
@@ -220,9 +223,9 @@ class WatchSpeech(
                 }
             }
             "status" -> when (d.optString("state")) {
-                "thinking" -> agentThinking = true
-                "idle" -> agentThinking = false
-                "error" -> { agentThinking = false; listener.onError(d.optString("error", "the agent couldn't answer")) }
+                "thinking" -> if (thinkingAt == 0L) thinkingAt = now()
+                "idle" -> thinkingAt = 0
+                "error" -> { thinkingAt = 0; listener.onError(d.optString("error", "the agent couldn't answer")) }
             }
         }
         state()
@@ -274,7 +277,7 @@ class WatchSpeech(
 
     /** One clip to the watch, paced; false: stopped meanwhile. */
     private fun speak(rate: Int, pcm: ByteArray, gen: Int): Boolean {
-        val step = rate * 2 * CHUNK_MS / 1000
+        val step = maxOf(2, rate * 2 * CHUNK_MS / 1000 and 1.inv())     // whole samples
         var off = 0
         while (off < pcm.size) {
             while (open && gen == generation && speakingUntil - now() > AHEAD_MS) Thread.sleep(20)
@@ -301,15 +304,17 @@ class WatchSpeech(
     override fun reportPlayback(turn: Int, frames: Long) {}     // the hub doesn't track playback
 
     /** What the watch's Rook shows: speaking while a reply plays, thinking while one is coming. */
-    @Synchronized private fun state() {
+    @Synchronized private fun state(force: Boolean = false) {
         if (!open) return
+        val t = now()
+        val thinking = thinkingAt > 0 && t - thinkingAt < THINK_MS
         val s = when {
-            now() < speakingUntil -> "speaking"
+            t < speakingUntil -> "speaking"
             // A reply waiting to play (or for its audio) is still coming: no "listening" flicker before it.
-            hearing > 0 || agentThinking || pending.get() > 0 -> "thinking"
+            hearing > 0 || thinking || pending.get() > 0 -> "thinking"
             else -> "listening"
         }
-        if (s != lastState) { lastState = s; listener.onState(s) }
+        if (s != lastState || force) { lastState = s; listener.onState(s) }
     }
 
     private fun fail(msg: String, e: Throwable?) {
