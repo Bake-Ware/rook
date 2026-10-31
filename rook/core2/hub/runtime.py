@@ -920,8 +920,11 @@ class Hub:
 
     # -- housekeeping -----------------------------------------------------------
 
-    def _hourly(self) -> None:
-        for problem in self.journal.check():
+    async def _hourly(self) -> None:
+        self.dispatcher.prune_sessions()
+        # Walking every chain takes seconds once the journal is large: off the
+        # loop, so calls keep flowing (the store reads in pages under its lock).
+        for problem in await asyncio.to_thread(self.journal.check):
             log.critical("journal chain broken", extra={"fields": problem})
 
     def _daily(self) -> None:
@@ -1145,8 +1148,7 @@ class Hub:
         if self.identities.is_owner(caller.person):
             viewer: dict = {"owner": True}
         elif caller.agent:
-            projects = sorted({s.project for s in self.dispatcher.sessions.values()
-                               if s.agent == caller.agent and s.project})
+            projects = sorted(self.dispatcher.projects.get(caller.agent, ()))
             viewer = {"agent": caller.agent, "projects": projects}
         else:
             viewer = {"person": caller.person}

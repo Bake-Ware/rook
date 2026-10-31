@@ -126,7 +126,8 @@ class Dispatcher:
         self.identities, self.workers = identities, workers
         self.send, self.journal, self.secrets, self.clock = send, journal, secrets, clock
         self.gates: list = list(gates or ())
-        self.sessions: dict[str, Session] = {}
+        self.sessions: dict[str, Session] = {}       # live ones; prune_sessions drops the rest
+        self.projects: dict[str, set[str]] = {}       # agent -> projects its sessions were for
         self.holds: dict[str, Hold] = {}
         self.closed_doors: set[str] = set()
         self._inflight: dict[str, tuple] = {}   # nonce -> (ticket, caller, session id, extra layers, door)
@@ -144,8 +145,20 @@ class Dispatcher:
         s = Session(_secrets.token_hex(16), caller.person, caller.agent, list(caps), project, task,
                     now, now + SESSION_SECS)
         self.sessions[s.id] = s
+        if caller.agent and project:
+            self.projects.setdefault(caller.agent, set()).add(project)
         self._note("session", s, event="start", caps=list(caps), task=task)
         return s
+
+    def prune_sessions(self) -> int:
+        """Forget ended and expired sessions that no call in flight and no
+        hold still uses (core.elevate looks them up). Returns how many went."""
+        now = self.clock()
+        busy = {v[2] for v in self._inflight.values()} | {h.session.id for h in self.holds.values()}
+        gone = [sid for sid, s in self.sessions.items() if (s.ended or now > s.exp) and sid not in busy]
+        for sid in gone:
+            del self.sessions[sid]
+        return len(gone)
 
     def end_session(self, sid: str) -> None:
         s = self.sessions.get(sid)

@@ -781,3 +781,56 @@ def test_hmac_and_token_routes(hubs, tmp_path, monkeypatch):
         finally:
             await hub.stop()
     run(go())
+
+
+def test_hourly_check_runs_off_the_loop_and_prunes_sessions(hubs):
+    async def go():
+        hub, _, _ = await hubs(worker=False)
+        try:
+            ended = hub.dispatcher.start_session(runtime.Caller("person:bake"), ["*"])
+            hub.dispatcher.end_session(ended.id)
+            walked = []
+
+            def slow_check():          # a long journal: seconds of walking
+                time.sleep(0.5)
+                walked.append(True)
+                return []
+            hub.journal.check = slow_check
+            ticks = 0
+
+            async def tick():
+                nonlocal ticks
+                while not walked:
+                    ticks += 1
+                    await asyncio.sleep(0.02)
+            await asyncio.gather(hub._hourly(), tick())
+            assert walked and ticks > 10          # the loop kept running while the chains were walked
+            assert ended.id not in hub.dispatcher.sessions
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_keep_alive_requests_do_not_wait_for_delayed_acks(hubs):
+    """The door writes headers and body separately; with Nagle on, each reply
+    on a reused connection waited ~40 ms for the client's delayed ACK."""
+    import http.client
+    import statistics
+
+    async def go():
+        hub, _, _ = await hubs(worker=False)
+        try:
+            def timed():
+                c = http.client.HTTPConnection("127.0.0.1", hub.doors[0].port, timeout=10)
+                ms = []
+                for _ in range(40):
+                    t = time.monotonic()
+                    c.request("GET", "/health")
+                    c.getresponse().read()
+                    ms.append((time.monotonic() - t) * 1000)
+                c.close()
+                return statistics.median(ms[5:])
+            assert await asyncio.to_thread(timed) < 20
+        finally:
+            await hub.stop()
+    run(go())

@@ -47,6 +47,7 @@ import json
 import logging
 import os
 import time
+import weakref
 from typing import Awaitable, Callable, Dict, Optional
 
 from telesthete.protocol.drop import CHUNK_SIZE, DropFrameType, DropReceiver, DropSender
@@ -191,6 +192,21 @@ class _Receiver(DropReceiver):
             self.request_missing()
 
 
+def _weak(method: Callable) -> Callable:
+    """``method`` as a callback that doesn't keep its object alive. A bound
+    method handed to the Drop receiver or sender closes a reference cycle
+    (wrapper -> receiver -> callback -> wrapper), so every chunk of a pulled
+    reply, or the whole blob a reply server sent, stayed in memory until a
+    full garbage collection: hundreds of MB under steady large replies."""
+    ref = weakref.WeakMethod(method)
+
+    def call(*args):
+        m = ref()
+        if m is not None:
+            m(*args)
+    return call
+
+
 class OtaDropReceiver:
     """Worker-side: pulls one offered bundle over the band for a given drop_id.
 
@@ -223,7 +239,7 @@ class OtaDropReceiver:
         self._user_cb: Optional[Callable[[bytes, bool], None]] = None
         # Always wire our own completion so wait() works whether or not a caller
         # registered a callback.
-        self._recv.on_complete(self._on_complete)
+        self._recv.on_complete(_weak(self._on_complete))
 
     def _on_complete(self, data: bytes, ok: bool) -> None:
         self.data = data if ok else None
@@ -317,7 +333,7 @@ class OtaDropSender:
         self._user_cb: Optional[Callable[[bool], None]] = None
         # Always wire our own completion so wait() resolves on the receiver's
         # DONE regardless of whether a caller registered a callback.
-        self._sender.on_complete(self._on_complete)
+        self._sender.on_complete(_weak(self._on_complete))
 
     @property
     def sha256(self) -> str:

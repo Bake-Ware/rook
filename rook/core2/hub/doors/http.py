@@ -99,6 +99,9 @@ class _Handler(BaseHTTPRequestHandler):
     loop: asyncio.AbstractEventLoop
     protocol_version = "HTTP/1.1"
     server_version = "rook-hub"
+    # Headers and body go out in two writes: with Nagle on, the body waits for the
+    # client's delayed ACK, ~40 ms on every request of a busy keep-alive connection.
+    disable_nagle_algorithm = True
     timeout = 60          # seconds a socket may sit idle or half-sent: no thread held forever
 
     def log_message(self, fmt, *args):   # our logger, not stderr

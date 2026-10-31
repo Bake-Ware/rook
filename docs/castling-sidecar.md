@@ -57,6 +57,7 @@ S=~/.rook-castling/src/deploy/castling-sidecar
 $S/check.sh        # smoke test through both doors (prints no secret)
 $S/stop.sh         # stop the three rook-castling-* units (never rook-band-worker)
 $S/start.sh        # start them again
+$S/restart.sh hub  # restart some of relay, hub, worker (all three when none is named)
 $S/uninstall.sh    # stop, delete the units, move ~/.rook-castling to ~/.rook-castling.removed-<time>
 $S/uninstall.sh --purge   # ... and delete it instead
 ```
