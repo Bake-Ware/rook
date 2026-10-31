@@ -1,7 +1,8 @@
 """The agents package core (rook/plugins/agents): the runtime driven through
 its caps and hooks with a real Ctx, a fake agent.backend behind the ctx's
-dispatcher, a fake hub people view (agent identities, turn tokens), the plugin's own
-SQLite and the hub's one stream store (ctx.streams) in tmp."""
+dispatcher, a fake hub people view (agent identities, turn tokens), the
+hub's record store (agents, notes, memory are kit records) and its one
+stream store (ctx.streams) in tmp."""
 
 import asyncio
 import json
@@ -11,6 +12,7 @@ import pytest
 from port_helpers import CONTRACTS, PLUGINS, go
 from rook.kit.ctx import Caller, Ctx, KitError, invoke, load_run
 from rook.kit.manifest import check, load
+from rook.kit.records import RecordStore
 from rook.streams import SqliteStore, Streams
 
 AGENTS = PLUGINS / "agents"
@@ -20,6 +22,7 @@ WORKBENCH = {"task": "tasks", "knowledge": "knowledge", "concept": "concepts"}  
 BAKE = Caller(person="person:bake", band="b1", why="talk to my agents", owner=True)
 GUEST = Caller(person="person:guest", band="b1", why="say hi")
 PM = Caller(agent="agent:pm", band="b1", why="pm keeps notes")
+HOOK = Caller(plugin="agents", band="b1", why="agents hook")
 
 
 class Backend:
@@ -117,20 +120,47 @@ class Rig:
         self.people = People()
         self.modules = {}
         self.streams = Streams(SqliteStore(str(tmp_path / "stream-events.db")), host="hub")   # the hub's
+        self.records = RecordStore(str(tmp_path / "records.db"), emit=self._emit)
+        self.records.register(self.manifest, plugin_dir=AGENTS)
+        self.hooks = set()
+
+    def _emit(self, event, payload, source):
+        """The hub's event bus, for the plugin's on: hooks."""
+        hook = {"agents.agent.created": "on_created", "agents.agent.updated": "on_updated",
+                "agents.agent.archived": "on_archived"}.get(event)
+        if hook and self.modules:
+            t = asyncio.ensure_future(self.call(hook, HOOK, event=event, payload=payload))
+            self.hooks.add(t)
+            t.add_done_callback(self.hooks.discard)
+
+    def rec(self, record, verb, caller=BAKE, **args):
+        """A generated record cap (agents.<record>.<verb>), as the kit serves it."""
+        return getattr(self.records.type(f"agents.{record}"), verb)(caller, **args)
+
+    def agent(self, name):
+        return self.rec("agent", "list", where={"name": name})[0]
+
+    async def settle(self):
+        while self.hooks:
+            done = list(self.hooks)
+            await asyncio.gather(*done)
+            self.hooks.difference_update(done)     # gather of finished tasks never yields to their callbacks
 
     def ctx(self, caller, cap=None):
         return Ctx(self.manifest, caller, dispatch=self.backend, settings=self.settings,
-                   data_dir=self.data, cap=cap, streams=self.streams, people=self.people)
+                   data_dir=self.data, cap=cap, streams=self.streams, people=self.people,
+                   records=self.records)
 
     async def call(self, fn, caller=BAKE, **args):
         func = load_run(AGENTS, f"scripts/agents.py:{fn}", self.modules)
         return await invoke(func, self.ctx(caller, fn.replace("_", ".")), args)
 
     async def start(self):
-        await self.call("start", Caller(plugin="agents", why="agents hook: start"))
+        await self.call("start", HOOK)
 
     async def stop(self):
-        await self.call("stop", Caller(plugin="agents", why="agents hook: stop"))
+        await self.settle()
+        await self.call("stop", HOOK)
         self.modules = {}                  # the next start loads the code afresh, like a reload
 
     @property
@@ -203,15 +233,13 @@ def test_core_and_agents_alone_get_only_their_own_roles(tmp_path):
     rig.backend.installed = {}
 
     async def body():
-        assert [a["name"] for a in await rig.call("list_agents")] == OWN
-        with pytest.raises(KitError, match="no persona pm"):
-            await rig.call("create", name="x", persona="pm")
+        assert [a["name"] for a in rig.rec("agent", "list", order="name")] == OWN
         assert "- consult: Pull in another agent" in rig.rt.system_prompt(rig.rt.agent("house"))
         # The workbench installed later: its roles appear on the next look.
         rig.backend.installed = dict(WORKBENCH)
         await rig.rt.ready(force=True)
-        assert [a["name"] for a in await rig.call("list_agents")] == ROLES
-        assert rig.rt.agent("producer")["origin"] == "concept@0.5.0"
+        assert [a["name"] for a in rig.rec("agent", "list", order="name")] == ROLES
+        assert "assembling a crew" in rig.agent("producer")["prompt"] and "producer" in rig.people.agents
     run(rig, body)
 
 
@@ -219,70 +247,85 @@ def test_core_and_agents_alone_get_only_their_own_roles(tmp_path):
 
 def test_install_makes_the_ready_made_roles_and_edits_win(rig):
     async def body():
-        listed = await rig.call("list_agents")
+        listed = rig.rec("agent", "list", order="name")
         assert [a["name"] for a in listed] == ROLES
         assert {a["name"] for a in listed if a["always_on"]} == {"house", "security"}
-        pm = await rig.call("get", name="pm")
-        assert pm["origin"] == "task@0.5.0" and "keep the work moving" in pm["prompt"]
+        assert not any(a["awake"] for a in listed)
+        pm = rig.agent("pm")
+        assert pm["persona"] == "pm" and "keep the work moving" in pm["prompt"] and pm["creator"] == "plugin:agents"
         # Every role is its own identity on the hub, with its persona's grants
         # (and its own turns); the archivist's are narrow.
         assert sorted(rig.people.agents) == ROLES
         assert rig.people.agents["pm"] == ["*", "agent.backend"]
         assert rig.people.agents["archivist"] == ["agents.*", "knowledge.*", "concept.*", "project.*", "task.*",
                                                   "journal.*", "agent.backend"]
-        await rig.call("update", name="house", summary="Mine now")
-        # pm from an older release, unedited: the next start refreshes it.
-        a = rig.rt.agent("pm")
-        rig.rt.save({**a, "prompt": "old", "origin": "task@0.4.0"})
+        house = rig.agent("house")
+        rig.rec("agent", "update", id=house["id"], revision=house["revision"], summary="Mine now")
+        # pm, unedited, behind its persona (an older release): the next start brings it up to date.
+        rig.rt.write(rig.rt.agent("pm"), prompt="old")
         await rig.stop()
         await rig.start()
-        assert (await rig.call("get", name="house"))["summary"] == "Mine now"
-        assert "keep the work moving" in (await rig.call("get", name="pm"))["prompt"]
-        assert [a["name"] for a in await rig.call("list_agents")] == ROLES     # nothing made twice
+        assert rig.agent("house")["summary"] == "Mine now"                      # edits win
+        assert "keep the work moving" in rig.agent("pm")["prompt"]
+        assert [a["name"] for a in rig.rec("agent", "list", order="name")] == ROLES   # nothing made twice
+        assert [h["actor"] for h in rig.rec("agent", "history", id=house["id"])][-1] == "person:bake"
     run(rig, body)
 
 
 def test_create_update_archive(rig):
     async def body():
-        made = await rig.call("create", name="re", persona="lead", title="Reverse engineer",
-                              backend="agents-claude-code.turn", model={"two": "sonnet"}, grants=["shell.*"])
-        assert made == {"name": "re", "title": "Reverse engineer", "summary": rig.rt.agent("lead")["summary"],
-                        "persona": "lead", "backend": "agents-claude-code.turn", "always_on": False,
-                        "archived": None, "awake": False}
+        made = rig.rec("agent", "create", name="re", persona="lead", title="Reverse engineer",
+                       backend="agents-claude-code.turn", model={"two": "sonnet"}, grants=["shell.*"])
+        await rig.settle()                     # the persona's defaults fill the rest
+        re_ = rig.agent("re")
+        assert (re_["title"], re_["backend"], re_["creator"]) == ("Reverse engineer", "agents-claude-code.turn",
+                                                                  "person:bake")
+        lead = rig.agent("lead")
+        assert (re_["summary"], re_["skills"], re_["prompt"]) == (lead["summary"], lead["skills"], lead["prompt"])
         assert rig.people.agents["re"] == ["shell.*", "agent.backend"]
-        assert rig.rt.agent("re")["creator"] == "person:bake"
-        for args, error in (({"name": "re"}, "already exists"), ({"name": "x", "persona": "nope"}, "no persona")):
-            with pytest.raises(KitError, match=error):
-                await rig.call("create", **args)
-        with pytest.raises(KitError, match="keeps its persona"):
-            await rig.call("update", name="re", persona="qa")
+        with pytest.raises(KitError, match="already used"):
+            rig.rec("agent", "create", name="re")
+        with pytest.raises(KitError, match="bad args"):
+            rig.rec("agent", "create", name="x", backend="claude-code")      # a provider cap, or default
+        assert rig.records.type("agents.agent").rdef.risk == {"create": "admin", "update": "admin",
+                                                              "archive": "admin"}
         out = await rig.call("chat_send", agent="re", text="what is this binary?")
         assert out["text"] == "echo what is this binary?"
         cap, args, _ = rig.backend.turns()[-1]
         # Pinned to one provider, still called as the contract.
         assert (cap, args["model"]) == ("agents-claude-code.turn", "sonnet")
         assert rig.backend.contracts[-1] == "agent.backend"
-        await rig.call("update", name="re", grants=["shell.exec", "file.*"])
+        assert rig.rt.streams.get(out["stream"]).attrs["harness"]
+        re_ = rig.agent("re")
+        rig.rec("agent", "update", id=re_["id"], revision=re_["revision"], grants=["shell.exec", "file.*"])
+        await rig.settle()
         assert rig.people.agents["re"] == ["shell.exec", "file.*", "agent.backend"]
-        sid = out["stream"]
-        assert rig.rt.streams.get(sid).attrs["harness"]
-        await rig.call("update", name="re", backend="default")
-        assert rig.rt.streams.get(sid).attrs["harness"] is None      # another harness can't resume it
-        assert (await rig.call("archive", name="re"))["archived"]
-        assert "re" not in [a["name"] for a in await rig.call("list_agents")]
+        re_ = rig.agent("re")
+        rig.rec("agent", "update", id=re_["id"], revision=re_["revision"], backend="default")
+        await rig.call("chat_send", agent="re", text="again")
+        cap, args, _ = rig.backend.turns()[-1]
+        assert cap == "agent.backend" and "session" not in args          # another harness can't resume it
+        re_ = rig.agent("re")
+        rig.rec("agent", "archive", id=made["id"], revision=re_["revision"])
+        await rig.settle()
+        assert "re" not in [a["name"] for a in rig.rec("agent", "list")]
         assert "re" not in rig.people.agents                           # archived: no identity
         with pytest.raises(KitError, match="no agent re"):
             await rig.call("chat_send", agent="re", text="hello?")
-        await rig.call("archive", name="re", restore=True)
+        re_ = rig.rec("agent", "get", id=made["id"])
+        rig.rec("agent", "archive", id=made["id"], revision=re_["revision"], restore=True)
+        await rig.settle()                     # restored: its identity is back
         out = await rig.call("chat_send", agent="re", text="back?")
         assert out["text"] == "echo back?" and rig.backend.turns()[-1][0] == "agent.backend"
         assert rig.backend.contracts[-1] is None and "re" in rig.people.agents
-        # A name hub.yaml already has is never made a Rook-run agent.
+        # A name hub.yaml already has is never made a Rook-run agent: the
+        # record has no identity, so its turns fail closed.
         rig.people.taken.add("claude-code")
-        with pytest.raises(KitError, match="configured in hub.yaml"):
-            await rig.call("create", name="claude-code")
-        with pytest.raises(KitError, match="no agent claude-code"):
-            await rig.call("get", name="claude-code")
+        rig.rec("agent", "create", name="claude-code")
+        await rig.settle()
+        assert "claude-code" not in rig.people.agents
+        with pytest.raises(KitError, match="doesn't run agent claude-code"):
+            await rig.call("chat_send", agent="claude-code", text="hi")
     run(rig, body)
 
 
@@ -333,8 +376,9 @@ def test_each_party_has_its_own_session(rig):
             await rig.call("chat_read", GUEST, agent="house", party="person:bake")
         peek = await rig.call("chat_read", agent="house", party="person:guest")
         assert peek["stream"] == theirs["stream"]
-        assert [s["party"] for s in (await rig.call("get", GUEST, name="house"))["sessions"]] == ["person:guest"]
-        assert len((await rig.call("get", name="house"))["sessions"]) == 2
+        assert [m.attrs["party"] for m in rig.rt.sessions("house", "person:guest")] == ["person:guest"]
+        assert len(rig.rt.sessions("house")) == 2
+        assert {m.attrs["plugin"] for m in rig.rt.sessions("house")} == {"agents"}   # in the hub's one store
         out = await rig.call("chat_send", PM, agent="qa", text="is #12 verified?")
         assert rig.rt.streams.get(out["stream"]).participants == ["agent:qa", "agent:pm"]
         c = rig.backend.turns()[-1][2]
@@ -386,8 +430,9 @@ def test_sleep_and_archive_answer_every_waiter(rig):
         await until(lambda: rig.backend.turns())
         queued = asyncio.ensure_future(rig.call("chat_send", agent="lead", text="behind it"))
         await until(lambda: len(rig.rt.asks) == 1)
-        assert (await rig.call("get", name="lead"))["awake"]
+        assert rig.agent("lead")["awake"]                 # presence: a field of the record
         assert (await rig.call("sleep", name="lead"))["awake"] is False
+        assert rig.agent("lead")["awake"] is False
         for send in (first, queued):
             with pytest.raises(KitError, match="put to sleep before it answered"):
                 await send
@@ -396,7 +441,8 @@ def test_sleep_and_archive_answer_every_waiter(rig):
         await until(lambda: len(rig.backend.turns()) == 2)
         queued = asyncio.ensure_future(rig.call("chat_send", agent="qa", text="and this"))
         await until(lambda: len(rig.rt.asks) == 1)
-        await rig.call("archive", name="qa")
+        qa = rig.agent("qa")
+        rig.rec("agent", "archive", id=qa["id"], revision=qa["revision"])
         for send in (busy, queued):
             with pytest.raises(KitError, match="put to sleep before it answered"):
                 await send
@@ -432,9 +478,11 @@ def test_notepad_is_private(rig):
             await rig.call("note", GUEST, agent="pm", text="sneaky")
         with pytest.raises(KitError, match="notepad is private"):
             await rig.call("note", PM, agent="qa", text="not mine")
-        assert [n["text"] for n in (await rig.call("get", PM, name="pm"))["notepad"]] == [
-            "Bake wants burn-downs on Mondays", "owners may write too"]
-        assert "notepad" not in await rig.call("get", GUEST, name="pm")
+        notes = rig.rt.notes("pm")
+        assert [n["text"] for n in notes] == ["Bake wants burn-downs on Mondays", "owners may write too"]
+        assert [n["creator"] for n in notes] == ["agent:pm", "person:bake"]
+        assert rig.records.type("agents.note").rdef.verbs == []          # no caps: nobody else reads it
+        assert rig.records.type("agents.memory").rdef.private
         with pytest.raises(KitError, match="only the agent itself or an owner"):
             await rig.call("dream", GUEST, name="pm")
     run(rig, body)
@@ -446,17 +494,16 @@ def test_dream_curates_the_notepad_into_memory(rig):
         n1 = (await rig.call("note", PM, agent="pm", text="Bake wants burn-downs on Mondays"))["note"]
         n2 = (await rig.call("note", PM, agent="pm", text="release 0.5 slips if wave 4 isn't in"))["note"]
         await rig.call("note", PM, agent="pm", text="hmm, maybe coffee")
-        rt.db.execute("INSERT INTO memory (agent, text, created, updated) VALUES ('pm', 'Reports go out Fridays', 0, 0)")
-        rt.db.execute("INSERT INTO memory (agent, text, created, updated) VALUES ('pm', 'Wrong thing', 0, 0)")
-        rt.db.execute("INSERT INTO memory (agent, text, created, updated) VALUES ('qa', 'Not pm', 0, 0)")
-        (m1, _), (m2, _), (m3, _) = rt.db.execute("SELECT id, text FROM memory ORDER BY id").fetchall()
+        m1, m2, m3 = (rt.rec.memory.create(agent=a, text=t)["id"] for a, t in (
+            ("pm", "Reports go out Fridays"), ("pm", "Wrong thing"), ("qa", "Not pm")))
         rig.backend.dream = {"add": ["Burn-down every Monday", " ", 7],
                              "update": [{"id": m1, "text": "Reports go out Mondays"}, {"id": m3, "text": "hijack"}],
-                             "remove": [m2, m3], "keep": [n2, 999]}
+                             "remove": [m2, m3], "keep": [n2, "r_nope", 999]}
         rig.backend.hold = asyncio.Event()
         dreaming = asyncio.ensure_future(rig.call("dream", PM, name="pm"))
         await until(lambda: rig.backend.dreams())
-        await rig.call("update", name="pm", summary="edited while it dreamed")
+        pm = rig.agent("pm")
+        rig.rec("agent", "update", id=pm["id"], revision=pm["revision"], summary="edited while it dreamed")
         rig.backend.hold.set()
         rig.backend.hold = None
         out = await dreaming
@@ -464,6 +511,8 @@ def test_dream_curates_the_notepad_into_memory(rig):
         assert out == {"dreamed": True, "added": 1, "updated": 1, "removed": 1, "notes_kept": 1}
         assert [m["text"] for m in rt.memories("pm")] == ["Reports go out Mondays", "Burn-down every Monday"]
         assert [m["text"] for m in rt.memories("qa")] == ["Not pm"]       # another agent's memory is untouchable
+        assert [m["text"] for m in rt.rec.memory.list(where={"agent": "pm"}, archived=True)] == ["Wrong thing"]
+        assert rig.rec("memory", "list", GUEST) == []                     # private: owners curate it
         assert [n["id"] for n in rt.notes("pm")] == [n2]
         cap, args, caller = rig.backend.dreams()[0]
         assert cap == "agent.backend" and args["model"] == "three" and "session" not in args
@@ -487,7 +536,7 @@ def test_dream_curates_the_notepad_into_memory(rig):
         await rig.call("chat_send", agent="house", text="coffee?")
         assert "## Memory\n- Coffee: black" in rig.backend.turns()[-1][1]["system"]
         for i in range(205):
-            rt.db.execute("INSERT INTO memory (agent, text, created, updated) VALUES ('lead', ?, 0, 0)", (f"m{i}",))
+            rt.rec.memory.create(agent="lead", text=f"m{i}")
         await rig.call("chat_send", agent="lead", text="?")
         system = rig.backend.turns()[-1][1]["system"]
         assert "- m204" in system and "- m4\n" not in system and "- m5\n" in system   # the newest 200
@@ -517,7 +566,7 @@ def test_an_idle_agent_sleeps_and_dreams(tmp_path):
         await asyncio.sleep(0.6)
         assert rig.rt.awake("house")
         await rig.call("note", agent="house", text="Bake says hi")
-        await rig.call("tick", Caller(plugin="agents", why="agents hook: every 30m"))
+        await rig.call("tick", HOOK)
         assert rig.rt.notes("house") == [] and rig.rt.awake("house")
     go(lambda: _started(rig, body), 20)
 

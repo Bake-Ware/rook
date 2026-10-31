@@ -87,18 +87,21 @@ lasting memory and tidies both; always-on agents dream every 6 hours (`dream_eve
 
 ## Your own agents and personas
 
-`agents.create {name, persona?, prompt?, grants?, skills?, backend?, model?}`
-makes an agent from a persona's defaults and your changes;
-`agents.update` changes one (your edits win over later persona updates);
-`agents.archive` stops one and keeps everything (and takes its identity
-off the hub until you restore it). A persona's **grants** are its own
-rights, checked on every call it makes; every agent may also run its own
-turns (`agent.backend`). `backend` is `default` (the hub's chosen provider)
-or one provider's cap, e.g. `agents-claude-code.turn`. Skills are markdown
-playbooks an agent follows (`agents.skill {name}` reads one). Any plugin
-can ship personas and skills in its manifest; each installed plugin's
-personas become agents. With the workbench, a knowledge page of kind
-`skill` is a skill too (the skill library lives in the knowledge store), so
-a concept's skills can be written as pages.
+Agents are records on the hub: `agents.agent.list` shows them (and who is
+awake). `agents.agent.create {name, persona?, prompt?, grants?, skills?,
+backend?, model?}` makes one; what you leave out comes from the persona.
+`agents.agent.update {id, revision, ...}` changes one (your edits win over
+later persona updates); `agents.agent.archive` stops one and keeps
+everything (and takes its identity off the hub until you restore it).
+Owners curate an agent's memory with `agents.memory.*`. A persona's
+**grants** are its own rights, checked on every call it makes; every agent
+may also run its own turns (`agent.backend`). `backend` is `default` (the
+hub's chosen provider) or one provider's cap, e.g.
+`agents-claude-code.turn`. Skills are markdown playbooks an agent follows
+(`agents.skill {name}` reads one). Any plugin can ship personas and skills
+in its manifest; each installed plugin's personas become agents. With the
+workbench, a knowledge page of kind `skill` is a skill too (the skill
+library lives in the knowledge store), so a concept's skills can be
+written as pages.
 
 The full cap list and settings: [the agents plugin's manual](../../rook/plugins/agents/docs/manual.md).

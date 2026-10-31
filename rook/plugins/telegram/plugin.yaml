@@ -26,6 +26,16 @@ settings:
   api: { type: url, default: "https://api.telegram.org", where: hub, apply: reload, doc: The Bot API base URL. }
   poll: { type: int, default: 25, min: 1, max: 50, where: hub, apply: reload, doc: Seconds one getUpdates long poll waits. }
 
+# Who linked which account: kit records (castling-plugins "Records"), no caps
+# of their own (link, unlink and status are the caps).
+records:
+  link:
+    fields:
+      user: { type: str, required: true, unique: true, doc: "The Telegram user id." }
+      chat: { type: str, doc: "Their private chat with the bot." }
+      name: { type: str, doc: "Their Telegram name." }
+    caps: []
+
 caps:
   send:
     doc: A direct message from the bot to a person who linked their Telegram account.

@@ -1,7 +1,8 @@
 """The agents runtime (castling-agents): one mechanism for every agent.
 
-An agent is a row in ``agents.db`` (persona fields, grants, backend, model,
-always-on) plus:
+An agent is an ``agents.agent`` kit record (persona fields, grants, backend,
+model, always-on; the kit gives its storage, history and the
+``agents.agent.*`` caps) plus:
 
 - **sessions**: one durable ``session`` stream (rook.streams) per party it
   talks with (``person:<name>``, ``agent:<name>``, ``system:...``), so a
@@ -10,9 +11,10 @@ always-on) plus:
   events (prompt, reply). Wake = attach a runner; it detaches after
   ``warm`` without input (never, for always-on agents). The backend's own
   session id (Claude Code's ``--resume``) rides in the stream's attrs.
-- **notepad**: private scratch notes (``agents.note``), shown back to the
-  agent until a dream curates them.
-- **memory**: what the agent knows; read-only while it works (built into the
+- **notepad**: private scratch notes (``agents.note``; ``note`` records with
+  no caps of their own), shown back to the agent until a dream curates them.
+- **memory**: what the agent knows (``memory`` records, private: owners curate
+  them with ``agents.memory.*``); read-only while it works (built into the
   system prompt once per wake). The dream cycle (System Three, a light
   model) turns the notepad into memory and prunes both when the agent goes
   idle, and every ``dream_every`` for always-on agents.
@@ -53,7 +55,6 @@ import asyncio
 import copy
 import json
 import logging
-import sqlite3
 import time
 from dataclasses import replace
 from functools import lru_cache
@@ -73,6 +74,7 @@ FIELDS = ("persona", "title", "summary", "prompt", "skills", "grants", "backend"
 MAX_MEMORIES, MAX_NOTES = 200, 50
 _CLASHES: set = set()      # (persona, plugin) clashes already logged
 CATALOG_SECS = 60.0          # how stale the installed manifests' personas and skills may get
+ME = "plugin:agents"           # the actor of the plugin's own record writes (seeding, presence, dreams)
 
 DIRECTIVE = """\
 Pulling in other agents is expected and okay, not overstepping. When work
@@ -107,8 +109,8 @@ project for it yet, add a memory saying so ("crochet, third time this month,
 no project yet"), so it can be raised when relevant.
 
 Answer exactly:
-{{"add": ["new memory", ...], "update": [{{"id": 3, "text": "corrected"}}, ...],
- "remove": [5, ...], "keep": [note ids to keep on the notepad]}}
+{{"add": ["new memory", ...], "update": [{{"id": "r_...", "text": "corrected"}}, ...],
+ "remove": ["r_...", ...], "keep": [note ids to keep on the notepad]}}
 
 {data}"""
 
@@ -121,23 +123,17 @@ _RT: "Runtime | None" = None
 def _rt(ctx) -> "Runtime":
     global _RT
     if _RT is None:
-        _RT = Runtime(ctx.data, ctx.settings, ctx.streams)
+        _RT = Runtime(ctx)
     return _RT
 
 
 class Runtime:
-    def __init__(self, data: Path, settings, streams):
-        data.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(str(data / "agents.db"), isolation_level=None, check_same_thread=False)
-        self.db.executescript("""
-            PRAGMA journal_mode=WAL;
-            CREATE TABLE IF NOT EXISTS agent (name TEXT PRIMARY KEY, data TEXT NOT NULL, archived REAL);
-            CREATE TABLE IF NOT EXISTS note (id INTEGER PRIMARY KEY, agent TEXT NOT NULL, at REAL, text TEXT);
-            CREATE TABLE IF NOT EXISTS memory (id INTEGER PRIMARY KEY, agent TEXT NOT NULL, text TEXT,
-                                               created REAL, updated REAL);
-        """)
-        self.streams = streams                           # the hub's one store (ctx.streams)
-        self.settings = settings
+    def __init__(self, ctx):
+        sys = copy.copy(ctx)
+        sys.caller = Caller(band=ctx.band, owner=True, plugin="agents")
+        self.rec = sys.records                           # every row, as the plugin
+        self.streams = ctx.streams                       # the hub's one store (castling-streams)
+        self.settings = ctx.settings
         self.ctx = None                                  # the plugin's own (hooks): dreams
         self.runners: dict[str, asyncio.Task] = {}       # stream -> runner
         self.locks: dict[str, asyncio.Lock] = {}         # agent -> one turn or dream at a time
@@ -147,6 +143,7 @@ class Runtime:
         self.closing = False
         self.catalog = Catalog.own()                     # personas and skills of every installed plugin
         self.catalog_at = 0.0
+        self.registered: set[str] = set()                # agents with an identity on the hub
 
     async def close(self) -> None:
         self.closing = True
@@ -155,36 +152,42 @@ class Runtime:
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        self.db.close()
 
     def seconds(self, key: str) -> float:
         return parse_duration(self.settings[key])
 
-    # -- agents --------------------------------------------------------------
+    # -- agents (records) -----------------------------------------------------
+
+    def find(self, name: str, archived: bool = False) -> dict | None:
+        """The ``agents.agent`` record named ``name`` (an archived one too, with ``archived``)."""
+        for gone in ((False, True) if archived else (False,)):
+            rows = self.rec.agent.list(where={"name": name}, archived=gone, limit=1)
+            if rows:
+                return rows[0]
+        return None
 
     def agent(self, name: str, archived: bool = False) -> dict:
-        row = self.db.execute("SELECT data, archived FROM agent WHERE name = ?", (name,)).fetchone()
-        if row is None or (row[1] is not None and not archived):
+        a = self.find(name, archived)
+        if a is None:
             raise KeyError(name)
-        return {"name": name, **json.loads(row[0]), "archived": row[1]}
+        return a
 
     def agents(self, archived: bool = False) -> list[dict]:
-        rows = self.db.execute("SELECT name, data, archived FROM agent WHERE archived IS "
-                               + ("NOT NULL" if archived else "NULL") + " ORDER BY name").fetchall()
-        return [{"name": n, **json.loads(d), "archived": a} for n, d, a in rows]
+        return self.rec.agent.list(archived=archived, limit=500, order="name")
 
-    def save(self, a: dict) -> dict:
-        data = {k: v for k, v in a.items() if k not in ("name", "archived")}
-        self.db.execute("INSERT INTO agent (name, data, archived) VALUES (?, ?, ?) ON CONFLICT(name) "
-                        "DO UPDATE SET data = excluded.data, archived = excluded.archived",
-                        (a["name"], json.dumps(data), a.get("archived")))
-        return a
+    def write(self, a: dict, **fields) -> dict:
+        """Change an agent as the plugin (not an edit: persona updates still reach it)."""
+        return self.rec.agent.update(a["id"], revision=a["revision"], **fields)
+
+    def edited(self, a: dict) -> bool:
+        """Someone other than this plugin changed (or made) it: its persona no longer updates it."""
+        return any(h["actor"] != ME for h in self.rec.agent.history(a["id"]))
 
     async def ready(self, force: bool = False) -> None:
         """Know the installed plugins' personas and skills (at most
-        CATALOG_SECS old) and make agents of new personas. Hub plugins load
-        one after another, so a plugin after this one is seen on a later
-        look, not at start."""
+        CATALOG_SECS old), make agents of new personas and give every agent
+        its identity. Hub plugins load one after another, so a plugin after
+        this one is seen on a later look, not at start."""
         if not force and time.monotonic() - self.catalog_at < CATALOG_SECS:
             return
         self.catalog_at = time.monotonic()
@@ -192,42 +195,69 @@ class Runtime:
             self.catalog = await Catalog.installed(self.ctx)
         made = self.seed()
         if made:
-            log.info("agents made from personas: %s", ", ".join(made))
+            log.info("agents made or updated from personas: %s", ", ".join(made))
         if self.ctx is not None:
-            for a in self.agents():
-                try:
-                    self.register(self.ctx, a)
-                except KitError as e:        # its turns fail closed: the hub won't mint it a token
-                    log.warning("agent %s has no identity: %s", a["name"], e.message)
+            have = self.agents()
+            for gone in self.registered - {a["name"] for a in have}:     # deleted records
+                self.register(self.ctx, {"name": gone, "archived": True})
+            for a in have:
+                self.register(self.ctx, a)
 
     def register(self, ctx, a: dict) -> None:
-        """The agent's identity on the hub, as the agent is now: its own
-        grants, or none once archived (raises KitError: a name hub.yaml or
-        another plugin has, malformed grants)."""
-        ctx.run_agent(a["name"], None if a.get("archived") else rights(a))
+        """The agent's identity on the hub, as its record is now: its own
+        grants, or none once archived. One the hub refuses (a name hub.yaml
+        or another plugin has) is logged and has no identity, so its turns
+        fail closed: the hub won't mint it a token."""
+        try:
+            ctx.run_agent(a["name"], None if a.get("archived") else rights(a))
+        except KitError as e:
+            log.warning("agent %s has no identity: %s", a["name"], e.message)
+            return
+        (self.registered.discard if a.get("archived") else self.registered.add)(a["name"])
 
     def seed(self) -> list[str]:
         """Make the installed personas that aren't agents yet (create:
-        default); refresh unedited ones a newer version changed. Edits win."""
+        default); bring unedited ones up to date with their persona. Edits win."""
         made = []
-        for name, (p, origin, _) in self.catalog.personas.items():
+        for name, (p, _origin, _folder) in self.catalog.personas.items():
             if p.get("create", "default") != "default":
                 continue
-            try:
-                have = self.agent(name, archived=True)
-            except KeyError:
-                have = None
-            if have is not None and (have.get("edited") or have.get("origin") == origin
-                                     or have.get("persona") != name):
+            want = self.catalog.persona(name)
+            have = self.find(name, archived=True)
+            if have is None:
+                self.rec.agent.create(name=name, awake=False, **want)
+            elif have.get("persona") == name and any(have.get(k) != v for k, v in want.items()) \
+                    and not self.edited(have):
+                self.write(have, **want)
+            else:
                 continue
-            now = time.time()
-            self.save({"created": now, **(have or {}), **self.catalog.persona(name), "name": name,
-                       "origin": origin, "updated": now})
             made.append(name)
         return made
 
+    def fill(self, rec: dict) -> None:
+        """A person made an agent from a persona: its defaults fill what they left out."""
+        if not rec.get("persona"):
+            return
+        try:
+            base = self.catalog.persona(rec["persona"])
+        except KeyError:
+            return
+        missing = {k: v for k, v in base.items() if rec.get(k) is None}
+        if missing:
+            self.write(self.rec.agent.get(rec["id"]), **missing)
+
     def awake(self, name: str) -> bool:
         return any(self.streams.get(sid).attrs.get("agent") == name for sid in self.runners)
+
+    def presence(self, name: str) -> None:
+        """Keep the record's ``awake`` (agents.agent.list shows it) in step with the runners."""
+        a = self.find(name, archived=True)
+        now = self.awake(name)
+        if a is not None and bool(a.get("awake")) != now:
+            try:
+                self.write(a, awake=now)
+            except KitError:          # changed meanwhile: the next change catches up
+                pass
 
     def view(self, a: dict) -> dict:
         return {k: a.get(k) for k in ("name", "title", "summary", "persona", "backend", "always_on",
@@ -252,6 +282,7 @@ class Runtime:
     def wake(self, name: str, sid: str) -> None:
         if sid not in self.runners:
             self.runners[sid] = asyncio.get_running_loop().create_task(self.run(name, sid))
+            self.presence(name)
 
     async def sleep(self, name: str) -> None:
         mine = {m.id for m in self.sessions(name)}
@@ -290,8 +321,9 @@ class Runtime:
                     break                    # archived, or idle for warm
                 if "text" not in ev.body:
                     continue                 # signals and resizes mean nothing to an agent yet
-                if system is None or built != (a.get("updated"), a.get("dreamed")):
-                    system, built = self.system_prompt(a), (a.get("updated"), a.get("dreamed"))
+                key = (json.dumps([a.get(k) for k in FIELDS], sort_keys=True), a.get("dreamed"))
+                if system is None or built != key:     # an edit or a dream (not presence)
+                    system, built = self.system_prompt(a), key
                 await self.turn(a, prod, ev, system)
         finally:
             # Let go before the first await, so a message sent from here on
@@ -301,6 +333,7 @@ class Runtime:
                 del self.runners[sid]
             await inputs.aclose()
             if not self.closing:
+                self.presence(name)
                 self.after(name, sid)
 
     def after(self, name: str, sid: str) -> None:
@@ -327,9 +360,11 @@ class Runtime:
             meta = self.streams.get(prod.id)
             self.alone[name] = self.alone.get(name, 0) + alone
             try:
+                # another harness can't resume this one's session
+                same = meta.attrs.get("harness_backend") == a.get("backend")
                 res = await self.backend(ctx, a, f"Message from {ev.by}:\n\n{ev.body['text']}",
-                                         system=system, session=meta.attrs.get("harness"), door=True,
-                                         why=f"agent {name} answers {ev.by}")
+                                         system=system, session=meta.attrs.get("harness") if same else None,
+                                         door=True, why=f"agent {name} answers {ev.by}")
             except asyncio.CancelledError:
                 self.fail(prod, fut, "the agent was put to sleep before it answered")
                 raise
@@ -340,7 +375,7 @@ class Runtime:
         if not isinstance(res, dict) or not isinstance(res.get("text"), str):
             return self.fail(prod, fut, "the backend gave no reply text")
         if res.get("session"):
-            self.streams.update(prod.id, attrs={"harness": res["session"]})
+            self.streams.update(prod.id, attrs={"harness": res["session"], "harness_backend": a.get("backend")})
         reply = prod.append("turn", {"role": "reply", "text": res["text"],
                                      **({"usage": res["usage"]} if res.get("usage") else {})})
         if not fut.done():
@@ -414,12 +449,10 @@ class Runtime:
     # -- notepad, memory, dreams ------------------------------------------------
 
     def notes(self, name: str) -> list[dict]:
-        rows = self.db.execute("SELECT id, at, text FROM note WHERE agent = ? ORDER BY id", (name,))
-        return [{"id": i, "at": at, "text": t} for i, at, t in rows]
+        return self.rec.note.list(where={"agent": name}, limit=500, order="created")
 
     def memories(self, name: str) -> list[dict]:
-        rows = self.db.execute("SELECT id, text, updated FROM memory WHERE agent = ? ORDER BY id", (name,))
-        return [{"id": i, "text": t, "updated": u} for i, t, u in rows]
+        return self.rec.memory.list(where={"agent": name}, limit=500, order="created")
 
     async def dream(self, name: str) -> dict:
         """System Three: curate the notepad into memory, prune both."""
@@ -438,20 +471,20 @@ class Runtime:
             res = await self.backend(self.ctx, a, DREAM.format(data=data), system=DREAM_SYSTEM, model=model,
                                      why=f"agents: dream cycle for {name}")
             ops = parse_dream(res.get("text") if isinstance(res, dict) else None)
-            seen, mine = {n["id"] for n in notes}, {m["id"] for m in mems}
+            seen, mine = {n["id"] for n in notes}, {m["id"]: m for m in mems}
             keep = {i for i in ops["keep"] if i in seen}
             update = [u for u in ops["update"] if u["id"] in mine]      # only its own memories
             remove = {i for i in ops["remove"] if i in mine}
-            now = time.time()
-            with self.db:
-                self.db.execute("BEGIN")
-                self.db.executemany("INSERT INTO memory (agent, text, created, updated) VALUES (?, ?, ?, ?)",
-                                    [(name, text, now, now) for text in ops["add"]])
-                self.db.executemany("UPDATE memory SET text = ?, updated = ? WHERE id = ?",
-                                    [(u["text"], now, u["id"]) for u in update])
-                self.db.executemany("DELETE FROM memory WHERE id = ?", [(i,) for i in remove])
-                self.db.executemany("DELETE FROM note WHERE id = ?", [(i,) for i in seen - keep])
-            self.save({**self.agent(name, archived=True), "dreamed": now})   # as edited meanwhile
+            # Memory first, the notes last: if this stops half way the notes stay for next time.
+            for text in ops["add"]:
+                self.rec.memory.create(agent=name, text=text)
+            for u in update:
+                self.rec.memory.update(u["id"], text=u["text"])
+            for i in remove:          # forgotten, not erased: an owner can bring it back
+                self.rec.memory.archive(i)
+            for i in seen - keep:
+                self.rec.note.delete(i)
+            self.write(self.agent(name, archived=True), dreamed=time.time())   # as edited meanwhile
         return {"dreamed": True, "added": len(ops["add"]), "updated": len(update), "removed": len(remove),
                 "notes_kept": len(keep)}
 
@@ -569,11 +602,11 @@ def parse_dream(text) -> dict:
         raise KitError("the dream reply was not JSON; the notepad is kept") from None
     if not isinstance(obj, dict):
         raise KitError("the dream reply was not a JSON object; the notepad is kept")
-    ints = lambda xs: [x for x in xs if isinstance(x, int) and not isinstance(x, bool)]  # noqa: E731
+    ids = lambda xs: [x for x in xs if isinstance(x, str) and x]  # noqa: E731 - record ids
     return {"add": [x.strip() for x in obj.get("add") or [] if isinstance(x, str) and x.strip()],
-            "update": [u for u in obj.get("update") or [] if isinstance(u, dict) and isinstance(u.get("id"), int)
+            "update": [u for u in obj.get("update") or [] if isinstance(u, dict) and isinstance(u.get("id"), str)
                        and isinstance(u.get("text"), str) and u["text"].strip()],
-            "remove": ints(obj.get("remove") or []), "keep": ints(obj.get("keep") or [])}
+            "remove": ids(obj.get("remove") or []), "keep": ids(obj.get("keep") or [])}
 
 
 def rights(a: dict) -> list:
@@ -595,6 +628,7 @@ async def start(ctx):
     rt.ctx = ctx
     await rt.ready(force=True)
     for a in rt.agents():
+        rt.presence(a["name"])           # nobody is awake after a restart
         if a.get("always_on"):
             for m in rt.sessions(a["name"]):
                 rt.wake(a["name"], m.id)
@@ -605,6 +639,35 @@ async def stop(ctx):
     if _RT is not None:
         rt, _RT = _RT, None
         await rt.close()
+
+
+async def on_created(ctx, event=None, payload=None):
+    """agents.agent.create: the persona's defaults fill what was left out,
+    and the agent gets its identity (agent:<name>, its own grants)."""
+    rec, by = (payload or {}).get("record"), (payload or {}).get("by")
+    if not rec or by == ME:          # the plugin's own seeding registers in ready()
+        return
+    rt = _rt(ctx)
+    await rt.ready()                 # a persona installed since the last look
+    rt.fill(rec)
+    rt.register(ctx, rt.rec.agent.get(rec["id"]))
+
+
+async def on_updated(ctx, event=None, payload=None):
+    """An agent changed (or was restored): its identity follows its grants."""
+    rec, by = (payload or {}).get("record"), (payload or {}).get("by")
+    if rec and by != ME:             # presence and dreams don't touch grants
+        _rt(ctx).register(ctx, rec)
+
+
+async def on_archived(ctx, event=None, payload=None):
+    """An archived agent stops (it keeps its sessions, notepad and memory)
+    and has no identity until it is restored."""
+    rec = (payload or {}).get("record")
+    if rec:
+        rt = _rt(ctx)
+        rt.register(ctx, {**rec, "archived": rec.get("archived") or True})
+        await rt.sleep(rec["name"])
 
 
 async def tick(ctx):
@@ -743,81 +806,6 @@ def _self_or_owner(ctx, name: str) -> bool:
     return ctx.agent == f"agent:{name}" or ctx.caller.owner
 
 
-async def list_agents(ctx, archived=False):
-    rt = _rt(ctx)
-    await rt.ready()
-    return [rt.view(a) for a in rt.agents(archived)]
-
-
-async def get(ctx, name):
-    rt = _rt(ctx)
-    await rt.ready()
-    a = _agent(ctx, rt, name, archived=True)
-    out = {**{k: a.get(k) for k in (*FIELDS, "origin", "edited", "dreamed", "archived")}, **rt.view(a)}
-    party = None if ctx.caller.owner else _party(ctx)
-    out["sessions"] = [{"stream": m.id, "party": m.attrs.get("party"), "last_seq": m.last_seq}
-                       for m in rt.sessions(name, party)]
-    if _self_or_owner(ctx, name):
-        out["memory"], out["notepad"] = rt.memories(name), rt.notes(name)
-    return out
-
-
-def _fields(ctx, args: dict, base: dict) -> dict:
-    out = dict(base)
-    for k in FIELDS:
-        if args.get(k) is not None:
-            out[k] = copy.deepcopy(args[k])
-    return out
-
-
-async def create(ctx, name, **args):
-    rt = _rt(ctx)
-    await rt.ready()
-    try:
-        rt.agent(name, archived=True)
-        raise ctx.Error(f"agent {name} already exists")
-    except KeyError:
-        pass
-    base = {"persona": None, "title": name, "summary": "", "prompt": "", "skills": [], "grants": [],
-            "backend": "default", "model": {}, "always_on": False, "cwd": ""}
-    if args.get("persona"):
-        try:
-            base = rt.catalog.persona(args["persona"])
-        except KeyError:
-            raise ctx.Error(f"no persona {args['persona']}") from None
-    now = time.time()
-    a = {**_fields(ctx, args, base), "name": name, "origin": "", "edited": True, "created": now,
-         "updated": now, "creator": ctx.caller.actor}
-    rt.register(ctx, a)
-    return rt.view(rt.save(a))
-
-
-async def update(ctx, name, **args):
-    rt = _rt(ctx)
-    a = _agent(ctx, rt, name, archived=True)
-    if args.get("persona") and args["persona"] != a.get("persona"):
-        raise ctx.Error("an agent keeps its persona; make a new agent for another")
-    old = a.get("backend")
-    a = {**_fields(ctx, args, a), "edited": True, "updated": time.time()}
-    rt.register(ctx, a)
-    rt.save(a)
-    if a.get("backend") != old:                  # another harness can't resume this one's sessions
-        for m in rt.sessions(name):
-            rt.streams.update(m.id, attrs={"harness": None})
-    return rt.view(a)
-
-
-async def archive(ctx, name, restore=False):
-    rt = _rt(ctx)
-    a = _agent(ctx, rt, name, archived=True)
-    a["archived"] = None if restore else (a.get("archived") or time.time())
-    rt.register(ctx, a)
-    rt.save(a)
-    if not restore:
-        await rt.sleep(name)
-    return rt.view(a)
-
-
 async def wake(ctx, name):
     rt = _rt(ctx)
     _agent(ctx, rt, name)
@@ -876,8 +864,7 @@ async def note(ctx, agent, text):
     _agent(ctx, rt, agent, archived=True)
     if not _self_or_owner(ctx, agent):
         raise ctx.Error("a notepad is private: only the agent itself (or an owner) writes it")
-    cur = rt.db.execute("INSERT INTO note (agent, at, text) VALUES (?, ?, ?)", (agent, time.time(), text))
-    return {"note": cur.lastrowid}
+    return {"note": ctx.records.note.create(agent=agent, text=text)["id"]}
 
 
 async def dream(ctx, name):

@@ -4,22 +4,22 @@ events.
 
 One Gateway connection runs from the start hook until stop: hello, identify,
 heartbeat on the server's interval, MESSAGE_CREATE in; any close or error
-reconnects with backoff (a fresh identify; no resume). Links live in the
-plugin's data dir (``links.json``: person -> user, DM channel, name), written
-only when someone sends a valid ``!link CODE`` in a direct message.
+reconnects with backoff (a fresh identify; no resume). Links are ``link``
+kit records (the person, their Discord user, DM channel and name), made only
+when someone sends a valid ``!link CODE`` in a direct message.
 """
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
-import os
 import re
 import secrets
 import time
 
 import aiohttp
 
-from rook.kit.ctx import KitError
+from rook.kit.ctx import Caller, KitError
 
 LIMIT = 2000                   # Discord's longest message
 CODE_TTL = 600.0
@@ -36,13 +36,12 @@ _codes: dict = {}              # code -> (person, expires)
 
 async def send(ctx, to, text, title=None):
     person = _person(to)
-    links = _links(ctx)
-    link = links.get(person)
+    link = _link(ctx, person)
     if not link:
         raise KitError(f"{_name(person)} hasn't linked Discord (discord.link)")
     if not link.get("chat"):
-        link["chat"] = str((await _api(ctx, "POST", "/users/@me/channels", {"recipient_id": link["user"]}))["id"])
-        _save_links(ctx, links)
+        chat = str((await _api(ctx, "POST", "/users/@me/channels", {"recipient_id": link["user"]}))["id"])
+        link = _book(ctx).update(link["id"], chat=chat)
     msg = await _api(ctx, "POST", f"/channels/{link['chat']}/messages", {"content": _text(text, title)})
     return {"to": person, "message": str(msg.get("id", ""))}
 
@@ -71,18 +70,17 @@ async def unlink(ctx, to=None):
     person = _person(to) if to else ctx.person
     if person != ctx.person and not ctx.caller.owner:
         raise KitError("denied: only an owner unlinks someone else")
-    links = _links(ctx)
-    gone = links.pop(person, None) is not None
-    if gone:
-        _save_links(ctx, links)
-    return {"person": person, "unlinked": gone}
+    link = _link(ctx, person)
+    if link:
+        _book(ctx).delete(link["id"])
+    return {"person": person, "unlinked": link is not None}
 
 
 async def status(ctx, to=None):
     person = _person(to) if to else ctx.person
     out = {"connected": _state["connected"], "bot": _state["bot"], "error": _state["error"]}
     if person:
-        out["linked"] = person in _links(ctx)
+        out["linked"] = _link(ctx, person) is not None
     return out
 
 
@@ -169,13 +167,11 @@ async def _inbound(ctx, d: dict) -> None:
     if m and private:
         person = _redeem(m.group(1).lower())
         if person:
-            links = _links(ctx)
-            links[person] = {"user": user, "chat": chat, "name": str(author.get("username") or user)}
-            _save_links(ctx, links)
+            _linked(ctx, person, user, chat, str(author.get("username") or user))
         reply = f"Linked: you are {_name(person)} on Rook." if person else "That code is wrong or has expired."
         await _api(ctx, "POST", f"/channels/{chat}/messages", {"content": reply})
         return
-    person = next((p for p, ln in _links(ctx).items() if ln.get("user") == user), None)
+    person = _person_of(ctx, user)
     ctx.emit("discord.message", {"text": text, "chat": chat, "private": private,
                                  "from": str(author.get("username") or user), "from_id": user,
                                  "message": str(d.get("id", "")),
@@ -223,18 +219,30 @@ def _redeem(code: str) -> str | None:
     return person
 
 
-def _links(ctx) -> dict:
-    try:
-        return json.loads((ctx.data / "links.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+def _book(ctx, person: str | None = None):
+    """The ``link`` records (one per linked person), as the plugin: every row.
+    With ``person``, as that person, so the record they make is theirs."""
+    c = copy.copy(ctx)
+    c.caller = Caller(person=person, band=ctx.band, owner=person is None, plugin=ctx.plugin)
+    return c.records.link
 
 
-def _save_links(ctx, links: dict) -> None:
-    path = ctx.data / "links.json"
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(links, indent=1), encoding="utf-8")
-    os.replace(tmp, path)
+def _link(ctx, person: str) -> dict | None:
+    return next((r for r in _book(ctx).list(limit=500) if r["person"] == person), None)
+
+
+def _linked(ctx, person: str, user: str, chat: str, name: str) -> None:
+    """``person`` redeemed a code from ``user``: one link per person and per account."""
+    book = _book(ctx)
+    for r in book.list(limit=500):
+        if r["person"] == person or r["user"] == user:
+            book.delete(r["id"])
+    _book(ctx, person).create(user=user, chat=chat, name=name)
+
+
+def _person_of(ctx, user: str) -> str | None:
+    rows = _book(ctx).list(where={"user": user}, limit=1)
+    return rows[0]["person"] if rows else None
 
 
 def _person(name: str) -> str:

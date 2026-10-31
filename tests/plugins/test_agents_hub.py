@@ -17,10 +17,12 @@ pytest.importorskip("jsonschema")
 
 from port_helpers import PLUGINS  # noqa: E402
 from rook.core2.hub.identity import Caller  # noqa: E402
+from rook.kit.ctx import Caller as KitCaller  # noqa: E402
 from rook.core2.hub.runtime import Config, Hub, Loopback  # noqa: E402
 
 BAND = "e17904e6ed4c664592f64f6f1d02c682"
 WHY = "Check the agents plugin on the hub."
+OWNER_ROWS = KitCaller(band=BAND, owner=True)
 
 BRAIN = """\
 manifest: 1
@@ -113,15 +115,17 @@ def test_agents_on_the_hub(tmp_path):
             assert {"agents", "agents-local"} <= set(hub.plugins.plugins)     # beside the builtin ones
             # The library loads in name order, agents first: the workbench's
             # personas (castling-dashboard) are made on the next look.
-            out = await call(hub, owner, "agents.list")
+            # Agents are kit records (drift #31).
+            out = await call(hub, owner, "agents.agent.list")
             assert out["ok"] and {a["name"] for a in out["result"]} >= {"house", "security"}, out
             rt = next(m for m in hub.plugins._modules["agents"].values() if hasattr(m, "_RT"))._RT
             await rt.ready(force=True)
-            out = await call(hub, owner, "agents.list")
+            out = await call(hub, owner, "agents.agent.list")
             assert out["ok"] and sorted(a["name"] for a in out["result"]) == [
                 "archivist", "house", "lead", "pm", "producer", "qa", "security", "writer"], out
-            got = (await call(hub, owner, "agents.get", name="producer"))["result"]
-            assert got["origin"] == "concept@0.5.0" and "assembling a crew" in got["prompt"], got
+            assert not any(a["awake"] for a in out["result"] if a["name"] != "house"), out
+            got = next(a for a in out["result"] if a["name"] == "producer")
+            assert got["persona"] == "producer" and "assembling a crew" in got["prompt"], got
             out = await call(hub, owner, "agents.skill", name="wiki-sweep")
             assert out["ok"] and out["result"]["text"].startswith("# Wiki sweep"), out
             page = await call(hub, owner, "knowledge.create", title="Test-stitch a pattern", slug="test-stitch",
@@ -147,11 +151,11 @@ def test_agents_on_the_hub(tmp_path):
             # guest's rights, and core's guest preset grants no backend.
             out = await call(hub, guest, "agents.chat.send", agent="house", text="open the door")
             assert out == {"id": out["id"], "ok": False, "error": "house: denied: person: grants"}, out
-            assert not (await call(hub, guest, "agents.list"))["ok"]
+            assert not (await call(hub, guest, "agents.agent.list"))["ok"]
             out = await call(hub, guest, "agents.chat.read", agent="house")
             assert out["ok"] and "good morning" not in json.dumps(out["result"]), out
 
-            out = await call(hub, owner, "agents.create", name="Bad Name")
+            out = await call(hub, owner, "agents.agent.create", name="Bad Name")
             assert not out["ok"] and out["error"].startswith("bad args"), out
 
             # Idle: the house agent is always on; qa sleeps after warm and
@@ -160,9 +164,30 @@ def test_agents_on_the_hub(tmp_path):
             assert (await call(hub, owner, "agents.note", agent="qa", text="CI is green on #12"))["ok"]
             await until(lambda: [e for e in hub.journal.query(cap="agents-local.turn", agent="agent:qa")
                                  if e["person"] is None])
-            got = (await call(hub, owner, "agents.get", name="qa"))["result"]
-            assert got["memory"][0]["text"] == "learned: three" and got["notepad"] == []
-            assert got["awake"] is False
+            mem = (await call(hub, owner, "agents.memory.list", where={"agent": "qa"}))["result"]
+            assert [m["text"] for m in mem] == ["learned: three"] and mem[0]["creator"] == "plugin:agents"
+            await until(lambda: hub.records.type("agents.note").list(OWNER_ROWS, where={"agent": "qa"}) == [])
+            await until(lambda: hub.records.type("agents.agent").list(OWNER_ROWS, where={"name": "qa"})[0]["awake"]
+                        is False)
+            assert not (await call(hub, guest, "agents.memory.list"))["ok"]          # private, and no grant
+
+            # Made from a persona: its defaults fill what was left out, and it
+            # is agent:qa2 on the hub with the persona's grants; an edit to its
+            # grants reaches its identity; archived, it has none.
+            out = await call(hub, owner, "agents.agent.create", name="qa2", persona="qa", title="Second QA")
+            assert out["ok"], out
+            rid = out["result"]["id"]
+            await until(lambda: hub.records.type("agents.agent").get(OWNER_ROWS, rid).get("prompt"))
+            got = hub.records.type("agents.agent").get(OWNER_ROWS, rid)
+            assert got["title"] == "Second QA" and got["skills"] and got["backend"] == "default"
+            await until(lambda: hub.identities.run_by.get("qa2") == "agents")
+            out = await call(hub, owner, "agents.agent.update", id=rid, revision=got["revision"],
+                             grants=["tasks.*"])
+            assert out["ok"], out
+            await until(lambda: hub.identities.agents["qa2"]["grants"] == ["tasks.*", "agent.backend"])
+            out = await call(hub, owner, "agents.agent.archive", id=rid, revision=out["result"]["revision"])
+            assert out["ok"], out
+            await until(lambda: "qa2" not in hub.identities.run_by)
         finally:
             await hub.stop()
     asyncio.run(asyncio.wait_for(body(), 30))

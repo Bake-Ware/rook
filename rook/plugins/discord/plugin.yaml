@@ -26,6 +26,16 @@ settings:
     setup: Make an application with a bot, tick the Message Content intent, store the bot token in the vault and set this to the vault name.
   api: { type: url, default: "https://discord.com/api/v10", where: hub, apply: reload, doc: The REST API base URL. }
 
+# Who linked which account: kit records (castling-plugins "Records"), no caps
+# of their own (link, unlink and status are the caps).
+records:
+  link:
+    fields:
+      user: { type: str, required: true, unique: true, doc: "The Discord user id." }
+      chat: { type: str, doc: "Their direct-message channel (made on first send)." }
+      name: { type: str, doc: "Their Discord user name." }
+    caps: []
+
 caps:
   send:
     doc: A direct message from the bot to a person who linked their Discord account.

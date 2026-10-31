@@ -59,18 +59,24 @@ While it works, an agent jots what it decides, learns and is told on its
 private notepad (`agents.note`). Its memory is read-only while it works. When
 it goes to sleep, a **dream cycle** - a light model (the backend's System
 Three: Haiku for Claude Code) - turns the notepad into lasting memory and
-prunes and corrects both. Always-on agents dream every `dream_every` (6 hours). `agents.dream`
-runs one now. `agents.get` shows memory and notepad to the agent itself and
-to owners.
+prunes and corrects both. Always-on agents dream every `dream_every` (6
+hours). `agents.dream` runs one now. Memories are private records owners
+curate with `agents.memory.list/get/search/create/update/archive/delete`;
+the notepad is the agent's own (it sees it in its prompt) and has no caps
+to read it. Your sessions with an agent are streams: `stream.list
+kind=session` on worker `rook` lists them and `stream.read` reads them.
 
 ## Making and changing agents
 
-`agents.create {name, persona?, ...}` makes one, from a persona's defaults
-and/or your own prompt, grants, skills, backend and models
-(`model: {two: opus, three: haiku}`). `agents.update` changes one; your edits
-win over later persona updates. `agents.archive` stops one and keeps
-everything; `restore: true` brings it back. Skills are markdown playbooks;
-`agents.skill {name}` reads one.
+Agents are records: `agents.agent.list` (with `awake`), `get`, `search`,
+`history`, and for admins `create`, `update`, `archive`.
+`agents.agent.create {name, persona?, ...}` makes one; what you leave out
+comes from the persona's defaults (prompt, grants, skills, backend, models
+like `model: {two: opus, three: haiku}`). `agents.agent.update {id,
+revision, ...}` changes one; once anyone but the plugin has changed an agent,
+later persona updates no longer touch it. `agents.agent.archive` stops one and
+keeps everything; `restore: true` brings it back. Skills are markdown
+playbooks; `agents.skill {name}` reads one.
 
 ## Backends
 
