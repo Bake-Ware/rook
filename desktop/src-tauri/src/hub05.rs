@@ -16,9 +16,7 @@
 //! `agents.chat.send` as the person, and the reply lands in the same session
 //! the dashboard's dock shows.
 
-use crate::hub::{
-    client, first_line, set_cookie_pairs, text, Answer, AttentionItem, Found, HubError, Session, Waiting, WorkItem,
-};
+use crate::hub::{client, first_line, set_cookie_pairs, text, Answer, AttentionItem, HubError, Waiting};
 use crate::sections::{Page, Section};
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -31,8 +29,6 @@ pub const HOUSE: &str = "house";
 pub const WEB_COOKIE: &str = "rook_web";
 /// Dashboard pages (`#/<plugin>/<page>`, rook/core2/hub/doors/web/static/shell.js).
 pub const APPROVALS_PAGE: &str = "/#/approval/approvals";
-pub const TASKS_PAGE: &str = "/#/task/tasks";
-pub const KNOWLEDGE_PAGE: &str = "/#/knowledge/knowledge";
 
 #[derive(Clone)]
 pub struct Hub05 {
@@ -103,41 +99,6 @@ impl Hub05 {
                 })
                 .collect(),
         ))
-    }
-
-    /// Tasks in progress or blocked (`task.list` per state), with their projects' titles.
-    pub async fn work(&self) -> Result<Vec<WorkItem>, HubError> {
-        let why = "Desktop app: the Rook panel lists work in progress.";
-        let list =
-            |state: &'static str| self.hub_call("task.list", json!({"where": {"state": state}, "limit": 50}), why);
-        let projects = self.hub_call("project.list", json!({"limit": 200}), why);
-        let (active, blocked, projects) = tokio::join!(list("in_progress"), list("blocked"), projects);
-        // A hub without the projects plugin still lists its tasks.
-        Ok(task_items(&blocked?, &active?, &projects.unwrap_or(Value::Null)))
-    }
-
-    /// Knowledge pages, then tasks, matching the words.
-    pub async fn knowledge(&self, query: &str) -> Result<Vec<Found>, HubError> {
-        let why = "Desktop app: a knowledge search from the Rook panel.";
-        let (pages, tasks) = tokio::join!(
-            self.hub_call("knowledge.search", json!({"query": query, "limit": 10}), why),
-            self.hub_call("task.search", json!({"query": query, "limit": 5}), why),
-        );
-        let mut out = found_items(&pages?, "knowledge", KNOWLEDGE_PAGE);
-        out.extend(found_items(&tasks.unwrap_or(Value::Null), "task", TASKS_PAGE));
-        Ok(out)
-    }
-
-    /// The hub's agents, awake ones first (`agents.list`).
-    pub async fn sessions(&self) -> Result<Vec<Session>, HubError> {
-        let v = self
-            .hub_call(
-                "agents.list",
-                json!({}),
-                "Desktop app: the Rook panel lists the agents.",
-            )
-            .await?;
-        Ok(agent_items(&v))
     }
 
     /// The dashboard's pages by section (`pages.list`), for the tray and the panel.
@@ -332,97 +293,6 @@ pub fn hold_items(v: &Value) -> Vec<Waiting> {
         .collect()
 }
 
-/// `task.list` rows (records): blocked first, then in progress.
-pub fn task_items(blocked: &Value, active: &Value, projects: &Value) -> Vec<WorkItem> {
-    let project = |id: &str| -> String {
-        projects
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|p| text(p, "id") == id)
-            .map(|p| text(p, "title"))
-            .unwrap_or_default()
-    };
-    let mut out = vec![];
-    for (state, rows) in [("blocked", blocked), ("in_progress", active)] {
-        for t in rows.as_array().into_iter().flatten() {
-            let title = text(t, "title");
-            if title.is_empty() {
-                continue;
-            }
-            let note = if state == "blocked" {
-                text(t, "assignee")
-            } else {
-                t.get("claims")
-                    .and_then(Value::as_array)
-                    .map(|cs| {
-                        cs.iter()
-                            .map(|c| short_id(&text(c, "actor")))
-                            .filter(|a| !a.is_empty())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    })
-                    .unwrap_or_default()
-            };
-            out.push(WorkItem {
-                title,
-                state: state.into(),
-                project: project(&text(t, "project")),
-                note,
-                link: TASKS_PAGE.into(),
-            });
-        }
-    }
-    out
-}
-
-/// `knowledge.search` / `task.search` rows (records).
-pub fn found_items(v: &Value, kind: &str, link: &str) -> Vec<Found> {
-    v.as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|r| {
-            let title = text(r, "title");
-            (!title.is_empty()).then(|| Found {
-                excerpt: first_line(&text(r, "body").replace("**", ""), 220),
-                title,
-                kind: kind.into(),
-                link: link.into(),
-            })
-        })
-        .collect()
-}
-
-/// `agents.list`: live (awake) agents first; archived ones left out.
-pub fn agent_items(v: &Value) -> Vec<Session> {
-    let mut out: Vec<Session> = v
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|a| a.get("archived").map_or(true, Value::is_null))
-        .filter_map(|a| {
-            let name = text(a, "name");
-            if name.is_empty() {
-                return None;
-            }
-            let awake = a.get("awake").and_then(Value::as_bool) == Some(true);
-            Some(Session {
-                title: Some(text(a, "title"))
-                    .filter(|t| !t.is_empty())
-                    .unwrap_or_else(|| name.clone()),
-                agent: name,
-                worker: HUB_WORKER.into(),
-                state: if awake { "live" } else { "idle" }.into(),
-                cwd: first_line(&text(a, "summary"), 200),
-                updated: 0.0,
-                link: "/".into(),
-            })
-        })
-        .collect();
-    out.sort_by_key(|s| s.state != "live");
-    out
-}
-
 /// A page id the menu may carry: `<plugin>/<page>` in plain characters.
 fn safe_page(id: &str) -> bool {
     !id.is_empty()
@@ -497,45 +367,6 @@ mod tests {
         assert_eq!((w[0].kind.as_str(), w[0].link.as_str()), ("hold", APPROVALS_PAGE));
         assert_eq!(w[1].who, "kid");
         assert!(hold_items(&json!({"ok": true})).is_empty());
-    }
-
-    #[test]
-    fn tasks_with_project_titles() {
-        let active = json!([{"id": "r1", "title": "Port the desktop app", "state": "in_progress",
-            "project": "p1", "claims": [{"actor": "agent:claude-code", "person": "person:bake"}]}]);
-        let blocked = json!([{"id": "r2", "title": "Sign the app", "state": "blocked", "project": "px",
-            "assignee": "bake"}, {"id": "r3", "title": ""}]);
-        let projects = json!([{"id": "p1", "title": "Castling"}]);
-        let w = task_items(&blocked, &active, &projects);
-        assert_eq!(w.len(), 2);
-        assert_eq!(
-            (w[0].title.as_str(), w[0].state.as_str(), w[0].note.as_str()),
-            ("Sign the app", "blocked", "bake")
-        );
-        assert_eq!(w[0].project, "");
-        assert_eq!((w[1].project.as_str(), w[1].note.as_str()), ("Castling", "claude-code"));
-        assert_eq!(w[1].link, TASKS_PAGE);
-        assert!(task_items(&Value::Null, &Value::Null, &Value::Null).is_empty());
-    }
-
-    #[test]
-    fn search_hits_and_agents() {
-        let f = found_items(
-            &json!([{"title": "Desktop", "body": "**Preview:** new.\nmore"}, {"title": ""}]),
-            "knowledge",
-            KNOWLEDGE_PAGE,
-        );
-        assert_eq!(f.len(), 1);
-        assert_eq!(
-            (f[0].excerpt.as_str(), f[0].link.as_str()),
-            ("Preview: new.", KNOWLEDGE_PAGE)
-        );
-        let a = agent_items(&json!([
-            {"name": "pm", "title": "Project manager", "summary": "Sweeps tickets.", "awake": false, "archived": null},
-            {"name": "house", "title": "House agent", "awake": true, "archived": null},
-            {"name": "old", "awake": true, "archived": 1793400000.0}]));
-        assert_eq!(a.iter().map(|s| s.agent.as_str()).collect::<Vec<_>>(), ["house", "pm"]);
-        assert_eq!((a[0].state.as_str(), a[1].cwd.as_str()), ("live", "Sweeps tickets."));
     }
 
     #[test]

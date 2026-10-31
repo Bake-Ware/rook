@@ -40,14 +40,6 @@ async fn live_hub05_round_trip() {
     let pages = h.pages().await.unwrap();
     let hub = pages.iter().find(|s| s.title == "Hub").expect("the Hub section");
     assert!(hub.pages.iter().any(|p| p.hash == "/approval/approvals"), "{pages:?}");
-    // The workbench and agents plugins, when the hub has them.
-    for (what, r) in [
-        ("work", h.work().await.map(|w| w.len())),
-        ("knowledge", h.knowledge("rook").await.map(|f| f.len())),
-        ("sessions", h.sessions().await.map(|s| s.len())),
-    ] {
-        println!("{what}: {r:?}");
-    }
 
     if std::env::var("ROOK_TEST_ASK05").is_ok() {
         let a = h
