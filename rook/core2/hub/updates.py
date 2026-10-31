@@ -9,9 +9,11 @@ itself back).
     update.status   {}                            releases, the rollout, each worker's core
     update.history  {limit?}                      what happened, newest first
 
-Each worker is updated with a ``worker.update`` call made as the person who
-started the rollout (dispatch checks it and the journal shows it like any
-call), carrying the release's Drop descriptor; the worker pulls, verifies,
+Each worker is updated through a change record (``change.submit``, the
+change plugin, as for plugin pushes) made as the person who started the
+rollout: its one script is ``worker.update`` with the release's Drop
+descriptor, its way back ``worker.rollback`` (``change.revert``), and every
+step goes through dispatch and the journal as that person; the worker pulls, verifies,
 smoke-checks and restarts into it on trial. The hub then waits up to
 ``gate`` seconds for the worker to report that release confirmed
 (``worker.status``). Plugins keep updating through distribution
@@ -118,8 +120,6 @@ class Updates:
     async def prepare(self, ctx, version: str | None = None, source: str | None = None) -> dict:
         """Sign a release of ``source`` (a folder holding ``rook/``; default
         the code this hub runs). The same code again is the same release."""
-        # TODO(castling:changes): an agent preparing or rolling out a release (code for every
-        # worker) goes through a change record, like an agent's plugin push.
         self._owner(ctx)
         import rook
         src = Path(source).expanduser() if source else Path(rook.__file__).resolve().parent.parent
@@ -184,6 +184,9 @@ class Updates:
         path = self._tarball(version)
         if self.task is not None and not self.task.done():
             raise KitError(f"a rollout to {self.rollout_state.get('version')} is running; wait for it")
+        if "change" not in self.hub.plugins.plugins:
+            raise KitError("refused: core updates go through change records; put the change plugin "
+                           "(rook/plugins/changes) in the hub's library")
         rows = self._workers(version)
         names = {r["name"] for r in rows}
         for n in [*(canary or ()), *(workers or ())]:
@@ -290,12 +293,27 @@ class Updates:
             desc = hub.transport.offer(k.band, blob, to=w["id"])
         except Exception as e:
             return self._done(w, False, f"release not offered: {e}")
-        reply = await hub.call_as(who, "worker.update", {"bundle": desc}, target=w["id"])
-        if reply.get("held"):
-            return self._done(w, False, f"waiting for a person (hold {reply.get('hold')}); "
-                                        "once it is answered, roll out again")
-        if not reply.get("ok"):
-            return self._done(w, False, str(reply.get("error") or "worker.update failed"))
+        frm = w.get("from") or "its installed core"
+        reply = await hub.call_as(who, "change.submit", {
+            "what": f"Update the core of {w['name']} to {version} (was {frm})", "why": who.why,
+            "category": "update", "wait": True,
+            "risk": f"{w['name']} restarts on the new core; its terminals and streams would end (it refuses "
+                    "while any are open). A core that doesn't serve its home hub is rolled back by the worker.",
+            "plan": f"The worker pulls the hub-signed release {version}, checks every file, smoke-checks it and "
+                    "restarts into it on trial; the rollout then waits for it to report the release confirmed.",
+            "scripts": [{"worker": w["id"], "cap": "worker.update", "args": {"bundle": desc}, "atomic": True}],
+            "rollback": {"worker": w["id"], "cap": "worker.rollback", "args": {}}}, target=hub.node)
+        rec = reply.get("result") if reply.get("ok") else None
+        if not isinstance(rec, dict):
+            return self._done(w, False, str(reply.get("error") or "change.submit failed"))
+        w["change"] = rec.get("id")
+        if rec.get("state") == "asked":
+            return self._done(w, False, f"change {rec.get('id')} waits for a person's card; once it is "
+                                        "answered the worker updates, and a new rollout skips it")
+        if rec.get("state") != "kept":
+            step = next((e for e in reversed(rec.get("log") or []) if e.get("phase") == "script"), None)
+            return self._done(w, False, str((step or {}).get("error") or rec.get("outcome")
+                                            or f"change {rec.get('state')}"))
         deadline = time.monotonic() + gate
         while time.monotonic() < deadline:
             await asyncio.sleep(POLL)

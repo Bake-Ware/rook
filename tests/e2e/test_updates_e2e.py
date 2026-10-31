@@ -69,6 +69,9 @@ def test_a_release_rolls_out_restarts_the_worker_into_it_and_rolls_back_by_hand(
     assert band.owner.call("e2e.ping", {"text": "on the release"})["ok"]
     entries = band.owner.get("/journal?cap=worker.update&limit=5")["entries"]
     assert entries and entries[0]["person"].endswith("bake") and entries[0]["ok"]
+    change = call(band, "change.get", {"id": ro["workers"][0]["change"]}, worker="rook")
+    assert change["state"] == "kept" and change["category"] == "update"
+    assert change["rollback"]["cap"] == "worker.rollback"
     history = [e["event"] for e in call(band, "update.history", worker="rook")["entries"]]
     assert history[:3] == ["rollout.done", "worker.updated", "rollout.started"]
     # by hand: back to the installed core

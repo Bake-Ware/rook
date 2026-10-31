@@ -21,9 +21,14 @@ Code: `rook/core2/release.py` (the format), `rook/core2/worker/boot.py`
 3. `update.rollout {version}` (owners): returns at once. Canaries first
    (`canary`, default the first worker in line), one at a time, then the rest
    `batch` at a time (default 2). The first worker that fails stops it.
-4. For each worker the hub offers the release over Drop and calls
-   `worker.update {bundle}` **as the person who started the rollout**, so
-   dispatch checks it and the journal shows it like any other call.
+4. For each worker the hub offers the release over Drop and submits a
+   **change record** (`change.submit`, as for plugin pushes) **as the person
+   who started the rollout**: its one script is `worker.update {bundle}`, its
+   way back `worker.rollback` (so `change.revert` undoes a kept update), and
+   dispatch and the journal see every step. A change that waits for a card
+   (a risky change) stops the rollout; once it is answered the worker updates,
+   and the next rollout skips it. Without the change plugin in the hub's
+   library a rollout is refused, like a push.
 5. The worker pulls it, checks it (below), installs requirements it lacks,
    runs the new core's smoke check in a child process, and restarts into it
    on **trial**.

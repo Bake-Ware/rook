@@ -323,7 +323,9 @@ class FakeHub:
     """What Updates uses of the hub: known workers, their caps, Drop, call_as."""
 
     def __init__(self, data: Path, workers: dict):
-        self.data, self.op, self.hub_id = data, OP, HUB
+        self.data, self.op, self.hub_id, self.node = data, OP, HUB, "hubnode"
+        self.plugins = SimpleNamespace(plugins={"change": object()})
+        self.changes: list = []
         self.known = {n: SimpleNamespace(id=n, name=n, version="0.5.0", online=True, band="b") for n in workers}
         self.dispatcher = SimpleNamespace(workers={n: SimpleNamespace(caps={"worker.update": {}} if up else {})
                                                    for n, up in workers.items()})
@@ -333,6 +335,18 @@ class FakeHub:
         self.cores = {n: {"running": None, "trial": None, "failed": None} for n in workers}
 
     async def call_as(self, who, cap, args, target=None, **kw):
+        if cap == "change.submit":
+            # the change plugin runs the one script as the same person
+            assert target == "hubnode" and args["rollback"]["cap"] == "worker.rollback"
+            self.changes.append(args)
+            step = args["scripts"][0]
+            if self.fail.get(step["worker"]) == "ask":
+                return {"ok": True, "result": {"id": "c-asked", "state": "asked", "log": []}}
+            got = await self.call_as(who, step["cap"], step["args"], target=step["worker"])
+            entry = {"phase": "script", "ok": got["ok"], **({"result": got["result"]} if got["ok"]
+                                                            else {"error": got["error"]})}
+            return {"ok": True, "result": {"id": f"c{len(self.changes)}", "log": [entry],
+                                           "state": "kept" if got["ok"] else "refused"}}
         self.calls.append((cap, target, who.person))
         if cap == "worker.update":
             if self.fail.get(target) == "refuse":
@@ -396,6 +410,9 @@ def test_rollout_goes_canary_first_then_batches_and_skips_what_it_cannot_update(
     assert set(started["skipped"]) == {"d", "phone"}
     assert [t for cap, t, _ in hub.calls if cap == "worker.update"][0] == "c"
     assert all(p == "bake" for _, _, p in hub.calls)                     # as the person who started it
+    assert [c["scripts"][0]["worker"] for c in hub.changes] == ["c", "a", "b"]   # one change record each
+    assert {w["name"]: w.get("change") for w in status["rollout"]["workers"] if w["state"] == "updated"} == \
+        {"c": "c1", "a": "c2", "b": "c3"}
     assert status["rollout"]["status"] == "done"
     assert {w["name"]: w["state"] for w in status["rollout"]["workers"]} == \
         {"c": "updated", "a": "updated", "b": "updated", "d": "skipped", "phone": "skipped"}
@@ -455,7 +472,25 @@ def test_rollout_refusals(tmp_path, monkeypatch):
         hub.known["a"].version = "0.5.1"
         with pytest.raises(KitError, match="already on 0.5.1"):
             await up.rollout(ctx(), "0.5.1")
+        hub.plugins.plugins.clear()
+        with pytest.raises(KitError, match="change records"):
+            await up.rollout(ctx(), "0.5.1")
     asyncio.run(go())
+
+
+def test_a_change_waiting_for_a_card_stops_the_rollout(tmp_path, monkeypatch):
+    hub, up = make(tmp_path, monkeypatch, {"a": True, "b": True})
+    hub._target = "0.5.1"
+    hub.fail["a"] = "ask"
+
+    async def go():
+        await up.prepare(ctx(), version="0.5.1", source=str(source(tmp_path)))
+        await up.rollout(ctx(), "0.5.1")
+        await finish(up)
+        return (await up.status(ctx()))["rollout"]
+    ro = asyncio.run(go())
+    assert ro["status"] == "failed" and "c-asked waits for a person" in ro["workers"][0]["reason"]
+    assert not [c for c in hub.calls if c[0] == "worker.update"]
 
 
 def test_a_rollout_cut_short_by_a_hub_restart_is_recorded(tmp_path, monkeypatch):

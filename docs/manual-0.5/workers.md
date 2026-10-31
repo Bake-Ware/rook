@@ -70,7 +70,9 @@ own code, its **core**, updates from a release the hub signs:
    the hub (`worker=rook`): it packs the code the hub runs into a signed
    release.
 2. Call `update.rollout {version}`. The first worker (or the `canary` ones
-   you name) goes first; the rest follow a couple at a time.
+   you name) goes first; the rest follow a couple at a time. Each worker's
+   update is a change record, like a plugin push, so `change.revert` undoes
+   it later.
 3. Each worker checks the hub's signature and every file, tries the new code
    in a test run, and restarts into it. If the new core hasn't served a call
    from its home hub within two minutes, or crashes three times at start,
