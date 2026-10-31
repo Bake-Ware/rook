@@ -75,7 +75,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 5 | renamed, missing | "Producer" became a release manager; the house agent doesn't tag work or offer projects | `agents/personas/producer.md`, `house.md` |
 | 6 | contradiction | Archivist and wiki-sweep teach 0.4 verification and supersede | `agents/personas/archivist.md`, `skills/wiki-sweep.md` |
 | 7 | over-built | The one-off 0.4 migration ships as a product tool in core | `rook/core2/migrate`, `knowledge/scripts/import_04.py` |
-| 8 | missing | C4 `approval.ask` not built; plugins built their own asks; `page.show` absent | builtin `approval`, `jobs`, `huddle carry`, `changes` |
+| 8 | missing | C4 `approval.ask` not built; plugins built their own asks; `page.show` absent (**fixed, PR #350**: approval.ask; `page.show` open) | builtin `approval`, `jobs`, `huddle carry`, `changes` |
 | 9 | contradiction (partial) | Streams: three private hub stores, no hub `stream.read/write`, no chat rooms (**fixed, PR #347**) | `agents`, `speech`, `huddle`, #331 |
 | 10 | missing, package | Personas only from the agents manifest; workbench roles in agents; skills not in the knowledge store | `agents.py:158,416,464` |
 | 11 | missing | No Codex backend, while the enum and manuals offer codex/local/api. **Fixed: PR #336** | `rook/plugins/agents*` |
@@ -284,6 +284,7 @@ Watch items (ask Bake, not drift yet) are after the findings.
 - **Smallest fix.** `approval.ask {question, options?, why}` in the approval builtin, same card path
   as holds, no call attached, routed to the house agent when present; jobs, huddle and changes
   use it. Add `page.show`. Add C4 to the switchover open list.
+- **Fixed** (approval.ask, jobs) in PR #350 (c8/roles-ask). `change.apply` goes with the change-records fix (#1), `huddle.carry` with #333; `page.show` is not built yet.
 
 ## 9. Streams: one API in name only (contradiction, partial)
 
