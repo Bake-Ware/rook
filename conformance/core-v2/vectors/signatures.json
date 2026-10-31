@@ -31,6 +31,18 @@
    "seed": "808eac56aaab83130704a057282a4a13976ce182306b72495bde3e92ea77be6a",
    "pub": "ed25519:TDjPN4COaqItSqRV7AEIqHx+XMyo0j4r2Nlicq8zzaU=",
    "kid": "7f7970658681bad8"
+  },
+  {
+   "name": "worker",
+   "seed": "a95cacf721b8b3951665d7cc2d3b42fa4367641bf3f7dd073131100ac9d28242",
+   "pub": "ed25519:qqrJKhZWSXWlluOcouq1KZHejapAZG1uZ68W55yusUA=",
+   "kid": "0e63af1fab431577"
+  },
+  {
+   "name": "worker-b",
+   "seed": "5cadc00c45e75f3e660be92ca4729349a2d0d658e50fe0feb5661d7c4866eeaf",
+   "pub": "ed25519:EOxULSfHVYfRfBbLvOXvLOtp7daxmX5h5WuEUoZrZNY=",
+   "kid": "8825d28426261642"
   }
  ],
  "prefixes": {
@@ -40,7 +52,8 @@
   "rook-membership": "rook-membership-v2\n",
   "rook-announce": "rook-announce-v2\n",
   "rook-plugin": "rook-plugin-v2\n",
-  "rook-release": "rook-release-v2\n"
+  "rook-release": "rook-release-v2\n",
+  "rook-request": "rook-request-v2\n"
  },
  "signing_input": {
   "object": {

@@ -72,10 +72,17 @@ python -m rook.core2.worker --config worker.yaml enroll --discover
   trusts. On a service install keep it owned by root (or Administrator) so
   the worker can't change it; the worker warns when it can.
 - `<data>/bands.json`: the home band.
+- `<data>/worker.key`: the machine's own key. The worker signs what it asks
+  of a hub with it (sub-calls, elevation), so nobody else on the band can
+  ask for those in its name. It never leaves the machine; the
+  hub recorded its public half when the person approved the device. A
+  worker that started before it had one makes it on its next start, and
+  its hub takes it from the worker's first announce. Lost the file? Enroll
+  again (`--force`): the hub refuses a different key for a machine it knows.
 - `name` and `worker_id` in `worker.yaml`. The rest of the file is kept.
 
 A machine that already has a home refuses to enroll again; `--force` makes a
-new home hub and drops every other band. Off this machine, enrollment needs
+new home hub, a new key, and drops every other band. Off this machine, enrollment needs
 `https://` (`--insecure` overrides it, for a trial on a trusted network).
 
 ## Joining another band

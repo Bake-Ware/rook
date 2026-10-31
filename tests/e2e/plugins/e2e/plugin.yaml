@@ -3,6 +3,7 @@ plugin: e2e
 version: 1.0.0
 title: E2E fixture
 doc: Caps the end-to-end tests call on a real worker.
+uses: ["e2e.ping"]
 caps:
   ping:
     doc: Answer with who asked and the worker's process id.
@@ -21,6 +22,12 @@ caps:
     scope: self
     effects: [destructive]
     run: scripts/e2e.py:wipe
+  relay:
+    doc: Wait a moment, then ask e2e.ping through the hub (ctx.call, a signed core.call).
+    risk: read
+    scope: self
+    args: { wait: { type: int } }
+    run: scripts/e2e.py:relay
   receive:
     doc: Pretend a text arrived (emits e2e.sms.received, as the phone's sms plugin does).
     risk: write

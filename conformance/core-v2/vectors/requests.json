@@ -1,0 +1,1301 @@
+{
+ "spec": "2.0",
+ "vector": "requests",
+ "hub": "19c7d7856f775f9a",
+ "band": "e17904e6ed4c664592f64f6f1d02c682",
+ "keys": {
+  "3f0a9c1d2e3f40516273849506a7b8c9": "ed25519:qqrJKhZWSXWlluOcouq1KZHejapAZG1uZ68W55yusUA=",
+  "7e6d5c4b3a291807f6e5d4c3b2a19080": "ed25519:EOxULSfHVYfRfBbLvOXvLOtp7daxmX5h5WuEUoZrZNY="
+ },
+ "skew": 60,
+ "cases": [
+  {
+   "name": "ok: core.call",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "a1pMbmt0ppDOgqf5T/ua1y86rYb3Sxo1eHjFwENS6RDo/w7u0PILJTue0looMTBSAPMeZjOUqxqPQ/dQmxdHDg=="
+    }
+   },
+   "reason": "ok"
+  },
+  {
+   "name": "ok: core.elevate",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.elevate",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "reason": "upfront"
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.elevate",
+     "args_hash": "05ABQEXu3R-iggvSdQVvtR3WUtE2IhBFgFQEVQHcThc",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "IYvygpblfpaxB120dwX4i5+Mm6J1uA3uUKapw8Nbgev/wFl6P3UFxx9mYCXTKv3CAU0TA6mFcmeV3aw8owVABg=="
+    }
+   },
+   "reason": "ok"
+  },
+  {
+   "name": "unknown field is signed and verifies",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "x_future": 1,
+     "sig": "fwP1G9bu91NT9RhOAK/U3dyRkCNSBTu1lDw6sPh0usrlDa+5keYfOiMz7phFtT2Zrm7MXaPusJUlfetWj0DUDw=="
+    }
+   },
+   "reason": "ok"
+  },
+  {
+   "name": "no proof: the H2 replay of an in-flight ticket",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    }
+   },
+   "reason": "no_proof"
+  },
+  {
+   "name": "wrong v",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 1,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "JWUgZ2ZgslY6YlnvBPYIcEdAwgzf+FRkcwS40WFYMZVHB10IR1PzA+cvit2qjtDtg7nxhOrB72XE1KP9OdoMBA=="
+    }
+   },
+   "reason": "malformed"
+  },
+  {
+   "name": "nonce not 32 hex",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "abc",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "ZlDwJezSaECjXA/Rj/sHBgo5B9iDMwDnQiRTqBPuT+EmyEmVhUR6kFEM1FxZ5CCcaB9aEwB7Dwy9JxBRQ8ksDQ=="
+    }
+   },
+   "reason": "malformed"
+  },
+  {
+   "name": "ts a string",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": "1793300000",
+     "kid": "0e63af1fab431577",
+     "sig": "lOiMGrdYYY4Z1z+aswXF9LYRvi+EkTO+OSTAhZgjRtDULd1NPSe+G1K5CgjppbvnUeyMf5dPpCiPnhwq7ooDBA=="
+    }
+   },
+   "reason": "malformed"
+  },
+  {
+   "name": "parent left out",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "LZyrvfEOXqXnt7i1ACkhQ+W6sDWQdizprTyi+yKmMF20Mm2c/fiCC7RaIztpTjBtgf8w/vvwKnntpFSquV/xCw=="
+    }
+   },
+   "reason": "malformed"
+  },
+  {
+   "name": "a worker this hub has no key for",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "dddddddddddddddddddddddddddddddd",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "+kuqOlWorQOx10QcG7A+nVSqdXVJU3S5I4xXNVhBBboDAsy2oukslSEW3MQr+YmuISsDniLVaZ3zVuaxpmMKAw=="
+    }
+   },
+   "reason": "unknown_worker"
+  },
+  {
+   "name": "signed by another key",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "7f7970658681bad8",
+     "sig": "PBTxFcKOT0pHhEQgI7D8b1Mthf+KJn55B/R3G17sk6QXWJTUTgSi5mo4xTJKeV7FsKYImBvUCjdPA7bj6NjABA=="
+    }
+   },
+   "reason": "unknown_key"
+  },
+  {
+   "name": "forged: claims the worker's kid",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "PBTxFcKOT0pHhEQgI7D8b1Mthf+KJn55B/R3G17sk6QXWJTUTgSi5mo4xTJKeV7FsKYImBvUCjdPA7bj6NjABA=="
+    }
+   },
+   "reason": "bad_signature"
+  },
+  {
+   "name": "tampered after signing",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300006,
+     "kid": "0e63af1fab431577",
+     "sig": "a1pMbmt0ppDOgqf5T/ua1y86rYb3Sxo1eHjFwENS6RDo/w7u0PILJTue0looMTBSAPMeZjOUqxqPQ/dQmxdHDg=="
+    }
+   },
+   "reason": "bad_signature"
+  },
+  {
+   "name": "for another hub",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "21f7b4340bc96a6c",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "FZZkWptGN/P36/OQbv6HcfJIt4/11NaF69zT4rlhE6dFf3p8euCtJtQlV+PEh68Lse7VbqA/cOPL4eRTL65YDg=="
+    }
+   },
+   "reason": "wrong_hub"
+  },
+  {
+   "name": "for another band",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "3384db16e75f5d25f75fa3010b904c9f",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "Zp32bDHYwba/RlCNIOfwAx8HHf2nauxEx3Tr6orEKBjCVQ3xMGFz1Qdkw7h2K4dvGUL4vg6QNjnJ2PauDlyGCg=="
+    }
+   },
+   "reason": "wrong_band"
+  },
+  {
+   "name": "the proof of another request",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "a1pMbmt0ppDOgqf5T/ua1y86rYb3Sxo1eHjFwENS6RDo/w7u0PILJTue0looMTBSAPMeZjOUqxqPQ/dQmxdHDg=="
+    }
+   },
+   "reason": "wrong_call"
+  },
+  {
+   "name": "an elevate's proof on a sub-call",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.elevate",
+     "args_hash": "05ABQEXu3R-iggvSdQVvtR3WUtE2IhBFgFQEVQHcThc",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "IYvygpblfpaxB120dwX4i5+Mm6J1uA3uUKapw8Nbgev/wFl6P3UFxx9mYCXTKv3CAU0TA6mFcmeV3aw8owVABg=="
+    }
+   },
+   "reason": "wrong_cap"
+  },
+  {
+   "name": "arguments changed after signing",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "shell.exec",
+     "target": "kaiju",
+     "args": {
+      "argv": [
+       "sh"
+      ]
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "a1pMbmt0ppDOgqf5T/ua1y86rYb3Sxo1eHjFwENS6RDo/w7u0PILJTue0looMTBSAPMeZjOUqxqPQ/dQmxdHDg=="
+    }
+   },
+   "reason": "wrong_args"
+  },
+  {
+   "name": "the proof moved onto a sub-call of another ticket",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "00000000000000000000000000000000",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "Gecsefu68G0FOUMepBhQRaUj14/mZNvFeniSZ1JKmw1JreY6IRkab7b0BUfZaIhxni0inQi8v33wByssw+7eDA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "a1pMbmt0ppDOgqf5T/ua1y86rYb3Sxo1eHjFwENS6RDo/w7u0PILJTue0looMTBSAPMeZjOUqxqPQ/dQmxdHDg=="
+    }
+   },
+   "reason": "wrong_args"
+  },
+  {
+   "name": "parent names another ticket",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "00000000000000000000000000000000",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "IqxQ9rEZZoPtCg0Nw7/MiYgQNK9pDB260TaaZD2yEy0jUoIYgAkl/pGIv/RrM1wSSl9lo6daO86J1TDesqcBCA=="
+    }
+   },
+   "reason": "wrong_parent"
+  },
+  {
+   "name": "a request with no ticket",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {},
+     "why": "No ticket."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "dSj8elTo23wcmlVGJMtk-dqSMYFdskQaiFbDS0ItDk0",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "CqqFxmS6jBSGkOIfvU4E7O/vS41/L5e0a9NC/t0gz5ET8LCs6SdD5H0kMFLJDyacWDZhb3OfJ6PqMacKRNCZBg=="
+    }
+   },
+   "reason": "wrong_parent"
+  },
+  {
+   "name": "another worker's in-flight ticket",
+   "now": 1793300005,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "7e6d5c4b3a291807f6e5d4c3b2a19080",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "8825d28426261642",
+     "sig": "faSeO6idNYJ98wURWLhRLSp/a/E1JanQiZEwENxwU4c8XZ/HTuAlMuiO315+IBvEVNVqkeV5ZE66k91f4SatBA=="
+    }
+   },
+   "reason": "wrong_worker"
+  },
+  {
+   "name": "61 s old",
+   "now": 1793300066,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "a1pMbmt0ppDOgqf5T/ua1y86rYb3Sxo1eHjFwENS6RDo/w7u0PILJTue0looMTBSAPMeZjOUqxqPQ/dQmxdHDg=="
+    }
+   },
+   "reason": "stale"
+  },
+  {
+   "name": "60 s old",
+   "now": 1793300065,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "a1pMbmt0ppDOgqf5T/ua1y86rYb3Sxo1eHjFwENS6RDo/w7u0PILJTue0looMTBSAPMeZjOUqxqPQ/dQmxdHDg=="
+    }
+   },
+   "reason": "ok"
+  },
+  {
+   "name": "61 s ahead",
+   "now": 1793299944,
+   "seen": [],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "a1pMbmt0ppDOgqf5T/ua1y86rYb3Sxo1eHjFwENS6RDo/w7u0PILJTue0looMTBSAPMeZjOUqxqPQ/dQmxdHDg=="
+    }
+   },
+   "reason": "stale"
+  },
+  {
+   "name": "the worker's own request replayed",
+   "now": 1793300006,
+   "seen": [
+    "c4f0a1b2c3d4e5f60718293a4b5c6d7e"
+   ],
+   "request": {
+    "id": "aa11bb22cc33dd44ee55ff6600778899",
+    "cap": "core.call",
+    "target": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "args": {
+     "ticket": {
+      "typ": "rook-ticket",
+      "v": 2,
+      "hub": "19c7d7856f775f9a",
+      "band": "e17904e6ed4c664592f64f6f1d02c682",
+      "call": "5d1c0e8a9b7f4c2e8a61f0b3c4d5e6f7",
+      "nonce": "9b1f2e3d4c5b6a798877665544332211",
+      "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+      "cap": "shell.exec",
+      "args_hash": "-Ec2jpRPleV_pmLHFmMzJ-z5Tp1NHNVx3HWq64a_JoM",
+      "person": "person:bake",
+      "agent": "agent:claude-code",
+      "session": "s_7c1e",
+      "why": "Check how long kaiju has been up.",
+      "iat": 1793300000,
+      "exp": 1793300060,
+      "kid": "3c1945587ef004c3",
+      "sig": "hpoFYxWYe+C6wbsg6OYDw0Hxgnd8B3y8Rtpl7VvUAKO9SjbefDDlc+WkhUN2aPz9KaZF4HjHhm89/99XDQp9AA=="
+     },
+     "cap": "echo.say",
+     "target": "kaiju",
+     "args": {
+      "text": "hi"
+     },
+     "why": "Say hi from inside the call."
+    },
+    "proof": {
+     "typ": "rook-request",
+     "v": 2,
+     "worker": "3f0a9c1d2e3f40516273849506a7b8c9",
+     "hub": "19c7d7856f775f9a",
+     "band": "e17904e6ed4c664592f64f6f1d02c682",
+     "id": "aa11bb22cc33dd44ee55ff6600778899",
+     "cap": "core.call",
+     "args_hash": "lkFiGfa7TZw4LANNSruxf-ip5zln5Wlo1j2UYaQ3HYQ",
+     "parent": "9b1f2e3d4c5b6a798877665544332211",
+     "nonce": "c4f0a1b2c3d4e5f60718293a4b5c6d7e",
+     "ts": 1793300005,
+     "kid": "0e63af1fab431577",
+     "sig": "a1pMbmt0ppDOgqf5T/ua1y86rYb3Sxo1eHjFwENS6RDo/w7u0PILJTue0looMTBSAPMeZjOUqxqPQ/dQmxdHDg=="
+    }
+   },
+   "reason": "replay"
+  }
+ ]
+}

@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("nacl")
+from nacl.signing import SigningKey  # noqa: E402
 pytest.importorskip("jsonschema")
 
 from rook.core2 import journal as journal_mod, wire  # noqa: E402
@@ -177,6 +178,7 @@ class FakeWorker:
 
     def __init__(self, hub: Hub, band: Loopback, tmp: Path, core: str = "2.0"):
         self.hub, self.core = hub, core
+        self.key = SigningKey.generate()    # its own key: signs its core.call / core.elevate (13.1)
         folder = plugin(tmp, "echo", ECHO, {"echo.py": "def say(ctx, text): return text\n"})
         self.echo_raw, _ = check(folder)
         self.core_raw, _ = check(CORE)
@@ -193,6 +195,8 @@ class FakeWorker:
         self.refused: list[dict] = []
         self.args_seen: list[dict] = []
         self.announces = 0
+        self.sent: list[dict] = []          # its requests to the hub, as a band member would see them
+        self.during_relay = None            # async fn(ticket): runs inside echo.relay, after its sub-call
 
     def entries(self):
         return sorted(({"plugin": r["plugin"], "version": r["version"], "hash": wire.manifest_hash(r),
@@ -201,8 +205,9 @@ class FakeWorker:
 
     async def announce(self, **over):
         e = self.entries()
+        key = {"key": wire.pub_text(self.key)} if self.key else {}
         await self.to_hub({"kind": "announce", "worker_id": WID, "name": "kaiju", "core": self.core,
-                           "version": "1.0", "manifests": e,
+                           **key, "version": "1.0", "manifests": e,
                            "manifests_hash": runtime._entries_hash(e), **over})
 
     async def heartbeat(self, mhash=None):
@@ -212,10 +217,16 @@ class FakeWorker:
     async def ask(self, band, args):
         return await self.request("core.elevate", args)
 
-    async def request(self, cap, args):
+    async def request(self, cap, args, **proof):
         rid = secrets.token_hex(16)
         fut = self.pending[rid] = asyncio.get_running_loop().create_future()
-        await self.to_hub({"id": rid, "cap": cap, "target": self.hub.node, "args": args})
+        req = {"id": rid, "cap": cap, "target": self.hub.node, "args": args}
+        if self.key:
+            req["proof"] = wire.request_proof(self.key, req, **{
+                "worker": WID, "hub": self.hub.hub_id, "band": BAND, "nonce": secrets.token_hex(16),
+                "ts": int(time.time()), **proof})
+        self.sent.append(req)
+        await self.to_hub(req)
         return await fut
 
     async def handle(self, msg):
@@ -254,9 +265,12 @@ class FakeWorker:
                 sub = await self.request("core.call", {"ticket": got.ticket, "cap": "echo.say",
                                                        "target": "kaiju", "args": {"text": "inner"},
                                                        "why": "Relay a message."})
+                if self.during_relay:
+                    await self.during_relay(got.ticket)
                 return {"inner": sub}
             raise RuntimeError(cap)
-        await self.to_hub(await self.gate.execute(got, action))
+        out = await self.gate.execute(got, action)
+        await self.to_hub(out)
 
 
 @pytest.fixture
@@ -828,6 +842,98 @@ def test_hourly_check_runs_off_the_loop_and_prunes_sessions(hubs):
     run(go())
 
 
+# -- workers sign their requests (review H2) ----------------------------------------
+
+class Attacker:
+    """Another band member: holds the PSK, hears everything the hub sends
+    (tickets included) and sends what it likes."""
+
+    def __init__(self, band: Loopback):
+        self.heard: list[dict] = []
+        self.to_hub = band.attach(BAND, self.hear)
+        self.key = SigningKey.generate()
+
+    async def hear(self, msg):
+        self.heard.append(msg)
+
+    async def ask(self, req, timeout=5.0):
+        start = len(self.heard)        # a replayed id was answered once already
+        await self.to_hub(req)
+        for _ in range(int(timeout / 0.02)):
+            got = next((m for m in self.heard[start:] if m.get("id") == req["id"] and "ok" in m), None)
+            if got:
+                return got
+            await asyncio.sleep(0.02)
+        raise AssertionError("no reply")
+
+
+def evil_call(hub, ticket, text="evil"):
+    return {"id": secrets.token_hex(16), "cap": "core.call", "target": hub.node,
+            "args": {"ticket": ticket, "cap": "echo.say", "target": "kaiju", "args": {"text": text},
+                     "why": "Not the worker."}}
+
+
+def test_h2_an_in_flight_ticket_cant_be_replayed_by_another_band_member(hubs):
+    """castling/review.md H2: a PSK holder reads the ticket of a call in
+    flight and sends its own core.call with it. Before worker keys the hub ran
+    as the parent's person; now every attempt is refused."""
+    async def go():
+        hub, w, token = await hubs()
+        evil = Attacker(hub.transport)
+        tries = {}
+
+        async def during(ticket):
+            # 1. the bare bearer ticket, as in 2.0
+            tries["bare"] = await evil.ask(evil_call(hub, ticket))
+            tries["bare again"] = await evil.ask(evil_call(hub, ticket))
+            # 2. signed with its own key, claiming to be the worker
+            req = evil_call(hub, ticket)
+            req["proof"] = wire.request_proof(evil.key, req, worker=WID, hub=hub.hub_id, band=BAND,
+                                              nonce=secrets.token_hex(16), ts=int(time.time()))
+            tries["forged"] = await evil.ask(req)
+            # 3. as a machine of its own (its key pinned at its announce), with the worker's ticket
+            other = "ab" * 16
+            await evil.to_hub({"kind": "announce", "worker_id": other, "name": "evil", "core": "2.0",
+                               "key": wire.pub_text(evil.key), "manifests": [],
+                               "manifests_hash": runtime._entries_hash([])})
+            await until(lambda: hub.worker_key(other))
+            req = evil_call(hub, ticket)
+            req["proof"] = wire.request_proof(evil.key, req, worker=other, hub=hub.hub_id, band=BAND,
+                                              nonce=secrets.token_hex(16), ts=int(time.time()))
+            tries["other worker"] = await evil.ask(req)
+            # 4. the worker's own signed sub-call, sent again
+            tries["replay"] = await evil.ask(w.sent[-1])
+            # 5. the worker's proof on a request of its own
+            req = evil_call(hub, ticket)
+            req["proof"] = w.sent[-1]["proof"]
+            tries["moved proof"] = await evil.ask(req)
+        w.during_relay = during
+        try:
+            await w.announce()
+            await until(lambda: "echo.relay" in hub.dispatcher.workers.get(WID, runtime.Worker("", "", "", {}, {})).caps)
+            assert hub.worker_key(WID) == wire.pub_text(w.key)
+            _, out = await http(hub, "POST", "/call", {"worker": "kaiju", "cap": "echo.relay", "why": WHY}, token)
+            assert out["ok"] and out["result"]["inner"]["result"]["said"] == "inner", out
+            errors = {k: (v["ok"], v["error"]) for k, v in tries.items()}
+            assert errors == {
+                "bare": (False, "denied: worker request: no_proof"),
+                "bare again": (False, "denied: worker request: no_proof"),
+                "forged": (False, "denied: worker request: unknown_key"),
+                "other worker": (False, "denied: worker request: wrong_worker"),
+                "replay": (False, "denied: worker request: replay"),
+                "moved proof": (False, "denied: worker request: wrong_call"),
+            }, errors
+            # nothing ran for the attacker: only the worker's own sub-call reached it
+            said = [t for t in w.verified if t["cap"] == "echo.say"]
+            assert len(said) == 1
+            # the real sub-call is journaled with the call it ran inside
+            inner = hub.journal.query(cap="echo.say", limit=1)[0]
+            assert inner["parent"] == out["id"] and inner["ok"]
+        finally:
+            await hub.stop()
+    run(go())
+
+
 def test_vault_references_reach_only_the_worker(hubs, tmp_path):
     cfg = Config(data=tmp_path / "data", band=BAND, users={"bake": {"preset": "owner"}, "ann": {"preset": "adult"}},
                  agents={"claude": {"grants": ["*"], "max_risk": "exec"}}, doors={"http": {"bind": "127.0.0.1:0"}})
@@ -889,6 +995,43 @@ def test_vault_references_reach_only_the_worker(hubs, tmp_path):
     run(go())
 
 
+def test_worker_keys_are_pinned(hubs, tmp_path):
+    async def go():
+        hub, w, token = await hubs()
+        try:
+            # enrollment recorded a key: an announce with another one is refused
+            enrolled = SigningKey.generate()
+            hub.enroll.enrolled[WID] = {"name": "kaiju", "owner": "person:bake", "key": wire.pub_text(enrolled)}
+            await w.announce()
+            await asyncio.sleep(0.2)
+            assert WID not in hub.known
+            w.key = enrolled
+            await w.announce()
+            await until(lambda: WID in hub.known)
+            pinned = hub.journal.query(kind="worker_key", viewer={"owner": True}, limit=5)
+            assert [(e["worker"], e["via"], e["key"]) for e in pinned] == \
+                [(WID, "enrollment", wire.key_id(wire.pub_text(enrolled)))]
+            # once pinned, another key is refused: the name and manifests stay the worker's
+            w.key = SigningKey.generate()
+            await w.announce(name="impostor", manifests=[], manifests_hash=runtime._entries_hash([]))
+            await asyncio.sleep(0.2)
+            assert hub.known[WID].name == "kaiju" and hub.known[WID].key == wire.pub_text(enrolled)
+            # an announce with no key (older code) doesn't unpin it
+            w.key = None
+            await w.announce()
+            await asyncio.sleep(0.1)
+            assert hub.worker_key(WID) == wire.pub_text(enrolled)
+            assert (hub.data / "workers.json").read_text().count(wire.pub_text(enrolled)) == 1
+            bad = {"kind": "announce", "worker_id": "cd" * 16, "name": "x", "core": "2.0", "key": "ed25519:nope",
+                   "manifests": [], "manifests_hash": runtime._entries_hash([])}
+            await w.to_hub(bad)
+            await asyncio.sleep(0.1)
+            assert "cd" * 16 not in hub.known
+        finally:
+            await hub.stop()
+    run(go())
+
+
 def test_keep_alive_requests_do_not_wait_for_delayed_acks(hubs):
     """The door writes headers and body separately; with Nagle on, each reply
     on a reused connection waited ~40 ms for the client's delayed ACK."""
@@ -933,6 +1076,33 @@ def test_the_vault_survives_a_restart_and_a_foreign_one_stays_locked(hubs, tmp_p
             _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "secret.set", "why": WHY,
                                                        "args": {"name": "x", "value": "y"}}, token)
             assert not out["ok"] and "locked" in out["error"], out
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_sub_calls_per_call_are_capped(hubs, monkeypatch):
+    from rook.core2.hub import dispatch as dispatch_mod
+    monkeypatch.setattr(dispatch_mod, "SUB_CALLS", 1)
+
+    async def go():
+        hub, w, token = await hubs()
+        more = []
+
+        async def again(ticket):
+            for _ in range(2):
+                more.append(await w.request("core.call", {"ticket": ticket, "cap": "echo.say", "target": "kaiju",
+                                                          "args": {"text": "more"}, "why": "Once more."}))
+        w.during_relay = again
+        try:
+            await w.announce()
+            await until(lambda: "echo.relay" in hub.dispatcher.workers.get(WID, runtime.Worker("", "", "", {}, {})).caps)
+            _, out = await http(hub, "POST", "/call", {"worker": "kaiju", "cap": "echo.relay", "why": WHY}, token)
+            assert out["ok"] and out["result"]["inner"]["ok"]
+            assert [m["error"] for m in more] == ["denied: core.call: more than 1 sub-calls in one call"] * 2
+            limit = hub.journal.query(kind="sub_call_limit", viewer={"owner": True}, limit=5)
+            assert len(limit) == 1 and limit[0]["call"] == out["id"]
+            assert hub.dispatcher.sub_calls == {}       # forgotten when the call ends
         finally:
             await hub.stop()
     run(go())

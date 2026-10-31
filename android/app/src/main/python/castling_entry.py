@@ -122,6 +122,7 @@ def _sleep(seconds: float) -> None:
 def enroll(files_dir: str, target: str, name: str, listener=None, force: bool = False) -> str:
     """Sign this phone in with its 0.5 home hub. Returns status() JSON with
     ``ok``, or ``{"ok": false, "error"}``."""
+    from rook.core2 import wire
     from rook.core2.enroll import device
     _cancel.clear()
     say = listener.say if listener is not None else log.info
@@ -131,10 +132,11 @@ def enroll(files_dir: str, target: str, name: str, listener=None, force: bool = 
         device.check_url(url)       # https, or a hub on this phone itself (adb reverse in tests)
         if not force and device.home_of(path):
             raise device.EnrollError(device.already(device.home_of(path)))
-        bundle = device.sign_in(url, name, code, pinned, say=say, sleep=_sleep)
+        key = device.signing_key(path, force)       # the phone's own key (spec 5.8): the hub records it
+        bundle = device.sign_in(url, name, code, pinned, key=wire.pub_text(key), say=say, sleep=_sleep)
         if _cancel.is_set():
             raise Cancelled()
-        device.install(path, bundle, url, force=force)
+        device.install(path, bundle, url, force=force, key=key)
     except Cancelled:
         return json.dumps({"ok": False, "error": "sign-in cancelled"})
     except device.EnrollError as e:

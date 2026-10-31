@@ -27,7 +27,10 @@ What it owns:
   restarts, ``<data>/workers.json``). Presence follows heartbeats (90 s).
 - **The hub node**: calls to ``rook`` (the hub's own caps) are dispatched like
   any other and run in-process; the band's ``core.elevate`` and ``core.call``
-  requests are answered here (13).
+  requests are answered here (13), each signed by the worker's own key
+  (13.1). The hub pins that key per worker: from enrollment, else
+  the first announce that carries one; a later announce with another key is
+  refused.
 - **The vault** (:mod:`.vault`): ``<data>/vault.db``, unlocked on start
   with the root key; ``{{secret:NAME}}`` in calls to workers and hub
   plugins' secret settings read it; ``secret.*`` caps for owners.
@@ -275,6 +278,7 @@ class Known:
     online: bool = False
     problem: str | None = None           # why some or all of it can't be used
     tried: str | None = None             # the last heartbeat manifests_hash a fetch was made for
+    key: str | None = None               # its pinned public key (5.8): signs its core.call/core.elevate
 
     def saved(self) -> dict:
         d = asdict(self)
@@ -340,6 +344,7 @@ class Hub:
         self._tasks: set[asyncio.Task] = set()
         self._loops: list[asyncio.Task] = []
         self._pending: dict[str, asyncio.Future] = {}
+        self._replay = wire.ReplayCache()        # worker request nonces (13.1)
         self._late: dict[str, str] = {}          # call id -> worker, for calls given up on (bounded)
         self._event_ids: dict[tuple, None] = {}  # (worker, event id) seen lately (bounded)
         self._event_refused: set = set()         # (worker, event, why) logged once
@@ -729,8 +734,24 @@ class Hub:
             return
         if any(o.name == name and o.id != wid for o in self.known.values()):
             log.warning("a second worker id claims a known name", extra={"fields": {"worker": wid, "name": name}})
+        key, pinned = msg.get("key"), self.worker_key(wid)
+        if key is not None and not wire.valid_pub(key):
+            log.warning("bad worker announce", extra={"fields": {"worker": wid, "error": "key"}})
+            return
+        if pinned and key and key != pinned:
+            # An impostor, or a machine that lost its key: it enrolls again.
+            log.warning("worker announce refused: not its pinned key", extra={"fields": {
+                "worker": wid, "name": name, "key": wire.key_id(key), "pinned": wire.key_id(pinned)}})
+            return
         async with self._lock(wid):
             k = self.known.get(wid) or Known(wid, name, band)
+            if key and not k.key:
+                k.key = key
+                via = "enrollment" if pinned else "announce"
+                self._journal({"kind": "worker_key", "ts": self.clock(), "hub": self.hub_id, "worker": wid,
+                               "name": name, "key": wire.key_id(key), "via": via, "decision": "allow"})
+                log.info("worker key pinned", extra={"fields": {"worker": wid, "name": name,
+                                                                "key": wire.key_id(key), "via": via}})
             before = (k.online, k.version)
             k.name, k.band = name, band
             k.announced_core = msg.get("core")
@@ -883,15 +904,46 @@ class Hub:
                                "call": msg["id"], "worker": msg["from"], "ok": msg.get("ok") is True,
                                **({"error": str(msg.get("error"))[:500]} if msg.get("ok") is not True else {})})
 
+    def worker_key(self, wid: Any) -> str | None:
+        """The public key this hub pinned for a worker (5.8): from its
+        announce once seen, else from its enrollment."""
+        k = self.known.get(wid) if isinstance(wid, str) else None
+        if k is not None and k.key:
+            return k.key
+        rec = self.enroll.enrolled.get(wid) if isinstance(wid, str) else None
+        key = rec.get("key") if isinstance(rec, dict) else None
+        return key if wire.valid_pub(key) else None
+
+    def _request_refused(self, band: str, req: dict) -> str | None:
+        """Check a worker's ``core.call`` or ``core.elevate`` (13.1): signed
+        by the worker its parent ticket names, with that worker's pinned key,
+        fresh and not replayed. Returns the refusal, or None."""
+        args = req.get("args") if isinstance(req.get("args"), dict) else {}
+        ticket = args.get("ticket") if isinstance(args.get("ticket"), dict) else {}
+        proof = req.get("proof")
+        wid = proof.get("worker") if isinstance(proof, dict) else ticket.get("worker")
+        pub = self.worker_key(wid)
+        ok, reason = wire.verify_request(proof, req, hub=self.hub_id, band=band, keys={wid: pub} if pub else {},
+                                         now=int(self.clock()), replay=self._replay)
+        if ok:
+            return None
+        log.warning("worker request refused", extra={"fields": {"cap": req["cap"], "worker": str(wid)[:40],
+                                                                 "reason": reason}})
+        return f"denied: worker request: {reason}"
+
     async def _band_request(self, band: str, req: dict) -> None:
         """``core.elevate`` and ``core.call`` from a worker, each authenticated
-        by the ticket of a call in flight (13)."""
+        by the ticket of a call in flight (13) and signed by the worker the
+        ticket names (13.1); ``core.event`` (13)."""
         rid, args = req.get("id"), req.get("args") if isinstance(req.get("args"), dict) else {}
         if not isinstance(rid, str) or not rid:
             return
         ticket = args.get("ticket")
         worker = ticket.get("worker") if isinstance(ticket, dict) else None
-        if req["cap"] == "core.elevate":
+        refused = self._request_refused(band, req) if req["cap"] in ("core.elevate", "core.call") else None
+        if refused:
+            out = {"ok": False, "error": f"elevation: {refused}" if req["cap"] == "core.elevate" else refused}
+        elif req["cap"] == "core.elevate":
             out = await self.dispatcher.elevate(worker, ticket, args.get("reason"))
         elif req["cap"] == "core.event":
             out = self._worker_events(band, args)

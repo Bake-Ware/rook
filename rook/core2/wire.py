@@ -1,6 +1,8 @@
 """Core v2 wire primitives: canonical JSON (RFC 8785), signed objects,
 call tickets, elevation leases, hub keys, memberships and version
-negotiation. Spec sections 3, 5, 6 and 8 of docs/spec/core-v2.md.
+negotiation, and the proof a worker signs its ``core.call`` and
+``core.elevate`` with. Spec sections 3, 5, 6, 8 and 13 of
+docs/spec/core-v2.md.
 
 Signing and verification take PyNaCl keys/raw bytes; everything else is
 standard library.
@@ -139,6 +141,7 @@ PREFIX = {
     "rook-announce": b"rook-announce-v2\n",
     "rook-plugin": b"rook-plugin-v2\n",
     "rook-release": b"rook-release-v2\n",
+    "rook-request": b"rook-request-v2\n",     # signed by the worker's own key (5.8)
 }
 
 # Keys that ride on a signed object without being signed (spec 3.3).
@@ -378,4 +381,83 @@ def verify_membership(doc: Any, home_hub: str, home_keys: dict, worker_id: str) 
         return False, "bad_role"
     if doc["role"] != "removed" and not rights.valid_rights(doc.get("ceiling")):
         return False, "bad_ceiling"
+    return True, "ok"
+
+
+# -- worker keys (spec 5.8, 13.1) ------------------------------------------
+
+REQUEST_SKEW = 60      # |now - ts| tolerated on a worker's request proof
+_PUB = re.compile(r"ed25519:[A-Za-z0-9+/]{43}=")
+
+
+def valid_pub(text: Any) -> bool:
+    """True for ``ed25519:<base64 of 32 bytes>``."""
+    if not (isinstance(text, str) and _PUB.fullmatch(text)):
+        return False
+    try:
+        return len(_raw_pub(text)) == 32
+    except ValueError:
+        return False
+
+
+def _ticket_of(request: dict) -> Any:
+    args = request.get("args")
+    return args.get("ticket") if isinstance(args, dict) else None
+
+
+def request_proof(sk, request: dict, *, worker: str, hub: str, band: str, nonce: str, ts: int) -> dict:
+    """The ``rook-request`` a worker puts on its ``core.call`` or
+    ``core.elevate`` as ``proof``: binds the request (id, cap, args), the hub
+    and band it is for, the parent ticket's nonce, a fresh nonce and the
+    time."""
+    return sign(sk, {"typ": "rook-request", "v": 2, "worker": worker, "hub": hub, "band": band,
+                     "id": request["id"], "cap": request["cap"], "args_hash": args_hash(request.get("args")),
+                     "parent": (_ticket_of(request) or {}).get("nonce"), "nonce": nonce, "ts": ts})
+
+
+_PROOF_STR = ("worker", "hub", "band", "id", "cap", "args_hash", "parent", "nonce", "kid", "sig")
+
+
+def verify_request(proof: Any, request: dict, *, hub: str, band: str, keys: dict, now: int,
+                   replay: ReplayCache) -> tuple[bool, str]:
+    """Hub-side check of a worker's ``core.call`` or ``core.elevate`` (spec
+    13.1). ``keys`` maps worker ids to the public keys this hub pinned for
+    them. Returns (ok, reason); records the nonce on success."""
+    if proof is None:
+        return False, "no_proof"
+    if not (isinstance(proof, dict) and proof.get("typ") == "rook-request" and proof.get("v") == 2
+            and all(isinstance(proof.get(k), str) and proof[k] for k in _PROOF_STR)
+            and isinstance(proof.get("ts"), int) and not isinstance(proof["ts"], bool)
+            and _HEX32.fullmatch(proof["nonce"]) and _HEX32.fullmatch(proof["parent"])):
+        return False, "malformed"
+    pub = keys.get(proof["worker"])
+    if not pub:
+        return False, "unknown_worker"
+    if proof["kid"] != key_id(pub):
+        return False, "unknown_key"
+    if not verify_sig(pub, proof):
+        return False, "bad_signature"
+    if proof["hub"] != hub:
+        return False, "wrong_hub"
+    if proof["band"] != band:
+        return False, "wrong_band"
+    if proof["id"] != request.get("id"):
+        return False, "wrong_call"
+    if proof["cap"] != request.get("cap"):
+        return False, "wrong_cap"
+    try:
+        if proof["args_hash"] != args_hash(request.get("args")):
+            return False, "wrong_args"
+    except (ValueError, RecursionError):
+        return False, "wrong_args"
+    ticket = _ticket_of(request)
+    if not isinstance(ticket, dict) or proof["parent"] != ticket.get("nonce"):
+        return False, "wrong_parent"
+    if ticket.get("worker") != proof["worker"]:
+        return False, "wrong_worker"
+    if abs(now - proof["ts"]) > REQUEST_SKEW:
+        return False, "stale"
+    if replay.seen(proof["nonce"], now):
+        return False, "replay"
+    replay.add(proof["nonce"], proof["ts"] + REQUEST_SKEW, now)
     return True, "ok"

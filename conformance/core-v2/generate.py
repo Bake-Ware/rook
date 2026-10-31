@@ -31,7 +31,7 @@ def key(name: str) -> SigningKey:
     return SigningKey(hashlib.sha256(b"rook-core-v2-test:" + name.encode()).digest())
 
 
-KEYS = {n: key(n) for n in ("home-root", "home-op", "guest-root", "guest-op", "attacker")}
+KEYS = {n: key(n) for n in ("home-root", "home-op", "guest-root", "guest-op", "attacker", "worker", "worker-b")}
 PUB = {n: wire.pub_text(k) for n, k in KEYS.items()}
 KID = {n: wire.key_id(p) for n, p in PUB.items()}
 HOME, GUEST = KID["home-root"], KID["guest-root"]
@@ -302,6 +302,85 @@ def gen_leases() -> dict:
     return {"ticket": t, "keys": keys, "cases": out}
 
 
+# -- worker requests (13.1) ----------------------------------------------------
+
+HUB_NODE = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+WORKER_B = "7e6d5c4b3a291807f6e5d4c3b2a19080"
+REQ_ID = "aa11bb22cc33dd44ee55ff6600778899"
+PROOF_NONCE = "c4f0a1b2c3d4e5f60718293a4b5c6d7e"
+
+
+def sub_call(ticket=None, **args) -> dict:
+    a = {"ticket": ticket or ticket_for(), "cap": "echo.say", "target": "kaiju", "args": {"text": "hi"},
+         "why": "Say hi from inside the call.", **args}
+    return {"id": REQ_ID, "cap": "core.call", "target": HUB_NODE, "args": a}
+
+
+def proved(req, signer="worker", worker=WORKER, hub=HOME, band=BAND, nonce=PROOF_NONCE, ts=T0 + 5,
+           for_request=None, **over) -> dict:
+    p = wire.request_proof(KEYS[signer], for_request or req, worker=worker, hub=hub, band=band, nonce=nonce, ts=ts)
+    if over:
+        p = {**p, **over}
+        p = wire.sign(KEYS[signer], {k: v for k, v in p.items() if v is not None and k != "sig"})
+    return {**req, "proof": p}
+
+
+def gen_requests() -> dict:
+    t = ticket_for()
+    call = sub_call()
+    elevate = {"id": REQ_ID, "cap": "core.elevate", "target": HUB_NODE, "args": {"ticket": t, "reason": "upfront"}}
+    no_ticket = {"id": REQ_ID, "cap": "core.call", "target": HUB_NODE,
+                 "args": {"cap": "echo.say", "target": "kaiju", "args": {}, "why": "No ticket."}}
+    other_t = ticket_for(nonce="0" * 32)
+    ok = proved(call)
+    tampered = {**ok, "proof": {**ok["proof"], "ts": T0 + 6}}
+    forged = proved(call, signer="attacker")
+    forged["proof"] = {**forged["proof"], "kid": KID["worker"]}
+    keys = {WORKER: PUB["worker"], WORKER_B: PUB["worker-b"]}
+    cases = [
+        ("ok: core.call", ok, T0 + 5, [], "ok"),
+        ("ok: core.elevate", proved(elevate), T0 + 5, [], "ok"),
+        ("unknown field is signed and verifies", proved(call, x_future=1), T0 + 5, [], "ok"),
+        ("no proof: the H2 replay of an in-flight ticket", call, T0 + 5, [], "no_proof"),
+        ("wrong v", proved(call, v=1), T0 + 5, [], "malformed"),
+        ("nonce not 32 hex", proved(call, nonce="abc"), T0 + 5, [], "malformed"),
+        ("ts a string", proved(call, ts=str(T0)), T0 + 5, [], "malformed"),
+        ("parent left out", proved(call, parent=None), T0 + 5, [], "malformed"),
+        ("a worker this hub has no key for", proved(call, worker="dd" * 16), T0 + 5, [], "unknown_worker"),
+        ("signed by another key", proved(call, signer="attacker"), T0 + 5, [], "unknown_key"),
+        ("forged: claims the worker's kid", forged, T0 + 5, [], "bad_signature"),
+        ("tampered after signing", tampered, T0 + 5, [], "bad_signature"),
+        ("for another hub", proved(call, hub=GUEST), T0 + 5, [], "wrong_hub"),
+        ("for another band", proved(call, band=GUEST_BAND), T0 + 5, [], "wrong_band"),
+        ("the proof of another request", {**call, "id": "bb" * 16, "proof": ok["proof"]}, T0 + 5, [],
+         "wrong_call"),
+        ("an elevate's proof on a sub-call", {**call, "proof": proved(elevate)["proof"]}, T0 + 5, [],
+         "wrong_cap"),
+        ("arguments changed after signing", {**sub_call(cap="shell.exec", args={"argv": ["sh"]}),
+                                              "proof": ok["proof"]}, T0 + 5, [], "wrong_args"),
+        ("the proof moved onto a sub-call of another ticket", proved(sub_call(other_t), for_request=call),
+         T0 + 5, [], "wrong_args"),
+        ("parent names another ticket", proved(call, parent="0" * 32), T0 + 5, [], "wrong_parent"),
+        ("a request with no ticket", proved(no_ticket, parent=NONCE), T0 + 5, [], "wrong_parent"),
+        ("another worker's in-flight ticket", proved(call, signer="worker-b", worker=WORKER_B), T0 + 5, [],
+         "wrong_worker"),
+        ("61 s old", ok, T0 + 66, [], "stale"),
+        ("60 s old", ok, T0 + 65, [], "ok"),
+        ("61 s ahead", ok, T0 - 56, [], "stale"),
+        ("the worker's own request replayed", ok, T0 + 6, [PROOF_NONCE], "replay"),
+    ]
+    out = []
+    for name, req, now, seen, expect in cases:
+        cache = wire.ReplayCache()
+        for n in seen:
+            cache.add(n, now, now)
+        ok_, reason = wire.verify_request(copy.deepcopy(req.get("proof")), req, hub=HOME, band=BAND, keys=keys,
+                                          now=now, replay=cache)
+        check(reason == expect and ok_ == (expect == "ok"), f"request {name}: {reason}")
+        out.append({"name": name, "now": now, "seen": seen, "request": req, "reason": expect})
+    return {"hub": HOME, "band": BAND, "keys": keys, "skew": wire.REQUEST_SKEW, "cases": out}
+
+
 # -- memberships ----------------------------------------------------------------
 
 def gen_memberships() -> dict:
@@ -522,7 +601,7 @@ def gen_journal() -> dict:
 
 VECTORS = {
     "canonical": gen_canonical, "signatures": gen_signatures, "tickets": gen_tickets, "leases": gen_leases,
-    "memberships": gen_memberships, "version": gen_version, "rights": gen_rights, "presets": gen_presets,
+    "memberships": gen_memberships, "requests": gen_requests, "version": gen_version, "rights": gen_rights, "presets": gen_presets,
     "gate": gen_gate, "journal": gen_journal,
 }
 

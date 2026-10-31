@@ -50,6 +50,13 @@ starts the relay and hub, enrolls the worker with a one-time code from
 `POST /enroll/code` (the QR path of spec 12), mints the MCP token and starts
 the worker. It needs `uv`, `git` and `curl`; the venv's Python comes from uv.
 
+Upgrading a sidecar enrolled before worker keys re-keys its worker by
+itself: the worker makes `worker.key` in its data folder on its first start
+and the hub pins it from the worker's next announce (journal entry
+`worker_key`, `via: announce`). Upgrade the hub and the worker together:
+the new hub refuses unsigned sub-calls and elevations, which the old worker
+sends.
+
 The installed copy carries the other scripts too:
 
 ```sh

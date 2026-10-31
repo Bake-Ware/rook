@@ -59,6 +59,7 @@ async def serve(worker: Worker) -> None:
 
 
 def enroll(args) -> int:
+    from .. import wire
     from ..enroll import device, mdns
     config = Path(args.config)
     try:
@@ -72,8 +73,10 @@ def enroll(args) -> int:
         if not args.force and device.home_of(config):
             raise device.EnrollError(device.already(device.home_of(config)))
         name = args.name or device.default_name(config)
-        bundle = device.sign_in(url, name, args.code or code, pinned, say=lambda s: print(s, flush=True))
-        paths = device.install(config, bundle, url, force=args.force)
+        key = device.signing_key(config, args.force)
+        bundle = device.sign_in(url, name, args.code or code, pinned, key=wire.pub_text(key),
+                                say=lambda s: print(s, flush=True))
+        paths = device.install(config, bundle, url, force=args.force, key=key)
     except device.EnrollError as e:
         print(f"enroll: {e}", file=sys.stderr)
         return 1
