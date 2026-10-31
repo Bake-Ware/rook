@@ -9,7 +9,6 @@ rights object, and a call is allowed only when every layer permits it.
 """
 from __future__ import annotations
 
-import re
 from typing import Any
 
 RISKS = ("read", "write", "exec", "admin")
@@ -38,17 +37,32 @@ def risk_rank(risk: Any) -> int:
     return RISKS.index(risk) if risk in RISKS else len(RISKS) - 1
 
 
-def _glob(pattern: str) -> re.Pattern:
-    return re.compile(".*".join(re.escape(p) for p in pattern.split("*")), re.S)
+def _glob(pattern: str, text: str) -> bool:
+    """Whole-``text`` match where ``*`` is any run of characters. Linear:
+    patterns are caller input (a session's declared caps), and a regex of
+    ``.*`` runs backtracks exponentially on ``*a*a*a...``."""
+    parts = pattern.split("*")
+    if len(parts) == 1:
+        return pattern == text
+    head, tail = parts[0], parts[-1]
+    if len(text) < len(head) + len(tail) or not text.startswith(head) or not text.endswith(tail):
+        return False
+    i, end = len(head), len(text) - len(tail)
+    for mid in parts[1:-1]:          # leftmost fit is enough with only '*'
+        i = text.find(mid, i, end)
+        if i < 0:
+            return False
+        i += len(mid)
+    return True
 
 
 def matches(pattern: str, cap: str, target: str = "") -> bool:
     """``cap-glob`` or ``cap-glob@target-glob``; ``*`` is the only wildcard
     and matches any run of characters, dots included."""
     name, at, where = pattern.partition("@")
-    if not _glob(name).fullmatch(cap):
+    if not _glob(name, cap):
         return False
-    return not at or bool(_glob(where).fullmatch(target or ""))
+    return not at or _glob(where, target or "")
 
 
 def valid_rights(r: Any) -> bool:
