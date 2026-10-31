@@ -4,8 +4,8 @@ says what they are). One runtime per hub (``_RT``), made by the start hook.
 **Streams.** Each huddle is a durable ``huddle`` stream: posts are ``text``
 events by whoever posted, and the plugin writes ``status`` events for pins,
 calls, gates and outcomes, so the thread is the huddle's whole story.
-TODO(castling:streams): the streams live in this plugin's own store
-(``<data>/huddles.db``) until the hub keeps one stream index.
+The streams live in this plugin's own store (``<data>/huddles.db``) and are
+listed in the hub's stream index (``ctx.index_streams``, ``stream.list``).
 
 **Pins.** Only a person (no agent in the call) or the huddle's chair agent
 (``agent:<chair>``) pins, at an exact version: a PR at its head SHA (a
@@ -122,6 +122,7 @@ class Runtime:
         self.sys = Caller(band=ctx.band, owner=True, plugin="huddle")
         self.sysctx = _with_caller(ctx, self.sys)
         self.streams = Streams(SqliteStore(str(ctx.data / "huddles.db")), host="hub")
+        ctx.index_streams(self.streams)          # huddles in the hub's stream list (N28)
         self.tasks: set[asyncio.Task] = set()
 
     def spawn(self, coro) -> asyncio.Task:
