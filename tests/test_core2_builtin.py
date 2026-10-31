@@ -12,7 +12,8 @@ from rook.kit.ctx import Caller, KitError
 from rook.kit.manifest import load
 from rook.kit.manifest.validate import CORE_PRESETS, contract_problems
 
-SERVICES = {"notify.send", "llm.complete", "agent.backend", "voice.tts", "voice.stt"}
+SERVICES = {"notify.send", "llm.complete", "agent.backend", "voice.tts", "voice.stt", "voice.turn",
+            "voice.speaker"}
 DEVICES = {"hid.click", "hid.key", "hid.drag", "hid.type", "app.launch", "notification.post",
            "power.off", "screen.capture", "screen.on", "sound.set", "media.play", "media.pause",
            "media.stop", "media.next", "media.previous", "media.seek", "ui.screen",

@@ -1,0 +1,92 @@
+# The voice service worker (services/voice) on a 0.5 band: the speech motor
+# skill's engines on a machine with the models (kaiju's GPU). A builtin
+# manifest (castling-manifest-builtin): the service implements these caps in
+# its own process (services/voice/band.py: python -m services.voice.band), so
+# they carry no run:, and the hub never pushes this plugin. Whisper (STT),
+# Kokoro and Chatterbox (TTS), Smart Turn (end of turn) and TitaNet (speaker
+# ID) stay as they are.
+#
+# Audio in is a file map {data: base64, mime}: audio/L16 (16 kHz mono 16-bit
+# PCM, the phone's capture format) or audio/wav (mono 16-bit). Audio out is
+# audio/wav.
+manifest: 1
+plugin: speech-engine
+version: 0.5.0
+title: Speech engine
+doc: Speech recognition, spoken voices, end-of-turn detection and speaker ID from the voice service.
+package: agents
+builtin: true
+runs_on: worker
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+
+caps:
+  stt:
+    doc: Speech to text with Whisper. Quiet or unintelligible audio is an empty text with the reason.
+    risk: read
+    scope: local
+    effects: [personal]
+    timeout: 30s
+    args:
+      audio: { type: file, required: true, doc: "At most 30 s." }
+      language: { type: str, doc: "BCP 47 tag; the service transcribes English for now and says so." }
+    result:
+      type: map
+      fields:
+        text: { type: str, required: true }
+        language: { type: str }
+        reason: { type: str, doc: "Why nothing was heard: quiet, no_speech, ..." }
+  tts:
+    doc: Speak a line in a Kokoro or Chatterbox voice (a Chatterbox failure speaks it in the Kokoro default).
+    risk: read
+    scope: local
+    timeout: 60s
+    args:
+      text: { type: str, required: true, max: 2500 }
+      voice: { type: str, doc: "A voice from speech-engine.voices; blank: the service's default." }
+    result: { type: file, doc: audio/wav }
+  turn:
+    doc: Smart Turn's verdict on an utterance - finished, or only a pause.
+    risk: read
+    scope: local
+    timeout: 10s
+    args:
+      audio: { type: file, required: true, doc: "The utterance so far; the last 8 s are judged." }
+    result:
+      type: map
+      fields:
+        complete: { type: bool, required: true }
+  speaker:
+    doc: Who is speaking, against the enrolled voices (advisory, shadow mode).
+    risk: read
+    scope: local
+    effects: [personal]
+    timeout: 10s
+    args:
+      audio: { type: file, required: true, doc: "At least 0.6 s of speech." }
+    result:
+      type: map
+      fields:
+        label: { type: str, required: true, doc: "An enrolled name, guest or assistant (the service's own voice)." }
+        score: { type: float }
+        candidate: { type: str, doc: "The closest enrolled voice, even below the threshold." }
+  voices:
+    doc: The voices this service speaks, and its default.
+    risk: read
+    scope: local
+    idempotent: true
+    result: { type: map }
+  status:
+    doc: Which engines are loaded (STT, TTS engines, turn, speaker ID) and why one isn't.
+    risk: read
+    scope: local
+    idempotent: true
+    result: { type: map }
+
+provides:
+  voice.stt: speech-engine.stt
+  voice.tts: speech-engine.tts
+  voice.turn: speech-engine.turn
+  voice.speaker: speech-engine.speaker
+
+docs: { manual: docs/manual.md }

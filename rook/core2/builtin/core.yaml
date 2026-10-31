@@ -140,9 +140,12 @@ contracts:
         session: { type: str, required: true, doc: Pass back to continue the conversation. }
         usage: { type: map, items: { type: int } }
 
-  # TODO(castling:hub-services): Bake decided B10 (castling-naming-decisions):
-  # `voice` is the device speech contract (voice.speak, below); the hub's voice
-  # service moves to `speech`, so these become speech.tts and speech.stt.
+  # The voice motor skill (castling-agents): speech in, speech out, turn
+  # detection, speaker ID. Bake's B10 (castling-naming-decisions): `voice` is
+  # the speech contracts' namespace (these four, and a device speaking aloud);
+  # the hub's voice assistant service is `speech` (rook/plugins/speech).
+  # Audio is a file map {data: base64, mime}: audio/L16 (16 kHz mono 16-bit
+  # PCM) or audio/wav.
   voice.tts:
     doc: Text to speech.
     route: provider
@@ -162,6 +165,27 @@ contracts:
       fields:
         text: { type: str, required: true }
         language: { type: str }
+
+  voice.turn:
+    doc: Whether the speaker has finished their turn or only paused (end-of-turn detection).
+    route: provider
+    args:
+      audio: { type: file, required: true, doc: "The utterance so far (the last 8 s matter)." }
+    result:
+      type: map
+      fields:
+        complete: { type: bool, required: true }
+
+  voice.speaker:
+    doc: Who is speaking (speaker ID against enrolled voices; advisory, never a credential).
+    route: provider
+    args:
+      audio: { type: file, required: true }
+    result:
+      type: map
+      fields:
+        label: { type: str, required: true, doc: "An enrolled name, guest (nobody enrolled) or assistant (its own voice)." }
+        score: { type: float, doc: The best enrolled match's similarity. }
 
   # -- devices: the call names the device (coverage gaps B2, B4) ------------
 

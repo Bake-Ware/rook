@@ -36,8 +36,9 @@ from jsonschema import Draft202012Validator
 
 from rook.kit._types import parse_duration
 from rook.kit.actions import run_action
+from rook.kit.actions.parse import file_result
 from rook.kit.contracts import Contracts
-from rook.kit.ctx import Caller, Ctx, KitError, invoke, load_run
+from rook.kit.ctx import Caller, Ctx, FileResult, KitError, invoke, load_run
 from rook.kit.hooks import Scheduler
 from rook.kit.manifest import compile_fields, load
 from rook.kit.records import RecordStore
@@ -241,7 +242,10 @@ class HubPlugins:
                                     plugin_dir=str(p.folder) if p.folder else None,
                                     plugin_data=str(self._data(p)) if self.data_dir else None,
                                     timeout=_timeout(hc.meta))
-        return await invoke(hc.handler, self._ctx(p, caller, cap), args)
+        res = await invoke(hc.handler, self._ctx(p, caller, cap), args)
+        if isinstance(res, FileResult):     # ctx.file: the same file map a worker returns
+            res = file_result(res.data if res.data is not None else res.path.read_bytes(), res.name, res.mime)
+        return res
 
     def route(self, plugin: str, path: str) -> Route | None:
         p = self.plugins.get(plugin)

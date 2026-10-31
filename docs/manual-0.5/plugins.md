@@ -86,6 +86,13 @@ linked.
 - [claudecode](../../rook/plugins/claudecode/docs/manual.md): Claude Code rules written once on the hub.
 - [decide](../../rook/plugins/decide/docs/manual.md): one-pass decision model for typed questions.
 
+**Speech** (talk to your agents by voice; `docs/castling-speech.md` says what
+runs where and what the phone app needs):
+
+- [speech](../../rook/plugins/speech/docs/manual.md): voice sessions on the hub, a fast front talker, the agent behind it.
+- [speech-engine](../../rook/plugins/speech-engine/docs/manual.md): the voice service's worker (speech recognition, voices, end of turn, speaker ID).
+- [speech-elevenlabs](../../rook/plugins/speech-elevenlabs/docs/manual.md): spoken replies in ElevenLabs voices.
+
 **Workbench** (on the hub; [The workbench](workbench.md)):
 
 - [task](../../rook/plugins/tasks/docs/manual.md), [project](../../rook/plugins/projects/docs/manual.md), [knowledge](../../rook/plugins/knowledge/docs/manual.md), [concept](../../rook/plugins/concepts/docs/manual.md), [whiteboard](../../rook/plugins/whiteboard/docs/manual.md).
@@ -110,8 +117,6 @@ and `docs/castling-phone.md` says what is still 0.4):
 - The screen and input: [screen-android](../../rook/plugins/screen-android/docs/manual.md), [ui-android](../../rook/plugins/ui-android/docs/manual.md) (apps by their labels), [hid-android](../../rook/plugins/hid-android/docs/manual.md), [app-android](../../rook/plugins/app-android/docs/manual.md), [clipboard-android](../../rook/plugins/clipboard-android/docs/manual.md).
 - Sound: [sound-android](../../rook/plugins/sound-android/docs/manual.md) (volume, Do Not Disturb), [media-android](../../rook/plugins/media-android/docs/manual.md) (what is playing), [voice-android](../../rook/plugins/voice-android/docs/manual.md) (speak aloud, ask and hear the answer).
 - The phone itself: [phone](../../rook/plugins/phone/docs/manual.md) (find, unlock, vibrate, flashlight), [battery-android](../../rook/plugins/battery-android/docs/manual.md), [notification-android](../../rook/plugins/notification-android/docs/manual.md) (notifications and decision cards).
-
-Speech is on its way in a separate pull request, with its own manual page.
 
 ## Writing your own
 
