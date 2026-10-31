@@ -12,6 +12,8 @@ agent, or an agent for a person).
     POST /holds/<name>    {decision: approve | refuse}
     POST /plugins/push    {worker, plugin, why}  owners: sign the library's plugin for that worker and install it
     GET  /health          no token
+    *    /p/<plugin><path>  a hub plugin's ``routes:`` entry: ``auth: user`` takes the
+                          bearer token, ``none`` anyone (the plugin checks, e.g. a webhook's HMAC)
 
 Enrollment (spec 12; rook.core2.enroll.hub):
 
@@ -40,6 +42,8 @@ import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qsl, unquote, urlsplit
+
+from rook.kit.ctx import Caller as KitCaller, KitError
 
 from .web import Web
 
@@ -136,6 +140,8 @@ class _Handler(BaseHTTPRequestHandler):
             return 200, {"ok": True, "hub": hub.hub_id}
         if method == "POST" and path in OPEN:      # a device enrolling has no token yet
             return 200, self._run(getattr(hub.enroll, OPEN[path])(self._body()))
+        if path.startswith("/p/"):
+            return self._plugin_route(method, url)
         caller = self._run(self._auth())
         body = self._body() if method == "POST" else None
         query = dict(parse_qsl(url.query))
@@ -169,6 +175,32 @@ class _Handler(BaseHTTPRequestHandler):
         host = self.headers.get("Host")
         return f"http://{host}" if host else None
 
+    def _plugin_route(self, method: str, url):
+        hub = self.door.hub
+        plugin, _, rest = url.path[len("/p/"):].partition("/")
+        path = "/" + rest.rstrip("/")
+        route = hub.plugins.route(plugin, path)
+        if route is None:
+            raise _Error(404, "not found")
+        if method not in route.methods:
+            raise _Error(405, "method not allowed")
+        if route.auth not in ("user", "none"):     # TODO(castling:routes): hmac and token routes
+            raise _Error(501, f"{route.auth} routes are not served yet")
+        caller = None
+        if route.auth == "user":
+            who = self._run(self._auth())
+            caller = KitCaller(person=who.person, agent=who.agent, band=hub.band, why=f"{plugin} route {path}",
+                               owner=hub.identities.is_owner(who.person))
+        request = {"method": method, "path": path, "query": dict(parse_qsl(url.query)),
+                   "headers": {k.lower(): v for k, v in self.headers.items()}, "body": self._raw()}
+        try:
+            out = self._run(hub.plugins.serve(plugin, path, request, caller))
+        except PermissionError as e:
+            raise _Error(401, str(e) or "unauthorized") from None
+        except KitError as e:
+            raise _Error(400, e.message) from None
+        return 200, out if isinstance(out, dict) else {"ok": True, "result": out}
+
     async def _auth(self):
         header = self.headers.get("Authorization", "")
         scheme, _, token = header.partition(" ")
@@ -177,15 +209,21 @@ class _Handler(BaseHTTPRequestHandler):
             raise _Error(401, "a valid bearer token is required")
         return caller
 
-    def _body(self) -> dict:
+    def _raw(self) -> bytes:
+        if self.command == "GET" and "Content-Length" not in self.headers:
+            return b""
         try:
             n = int(self.headers.get("Content-Length", ""))
         except ValueError:
             raise _Error(411, "Content-Length required") from None
         if n < 0 or n > MAX_BODY:
             raise _Error(413, "body too large")
+        return self.rfile.read(n)
+
+    def _body(self) -> dict:
+        raw = self._raw()
         try:
-            body = json.loads(self.rfile.read(n) or b"{}", parse_constant=_reject)
+            body = json.loads(raw or b"{}", parse_constant=_reject)
         except (ValueError, UnicodeDecodeError) as e:
             raise _Error(400, f"bad JSON: {e}") from None
         if not isinstance(body, dict):
