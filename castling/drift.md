@@ -319,6 +319,9 @@ Watch items (ask Bake, not drift yet) are after the findings.
   `stream.write` (text in a room) and `stream.close` under the index's rights. Plugin-owned
   streams are read with `stream.read` and written through their plugin's verbs (they do more
   than append). No relay yet (`TODO(castling:relay)`).
+- **Fixed: PR #359** (the rooms note): the move carries every 0.4 chat room and huddle into the
+  hub's stream store with full history (`castling/switchover/migrate/rooms.py`), and
+  `migrate --verify` checks each message survived.
 
 ## 10. Personas and skills: one plugin, one store (missing + package drift)
 
