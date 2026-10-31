@@ -76,6 +76,7 @@ from ..enroll.hub import Enrollment, check_options as check_enroll, recovery_key
 from . import distribute
 from .dispatch import Call, Dispatcher, Worker
 from .doors.web import caps as builtin_caps
+from . import updates
 from .identity import Caller, Identities, digest
 from .journal_store import JournalError, JournalStore
 from .plugins import HubPlugins, short_caps
@@ -408,6 +409,7 @@ class Hub:
         builtin_caps.install(self)               # pages, hub, approval, journal, setting: before the library
         vault_caps.install(self)
         backup_caps.install(self)
+        self.updates = updates.install(self)     # update.*: core releases and rollouts
         self.enroll = Enrollment(self, cfg.enroll)
         self.dispatcher = Dispatcher(hub_id=self.hub_id, op_key=self.op, identities=self.identities,
                                      workers={}, send=self._send, journal=self._journal,
@@ -458,6 +460,8 @@ class Hub:
         if getattr(self, "mdns", None) is not None:
             await self.mdns.stop()
             self.mdns = None
+        if getattr(self, "updates", None) is not None:
+            await self.updates.close()
         for t in self._loops + list(self._tasks):
             t.cancel()
         await asyncio.gather(*self._loops, *self._tasks, return_exceptions=True)

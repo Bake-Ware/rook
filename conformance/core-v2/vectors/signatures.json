@@ -39,7 +39,8 @@
   "rook-hubkey": "rook-hubkey-v2\n",
   "rook-membership": "rook-membership-v2\n",
   "rook-announce": "rook-announce-v2\n",
-  "rook-plugin": "rook-plugin-v2\n"
+  "rook-plugin": "rook-plugin-v2\n",
+  "rook-release": "rook-release-v2\n"
  },
  "signing_input": {
   "object": {
@@ -287,6 +288,48 @@
     "iat": 1793300000,
     "kid": "3c1945587ef004c3",
     "sig": "2v9sCqzOMLlB5JAoa54PT1BOItKAHf8VPwf0EryPcNiyj1ip+kn7il0cuAix3lEzboi8n8/9J3WSxE6DXHI9CQ=="
+   },
+   "pub": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+   "valid": false
+  },
+  {
+   "name": "release.sig",
+   "object": {
+    "typ": "rook-release",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "version": "0.5.1",
+    "core": "2.0",
+    "files": {
+     "rook/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "requires": [
+     "pyyaml>=6"
+    ],
+    "iat": 1793300000,
+    "kid": "3c1945587ef004c3",
+    "sig": "DN/Pep3iU6OH/8Vq/9fZe/mp7s0I2q7gfTokkBliwQ/ASShbgrisyG2YuZecTFK5bEDkLaxkh42pG9mA63kHCQ=="
+   },
+   "pub": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
+   "valid": true
+  },
+  {
+   "name": "release.sig read as a plugin.sig",
+   "object": {
+    "typ": "rook-plugin",
+    "v": 2,
+    "hub": "19c7d7856f775f9a",
+    "version": "0.5.1",
+    "core": "2.0",
+    "files": {
+     "rook/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "requires": [
+     "pyyaml>=6"
+    ],
+    "iat": 1793300000,
+    "kid": "3c1945587ef004c3",
+    "sig": "DN/Pep3iU6OH/8Vq/9fZe/mp7s0I2q7gfTokkBliwQ/ASShbgrisyG2YuZecTFK5bEDkLaxkh42pG9mA63kHCQ=="
    },
    "pub": "ed25519:reolTIEgkJVnpZxm84rJYuc0NJGInsnAulsCfJnyrBk=",
    "valid": false

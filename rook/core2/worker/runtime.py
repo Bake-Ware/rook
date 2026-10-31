@@ -20,6 +20,11 @@ What it wires together:
   over Drop and installs it (signature, files, checks, automatic rollback);
   ``core.plugin.rollback`` goes back a version. Installed plugins load again
   at start-up, re-checked.
+- **Updater** (:mod:`.update`): ``worker.update`` pulls a hub-signed core
+  release over Drop, verifies and smoke-checks it and restarts into it as a
+  trial (:mod:`.boot`); the trial is confirmed by the first call from the
+  home hub it serves, else dropped after ``ROOK_UPDATE_TRIAL_SECS`` and the worker
+  restarts on the core it had. ``worker.rollback`` goes back by hand.
 - **Transport** (:mod:`rook.core2.transport`): one connection per band, each
   with its own announce, heartbeat and hub-loss clock (9.4). Bands come from
   the config, enrollment and ``core.trust.set`` (the last two kept in
@@ -60,9 +65,10 @@ from ..builtin import CORE, STREAM, WORKER
 from ..transport import FEATURES, Transport, TransportError, link_from
 from rook.streams import Streams
 
-from . import builtins, events
+from . import boot, builtins, events
 from .host import Host
 from .install import Installer
+from .update import TRIAL_SECS, UpdateError, Updater
 from .loader import LoadError, local_os
 from .security import ELEVATE_TIMEOUT, Call, Member, ReplayStore, TrustStore, WorkerGate, _write_atomic
 
@@ -187,6 +193,8 @@ class _Gate(WorkerGate):
         started, out = time.time(), {"ok": False, "error": "worker error"}
         try:
             out = await super().execute(call, action, now)
+            if out.get("ok") and self.worker.on_trial:
+                self.worker._served(call.band)
             return out
         except Exception as e:             # Host.handle turns it into the error reply
             out = {"ok": False, "error": getattr(e, "message", None) or str(e) or type(e).__name__}
@@ -207,9 +215,13 @@ class Worker:
     its own worker (the voice service, services/voice/band.py)."""
 
     def __init__(self, cfg: Config, *, make_link: Callable[[dict], Any] = link_from,
-                 transport_opts: dict | None = None, extra_builtins=()):
+                 transport_opts: dict | None = None, extra_builtins=(), config_path: Path | None = None):
         check_config(cfg)
         self.cfg = cfg
+        self.config_path = config_path        # for the smoke check of a core update
+        self.trial_secs = float(os.environ.get("ROOK_UPDATE_TRIAL_SECS") or TRIAL_SECS)
+        self._trial_timer: asyncio.TimerHandle | None = None
+        self.on_trial = False                 # running a core update that hasn't proved itself yet
         self.extra_builtins = list(extra_builtins)
         self.data = Path(cfg.data)
         self.make_link = make_link
@@ -257,6 +269,7 @@ class Worker:
                          data_root=self.data / "plugin-data", gate=self.gate, streams=self.streams)
         own = builtins.handlers(self, self.streams, self.ran,
                                 restart=self._restart if self.reexec is not None else None)
+        own.update({"worker.update": self._core_update, "worker.rollback": self._core_rollback})
         for path, caps in ((CORE, {"core.trust.set": self._trust_set, "core.trust.get": self._trust_get,
                                    "core.plugin.install": self._plugin_install,
                                    "core.plugin.rollback": self._plugin_rollback}),
@@ -269,6 +282,9 @@ class Worker:
             self.host.add_builtin(data, handlers)
         self.installer = Installer(self.data / "plugins", worker_id=self.worker_id, host=self.host,
                                    keys=self._approver_keys, approves=lambda hub: bool(self._approver_bands(hub)))
+        self.updater = Updater(boot.root_of(self.data), keys=self._approver_keys, running=boot.running(),
+                               config=self.config_path)
+        self._check_release()
         for name, values in self._local_settings().items():
             await self.host.set_settings(name, local=values)
         await self._load_plugins()
@@ -295,6 +311,9 @@ class Worker:
 
     async def _close(self) -> None:
         self.started = False
+        if self._trial_timer is not None:
+            self._trial_timer.cancel()
+            self._trial_timer = None
         while self._tasks:              # late calls, and announces they spawned
             late = set(self._tasks)
             for t in late:
@@ -660,6 +679,95 @@ class Worker:
         self._spawn(self.reannounce())
         return report
 
+    # -- core updates (docs/castling-updates.md) ---------------------------------------
+
+    def _check_release(self) -> None:
+        """At start: a release whose hub no longer approves code here goes
+        (back to the installed core); a trial gets its clock."""
+        up = self.updater
+        if up.running is None:
+            return
+        try:
+            folder = boot.running_folder()
+            hub = json.loads((folder / boot.SIG_FILE).read_text(encoding="utf-8")).get("hub")
+        except (OSError, ValueError, AttributeError, TypeError):
+            hub = None
+        if not self._approver_bands(hub):
+            up.refuse_running(f"hub {hub} no longer approves code on this machine")
+            self._restart_soon()
+        elif up.in_trial():
+            self.on_trial = True
+            self._trial_timer = self.loop.call_later(self.trial_secs, self._trial_expired)
+            log.info("core update on trial", extra=_f(version=up.running, seconds=self.trial_secs))
+
+    def _served(self, band: str) -> None:
+        """A call from the home hub went all the way through this core
+        (ticket, gate, host, plugin): the trial has proved itself."""
+        if band != self.trust.home.band or not self.on_trial:
+            return
+        self.on_trial = False
+        if self._trial_timer is not None:
+            self._trial_timer.cancel()
+            self._trial_timer = None
+        self.updater.confirm()
+
+    def _trial_expired(self) -> None:
+        self._trial_timer = None
+        if self.on_trial and self.updater.in_trial():
+            self.on_trial = False
+            self.updater.abandon(f"no call from the home hub served within {self.trial_secs:g}s")
+            self._restart_soon()
+
+    def _restart_soon(self) -> None:
+        if self.reexec is not None:
+            self.loop.call_later(builtins.RESTART_DELAY, self._restart)
+
+    def _restartable(self) -> None:
+        if self.reexec is None:
+            raise KitError("this worker can't restart itself: its core updates come with its app")
+        busy = self.streams.list(open_only=True)
+        if busy:
+            raise KitError(f"busy: {len(busy)} terminal or stream(s) open here would end; "
+                           "close them, or update this worker later", retry=True)
+
+    async def _core_update(self, ctx, bundle: dict) -> dict:
+        """worker.update: pull the release over Drop from the hub that sent the
+        call, verify, unpack, smoke-check, then restart into it on trial."""
+        if os.name == "nt":
+            # execv starts a new process there and the old one exits: whatever runs the
+            # worker would see it end. Not tried yet (docs/castling-updates.md).
+            raise KitError("core updates over the band aren't supported on Windows yet")
+        self._restartable()
+        band = ctx.caller.band
+        parent = self._parent(ctx.caller, "worker.update")
+        source = self.hub_nodes.get((parent.ticket["hub"], band)) if parent else None
+        try:
+            blob = await self.transport.pull(band, bundle, source, PULL_TIMEOUT)
+        except TransportError as e:
+            raise KitError(f"release not received: {e}", retry=True) from None
+        incoming = self.data / "incoming"
+        incoming.mkdir(exist_ok=True, mode=0o700)
+        path = incoming / f"{uuid.uuid4().hex}.tar.gz"
+        try:
+            await asyncio.to_thread(path.write_bytes, blob)
+            report = await self.updater.receive(path)
+        except UpdateError as e:
+            log.warning("core update refused", extra=_f(error=str(e)))
+            raise KitError(f"update refused: {e}") from None
+        finally:
+            path.unlink(missing_ok=True)
+        self._restart_soon()
+        return report
+
+    async def _core_rollback(self, ctx) -> dict:
+        self._restartable()
+        try:
+            report = self.updater.rollback()
+        except UpdateError as e:
+            raise KitError(str(e)) from None
+        self._restart_soon()
+        return report
+
 
 # Errors whose text the worker writes itself. Anything else (bad args, a
 # plugin's message) can quote argument values, and the hub substitutes
@@ -673,6 +781,10 @@ def _loggable(error: Any) -> str:
 
 
 def _version() -> str:
+    """The core release this process runs, else the installed package's version."""
+    running = boot.running()
+    if running:
+        return running
     try:
         from importlib.metadata import version
         return version("rook")

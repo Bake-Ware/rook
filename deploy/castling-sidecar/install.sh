@@ -86,7 +86,8 @@ After=rook-castling-hub.service
 WorkingDirectory=$ROOT/worker
 Environment=PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=$PY -m rook.core2.worker --config $WORKER_CFG
-Restart=on-failure
+# always: a core update that exits cleanly must still come back (and roll back).
+Restart=always
 RestartSec=5
 
 [Install]

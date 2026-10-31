@@ -46,8 +46,10 @@ Code: `desktop/src-tauri/src/hub05.rs` (door client, pure parsers),
 - **The app approves its own device code.** The person clicked **Add this
   computer** while signed in as themselves, which is the approval spec 12
   asks for; the code never leaves the app.
-- **Update check off on 0.5** (TODO(castling:desktop-updates)): a 0.5 hub has
-  no `/updates/desktop.json`.
+- **Update check off on 0.5** (TODO(castling:desktop-updates)): the 0.5 hub
+  serves `/updates/desktop.json` now (docs/castling-updates.md); the app still
+  skips the check in 0.5 mode until its one-line switch lands (it waits on the
+  desktop workflow's macOS job, see docs/castling-updates.md).
 
 ## Tests
 

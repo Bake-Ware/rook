@@ -121,6 +121,9 @@ def gen_signatures() -> dict:
         "typ": "rook-plugin", "v": 2, "hub": KID["home-root"], "worker": WORKER, "plugin": "echo",
         "version": "1.0.0", "files": {"plugin.yaml": hashlib.sha256(b"manifest: 1\n").hexdigest()},
         "python": ["anyio==4.15.1"], "iat": T0})
+    release_sig = wire.sign(KEYS["home-op"], {
+        "typ": "rook-release", "v": 2, "hub": KID["home-root"], "version": "0.5.1", "core": "2.0",
+        "files": {"rook/__init__.py": hashlib.sha256(b"").hexdigest()}, "requires": ["pyyaml>=6"], "iat": T0})
     objects = []
     for name, obj, pub, expect in [
         ("ticket", ticket, "home-op", True),
@@ -128,6 +131,8 @@ def gen_signatures() -> dict:
         ("plugin.sig", plugin_sig, "home-op", True),
         ("plugin.sig with a file added", {**plugin_sig, "files": {**plugin_sig["files"], "x.py": "0" * 64}},
          "home-op", False),
+        ("release.sig", release_sig, "home-op", True),
+        ("release.sig read as a plugin.sig", {**release_sig, "typ": "rook-plugin"}, "home-op", False),
         ("unknown field is signed and verifies", extra, "home-op", True),
         ("unknown field removed after signing", {k: v for k, v in extra.items() if k != "x_future"}, "home-op", False),
         ("hubkey rides unsigned", {**ticket, "hubkey": grant}, "home-op", True),

@@ -20,12 +20,12 @@ Scripts in `castling/switchover/`:
 |---|---|---|---|
 | Hub | rook.bakeforge.com on bakenetcanada (Oracle VM), releases through the CR runner | `python -m rook.core2.hub`: HTTP door, dashboard, MCP door, enrollment | runs as the cachyrig sidecar (#286), plain HTTP, localhost relay |
 | Band relay | telesthete-hub behind mcp.bakeforge.com:443 | the same Telesthete wire (`TelestheteLink` reuses `rook.worker`'s transport) | a 0.5 band can share the live relay under its own band id |
-| Workers | ~38 machines with OTA updates | `python -m rook.core2.worker`, enroll by device code | cachyrig only; no update path (N27) |
+| Workers | ~38 machines with OTA updates | `python -m rook.core2.worker`, enroll by device code | cachyrig only; core updates by signed release and staged rollout (`update.*`, docs/castling-updates.md) |
 | Plugins | 63 | 50 plugin folders in `rook/plugins/`, the rest binned or core (castling/coverage.md) | see "Not ported" below |
 | Vault | 65 secrets | `<data>/vault.db` sealed under the root and recovery keys; `{{secret:NAME}}` and hub plugins' secret settings read it; `secret.*` caps | worker-side secret settings have no vault path yet |
 | Speech / voice | kaiju Chatterbox + Whisper, voice front | `speech` + `speech-engine` + `speech-elevenlabs` | PR #287 open |
 | Phone app | APK 0.4.23 stable, beta channel | 0.4/0.5 switch, 0.5 runs in Chaquopy | PR #298 open, emulator only |
-| Desktop app | 0.2 | 0.4/0.5 switch, token sign-in, worker05 | merged (#290); no update check on 0.5 |
+| Desktop app | 0.2 | 0.4/0.5 switch, token sign-in, worker05 | merged (#290); the 0.5 hub serves `/updates/desktop.json`, the app's 0.5 switch is a follow-up PR |
 | Watch | 0.2.1 through the phone | wave 6 lane in progress | not on 0.5 |
 | Security | trust map, hard stops | `security` (canary + taint) and `security-ml` (shadow) | merged (#284) |
 | Agents | house agent, huddles, CR runner, sessions | `agents` + `agents-claude-code`, 8 personas | merged (#280, #288); huddles: `huddle` + `github` plugins (R14) |
@@ -266,8 +266,11 @@ Then whichever service containers D6 keeps.
 The sacred list is empty on 0.4. If D3 makes any machine sacred on 0.5, add
 it to `sacred:` before that machine enrolls.
 
-Wave B (everything after this) waits for R6. Without it, each core fix means
-visiting every machine. Plugin fixes can be pushed already.
+Wave B (everything after this) needed R6, now on `castling`: a core fix is
+`update.prepare` then `update.rollout` (canaries first), and each worker
+rolls itself back if the new core doesn't come up (docs/castling-updates.md).
+Workers need a service manager that restarts them (the sidecar's unit does).
+Plugin fixes are pushed as before.
 
 Rollback per machine: `systemctl --user disable --now rook05-worker`. The
 0.4 worker never stopped. Never restart cachyrig's 0.4 worker: it kills

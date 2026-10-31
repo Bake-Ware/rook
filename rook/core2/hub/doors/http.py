@@ -13,6 +13,7 @@ agent, or an agent for a person).
     POST /plugins/push    {worker, plugin, why}  owners: sign the library's plugin for that worker and install it
     POST /doors/<name>    {open: bool}  owners: the kill switch (close or open a door; kept across restarts)
     GET  /health          no token
+    GET  /updates/desktop.json  no token: the desktop app's files in Rook's latest release (its update check)
     *    /p/<plugin><path>  a hub plugin's ``routes:`` entry: ``auth: user`` takes the
                           bearer token, ``hmac``/``token`` a signature or token under the
                           route's secret (HubPlugins.route_allows), ``none`` anyone
@@ -148,6 +149,9 @@ class _Handler(BaseHTTPRequestHandler):
             return 200, {"ok": True, "hub": hub.hub_id}
         if self.door.name in hub.dispatcher.closed_doors and not path.startswith("/doors/"):
             raise _Error(503, f"denied: door {self.door.name} closed")
+        if method == "GET" and path == "/updates/desktop.json":     # the desktop app checks before sign-in
+            from ..updates import desktop_feed
+            return 200, desktop_feed()
         if method == "POST" and path in OPEN:      # a device enrolling has no token yet
             extra = {"address": self._address()} if OPEN[path] == "device_start" else {}
             return 200, self._run(getattr(hub.enroll, OPEN[path])(self._body(), **extra))

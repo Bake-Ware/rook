@@ -1,8 +1,8 @@
 # The worker's own caps (castling-caps: info, log and selfupdate move into
 # core). Implemented inside the worker binary (rook/core2/worker/builtins.py),
 # announced like any plugin, never pushed. The rest of 0.4's selfupdate is
-# binned or elsewhere: deauth is core.trust.set with a removed membership,
-# hold is a setting, and worker.update waits for the 0.5 release format.
+# binned or elsewhere: deauth is core.trust.set with a removed membership and
+# hold is a setting. worker.update/rollback: docs/castling-updates.md.
 manifest: 1
 plugin: worker
 version: 0.5.0
@@ -27,7 +27,8 @@ caps:
   status:
     doc: >-
       One read of this worker: name, id, version, core, OS facts, uptime, the bands it is on
-      (with hub contact), plugins loaded and caps unavailable (with why), open streams.
+      (with hub contact), plugins loaded and caps unavailable (with why), open streams, and its
+      core release (running, current, previous, a trial waiting to prove itself, the last failure).
     risk: read
     scope: self
     idempotent: true
@@ -63,4 +64,35 @@ caps:
     result:
       type: map
       fields:
+        restarting: { type: bool }
+  update:
+    doc: >-
+      Update this worker's core to a hub-signed release: pull it, check its signature and files,
+      install its requirements, smoke-check it, then restart into it on trial. The new core must
+      serve a call from its home hub within two minutes (and within three starts), or the worker
+      drops it and restarts on the core it had. Refused while terminals or streams are open here.
+    risk: admin
+    scope: self
+    effects: [persists]
+    timeout: 20m
+    args:
+      bundle: { type: map, required: true, doc: "The release's Drop descriptor: id, size, sha256." }
+    result:
+      type: map
+      fields:
+        version: { type: str }
+        from: { type: str, doc: "The core it replaces; blank: the installed one." }
+        restarting: { type: bool }
+  rollback:
+    doc: >-
+      Go back to the kept previous core (the installed one when no release was kept) and
+      restart. Refused while terminals or streams are open here.
+    risk: admin
+    scope: self
+    effects: [persists]
+    result:
+      type: map
+      fields:
+        version: { type: str, doc: "The core it restarts on; blank: the installed one." }
+        from: { type: str }
         restarting: { type: bool }
