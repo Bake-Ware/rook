@@ -95,9 +95,9 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 25 | over-built (low) | Child preset `approve_new` queue for a deferred feature | `rights.py`, `identity.py`, spec 8.5 |
 | 26 | over-built (low) | Journal retention tiered by risk (**fixed, PR #338**) | `rook/core2/journal.py:26` |
 | 27 | over-built (low) | `github` in the core package with a huddle-only writer list | `rook/plugins/github/plugin.yaml` |
-| 28 | over-built (low) | Jobs notify the person directly with a fixed channel order | `jobs.py:461-487,605`, `notify` |
+| 28 | over-built (low) | Jobs notify the person directly with a fixed channel order (**fixed, PR #355**) | `jobs.py:461-487,605`, `notify` |
 | 29 | over-built (low) | Desktop app ports 0.4 Work/Knowledge/Sessions panels | `desktop/src-tauri/src/hub05.rs:108` |
-| 30 | missing (known) | No attention job on the hub; phone keeps the 0.4 attention store | `notification-android`, `docs/castling-phone.md:111` |
+| 30 | missing (known) | No attention job on the hub; phone keeps the 0.4 attention store (**fixed, PR #355**) | `notification-android`, `docs/castling-phone.md:111` |
 | 31 | over-built | Hub plugins rebuild storage instead of declaring records | `agents.py:110`, `telegram`/`discord` `links.json`, hub pages |
 | 32 | contradiction (mild) | Core service plugins call providers by plugin name, not contract. **agents fixed: PR #344**; notify, speech: follow-up | `notify`, `speech`, `agents` |
 | 33 | renamed (low) | Plural namespaces `jobs.*`, `agents.*`, `pages.*`; `jobs.start` not `job.run` | `jobs`, `agents`, hub pages |
@@ -554,6 +554,8 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
   ... ask the house agent to get word to the stakeholder." `jobs.py:461-487, 605` call
   `notify.send` with a fixed channel order even when agents are installed. *Fix:* route through
   the house agent (the #8 path) when present; keep the order as the core-only fallback.
+  **Fixed:** PR #355 (c8/attention): `notify:` and `job.notify` go to the house agent
+  (`default_agent`, `agents.chat.send`); `notify.send` only without agents.
 - **29. Desktop app ports 0.4 panels (over-built, low).** castling-attention: "No built-in views
   needed for things like knowledge or tasks: the agent opens the relevant page/link";
   castling-dashboard: tasks are not core. `desktop/src-tauri/src/hub05.rs:108-135` hard-codes Work
@@ -566,6 +568,9 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
   `AttentionStore` taxonomy; `docs/castling-phone.md:111` cites "the hub's attention job" as if it
   existed. On the D5 not-ported list. *Fix:* one jobs template (`on:` those events, batched) that
   runs the house agent with an `attention` skill.
+  **Fixed:** PR #355 (c8/attention): `attention` plugin (records -> `attention.list`, a
+  ready-made 15-minute persona job, the house agent's `attention` skill collecting via caps, as
+  castling-attention says "periodically ... via caps"); the 0.5 phone no longer classifies.
 
 ## 31. Hub plugins rebuild storage instead of declaring it (over-built)
 
