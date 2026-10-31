@@ -319,10 +319,23 @@ class Web:
     # -- events -------------------------------------------------------------------
 
     def _on_event(self, event: str, payload: dict, source: str | None) -> None:
+        whose = self._whose(event, payload)
         with self._cond:
             self._seq += 1
-            self._events.append((self._seq, event, json.loads(json.dumps(payload, default=str))))
+            self._events.append((self._seq, event, json.loads(json.dumps(payload, default=str)), whose))
             self._cond.notify_all()
+
+    def _whose(self, event: str, payload) -> str | None:
+        """Whose data an event is, like a private record (review D6): its
+        ``person`` when it carries or declares one (a hold, a linked chat
+        message), owners' (``""``) when it brings outside content in
+        (``taints``: an inbound message naming nobody), else None: anyone
+        whose rights hear it."""
+        decl = next((m["emits"][event] for m in self.hub._norm.values() if event in (m.get("emits") or {})), {})
+        person = payload.get("person") if isinstance(payload, dict) else None
+        if isinstance(payload, dict) and "person" in payload or "person" in (decl.get("payload") or {}):
+            return person if isinstance(person, str) and person else ""
+        return "" if decl.get("taints") else None
 
     def _poll(self, sid: str, token: str, since) -> dict:
         t = self._token(sid, token)
@@ -335,12 +348,14 @@ class Web:
         except Exception as e:
             raise _Error(403, str(getattr(e, "message", e))) from None
         person = self.sessions[sid].person if sid in self.sessions else None
+        owner = self.hub.identities.is_owner(person)
         layers = [["person", self.hub.identities.person_rights(person) if person else NONE],
                   ["page", {"grants": page.events}], *self._authors(page)]
 
         def visible():
-            return [{"seq": s, "event": e, "payload": p} for s, e, p in self._events
-                    if s > since and rights.check(layers, {"cap": e, "risk": "read", "effects": []})["ok"]]
+            return [{"seq": s, "event": e, "payload": p} for s, e, p, whose in self._events
+                    if s > since and (whose is None or owner or whose == person)
+                    and rights.check(layers, {"cap": e, "risk": "read", "effects": []})["ok"]]
         deadline = time.monotonic() + self.poll_secs
         with self._cond:
             if since is None:          # first poll: where the stream is now

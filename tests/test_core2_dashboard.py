@@ -66,6 +66,9 @@ caps:
     run: scripts/board.py:motto
 pages:
   board: { title: Board, file: pages/board.html, caps: ["board.count", "board.motto"], events: ["board.*"], nav: { section: Home } }
+emits:
+  board.inbox: { doc: A message came in from outside., taints: true, payload: { text: { type: str } } }
+  board.note: { doc: A note for someone., payload: { person: { type: str }, text: { type: str } } }
 """
 
 BOARD_PY = """\
@@ -496,6 +499,54 @@ def test_pages_hear_only_declared_events_the_viewer_may_hear(site):
             next(d for d in hub.doors if d.name == "http").web.poll_secs = 0.2     # nothing is coming
             _, out = await kim.json("GET", f"/web/api/events?token={tk}&since={seq}")
             assert out["events"] == []
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_page_events_reach_only_the_people_they_belong_to(site):
+    # An adult's page hears its own holds and messages, not other people's;
+    # outside content naming nobody reaches owners only (review D6).
+    async def go():
+        hub, tokens = await site()
+        try:
+            hub.identities.add_user("ann", "adult")
+            ann, bake = Client(hub), Client(hub)
+            await ann.sign_in(hub.add_token(Caller(person="person:ann")))
+            await bake.sign_in(tokens["bake"])
+            pages = {}
+            for who, c in (("ann", ann), ("bake", bake)):
+                for page in ("board/board", "approval/approvals"):
+                    t = (await c.open(page))["token"]
+                    pages[who, page] = (c, t, (await c.json("GET", f"/web/api/events?token={t}"))[1]["seq"])
+            hub._emit("board.inbox", {"text": "a stranger's text"}, "board")
+            hub._emit("board.note", {"person": "person:bake", "text": "for bake"}, "board")
+            hub._emit("board.note", {"person": "person:ann", "text": "for ann"}, "board")
+            hub._emit("board.changed", {"n": 1}, "board")
+            hub._emit("hold.created", {"hold": "h_1", "cap": "x.y", "person": "person:bake", "reasons": []}, "core")
+            hub._emit("hold.created", {"hold": "h_2", "cap": "x.y", "person": "person:ann", "reasons": []}, "core")
+            hub._emit("hold.created", {"hold": "h_3", "cap": "x.y", "person": None, "reasons": []}, "core")
+            await asyncio.sleep(0.2)
+            next(d for d in hub.doors if d.name == "http").web.poll_secs = 0.2
+
+            async def heard(who, page):
+                c, t, seq = pages[who, page]
+                _, out = await c.json("GET", f"/web/api/events?token={t}&since={seq}")
+                return [(e["event"], e["payload"].get("text") or e["payload"].get("hold") or e["payload"].get("n"))
+                        for e in out["events"]]
+            assert await heard("ann", "board/board") == [("board.note", "for ann"), ("board.changed", 1)]
+            assert await heard("ann", "approval/approvals") == [("hold.created", "h_2")]
+            assert await heard("bake", "board/board") == [
+                ("board.inbox", "a stranger's text"), ("board.note", "for bake"), ("board.note", "for ann"),
+                ("board.changed", 1)]
+            assert [h for _, h in await heard("bake", "approval/approvals")] == ["h_1", "h_2", "h_3"]
+            # hold.decided says whose hold it was
+            got = []
+            hub.listeners.append(lambda e, p, src: got.append(p) if e == "hold.decided" else None)
+            _, held = await bake.json("POST", "/call", {"worker": "rook", "cap": "board.wipe", "why": WHY},
+                                      bearer=tokens["claude"])
+            _, out = await bake.json("POST", f"/holds/{held['hold']}", {"decision": "refuse"}, bearer=tokens["bake"])
+            assert out == {"ok": True} and got[-1]["person"] == "person:bake", (out, got)
         finally:
             await hub.stop()
     run(go())
