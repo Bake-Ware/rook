@@ -46,7 +46,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from rook.kit._types import parse_duration
-from rook.kit.ctx import KitError
+from rook.kit.ctx import Caller, KitError
 from rook.kit.manifest import _yaml
 from rook.streams import StreamError, Streams, SqliteStore
 
@@ -486,6 +486,41 @@ async def tick(ctx):
     for a in rt.agents():
         if a.get("always_on") and time.time() - (a.get("dreamed") or a.get("created") or 0) >= every:
             await rt.dream_quietly(a["name"])
+
+
+CHANNELS = {"telegram.message": ("telegram", "Telegram"), "discord.message": ("discord", "Discord")}
+
+
+async def inbound(ctx, event, payload, source=None):
+    """A direct message to the band's Telegram or Discord bot from a person
+    who linked their account: an ``input`` into their session with
+    ``chat_agent`` (castling-streams: "Message into a running agent: an input
+    event"), as that person, and the reply back to them by the same bot.
+    Group and channel messages, and people who haven't linked, stay events
+    for jobs. The text is outside content, so the calls run tainted.
+
+    Only the hub's own bot plugin is believed: another plugin may declare
+    the same event name, and a worker's events carry ``worker`` (the hub
+    stamps it), so either would otherwise speak as whoever it names."""
+    agent = (ctx.settings["chat_agent"] or "").strip()
+    plugin, label = CHANNELS.get(event, (None, None))
+    if source != plugin or "worker" in payload:
+        return
+    person, text = payload.get("person"), str(payload.get("text") or "").strip()
+    if not (agent and plugin and person and text and payload.get("private")):
+        return
+    who = Caller(person=person, band=ctx.caller.band, tainted=True,
+                 why=f"{person} wrote to {agent} on {label}")
+    try:
+        got = await ctx.call_as(who, "agents.chat.send", {"agent": agent, "text": f"(on {label}) {text}"})
+        reply = got.get("text") if isinstance(got, dict) else None
+        reply = reply or f"({agent} gave no reply)"
+    except KitError as e:
+        reply = f"{agent} couldn't answer: {e.message}"
+    # The reply goes out as this plugin (a guest may not send as themselves),
+    # only ever to the person who wrote.
+    await _why(ctx, f"{agent}'s reply to {person} on {label}").call(
+        f"{plugin}.send", to=person.removeprefix("person:"), text=reply)
 
 
 # -- caps ----------------------------------------------------------------------------

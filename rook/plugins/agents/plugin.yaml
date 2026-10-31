@@ -19,12 +19,15 @@ license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 # agent.backend: the chosen provider; an agent pinned to one backend calls
 # agents-<backend>.turn (the backend plugins of this package).
-uses: ["agent.backend", "agents-claude-code.*", "agents-codex.*", "agents-local.*", "agents-api.*"]
+# A person's direct message to the band's Telegram or Discord bot goes to
+# chat_agent as that person; the reply goes back to them by the same bot.
+uses: ["agent.backend", "telegram.send", "discord.send", "agents-claude-code.*", "agents-codex.*", "agents-local.*", "agents-api.*"]
 
 settings:
   warm: { type: duration, default: 10m, doc: How long an agent that isn't always-on stays awake after its last message. }
   turn_timeout: { type: duration, default: 20m, doc: Longest one agent turn may take. }
   dream_every: { type: duration, default: 6h, doc: How often an always-on agent gets a dream pass. }
+  chat_agent: { default: house, doc: "The agent that answers people's direct messages to the band's Telegram and Discord bots (once they linked their account); blank: none does." }
   dream_model: { type: str, default: haiku, doc: "System Three's model (the dream cycle), unless the agent names its own model.three." }
 
 caps:
@@ -166,6 +169,9 @@ hooks:
   start: scripts/agents.py:start
   stop: scripts/agents.py:stop
   every: [ { interval: 30m, run: scripts/agents.py:tick } ]
+  on:
+    - { event: telegram.message, run: scripts/agents.py:inbound }
+    - { event: discord.message, run: scripts/agents.py:inbound }
 
 # The ready-made roles (castling-agents "Skills and defaults"): created on
 # install, each with its skills. Lean toward agency: broad grants, and acting

@@ -31,6 +31,12 @@ go through the house agent.
   (`wait: false` answers at once). It wakes the agent if it sleeps.
 - `agents.chat.read {agent, after}` reads your session with it; pass `next`
   back as `after`.
+- A direct message to the band's Telegram or Discord bot, once you linked
+  your account (`telegram.link`, `discord.link`), goes to the `chat_agent`
+  (the house agent by default) in your session with it, as you; the reply
+  comes back from the bot. Group and channel messages, and people who
+  haven't linked, are not answered (they stay events for jobs). Blank
+  `chat_agent` turns this off.
 
 Each person (and each agent) has their own session with an agent, kept for
 good and resumed next time. A guest never sees your conversation. When an
@@ -66,4 +72,4 @@ everything; `restore: true` brings it back. Skills are markdown playbooks;
 An agent with backend `default` uses the hub's chosen `agent.backend`
 provider; `claude-code` (or another name) pins it to that backend plugin
 (`agents-claude-code`). Settings: `warm`, `turn_timeout`, `dream_every`,
-`dream_model`.
+`dream_model`, `chat_agent`.

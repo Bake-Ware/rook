@@ -51,6 +51,11 @@ Agents that need you go through the house agent.
   `rook` waits for the reply; `agents.chat.read {agent, after}` reads your
   session with it (pass `next` back as `after`). A first turn takes about
   10 seconds.
+- On Telegram or Discord: link your account once (`telegram.link` or
+  `discord.link`, then send the code to the bot), and a direct message to
+  the bot goes to the house agent in your session with it; the bot sends
+  the reply. The `agents.chat_agent` setting picks another agent; blank
+  turns it off.
 
 Each person has their own session with an agent, kept and resumed next
 time; nobody else sees it. An agent working for you can do only what both

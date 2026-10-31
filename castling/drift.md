@@ -86,7 +86,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 16 | missing | `core.elevate` skips the gate hook (**fixed, PR #338**) | `rook/core2/hub/dispatch.py:550` |
 | 17 | contradiction | The security gate ships in enforce mode with heuristic holds (**fixed, PR #338**) | `rook/plugins/security/plugin.yaml:26` |
 | 18 | missing (bug) | The pinned-task check calls a cap that doesn't exist, fails quietly | `security/plugin.yaml:20` |
-| 19 | missing | Telegram/Discord messages reach no agent after cutover | `telegram`, `discord`, switchover step 3 |
+| 19 | missing | Telegram/Discord messages reach no agent after cutover. **Fixed: PR #341** | `telegram`, `discord`, switchover step 3 |
 | 20 | missing | No agent-led install path; README and skill are still 0.4 | `README.md`, `skills/rook/` |
 | 21 | missing | Appliance routing and appliance settings on the worker | `dispatch.py`, `worker/host.py` (N3) |
 | 22 | missing | Worker secret settings have no vault path | `worker/host.py:395` |
@@ -444,7 +444,7 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
 - **Smallest fix.** `task.get` in `uses` and the default; log at warning; one test against the real
   tasks manifest. (Fixing it makes #17's heuristics fire for real, so do #17 first.)
 
-## 19. Telegram/Discord messages reach no agent after cutover (missing)
+## 19. Telegram/Discord messages reach no agent after cutover (missing) Fixed: PR #341
 
 - **Decision.** castling-streams: "Worker chat and `msg`: a stream with the local human as a
   participant, or a person's inbox stream." "Message into a running agent: an `input` event."
