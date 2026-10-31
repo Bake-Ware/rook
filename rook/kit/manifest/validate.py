@@ -375,9 +375,17 @@ class _Checker:
         return self.issues
 
     def requires(self, req, path):
+        from .diff import satisfies   # diff imports this module
         for i, name in enumerate((req or {}).get("settings") or ()):
             if name not in self.settings:
                 self.error(path + ("settings", i), "unknown-setting", f"no setting {name!r} is declared")
+        ranges = [(("rook",), (req or {})["rook"])] if "rook" in (req or {}) else []
+        ranges += [(("plugins", n), r) for n, r in ((req or {}).get("plugins") or {}).items()]
+        for sub, rng in ranges:
+            try:
+                satisfies("0.0.0", rng)
+            except ValueError:
+                self.warn(path + sub, "bad-range", f"{rng!r} is not a version range (>=1.2,<2): not checked")
 
     def setting(self, spec, path):
         if spec.get("type") == "oauth":

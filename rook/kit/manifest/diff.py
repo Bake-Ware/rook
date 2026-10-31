@@ -98,3 +98,34 @@ def check_bump(old, new) -> list[Issue]:
     return [Issue(c.path, "breaking-change", "error",
                   f"{c.message}: needs a major version bump ({od['version']} -> {nd['version']})")
             for c in diff(Manifest(od), Manifest(nd))]
+
+
+_COMPARATOR = re.compile(r"^(>=|<=|==|>|<|=)?\s*(\d+(?:\.\d+){0,2}(?:-[0-9A-Za-z.-]+)?)$")
+
+
+def _padded(v: str) -> str:
+    core, dash, pre = v.partition("-")
+    parts = core.split(".")
+    return ".".join(parts + ["0"] * (3 - len(parts))) + dash + pre
+
+
+def satisfies(version: str, spec: str) -> bool:
+    """Whether ``version`` is in the range ``spec`` (``requires.plugins`` and
+    ``requires.rook``): comparators joined by commas, each ``>=``, ``>``,
+    ``<=``, ``<``, ``==`` or a bare version (exact); a version may leave out
+    minor and patch (``>=0.5,<0.6``). Blank or ``*``: any. Raises ValueError
+    for a range it can't read."""
+    spec = spec.strip()
+    if spec in ("", "*"):
+        return True
+    have = semver_key(version)
+    for part in spec.split(","):
+        m = _COMPARATOR.match(part.strip())
+        if not m:
+            raise ValueError(f"not a version range: {spec!r}")
+        op, want = m.group(1) or "==", semver_key(_padded(m.group(2)))
+        ok = {">=": have >= want, ">": have > want, "<=": have <= want, "<": have < want,
+              "==": have == want, "=": have == want}[op]
+        if not ok:
+            return False
+    return True

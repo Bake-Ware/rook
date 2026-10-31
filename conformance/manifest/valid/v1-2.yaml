@@ -4,6 +4,7 @@ manifest: 1
 plugin: kvm2
 version: 1.0.0
 runs_on: hub
+requires: { plugins: { notify: "~1" } }     # warned: not a range this format reads
 settings:
   hook_secret: { secret: true }
   bot_token: { secret: true }

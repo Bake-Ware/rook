@@ -495,6 +495,7 @@ def test_hub_plugins_records_contracts_and_hooks(hubs, tmp_path):
         try:
             library = [n for n, p in hub.plugins.plugins.items() if not p.manifest.get("builtin")]
             assert library == ["notes"]       # broken was refused, the hub runs
+            assert hub._installed()["notes"] == "1.0.0"     # what requires.plugins is checked against
             _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "notes.note.create",
                                                        "args": {"text": "milk"}, "why": WHY}, token)
             assert out["ok"] and out["result"]["text"] == "milk", out

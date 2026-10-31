@@ -513,6 +513,11 @@
       "level": "warning",
       "path": "/provides/1",
       "code": "unknown-contract"
+    },
+    {
+      "level": "warning",
+      "path": "/requires/plugins/notify",
+      "code": "bad-range"
     }
   ],
   "valid/warnings.yaml": [

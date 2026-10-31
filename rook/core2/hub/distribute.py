@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from rook.core2 import wire
-from rook.kit.manifest import ManifestError, check_bump, file_hashes, load, trust_class
+from rook.kit.manifest import ManifestError, check_bump, file_hashes, load, satisfies, trust_class
 
 SIG_TYP = "rook-plugin"
 SIG_FILE = "plugin.sig"
@@ -261,10 +261,14 @@ def sign_files(signer, *, hub: str, worker: str, plugin: str, version: str,
 
 def prepare(folder, env: WorkerEnv | None, *, signer, hub: str, current: dict | None = None,
             cache: Path | None = None, fetch: Callable = fetch_url,
-            resolve: Callable = resolve_python, now: int | None = None) -> Plan:
+            resolve: Callable = resolve_python, now: int | None = None,
+            installed: dict | None = None) -> Plan:
     """Everything up to the push, for one target worker (``env``; None for a
     hub-only plugin). ``current`` is the parsed manifest that worker runs now,
-    if any: a breaking change without a major bump is refused."""
+    if any: a breaking change without a major bump is refused. ``installed``
+    ({plugin: version} the band runs) checks ``requires.plugins``: the caps
+    this plugin calls (``uses``) are the dependency, the range says which
+    versions of their plugin it was written against."""
     folder = Path(folder).resolve()
     try:
         m = load(folder)
@@ -280,6 +284,16 @@ def prepare(folder, env: WorkerEnv | None, *, signer, hub: str, current: dict | 
         if errors:
             raise Refused(f"{m.plugin} {current.get('version')} -> {m.version}: "
                           + "; ".join(i.message for i in errors))
+    for dep, rng in ((data.get("requires") or {}).get("plugins") or {}).items():
+        if installed is None:
+            break
+        have = installed.get(dep)
+        try:
+            ok = have is not None and satisfies(have, rng)
+        except ValueError as e:
+            raise Refused(f"{m.plugin} requires.plugins.{dep}: {e}") from None
+        if not ok:
+            raise Refused(f"{m.plugin} needs {dep} {rng}: " + ("not installed" if have is None else f"the band has {have}"))
     try:
         trust = trust_class(folder)
         hashes = file_hashes(folder)

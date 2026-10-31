@@ -59,6 +59,7 @@ from nacl.signing import SigningKey
 from rook.kit.contracts import Contracts
 from rook.kit.ctx import Caller as KitCaller, KitError
 from rook.kit.manifest import check, normalize, validate
+from rook.kit.manifest.diff import semver_key
 from rook.kit.records import RecordStore
 
 from .. import CORE_VERSION, rights, wire
@@ -969,6 +970,21 @@ class Hub:
             cap=cap, target=target, args=args, why=who.why or f"{who.plugin or 'hub'} plugin", session=sid,
             layers=[["uses", {"grants": list(uses)}]] if uses is not None else [], contract=contract))
 
+    def _installed(self) -> dict:
+        """{plugin: version} the band runs: the hub's plugins and every known
+        worker's (the newest when they differ)."""
+        out: dict = {}
+        found = [(n, p.manifest.get("version")) for n, p in self.plugins.plugins.items()]
+        found += [(e["plugin"], (self.manifests.get(e["hash"]) or {}).get("version"))
+                  for k in self.known.values() for e in k.manifests]
+        for name, version in found:
+            try:
+                if isinstance(version, str) and (name not in out or semver_key(version) > semver_key(out[name])):
+                    out[name] = version
+            except ValueError:
+                continue
+        return out
+
     def _target_for(self, cap: str) -> str | None:
         """The hub if it serves ``cap``, else the one worker that does (the
         one online, when several do)."""
@@ -1121,7 +1137,8 @@ class Hub:
         env = distribute.WorkerEnv(k.id, os=str(k.facts.get("os", "")), python=str(k.facts.get("python", "")))
         try:     # uv resolution and asset downloads block: off the loop
             plan = await asyncio.to_thread(distribute.prepare, folder, env, signer=self.op, hub=self.hub_id,
-                                           current=current, cache=self.data / "assets")
+                                           current=current, cache=self.data / "assets",
+                                           installed=self._installed())
         except distribute.Refused as e:
             return {"ok": False, "error": f"refused: {e}"}
         if plan.sig is None:
