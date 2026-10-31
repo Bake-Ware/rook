@@ -405,7 +405,8 @@ class Hub:
             self.identities.add_agent(name, r)
         self._load_tokens()
         if cfg.oauth:
-            self.oauth = OAuth(self.data, cfg.oauth["issuer"], cfg.oauth["resource"], clock=self.clock)
+            self.oauth = OAuth(self.data, cfg.oauth["issuer"], cfg.oauth["resource"], clock=self.clock,
+                               alive=lambda person, agent: self.current(Caller(person, agent)) is not None)
 
         self.contracts = Contracts(dict(cfg.contracts))
         self.plugins = HubPlugins(records=self.records, contracts=self.contracts, call=self.call_as,
@@ -436,6 +437,8 @@ class Hub:
             door = make_door(name, self, opts or {})
             await door.start()
             self.doors.append(door)
+        if self.oauth and not any(getattr(d, "web", None) for d in self.doors):
+            log.warning("oauth is set but no door serves the hub site: remote MCP clients can't sign in")
         if cfg.enroll.get("discover"):
             from ..enroll.mdns import Responder
             self.mdns = Responder(cfg.enroll["url"], self.hub_id)

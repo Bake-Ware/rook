@@ -431,9 +431,13 @@ class Web:
             if session is None:
                 if req.headers.get("Sec-Fetch-Site") == "cross-site":
                     # The sign-in cookie is SameSite=Strict: a link from the app's own site
-                    # arrives without it. Load the page again from here, and it comes along.
+                    # arrives without it. Load the page again from here, and it comes along;
+                    # a browser that still calls that cross-site gets a link to click.
+                    again = escape(req.path + "&rook_again=1")
+                    if "rook_again" in query:
+                        return self._oauth_page(200, "Rook", f'<p><a href="{escape(req.path)}">Continue</a></p>')
                     return self._oauth_page(200, "Rook", '<p class="muted">One moment…</p>',
-                                            head='<meta http-equiv="refresh" content="0">')
+                                            head=f'<meta http-equiv="refresh" content="0; url={again}">')
                 return 303, {"Location": "/login?next=" + quote(req.path, safe="")}, b""
             consent = oauth.begin(query, sid)
             return self._consent(session, consent)
@@ -567,7 +571,8 @@ OAUTH_META = "/.well-known/oauth-authorization-server"
 
 def _next(value) -> str | None:
     """Where sign-in goes next: only back into an OAuth authorization."""
-    if isinstance(value, str) and value.startswith("/oauth/authorize?") and "\\" not in value:
+    if isinstance(value, str) and value.startswith("/oauth/authorize?") and \
+            not any(c == "\\" or ord(c) <= 32 or ord(c) == 127 for c in value):
         return value
     return None
 

@@ -85,12 +85,15 @@ def check_options(opts: dict) -> None:
         v = opts.get(key)
         if not (isinstance(v, str) and _web_uri(v) and not urlsplit(v).query and "#" not in v):
             raise ValueError(f"oauth: {key} must be an https address (http only on localhost)")
+    if urlsplit(opts["issuer"]).path not in ("", "/"):
+        raise ValueError("oauth: issuer is the hub site's address, without a path")
 
 
 class OAuth:
-    def __init__(self, data: Path, issuer: str, resource: str, clock=time.time):
+    def __init__(self, data: Path, issuer: str, resource: str, clock=time.time, alive=lambda person, agent: True):
         self.issuer, self.resource = issuer.rstrip("/"), resource.rstrip("/")
         self.clock = clock
+        self.alive = alive          # (person, agent) -> still configured: no tokens for someone gone
         self.path = Path(data) / "oauth.json"
         self._lock = threading.Lock()
         try:
@@ -269,6 +272,10 @@ class OAuth:
                 grant["used"] = int(now)
             else:
                 raise OAuthError("unsupported_grant_type", "grant_type: authorization_code or refresh_token")
+            if not self.alive(grant["person"], grant["agent"]):
+                self._revoke(grant["id"], "its person or agent is gone")
+                self._save()
+                raise OAuthError("invalid_grant", "the person or agent this connector acts as is gone")
             access, refresh = "rook_at_" + secrets.token_urlsafe(32), "rook_rt_" + secrets.token_urlsafe(32)
             grant["refresh"] = _digest(refresh)
             self.access[_digest(access)] = [grant["id"], int(now + ACCESS_SECS)]

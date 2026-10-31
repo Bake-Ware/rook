@@ -230,7 +230,9 @@ def test_full_flow(oauth_hub):
         browser = Browser(h.site)
         path = client.authorize_path()
         status, headers, page = await browser.get(path, {"Sec-Fetch-Site": "cross-site"})
-        assert status == 200 and b'http-equiv="refresh"' in page
+        assert status == 200 and b'http-equiv="refresh" content="0; url=/oauth/authorize?' in page
+        status, _, page = await browser.get(path + "&rook_again=1", {"Sec-Fetch-Site": "cross-site"})
+        assert status == 200 and b"Continue</a>" in page and b"refresh" not in page     # never a loop
         status, headers, _ = await browser.get(path, {"Sec-Fetch-Site": "same-origin"})
         assert status == 303 and headers["Location"].startswith("/login?next=%2Foauth%2Fauthorize%3F")
         nxt = parse_qs(urlsplit(headers["Location"]).query)["next"][0]
@@ -331,9 +333,14 @@ def test_rights_intersect_and_identity_checks(oauth_hub):
                 "worker": "kaiju", "cap": "echo.relay", "args": {"text": "x"}, "why": WHY}}},
             headers={"Authorization": f"Bearer {narrow['access_token']}"}))[2]
         assert json.loads(out["result"]["content"][0]["text"])["error"].startswith("denied")
-        # the agent taken out of the config: its connector's tokens are nobody
+        # the agent taken out of the config: its connector's tokens are nobody, and it can't refresh
         del hub.identities.agents["reader"]
         assert (await mcp_call(h, narrow["access_token"]))[0] == 401
+        reader = next(c for c in hub.oauth.connectors() if c["agent"] == "agent:reader")
+        status, _, err = await jreq(h.site + "/oauth/token", "POST", form={
+            "grant_type": "refresh_token", "refresh_token": narrow["refresh_token"], "client_id": reader["client"]})
+        assert status == 400 and err["error"] == "invalid_grant"
+        assert hub.oauth.get(reader["id"]) is None
         # closing the mcp door refuses connectors like every agent
         _, toks = await connected(h)
         await hub.set_door(runtime.Caller(person="person:bake"), "mcp", False)
@@ -487,6 +494,8 @@ def test_bad_requests(oauth_hub):
         # sign-in only follows next back into an authorization
         b2 = Browser(h.site)
         assert await b2.sign_in(h.hub.add_token(runtime.Caller(person="person:bake")), "https://evil.example/") == "/"
+        assert await b2.sign_in(h.hub.add_token(runtime.Caller(person="person:bake")),
+                                "/oauth/authorize?x\r\nSet-Cookie: a=b") == "/"
         # an access token is not a sign-in token
         _, tokens = await connected(h, browser)
         status, headers, _ = await request(h.site + "/login", "POST", form={"token": tokens["access_token"]})
@@ -598,7 +607,8 @@ def test_config_checked(tmp_path):
     for bad in ({"issuer": "http://hub.example", "resource": RESOURCE},
                 {"issuer": ISSUER},
                 {"issuer": ISSUER, "resource": RESOURCE, "extra": 1},
-                {"issuer": ISSUER + "?x=1", "resource": RESOURCE}):
+                {"issuer": ISSUER + "?x=1", "resource": RESOURCE},
+                {"issuer": ISSUER + "/rook", "resource": RESOURCE}):
         with pytest.raises(ValueError):
             check_options(bad)
     check_options({"issuer": "https://hub.example", "resource": "https://hub.example/mcp"})
