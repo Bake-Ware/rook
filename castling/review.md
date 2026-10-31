@@ -11,6 +11,9 @@ complexity.
 Every fixed finding has a test that fails on castling and passes with the
 fix, in its own pull request (one theme each). Open findings say what to do.
 
+All fixes together pass the whole test suite, `tests/e2e` included
+(`rook-pytest tests`: 5241 passed, 2026-10-31).
+
 Severity: **critical** = a narrow identity gets full rights; **high** = a
 secret leaks, a signature or spec guarantee is bypassed, or one call can
 take a worker or the hub down; **medium** = a real gap that needs an
@@ -38,7 +41,7 @@ unusual setup or a second step; **low** = hardening.
 | K3 | high | Config-action `exec` skipped core's launch path (spec 7.1): root workers ran actions as root, leases never applied. Every exec child also inherited the hub's `ROOK_SECRET_*` vault stand-in. | #305 |
 | D8 | low/med | An unread request body on a kept-alive connection was parsed as the next request (smuggling behind a shared proxy connection). | #303 |
 | D10 | low | No socket timeout on the HTTP door: idle connections held threads forever. 60 s now. | #303 |
-| CI | — | Castling itself was red: the 0.5 manual check (#291) landed after #289's plugins; a jobs test raced on py3.12. | #304 |
+| CI | — | `test_ask_answer_cancel_and_timeout` (jobs) raced on CI py3.12 and failed unrelated PRs. | #304 |
 
 ## Open
 
