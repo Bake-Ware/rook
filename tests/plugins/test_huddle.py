@@ -29,7 +29,8 @@ pytest.importorskip("jsonschema")
 
 from port_helpers import PLUGINS  # noqa: E402
 from rook.core2.hub.identity import Caller  # noqa: E402
-from rook.core2.hub.runtime import Config, Hub, Loopback  # noqa: E402
+from rook.core2.hub.runtime import Config, Hub, Loopback, _key  # noqa: E402
+from rook.core2.hub.vault import Vault  # noqa: E402
 from rook.kit.ctx import Caller as KitCaller  # noqa: E402
 from rook.kit.ctx import load_run  # noqa: E402
 from rook.kit.manifest import check  # noqa: E402
@@ -226,9 +227,18 @@ def gh():
     fake.stop()
 
 
+def seed_vault(data, **values):
+    """Secrets in the hub's vault before it starts (as ``secret set`` would)."""
+    (data / "keys").mkdir(parents=True, exist_ok=True)
+    _key(data / "keys" / "root.key")
+    v = Vault(data).unlock()
+    for name, value in values.items():
+        v.set(name, value, by="test")
+
+
 @pytest.fixture
-def cfg(tmp_path, gh, monkeypatch):
-    monkeypatch.setenv("ROOK_SECRET_GITHUB_HUB", TOKEN)
+def cfg(tmp_path, gh):
+    seed_vault(tmp_path / "data", **{"github-hub": TOKEN})
     lib = tmp_path / "lib"
     plugin(lib, "probe", PROBE, {"probe.py": PROBE_PY})
     plugin(lib, "agents", AGENTS, {"agents.py": AGENTS_PY})
@@ -599,3 +609,19 @@ def test_after_a_restart_open_calls_end(cfg, gh):
     async def bounded():
         await asyncio.wait_for(body(), 60)
     asyncio.run(bounded())
+
+
+def test_no_token_in_the_vault_says_so(tmp_path, gh):
+    lib = tmp_path / "lib"
+    for name in ("huddle", "github"):
+        lib.mkdir(exist_ok=True)
+        (lib / name).symlink_to(PLUGINS / name, target_is_directory=True)
+    cfg = Config(data=tmp_path / "data", band=BAND, library=lib, users={"bake": {"preset": "owner"}},
+                 settings={"github": {"api": gh.url, "token": "github-hub"}}, doors={"http": {"bind": "127.0.0.1:0"}})
+
+    async def body(rig):
+        h = await rig.bake.ok("huddle.start", title="No token")
+        out = await rig.bake.call("huddle.pin", huddle=h["huddle"], kind="pr", repo=REPO, number=7)
+        assert not out["ok"] and "github-hub" in out["error"] and "vault" in out["error"], out
+        assert not gh.requests
+    on_rig(cfg, body)
