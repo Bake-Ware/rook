@@ -298,6 +298,17 @@ and can be granted like caps. An event about one person's data carries a
 person and owners. An event with `taints: true` (outside content: an
 inbound message) that names nobody reaches owners' pages only.
 
+`ctx.emit(name, payload)` sends one. On a worker it runs that worker's own
+`on:` hooks and goes to the hub, which takes it only when the payload fits
+the declared fields (no others) and the worker's ceiling grants the name.
+The hub sets `person` (whoever owns the worker) and `worker` (its name) on
+the payload: an event from a machine is its owner's data, and a hook or job
+can answer on the same machine with `ctx.call_on(payload["worker"], ...)`.
+While the hub is away the worker keeps the newest 1000 events and sends
+them when it is back. Mark outside content (an inbound message, another
+app's notification) `taints: true`: hooks and jobs that act on it run their
+calls in a tainted session, which the security gate watches more closely.
+
 ## Other sections
 
 `gate` (a security check at dispatch, [Security](security.md#writing-a-gate)),

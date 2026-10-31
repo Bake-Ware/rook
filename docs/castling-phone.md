@@ -59,8 +59,10 @@ very first run announces nothing old):
 | `notification-android.received` | another app posted a notification (30 s) | yes |
 | `notification-android.card` | the person answered, acked, dismissed, saw or opened a card (10 s) | no |
 
-Until events travel to the hub (`TODO(castling:events)` in the worker
-runtime) they reach only this worker's `on:` hooks.
+They run this worker's `on:` hooks and go to the hub (`core.event`, spec
+13), which hands them to its hooks, jobs and live pages with `person` (the
+phone's owner) and `worker` (the phone's name) set. While the hub is away
+the phone keeps up to 1000 of them per hub and sends them when it is back.
 
 ## The app's 0.4/0.5 switch
 
@@ -106,7 +108,7 @@ The phone's own features keep working in 0.5 mode, but they still talk to
 | Voice (conversation, wake word, Talk button) | the 0.4 voice server's WebSocket (Settings > App) | a client for the hub's `speech` plugin (PR #287): `speech.open` / `speech.hear` with 16 kHz audio clips, `speech.read` for replies; the URL and key from the enrollment bundle's `services` (`data/services.json`) instead of typed settings |
 | Watch (Wear OS) | 0.4: streams its mic to the phone, which relays to the 0.4 voice server. 0.5: the phone runs a `speech` session on the hub for it ([castling-watch.md](castling-watch.md)) | done: the watch app itself didn't change |
 | Widgets (Talk, Waiting, Chat) | Talk and Chat use the 0.4 voice session; Waiting reads the 0.4 attention cards | Talk and Chat follow the voice client; Waiting reads the hub's cards, which reach the phone as `notification.post` with an `id` (castling-attention) |
-| Decision cards, attention feed | the 0.4 attention service and sorting rules | the hub's attention job; answers already travel back as `notification-android.card` events once events reach the hub (`TODO(castling:events)`) |
+| Decision cards, attention feed | the 0.4 attention service and sorting rules | the hub's attention job; answers travel back as `notification-android.card` events (`core.event`) |
 | APK updates | the 0.4 site's feed, stable or beta | `worker.update` from the hub |
 | Workers tab roster | 0.4 hub roster | the hub's announces |
 

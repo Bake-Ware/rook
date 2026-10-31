@@ -378,3 +378,26 @@ def test_a_ceiling_keeps_events_from_a_guest_hub(band, tmp_path):
         assert [m["plugin"] for m in view["manifests"]] == ["core", "phone"]   # core: always
         await w.stop()
     go(body)
+
+
+def test_a_page_that_receives_a_tainting_event_acts_in_a_tainted_session(tmp_path):
+    from test_core2_dashboard import Client, start
+
+    async def body():
+        hub, tokens = await start(tmp_path)
+        try:
+            hub.taints = lambda event: event == "board.inbox"       # as if a manifest declared it taints
+            c = Client(hub)
+            await c.sign_in(tokens["bake"])
+            t = (await c.open("board/board"))["token"]
+            session = hub.dispatcher.sessions[next(d for d in hub.doors if d.name == "http").web.tokens[t].dispatch]
+            seq = (await c.json("GET", f"/web/api/events?token={t}"))[1]["seq"]
+            hub._emit("board.changed", {"n": 1}, "board")
+            _, got = await c.json("GET", f"/web/api/events?token={t}&since={seq}")
+            assert [e["event"] for e in got["events"]] == ["board.changed"] and not session.tainted
+            hub._emit("board.inbox", {"text": "from outside"}, "board")
+            _, got = await c.json("GET", f"/web/api/events?token={t}&since={got['seq']}")
+            assert [e["event"] for e in got["events"]] == ["board.inbox"] and session.tainted
+        finally:
+            await hub.stop()
+    go(body)
