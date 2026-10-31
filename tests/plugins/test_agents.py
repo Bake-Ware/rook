@@ -318,6 +318,10 @@ def test_create_update_archive(rig):
         out = await rig.call("chat_send", agent="re", text="back?")
         assert out["text"] == "echo back?" and rig.backend.turns()[-1][0] == "agent.backend"
         assert rig.backend.contracts[-1] is None and "re" in rig.people.agents
+        # Deleted: its identity goes on the next look (a delete has no event).
+        rig.rec("agent", "delete", id=made["id"])
+        await rig.rt.ready(force=True)
+        assert "re" not in rig.people.agents
         # A name hub.yaml already has is never made a Rook-run agent: the
         # record has no identity, so its turns fail closed.
         rig.people.taken.add("claude-code")
