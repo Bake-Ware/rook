@@ -72,12 +72,12 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 2 | contradiction | Core refuses plugin pushes and worker updates without the change plugin | `rook/core2/hub/runtime.py:1354`, #326 |
 | 3 | missing | Sign-off (the decided replacement) is storage only; agents can't review PRs | `rook/plugins/tasks`, `rook/plugins/github` |
 | 4 | missing | Rook-run agents have no identity of their own; persona grants are decorative | `agents/scripts/agents.py:26`, `agents-claude-code` |
-| 5 | renamed, missing | "Producer" became a release manager; the house agent doesn't tag work or offer projects | `agents/personas/producer.md`, `house.md` |
-| 6 | contradiction | Archivist and wiki-sweep teach 0.4 verification and supersede | `agents/personas/archivist.md`, `skills/wiki-sweep.md` |
+| 5 | renamed, missing | "Producer" became a release manager; the house agent doesn't tag work or offer projects (**fixed, PR #340**) | `agents/personas/producer.md`, `house.md` |
+| 6 | contradiction | Archivist and wiki-sweep teach 0.4 verification and supersede (**fixed, PR #340**) | `agents/personas/archivist.md`, `skills/wiki-sweep.md` |
 | 7 | over-built | The one-off 0.4 migration ships as a product tool in core | `rook/core2/migrate`, `knowledge/scripts/import_04.py` |
 | 8 | missing | C4 `approval.ask` not built; plugins built their own asks; `page.show` absent | builtin `approval`, `jobs`, `huddle carry`, `changes` |
 | 9 | contradiction (partial) | Streams: three private hub stores, no hub `stream.read/write`, no chat rooms (**fixed, PR #347**) | `agents`, `speech`, `huddle`, #331 |
-| 10 | missing, package | Personas only from the agents manifest; workbench roles in agents; skills not in the knowledge store | `agents.py:158,416,464` |
+| 10 | missing, package | Personas only from the agents manifest; workbench roles in agents; skills not in the knowledge store (**fixed, PR #340**) | `agents.py:158,416,464` |
 | 11 | missing | No Codex backend, while the enum and manuals offer codex/local/api. **Fixed: PR #336** | `rook/plugins/agents*` |
 | 12 | contradiction, over-built | Core "2.1" is breaking but labelled minor; extras beyond H2 | #327 |
 | 13 | over-built | Worker updates port 0.4 OTA as caps, including caps Bake's pass binned | #326 |
@@ -230,6 +230,7 @@ Watch items (ask Bake, not drift yet) are after the findings.
 - **Smallest fix.** Rewrite `producer.md` to the decision (interview, research, `concept.create`
   with roles/skills/sign-off norms); three bullets in `house.md`; one line in the dream prompt.
   Release work, if wanted, is a skill for lead or QA.
+- **Fixed** in PR #340 (c8/roles).
 
 ## 6. Archivist teaches the 0.4 verification model (contradiction)
 
@@ -244,6 +245,7 @@ Watch items (ask Bake, not drift yet) are after the findings.
   the namespaces are singular, so once #4 lands they match nothing.
 - **Smallest fix.** "Fix the page and add a `sources` entry saying why; an unsupported statement
   gets a source or comes out." Correct the three grant patterns.
+- **Fixed** in PR #340 (c8/roles).
 
 ## 7. The one-off 0.4 migration ships as a product tool (over-built)
 
@@ -326,6 +328,7 @@ Watch items (ask Bake, not drift yet) are after the findings.
 - **Smallest fix.** Seed personas from every installed manifest; move PM/archivist/producer and
   their skills into a workbench manifest; `agents.skill` falls back to knowledge pages of kind
   skill.
+- **Fixed** in PR #340 (c8/roles).
 
 ## 11. No Codex backend, but the enum and manuals offer it (missing). Fixed: PR #336
 
