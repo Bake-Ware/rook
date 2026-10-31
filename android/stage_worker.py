@@ -89,7 +89,8 @@ def stage_castling(rook_dst: Path) -> list[Path]:
     for pkg in ("kit", "streams"):
         _copy_pkg(src / pkg, rook_dst / pkg)
     # rook/kit/manifest/validate.py looks for the schema here in an installed copy.
-    # A package, so Chaquopy extracts it next to its __init__ on import.
+    # Chaquopy puts package data files on disk where __file__ says (seen on the
+    # emulator for this and rook/core2/builtin/core.yaml).
     schema = rook_dst / "_conformance"
     schema.mkdir(exist_ok=True)
     (schema / "__init__.py").write_text("", encoding="utf-8")
