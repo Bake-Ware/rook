@@ -400,6 +400,7 @@ def main(job):
                         what="the ask")
             rec = rig.hub.records.type("jobs.run").get(_owner(), rid)
             assert rec["asking"] == {"question": "Ship it?", "options": ["yes", "no"]}
+            await until(lambda: rig.sent(), what="the ask's message")     # sent just after it waits
             assert rig.sent()[-1]["text"].startswith("Ship it? (yes / no)\nAnswer with jobs.answer run=")
             assert not (await rig.pat.call("jobs.answer", run=rid, answer="yes"))["ok"]     # not pat's
             out = await rig.bake.call("jobs.answer", run=rid, answer="maybe")
