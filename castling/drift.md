@@ -68,8 +68,8 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | # | Severity | Finding | Where |
 |---|---|---|---|
 | 0 | contradiction, over-built | Huddles rebuilt as a merge-vote room (known; rework in flight) | #329 `rook/plugins/huddle`, `github`, `agents/skills/chair.md` |
-| 1 | contradiction, over-built | Change records rebuilt as the 0.4 CR runner | #322 `rook/plugins/changes` |
-| 2 | contradiction | Core refuses plugin pushes and worker updates without the change plugin | `rook/core2/hub/runtime.py:1354`, #326 |
+| 1 | contradiction, over-built | Change records rebuilt as the 0.4 CR runner (**fixed: #346**) | #322 `rook/plugins/changes` |
+| 2 | contradiction | Core refuses plugin pushes and worker updates without the change plugin (**fixed: #346**) | `rook/core2/hub/runtime.py:1354`, #326 |
 | 3 | missing | Sign-off (the decided replacement) is storage only; agents can't review PRs | `rook/plugins/tasks`, `rook/plugins/github` |
 | 4 | missing | Rook-run agents have no identity of their own; persona grants are decorative | `agents/scripts/agents.py:26`, `agents-claude-code` |
 | 5 | renamed, missing | "Producer" became a release manager; the house agent doesn't tag work or offer projects (**fixed, PR #340**) | `agents/personas/producer.md`, `house.md` |
@@ -80,7 +80,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 10 | missing, package | Personas only from the agents manifest; workbench roles in agents; skills not in the knowledge store (**fixed, PR #340**) | `agents.py:158,416,464` |
 | 11 | missing | No Codex backend, while the enum and manuals offer codex/local/api. **Fixed: PR #336** | `rook/plugins/agents*` |
 | 12 | contradiction, over-built | Core "2.1" is breaking but labelled minor; extras beyond H2 | #327 |
-| 13 | over-built | Worker updates port 0.4 OTA as caps, including caps Bake's pass binned | #326 |
+| 13 | over-built | Worker updates port 0.4 OTA as caps, including caps Bake's pass binned (**fixed: #346**) | #326 |
 | 14 | over-built | OAuth door is a full authorization server; 0.4 cut that back to a shim | #332 (**fixed in #337**) |
 | 15 | missing | Backup has no default target and no house-agent nudges | `rook/core2/hub/backup` |
 | 16 | missing | `core.elevate` skips the gate hook (**fixed, PR #338**) | `rook/core2/hub/dispatch.py:550` |
@@ -158,6 +158,10 @@ Watch items (ask Bake, not drift yet) are after the findings.
   `kind`, `change.apply`, `change.revert`, the step runner and `rejoin`. Apply/test/rollback become
   a jobs-plugin job the record links (castling-jobs already designed "scripts with steps and
   branching"). Rewrite the R4 row.
+- **Status. Fixed in #346:** `change` is a record type (what, why, risk, testing, rollback, steps,
+  links, `job`/`rollback_job`, outcome) with `change.create` checking the ceremony for the trust
+  level; no runner, `kind`, `apply`, `revert` or `rejoin`; R4 row rewritten. Open for Bake: how a
+  sacred project's owner approval works now that records gate nothing.
 
 ## 2. Core refuses work without the change plugin (contradiction)
 
@@ -174,6 +178,8 @@ Watch items (ask Bake, not drift yet) are after the findings.
 - **Smallest fix.** Core pushes and updates on its own and journals the call (that *is* the audit
   trail); when the change plugin is present it writes a one-line record. Never refuse because a
   plugin is missing.
+- **Status. Fixed in #346:** pushes call `core.plugin.install` and rollouts `worker.update`
+  directly; `Hub.note_change` writes a record only when the plugin is installed.
 
 ## 3. Sign-off is storage only, and agents can't review PRs (missing)
 
@@ -379,6 +385,9 @@ Watch items (ask Bake, not drift yet) are after the findings.
 - **Smallest fix.** Keep the signed release and `worker.update` with trial + rollback inside it
   (`worker.update {version}` covers going back). `prepare` becomes the CLI. One change record for
   the rollout, not per worker, and not through the runner (#1, #2).
+- **Status. Fixed in #346:** `worker.rollback` gone (`worker.update {version}` goes back);
+  `update.prepare` folded into `update.rollout` (it signs the hub's code or a `source`; a held
+  `version` rolls the band back) rather than a CLI; one record per rollout, written by core.
 
 ## 14. The OAuth door is a full authorization server (over-built). PR #332, merged
 
