@@ -1,0 +1,57 @@
+# A hosted voice.tts provider: ElevenLabs text to speech (the 0.4 voice
+# service's VOICE_TTS_HOSTED=elevenlabs, as its own plugin). Opt-in: text goes
+# to ElevenLabs only when this is the chosen voice.tts provider (the hub
+# config's contracts:) or a session's voice is one of its voices; the speech
+# plugin falls back to the speech engine's default voice when it fails.
+# Raw HTTPS with the stdlib. Code: scripts/elevenlabs.py.
+manifest: 1
+plugin: speech-elevenlabs
+version: 0.5.0
+title: ElevenLabs voices
+doc: Spoken replies in ElevenLabs voices, with an API key.
+package: agents
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+requires: { settings: [key] }
+
+settings:
+  key:
+    secret: true
+    where: hub
+    doc: The vault name of the ElevenLabs API key.
+    setup: Make an API key in your ElevenLabs profile, store it in the vault and set this to the vault name.
+  voices:
+    type: str
+    default: ""
+    where: hub
+    doc: "Voices to offer as name=voice_id, comma separated (Rachel=21m00Tcm4TlvDq8ntWcQ); blank: the account's voices."
+  default: { type: str, default: "", where: hub, doc: "The voice a blank voice speaks in; blank: the first one." }
+  model: { type: str, default: eleven_flash_v2_5, where: hub, doc: The ElevenLabs model (flash is the fastest). }
+  url: { type: url, default: "https://api.elevenlabs.io", where: hub, doc: The API base URL. }
+  timeout: { type: duration, default: 10s, where: hub, doc: Longest one request may take. }
+
+caps:
+  tts:
+    doc: Speak a line in an ElevenLabs voice (24 kHz WAV). Each call spends ElevenLabs characters.
+    on: hub
+    risk: read
+    scope: external
+    timeout: 30s
+    run: scripts/elevenlabs.py:tts
+    args:
+      text: { type: str, required: true, max: 2500 }
+      voice: { type: str, doc: "A voice from speech-elevenlabs.voices (eleven_<name>); blank: the default." }
+    result: { type: file, doc: audio/wav }
+  voices:
+    doc: The ElevenLabs voices offered (eleven_<name>) and the default.
+    on: hub
+    risk: read
+    scope: external
+    idempotent: true
+    run: scripts/elevenlabs.py:voices
+    result: { type: map }
+
+provides:
+  voice.tts: speech-elevenlabs.tts
+docs: { manual: docs/manual.md }

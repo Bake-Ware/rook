@@ -1,0 +1,109 @@
+# The hub's voice assistant service (Bake's B10: the 0.4 hub voice plugin's
+# voice.* became speech.*). Voice is a motor skill any agent can use
+# (castling-agents): a voice session is a stream (castling-streams, kind
+# voice) whose producer, this plugin, turns audio into turn events.
+#
+# One utterance (speech.hear): voice.stt hears it, voice.turn says whether
+# the person finished or only paused, voice.speaker says who it sounds like
+# (kept on the session, advisory). Then System One, a fast model
+# (llm.complete, model "one"), answers small things at once and hands the
+# rest to the agent's System Two, its real brain (agents.chat.send, in the
+# person's own session with that agent), whose reply lands in the stream.
+# Replies are spoken with voice.tts (the speech engine, or a hosted voice
+# such as speech-elevenlabs). Code: scripts/speech.py.
+manifest: 1
+plugin: speech
+version: 0.5.0
+title: Speech
+doc: Talk to your agents by voice - sessions, a fast front talker, the agent's brain behind it.
+package: agents
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+# The voice contracts and their providers (contract routing re-dispatches
+# the provider as the same caller), System One's model and the agent.
+uses: [voice.stt, voice.tts, voice.turn, voice.speaker, "speech-engine.*", "speech-elevenlabs.*",
+       llm.complete, llm-openai.complete, llm-anthropic.complete, llm-cli.complete, agents.chat.send]
+
+settings:
+  agent: { type: str, default: house, doc: "The agent a voice session talks to unless it names another." }
+  talker:
+    type: bool
+    default: true
+    doc: "System One answers small things at once and hands the rest to the agent; off: every turn goes to the agent."
+  talker_model: { type: str, default: one, doc: "System One's model: a model id or a system (one, two, three)." }
+  voice: { type: str, default: "", where: person, doc: "The voice your sessions speak in; blank: the provider's default." }
+  history: { type: int, default: 12, min: 0, max: 100, doc: How many recent turns System One sees. }
+
+caps:
+  open:
+    doc: Start a voice session with an agent. Send what you say with speech.hear; read the replies with speech.read.
+    risk: write
+    scope: multi-user
+    effects: [persists]
+    run: scripts/speech.py:open_session
+    args:
+      agent: { type: str, pattern: "^[a-z][a-z0-9_-]{0,39}$", doc: "blank: the speech.agent setting." }
+      voice: { type: str, doc: "blank: your speech.voice setting." }
+      device: { type: str, doc: "The worker you speak from (your phone, watch, desktop), kept on the session." }
+      title: { type: str }
+    result:
+      type: map
+      fields:
+        stream: { type: str, required: true }
+        agent: { type: str, required: true }
+        voice: { type: str }
+  hear:
+    doc: "One utterance: audio (or typed text) into the session. Answers what was heard, the speaker, and System One's spoken reply; the agent's reply follows in speech.read."
+    risk: write
+    scope: multi-user
+    effects: [persists, personal]
+    timeout: 2m
+    run: scripts/speech.py:hear
+    args:
+      stream: { type: str, required: true }
+      audio: { type: file, doc: "audio/L16 (16 kHz mono 16-bit) or audio/wav, at most 30 s." }
+      text: { type: str, doc: "What was said, when the device already transcribed it." }
+      final: { type: bool, default: false, doc: "The person is done (push-to-talk released): skip end-of-turn detection." }
+    result: { type: map }
+  read:
+    doc: The session's events after a cursor; with audio, each reply carries its spoken audio.
+    risk: read
+    scope: multi-user
+    idempotent: true
+    timeout: 2m
+    run: scripts/speech.py:read
+    args:
+      stream: { type: str, required: true }
+      after: { type: int, default: 0, min: 0, doc: "The last seq you saw; pass back next." }
+      limit: { type: int, default: 50, min: 1, max: 500 }
+      wait: { type: float, default: 0, min: 0, max: 60, doc: Seconds to wait for something new. }
+      audio: { type: bool, default: false, doc: "Attach each reply's audio (voice.tts)." }
+    result: { type: map }
+  close:
+    doc: End a voice session (its history stays).
+    risk: write
+    scope: multi-user
+    run: scripts/speech.py:close
+    args:
+      stream: { type: str, required: true }
+    result: { type: map }
+  voices:
+    doc: The voices sessions can speak in (the speech engine's, and hosted ones when installed).
+    risk: read
+    scope: multi-user
+    idempotent: true
+    run: scripts/speech.py:voices
+    result: { type: map }
+  status:
+    doc: Your open voice sessions, the default agent, whether System One is on, and the speech engine's state.
+    risk: read
+    scope: multi-user
+    idempotent: true
+    run: scripts/speech.py:status
+    result: { type: map }
+
+hooks:
+  stop: scripts/speech.py:stop
+
+docs: { manual: docs/manual.md }

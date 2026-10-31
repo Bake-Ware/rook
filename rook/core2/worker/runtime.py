@@ -196,12 +196,16 @@ class Worker:
     """One per process. ``make_link(spec)`` turns a band spec (the config's
     ``bands`` entries, ``core.trust.set``'s ``connect``) into a transport
     link; tests pass loopback links. ``transport_opts`` go to
-    :class:`~rook.core2.transport.Transport` (``every``, ``lost_after``...)."""
+    :class:`~rook.core2.transport.Transport` (``every``, ``lost_after``...).
+    ``extra_builtins`` are more ``builtin: true`` manifests this process
+    implements, ``[(manifest data, {cap: handler})]``: a service that runs
+    its own worker (the voice service, services/voice/band.py)."""
 
     def __init__(self, cfg: Config, *, make_link: Callable[[dict], Any] = link_from,
-                 transport_opts: dict | None = None):
+                 transport_opts: dict | None = None, extra_builtins=()):
         check_config(cfg)
         self.cfg = cfg
+        self.extra_builtins = list(extra_builtins)
         self.data = Path(cfg.data)
         self.make_link = make_link
         self.transport_opts = dict(transport_opts or {})
@@ -255,6 +259,8 @@ class Worker:
             if data is None or any(i.level == "error" for i in issues):
                 raise RuntimeError(f"{path.name} is invalid: {[str(i) for i in issues]}")
             self.host.add_builtin(data, {c: f for c, f in caps.items() if c.startswith(data["plugin"] + ".")})
+        for data, handlers in self.extra_builtins:
+            self.host.add_builtin(data, handlers)
         self.installer = Installer(self.data / "plugins", worker_id=self.worker_id, host=self.host,
                                    keys=self._approver_keys, approves=lambda hub: bool(self._approver_bands(hub)))
         for name, values in self._local_settings().items():
