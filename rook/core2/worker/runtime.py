@@ -206,7 +206,8 @@ class Worker:
         self.make_link = make_link
         self.transport_opts = dict(transport_opts or {})
         self.inflight: list[Call] = []
-        self.reexec: Callable[[], None] = builtins.reexec   # worker.restart's last step; tests replace it
+        # worker.restart's last step; tests replace it, None where a process can't exec itself.
+        self.reexec: Callable[[], None] | None = builtins.reexec
         self.hub_nodes: dict[tuple[str, str], str] = {}     # (hub_id, band) -> the hub's node id there
         self.started = False
         self._tasks: set[asyncio.Task] = set()
@@ -244,7 +245,8 @@ class Worker:
         self.host = Host(hardware=self.cfg.hardware, dispatch=self._dispatch,
                          store_setting=self._store_setting, emit=self._emit,
                          data_root=self.data / "plugin-data", gate=self.gate, streams=self.streams)
-        own = builtins.handlers(self, self.streams, self.ran, restart=self._restart)
+        own = builtins.handlers(self, self.streams, self.ran,
+                                restart=self._restart if self.reexec is not None else None)
         for path, caps in ((CORE, {"core.trust.set": self._trust_set, "core.trust.get": self._trust_get,
                                    "core.plugin.install": self._plugin_install,
                                    "core.plugin.rollback": self._plugin_rollback}),

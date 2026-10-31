@@ -61,6 +61,11 @@ def test_android_worker_serves_the_phone_plugins_and_installs_no_packages(cfg):
             assert "sms.send" in w.gate.caps and "battery.status" not in w.gate.caps
             with pytest.raises(RuntimeError, match="built into the APK"):
                 w.installer.install_python(["websockets>=12"])
+            # worker.restart can't exec over the app's process: the app restarts the worker.
+            from rook.kit.ctx import Caller
+            from rook.core2.worker.host import CallError
+            with pytest.raises(CallError, match="can't restart itself"):
+                await w.host.call("worker.restart", {}, Caller(person="person:bake", band=band_of(PSK)))
             link = w.transport._bands[band_of(PSK)].link
             await w.redial()
             assert w.transport.bands == [band_of(PSK)] and w.transport._bands[band_of(PSK)].link is not link

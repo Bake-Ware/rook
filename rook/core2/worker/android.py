@@ -42,6 +42,10 @@ def _no_pip(pins: list[str]) -> None:
 
 
 class AndroidWorker(Worker):
+    def __init__(self, *args, **kw):
+        super().__init__(*args, **kw)
+        self.reexec = None      # worker.restart would exec over the app's own process: the app restarts it
+
     async def _load_plugins(self) -> None:
         self.installer.install_python = _no_pip
         await super()._load_plugins()
