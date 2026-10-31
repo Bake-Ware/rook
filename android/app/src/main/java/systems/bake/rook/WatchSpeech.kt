@@ -7,6 +7,7 @@ import systems.bake.rook.wearlink.Transcript
 import java.io.IOException
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
 /** What [WatchBridge] needs from a voice session: the 0.4 [VoiceClient], or 0.5's [WatchSpeech]. */
@@ -80,6 +81,8 @@ class WatchSpeech(
     @Volatile private var speakingUntil = 0L
     @Volatile private var hearing = 0
     @Volatile private var agentThinking = false
+    /** Replies queued or in the play thread's hands (fetching their audio, or playing). */
+    private val pending = AtomicInteger()
     private var lastState = ""
     private var turn = 0
     private val segmenter = Segmenter()
@@ -168,7 +171,7 @@ class WatchSpeech(
                     val text = say.optString("text")
                     if (text.isNotBlank()) { listener.onAssistantDelta(text); listener.onAssistantDone() }
                     val clips = say.optJSONArray("audio")
-                    if (!muted && clips != null) replies.offer(Reply((0 until clips.length()).map { clips.getJSONObject(it) }, say.optInt("seq")))
+                    if (!muted && clips != null) enqueue(Reply((0 until clips.length()).map { clips.getJSONObject(it) }, say.optInt("seq")))
                 }
             } catch (e: Exception) {
                 if (open) { warn("watch speech: hear failed", e); listener.onError(problem(e)) }
@@ -213,7 +216,7 @@ class WatchSpeech(
                 val text = d.optString("text")
                 if (text.isNotBlank()) {
                     listener.onAssistantDelta(text); listener.onAssistantDone()
-                    if (!muted) replies.offer(Reply(null, e.optInt("seq")))
+                    if (!muted) enqueue(Reply(null, e.optInt("seq")))
                 }
             }
             "status" -> when (d.optString("state")) {
@@ -227,23 +230,35 @@ class WatchSpeech(
 
     // -- playback ------------------------------------------------------------------------------------
 
+    private fun enqueue(r: Reply) {
+        pending.incrementAndGet()
+        if (!replies.offer(r)) { pending.decrementAndGet(); warn("watch speech: replies backed up; dropped one", null) }
+    }
+
+    /** Drops the replies not started yet. */
+    private fun dropQueued() { pending.addAndGet(-ArrayList<Reply>().also { replies.drainTo(it) }.size) }
+
     private fun playLoop() {
         while (open) {
             val left = speakingUntil - now()
             val r = replies.poll(left.coerceIn(50, 200), TimeUnit.MILLISECONDS)
             if (r == null) { state(); continue }
-            val gen = generation
-            val clips = r.clips ?: try { fetch(r.seq) } catch (e: Exception) {
-                if (open) { warn("watch speech: reply audio failed", e); listener.onError("No audio for that reply: ${problem(e)}") }
-                continue
-            }
-            if (gen != generation || muted || !open) continue
-            turn++
-            for (clip in clips) {
-                val wav = clip.optString("data").decodeBase64()?.toByteArray()?.let { Wav.pcm(it) }
-                if (wav == null) { warn("watch speech: a reply clip isn't 16-bit WAV", null); continue }
-                if (!speak(wav.first, wav.second, gen)) break
-            }
+            try { play(r) } finally { pending.decrementAndGet(); state() }
+        }
+    }
+
+    private fun play(r: Reply) {
+        val gen = generation
+        val clips = r.clips ?: try { fetch(r.seq) } catch (e: Exception) {
+            if (open) { warn("watch speech: reply audio failed", e); listener.onError("No audio for that reply: ${problem(e)}") }
+            return
+        }
+        if (gen != generation || muted || !open) return
+        turn++
+        for (clip in clips) {
+            val wav = clip.optString("data").decodeBase64()?.toByteArray()?.let { Wav.pcm(it) }
+            if (wav == null) { warn("watch speech: a reply clip isn't 16-bit WAV", null); continue }
+            if (!speak(wav.first, wav.second, gen)) return
         }
     }
 
@@ -276,7 +291,7 @@ class WatchSpeech(
     override fun interrupt() {
         muted = true
         generation++
-        replies.clear()
+        dropQueued()
         speakingUntil = 0
         sink.flush()
         listener.onInterrupt()
@@ -290,7 +305,8 @@ class WatchSpeech(
         if (!open) return
         val s = when {
             now() < speakingUntil -> "speaking"
-            hearing > 0 || agentThinking -> "thinking"
+            // A reply waiting to play (or for its audio) is still coming: no "listening" flicker before it.
+            hearing > 0 || agentThinking || pending.get() > 0 -> "thinking"
             else -> "listening"
         }
         if (s != lastState) { lastState = s; listener.onState(s) }
@@ -313,6 +329,6 @@ class WatchSpeech(
     override fun close() {
         open = false
         generation++
-        utterances.clear(); replies.clear()
+        utterances.clear(); dropQueued()
     }
 }
