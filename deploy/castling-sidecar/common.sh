@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT=${ROOK_CASTLING_HOME:-$HOME/.rook-castling}
-OWNER=${ROOK_CASTLING_OWNER:-bake}
+OWNER=${ROOK_CASTLING_OWNER:-$(id -un | tr "[:upper:]" "[:lower:]")}   # your Rook user name
 WORKER_NAME=${ROOK_CASTLING_WORKER:-$(hostname -s)}
 RELAY_PORT=${ROOK_CASTLING_RELAY_PORT:-7475}     # UDP, 127.0.0.1 only (0.4's relay is 7474 elsewhere)
 HTTP_BIND=${ROOK_CASTLING_HTTP_BIND:-0.0.0.0:8750}   # dashboard + HTTP door: localhost and the LAN

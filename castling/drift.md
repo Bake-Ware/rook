@@ -87,7 +87,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 17 | contradiction | The security gate ships in enforce mode with heuristic holds (**fixed, PR #338**) | `rook/plugins/security/plugin.yaml:26` |
 | 18 | missing (bug) | The pinned-task check calls a cap that doesn't exist, fails quietly (**fixed, PR #342**) | `security/plugin.yaml:20` |
 | 19 | missing | Telegram/Discord messages reach no agent after cutover. **Fixed: PR #341** | `telegram`, `discord`, switchover step 3 |
-| 20 | missing | No agent-led install path; README and skill are still 0.4 | `README.md`, `skills/rook/` |
+| 20 | missing | No agent-led install path; README and skill are still 0.4. **Fixed: PR #345** | `README.md`, `skills/rook/` |
 | 21 | missing | Appliance routing and appliance settings on the worker | `dispatch.py`, `worker/host.py` (N3) |
 | 22 | missing | Worker secret settings have no vault path | `worker/host.py:395` |
 | 23 | contradiction (source) | Switchover "not ported" list and R2 use retired 0.4 names (huddles, Feed, `show.present`, N23) | `docs/castling-switchover.md` |
@@ -473,7 +473,7 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
   to the linked person's house-agent session and replies through `notify.send`; or list it under
   D5.
 
-## 20. No agent-led install path (missing)
+## 20. No agent-led install path (missing) Fixed: PR #345
 
 - **Decision.** castling-first-run: "README leads with: **the easiest way to get started with Rook
   is to ask whatever agent you're already using to set it up** (point it at the GitHub repo)."

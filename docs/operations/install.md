@@ -6,7 +6,7 @@ Three ways to run a hub, from least to most hands-on:
    Linux machine. Recommended.
 2. **Docker**: `ghcr.io/bake-ware/rook` with `compose.yaml`.
 3. **From source**: a clone, a virtualenv and `scripts/local-hub.sh` in the foreground.
-   For development; see the [README](../../README.md#c-from-source).
+   For development; see the [README](../README-0.4.md#c-from-source).
 
 All three run the same two processes: the relay (`telesthete-hub`, UDP 7474) and the hub
 (`rook-hub`: the dashboard, `/mcp` and the `/band` worker bridge in one process, TCP 7005),
@@ -99,7 +99,7 @@ Change a setting by editing `hub.env` and restarting the services
 (`sudo systemctl restart rook-hub`, or `systemctl --user restart rook-hub`). Every
 variable is listed in [settings-reference.md](settings-reference.md). For a public hub
 behind HTTPS set `ROOK_DOMAIN`, `ROOK_HUB_PUBLIC`, `ROOK_MCP_PUBLIC_URL` and
-`ROOK_ALLOWED_HOSTS` there as the [README](../../README.md#going-beyond-localhost)
+`ROOK_ALLOWED_HOSTS` there as the [README](../README-0.4.md#going-beyond-localhost)
 describes.
 
 A hub reachable from the internet should sit behind a TLS reverse proxy or tunnel
@@ -193,7 +193,7 @@ they run as the `rook` user. CI uses this mode (`.github/workflows/installer.yml
 
 `compose.yaml` runs `ghcr.io/bake-ware/rook:${ROOK_VERSION:-latest}` (linux/amd64 and
 linux/arm64) as two services, `relay` and `hub` (`rook-hub`; the image's default command),
-sharing the `rook-data` volume; see the [README](../../README.md#b-docker) for the `.env`
+sharing the `rook-data` volume; see the [README](../README-0.4.md#b-docker) for the `.env`
 it needs. The hub publishes 7005 (dashboard, `/mcp`, `/band`) and, for setups made before
 the single-process hub, the MCP server alone on 8765. Upgrading from the three-service
 compose file: `docker compose up -d --remove-orphans`. The image contains the prebuilt relay pinned in `rook/_release.py`,

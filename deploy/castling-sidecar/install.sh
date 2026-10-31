@@ -117,7 +117,7 @@ plugins="$SRC/rook/plugins"
 # The library: the hub's trusted plugin folders (hub plugins run there; the
 # worker ones are pushable). The worker loads its own straight from the code.
 HUB_PLUGINS="agents notify changes tasks projects knowledge concepts whiteboard"
-WORKER_PLUGINS="shell file notification-desktop screen-desktop torrent agents-claude-code llm-cli"
+WORKER_PLUGINS="shell file notification-desktop screen-desktop torrent agents-claude-code agents-codex llm-cli"
 mkdir -p "$ROOT/hub/library"
 find "$ROOT/hub/library" -maxdepth 1 -type l -delete
 for p in $HUB_PLUGINS $WORKER_PLUGINS; do
@@ -147,6 +147,9 @@ cfg.setdefault("name", name)
 cfg["plugins"] = [str(plugins / p) for p in wanted if (plugins / p / "plugin.yaml").is_file()]
 claude = shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
 cfg.setdefault("settings", {}).setdefault("agents-claude-code", {"claude": claude})
+if (plugins / "agents-codex" / "plugin.yaml").is_file():
+    codex = shutil.which("codex") or os.path.expanduser("~/.local/bin/codex")
+    cfg["settings"].setdefault("agents-codex", {"codex": codex})
 if os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"):
     cfg["hardware"] = sorted(set(cfg.get("hardware") or []) | {"display"})   # screen + notification ports
 cfg["log"] = {"level": "info", "format": "text"}
