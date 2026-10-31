@@ -494,6 +494,23 @@ def test_release_rechecks_rights(hub):
     assert calls(hub)[-1]["decision"] == "deny"
 
 
+
+def test_release_sees_the_cap_and_worker_as_they_are_now(hub):
+    # Held for a gate flag only; meanwhile the worker re-announces the cap as
+    # destructive. Triage may release flags, never a hard stop.
+    hub.gates = [G("ml", "flag")]
+    out, _ = call(hub, BAKE, "file.read")
+    assert out["held"]
+    hub.worker.caps = {**hub.worker.caps, "file.read": {**CAPS["file.read"], "effects": ["destructive"]}}
+    rel = run(hub.release(out["hold"], "system:triage"))
+    assert "changed since it was held" in rel["error"] and not hub.tx.requests
+    # the worker became sacred after the hold: same
+    hub.worker.caps = dict(CAPS)
+    out, _ = call(hub, BAKE, "shell.exec")
+    hub.worker.sacred = True
+    rel = run(hub.release(out["hold"], "system:triage"))
+    assert "changed since it was held" in rel["error"] and not hub.tx.requests
+
 # -- gates (10.2) ------------------------------------------------------------
 
 def G(name, verdict="allow", mode="enforce", reason="anomaly", **kw):
