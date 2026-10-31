@@ -293,7 +293,10 @@ connections), `status` (a small live status announced with the worker),
 `every: [{interval, run}]` for timers, and `on: [{event, call | run, args}]`
 to react to an event. Hooks act as the plugin itself, with only its own
 namespace and its `uses`. Events a plugin sends are declared in `emits:`
-and can be granted like caps.
+and can be granted like caps. An event about one person's data carries a
+`person` field (declare it in the payload): pages show it only to that
+person and owners. An event with `taints: true` (outside content: an
+inbound message) that names nobody reaches owners' pages only.
 
 ## Other sections
 

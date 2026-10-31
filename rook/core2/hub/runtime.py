@@ -1161,6 +1161,7 @@ class Hub:
         never is, so a job or plugin acting as the person can't."""
         by = caller.agent or caller.person
         present = present and caller.agent is None and caller.person is not None
+        held = self.dispatcher.holds.get(hold) if isinstance(hold, str) else None
         if decision == "approve":
             out = await self.dispatcher.release(hold, by, present)
         elif decision == "refuse":
@@ -1169,7 +1170,8 @@ class Hub:
             return {"ok": False, "error": "bad request: decision is approve or refuse"}
         if not str(out.get("error", "")).startswith(("unknown hold", f"{by} may not")):
             self._emit("hold.decided", {"hold": hold, "decision": "approved" if decision == "approve"
-                                        else "denied", "by": by}, "core")
+                                        else "denied", "by": by,
+                                        "person": held.caller.person if held else None}, "core")
         return out
 
     def door_refused(self, caller: Caller, door: str) -> str | None:
