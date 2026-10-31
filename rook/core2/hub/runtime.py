@@ -1103,15 +1103,19 @@ class Hub:
             for h in self.dispatcher.holds.values()
             if owner or (caller.person and h.caller.person == caller.person) or h.caller == caller]}
 
-    async def decide(self, caller: Caller, hold: str, decision: Any) -> dict:
+    async def decide(self, caller: Caller, hold: str, decision: Any, present: bool = False) -> dict:
         """A person's answer to a hold: ``approve`` runs the exact call, ``refuse`` is final.
-        An agent acting for a person answers as the agent, not the person
-        (10.3: nothing but the person releases a hard stop)."""
+        An agent acting for a person answers as the agent, not the person.
+        ``present``: the answer comes from a door where the person is there
+        (the site, ``POST /holds`` with their own token, a phone card), the
+        only way a hard stop is answered (10.3); the ``approval.decide`` cap
+        never is, so a job or plugin acting as the person can't."""
         by = caller.agent or caller.person
+        present = present and caller.agent is None and caller.person is not None
         if decision == "approve":
-            out = await self.dispatcher.release(hold, by)
+            out = await self.dispatcher.release(hold, by, present)
         elif decision == "refuse":
-            out = self.dispatcher.refuse(hold, by)
+            out = self.dispatcher.refuse(hold, by, present)
         else:
             return {"ok": False, "error": "bad request: decision is approve or refuse"}
         if not str(out.get("error", "")).startswith(("unknown hold", f"{by} may not")):

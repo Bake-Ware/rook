@@ -15,8 +15,11 @@ caller's own words: it never grants anything.
 
 ## What waits for you
 
-**Hard stops** always wait, and only you can release them (not an agent
-acting for you, not the security agent):
+**Hard stops** always wait, and only you can release them, from a place
+where you are there yourself: the dashboard's Approvals page, or
+`POST /holds` with your own token. Not an agent acting for you, not the
+security agent, and not a job or plugin acting as you (the
+`approval.decide` cap never answers a hard stop):
 
 - a cap that erases data for good (`destructive`, or an effect the hub
   doesn't know),

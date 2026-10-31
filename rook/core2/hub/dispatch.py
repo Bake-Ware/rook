@@ -7,7 +7,7 @@
     reply = await d.dispatch(caller, Call(cap="shell.exec", target="kaiju",
                                           args={...}, why="...", session=s.id))
     # {"id", "ok", "result" | "error"}; a held call: {"held": True, "hold": name}
-    await d.release(name, by="person:bake")   # runs the exact held call
+    await d.release(name, by="person:bake", present=True)   # runs the exact held call
 
 Order (10.1): door, caller, session, target and cap, why, rights (the
 intersection of person, agent, session, extra layers such as plugin ``uses``
@@ -46,6 +46,9 @@ DEFAULT_TIMEOUT = 15.0
 TIMEOUT_GRACE = 5.0
 REMINT = ("denied by worker: expired", "denied by worker: not_yet_valid")
 NO_RETRY = {"destructive", "physical"}
+# The one component that may release a gate flag on its own: the security
+# plugin's triage step (a flag of its own gate only; never a hard stop).
+TRIAGE = ("system:plugin.security", "security")
 
 
 @dataclass
@@ -396,27 +399,31 @@ class Dispatcher:
 
     # -- holds (10.3) ------------------------------------------------------
 
-    def may_release(self, hold: Hold, by: str) -> bool:
+    def may_release(self, hold: Hold, by: str, present: bool = False) -> bool:
         """Hard stops: only the person the call is for (an owner when it is
-        for no person). A new cap for a child: an owner. A gate flag: the
-        person, an owner, or the hub's own platform agents (system:)."""
+        for no person), and only from a door where that person is there
+        (``present``: the site, a phone card, ``POST /holds`` with their own
+        token), never from a dispatched cap a job or plugin can make (10.3).
+        A new cap for a child: an owner. A gate flag: the person, an owner,
+        or the security triage component for its own gate's flags."""
         if not isinstance(by, str):
             return False
         person, owner = hold.caller.person, self.identities.is_owner(by)
-        if hold.hard and by != person and (person or not owner):
+        if hold.hard and (not present or (by != person and (person or not owner))):
             return False
         if hold.new_cap and not owner:
             return False
-        return not hold.flagged_by or by == person or owner or by.startswith("system:")
+        triage = by == TRIAGE[0] and set(hold.flagged_by) <= {TRIAGE[1]}
+        return not hold.flagged_by or by == person or owner or triage
 
-    async def release(self, name: str, by: str) -> dict:
+    async def release(self, name: str, by: str, present: bool = False) -> dict:
         """Run the exact held call with a ticket minted now. Holds don't
         expire, but rights are checked again (a grant taken away while it
         waited still counts) and a session ended on purpose stays ended."""
         hold = self.holds.get(name)
         if hold is None:
             return {"ok": False, "error": f"unknown hold: {name}"}
-        if not self.may_release(hold, by):
+        if not self.may_release(hold, by, present):
             return {"ok": False, "error": f"{by} may not release {name}"}
         del self.holds[name]
         entry = {**hold.entry, "ts": self.clock(), "decision": "released", "by": by}
@@ -440,12 +447,12 @@ class Dispatcher:
         self.journal(entry)
         return out
 
-    def refuse(self, name: str, by: str) -> dict:
+    def refuse(self, name: str, by: str, present: bool = False) -> dict:
         """The person said no: final."""
         hold = self.holds.get(name)
         if hold is None:
             return {"ok": False, "error": f"unknown hold: {name}"}
-        if not self.may_release(hold, by):
+        if not self.may_release(hold, by, present):
             return {"ok": False, "error": f"{by} may not refuse {name}"}
         del self.holds[name]
         self.journal({**hold.entry, "ts": self.clock(), "decision": "refused", "by": by})

@@ -11,7 +11,11 @@ child uses a cap for the first time, or when a security gate flags it.
 | `approval.decide` | `{hold, decision: approve \| refuse}`. `approve` runs exactly that call now, with a fresh ticket; `refuse` is final. |
 
 Only a person answers. An agent acting for a person answers as the agent,
-so it can never release a hard stop. Holds don't expire.
+so it can never release a hard stop. A hard stop is answered only where
+the person is there: this page (the site answers it for them, not through
+the cap) or `POST /holds/<hold>` with their own token. The
+`approval.decide` cap never answers one, so a job or hub plugin acting as
+the person can't. Holds don't expire.
 
 The **Approvals** page (in the sidebar) lists them with Approve and Refuse
 buttons and updates as holds come and go. The `approval/holds` component

@@ -448,8 +448,10 @@ def test_hard_stops_hold(hub, cap, reason):
     assert e["decision"] == "held" and e["hold"] == out["hold"] and "ticket" not in e
     # not the agent, not the platform, not another owner-less person
     for by in ("agent:claude", "system:security", "person:ann"):
-        assert not run(hub.release(out["hold"], by))["ok"]
-    rel = run(hub.release(out["hold"], "person:bake"))
+        assert not run(hub.release(out["hold"], by, present=True))["ok"]
+    # the person, but through a dispatched cap (a job or plugin acting as them)
+    assert "may not release" in run(hub.release(out["hold"], "person:bake"))["error"]
+    rel = run(hub.release(out["hold"], "person:bake", present=True))
     assert rel["ok"] and rel["id"] == out["id"]
     req = hub.tx.requests[0]
     assert req["id"] == out["id"] and req["ticket"]["session"] == s.id
@@ -457,7 +459,7 @@ def test_hard_stops_hold(hub, cap, reason):
     released = calls(hub)[-1]
     assert released["decision"] == "released" and released["by"] == "person:bake"
     assert released["call"] == out["id"] and released["ok"] is True
-    assert run(hub.release(out["hold"], "person:bake"))["error"].startswith("unknown hold")
+    assert run(hub.release(out["hold"], "person:bake", present=True))["error"].startswith("unknown hold")
 
 
 def test_sensitive_without_a_secret_is_not_a_hard_stop(hub):
@@ -468,8 +470,8 @@ def test_hard_stop_without_a_person_needs_an_owner(hub):
     hub.identities.agents["nightly"] = {"grants": ["*"]}
     out, _ = call(hub, NIGHTLY, "file.delete")
     assert out["held"]
-    assert not run(hub.release(out["hold"], "person:ann"))["ok"]
-    assert run(hub.release(out["hold"], "person:bake"))["ok"]
+    assert not run(hub.release(out["hold"], "person:ann", present=True))["ok"]
+    assert run(hub.release(out["hold"], "person:bake", present=True))["ok"]
 
 
 def test_sacred_machine_holds_changes_not_reads(hub):
@@ -481,10 +483,10 @@ def test_sacred_machine_holds_changes_not_reads(hub):
 
 def test_refused_hold_is_final(hub):
     out, _ = call(hub, BAKE, "file.delete")
-    assert not hub.refuse(out["hold"], "agent:claude")["ok"]
-    assert hub.refuse(out["hold"], "person:bake") == {"ok": True}
+    assert not hub.refuse(out["hold"], "agent:claude", present=True)["ok"]
+    assert hub.refuse(out["hold"], "person:bake", present=True) == {"ok": True}
     assert calls(hub)[-1]["decision"] == "refused"
-    assert not run(hub.release(out["hold"], "person:bake"))["ok"] and not hub.tx.requests
+    assert not run(hub.release(out["hold"], "person:bake", present=True))["ok"] and not hub.tx.requests
 
 
 def test_released_call_is_the_held_one_even_if_the_door_changes_its_args(hub):
@@ -492,7 +494,7 @@ def test_released_call_is_the_held_one_even_if_the_door_changes_its_args(hub):
     args = {"path": "/tmp/x"}
     out = run(hub.dispatch(BAKE, Call(cap="file.delete", target="kaiju", args=args, why="x", session=s.id)))
     args["path"] = "/"
-    assert run(hub.release(out["hold"], "person:bake"))["ok"]
+    assert run(hub.release(out["hold"], "person:bake", present=True))["ok"]
     assert hub.tx.requests[0]["args"] == {"path": "/tmp/x"}
     assert calls(hub)[0]["args"] == {"path": "/tmp/x"}
 
@@ -500,14 +502,14 @@ def test_released_call_is_the_held_one_even_if_the_door_changes_its_args(hub):
 def test_ended_session_stays_ended_for_holds(hub):
     out, s = call(hub, BAKE, "file.delete")
     hub.end_session(s.id)
-    assert run(hub.release(out["hold"], "person:bake"))["error"] == "denied: session: ended"
+    assert run(hub.release(out["hold"], "person:bake", present=True))["error"] == "denied: session: ended"
     assert not hub.tx.requests
 
 
 def test_holds_do_not_expire(hub):
     out, _ = call(hub, BAKE, "file.delete")
     hub.clock_box[0] += 3 * 86400
-    assert run(hub.release(out["hold"], "person:bake"))["ok"]
+    assert run(hub.release(out["hold"], "person:bake", present=True))["ok"]
     t = hub.tx.requests[0]["ticket"]
     assert t["iat"] == int(hub.clock_box[0])
 
@@ -515,7 +517,7 @@ def test_holds_do_not_expire(hub):
 def test_release_rechecks_rights(hub):
     out, _ = call(hub, CLAUDE_FOR_BAKE, "file.delete")
     hub.identities.agents["claude"] = {"grants": ["shell.*"]}
-    rel = run(hub.release(out["hold"], "person:bake"))
+    rel = run(hub.release(out["hold"], "person:bake", present=True))
     assert rel["error"] == "denied: agent: grants" and not hub.tx.requests
     assert calls(hub)[-1]["decision"] == "deny"
 
@@ -524,17 +526,17 @@ def test_release_rechecks_rights(hub):
 def test_release_sees_the_cap_and_worker_as_they_are_now(hub):
     # Held for a gate flag only; meanwhile the worker re-announces the cap as
     # destructive. Triage may release flags, never a hard stop.
-    hub.gates = [G("ml", "flag")]
+    hub.gates = [G("security", "flag")]
     out, _ = call(hub, BAKE, "file.read")
     assert out["held"]
     hub.worker.caps = {**hub.worker.caps, "file.read": {**CAPS["file.read"], "effects": ["destructive"]}}
-    rel = run(hub.release(out["hold"], "system:triage"))
+    rel = run(hub.release(out["hold"], "system:plugin.security"))
     assert "changed since it was held" in rel["error"] and not hub.tx.requests
     # the worker became sacred after the hold: same
     hub.worker.caps = dict(CAPS)
     out, _ = call(hub, BAKE, "shell.exec")
     hub.worker.sacred = True
-    rel = run(hub.release(out["hold"], "system:triage"))
+    rel = run(hub.release(out["hold"], "system:plugin.security"))
     assert "changed since it was held" in rel["error"] and not hub.tx.requests
 
 # -- gates (10.2) ------------------------------------------------------------
@@ -557,11 +559,36 @@ def test_gate_block_refuses_and_is_journaled(hub):
 
 
 def test_gate_flag_holds_and_triage_may_release(hub):
+    hub.gates = [G("security", "flag")]
+    out, _ = call(hub, CLAUDE_FOR_BAKE, "shell.exec")
+    assert out["held"] and "gate security" in out["error"]
+    assert not run(hub.release(out["hold"], "agent:claude"))["ok"]
+    assert run(hub.release(out["hold"], "system:plugin.security"))["ok"]
+
+
+def test_only_the_security_triage_component_releases_flags_of_its_own_gate(hub):
+    # Any other system: component (a hook, a job's plugin) is not triage, and
+    # triage releases its own gate's flags only (review H7).
+    hub.gates = [G("security", "flag")]
+    out, _ = call(hub, CLAUDE_FOR_BAKE, "shell.exec")
+    for by in ("system:security", "system:hub", "system:plugin.jobs", "system:triage"):
+        assert "may not release" in run(hub.release(out["hold"], by))["error"]
     hub.gates = [G("ml", "flag")]
     out, _ = call(hub, CLAUDE_FOR_BAKE, "shell.exec")
-    assert out["held"] and "gate ml" in out["error"]
-    assert not run(hub.release(out["hold"], "agent:claude"))["ok"]
-    assert run(hub.release(out["hold"], "system:security"))["ok"]
+    assert "may not release" in run(hub.release(out["hold"], "system:plugin.security"))["error"]
+    assert run(hub.release(out["hold"], "person:bake"))["ok"]       # a flag needs no presence
+
+
+def test_hard_stops_are_never_released_by_automation(hub):
+    # A person-only caller that isn't there (a job made by the person, a hub
+    # plugin's ctx.call_as) can't release or refuse the person's hard stop;
+    # the triage component never can (review H7, spec 10.3).
+    out, _ = call(hub, BAKE, "mail.send")
+    for by in ("person:bake", "system:plugin.security"):
+        assert "may not release" in run(hub.release(out["hold"], by))["error"]
+        assert "may not refuse" in hub.refuse(out["hold"], by)["error"]
+    assert not hub.tx.requests and out["hold"] in hub.holds
+    assert run(hub.release(out["hold"], "person:bake", present=True))["ok"]
 
 
 def test_shadow_gates_are_recorded_but_never_count(hub):
