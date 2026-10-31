@@ -211,6 +211,23 @@ def test_session_must_exist_belong_and_be_live(hub):
     assert hub.log[-2]["event"] == "end"
 
 
+def test_prune_forgets_ended_and_expired_sessions_only(hub):
+    live = hub.start_session(BAKE, ["*"])
+    ended = hub.start_session(BAKE, ["*"])
+    hub.end_session(ended.id)
+    held, s = call(hub, BAKE, "file.delete")             # waits for the person
+    busy = hub.start_session(CLAUDE_FOR_BAKE, ["*"], project="castling")
+    hub._inflight["n"] = ({}, CLAUDE_FOR_BAKE, busy.id)  # a call still running in it
+    assert hub.prune_sessions() == 1 and ended.id not in hub.sessions
+    hub.clock_box[0] += 12 * 3600 + 1
+    assert hub.prune_sessions() == 1 and set(hub.sessions) == {busy.id, s.id}
+    del hub._inflight["n"]
+    assert run(hub.release(held["hold"], "person:bake", present=True))["ok"]
+    assert hub.prune_sessions() == 2 and not hub.sessions
+    assert hub.projects == {"agent:claude": {"castling"}}  # the agent still reads its projects
+    assert live.id not in hub.sessions
+
+
 def test_session_caps_scope_tickets(hub):
     out, _ = call(hub, BAKE, "shell.exec", caps=["file.*"])
     assert out["error"] == "denied: session: grants"
