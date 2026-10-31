@@ -41,6 +41,9 @@ A config (paths are relative to the file)::
       relay: rook.example:7474    # the band relay as devices reach it, if not the transport's
       discover: true              # answer local network discovery (mDNS _rook-hub._tcp)
       services: { voice: { url: "https://voice.example", key_env: VOICE_KEY, presets: [owner, adult] } }
+    oauth:                        # remote MCP clients (claude.ai connectors) sign in here (rook.core2.hub.oauth)
+      issuer: https://rook.example          # the hub site (http door), behind TLS
+      resource: https://rook.example/mcp    # the MCP door as clients reach it
     log: { level: info, format: json }
 
 SIGINT or SIGTERM stops it cleanly.

@@ -12,11 +12,13 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass, field
+from html import escape
 from pathlib import Path
-from urllib.parse import parse_qsl, unquote, urlsplit
+from urllib.parse import parse_qsl, quote, unquote, urlsplit
 
 from rook.core2 import rights
 from rook.core2.hub.identity import NONE, Caller
+from rook.core2.hub.oauth import OAuthError, basic_auth
 from .caps import _read_json, _write, dock_agent
 
 log = logging.getLogger("rook.hub.door.web")
@@ -85,7 +87,7 @@ class Web:
 
     @staticmethod
     def owns(path: str) -> bool:
-        return path in ("/", "/login", "/logout") or path.startswith("/web/")
+        return path in ("/", "/login", "/logout", OAUTH_META) or path.startswith(("/web/", "/oauth/"))
 
     def handle(self, req, method: str, path: str, query: str) -> tuple[int, dict, bytes]:
         """One request: (status, headers, body)."""
@@ -95,6 +97,8 @@ class Web:
             return _json(e.status, {"ok": False, "error": e.message})
 
     def _route(self, req, method, path, query):
+        if path == OAUTH_META or path.startswith("/oauth/"):
+            return self._oauth(req, method, path, query)
         if method == "GET" and path.startswith("/web/static/"):
             return self._static(path[len("/web/static/"):])
         if path == "/login":
@@ -161,15 +165,17 @@ class Web:
             if n < 0 or n > 4096:
                 raise _Error(413, "body too large")
             req._read = True
-            token = dict(parse_qsl(req.rfile.read(n).decode("utf-8", "replace"))).get("token", "")
-            form = True
+            fields = dict(parse_qsl(req.rfile.read(n).decode("utf-8", "replace")))
+            token, form = fields.get("token", ""), True
         else:
+            fields = {}
             token, form = req._body().get("token", ""), False
+        then = _next(fields.get("next"))
         caller = req._run(_auth(self.hub, str(token).strip()))
         if caller is None or caller.agent or not caller.person:
             log.info("sign-in refused")
             if form:
-                return 303, {"Location": "/login?failed=1"}, b""
+                return 303, {"Location": "/login?failed=1" + (f"&next={quote(then, safe='')}" if then else "")}, b""
             raise _Error(401, "that is not a person's token")
         sid = secrets.token_urlsafe(32)
         with self._lock:
@@ -178,7 +184,7 @@ class Web:
         log.info("signed in", extra={"fields": {"person": caller.person}})
         headers = {"Set-Cookie": self._cookie(sid, SESSION_SECS)}
         if form:
-            return 303, {**headers, "Location": "/"}, b""
+            return 303, {**headers, "Location": then or "/"}, b""
         return 200, {**headers, **_JSON}, b'{"ok": true}'
 
     def _session(self, req) -> tuple[str | None, Session | None]:
@@ -380,6 +386,113 @@ class Web:
                     return {"ok": True, "seq": self._seq, "events": got}
                 self._cond.wait(left)
 
+    # -- OAuth: the authorization server for remote MCP clients (rook.core2.hub.oauth) --
+
+    def _oauth(self, req, method, path, query):
+        oauth = self.hub.oauth
+        if oauth is None:
+            raise _Error(404, "not found")
+        try:
+            if method == "GET" and path == OAUTH_META:
+                return _json(200, oauth.metadata())
+            if path == "/oauth/authorize" and method in ("GET", "POST"):
+                return self._authorize(req, method, query)
+            if method != "POST" or path not in ("/oauth/register", "/oauth/token", "/oauth/revoke"):
+                raise _Error(404 if path not in ("/oauth/register", "/oauth/token", "/oauth/revoke") else 405,
+                             "not found" if method == "POST" else "method not allowed")
+            if path == "/oauth/register":
+                return _json(201, oauth.register(req._body()))
+            form, basic = _form(req), basic_auth(req.headers.get("Authorization", ""))
+            if path == "/oauth/revoke":
+                oauth.revoke_token(form, basic)
+                return _json(200, {})
+            reply, grant = oauth.token(form, basic)
+            if grant:
+                self.hub._journal({"kind": "connector", "ts": self.hub.clock(), "person": grant["person"],
+                                   "agent": grant["agent"], "name": grant["name"], "grant": grant["id"],
+                                   "client": grant["client"], "ok": True})
+                log.info("oauth connector allowed", extra={"fields": {"grant": grant["id"], "person": grant["person"],
+                                                                      "agent": grant["agent"]}})
+            return _json(200, reply)
+        except OAuthError as e:
+            if e.redirect:
+                return 303, {"Location": e.redirect}, b""
+            if path == "/oauth/authorize":
+                return self._oauth_page(e.status, "This app can't connect", f"<p>{escape(e.description)}</p>")
+            extra = {"WWW-Authenticate": 'Basic realm="rook"'} if e.status == 401 else {}
+            return e.status, {**_JSON, **extra}, json.dumps(e.body()).encode("utf-8")
+
+    def _authorize(self, req, method, query):
+        """The person's side of the flow: sign in, then allow the app as one
+        of the hub's agents (or don't)."""
+        oauth = self.hub.oauth
+        sid, session = self._session(req)
+        if method == "GET":
+            if session is None:
+                if req.headers.get("Sec-Fetch-Site") == "cross-site":
+                    # The sign-in cookie is SameSite=Strict: a link from the app's own site
+                    # arrives without it. Load the page again from here, and it comes along.
+                    return self._oauth_page(200, "Rook", '<p class="muted">One moment…</p>',
+                                            head='<meta http-equiv="refresh" content="0">')
+                return 303, {"Location": "/login?next=" + quote(req.path, safe="")}, b""
+            consent = oauth.begin(query, sid)
+            return self._consent(session, consent)
+        site, origin = req.headers.get("Sec-Fetch-Site"), req.headers.get("Origin")
+        if site not in (None, "same-origin") or \
+                (origin is not None and urlsplit(origin).netloc != req.headers.get("Host", "")):
+            raise OAuthError("invalid_request", "Answer from this hub's own page.", 403)
+        form = _form(req)
+        if session is None:
+            raise OAuthError("access_denied", "Your sign-in ended. Start again from the app.", 401)
+        if not secrets.compare_digest(form.get("csrf", "").encode(), session.csrf.encode()):
+            raise OAuthError("invalid_request", "This page is stale. Start again from the app.", 403)
+        agent = form.get("agent")
+        allow = form.get("decision") == "allow"
+        if allow and agent not in self.hub.identities.agents:
+            raise OAuthError("invalid_request", "Choose one of the hub's agents.")
+        return 303, {"Location": oauth.decide(form.get("consent"), sid, session.person,
+                                              f"agent:{agent}" if allow else None)}, b""
+
+    def _consent(self, session: Session, c: dict):
+        agents = self.hub.identities.agents
+        rows = "".join(
+            f'<label class="choice"><input type="radio" name="agent" value="{escape(name)}" required'
+            f'{" checked" if len(agents) == 1 else ""}> <b>{escape(name)}</b> '
+            f'<span class="muted">{escape(_rights_line(r))}</span></label>'
+            for name, r in sorted(agents.items()))
+        body = (f'<p><b>{escape(c["client"])}</b> wants to use this hub for you '
+                f'({escape(session.person.partition(":")[2])}).</p>'
+                f'<p class="muted">When you answer, you go back to <b>{escape(c["return_to"])}</b>. '
+                "Only allow an app you just added yourself.</p>")
+        if rows:
+            body += (f'<fieldset><legend>It acts as</legend>{rows}</fieldset>'
+                     '<p class="muted">It can do only what both you and that agent may do. Its calls are '
+                     "journaled; end it any time on More &gt; Connectors.</p>")
+        else:
+            body += ('<p class="bad">This hub has no agents yet. An owner adds one under <code>agents:</code> '
+                     "in hub.yaml.</p>")
+        body += (f'<input type="hidden" name="consent" value="{escape(c["id"])}">'
+                 f'<input type="hidden" name="csrf" value="{escape(session.csrf)}">'
+                 + ('<button type="submit" name="decision" value="allow">Allow</button>' if rows else "")
+                 + '<button type="submit" name="decision" value="deny" class="link" formnovalidate>'
+                   "Don't allow</button>")
+        back = urlsplit(c["redirect_uri"])
+        # form-action covers the redirect after the answer, so it names the app's address too.
+        csp = SHELL_CSP.replace("form-action 'self'", f"form-action 'self' {back.scheme}://{back.netloc}")
+        return self._oauth_page(200, "Allow an app", body, form=True, csp=csp)
+
+    def _oauth_page(self, status: int, title: str, body: str, head: str = "", form: bool = False,
+                    csp: str = SHELL_CSP):
+        inner = (f'<form class="login consent" method="post" action="/oauth/authorize">'
+                 f'<div class="brand">{escape(title)}</div>{body}</form>') if form else \
+            f'<div class="login consent"><div class="brand">{escape(title)}</div>{body}</div>'
+        doc = ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
+               '<meta name="viewport" content="width=device-width, initial-scale=1">'
+               f'{head}<title>Rook: {escape(title)}</title><link rel="stylesheet" href="/web/static/shell.css">'
+               f"</head><body>{inner}</body></html>")
+        return status, {"Content-Type": TYPES[".html"], "Content-Security-Policy": csp, "X-Frame-Options": "DENY",
+                        "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer"}, doc.encode("utf-8")
+
     # -- files --------------------------------------------------------------------
 
     def _static(self, name: str):
@@ -449,6 +562,31 @@ def _cookie_value(header: str, name: str) -> str | None:
 
 
 _JSON = {"Content-Type": "application/json"}
+OAUTH_META = "/.well-known/oauth-authorization-server"
+
+
+def _next(value) -> str | None:
+    """Where sign-in goes next: only back into an OAuth authorization."""
+    if isinstance(value, str) and value.startswith("/oauth/authorize?") and "\\" not in value:
+        return value
+    return None
+
+
+def _form(req) -> dict:
+    """An OAuth form body (application/x-www-form-urlencoded), each field once."""
+    if not req.headers.get("Content-Type", "").startswith("application/x-www-form-urlencoded"):
+        raise OAuthError("invalid_request", "send application/x-www-form-urlencoded")
+    pairs = parse_qsl(req._raw().decode("utf-8", "replace"))
+    out = dict(pairs)
+    if len(out) != len(pairs):
+        raise OAuthError("invalid_request", "a field came twice")
+    return out
+
+
+def _rights_line(r: dict) -> str:
+    grants = r.get("grants") or []
+    text = ", ".join(map(str, grants[:6])) + (f" and {len(grants) - 6} more" if len(grants) > 6 else "")
+    return f"{text or 'nothing'}" + (f", up to {r['max_risk']}" if r.get("max_risk") else "")
 
 
 def _json(status: int, body: dict):

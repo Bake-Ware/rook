@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Connectors</title>
+</head>
+<body>
+<div class="scroll">
+<table>
+  <thead><tr><th>App</th><th>Acts as</th><th>Allowed</th><th>Last refreshed</th><th></th></tr></thead>
+  <tbody id="rows"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+</table>
+</div>
+<script>
+"use strict";
+const rows = document.getElementById("rows");
+
+function row(c) {
+  return `<tr data-id="${rook.esc(c.id)}">
+    <td>${rook.esc(c.name)}</td>
+    <td>${rook.esc(c.agent.replace(/^agent:/, ""))} <span class="muted">for ${rook.esc(c.person.replace(/^person:/, ""))}</span></td>
+    <td class="muted">${rook.ago(c.created)}</td>
+    <td class="muted">${rook.ago(c.used)}</td>
+    <td><button data-revoke>Revoke</button> <span class="out"></span></td></tr>`;
+}
+
+async function load() {
+  try {
+    const r = await rook.call("connector.list");
+    if (!r.enabled) {
+      rows.innerHTML = '<tr><td colspan="5" class="muted">OAuth is off on this hub (oauth: in hub.yaml).</td></tr>';
+    } else {
+      rows.innerHTML = r.connectors.length ? r.connectors.map(row).join("")
+        : '<tr><td colspan="5" class="muted">No connectors.</td></tr>';
+    }
+  } catch (x) {
+    rows.innerHTML = `<tr><td colspan="5" class="bad">${rook.esc(x.message)}</td></tr>`;
+  }
+}
+
+rows.addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-revoke]");
+  if (!b) return;
+  const tr = b.closest("tr"), out = tr.querySelector(".out");
+  b.disabled = true;
+  try {
+    await rook.call("connector.revoke", { id: tr.dataset.id }, { why: "The person revoked a connector on the Connectors page." });
+    load();
+  } catch (x) {
+    out.className = "bad";
+    out.textContent = x.message;
+    b.disabled = false;
+  }
+});
+
+load();
+</script>
+</body>
+</html>

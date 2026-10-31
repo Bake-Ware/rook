@@ -9,7 +9,12 @@ band through the Model Context Protocol, streamable HTTP transport
 Every request carries ``Authorization: Bearer <token>``. A token belongs to
 an agent acting for a person (``python -m rook.core2.hub --config hub.yaml
 token --person bake --agent claude-code``), so dispatch intersects what both
-may do. Every tool ends at the hub's door API like the HTTP door's routes:
+may do. With ``oauth:`` in hub.yaml the door also takes OAuth access tokens
+(remote clients such as claude.ai's connectors, :mod:`rook.core2.hub.oauth`):
+a 401 names its protected resource metadata
+(``/.well-known/oauth-protected-resource``), which names the hub site as the
+authorization server; a person signs in there and picks the agent the
+connector acts as. Every tool ends at the hub's door API like the HTTP door's routes:
 ``call`` goes through dispatch (why, rights, gates, holds, ticket, journal),
 the rest are the hub's read views. The door is stateless: no MCP session
 ids; a caller's calls share their default Rook session unless they start one.
@@ -124,6 +129,25 @@ class McpDoor(HttpDoor):
         self.path = "/" + str(options.get("path", "/mcp")).strip("/")
         self.origins = set(options.get("origins") or ())
 
+    def challenge(self) -> str:
+        """With OAuth on, a 401 points at the protected resource metadata (RFC 9728 5.1)."""
+        oauth = self.hub.oauth
+        if oauth is None:
+            return "Bearer"
+        return f'Bearer resource_metadata="{_metadata_url(oauth.resource)}"'
+
+    def well_known(self, path: str) -> dict | None:
+        """The OAuth discovery documents this door answers, by path."""
+        oauth = self.hub.oauth
+        if oauth is None:
+            return None
+        pr = "/.well-known/oauth-protected-resource"
+        if path in (pr, pr + self.path, urlsplit(_metadata_url(oauth.resource)).path):
+            return oauth.resource_metadata()
+        if path == "/.well-known/oauth-authorization-server":     # clients that look here first
+            return oauth.metadata()
+        return None
+
     async def rpc(self, caller, method: str, params: dict) -> dict:
         """One JSON-RPC request to its result, or :class:`RpcError`."""
         if method == "initialize":
@@ -211,7 +235,13 @@ class _McpHandler(_Handler):
         self._handle("DELETE")
 
     def _route(self, method: str):
-        if urlsplit(self.path).path.rstrip("/") != self.door.path.rstrip("/"):
+        path = urlsplit(self.path).path
+        if method == "GET" and path.startswith("/.well-known/"):
+            doc = self.door.well_known(path.rstrip("/"))
+            if doc is None:
+                raise _Error(404, "not found")
+            return 200, doc
+        if path.rstrip("/") != self.door.path.rstrip("/"):
             raise _Error(404, "not found")
         if method != "POST":
             raise _Error(405, "POST JSON-RPC messages here; this door opens no stream")
@@ -245,7 +275,25 @@ class _McpHandler(_Handler):
             return 200, _err(mid, -32603, "internal error")
 
 
+    async def _auth(self):
+        """A bearer token (tokens.json), else an OAuth access token."""
+        scheme, _, token = self.headers.get("Authorization", "").partition(" ")
+        token = token.strip() if scheme.lower() == "bearer" else ""
+        hub = self.door.hub
+        caller = (hub.authenticate(token) or hub.oauth_caller(token)) if token else None
+        if caller is None:
+            raise _Error(401, "a valid bearer token is required")
+        return caller
+
+
 McpDoor.handler = _McpHandler
+
+
+def _metadata_url(resource: str) -> str:
+    """Where the resource's metadata lives (RFC 9728 3.1: the well-known
+    segment goes between the host and the resource's path)."""
+    u = urlsplit(resource)
+    return f"{u.scheme}://{u.netloc}/.well-known/oauth-protected-resource{u.path.rstrip('/')}"
 
 
 def _err(mid, code: int, message: str) -> dict:

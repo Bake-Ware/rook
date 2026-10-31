@@ -78,6 +78,7 @@ from .dispatch import Call, Dispatcher, Worker
 from .doors.web import caps as builtin_caps
 from .identity import Caller, Identities, digest
 from .journal_store import JournalError, JournalStore
+from .oauth import OAuth, check_options as check_oauth
 from .plugins import HubPlugins, short_caps
 from .vault import Vault, VaultError, resolver
 from .vault import caps as vault_caps
@@ -117,6 +118,7 @@ class Config:
     doors: dict = field(default_factory=lambda: {"http": {"bind": "127.0.0.1:8740"}})
     transport: dict | None = None                   # rook.core2.transport.hub_transport options
     enroll: dict = field(default_factory=dict)      # rook.core2.enroll.hub: url, relay, ws_url, discover, services
+    oauth: dict | None = None                       # rook.core2.hub.oauth: {issuer, resource}, for remote MCP clients
     log: dict = field(default_factory=dict)         # {level, format: text|json}
     file = None    # not a key: the YAML file it was read from, set by load_config (backups copy it)
 
@@ -158,6 +160,8 @@ def check_config(cfg: Config) -> None:
     if not any(u.get("preset") == "owner" for u in cfg.users.values()):
         raise ValueError("users: seed at least one owner (preset: owner)")
     check_enroll(cfg.enroll)
+    if cfg.oauth is not None:
+        check_oauth(cfg.oauth)
 
 
 # -- keys -----------------------------------------------------------------------
@@ -353,6 +357,7 @@ class Hub:
         self.manifests: dict[str, dict] = {}     # hash -> parsed manifest
         self._norm: dict[str, dict] = {}         # hash -> normalized
         self.doors: list = []
+        self.oauth: OAuth | None = None          # remote MCP clients' OAuth (cfg.oauth)
         self.listeners: list = []                # fn(event, payload, source) for every event
 
     # -- start and stop ---------------------------------------------------------
@@ -399,6 +404,8 @@ class Hub:
         for name, r in cfg.agents.items():
             self.identities.add_agent(name, r)
         self._load_tokens()
+        if cfg.oauth:
+            self.oauth = OAuth(self.data, cfg.oauth["issuer"], cfg.oauth["resource"], clock=self.clock)
 
         self.contracts = Contracts(dict(cfg.contracts))
         self.plugins = HubPlugins(records=self.records, contracts=self.contracts, call=self.call_as,
@@ -576,7 +583,16 @@ class Hub:
             mtime = None
         if mtime is not None and mtime != getattr(self, "_tokens_mtime", None):
             self._load_tokens()
-        caller = self.identities.authenticate(token)
+        return self.current(self.identities.authenticate(token))
+
+    def oauth_caller(self, token: str) -> Caller | None:
+        """An OAuth access token (remote MCP clients, :mod:`.oauth`) to the
+        agent acting for the person who allowed it, or None."""
+        hit = self.oauth.authenticate(token) if self.oauth else None
+        return self.current(Caller(person=hit[0], agent=hit[1])) if hit else None
+
+    def current(self, caller: Caller | None) -> Caller | None:
+        """``caller`` while its person and agent are still configured."""
         if caller is None:
             return None
         if caller.person and self.identities.user(caller.person) is None:
