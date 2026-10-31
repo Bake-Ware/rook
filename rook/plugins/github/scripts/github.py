@@ -2,7 +2,8 @@
 
 ``merge`` is how work lands on 0.5 (castling-workbench: sign-off replaces
 merge votes). It checks, as the caller, the task's sign-off against what its
-project's trust level asks for (:func:`signoff_problems`), runs the gates
+project's trust level asks for, or the repo's project's when the ``repos``
+setting names a stricter one (:func:`signoff_problems`), runs the gates
 against GitHub (:func:`gate_problems`), and only then merges at the head SHA
 the caller named, with the hub's token. The call is journaled like any
 other, with its args and why; the reply says who signed and which gates
@@ -257,12 +258,23 @@ def _level(ctx, project) -> tuple[str, str | None]:
     return (trust[0]["level"] if trust else "normal"), pool.get("signoff")
 
 
+def _strictest(ctx, task_project, repo) -> tuple[str, str | None]:
+    """The task's project and the one the ``repos`` setting names for the
+    repo, the stricter of each: a task in a ship-it project can't land work
+    in a repo that belongs to a sacred one."""
+    mapped = next((p for r, p in (ctx.settings["repos"] or {}).items() if r.lower() == repo.lower()), None)
+    found = [_level(ctx, p) for p in dict.fromkeys([task_project, mapped]) if p] or [("normal", None)]
+    level = max((lv for lv, _ in found), key=("ship-it", "normal", "sacred").index)
+    need = max((n or "none" for _, n in found), key=NEED.index)
+    return level, None if need == "none" else need
+
+
 def merge(ctx, repo, number, sha, task, method="merge"):
     repo = _repo(repo)
     if not _SHA.fullmatch(str(sha)):
         raise KitError("bad args: sha is the full 40-character head you checked")
     t = ctx.call("task.get", id=task)
-    level, pool_need = _level(ctx, t.get("project"))
+    level, pool_need = _strictest(ctx, t.get("project"), repo)
     rows = ctx.call("task.signoff.list", where={"task": t["id"]}, limit=500)
     p = pr(ctx, repo, number)
     logins = {k.lower(): v for k, v in (ctx.settings["logins"] or {}).items()}

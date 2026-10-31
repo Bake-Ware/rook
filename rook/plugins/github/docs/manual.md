@@ -22,7 +22,9 @@ Sign-off replaces merge votes (castling-workbench):
 `github.merge` refuses, with every reason at once, unless both of these hold.
 
 **Sign-off is satisfied** for the project's trust level (`project.trust`;
-normal without a project or a level):
+normal without a project or a level). When the `repos` setting names a
+project for the repo, the stricter of the two applies, so a task in a
+ship-it project can't land work in a sacred project's repo:
 
 | Level | Needs |
 |---|---|
@@ -65,6 +67,7 @@ the task (relation `produced`).
 | `token` | none | the vault name of the token |
 | `api` | `https://api.github.com` | the REST API base URL |
 | `logins` | `{}` | GitHub login → band identity, for reviews as sign-off |
+| `repos` | `{}` | `owner/name` → project id, whose level and norms also apply |
 | `require_ci` | `true` | no checks at all fails ci and tests |
 | `test_checks` | `["*test*"]` | check names that are test runs |
 

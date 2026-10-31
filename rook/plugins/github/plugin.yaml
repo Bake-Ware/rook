@@ -25,6 +25,7 @@ settings:
     setup: Make a fine-grained token on GitHub, store it in the vault and set this to its vault name.
   api: { type: url, default: "https://api.github.com", where: hub, doc: The REST API base URL. }
   logins: { type: map, items: { type: str }, default: {}, where: hub, doc: "GitHub login -> who it is on the band (agent:qa, person:bake): an approving PR review by a known login counts as that one's sign-off." }
+  repos: { type: map, items: { type: str }, default: {}, where: hub, doc: "owner/name -> project id: that project's trust level and sign-off norm apply to merges into the repo whatever project the task is in (the stricter of the two)." }
   require_ci: { type: bool, default: true, where: hub, doc: "A commit with no checks at all fails the ci and tests gates." }
   test_checks: { type: list, items: { type: str }, default: ["*test*"], where: hub, doc: "Check names (globs) that are test runs, for the tests gate." }
 
@@ -100,7 +101,8 @@ caps:
   merge:
     doc: >-
       Land a pull request for a task. Refused, with every reason, unless the task's sign-off is
-      satisfied for its project's trust level (ship-it: none needed; normal: a reviewer other than
+      satisfied for its project's trust level (and the repos setting's project for the repo, the
+      stricter; ship-it: none needed; normal: a reviewer other than
       the author; sacred, or a concept asking for the user: an owner too; no sign-off declined or
       still waiting; GitHub reviews by known logins count) and the gates pass: version (sha is the
       head), mergeable, ci (every check finished and green), tests, secrets (nothing

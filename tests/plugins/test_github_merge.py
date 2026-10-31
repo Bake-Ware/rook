@@ -207,6 +207,21 @@ def test_the_gates(tmp_path, gh):
     on_rig(config(tmp_path, gh), body)
 
 
+def test_a_sacred_repo_holds_in_any_project(tmp_path, gh):
+    cfg = config(tmp_path, gh)
+
+    async def body(rig):
+        careful = await rig.bake.ok("project.create", title="Careful", slug="careful")
+        await rig.bake.ok("project.trust.create", project=careful["id"], level="sacred")
+        cfg.settings["github"]["repos"] = {REPO.lower(): careful["id"]}
+        rig.hub.plugins.settings["github"] = cfg.settings["github"]
+        tid = await task_in(rig, "ship-it")                         # a ship-it task, a sacred repo
+        out = await merge(rig, tid)
+        assert not out["ok"] and "no sign-off yet: a sacred project" in out["error"], out
+        assert "must sign off too" in out["error"] and not gh.writes
+    on_rig(cfg, body)
+
+
 def test_no_token_in_the_vault_says_so(tmp_path, gh):
     async def body(rig):
         tid = await task_in(rig, "ship-it")
