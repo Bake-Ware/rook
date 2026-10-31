@@ -93,7 +93,6 @@ linked.
 - [claudecode](../../rook/plugins/claudecode/docs/manual.md): Claude Code rules written once on the hub.
 - [decide](../../rook/plugins/decide/docs/manual.md): one-pass decision model for typed questions.
 - [huddle](../../rook/plugins/huddle/docs/manual.md): group threads where people and agents in roles work something out.
-- [github](../../rook/plugins/github/docs/manual.md): GitHub reads, and `github.merge`: how work lands (the task's sign-off for its trust level, then the gates, with the hub's token).
 
 **Speech** (talk to your agents by voice; `docs/castling-speech.md` says what
 runs where and what the phone app needs):
@@ -105,6 +104,7 @@ runs where and what the phone app needs):
 **Workbench** (on the hub; [The workbench](workbench.md)):
 
 - [task](../../rook/plugins/tasks/docs/manual.md), [project](../../rook/plugins/projects/docs/manual.md), [knowledge](../../rook/plugins/knowledge/docs/manual.md), [concept](../../rook/plugins/concepts/docs/manual.md), [whiteboard](../../rook/plugins/whiteboard/docs/manual.md).
+- [github](../../rook/plugins/github/docs/manual.md): GitHub reads, `github.review` (sign off on a PR as yourself) and `github.merge` (lands it once the task's sign-off meets its project's trust level and the gates pass).
 
 **Devices** (on workers):
 

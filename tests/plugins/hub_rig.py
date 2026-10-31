@@ -59,6 +59,9 @@ class FakeGitHub:
         if rest[0] == "pulls" and len(rest) == 2 and method == "GET":
             pr = self.prs.get(int(rest[1]))
             return (200, pr) if pr else (404, {"message": "Not Found"})
+        if rest[0] == "pulls" and rest[2:] == ["reviews"] and method == "POST":
+            self.writes.append(("review", int(rest[1]), body))
+            return 200, {"id": 9, "html_url": f"https://github.com/{REPO}/pull/{rest[1]}#review-9"}
         if rest[0] == "pulls" and rest[2:] == ["reviews"]:
             return 200, self.reviews.get(int(rest[1]), [])
         if rest[0] == "pulls" and rest[2:] == ["merge"] and method == "PUT":
@@ -100,6 +103,9 @@ class FakeGitHub:
 
             def do_PUT(self):
                 self._go("PUT")
+
+            def do_POST(self):
+                self._go("POST")
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), H)
         self.server.timeout = 5

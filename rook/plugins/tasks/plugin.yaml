@@ -13,6 +13,8 @@ package: workbench
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 runs_on: hub
+# request_signoff: the project's expert pool and trust level (workbench caps only).
+uses: ["project.get", "project.trust.list", "concept.pool"]
 records:
   task:
     fields:
@@ -104,12 +106,12 @@ caps:
     result: { type: map }
     run: scripts/task.py:handoff
   request_signoff:
-    doc: "Ask reviewers to sign off before the task is done (event task.signoff_requested; task.signoff.list where={task} shows where it stands). Reviewers come from the project's concepts (concept.pool); the project's trust level says whether the person is one of them."
+    doc: "Ask reviewers to sign off before the task is done (event task.signoff_requested; task.signoff.list where={task} shows where it stands). No reviewers: the expert roles of the project's concepts (concept.pool), as role:<name>. A sacred project (project.trust) adds its owners. The agents package wakes the agents asked (agent:<name>, or role:<name> for the agent of that name), as you."
     risk: write
     scope: multi-user
     args:
       id: { type: str, required: true }
-      reviewers: { type: list, items: { type: str }, required: true, max: 20 }
+      reviewers: { type: list, items: { type: str }, max: 20, doc: "person:<name>, agent:<name> or role:<name>; blank: the project's expert pool." }
       note: { type: str, doc: What to look at. }
     result: { type: map }
     run: scripts/task.py:request_signoff
@@ -130,7 +132,7 @@ emits:
     payload: { id: { type: str }, title: { type: str }, to: { type: str }, by: { type: str }, note: { type: str } }
   task.signoff_requested:
     doc: A task asks for sign-off.
-    payload: { id: { type: str }, title: { type: str }, reviewers: { type: list, items: { type: str } }, by: { type: str }, note: { type: str } }
+    payload: { id: { type: str }, title: { type: str }, reviewers: { type: list, items: { type: str } }, by: { type: str }, person: { type: str, doc: "The person the asker acts for (blank: none)." }, note: { type: str } }
 
 # The workbench's team roles (castling-dashboard): personas this package
 # ships, made into agents when the agents package is installed. Lean toward
@@ -140,24 +142,25 @@ personas:
     title: Project manager
     summary: Oversight of the work - sweeps tickets, organizes, reports and plans; handoffs that depend on other work go through it.
     prompt: personas/pm.md
-    skills: [ticket-sweep, handoff, consult, notepad]
+    skills: [ticket-sweep, signoff, handoff, consult, notepad]
     grants: ["*"]
   lead:
     title: Lead developer
     summary: Owns the coding work in flight - design calls, branches, reviews and technical debt.
     prompt: personas/lead.md
-    skills: [handoff, consult, notepad]
+    skills: [signoff, handoff, consult, notepad]
     grants: ["*"]
   qa:
     title: QA engineer
     summary: Evidence that things work - tests, regressions, anything called done without proof.
     prompt: personas/qa.md
-    skills: [verify, handoff, consult, notepad]
+    skills: [verify, signoff, handoff, consult, notepad]
     grants: ["*"]
 skills:
   ticket-sweep: skills/ticket-sweep.md
   handoff: skills/handoff.md
   verify: skills/verify.md
+  signoff: skills/signoff.md
 docs: { manual: docs/manual.md }
 
 pages:

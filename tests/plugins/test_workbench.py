@@ -4,6 +4,7 @@ host with an in-memory record store, as two agents and a person would."""
 
 import asyncio
 import shutil
+from types import SimpleNamespace
 
 import pytest
 
@@ -29,7 +30,9 @@ def test_manifest_is_clean_and_hub_only(folder):
     assert [str(i) for i in issues] == []
     m = load(PLUGINS / folder, CONTRACTS)
     assert (m.plugin, data["package"], data["runs_on"]) == (FOLDERS[folder], "workbench", "hub")
-    assert not data.get("uses"), "the workbench needs no other package (agents, core caps)"
+    workbench = ("task.", "project.", "concept.", "knowledge.", "whiteboard.")
+    assert all(u.startswith(workbench) for u in data.get("uses") or []), \
+        "the workbench needs no other package (agents, core caps)"
     for cap, spec in m.caps.items():
         assert spec["on"] == "hub" and spec["doc"] and spec["risk"], cap
     assert (PLUGINS / folder / "docs" / "manual.md").read_text().strip()
@@ -41,7 +44,14 @@ class Bench:
     def __init__(self):
         self.events = []
         emit = lambda e, p, s: self.events.append((e, p))  # noqa: E731
-        self.plugins = HubPlugins(records=RecordStore(emit=emit), contracts=Contracts(), call=None, emit=emit)
+        self.plugins = HubPlugins(records=RecordStore(emit=emit), contracts=Contracts(), call=self._call, emit=emit,
+                                  people=SimpleNamespace(owners=lambda: ["person:bake"], settings=lambda p: {}))
+
+    async def _call(self, who, cap, args, uses=None, target=None, contract=None):
+        try:
+            return {"ok": True, "result": await self.plugins.run(cap, args, who)}
+        except KitError as e:
+            return {"ok": False, "error": e.message}
 
     async def load(self):
         for folder in sorted(FOLDERS):
@@ -254,16 +264,34 @@ def test_knowledge_pages_links_and_provenance():
     bench(body)
 
 
+def test_signoff_goes_to_the_pool_and_sacred_adds_the_owner():
+    async def body(b):
+        await b("concept.create", title="Software", slug="software", roles=["lead", "qa"])
+        p = await b("project.create", title="Rook", slug="rook", concepts=["software"])
+        t = await b("task.create", title="Huddles reworked", project=p["id"])
+        out = await b("task.request_signoff", id=t["id"], note="PR #333")      # no reviewers: the pool
+        assert [s["reviewer"] for s in out["signoff"]] == ["role:lead", "role:qa"]
+        assert b.events[-1][1]["person"] == "person:bake" and b.events[-1][1]["by"] == "agent:ann"
+        await b("project.trust.create", BAKE, project=p["id"], level="sacred")
+        t2 = await b("task.create", title="Vault", project=p["id"])
+        out = await b("task.request_signoff", id=t2["id"], reviewers=["agent:bob"])
+        assert [s["reviewer"] for s in out["signoff"]] == ["agent:bob", "person:bake"]   # the trust level decides
+        lone = await b("task.create", title="No project")
+        with pytest.raises(KitError, match="name reviewers"):
+            await b("task.request_signoff", id=lone["id"])
+    bench(body)
+
+
 def test_concept_pool_and_project_tags():
     async def body(b):
         await b("concept.create", title="Software", slug="software", roles=["lead", "qa"], skills=["git-flow"])
         await b("concept.create", title="Hardware", slug="hardware", roles=["hardware-review", "qa"],
-                signoff="user", trust="sacred")
+                trust="sacred")
         p = await b("project.create", title="ESP32 firmware", concepts=["software", "hardware"])
         pool = await b("concept.pool", concepts=p["concepts"] + ["crochet"])
-        assert (pool["roles"], pool["skills"], pool["signoff"], pool["trust"], pool["missing"]) == \
-            (["lead", "qa", "hardware-review"], ["git-flow"], "user", "sacred", ["crochet"])
-        assert (await b("concept.pool", concepts=["crochet"]))["signoff"] is None
+        assert (pool["roles"], pool["skills"], pool["trust"], pool["missing"]) == \
+            (["lead", "qa", "hardware-review"], ["git-flow"], "sacred", ["crochet"])
+        assert (await b("concept.pool", concepts=["crochet"]))["trust"] is None
         trust = await b("project.trust.create", BAKE, project=p["id"], level="ship-it", note="no users yet")
         assert trust["level"] == "ship-it"
         with pytest.raises(KitError, match="already used"):

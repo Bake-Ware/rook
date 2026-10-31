@@ -57,8 +57,8 @@ def test_signoff_rules():
                                                                  "commit": commit, "who": who}
     owners = ["person:bake"]
 
-    def problems(level, rows=(), revs=(), pool=None, author="agent:coder", caller="agent:coder"):
-        return mod.signoff_problems(level, pool, list(rows), list(revs), HEAD, author, caller, owners)[0]
+    def problems(level, rows=(), revs=(), author="agent:coder", caller="agent:coder"):
+        return mod.signoff_problems(level, list(rows), list(revs), HEAD, author, caller, owners)[0]
     assert problems("ship-it") == []
     assert "no sign-off yet" in problems("normal")[0]
     assert problems("normal", [row("agent:qa")]) == []
@@ -67,8 +67,6 @@ def test_signoff_rules():
     assert "declined" in problems("ship-it", [row("agent:qa", "declined")])[0]       # a no blocks even ship-it
     assert "an owner" in problems("sacred", [row("agent:qa")])[0]
     assert problems("sacred", [row("agent:qa"), row("person:bake")]) == []
-    assert "concept asks for the user" in problems("normal", [row("agent:qa")], pool="user")[0]
-    assert problems("ship-it", pool="none") == []
     # GitHub reviews: the latest per login, approvals only at the head and only by known logins
     assert problems("normal", revs=[rev("claude-qa", who="agent:qa")]) == []
     assert problems("normal", revs=[rev("claude-qa", commit=BASE, who="agent:qa")])
@@ -87,7 +85,7 @@ def test_a_ship_it_task_lands_with_the_gates_alone(tmp_path, gh):
         out = await merge(rig, tid)
         assert out["ok"], out
         r = out["result"]
-        assert r["merged"] and r["sha"] == "c" * 40 and r["signoff"]["need"] == "none"
+        assert r["merged"] and r["sha"] == "c" * 40 and r["signoff"] == {"level": "ship-it", "signers": []}
         assert r["gates"] == ["version", "mergeable", "ci", "tests", "secrets"]
         assert gh.writes[0][2]["sha"] == HEAD and gh.writes[0][2]["commit_title"].startswith(
             "Merge pull request #7 from c7/work (task ")
@@ -133,13 +131,29 @@ def test_sacred_needs_the_owner(tmp_path, gh):
     on_rig(config(tmp_path, gh), body)
 
 
-def test_a_concept_can_ask_for_the_user(tmp_path, gh):
+def test_review_routes_and_lands(tmp_path, gh):
+    """The whole path: a task in a project with an expert pool asks for
+    sign-off with no reviewers named, the agents asked are woken, one reviews
+    the PR as itself (sign-off + a review on GitHub), and the PR merges."""
     async def body(rig):
-        await rig.bake.ok("concept.create", title="Hardware", slug="hardware", signoff="user", roles=["qa"])
-        tid = await task_in(rig, concepts=["hardware"])               # normal project, user sign-off norm
-        await rig.coder.ok("task.request_signoff", id=tid, reviewers=["agent:qa"])
-        await rig.qa.ok("task.signoff", id=tid, approve=True)
-        assert "a concept asks for the user" in (await merge(rig, tid))["error"]
+        await rig.bake.ok("concept.create", title="Software", slug="software", roles=["qa"])
+        tid = await task_in(rig, concepts=["software"])
+        out = await rig.coder.ok("task.request_signoff", id=tid, note="PR #7 at aaaaaaa")
+        assert [s["reviewer"] for s in out["signoff"]] == ["role:qa"]
+        assert "has not signed off yet" in (await merge(rig, tid))["error"]
+        stale = await rig.qa.call("github.review", repo=REPO, number=7, sha="e" * 40, task=tid, approve=True,
+                                  body="read it")
+        assert not stale["ok"] and "review the new head" in stale["error"]
+        r = await rig.qa.ok("github.review", repo=REPO, number=7, sha=HEAD, task=tid, approve=True,
+                            body="Read the diff; tests cover the restart.")
+        assert [(s["reviewer"], s["state"], s["by"]) for s in r["signoff"]] == [("role:qa", "approved", "agent:qa")]
+        posted = [w for w in gh.writes if w[0] == "review"]
+        assert posted[0][2]["commit_id"] == HEAD and posted[0][2]["event"] == "COMMENT"
+        assert posted[0][2]["body"].startswith("**agent:qa** approves")
+        # the author's own review is not a sign-off
+        await rig.coder.ok("github.review", repo=REPO, number=7, sha=HEAD, task=tid, approve=True, body="mine")
+        out = await merge(rig, tid)
+        assert out["ok"] and out["result"]["signoff"]["signers"] == ["agent:qa"], out
     on_rig(config(tmp_path, gh), body)
 
 

@@ -9,13 +9,13 @@ plugin: github
 version: 0.5.0
 title: GitHub
 doc: Read pull requests, checks and diffs on GitHub, and merge one once its task is signed off and its gates pass.
-package: core
+package: workbench
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-# The sign-off check reads the task, its project and the project's concepts
-# as the caller.
-uses: ["task.get", "task.link", "task.signoff.list", "project.get", "project.trust.list", "concept.pool"]
+# merge reads the task, its sign-off and its project's trust level as the
+# caller; review records the caller's sign-off.
+uses: ["task.get", "task.link", "task.signoff", "task.signoff.list", "project.get", "project.trust.list"]
 
 settings:
   token:
@@ -74,6 +74,23 @@ caps:
       repo: { type: str, required: true }
       number: { type: int, required: true, min: 1 }
     result: { type: list }
+  review:
+    doc: >-
+      Review a pull request for a task as yourself, at the head you read (sha): approve, or ask
+      for changes with what to fix (body). Records your sign-off on the task (answering the request
+      made to you, or to role:<your name>) and posts the review on the pull request.
+    risk: write
+    scope: external
+    timeout: 60s
+    run: scripts/github.py:review
+    args:
+      repo: { type: str, required: true }
+      number: { type: int, required: true, min: 1 }
+      sha: { type: str, required: true, pattern: "^[0-9a-f]{40}$" }
+      task: { type: str, required: true }
+      approve: { type: bool, required: true }
+      body: { type: str, required: true, min: 1, max: 20000, doc: "What you checked, or what to fix." }
+    result: { type: map }
   diff:
     doc: "The unified diff base...head: {text, bytes, truncated} (cut at 8 MB)."
     risk: read
@@ -103,7 +120,7 @@ caps:
       Land a pull request for a task. Refused, with every reason, unless the task's sign-off is
       satisfied for its project's trust level (and the repos setting's project for the repo, the
       stricter; ship-it: none needed; normal: a reviewer other than
-      the author; sacred, or a concept asking for the user: an owner too; no sign-off declined or
+      the author; sacred: an owner too; no sign-off declined or
       still waiting; GitHub reviews by known logins count) and the gates pass: version (sha is the
       head), mergeable, ci (every check finished and green), tests, secrets (nothing
       credential-shaped added). Merges only at sha with the hub's token and links the merge commit

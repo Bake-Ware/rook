@@ -18,18 +18,13 @@ records:
       doc: { type: markdown, doc: What this kind of work is and how the person likes it done. }
       roles: { type: list, items: { type: str }, doc: Expert roles (agent personas) to draw on. }
       skills: { type: list, items: { type: str }, doc: Skill page slugs (knowledge kind skill). }
-      signoff:
-        type: str
-        enum: [none, experts, user]
-        default: experts
-        doc: "Who signs off before a task is done: nobody, reviewers from the roles, or the person too."
       trust: { type: str, enum: [sacred, normal, ship-it], default: normal, doc: Suggested trust level for new projects. }
       from: { type: str, doc: "plugin@version when a plugin's concepts: section seeded it." }
     search: [title, doc]
     history: true
 caps:
   pool:
-    doc: "The merged pool for some concepts (a project's concepts list): every role and skill, the strictest sign-off and trust, and each concept's doc."
+    doc: "The merged pool for some concepts (a project's concepts list): every role and skill (sign-off reviewers come from the roles), the strictest trust, and each concept's doc."
     risk: read
     scope: multi-user
     idempotent: true

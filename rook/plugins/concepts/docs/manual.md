@@ -6,9 +6,10 @@ time share one, and a project can carry several (embedded firmware is
 software and hardware), so concepts are tags, not parents.
 
 A concept sets the pool of experts a project draws on: `roles` (agent
-personas), `skills` (skill pages in knowledge), `signoff` (`none`,
-`experts`, or `user` when the person signs off too) and the `trust` level new
-projects start with. A playlist needs no security advisor; a comic book
+personas: the reviewers a task's sign-off goes to), `skills` (skill pages
+in knowledge) and the `trust` level new projects start with. Whether the
+person signs off too is the project's trust level (`project.trust`:
+sacred), not the concept's. A playlist needs no security advisor; a comic book
 needs no finance.
 
 Caps: `concept.list`, `get`, `search`, `create`, `update`, `archive`,

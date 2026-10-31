@@ -634,6 +634,37 @@ async def on_asked(ctx, event, payload):
                     getattr(e, "message", None) or e)
 
 
+async def on_signoff_requested(ctx, event, payload):
+    """A task asks agents for sign-off (task.request_signoff): message each
+    agent asked (agent:<name>, or role:<name> for the agent of that name), as
+    the one asking, so the reviewer's turn has no more than they may.
+    TODO(castling:identity): run the review as agent:<reviewer> itself."""
+    rt = _RT
+    if rt is None or not isinstance(payload, dict):
+        return
+    by, person = str(payload.get("by") or ""), str(payload.get("person") or "") or None
+    asker = Caller(person=person, agent=by if by.startswith("agent:") else None, band=ctx.band,
+                   why=f"Ask for sign-off on task {payload.get('id')}")
+    if not (asker.person or asker.agent):
+        asker = replace(asker, person=by if by.startswith("person:") else None)
+    if not (asker.person or asker.agent):
+        return
+    names = {a["name"] for a in rt.agents()}
+    for r in payload.get("reviewers") or []:
+        kind, _, name = str(r).partition(":")
+        if kind not in ("agent", "role") or name not in names or f"agent:{name}" == by:
+            continue
+        note = payload.get("note") or ""
+        text = (f"Task \"{payload.get('title')}\" ({payload.get('id')}) asks for your sign-off as {r}"
+                + (f": {note}" if note else ".") + " Use your signoff skill: for a pull request, "
+                f"github.review ... task={payload.get('id')}; otherwise task.signoff id={payload.get('id')} "
+                f"reviewer={r}.")
+        try:
+            await ctx.call_as(asker, "agents.chat.send", {"agent": name, "text": text, "wait": False})
+        except KitError as e:
+            log.warning("sign-off request not delivered", extra={"fields": {"agent": name, "error": e.message}})
+
+
 # -- caps ----------------------------------------------------------------------------
 
 def _agent(ctx, rt: Runtime, name: str, archived: bool = False) -> dict:

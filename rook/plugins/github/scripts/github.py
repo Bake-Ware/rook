@@ -26,8 +26,7 @@ TIMEOUT = 20.0
 TEXT_MAX = 8 * 1024 * 1024
 JSON = "application/vnd.github+json"
 PASSING = ("success", "neutral", "skipped")
-NEED = ("none", "experts", "user")                  # loosest first
-LEVEL_NEEDS = {"ship-it": "none", "normal": "experts", "sacred": "user"}
+LEVELS = ("ship-it", "normal", "sacred")             # loosest first
 MERGEABLE_TRIES, MERGEABLE_WAIT = 3, 1.0
 _REPO = re.compile(r"[\w.-]+/[\w.-]+")
 _SHA = re.compile(r"[0-9a-f]{40}")
@@ -160,14 +159,13 @@ def file(ctx, repo, path, ref):
 
 # -- landing -----------------------------------------------------------------------
 
-def signoff_problems(level: str, pool_need: str | None, rows: list, revs: list, head: str,
-                     author: str | None, caller_agent: str | None, owners: list) -> tuple[list, dict]:
+def signoff_problems(level: str, rows: list, revs: list, head: str, author: str | None,
+                     caller_agent: str | None, owners: list) -> tuple[list, dict]:
     """What keeps a task's sign-off from being satisfied (empty: it is), and
     who signed. ``rows``: task.signoff records; ``revs``: :func:`reviews`
     (the latest review per login counts; an approval counts only at
     ``head``). The author (the PR's mapped login) and the calling agent
     don't sign their own work."""
-    need = max(LEVEL_NEEDS.get(level, "experts"), pool_need or "none", key=NEED.index)
     own = {author, caller_agent} - {None}
     signers, problems = [], []
     for r in rows:
@@ -188,13 +186,12 @@ def signoff_problems(level: str, pool_need: str | None, rows: list, revs: list, 
         elif r["state"] == "APPROVED" and r["commit"] == head and r["who"] and r["who"] not in own:
             signers.append(r["who"])
     signers = list(dict.fromkeys(signers))
-    if need != "none" and not signers:
+    if level != "ship-it" and not signers:
         problems.append(f"no sign-off yet: a {level} project needs a reviewer other than the author "
                         "(task.request_signoff, then task.signoff; or an approving GitHub review at the head)")
-    if need == "user" and not set(signers) & set(owners):
-        problems.append(f"an owner ({', '.join(owners) or 'the person'}) must sign off too "
-                        f"({'a concept asks for the user' if level != 'sacred' else 'the project is sacred'})")
-    return problems, {"level": level, "need": need, "signers": signers}
+    if level == "sacred" and not set(signers) & set(owners):
+        problems.append(f"an owner ({', '.join(owners) or 'the person'}) must sign off too (the project is sacred)")
+    return problems, {"level": level, "signers": signers}
 
 
 def gate_problems(ctx, repo: str, p: dict, sha: str) -> tuple[list, list]:
@@ -248,25 +245,53 @@ def gate_problems(ctx, repo: str, p: dict, sha: str) -> tuple[list, list]:
     return [f"{g['id']}: {g['detail']}" for g in gates if not g["ok"]], gates
 
 
-def _level(ctx, project) -> tuple[str, str | None]:
-    """The project's trust level (normal without one) and its concepts' sign-off norm."""
+def _level(ctx, project) -> str:
+    """The project's trust level (project.trust); normal without one."""
     if not project:
-        return "normal", None
+        return "normal"
     p = ctx.call("project.get", id=project)
     trust = ctx.call("project.trust.list", where={"project": p["id"]}, limit=1)
-    pool = ctx.call("concept.pool", concepts=p["concepts"]) if p.get("concepts") else {}
-    return (trust[0]["level"] if trust else "normal"), pool.get("signoff")
+    return trust[0]["level"] if trust else "normal"
 
 
-def _strictest(ctx, task_project, repo) -> tuple[str, str | None]:
-    """The task's project and the one the ``repos`` setting names for the
-    repo, the stricter of each: a task in a ship-it project can't land work
-    in a repo that belongs to a sacred one."""
+def _strictest(ctx, task_project, repo) -> str:
+    """The stricter of the task's project and the one the ``repos`` setting
+    names for the repo: a task in a ship-it project can't land work in a
+    repo that belongs to a sacred one."""
     mapped = next((p for r, p in (ctx.settings["repos"] or {}).items() if r.lower() == repo.lower()), None)
-    found = [_level(ctx, p) for p in dict.fromkeys([task_project, mapped]) if p] or [("normal", None)]
-    level = max((lv for lv, _ in found), key=("ship-it", "normal", "sacred").index)
-    need = max((n or "none" for _, n in found), key=NEED.index)
-    return level, None if need == "none" else need
+    return max([_level(ctx, p) for p in dict.fromkeys([task_project, mapped]) if p] or ["normal"],
+               key=LEVELS.index)
+
+
+def review(ctx, repo, number, sha, task, approve, body):
+    """Sign off (or decline) as the caller, then put the review on the PR.
+    The task's sign-off record is what github.merge counts.
+    TODO(castling:identity): post the review under the reviewer's own GitHub
+    account once agents have one (then it is an APPROVE / REQUEST_CHANGES
+    review that counts through the logins setting). Until then the hub's token
+    posts it as a comment that names the reviewer."""
+    repo = _repo(repo)
+    p = pr(ctx, repo, number)
+    if p["head"] != sha:
+        raise KitError(f"the head is {p['head'][:7]}, not {sha[:7]}: review the new head")
+    me = ctx.caller.actor
+    if not me:
+        raise KitError("a review needs a person or an agent")
+    rows = ctx.call("task.signoff.list", where={"task": task}, limit=500)
+    mine = [r["reviewer"] for r in rows if r["state"] == "requested"
+            and r["reviewer"] in (me, f"role:{me.partition(':')[2]}")]
+    note = f"{repo}#{int(number)} at {sha[:7]}: {body}"[:2000]
+    out = ctx.call("task.signoff", id=task, approve=bool(approve), note=note,
+                   **({"reviewer": mine[0]} if mine else {}))
+    verdict = "approves" if approve else "asks for changes"
+    try:
+        r = _req(ctx, "POST", f"/repos/{repo}/pulls/{int(number)}/reviews",
+                 {"commit_id": sha, "event": "COMMENT",
+                  "body": f"**{me}** {verdict} (task {task}, sign-off as {mine[0] if mine else me}):\n\n{body}"}) or {}
+        posted = r.get("html_url") or True
+    except KitError as e:
+        posted = f"not posted: {e.message[:200]}"
+    return {"task": task, "signoff": out.get("signoff"), "review": posted}
 
 
 def merge(ctx, repo, number, sha, task, method="merge"):
@@ -274,11 +299,11 @@ def merge(ctx, repo, number, sha, task, method="merge"):
     if not _SHA.fullmatch(str(sha)):
         raise KitError("bad args: sha is the full 40-character head you checked")
     t = ctx.call("task.get", id=task)
-    level, pool_need = _strictest(ctx, t.get("project"), repo)
+    level = _strictest(ctx, t.get("project"), repo)
     rows = ctx.call("task.signoff.list", where={"task": t["id"]}, limit=500)
     p = pr(ctx, repo, number)
     logins = {k.lower(): v for k, v in (ctx.settings["logins"] or {}).items()}
-    problems, signed = signoff_problems(level, pool_need, rows, reviews(ctx, repo, number), sha,
+    problems, signed = signoff_problems(level, rows, reviews(ctx, repo, number), sha,
                                         logins.get(p["author"].lower()), ctx.caller.agent, ctx.owners())
     gate_bad, gates = gate_problems(ctx, repo, p, sha)
     problems += gate_bad

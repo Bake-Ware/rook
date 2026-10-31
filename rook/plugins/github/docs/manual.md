@@ -2,20 +2,26 @@
 
 Pull requests, commits, checks, reviews, diffs and files from GitHub's REST
 API (`github.pr`, `github.commit`, `github.checks`, `github.reviews`,
-`github.diff`, `github.file` on worker `rook`), and **`github.merge`, how
-work lands on 0.5**.
+`github.diff`, `github.file` on worker `rook`), and **`github.review` and
+`github.merge`, how work lands on 0.5**. Part of the workbench package.
 
 ## Landing a pull request
 
 Sign-off replaces merge votes (castling-workbench):
 
 1. **Ask for sign-off** on the task the work is for:
-   `task.request_signoff id=<task> reviewers=[agent:qa]`. Pick the reviewers
-   from the project's concepts (`concept.pool`): its expert roles.
-2. **Reviewers sign off**, either on the task (`task.signoff id=<task>
-   approve=true`) or on GitHub, as an approving review under the agent's own
-   GitHub identity. A review counts once its login is in the `logins`
-   setting, and only when it was made at the head being merged.
+   `task.request_signoff id=<task> note="PR #N at <sha>"`. With no reviewers
+   named it goes to the project's expert pool (its concepts' roles), and to
+   the owners on a sacred project; the agents asked are woken with the note.
+2. **Reviewers review the PR as themselves**: `github.review repo number
+   sha=<head they read> task approve body`. It records their sign-off on the
+   task (answering the request made to them or to their role) and posts the
+   review on the PR. `task.signoff` works too, for work that isn't a PR. An
+   approving GitHub review made under an agent's or person's own GitHub
+   account also counts, once its login is in the `logins` setting, and only
+   at the head being merged. (Until agents have their own GitHub accounts,
+   `github.review` posts with the hub's token as a comment naming the
+   reviewer; the task sign-off is what counts.)
 3. **Merge**:
    `github.merge repo=Bake-Ware/rook number=329 sha=<head you checked> task=<task>`
 
@@ -32,8 +38,7 @@ ship-it project can't land work in a sacred project's repo:
 | `normal` | one reviewer other than the author |
 | `sacred` | that, and an owner |
 
-A project concept whose sign-off norm is `user` asks for an owner too. A
-sign-off that was declined or is still waiting blocks the merge at any
+Only the trust level decides whether an owner signs. A sign-off that was declined or is still waiting blocks the merge at any
 level, and so does a GitHub "changes requested". The author (the PR's
 login) and the calling agent can't sign off their own work. A person signs
 off from their own login, never through an agent.

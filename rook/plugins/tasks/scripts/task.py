@@ -124,15 +124,32 @@ def _view(s):
     return {k: s[k] for k in ("reviewer", "state", "note", "by", "updated")}
 
 
-def request_signoff(ctx, id, reviewers, note=None):
+def _project(ctx, t):
+    """(trust level, expert roles) of the task's project; normal and none without one."""
+    if not t.get("project"):
+        return "normal", []
+    p = ctx.call("project.get", id=t["project"])
+    trust = ctx.call("project.trust.list", where={"project": p["id"]}, limit=1)
+    roles = ctx.call("concept.pool", concepts=p["concepts"])["roles"] if p.get("concepts") else []
+    return (trust[0]["level"] if trust else "normal"), roles
+
+
+def request_signoff(ctx, id, reviewers=None, note=None):
     me, t = ctx.caller.actor, ctx.records.task.get(id)
     if t["archived"] or t["state"] not in OPEN:
         raise ctx.Error(f"task {id} is {'archived' if t['archived'] else t['state']}; "
                         "reopen it before asking for sign-off")
-    for r in dict.fromkeys(reviewers):
+    level, roles = _project(ctx, t)
+    reviewers = list(dict.fromkeys(reviewers or [f"role:{r}" for r in roles]))
+    if not reviewers:
+        raise ctx.Error("name reviewers: the task's project has no concepts with expert roles")
+    if level == "sacred":           # the project's trust level decides whether the person signs
+        reviewers += [o for o in ctx.owners() if o not in reviewers]
+    for r in reviewers:
         _set_signoff(ctx, id, r, state="requested", note=note or "", by=me)
-    ctx.emit("task.signoff_requested", {"id": id, "title": t["title"], "reviewers": list(dict.fromkeys(reviewers)),
-                                        "by": me, "note": note or ""})
+    # The agents package wakes the agents asked (its on: hook), as the one asking.
+    ctx.emit("task.signoff_requested", {"id": id, "title": t["title"], "reviewers": reviewers,
+                                        "by": me, "person": ctx.person or "", "note": note or ""})
     return {"id": id, "signoff": [_view(s) for s in _signoffs(ctx, id)]}
 
 

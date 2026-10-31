@@ -178,6 +178,7 @@ hooks:
     - { event: discord.message, run: scripts/agents.py:inbound }
     # castling-caps C4: a question for the person is routed through the house agent.
     - { event: approval.asked, run: scripts/agents.py:on_asked }
+    - { event: task.signoff_requested, run: scripts/agents.py:on_signoff_requested }
 
 # The ready-made roles this package ships (castling-agents "Skills and
 # defaults"): created on install, each with its skills. Any plugin's manifest
