@@ -302,11 +302,10 @@ def test_a_standard_change_runs_as_its_author_and_is_kept(cfg):
         assert (person, agent) == ("person:amy", None) and why == f"The x we need is 2. [change {rec['id']}]"
         entry = rig.calls("probe.set")[0]
         assert entry["person"] == "person:amy" and entry["why"] == why and entry["decision"] == "allow"
-        # the record is the audit trail: band-wide, searchable, with its history
+        # the record is the audit trail: band-wide and searchable
         assert [r["id"] for r in await rig.bake.ok("change.search", query="probe x")] == [rec["id"]]
         assert [r["id"] for r in await rig.pat.ok("change.list", where={"state": "kept"})] == [rec["id"]]
-        states = [h["data"].get("state") for h in await rig.bake.ok("change.history", id=rec["id"])]
-        assert states[0] == "running" and states[-1] == "kept"
+        assert not (await rig.amy.call("change.update", id=rec["id"], state="kept"))["ok"]   # only the plugin writes
         assert rig.sent() == []
     on_rig(cfg, body)
 
@@ -346,6 +345,19 @@ def test_a_failed_script_rolls_back_unless_nothing_changed(cfg):
         checked = await rig.amy.ok("change.submit", **change(checks=[S("fail")]), wait=True)
         assert checked["state"] == "refused" and checked["outcome"].startswith("nothing changed: check 1"), checked
         assert rig.sent() and all("A change did not stick" == m["title"] for m in rig.sent())
+    on_rig(cfg, body)
+
+
+def test_a_narrow_session_stays_narrow_through_a_change(cfg):
+    async def body(rig):
+        s = await rig.amy.request("POST", "/session", {"caps": ["change.*", "probe.get"]})
+        out = await rig.amy.request("POST", "/call", {"worker": "rook", "cap": "change.submit", "why": WHY,
+                                                      "session": s["session"], "args": {**change(), "wait": True}})
+        rec = out["result"]
+        assert rec["state"] == "refused" and "denied: session" in rec["log"][0]["error"], rec
+        assert rig.state() == {}
+        # her own door session allows probe.set: the same change runs
+        assert (await rig.amy.ok("change.submit", **change(), wait=True))["state"] == "kept"
     on_rig(cfg, body)
 
 
@@ -428,7 +440,7 @@ def test_machines_must_be_on_the_band_and_not_sacred(cfg):
 
     # a sacred machine (hub.workers says so): every call there holds for the
     # person anyway, so a change runs nothing there on its own
-    async def workers():
+    async def workers(fresh=False):
         return [{"id": "w1", "name": "kaiju", "online": True, "sacred": True},
                 {"id": "w2", "name": "nas", "online": True}]
     fake = type("Fake", (), {"workers": staticmethod(workers)})()

@@ -61,8 +61,8 @@ records:
       ended: { type: float }
     index: [state, project, hold, task]
     search: [what, why, risk, plan, category, outcome]
-    history: true
-    caps: [list, get, search, history]
+    # No history: only this plugin writes a change, and its log says what happened when.
+    caps: [list, get, search]
 
 caps:
   submit:

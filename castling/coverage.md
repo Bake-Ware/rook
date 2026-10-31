@@ -310,7 +310,7 @@ Everything else in "Today's plugins -> 0.5" without a 0.5 plugin, and where it w
 | worker: admin; hub: node, marketplace (-> plugin) | core hub administration (one plugin namespace for hub and workers: list, enable, disable, reload, marketplace); today's path is the hub's `POST /plugins/push` + `core.plugin.install/rollback`. Core, not a port. |
 | hub: info, settings, approvals, show (-> hub, setting, approval, page) | the dashboard's hub builtins (#279): hub.status, setting.list/set (settings.describe/get fold into list; reset is set to the default; history is the journal), approval.list/decide. show.present needs a device "show this page" contract that nothing provides yet. |
 | hub: trust, policy, access (-> trust, user) | core config: people, presets and grants are the hub config's `users` (spec 8.5); trust.check ("will this run, hold or be refused, and why") would be a dry run of dispatch, core work. Not a plugin port. |
-| hub: changes (-> change) | change records (castling-changes) belong with the gate and journal (core/security); not built. |
+| hub: changes (-> change) | change records (castling-changes): rook/plugins/changes, a records hub plugin; plugin pushes go through it. |
 | hub: updates (-> update) | waits for a 0.5 release format, like worker.update (N27). |
 | hub: attention (-> attention) | the house agent's curated list (castling-attention): an agents/jobs record fed by phone events once they reach the hub (N21). Not ported. |
 | hub: huddle (-> huddle.start) | a room with roles on a stream: agents package. Not ported here. |

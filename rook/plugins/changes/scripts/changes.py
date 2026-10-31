@@ -20,7 +20,10 @@ none is sacred, then:
 
 Every step is a cap call through dispatch as the change's author (the person,
 or the agent acting for them), with the change's why and id, on the worker
-the step names; the plugin's own rights are never lent to it. A step that
+the step names; the plugin's own rights are never lent to it. A standard
+change runs in the session it was submitted in, so a session narrowed to a
+few caps can't reach others through a change; a risky one, which an owner
+approved, runs in the author's own session for such calls. A step that
 comes back held stops the change where it is: that call may still run once
 someone answers it, so nothing is rolled back under it.
 
@@ -52,6 +55,7 @@ LOG_MAX = 200
 WHY_MAX = 500                      # spec: a why is at most 500 characters
 RETRY_EVERY, RETRY_FOR = 0.5, 60.0  # after a start: the hub serves our caps once its start-up ends
 POLL = 2.0                         # how often a step looks for its worker to come back
+ROSTER_TTL = 5.0                   # hub.workers answers reused this long (one journal entry, not one a step)
 TERMINAL = ("noted", "kept", "rolled_back", "failed", "refused", "declined", "reverted")
 STEP_KEYS = {"worker", "cap", "args"}
 _CAP = re.compile(r"[a-z][a-z0-9_-]*(\.[a-z0-9_-]+)+")
@@ -177,6 +181,7 @@ class Runtime:
         self.rejoin = parse_duration(ctx.settings["rejoin"])
         self.tasks: set[asyncio.Task] = set()
         self.runs: dict[str, asyncio.Task] = {}
+        self.roster: tuple[float, list] = (0.0, [])
 
     def spawn(self, coro) -> asyncio.Task:
         t = asyncio.ensure_future(coro)
@@ -244,14 +249,18 @@ class Runtime:
             raise KitError(f"project {project}: {e.message}") from None
         return trust[0]["level"] if trust else "normal"
 
-    async def workers(self) -> list[dict]:
-        out = await self.ctx.call_as(self.me("Look up the machines a change runs on"), "hub.workers", {})
-        return out.get("workers") or [] if isinstance(out, dict) else []
+    async def workers(self, fresh: bool = False) -> list[dict]:
+        at, known = self.roster
+        if fresh or time.monotonic() - at > ROSTER_TTL:
+            out = await self.ctx.call_as(self.me("Look up the machines a change runs on"), "hub.workers", {})
+            known = (out.get("workers") or []) if isinstance(out, dict) else []
+            self.roster = (time.monotonic(), known)
+        return known
 
     async def check_machines(self, machines: list[str]) -> None:
         if not machines:
             return
-        known = await self.workers()
+        known = await self.workers(fresh=True)
         for m in machines:
             w = next((w for w in known if m in (w.get("id"), w.get("name"))), None)
             if w is None:
@@ -294,20 +303,20 @@ class Runtime:
 
     # -- running ----------------------------------------------------------------------------
 
-    def start(self, cid: str, cut: bool = False) -> asyncio.Task:
+    def start(self, cid: str, cut: bool = False, session: str | None = None) -> asyncio.Task:
         live = self.runs.get(cid)
         if live is not None and not live.done():
             return live
-        t = self.runs[cid] = self.spawn(self._guarded(cid, cut))
+        t = self.runs[cid] = self.spawn(self._guarded(cid, cut, session))
         t.add_done_callback(lambda _: self.runs.pop(cid, None))
         return t
 
-    async def _guarded(self, cid: str, cut: bool) -> None:
+    async def _guarded(self, cid: str, cut: bool, session: str | None) -> None:
         try:
             if cut:
                 await self.recover_run(cid)
             else:
-                await self.run(cid)
+                await self.run(cid, session)
         except asyncio.CancelledError:
             raise
         except Exception as e:      # a broken run says so, never stays open
@@ -348,9 +357,9 @@ class Runtime:
         self.note(rec["id"], entry, done=True)
         return entry
 
-    async def run(self, cid: str) -> dict:
+    async def run(self, cid: str, session: str | None = None) -> dict:
         rec = self.update(cid, state="running")
-        who = self.author(rec)
+        who = replace(self.author(rec), session=session)
         for i, s in enumerate(rec["checks"] or []):
             got = await self.step(rec, who, "check", i, s)
             if not got["ok"]:
@@ -472,7 +481,7 @@ async def submit(ctx, wait=False, **args):
         return rt.update(rec["id"], ended=time.time(), outcome="recorded")
     if state == "asked":
         return await rt.ask(rec)
-    run = rt.start(rec["id"])
+    run = rt.start(rec["id"], session=ctx.caller.session)
     if wait:
         await asyncio.shield(run)
     return rt.get(rec["id"])
@@ -492,13 +501,14 @@ async def apply(ctx, id):
 async def revert(ctx, id):
     rt = _rt()
     rec = ctx.records.change.get(id)
-    if not (ctx.caller.owner or (ctx.caller.person and ctx.caller.person == rec["person"])):
+    mine = ctx.caller.person == rec["person"] if ctx.caller.person else ctx.caller.actor == rec["creator"]
+    if not (ctx.caller.owner or mine):
         raise KitError("only its author or an owner reverts a change")
     if rec["state"] != "kept":
         raise KitError(f"change {id} is {rec['state']}: only a kept change is reverted")
     if not rec.get("rollback"):
         raise KitError(f"change {id} has no rollback: undo it by hand, with a change record of its own")
-    who = Caller(person=ctx.caller.person, agent=ctx.caller.agent, band=rt.band)
+    who = Caller(person=ctx.caller.person, agent=ctx.caller.agent, session=ctx.caller.session, band=rt.band)
     got = await rt.step(rec, who, "revert", 0, rec["rollback"])
     if not got["ok"]:
         raise KitError(f"the rollback failed ({got['error']}); change {id} is still kept")
