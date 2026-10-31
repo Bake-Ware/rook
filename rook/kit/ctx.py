@@ -208,6 +208,16 @@ class Ctx:
             raise KitError("no people here: the hub knows its owners")
         return list(self._people.owners())
 
+    # -- contracts (the hub) ------------------------------------------------------
+
+    def providers(self, contract: str) -> list[str]:
+        """Hub only: the caps that provide ``contract``, first installed first
+        (the hub's registry: passive discovery). Call one with
+        ``ctx.call_as(..., provider=cap)``."""
+        if self._people is None or not hasattr(self._people, "providers"):
+            raise KitError("no contract registry here: the hub keeps it")
+        return list(self._people.providers(contract))
+
     # -- agents this plugin runs (the hub) ----------------------------------------
 
     def run_agent(self, name: str, grants: list | None) -> None:

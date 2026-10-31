@@ -148,11 +148,13 @@ def test_notify_reaches_people_on_phone_telegram_and_discord(tmp_path):
         out = await call(hub, ann, "setting.list", plugin="notify", person="bake")
         assert not out["ok"] and "someone else's" in out["error"], out
         assert (await call(hub, owner, "setting.list", plugin="notify", person="ann"))["ok"]
-        out = await call(hub, owner, "setting.set", plugin="notify", key="reach", value=["fax"])
-        assert not out["ok"] and out["error"].startswith("bad value"), out
+        # Channels are the plugins that provide notify.channel.send, by name:
+        # one nobody provides is an error for that channel, not a setting error.
+        out = await call(hub, owner, "notify.send", text="hi", channel="fax")
+        assert not out["ok"] and "fax: no plugin provides the fax channel" in out["error"], out
         listed = (await call(hub, owner, "setting.list", plugin="notify"))["result"]["settings"]
         assert {(s["key"], s.get("where", "hub"), str(s["value"])) for s in listed} >= {
-            ("phone", "person", "rook"), ("channels", "hub", "['phone', 'telegram', 'discord']")}
+            ("phone", "person", "rook"), ("channels", "hub", "[]")}
         assert json.loads((hub.data / "person-settings.json").read_text()) == {
             "person:bake": {"notify": {"phone": "rook"}}}
 
@@ -208,9 +210,13 @@ def test_notify_reaches_people_on_phone_telegram_and_discord(tmp_path):
         assert ev[1]["person"] == "person:bake" and ev[1]["guild"] == "1" and ev[1]["private"] is False
         await dc.wait(lambda: dc.heartbeats)
 
-        # channel all: every channel bake has; the person's own order.
+        # channel all: every channel bake has (phone, then the providers in
+        # install order); the person's own order.
         out = await call(hub, owner, "notify.send", text="all hands", channel="all")
-        assert [s["channel"] for s in out["result"]["sent"]] == ["phone", "telegram", "discord"], out
+        assert [s["channel"] for s in out["result"]["sent"]] == ["phone", "discord", "telegram"], out
+        # By contract, never by plugin name.
+        sent = hub.journal.query(cap="telegram.send", limit=1)[0]
+        assert sent["contract"] == "notify.channel.send" and sent["person"] == "person:bake"
         assert (await call(hub, owner, "setting.set", plugin="notify", key="reach", value=["discord", "phone"]))["ok"]
         out = await call(hub, owner, "notify.send", text="yours", to="bake")
         assert out["result"]["sent"] == [{"to": "person:bake", "channel": "discord"}], out

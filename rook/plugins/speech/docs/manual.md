@@ -51,5 +51,6 @@ A voice that fails (a hosted service down) speaks in the speech engine's
 default voice. Speaker ID never grants anything: it is shown to System One
 and kept on the session, nothing more.
 
-`speech.status` lists your open sessions and the speech engine's state;
-`speech.voices` the voices on offer.
+`speech.status` lists your open sessions and which plugins provide each
+voice contract (an engine's own status cap says why one isn't loaded);
+`speech.voices` the voices every text-to-speech provider offers.

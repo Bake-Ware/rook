@@ -29,6 +29,7 @@ import json
 import logging
 import re
 from collections import OrderedDict
+from dataclasses import replace
 
 from rook.kit.ctx import KitError
 from rook.streams import StreamError
@@ -174,10 +175,13 @@ async def close(ctx, stream):
 
 
 async def voices(ctx):
+    """Every text-to-speech provider's voices (the voice.tts.voices
+    contract), by provider plugin."""
     out, errors = {}, {}
-    for plugin in ("speech-engine", "speech-elevenlabs"):
+    for cap in ctx.providers("voice.tts.voices"):
+        plugin = cap.partition(".")[0]
         try:
-            out[plugin] = await ctx.call(f"{plugin}.voices")
+            out[plugin] = await _as_contract(ctx, "voice.tts.voices", cap, {})
         except KitError as e:
             errors[plugin] = e.message
     return {"voices": out, **({"errors": errors} if errors else {})}
@@ -186,12 +190,13 @@ async def voices(ctx):
 async def status(ctx):
     rt = _rt(ctx)
     mine = [m.wire() for m in rt.streams.list("voice", participant=_who(ctx), open_only=True)]
-    try:
-        engine = await ctx.call("speech-engine.status")
-    except KitError as e:
-        engine = {"error": e.message}
+    engines = {c: ctx.providers(c) for c in ("voice.stt", "voice.tts", "voice.turn", "voice.speaker")}
     return {"sessions": mine, "agent": ctx.settings["agent"], "talker": bool(ctx.settings["talker"]),
-            "engine": engine}
+            "engines": engines}
+
+
+def _as_contract(ctx, contract: str, cap: str, args: dict):
+    return ctx.call_as(replace(ctx.caller, plugin=ctx.plugin), contract, args, provider=cap)
 
 
 # -- System One and Two ------------------------------------------------------------
@@ -284,11 +289,14 @@ async def _tts(ctx, text: str, voice: str) -> dict:
     try:
         return await ctx.call("voice.tts", text=text, **({"voice": voice} if voice else {}))
     except KitError as first:
-        # A hosted voice that fails speaks in the local engine's default.
-        try:
-            return await ctx.call("speech-engine.tts", text=text)
-        except KitError:
-            raise first from None
+        # A voice that fails (a hosted one down) speaks in another provider's
+        # default voice, first installed first.
+        for cap in ctx.providers("voice.tts"):
+            try:
+                return await _as_contract(ctx, "voice.tts", cap, {"text": text})
+            except KitError:
+                continue
+        raise first from None
 
 
 def chunks(text: str, limit: int = CHUNK) -> list[str]:

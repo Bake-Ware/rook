@@ -1,33 +1,33 @@
 # The notify.send contract's provider (castling-attention, castling-agents
 # "Reaching the user"): one send service that gets a message to a person on
 # a channel that reaches them. Channels: phone (notification.post on the
-# person's device, a target contract), telegram and discord (their plugins'
-# send caps, to the person's linked account). The house agent picks the
-# channel by passing one; otherwise the person's own order, else the hub's.
+# person's device, a target contract) and every plugin that provides the
+# notify.channel.send contract (Telegram, Discord, ...), named by its plugin
+# and found in the hub's registry. The house agent picks the channel by
+# passing one; otherwise the person's own order, else the hub's.
 # Code: scripts/notify.py.
 manifest: 1
 plugin: notify
-version: 0.5.0
+version: 0.5.1
 title: Notify
-doc: Get a message to a person on the channel that reaches them (phone, Telegram, Discord).
+doc: Get a message to a person on the channel that reaches them (phone, or any channel plugin such as Telegram or Discord).
 package: core
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-# The channels it may reach, as the caller (notification.post covers the
-# device's provider of the contract it reaches).
-uses: [notification.post, telegram.send, telegram.status, discord.send, discord.status]
+# The channels it may reach, as the caller, by contract only.
+uses: [notification.post, notify.channel.send, notify.channel.status]
 
 settings:
   channels:
     type: list
-    items: { type: str, enum: [phone, telegram, discord] }
-    default: [phone, telegram, discord]
+    items: { type: str }
+    default: []
     where: hub
-    doc: The channels to try, first choice first, for people who haven't set their own.
+    doc: "The channels to try, first choice first, for people who haven't set their own: phone or a channel plugin's name (telegram, discord, ...); blank: phone, then every installed channel."
   reach:
     type: list
-    items: { type: str, enum: [phone, telegram, discord] }
+    items: { type: str }
     where: person
     doc: "How you want to be reached, first choice first; blank: the hub's order."
   phone:
@@ -49,8 +49,7 @@ caps:
       title: { type: str, doc: "A short heading, where the channel shows one." }
       channel:
         type: str
-        enum: [phone, telegram, discord, all]
-        doc: "Only this channel (all: every channel they have); blank: the first that works."
+        doc: "Only this channel (phone or a channel plugin's name; all: every channel they have); blank: the first that works."
     result:
       type: map
       fields:
