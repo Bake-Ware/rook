@@ -15,7 +15,8 @@ pytest.importorskip("jsonschema")
 
 from port_helpers import PLUGINS  # noqa: E402
 from rook.kit.manifest import check  # noqa: E402
-from test_jobs import HOUSE, HOUSE_PY, Rig, _owner, cfg, plugin, run, until  # noqa: E402,F401
+from rook.core2.hub.identity import Caller  # noqa: E402
+from test_jobs import HOUSE, HOUSE_PY, Door, Rig, _owner, cfg, plugin, run, until  # noqa: E402,F401
 
 ATTENTION = PLUGINS / "attention"
 
@@ -69,6 +70,10 @@ def test_what_it_curates_is_private_records(rig_cfg):
             assert [i["id"] for i in await rig.bake.ok("attention.list")] == [got["id"]]
             assert [i["id"] for i in await rig.bake.ok("attention.search", query="warranty")] == [got["id"]]
             assert await rig.amy.ok("attention.list") == []          # someone else's: not theirs to see
+            house = Door(rig.hub, rig.hub.add_token(Caller(agent="agent:house"), label="house"))
+            mine = await house.ok("attention.create", summary="School trip form due Monday.", whose="person:bake")
+            assert [i["id"] for i in await house.ok("attention.list")] == [mine["id"]]   # its own, to curate
+            assert {i["id"] for i in await rig.bake.ok("attention.list")} == {got["id"], mine["id"]}
             done = await rig.bake.ok("attention.archive", id=got["id"], revision=got["revision"])
             assert done["archived"]
         finally:
