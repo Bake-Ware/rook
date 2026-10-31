@@ -83,8 +83,8 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 13 | over-built | Worker updates port 0.4 OTA as caps, including caps Bake's pass binned | #326 |
 | 14 | over-built | OAuth door is a full authorization server; 0.4 cut that back to a shim | #332 |
 | 15 | missing | Backup has no default target and no house-agent nudges | `rook/core2/hub/backup` |
-| 16 | missing | `core.elevate` skips the gate hook | `rook/core2/hub/dispatch.py:550` |
-| 17 | contradiction | The security gate ships in enforce mode with heuristic holds | `rook/plugins/security/plugin.yaml:26` |
+| 16 | missing | `core.elevate` skips the gate hook (**fixed, PR #338**) | `rook/core2/hub/dispatch.py:550` |
+| 17 | contradiction | The security gate ships in enforce mode with heuristic holds (**fixed, PR #338**) | `rook/plugins/security/plugin.yaml:26` |
 | 18 | missing (bug) | The pinned-task check calls a cap that doesn't exist, fails quietly | `security/plugin.yaml:20` |
 | 19 | missing | Telegram/Discord messages reach no agent after cutover | `telegram`, `discord`, switchover step 3 |
 | 20 | missing | No agent-led install path; README and skill are still 0.4 | `README.md`, `skills/rook/` |
@@ -93,7 +93,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 23 | contradiction (source) | Switchover "not ported" list and R2 use retired 0.4 names (huddles, Feed, `show.present`, N23) | `docs/castling-switchover.md` |
 | 24 | over-built (low) | 96 0.4 cap aliases in 27 manifests | `rook/plugins/*/plugin.yaml` |
 | 25 | over-built (low) | Child preset `approve_new` queue for a deferred feature | `rights.py`, `identity.py`, spec 8.5 |
-| 26 | over-built (low) | Journal retention tiered by risk | `rook/core2/journal.py:26` |
+| 26 | over-built (low) | Journal retention tiered by risk (**fixed, PR #338**) | `rook/core2/journal.py:26` |
 | 27 | over-built (low) | `github` in the core package with a huddle-only writer list | `rook/plugins/github/plugin.yaml` |
 | 28 | over-built (low) | Jobs notify the person directly with a fixed channel order | `jobs.py:461-487,605`, `notify` |
 | 29 | over-built (low) | Desktop app ports 0.4 Work/Knowledge/Sessions panels | `desktop/src-tauri/src/hub05.rs:108` |
@@ -412,6 +412,8 @@ Watch items (ask Bake, not drift yet) are after the findings.
   from the pinned task" flag. Spec 7.2 step 3 omits the gate too.
 - **Smallest fix.** Run the gates on `core.elevate` with risk admin and the parent call's
   args/why/session; a flag is a hold or deny. One line in spec 7.2.
+- **Fixed: PR #338.** `core.elevate` runs the gates as admin (enforced flag or block refuses: no
+  hold mid-call); not re-run for a call already gated as admin at dispatch; spec 7.2 + 10.2.
 
 ## 17. The security gate ships in enforce mode with heuristic holds (contradiction)
 
@@ -425,6 +427,8 @@ Watch items (ask Bake, not drift yet) are after the findings.
   unmeasured false-positive rates. (security-ml correctly ships in shadow.)
 - **Smallest fix.** Canary blocks enforced; taint/intent checks journal and allow until a
   `heuristics: shadow|enforce` setting (default shadow) is flipped after clean nights.
+- **Fixed: PR #338.** Exactly that: `heuristics` setting, default `shadow`, `security.status`
+  counts `would_hold`; canaries still block.
 
 ## 18. The pinned-task check is dead (missing, bug)
 
@@ -511,12 +515,15 @@ Watch items (ask Bake, not drift yet) are after the findings.
 - **25. Child `approve_new` (over-built).** castling-design: "Deferred: kids and guest accounts";
   castling-manifest-presets: "Bake, Oct 30: canned, don't overthink." Built: a per-person "first
   call of each cap waits for an owner" queue (`rights.py:26`, `core.yaml:518`, `identity.py:160`,
-  spec 8.5) on top of the `max_risk`/`effects` ceilings. *Fix:* remove `approve_new`.
+  spec 8.5) on top of the `max_risk`/`effects` ceilings. *Fix:* remove `approve_new`. **Left for
+  Bake (PR #338):** castling-manifest-presets itself lists `approve_new: owner`, so this needs his
+  call: keep it, or cut it until kids' accounts are designed?
 - **26. Journal retention tiered by risk (over-built).** castling-journal: "The general chain is
   pruned by age (~30-90 days) in daily segments." Built: `RETENTION_DAYS = {read:30, write:30,
   exec:60, admin:90}` (`rook/core2/journal.py:26`), a segment kept for its riskiest entry, and a
   kept admin day holds back the days after it - in practice 90 days with extra code. Source:
-  wave2 `journal.txt` ("tiered retention by risk"). *Fix:* one `retention_days`.
+  wave2 `journal.txt` ("tiered retention by risk"). *Fix:* one `retention_days`. **Fixed: PR #338**
+  (`RETENTION_DAYS = 90`, `JournalStore(retention_days=)`).
 - **27. `github` in core (over-built, package).** castling-dashboard: "**Core:** workers, settings,
   approvals ..., journal." `rook/plugins/github/plugin.yaml:12` `package: core` with
   `writers: [huddle]`. *Fix:* `package: workbench`; the sign-off rule (#3) replaces `writers`.
