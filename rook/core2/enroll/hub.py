@@ -86,7 +86,7 @@ def recovery_key(data: Path) -> str:
     """The owner's recovery key (castling-backup): made once, with the
     owner, a plain string to save however they like; owners can see it again
     while the hub lives, and need it only if the hub dies.
-    TODO(castling:backup): off-site backups are encrypted with it."""
+    Off-site backups are sealed under a key derived from it (rook.core2.hub.backup)."""
     path = Path(data) / "keys" / "recovery.key"
     try:
         return path.read_text(encoding="ascii").strip()

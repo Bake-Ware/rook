@@ -79,6 +79,7 @@ from .journal_store import JournalError, JournalStore
 from .plugins import HubPlugins, short_caps
 from .vault import Vault, VaultError, resolver
 from .vault import caps as vault_caps
+from .backup import caps as backup_caps
 
 log = logging.getLogger("rook.hub")
 
@@ -115,6 +116,7 @@ class Config:
     transport: dict | None = None                   # rook.core2.transport.hub_transport options
     enroll: dict = field(default_factory=dict)      # rook.core2.enroll.hub: url, relay, ws_url, discover, services
     log: dict = field(default_factory=dict)         # {level, format: text|json}
+    file: Path | None = None                        # the YAML it was read from (load_config sets it)
 
 
 def load_config(path: str | Path) -> Config:
@@ -123,7 +125,7 @@ def load_config(path: str | Path) -> Config:
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
         raise ValueError(f"{path}: not a mapping")
-    known = set(Config.__dataclass_fields__)
+    known = set(Config.__dataclass_fields__) - {"file"}
     unknown = sorted(set(raw) - known)
     if unknown:
         raise ValueError(f"{path}: unknown keys: {', '.join(unknown)}")
@@ -133,6 +135,7 @@ def load_config(path: str | Path) -> Config:
     raw["data"] = base / raw["data"]
     if raw.get("library"):
         raw["library"] = base / raw["library"]
+    raw["file"] = path.resolve()
     cfg = Config(**{k: v for k, v in raw.items() if v is not None})
     check_config(cfg)
     return cfg
@@ -402,6 +405,7 @@ class Hub:
         self.plugins.add_core(self.core)
         builtin_caps.install(self)               # pages, hub, approval, journal, setting: before the library
         vault_caps.install(self)
+        backup_caps.install(self)
         self.enroll = Enrollment(self, cfg.enroll)
         self.dispatcher = Dispatcher(hub_id=self.hub_id, op_key=self.op, identities=self.identities,
                                      workers={}, send=self._send, journal=self._journal,

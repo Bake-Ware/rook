@@ -1,0 +1,63 @@
+# Keeps the hub's sealed backups on this worker (castling gate R5): the
+# hub's backup plugin with target worker:<this worker> pushes, lists, reads
+# back and prunes them here. It only ever touches *.rookbak files in its
+# folder, never the newest backup of a hub, and never sees a key: the files
+# are sealed under the owner's recovery key before they leave the hub.
+manifest: 1
+plugin: backup-store
+version: 0.5.0
+title: Backup store
+doc: Holds the hub's sealed backups in a folder on this worker.
+package: core
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+settings:
+  folder:
+    type: str
+    where: worker
+    default: "~/.rook-backups"
+    doc: Where the backups are kept (~ is the worker account's home).
+caps:
+  put:
+    doc: "Write part of a backup, at offset (0 starts it). The last part gives sha256 of the whole file: it is checked, then the file is kept under its name."
+    risk: write
+    scope: local
+    effects: [persists]
+    timeout: 120s
+    args:
+      name: { type: str, required: true, pattern: "^rook-hub-[0-9a-f]{8,64}-[0-9]{8}T[0-9]{6}Z\\.rookbak$" }
+      offset: { type: int, required: true, min: 0 }
+      data: { type: str, required: true, max: 8000000, doc: "Base64: at most 4 MiB of bytes." }
+      sha256: { type: str, pattern: "^[0-9a-f]{64}$", doc: "The whole file's hash: this part is the last." }
+    result: { type: map }
+    run: scripts/store.py:put
+  list:
+    doc: The backups kept here, with their sizes.
+    risk: read
+    scope: local
+    idempotent: true
+    timeout: 30s
+    result: { type: map }
+    run: scripts/store.py:list_
+  get:
+    doc: Read part of a backup (base64), from offset; eof says it was the last part.
+    risk: read
+    scope: local
+    idempotent: true
+    timeout: 120s
+    args:
+      name: { type: str, required: true, pattern: "^rook-hub-[0-9a-f]{8,64}-[0-9]{8}T[0-9]{6}Z\\.rookbak$" }
+      offset: { type: int, default: 0, min: 0 }
+      size: { type: int, default: 4194304, min: 1, max: 4194304 }
+    result: { type: map }
+    run: scripts/store.py:get
+  delete:
+    doc: "Delete an old backup (the hub's retention). Refuses a hub's newest backup, so the last copy always stays."
+    risk: write
+    scope: local
+    timeout: 30s
+    args:
+      name: { type: str, required: true, pattern: "^rook-hub-[0-9a-f]{8,64}-[0-9]{8}T[0-9]{6}Z\\.rookbak$" }
+    result: { type: map }
+    run: scripts/store.py:delete
+docs: { manual: docs/manual.md }
