@@ -53,10 +53,12 @@ Runs on cachyrig (12 cores), sidecar at castling c90a968f plus this branch's
 harness (before the fixes), then at this branch (after). 0.4 kept running
 beside it untouched throughout.
 
-- **No failures in steady state.** 10 minutes without disruptions: 13,337
-  operations, 0 failed. 45 minutes with disruptions: 47,842 operations, 114
-  failed, every one of them inside a disruption window (hub restarting,
-  relay paused or restarted). The journal chains verified at every check.
+- **No failures in steady state.** About 105 minutes of soak in all. 10
+  minutes without disruptions: 13,337 operations, 0 failed. 45 minutes with
+  disruptions: 47,842 operations, 114 failed, every one of them inside a
+  disruption window (hub restarting, relay paused or restarted). With the
+  fixes, 20 minutes including a relay pause: 21,949 operations, 0 failed.
+  The journal chains verified at every check.
 - **Latency** of a worker call through the hub is ~7 ms at p50 and ~50 ms at
   p99 under mixed load; but a client making calls back to back on one
   connection paid ~45 ms each (Nagle + delayed ACK in the door). Fixed.
@@ -66,6 +68,9 @@ beside it untouched throughout.
   Fixed.
 - **The hourly journal check blocks the hub's loop**: ~13,000 entries a
   second, so 5 s at 69,000 entries. Moved off the loop.
+- **Filtered journal reads slowed with the journal**: a person's or agent's
+  newest entries sorted every one of their entries (130 ms at 40,000), under
+  the lock every call's journal append waits on. Indexes fixed.
 - Not fixed here (other lanes, or Bake's call): lost band messages are never
   resent (a call in flight during a blip waits its whole timeout, 20 minutes
   for a plugin push); a relay restart costs ~20 s; large replies move at
@@ -78,8 +83,8 @@ beside it untouched throughout.
 
 | Clients | Before | After (TCP_NODELAY) |
 |---|---|---|
-| 1 | 21 calls/s, p50 47 ms, p99 54 ms | BURST1_AFTER |
-| 8 | 146 calls/s, p50 53 ms, p99 79 ms | BURST8_AFTER |
+| 1 | 21 calls/s, p50 47 ms, p99 54 ms | 150 calls/s, p50 6.2 ms, p99 24 ms |
+| 8 | 146 calls/s, p50 53 ms, p99 79 ms | 273 calls/s, p50 29 ms, p99 60 ms |
 
 On a throwaway e2e band, 200 sequential calls on one connection: soak.ping
 p50 45 ms before, 4.1 ms after; `GET /holds` 42 ms before, 0.5 ms after.
@@ -193,18 +198,73 @@ Replay cache: at ~20 calls/s the worker held up to 23,015 nonces (1 MB file,
 one fsync per call). It keeps each for 15 minutes (`REPLAY_KEEP`, spec
 600-1200 s) and holds at most 50,000 (`REPLAY_MAX`), so a worker averaging
 more than ~55 calls/s over 15 minutes refuses every call ("replay cache
-full") until old nonces age out. One worker served 146 calls/s in the burst,
-so this is reachable. Computed, not run (it would lock the worker for 15
+full") until old nonces age out. One worker served 273 calls/s in the burst
+(after the TCP_NODELAY fix): eight busy clients fill the cache in about
+three minutes. Computed, not run (it would lock the worker for 15
 minutes).
 
-AFTER_RUN
+Filtered journal reads: `/journal` p50 went 6.6 -> 20.5 -> 57.4 ms as the
+journal grew 20k -> 69k -> 102k entries. The store's indexes were
+`(column, ts)` while reads are `ORDER BY seq DESC LIMIT n`, so SQLite sorted
+every matching row: on the 102k snapshot an agent's last 20 entries took
+130 ms (40k of its own), a person's 86 ms (24k), and the store holds its lock
+(which every call's journal append needs) for the whole query. With
+`(column, seq)` indexes both take ~0 ms. An agent whose sessions had
+projects reads `agent = ? OR project IN (...)`, which still sorts (144 ms on
+that snapshot).
+
+## After the fixes
+
+The sidecar upgraded to this branch (`install.sh --upgrade c6/soak`), 30
+minutes, the same load, one 5 s relay pause, plugin push/rollback every
+2 minutes (before the journal-index and TCP_NODELAY fixes):
+
+- 32,702 operations at 18.2/s, 6 failed, all in the relay pause (5 timeouts
+  and a plugin push that hung, finding 1 below).
+- **Hub memory levels off**: 73 MB at start, 88 MB at minute 2, then
+  90-94 MB for the remaining 28 minutes (before: 49 -> 168 MB in 21 minutes,
+  still climbing).
+- The worker still rises slowly: 101 MB at minute 8, 127 MB at minute 30,
+  in steps, with its thread pool at 17 threads (the plugins' sync calls run
+  in threads; `soak.blob` builds 4 MiB strings there). It is no longer the
+  cycle; likely per-thread malloc arenas holding those buffers. Worth a
+  longer run (finding 10).
+- Chain checks: 70,512 -> 102,019 entries, 5.4 -> 7.9 s each, no problems.
+- Worker-call p50 6.7-8.1 ms; p99 87-100 ms (the journal reads above were
+  still slow in this build).
+
+Then with every fix (the sidecar at this branch's head), 20 minutes, the
+same load and one 5 s relay pause:
+
+- 21,949 operations at 18.3/s, **0 failed**, the relay pause included (two
+  calls waited it out, none timed out); 19 plugin pushes and rollbacks, none
+  failed.
+- Hub 49 -> 77 MB by minute 10, 77-80 MB after. Worker 43 -> 111 MB by
+  minute 8, 111-121 MB after.
+- Chain checks at 110k-132k entries: ~10 s each under the load, none on the
+  hub's loop.
+
+| op | before (45 min run) p50 / p99 ms | after p50 / p99 ms |
+|---|---|---|
+| ping | 6.8 / 53.8 | 7.2 / 44.2 |
+| mcp_session (4 sequential MCP calls) | 135.2 / 213.4 | 12.8 / 89.6 |
+| held_refused (2 sequential calls) | 44.9 / 91.8 | 4.6 / 41.4 |
+| stream_term (open, write, reads, close) | 209.8 / 285.6 | 87.5 / 189.0 |
+| view_journal | 20.5 / 72.3 (57.4 p50 at 100k entries) | 2.5 / 25.0 |
+| mcp_journal | 2.7 / 99.4 | 2.3 / 31.9 |
+| probe_loop (`GET /holds`) | 1.2 / 34.8 | 1.4 / 20.9 |
+
+The soak left ~135,000 entries (212 MB) in the sidecar's journal; they go
+with retention like any others. `soak.py teardown` removed the soak users,
+tokens and plugin afterwards.
 
 ## Fixed in this PR
 
 | Fix | Where | Evidence |
 |---|---|---|
 | Drop wrappers register a weak completion callback: no cycle, chunks and served blobs freed as soon as the transfer is dropped | `rook/worker/ota_drop.py` (shared with 0.4; behaviour unchanged while the wrapper lives) | e2e band: hub 378 -> 96 MB, worker 241 -> 105 MB; `test_a_finished_transfer_is_freed_without_the_cycle_collector` fails without it |
-| The door sets TCP_NODELAY | `rook/core2/hub/doors/http.py` (HTTP, MCP and the site) | sequential call p50 45 -> 4.1 ms; `test_keep_alive_requests_do_not_wait_for_delayed_acks` fails without it |
+| The door sets TCP_NODELAY | `rook/core2/hub/doors/http.py` (HTTP, MCP and the site) | sequential call p50 45 -> 4.1 ms (e2e band); sidecar burst, one client 21 -> 150 calls/s; `test_keep_alive_requests_do_not_wait_for_delayed_acks` fails without it |
+| Journal indexes `(column, seq)` instead of `(column, ts)`; the old ones are dropped and rebuilt once at start | `rook/core2/hub/journal_store.py` | 102k-entry snapshot: agent read 130 -> ~0 ms, person 86 -> ~0 ms; `test_filtered_reads_walk_an_index_in_order_and_old_indexes_go` fails without it |
 | The hourly chain check runs in a thread (the store reads in pages under its lock) | `rook/core2/hub/runtime.py` | 5 s loop stall at 69k entries; `test_hourly_check_runs_off_the_loop_and_prunes_sessions` |
 | Ended and expired sessions are forgotten hourly, except those a call in flight or a hold still uses; agents keep reading their pruned sessions' projects | `rook/core2/hub/dispatch.py`, `runtime.py` | in-process hub: +3,000 sessions per 3,000 rounds before; `test_prune_forgets_ended_and_expired_sessions_only` |
 
@@ -243,3 +303,9 @@ For their lanes, or for Bake:
 9. Two recursive inner functions (`dispatch._reveals_secret.has`,
    `Enrollment.resolve.walk`) leave a tiny reference cycle per call. No
    payloads in them; negligible.
+10. **Worker memory under big replies** still creeps after the fix (see
+    After the fixes). A run of a few hours, or `MALLOC_ARENA_MAX` on the
+    worker unit, would tell arenas from a second leak.
+11. An agent's journal read that includes its projects
+    (`agent = ? OR project IN (...)`) still sorts every match; two indexed
+    reads merged would not.
