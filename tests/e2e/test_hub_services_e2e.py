@@ -107,7 +107,7 @@ def test_notify_send_reaches_a_worker_and_telegram(fresh, tmp_path):
 
         out = hub.call("notify.send", {"text": "everywhere", "channel": "all"}, worker="rook")
         assert [s["channel"] for s in out["result"]["sent"]] == ["phone", "telegram"], out
-        assert "discord" in out["result"]["errors"]["person:bake"]     # not installed
+        assert "discord" not in json.dumps(out["result"]["errors"])    # not installed: not a channel at all
         assert fresh.worker_calls("phone.notification.post") == 2
         assert not Path(fresh.hub_dir / "data" / "person-settings.json").read_text().count(TOKEN)
     finally:
