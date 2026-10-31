@@ -182,9 +182,9 @@ caps:
 - `effects: [physical]` keeps `power.set` from children and guests;
   `sensitive` marks the screen as private content.
 
-The hub can't onboard appliances yet ([Workers](workers.md#appliances)),
-so test appliance caps through the action engine directly, as the kvm,
-tv, adb and cec plugin tests do.
+Onboard a device with the hub's `appliance.add` ([Workers](workers.md#appliances));
+its instance values reach the cap with each call. `run:` code reads the
+same values as `ctx.appliance`.
 
 ## Code: `run:`
 

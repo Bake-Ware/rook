@@ -56,7 +56,7 @@ chat rooms live on rook (call worker=rook cap=stream.open args={"title": ...} op
 
 _WHY = {"type": "string", "description": "One plain sentence: why you make this call. Journaled."}
 _READ = {"readOnlyHint": True}
-_WORKER = {"type": "string", "description": "Worker name or id (workers lists them; 'rook' is the hub)."}
+_WORKER = {"type": "string", "description": "Worker name or id (workers lists them; 'rook' is the hub), or an appliance's name (appliance.list)."}
 
 TOOLS = [
     {"name": "call",
@@ -67,7 +67,8 @@ TOOLS = [
          "args": {"type": "object", "description": "The cap's arguments (caps match=<cap> describes them)."},
          "why": _WHY,
          "session": {"type": "string", "description": "A session from the session tool; blank: your default."},
-         "appliance": {"type": "string", "description": "A device behind the worker, if the cap is on one."},
+         "appliance": {"type": "string", "description": "An appliance (TV, lamp...) by name; or just give its name as worker. "
+                                                      "With both, worker pins one of its delegates."},
          "elevate": {"type": "boolean", "description": "Ask for administrator rights up front."}}}},
     {"name": "caps", "annotations": _READ,
      "description": "What workers serve, from their manifests (offline workers included): "

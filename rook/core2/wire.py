@@ -259,6 +259,8 @@ def _ticket_shape(t: Any) -> bool:
         return False
     if "contract" in t and not (isinstance(t["contract"], str) and t["contract"]):
         return False
+    if "carry_hash" in t and not (isinstance(t["carry_hash"], str) and t["carry_hash"]):
+        return False
     if "owner" in t and not (isinstance(t["owner"], bool) and t.get("person")):
         return False
     who = [t.get("person"), t.get("agent")]
@@ -296,6 +298,10 @@ def verify_ticket(ticket: Any, request: dict, worker: dict, now: int,
         return False, "wrong_cap"
     try:
         if ticket["args_hash"] != args_hash(request.get("args")):
+            return False, "wrong_args"
+        # What the hub carries beside the args (5.7: plugin settings, an
+        # appliance's instance, secrets resolved) is bound the same way.
+        if ticket.get("carry_hash") != (args_hash(request["carry"]) if "carry" in request else None):
             return False, "wrong_args"
     except (ValueError, RecursionError):
         return False, "wrong_args"

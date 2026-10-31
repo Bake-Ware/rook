@@ -172,3 +172,54 @@ def test_handle_elevates_may_caps_and_refuses_the_rest(tmp_path, fs):
         assert dropped["result"] == {"dropped": 1}
         await host.close()
     go(body)
+
+
+TV_YAML = """manifest: 1
+plugin: tv
+version: 1.0.0
+settings:
+  cloud: { secret: true, where: hub }
+appliance:
+  settings:
+    key: { secret: true }
+caps:
+  seen:
+    doc: What the call carried.
+    risk: read
+    scope: local
+    run: scripts/tv.py:seen
+"""
+
+TV_PY = """
+def seen(ctx):
+    return {"appliance": dict(ctx.appliance or {}), "cloud": ctx.settings["cloud"]}
+"""
+
+
+def test_handle_uses_the_carry_its_ticket_binds(tmp_path):
+    """Spec 5.7: instance settings and credentials travel with the call; the
+    ticket's carry_hash binds them, and the reply never shows a secret."""
+    d = tmp_path / "tv"
+    (d / "scripts").mkdir(parents=True)
+    (d / "plugin.yaml").write_text(TV_YAML)
+    (d / "scripts" / "tv.py").write_text(TV_PY)
+
+    def carried(carry, appliance="den-tv"):
+        req = request("tv.seen", {})
+        t = {k: v for k, v in req["ticket"].items() if k not in ("kid", "sig")}
+        t.update(appliance=appliance, carry_hash=wire.args_hash(carry))
+        return {**req, "appliance": appliance, "carry": carry, "ticket": wire.sign(OP, t)}
+
+    async def body():
+        host = make_host(tmp_path)
+        await host.load(d)
+        carry = {"settings": {"cloud": "cl0ud"}, "instance": {"name": "den-tv", "host": "10.0.0.7",
+                                                             "settings": {"key": "k3y"}}}
+        out = await host.handle(carried(carry), BAND, NOW)
+        assert out["ok"], out
+        assert out["result"] == {"appliance": {"name": "den-tv", "host": "10.0.0.7", "key": "k3y"}, "cloud": "cl0ud"}
+        tampered = carried(carry)
+        tampered["carry"] = {**carry, "settings": {"cloud": "evil"}}
+        assert (await host.handle(tampered, BAND, NOW))["error"] == "denied by worker: wrong_args"
+        await host.close()
+    go(body)

@@ -94,7 +94,9 @@ bug), screen.capture `result: {type: file}` (both screen plugins); kvm stops cla
   but the request table (6.1) carries only the instance name: where the values travel is unspecified.
   kvm's script reads `ctx.appliance` and its tests stand in for the host
   (`TODO(castling:worker-host)`). Fix: spec a request field (or a delegate-side instance store) and
-  pass `appliance=` in `Host._exec` and `ctx.appliance` for scripts.
+  pass `appliance=` in `Host._exec` and `ctx.appliance` for scripts. **Fixed (drift #21, branch
+  c8/appliance):** the request's `carry` (spec 6.1, bound by the ticket's `carry_hash`) brings the
+  instance; the host builds `{{appliance.*}}` and `ctx.appliance` from it.
 - **N4. `check` caps are called with `{}` and no appliance, and a failing check rolls back.** An
   appliance plugin can't have a check at install (kvm has none); a cap with a required arg can't be
   one (notification-desktop has none); and a check must not depend on outside state (torrent.status
@@ -327,7 +329,9 @@ Everything else in "Today's plugins -> 0.5" without a 0.5 plugin, and where it w
 - **N26. No appliance registry on the hub.** The dispatcher has `Worker.appliances` (spec 5.7) but
   nothing fills it: there are no onboarding, define, list or remove caps, no delegate routes, and
   instance values still don't travel with a call (N3). `appliance.test` is the only way to try a
-  device recipe; shipping one is a plugin push (`POST /plugins/push`, no cap yet).
+  device recipe; shipping one is a plugin push (`POST /plugins/push`, no cap yet). **Fixed (drift
+  #21, branch c8/appliance):** hub `appliance.add/list/remove` (`<data>/appliances.json`), pair cap
+  at onboarding, dispatch routes an appliance's name to its delegates; `Worker.appliances` is gone.
 - **N27. No 0.5 release format.** Closed in wave 7: a `rook-release` signed tarball of the `rook`
   package, `worker.update`/`worker.rollback` (trial boot, smoke check, automatic rollback) and the
   hub's `update.prepare/rollout/status/history` (docs/castling-updates.md). `apply_hub` stays the

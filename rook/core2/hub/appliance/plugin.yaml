@@ -1,0 +1,59 @@
+# The hub's appliance registry (spec 5.7; castling-workers-appliances).
+# An appliance runs no worker: each instance has a name, the plugin whose
+# caps it answers, its delegate workers (the first is the known-good route)
+# and its instance settings. Agents call it by name, like a worker; dispatch
+# sends the call to a delegate with the instance's values.
+# Implemented by the hub (rook.core2.hub.appliance.caps).
+manifest: 1
+plugin: appliance
+version: 0.5.0
+title: Appliances
+doc: The band's appliances (TVs, lamps, KVMs, phones over adb). Call one by its name, like a worker.
+package: core
+builtin: true
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+
+caps:
+  add:
+    doc: >-
+      Onboard an appliance from the worker that reaches it, or add another worker as a delegate
+      of one already added. A new instance's plugin pair cap (if it declares one) runs first,
+      through that worker; the route is recorded only when it works. Secret instance settings are
+      vault names ({{secret:NAME}} or NAME); a secret the pair cap returns goes to the vault.
+    on: hub
+    risk: admin
+    scope: multi-user
+    effects: [persists]
+    timeout: 120s
+    args:
+      name: { type: str, required: true, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$", doc: "What agents call it (living-room-tv)." }
+      plugin: { type: str, required: true, doc: The plugin whose caps it answers (its appliance section). }
+      worker: { type: str, required: true, doc: The delegate worker that reaches it (name or id). }
+      host: { type: str, max: 253, doc: "Its address, from discovery." }
+      port: { type: int, min: 1, max: 65535, doc: "Its port, from discovery." }
+      settings: { type: map, doc: Instance settings (the plugin's appliance settings). }
+      pair: { type: map, doc: Args for the plugin's pair cap. }
+    result: { type: map }
+  list:
+    doc: Every appliance with its plugin, delegates (known-good first, with online state), address and settings (secret ones by vault name, never a value).
+    on: hub
+    risk: read
+    scope: multi-user
+    idempotent: true
+    args:
+      name: { type: str, doc: Just this one. }
+    result: { type: map }
+  remove:
+    doc: Forget an appliance (or just one of its delegates). Its vault secrets stay in the vault.
+    on: hub
+    risk: admin
+    scope: multi-user
+    effects: [persists]
+    args:
+      name: { type: str, required: true }
+      worker: { type: str, doc: Only drop this delegate. }
+    result: { type: map }
+
+docs: { manual: docs/manual.md }

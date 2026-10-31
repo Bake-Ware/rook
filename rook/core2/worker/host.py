@@ -14,6 +14,14 @@ the cap's ``exclusive`` lock, runs the action or ``run:`` function under the
 cap's timeout, and turns every failure into an error reply: a plugin never
 takes the worker down. The gate's cap table follows every load and unload.
 
+What the hub carries beside the args (spec 5.7, bound by the ticket's
+``carry_hash``) is used for that one call and never stored: ``settings``,
+the plugin's hub-kept settings with secret values already read from the
+hub's vault (castling-enrollment: "Secrets: referenced only by vault name;
+the hub sends the value with each call; never written to worker disk"), and
+``instance``, an appliance's name, address and instance settings, which
+become ``{{appliance.*}}`` in actions and ``ctx.appliance`` in Python.
+
 Replacing a plugin stops the old version's hooks, binds the new one from its
 folder and starts its hooks; if that fails the old one comes back. The
 previous version is kept (by folder and hash) so :meth:`Host.rollback` can
@@ -35,7 +43,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from rook.core2 import rights, wire
-from rook.kit.actions import ActionError, Secret, run_action
+from rook.kit.actions import ActionError, Secret, appliance_values, run_action
 from rook.kit.actions.parse import file_result
 from rook.kit.ctx import Caller, Ctx, FileResult, KitError, invoke
 from rook.kit.hooks import Scheduler
@@ -265,12 +273,15 @@ class Host:
         caller = Caller(person=info["person"], agent=info["agent"], session=info["session"],
                         band=band, why=info["why"], owner=info["owner"])
 
+        carry = request.get("carry") if isinstance(request.get("carry"), dict) else None
+        appliance = call.ticket.get("appliance")
+
         async def action(lease):
             if cap == "core.manifests":
                 return self.manifests(args.get("plugins"), call.member.ceiling)
             if cap == "core.lease.drop":
                 return self.gate.drop_leases(call.ticket["hub"], band, args)
-            return await self.call(cap, args, caller, lease=lease)
+            return await self.call(cap, args, caller, lease=lease, carry=carry, appliance=appliance)
 
         try:
             return await self.gate.execute(call, action, now)
@@ -283,9 +294,12 @@ class Host:
             return reply(request["id"], self.gate.worker_id,
                          error=f"{cap} failed: access denied{': ' + str(e) if str(e) else ''}")
 
-    async def call(self, cap: str, args: Mapping | None, caller: Caller, lease: dict | None = None) -> Any:
+    async def call(self, cap: str, args: Mapping | None, caller: Caller, lease: dict | None = None,
+                   carry: Mapping | None = None, appliance: str | None = None) -> Any:
         """Run one cap for ``caller`` (from a verified ticket), elevated when
-        ``lease`` is set. Returns the JSON-able result or raises CallError;
+        ``lease`` is set. ``carry``: what the hub sent with it (settings and
+        an appliance instance, secrets resolved); ``appliance``: the instance
+        the ticket names. Returns the JSON-able result or raises CallError;
         access denied (``NeedsElevation``, ``PermissionError``) passes through
         so the gate can elevate and run it again."""
         p, c = self._find(cap)
@@ -310,7 +324,8 @@ class Host:
             except TimeoutError:
                 raise CallError(f"busy: {c.spec['exclusive']} is in use", retry=True) from None
         shown: list[str] = []   # secret values this call's code was handed
-        work = asyncio.ensure_future(self._exec(p, c, args, caller, shown, lease))
+        settings, instance = self._carried(p, carry, appliance, shown)
+        work = asyncio.ensure_future(self._exec(p, c, args, caller, shown, lease, settings, instance))
         work.add_done_callback(_retrieve)
         if lock is not None:
             # Held until the work really ends: a timed-out sync function keeps
@@ -358,21 +373,24 @@ class Host:
         raise CallError(f"unknown capability: {cap}")
 
     async def _exec(self, p: Plugin, c, args: dict, caller: Caller, shown: list[str],
-                    lease: dict | None = None) -> Any:
+                    lease: dict | None = None, settings: dict | None = None,
+                    instance: dict | None = None) -> Any:
+        settings = self._call_settings(p) if settings is None else settings
         if c.action is None:
-            ctx = self._ctx(p, caller, shown, cap=c.name)
+            ctx = self._ctx(p, caller, shown, cap=c.name, settings=settings)
             # TODO(castling:wiring): the call context (6.6: hub, call id, risk,
             # lease) belongs on Caller; until then the lease rides on ctx so
             # plugin code can pass it to security.launch.
             ctx.lease = lease
+            ctx.appliance = instance
             return await invoke(c.func, ctx, args)
         text = json.dumps(c.action)
-        settings = self._action_settings(p, set(_SETTING_REF.findall(text)))
+        settings = self._action_settings(p, settings, set(_SETTING_REF.findall(text)))
         tmp = tempfile.TemporaryDirectory(prefix=f"rook-{p.name}-") if _TMP_REF.search(text) else None
         try:
             # cap=: arg join/map and result coercion (manifest 1.1).
             return await run_action(
-                c.action, args, settings=settings, worker={"os": self.os_name},
+                c.action, args, settings=settings, appliance=instance, worker={"os": self.os_name},
                 secrets=self.resolve_secret, tmp=tmp.name if tmp else None,
                 plugin_dir=str(p.folder) if p.folder else None,
                 plugin_data=str(self._data_dir(p)) if self.data_root else None,
@@ -381,40 +399,73 @@ class Host:
             if tmp is not None:
                 tmp.cleanup()
 
-    def _action_settings(self, p: Plugin, used: set[str]) -> dict:
-        """Setting values for an action; the secret ones it names are fetched
-        from the vault now, per call, and marked so errors never show them."""
+    def _call_settings(self, p: Plugin) -> dict:
+        """The plugin's settings for one call with nothing carried: a secret
+        setting's value lives only in the hub's vault, so a value kept on this
+        worker (a vault name in a local file) is never used."""
+        decls = p.manifest.get("settings") or {}
+        return {k: v for k, v in p.settings.items() if not _secret(decls.get(k))}
+
+    def _carried(self, p: Plugin, carry: Mapping | None, appliance: str | None,
+                 shown: list[str]) -> tuple[dict, dict | None]:
+        """(settings, appliance instance) for one call: the plugin's own
+        settings with what the hub carried on top, secret ones marked so
+        errors never show them; the instance built as
+        ``appliance_values`` does (host, port and name, its settings over
+        their defaults on top)."""
+        decls = p.manifest.get("settings") or {}
+        settings = self._call_settings(p)
+        got = (carry or {}).get("settings")
+        for key, value in (got.items() if isinstance(got, Mapping) else ()):
+            if key not in decls or value is None:
+                continue
+            if _secret(decls[key]):
+                value = Secret(str(value))
+                shown.append(str(value))
+            settings[key] = value
+        if appliance is None:
+            return settings, None
+        app = p.manifest.get("appliance")
+        if not isinstance(app, Mapping):
+            raise CallError(f"{p.name} has no appliance section: call its caps on this worker")
+        adecls = app.get("settings") or {}
+        inst = (carry or {}).get("instance")
+        inst = inst if isinstance(inst, Mapping) else {}
+        values = {k: d["default"] for k, d in adecls.items() if isinstance(d, Mapping) and "default" in d}
+        mine = inst.get("settings")
+        for key, value in (mine.items() if isinstance(mine, Mapping) else ()):
+            if key not in adecls or value is None:
+                continue
+            if _secret(adecls[key]):
+                value = Secret(str(value))
+                shown.append(str(value))
+            values[key] = value
+        base = {"name": appliance, **{k: inst[k] for k in ("host", "port") if inst.get(k) is not None}}
+        return settings, appliance_values(base, values)
+
+    def _action_settings(self, p: Plugin, settings: Mapping, used: set[str]) -> dict:
+        """Setting values for an action: defaults filled in; a secret one it
+        names must have come from the hub with this call."""
         out = {}
         for key, decl in (p.manifest.get("settings") or {}).items():
-            value = p.settings.get(key, decl.get("default"))
-            if value is None:
-                continue
-            if decl.get("secret"):
-                if key not in used:
-                    continue
-                if self.resolve_secret is None:
-                    raise CallError(f"setting {key} is a secret but no vault is available")
-                value = self.resolve_secret(value)
-                if value is None:
-                    raise CallError(f"setting {key}: its secret is not in the vault")
-                value = Secret(value)
-            out[key] = value
+            value = settings.get(key, None if _secret(decl) else decl.get("default"))
+            if _secret(decl) and key in used and value is None:
+                raise CallError(f"setting {key} is a secret and the hub sent none: set it on the hub (setting.set)")
+            if value is not None:
+                out[key] = value
         return out
 
     def _ctx(self, p: Plugin, caller: Caller, shown: list[str] | None = None,
-             cap: str | None = None) -> Ctx:
+             cap: str | None = None, settings: Mapping | None = None) -> Ctx:
         store = partial(self.store_setting, p.name) if self.store_setting else None
-        resolve = self.resolve_secret
-        if resolve is not None and shown is not None:
-            def resolve(name, _get=resolve):
-                value = _get(name)
-                if value:
-                    shown.append(str(value))
-                return value
-        return Ctx(p.manifest, caller, dispatch=self.dispatch, settings=p.settings,
-                   resolve_secret=resolve, store_setting=store, emit=self.emit,
-                   data_dir=self._data_dir(p) if self.data_root else None,
-                   streams=self.streams, cap=cap)
+        ctx = Ctx(p.manifest, caller, dispatch=self.dispatch, settings=p.settings if settings is None else settings,
+                  resolve_secret=self.resolve_secret, store_setting=store, emit=self.emit,
+                  data_dir=self._data_dir(p) if self.data_root else None,
+                  streams=self.streams, cap=cap)
+        if settings is not None:
+            # Secret settings arrived resolved (Secret values): read as they are.
+            ctx.settings = _Carried(ctx.settings, settings)
+        return ctx
 
     def _data_dir(self, p: Plugin) -> Path:
         return self.data_root / p.name
@@ -480,6 +531,34 @@ class Host:
         if status:
             out["status"] = status
         return out
+
+
+def _secret(decl: Any) -> bool:
+    return isinstance(decl, Mapping) and (decl.get("secret") is True or decl.get("type") == "secret")
+
+
+class _Carried(Mapping):
+    """``ctx.settings`` for one call whose secret settings came from the hub
+    resolved: those read as the value itself, the rest as the kit's
+    settings do (defaults, ``set``)."""
+
+    def __init__(self, base, carried: Mapping):
+        self._base, self._carried = base, carried
+
+    def __getitem__(self, key: str) -> Any:
+        value = self._carried.get(key)
+        if isinstance(value, Secret):
+            return value
+        return self._base[key]
+
+    def __iter__(self):
+        return iter(self._base)
+
+    def __len__(self) -> int:
+        return len(self._base)
+
+    def set(self, key: str, value: Any) -> None:
+        self._base.set(key, value)
 
 
 def _retrieve(task: asyncio.Future) -> None:

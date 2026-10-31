@@ -106,10 +106,18 @@ it waits for you, and only you can release it ([Holds](holds.md)).
 An **appliance** runs no worker: a TV, a PiKVM, a phone over adb, a
 Pico-CEC bridge. Its plugin has an `appliance:` section (how to find it,
 its per-device settings), and a worker that can reach the device carries
-its calls; the call names the device (`appliance`), and the ticket binds
-both. The plugins for these ship (`kvm`, `tv`, `adb`, `cec`), but the hub
-can't onboard an appliance yet: it has no registry of devices and their
-routes, so appliance caps can't be called end to end on 0.5 today.
+its calls. Each device is an instance with its own name, called like a
+worker (`worker=living-room-tv cap=tv.power.off`). The hub keeps the
+registry: `appliance.add` onboards one from the worker that reaches it
+(running the plugin's pair cap first, when it has one), `appliance.list`
+and `appliance.remove`. A call goes to the known-good delegate (or the next
+online one) with the instance's address and settings, secrets read from the
+vault for that call; the ticket binds them. The plugins for these ship
+(`kvm`, `tv`, `adb`, `cec`).
+
+Worker plugin settings marked `secret` (and `where: hub` ones) are kept on
+the hub (`setting.set`, a vault name for a secret) and sent with each call:
+never written to the worker's disk.
 
 ## The hub's own node
 

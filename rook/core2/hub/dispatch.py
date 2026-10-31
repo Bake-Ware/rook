@@ -27,6 +27,14 @@ database:
   unresolved args, and values come back as ``[redacted]`` in the call's
   error and result. The journal also redacts args the cap declares
   ``type: secret`` (:func:`.vault.journal_args`).
+- ``appliances``: the hub's appliance registry (``get(name)``,
+  ``worked(name, worker_id)``). A call whose target is an appliance's name
+  (or that names ``appliance``) goes to one of its delegates (5.7).
+- ``carry(worker, cap, appliance) -> (carry, secret values)``: what the hub
+  sends beside the args, bound by the ticket's ``carry_hash``: the plugin's
+  hub-kept settings and the appliance instance, secrets resolved per call.
+- ``online(worker_id) -> bool``: a routing hint only; a delegate that looks
+  offline is tried last, never refused.
 """
 from __future__ import annotations
 
@@ -68,8 +76,8 @@ class Worker:
     band: str
     caps: dict                                       # cap -> manifest cap data
     ceiling: dict                                    # this hub's ceiling on it (rights)
-    appliances: dict = field(default_factory=dict)  # name -> {cap: manifest cap data}
     uses: dict = field(default_factory=dict)        # plugin -> [pattern] (manifest ``uses``)
+    plugins: dict = field(default_factory=dict)     # plugin -> [cap] it serves here
     sacred: bool = False
 
 
@@ -127,10 +135,14 @@ class Dispatcher:
     def __init__(self, *, hub_id: str, op_key, identities: Identities, workers: dict,
                  send: Callable[[str, dict], Awaitable[dict]], journal: Callable[[dict], Any],
                  gates: list | None = None, secrets: Callable[[Any, Caller], Any] | None = None,
-                 hubkey: dict | None = None, clock: Callable[[], float] = time.time):
+                 hubkey: dict | None = None, clock: Callable[[], float] = time.time,
+                 appliances: Any = None, carry: Callable | None = None,
+                 online: Callable[[str], bool] | None = None):
         self.hub_id, self.op_key, self.hubkey = hub_id, op_key, hubkey
         self.identities, self.workers = identities, workers
         self.send, self.journal, self.secrets, self.clock = send, journal, secrets, clock
+        self.appliances, self.carry = appliances, carry
+        self.online = online or (lambda wid: True)
         self.gates: list = list(gates or ())
         self.sessions: dict[str, Session] = {}       # live ones; prune_sessions drops the rest
         self.projects: dict[str, set[str]] = {}       # agent -> projects its sessions were for
@@ -282,13 +294,24 @@ class Dispatcher:
         if (s.person, s.agent) != (caller.person, caller.agent):
             return deny("denied: session: belongs to another caller", "session")
         entry["project"] = s.project
-        # 3. target and cap
-        w = self.resolve(call.target)
-        if w is None:
-            return deny(f"unknown worker: {call.target}")
-        caps = w.caps if call.appliance is None else w.appliances.get(call.appliance)
-        if caps is None:
-            return deny(f"unknown appliance: {call.appliance}")
+        # 3. target and cap: a worker, or an appliance by name (5.7)
+        routes, inst = [], None
+        if call.appliance is None and self.resolve(call.target) is None and self._appliance(call.target):
+            call.appliance = call.target
+        if call.appliance is None:
+            w = self.resolve(call.target)
+            if w is None:
+                return deny(f"unknown worker: {call.target}")
+            caps = w.caps
+        else:
+            inst = self._appliance(call.appliance)
+            if inst is None:
+                return deny(f"unknown appliance: {call.appliance}")
+            routes, err = self._routes(inst, call.target)
+            if err:
+                return deny(err)
+            w = routes[0]
+            caps = _plugin_caps(w, inst["plugin"])
         name, contract, err = _resolve(caps, call.cap, call.contract)
         meta = caps.get(name)
         if err or meta is None:
@@ -336,7 +359,7 @@ class Dispatcher:
                     "error": "held: " + "; ".join(hold.reasons())}
         # 8. ticket
         entry["decision"] = "allow"
-        return await self._run(caller, s, w, call, meta, entry)
+        return await self._run(caller, s, w, call, meta, entry, routes[1:])
 
     def resolve(self, target: str) -> Worker | None:
         """A worker by id, else by name (names are unique per band)."""
@@ -344,6 +367,43 @@ class Dispatcher:
             return self.workers[target]
         named = [w for w in self.workers.values() if w.name == target]
         return named[0] if len(named) == 1 else None
+
+    # -- appliances (5.7) --------------------------------------------------
+
+    def _appliance(self, name: str | None) -> dict | None:
+        return self.appliances.get(name) if self.appliances is not None and isinstance(name, str) else None
+
+    def _routes(self, inst: dict, target: str | None) -> tuple[list, str | None]:
+        """The delegates to try for ``inst``, in order: the known-good one
+        first, online ones before offline ones (status is only a hint: with
+        none online they are all still tried), only workers that serve its
+        plugin now. ``target`` naming one of its delegates pins the route."""
+        name, plugin = inst["name"], inst["plugin"]
+        ws = [self.workers[d] for d in inst["delegates"] if d in self.workers]
+        if target and target != name:
+            pin = self.resolve(target)
+            if pin is None or pin.id not in inst["delegates"]:
+                return [], f"{target} is not a delegate of appliance {name}"
+            ws = [pin]
+        ws = [w for w in ws if _plugin_caps(w, plugin)]
+        if not ws:
+            return [], f"appliance {name}: no delegate serves {plugin} now"
+        return [w for w in ws if self.online(w.id)] + [w for w in ws if not self.online(w.id)], None
+
+    async def _route_ok(self, caller: Caller, s: Session, w: Worker, call: Call, meta: dict,
+                        first: Worker, entry: dict) -> bool:
+        """Whether a call allowed on delegate ``first`` may go to delegate
+        ``w`` instead: the same cap data, no hard stop ``first`` didn't have
+        (a sacred delegate), and rights and gates pass there too."""
+        inst = self._appliance(call.appliance)
+        if inst is None or _plugin_caps(w, inst["plugin"]).get(call.cap) != meta:
+            return False
+        if set(_hard_stops(meta, w, entry["risk"])) - set(_hard_stops(meta, first, entry["risk"])):
+            return False
+        if self._rights(caller, s, w, call, entry):
+            return False
+        results = await gates_mod.run(self.gates, _gate_input(caller, s, w, call, entry))
+        return rights.gate_decision(results)["verdict"] == "allow"
 
     def _rights(self, caller: Caller, s: Session, w: Worker, call: Call, entry: dict) -> dict | None:
         if caller.person and self.identities.expired(caller.person, self.clock()):
@@ -364,7 +424,11 @@ class Dispatcher:
     # -- run: mint, send, wait (6.2, 6.5) ----------------------------------
 
     async def _run(self, caller: Caller, s: Session, w: Worker, call: Call, meta: dict,
-                   entry: dict) -> dict:
+                   entry: dict, alternates: list | None = None) -> dict:
+        """Mint, send, wait. ``alternates``: an appliance's other delegates,
+        tried in turn when a send to one fails before it got there, or a call
+        safe to repeat timed out or failed with ``retry``; the delegate that
+        answers becomes the known-good route."""
         cid = entry["call"]
         try:
             args = self.secrets(call.args, caller, call.cap, w.id) if self.secrets else call.args
@@ -374,44 +438,43 @@ class Dispatcher:
             return {"id": cid, "ok": False, "error": entry["error"]}
         if "taints" in (meta.get("effects") or ()):
             s.tainted = True
-        request = {"id": cid, "cap": call.cap, "target": w.id, "args": {} if args is None else args}
-        if call.appliance is not None:
-            request["appliance"] = call.appliance
         wait = _timeout(meta) + TIMEOUT_GRACE
         may_retry = bool(meta.get("idempotent")) and not NO_RETRY & set(_hold_effects(meta))
-        entry["ticket"], reminted, retried = [], False, False
+        entry["ticket"], carried, first = [], [], w
+        alternates = list(alternates or ())
         start = time.monotonic()
         try:
             while True:
-                request["ticket"] = self._mint(cid, caller, s, w, call, ahash)
-                nonce = request["ticket"]["nonce"]
-                entry["ticket"].append(nonce)
-                self._inflight[nonce] = (request["ticket"], caller, s.id, call.layers, call.door, call,
-                                         {k: entry[k] for k in ("risk", "scope", "effects")})
                 try:
-                    reply = await asyncio.wait_for(self.send(w.band, request), wait)
-                except asyncio.TimeoutError:
-                    if may_retry and not retried:
-                        retried = True
-                        continue
-                    reply = {"ok": False, "error": "timeout: the call may still be running"}
+                    carry, values = self.carry(w, call.cap, call.appliance) if self.carry else (None, [])
                 except Exception as e:
-                    reply = {"ok": False, "error": f"send failed: {e}"}
-                finally:
-                    self._inflight.pop(nonce, None)
-                if not isinstance(reply, dict) or not isinstance(reply.get("ok"), bool):
-                    reply = {"ok": False, "error": "malformed reply"}
-                elif "from" in reply and reply["from"] != w.id:
-                    reply = {"ok": False, "error": "reply from the wrong worker"}
-                if not reminted and not reply.get("ok") and reply.get("error") in REMINT:
-                    reminted = True
-                    continue
-                break
+                    reply = {"ok": False, "error": f"secret: {e}"}
+                    break
+                carried += values
+                reply, delivered = await self._send_to(cid, caller, s, w, call, entry, args, ahash, carry,
+                                                       wait, may_retry)
+                retry_here = not delivered or (may_retry and (
+                    reply.get("retry") or str(reply.get("error", "")).startswith("timeout")))
+                if reply.get("ok") or not retry_here:
+                    break
+                nxt = None
+                while alternates and nxt is None:
+                    cand = alternates.pop(0)
+                    if await self._route_ok(caller, s, cand, call, meta, first, entry):
+                        nxt = cand
+                if nxt is None:
+                    break
+                entry.setdefault("routes", [first.id]).append(nxt.id)
+                w = nxt
         finally:
             self.sub_calls.pop(cid, None)
         entry["ms"] = int((time.monotonic() - start) * 1000)
+        if w is not first:
+            entry["worker"] = w.id
+        if reply.get("ok") and call.appliance is not None and self.appliances is not None:
+            self.appliances.worked(call.appliance, w.id)
         out = {"id": cid, "ok": reply["ok"]}
-        shown = _resolved(call.args, args)
+        shown = _resolved(call.args, args) + [v for v in carried if v]
         if reply["ok"]:
             # A value the hub put in never comes back to the caller (an
             # ``echo`` of it, a reply that quotes its input).
@@ -432,6 +495,45 @@ class Dispatcher:
         entry["ok"] = out["ok"]
         return out
 
+    async def _send_to(self, cid: str, caller: Caller, s: Session, w: Worker, call: Call, entry: dict,
+                       args: Any, ahash: str, carry: dict | None, wait: float,
+                       may_retry: bool) -> tuple[dict, bool]:
+        """One worker: send, re-mint once on an expired ticket, retry once a
+        timed-out call that is safe to repeat. Returns (reply, delivered):
+        delivered is False when the send itself failed."""
+        request = {"id": cid, "cap": call.cap, "target": w.id, "args": {} if args is None else args}
+        if call.appliance is not None:
+            request["appliance"] = call.appliance
+        if carry:
+            request["carry"] = carry
+        chash = wire.args_hash(carry) if carry else None
+        reminted, retried = False, False
+        while True:
+            request["ticket"] = self._mint(cid, caller, s, w, call, ahash, chash)
+            nonce = request["ticket"]["nonce"]
+            entry["ticket"].append(nonce)
+            self._inflight[nonce] = (request["ticket"], caller, s.id, call.layers, call.door, call,
+                                     {k: entry[k] for k in ("risk", "scope", "effects")})
+            try:
+                reply = await asyncio.wait_for(self.send(w.band, request), wait)
+            except asyncio.TimeoutError:
+                if may_retry and not retried:
+                    retried = True
+                    continue
+                reply = {"ok": False, "error": "timeout: the call may still be running"}
+            except Exception as e:
+                return {"ok": False, "error": f"send failed: {e}"}, False
+            finally:
+                self._inflight.pop(nonce, None)
+            if not isinstance(reply, dict) or not isinstance(reply.get("ok"), bool):
+                reply = {"ok": False, "error": "malformed reply"}
+            elif "from" in reply and reply["from"] != w.id:
+                reply = {"ok": False, "error": "reply from the wrong worker"}
+            if not reminted and not reply.get("ok") and reply.get("error") in REMINT:
+                reminted = True
+                continue
+            return reply, True
+
     async def _check_result(self, caller: Caller, s: Session, w: Worker, call: Call, entry: dict,
                             out: dict) -> dict:
         """Gates' ``result`` checks (gate.py): a block withholds the result."""
@@ -444,7 +546,8 @@ class Dispatcher:
         entry["error"] = f"denied: blocked by gate {first['gate']}: {first['reason']}"
         return {"id": out["id"], "ok": False, "error": entry["error"]}
 
-    def _mint(self, cid: str, caller: Caller, s: Session, w: Worker, call: Call, ahash: str) -> dict:
+    def _mint(self, cid: str, caller: Caller, s: Session, w: Worker, call: Call, ahash: str,
+              chash: str | None = None) -> dict:
         now = int(self.clock())
         t = {"typ": "rook-ticket", "v": 2, "hub": self.hub_id, "band": w.band, "call": cid,
              "nonce": _secrets.token_hex(16), "worker": w.id, "cap": call.cap,
@@ -452,6 +555,8 @@ class Dispatcher:
              "iat": now, "exp": now + TICKET_SECS}
         if call.appliance is not None:
             t["appliance"] = call.appliance
+        if chash is not None:
+            t["carry_hash"] = chash
         if caller.person:
             t["person"] = caller.person
             if self.identities.is_owner(caller.person):
@@ -499,7 +604,9 @@ class Dispatcher:
         # or a machine made sacred since must not ride on an approval given
         # for less (a gate flag triage may release is not a hard stop).
         w = self.workers.get(hold.worker.id)
-        caps = None if w is None else w.caps if hold.call.appliance is None else w.appliances.get(hold.call.appliance)
+        inst = self._appliance(hold.call.appliance) if hold.call.appliance is not None else None
+        caps = None if w is None else w.caps if hold.call.appliance is None else \
+            _plugin_caps(w, inst["plugin"]) if inst is not None and w.id in inst["delegates"] else None
         meta = (caps or {}).get(hold.call.cap)
         refused = None if meta is None else self._rights(hold.caller, hold.session, w, hold.call, entry)
         if meta != hold.meta or set(_hard_stops(meta, w, entry["risk"])) - set(hold.hard):
@@ -644,6 +751,11 @@ def _gate_input(caller: Caller, s: Session, w: Worker, call: Call, entry: dict) 
             "worker": w.name, "appliance": call.appliance, "why": call.why, "risk": entry["risk"],
             "scope": entry["scope"], "effects": entry["effects"], "session": s.view(), "band": w.band,
             **({"contract": call.contract} if call.contract else {})}
+
+
+def _plugin_caps(w: Worker, plugin: str) -> dict:
+    """The caps ``w`` serves from ``plugin``: an appliance call reaches only its plugin's caps."""
+    return {n: w.caps[n] for n in w.plugins.get(plugin, ()) if n in w.caps}
 
 
 def _resolve(caps: dict, cap: str, contract: str | None = None) -> tuple[str, str | None, str | None]:
