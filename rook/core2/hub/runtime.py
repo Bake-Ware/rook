@@ -40,6 +40,7 @@ The band comes through a transport with three methods (``start(on_message)``,
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import logging
@@ -81,6 +82,9 @@ GRANT_DAYS = 7                # rook-hubkey lifetime; renewed daily (5.2)
 OP_KEY_DAYS = 30              # operational key rotation (5.2)
 DAY = 86400.0
 SYSTEM = Caller(agent="system:hub")
+# The hub-node call a hub cap runs inside: (session id, the door's layers, door).
+# Its ctx.call in that session carries them (a page's caps, the door).
+_PARENT: contextvars.ContextVar = contextvars.ContextVar("rook_hub_parent_call", default=None)
 
 
 # -- config -------------------------------------------------------------------
@@ -865,6 +869,12 @@ class Hub:
         caller = KitCaller(person=t.get("person"), agent=t.get("agent"), session=t["session"], band=t["band"],
                            why=t["why"], owner=self.identities.is_owner(t.get("person")))
         out = {"id": req["id"], "from": self.node}
+        # The layers the door put on this call (a page's caps, its authors) and
+        # the door ride on its ctx.call; plugin ``uses`` don't compose: each
+        # hub plugin's own apply at each hop (the agents runtime relies on it).
+        held = self.dispatcher._inflight.get(t["nonce"])
+        parent = _PARENT.set((t["session"], [layer for layer in held[3] if layer[0] != "uses"], held[4])
+                             if held else None)
         try:
             out.update(ok=True, result=await self.plugins.run(req["cap"], req.get("args"), caller))
         except asyncio.CancelledError:
@@ -876,6 +886,8 @@ class Hub:
                 out["retry"] = True
             if not isinstance(e, KitError):
                 log.warning("hub cap failed", extra={"fields": {"cap": req["cap"], "error": msg}})
+        finally:
+            _PARENT.reset(parent)
         try:
             json.dumps(out.get("result"), allow_nan=False)
         except (TypeError, ValueError):
@@ -957,7 +969,10 @@ class Hub:
         can be ``system:hub``). ``uses`` is the plugin's extra layer;
         ``target`` names the worker (``ctx.call_on``, ``ctx.call_as``), else
         the one that serves ``cap``; ``contract``: a provider-routed contract's
-        call to its chosen provider, so rights match the contract's name."""
+        call to its chosen provider, so rights match the contract's name. A
+        call in the session of the hub-node call it runs inside also carries
+        the layers its door put on that call (a page's caps and authors) and
+        the door."""
         if who.person or who.agent:
             caller = Caller(who.person, who.agent)
             if caller.problem():
@@ -973,9 +988,13 @@ class Hub:
         target = target or self._target_for(cap)
         if target is None:
             return {"ok": False, "error": f"no single worker serves {cap}"}
+        layers, door = [["uses", {"grants": list(uses)}]] if uses is not None else [], None
+        parent = _PARENT.get()
+        if parent and sid == parent[0]:     # inside the call it runs in: that call's layers and door too
+            layers, door = [*parent[1], *layers], parent[2]
         return await self.dispatcher.dispatch(caller, Call(
             cap=cap, target=target, args=args, why=who.why or f"{who.plugin or 'hub'} plugin", session=sid,
-            layers=[["uses", {"grants": list(uses)}]] if uses is not None else [], contract=contract))
+            layers=layers, door=door, contract=contract))
 
     def _installed(self) -> dict:
         """{plugin: version} the band runs: the hub's plugins and every known

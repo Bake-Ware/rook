@@ -93,6 +93,11 @@ caps:
     risk: read
     scope: self
     run: scripts/notes.py:quit
+  relay:
+    doc: Counts the notes through the hub (ctx.call).
+    risk: read
+    scope: self
+    run: scripts/notes.py:relay
 provides:
   notify.send: notes.tell
 hooks:
@@ -110,6 +115,9 @@ def tell(ctx, text, to=None, title=None):
 
 def quit(ctx):
     raise SystemExit(3)
+
+def relay(ctx):
+    return ctx.call("notes.count")
 
 def online(ctx, event, payload):
     SEEN.append((payload["name"], ctx.call("notes.count")["count"]))
@@ -576,6 +584,40 @@ def test_hub_plugins_records_contracts_and_hooks(hubs, tmp_path):
             await until(lambda: mod.SEEN == [("kaiju", 3)])     # on: worker.online hook ran, and called a cap
             hooked = hub.journal.query(cap="notes.count", limit=1)[0]
             assert (hooked["agent"], hooked["person"], hooked["ok"]) == ("system:plugin.notes", None, True)
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_hub_caps_carry_the_parent_calls_layers_and_door(hubs, tmp_path):
+    # A page that declared notes.relay only must not reach notes.count through
+    # it, and closing the door the call came in by stops its sub-calls too
+    # (review H5 hub caps, H10).
+    lib = tmp_path / "lib"
+    plugin(lib, "notes", NOTES, {"notes.py": NOTES_PY})
+    bake = runtime.Caller(person="person:bake")
+
+    async def go():
+        hub, _, _ = await hubs(config(tmp_path, library=lib), worker=False)
+        try:
+            body = {"worker": "rook", "cap": "notes.relay", "why": WHY}
+            out = await hub.call(bake, body, "web")
+            assert out["ok"] and out["result"] == {"count": 0}, out
+            out = await hub.call(bake, body, "web", layers=[["page", {"grants": ["notes.relay"]}]])
+            assert "denied: page: grants" in out["error"], out
+            inner = hub.journal.query(cap="notes.count", limit=1)[0]
+            assert inner["error"] == "denied: page: grants"
+            seen, dispatch = [], hub.dispatcher.dispatch
+
+            async def spy(caller, call):
+                seen.append((call.cap, call.door, [n for n, _ in call.layers]))
+                return await dispatch(caller, call)
+            hub.dispatcher.dispatch = spy
+            out = await hub.call(bake, body, "mcp", layers=[["page", {"grants": ["notes.*"]}]])
+            assert out["ok"], out
+            assert seen == [("notes.relay", "mcp", ["page"]), ("notes.count", "mcp", ["page", "uses"])]
+            # a hook (its own component session) is not narrowed by a call in flight
+            assert (await hub.call_as(runtime.KitCaller(plugin="notes"), "notes.count", None))["ok"]
         finally:
             await hub.stop()
     run(go())

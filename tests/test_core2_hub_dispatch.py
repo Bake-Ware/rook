@@ -370,6 +370,21 @@ def test_sub_call_keeps_the_parent_calls_layers(hub):
     out, _ = call(hub, BAKE, "file.read", layers=[["page", {"grants": ["file.read"]}]])
     assert out["ok"] and results[0]["error"] == "denied: page: grants"
 
+def test_sub_call_goes_through_the_parent_calls_door(hub):
+    # Closing a door stops the work already started through it (review H10).
+    results = []
+
+    async def answer(req, n):
+        if n == 1:
+            hub.close_door("mcp", "person:bake")
+            results.append(await hub.sub_call(WID, req["ticket"], "web.fetch", "kaiju", None, "warm the cache"))
+        return {"id": req["id"], "from": WID, "ok": True, "result": n}
+
+    hub.tx.answer = answer
+    out, _ = call(hub, BAKE, "file.read", door="mcp")
+    assert out["ok"] and results[0]["error"] == "denied: door mcp closed"
+
+
 def test_unknown_risk_is_admin_and_unknown_scope_external(hub):
     out, _ = call(hub, CLAUDE_FOR_BAKE, "weird.risk")
     assert out["error"] == "denied: agent: risk"
