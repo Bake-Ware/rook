@@ -451,6 +451,26 @@ def test_a_canary_buried_in_a_big_result_is_still_found_in_budget(tmp_path, lib)
     with_hub(tmp_path, lib, body)
 
 
+def test_a_canary_behind_more_than_the_scan_window_is_still_found(tmp_path, lib):
+    # Padding in front of a canary no longer hides it: the scan reads the head
+    # and the tail, and runs off the hub's loop (review K6).
+    import threading
+    async def body(h):
+        h.module("tools").FILES["/padded"] = "x" * (9 << 20) + token(h) + "y" * 100
+        out = await h.call(CLAUDE, "tools.read", {"path": "/padded"})
+        assert out["error"] == "denied: blocked by gate security: canary", out.get("error")
+        threads, scan = [], h.sec.S.canary_in
+
+        def spy(text, worker=""):
+            threads.append(threading.current_thread() is threading.main_thread())
+            return scan(text, worker)
+        h.sec.S.canary_in = spy
+        out = await h.call(BAKE, "tools.leak", {"text": "p" * (9 << 20) + token(h)})
+        assert out["error"] == "denied: blocked by gate security: canary", out.get("error")
+        assert threads and not any(threads)
+    with_hub(tmp_path, lib, body)
+
+
 def test_taint_watches_agents_not_people(tmp_path, lib):
     async def body(h):
         sid = await h.session(BAKE)
