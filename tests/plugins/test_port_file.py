@@ -102,6 +102,46 @@ def test_search(tmp_path):
         run("search", {"pattern": "(", "path": str(tmp_path)})
 
 
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no FIFOs here")
+def test_read_refuses_what_isnt_a_regular_file(tmp_path):
+    # open() on a FIFO blocks forever: the call times out but its thread never ends
+    os.mkfifo(tmp_path / "pipe")
+    with pytest.raises(CallError, match="not a regular file"):
+        run("read", {"path": str(tmp_path / "pipe")})
+
+
+def test_a_runaway_pattern_never_stalls_the_worker(tmp_path, monkeypatch):
+    # (a+)+$ backtracks exponentially and re holds the GIL: run in-process it
+    # freezes every thread, the event loop included, past any timeout.
+    import asyncio
+    import time
+
+    (tmp_path / "x.txt").write_text("a" * 27 + "!\n")      # ~15 s of backtracking
+
+    async def body():
+        host = Host(os_name="linux")
+        await host.load(PLUGINS / "file")
+        mod = next(iter(host.plugins["file"].modules.values()))
+        mod.SEARCH_SECONDS = 1
+        ticks, start = [], time.monotonic()
+
+        async def beat():
+            while True:
+                ticks.append(time.monotonic())
+                await asyncio.sleep(0.05)
+        t = asyncio.ensure_future(beat())
+        try:
+            out = await host.call("file.search", {"pattern": "(a+)+$", "path": str(tmp_path)}, ME)
+        finally:
+            t.cancel()
+            await host.close()
+        gaps = [b - a for a, b in zip(ticks, ticks[1:])]
+        return out, max(gaps or [0]), time.monotonic() - start
+    out, gap, took = go(body)
+    assert out["timed_out"] and out["matches"] == []
+    assert gap < 0.5 and took < 10
+
 def test_stat_and_old_name(tmp_path):
     f = tmp_path / "f"
     f.write_text("abc")

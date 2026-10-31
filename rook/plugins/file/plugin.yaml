@@ -1,9 +1,9 @@
-# Files on this worker, in the worker process as the worker's account
-# (scripts/file.py, stdlib). Nothing here starts a process, so nothing can
-# be elevated: elevation is shell.exec's.
+# Files on this worker, as the worker's account (scripts/file.py, stdlib).
+# Nothing here is elevated: elevation is shell.exec's. search runs its regex
+# in a child Python killed at the deadline (a runaway pattern holds the GIL).
 manifest: 1
 plugin: file
-version: 0.5.0
+version: 0.5.1
 title: Files
 doc: Read, write, list, search and stat files on this worker.
 package: devices
