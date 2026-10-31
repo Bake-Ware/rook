@@ -49,7 +49,6 @@ class User:
     preset: str
     grants: list = field(default_factory=list)
     created: float = 0
-    used: set = field(default_factory=set)    # caps called, for approve_new
 
 
 class Identities:
@@ -156,15 +155,6 @@ class Identities:
             out.append(["agent", self.agent_rights(caller.agent)])
         return out
 
-    def needs_approval(self, person: str | None, cap: str) -> bool:
-        """``approve_new``: the person's first call of a cap waits for an owner."""
-        u = self.user(person)
-        return bool(u and self.presets[u.preset].get("approve_new") and cap not in u.used)
-
-    def mark_used(self, person: str | None, cap: str) -> None:
-        u = self.user(person)
-        if u:
-            u.used.add(cap)
 
 
 def digest(token: str) -> str:

@@ -69,11 +69,11 @@ def test_a_person_uses_the_workers_page(band):
     assert entries and entries[0]["person"] == "person:bake" and entries[0]["why"] == "Shown on the hub/workers page."
 
 
-def test_a_child_waits_for_an_owner_before_opening_a_page(band):
+def test_a_child_opens_pages_its_preset_grants_and_nothing_else(band):
     kid = Browser(band.url)
     kid.sign_in(band.kid_token)
-    out = kid.post("/web/api/open", {"page": "hub/workers"})     # child: pages.view, first use held (approve_new)
-    assert out.get("held") and not out["ok"], out
+    out = kid.post("/web/api/open", {"page": "hub/workers"})     # child: pages.view, no first-use queue
+    assert not out.get("held"), out
     assert kid.post("/web/api/call", {"cap": "pages.list"})["error"].startswith("denied: person")
 
 

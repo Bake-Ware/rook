@@ -19,8 +19,7 @@
     "pages.view"
    ],
    "max_risk": "write",
-   "effects": [],
-   "approve_new": "owner"
+   "effects": []
   },
   "guest": {
    "grants": [

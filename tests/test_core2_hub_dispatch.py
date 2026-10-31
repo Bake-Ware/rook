@@ -519,14 +519,14 @@ def test_child_physical_refused_even_with_a_grant(hub):
     assert call(hub, KID, "light.set")[0]["error"] == "denied: person: effects"
 
 
-def test_child_first_call_of_a_cap_waits_for_an_owner(hub):
+def test_a_child_gets_what_its_preset_grants_without_a_queue(hub):
+    """castling-manifest-presets (Bake): "canned, don't overthink". A child has
+    what the preset grants, no more and no first-use queue (drift #25)."""
+    assert call(hub, KID, "homework.item.list")[0]["error"].startswith("denied: person")
     hub.identities.add_plugin_presets("homework", {"child": {"grants": ["homework.item.list"]}})
     out, _ = call(hub, KID, "homework.item.list")
-    assert out["held"] and "new cap" in out["error"] and not hub.tx.requests
-    assert run(hub.release(out["hold"], "person:kid"))["error"].startswith("person:kid may not")
-    assert run(hub.release(out["hold"], "person:bake"))["ok"]
-    assert call(hub, KID, "homework.item.list")[0]["ok"]          # second time: no hold
-    assert hub.tx.verdicts == ["ok", "ok"]
+    assert out["ok"] and not out.get("held")
+    assert hub.tx.verdicts == ["ok"]
 
 
 def test_guest_expires_after_seven_days(hub):
@@ -1022,9 +1022,9 @@ def test_a_crash_inside_dispatch_is_an_error_reply_and_still_journaled(hub):
     e = calls(hub)[-1]
     assert (e["call"], e["ok"], e["error"], e["decision"], e["session"]) == (out["id"], False, "internal", "deny", s.id)
 
-    def boom(person, cap):
+    def boom(*args):
         raise RuntimeError("identities broke")
-    hub.identities.needs_approval = boom
+    hub.identities.layers = boom
     out, _ = call(hub, BAKE, "file.read")
     assert out["error"] == "internal error" and calls(hub)[-1]["error"] == "internal"
 

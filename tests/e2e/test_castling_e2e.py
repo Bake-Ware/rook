@@ -163,15 +163,9 @@ def test_a_call_without_a_why_is_refused_before_any_ticket(band):
 def test_a_child_stays_under_its_preset_ceiling(band):
     over = band.kid.call("e2e.admin")
     assert not over["ok"] and over["error"].startswith("denied: person: "), over
-    # a child's first use of a cap waits for an owner (approve_new), then runs as the child
-    first = band.kid.call("e2e.ping", {"text": "may I"})
-    assert first["held"] and "new cap" in first["error"], first
-    mine = band.kid.post(f"/holds/{first['hold']}", {"decision": "approve"})
-    assert not mine["ok"] and "may not release" in mine["error"]
-    ok = band.owner.post(f"/holds/{first['hold']}", {"decision": "approve"})
-    assert ok["ok"] and ok["result"]["person"] == "person:kid", ok
-    again = band.kid.call("e2e.ping", {"text": "again"})
-    assert again["ok"] and again["result"]["text"] == "again"
+    # what the preset grants runs as the child at once: no first-use queue (drift #25)
+    ok = band.kid.call("e2e.ping", {"text": "may I"})
+    assert ok["ok"] and ok["result"]["text"] == "may I", ok
     # and no door gets a child past its preset
     assert not band.kid.post("/plugins/push", {"worker": "e2e-worker", "plugin": "tv", "why": WHY})["ok"]
 

@@ -17,5 +17,5 @@ contracts:
 presets:
   owner: { grants: ["*"] }
   adult: { grants: ["*"], max_risk: admin }
-  child: { grants: ["agents.chat.*", pages.view], max_risk: write, effects: [], approve_new: owner }
+  child: { grants: ["agents.chat.*", pages.view], max_risk: write, effects: [] }
   guest: { grants: ["agents.chat.*"], max_risk: write, effects: [], expires: 7d }

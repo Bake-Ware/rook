@@ -235,7 +235,6 @@
           "grants": {"$ref": "#/$defs/globs"},
           "max_risk": {"$ref": "#/$defs/risk"},
           "effects": {"type": "array", "items": {"$ref": "#/$defs/name"}},
-          "approve_new": {"type": "string"},
           "expires": {"$ref": "#/$defs/duration"}
         }
       }

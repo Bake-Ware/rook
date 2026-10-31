@@ -117,11 +117,10 @@ class Hold:
     meta: dict
     entry: dict
     hard: list           # hard stops: only the person releases
-    new_cap: bool        # approve_new: an owner releases
     flagged_by: list     # gates that flagged it
 
     def reasons(self) -> list:
-        return self.hard + (["new cap"] if self.new_cap else []) + [f"gate {g}" for g in self.flagged_by]
+        return self.hard + [f"gate {g}" for g in self.flagged_by]
 
 
 class Dispatcher:
@@ -328,7 +327,6 @@ class Dispatcher:
         # 7. holds (10.3)
         hold = Hold(f"h_{_secrets.token_hex(8)}", caller, call, s, w, meta, {},
                     _hard_stops(meta, w, entry["risk"]),
-                    self.identities.needs_approval(caller.person, name),
                     verdict["by"] if verdict["verdict"] == "flag" else [])
         if hold.reasons():
             entry.update(decision="held", hold=hold.name, reasons=hold.reasons())
@@ -376,7 +374,6 @@ class Dispatcher:
             return {"id": cid, "ok": False, "error": entry["error"]}
         if "taints" in (meta.get("effects") or ()):
             s.tainted = True
-        self.identities.mark_used(caller.person, call.cap)
         request = {"id": cid, "cap": call.cap, "target": w.id, "args": {} if args is None else args}
         if call.appliance is not None:
             request["appliance"] = call.appliance
@@ -477,14 +474,12 @@ class Dispatcher:
         for no person), and only from a door where that person is there
         (``present``: the site, a phone card, ``POST /holds`` with their own
         token), never from a dispatched cap a job or plugin can make (10.3).
-        A new cap for a child: an owner. A gate flag: the person, an owner,
+        A gate flag: the person, an owner,
         or the security triage component for its own gate's flags."""
         if not isinstance(by, str):
             return False
         person, owner = hold.caller.person, self.identities.is_owner(by)
         if hold.hard and (not present or (by != person and (person or not owner))):
-            return False
-        if hold.new_cap and not owner:
             return False
         triage = by == TRIAGE[0] and set(hold.flagged_by) <= {TRIAGE[1]}
         return not hold.flagged_by or by == person or owner or triage

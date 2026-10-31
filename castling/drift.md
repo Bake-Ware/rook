@@ -533,6 +533,8 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
   spec 8.5) on top of the `max_risk`/`effects` ceilings. *Fix:* remove `approve_new`. **Left for
   Bake (PR #338):** castling-manifest-presets itself lists `approve_new: owner`, so this needs his
   call: keep it, or cut it until kids' accounts are designed?
+  **Fixed:** PR #351 (c8/ops-child): cut, by the coordinator's call under Bake's delegation (recorded
+  as Claude's call): a child gets more only when an owner edits the preset or grants that person more.
 - **26. Journal retention tiered by risk (over-built).** castling-journal: "The general chain is
   pruned by age (~30-90 days) in daily segments." Built: `RETENTION_DAYS = {read:30, write:30,
   exec:60, admin:90}` (`rook/core2/journal.py:26`), a segment kept for its riskiest entry, and a
