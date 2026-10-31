@@ -38,6 +38,29 @@ The door speaks MCP's streamable HTTP. Keep it on localhost and put TLS in
 front before exposing it; `origins: [...]` lists the browser origins it
 lets in (any other `Origin` is refused).
 
+## claude.ai and other remote clients (OAuth)
+
+claude.ai's web and mobile connectors can't take a pasted token; they sign
+in with OAuth. Give the hub its public addresses (both behind TLS; one
+hostname with `/mcp` sent to the MCP door is simplest):
+
+```yaml
+oauth:
+  issuer: https://rook.example         # the hub site
+  resource: https://rook.example/mcp   # the MCP door
+```
+
+Then add a custom connector in claude.ai with the door's address. It finds
+the hub on its own, sends you to the hub site to sign in, and asks which of
+the hub's agents it acts as. Choose one and Allow. The connector is that
+agent acting for you, like a token from `token --person --agent`: it gets
+only what both may do, and its calls are journaled that way.
+
+Its access lasts an hour and renews itself; a connector unused for 30 days
+lapses. End one any time on the site (More > Connectors), and closing the
+`mcp` door refuses it like every agent. Tokens you mint keep working
+beside it.
+
 ## The seven tools
 
 | Tool | What it does |
