@@ -58,6 +58,15 @@ def test_a_turn_and_its_resume(tmp_path, bins):
     assert (bins.dir / "claude.stdin").read_text() == "hello\n---\nagain\n---\n"
 
 
+@pytest.mark.parametrize("args", [{"session": "--dangerously-skip-permissions"},
+                                  {"session": "--permission-mode=bypassPermissions"},
+                                  {"model": "--settings=/tmp/hooks.json"}])
+def test_session_and_model_are_never_options(tmp_path, bins, args):
+    bins.add("claude", CLAUDE)
+    with pytest.raises(KitError, match="bad args"):
+        turn(tmp_path, prompt="hi", **args)
+    assert not bins.calls("claude")
+
 @pytest.mark.parametrize("mode, error", [
     ("error", "Claude Code: Credit balance is too low"),
     ("crash", r"Claude Code failed \(exit 1\): not logged in"),
