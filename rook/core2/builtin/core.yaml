@@ -133,6 +133,7 @@ contracts:
       effort: { type: str, doc: "Reasoning effort, where the harness has one; blank: its default." }
       system: { type: str, doc: Appended to the harness's own system prompt. }
       timeout: { type: duration, doc: How long the turn may take. }
+      door: { type: secret, doc: "A door token for this turn only (the agent, acting for the person behind it if any): the harness reaches Rook's MCP door with it, so its calls are the agent's own. Never journaled." }
     result:
       type: map
       fields:

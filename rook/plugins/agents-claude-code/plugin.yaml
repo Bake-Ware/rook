@@ -4,7 +4,7 @@
 # resumed by session id; the prompt goes in on stdin. Code: scripts/claude.py.
 manifest: 1
 plugin: agents-claude-code
-version: 0.5.0
+version: 0.5.1
 title: Claude Code backend
 doc: Agent turns in the Claude Code CLI, for the agents package.
 package: agents
@@ -17,7 +17,8 @@ settings:
   model_three: { default: haiku, doc: "System Three's model (dream cycles)." }
   permission_mode: { doc: "Claude Code's --permission-mode for agent turns (default, acceptEdits, plan, ...); blank: its own default." }
   allowed_tools: { type: list, items: { type: str }, doc: "Tools a turn may use without asking (--allowedTools), e.g. Read, Bash(git status:*)." }
-  mcp_config: { type: path, doc: "An MCP config file for agent turns (--mcp-config), e.g. the Rook MCP door." }
+  door_url: { type: url, default: "http://127.0.0.1:8741/mcp", doc: "The hub's MCP door as this worker reaches it. Each turn reaches it with that turn's own token (the agent, for the person behind it)." }
+  mcp_config: { type: path, doc: "An MCP config file with other MCP servers for agent turns (--mcp-config). Rook itself comes from door_url, with the turn's token." }
   isolate: { type: bool, default: true, doc: "Leave out the signed-in user's own Claude Code settings, hooks and MCP servers (--setting-sources project,local --strict-mcp-config): a turn reaches only what mcp_config gives it." }
 caps:
   turn:
@@ -34,6 +35,7 @@ caps:
       effort: { type: str, doc: "Not used: Claude Code sets its own reasoning effort." }
       system: { type: str, doc: Appended to Claude Code's system prompt. }
       timeout: { type: duration, default: 20m, doc: How long the turn may take. }
+      door: { type: secret, doc: "The turn's door token, from the agents runtime: the turn's Rook MCP server uses it. Never journaled." }
     result:
       type: map
       fields:

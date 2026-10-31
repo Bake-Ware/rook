@@ -19,23 +19,17 @@ Settings:
 | `model` | Codex's | System Two's model when the agent names none. |
 | `model_three` | `gpt-6-luna` | System Three's model, for dream cycles: a light one. Blank: Codex's default. |
 | `sandbox` | Codex's (`read-only`) | The sandbox for commands a turn runs: `read-only`, `workspace-write` or `danger-full-access`. |
-| `config` | none | Extra Codex config, one `key=value` per line, each passed as `-c`. |
+| `door_url` | `http://127.0.0.1:8741/mcp` | The hub's MCP door as this worker reaches it. |
+| `config` | none | Extra Codex config, one `key=value` per line, each passed as `-c` (other MCP servers, say). |
 | `isolate` | on | Leave out the signed-in user's own `config.toml` and rules (`--ignore-user-config --ignore-rules`); sign-in still comes from `CODEX_HOME`. Off: turns run with the user's whole Codex setup. |
 
-To let the agent reach the band, point Codex at the hub's MCP door in
-`config`:
-
-```
-mcp_servers.rook.url="http://<hub>:8751/mcp"
-mcp_servers.rook.bearer_token_env_var="ROOK_AGENT_TOKEN"
-mcp_servers.rook.default_tools_approval_mode="approve"
-```
-
-with `ROOK_AGENT_TOKEN` in the worker's environment holding a token for the
-agent acting for a person
-(`python -m rook.core2.hub --config hub.yaml token --person <you> --agent <agent>`).
-The last line lets Codex make the calls without asking: the hub decides what
-each call may do.
+Each turn reaches Rook with its own token: the agents runtime gets one from
+the hub for that turn (the agent, for the person behind the message) and
+passes it as `door`. This plugin adds the door as the turn's `rook` MCP
+server (`door_url`), with the token in the turn's own environment
+(`ROOK_DOOR_TOKEN`, `bearer_token_env_var`), never on the command line or on
+disk, and lets Codex call its tools without asking: the hub decides what
+each call may do. The hub ends the token when the turn does.
 
 Turns run in the folder the agent names, else in this plugin's data folder
 (`work/`). Install Codex on the worker and sign in once (`codex login`)

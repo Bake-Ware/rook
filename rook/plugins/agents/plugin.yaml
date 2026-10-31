@@ -8,24 +8,25 @@
 #
 # Every ready-made role below, and every persona another installed plugin
 # ships, is created on install; skills are markdown in a manifest's skills:
-# or knowledge pages of kind skill. Code: scripts/agents.py.
+# or knowledge pages of kind skill. Each agent is its own identity on the hub
+# (agent:<name>) with its grants: alone it has only them, for a person only
+# what both may. Code: scripts/agents.py.
 manifest: 1
 plugin: agents
-version: 0.5.0
+version: 0.5.1
 title: Agents
 doc: Agents with a persona, a backend, persistent sessions, a private notepad and curated memory.
 package: agents
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-# agent.backend: the chosen provider; an agent pinned to one backend calls
-# agents-<backend>.turn (the backend plugins of this package).
+# agent.backend only for turns: the hub's chosen provider, or the provider an
+# agent is pinned to (any plugin that provides the contract).
 # A person's direct message to the band's Telegram or Discord bot goes to
 # chat_agent as that person; the reply goes back to them by the same bot.
 # hub.manifests: the personas and skills every installed plugin ships;
 # knowledge.get: skills kept as knowledge pages (kind skill), with the workbench.
-uses: ["agent.backend", "agents-claude-code.turn", "agents-codex.turn", "telegram.send", "discord.send",
-       "hub.manifests", "knowledge.get"]
+uses: ["agent.backend", "telegram.send", "discord.send", "hub.manifests", "knowledge.get"]
 
 settings:
   warm: { type: duration, default: 10m, doc: How long an agent that isn't always-on stays awake after its last message. }
@@ -66,8 +67,8 @@ caps:
       summary: { type: str, doc: The roster line every agent sees. }
       prompt: { type: markdown, doc: What the agent is and how it works. }
       skills: { type: list, items: { type: str } }
-      grants: { type: list, items: { type: str }, doc: "Cap patterns it may use; acting for a person it gets only what both may." }
-      backend: { type: str, enum: [default, claude-code, codex] }
+      grants: { type: list, items: { type: str }, doc: "Cap patterns it may use as agent:<name> (plus agent.backend, its own turns); acting for a person it gets only what both may, alone only these." }
+      backend: { type: str, pattern: "^(default|[a-z][a-z0-9-]*\\.[a-z][a-z0-9_.]*)$", doc: "default (the hub's chosen agent.backend provider) or one provider's cap, e.g. agents-claude-code.turn." }
       model: { type: map, items: { type: str }, doc: "Per-system model: {two: opus, three: haiku}; default: the backend's model and model_three settings." }
       always_on: { type: bool, doc: "Never sleeps on idle (house, security); others wake when addressed." }
       cwd: { type: str, doc: "The folder its backend works in; blank: the backend's own." }
@@ -85,8 +86,8 @@ caps:
       summary: { type: str, doc: The roster line every agent sees. }
       prompt: { type: markdown, doc: What the agent is and how it works. }
       skills: { type: list, items: { type: str } }
-      grants: { type: list, items: { type: str }, doc: "Cap patterns it may use; acting for a person it gets only what both may." }
-      backend: { type: str, enum: [default, claude-code, codex] }
+      grants: { type: list, items: { type: str }, doc: "Cap patterns it may use as agent:<name> (plus agent.backend, its own turns); acting for a person it gets only what both may, alone only these." }
+      backend: { type: str, pattern: "^(default|[a-z][a-z0-9-]*\\.[a-z][a-z0-9_.]*)$", doc: "default (the hub's chosen agent.backend provider) or one provider's cap, e.g. agents-claude-code.turn." }
       model: { type: map, items: { type: str }, doc: "Per-system model: {two: opus, three: haiku}; default: the backend's model and model_three settings." }
       always_on: { type: bool, doc: "Never sleeps on idle (house, security); others wake when addressed." }
       cwd: { type: str, doc: "The folder its backend works in; blank: the backend's own." }

@@ -1103,6 +1103,132 @@ def test_sub_calls_per_call_are_capped(hubs, monkeypatch):
             limit = hub.journal.query(kind="sub_call_limit", viewer={"owner": True}, limit=5)
             assert len(limit) == 1 and limit[0]["call"] == out["id"]
             assert hub.dispatcher.sub_calls == {}       # forgotten when the call ends
+
+
+CREW = """\
+manifest: 1
+plugin: crew
+version: 1.0.0
+doc: Runs agents of its own (like the agents runtime).
+runs_on: hub
+uses: [notify.send]
+caps:
+  hire:
+    doc: Make or change one of its agents.
+    risk: admin
+    scope: multi-user
+    run: scripts/crew.py:hire
+    args:
+      name: { type: str, required: true }
+      grants: { type: list, items: { type: str } }
+  count:
+    doc: Something an agent may be granted.
+    risk: read
+    scope: self
+    run: scripts/crew.py:count
+  token:
+    doc: A turn token (tests only hand it back).
+    risk: read
+    scope: self
+    run: scripts/crew.py:token
+    args:
+      name: { type: str, required: true }
+  think:
+    doc: A turn as the agent through one provider of a contract.
+    risk: write
+    scope: self
+    run: scripts/crew.py:think
+    args:
+      name: { type: str, required: true }
+      provider: { type: str, required: true }
+"""
+
+CREW_PY = """\
+from rook.kit.ctx import Caller
+
+def hire(ctx, name, grants=None):
+    ctx.run_agent(name, grants)
+    return {"ok": True}
+
+def count(ctx):
+    return {"person": ctx.person, "agent": ctx.agent}
+
+def token(ctx, name):
+    return ctx.turn_token(name, 60)
+
+async def think(ctx, name, provider):
+    who = Caller(person=ctx.person, agent=f"agent:{name}", band=ctx.band, why=f"{name} thinks")
+    return await ctx.call_as(who, "notify.send", {"text": "from " + name}, provider=provider)
+"""
+
+
+def test_rook_run_agents_have_their_own_identity_and_turn_tokens(hubs, tmp_path):
+    # Drift #4 (castling-protocol): agents and people each have their own
+    # identity; acting for a person = what both may; alone = its own grants.
+    lib = tmp_path / "lib"
+    plugin(lib, "notes", NOTES, {"notes.py": NOTES_PY})
+    plugin(lib, "crew", CREW, {"crew.py": CREW_PY})
+    now = [time.time()]
+
+    async def go():
+        hub = Hub(config(tmp_path, library=lib), transport=Loopback(), clock=lambda: now[0])
+        await hub.start()
+        owner = (hub.data / "owner.token").read_text().strip()
+
+        async def call(token, cap, **args):
+            return (await http(hub, "POST", "/call", {"worker": "rook", "cap": cap, "args": args, "why": WHY},
+                               token))[1]
+        try:
+            out = await call(owner, "crew.hire", name="scribe", grants=["crew.count", "notify.send"])
+            assert out["ok"], out
+            assert hub.identities.agents["scribe"] == {"grants": ["crew.count", "notify.send"]}
+            assert hub.identities.run_by == {"scribe": "crew"}
+            note = hub.journal.query(kind="agent", limit=1)[0]
+            assert (note["by"], note["agent"], note["grants"]) == ("system:plugin.crew", "agent:scribe",
+                                                                   ["crew.count", "notify.send"])
+            # Never a hub.yaml agent's name, never malformed grants.
+            for name, grants, error in (("claude", ["*"], "configured in hub.yaml"), ("x", [""], "malformed")):
+                out = await call(owner, "crew.hire", name=name, grants=grants)
+                assert error in out["error"], out
+            assert hub.identities.agents["claude"]["max_risk"] == "exec"
+            # Only the plugin that runs it mints its turn tokens.
+            with pytest.raises(runtime.KitError, match="doesn't run agent scribe"):
+                hub.turn_token("notes", "person:bake", "scribe", 60)
+            # A turn token: the agent, for the person whose call it came from.
+            token = (await call(owner, "crew.token", name="scribe"))["result"]
+            assert hub.authenticate(token) == runtime.Caller("person:bake", "agent:scribe")
+            out = await call(token, "crew.count")
+            assert out["result"] == {"person": "person:bake", "agent": "agent:scribe"}, out
+            entry = hub.journal.query(cap="crew.count", limit=1)[0]
+            assert (entry["person"], entry["agent"]) == ("person:bake", "agent:scribe")
+            out = await call(token, "crew.hire", name="scribe", grants=["*"])     # its own grants hold
+            assert out["error"] == "denied: agent: grants", out
+            # For a child, only what both may (the child's preset refuses crew.count).
+            kid = hub.turn_token("crew", "person:kid", "scribe", 60)
+            assert (await call(kid, "crew.count"))["error"] == "denied: person: grants"
+            # Alone: its own grants only.
+            alone = hub.turn_token("crew", None, "scribe", 60)
+            assert (await call(alone, "crew.count"))["result"] == {"person": None, "agent": "agent:scribe"}
+            # A contract through one chosen provider: rights match the contract.
+            out = await call(owner, "crew.think", name="scribe", provider="notes.tell")
+            assert out["ok"], out
+            told = hub.journal.query(cap="notes.tell", limit=1)[0]
+            assert (told["contract"], told["agent"], told["person"]) == ("notify.send", "agent:scribe",
+                                                                         "person:bake")
+            out = await call(owner, "crew.think", name="scribe", provider="notes.count")
+            assert "doesn't provide notify.send" in out["error"], out
+            # Tokens end with the turn, expire, and die with the agent.
+            hub.end_turn_token(kid)
+            assert hub.authenticate(kid) is None
+            assert (await http(hub, "GET", "/workers", token=alone))[0] == 200
+            now[0] += 61
+            assert hub.authenticate(alone) is None and hub.authenticate(token) is None
+            now[0] -= 61
+            assert hub.authenticate(token) is not None
+            out = await call(owner, "crew.hire", name="scribe")          # no grants: archived
+            assert out["ok"] and "scribe" not in hub.identities.agents
+            assert hub.authenticate(token) is None
+            assert (await http(hub, "GET", "/workers", token=token))[0] == 401
         finally:
             await hub.stop()
     run(go())

@@ -639,8 +639,10 @@ class Dispatcher:
 
 
 def _gate_input(caller: Caller, s: Session, w: Worker, call: Call, entry: dict) -> dict:
-    """What a gate sees (spec 10.2); args with secret references unresolved."""
-    return {"cap": call.cap, "args": call.args, "caller": {"person": caller.person, "agent": caller.agent},
+    """What a gate sees (spec 10.2): the args as the journal keeps them, so
+    secret references stay unresolved and ``type: secret`` values (a turn's
+    door token, a backup blob) are redacted."""
+    return {"cap": call.cap, "args": entry["args"], "caller": {"person": caller.person, "agent": caller.agent},
             "worker": w.name, "appliance": call.appliance, "why": call.why, "risk": entry["risk"],
             "scope": entry["scope"], "effects": entry["effects"], "session": s.view(), "band": w.band,
             **({"contract": call.contract} if call.contract else {})}

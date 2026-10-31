@@ -20,13 +20,13 @@ Put `agents` in the hub's library, and a backend:
 - `agents-claude-code` on a worker that has Claude Code installed and
   signed in: turns run `claude -p` under that subscription
   ([its manual](../../rook/plugins/agents-claude-code/docs/manual.md)).
-  Give it an `mcp_config` setting pointing at the hub's MCP door if the
-  agents should reach the band themselves; without it their turns have no
-  Rook tools.
+  Each turn reaches the hub's MCP door (its `door_url` setting, the local
+  door by default) with a token made for that turn only, so the agent acts
+  on the band as itself.
 - or `agents-codex` on a worker that has Codex installed and signed in
   (`codex login`): turns run `codex exec` under that ChatGPT subscription
-  ([its manual](../../rook/plugins/agents-codex/docs/manual.md)). Its
-  `config` setting points Codex at the MCP door the same way.
+  ([its manual](../../rook/plugins/agents-codex/docs/manual.md)), reaching
+  the door the same way with each turn's own token.
 - `llm-cli`, `llm-anthropic` or `llm-openai` if other plugins need plain
   completions (`llm.complete`); agents themselves think through
   `agent.backend`.
@@ -70,8 +70,11 @@ Agents that need you go through the house agent.
   turns it off.
 
 Each person has their own session with an agent, kept and resumed next
-time; nobody else sees it. An agent working for you can do only what both
-of you may, and every call it makes is journaled with its name and yours.
+time; nobody else sees it. Every hub agent is an identity of its own on the
+hub (`agent:pm`). Answering you, it can do only what both of you may; acting
+alone (a persona job, another agent asking with nobody behind it) only what
+its own grants allow. Every call it makes is journaled with its name, and
+yours when it works for you.
 
 ## Awake, asleep, dreaming
 
@@ -87,8 +90,11 @@ lasting memory and tidies both; always-on agents dream every 6 hours (`dream_eve
 `agents.create {name, persona?, prompt?, grants?, skills?, backend?, model?}`
 makes an agent from a persona's defaults and your changes;
 `agents.update` changes one (your edits win over later persona updates);
-`agents.archive` stops one and keeps everything. A persona's **grants** are
-its own rights: unattended, an agent can do only those. Skills are markdown
+`agents.archive` stops one and keeps everything (and takes its identity
+off the hub until you restore it). A persona's **grants** are its own
+rights, checked on every call it makes; every agent may also run its own
+turns (`agent.backend`). `backend` is `default` (the hub's chosen provider)
+or one provider's cap, e.g. `agents-claude-code.turn`. Skills are markdown
 playbooks an agent follows (`agents.skill {name}` reads one). Any plugin
 can ship personas and skills in its manifest; each installed plugin's
 personas become agents. With the workbench, a knowledge page of kind

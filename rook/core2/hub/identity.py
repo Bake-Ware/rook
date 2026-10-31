@@ -7,6 +7,13 @@ rights layers dispatch intersects: the person's preset plus their grants, and
 the agent's own grants. An agent acting for a person carries both, so it gets
 only what both may do; acting alone it has only its own.
 
+Agents come from two places: hub.yaml ``agents:`` (outside harnesses that
+reach the hub with a token: Claude Code, Codex, an OAuth connector) and the
+hub plugin that runs them (the agents runtime registers each Rook-run agent
+with its persona's grants: ``run_by``). A Rook-run agent's harness reaches
+the hub with a turn token: minted for one turn, kept only in memory, dead
+when the turn ends or expires.
+
 In-memory hub state; persistence is the caller's business.
 """
 from __future__ import annotations
@@ -14,6 +21,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import secrets
+import time
 from dataclasses import dataclass, field
 
 from rook.kit._types import parse_duration
@@ -60,8 +68,10 @@ class Identities:
         self.plugin_grants: dict[str, dict[str, list]] = {}   # preset -> {plugin: [pattern]}
         self.users: dict[str, User] = {}
         self.agents: dict[str, dict] = {}                     # name -> rights
+        self.run_by: dict[str, str] = {}                      # Rook-run agent -> the hub plugin that runs it
         self.components: dict[str, dict] = {}                 # system:<name> -> rights beyond core.*
         self._tokens: dict[str, Caller] = {}                  # sha256(token) -> caller
+        self._turns: dict[str, tuple[Caller, float]] = {}    # sha256(turn token) -> (caller, expiry)
 
     # -- setup -----------------------------------------------------------
 
@@ -71,10 +81,26 @@ class Identities:
         self.users[name] = User(name, preset, list(grants), created)
         return self.users[name]
 
-    def add_agent(self, name: str, r: dict) -> None:
+    def add_agent(self, name: str, r: dict, run_by: str | None = None) -> None:
+        """An agent identity. ``run_by``: the hub plugin that runs it (a
+        Rook-run agent); it may change or drop only its own, never one from
+        hub.yaml or another plugin's."""
         if not rights.valid_rights(r):
             raise ValueError(f"malformed rights for agent {name!r}")
+        if run_by is not None and name in self.agents and self.run_by.get(name) != run_by:
+            raise ValueError(f"agent {name!r} is " + (f"run by {self.run_by[name]}" if name in self.run_by
+                                                        else "configured in hub.yaml"))
         self.agents[name] = r
+        if run_by is not None:
+            self.run_by[name] = run_by
+
+    def drop_agent(self, name: str, run_by: str) -> None:
+        """Forget a Rook-run agent (archived): its turn tokens die with it."""
+        if self.run_by.get(name) != run_by:
+            raise ValueError(f"agent {name!r} isn't run by {run_by}")
+        del self.agents[name], self.run_by[name]
+        for d in [d for d, (c, _) in self._turns.items() if c.agent == f"agent:{name}"]:
+            del self._turns[d]
 
     def add_component(self, name: str, r: dict) -> None:
         """Rights for ``system:<name>``, a hub component acting on its own (a
@@ -112,9 +138,30 @@ class Identities:
 
     def revoke_token(self, token: str) -> None:
         self._tokens.pop(digest(token), None)
+        self._turns.pop(digest(token), None)
 
-    def authenticate(self, token: str) -> Caller | None:
-        return self._tokens.get(digest(token)) if isinstance(token, str) else None
+    def add_turn_token(self, caller: Caller, expires: float, now: float) -> str:
+        """A door token for one turn of a Rook-run agent (``caller.agent``),
+        for the person behind it if any. In memory only; expired ones are
+        dropped as new ones are made."""
+        if caller.problem():
+            raise ValueError(caller.problem())
+        if (caller.agent or "").partition(":")[2] not in self.run_by:
+            raise ValueError("turn tokens are for Rook-run agents")
+        for d in [d for d, (_, exp) in self._turns.items() if exp <= now]:
+            del self._turns[d]
+        token = secrets.token_urlsafe(32)
+        self._turns[digest(token)] = (caller, expires)
+        return token
+
+    def authenticate(self, token: str, now: float | None = None) -> Caller | None:
+        if not isinstance(token, str):
+            return None
+        d = digest(token)
+        if d in self._turns:
+            caller, exp = self._turns[d]
+            return caller if (time.time() if now is None else now) < exp else None
+        return self._tokens.get(d)
 
     # -- questions dispatch asks ------------------------------------------
 

@@ -170,6 +170,20 @@ def test_secrets_resolved_for_the_wire_only(hub):
 
 
 
+def test_gates_never_see_a_secret_value(hub):
+    # A turn's door token (agent.backend's ``door``) or a backup blob: declared
+    # ``type: secret``, so gates get the journal's copy, redacted.
+    hub.workers[WID].caps["agent.turn"] = {"risk": "exec", "scope": "local", "effects": [],
+                                           "args": {"prompt": {"type": "str"}, "door": {"type": "secret"}}}
+    seen = []
+    hub.gates = [gates.Gate("spy", lambda inp: seen.append(inp) or
+                            {"verdict": "allow", "confidence": 1, "reason": "other"}, mode="enforce")]
+    out, _ = call(hub, BAKE, "agent.turn", {"prompt": "hi", "door": "tok-123"})
+    assert out["ok"] and hub.tx.requests[0]["args"]["door"] == "tok-123"
+    assert seen[0]["args"] == {"prompt": "hi", "door": "[redacted]"}
+    assert "tok-123" not in json.dumps(hub.log)
+
+
 def test_secret_values_never_come_back_in_error_text(hub):
     # A worker's schema error quotes the argument it got: the resolved value.
     hub.secrets = lambda args, caller, cap, target=None: {**args, "n": "hunter2"} if args else args

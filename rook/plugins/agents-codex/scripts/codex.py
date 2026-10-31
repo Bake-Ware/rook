@@ -7,11 +7,17 @@ user). Codex prints JSONL events: ``thread.started`` carries the session id,
 each ``item.completed`` of type ``agent_message`` a reply (the last one is
 the answer), ``turn.completed`` the token usage, ``turn.failed`` the error.
 Codex exits 0 on a failed turn, so the events decide.
+
+``door``: the turn token the agents runtime got from the hub for this turn
+(the agent, for the person behind it). The turn's Rook MCP server is the door
+at ``door_url``, its bearer token read from ``ROOK_DOOR_TOKEN`` in the turn's
+own environment: never on the command line or on disk.
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from pathlib import Path
 
@@ -22,6 +28,7 @@ from rook.kit._types import parse_duration
 _WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,127}")
 # key=value, the key a dotted TOML path: never an option either.
 _CONFIG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\"-]*=.*", re.S)
+TOKEN_ENV = "ROOK_DOOR_TOKEN"
 USAGE = ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens")
 
 
@@ -39,7 +46,7 @@ def model_for(settings, model: str | None) -> str:
     return model
 
 
-def argv(settings, *, session=None, model=None, effort=None, system=None) -> list[str]:
+def argv(settings, *, session=None, model=None, effort=None, system=None, door=False) -> list[str]:
     out = [settings["codex"] or "codex", "exec"]
     if session:
         out.append("resume")
@@ -55,12 +62,18 @@ def argv(settings, *, session=None, model=None, effort=None, system=None) -> lis
         out += ["-c", f"developer_instructions={toml_str(system)}"]
     for kv in settings["config"] or ():
         out += ["-c", kv]
+    if door:                     # the turn's own Rook: the door, with the token from the environment
+        out += ["-c", f"mcp_servers.rook.url={toml_str(settings['door_url'])}",
+                "-c", f"mcp_servers.rook.bearer_token_env_var={toml_str(TOKEN_ENV)}",
+                # no prompts in exec: the hub decides what each call may do
+                "-c", 'mcp_servers.rook.default_tools_approval_mode="approve"']
     if settings["isolate"]:      # not the person's own config, MCP servers and rules
         out += ["--ignore-user-config", "--ignore-rules"]
     return out + ([session] if session else []) + ["-"]
 
 
-async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, system=None, timeout="20m"):
+async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, system=None, timeout="20m",
+               door=None):
     work = Path(cwd).expanduser() if cwd else ctx.data / "work"
     if not cwd:
         work.mkdir(parents=True, exist_ok=True)
@@ -72,10 +85,14 @@ async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, sys
     for kv in ctx.settings["config"] or ():
         if not _CONFIG.fullmatch(kv):
             raise ctx.Error(f"agents-codex.config: {kv[:40]!r} is not key=value")
-    cmd = argv(ctx.settings, session=session, model=model, effort=effort, system=system)
+    if door and not ctx.settings["door_url"]:
+        raise ctx.Error("set agents-codex.door_url to the hub's MCP door to give agents Rook")
+    cmd = argv(ctx.settings, session=session, model=model, effort=effort, system=system, door=bool(door))
+    env = {**os.environ, TOKEN_ENV: door} if door else None
     try:
         proc = await launch(cmd, getattr(ctx, "lease", None), cwd=str(work), stdin=asyncio.subprocess.PIPE,
-                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                            **({"env": env} if env else {}))
     except FileNotFoundError:
         raise ctx.Error(f"{cmd[0]} not found: install Codex or set agents-codex.codex") from None
     try:
