@@ -13,7 +13,9 @@ User guide: [desktop-app.md](desktop-app.md#a-rook-05-hub-preview).
 | Sign-in | dashboard cookie (window, account login or dashboard password) | the person's door token; the site's `/login` checks it once and gives the dashboard window its `rook_web` session |
 | Hub calls | `/api/band/call`, read-risk caps | HTTP door `POST /call` as the person, each with a why (journaled) |
 | Waiting on you | `approvals.list` | `GET /holds` |
-| Work, Knowledge, Sessions tabs | `task.read` deck, `knowledge.read` search, `/account/work/sessions` | none: the panel shows holds, the hub's pages and the house agent, and an agent opens a page when one is needed (castling-attention: "No built-in views needed for things like knowledge or tasks"; drift #29) |
+| Work | `task.read` deck | `task.list` (in progress, blocked) + `project.list` |
+| Knowledge | `knowledge.read` search | `knowledge.search` + `task.search` |
+| Sessions tab | `/account/work/sessions` | `agents.list` (awake agents first) |
 | Tray Dashboard menu | `ui/sections.json` | the hub's `pages.list`, by section, refreshed every 20 polls |
 | Quick ask | private chat room, or `home.ask` over MCP | `agents.chat.send` to `house`, in the person's own session (the dock's) |
 | Ask about this page | the @home dock | the site's dock (`#dock-btn`) |
@@ -37,10 +39,10 @@ Code: `desktop/src-tauri/src/hub05.rs` (door client, pure parsers),
   acting for a person. The app acts as the person, and the HTTP door runs
   everything the panel and quick ask need, so the 0.4 agent-token option is
   hidden on 0.5.
-- **No built-in lists beyond holds.** Tasks and knowledge are workbench
-  plugins, not core (castling-dashboard), so the app doesn't assume them: the
-  hub's pages menu reaches them, and the dashboard dock shows the person's own
-  conversation with the house agent.
+- **Sessions tab lists agents.** The hub's stream index (`stream.list`
+  with `kind: session`, gate R3) now lists agent sessions and terminals;
+  the tab still lists the agents (`agents.list`) and can move to it. The
+  dashboard dock shows the person's own conversation.
 - **The app approves its own device code.** The person clicked **Add this
   computer** while signed in as themselves, which is the approval spec 12
   asks for; the code never leaves the app.
@@ -62,7 +64,7 @@ Code: `desktop/src-tauri/src/hub05.rs` (door client, pure parsers),
 - `tests/test_desktop_contract05.py`: the routes, cookie, page ids, caps,
   dock markup and enroll output the app relies on, against the castling code.
 - By hand: the app in a headless sway session against that hub, settings in
-  0.5 mode, the panel (pages and holds), the dashboard window opening
+  0.5 mode, the panel (pages and work count), the dashboard window opening
   signed in.
 
 Windows: the 0.5 worker is untested there (the 0.5 e2e suite is POSIX only);

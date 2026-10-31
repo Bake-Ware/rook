@@ -1528,16 +1528,22 @@ fn to_json<T: Serialize>(r: Result<T, hub::HubError>) -> Result<serde_json::Valu
 }
 
 /// The Rook panel's lists: `waiting`, `work`, `knowledge` (with `query`) or
-/// `sessions`. Read-only, as the signed-in person. A 0.5 hub has only
-/// `waiting`: the panel shows holds, the hub's pages and the house agent, and
-/// an agent opens a page when one is needed (castling-attention: "No built-in
-/// views needed for things like knowledge or tasks").
+/// `sessions`. Read-only, as the signed-in person.
 #[tauri::command]
 async fn panel_data(app: AppHandle, kind: String, query: Option<String>) -> Result<serde_json::Value, String> {
     if v05(&app) {
         let h = hub05_client(&app)?;
         return match kind.as_str() {
             "waiting" => to_json(h.waiting().await),
+            "work" => to_json(h.work().await),
+            "knowledge" => {
+                let q: String = query.unwrap_or_default().trim().chars().take(200).collect();
+                if q.is_empty() {
+                    return Ok(json!([]));
+                }
+                to_json(h.knowledge(&q).await)
+            }
+            "sessions" => to_json(h.sessions().await),
             _ => Err("unknown list".into()),
         };
     }

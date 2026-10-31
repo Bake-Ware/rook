@@ -41,7 +41,7 @@ def test_site_sign_in_cookie_and_csrf():
 def test_page_ids_the_panel_links_to_exist():
     plugins = ROOT / "rook/plugins"
     builtin = ROOT / "rook/core2/hub/doors/web/builtin"
-    for const in ("APPROVALS_PAGE",):
+    for const in ("APPROVALS_PAGE", "TASKS_PAGE", "KNOWLEDGE_PAGE"):
         plugin, page = rust_const(const).removeprefix("/#/").split("/")
         manifests = [*plugins.glob("*/plugin.yaml"), *builtin.glob("*/plugin.yaml")]
         found = [m for m in manifests if (yaml.safe_load(m.read_text()) or {}).get("plugin") == plugin]
@@ -56,12 +56,12 @@ def test_caps_the_app_calls_exist():
         m = yaml.safe_load((ROOT / "rook/plugins" / name / "plugin.yaml").read_text())
         return m["plugin"], set(m.get("caps") or {}), set(m.get("records") or {})
     plugin, own, _ = caps("agents")
-    assert plugin == "agents" and "chat.send" in own
-    for cap in ('"agents.chat.send"', '"pages.list"'):
+    assert plugin == "agents" and {"chat.send", "list"} <= own
+    for name, record in (("tasks", "task"), ("knowledge", "knowledge"), ("projects", "project")):
+        assert record in caps(name)[2], name                 # records give <record>.list/.search
+    for cap in ('"agents.chat.send"', '"agents.list"', '"task.list"', '"task.search"', '"knowledge.search"',
+                '"project.list"', '"pages.list"'):
         assert cap in HUB05, cap
-    # no workbench lists on 0.5 (castling-attention: the agent opens a page; drift #29)
-    for cap in ('"agents.list"', '"task.list"', '"task.search"', '"knowledge.search"', '"project.list"'):
-        assert cap not in HUB05, cap
     assert rust_const("HOUSE") in (ROOT / "rook/plugins/agents/plugin.yaml").read_text()
 
 

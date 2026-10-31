@@ -553,7 +553,7 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
   castling-dashboard: tasks are not core. `desktop/src-tauri/src/hub05.rs:108-135` hard-codes Work
   (`task.list`), Knowledge and Sessions tabs that assume the workbench. Source: wave6
   `desktop.txt`. *Fix:* show holds + `pages.list` + the dock, or show tabs only when the caps exist.
-  **Fixed:** PR #349: on 0.5 the panel shows holds, pages and the house agent only.
+  **Fix in** PR #352 (c8/ops-desktop): on 0.5 the panel shows holds, pages and the house agent only (split out of #349: its macOS job can't run).
 - **30. No attention job on the hub (missing, known).** castling-attention: "Attention becomes an
   **aggregation job on the hub** run by the house agent". Nothing consumes
   `notification-android.received`/`sms.received`; the 0.5 phone plugin posts through the 0.4

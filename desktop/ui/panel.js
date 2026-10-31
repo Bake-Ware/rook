@@ -107,22 +107,15 @@ function sections(list) {
   }));
 }
 
-// A 0.5 hub has no Work, Knowledge or Sessions lists: holds, the hub's pages
-// and the house agent only (castling-attention: the agent opens a page).
-let v05 = false;
-
 async function refresh() {
   const st = await invoke('get_state');
-  v05 = !!(st.settings && st.settings.hub_version === '0.5');
-  for (const b of document.querySelectorAll('[data-tab]')) b.hidden = v05 && b.dataset.tab !== 'waiting';
-  if (v05 && tab !== 'waiting') select('waiting');
   $('#hub-line').textContent = st.signed_in ? st.hub + (st.principal ? ' · ' + st.principal : '') : 'Not signed in. Open Settings to connect to your hub.';
   sections(st.sections);
   $('#ask-page').hidden = !st.signed_in;
   if (!st.signed_in) { listEl.replaceChildren(); setMsg(msg, 'Sign in to your hub first (Settings).', 'err'); return; }
   load(tab);
   // Counts on the other tabs, without switching.
-  for (const w of v05 ? [] : ['waiting', 'work']) if (w !== tab) invoke('panel_data', { kind: w }).then(i => count(w, i.length)).catch(() => {});
+  for (const w of ['waiting', 'work']) if (w !== tab) invoke('panel_data', { kind: w }).then(i => count(w, i.length)).catch(() => {});
 }
 
 for (const b of document.querySelectorAll('[data-tab]')) b.addEventListener('click', () => select(b.dataset.tab));
