@@ -655,6 +655,7 @@ def test_hmac_and_token_routes(hubs, tmp_path, monkeypatch):
             assert await post(hub, "/signed", body, {"X-Hub-Signature-256": sig}) == (200, {"got": body.decode()})
             assert (await post(hub, "/signed", body + b" ", {"X-Hub-Signature-256": sig}))[0] == 401
             assert (await post(hub, "/signed", body, {}))[0] == 401
+            assert (await post(hub, "/signed", body, {"X-Hub-Signature-256": "sha256=\u00e9\u00e9"}))[0] == 401
             assert (await post(hub, "/tg", body, {"X-Telegram-Bot-Api-Secret-Token": "t0k"}))[0] == 200
             assert (await post(hub, "/tg", body, {"X-Telegram-Bot-Api-Secret-Token": "nope"}))[0] == 401
             assert (await post(hub, "/bearer", body, {"Authorization": "Bearer t0k"}))[0] == 200

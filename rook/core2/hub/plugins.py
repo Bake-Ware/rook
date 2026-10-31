@@ -279,7 +279,7 @@ class HubPlugins:
         if route.auth == "hmac":
             expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
             given = given[7:] if given.lower().startswith("sha256=") else given
-            return hmac.compare_digest(expected, given.lower())
+            return hmac.compare_digest(expected.encode(), given.lower().encode())
         given = given[7:].strip() if given.lower().startswith("bearer ") else given
         return hmac.compare_digest(secret.encode(), given.encode())
 
