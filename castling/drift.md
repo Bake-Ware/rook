@@ -74,7 +74,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 4 | missing | Rook-run agents have no identity of their own; persona grants are decorative. **Fixed: PR #344** | `agents/scripts/agents.py:26`, `agents-claude-code` |
 | 5 | renamed, missing | "Producer" became a release manager; the house agent doesn't tag work or offer projects (**fixed, PR #340**) | `agents/personas/producer.md`, `house.md` |
 | 6 | contradiction | Archivist and wiki-sweep teach 0.4 verification and supersede (**fixed, PR #340**) | `agents/personas/archivist.md`, `skills/wiki-sweep.md` |
-| 7 | over-built | The one-off 0.4 migration ships as a product tool in core | `rook/core2/migrate`, `knowledge/scripts/import_04.py` |
+| 7 | over-built | The one-off 0.4 migration ships as a product tool in core (**fixed, PR #339**) | `rook/core2/migrate`, `knowledge/scripts/import_04.py` |
 | 8 | missing | C4 `approval.ask` not built; plugins built their own asks; `page.show` absent (**fixed, PR #350**: approval.ask; `page.show` open) | builtin `approval`, `jobs`, `huddle carry`, `changes` |
 | 9 | contradiction (partial) | Streams: three private hub stores, no hub `stream.read/write`, no chat rooms (**fixed, PR #347**) | `agents`, `speech`, `huddle`, #331 |
 | 10 | missing, package | Personas only from the agents manifest; workbench roles in agents; skills not in the knowledge store (**fixed, PR #340**) | `agents.py:158,416,464` |
@@ -82,7 +82,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 12 | contradiction, over-built | Core "2.1" is breaking but labelled minor; extras beyond H2 | #327 |
 | 13 | over-built | Worker updates port 0.4 OTA as caps, including caps Bake's pass binned | #326 |
 | 14 | over-built | OAuth door is a full authorization server; 0.4 cut that back to a shim | #332 (**fixed in #337**) |
-| 15 | missing | Backup has no default target and no house-agent nudges | `rook/core2/hub/backup` |
+| 15 | missing | Backup has no default target and no house-agent nudges (**fixed, PR #343**) | `rook/core2/hub/backup` |
 | 16 | missing | `core.elevate` skips the gate hook (**fixed, PR #338**) | `rook/core2/hub/dispatch.py:550` |
 | 17 | contradiction | The security gate ships in enforce mode with heuristic holds (**fixed, PR #338**) | `rook/plugins/security/plugin.yaml:26` |
 | 18 | missing (bug) | The pinned-task check calls a cap that doesn't exist, fails quietly (**fixed, PR #342**) | `security/plugin.yaml:20` |
@@ -90,9 +90,9 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 20 | missing | No agent-led install path; README and skill are still 0.4. **Fixed: PR #345** | `README.md`, `skills/rook/` |
 | 21 | missing | Appliance routing and appliance settings on the worker | `dispatch.py`, `worker/host.py` (N3) |
 | 22 | missing | Worker secret settings have no vault path | `worker/host.py:395` |
-| 23 | contradiction (source) | Switchover "not ported" list and R2 use retired 0.4 names (huddles, Feed, `show.present`, N23) | `docs/castling-switchover.md` |
-| 24 | over-built (low) | 96 0.4 cap aliases in 27 manifests | `rook/plugins/*/plugin.yaml` |
-| 25 | over-built (low) | Child preset `approve_new` queue for a deferred feature | `rights.py`, `identity.py`, spec 8.5 |
+| 23 | contradiction (source) | Switchover "not ported" list and R2 use retired 0.4 names (huddles, Feed, `show.present`, N23) (**fixed, PR #339**) | `docs/castling-switchover.md` |
+| 24 | over-built (low) | 96 0.4 cap aliases in 27 manifests (**fixed, PR #349**) | `rook/plugins/*/plugin.yaml` |
+| 25 | over-built (low) | Child preset `approve_new` queue for a deferred feature (**fixed, PR #351**) | `rights.py`, `identity.py`, spec 8.5 |
 | 26 | over-built (low) | Journal retention tiered by risk (**fixed, PR #338**) | `rook/core2/journal.py:26` |
 | 27 | over-built (low) | `github` in the core package with a huddle-only writer list | `rook/plugins/github/plugin.yaml` |
 | 28 | over-built (low) | Jobs notify the person directly with a fixed channel order | `jobs.py:461-487,605`, `notify` |
@@ -101,7 +101,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 31 | over-built | Hub plugins rebuild storage instead of declaring records | `agents.py:110`, `telegram`/`discord` `links.json`, hub pages |
 | 32 | contradiction (mild) | Core service plugins call providers by plugin name, not contract. **agents fixed: PR #344**; notify, speech: follow-up | `notify`, `speech`, `agents` |
 | 33 | renamed (low) | Plural namespaces `jobs.*`, `agents.*`, `pages.*`; `jobs.start` not `job.run` | `jobs`, `agents`, hub pages |
-| 34 | over-built (low) | Manifest 1.1/1.2 features nothing uses; jobs rolls its own webhook HMAC | `rook/kit/manifest`, `hub/plugins.py`, `jobs.py:870` |
+| 34 | over-built (low) | Manifest 1.1/1.2 features nothing uses; jobs rolls its own webhook HMAC (**partly fixed, PR #349**: format frozen, unused keys reserved; code and the jobs webhook left) | `rook/kit/manifest`, `hub/plugins.py`, `jobs.py:870` |
 
 Watch items (ask Bake, not drift yet) are after the findings.
 
@@ -548,7 +548,7 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
 - **27. `github` in core (over-built, package).** castling-dashboard: "**Core:** workers, settings,
   approvals ..., journal." `rook/plugins/github/plugin.yaml:12` `package: core` with
   `writers: [huddle]`. *Fix:* `package: workbench`; the sign-off rule (#3) replaces `writers`.
-  **Fixed by** PR #333 (`package: workbench`, `writers` gone).
+  **Fix in** PR #333, still open (`package: workbench`, `writers` gone).
 - **28. Jobs notify the person directly (over-built, minor).** castling-agents: "**Channels are
   changeable, not fixed rules.** The house agent picks channel, device and timing"; "Other agents
   ... ask the house agent to get word to the stakeholder." `jobs.py:461-487, 605` call
