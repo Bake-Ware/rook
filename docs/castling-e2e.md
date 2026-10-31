@@ -29,6 +29,7 @@ What they prove:
 | Enrollment | every worker enrolls with a one-time code (the QR); a fresh worker enrolls with a device code the owner approves on a hub made by `init`; it joins a second hub's band as a guest under the home owner's ceiling (the journal keeps the PSK as a reference), the guest hub is refused outside it, and the worker leaves the band when removed |
 | Speech | the voice service's worker (`services/voice/band.py`, fake models) announces the builtin speech-engine manifest; a voice session on the hub's speech plugin hears, IDs the speaker and speaks over the band, and the agent's reply arrives in the session (docs/castling-speech.md) |
 | Real ports | the worker also loads `rook/plugins/battery`, `torrent`, `shell` and `file`; what the machine can't serve is listed as unavailable, with the reason, and a call says why; `shell.exec` runs through the ticket, the worker gate and core's launch path, and `file.read` reads its output back |
+| Events | a text arriving on the worker (`e2e.sms.received`, `taints`, emitted like the phone's `sms.received`) reaches the hub over `core.event` with `person` and `worker` set; it fires an owner's job filtered on the text, whose call goes back to that worker, and shows on a live page made with `events: [e2e.*]` |
 | Jobs | `rook/plugins/jobs` in the hub library: a job every second calls `e2e.ping` on the worker as its creator; an owner's script job fires on `hold.created` (filtered to `e2e.wipe`) and its call reaches the worker through dispatch with the script's why |
 
 ## A 0.5 hub and worker by hand

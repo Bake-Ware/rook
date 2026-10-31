@@ -56,7 +56,9 @@ class KitError(Exception):
 @dataclass(frozen=True)
 class Caller:
     """Who a call runs for. ``plugin`` is set when a plugin acts on its own
-    (hooks, ``ctx.call``); ``owner`` lets records show private rows."""
+    (hooks, ``ctx.call``); ``owner`` lets records show private rows.
+    ``tainted``: it acts on outside content (an event with ``taints``), so
+    the hub runs its calls in a tainted session (spec 8.4)."""
 
     person: str | None = None
     agent: str | None = None
@@ -65,6 +67,7 @@ class Caller:
     why: str = ""
     owner: bool = False
     plugin: str | None = None
+    tainted: bool = False
 
     @property
     def actor(self) -> str:

@@ -21,3 +21,16 @@ caps:
     scope: self
     effects: [destructive]
     run: scripts/e2e.py:wipe
+  receive:
+    doc: Pretend a text arrived (emits e2e.sms.received, as the phone's sms plugin does).
+    risk: write
+    scope: self
+    args: { from: { type: str, required: true }, body: { type: str, required: true } }
+    run: scripts/e2e.py:receive
+emits:
+  e2e.sms.received:
+    doc: A text arrived. Outside content.
+    taints: true
+    payload:
+      from: { type: str, required: true }
+      body: { type: str, required: true }

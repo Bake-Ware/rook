@@ -11,3 +11,8 @@ def admin(ctx):
 
 def wipe(ctx):
     return {"wiped": True}
+
+
+def receive(ctx, **text):
+    ctx.emit("e2e.sms.received", text)
+    return {"emitted": True}

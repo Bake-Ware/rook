@@ -827,8 +827,9 @@ connection details (relay or WebSocket address and the band PSK as a
   ceiling that applies is that hub's. Nothing about other bands crosses a
   band's connection.
 - **Filtered view:** on each band the worker announces only manifests with
-  at least one cap whose name the band's ceiling grants match, and its
-  `ceiling` for that band. A delegate that is a member of an appliance's
+  at least one cap or event (`emits`) whose name the band's ceiling grants
+  match, and its `ceiling` for that band. Events go to a hub only when its
+  ceiling grants their name (13, `core.event`). A delegate that is a member of an appliance's
   band only as a proxy has a ceiling naming those appliances (`light.*@…`),
   so that band sees nothing else of the machine.
 - The home hub knows all of a worker's bands (it added them). A guest band
@@ -1036,15 +1037,37 @@ for the ones it makes on its own.
 | `core.trust.set` | admin | `membership` (9.3), `connect` (`{relay, ws_url, psk}`, not for `removed`) | `{"ok": true}` or why not; home hub only |
 | `core.trust.get` | read | | the anchor's `hub_id` and band, and the memberships (no PSKs) |
 
-The hub serves two caps to its band's workers. They are the only
+The hub serves three caps to its band's workers. They are the only
 band-originated requests a hub serves, and they carry no ticket of their
-own: each is authenticated by the **ticket of a call still in flight**,
-which the hub minted itself, for that worker.
+own. `core.elevate` and `core.call` are each authenticated by the **ticket
+of a call still in flight**, which the hub minted itself, for that worker.
+`core.event` is only as good as the band key, like an announce (15).
 
 | Cap (on the hub node) | Arguments | Result |
 |---|---|---|
 | `core.elevate` | `ticket` (the call's), `reason` (`upfront` or `access_denied`) | `{"lease": <rook-lease>}`, or an error: `elevation: denied`, `elevation: outside ceiling` |
 | `core.call` | `ticket` (the parent call's), `cap`, `target`, `args`, `why` | the sub-call's reply. The hub dispatches it (10.1) as the parent's `person`, `agent` and `session`, with the calling plugin's `uses` as an extra layer. |
+| `core.event` | `worker_id`, `events` (at most 100 of `{id, event, plugin, payload}`), `dropped` (optional count) | `{"taken": n}`; `unknown worker` with `retry` when the hub holds no announce for that worker on this band |
+
+**Events.** A worker sends the events its plugins emit (`emits`) to every
+hub whose ceiling grants the event's name, in `core.event` batches, one
+batch in flight per hub. While a hub is lost (5.4) the worker keeps them in
+a bounded queue per hub; when it is full the oldest go, and `dropped` says
+how many with the next batch. A batch the hub didn't answer goes again with
+the same event `id`s (random, per event), and the hub drops ids it has
+seen. The hub takes an event only when the worker is known on the band the
+request came on, a manifest it announced declares the event (by that
+`plugin`), its ceiling grants the name (with the worker's name as target)
+and the payload fits the declared fields (no others; at most 16 KiB as ASCII JSON). A
+worker's events are its owner's data: the hub sets `person` (the person who
+owns the worker, null when none is known) and `worker` (its name) on the
+payload, replacing whatever the worker sent there. Refused events are
+dropped and logged; the batch is still answered. A taken event goes where
+the hub's own events go: hub plugins' `on:` hooks (library code an owner
+installed), jobs (event jobs are an owner's) and live pages, which show it
+only to viewers whose rights grant its name and whose data it is. An event declared `taints: true` taints the sessions that act
+on it (8.4): the session a hook or job runs its calls in, and a page's
+session once the page receives it.
 
 Worker administration (plugins over Drop, updates, configuration,
 enrollment changes) is defined by the core manifest's caps, not by this
@@ -1092,7 +1115,10 @@ signatures).
 - **The PSK is band membership.** Anyone holding it reads all of the band's
   traffic, including secret values sent with calls, and can announce
   anything. It cannot mint tickets, so it cannot make a v2 worker run
-  anything. Workers have no keys of their own in v2.0, so an impostor
+  anything. It can send events as any worker the hub knows on the band,
+  but only events that worker announced, within its ceiling; they count
+  as that worker's owner's data and, when declared `taints`, taint
+  whatever acts on them. Workers have no keys of their own in v2.0, so an impostor
   worker on the band can receive calls meant for the name it claims;
   calls are bound to `worker_id`, and hubs SHOULD alert when a known
   `worker_id` appears from a second address.

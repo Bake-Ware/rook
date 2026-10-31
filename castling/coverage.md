@@ -270,7 +270,8 @@ shares.
   `{"error": "ctx.call ...: only a cap running for a hub call ..."}` in every heartbeat.
   battery-android uses a `run:` status hook instead. Fix (worker runtime): run a plugin's own caps
   locally for hooks.
-- **N21. Events stay on the worker** (`TODO(castling:events)` in the runtime). `sms.received` and the
+- **N21. Events stay on the worker.** **Closed** (wave 7, gate R2): workers send their plugins'
+  events to the hub with `core.event` (spec 13). Was: `sms.received` and the
   notification events reach only this worker's `on:` hooks; the hub's attention job can't see them
   until events travel.
 - **N22. Who may post a decision card** is call C4 (open). `notification.post` is `write` for plain
