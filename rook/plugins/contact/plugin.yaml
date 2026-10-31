@@ -1,0 +1,29 @@
+manifest: 1
+plugin: contact
+version: 0.5.0
+title: Contacts
+doc: Search the address book of the phone running the Rook app.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [android]
+caps:
+  search:
+    doc: "Contacts whose name or number contains query (blank: the first ones by name): {contacts: [{name, number}]}, one row per number."
+    risk: read
+    scope: local
+    effects: [personal]
+    idempotent: true
+    timeout: 20s
+    aliases: [contacts.search]
+    args:
+      query: { type: str, default: "", max: 100 }
+      limit: { type: int, default: 40, min: 1, max: 500 }
+    result:
+      type: map
+      fields:
+        contacts:
+          type: list
+          items: { type: map, fields: { name: { type: str }, number: { type: str } } }
+    run: scripts/contact.py:search
+docs: { manual: docs/manual.md }

@@ -145,7 +145,9 @@ def test_a_device_code_waits_for_the_person_and_can_be_refused(tmp_path):
         try:
             task = asyncio.create_task(asyncio.to_thread(
                 device.sign_in, url(hub), "tablet", say=said.append, sleep=lambda s: __import__("time").sleep(0.05)))
-            pending = await until(lambda: _pending(hub, tok["ann"]))
+            async def listed():   # the device prints the code only once the hub's answer is back
+                return said and await _pending(hub, tok["ann"])
+            pending = await until(listed)
             code = pending[0]["user_code"]
             assert pending[0]["name"] == "tablet" and said and code in said[0] and hub.hub_id in said[0]
             kid = await http(hub, "POST", "/enroll/approve", {"code": code}, tok["kid"])

@@ -1,0 +1,63 @@
+# Things only a phone does: ring to be found, unlock its PIN screen, buzz,
+# the flashlight.
+manifest: 1
+plugin: phone
+version: 0.5.0
+title: Phone
+doc: Find, unlock, vibrate and the flashlight of the phone running the Rook app.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [android]
+caps:
+  find:
+    doc: Ring at full alarm volume for seconds (1-120) so the phone can be found, then put the volume back. phone.find_stop ends it sooner. Do Not Disturb still applies.
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 15s
+    aliases: [device.find]
+    args:
+      seconds: { type: int, default: 30, min: 1, max: 120 }
+    run: scripts/phone.py:find
+  find_stop:
+    doc: Stop phone.find's ringing and put the alarm volume back.
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 15s
+    aliases: [device.find_stop]
+    run: scripts/phone.py:find_stop
+  unlock:
+    doc: "Unlock a PIN lock screen the way a finger would: wake, bring up the pad, tap the digits. Without pin it types the PIN saved in the app (Settings > App > Device unlock PIN), which never leaves the phone. Bypasses nothing: it needs the right PIN, and a phone whose lock screen refuses accessibility taps can't be unlocked this way. {unlocked, pin: saved|given, taps_ok, note?}; the reply never carries digits."
+    risk: exec
+    scope: local
+    effects: [physical, sensitive]
+    timeout: 30s
+    aliases: [device.unlock]
+    args:
+      pin: { type: secret, pattern: "^[0-9]{4,16}$", doc: "Digits; pass it as a vault reference. Blank: the PIN saved in the app." }
+      hold_ms: { type: int, default: 9000, min: 1000, max: 60000, doc: How long the screen stays on for the pad. }
+      pre_swipe: { type: bool, default: true, doc: Swipe up first (lock screens that show the clock before the pad). }
+    run: scripts/phone.py:unlock
+  vibrate:
+    doc: Buzz the phone for ms milliseconds.
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 15s
+    aliases: [device.vibrate]
+    args:
+      ms: { type: int, default: 300, min: 1, max: 5000 }
+    run: scripts/phone.py:vibrate
+  torch:
+    doc: Turn the flashlight on or off.
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 15s
+    aliases: [device.torch]
+    args:
+      on: { type: bool, default: true }
+    run: scripts/phone.py:torch
+docs: { manual: docs/manual.md }

@@ -1,0 +1,74 @@
+# The phone's screen: wake it, keep it on, its state, and a capture
+# (MediaProjection, consent given once in the app).
+manifest: 1
+plugin: screen-android
+version: 0.5.0
+title: Phone screen
+doc: Wake, keep awake and capture the screen of the phone running the Rook app.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [android]
+settings:
+  keep_awake_auto:
+    type: bool
+    apply: reload
+    doc: "Keep the phone awake while an agent drives its screen (ui.*, hid.*, screen.capture, app.launch, ...), until it has been idle for keep_awake_idle_minutes. Blank: the app's own setting (on)."
+  keep_awake_idle_minutes:
+    type: int
+    min: 1
+    max: 1440
+    apply: reload
+    doc: "Idle minutes before keep-awake lets the screen go. Blank: the app's own setting (10)."
+caps:
+  screen.on:
+    doc: "Turn the screen on, over the lock screen, for hold_ms. dismiss_keyguard also brings up the PIN pad (it never bypasses a secure lock; phone.unlock types the PIN). Needs 'Display over other apps'."
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 15s
+    aliases: [device.wake]
+    args:
+      dismiss_keyguard: { type: bool, default: false }
+      hold_ms: { type: int, default: 1200, min: 100, max: 60000 }
+    run: scripts/screen.py:on
+  screen.keep_on:
+    doc: "Keep the screen on (so it never locks) for minutes, then let it go; on=false lets it go now. Returns screen.status."
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 15s
+    aliases: [device.keep_awake]
+    args:
+      on: { type: bool, required: true }
+      minutes: { type: int, default: 30, min: 1, max: 1440 }
+    result: { type: map }
+    run: scripts/screen.py:keep_on
+  screen.status:
+    doc: "The screen's state: screen_on, locked, keep-awake (on, mode manual|auto, until, remaining_s), the passive setting, whether an unlock PIN is saved, the screen timeout."
+    risk: read
+    scope: local
+    idempotent: true
+    timeout: 15s
+    aliases: [device.keep_awake_status]
+    result: { type: map }
+    run: scripts/screen.py:status
+  screen.capture:
+    doc: The screen as a JPEG (MediaProjection; a person grants capture once in the app). Apps that block screenshots come out black.
+    risk: read
+    scope: local
+    effects: [sensitive, taints]
+    timeout: 20s
+    aliases: [screenshot.capture]
+    args:
+      quality: { type: int, min: 1, max: 100, doc: "JPEG quality; blank: 85." }
+    result: { type: file, doc: A JPEG. }
+    run: scripts/screen.py:capture
+provides:
+  screen.on: screen-android.screen.on
+  screen.keep_on: screen-android.screen.keep_on
+  screen.status: screen-android.screen.status
+  screen.capture: screen-android.screen.capture
+hooks:
+  start: scripts/screen.py:start
+docs: { manual: docs/manual.md }

@@ -1,0 +1,40 @@
+# Where the phone is (the app's LocationBridge: GPS or network, bounded), and
+# Maps for a place: show it or start turn-by-turn directions.
+manifest: 1
+plugin: location
+version: 0.5.0
+title: Location
+doc: Where the phone running the Rook app is, and showing or navigating to a place in Maps.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [android]
+caps:
+  get:
+    doc: "Where the phone is: {lat, lon, accuracy_m, age_s, stale, provider, maps_url}. Needs Location on and Rook's location permission (all the time)."
+    risk: read
+    scope: local
+    effects: [personal]
+    timeout: 30s
+    args:
+      timeout: { type: int, default: 8, min: 1, max: 25, doc: Seconds to wait for a fix. }
+    result: { type: map }
+    run: scripts/location.py:get
+  navigate:
+    doc: Start turn-by-turn directions to a place in Maps (an address or a place name).
+    risk: write
+    scope: local
+    timeout: 15s
+    args:
+      to: { type: str, required: true, min: 1, max: 500 }
+      mode: { type: str, enum: [drive, walk, bike, transit], default: drive }
+    run: scripts/location.py:navigate
+  show:
+    doc: Show a place on the map (an address, a place name or "lat,lon").
+    risk: write
+    scope: local
+    timeout: 15s
+    args:
+      to: { type: str, required: true, min: 1, max: 500 }
+    run: scripts/location.py:show
+docs: { manual: docs/manual.md }

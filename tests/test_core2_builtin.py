@@ -15,7 +15,13 @@ from rook.kit.manifest.validate import CORE_PRESETS, contract_problems
 SERVICES = {"notify.send", "llm.complete", "agent.backend", "voice.tts", "voice.stt"}
 DEVICES = {"hid.click", "hid.key", "hid.drag", "hid.type", "app.launch", "notification.post",
            "power.off", "screen.capture", "screen.on", "sound.set", "media.play", "media.pause",
-           "media.stop", "media.next", "media.previous", "media.seek", "ui.screen"}
+           "media.stop", "media.next", "media.previous", "media.seek", "ui.screen",
+           # the rest of castling-caps C1, first provided by the phone plugins
+           "ui.click", "ui.scroll", "ui.type", "ui.wait", "hid.status", "screen.keep_on", "screen.status",
+           "battery.status", "app.list", "app.open_url", "app.share", "app.settings", "clipboard.get",
+           "clipboard.set", "sound.status", "sound.dnd", "media.status", "notification.list",
+           "notification.get", "notification.update", "notification.dismiss", "notification.act",
+           "voice.speak", "voice.ask", "voice.replies", "voice.stop", "voice.voices"}
 
 
 @pytest.fixture(scope="module")

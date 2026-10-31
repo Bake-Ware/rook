@@ -1,0 +1,41 @@
+# Timers and alarms through the phone's clock app (AlarmClock intents).
+manifest: 1
+plugin: clock
+version: 0.5.0
+title: Clock
+doc: Set timers and alarms in the clock app of the phone running the Rook app.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [android]
+caps:
+  timer:
+    doc: Start a countdown timer in the clock app. start=false only opens it, set up, for a person to start.
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 15s
+    args:
+      seconds: { type: int, required: true, min: 1, max: 86400 }
+      label: { type: str, default: "", max: 100 }
+      start: { type: bool, default: true }
+    run: scripts/clock.py:timer
+  alarm:
+    doc: Set an alarm in the clock app at hour:minute (24-hour, phone-local). start=false only opens it, set up, for a person to save.
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 15s
+    args:
+      hour: { type: int, required: true, min: 0, max: 23 }
+      minute: { type: int, default: 0, min: 0, max: 59 }
+      label: { type: str, default: "", max: 100 }
+      start: { type: bool, default: true }
+    run: scripts/clock.py:alarm
+  alarms:
+    doc: Open the clock app's list of alarms.
+    risk: write
+    scope: local
+    timeout: 15s
+    run: scripts/clock.py:alarms
+docs: { manual: docs/manual.md }

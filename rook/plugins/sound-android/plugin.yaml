@@ -1,0 +1,48 @@
+# Volume, ringer and Do Not Disturb (AudioManager, NotificationManager).
+manifest: 1
+plugin: sound-android
+version: 0.5.0
+title: Phone sound
+doc: Volume, ringer and Do Not Disturb of the phone running the Rook app.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [android]
+caps:
+  sound.status:
+    doc: "Each stream's volume (media, ring, notification, alarm, call: pct, level, max), the ringer (normal, vibrate, silent), Do Not Disturb (off, priority, alarms, total) and dnd_access (whether Rook may change it)."
+    risk: read
+    scope: local
+    idempotent: true
+    timeout: 10s
+    result: { type: map }
+    run: scripts/sound.py:status
+  sound.set:
+    doc: "Set a stream's volume (level in percent, or step by that many steps, or mute), and/or the ringer. Silent needs Do Not Disturb access (allow it in the Rook app). No volume panel shows. Returns sound.status."
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 10s
+    args:
+      level: { type: int, min: 0, max: 100, doc: Volume in percent. }
+      step: { type: int, min: -30, max: 30, doc: "Move the volume by this many steps (+3, -2)." }
+      mute: { type: bool }
+      stream: { type: str, enum: [media, ring, notification, alarm, call, system], default: media }
+      ringer: { type: str, enum: [normal, vibrate, silent] }
+    result: { type: map }
+    run: scripts/sound.py:set_sound
+  sound.dnd:
+    doc: "Set Do Not Disturb: off, priority (only what the phone lets through), alarms (alarms only) or total (silence). Needs Do Not Disturb access (allow it in the Rook app). Returns sound.status."
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 10s
+    args:
+      mode: { type: str, required: true, enum: [off, priority, alarms, total] }
+    result: { type: map }
+    run: scripts/sound.py:dnd
+provides:
+  sound.status: sound-android.sound.status
+  sound.set: sound-android.sound.set
+  sound.dnd: sound-android.sound.dnd
+docs: { manual: docs/manual.md }
