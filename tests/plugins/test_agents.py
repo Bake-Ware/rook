@@ -288,7 +288,7 @@ def test_create_update_archive(rig):
         with pytest.raises(KitError, match="bad args"):
             rig.rec("agent", "create", name="x", backend="claude-code")      # a provider cap, or default
         assert rig.records.type("agents.agent").rdef.risk == {"create": "admin", "update": "admin",
-                                                              "archive": "admin"}
+                                                              "archive": "admin", "delete": "admin"}
         out = await rig.call("chat_send", agent="re", text="what is this binary?")
         assert out["text"] == "echo what is this binary?"
         cap, args, _ = rig.backend.turns()[-1]

@@ -69,7 +69,7 @@ kind=session` on worker `rook` lists them and `stream.read` reads them.
 ## Making and changing agents
 
 Agents are records: `agents.agent.list` (with `awake`), `get`, `search`,
-`history`, and for admins `create`, `update`, `archive`.
+`history`, and for admins `create`, `update`, `archive`, `delete` (for good).
 `agents.agent.create {name, persona?, ...}` makes one; what you leave out
 comes from the persona's defaults (prompt, grants, skills, backend, models
 like `model: {two: opus, three: haiku}`). `agents.agent.update {id,

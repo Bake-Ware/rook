@@ -58,8 +58,8 @@ records:
       dreamed: { type: float, doc: "When its last dream cycle ran (the agents plugin keeps this)." }
     search: [name, title, summary]
     history: true
-    caps: [list, get, search, create, update, archive, history]
-    risk: { create: admin, update: admin, archive: admin }
+    caps: [list, get, search, create, update, archive, delete, history]
+    risk: { create: admin, update: admin, archive: admin, delete: admin }
   note:
     fields:
       agent: { type: str, required: true }
