@@ -5,9 +5,11 @@
     python castling/switchover/readiness.py [--prs]
 
 Each gate is a file that has to exist or a ``TODO(castling:<owner>)`` that has
-to be gone. Gates a person decides (soak numbers, the review's findings, the
-on-device checks) are listed for the record, never ticked here. Exit 0 when
-every code gate passes.
+to be gone. Only the gates in CUTOVER hold the cutover (D5, castling-switchover-
+decisions: "cutover held for gates R1-R5, R10 and R14; the rest can follow").
+The rest, and the follow-ups a person ticks (soak, review findings, on-device
+checks), are listed for the record and hold nothing. Exit 0 when every
+cutover gate passes.
 """
 from __future__ import annotations
 
@@ -52,12 +54,13 @@ GATES = [
     ("R14", "agents land work on 0.5 without 0.4: task sign-off, then github.merge at the signed-off head",
      ("plugin", "github:merge")),
 ]
-PERSON = [
+CUTOVER = {"R1", "R2", "R3", "R4", "R5", "R10", "R14"}
+FOLLOW_UPS = [
     "soak numbers meet the bars in the plan (docs/castling-soak.md)",
     "every castling/review.md finding is fixed or accepted by Bake",
     "the watch app on 0.5 checked on the watch",
     "the phone app's 0.5 mode checked on bakephone",
-    "a Windows machine runs the 0.5 worker for a week",
+    "the desktop app's \"Add this computer\" on one Linux and one Windows machine",
 ]
 
 
@@ -130,14 +133,15 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     rows = check(todos())
     for gate, ok, what, why in rows:
-        print(f"[{'x' if ok else ' '}] {gate} {what}  ({why})")
-    print("\nFor a person to tick:")
-    print("\n".join(f"[ ] {p}" for p in PERSON))
+        hold = "holds cutover" if gate in CUTOVER else "follow-up"
+        print(f"[{'x' if ok else ' '}] {gate} [{hold}] {what}  ({why})")
+    print("\nFollow-ups for a person to tick (they hold nothing):")
+    print("\n".join(f"[ ] {p}" for p in FOLLOW_UPS))
     if a.prs:
         prs = open_prs()
         print(f"\nOpen PRs into castling: {len(prs)}")
         print("\n".join(f"  {p}" for p in prs))
-    return 0 if all(ok for _, ok, _, _ in rows) else 1
+    return 0 if all(ok for gate, ok, _, _ in rows if gate in CUTOVER) else 1
 
 
 if __name__ == "__main__":

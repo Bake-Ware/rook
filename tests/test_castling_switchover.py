@@ -121,3 +121,20 @@ def test_readiness_gates_follow_the_decisions(tmp_path, monkeypatch):
     assert mod.check({})[0][1] is True
     manifest.write_text("plugin: change\ncaps: {submit: {}}\n")
     assert mod.check({})[0][1] is False                                  # no record, no gate
+
+
+def test_only_the_d5_gates_hold_the_cutover(monkeypatch, capsys):
+    """D5 (castling-switchover-decisions): "cutover held for gates R1-R5, R10
+    and R14; the rest can follow". No week-long waits, and a failing follow-up
+    gate doesn't fail the run."""
+    mod = _readiness()
+    assert mod.CUTOVER == {"R1", "R2", "R3", "R4", "R5", "R10", "R14"}
+    assert not any("week" in f for f in mod.FOLLOW_UPS)
+    doc = (REPO / "docs/castling-switchover.md").read_text(encoding="utf-8")
+    assert "for a week" not in doc and "a week of steps" not in doc
+    real = mod.check
+    monkeypatch.setattr(mod, "check", lambda found: [(g, g != "R11", w, y) for g, ok, w, y in real({})])
+    assert mod.main([]) == 0                                             # R11 failing holds nothing
+    monkeypatch.setattr(mod, "check", lambda found: [(g, g != "R4", w, y) for g, ok, w, y in real({})])
+    assert mod.main([]) == 1
+    assert "[holds cutover]" in capsys.readouterr().out
