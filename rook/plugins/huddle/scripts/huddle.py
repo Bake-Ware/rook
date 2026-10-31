@@ -545,9 +545,9 @@ async def pin(ctx, huddle, kind=None, repo=None, number=None, sha=None, path=Non
         p = await rt.gh("pr", why, repo=repo, number=int(number))
         if p["state"] != "open" and not p["merged"]:
             raise KitError(f"{repo}#{number} is closed without a merge")
-        if sha and sha != p["head"]:
+        if sha and (len(sha) < 7 or not p["head"].startswith(sha.lower())):
             raise KitError(f"{repo}#{number}'s head is {p['head']}, not {sha}: pin the head")
-        version, key = p["head"], f"pr:{repo}#{p['number']}"
+        version, key = p["head"], f"pr:{repo.lower()}#{p['number']}"
         ref = {"repo": repo, "number": p["number"], "base": p["base"], "base_sha": p["base_sha"],
                "head_ref": p["head_ref"], "author": p["author"], "url": p["url"]}
         title = title or f"{repo}#{p['number']}: {p['title']}"[:200]
@@ -557,14 +557,14 @@ async def pin(ctx, huddle, kind=None, repo=None, number=None, sha=None, path=Non
         c = await rt.gh("commit", why, repo=repo, ref=sha)
         version = c["sha"]
         if kind == "commit":
-            key = f"commit:{repo}@{version}"
+            key = f"commit:{repo.lower()}@{version}"
             ref = {"repo": repo, "parent": (c["parents"] or [""])[0]}
             title = title or f"{repo}@{short(version)}: {c['message'].splitlines()[0] if c['message'] else ''}"[:200]
         else:
             if not path:
                 raise KitError("bad args: a file pin needs path")
             await rt.gh("file", why, repo=repo, path=path, ref=version)       # it exists there
-            key, ref = f"file:{repo}:{path}", {"repo": repo, "path": path}
+            key, ref = f"file:{repo.lower()}:{path}", {"repo": repo, "path": path}
             title = title or f"{repo}:{path}@{short(version)}"[:200]
     elif kind == "doc":
         if not text:

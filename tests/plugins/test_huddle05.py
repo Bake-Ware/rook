@@ -72,7 +72,7 @@ class FakeGitHub:
         body = json.loads(h.rfile.read(int(h.headers.get("Content-Length") or 0)) or b"null")
         self.requests.append((method, path, h.headers.get("Authorization")))
         parts = path.strip("/").split("/")
-        if parts[:3] != ["repos", *REPO.split("/")]:
+        if [p.lower() for p in parts[:3]] != ["repos", *REPO.lower().split("/")]:
             return 404, {"message": "Not Found"}
         rest = parts[3:]
         if rest[0] == "pulls" and len(rest) == 2 and method == "GET":
@@ -419,7 +419,8 @@ def test_only_a_person_or_the_chair_pins(cfg, gh):
 def test_a_new_pin_supersedes_and_a_moved_head_voids(cfg, gh):
     async def body(rig):
         h, first = await huddle_with_pr(rig)
-        again = await rig.house.ok("huddle.pin", huddle=h["huddle"], kind="pr", repo=REPO, number=7)
+        again = await rig.house.ok("huddle.pin", huddle=h["huddle"], kind="pr", repo=REPO.lower(), number=7,
+                                   sha=HEAD[:7])
         assert again["already"] and again["artifact"] == first["artifact"]
         # the author pushes: the old pin can't be called, the new one supersedes it
         new = "e" * 40
