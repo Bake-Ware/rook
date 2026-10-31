@@ -531,3 +531,27 @@ def test_cli_backup_and_restore_on_a_fresh_machine(tmp_path):
     assert load_config(tmp_path / "new" / "hub.yaml").library == (tmp_path / "new" / "library").resolve()
     r = cli("--config", str(tmp_path / "new" / "hub.yaml"), "recovery-key")
     assert r.stdout.strip() == rk
+
+
+def test_a_blank_target_is_another_owned_worker_with_backup_store(monkeypatch):
+    """castling-backup: "a reasonable one by default": another worker on the
+    band (an owner's, online, running backup-store), never the hub's own
+    machine, the same one each night while it is up."""
+    from types import SimpleNamespace as NS
+
+    from rook.core2.hub.backup import caps as bcaps
+    monkeypatch.setattr(bcaps.socket, "gethostname", lambda: "HubBox")
+    store = {"backup-store.put": {}}
+
+    def hub(*known, owners=("person:bake",)):
+        return NS(node="hub", known={k.id: k for k in known},
+                  dispatcher=NS(workers={k.id: NS(caps=k.caps) for k in known}),
+                  identities=NS(is_owner=lambda p: p in owners),
+                  enroll=NS(owner_of=lambda wid: "person:ann" if wid == "kid" else "person:bake"))
+
+    def w(id, name, online=True, caps=store):
+        return NS(id=id, name=name, online=online, caps=caps)
+    assert bcaps.default_worker(hub()) is None
+    assert bcaps.default_worker(hub(w("a", "hubbox"), w("b", "nas", online=False), w("c", "pi", caps={}),
+                                    w("kid", "tablet"))) is None
+    assert bcaps.default_worker(hub(w("z", "zeta"), w("y", "nas"), w("a", "hubbox"))) == "nas"
