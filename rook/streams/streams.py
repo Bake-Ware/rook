@@ -14,19 +14,29 @@ sleeping agent). One producer at a time.
 
 Appends and waits run on one event loop thread; a producer reading in
 another thread hands its chunks over with ``loop.call_soon_threadsafe``.
+
+``on_change(sid, change)`` hears every change, for the hub's index
+(:mod:`.index`): ``open``, ``update``, ``close``, ``append`` and ``delete``
+(called while the stream still exists, also when a bounded store prunes a
+finished one). It must not raise into the caller and must be quick.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
+import math
 import secrets
 import time
-from typing import AsyncIterator
+from typing import AsyncIterator, Callable
 
 from .events import KINDS, Event, Meta, StreamError, StreamSpec, check_body, check_kind
 from .store import DEFAULT_BUDGET, MemoryStore, SqliteStore
 
 READ_LIMIT = 1000
+ATTR_TEXT = 200               # longest attr string a summary keeps
+
+log = logging.getLogger("rook.streams")
 
 
 class Streams:
@@ -38,6 +48,8 @@ class Streams:
         self.clock = clock
         self._changed: dict[str, asyncio.Event] = {}
         self._producers: dict[str, "Producer"] = {}
+        self.on_change: Callable[[str, str], None] | None = None
+        self.bounded.on_drop = lambda sid: self._report(sid, "delete")
 
     # -- streams -----------------------------------------------------------
 
@@ -56,6 +68,7 @@ class Streams:
                     participants=list(dict.fromkeys(participants)), attrs=dict(attrs or {}),
                     created=self.clock())
         store.create(meta, budget)
+        self._report(meta.id, "open")
         return meta
 
     def get(self, sid: str) -> Meta:
@@ -81,6 +94,7 @@ class Streams:
         if attrs:
             meta.attrs.update(attrs)
         store.save(meta)
+        self._report(sid, "update")
         return meta
 
     def close(self, sid: str, by: str = "", **status) -> Meta:
@@ -96,11 +110,14 @@ class Streams:
         store.save(meta)
         self._producers.pop(sid, None)
         self._notify(sid)
+        self._report(sid, "close")
         return meta
 
     def delete(self, sid: str) -> None:
         """Erase a stream and every event for good (its own cap: a hard stop)."""
-        self._store(sid).delete(sid)
+        store = self._store(sid)
+        self._report(sid, "delete")
+        store.delete(sid)
         self._producers.pop(sid, None)
         self._notify(sid)
 
@@ -117,6 +134,7 @@ class Streams:
             raise StreamError(f"stream {sid} ({meta.kind}) does not take {type_} events")
         ev = store.append(sid, type_, by, check_body(type_, body), self.clock())
         self._notify(sid)
+        self._report(sid, "append")
         return ev
 
     async def read(self, sid: str, after: int = 0, limit: int = 200, types=None,
@@ -181,6 +199,7 @@ class Streams:
             store = self._store(sid)
             meta.producer = producer
             store.save(meta)
+            self._report(sid, "update")
         handle = Producer(self, sid, producer or meta.producer)
         self._producers[sid] = handle
         return handle
@@ -206,7 +225,33 @@ class Streams:
             if len(events) < READ_LIMIT:
                 return self.durable.get(dst.id)
 
+    def summary(self, sid: str) -> dict:
+        """What the hub index keeps of a stream: its metadata (attrs only
+        their plain values, strings cut short), ``size`` (bytes held) and
+        ``last_at`` (the newest event, else when it opened)."""
+        meta = self.get(sid)
+        size, last_at = self._store(sid).stats(sid)
+        attrs = {k: (v[:ATTR_TEXT] if isinstance(v, str) else v) for k, v in meta.attrs.items()
+                 if isinstance(k, str) and len(k) <= 64 and (isinstance(v, (str, int, bool)) or (
+                     isinstance(v, float) and math.isfinite(v)))}
+        out = {"id": meta.id, "kind": meta.kind, "title": meta.title, "producer": meta.producer,
+               "participants": list(meta.participants), "attrs": attrs, "types": list(meta.spec.types),
+               "input": meta.spec.input, "durable": meta.spec.durable, "created": meta.created,
+               "last_seq": meta.last_seq, "last_at": last_at if last_at is not None else meta.created,
+               "size": size}
+        if meta.closed is not None:
+            out["closed"] = meta.closed
+        return out
+
     # -- plumbing ----------------------------------------------------------
+
+    def _report(self, sid: str, change: str) -> None:
+        if self.on_change is None:
+            return
+        try:
+            self.on_change(sid, change)
+        except Exception:               # the index is a view: it never breaks a stream
+            log.exception("stream change not reported", extra={"fields": {"stream": sid, "change": change}})
 
     def _store_for(self, spec: StreamSpec):
         if not spec.durable:

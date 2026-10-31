@@ -71,9 +71,9 @@ from rook.kit.manifest.diff import semver_key
 from rook.kit.records import RecordStore
 
 from .. import CORE_VERSION, rights, wire
-from ..builtin import CORE
+from ..builtin import CORE, STREAM
 from ..enroll.hub import Enrollment, check_options as check_enroll, recovery_key
-from . import distribute
+from . import distribute, streams as hub_streams
 from .dispatch import Call, Dispatcher, Worker
 from .doors.web import caps as builtin_caps
 from . import updates
@@ -412,12 +412,15 @@ class Hub:
         self.contracts = Contracts(dict(cfg.contracts))
         self.plugins = HubPlugins(records=self.records, contracts=self.contracts, call=self.call_as,
                                   emit=self._emit, data_dir=self.data / "plugins", settings=cfg.settings,
-                                  resolve_secret=self.vault.setting, band=self.band)
+                                  resolve_secret=self.vault.setting, band=self.band,
+                                  index_streams=lambda plugin, streams: self.streams.watch(plugin, streams))
         self.plugins.add_core(self.core)
         builtin_caps.install(self)               # pages, hub, approval, journal, setting: before the library
         vault_caps.install(self)
         backup_caps.install(self)
         self.updates = updates.install(self)     # update.*: core releases and rollouts
+        self.streams = hub_streams.HubStreams(self)   # the stream index (N28): stream.list/get/search
+        self._cache(check(STREAM)[0])            # workers' stream events resolve before any fetch
         self.enroll = Enrollment(self, cfg.enroll)
         self.dispatcher = Dispatcher(hub_id=self.hub_id, op_key=self.op, identities=self.identities,
                                      workers={}, send=self._send, journal=self._journal,
@@ -484,7 +487,7 @@ class Hub:
             await self.plugins.close()
         if hasattr(self, "dispatcher"):
             self._save_workers()
-        for store in ("journal", "records"):
+        for store in ("journal", "records", "streams"):
             if hasattr(self, store):
                 getattr(self, store).close()
 
@@ -941,6 +944,9 @@ class Hub:
         w = self.dispatcher.workers.get(wid) if k is not None else None
         if k is None or w is None or k.band != band:
             return {"ok": False, "error": "unknown worker: announce first", "retry": True}
+        lock = self._locks.get(wid)
+        if lock is not None and lock.locked():     # its announce is still being taken (manifests)
+            return {"ok": False, "error": "busy: the worker's announce is being read", "retry": True}
         if not isinstance(batch, list) or len(batch) > EVENT_BATCH:
             return {"ok": False, "error": f"bad args: events is a list of at most {EVENT_BATCH}"}
         dropped = args.get("dropped")
@@ -968,7 +974,11 @@ class Hub:
                                                                           "reason": why}})
                 continue
             _remember(self._event_ids, key, EVENT_IDS)
-            self._emit(name, {**payload, "person": owner, "worker": k.name}, declared[name][0])
+            payload = {**payload, "person": owner, "worker": k.name}
+            if declared[name][0] == "stream" and name in hub_streams.EVENTS:
+                self.streams.take(k, name, payload)      # the stream index's own (N28): not on the bus
+            else:
+                self._emit(name, payload, declared[name][0])
             taken += 1
         return {"ok": True, "result": {"taken": taken}}
 

@@ -100,6 +100,7 @@ def _rt(ctx) -> "Runtime":
     global _RT
     if _RT is None:
         _RT = Runtime(ctx.data, ctx.settings)
+        ctx.index_streams(_RT.streams)       # agent sessions in the hub's stream list (N28)
     return _RT
 
 

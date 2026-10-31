@@ -79,6 +79,7 @@ def _rt(ctx) -> Runtime:
     global _RT
     if _RT is None:
         _RT = Runtime(ctx.data)
+        ctx.index_streams(_RT.streams)       # voice sessions in the hub's stream list (N28)
     return _RT
 
 

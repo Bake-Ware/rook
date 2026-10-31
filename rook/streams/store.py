@@ -42,6 +42,7 @@ class MemoryStore:
         self._events: dict[str, deque[Event]] = {}
         self._held: dict[str, int] = {}          # bytes held per stream
         self._budget: dict[str, int] = {}
+        self.on_drop = None                       # fn(sid) before a finished stream is pruned
 
     def __contains__(self, sid: str) -> bool:
         return sid in self._meta
@@ -90,6 +91,12 @@ class MemoryStore:
     def list(self) -> list[Meta]:
         return list(self._meta.values())
 
+    def stats(self, sid: str) -> tuple[int, float | None]:
+        """``(bytes held, time of the newest event)``."""
+        self.get(sid)
+        ring = self._events[sid]
+        return self._held[sid], (ring[-1].at if ring else None)
+
     def delete(self, sid: str) -> None:
         self.get(sid)
         for d in (self._meta, self._events, self._held, self._budget):
@@ -108,6 +115,8 @@ class MemoryStore:
     def _prune_closed(self) -> None:
         closed = sorted((m for m in self._meta.values() if m.closed), key=lambda m: m.closed)
         for m in closed[:max(0, len(closed) - self.keep_closed)]:
+            if self.on_drop is not None:
+                self.on_drop(m.id)
             self.delete(m.id)
 
 
@@ -220,6 +229,13 @@ class SqliteStore:
         with self._lock:
             rows = self._db.execute(f"SELECT {_COLS} FROM streams").fetchall()
         return [self._meta(r) for r in rows]
+
+    def stats(self, sid: str) -> tuple[int, float | None]:
+        """``(bytes of events kept, time of the newest event)``."""
+        with self._lock:
+            size, last = self._db.execute(
+                "SELECT COALESCE(SUM(LENGTH(body)), 0), MAX(at) FROM events WHERE stream=?", (sid,)).fetchone()
+        return size, last
 
     def delete(self, sid: str) -> None:
         with self._lock:

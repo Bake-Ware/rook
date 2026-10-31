@@ -70,3 +70,36 @@ caps:
     args:
       stream: { type: str, required: true, pattern: "^s_[0-9a-f]{16}$" }
     result: { type: map }
+
+# What the hub's stream index hears (N28; rook/streams/index.py). Only a
+# stream opened for a band goes to that band's hub. The hub files them in
+# its index (stream.list) and doesn't pass them on to hooks, jobs or pages.
+emits:
+  stream.changed:
+    doc: A stream opened, changed (title, producer, closed) or had activity (at most every few seconds).
+    payload:
+      id: { type: str, required: true, pattern: "^s_[0-9a-f]{16}$" }
+      kind: { type: str, required: true }
+      title: { type: str, max: 200 }
+      producer: { type: str, max: 200 }
+      participants: { type: list, items: { type: str }, max: 100 }
+      attrs: { type: map, doc: "Plain values only: cwd, pid, exit_code, band, ..." }
+      types: { type: list, items: { type: str } }
+      input: { type: bool }
+      durable: { type: bool }
+      created: { type: float }
+      closed: { type: float }
+      last_seq: { type: int }
+      last_at: { type: float, doc: "The newest event, else when it opened." }
+      size: { type: int, doc: "Bytes the worker holds of it." }
+  stream.deleted:
+    doc: A stream is gone (erased, or a finished one pruned from the bounded store).
+    payload:
+      id: { type: str, required: true, pattern: "^s_[0-9a-f]{16}$" }
+  stream.synced:
+    doc: >-
+      After hub contact: the worker's streams on this band are exactly `ids` (sent after a
+      stream.changed for each). `complete` false when there were too many to list.
+    payload:
+      ids: { type: list, items: { type: str }, max: 500 }
+      complete: { type: bool }

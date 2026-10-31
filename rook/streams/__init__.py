@@ -6,8 +6,9 @@ plugins map onto it.
 """
 
 from .events import (EVENT_TYPES, KINDS, Event, Meta, StreamError, StreamSpec)
+from .index import Reporter, StreamIndex
 from .store import MemoryStore, SqliteStore
 from .streams import Producer, Streams, cap_stream
 
 __all__ = ["EVENT_TYPES", "KINDS", "Event", "Meta", "MemoryStore", "Producer",
-           "SqliteStore", "StreamError", "StreamSpec", "Streams", "cap_stream"]
+           "Reporter", "SqliteStore", "StreamIndex", "StreamError", "StreamSpec", "Streams", "cap_stream"]
