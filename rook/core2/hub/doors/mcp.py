@@ -219,6 +219,9 @@ class _McpHandler(_Handler):
         if origin and origin not in self.door.origins:
             raise _Error(403, f"origin {origin} not allowed")
         caller = self._run(self._auth())
+        refused = self.door.hub.door_refused(caller, self.door.name)
+        if refused:      # every tool, session starts and reads alike
+            raise _Error(503, refused)
         try:
             msg = self._body()
         except _Error as e:

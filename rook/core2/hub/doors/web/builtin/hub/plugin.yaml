@@ -35,6 +35,16 @@ caps:
     args:
       section: { type: str, doc: "A manifest section, e.g. jobs; blank: whole manifests." }
     result: { type: map }
+  door:
+    doc: "The kill switch: close a door (mcp, http, web) so it refuses everything, or open it again. Closing mcp also refuses agents' tokens on every door. Owners, or a hub component closing one (the security plugin); kept across restarts. Also POST /doors/<name>."
+    on: hub
+    risk: admin
+    scope: multi-user
+    effects: [persists]
+    args:
+      door: { type: str, required: true, pattern: "^[a-z][a-z0-9_-]{0,31}$" }
+      open: { type: bool, required: true, doc: "false closes the door, true opens it." }
+    result: { type: map }
 
 pages:
   workers: { title: Workers, file: pages/workers.html, caps: [hub.workers], events: ["worker.*", "plugin.*"], nav: { section: Hub } }

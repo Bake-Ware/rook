@@ -11,6 +11,7 @@ agent, or an agent for a person).
     GET  /holds           calls waiting for a person
     POST /holds/<name>    {decision: approve | refuse}
     POST /plugins/push    {worker, plugin, why}  owners: sign the library's plugin for that worker and install it
+    POST /doors/<name>    {open: bool}  owners: the kill switch (close or open a door; kept across restarts)
     GET  /health          no token
     *    /p/<plugin><path>  a hub plugin's ``routes:`` entry: ``auth: user`` takes the
                           bearer token, ``hmac``/``token`` a signature or token under the
@@ -142,12 +143,20 @@ class _Handler(BaseHTTPRequestHandler):
         hub = self.door.hub
         if method == "GET" and path == "/health":
             return 200, {"ok": True, "hub": hub.hub_id}
+        if self.door.name in hub.dispatcher.closed_doors and not path.startswith("/doors/"):
+            raise _Error(503, f"denied: door {self.door.name} closed")
         if method == "POST" and path in OPEN:      # a device enrolling has no token yet
             return 200, self._run(getattr(hub.enroll, OPEN[path])(self._body()))
         if path.startswith("/p/"):
             return self._plugin_route(method, url)
         caller = self._run(self._auth())
         body = self._body() if method == "POST" else None
+        if method == "POST" and path.startswith("/doors/") and path.count("/") == 2:
+            # The switch itself: an owner reopens a door even while this one is closed.
+            return 200, self._run(hub.set_door(caller, unquote(path[len("/doors/"):]), body.get("open")))
+        refused = hub.door_refused(caller, self.door.name)
+        if refused:
+            raise _Error(503, refused)
         query = dict(parse_qsl(url.query))
         routes = {
             ("POST", "/call"): lambda: hub.call(caller, body, self.door.name),
@@ -197,6 +206,8 @@ class _Handler(BaseHTTPRequestHandler):
         caller = None
         if route.auth == "user":
             who = self._run(self._auth())
+            if (refused := hub.door_refused(who, self.door.name)):
+                raise _Error(503, refused)
             caller = KitCaller(person=who.person, agent=who.agent, band=hub.band, why=f"{plugin} route {path}",
                                owner=hub.identities.is_owner(who.person))
         request = {"method": method, "path": path, "query": dict(parse_qsl(url.query)),

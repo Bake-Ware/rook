@@ -236,7 +236,8 @@ def install(hub) -> None:
                   "pages.archive": h.pages_archive, "pages.restore": h.pages_restore,
                   "pages.components": h.pages_components, "pages.site": h.pages_site,
                   "pages.start": h.pages_start},
-        "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers, "hub.manifests": h.hub_manifests},
+        "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers, "hub.manifests": h.hub_manifests,
+                "hub.door": h.hub_door},
         "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide},
         "journal": {"journal.search": h.journal_search},
         "setting": {"setting.list": settings.list, "setting.set": settings.set},
@@ -444,7 +445,7 @@ class _Handlers:
     async def hub_status(self, ctx) -> dict:
         hub = self.hub
         out = {"hub": hub.hub_id, "node": hub.node, "band": hub.band, "core": CORE_VERSION,
-               "doors": [d.name for d in hub.doors],
+               "doors": [d.name for d in hub.doors], "closed_doors": sorted(hub.dispatcher.closed_doors),
                "plugins": [{"plugin": p.name, "version": str(p.manifest["version"]),
                             "title": p.manifest.get("title") or p.name, "builtin": bool(p.manifest.get("builtin")),
                             "runs_on": p.manifest.get("runs_on"), "caps": len(p.manifest.get("caps") or {}),
@@ -455,6 +456,12 @@ class _Handlers:
                              for u in sorted(hub.identities.users.values(), key=lambda u: u.name)]
             out["agents"] = sorted(hub.identities.agents)
         return out
+
+    async def hub_door(self, ctx, door: str, open: bool) -> dict:
+        out = await self.hub.set_door(_who(ctx), door, open)
+        if not out["ok"]:
+            raise KitError(out["error"])
+        return {"closed": out["closed"]}
 
     async def hub_workers(self, ctx) -> dict:
         return {"workers": (await self.hub.workers_view(_who(ctx)))["workers"]}

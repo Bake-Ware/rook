@@ -261,3 +261,64 @@ def test_stream_tool_calls_the_stream_caps():
         ({"worker": "kaiju", "cap": "stream.read", "args": {"stream": "s_1", "after": 2, "wait": 5}, "why": WHY}, "mcp"),
         ({"worker": "kaiju", "cap": "stream.write", "args": {"stream": "s_1", "type": "input",
                                                              "body": {"text": "ls\n"}}, "why": WHY}, "mcp")]
+
+
+def test_the_kill_switch_closes_every_path_and_survives_a_restart(mcp_hub, tmp_path):
+    # Review D7: a closed MCP door refuses its reads and session starts too,
+    # the same agent token on the HTTP door, and stays closed after a
+    # restart; an owner closes and opens it by route or cap.
+    async def go():
+        hub, w, url, token = await mcp_hub()
+        try:
+            from rook.core2.hub.doors import make_door
+            http = make_door("http", hub, {"bind": "127.0.0.1:0"})
+            await http.start()
+            hub.doors.append(http)
+            base = f"http://127.0.0.1:{http.port}"
+            owner = (hub.data / "owner.token").read_text().strip()
+            bare = hub.add_token(runtime.Caller(agent="agent:claude"))
+            status, _, out = await post(f"{base}/doors/mcp", {"open": False}, token)       # an agent: no
+            assert out["error"].startswith("denied: only an owner") and not hub.dispatcher.closed_doors
+            status, _, out = await post(f"{base}/doors/mcp", {"open": False}, owner)
+            assert out == {"ok": True, "closed": ["mcp"]}, out
+            for method in ("tools/list", "initialize"):
+                status, _, out = await post(url, {"jsonrpc": "2.0", "id": 1, "method": method, "params": {}}, token)
+                assert status == 503 and out["error"] == "denied: door mcp closed", (status, out)
+            for agent_token in (token, bare):
+                status, _, out = await post(f"{base}/workers", None, agent_token, method="GET")
+                assert status == 503 and out["error"] == "denied: door mcp closed"
+                status, _, out = await post(f"{base}/call", {"worker": "kaiju", "cap": "echo.say",
+                                                             "args": {"text": "x"}, "why": WHY}, agent_token)
+                assert status == 503
+            status, _, out = await post(f"{base}/workers", None, owner, method="GET")     # the person: yes
+            assert status == 200 and out["ok"]
+            status, _, out = await post(f"{base}/call", {"worker": "rook", "cap": "hub.status", "why": WHY}, owner)
+            assert out["result"]["closed_doors"] == ["mcp"]
+            # the cap: an agent acting for the owner can't open it (nor reach it while mcp is closed)
+            out = await hub.call(AGENT, {"worker": "rook", "cap": "hub.door", "why": WHY,
+                                         "args": {"door": "mcp", "open": True}}, "web")
+            assert out["error"] == "denied: door mcp closed"
+            hub.dispatcher.closed_doors.discard("mcp")
+            out = await hub.call(AGENT, {"worker": "rook", "cap": "hub.door", "why": WHY,
+                                         "args": {"door": "web", "open": False}}, "web")
+            assert out["error"].startswith("denied:") and not hub.dispatcher.closed_doors, out
+            hub.dispatcher.closed_doors.add("mcp")
+            closes = [e for e in hub.journal.query(kind="door")]
+            assert closes and closes[0]["by"] == "person:bake" and closes[0]["open"] is False
+        finally:
+            await hub.stop()
+
+        hub2 = runtime.Hub(hub.cfg, transport=runtime.Loopback())          # same data folder
+        await hub2.start()
+        try:
+            assert hub2.dispatcher.closed_doors == {"mcp"}
+            url2 = f"http://127.0.0.1:{hub2.doors[0].port}/mcp"
+            status, _, out = await post(url2, {"jsonrpc": "2.0", "id": 1, "method": "ping"}, token)
+            assert status == 503
+            out = await hub2.call(runtime.Caller(person="person:bake"), {
+                "worker": "rook", "cap": "hub.door", "args": {"door": "mcp", "open": True}, "why": WHY}, "web")
+            assert out["ok"] and out["result"] == {"closed": []}, out
+            assert (await rpc(url2, token, "ping"))["result"] == {}
+        finally:
+            await hub2.stop()
+    run(go())

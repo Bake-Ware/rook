@@ -171,6 +171,19 @@ class Dispatcher:
         self.gates = list(gates)
         self._note("gates", None, by=by, gates=[[g.name, g.mode] for g in self.gates])
 
+    def door_closed(self, caller: Caller, door: str | None) -> str | None:
+        """The closed door that refuses ``caller`` coming in by ``door``: that
+        door, or for an agent (not the hub's own components) the MCP door,
+        the agents' way in, whichever door its token is used on."""
+        if door is None:
+            return None
+        if door in self.closed_doors:
+            return door
+        agent = caller.agent or ""
+        if agent and not agent.startswith("system:") and "mcp" in self.closed_doors:
+            return "mcp"
+        return None
+
     def close_door(self, door: str, by: str) -> None:
         """The kill switch: refuse everything from one door (the MCP door)."""
         if not self.identities.is_owner(by) and not by.startswith("system:"):
@@ -208,8 +221,9 @@ class Dispatcher:
                 entry["layer"] = layer
             return {"id": cid, "ok": False, "error": error}
 
-        if call.door in self.closed_doors:
-            return deny(f"denied: door {call.door} closed")
+        closed = self.door_closed(caller, call.door)
+        if closed:
+            return deny(f"denied: door {closed} closed")
         # 1. caller
         if caller.problem():
             return deny(f"denied: caller: {caller.problem()}", "caller")

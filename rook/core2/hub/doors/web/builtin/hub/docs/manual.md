@@ -4,8 +4,9 @@ What the hub knows about itself and its workers.
 
 | Cap | What it does |
 |---|---|
-| `hub.status` | The hub's id, band, core version, doors and plugins; for owners, its people too. |
+| `hub.status` | The hub's id, band, core version, doors (and which are closed) and plugins; for owners, its people too. |
 | `hub.workers` | Every worker the hub knows, online or not: name, id, plugins, when it was last seen, and the caps it can't serve with the reason (`missing bin: ...`). |
+| `hub.door` | `{door, open}`: the kill switch. Closing a door (`mcp`, `http`, `web`) makes it refuse everything (calls, sessions, reads, work already started through it); closing `mcp` also refuses agents' tokens on every door. Owners, or a hub component closing one (the security plugin). Kept across restarts. Over HTTP: `POST /doors/<name> {"open": false}`. |
 | `hub.manifests` | The manifest of every plugin in use: the hub's own and those its workers announce. `section` (`jobs`, `personas`, ...) narrows it to the plugins that have that section, and only that section. |
 
 The **Workers** page (in the sidebar) shows `hub.workers` and refreshes

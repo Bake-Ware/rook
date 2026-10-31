@@ -6,6 +6,16 @@ ceilings, and hard stops wait for you ([Holds](holds.md)). On top of that,
 **gates** look at each call at the hub before its ticket exists. Gates come
 from plugins; install the ones you want in the hub's library.
 
+## The kill switch
+
+Close a door and it refuses everything that comes through it: calls,
+session starts, reads, and work already started through it (a plugin's
+sub-calls). Closing `mcp` also refuses every agent's token on the other
+doors, so an agent can't walk around it. Owners close and open doors with
+`POST /doors/mcp {"open": false}` (or the `hub.door` cap); a hub component
+such as the security plugin may close one but never open it. A closed door
+stays closed across restarts; `hub.status` lists them.
+
 ## How gates work
 
 - A gate answers `allow`, `flag` or `block` for the calls it watches.
