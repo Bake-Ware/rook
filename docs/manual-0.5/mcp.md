@@ -38,28 +38,34 @@ The door speaks MCP's streamable HTTP. Keep it on localhost and put TLS in
 front before exposing it; `origins: [...]` lists the browser origins it
 lets in (any other `Origin` is refused).
 
-## claude.ai and other remote clients (OAuth)
+## claude.ai's connectors
 
-claude.ai's web and mobile connectors can't take a pasted token; they sign
-in with OAuth. Give the hub its public addresses (both behind TLS; one
-hostname with `/mcp` sent to the MCP door is simplest):
+claude.ai's web and mobile connectors can't take a pasted header; they
+sign in with OAuth. The door does just enough OAuth for them, and the
+token stays the only credential:
 
-```yaml
-oauth:
-  issuer: https://rook.example         # the hub site
-  resource: https://rook.example/mcp   # the MCP door
-```
+1. Put the door behind TLS at a public address and tell it that address:
 
-Then add a custom connector in claude.ai with the door's address. It finds
-the hub on its own, sends you to the hub site to sign in, and asks which of
-the hub's agents it acts as. Choose one and Allow. The connector is that
-agent acting for you, like a token from `token --person --agent`: it gets
-only what both may do, and its calls are journaled that way.
+   ```yaml
+   doors:
+     mcp: { bind: "127.0.0.1:8741", oauth: "https://rook.example" }
+   ```
 
-Its access lasts an hour and renews itself; a connector unused for 30 days
-lapses. End one any time on the site (More > Connectors), and closing the
-`mcp` door refuses it like every agent. Tokens you mint keep working
-beside it.
+   The door answers `/mcp`, `/authorize`, `/token` and
+   `/.well-known/oauth-*` itself, so send all of those to it (or give it a
+   hostname of its own).
+
+2. Mint a token for an agent acting for you, as above (say `--agent
+   claude-web`; list it under `agents:` first).
+
+3. In claude.ai, add a custom connector with the address
+   `https://rook.example/mcp`. Under Advanced settings put any client ID
+   and the token as the client secret.
+
+There's no sign-in page: the connector goes straight through, and what it
+sends on `/mcp` is that token, journaled as that agent acting for you. A
+person's own token is refused here. To cut the connector off, take its
+token out of `<data>/tokens.json`.
 
 ## The seven tools
 

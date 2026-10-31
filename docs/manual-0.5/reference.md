@@ -15,10 +15,9 @@ Paths are relative to the file. An unknown key is an error.
 | `settings` | hub-side plugin settings: `plugin: {setting: value}` ([Settings](settings.md)) |
 | `contracts` | which provider answers a shared cap: `llm.complete: llm-cli.complete` |
 | `sacred` | worker names where every change is a hard stop ([Workers](workers.md#sacred-machines)) |
-| `doors` | `http: {bind, web}` (`web: false` turns the site off, `{secure_cookie: true}` behind TLS); `mcp: {bind, path, origins}` ([MCP](mcp.md)) |
+| `doors` | `http: {bind, web}` (`web: false` turns the site off, `{secure_cookie: true}` behind TLS); `mcp: {bind, path, origins, oauth}` (`oauth`: the door's public https address, for [claude.ai's connectors](mcp.md#claudeais-connectors)) ([MCP](mcp.md)) |
 | `transport` | the band link: `bands: [{psk_env \| psk, relay \| ws_url}]` |
 | `enroll` | what enrolling devices are told: `url`, `relay`, `ws_url`, `discover`, `services` ([Adding machines](enrollment.md)) |
-| `oauth` | `{issuer, resource}`: remote MCP clients (claude.ai's connectors) sign in with OAuth; `issuer` is the hub site's public https address, `resource` the MCP door's ([MCP](mcp.md#claudeai-and-other-remote-clients-oauth)) |
 | `log` | `{level, format: text \| json}` |
 
 `init` writes a working file; a full example is at the top of
@@ -90,9 +89,6 @@ says why.
 | `GET /updates/desktop.json` | | no token: the desktop app's files in Rook's latest release, for its update check |
 
 The hub site is on `/`, `/login` and `/web/` ([The hub site](dashboard.md)).
-With `oauth:` set it also answers OAuth for remote MCP clients:
-`/.well-known/oauth-authorization-server`, `/oauth/register`,
-`/oauth/authorize`, `/oauth/token` and `/oauth/revoke` ([MCP](mcp.md#claudeai-and-other-remote-clients-oauth)).
 A hub plugin's own endpoints (its manifest's `routes:`) are under
 `/p/<plugin>/<path>`: `auth: user` takes the bearer token, `auth: none`
 lets anyone in and the plugin checks. `auth: {hmac: "{{settings.x}}"}` takes

@@ -125,8 +125,9 @@ class _Handler(BaseHTTPRequestHandler):
             if self.door.web is not None and self.door.web.owns(url.path):
                 status, headers, data = self.door.web.handle(self, method, url.path, url.query)
             else:
-                status, body = self._route(method)
+                status, body, *extra = self._route(method)     # (status, body[, headers])
                 headers, data = _encode(body)
+                headers.update(*extra)
         except _Error as e:
             status, (headers, data) = e.status, _encode(e.body or {"ok": False, "error": e.message})
         except Exception:
@@ -138,7 +139,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         for k, v in headers.items():
             self.send_header(k, v)
-        if status == 401 and "WWW-Authenticate" not in headers:
+        if status == 401:
             self.send_header("WWW-Authenticate", self.door.challenge())
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")

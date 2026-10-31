@@ -81,7 +81,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 11 | missing | No Codex backend, while the enum and manuals offer codex/local/api | `rook/plugins/agents*` |
 | 12 | contradiction, over-built | Core "2.1" is breaking but labelled minor; extras beyond H2 | #327 |
 | 13 | over-built | Worker updates port 0.4 OTA as caps, including caps Bake's pass binned | #326 |
-| 14 | over-built | OAuth door is a full authorization server; 0.4 cut that back to a shim | #332 |
+| 14 | over-built | OAuth door is a full authorization server; 0.4 cut that back to a shim | #332 (**fixed in #337**) |
 | 15 | missing | Backup has no default target and no house-agent nudges | `rook/core2/hub/backup` |
 | 16 | missing | `core.elevate` skips the gate hook | `rook/core2/hub/dispatch.py:550` |
 | 17 | contradiction | The security gate ships in enforce mode with heuristic holds | `rook/plugins/security/plugin.yaml:26` |
@@ -369,7 +369,10 @@ Watch items (ask Bake, not drift yet) are after the findings.
   (`worker.update {version}` covers going back). `prepare` becomes the CLI. One change record for
   the rollout, not per worker, and not through the runner (#1, #2).
 
-## 14. The OAuth door is a full authorization server (over-built). PR #332, open
+## 14. The OAuth door is a full authorization server (over-built). PR #332, merged
+
+**Fixed in #337:** #332 reverted; `rook/core2/hub/doors/mcp_oauth.py` is the 0.4 shim's shape on the MCP
+door (agent token = client secret = access token, no sign-in, no DCR, no store).
 
 - **Decision.** 0.4 history: the full OAuth server was deleted on 2026-07-31 for bearer tokens;
   2baf1a2 (Aug 10) re-added only `oauth_shim.py` for claude.ai web (PKCE `/authorize`, no
