@@ -91,7 +91,7 @@ def band(tmp_path):
 
     def worker():
         w = Worker(cfg, make_link=lambda spec: relay.link(spec["psk"]),
-                   transport_opts={"every": 0.05, "lost_after": 0.5})
+                   transport_opts={"every": 0.05, "lost_after": 3.0})   # contact is announces and calls
         return w
 
     def hub():
@@ -196,7 +196,7 @@ def test_the_index_outlives_the_hub_and_a_hub_without_one_learns_by_resync(band,
         kept = StreamIndex(str(tmp_path / "hub" / "streams.db"))
         assert kept.get(sid)                             # the index outlives the hub process
         kept.close()
-        await until(lambda: w.transport.lost(BAND), 10)
+        await until(lambda: w.transport.lost(BAND), 20)
         # A new hub process's announce seq starts at the clock; the old one's ran ahead of it
         # (several announces a second), and the worker takes only a newer seq (spec 5.4).
         await asyncio.sleep(max(0.0, hub._seq + 1 - time.time()))
