@@ -978,10 +978,7 @@ async fn keep_web_session(app: &AppHandle) {
 /// once.
 async fn check_update(app: &AppHandle) {
     let s = settings(app);
-    // TODO(castling:desktop-updates): a 0.5 hub has no /updates/desktop.json yet.
-    if s.v05() {
-        return;
-    }
+    // 0.4 and 0.5 hubs both serve /updates/desktop.json (0.5: rook.core2.hub.updates.desktop_feed).
     let Ok(origin) = config::normalize_hub_url(&s.hub_url) else {
         return;
     };
