@@ -26,7 +26,7 @@ second engine is one more plugin.
 its caps in its own process. `python -m services.voice.band --config
 worker.yaml` is an ordinary 0.5 worker (enrolled the usual way) that also
 announces speech-engine with handlers over the service's loaded models
-(services/voice/band.py; `Worker(cfg, builtins=[...])` is the hook). The
+(services/voice/band.py; `Worker(cfg, extra_builtins=[...])` is the hook). The
 hub holds the manifest in its library, so it knows it by hash. The models,
 the Chatterbox subprocess and the speaker store are the 0.4 service's, with
 the same environment. Nothing on kaiju changes until someone runs it; the

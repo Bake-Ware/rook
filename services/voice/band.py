@@ -190,7 +190,7 @@ def main(argv=None, engine=None) -> int:
     setup_logging(cfg.log)
     engine = engine or ServiceEngine.load()
     try:
-        asyncio.run(serve(Worker(cfg, builtins=[(manifest(), handlers(engine))])))
+        asyncio.run(serve(Worker(cfg, extra_builtins=[(manifest(), handlers(engine))])))
     except KeyboardInterrupt:
         pass
     except (OSError, ValueError, RuntimeError) as e:
