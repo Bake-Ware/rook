@@ -1,17 +1,22 @@
 """file: read, write, list, search and stat paths on this worker.
 
-Pure stdlib, in the worker process, as the worker's account: nothing here
-starts a process, so nothing can be elevated (use shell.exec with elevation
-for files the worker can't reach). Failures raise ctx.Error naming the path.
+Pure stdlib, as the worker's account: nothing here can be elevated (use
+shell.exec with elevation for files the worker can't reach). Failures raise
+ctx.Error naming the path. ``search`` runs the caller's regex in a child
+Python (this file) that is killed at the deadline: ``re`` holds the GIL for a
+whole match, so a runaway pattern in the worker would freeze every thread.
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
+import json
 import os
 import re
 import stat as st_
+import sys
 import time
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -22,8 +27,16 @@ SEARCH_SECONDS = 50     # a search stops here and says truncated (the cap's time
 def read(ctx, path, encoding="utf-8", max_bytes=8 * 1024 * 1024):
     p = Path(path)
     try:
-        size = p.stat().st_size
-        with open(p, "rb") as f:
+        # Non-blocking open, then only a regular file: open() on a FIFO waits
+        # for a writer forever, and a timed-out call's thread never ends.
+        fd = os.open(p, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(fd, "rb") as f:
+            st = os.fstat(fd)
+            if not st_.S_ISREG(st.st_mode):
+                raise ctx.Error(f"not a regular file: {path}")
+            if hasattr(os, "set_blocking"):
+                os.set_blocking(fd, True)
+            size = st.st_size
             raw = f.read(max_bytes + 1)
     except OSError as e:
         raise _error(ctx, e, path) from None
@@ -87,19 +100,44 @@ def list_(ctx, path, recursive=False, hidden=True, limit=5000):
     return {"entries": entries}
 
 
-def search(ctx, pattern, path=".", recursive=True, glob="*", ignore_case=False, limit=100):
+async def search(ctx, pattern, path=".", recursive=True, glob="*", ignore_case=False, limit=100):
     try:
-        rx = re.compile(pattern, re.IGNORECASE if ignore_case else 0)
+        re.compile(pattern)
     except re.error as e:
         raise ctx.Error(f"bad pattern: {e}") from None
-    root = Path(path)
-    if not root.exists():
+    if not Path(path).exists():
         raise ctx.Error(f"not found: {path}")
+    from rook.core2.worker.security import launch
+    job = json.dumps({"pattern": pattern, "path": str(path), "recursive": recursive, "glob": glob,
+                      "ignore_case": ignore_case, "limit": limit, "seconds": SEARCH_SECONDS})
+    PIPE = asyncio.subprocess.PIPE
+    try:
+        proc = await launch([sys.executable, "-I", __file__], None, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    except OSError:      # no runnable interpreter (the Android app's embedded Python): in-process
+        return await asyncio.to_thread(_scan, **json.loads(job))
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(job.encode("utf-8")), SEARCH_SECONDS + 2)
+    except asyncio.TimeoutError:     # stuck inside one match: no partial result to give
+        return {"matches": [], "truncated": True, "timed_out": True}
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+    try:
+        return json.loads(out)
+    except ValueError:
+        raise ctx.Error(f"search failed: {err.decode('utf-8', 'replace').strip()[-300:]}") from None
+
+
+def _scan(pattern, path, recursive, glob, ignore_case, limit, seconds) -> dict:
+    """The search itself, in the child."""
+    rx = re.compile(pattern, re.IGNORECASE if ignore_case else 0)
+    root = Path(path)
     if root.is_file():
         files = iter([root])
     else:
         files = (f for f in (root.rglob(glob) if recursive else root.glob(glob)) if f.is_file())
-    deadline = time.monotonic() + SEARCH_SECONDS
+    deadline = time.monotonic() + seconds
     matches = []
     for fp in files:
         if time.monotonic() > deadline:
@@ -146,3 +184,7 @@ def _error(ctx, e: OSError, path: str):
             NotADirectoryError: "not a directory", PermissionError: "permission denied",
             FileExistsError: "exists"}.get(type(e))
     return ctx.Error(f"{what}: {path}" if what else f"{path}: {e.strerror or e}")
+
+
+if __name__ == "__main__":       # the search child: one job on stdin, the result on stdout
+    print(json.dumps(_scan(**json.load(sys.stdin))))
