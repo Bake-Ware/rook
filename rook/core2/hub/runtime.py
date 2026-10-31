@@ -1031,11 +1031,40 @@ class Hub:
         return reply
 
     async def start_session(self, caller: Caller, body: dict) -> dict:
+        project = body.get("project")
+        if project is not None and (refused := self._project_refused(caller, project)):
+            return {"ok": False, "error": f"denied: project: {refused}"}
         try:
-            s = self.dispatcher.start_session(caller, body.get("caps"), body.get("project"), body.get("task"))
+            s = self.dispatcher.start_session(caller, body.get("caps"), project, body.get("task"))
         except ValueError as e:
             return {"ok": False, "error": f"bad request: {e}"}
         return {"ok": True, "session": s.id, "exp": s.exp}
+
+    def _project_refused(self, caller: Caller, project: Any) -> str | None:
+        """A session's project opens that project's journal to its agent
+        (11.4), so naming one needs access to it: an owner (who reads the
+        whole journal anyway), or a caller whose rights read projects and who
+        sees that project (by id or slug) on the workbench."""
+        if not isinstance(project, str) or not project:
+            return "a project id or slug"
+        if self.identities.is_owner(caller.person):
+            return None
+        if not rights.check(self.identities.layers(caller), {"cap": "project.get", "risk": "read",
+                                                             "effects": [], "target": "rook"})["ok"]:
+            return "you may not read projects"
+        try:
+            projects = self.records.type("project.project")
+        except KitError:
+            return f"no project {project} (no projects on this hub)"
+        who = KitCaller(person=caller.person, agent=caller.agent, band=self.band)
+        try:
+            projects.get(who, project)
+            return None
+        except KitError:
+            pass
+        if projects.list(who, where={"slug": project}, limit=1):
+            return None
+        return f"no project {project}"
 
     async def end_session(self, caller: Caller, sid: Any) -> dict:
         s = self.dispatcher.sessions.get(sid) if isinstance(sid, str) else None
