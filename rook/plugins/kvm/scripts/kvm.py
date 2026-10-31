@@ -62,6 +62,14 @@ def _appliance(ctx) -> dict:
     return a
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib re-sends every header on a redirect, to any host: the key would
+    go along. These APIs don't redirect; a 3xx comes back as an error."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
 def _request(ctx, method: str, path: str, query: dict | None = None, data: bytes | None = None,
              ctype: str | None = None, *, raw: bool = False):
     """One kvmd request: (status, content type, body). A non-2xx answer is an
@@ -80,7 +88,8 @@ def _request(ctx, method: str, path: str, query: dict | None = None, data: bytes
         tls.check_hostname = False
         tls.verify_mode = ssl.CERT_NONE
     try:
-        with urllib.request.urlopen(req, context=tls, timeout=15) as r:
+        opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=tls), _NoRedirect)
+        with opener.open(req, timeout=15) as r:
             return r.status, r.headers.get("Content-Type", ""), _read(ctx, r)
     except urllib.error.HTTPError as e:
         if raw:

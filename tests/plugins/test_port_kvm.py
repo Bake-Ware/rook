@@ -79,6 +79,12 @@ class FakeKvmd(BaseHTTPRequestHandler):
         if (self.command, url.path) == ("GET", "/api/atx"):
             return self._send(200, {"ok": True, "result": {"enabled": True, "busy": False,
                                                            "leds": {"power": True, "hdd": False}}})
+        if url.path == "/api/moved":               # a redirect to another host
+            self.send_response(307)
+            self.send_header("Location", srv.elsewhere + "/api/atx")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return None
         if (self.command, url.path) == ("GET", "/api/log") and "follow=1" in (url.query or ""):
             self.send_response(200)          # a follow stream: lines until the client goes
             self.send_header("Content-Type", "text/plain")
@@ -309,3 +315,29 @@ def test_a_follow_stream_is_cut_off_not_read_forever(kvmd, monkeypatch):
     monkeypatch.setitem(script, "READ_MAX", 100)
     with pytest.raises(KitError, match="larger than"):
         call(kvmd, "kvm.api_get", {"path": "/api/log", "query": {"follow": "1"}})
+
+
+def test_a_redirect_never_carries_the_password_elsewhere(kvmd):
+    # Review K9: urllib re-sends the Authorization header on a redirect, to any host.
+    seen = []
+
+    class Elsewhere(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            seen.append(self.headers.get("Authorization"))
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+    other = ThreadingHTTPServer(("127.0.0.1", 0), Elsewhere)
+    threading.Thread(target=other.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+    kvmd.elsewhere = f"http://127.0.0.1:{other.server_address[1]}"
+    try:
+        with pytest.raises(KitError, match="307"):
+            call(kvmd, "kvm.api_get", {"path": "/api/moved"})
+        assert seen == []
+    finally:
+        other.shutdown()
+        other.server_close()

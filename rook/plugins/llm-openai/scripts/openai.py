@@ -56,6 +56,14 @@ def system_model(settings, model: str | None) -> str:
     return model
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib re-sends every header on a redirect, to any host: the key would
+    go along. These APIs don't redirect; a 3xx comes back as an error."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
 def _http(ctx, method: str, path: str, body: dict | None = None) -> dict:
     url = str(ctx.settings["url"] or "").rstrip("/")
     if not url:
@@ -65,7 +73,8 @@ def _http(ctx, method: str, path: str, body: dict | None = None) -> dict:
     if ctx.settings["key"]:
         req.add_header("Authorization", f"Bearer {ctx.settings['key']}")
     try:
-        with urllib.request.urlopen(req, timeout=parse_duration(ctx.settings["timeout"])) as r:
+        opener = urllib.request.build_opener(_NoRedirect)
+        with opener.open(req, timeout=parse_duration(ctx.settings["timeout"])) as r:
             return json.loads(r.read() or b"{}")
     except urllib.error.HTTPError as e:
         raise KitError(f"{path}: HTTP {e.code}: {_error(e)}", retry=e.code == 429 or e.code >= 500) from None

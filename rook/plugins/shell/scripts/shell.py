@@ -33,6 +33,7 @@ _ALIASES = {"pwsh": "powershell", "powershell.exe": "powershell", "pwsh.exe": "p
 CREATE_NO_WINDOW = 0x08000000      # the Windows worker has no console: no window per child
 MAX_CMDLINE = 32767
 CHUNK = 64 * 1024                  # one bytes event at most (well under the stream's 1 MiB)
+OUT_MAX = 8 << 20                  # bytes of stdout (and of stderr) shell.exec keeps; the rest is read and dropped
 # Names whose values shell.env never shows: the worker's own keys and anything credential-like.
 _SECRET_NAME = re.compile(r"(TOKEN|SECRET|PASSW|PSK|API_?KEY|PRIVATE|CREDENTIAL|_KEY$|^ROOK_)", re.I)
 _SIGNALS = {"INT": signal.SIGINT, "TERM": signal.SIGTERM, "KILL": getattr(signal, "SIGKILL", signal.SIGTERM),
@@ -53,8 +54,8 @@ async def exec_(ctx, argv=None, cmd=None, stdin=None, timeout=30.0, cwd=None, en
     command, ran = _command(ctx, argv, cmd, shell)
     proc = await _start(ctx, command, cwd, env, stdin=stdin is not None)
     try:
-        out, err = await asyncio.wait_for(
-            proc.communicate(stdin.encode() if stdin is not None else None), timeout)
+        out, err, cut = await asyncio.wait_for(_collect(proc, stdin.encode() if stdin is not None else None),
+                                               timeout)
     except asyncio.TimeoutError:
         await _kill(proc)
         raise ctx.Error(f"timed out after {timeout:g}s and was killed; anything it already did "
@@ -64,6 +65,8 @@ async def exec_(ctx, argv=None, cmd=None, stdin=None, timeout=30.0, cwd=None, en
         raise
     reply = {"ok": proc.returncode == 0, "code": proc.returncode,
              "stdout": _decode(out), "stderr": _decode(err)}
+    if cut:
+        reply["truncated"] = True
     if ran and (ran != "sh" or IS_WIN):
         reply["shell"] = ran
     if getattr(ctx, "lease", None) is None and looks_denied(proc.returncode, err):
@@ -71,6 +74,37 @@ async def exec_(ctx, argv=None, cmd=None, stdin=None, timeout=30.0, cwd=None, en
         # asks again with elevation if that is what it wants.
         reply["denied"] = True
     return reply
+
+
+async def _collect(proc, stdin: bytes | None) -> tuple[bytes, bytes, bool]:
+    """communicate() with a ceiling: each stream keeps its first OUT_MAX
+    bytes and the rest is drained and dropped, so ``yes`` for 30 s can't run
+    the worker out of memory. The process isn't stopped for it."""
+    cut = False
+
+    async def feed() -> None:
+        if stdin is None:
+            return
+        try:
+            proc.stdin.write(stdin)
+            await proc.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            proc.stdin.close()
+
+    async def drain(stream) -> bytes:
+        nonlocal cut
+        buf = bytearray()
+        while chunk := await stream.read(CHUNK):
+            if len(buf) + len(chunk) > OUT_MAX:
+                cut = True
+            buf += chunk[:max(0, OUT_MAX - len(buf))]
+        return bytes(buf)
+
+    _, out, err = await asyncio.gather(feed(), drain(proc.stdout), drain(proc.stderr))
+    await proc.wait()
+    return out, err, cut
 
 
 def which(ctx, name):
