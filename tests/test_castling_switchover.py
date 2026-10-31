@@ -78,3 +78,22 @@ def test_a_folder_copy_works_too_and_a_non_snapshot_is_refused(tmp_path):
         _add(tf, "x/readme.txt", b"hi")
     with pytest.raises(SystemExit, match="not a 0.4 hub snapshot"):
         _dryrun().main(["--snapshot", str(bad), "--out", str(out)])
+
+
+def _readiness():
+    spec = importlib.util.spec_from_file_location("switchover_readiness", REPO / "castling/switchover/readiness.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_readiness_gates_read_this_checkout():
+    mod = _readiness()
+    found = mod.todos()
+    assert all(isinstance(v, list) and v for v in found.values())
+    rows = {gate: (ok, why) for gate, ok, _, why in mod.check({})}       # no TODOs left at all
+    assert rows["R1"][0] and rows["R9"][0]                               # a todo gate passes once its markers go
+    assert rows["R6"][1] == "cap update in rook/core2/builtin/worker.yaml"
+    rows = {gate: ok for gate, ok, _, _ in mod.check({"vault": ["rook/x.py"]})}
+    assert rows["R1"] is False
+    assert [g for g, *_ in mod.GATES] == [f"R{i}" for i in range(1, len(mod.GATES) + 1)]
