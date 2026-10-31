@@ -38,6 +38,7 @@ log = logging.getLogger("rook.plugin.speech")
 
 AUDIO_CACHE = 64          # spoken replies kept for speech.read(audio=true)
 SAY_MAX = 600             # System One says one or two sentences
+CHUNK = 300               # characters per spoken clip
 
 TALKER = """\
 You are the voice of {agent}, the quick front talker in a spoken conversation
@@ -260,25 +261,48 @@ async def _history(rt: Runtime, stream: str, n: int) -> list[dict]:
     return [{"role": "user" if t["role"] == "prompt" else "assistant", "content": t["text"]} for t in turns]
 
 
-async def _audio(ctx, rt: Runtime, meta, seq: int, text: str) -> dict:
-    """A reply's spoken audio (voice.tts in the session's voice), cached."""
+async def _audio(ctx, rt: Runtime, meta, seq: int, text: str) -> list:
+    """A reply's spoken audio, one clip per chunk of sentences (voice.tts in
+    the session's voice), cached."""
     key = (meta.id, seq)
     if key in rt.audio:
         rt.audio.move_to_end(key)
         return rt.audio[key]
     voice = meta.attrs.get("voice") or ""
+    clips = [await _tts(ctx, part, voice) for part in chunks(text)]
+    rt.audio[key] = clips
+    while len(rt.audio) > AUDIO_CACHE:
+        rt.audio.popitem(last=False)
+    return clips
+
+
+async def _tts(ctx, text: str, voice: str) -> dict:
     try:
-        got = await ctx.call("voice.tts", text=text, **({"voice": voice} if voice else {}))
+        return await ctx.call("voice.tts", text=text, **({"voice": voice} if voice else {}))
     except KitError as first:
         # A hosted voice that fails speaks in the local engine's default.
         try:
-            got = await ctx.call("speech-engine.tts", text=text)
+            return await ctx.call("speech-engine.tts", text=text)
         except KitError:
             raise first from None
-    rt.audio[key] = got
-    while len(rt.audio) > AUDIO_CACHE:
-        rt.audio.popitem(last=False)
-    return got
+
+
+def chunks(text: str, limit: int = CHUNK) -> list[str]:
+    """Sentences packed into pieces of at most ``limit`` characters (a long
+    sentence is cut at a space): an engine speaks a short piece well, and
+    Chatterbox stops at about 30 seconds."""
+    out, cur = [], ""
+    for sentence in re.split(r"(?<=[.!?])\s+", text.strip()):
+        while len(sentence) > limit:
+            cut = sentence.rfind(" ", 0, limit)
+            cut = cut if cut > 0 else limit
+            out, cur = [*out, *([cur] if cur else []), sentence[:cut].strip()], ""
+            sentence = sentence[cut:].strip()
+        if cur and len(cur) + 1 + len(sentence) > limit:
+            out, cur = [*out, cur], sentence
+        else:
+            cur = f"{cur} {sentence}".strip()
+    return [*out, *([cur] if cur else [])]
 
 
 # -- helpers --------------------------------------------------------------------------

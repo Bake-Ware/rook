@@ -121,8 +121,8 @@ def test_a_voice_session(tmp_path):
         assert (r["heard"], r["complete"], r["handoff"]) == ("hello there", True, False), r
         assert r["speaker"] == {"label": "bake", "score": 0.81}
         assert r["say"]["text"] == "Hi Bake! (sounds like bake)"
-        assert r["say"]["audio"]["mime"] == "audio/wav"
-        assert audio_text(r["say"]["audio"]) == "RIFF:default:Hi Bake! (sounds like bake)"
+        assert [a["mime"] for a in r["say"]["audio"]] == ["audio/wav"]
+        assert audio_text(r["say"]["audio"][0]) == "RIFF:default:Hi Bake! (sounds like bake)"
         stt = hub.journal.query(cap="speech-engine.stt", limit=1)[0]
         assert (stt["person"], stt["ok"]) == ("person:bake", True)      # routed as the speaker
 
@@ -134,7 +134,7 @@ def test_a_voice_session(tmp_path):
         e, res = await reply_from(hub, owner, sid, "two", audio=True)
         assert e["data"]["text"] == "brain: (Spoken, in a voice session.) what is on my calendar"
         assert e["by"] == "agent:house"
-        assert audio_text(e["audio"]).endswith(e["data"]["text"])
+        assert audio_text(e["audio"][0]).endswith(e["data"]["text"])
         assert res["attrs"]["speaker"] == {"label": "bake", "score": 0.81}
         assert res["attrs"]["device"] == "bakephone"
         turn = hub.journal.query(cap="agents-local.turn", limit=1)[0]
@@ -186,7 +186,7 @@ def test_without_system_one_every_turn_goes_to_the_agent(tmp_path):
         out = await call(hub, owner, "speech.hear", stream=sid, audio=said("hello"))
         assert out["result"]["handoff"] is True and out["result"]["say"] is None, out
         e, _ = await reply_from(hub, owner, sid, "two", audio=True)
-        assert audio_text(e["audio"]) == "RIFF:default:" + e["data"]["text"]       # the fallback voice
+        assert audio_text(e["audio"][0]) == "RIFF:default:" + e["data"]["text"]    # the fallback voice
     run(cfg, body)
 
     cfg = hub_config(tmp_path / "off", library(tmp_path / "off"), speech={"talker": False})
@@ -208,3 +208,11 @@ def test_parse_plan():
     assert mod.parse_plan('Sure:\n```json\n{"say": "", "handoff": "book it"}\n```') == ("", "book it")
     for bad in ("plain words", '{"say": 3}', '{"say": "", "handoff": ""}', "{nope}"):
         assert mod.parse_plan(bad) is None, bad
+
+    # Spoken in sentence-sized clips: Chatterbox stops at about 30 s.
+    assert mod.chunks("One. Two! Three?", 9) == ["One. Two!", "Three?"]
+    assert mod.chunks("A short one.") == ["A short one."]
+    long = "word " * 100
+    parts = mod.chunks("Hi. " + long, 60)
+    assert all(len(p) <= 60 for p in parts) and " ".join(parts).split() == ("Hi. " + long).split()
+    assert mod.chunks("") == []

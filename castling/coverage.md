@@ -211,8 +211,8 @@ Every provider maps `model: one | two | three` (castling-agents' three systems) 
 - **H5. No cap picks a contract's provider.** The choice is the config file's `contracts:`;
   `llm.providers` shows it. The house agent can't switch providers yet.
 - **H6. A new notify channel means editing notify's `channels` enum and `uses`.**
-- Voice: core.yaml's `voice.tts`/`voice.stt` should become `speech.*` (castling-naming-decisions,
-  B10); not changed here, nothing provides them yet.
+- Voice: B10 settled as `voice` = the speech contracts (`voice.tts/stt`, plus `voice.turn` and
+  `voice.speaker` from the speech port) and the hub service = `speech` (docs/castling-speech.md).
 
 ## The phone ports (wave 5)
 
