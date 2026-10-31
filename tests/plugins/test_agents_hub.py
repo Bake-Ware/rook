@@ -251,8 +251,11 @@ def test_a_linked_persons_direct_message_reaches_the_house_agent(tmp_path):
             await until(lambda: outbox())
             assert outbox() == [{"to": "bake", "text": "brain: (on Telegram) what's on today?", "by": None}]
             turn = hub.journal.query(cap="agents-local.turn", limit=1)[0]
-            assert (turn["person"], turn["ok"]) == ("person:bake", True)        # as the person who wrote
+            assert (turn["person"], turn["agent"], turn["ok"]) == ("person:bake", "agent:house", True)
             assert hub.dispatcher.sessions[turn["session"]].tainted            # outside content
+            # ... and so is the session its harness's calls run in (its turn token's).
+            door = hub._door_sessions[("person:bake", "agent:house")]
+            assert hub.dispatcher.sessions[door].tainted
             out = await call(hub, owner, "agents.chat.read", agent="house")     # their one session with it
             assert "what's on today?" in json.dumps(out["result"]), out
 
