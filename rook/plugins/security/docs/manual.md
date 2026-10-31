@@ -1,9 +1,10 @@
 # Security
 
 The security plugin checks every call at the hub, before a ticket exists,
-and stays out of the way: it blocks only on canary hits, holds only risky
-calls that look out of place, and reaches you only when something is
-actually wrong. It ships enabled; turning it off or swapping it is an owner
+and stays out of the way: it blocks only on canary hits and reaches you
+only when something is actually wrong. Its taint and pinned-task checks
+start in shadow: they only note what they would have held, until you turn
+them on. It ships enabled; turning it off or swapping it is an owner
 action and is journaled.
 
 ## Canaries
@@ -48,10 +49,19 @@ From a clean session only a high-impact call (admin, or persistence) that
 has nothing to do with the pinned task waits. Everything else goes through,
 and the gate's reading is journaled with the call.
 
+These checks are guesses, so they ship in **shadow**: instead of waiting,
+the call goes and the journal keeps the gate's reading (an `allow` with the
+reason it would have held, such as `persistence` or `intent_mismatch`).
+`security.status` counts them (`would_hold`) and shows the latest to owners.
+When they have stayed quiet and right for a while, set `heuristics` to
+`enforce` and those calls wait for you as described above. Canary hits
+block either way.
+
 ## The triage agent
 
 The `security` agent (agents package) is told about every call this gate
-holds. When it can show a false alarm (the call matches the pinned task, or
+holds (with `heuristics: enforce`; in shadow it holds none). When it can
+show a false alarm (the call matches the pinned task, or
 the same caller made exactly that call there from a clean session before)
 it releases that one call with `security.release`; the plugin checks the
 evidence itself and refuses hard stops, persistence, sending data out,
@@ -67,3 +77,4 @@ rest wait for you on Approvals.
 | `house_agent` | `house` | who reaches you about canary hits (else `notify.send`) |
 | `triage_agent` | `security` | who is woken on holds; the only caller of `security.release` |
 | `task_cap` | `task.task.get` | how a session's pinned task is read |
+| `heuristics` | `shadow` | `enforce` makes taint and pinned-task flags wait for you; `shadow` only journals them |

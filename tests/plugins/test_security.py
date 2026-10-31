@@ -142,12 +142,15 @@ class H:
         return self.hub.journal.query(call=out["id"])[0]
 
 
-def with_hub(tmp_path, lib, body):
+def with_hub(tmp_path, lib, body, heuristics="enforce"):
+    """``heuristics``: most tests here exercise the holds, so they turn the
+    heuristics on; None leaves the shipped default (shadow)."""
     async def go():
         cfg = Config(data=tmp_path / "data", band=BAND, library=lib,
                      users={"bake": {"preset": "owner"}},
                      agents={"claude": {"grants": ["*"]}, "security": {"grants": ["*"]},
                              "rogue": {"grants": ["*"]}},
+                     settings={"security": {"heuristics": heuristics}} if heuristics else {},
                      doors={})
         hub = Hub(cfg, transport=Loopback())
         await hub.start()
@@ -316,6 +319,27 @@ def test_a_clean_session_is_flagged_only_for_high_impact_calls_far_from_its_task
         out = await h.call(CLAUDE, "tools.admin", {"cmd": "mkdocs gh-deploy"}, sid, why="Publish the docs.")
         assert out["ok"]
     with_hub(tmp_path, lib, body)
+
+
+def test_heuristics_ship_in_shadow_canaries_still_block(tmp_path, lib):
+    # castling-security: "Ship in shadow mode first"; alarm fatigue is a real
+    # threat, canaries are the near-zero false positive piece (drift #17).
+    async def body(h):
+        sid = await h.session(CLAUDE, task="t_docs")
+        await h.call(CLAUDE, "tools.fetch", {"text": "an email"}, sid)
+        await h.settle(lambda: h.sec.S.tasks.get("t_docs"))
+        out = await h.call(CLAUDE, "tools.run", {"cmd": "echo key >> ~/.ssh/authorized_keys"}, sid,
+                           why="Publish the docs site.")
+        assert out["ok"], out                                            # would have held: journaled only
+        g = h.entry(out)["gates"][0]
+        assert (g["verdict"], g["reason"]) == ("allow", "persistence")
+        assert not h.hub.dispatcher.holds and not h.sec.S.flags
+        st = await h.call(BAKE, "security.status")
+        assert st["result"]["heuristics"] == "shadow" and st["result"]["would_hold"] == 1
+        assert st["result"]["would_have_held"][0]["reason"] == "persistence"
+        out = await h.call(CLAUDE, "tools.leak", {"text": token(h)}, sid)
+        assert not out["ok"] and "blocked by gate security: canary" in out["error"]
+    with_hub(tmp_path, lib, body, heuristics=None)
 
 
 # -- the triage agent -----------------------------------------------------------------------------

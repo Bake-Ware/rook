@@ -31,17 +31,22 @@ stays closed across restarts; `hub.status` lists them.
 
 ## `security`: canaries, taint and the pinned task
 
-Ships in enforce mode. It blocks only on canary hits, holds only risky
-calls that look out of place, and reaches you only when something is
-actually wrong.
+Ships enabled. Canary hits block from the start; the taint checks start in
+shadow (they journal what they would have held and let the call go) until
+an owner sets the plugin's `heuristics` setting to `enforce`. It reaches you
+only when something is actually wrong.
 
 - **Canaries**: decoy secrets nobody should ever use. Plant one where an
   intruder would look; any call that carries it, returns it or names its
   file is refused, and the session and agent behind it are paused until an
   owner clears them in person.
 - **Taint**: once an agent's session has read outside content (a web page,
-  an email), its risky calls wait for you unless they match the session's
-  pinned task, and persistence or sending data out always waits.
+  an email), its risky calls are flagged unless they match the session's
+  pinned task, and persistence or sending data out always is. In shadow
+  (the default) a flag is only journaled and counted in `security.status`
+  (`would_hold`); with `heuristics: enforce` the call waits for you.
+- **Elevation**: a call that asks for admin rights mid-run goes through the
+  gates again as an admin call, and is refused unless they pass it.
 - **Triage**: the `security` agent looks at every call this gate holds and
   may release one call when it can show a false alarm. It can never
   release a hard stop, and it can release at most 5 calls an hour.

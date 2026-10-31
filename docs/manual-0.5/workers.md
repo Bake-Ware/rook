@@ -38,8 +38,11 @@ Every call runs as the worker's normal account: no `sudo`, no "run as
 administrator". Shell stays fully open within that account. A cap that
 needs administrator rights declares `elevation: upfront` or `may` in its
 manifest; the worker then asks the hub, inside the same call, for a
-15-minute **lease** for that person, agent and session. The hub journals
-it, and the call runs elevated (on Linux through `sudo -n`, so the worker's
+15-minute **lease** for that person, agent and session. The hub runs its
+security gates on the call as an admin call first (elevation must pass:
+a flag refuses it, since nothing can wait for you mid-call; ask with
+`elevate` up front and a flag becomes a hold instead), journals it, and the
+call runs elevated (on Linux through `sudo -n`, so the worker's
 account needs a sudoers rule you add yourself). No answer from the hub in
 10 seconds and the call fails: elevation fails closed. Leases end when
 rights change, when the worker loses the hub, or when it restarts. A worker

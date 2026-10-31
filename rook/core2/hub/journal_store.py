@@ -21,7 +21,7 @@ import uuid
 from contextlib import contextmanager
 from typing import Callable, Iterator
 
-from .. import journal, rights
+from .. import journal
 from ..wire import canonical
 
 SCHEMA = 1
@@ -76,10 +76,6 @@ CREATE TRIGGER IF NOT EXISTS checkpoint_kept BEFORE DELETE ON journal_checkpoint
 BEGIN SELECT RAISE(ABORT, 'checkpoints are never deleted'); END;
 """
 
-# Riskiest entry of a segment, as an index into rights.RISKS (see journal.tier).
-_RANK = ("CASE WHEN risk IS NULL OR risk = 'read' THEN 0 WHEN risk = 'write' THEN 1 "
-         "WHEN risk = 'exec' THEN 2 ELSE 3 END")
-
 PAGE = 2000  # rows per read when walking a chain
 
 
@@ -89,7 +85,7 @@ class JournalError(Exception):
 
 class JournalStore:
     def __init__(self, path: str = ":memory:", *, clock: Callable[[], float] = time.time,
-                 retention: dict | None = None):
+                 retention_days: float = journal.RETENTION_DAYS):
         self._db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         if path != ":memory:":
             self._db.execute("PRAGMA journal_mode=WAL")
@@ -97,7 +93,7 @@ class JournalStore:
         self._lock = threading.RLock()   # the connection and the in-memory chains
         self._maint = threading.Lock()   # verify and prune never overlap
         self.clock = clock
-        self.retention = {**journal.RETENTION_DAYS, **(retention or {})}
+        self.retention_days = retention_days
         version = self._db.execute("PRAGMA user_version").fetchone()[0]
         if version not in (0, SCHEMA):
             raise JournalError(f"journal schema {version} is newer than this hub ({SCHEMA})")
@@ -277,9 +273,9 @@ class JournalStore:
 
     def prune(self, now: float | None = None, closed: dict | None = None) -> list[dict]:
         """Retention (11.4). ``closed`` maps closed projects to when they
-        closed. A closed project's chain goes whole once its last activity is
-        past the tier of its riskiest entry; the general chain goes by UTC
-        day, oldest first, stopping at the first day still kept. Each prune
+        closed. A closed project's chain goes whole once its close and its
+        last activity are past retention; the general chain goes by UTC day,
+        oldest first, up to the first day still kept. Each prune
         moves the chain's checkpoint to its last pruned entry, deletes up to
         it and journals a ``prune`` entry on the general chain; returns those."""
         now = self.clock() if now is None else now
@@ -287,10 +283,9 @@ class JournalStore:
         with self._maint, self._lock:
             for project, closed_at in sorted((closed or {}).items()):
                 chain = journal.chain_name(project)
-                seq, last_ts, rank = self._db.execute(
-                    f"SELECT MAX(seq), MAX(ts), MAX({_RANK}) FROM journal WHERE chain = ?", (chain,)).fetchone()
-                if seq is not None and journal.expired(max(last_ts, closed_at), rights.RISKS[rank], now,
-                                                       self.retention):
+                seq, last_ts = self._db.execute(
+                    "SELECT MAX(seq), MAX(ts) FROM journal WHERE chain = ?", (chain,)).fetchone()
+                if seq is not None and journal.expired(max(last_ts, closed_at), now, self.retention_days):
                     out.append(self._prune_through(chain, seq, "project closed", now))
             seq = self._general_cutoff(now)
             if seq is not None:
@@ -298,22 +293,16 @@ class JournalStore:
         return out
 
     def _general_cutoff(self, now: float) -> int | None:
-        """The last general-chain seq such that it and every entry before it
-        lie in expired days, or None if nothing is due."""
-        day = f"CAST(ts / {journal.DAY} AS INTEGER)"
-        days = self._db.execute(f"SELECT {day} AS d, MAX({_RANK}) FROM journal WHERE chain = ? GROUP BY d",
-                                (journal.GENERAL,)).fetchall()
-        kept = [d for d, rank in days
-                if not journal.expired((d + 1) * journal.DAY, rights.RISKS[rank], now, self.retention)]
-        if len(kept) == len(days):
-            return None
-        cond, params = "", [journal.GENERAL]
-        if kept:
-            first_kept = self._db.execute(
-                f"SELECT MIN(seq) FROM journal WHERE chain = ? AND {day} IN ({','.join('?' * len(kept))})",
-                [journal.GENERAL, *kept]).fetchone()[0]
-            cond, params = " AND seq < ?", [journal.GENERAL, first_kept]
-        return self._db.execute(f"SELECT MAX(seq) FROM journal WHERE chain = ?{cond}", params).fetchone()[0]
+        """The last general-chain seq before the first entry of a day still
+        kept (so no gaps, even if the clock once stepped back), or None if
+        nothing is due."""
+        cutoff = int((now - self.retention_days * journal.DAY) // journal.DAY) * journal.DAY
+        first_kept = self._db.execute("SELECT MIN(seq) FROM journal WHERE chain = ? AND ts >= ?",
+                                      (journal.GENERAL, cutoff)).fetchone()[0]
+        if first_kept is None:
+            return self._db.execute("SELECT MAX(seq) FROM journal WHERE chain = ?", (journal.GENERAL,)).fetchone()[0]
+        return self._db.execute("SELECT MAX(seq) FROM journal WHERE chain = ? AND seq < ?",
+                                (journal.GENERAL, first_kept)).fetchone()[0]
 
     def _prune_through(self, chain: str, seq: int, reason: str, now: float) -> dict:
         last_id, last_hash = self._db.execute("SELECT id, hash FROM journal WHERE seq = ?", (seq,)).fetchone()
