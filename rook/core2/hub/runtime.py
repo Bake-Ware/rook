@@ -388,6 +388,7 @@ class Hub:
         self.dispatcher = Dispatcher(hub_id=self.hub_id, op_key=self.op, identities=self.identities,
                                      workers={}, send=self._send, journal=self._journal,
                                      hubkey=self.grant, clock=self.clock, secrets=self.enroll.resolve)
+        self.dispatcher.closed_doors = set(_read_doors(self.data))
         self._sync_hub()
         await self._load_library()
         self.dispatcher.gates = self.plugins.gates()
@@ -1152,6 +1153,26 @@ class Hub:
                                         else "denied", "by": by}, "core")
         return out
 
+    def door_refused(self, caller: Caller, door: str) -> str | None:
+        """A door's own check, before it serves anything (views, sessions,
+        calls): the error when a closed door refuses this caller."""
+        closed = self.dispatcher.door_closed(caller, door)
+        return f"denied: door {closed} closed" if closed else None
+
+    async def set_door(self, caller: Caller | str, door: Any, open: Any) -> dict:
+        """Close or open a door (the kill switch): an owner, or a hub
+        component closing one (the security plugin). Kept across restarts."""
+        by = caller if isinstance(caller, str) else caller.agent or caller.person
+        if not (isinstance(door, str) and re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", door)) or not isinstance(open, bool):
+            return {"ok": False, "error": "bad request: door (a name) and open (true or false)"}
+        try:
+            (self.dispatcher.open_door if open else self.dispatcher.close_door)(door, by)
+        except PermissionError as e:
+            return {"ok": False, "error": f"denied: {e}"}
+        _write_private(self.data / "doors.json", json.dumps({"closed": sorted(self.dispatcher.closed_doors)}))
+        log.warning("door " + ("opened" if open else "closed"), extra={"fields": {"door": door, "by": by}})
+        return {"ok": True, "closed": sorted(self.dispatcher.closed_doors)}
+
     async def push_plugin(self, caller: Caller, body: dict, door: str) -> dict:
         """``{worker, plugin, why}``: sign the library's copy of ``plugin``
         for that worker (plugin.sig, spec 13) and send it with
@@ -1208,6 +1229,18 @@ class Hub:
             if isinstance(raw, dict) and raw.get("plugin") == name:
                 return folder
         return None
+
+
+def _read_doors(data: Path) -> list:
+    """The doors closed when the hub last ran (``<data>/doors.json``)."""
+    try:
+        closed = json.loads((data / "doors.json").read_text(encoding="utf-8")).get("closed")
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError, AttributeError) as e:
+        # A switch someone pulled must not come undone: refuse to start blind.
+        raise RuntimeError(f"doors.json unreadable ({e}); fix or remove it") from None
+    return [d for d in closed if isinstance(d, str)] if isinstance(closed, list) else []
 
 
 def _bundle_bytes(plan) -> bytes:

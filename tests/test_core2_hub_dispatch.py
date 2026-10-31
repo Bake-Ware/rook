@@ -707,6 +707,18 @@ def test_changing_gates_and_doors_is_an_owner_action(hub):
     assert call(hub, BAKE, "file.read", door="mcp")[0]["ok"]
 
 
+def test_a_closed_mcp_door_refuses_agents_on_every_door(hub):
+    # The agents' door: their tokens can't walk around it (review D7).
+    hub.close_door("mcp", "person:bake")
+    for caller in (CLAUDE_FOR_BAKE, NIGHTLY):
+        assert call(hub, caller, "file.read", door="http")[0]["error"] == "denied: door mcp closed"
+    assert call(hub, BAKE, "file.read", door="http")[0]["ok"]
+    hub.identities.add_component("plugin.jobs", {"grants": ["*"]})
+    system = Caller(agent="system:plugin.jobs")
+    assert call(hub, system, "file.read", door="http")[0]["ok"]
+    assert call(hub, CLAUDE_FOR_BAKE, "file.read")[0]["ok"]          # no door: the hub's own work
+
+
 # -- taint (8.4) -------------------------------------------------------------
 
 def test_taints_cap_marks_the_session_for_good(hub):

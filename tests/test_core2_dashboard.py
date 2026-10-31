@@ -668,7 +668,7 @@ def test_every_builtin_cap_is_known():
         declared |= set(load(folder).data["caps"])
     assert declared == {
         "pages.list", "pages.view", "pages.get", "pages.create", "pages.update", "pages.archive", "pages.restore",
-        "pages.components", "pages.site", "pages.start", "hub.status", "hub.workers", "hub.manifests", "approval.list", "approval.decide", "journal.search", "setting.list",
+        "pages.components", "pages.site", "pages.start", "hub.status", "hub.workers", "hub.manifests", "hub.door", "approval.list", "approval.decide", "journal.search", "setting.list",
         "setting.set", "llm.providers", "llm.models", "llm.status"}
 
 

@@ -70,6 +70,7 @@ says why.
 | `GET /holds` | | calls waiting for a person |
 | `POST /holds/<hold>` | `{decision: approve \| refuse}` | answer one ([Holds](holds.md)) |
 | `POST /plugins/push` | `{worker, plugin, why}` | owners: install a library plugin on a worker |
+| `POST /doors/<name>` | `{open: true \| false}` | owners: the kill switch ([Security plugins](security.md#the-kill-switch)) |
 | `POST /enroll/code` | `{}` | a one-time code and its QR text |
 | `POST /enroll/claim` | `{code, name}` | no token: a device claims its config, once |
 | `POST /enroll/device` | `{name}` | no token: a device code to poll and a code to show |
