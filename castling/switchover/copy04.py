@@ -6,9 +6,10 @@ command needed: bakenetcanada has none), as the user that owns the data:
     python3 copy04.py /home/ubuntu/rook04-copy            # from /var/lib/rook-band-mcp
     python3 copy04.py --from <data folder> <empty folder>
 
-It never writes to the hub: each database is read through a ``mode=ro``
-connection and copied with SQLite's online backup (one consistent file, safe
-while the hub runs); every other file is copied as is. The copies are then
+It never writes to the hub's folder: each database is read through a
+``mode=ro`` connection (``immutable`` when the hub is stopped, so not even a
+``-shm`` appears) and copied with SQLite's online backup (one consistent
+file, safe while the hub runs); every other file is copied as is. The copies are then
 switched out of WAL mode so opening one can't leave ``-wal`` files beside
 it. Skipped: ``-wal``/``-shm``/``.lock`` files (the backup already holds
 their contents) and the release binaries under ``updates/`` (worker bundles
@@ -41,6 +42,17 @@ def _sha256(path: str) -> str:
     return h.hexdigest()
 
 
+def _source_uri(path: str) -> str:
+    """How to open a hub database without writing beside it. A WAL database
+    nothing has open (no ``-wal``/``-shm``: the hub is stopped) is read as
+    immutable, since even a read-only open would create those files; every
+    other one through a read-only connection, which takes the hub's locks."""
+    with open(path, "rb") as f:
+        wal = f.read(20)[18:20] == b"\x02\x02"
+    idle = not os.path.exists(path + "-wal") and not os.path.exists(path + "-shm")
+    return f"file:{path}?mode=ro" + ("&immutable=1" if wal and idle else "")
+
+
 def copy(src: str, dst: str) -> dict:
     src, dst = os.path.abspath(src), os.path.abspath(dst)
     if dst == src or dst.startswith(src + os.sep):
@@ -66,7 +78,7 @@ def copy(src: str, dst: str) -> dict:
             with open(path, "rb") as f:
                 is_db = f.read(16).startswith(b"SQLite format 3")
             if is_db:
-                live = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+                live = sqlite3.connect(_source_uri(path), uri=True)
                 out_db = sqlite3.connect(out)
                 try:
                     live.backup(out_db)

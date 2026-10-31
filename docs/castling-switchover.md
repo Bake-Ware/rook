@@ -392,6 +392,9 @@ were never revoked). Work done on 0.5 meanwhile stays on 0.5 (there is no
   (`page.show`, `trust.check`, `appliance.*`, history importers into
   `stream.*`, speech modes), D3 sacred machines, D6 service containers.
 - Retire the 0.4-only secrets (D8) and rotate the reused ones (Bake's call).
+- The archive (`<data>/archive/0.4`, about 0.45 GB, 0.4's API tokens and
+  OAuth client files among it) rides in every hub backup. Once agents have
+  reshaped what they need from it, moving it out is Bake's call.
 - Tag `v0.5.0`; remove the 0.4 code in one PR once the transport no longer
   imports `rook.worker`.
 - Delete the migration copies and `castling/switchover/migrate`,

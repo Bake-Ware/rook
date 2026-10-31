@@ -209,6 +209,8 @@ def test_verify_before_the_move_finds_everything_missing(tmp_path, full04):
     migrate(full04, cfg)                                                   # a dry run writes nothing
     v = verify.verify(full04, cfg)
     assert not v["ok"] and _kinds(v)["chat rooms and huddles -> streams"]["missing"] == 2
+    assert _kinds(v)["secrets (names + value hashes)"]["missing"] == 2
+    assert not (cfg.parent / "data" / "vault.db").exists()                    # verify wrote nothing
 
 
 def test_verify_command_line(tmp_path, full04):
@@ -300,6 +302,15 @@ def test_copy04_takes_a_consistent_copy_without_touching_the_hub(tmp_path):
     assert not list(dest.rglob("*-wal")) and not list(dest.rglob("*-shm"))
     assert stat.S_IMODE(dest.stat().st_mode) == 0o700
     assert json.loads((dest / "COPY-INFO.json").read_text())["files"]["trust.json"]["sha256"]
+    stopped = tmp_path / "stopped"                                # a stopped hub: nothing beside its files
+    stopped.mkdir()
+    (stopped / "journal.db").write_bytes((dest / "journal.db").read_bytes())
+    db = sqlite3.connect(stopped / "journal.db")
+    db.execute("PRAGMA journal_mode=WAL")
+    db.close()
+    assert sorted(p.name for p in stopped.iterdir()) == ["journal.db"]
+    _copy04().copy(str(stopped), str(tmp_path / "copy2"))
+    assert sorted(p.name for p in stopped.iterdir()) == ["journal.db"]
     with pytest.raises(SystemExit):
         _copy04().copy(str(live), str(dest))                      # never over an earlier copy
     with pytest.raises(SystemExit):

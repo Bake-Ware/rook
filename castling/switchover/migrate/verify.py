@@ -382,6 +382,9 @@ def _secrets(source: Source, data: Path) -> dict:
     from .vault import Vault
     missing = list(problems)
     moved = 0
+    if not (data / "vault.db").exists():          # unlock would make one: verify never writes
+        return _row("secrets (names + value hashes)", len(want) + len(problems), 0,
+                    missing=missing + sorted(want))
     try:
         v = Vault(data).unlock()
     except Exception as e:                       # noqa: BLE001 - no vault: every secret is missing
