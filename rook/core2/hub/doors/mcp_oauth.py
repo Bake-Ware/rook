@@ -135,7 +135,7 @@ class OAuthShim:
             if rec["client_id"] and client_id and client_id != rec["client_id"]:
                 return _err("invalid_grant", "client_id mismatch")
             calc = base64.urlsafe_b64encode(hashlib.sha256(form.get("code_verifier", "").encode()).digest())
-            if not hmac.compare_digest(calc.rstrip(b"=").decode(), rec["challenge"]):
+            if not hmac.compare_digest(calc.rstrip(b"="), rec["challenge"].encode()):   # bytes: any text is safe
                 return _err("invalid_grant", "PKCE verification failed")
             return self._issue(secret, "invalid_client", 401)
         if grant == "refresh_token":

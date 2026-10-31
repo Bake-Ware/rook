@@ -124,6 +124,7 @@ def test_codes_are_once_short_lived_and_bound():
     assert exchange(s, code)[0] == 400                                        # a wrong try spends it
     assert exchange(s, code_of(authorize(s)), redirect_uri="https://evil.example/cb")[0] == 400
     assert exchange(s, code_of(authorize(s)), client_id="other")[0] == 400
+    assert exchange(s, code_of(authorize(s, code_challenge="é" * 43)))[0] == 400     # no 500 on odd text
     code = code_of(authorize(s))
     clock.t += 301
     assert exchange(s, code)[1]["error_description"] == "invalid or expired code"
