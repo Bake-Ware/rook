@@ -622,6 +622,12 @@ def test_from_config_builds_one_link_per_band(monkeypatch):
     assert TelestheteLink(PSK, relay="[::1]:7475").t.hub == ("::1", 7475)
     assert TelestheteLink(PSK, relay="relay.lan").t.hub == ("relay.lan", 7474)
     assert band_of(PSK) == hashlib.sha256(PSK.encode()).digest()[:16].hex()
+    # UDP: a 5 s keepalive and 20,000 frames/s pacing unless the band says otherwise; WS: as before
+    udp, ws = t._bands[BAND].link.t, t._bands[BAND2].link.t
+    assert (udp._keepalive, udp._pace) == (5.0, (20_000.0, 256)) and (ws._keepalive, ws._pace) == (20.0, None)
+    tuned = from_config({"node_id": WORKER, "bands": [{"psk": PSK, "relay": "r:1", "keepalive": 2,
+                                                       "pace": [0, 1]}]})._bands[BAND].link.t
+    assert (tuned._keepalive, tuned._pace) == (2.0, (0.0, 1))
     with pytest.raises(ValueError):
         from_config({"node_id": WORKER, "bands": [{"relay": "x:1"}]})
     with pytest.raises(ValueError):

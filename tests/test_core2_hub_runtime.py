@@ -730,6 +730,21 @@ def test_only_late_replies_to_our_own_calls_are_journaled(hubs):
     run(go())
 
 
+def test_a_call_the_hub_gives_up_on_stops_being_resent(hubs):
+    async def go():
+        hub, w, _ = await hubs()
+        forgotten = []
+        hub.transport.forget = lambda band, rid: forgotten.append((band, rid))
+        try:
+            req = {"id": "d" * 32, "cap": "echo.say", "target": "e" * 32, "args": {}}     # nobody answers
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(hub._send(hub.band, req), 0.1)      # dispatch's timeout
+            assert forgotten == [(hub.band, "d" * 32)] and hub._late["d" * 32] == "e" * 32
+        finally:
+            await hub.stop()
+    run(go())
+
+
 BOT = """\
 manifest: 1
 plugin: bot
