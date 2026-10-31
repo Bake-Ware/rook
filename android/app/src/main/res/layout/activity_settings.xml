@@ -81,6 +81,8 @@
           <Button android:id="@+id/btnSignIn05" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Sign in" />
           <TextView android:id="@+id/code05" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingTop="8dp" android:textSize="16sp" android:textColor="@color/rook_fg" android:textIsSelectable="true" android:visibility="gone" />
           <Button android:id="@+id/btnCancel05" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="Cancel sign-in" android:visibility="gone" style="@style/RookOutlinedButton" />
+          <TextView style="@style/RookFieldLabel" android:text="Your hub token (talking on the watch calls the hub as you)" />
+          <EditText android:id="@+id/token05" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Hub token" android:inputType="textPassword" />
         </LinearLayout>
         <LinearLayout android:id="@+id/connect04" style="@style/RookPanel">
           <TextView style="@style/RookSectionLabel" android:text="CONNECT" />

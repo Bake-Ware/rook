@@ -185,4 +185,7 @@ adb connect <watch-ip>:<port>
 adb -s <watch-ip>:<port> install -r wear/build/outputs/apk/debug/wear-debug.apk
 ```
 
-The phone needs a build with `WatchVoiceListener` (this one or later).
+The phone needs a build with `WatchVoiceListener` (this one or later). On Rook 0.5 (Settings >
+Band > Rook version) the phone talks to the hub's `speech` plugin instead, with your hub token
+(Settings > Band): see [docs/castling-watch.md](../docs/castling-watch.md). The watch app is
+the same for both.
