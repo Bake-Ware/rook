@@ -23,7 +23,8 @@ source: https://github.com/Bake-Ware/rook
 # The voice contracts and their providers (contract routing re-dispatches
 # the provider as the same caller), System One's model and the agent.
 uses: [voice.stt, voice.tts, voice.turn, voice.speaker, "speech-engine.*", "speech-elevenlabs.*",
-       llm.complete, llm-openai.complete, llm-anthropic.complete, llm-cli.complete, agents.chat.send]
+       llm.complete, llm-openai.complete, llm-anthropic.complete, llm-cli.complete, agents.chat.send,
+       agents.get]
 
 settings:
   agent: { type: str, default: house, doc: "The agent a voice session talks to unless it names another." }

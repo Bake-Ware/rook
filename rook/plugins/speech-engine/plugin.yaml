@@ -29,7 +29,7 @@ caps:
     timeout: 30s
     args:
       audio: { type: file, required: true, doc: "At most 30 s." }
-      language: { type: str, doc: "BCP 47 tag; blank: English (the service's setting)." }
+      language: { type: str, doc: "BCP 47 tag; the service transcribes English for now and says so." }
     result:
       type: map
       fields:

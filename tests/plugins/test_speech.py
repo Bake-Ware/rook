@@ -160,6 +160,12 @@ def test_a_voice_session(tmp_path):
         # guest preset grants no speech at all.
         out = await call(hub, sam, "speech.read", stream=sid)
         assert out["ok"] is False and "no voice session" in out["error"], out
+        out = await call(hub, owner, "speech.open", agent="nobody")
+        assert not out["ok"] and "nobody" in out["error"], out
+        sams = (await call(hub, sam, "speech.open"))["result"]["stream"]
+        assert (await call(hub, owner, "speech.read", stream=sams))["ok"]          # owners may read it
+        out = await call(hub, owner, "speech.hear", stream=sams, text="hello")
+        assert not out["ok"] and "someone else's" in out["error"], out            # but not speak as sam
         assert (await call(hub, guest, "speech.open"))["error"] == "denied: person: grants"
 
         out = await call(hub, owner, "speech.status")

@@ -98,6 +98,7 @@ async def stop(ctx):
 async def open_session(ctx, agent=None, voice=None, device=None, title=None):
     who = _who(ctx)
     agent = agent or ctx.settings["agent"]
+    await ctx.call("agents.get", name=agent)        # a missing agent fails here, not mid-conversation
     voice = voice if voice is not None else ctx.settings["voice"]
     attrs = {"agent": agent, "voice": voice or "", **({"device": device} if device else {})}
     meta = _rt(ctx).streams.open("voice", title=title or f"Voice: {_name(who)} and {agent}",
@@ -107,9 +108,9 @@ async def open_session(ctx, agent=None, voice=None, device=None, title=None):
 
 async def hear(ctx, stream, audio=None, text=None, final=False):
     if (audio is None) == (text is None):
-        raise ctx.Error("give audio or text, not both")
+        raise ctx.Error("give audio or text (one of them)")
     rt = _rt(ctx)
-    meta = _session(ctx, rt, stream)
+    meta = _session(ctx, rt, stream, write=True)
     async with rt.locks.setdefault(stream, asyncio.Lock()):
         speaker, complete = None, True
         if audio is not None:
@@ -170,7 +171,7 @@ async def read(ctx, stream, after=0, limit=50, wait=0, audio=False):
 
 async def close(ctx, stream):
     rt = _rt(ctx)
-    _session(ctx, rt, stream, open_only=False)
+    _session(ctx, rt, stream, open_only=False, write=True)
     meta = rt.streams.close(stream, by=_who(ctx))
     return {"stream": stream, "closed": meta.closed}
 
@@ -250,6 +251,9 @@ async def _think(ctx, rt: Runtime, stream: str, agent: str, request: str) -> Non
         _append_quietly(rt, stream, {"state": "error", "error": e.message})
     except StreamError:        # the session was closed meanwhile
         pass
+    except Exception as e:     # plugin code never leaves a task failing unseen
+        log.warning("System Two hand-off failed: %s: %s", type(e).__name__, e)
+        _append_quietly(rt, stream, {"state": "error", "error": f"{type(e).__name__}: {e}"[:300]})
 
 
 async def _history(rt: Runtime, stream: str, n: int) -> list[dict]:
@@ -318,13 +322,18 @@ def _name(who: str) -> str:
     return who.partition(":")[2] or who
 
 
-def _session(ctx, rt: Runtime, stream: str, open_only: bool = True):
+def _session(ctx, rt: Runtime, stream: str, open_only: bool = True, write: bool = False):
+    """The session, for a participant; owners may also read anyone's. Only
+    a participant speaks into one: System Two runs as whoever speaks."""
     try:
         meta = rt.streams.get(stream)
     except StreamError:
         raise ctx.Error(f"no voice session {stream}") from None
-    if meta.kind != "voice" or (_who(ctx) not in meta.participants and not ctx.caller.owner):
+    mine = _who(ctx) in meta.participants
+    if meta.kind != "voice" or not (mine or ctx.caller.owner):
         raise ctx.Error(f"no voice session {stream}")
+    if write and not mine:
+        raise ctx.Error(f"voice session {stream} is someone else's: only they speak into it")
     if open_only and meta.closed:
         raise ctx.Error(f"voice session {stream} is closed")
     return meta

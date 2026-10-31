@@ -17,6 +17,7 @@ from rook.kit.ctx import Ctx, KitError, invoke, load_run  # noqa: E402
 from rook.kit.manifest import load  # noqa: E402
 
 KEY = "xi-test-key"
+MODULES: dict = {}       # one load of the plugin, as on the hub (its voice-list cache lives there)
 
 
 class Fake(BaseHTTPRequestHandler):
@@ -66,7 +67,7 @@ def run(func, settings, **args):
 
     async def body():
         ctx = Ctx(m, ME, settings=settings, resolve_secret=secrets.get, cap=func)
-        return await invoke(load_run(PLUGINS / "speech-elevenlabs", script, {}), ctx, args)
+        return await invoke(load_run(PLUGINS / "speech-elevenlabs", script, MODULES), ctx, args)
     return go(body)
 
 
@@ -88,6 +89,10 @@ def test_voices_and_speech(api):
     assert (method, path) == ("POST", "/v1/text-to-speech/v1?output_format=pcm_24000")
     assert body == {"text": "Hello there.", "model_id": "eleven_flash_v2_5"}
 
+    # The account's list is kept a while; voices named in the setting: it isn't asked at all.
+    Fake.seen = []
+    run("tts", s, text="Again.", voice="eleven_rachel")
+    assert [m for m, _, _ in Fake.seen] == ["POST"]
     # Voices named in the setting: the account isn't asked.
     Fake.seen = []
     got = run("voices", {**s, "voices": "Jo=vJ, bad id=has space"})

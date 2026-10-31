@@ -7,6 +7,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -17,6 +18,8 @@ from rook.kit.ctx import KitError
 
 RATE = 24000
 MAX_VOICES = 40
+LIST_TTL = 600.0          # the account's voice list is asked again after this many seconds
+_listed: dict = {}        # (url, key) -> (time, ids)
 
 
 def tts(ctx, text, voice=None):
@@ -59,16 +62,20 @@ def parse_voice_map(raw: str) -> dict:
 
 
 def _voices(ctx) -> dict:
-    """The configured voices, else the account's (asked each time: the list is short)."""
+    """The configured voices, else the account's (kept LIST_TTL seconds)."""
     ids = parse_voice_map(ctx.settings["voices"])
     if ids:
         return ids
+    held = _listed.get((ctx.settings["url"], ctx.settings["key"]))
+    if held and time.monotonic() - held[0] < LIST_TTL:
+        return held[1]
     got = _http(ctx, "GET", "/v1/voices")
     for v in (got.get("voices") or [])[:MAX_VOICES]:
         if isinstance(v, dict) and v.get("voice_id") and v.get("name"):
             ids.update(parse_voice_map(f"{v['name']}={v['voice_id']}"))
     if not ids:
         raise KitError("the ElevenLabs account has no voices")
+    _listed[(ctx.settings["url"], ctx.settings["key"])] = (time.monotonic(), ids)
     return ids
 
 
