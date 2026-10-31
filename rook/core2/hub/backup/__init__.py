@@ -13,7 +13,8 @@ What goes in:
   with SQLite's online backup, so it is consistent while the hub runs (one
   database at a time: two databases are not one snapshot). ``vault.db`` is
   copied as it is: its values are sealed already. Left out: ``-wal``/``-shm``
-  files (the copies are whole), ``assets/`` (a download cache) and the work
+  files (the copies are whole), ``assets/`` (a download cache), ``releases/``
+  (core release tarballs: ``update.prepare`` makes them again) and the work
   folder ``.backup/``.
 - ``library/``: the trusted plugin folders, following links (a plugin
   linked from a checkout is backed up as its files), wherever the library is.
@@ -68,7 +69,7 @@ PERSON = b"rook-backup-1"
 SUFFIX = ".rookbak"
 NAME = re.compile(r"rook-hub-([0-9a-f]{8,64})-(\d{8}T\d{6}Z)\.rookbak")
 WORK = ".backup"                     # <data>/.backup: private scratch, never in a backup
-SKIP_TOP = {WORK, "assets"}
+SKIP_TOP = {WORK, "assets", "releases"}   # releases: core release tarballs, rebuilt by update.prepare
 SKIP_SUFFIX = ("-wal", "-shm", "-journal", ".tmp")
 SQLITE = b"SQLite format 3\x00"
 MANIFEST = "rook-backup.json"
