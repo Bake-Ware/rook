@@ -262,7 +262,10 @@ async def _history(rt: Runtime, stream: str, n: int) -> list[dict]:
     meta = rt.streams.get(stream)
     got = await rt.streams.read(stream, max(0, meta.last_seq - 4 * n), 4 * n, types=("turn",))
     turns = [e.body for e in got["events"] if e.body.get("text")][-n:]
-    return [{"role": "user" if t["role"] == "prompt" else "assistant", "content": t["text"]} for t in turns]
+    out = [{"role": "user" if t["role"] == "prompt" else "assistant", "content": t["text"]} for t in turns]
+    while out and out[0]["role"] == "assistant":    # a conversation starts with the person (the Claude API insists)
+        out.pop(0)
+    return out
 
 
 async def _audio(ctx, rt: Runtime, meta, seq: int, text: str) -> list:

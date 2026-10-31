@@ -222,3 +222,13 @@ def test_parse_plan():
     parts = mod.chunks("Hi. " + long, 60)
     assert all(len(p) <= 60 for p in parts) and " ".join(parts).split() == ("Hi. " + long).split()
     assert mod.chunks("") == []
+
+    # System One's history starts with the person, whatever the window cuts.
+    from rook.streams import Streams, StreamSpec
+    rt = mod.Runtime.__new__(mod.Runtime)
+    rt.streams = Streams()
+    meta = rt.streams.open("voice", spec=StreamSpec(("turn",)))
+    for role, text in (("prompt", "a"), ("reply", "b"), ("prompt", "c"), ("reply", "d"), ("prompt", "e")):
+        rt.streams.append(meta.id, "turn", {"role": role, "text": text})
+    got = asyncio.run(mod._history(rt, meta.id, 4))
+    assert [m["content"] for m in got] == ["c", "d", "e"]
