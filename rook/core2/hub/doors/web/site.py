@@ -122,14 +122,17 @@ class Web:
         caller = Caller(person=session.person)
         if path == "/web/api/call":
             cap, args = body.get("cap"), body.get("args") or {}
-            dock = isinstance(args, dict) and cap in DOCK_CAPS and args.get("agent") == dock_agent(self.hub)
+            agent = dock_agent(self.hub)
+            dock = agent is not None and cap in DOCK_CAPS and isinstance(args, dict) and args.get("agent") == agent
             if not (isinstance(cap, str) and cap.startswith("pages.") or dock):
                 raise _Error(403, "the shell calls pages.* (and the dock agent's chat) only")
             why = body.get("why") if isinstance(body.get("why"), str) and body["why"].strip() else \
                 "Talking with the agent in the site's dock." if dock else "Using the hub site."
+            # A message to the dock agent runs in the person's own door session:
+            # the agent's turn works with their rights, not the shell's pages.*.
+            session = req._run(self._dock_session(caller) if dock else self._shell_session(caller))
             return _json(200, req._run(self.hub.call(caller, {
-                "worker": "rook", "cap": cap, "args": args, "why": why,
-                "session": req._run(self._shell_session(caller))}, "web")))
+                "worker": "rook", "cap": cap, "args": args, "why": why, "session": session}, "web")))
         if path == "/web/api/open":
             return _json(200, self._open(req, sid, caller, body.get("page")))
         if path == "/web/api/page":
@@ -278,8 +281,11 @@ class Web:
         return out
 
     async def _shell_session(self, caller: Caller) -> str:
-        """The shell's dispatch session: pages.* and the dock's chat."""
-        return self.hub._session(self.hub._door_sessions, ("web", caller.person), caller, ["pages.*", *DOCK_CAPS])
+        """The shell's dispatch session: pages.* only."""
+        return self.hub._session(self.hub._door_sessions, ("web", caller.person), caller, ["pages.*"])
+
+    async def _dock_session(self, caller: Caller) -> str:
+        return self.hub._door_session(caller)
 
     async def _page_session(self, caller: Caller) -> str:
         """One dispatch session per opened page (its calls group in the
