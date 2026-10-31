@@ -74,6 +74,7 @@ linked.
 - [llm](../../rook/core2/hub/doors/web/builtin/llm/docs/manual.md): which language models the hub can use.
 - [pages](../../rook/core2/hub/doors/web/builtin/pages/docs/manual.md): the hub site's pages.
 - [setting](../../rook/core2/hub/doors/web/builtin/setting/docs/manual.md): hub and per-person settings.
+- [backup](../../rook/core2/hub/backup/docs/manual.md): sealed backups of the hub that only the recovery key opens, and restoring one on a new machine.
 
 **Core services** (install on the hub):
 
@@ -83,6 +84,7 @@ linked.
 - [security](../../rook/plugins/security/docs/manual.md) and [security-ml](../../rook/plugins/security-ml/docs/manual.md): the gates ([Security plugins](security.md)).
 - [jobs](../../rook/plugins/jobs/docs/manual.md): scheduled, event, manual and webhook jobs ([Jobs](jobs.md)).
 - [change](../../rook/plugins/changes/docs/manual.md): change records: what, why, risk, plan, scripts, tests and rollback; the hub runs standard changes and rolls them back, risky ones wait for one card. Plugin pushes need it.
+- [backup-store](../../rook/plugins/backup-store/docs/manual.md): keeps the hub's sealed backups on another worker (backup target `worker:<name>`).
 
 **Agents:**
 

@@ -83,8 +83,13 @@ set `doors: {http: {web: {secure_cookie: true}}}`.
 ## Backups
 
 Everything the hub knows is in its `data:` folder (keys, journal, records,
-tokens, settings). Stop the hub and copy the folder to back it up; there is
-no built-in backup yet. The recovery key is made once, with the owner; it
-is meant to encrypt off-site backups when those arrive, so save it now.
+tokens, settings). The hub backs itself up: set a target and install the
+nightly job ([Backup](../../rook/core2/hub/backup/docs/manual.md)):
+
+    settings:
+      backup: { target: "worker:janitor", keep: 7 }   # or dir:/mnt/usb, rclone:remote:path
+
+Backups are sealed under the recovery key, made once with the owner: only
+it restores one (`restore` on a new machine), so save it now.
 `python -m rook.core2.hub --config hub/hub.yaml recovery-key` shows it
 again while the hub lives.

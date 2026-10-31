@@ -31,6 +31,8 @@ What it owns:
 - **The vault** (:mod:`.vault`): ``<data>/vault.db``, unlocked on start
   with the root key; ``{{secret:NAME}}`` in calls to workers and hub
   plugins' secret settings read it; ``secret.*`` caps for owners.
+- **Backups** (:mod:`.backup`): ``backup.*`` caps for owners, sealed
+  under the recovery key, pushed to the ``backup`` plugin's target.
 - **Enrollment** (:mod:`rook.core2.enroll.hub`): devices signing in as a
   person, the config bundle, the owner's recovery key, other hubs' invites
   and the memberships this hub signs for its workers (spec 9, 12).
@@ -116,7 +118,7 @@ class Config:
     transport: dict | None = None                   # rook.core2.transport.hub_transport options
     enroll: dict = field(default_factory=dict)      # rook.core2.enroll.hub: url, relay, ws_url, discover, services
     log: dict = field(default_factory=dict)         # {level, format: text|json}
-    file: Path | None = None                        # the YAML it was read from (load_config sets it)
+    file = None    # not a key: the YAML file it was read from, set by load_config (backups copy it)
 
 
 def load_config(path: str | Path) -> Config:
@@ -125,7 +127,7 @@ def load_config(path: str | Path) -> Config:
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
         raise ValueError(f"{path}: not a mapping")
-    known = set(Config.__dataclass_fields__) - {"file"}
+    known = set(Config.__dataclass_fields__)
     unknown = sorted(set(raw) - known)
     if unknown:
         raise ValueError(f"{path}: unknown keys: {', '.join(unknown)}")
@@ -135,8 +137,8 @@ def load_config(path: str | Path) -> Config:
     raw["data"] = base / raw["data"]
     if raw.get("library"):
         raw["library"] = base / raw["library"]
-    raw["file"] = path.resolve()
     cfg = Config(**{k: v for k, v in raw.items() if v is not None})
+    cfg.file = path.resolve()
     check_config(cfg)
     return cfg
 

@@ -219,6 +219,11 @@ Needs R11, R12, the soak bars and the review fixes.
   95–98% disk in late October, so check the headroom first. If it is short,
   use bakenetus.
 - `init` with owner `bake`. Put the recovery key somewhere off the VM.
+- Backups (R5): set `settings.backup.target` and install the backup plugin's
+  nightly job. Until a 0.5 worker off the VM is enrolled, use an rclone
+  remote (`rclone:<remote>:rook05`); from step 3, `worker:cachyrig` with
+  `backup-store` installed there. Run `backup.run` once and check
+  `backup.verify` before migrating anything in.
 - Migrate from a fresh copy: dry run, then `--apply` with the hub stopped.
   This gives 0.5 the real knowledge, tasks and memory to work with. Workbench
   records changed later on 0.4 don't follow, but a re-run at step 5 adds what
