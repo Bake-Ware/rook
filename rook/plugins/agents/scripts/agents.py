@@ -29,8 +29,14 @@ agent's grants) and opens their sessions; the backend then hands its harness
 an MCP door token for that pair (TODO(castling:mcp-door)).
 Session streams live in the hub's one stream store (``ctx.streams``), so
 ``stream.list`` finds them and ``stream.read`` reads them.
-TODO(castling:workbench): skills are served from manifests here; they move
-to the knowledge store as their own kind.
+
+Personas and skills are content any plugin's manifest can ship
+(castling-dashboard): the runtime reads every installed manifest's
+``personas:`` and ``skills:`` (``hub.manifests``) and makes an agent of each
+persona, so the workbench's team roles come with the workbench. A skill not
+in any manifest is a knowledge page of kind ``skill`` (castling-agents: the
+skill library lives in the knowledge store as its own kind), when the
+workbench is installed.
 """
 from __future__ import annotations
 
@@ -55,6 +61,8 @@ PLUGIN_DIR = Path(__file__).resolve().parent.parent
 FIELDS = ("persona", "title", "summary", "prompt", "skills", "grants", "backend", "model",
           "always_on", "cwd")
 MAX_MEMORIES, MAX_NOTES = 200, 50
+_CLASHES: set = set()      # (persona, plugin) clashes already logged
+CATALOG_SECS = 60.0          # how stale the installed manifests' personas and skills may get
 
 DIRECTIVE = """\
 Pulling in other agents is expected and okay, not overstepping. When work
@@ -82,7 +90,9 @@ Turn the notepad into memory: add what is durable and well-founded (decisions,
 learned facts, the person's preferences and instructions), correct or merge
 memories the notes update, remove memories that are wrong or obsolete. Skip
 guesses, chatter and one-off details. Keep a note only if it is still in
-progress and not ready to become memory.
+progress and not ready to become memory. If a topic keeps coming up with no
+project for it yet, add a memory saying so ("crochet, third time this month,
+no project yet"), so it can be raised when relevant.
 
 Answer exactly:
 {{"add": ["new memory", ...], "update": [{{"id": 3, "text": "corrected"}}, ...],
@@ -122,6 +132,8 @@ class Runtime:
         self.asks: dict[tuple, tuple] = {}               # (stream, seq) -> (sender's ctx, future)
         self.tasks: set[asyncio.Task] = set()
         self.closing = False
+        self.catalog = Catalog.own()                     # personas and skills of every installed plugin
+        self.catalog_at = 0.0
 
     async def close(self) -> None:
         self.closing = True
@@ -155,11 +167,25 @@ class Runtime:
                         (a["name"], json.dumps(data), a.get("archived")))
         return a
 
-    def seed(self, manifest: dict) -> list[str]:
-        """Make the manifest's personas that aren't agents yet (create:
+    async def ready(self, force: bool = False) -> None:
+        """Know the installed plugins' personas and skills (at most
+        CATALOG_SECS old) and make agents of new personas. Hub plugins load
+        one after another, so a plugin after this one is seen on a later
+        look, not at start."""
+        if not force and time.monotonic() - self.catalog_at < CATALOG_SECS:
+            return
+        self.catalog_at = time.monotonic()
+        if self.ctx is not None:
+            self.catalog = await Catalog.installed(self.ctx)
+        made = self.seed()
+        if made:
+            log.info("agents made from personas: %s", ", ".join(made))
+
+    def seed(self) -> list[str]:
+        """Make the installed personas that aren't agents yet (create:
         default); refresh unedited ones a newer version changed. Edits win."""
-        made, origin = [], f"{manifest['plugin']}@{manifest['version']}"
-        for name, p in (manifest.get("personas") or {}).items():
+        made = []
+        for name, (p, origin, _) in self.catalog.personas.items():
             if p.get("create", "default") != "default":
                 continue
             try:
@@ -170,7 +196,7 @@ class Runtime:
                                      or have.get("persona") != name):
                 continue
             now = time.time()
-            self.save({"created": now, **(have or {}), **persona_fields(manifest, name), "name": name,
+            self.save({"created": now, **(have or {}), **self.catalog.persona(name), "name": name,
                        "origin": origin, "updated": now})
             made.append(name)
         return made
@@ -332,7 +358,7 @@ class Runtime:
                   for o in self.agents() if o["name"] != name]
         if others:
             parts.append("Other agents on this band:\n" + "\n".join(others))
-        skills = [f"- {s}: {skill_doc(s)}" for s in a.get("skills") or () if skill_path(s)]
+        skills = [f"- {s}: {self.catalog.skill_doc(s)}" for s in a.get("skills") or ()]
         if skills:
             parts.append("## Skills\nRead a skill with agents.skill before you follow it.\n" + "\n".join(skills))
         parts.append("## Notepad\n" + NOTEPAD.format(name=name))
@@ -402,27 +428,86 @@ def manifest() -> dict:
     return _yaml.loads((PLUGIN_DIR / "plugin.yaml").read_text(encoding="utf-8"))
 
 
-def persona_fields(m: dict, name: str) -> dict:
-    p = (m.get("personas") or {}).get(name)
-    if p is None:
-        raise KeyError(name)
-    prompt = (PLUGIN_DIR / p["prompt"]).read_text(encoding="utf-8") if p.get("prompt") else ""
-    return {"persona": name, "title": p.get("title", name), "summary": p.get("summary", ""),
-            "prompt": prompt, "skills": list(p.get("skills") or ()), "grants": list(p.get("grants") or ()),
-            "backend": p.get("backend", "default"), "model": dict(p.get("model") or {}),
-            "always_on": bool(p.get("always_on", False)), "cwd": ""}
+class Catalog:
+    """Personas and skills from installed manifests: name -> (spec, origin,
+    folder) and name -> file. This plugin's own come first; on a name two
+    plugins ship, the first one (by plugin name) wins."""
+
+    def __init__(self):
+        self.personas: dict[str, tuple[dict, str, Path]] = {}
+        self.skills: dict[str, Path] = {}
+
+    def add(self, m: dict, folder: Path) -> None:
+        origin = f"{m['plugin']}@{m['version']}"
+        for name, p in (m.get("personas") or {}).items():
+            if name in self.personas:
+                clash = (name, m["plugin"])
+                if clash not in _CLASHES:            # once, not on every look
+                    _CLASHES.add(clash)
+                    log.warning("persona %s from %s ignored: %s ships one", name, origin, self.personas[name][1])
+                continue
+            self.personas[name] = (p, origin, folder)
+        for name, rel in (m.get("skills") or {}).items():
+            path = _inside(folder, rel)
+            if path is not None:
+                self.skills.setdefault(name, path)
+
+    @classmethod
+    def own(cls) -> "Catalog":
+        c = cls()
+        c.add(manifest(), PLUGIN_DIR)
+        return c
+
+    @classmethod
+    async def installed(cls, ctx) -> "Catalog":
+        """This plugin's, then every installed plugin's the hub can show a
+        folder for (hub plugins and its library)."""
+        c = cls.own()
+        found: dict[str, tuple[dict, Path]] = {}
+        for section in ("personas", "skills"):
+            try:
+                got = await _why(ctx, "agents: find the personas and skills installed plugins ship").call(
+                    "hub.manifests", section=section)
+            except Exception as e:      # noqa: BLE001 - no hub to ask (a bare host): only our own
+                log.info("installed plugins' %s unknown: %s", section, getattr(e, "message", None) or e)
+                continue
+            for item in (got or {}).get("manifests") or ():
+                if item.get("plugin") == manifest()["plugin"] or not item.get("folder"):
+                    continue
+                m, _ = found.setdefault(item["plugin"], ({"plugin": item["plugin"], "version": item["version"]},
+                                                         Path(item["folder"])))
+                m[section] = item.get(section) or {}
+        for name in sorted(found):
+            m, folder = found[name]
+            c.add(m, folder)
+        return c
+
+    def persona(self, name: str) -> dict:
+        """An agent's fields from persona ``name``; KeyError if none ships it."""
+        p, _, folder = self.personas[name]
+        path = _inside(folder, p["prompt"]) if p.get("prompt") else None
+        prompt = path.read_text(encoding="utf-8") if path else ""
+        return {"persona": name, "title": p.get("title", name), "summary": p.get("summary", ""),
+                "prompt": prompt, "skills": list(p.get("skills") or ()), "grants": list(p.get("grants") or ()),
+                "backend": p.get("backend", "default"), "model": dict(p.get("model") or {}),
+                "always_on": bool(p.get("always_on", False)), "cwd": ""}
+
+    def skill_doc(self, name: str) -> str:
+        """The frontmatter description (and when to use it); a skill no
+        manifest ships is a knowledge page."""
+        path = self.skills.get(name)
+        if path is None:
+            return "a skill page in knowledge (kind skill)"
+        front, _ = _front(path.read_text(encoding="utf-8"))
+        return " ".join(x for x in (front.get("description", ""), f"Use when {front['when']}" if front.get("when")
+                                    else "") if x)
 
 
-def skill_path(name: str) -> Path | None:
-    rel = (manifest().get("skills") or {}).get(name)
-    return PLUGIN_DIR / rel if rel else None
-
-
-def skill_doc(name: str) -> str:
-    """The frontmatter description (and when to use it)."""
-    front, _ = _front(skill_path(name).read_text(encoding="utf-8"))
-    return " ".join(x for x in (front.get("description", ""), f"Use when {front['when']}" if front.get("when")
-                                else "") if x)
+def _inside(folder: Path, rel: str) -> Path | None:
+    """``folder/rel`` when it is a file inside ``folder``."""
+    root = folder.resolve()
+    path = (root / rel).resolve()
+    return path if root in path.parents and path.is_file() else None
 
 
 def _front(text: str) -> tuple[dict, str]:
@@ -461,9 +546,7 @@ def _why(ctx, why: str):
 async def start(ctx):
     rt = _rt(ctx)
     rt.ctx = ctx
-    made = rt.seed(manifest())
-    if made:
-        log.info("agents made from personas: %s", ", ".join(made))
+    await rt.ready(force=True)
     for a in rt.agents():
         if a.get("always_on"):
             for m in rt.sessions(a["name"]):
@@ -480,6 +563,7 @@ async def stop(ctx):
 async def tick(ctx):
     """Always-on agents never sleep, so they dream on a clock."""
     rt = _rt(ctx)
+    await rt.ready()
     every = rt.seconds("dream_every")
     for a in rt.agents():
         if a.get("always_on") and time.time() - (a.get("dreamed") or a.get("created") or 0) >= every:
@@ -543,11 +627,13 @@ def _self_or_owner(ctx, name: str) -> bool:
 
 async def list_agents(ctx, archived=False):
     rt = _rt(ctx)
+    await rt.ready()
     return [rt.view(a) for a in rt.agents(archived)]
 
 
 async def get(ctx, name):
     rt = _rt(ctx)
+    await rt.ready()
     a = _agent(ctx, rt, name, archived=True)
     out = {**{k: a.get(k) for k in (*FIELDS, "origin", "edited", "dreamed", "archived")}, **rt.view(a)}
     party = None if ctx.caller.owner else _party(ctx)
@@ -568,6 +654,7 @@ def _fields(ctx, args: dict, base: dict) -> dict:
 
 async def create(ctx, name, **args):
     rt = _rt(ctx)
+    await rt.ready()
     try:
         rt.agent(name, archived=True)
         raise ctx.Error(f"agent {name} already exists")
@@ -577,7 +664,7 @@ async def create(ctx, name, **args):
             "backend": "default", "model": {}, "always_on": False, "cwd": ""}
     if args.get("persona"):
         try:
-            base = persona_fields(manifest(), args["persona"])
+            base = rt.catalog.persona(args["persona"])
         except KeyError:
             raise ctx.Error(f"no persona {args['persona']}") from None
     now = time.time()
@@ -627,6 +714,7 @@ async def sleep(ctx, name):
 
 async def chat_send(ctx, agent, text, wait=True):
     rt = _rt(ctx)
+    await rt.ready()
     _agent(ctx, rt, agent)
     party = _party(ctx)
     if party == f"agent:{agent}":
@@ -676,8 +764,19 @@ async def dream(ctx, name):
 
 
 async def skill(ctx, name):
-    path = skill_path(name)
-    if path is None or not path.is_file():
+    """A skill a manifest ships, else the knowledge page of kind skill by
+    that slug (with the workbench)."""
+    rt = _rt(ctx)
+    await rt.ready()
+    path = rt.catalog.skills.get(name)
+    if path is not None:
+        front, body = _front(path.read_text(encoding="utf-8"))
+        return {"name": name, **front, "text": body.strip()}
+    try:
+        page = await ctx.call("knowledge.get", id=name)
+    except Exception:           # noqa: BLE001 - no workbench, no such page, or not theirs to read
+        page = None
+    if not isinstance(page, dict) or page.get("kind") != "skill":
         raise ctx.Error(f"no skill {name}")
-    front, body = _front(path.read_text(encoding="utf-8"))
-    return {"name": name, **front, "text": body.strip()}
+    return {"name": name, "description": page.get("title", ""), "text": (page.get("body") or "").strip(),
+            "page": page.get("slug") or page.get("id")}

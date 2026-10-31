@@ -15,6 +15,8 @@ from rook.streams import SqliteStore, Streams
 
 AGENTS = PLUGINS / "agents"
 ROLES = ["archivist", "house", "lead", "pm", "producer", "qa", "security", "writer"]
+OWN = ["house", "security"]                     # the agents package's own; the rest ship with the workbench
+WORKBENCH = {"task": "tasks", "knowledge": "knowledge", "concept": "concepts"}    # plugin -> folder
 BAKE = Caller(person="person:bake", band="b1", why="talk to my agents", owner=True)
 GUEST = Caller(person="person:guest", band="b1", why="say hi")
 PM = Caller(agent="agent:pm", band="b1", why="pm keeps notes")
@@ -26,11 +28,25 @@ class Backend:
 
     def __init__(self):
         self.calls = []
+        self.installed = dict(WORKBENCH)   # what hub.manifests shows: plugin -> folder in PLUGINS
+        self.pages = {}                    # knowledge.get: slug -> page
         self.fail = None
         self.hold = None                   # an asyncio.Event a turn waits on
         self.dream = {"add": [], "keep": []}
 
     async def __call__(self, cap, args, caller):
+        if cap == "hub.manifests":         # the hub's builtin, as it answers the plugin itself
+            out = []
+            for plugin, folder in sorted(self.installed.items()):
+                m = load(PLUGINS / folder, CONTRACTS).data
+                if m.get(args["section"]):
+                    out.append({"plugin": plugin, "version": m["version"], args["section"]: m[args["section"]],
+                                "folder": str(PLUGINS / folder)})
+            return {"manifests": out}
+        if cap == "knowledge.get":
+            if args["id"] not in self.pages:
+                raise KitError(f"no page {args['id']}")
+            return self.pages[args["id"]]
         self.calls.append((cap, args, caller))
         if self.hold is not None:
             await self.hold.wait()
@@ -119,16 +135,45 @@ def test_manifests_are_clean(folder):
 
 
 def test_every_role_has_a_prompt_and_its_skills():
-    m = load(AGENTS, CONTRACTS).data
-    assert sorted(m["personas"]) == ROLES
-    for name, p in m["personas"].items():
-        assert (AGENTS / p["prompt"]).read_text().strip(), name
-        assert set(p["skills"]) <= set(m["skills"]), name
+    """The agents package ships the house agent and security triage; the
+    workbench's plugins ship its team roles (castling-dashboard). Every
+    persona's skills exist in some installed manifest."""
+    found, skills = {}, {}
+    for folder in ["agents", *WORKBENCH.values()]:
+        m = load(PLUGINS / folder, CONTRACTS).data
+        for name, p in (m.get("personas") or {}).items():
+            assert name not in found, name
+            found[name] = p
+            assert (PLUGINS / folder / p["prompt"]).read_text().strip(), name
+        for name, rel in (m.get("skills") or {}).items():
+            text = (PLUGINS / folder / rel).read_text()
+            assert text.startswith("---\ndescription: ") and "\nwhen: " in text, name
+            skills[name] = folder
+    assert sorted(found) == ROLES
+    assert sorted(load(AGENTS, CONTRACTS).data["personas"]) == OWN
+    for name, p in found.items():
+        assert set(p["skills"]) <= set(skills), name
         assert "consult" in p["skills"] and "notepad" in p["skills"], name
-    assert {n for n, p in m["personas"].items() if p.get("always_on")} == {"house", "security"}
-    for name, rel in m["skills"].items():
-        text = (AGENTS / rel).read_text()
-        assert text.startswith("---\ndescription: ") and "\nwhen: " in text, name
+    assert {n for n, p in found.items() if p.get("always_on")} == {"house", "security"}
+    assert {skills[s] for s in ("ticket-sweep", "handoff", "verify", "wiki-sweep")} == {"tasks", "knowledge"}
+
+
+def test_core_and_agents_alone_get_only_their_own_roles(tmp_path):
+    """Without the workbench there is no task deck to sweep, so no PM."""
+    rig = Rig(tmp_path)
+    rig.backend.installed = {}
+
+    async def body():
+        assert [a["name"] for a in await rig.call("list_agents")] == OWN
+        with pytest.raises(KitError, match="no persona pm"):
+            await rig.call("create", name="x", persona="pm")
+        assert "- consult: Pull in another agent" in rig.rt.system_prompt(rig.rt.agent("house"))
+        # The workbench installed later: its roles appear on the next look.
+        rig.backend.installed = dict(WORKBENCH)
+        await rig.rt.ready(force=True)
+        assert [a["name"] for a in await rig.call("list_agents")] == ROLES
+        assert rig.rt.agent("producer")["origin"] == "concept@0.5.0"
+    run(rig, body)
 
 
 # -- roles, create, update, archive -----------------------------------------------------
@@ -139,11 +184,11 @@ def test_install_makes_the_ready_made_roles_and_edits_win(rig):
         assert [a["name"] for a in listed] == ROLES
         assert {a["name"] for a in listed if a["always_on"]} == {"house", "security"}
         pm = await rig.call("get", name="pm")
-        assert pm["origin"] == "agents@0.5.0" and "keep the work moving" in pm["prompt"]
+        assert pm["origin"] == "task@0.5.0" and "keep the work moving" in pm["prompt"]
         await rig.call("update", name="house", summary="Mine now")
         # pm from an older release, unedited: the next start refreshes it.
         a = rig.rt.agent("pm")
-        rig.rt.save({**a, "prompt": "old", "origin": "agents@0.4.0"})
+        rig.rt.save({**a, "prompt": "old", "origin": "task@0.4.0"})
         await rig.stop()
         await rig.start()
         assert (await rig.call("get", name="house"))["summary"] == "Mine now"
@@ -435,6 +480,17 @@ def test_skills_are_markdown_playbooks(rig):
         s = await rig.call("skill", name="reach-the-user")
         assert s["description"].startswith("Get word to the person")
         assert s["when"] and s["text"].startswith("# Reaching the person")
+        assert (await rig.call("skill", name="wiki-sweep"))["description"].startswith("Sweep the knowledge wiki")
         with pytest.raises(KitError, match="no skill nope"):
             await rig.call("skill", name="nope")
+        # The skill library lives in the knowledge store as its own kind.
+        rig.backend.pages = {"test-stitch": {"id": "k1", "slug": "test-stitch", "kind": "skill",
+                                             "title": "Test-stitch a pattern", "body": "\n1. Stitch a swatch.\n"},
+                             "crochet": {"id": "k2", "slug": "crochet", "kind": "fact", "title": "Crochet",
+                                         "body": "A craft."}}
+        s = await rig.call("skill", name="test-stitch")
+        assert s == {"name": "test-stitch", "description": "Test-stitch a pattern", "text": "1. Stitch a swatch.",
+                     "page": "test-stitch"}
+        with pytest.raises(KitError, match="no skill crochet"):     # a page, but not a skill
+            await rig.call("skill", name="crochet")
     run(rig, body)

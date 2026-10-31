@@ -101,6 +101,24 @@ caps:
       remove: { type: bool, default: false }
     result: { type: map }
     run: scripts/knowledge.py:link
+
+# The workbench's knowledge roles (castling-dashboard, castling-workbench):
+# personas made into agents when the agents package is installed.
+personas:
+  archivist:
+    title: Archivist
+    summary: Sweeps the wiki like a diligent Wikipedia editor - challenges unsupported claims, checks sources, merges duplicates, prunes stale pages.
+    prompt: personas/archivist.md
+    skills: [wiki-sweep, consult, notepad]
+    grants: ["agents.*", "knowledge.*", "concept.*", "project.*", "task.*", "journal.*"]
+  writer:
+    title: Technical writer
+    summary: Keeps the manual, changelog and knowledge true to what actually shipped.
+    prompt: personas/writer.md
+    skills: [handoff, consult, notepad]
+    grants: ["*"]
+skills:
+  wiki-sweep: skills/wiki-sweep.md
 docs: { manual: docs/manual.md }
 
 pages:

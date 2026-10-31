@@ -37,4 +37,14 @@ caps:
       concepts: { type: list, items: { type: str }, required: true, max: 20, doc: Concept slugs or ids. }
     result: { type: map }
     run: scripts/concept.py:pool
+
+# The producer (castling-workbench): bootstraps a new kind of work into a
+# concept. Made into an agent when the agents package is installed.
+personas:
+  producer:
+    title: Producer
+    summary: "Sets up a new kind of work the first time it becomes real: asks how the person likes to work, researches how practitioners do it, writes the concept (expert roles, skills, sign-off)."
+    prompt: personas/producer.md
+    skills: [consult, notepad]
+    grants: ["*"]
 docs: { manual: docs/manual.md }

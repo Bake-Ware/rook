@@ -6,8 +6,9 @@
 # the notepad when the agent goes idle. Always-on agents never sleep on idle
 # and get a periodic dream pass instead.
 #
-# Every ready-made role below is created on install; its skills are markdown
-# in skills/. Code: scripts/agents.py.
+# Every ready-made role below, and every persona another installed plugin
+# ships, is created on install; skills are markdown in a manifest's skills:
+# or knowledge pages of kind skill. Code: scripts/agents.py.
 manifest: 1
 plugin: agents
 version: 0.5.0
@@ -21,7 +22,10 @@ source: https://github.com/Bake-Ware/rook
 # agents-<backend>.turn (the backend plugins of this package).
 # A person's direct message to the band's Telegram or Discord bot goes to
 # chat_agent as that person; the reply goes back to them by the same bot.
-uses: ["agent.backend", "agents-claude-code.turn", "agents-codex.turn", "telegram.send", "discord.send"]
+# hub.manifests: the personas and skills every installed plugin ships;
+# knowledge.get: skills kept as knowledge pages (kind skill), with the workbench.
+uses: ["agent.backend", "agents-claude-code.turn", "agents-codex.turn", "telegram.send", "discord.send",
+       "hub.manifests", "knowledge.get"]
 
 settings:
   warm: { type: duration, default: 10m, doc: How long an agent that isn't always-on stays awake after its last message. }
@@ -172,9 +176,13 @@ hooks:
     - { event: telegram.message, run: scripts/agents.py:inbound }
     - { event: discord.message, run: scripts/agents.py:inbound }
 
-# The ready-made roles (castling-agents "Skills and defaults"): created on
-# install, each with its skills. Lean toward agency: broad grants, and acting
-# for a person an agent gets only what both may.
+# The ready-made roles this package ships (castling-agents "Skills and
+# defaults"): created on install, each with its skills. Any plugin's manifest
+# can ship personas and skills (castling-dashboard); every installed one's are
+# made into agents too, so the workbench's team roles (project manager, lead,
+# QA, writer, archivist, producer) come with the workbench. Lean toward
+# agency: broad grants, and acting for a person an agent gets only what both
+# may.
 personas:
   house:
     title: House agent
@@ -183,42 +191,6 @@ personas:
     skills: [reach-the-user, presence, hub-pages, consult, chair, notepad, housekeeping]
     grants: ["*"]
     always_on: true
-  pm:
-    title: Project manager
-    summary: Oversight of the work - sweeps tickets, organizes, reports and plans; handoffs that depend on other work go through it.
-    prompt: personas/pm.md
-    skills: [ticket-sweep, handoff, consult, notepad]
-    grants: ["*"]
-  lead:
-    title: Lead developer
-    summary: Owns the coding work in flight - design calls, branches, reviews and technical debt.
-    prompt: personas/lead.md
-    skills: [handoff, consult, notepad]
-    grants: ["*"]
-  qa:
-    title: QA engineer
-    summary: Evidence that things work - tests, regressions, anything called done without proof.
-    prompt: personas/qa.md
-    skills: [verify, handoff, consult, notepad]
-    grants: ["*"]
-  writer:
-    title: Technical writer
-    summary: Keeps the manual, changelog and knowledge true to what actually shipped.
-    prompt: personas/writer.md
-    skills: [handoff, consult, notepad]
-    grants: ["*"]
-  archivist:
-    title: Archivist
-    summary: Keeps the wiki honest - finds stale, duplicate and contradicted pages and fixes them.
-    prompt: personas/archivist.md
-    skills: [wiki-sweep, consult, notepad]
-    grants: ["agents.*", "knowledge.*", "concepts.*", "projects.*", "tasks.*", "journal.*"]
-  producer:
-    title: Producer
-    summary: Gets a release out the door - checklist, rollback plan, staged rollout, the announcement and the check afterwards.
-    prompt: personas/producer.md
-    skills: [handoff, consult, notepad]
-    grants: ["*"]
   security:
     title: Security triage
     summary: Triages security events - blocked calls, exposed secrets, odd journal activity - and proposes safer ways.
@@ -232,10 +204,6 @@ skills:
   presence: skills/presence.md
   consult: skills/consult.md
   notepad: skills/notepad.md
-  handoff: skills/handoff.md
-  ticket-sweep: skills/ticket-sweep.md
-  verify: skills/verify.md
-  wiki-sweep: skills/wiki-sweep.md
   security-triage: skills/security-triage.md
   hub-pages: skills/hub-pages.md
   housekeeping: skills/housekeeping.md
