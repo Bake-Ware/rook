@@ -1,0 +1,32 @@
+# A fake agent.backend for the hub site tests: the house agent "thinks" by
+# reading the last line of the message and calling page caps as the person
+# who sent it (tests/test_core2_worksurface.py, tests/e2e/test_dashboard_e2e.py).
+manifest: 1
+plugin: agents-local
+version: 1.0.0
+doc: A fake local agent backend that builds hub pages on request.
+runs_on: hub
+uses: ["pages.*"]
+caps:
+  turn:
+    doc: One fake agent turn.
+    risk: exec
+    scope: local
+    on: hub
+    run: scripts/brain.py:turn
+    args:
+      prompt: { type: str, required: true }
+      session: { type: str }
+      cwd: { type: str }
+      model: { type: str }
+      effort: { type: str }
+      system: { type: str }
+      timeout: { type: duration }
+    result:
+      type: map
+      fields:
+        text: { type: str, required: true }
+        session: { type: str, required: true }
+        usage: { type: map, items: { type: int } }
+provides:
+  agent.backend: agents-local.turn

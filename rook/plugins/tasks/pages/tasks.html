@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tasks</title>
+<style>
+  .state { font-size: 12px; padding: 1px 6px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); }
+  .detail td { background: var(--card); }
+  .detail p { margin: 4px 0; white-space: pre-wrap; }
+  ul { margin: 4px 0; padding-left: 18px; }
+</style>
+</head>
+<body>
+<div class="row" style="margin-bottom:10px">
+  <select id="state"><option value="open">Open</option><option value="done">Done</option><option value="">All</option></select>
+  <select id="project"><option value="">Every project</option></select>
+  <span class="grow"></span><span id="count" class="muted"></span>
+</div>
+<div class="scroll"><table>
+  <thead><tr><th>Task</th><th>State</th><th>Who</th><th>Changed</th></tr></thead>
+  <tbody id="rows"><tr><td colspan="4" class="muted">Loading…</td></tr></tbody>
+</table></div>
+<script>
+"use strict";
+const OPEN = ["todo", "in_progress", "blocked", "paused"];
+const $ = (id) => document.getElementById(id);
+let tasks = [], shown = null;
+
+function who(t) {
+  const claims = (t.claims || []).map((c) => c.actor);
+  return claims.length ? claims.join(", ") : (t.assignee || "");
+}
+
+async function detail(t) {
+  const comments = await rook.call("task.comment.list", { where: { task: t.id } }).catch(() => []);
+  const links = (t.links || []).map((l) => {
+    const ref = l.kind === "page" ? `<a class="go" data-page="${rook.esc(l.ref)}">${rook.esc(l.ref)}</a>` : rook.esc(l.ref);
+    return `<li>${rook.esc(l.relation)}: ${rook.esc(l.kind)} ${ref}${l.note ? ` <span class="muted">${rook.esc(l.note)}</span>` : ""}</li>`;
+  }).join("");
+  return (t.body ? `<p>${rook.esc(t.body)}</p>` : "") +
+    ((t.criteria || []).length ? `<h3>Done means</h3><ul>${t.criteria.map((c) => `<li>${rook.esc(c)}</li>`).join("")}</ul>` : "") +
+    (t.outcome ? `<h3>Outcome</h3><p>${rook.esc(t.outcome)}</p>` : "") +
+    (links ? `<h3>Links</h3><ul>${links}</ul>` : "") +
+    (comments.length ? `<h3>Comments</h3>${comments.map((c) => `<p><span class="muted">${rook.esc(c.creator)}, ${rook.ago(c.created)}:</span> ${rook.esc(c.text)}</p>`).join("")}` : "") +
+    `<div class="row"><input id="say" class="grow" placeholder="Add a comment"><button id="send">Comment</button></div>`;
+}
+
+async function render() {
+  const want = $("state").value, project = $("project").value;
+  const rows = tasks.filter((t) => (!want || (want === "open" ? OPEN.includes(t.state) : t.state === want)) &&
+    (!project || t.project === project));
+  $("count").textContent = rows.length + " shown";
+  const body = $("rows");
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="4" class="muted">No tasks here.</td></tr>';
+    return;
+  }
+  let html = "";
+  for (const t of rows) {
+    html += `<tr class="click" data-id="${rook.esc(t.id)}"><td>${rook.esc(t.title)}</td>
+      <td><span class="state">${rook.esc(t.state)}</span></td><td>${rook.esc(who(t))}</td>
+      <td class="muted">${rook.ago(t.updated)}</td></tr>`;
+    if (shown === t.id) html += `<tr class="detail"><td colspan="4">${await detail(t)}</td></tr>`;
+  }
+  body.innerHTML = html;
+  const send = $("send");
+  if (send) send.onclick = async () => {
+    const text = $("say").value.trim();
+    if (!text) return;
+    await rook.call("task.comment", { id: shown, text }, { why: "A comment from the Tasks page." });
+    render();
+  };
+}
+
+$("rows").onclick = (e) => {
+  const go = e.target.closest("a.go");
+  if (go) return rook.open(go.dataset.page);
+  const tr = e.target.closest("tr.click");
+  if (!tr) return;
+  shown = shown === tr.dataset.id ? null : tr.dataset.id;
+  render();
+};
+$("state").onchange = $("project").onchange = render;
+
+async function load() {
+  tasks = await rook.call("task.list", { limit: 500 });
+  render();
+}
+
+(async function () {
+  try {
+    const projects = await rook.call("project.list", { limit: 200 });
+    for (const p of projects) $("project").append(new Option(p.title, p.id));
+  } catch (x) { $("project").hidden = true; }     // no projects plugin, or not for this person
+  load().catch((x) => { $("rows").innerHTML = `<tr><td colspan="4" class="bad">${rook.esc(x.message)}</td></tr>`; });
+  rook.on("task.*", () => load().catch(() => {}));
+})();
+</script>
+</body>
+</html>

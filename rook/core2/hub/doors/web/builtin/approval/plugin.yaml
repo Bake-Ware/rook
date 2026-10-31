@@ -33,3 +33,6 @@ caps:
 
 pages:
   approvals: { title: Approvals, file: pages/approvals.html, caps: [approval.list, approval.decide], events: ["hold.*"], nav: { section: Hub } }
+
+components:
+  holds: { title: Waiting for you, file: components/holds.js, doc: "Calls held for a person's answer, with a link to Approvals.", caps: [approval.list] }

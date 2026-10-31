@@ -125,6 +125,7 @@ caps:
     risk: read
     scope: multi-user
     idempotent: true
+    timeout: 75s          # wait may hold the call up to 60 s
     run: scripts/agents.py:chat_read
     args:
       agent: { type: str, required: true }
@@ -174,7 +175,7 @@ personas:
     title: House agent
     summary: "The person's personal assistant and guardian of the house: knows how and when to reach them."
     prompt: personas/house.md
-    skills: [reach-the-user, presence, consult, notepad]
+    skills: [reach-the-user, presence, hub-pages, consult, notepad]
     grants: ["*"]
     always_on: true
   pm:
@@ -231,5 +232,6 @@ skills:
   verify: skills/verify.md
   wiki-sweep: skills/wiki-sweep.md
   security-triage: skills/security-triage.md
+  hub-pages: skills/hub-pages.md
 
 docs: { manual: docs/manual.md }

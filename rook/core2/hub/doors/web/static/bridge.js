@@ -7,11 +7,17 @@
 //   const r = await rook.call("hub.workers");            // the cap's result
 //   await rook.call("approval.decide", {hold, decision: "approve"}, {why: "..."});
 //   rook.on("worker.*", (payload, event) => reload());  // events it declared
+//   rook.open("approval/approvals");                     // go to another page
+//
+// A component (manifest components:) is a script that registers its render
+// function; a layout page mounts each one into its card:
+//
+//   rook.component(async (el, props) => { el.textContent = ...; });
 (function () {
   "use strict";
   var info = window.__rookPage || {};
   try { delete window.__rookPage; } catch (e) { window.__rookPage = undefined; }
-  var pending = {}, next = 1, listeners = [];
+  var pending = {}, next = 1, listeners = [], defs = {}, defining = null;
 
   function glob(pattern, name) {
     var parts = String(pattern).split("*").map(function (p) {
@@ -57,6 +63,32 @@
     on: function (pattern, fn) {
       listeners.push([pattern, fn]);
       if (listeners.length === 1) send({ kind: "listen" });
+    },
+    open: function (page) {
+      send({ kind: "open", page: String(page) });
+    },
+    component: function (fn) {
+      if (defining && typeof fn === "function") defs[defining] = fn;
+    },
+    _as: function (id) {
+      defining = id;
+    },
+    _mount: function (parts) {
+      defining = null;
+      parts.forEach(function (p, i) {
+        var el = document.getElementById("part-" + i);
+        if (!el) return;
+        var fn = defs[p.component];
+        var fail = function (x) {
+          el.innerHTML = '<p class="bad">' + window.rook.esc((x && x.message) || x) + "</p>";
+        };
+        if (!fn) return fail("This part is missing: " + p.component);
+        try {
+          Promise.resolve(fn(el, p.props || {})).catch(fail);
+        } catch (x) {
+          fail(x);
+        }
+      });
     },
     esc: function (s) {
       return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {

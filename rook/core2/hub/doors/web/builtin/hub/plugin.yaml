@@ -29,3 +29,6 @@ caps:
 
 pages:
   workers: { title: Workers, file: pages/workers.html, caps: [hub.workers], events: ["worker.*", "plugin.*"], nav: { section: Hub } }
+
+components:
+  workers: { title: Workers, file: components/workers.js, doc: "The band's workers: online or not, last seen.", caps: [hub.workers], props: { only: { type: list, items: { type: str }, doc: "Worker names to show; blank: all." } } }

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Knowledge</title>
+<style>
+  #page { margin-top: 12px; }
+  #page .body { white-space: pre-wrap; }
+  a.wiki { color: var(--accent); cursor: pointer; }
+</style>
+</head>
+<body>
+<form id="find" class="row"><input id="q" class="grow" placeholder="Search the wiki"><button>Search</button></form>
+<div id="list" class="scroll" style="margin-top:10px"></div>
+<div id="page" class="card" hidden></div>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+function rows(pages) {
+  $("list").innerHTML = pages.length ? "<table>" + pages.map((p) =>
+    `<tr class="click" data-slug="${rook.esc(p.slug)}"><td>${rook.esc(p.title)}</td><td class="muted">${rook.esc(p.kind || "")}</td>
+     <td class="muted">${rook.ago(p.updated)}</td></tr>`).join("") + "</table>" : '<p class="muted">Nothing found.</p>';
+}
+
+function wiki(text) {
+  return rook.esc(text).replace(/\[\[([a-z0-9-]+)\]\]/g, '<a class="wiki" data-slug="$1">$1</a>');
+}
+
+async function show(slug) {
+  const p = await rook.call("knowledge.get", { id: slug });
+  const box = $("page");
+  const stubs = (title, xs) => xs && xs.length ? `<h3>${title}</h3><p>${xs.map((x) =>
+    `<a class="wiki" data-slug="${rook.esc(x.slug)}">${rook.esc(x.title)}</a>`).join(", ")}</p>` : "";
+  box.innerHTML = `<h2>${rook.esc(p.title)}</h2><p class="muted">${rook.esc(p.kind)} · ${rook.ago(p.updated)}</p>
+    <div class="body">${wiki(p.body || "")}</div>
+    ${(p.sources || []).length ? "<h3>Sources</h3><ul>" + p.sources.map((s) =>
+      `<li>[^${rook.esc(s.key || "")}] ${rook.esc(s.kind)} ${rook.esc(s.ref || "")} <span class="muted">${rook.esc(s.by || "")}</span></li>`).join("") + "</ul>" : ""}
+    ${stubs("Links to", p.links_out)}${stubs("Linked from", p.backlinks)}${stubs("Pages under it", p.children)}`;
+  box.hidden = false;
+  box.scrollIntoView();
+}
+
+document.body.onclick = (e) => {
+  const a = e.target.closest("[data-slug]");
+  if (a) show(a.dataset.slug).catch((x) => { $("page").innerHTML = `<p class="bad">${rook.esc(x.message)}</p>`; $("page").hidden = false; });
+};
+$("find").onsubmit = async (e) => {
+  e.preventDefault();
+  const q = $("q").value.trim();
+  rows(q ? await rook.call("knowledge.search", { query: q, limit: 50 }) : await rook.call("knowledge.list", { limit: 50 }));
+};
+rook.call("knowledge.list", { limit: 50 }).then(rows)
+  .catch((x) => { $("list").innerHTML = `<p class="bad">${rook.esc(x.message)}</p>`; });
+</script>
+</body>
+</html>

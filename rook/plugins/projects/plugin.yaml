@@ -36,3 +36,6 @@ records:
     caps: [list, get, create, update]
     risk: { create: admin, update: admin }
 docs: { manual: docs/manual.md }
+
+pages:
+  projects: { title: Projects, file: pages/projects.html, caps: ["project.list", "task.list"], events: ["project.*"], nav: { section: Work } }

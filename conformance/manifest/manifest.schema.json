@@ -209,6 +209,8 @@
         "type": "object",
         "required": ["file"],
         "properties": {
+          "title": {"type": "string"},
+          "doc": {"type": "string"},
           "file": {"$ref": "#/$defs/rel_path"},
           "props": {"$ref": "#/$defs/fields"},
           "caps": {"$ref": "#/$defs/globs"}

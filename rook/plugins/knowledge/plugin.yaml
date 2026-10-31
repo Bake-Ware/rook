@@ -102,3 +102,6 @@ caps:
     result: { type: map }
     run: scripts/knowledge.py:link
 docs: { manual: docs/manual.md }
+
+pages:
+  knowledge: { title: Knowledge, file: pages/knowledge.html, caps: ["knowledge.list", "knowledge.search", "knowledge.get"], nav: { section: Work } }
