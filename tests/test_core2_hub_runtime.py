@@ -1103,6 +1103,9 @@ def test_sub_calls_per_call_are_capped(hubs, monkeypatch):
             limit = hub.journal.query(kind="sub_call_limit", viewer={"owner": True}, limit=5)
             assert len(limit) == 1 and limit[0]["call"] == out["id"]
             assert hub.dispatcher.sub_calls == {}       # forgotten when the call ends
+        finally:
+            await hub.stop()
+    run(go())
 
 
 CREW = """\

@@ -150,9 +150,29 @@ def test_it_provides_the_agent_backend_contract():
 
 
 def test_the_agents_package_offers_only_backends_that_exist():
+    # An agent's backend is default or one provider's cap (drift #32): never
+    # a name the agents plugin turns into a cap.
     agents = load(PLUGINS / "agents", CONTRACTS).data
-    enum = agents["caps"]["agents.create"]["args"]["backend"]["enum"]
-    assert enum == ["default", "claude-code", "codex"]
-    for name in enum[1:]:
-        assert (PLUGINS / f"agents-{name}" / "plugin.yaml").is_file()
-        assert f"agents-{name}.turn" in agents["uses"]
+    spec = agents["caps"]["agents.create"]["args"]["backend"]
+    assert "enum" not in spec and spec["pattern"].startswith("^(default|")
+    assert "agent.backend" in agents["uses"] and not any(u.startswith("agents-") for u in agents["uses"])
+    for name in ("claude-code", "codex"):
+        m = load(PLUGINS / f"agents-{name}", CONTRACTS).data
+        assert m["provides"] == {"agent.backend": f"agents-{name}.turn"}
+
+
+def test_a_turn_reaches_rook_with_its_own_door_token(tmp_path, bins):
+    bins.add("codex", CODEX + """
+with open(os.path.join(os.path.dirname(sys.argv[0]), "codex.token"), "w") as f:
+    f.write(os.environ.get("ROOK_DOOR_TOKEN", ""))
+""")
+    turn(tmp_path, prompt="hi", door="tok-123")
+    argv = bins.calls("codex")[0]["argv"]
+    assert argv[argv.index('mcp_servers.rook.url="http://127.0.0.1:8741/mcp"') - 1] == "-c"
+    assert 'mcp_servers.rook.bearer_token_env_var="ROOK_DOOR_TOKEN"' in argv
+    assert "tok-123" not in " ".join(argv)                    # never on the command line
+    assert (bins.dir / "codex.token").read_text() == "tok-123"  # only in the turn's environment
+    turn(tmp_path, prompt="hi")
+    assert not any("mcp_servers.rook" in a for a in bins.calls("codex")[1]["argv"])
+    with pytest.raises(KitError, match="door_url"):
+        turn(tmp_path, {"door_url": ""}, prompt="hi", door="tok-123")
