@@ -1,0 +1,104 @@
+# A one-pass decision model (Diffucision, or the typed decision engine)
+# answering a batch of typed questions about one state: the gate
+# classifier's upgrade path (castling-caps), and decide.drive, a screen loop
+# on it (kept by Bake's C3 amendment). Code: scripts/decide.py.
+manifest: 1
+plugin: decide
+version: 0.5.0
+title: Decision model
+doc: Ask a one-pass decision model (Diffucision) a batch of typed questions about one state.
+package: agents
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+requires: { settings: [endpoint] }
+# drive reads screens and sends input through the device contracts, on the
+# worker the caller names (a target contract resolves to <provider>.<cap>).
+uses: ["screen.capture", "*.screen.capture", "ui.screen", "*.ui.screen", "hid.click", "*.hid.click",
+       "hid.key", "*.hid.key", "hid.type", "*.hid.type", "hid.drag", "*.hid.drag"]
+
+settings:
+  endpoint:
+    type: url
+    where: hub
+    doc: "http(s)://host:port of the decision service (/decide, /healthz, /info are added; a ?adapter= query is kept)."
+    setup: Ask where the decision model listens (a GPU box on the LAN).
+  adapter:
+    type: str
+    where: hub
+    enum: [diffucision, decision-engine]
+    default: diffucision
+    doc: "The API dialect: diffucision (64 questions, 26 options, temperature) or decision-engine (24, 52)."
+  token: { secret: true, where: hub, doc: "The vault name of a bearer token; blank: the endpoint needs none." }
+  timeout: { type: duration, default: 10s, where: hub, doc: Longest one request may take. }
+  temperature: { type: float, where: hub, min: 0.05, max: 10, doc: "Softmax temperature; blank: the service's own. Diffucision only." }
+  perceiver: { type: url, where: hub, doc: "drive: an OCR / UI-parsing service (POST {image, goal} -> {text, elements}); blank: the device's ui.screen, else blind." }
+  dry_run: { type: bool, default: true, where: hub, doc: "drive only reports what it would do unless the call says dry_run=false." }
+  max_steps: { type: int, default: 20, min: 1, max: 500, where: hub, doc: drive's step budget when the call gives none. }
+  settle: { type: duration, default: 300ms, where: hub, doc: drive's pause after each input. }
+  grid: { default: 8x8, pattern: "^[1-9][0-9]?x[1-9][0-9]?$", where: hub, doc: "drive's click grid when there are no elements: ROWSxCOLS." }
+  halt: { type: bool, default: false, where: hub, doc: "Kill switch: drive refuses to start, and running drives stop at the next step." }
+  confirm: { enum: [gated, always], default: gated, where: hub, doc: "always: every drive action stops for a person; gated: only when a gate below fires." }
+  min_confidence: { type: float, default: 0.9, min: 0, max: 1, where: hub, doc: "Below this confidence a drive action stops for a person." }
+  confirm_p: { type: float, default: 0.2, min: 0, max: 1, where: hub, doc: "The model's P(needs confirmation) that stops an action for a person." }
+  done_p: { type: float, default: 0.5, min: 0, max: 1, where: hub, doc: P(done) that ends a drive. }
+  abort_p: { type: float, default: 0.5, min: 0, max: 1, where: hub, doc: P(abort) that ends a drive. }
+  destructive_words: { type: list, items: { type: str }, where: hub, doc: "Words that make a drive action stop for a person; blank: the built-in list (delete, send, pay, ...)." }
+
+caps:
+  run:
+    doc: >-
+      Answer a batch of typed questions about state in one pass. questions: [{id, type, question,
+      options|levels}], type choice (pick one option), score (ordered levels; returns level and the
+      expected score) or noul (yes/no; returns p = P(yes)). state is text or JSON. Every answer
+      carries probabilities and confidence (top-two margin); probabilities are uncalibrated. A batch
+      past the model's limit is split into several passes.
+    on: hub
+    risk: read
+    scope: external
+    timeout: 2m
+    run: scripts/decide.py:run
+    args:
+      state: { type: json, required: true, doc: What the questions are about (text or JSON). }
+      questions: { type: list, required: true, items: { type: map }, doc: "[{id, type, question, options|levels|criteria}]" }
+      temperature: { type: float, min: 0.05, max: 10, doc: "This call's temperature (Diffucision only)." }
+    result: { type: map }
+  status:
+    doc: "Is the decision model reachable and loaded, and what is it: {ok, ready, latency_ms, adapter, max_questions, max_options, model}."
+    on: hub
+    risk: read
+    scope: external
+    idempotent: true
+    timeout: 30s
+    aliases: [decide.health, decide.info]
+    run: scripts/decide.py:status
+    result: { type: map }
+  drive:
+    doc: >-
+      Drive a screen towards goal: screenshot -> one decision pass -> one input, repeated inside this
+      call until done, abort, a budget, the kill switch or a failed action. screen_worker serves
+      screen.capture; input_worker (default the same) serves hid.*; touch=true for a touch screen.
+      texts are strings it may choose to type (it can't write its own); keys the keys it may press.
+      Dry run (the dry_run setting, on by default) only reports the intended calls. An action its
+      gates flag (low confidence, blind, destructive-looking, model-flagged, confirm=always) ends the
+      drive as needs_confirmation with the pending calls: do them yourself through hid.* or ask the
+      person first, then drive again. An input the hub holds ends it as held.
+    on: hub
+    risk: exec
+    scope: multi-machine
+    effects: [physical]
+    timeout: none
+    run: scripts/decide.py:drive
+    args:
+      goal: { type: str, required: true, max: 1000 }
+      screen_worker: { type: str, required: true }
+      input_worker: { type: str }
+      touch: { type: bool, default: false }
+      dry_run: { type: bool }
+      max_steps: { type: int, min: 1, max: 500 }
+      max_seconds: { type: float, default: 120, min: 1, max: 3600 }
+      texts: { type: list, items: { type: str, max: 2000 } }
+      keys: { type: list, items: { type: str, max: 40 }, doc: "Keys or chords (enter, ctrl+s); blank: enter, escape, tab, backspace (back, home on touch)." }
+      screen_size: { type: str, pattern: "^[0-9]{2,5}x[0-9]{2,5}$", doc: "WIDTHxHEIGHT of the input's coordinates when they differ from the screenshot's." }
+    result: { type: map }
+docs: { manual: docs/manual.md }
