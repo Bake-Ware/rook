@@ -129,7 +129,7 @@ class Dispatcher:
         self.sessions: dict[str, Session] = {}
         self.holds: dict[str, Hold] = {}
         self.closed_doors: set[str] = set()
-        self._inflight: dict[str, tuple] = {}   # nonce -> (ticket, caller, session id, extra layers)
+        self._inflight: dict[str, tuple] = {}   # nonce -> (ticket, caller, session id, extra layers, door)
         self.leases: dict[str, tuple[str, str, int]] = {}   # lease id -> (worker id, session id, exp)
 
     # -- sessions (8.4) ----------------------------------------------------
@@ -347,7 +347,7 @@ class Dispatcher:
             request["ticket"] = self._mint(cid, caller, s, w, call, ahash)
             nonce = request["ticket"]["nonce"]
             entry["ticket"].append(nonce)
-            self._inflight[nonce] = (request["ticket"], caller, s.id, call.layers)
+            self._inflight[nonce] = (request["ticket"], caller, s.id, call.layers, call.door)
             try:
                 reply = await asyncio.wait_for(self.send(w.band, request), wait)
             except asyncio.TimeoutError:
@@ -491,19 +491,20 @@ class Dispatcher:
                        args: dict | None, why: str) -> dict:
         """Dispatch a plugin's ``core.call`` as the parent call's person,
         agent and session, with the parent's own extra layers (a page's caps,
-        an outer plugin's ``uses``) plus the calling plugin's ``uses``. The
-        parent ticket must be one this hub minted for that worker and still
-        in flight."""
+        an outer plugin's ``uses``) plus the calling plugin's ``uses``, and
+        through the parent's door (closing it stops the work started there).
+        The parent ticket must be one this hub minted for that worker and
+        still in flight."""
         nonce = ticket.get("nonce") if isinstance(ticket, dict) else None
         held = self._inflight.get(nonce) if isinstance(nonce, str) else None
         if held is None or held[0] != ticket or ticket["worker"] != from_worker:
             return {"ok": False, "error": "denied: core.call: no such call in flight"}
-        parent, caller, sid, layers = held
+        parent, caller, sid, layers, door = held
         w = self.workers.get(from_worker)
         plugin = parent["cap"].partition(".")[0]
         uses = {"grants": list((w.uses if w else {}).get(plugin, ()))}
         return await self.dispatch(caller, Call(cap=cap, target=target, args=args, why=why,
-                                                session=sid, layers=[*layers, ["uses", uses]]))
+                                                session=sid, layers=[*layers, ["uses", uses]], door=door))
 
     # -- core.elevate (7.2, 13): a lease for a call in flight -------------
 
