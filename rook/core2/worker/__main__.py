@@ -132,8 +132,8 @@ def main(argv=None) -> int:
     from . import boot
     try:
         boot.select(cfg.data)             # may exec into another core and not return
-    except OSError as e:                  # an unreadable core folder: run what is here
-        print(f"worker: core release not switched: {e}", file=sys.stderr)
+    except Exception as e:                # a broken core folder or state: run what is here, never not at all
+        print(f"worker: core release not switched: {type(e).__name__}: {e}", file=sys.stderr)
     try:
         asyncio.run(serve(Worker(cfg, config_path=Path(args.config).resolve())))
     except KeyboardInterrupt:

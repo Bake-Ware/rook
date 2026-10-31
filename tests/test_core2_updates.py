@@ -503,3 +503,15 @@ def test_the_desktop_feed_lists_the_apps_files_and_caches(monkeypatch):
     monkeypatch.setattr(updates, "_feed", {"at": 0.0, "body": None})
     assert updates.desktop_feed(down, now=5.0) == {"ok": True, "release": "", "downloads": []}
     assert updates.desktop_feed(fetch, now=5.0 + updates.FEED_RETRY + 1)["downloads"]   # retried soon after a failure
+
+
+def test_a_garbled_state_never_keeps_the_worker_from_starting(tmp_path):
+    root = tmp_path / "core"
+    installed(root, tmp_path, "0.5.1")
+    boot.write_state(root, {"current": None, "previous": None, "trial": {"version": "0.5.1", "boots": "x"},
+                            "failed": None})
+    assert boot.choose(root) is None and boot.read_state(root)["failed"]["version"] == "0.5.1"
+    (root / boot.STATE).write_text("{not json")
+    assert boot.choose(root) is None
+    boot.write_state(root, {"current": "../../etc", "previous": None, "trial": "x", "failed": None})
+    assert boot.choose(root) is None

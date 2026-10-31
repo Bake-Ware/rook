@@ -126,11 +126,13 @@ def choose(root: Path, hop: str | None = None, now: float | None = None) -> str 
         v = trial["version"]
         if hop == v:
             return v
+        if not isinstance(trial.get("boots"), int):
+            trial["boots"] = MAX_BOOTS           # unreadable count: don't give it more chances
         why = intact(root / v)
-        if why is None and int(trial.get("boots") or 0) >= MAX_BOOTS:
+        if why is None and trial["boots"] >= MAX_BOOTS:
             why = f"did not come up: {MAX_BOOTS} starts without serving a call from the home hub"
         if why is None:
-            trial["boots"] = int(trial.get("boots") or 0) + 1
+            trial["boots"] += 1
             write_state(root, state)
             return v
         state["trial"] = None

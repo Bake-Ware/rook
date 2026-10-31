@@ -23,6 +23,7 @@ import hashlib
 import io
 import json
 import re
+import secrets
 import subprocess
 import tarfile
 import time
@@ -177,7 +178,7 @@ def build(source: Path, dest: Path, *, signer, hub: str, version: str | None = N
     version, files, hashes, requires = plan(source, version)
     sig = sign(signer, hub=hub, version=version, files=hashes, requires=requires, now=now)
     dest = Path(dest)
-    part = dest.with_name(dest.name + ".part")
+    part = dest.with_name(f"{dest.name}.{secrets.token_hex(4)}.part")
     try:
         with tarfile.open(part, "w:gz", format=tarfile.PAX_FORMAT, compresslevel=6) as tar:
             raw = json.dumps(sig, sort_keys=True).encode("utf-8")
