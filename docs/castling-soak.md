@@ -272,8 +272,8 @@ tokens and plugin afterwards.
 
 For their lanes, or for Bake:
 
-Items 1, 2, 4 and 5 are fixed in wave 7 (next section); 3 mostly too: a
-resent request reaches the restarted worker and is answered at once.
+Items 1, 2, 4 and 5 are fixed in wave 7 (next section); 3 is not (a
+request the old worker acked before it died is not resent).
 
 1. **Lost band messages are never resent.** A request or reply dropped on
    the band (relay paused: its UDP buffer overflows; relay restarted) is
@@ -318,8 +318,8 @@ resent request reaches the restarted worker and is answered at once.
 ## Transport fixes (wave 7)
 
 Four of the findings above, fixed in `rook/core2/transport`,
-`rook/core2/worker/security.py` and the shared Drop receiver
-(`rook/worker/ota_drop.py`, opt-in, 0.4 unchanged). Before: the sidecar at
+`rook/core2/worker/security.py` and `rook/core2/transport/drop.py` (built
+on the 0.4 Drop classes, which are unchanged: no 0.4 module is edited). Before: the sidecar at
 castling `1c62dedc`; after: this branch. Same load each time (`run
 --minutes 11 --rate 20 --chaos-every 100 --plugin-every 120`, and `burst
 --seconds 300 --threads 8`). Raw runs: `~/rook-backups/c7-transport2/` on
@@ -403,27 +403,37 @@ a 20 ms path at ~3 MB/s.
 
 ### The chaos run, before and after
 
+Before: castling `1c62dedc`. After: this branch's transport (the run with
+the final resend behaviour; the machine was busier, load average ~19 from
+other agents' tests, so latencies are noisier than before). "Slow" is a
+call that took over 5 s and still came back ok.
+
 | | before | after |
 |---|---|---|
-| operations (11 min) | 10,736 at 16.2/s | 12,460 at 18.9/s |
-| `restart.sh relay` | ok again after 20.1 s; 8 calls waited out the gap, 4 timed out | 1.3 s; none |
-| `restart.sh worker` | 1.1 s; 4 timed out, 1 large reply not pulled, one call 65 s | 1.2 s; none |
+| operations (11 min) | 10,736 at 16.2/s | 12,006 at 18.2/s |
+| `restart.sh relay` | ok again after 20.1 s; 8 slow (max 20 s), 4 timed out | 0.3 s; none |
 | relay paused 5 s | 5.1 s; 2 slow (max 10.7 s) | 5.1 s; 1 slow (5.0 s) |
-| relay paused 20 s | 20.1 s; 12 slow (max 20.0 s), 0 failed | PAUSE20 |
-| hub restarts | doors refuse ~1-2 s (connection refused), unchanged | same |
-| calls over 25 s | 5 (file_read/write, sleep, streams: a lost message waited a timeout) | 0 |
-| blob_4m (4 MiB reply) p50 / p99 | 6,715 / 11,466 ms | 818 / 2,537 ms |
-| exec_1m (1 MiB of stdout) p50 / p99 | 1,344 / 4,051 ms | 429 / 1,091 ms |
-| stream_2_7m p50 | 686 ms | 359 ms |
-| blob_256k p50 | 309 ms | 58 ms |
-| mcp_blob_64k p50 | 135 ms | 16 ms |
-| worker-call p50 (ping) | 6.7 ms | 7.0 ms |
+| relay paused 20 s | 20.1 s; 12 slow (max 20 s), 0 failed | 20.1 s; 11 slow (max 20 s), 1 timed out (`exec_1m`, sent as the pause began) |
+| `restart.sh worker` | 1.1 s; 4 slow (max 65 s), 4 timed out, 1 large reply not pulled | 2.0 s; 6 slow (max 65 s), 3 timed out (finding 3, below) |
+| `restart.sh` (all three) | not reached in 11 min | 0.1 s; doors refuse while the hub restarts |
+| `restart.sh hub` | doors refuse ~1-2 s (connection refused) | same |
+| blob_4m (4 MiB reply) p50 / p99 | 6,715 / 11,466 ms | 1,651 / 3,810 ms (818 / 2,537 on a quieter machine) |
+| exec_1m (1 MiB of stdout) p50 / p99 | 1,344 / 4,051 ms | 454 / 1,333 ms |
+| stream_2_7m p50 | 686 ms | 363 ms |
+| blob_256k p50 | 309 ms | 98 ms |
+| mcp_blob_64k p50 | 135 ms | 17 ms |
+| worker-call p50 (ping) | 6.7 ms | 7.1 ms |
 | plugin push + rollback | 10, 0 failed | 10, 0 failed |
 
-Failures left in the after run are the doors refusing connections while
-the hub restarts (`restart.sh hub` and `restart.sh`), as before.
+An earlier after-run (before resends went out at once on recovery) had the
+20 s pause cost 2 timeouts: calls waited for their next resend slot after
+the relay woke. That is why the first answer after an outage now sends
+everything pending at once.
 
-Still open: a worker restart answers resent calls with `denied by worker:
-replay` (the nonce is in its persisted cache; the call may have run), which
-is honest but terse; and calls the hub sends to a worker that is gone for
-good still wait their timeout.
+Still open: calls in flight when a worker stops wait their whole timeout
+(finding 3): the old worker acked them, so nobody resends them, and the
+new one never heard of them. A worker that says goodbye, or a hub that
+fails a worker's acked calls when it re-announces with a new boot, would
+answer them at once. A resent call that does reach a restarted worker gets
+`denied by worker: replay` at once (its nonce is persisted; the call may
+have run).

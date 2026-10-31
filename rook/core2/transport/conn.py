@@ -67,11 +67,11 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from rook.core.backoff import Backoff
-from rook.worker.ota_drop import (DropReplyServer, drop_id_of, is_drop_packet,
-                                  pull_reply, valid_descriptor)
+from rook.worker.ota_drop import DropReplyServer, drop_id_of, is_drop_packet, valid_descriptor
 from rook.worker.wire.codec import route_id_for
 
 from .. import CORE_VERSION, wire
+from . import drop
 from .links import Link
 
 log = logging.getLogger("rook.core2.transport")
@@ -85,7 +85,6 @@ MAX_MESSAGE = 32 * 1024 * 1024  # largest inline message (the codec's reassembly
 BULK_MAX = 64 * 1024 * 1024     # bytes served over Drop at once, per band
 BULK_TTL = 300.0                # seconds an unpulled offer stays served
 PULL_SECS = 60.0                # default time to pull a large reply or a bundle
-PULL_WINDOWS = 8                # 64-chunk Drop windows a pull keeps in flight
 KEEP_SECS = 900.0               # request ids remembered (for rr, accept, drop pulls, resends)
 KEEP_MAX = 10_000
 ACK_DELAY = 0.2                 # acks wait this long, batched: a quick reply acks its request itself
@@ -424,8 +423,8 @@ class _Band:
             raise TransportError("malformed drop descriptor")
         if not self.link.connected:
             raise TransportError(f"band {self.band[:8]}: link down")
-        data = await pull_reply(self.link.band_id, parsed, self._raw, route=self._route_to(source),
-                                timeout=timeout, register=self._register, windows=PULL_WINDOWS)
+        data = await drop.pull(self.link.band_id, parsed, self._raw, route=self._route_to(source),
+                               timeout=timeout, register=self._register)
         if data is None:
             raise TransportError(f"drop {parsed[0]}: not pulled within {timeout:g}s or hash mismatch")
         return data

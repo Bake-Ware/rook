@@ -205,36 +205,3 @@ def test_reply_receiver_handles_chunks_in_linear_time():
             bytes([DropFrameType.CHUNK]) + i.to_bytes(4, "big") + chunk + _FAKE_TAG))
     assert rx.verified is False          # fake sha: complete, mismatched
     assert Counting.n < total * 80, Counting.n
-
-
-@pytest.mark.asyncio
-async def test_several_windows_in_flight_and_lost_chunks_asked_again():
-    """windows=4: one REQUEST asks for four 64-chunk windows, each drained
-    window opens the next, and after ``rerequest`` without progress every
-    chunk still missing below the frontier is asked again."""
-    import json
-    from telesthete.protocol.framing import unpack_packet
-    band_id = BandCrypto("ota-psk-win").band_id
-    data = os.urandom(1024 * 600 + 5)               # 587 chunks, ~9 windows
-    requests, n = [], {"chunks": 0}
-
-    def drop(pkt, to):
-        frame = unpack_packet(pkt).ciphertext
-        if to == "sender" and frame[0] == 0x02:
-            requests.append(json.loads(frame[1:-16])["ranges"])
-        if to == "receiver" and frame[0] == 0x03:
-            n["chunks"] += 1
-            return n["chunks"] > 300 and n["chunks"] % 50 == 7      # then 2 % lost, on every pass
-        return False
-
-    relay = Relay(drop=drop)
-    sender = OtaDropSender(band_id, 21, "w.pyz", data, relay.to_receiver())
-    receiver = OtaDropReceiver(band_id, 21, relay.to_sender(), rerequest=0.05, tick_secs=0.02, windows=4)
-    relay.sender, relay.receiver = sender, receiver
-    receiver.start()
-    receiver.accept_offer("w.pyz", len(data), sender.sha256)
-    assert await receiver.wait(timeout=15.0) and receiver.data == data
-    assert requests[0] == [[0, 64], [64, 128], [128, 192], [192, 256]]
-    assert requests[1:4] == [[[256, 320]], [[320, 384]], [[384, 448]]]      # each drained window: the next
-    assert any(len(r) > 1 for r in requests[4:])          # a stall asked for the gaps at once
-    receiver.stop()

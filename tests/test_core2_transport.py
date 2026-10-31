@@ -617,6 +617,44 @@ def test_a_large_reply_pulls_through_lost_drop_packets(monkeypatch):
     arun(main(), 30)
 
 
+def test_a_pull_keeps_several_windows_in_flight_and_asks_again_for_gaps():
+    """One REQUEST asks for four 64-chunk windows, each drained window opens
+    the next, and after ``rerequest`` without progress every chunk still
+    missing below the frontier is asked again in one REQUEST."""
+    from telesthete.protocol.framing import unpack_packet
+    from rook.core2.transport.drop import WindowedPull
+    from rook.worker.ota_drop import OtaDropSender
+
+    async def main():
+        band_id = bytes.fromhex(BAND)
+        data = os.urandom(1024 * 600 + 5)           # 587 chunks, ~9 windows
+        requests, n = [], {"chunks": 0}
+        ends = {}
+
+        async def to_sender(pkt):
+            frame = unpack_packet(pkt).ciphertext
+            if frame[0] == 0x02:
+                requests.append(json.loads(frame[1:-16])["ranges"])
+            ends["tx"].feed(pkt)
+
+        async def to_receiver(pkt):
+            if unpack_packet(pkt).ciphertext[0] == 0x03:
+                n["chunks"] += 1
+                if n["chunks"] > 300 and n["chunks"] % 50 == 7:     # then 2 % lost, on every pass
+                    return
+            ends["rx"].feed(pkt)
+        ends["tx"] = OtaDropSender(band_id, 0x8021, "reply", data, to_receiver)
+        ends["rx"] = rx = WindowedPull(band_id, 0x8021, to_sender, rerequest=0.05, tick_secs=0.02, windows=4)
+        rx.start()
+        rx.accept_offer("reply", len(data), ends["tx"].sha256)
+        assert await rx.wait(15) and rx.data == data
+        rx.stop()
+        assert requests[0] == [[0, 64], [64, 128], [128, 192], [192, 256]]
+        assert requests[1:4] == [[[256, 320]], [[320, 384]], [[384, 448]]]    # each drained window: the next
+        assert any(len(r) > 1 for r in requests[4:])        # a stall asked for the gaps at once
+    arun(main(), 20)
+
+
 # -- config -------------------------------------------------------------------------
 
 def test_from_config_builds_one_link_per_band(monkeypatch):
@@ -628,11 +666,11 @@ def test_from_config_builds_one_link_per_band(monkeypatch):
     assert TelestheteLink(PSK, relay="relay.lan").t.hub == ("relay.lan", 7474)
     assert band_of(PSK) == hashlib.sha256(PSK.encode()).digest()[:16].hex()
     # UDP: a 5 s keepalive and 20,000 frames/s pacing unless the band says otherwise; WS: as before
-    udp, ws = t._bands[BAND].link.t, t._bands[BAND2].link.t
-    assert (udp._keepalive, udp._pace) == (5.0, (20_000.0, 256)) and (ws._keepalive, ws._pace) == (20.0, None)
+    udp, ws = t._bands[BAND].link, t._bands[BAND2].link
+    assert (udp.t._keepalive, udp.pace) == (5.0, (20_000.0, 256)) and (ws.t._keepalive, ws.pace) == (20.0, None)
     tuned = from_config({"node_id": WORKER, "bands": [{"psk": PSK, "relay": "r:1", "keepalive": 2,
-                                                       "pace": [0, 1]}]})._bands[BAND].link.t
-    assert (tuned._keepalive, tuned._pace) == (2.0, (0.0, 1))
+                                                       "pace": [0, 1]}]})._bands[BAND].link
+    assert (tuned.t._keepalive, tuned.pace) == (2.0, (0, 1))
     with pytest.raises(ValueError):
         from_config({"node_id": WORKER, "bands": [{"relay": "x:1"}]})
     with pytest.raises(ValueError):
@@ -672,6 +710,8 @@ def test_telesthete_round_trip_on_localhost():
         try:
             await hub.start()
             await until(lambda: hub.t.connected(BAND))
+            pacer = hub.t._band(BAND).link.t.writer.pacer          # core v2's, not the 0.4 default
+            assert (pacer.rate, pacer.burst) == (20_000.0, 256.0)
             await worker.start()
             await until(lambda: WORKER in hub.t.peers(BAND) and hub.kinds("heartbeat"))
             # the hub announce went out before the worker joined; the next one is heard

@@ -50,8 +50,7 @@ import time
 import weakref
 from typing import Awaitable, Callable, Dict, Optional
 
-from telesthete.protocol.drop import (CHUNK_SIZE, MAX_RANGE_CHUNKS, DropFrameType, DropReceiver,
-                                      DropSender)
+from telesthete.protocol.drop import CHUNK_SIZE, DropFrameType, DropReceiver, DropSender
 from telesthete.protocol.framing import ChannelType, pack_packet, unpack_packet
 from telesthete.protocol.sequence import SequenceSource
 
@@ -172,65 +171,25 @@ def drop_id_of(payload: bytes) -> int:
 
 
 class _Receiver(DropReceiver):
-    """DropReceiver with a configurable re-request timeout and, optionally,
-    several windows in flight.
+    """DropReceiver with a configurable re-request timeout.
 
     The library re-requests a window only after 1 s without progress, which
     is right for a long OTA but turns a reply that loses one fragment per
     64-chunk window into a ~1 s stall per window. Large replies use a shorter
-    timeout (SPEC §8.2 leaves it to the implementation).
+    timeout (SPEC §8.2 leaves it to the implementation)."""
 
-    The library also keeps one 64-chunk window outstanding, so a transfer
-    pays a round trip per 64 KiB. With ``windows`` > 1 the receiver keeps
-    that many windows requested ahead (one REQUEST may carry several ranges,
-    and every sender serves each of them): when the oldest window drains it
-    asks for the next one, and after ``rerequest`` without progress it asks
-    again for every chunk still missing in flight. ``windows=1`` is the
-    library's behaviour."""
-
-    def __init__(self, *a, rerequest: Optional[float] = None, windows: int = 1, **kw) -> None:
+    def __init__(self, *a, rerequest: Optional[float] = None, **kw) -> None:
         super().__init__(*a, **kw)
         self.rerequest = rerequest
-        self.windows = max(1, int(windows))
-        self._next = 0          # first chunk not yet requested (windows > 1)
 
     def tick(self, now: Optional[float] = None) -> None:
-        if self.rerequest is None and self.windows == 1:
+        if self.rerequest is None:
             return super().tick(now)
         now = time.monotonic() if now is None else now
-        wait = self.rerequest if self.rerequest is not None else 1.0
         if (self.offer is not None and self.verified is None
-                and now - self._last_progress > wait):
+                and now - self._last_progress > self.rerequest):
             self._last_progress = now
-            self.request_missing(gaps=True)
-
-    def request_missing(self, gaps: bool = False) -> None:
-        if self.windows == 1:
-            return super().request_missing()
-        if self.offer is None or self.sender_addr is None or self.verified is not None:
-            return
-        if self._next_missing_range() is None:      # advances _low
-            return
-        total, low = self.offer["total_chunks"], self._low
-        limit = min(total, low + self.windows * MAX_RANGE_CHUNKS)
-        start = max(self._next, low)
-        ranges: list[tuple[int, int]] = []
-        if gaps:            # stalled: everything still missing below the frontier
-            run = None
-            for i in range(low, start + 1):
-                lacking = i < start and i not in self.have
-                if lacking and run is None:
-                    run = i
-                elif not lacking and run is not None:
-                    ranges += [(s, min(s + MAX_RANGE_CHUNKS, i)) for s in range(run, i, MAX_RANGE_CHUNKS)]
-                    run = None
-        ranges += [(s, min(s + MAX_RANGE_CHUNKS, limit)) for s in range(start, limit, MAX_RANGE_CHUNKS)]
-        if not ranges:
-            return
-        self._next = max(self._next, limit)
-        # The library calls us again once this (the oldest) window drains.
-        self._outstanding = (low, min(low + MAX_RANGE_CHUNKS, total))
-        self._send_json(self.sender_addr, DropFrameType.REQUEST, {"ranges": [list(r) for r in ranges]})
+            self.request_missing()
 
 
 def _weak(method: Callable) -> Callable:
@@ -261,7 +220,7 @@ class OtaDropReceiver:
                  have: Optional[Dict[int, bytes]] = None, *,
                  route: int = 0, native: Optional[NativeSend] = None,
                  rerequest: Optional[float] = None, tick_secs: float = _TICK_SECS,
-                 seq_source: Optional[SequenceSource] = None, windows: int = 1) -> None:
+                 seq_source: Optional[SequenceSource] = None) -> None:
         self.band_id = band_id
         self.drop_id = drop_id
         self._shim = _RelayShim(send_coro, route=route, native=native)
@@ -271,7 +230,7 @@ class OtaDropReceiver:
             crypto=self._crypto, transport=self._shim,
             # A retry against the same sender must keep counting up: the
             # sender's replay watermark would drop a fresh random start below it.
-            seq_source=seq_source or SequenceSource(), rerequest=rerequest, windows=windows,
+            seq_source=seq_source or SequenceSource(), rerequest=rerequest,
         )
         self._tick_secs = tick_secs
         self._tick_task: Optional[asyncio.Task] = None
@@ -567,19 +526,18 @@ def valid_descriptor(desc, max_size: int) -> Optional[tuple[int, int, str]]:
 
 async def pull_reply(band_id: bytes, desc: tuple[int, int, str],
                      send_coro: Callable[..., Awaitable[None]], *, route: int = 0,
-                     timeout: float, register: Callable[[int, Optional[OtaDropReceiver]], None],
-                     windows: int = 1) -> Optional[bytes]:
+                     timeout: float, register: Callable[[int, Optional[OtaDropReceiver]], None]
+                     ) -> Optional[bytes]:
     """Caller side: pull one served reply. ``register(drop_id, rx)`` hooks the
     receiver into the caller's inbound Drop routing (and ``rx=None`` unhooks
-    it). ``windows``: 64-chunk windows kept in flight (see :class:`_Receiver`).
-    Returns the verified bytes, or ``None`` on timeout / hash mismatch."""
+    it). Returns the verified bytes, or ``None`` on timeout / hash mismatch."""
     did, size, sha = desc
     deadline = time.monotonic() + timeout
     seqs = SequenceSource()
     for _attempt in range(2):
         rx = OtaDropReceiver(band_id, did, send_coro, route=route,
                              rerequest=REPLY_REREQUEST, tick_secs=REPLY_TICK,
-                             seq_source=seqs, windows=windows)
+                             seq_source=seqs)
         register(did, rx)
         try:
             rx.start()

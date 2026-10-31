@@ -92,12 +92,9 @@ class TelestheteLink:
         else:
             raise ValueError("a band link needs relay or ws_url")
         self.ws = bool(ws_url)
-        if self.ws:
-            self.t = TelestheteHubTransport(psk, host, port, ws_url=ws_url)
-        else:
-            rate, burst = pace if pace is not None else UDP_PACE
-            self.t = TelestheteHubTransport(psk, host, port, pace=(float(rate), int(burst)),
-                                            keepalive_secs=float(keepalive or UDP_KEEPALIVE))
+        self.pace = None if self.ws else tuple(pace if pace is not None else UDP_PACE)
+        self.t = TelestheteHubTransport(psk, host, port, ws_url=ws_url or None,
+                                        keepalive_secs=20.0 if self.ws else float(keepalive or UDP_KEEPALIVE))
         self.band_id = self.t.band_id
         self.band = self.band_id.hex()
 
@@ -120,6 +117,12 @@ class TelestheteLink:
         try:
             # WS calls on_connect on every (re)connect; UDP has no connection.
             await self.t.start(on_message, on_connect if self.ws else None)
+            if self.pace is not None and self.t.writer is not None:
+                # The 0.4 transport reads its pacer from the environment;
+                # core v2 sets its own on the writer it built.
+                from rook.worker.transports.writer import TokenBucket
+                rate, burst = self.pace
+                self.t.writer.pacer = TokenBucket(float(rate), int(burst)) if float(rate) > 0 else None
         except BaseException:
             await self.t.stop()
             raise
