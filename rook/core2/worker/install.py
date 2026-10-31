@@ -159,20 +159,29 @@ class Installer:
             current = self.state(pdir.name)["current"]
             if not current:
                 continue
-            folder = pdir / current
             try:
-                sig = json.loads((folder / SIG_FILE).read_text(encoding="utf-8"))
-                if sig.get("worker") != self.worker_id or sig.get("plugin") != pdir.name:
-                    raise InstallError("plugin.sig is for another worker or plugin")
-                if not self.approves(sig.get("hub")):
-                    raise InstallError(f"hub {sig.get('hub')} no longer approves plugins here")
-                if file_hashes(folder) != sig.get("files"):
-                    raise InstallError("files changed since install")
-            except (OSError, ValueError, AttributeError, InstallError) as e:
+                ok[pdir.name] = self._recheck(pdir.name, current)
+            except InstallError as e:
                 skipped[pdir.name] = f"{pdir.name}@{current}: {e}"
-                continue
-            ok[pdir.name] = folder
         return ok, skipped
+
+    def _recheck(self, plugin: str, version: Any) -> Path:
+        """An installed version folder that may load again: its files still
+        match its plugin.sig and the signing hub still approves plugins here."""
+        if not (_NAME.fullmatch(plugin) and isinstance(version, str) and _SEMVER.fullmatch(version)):
+            raise InstallError("not an installed plugin version")
+        folder = self.root / plugin / version
+        try:
+            sig = json.loads((folder / SIG_FILE).read_text(encoding="utf-8"))
+            if sig.get("worker") != self.worker_id or sig.get("plugin") != plugin:
+                raise InstallError("plugin.sig is for another worker or plugin")
+            if not self.approves(sig.get("hub")):
+                raise InstallError(f"hub {sig.get('hub')} no longer approves plugins here")
+            if file_hashes(folder) != sig.get("files"):
+                raise InstallError("files changed since install")
+        except (OSError, ValueError, AttributeError) as e:
+            raise InstallError(str(e)) from None
+        return folder
 
     # -- install ----------------------------------------------------------------------
 
@@ -343,10 +352,16 @@ class Installer:
     async def rollback(self, plugin: str) -> dict:
         """Swap back to the kept previous version (which becomes the kept one)."""
         async with self._lock:
+            if not _NAME.fullmatch(plugin):
+                return {"ok": False, "plugin": plugin, "reason": "not a plugin name"}
             state = self.state(plugin)
             prev = state["previous"]
             if not prev or not (self.root / plugin / prev).is_dir():
                 return {"ok": False, "plugin": plugin, "reason": f"no previous version of {plugin} is kept"}
+            try:
+                self._recheck(plugin, prev)    # the kept folder is on disk: verify it as at start-up
+            except InstallError as e:
+                return {"ok": False, "plugin": plugin, "reason": f"previous version {prev} refused: {e}"}
             err = await self._restore(plugin, prev)
             if err:
                 return {"ok": False, "plugin": plugin, "reason": f"rollback to {prev} failed: {err}"}

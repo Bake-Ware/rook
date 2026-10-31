@@ -231,6 +231,34 @@ def test_rollback_without_previous(tmp_path):
     assert not run(inst.rollback("echo"))["ok"]
 
 
+def test_rollback_rechecks_the_kept_version(tmp_path):
+    # The kept folder sits on disk between installs: rollback must verify it
+    # as start-up does, or a changed file loads without a hub signature.
+    inst, host = worker(tmp_path)
+    for v in ("1.0.0", "1.1.0"):
+        assert ship(make_plugin(tmp_path, version=v), inst)["ok"]
+    kept = tmp_path / "plugins" / "echo" / "1.0.0" / "plugin.yaml"
+    kept.write_text(kept.read_text() + "\n# changed\n")
+    back = run(inst.rollback("echo"))
+    assert not back["ok"] and "files changed" in back["reason"]
+    assert host.loaded["echo"][0] == "1.1.0"
+    assert inst.state("echo") == {"current": "1.1.0", "previous": "1.0.0"}
+    inst.approves = lambda hub: False
+    kept.write_text(kept.read_text().replace("\n# changed\n", ""))
+    assert "no longer approves" in run(inst.rollback("echo"))["reason"]
+
+
+def test_rollback_refuses_a_path_for_a_plugin_name(tmp_path):
+    # core.plugin.rollback's plugin arg is caller input: never a path.
+    inst, host = worker(tmp_path)
+    assert ship(make_plugin(tmp_path), inst)["ok"]
+    evil = tmp_path / "evil"
+    (evil / "x").mkdir(parents=True)
+    (evil / "state.json").write_text('{"current": null, "previous": "x"}')
+    (evil / "x" / "plugin.yaml").write_text("plugin: evil\nversion: 0.0.1\n")
+    back = run(inst.rollback("../evil"))
+    assert not back["ok"] and "evil" not in host.loaded
+
 def test_installed_rechecks_hashes_and_trust(tmp_path):
     inst, _ = worker(tmp_path)
     assert ship(make_plugin(tmp_path), inst)["ok"]
