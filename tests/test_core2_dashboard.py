@@ -417,14 +417,14 @@ def test_agent_made_pages_keep_a_note_and_never_exceed_their_author(site):
             # viewed by an owner, the page still can't do more than its author (narrow: board.count)
             t = (await c.open("pages/uptime"))["token"]
             assert (await c.page(t, "board.count"))["ok"]
-            assert (await c.page(t, "board.secret"))["error"] == "denied: author agent: grants"
+            assert (await c.page(t, "board.secret"))["error"] == "denied: agent: grants"
             # changes go into the note's history; plugin pages aren't changed this way
             _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "pages.update", "why": WHY, "args": {
                 "page": "pages/uptime", "change": "Added the count.", "html": "<p>3</p>"}}, bearer=tokens["claude"])
             assert out["ok"], out
             assert "agent:claude for person:bake: Added the count." in (hub.data / "pages/uptime/NOTE.md").read_text()
             # claude (all rights) changed it, but narrow wrote it too: still no more than narrow
-            assert (await c.page(t, "board.secret"))["error"] == "denied: author agent: grants"
+            assert (await c.page(t, "board.secret"))["error"] == "denied: agent: grants"
             assert (hub.data / "pages/uptime/page.html").read_text() == "<p>3</p>"
             _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "pages.update", "why": WHY, "args": {
                 "page": "board/board", "change": "x", "html": "x"}}, bearer=tokens["claude"])
@@ -439,6 +439,31 @@ def test_agent_made_pages_keep_a_note_and_never_exceed_their_author(site):
             await hub.stop()
     run(go())
 
+
+def test_a_made_page_cant_launder_its_author_through_a_new_page(site):
+    # narrow makes P1 (caps pages.create); bake opens it; P1 makes P2 with
+    # caps ["*"]. P2 must still carry narrow as an author, never bake alone.
+    async def go():
+        hub, tokens = await site()
+        try:
+            c = Client(hub)
+            await c.sign_in(tokens["bake"])
+            _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "pages.create", "why": WHY, "args": {
+                "name": "p1", "title": "P1", "html": "<p>1</p>", "note": "n", "caps": ["pages.create"]}},
+                bearer=tokens["narrow"])
+            assert out["ok"], out
+            t1 = (await c.open("pages/p1"))["token"]
+            out = await c.page(t1, "pages.create", {"name": "p2", "title": "P2", "html": "<p>2</p>",
+                                                    "note": "n", "caps": ["*"]})
+            assert out["ok"], out
+            got = (await c.call("pages.get", {"page": "pages/p2"}))["result"]
+            assert {"person": "person:bake", "agent": "agent:narrow"} in got["made_by"]["authors"]
+            t2 = (await c.open("pages/p2"))["token"]
+            assert (await c.page(t2, "board.count"))["ok"]
+            assert "denied" in (await c.page(t2, "board.secret"))["error"]
+        finally:
+            await hub.stop()
+    run(go())
 
 def test_pages_hear_only_declared_events_the_viewer_may_hear(site):
     async def go():

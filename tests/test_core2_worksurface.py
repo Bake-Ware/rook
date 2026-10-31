@@ -188,9 +188,9 @@ def test_layout_pages_are_checked_and_arranged_in_the_sandbox(tmp_path):
 
         # the sandbox scope: its components' caps, never more than its author (narrow)
         t = opened["token"]
-        assert (await c.page(t, "hub.workers"))["error"] == "denied: author agent: grants"
+        assert (await c.page(t, "hub.workers"))["error"] == "denied: agent: grants"
         assert (await c.page(t, "board.count"))["ok"]
-        assert (await c.page(t, "board.secret"))["error"] == "denied: page: grants"
+        assert (await c.page(t, "board.secret"))["error"] == "denied: agent: grants"   # narrow is the caller now; the page layer refuses too
         # a layout written by the owner may call what its components call
         assert (await bearer(c, tokens["bake"], "pages.create", **{**base, "name": "mine"},
                              layout=[{"component": "hub/workers"}]))["ok"]

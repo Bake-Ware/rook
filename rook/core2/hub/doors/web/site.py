@@ -212,7 +212,11 @@ class Web:
         if not reply.get("ok"):
             return reply
         token, nonce = secrets.token_urlsafe(32), secrets.token_urlsafe(24)
-        dsid = req._run(self._page_session(caller))
+        try:
+            page = self.hub.pages.openable(pid)
+        except Exception as e:
+            raise _Error(404, str(getattr(e, "message", e))) from None
+        dsid = req._run(self._page_session(_page_caller(page, caller)))
         now = time.time()
         with self._lock:
             s = self.sessions.get(sid)
@@ -267,8 +271,9 @@ class Web:
         why = body.get("why") if isinstance(body.get("why"), str) and body["why"].strip() else \
             f"Shown on the {t.page} page."
         layers = [["page", {"grants": page.caps}], *self._authors(page)]
-        return req._run(self.hub.call(caller, {"worker": worker, "cap": cap, "args": body.get("args"), "why": why,
-                                               "session": t.dispatch}, "web", layers=layers))
+        return req._run(self.hub.call(_page_caller(page, caller), {
+            "worker": worker, "cap": cap, "args": body.get("args"), "why": why,
+            "session": t.dispatch}, "web", layers=layers))
 
     def _authors(self, page) -> list:
         """A page an agent made never does more than any of its authors."""
@@ -344,6 +349,16 @@ class Web:
         if csp:
             headers.update({"Content-Security-Policy": csp, "X-Frame-Options": "DENY"})
         return 200, headers, path.read_bytes()
+
+
+def _page_caller(page, viewer: Caller) -> Caller:
+    """Who a page's calls act as. An agent-made page acts as its (first)
+    agent author for the viewer, so whatever it creates (a page, a job, a
+    record) is recorded as that agent's, never as the viewer's alone:
+    otherwise a made page could make a page or job without the author layer
+    and launder its author up to the viewer's full rights."""
+    agents = [a.get("agent") for a in (page.made or {}).get("authors") or () if a.get("agent")]
+    return Caller(viewer.person, agents[0]) if agents else viewer
 
 
 def inject(doc: str, info: dict) -> str:
