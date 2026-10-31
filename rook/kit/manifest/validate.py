@@ -599,7 +599,7 @@ class _Checker:
         all_caps = {**self.caps, **record_caps(self.data)}
         for name, preset in (self.data.get("presets") or {}).items():
             path = ("presets", name)
-            for key in ("max_risk", "effects", "approve_new", "expires"):
+            for key in ("max_risk", "effects", "expires"):
                 if key in preset:
                     self.error(path + (key,), "preset-ceiling", "only core sets preset ceilings")
             ceiling = CORE_PRESETS.get(name)

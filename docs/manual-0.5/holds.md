@@ -30,7 +30,6 @@ security agent, and not a job or plugin acting as you (the
 
 **Other holds:**
 
-- A child's first use of a cap waits for an owner ([Presets](people.md#the-four-presets)).
 - A security gate may flag a call that looks out of place ([Security plugins](security.md)).
 - A risky change, or any change in a sacred project, waits for one owner
   card: its `change.apply` is a hard stop ([change records](../../rook/plugins/changes/docs/manual.md)).
