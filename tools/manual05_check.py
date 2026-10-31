@@ -35,7 +35,7 @@ PLUGIN_RELATIVE = {"docs/manual.md"}     # a path inside a plugin folder, not th
 
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 CODE_PATH = re.compile(r"`((?:%s)[^`\s<>*{}]*)`" % "|".join(map(re.escape, REPO_DIRS)))
-FENCE = re.compile(r"^```(\w*)\n(.*?)^```", re.M | re.S)
+FENCE = re.compile(r"^ *```(\w*)\n(.*?)^ *```", re.M | re.S)   # list items indent theirs
 
 
 def pages() -> list[Path]:
