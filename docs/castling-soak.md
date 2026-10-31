@@ -305,7 +305,9 @@ For their lanes, or for Bake:
    payloads in them; negligible.
 10. **Worker memory under big replies** still creeps after the fix (see
     After the fixes). A run of a few hours, or `MALLOC_ARENA_MAX` on the
-    worker unit, would tell arenas from a second leak.
+    worker unit, would tell arenas from a second leak. Since #319 each
+    plugin has its own pool of up to 8 threads, so a worker can run more
+    threads (and malloc arenas) than the 17 seen here.
 11. An agent's journal read that includes its projects
     (`agent = ? OR project IN (...)`) still sorts every match; two indexed
     reads merged would not.
