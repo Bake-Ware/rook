@@ -113,6 +113,21 @@ incorporated here by reference, with v1's vectors (`band_crypto.json`,
 Peers advertise the transport extensions they speak in the announce's
 `features` list exactly as in core v1 section 14.
 
+**Acks (`ack`)**, an optional transport extension in the same style: a
+request whose `accept` lists `ack` asks its target to ack it and promises
+to ack the reply. An ack is `{"kind": "ack", "from": "<node_id>", "ids":
+["<id>", …]}` (sent to the peer's route; one message may ack several ids).
+The target acks the request unless its reply goes out first, and may
+resend the reply until it is acked; the caller may resend a request until
+it is acked or answered, unless its target announced without `ack` (a hub
+that just restarted resends to workers it has not heard yet). A request
+received again with the same `id` and the same ticket `nonce` is a resend:
+it MUST NOT run again (a held reply may be sent again); a re-minted ticket
+(6.5) is a new request. A reply received again is only acked. Resends stop
+when the caller gives up on the call. A peer without `ack` ignores acks as
+unknown messages (3.1), and refuses a resend that reaches it before its
+announce did as a replay (6.3).
+
 ### 2.2 Versions
 
 Core versions are `MAJOR.MINOR`, two decimal integers without leading

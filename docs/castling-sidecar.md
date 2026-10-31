@@ -170,8 +170,8 @@ curl -s -H "$H" '127.0.0.1:8750/journal?limit=5'
 ## Known rough edges
 
 - After the relay restarts (`stop`/`start`, `--upgrade`), the worker reaches
-  the hub at its first keepalive, about 20 s later; calls before that time
-  out. `check.sh` waits for it.
+  the hub at its next keepalive (every 5 s on UDP); a call sent meanwhile is
+  resent and goes through then. `check.sh` waits for it.
 - Agents can't reach the band themselves yet: their turns run with no MCP
   servers. To give them one, set `agents-claude-code.mcp_config` in
   `worker.yaml` (`settings:`) to an MCP config like `claude-mcp.json`; every

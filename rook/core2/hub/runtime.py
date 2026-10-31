@@ -999,7 +999,10 @@ class Hub:
         finally:
             if self._pending.get(request["id"]) is fut:
                 del self._pending[request["id"]]
-            if not fut.done():           # timed out or cancelled: a reply may still come
+            if not fut.done() or fut.cancelled():   # timed out (wait_for cancels fut too): a reply may still come
+                forget = getattr(self.transport, "forget", None)
+                if forget is not None:   # and the band stops sending it again
+                    forget(band, request["id"])
                 self._late[request["id"]] = request["target"]
                 while len(self._late) > 1000:
                     del self._late[next(iter(self._late))]
@@ -1043,7 +1046,8 @@ class Hub:
         self._last_announce = self.clock()
         msg = wire.sign(self.op, {"kind": "announce", "typ": "rook-announce", "v": 2, "worker_id": self.node,
                                   "name": "rook", "hub": self.hub_id, "band": self.band, "core": CORE_VERSION,
-                                  "ts": int(self.clock()), "seq": self._seq, "features": []})
+                                  "ts": int(self.clock()), "seq": self._seq,
+                                  "features": list(getattr(self.transport, "features", ()))})
         msg["hubkey"] = self.grant
         try:
             await self.transport.send(self.band, msg)

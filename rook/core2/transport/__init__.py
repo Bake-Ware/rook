@@ -23,13 +23,14 @@ __all__ = ["BEAT_SECS", "DROP_THRESHOLD", "FEATURES", "LOST_SECS", "LoopbackLink
 
 
 def link_from(spec: dict) -> TelestheteLink:
-    """A band link from ``{psk | psk_env, relay | ws_url}``. The PSK is the
+    """A band link from ``{psk | psk_env, relay | ws_url, keepalive?, pace?}``. The PSK is the
     resolved value (or an environment variable naming it), never a vault
     reference: whoever reads the config resolves those first."""
     psk = spec.get("psk") or (os.environ.get(spec["psk_env"]) if spec.get("psk_env") else None)
     if not psk:
         raise ValueError("a band needs psk or a set psk_env")
-    return TelestheteLink(psk, relay=spec.get("relay"), ws_url=spec.get("ws_url"))
+    return TelestheteLink(psk, relay=spec.get("relay"), ws_url=spec.get("ws_url"),
+                          keepalive=spec.get("keepalive"), pace=spec.get("pace"))
 
 
 def from_config(cfg: dict, **kw: Any) -> Transport:
