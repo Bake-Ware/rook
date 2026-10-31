@@ -18,7 +18,6 @@ from rook.core2.enroll.hub import recovery_key  # noqa: E402
 from rook.core2.hub.runtime import _key  # noqa: E402
 from rook.core2.hub.vault import (Locked, Vault, VaultError, canonical, journal_args, resolver,  # noqa: E402
                                   secret_values, substitute)
-from rook.core2.migrate import vault as migrate_vault  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 OWNERS = {"person:bake"}
@@ -97,17 +96,6 @@ def test_wraps_are_rows_not_keys_on_disk(tmp_path):
     with pytest.raises(Locked, match="no keys"):
         Vault(data).unlock()
 
-
-def test_the_migration_writes_what_the_hub_reads(tmp_path):
-    data = hub_data(tmp_path)
-    written = migrate_vault.put(data, [{"name": "github-pat", "value": "ghp_1", "description": "pat",
-                                        "created": 5.0, "set_by": "import:0.4"}])
-    assert written == ["github-pat"]
-    assert migrate_vault.put(data, [{"name": "github-pat", "value": "other"}]) == []    # kept
-    v = Vault(data).unlock()
-    assert v.get("github-pat") == "ghp_1" and v.list()[0]["created"] == 5.0
-    v.set("new-one", "n", by="person:bake")
-    assert migrate_vault.names(data) == ["github-pat", "new-one"] and migrate_vault.get(data, "new-one") == "n"
 
 
 def test_references_resolve_for_owners_only(tmp_path):

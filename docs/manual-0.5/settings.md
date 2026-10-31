@@ -67,6 +67,5 @@ The values live in the hub's vault, `<data>/vault.db` (owners only):
 Worker-side secret settings (a worker plugin's `secret: true` setting) have
 no path from the vault yet: pass the secret as a reference in the call.
 
-`python -m rook.core2.migrate` carries a 0.4 vault over into
-`<data>/vault.db` ([Moving from 0.4](migrating.md)). If the hub dies, copy
+If the hub dies, copy
 `vault.db` to the new hub and run `recover-vault` with the recovery key.

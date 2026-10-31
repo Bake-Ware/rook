@@ -21,7 +21,7 @@ import fnmatch
 import re
 import shlex
 
-from ..enroll.hub import NAME as WORKER_NAME
+from rook.core2.enroll.hub import NAME as WORKER_NAME
 
 TIERS = ("read", "write", "exec", "admin")       # 0.4 tiers == 0.5 risks
 DEFAULT_TIER = "exec"

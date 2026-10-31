@@ -265,6 +265,8 @@ Watch items (ask Bake, not drift yet) are after the findings.
 - **Smallest fix.** It works, so use it once: move `migrate/` and `import_04.py` under
   `castling/switchover/` (repo tooling, not shipped), drop `manual-0.5/migrating.md`, no more
   merge/re-run work, delete after cutover.
+- **Fixed:** PR #339 (c8/ops): moved to `castling/switchover/migrate` + `import_04.py`, manual page
+  dropped, one migration at step 5, deleted at step 6.
 
 ## 8. C4 `approval.ask` was never built; plugins built their own asks (missing)
 
@@ -514,6 +516,8 @@ door (agent token = client secret = access token, no sign-in, no DCR, no store).
   as R14 did.
 - **Smallest fix.** Rewrite those rows with the castling-caps names and outcomes; drop the Feed
   wording; R4 -> "change records (C2)", R14 -> "sign-off on tasks + agent PR reviews".
+- **Fixed:** PR #339 (c8/ops): R2/R3/R4/R14 and the not-ported list in the decisions' terms;
+  `readiness.py` R4 checks C2 (record, no apply/revert runner), R14 is sign-off + `github.merge`.
 
 ## 24-30. Lower severity
 

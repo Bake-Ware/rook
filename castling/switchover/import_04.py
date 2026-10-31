@@ -1,7 +1,7 @@
 """Import a 0.4 hub's knowledge, concepts, projects and tasks into the 0.5
 workbench records.
 
-    python rook/plugins/knowledge/scripts/import_04.py --from knowledge-copy.db \\
+    python castling/switchover/import_04.py --from knowledge-copy.db \\
         --records hub-data/records.db --band <the 0.5 hub's band> [--from-band <0.4 band>] \\
         [--handoffs sessions-copy.db] [--dry-run]
 
@@ -41,11 +41,13 @@ import sqlite3
 import sys
 from pathlib import Path
 
-from rook.kit.ctx import Caller
-from rook.kit.manifest import load
-from rook.kit.records import RecordStore
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))      # run from a checkout
 
-PLUGINS = Path(__file__).resolve().parents[2]
+from rook.kit.ctx import Caller  # noqa: E402
+from rook.kit.manifest import load  # noqa: E402
+from rook.kit.records import RecordStore  # noqa: E402
+
+PLUGINS = Path(__file__).resolve().parents[2] / "rook" / "plugins"
 FOLDERS = ("concepts", "projects", "knowledge", "tasks", "whiteboard")
 TASK_STATES = {"todo", "in_progress", "blocked", "paused", "done", "cancelled"}
 PAGE_KINDS = {"fact", "decision", "procedure", "observation", "question", "summary", "skill"}

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from test_core2_migrate import SECRET, make_04
+from test_castling_migrate import SECRET, make_04
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -100,3 +100,24 @@ def test_readiness_gates_read_this_checkout():
     assert [g for g, *_ in mod.GATES] == [f"R{i}" for i in range(1, len(mod.GATES) + 1)]
     mod.GATES = [("X1", "", ("plugin", "task:claim")), ("X2", "", ("plugin", "task:nope"))]
     assert [ok for _, ok, _, _ in mod.check({})] == [True, False]
+
+
+def test_readiness_gates_follow_the_decisions(tmp_path, monkeypatch):
+    """No gate can pass only by rebuilding a 0.4 piece Bake retired (drift #23):
+    R14 is sign-off + github.merge, never a merge vote; R4 is change records as
+    records (castling-caps C2), so an apply runner fails it."""
+    mod = _readiness()
+    gates = {g: (what, chk) for g, what, chk in mod.GATES}
+    assert "vote" not in repr(gates["R14"]) and gates["R14"][1] == ("plugin", "github:merge")
+    plugins = tmp_path / "rook" / "plugins"
+    (plugins / "change").mkdir(parents=True)
+    manifest = plugins / "change" / "plugin.yaml"
+    monkeypatch.setattr(mod, "REPO", tmp_path)
+    mod.GATES = [("R4", "", gates["R4"][1])]
+    manifest.write_text("plugin: change\nrecords: {change: {}}\ncaps: {submit: {}, apply: {}}\n")
+    ((_, ok, _, why),) = mod.check({})
+    assert ok is False and "NOT: plugin change has no cap apply" in why
+    manifest.write_text("plugin: change\nrecords: {change: {}}\ncaps: {submit: {}}\n")
+    assert mod.check({})[0][1] is True
+    manifest.write_text("plugin: change\ncaps: {submit: {}}\n")
+    assert mod.check({})[0][1] is False                                  # no record, no gate

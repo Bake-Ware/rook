@@ -25,24 +25,3 @@ one off with `remove=true`).
 
 When a page is wrong, fix it and cite why, like a wiki edit; the history
 keeps the old text.
-
-## Importing 0.4
-
-`scripts/import_04.py` copies a 0.4 hub's knowledge, concepts, projects and
-tasks into these records. Stop the 0.5 hub and copy the 0.4 `knowledge.db`
-(and, for handoffs, its sessions db) with `sqlite3 knowledge.db ".backup
-copy.db"` (one consistent file; a plain copy can leave recent writes in a
-`-wal` file, and the import refuses one), then:
-
-```sh
-python rook/plugins/knowledge/scripts/import_04.py --from knowledge-copy.db \
-    --records hub-data/records.db --band <the 0.5 band> \
-    [--from-band <a 0.4 band>] [--handoffs sessions-copy.db] [--dry-run]
-```
-
-The copy is opened read-only. Verification becomes provenance (evidence
-links are sources; a person's review is a `user` source); superseded pages
-are archived; task links, notes (as comments), open whiteboard lines and the latest
-handoff come along; claims don't (claim again). It prints what it imported,
-skipped (already there from an earlier run) and renamed (a slug another
-record already had).

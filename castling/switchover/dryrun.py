@@ -34,7 +34,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
-from rook.core2.migrate import migrate, render  # noqa: E402
+from castling.switchover.migrate import migrate, render  # noqa: E402
 
 INNER = re.compile(r"(^|/)data/[^/]*nodb\.tar$")      # the data folder minus databases
 LOOSE = ("trust.json", "vault.key")                   # the loose files the migration reads

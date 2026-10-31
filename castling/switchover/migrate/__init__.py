@@ -1,7 +1,8 @@
 """Move a 0.4 hub's state onto a 0.5 hub, once (castling-design: migration is
-a one-off move, not a product feature).
+a one-off move, not a product feature). Repo tooling for the switchover:
+it is not part of the shipped ``rook`` package; delete it after cutover.
 
-    python -m rook.core2.migrate --from <copy of the 0.4 data folder> --to <0.5 hub.yaml> [--apply]
+    python -m castling.switchover.migrate --from <copy of the 0.4 data folder> --to <0.5 hub.yaml> [--apply]
 
 It reads a **copy** of the 0.4 hub's data folder (:mod:`.source` refuses the
 live one) and, by default, only reports what it would do. ``--apply`` writes,
@@ -19,7 +20,7 @@ hub.yaml init``):
 - **memory**: the 0.4 home agent's active memories -> the house agent's
   memory (unapproved learned procedures -> its notepad);
 - **knowledge, projects, tasks, concepts** -> workbench records, by the
-  workbench's own importer (``rook/plugins/knowledge/scripts/import_04.py``);
+  0.4 workbench importer beside this package (``castling/switchover/import_04.py``);
 - **journal**: copied whole to ``<data>/archive/0.4/journal.db``, read-only;
   never replayed into the 0.5 chains;
 - **workers**: a re-enrollment checklist (every machine enrolls again).
@@ -43,11 +44,11 @@ from pathlib import Path
 
 import yaml
 
-from ..hub.runtime import _key, _write_private, home_band, load_config
+from rook.core2.hub.runtime import _key, _write_private, home_band, load_config
 from . import convert, vault
 from .source import NotACopy, Source, _tables
 
-IMPORTER = Path(__file__).resolve().parents[2] / "plugins" / "knowledge" / "scripts" / "import_04.py"
+IMPORTER = Path(__file__).resolve().parent.parent / "import_04.py"
 HOUSE = "house"                                   # the house agent (rook/plugins/agents)
 AGENTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS agent (name TEXT PRIMARY KEY, data TEXT NOT NULL, archived REAL);
@@ -233,7 +234,6 @@ def _workbench(source: Source, cfg, band: str, apply: bool, levels: dict, notes:
         return {"not_imported": "no 0.4 knowledge.db in the copy"}
     mod = _importer()
     if mod is None:
-        # TODO(castling:workbench): import_04.py lands with the workbench (PR #277).
         notes.append("knowledge, projects and tasks: the workbench importer isn't in this checkout: not imported")
         return {"not_imported": "no workbench importer in this checkout"}
     sessions = source.db("sessions")
