@@ -368,6 +368,8 @@ class Web:
                 got = visible() if page.events else []
                 left = deadline - time.monotonic()
                 if got or left <= 0:
+                    if any(self.hub.taints(e["event"]) for e in got):
+                        self.hub.dispatcher.taint(t.dispatch)    # the page's calls now act on outside content (8.4)
                     return {"ok": True, "seq": self._seq, "events": got}
                 self._cond.wait(left)
 

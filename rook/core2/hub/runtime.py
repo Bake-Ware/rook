@@ -57,6 +57,7 @@ from typing import Any, Awaitable, Callable, Protocol
 import yaml
 from nacl.signing import SigningKey
 
+from rook.kit._types import check as check_type
 from rook.kit.contracts import Contracts
 from rook.kit.ctx import Caller as KitCaller, KitError
 from rook.kit.manifest import check, normalize, validate
@@ -77,7 +78,11 @@ log = logging.getLogger("rook.hub")
 
 HEX32 = re.compile(r"[0-9a-f]{32}")
 ANNOUNCE_EVERY = 30.0         # hub announce, ±20 % (5.4)
+ANNOUNCE_GAP = 1.0            # at most one extra announce a second for workers that just announced
 OFFLINE_AFTER = 90.0          # roster eviction (5.5)
+EVENT_BATCH = 100             # events one core.event may carry
+EVENT_BYTES = 16 * 1024       # largest event payload (JSON) taken from a worker
+EVENT_IDS = 4096              # event ids remembered, to drop a batch sent again
 GRANT_DAYS = 7                # rook-hubkey lifetime; renewed daily (5.2)
 OP_KEY_DAYS = 30              # operational key rotation (5.2)
 DAY = 86400.0
@@ -278,6 +283,12 @@ class Known:
         return d
 
 
+def _remember(table: dict, key: Any, keep: int) -> None:
+    table[key] = None
+    while len(table) > keep:
+        del table[next(iter(table))]
+
+
 def _entries_ok(entries: Any) -> bool:
     return isinstance(entries, list) and all(
         isinstance(e, dict) and all(isinstance(e.get(k), str) and e[k] for k in ("plugin", "version", "hash"))
@@ -330,12 +341,15 @@ class Hub:
         self._loops: list[asyncio.Task] = []
         self._pending: dict[str, asyncio.Future] = {}
         self._late: dict[str, str] = {}          # call id -> worker, for calls given up on (bounded)
+        self._event_ids: dict[tuple, None] = {}  # (worker, event id) seen lately (bounded)
+        self._event_refused: set = set()         # (worker, event, why) logged once
         self._locks: dict[str, asyncio.Lock] = {}
         self._door_sessions: dict[tuple, str] = {}
-        self._component_sessions: dict[str, str] = {}
-        self._acting_sessions: dict[tuple, str] = {}   # (person, agent) -> session for ctx.call_as
+        self._component_sessions: dict = {}            # "hub" or (component, tainted) -> session
+        self._acting_sessions: dict[tuple, str] = {}   # (person, agent, tainted) -> session for ctx.call_as
         self._seq = 0
         self._last_announce = 0.0
+        self._announce_due = False
         self.known: dict[str, Known] = {}
         self.manifests: dict[str, dict] = {}     # hash -> parsed manifest
         self._norm: dict[str, dict] = {}         # hash -> normalized
@@ -705,8 +719,25 @@ class Hub:
             self._sync_hub()
             self._save_workers()
         self._presence(k, *before)
-        if self.clock() - self._last_announce > 5:
-            await self._announce_hub()     # a worker that just joined gets hub contact now
+        self._contact_soon()
+
+    def _contact_soon(self) -> None:
+        """A worker that just announced gets hub contact (a signed announce)
+        now, or within a second when one went out a moment ago: one announce
+        serves every worker on the band, and without it a worker can't reach
+        the hub node (its ``core.call``, ``core.event``) until the next one."""
+        wait = self._last_announce + ANNOUNCE_GAP - self.clock()
+        if wait <= 0:
+            self._last_announce = self.clock()
+            self._spawn(self._announce_hub())
+        elif not self._announce_due:
+            self._announce_due = True
+
+            async def later():
+                await asyncio.sleep(wait)
+                self._announce_due = False
+                await self._announce_hub()
+            self._spawn(later())
 
     async def _heartbeat(self, band: str, msg: dict) -> None:
         wid = msg.get("worker_id")
@@ -827,6 +858,8 @@ class Hub:
         worker = ticket.get("worker") if isinstance(ticket, dict) else None
         if req["cap"] == "core.elevate":
             out = self.dispatcher.elevate(worker, ticket, args.get("reason"))
+        elif req["cap"] == "core.event":
+            out = self._worker_events(band, args)
         elif req["cap"] == "core.call":
             target, cap = args.get("target"), args.get("cap")
             if not (isinstance(cap, str) and isinstance(target, str)):
@@ -842,6 +875,75 @@ class Hub:
         if reply["ok"]:
             reply.setdefault("result", None)
         await self.transport.send(band, reply)
+
+    def _worker_events(self, band: str, args: dict) -> dict:
+        """``core.event`` (13): a batch of events a worker's plugins emitted.
+        No ticket: like an announce it is only as good as the band key, so an
+        event is taken only from a worker this hub knows on this band, only
+        when one of the manifests it announced declares it (``emits``), within
+        the ceiling the hub holds for it, with a payload that fits the
+        declaration. A worker's events are its owner's data: the hub sets
+        ``person`` (its owner, None when unknown) and ``worker`` (its name) on
+        every payload, whatever the worker put there. Repeats (a batch sent
+        again) are dropped by event id."""
+        wid, batch = args.get("worker_id"), args.get("events")
+        k = self.known.get(wid) if isinstance(wid, str) else None
+        w = self.dispatcher.workers.get(wid) if k is not None else None
+        if k is None or w is None or k.band != band:
+            return {"ok": False, "error": "unknown worker: announce first", "retry": True}
+        if not isinstance(batch, list) or len(batch) > EVENT_BATCH:
+            return {"ok": False, "error": f"bad args: events is a list of at most {EVENT_BATCH}"}
+        dropped = args.get("dropped")
+        if isinstance(dropped, int) and not isinstance(dropped, bool) and dropped > 0:
+            log.warning("worker dropped events", extra={"fields": {"worker": k.name, "dropped": dropped}})
+        declared = {}
+        for e in k.manifests:
+            norm = self._norm.get(e["hash"])
+            if norm is not None and norm["plugin"] == e["plugin"]:
+                declared.update({name: (norm["plugin"], decl) for name, decl in (norm.get("emits") or {}).items()})
+        owner = self.enroll.owner_of(wid)
+        taken = 0
+        for ev in batch:
+            if not isinstance(ev, dict) or not isinstance(ev.get("id"), str) or not isinstance(ev.get("event"), str):
+                continue
+            name, payload = ev["event"], ev.get("payload")
+            key = (wid, ev["id"])
+            if key in self._event_ids:
+                continue
+            why = self._event_problem(w, name, payload, declared.get(name), ev.get("plugin"))
+            if why:
+                if (wid, name, why) not in self._event_refused and len(self._event_refused) < EVENT_IDS:
+                    self._event_refused.add((wid, name, why))
+                    log.warning("worker event refused", extra={"fields": {"worker": k.name, "event": name[:100],
+                                                                          "reason": why}})
+                continue
+            _remember(self._event_ids, key, EVENT_IDS)
+            self._emit(name, {**payload, "person": owner, "worker": k.name}, declared[name][0])
+            taken += 1
+        return {"ok": True, "result": {"taken": taken}}
+
+    def _event_problem(self, w: Worker, name: str, payload: Any, found: tuple | None, plugin: Any) -> str | None:
+        if found is None or found[0] != plugin:
+            return "not declared in emits by a plugin it announced"
+        if not any(rights.matches(g, name, w.name) for g in w.ceiling.get("grants") or ()):
+            return "outside the worker's ceiling"
+        if not isinstance(payload, dict):
+            return "payload is not an object"
+        try:
+            if len(json.dumps(payload, ensure_ascii=False, allow_nan=False)) > EVENT_BYTES:
+                return f"payload over {EVENT_BYTES} bytes"
+            check_type(name, {"type": "map", "fields": found[1].get("payload") or {}}, payload)
+        except ValueError as e:
+            return f"payload: {e}"[:200]
+        except TypeError:
+            return "payload is not JSON"
+        return None
+
+    def taints(self, event: str) -> bool:
+        """Whether ``event`` brings outside content in: a manifest the hub
+        knows declares it with ``taints: true`` (any one: when two disagree,
+        the event taints)."""
+        return any(((m.get("emits") or {}).get(event) or {}).get("taints") for m in self._norm.values())
 
     async def _send(self, band: str, request: dict) -> dict:
         """Dispatch's ``send``: the hub's own caps run here, the rest go over
@@ -932,8 +1034,11 @@ class Hub:
             self.journal.append({**entry, "args": "[no canonical form]"}, session)
 
     def _emit(self, event: str, payload: dict, source: str | None = None) -> None:
+        """Every event on the hub: its own, hub plugins' (records, ``ctx.emit``)
+        and workers' (``core.event``). Hub plugins' ``on:`` hooks, then the
+        listeners (the site's live pages)."""
         log.debug("event", extra={"fields": {"event": event, "source": source}})
-        self.plugins.scheduler.publish(event, payload, source)
+        self.plugins.scheduler.publish(event, payload, source, taints=self.taints(event))
         for fn in self.listeners:
             try:
                 fn(event, payload, source)
@@ -972,19 +1077,22 @@ class Hub:
         call to its chosen provider, so rights match the contract's name. A
         call in the session of the hub-node call it runs inside also carries
         the layers its door put on that call (a page's caps and authors) and
-        the door."""
+        the door. A ``tainted`` caller (a hook or job acting on a tainting
+        event) gets a tainted session of its own, apart from its clean one."""
         if who.person or who.agent:
             caller = Caller(who.person, who.agent)
             if caller.problem():
                 return {"ok": False, "error": f"denied: caller: {caller.problem()}"}
-            sid = who.session or self._session(self._acting_sessions, (caller.person, caller.agent),
+            sid = who.session or self._session(self._acting_sessions, (caller.person, caller.agent, who.tainted),
                                                caller, ["*"])
         else:
             component = f"plugin.{who.plugin}" if who.plugin else "hub"
             caller = Caller(agent=f"system:{component}")
             if who.plugin in self.plugins.plugins:
                 self.identities.add_component(component, {"grants": self.plugins.uses(who.plugin)})
-            sid = self._session(self._component_sessions, component, caller, ["*"])
+            sid = self._session(self._component_sessions, (component, who.tainted), caller, ["*"])
+        if who.tainted:     # acting on outside content (a tainting event): its own session, tainted (8.4)
+            self.dispatcher.taint(sid)
         target = target or self._target_for(cap)
         if target is None:
             return {"ok": False, "error": f"no single worker serves {cap}"}

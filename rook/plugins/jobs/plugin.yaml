@@ -77,7 +77,7 @@ records:
       error: { type: str }
       log: { type: list, items: { type: str } }
       asking: { type: map, doc: "What it waits on a person for: {question, options}." }
-      event: { type: map, doc: "{name, payload}: the event or webhook that started it." }
+      event: { type: map, doc: "{name, payload, taints?}: the event or webhook that started it; taints: outside content, so the run's calls were tainted." }
     index: [job, state]
     private: true
     retain: 30d

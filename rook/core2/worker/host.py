@@ -428,15 +428,27 @@ class Host:
     # -- announce ---------------------------------------------------------------
 
     def _visible(self, ceiling: Mapping | None) -> list[Plugin]:
-        """Filtered view (spec 9.4): plugins with a cap the band's ceiling grants name."""
+        """Filtered view (spec 9.4): plugins with a cap or an event the band's
+        ceiling grants name."""
         out = []
         for p in self.plugins.values():
             if ceiling is None or any(
                     cap in wire.ALWAYS or rights.matches(g.partition("@")[0], name)
                     for cap, spec in p.manifest["caps"].items() for name in [cap, *spec.get("contracts", ())]
-                    for g in ceiling.get("grants") or ()):
+                    for g in ceiling.get("grants") or ()) or any(
+                    rights.matches(g.partition("@")[0], ev)
+                    for ev in p.manifest.get("emits") or () for g in ceiling.get("grants") or ()):
                 out.append(p)
         return sorted(out, key=lambda p: p.name)
+
+    def sends(self, plugin: str, event: str, ceiling: Mapping | None, target: str = "") -> bool:
+        """Whether ``plugin``'s ``event`` goes to the hub whose ceiling this
+        is: the plugin declares it in ``emits`` and a grant names it (spec 13,
+        ``core.event``; ``target`` is this worker's name, for ``@`` grants)."""
+        p = self.plugins.get(plugin)
+        if p is None or event not in (p.manifest.get("emits") or {}):
+            return False
+        return ceiling is None or any(rights.matches(g, event, target) for g in ceiling.get("grants") or ())
 
     def manifests(self, plugins=None, ceiling: Mapping | None = None) -> dict:
         """``core.manifests`` (spec 13): the parsed manifests of the band's view."""

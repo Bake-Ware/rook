@@ -26,6 +26,10 @@ What it wires together:
   ``<data>/bands.json``).
   Losing the hub on a band drops its leases there (7.4).
 
+Plugin events (``ctx.emit``) run this worker's ``on:`` hooks and go to every
+hub whose ceiling grants them, as ``core.event`` batches from a bounded
+queue per hub (:mod:`.events`) that waits out a hub that is away.
+
 Plugin code's ``ctx.call`` becomes ``core.call`` on the hub, authenticated
 by the ticket of the call in flight it runs inside (13); hooks have no call
 in flight, so their ``ctx.call`` is refused.
@@ -56,7 +60,7 @@ from ..builtin import CORE, STREAM, WORKER
 from ..transport import FEATURES, Transport, TransportError, link_from
 from rook.streams import Streams
 
-from . import builtins
+from . import builtins, events
 from .host import Host
 from .install import Installer
 from .loader import LoadError, local_os
@@ -66,6 +70,7 @@ log = logging.getLogger("rook.worker")
 
 HEX32 = re.compile(r"[0-9a-f]{32}")
 SUB_CALL_TIMEOUT = 300.0      # ctx.call through the hub; the parent cap's timeout ends it sooner
+EVENT_TIMEOUT = 15.0          # core.event: one batch of events to a hub
 PULL_TIMEOUT = 300.0          # a plugin bundle over Drop
 STOP_GRACE = 10.0             # seconds in-flight calls get to finish on stop
 APPROVERS = ("home", "co-owner")
@@ -213,6 +218,7 @@ class Worker:
         # worker.restart's last step; tests replace it, None where a process can't exec itself.
         self.reexec: Callable[[], None] | None = builtins.reexec
         self.hub_nodes: dict[tuple[str, str], str] = {}     # (hub_id, band) -> the hub's node id there
+        self.outboxes: dict[tuple[str, str], events.Outbox] = {}   # (hub_id, band) -> events on their way
         self.started = False
         self._tasks: set[asyncio.Task] = set()
         self._settings_lock = threading.Lock()
@@ -294,6 +300,8 @@ class Worker:
             for t in late:
                 t.cancel()
             await asyncio.gather(*late, return_exceptions=True)
+        outboxes, self.outboxes = list(self.outboxes.values()), {}
+        await asyncio.gather(*(o.stop() for o in outboxes))
         if self.transport is not None:
             await self.transport.close()
         if self.host is not None:
@@ -388,6 +396,9 @@ class Worker:
         may have (re)started since this worker last announced, so announce."""
         log.info("hub contact", extra=_f(band=band[:8]))
         self._spawn(self._announce_on(band))
+        for (_, b), outbox in self.outboxes.items():
+            if b == band:
+                outbox.kick()
 
     async def _announce_on(self, band: str) -> None:
         try:
@@ -481,9 +492,53 @@ class Worker:
         return out.get("result")
 
     def _emit(self, event: str, payload: dict, plugin: str | None = None) -> None:
-        """A plugin's event, for this worker's ``on:`` hooks.
-        TODO(castling:events): carry events to the hub (no band message for them yet)."""
+        """A plugin's event (``ctx.emit``, from any thread): this worker's
+        ``on:`` hooks, and every hub whose ceiling grants it (``core.event``)."""
         self.host.publish(event, payload)
+        if plugin is not None and self.started:
+            try:
+                self.loop.call_soon_threadsafe(self._queue_event, event, payload, plugin)
+            except RuntimeError:            # the loop is closed: stopping
+                pass
+
+    def _queue_event(self, event: str, payload: dict, plugin: str) -> None:
+        if not self.started or self.transport is None:
+            return
+        try:
+            size = len(json.dumps(payload, ensure_ascii=False, allow_nan=False))
+        except (TypeError, ValueError):
+            log.warning("event not sent: payload is not JSON", extra=_f(event=event, plugin=plugin))
+            return
+        if size > events.MAX_EVENT:
+            log.warning("event not sent: too large", extra=_f(event=event, plugin=plugin, bytes=size))
+            return
+        ev = events.make(event, plugin, payload, size)
+        for band in self.transport.bands:
+            for m in self.trust.members(band):
+                if self.host.sends(plugin, event, m.ceiling, self.cfg.name):
+                    self._outbox(m.hub, band).put(ev)
+
+    def _outbox(self, hub: str, band: str) -> events.Outbox:
+        box = self.outboxes.get((hub, band))
+        if box is None:
+            async def send(batch: list, dropped: int) -> None:
+                await self._send_events(hub, band, batch, dropped)
+            box = self.outboxes[(hub, band)] = events.Outbox(f"{hub}/{band[:8]}", send)
+            box.start()
+        return box
+
+    async def _send_events(self, hub: str, band: str, batch: list, dropped: int) -> None:
+        """One batch to one hub; raises (so the outbox keeps it and tries
+        again) unless the hub answered. A batch the hub refuses for good is
+        logged and let go: sending it again would only be refused again."""
+        if self.transport.lost(band):       # don't send into the void: hub contact kicks the outbox
+            raise TransportError(f"hub lost on band {band[:8]}")
+        args = {"worker_id": self.worker_id, "events": batch, **({"dropped": dropped} if dropped else {})}
+        out = await self._hub_request(band, hub, "core.event", args, EVENT_TIMEOUT)
+        if not out.get("ok"):
+            if out.get("retry"):
+                raise TransportError(str(out.get("error")))
+            log.warning("events refused by the hub", extra=_f(band=band[:8], error=_loggable(out.get("error"))))
 
     def _store_setting(self, plugin: str, key: str, value: Any, secret: bool) -> None:
         """``ctx.settings.set`` for a worker-local value: kept in
@@ -536,6 +591,9 @@ class Worker:
         band, role = membership["band"], membership["role"]
         joined = self._joined()
         if role == "removed":
+            box = self.outboxes.pop((membership["hub"], band), None)
+            if box is not None:
+                await box.stop()
             if band in joined and not self.trust.members(band):
                 del joined[band]
                 self._save_joined(joined)

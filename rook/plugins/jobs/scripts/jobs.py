@@ -398,6 +398,8 @@ class Runtime:
             as_who=self.who(who), state="running", started=time.time(), event=event)
         live = Live(rec, job, {**(job.get("vars") or {}), **(vars_ or {})}, event)
         self.running[job["id"]] = self.runs[live.id] = live
+        if (event or {}).get("taints"):
+            who = replace(who, tainted=True)
         live.task = self.spawn(self.execute(live, who))
         live.task.add_done_callback(lambda _: self.forget(live))
         return live
@@ -726,7 +728,9 @@ async def on_event(ctx, event, payload):
     for job in rt.jobs():
         trig = job["trigger"]
         if "on" in trig and fnmatch.fnmatchcase(event, trig["on"]) and _matches(trig.get("filter"), payload):
-            rt.fire(job, "event", event={"name": event, "payload": payload})
+            # outside content (taints): the run's calls go in a tainted session
+            rt.fire(job, "event", event={"name": event, "payload": payload,
+                                         **({"taints": True} if ctx.caller.tainted else {})})
 
 
 # -- caps ---------------------------------------------------------------------------------
