@@ -343,9 +343,9 @@ class Dispatcher:
         # 6. gates
         results = await gates_mod.run(self.gates, _gate_input(caller, s, w, call, entry))
         entry["gates"] = results
-        verdict = rights.gate_decision(results)
+        verdict = rights.gate_decision(results, entry["risk"])   # a read's flag: journaled in gates, not held
         if verdict["verdict"] == "block":
-            first = next(r for r in results if r["gate"] == verdict["by"][0] and r["mode"] == "enforce")
+            first =next(r for r in results if r["gate"] == verdict["by"][0] and r["mode"] == "enforce")
             return deny(f"denied: blocked by gate {first['gate']}: {first['reason']}", "gate")
         # 7. holds (10.3)
         hold = Hold(f"h_{_secrets.token_hex(8)}", caller, call, s, w, meta, {},
@@ -403,7 +403,7 @@ class Dispatcher:
         if self._rights(caller, s, w, call, entry):
             return False
         results = await gates_mod.run(self.gates, _gate_input(caller, s, w, call, entry))
-        return rights.gate_decision(results)["verdict"] == "allow"
+        return rights.gate_decision(results, entry["risk"])["verdict"] == "allow"
 
     def _rights(self, caller: Caller, s: Session, w: Worker, call: Call, entry: dict) -> dict | None:
         if caller.person and self.identities.expired(caller.person, self.clock()):

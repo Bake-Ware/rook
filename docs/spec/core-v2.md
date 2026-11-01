@@ -933,7 +933,7 @@ order:
    announced ceiling; refuse with the refusing layer
    (`denied: <layer>: <reason>`).
 6. **Gates** (10.2). `block` refuses (`denied: blocked by gate <name>:
-   <reason category>`); `flag` MAY hold.
+   <reason category>`); `flag` MAY hold, except on a `read` call (10.2).
 7. **Holds** (10.3).
 8. **Ticket.** Mint (6.2), send, wait (6.5).
 9. **Journal** (11): one entry per dispatched call, whatever the outcome.
@@ -975,6 +975,11 @@ Rules (vectors: `gate.json`):
   shadow mode first.
 - A gate that errors, times out or returns a malformed result counts as
   `flag` with reason `gate_error`.
+- **Tiering by risk** (castling-security: "reads log, writes/exec can
+  hold, elevation must pass"). On a `read` call a `flag` (`gate_error`
+  included) is journaled and the call goes; it is never held. A `block`
+  still refuses. On `write`, `exec` and `admin` calls a `flag` MAY hold;
+  in elevation (7.2) it refuses.
 - Each gate declares a latency `budget` (default 20 ms); the hub MUST NOT
   wait longer than 200 ms for any gate.
 - Disabling or replacing a gate plugin is a deliberate owner action and is

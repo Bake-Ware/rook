@@ -126,10 +126,22 @@ def hard_stop(effects: list) -> bool:
     return any(e in HARD_STOP_EFFECTS or e not in EFFECTS for e in effects or ())
 
 
-def gate_decision(results: list) -> dict:
+def gate_decision(results: list, risk: str | None = None) -> dict:
     """Combine gate results at dispatch (spec 10). Shadow-mode gates never
     count; a malformed result or an error counts as a flag; block wins over
-    flag, flag over allow. Gates can only restrict."""
+    flag, flag over allow. Gates can only restrict.
+
+    ``risk`` tiers a flag (castling-security, Bake: "Tiering: reads log,
+    writes/exec can hold, elevation must pass"): on a ``read`` call a flag,
+    a ``gate_error`` included, is journaled and never held, so the verdict
+    is ``allow`` with the flagging gates in ``logged``; a block still wins."""
+    out = _gate_verdict(results)
+    if out["verdict"] == "flag" and risk == "read":
+        return {"verdict": "allow", "by": [], "logged": out["by"]}
+    return out
+
+
+def _gate_verdict(results: list) -> dict:
     verdict, by = "allow", []
     for r in results:
         if r.get("mode", "enforce") == "shadow":

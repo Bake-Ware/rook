@@ -668,9 +668,9 @@ def test_release_sees_the_cap_and_worker_as_they_are_now(hub):
     # Held for a gate flag only; meanwhile the worker re-announces the cap as
     # destructive. Triage may release flags, never a hard stop.
     hub.gates = [G("security", "flag")]
-    out, _ = call(hub, BAKE, "file.read")
+    out, _ = call(hub, BAKE, "light.set")
     assert out["held"]
-    hub.worker.caps = {**hub.worker.caps, "file.read": {**CAPS["file.read"], "effects": ["destructive"]}}
+    hub.worker.caps = {**hub.worker.caps, "light.set": {**CAPS["light.set"], "effects": ["destructive"]}}
     rel = run(hub.release(out["hold"], "system:plugin.security"))
     assert "changed since it was held" in rel["error"] and not hub.tx.requests
     # the worker became sacred after the hold: same
@@ -705,6 +705,35 @@ def test_gate_flag_holds_and_triage_may_release(hub):
     assert out["held"] and "gate security" in out["error"]
     assert not run(hub.release(out["hold"], "agent:claude"))["ok"]
     assert run(hub.release(out["hold"], "system:plugin.security"))["ok"]
+
+
+def test_a_flag_on_a_read_is_journaled_not_held(hub):
+    # castling-security (Bake): "Tiering: reads log, writes/exec can hold,
+    # elevation must pass".
+    hub.gates = [G("security", "flag")]
+    out, _ = call(hub, CLAUDE_FOR_BAKE, "file.read")
+    assert out["ok"] and not out.get("held") and not hub.holds and len(hub.tx.requests) == 1
+    e = calls(hub)[0]
+    assert e["decision"] == "allow" and e["gates"][0]["verdict"] == "flag"
+
+
+def test_a_gate_error_on_a_read_is_journaled_not_held(hub):
+    # A gate that overruns its budget (a stalled loop, a swapping VM) counts
+    # as a gate_error flag; on a read it must not reach the person.
+    def boom(inp):
+        raise RuntimeError("gate broke")
+    hub.gates = [gates.Gate("security", boom, mode="enforce"), G("ml")]
+    out, _ = call(hub, BAKE, "file.read")
+    assert out["ok"] and not hub.holds
+    assert calls(hub)[0]["gates"][0]["reason"] == "gate_error"
+    out, _ = call(hub, BAKE, "light.set")              # a write still holds
+    assert out["held"] and "gate security" in out["error"]
+
+
+def test_a_block_on_a_read_still_refuses(hub):
+    hub.gates = [G("security", "flag"), G("canary", "block", reason="canary")]
+    out, _ = call(hub, BAKE, "file.read")
+    assert out["error"] == "denied: blocked by gate canary: canary" and not hub.tx.requests
 
 
 def test_only_the_security_triage_component_releases_flags_of_its_own_gate(hub):
@@ -816,9 +845,9 @@ def test_gate_vectors_through_run():
                     raise RuntimeError("gate failed")
                 return {k: r[k] for k in ("verdict", "confidence", "reason") if k in r}
             gs.append(gates.Gate(r["gate"], check, mode=r.get("mode", "enforce")))
-        inp = {"cap": "shell.exec", "risk": "exec", "effects": []}
+        inp = {"cap": "shell.exec", "risk": c.get("risk") or "exec", "effects": []}
         results = run(gates.run(gs, inp))
-        assert rights.gate_decision(results) == c["expect"], c["name"]
+        assert rights.gate_decision(results, c.get("risk")) == c["expect"], c["name"]
 
 
 def test_gate_from_manifest():

@@ -200,6 +200,96 @@
      "ml"
     ]
    }
+  },
+  {
+   "name": "a flag on a read is logged, not held",
+   "results": [
+    {
+     "gate": "ml",
+     "mode": "enforce",
+     "verdict": "flag",
+     "confidence": 0.9,
+     "reason": "anomaly"
+    },
+    {
+     "gate": "canary",
+     "mode": "enforce",
+     "verdict": "allow",
+     "confidence": 0.9,
+     "reason": "anomaly"
+    }
+   ],
+   "risk": "read",
+   "expect": {
+    "verdict": "allow",
+    "by": [],
+    "logged": [
+     "ml"
+    ]
+   }
+  },
+  {
+   "name": "a gate error on a read is logged, not held",
+   "results": [
+    {
+     "gate": "ml",
+     "mode": "enforce",
+     "error": "timeout"
+    }
+   ],
+   "risk": "read",
+   "expect": {
+    "verdict": "allow",
+    "by": [],
+    "logged": [
+     "ml"
+    ]
+   }
+  },
+  {
+   "name": "a block on a read still refuses",
+   "results": [
+    {
+     "gate": "ml",
+     "mode": "enforce",
+     "verdict": "flag",
+     "confidence": 0.9,
+     "reason": "anomaly"
+    },
+    {
+     "gate": "canary",
+     "mode": "enforce",
+     "verdict": "block",
+     "confidence": 0.9,
+     "reason": "anomaly"
+    }
+   ],
+   "risk": "read",
+   "expect": {
+    "verdict": "block",
+    "by": [
+     "canary"
+    ]
+   }
+  },
+  {
+   "name": "a flag on a write holds",
+   "results": [
+    {
+     "gate": "ml",
+     "mode": "enforce",
+     "verdict": "flag",
+     "confidence": 0.9,
+     "reason": "anomaly"
+    }
+   ],
+   "risk": "write",
+   "expect": {
+    "verdict": "flag",
+    "by": [
+     "ml"
+    ]
+   }
   }
  ]
 }
