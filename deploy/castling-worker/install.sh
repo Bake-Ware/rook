@@ -8,7 +8,9 @@
 #   install.sh --upgrade [--ref SHA]           # new code, same data and keys
 #
 # Code: a codeload export of Bake-Ware/rook at REF (no git clone needed).
-# Unit: systemd --user rook05-worker (Restart=always), enabled and started.
+# Unit: rook05-worker (Restart=always), enabled and started: a systemd --user
+# unit, or a system unit when run as root (containers without a user bus).
+# Root installs default to /opt/rook05. Downloads use curl, else python.
 # Joining: the device-code enrollment; a hub in move-in approves it at once
 # (castling-switchover-decisions, "Usable first"). --code (or ROOK_JOIN_CODE)
 # joins with a one-time code from the hub (POST /enroll/code) instead.
@@ -17,7 +19,10 @@ set -euo pipefail
 say() { printf '== %s\n' "$*"; }
 die() { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
 
-HUB="" CODE=${ROOK_JOIN_CODE:-} NAME="" REF="castling" PLUGINS="" ROOT="$HOME/.rook05" upgrade=0
+HOME=${HOME:-$(getent passwd "$(id -un)" | cut -d: -f6)}
+export HOME
+if [ "$(id -u)" = 0 ]; then ROOT=/opt/rook05; else ROOT="$HOME/.rook05"; fi
+HUB="" CODE=${ROOK_JOIN_CODE:-} NAME="" REF="castling" PLUGINS="" upgrade=0
 while [ $# -gt 0 ]; do
     case $1 in
         --hub) HUB=$2; shift 2 ;;
@@ -34,12 +39,16 @@ CFG=$ROOT/worker.yaml
 SRC=$ROOT/src
 VENV=$ROOT/venv
 PY=$VENV/bin/python
-UNIT_DIR=$HOME/.config/systemd/user
 UNIT=rook05-worker
+if [ "$(id -u)" = 0 ]; then
+    UNIT_DIR=/etc/systemd/system; SCTL="systemctl"; WANTED=multi-user.target
+else
+    UNIT_DIR=$HOME/.config/systemd/user; SCTL="systemctl --user"; WANTED=default.target
+fi
 [ $upgrade = 1 ] || [ -n "$HUB" ] || die "--hub is required"
 [ $upgrade = 0 ] || [ -f "$CFG" ] || die "nothing to upgrade in $ROOT"
 NAME=${NAME:-$(hostname -s)}
-for c in curl tar git; do command -v $c >/dev/null || die "needs $c"; done
+for c in tar git; do command -v $c >/dev/null || die "needs $c"; done
 PYTHON=""
 for p in python3.13 python3.12 python3.11 python3; do
     if command -v $p >/dev/null && $p -c 'import sys, venv; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
@@ -48,6 +57,21 @@ for p in python3.13 python3.12 python3.11 python3; do
 done
 [ -n "$PYTHON" ] || command -v uv >/dev/null || die "needs python 3.11+ (with venv) or uv"
 
+fetch() {   # URL [sha]: the body (or, with sha, the GitHub commit sha) on stdout
+    local accept=""; [ "${2:-}" = sha ] && accept="application/vnd.github.sha"
+    if command -v curl >/dev/null; then
+        curl -fsSL --max-time 300 -A rook05-install ${accept:+-H "Accept: $accept"} "$1"
+    else
+        "${PYTHON:-python3}" - "$1" "$accept" <<'PYEOF'
+import sys, urllib.request as u
+h = {"User-Agent": "rook05-install"}
+if sys.argv[2]:
+    h["Accept"] = sys.argv[2]
+sys.stdout.buffer.write(u.urlopen(u.Request(sys.argv[1], headers=h), timeout=300).read())
+PYEOF
+    fi
+}
+
 umask 077
 mkdir -p "$ROOT" "$UNIT_DIR"
 chmod 700 "$ROOT"
@@ -55,12 +79,10 @@ chmod 700 "$ROOT"
 # -- code ---------------------------------------------------------------------------
 say "code: Bake-Ware/rook@$REF"
 rm -rf "$SRC.new"; mkdir -p "$SRC.new"
-curl -fsSL --max-time 300 -A rook05-install "https://codeload.github.com/Bake-Ware/rook/tar.gz/$REF" \
-    | tar -xz -C "$SRC.new" --strip-components=1
-sha=$(curl -fsSL --max-time 30 -A rook05-install -H 'Accept: application/vnd.github.sha' \
-    "https://api.github.com/repos/Bake-Ware/rook/commits/$REF" 2>/dev/null || echo "$REF")
+fetch "https://codeload.github.com/Bake-Ware/rook/tar.gz/$REF" | tar -xz -C "$SRC.new" --strip-components=1
+sha=$(fetch "https://api.github.com/repos/Bake-Ware/rook/commits/$REF" sha 2>/dev/null || echo "$REF")
 echo "$sha" > "$SRC.new/.castling-sha"
-[ $upgrade = 1 ] && systemctl --user stop $UNIT 2>/dev/null || true
+[ $upgrade = 1 ] && $SCTL stop $UNIT 2>/dev/null || true
 rm -rf "$SRC.old"; [ -d "$SRC" ] && mv "$SRC" "$SRC.old"
 mv "$SRC.new" "$SRC"
 say "venv: $VENV"
@@ -113,9 +135,9 @@ Restart=always
 RestartSec=5
 
 [Install]
-WantedBy=default.target
+WantedBy=$WANTED
 EOF
-systemctl --user daemon-reload
+$SCTL daemon-reload
 
 # -- join -------------------------------------------------------------------------------
 if ! grep -q '^anchor:' "$CFG"; then
@@ -123,7 +145,7 @@ if ! grep -q '^anchor:' "$CFG"; then
     (cd "$ROOT" && timeout 600 "$PY" -m rook.core2.worker --config "$CFG" enroll "$HUB" --name "$NAME" \
         ${CODE:+--code "$CODE"})
 fi
-systemctl --user enable $UNIT >/dev/null 2>&1 || true
-systemctl --user restart $UNIT
-loginctl enable-linger "$USER" >/dev/null 2>&1 || true
-say "done: $NAME on $(cut -c1-8 "$SRC/.castling-sha"), unit $UNIT ($(systemctl --user is-active $UNIT))"
+$SCTL enable $UNIT >/dev/null 2>&1 || true
+$SCTL restart $UNIT
+[ "$(id -u)" = 0 ] || loginctl enable-linger "$(id -un)" >/dev/null 2>&1 || true
+say "done: $NAME on $(cut -c1-8 "$SRC/.castling-sha"), unit $UNIT ($($SCTL is-active $UNIT))"
