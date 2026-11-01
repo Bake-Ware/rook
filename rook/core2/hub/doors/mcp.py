@@ -32,6 +32,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import logging
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -40,6 +41,8 @@ from .http import HttpDoor, _Error, _Handler
 from .. import passwords
 from ..identity import Caller
 from .mcp_oauth import OAuthShim, _fields
+
+APPROVALS = "oauth-approvals.json"     # codes the hub CLI approved (mcp_oauth: approve by code)
 
 log = logging.getLogger("rook.hub.door.mcp")
 
@@ -136,7 +139,13 @@ class McpDoor(HttpDoor):
         self.origins = set(options.get("origins") or ())
         self.oauth_agent = str(options.get("oauth_agent") or "claude-web")
         self.oauth = OAuthShim(options["oauth"], self.path, hub.authenticate, self._mint, self._oauth_problem,
-                               token_client=self._token_client) if options.get("oauth") else None
+                               token_client=self._token_client, approvals_file=Path(hub.data) / APPROVALS,
+                               note=self._approved) if options.get("oauth") else None
+
+    def _approved(self, **fields) -> None:
+        """Journal an approved connector code (who approved, for whom, which client)."""
+        log.info("connector code approved", extra={"fields": fields})
+        self.hub.dispatcher._note("oauth.approved", None, **fields)
 
     def _token_client(self, client_id: str) -> bool:
         """``rook-<id>``: a stored agent token (token.create) with that id."""

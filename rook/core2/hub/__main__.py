@@ -3,6 +3,7 @@
     python -m rook.core2.hub --config hub.yaml init --owner bake --relay relay.example:7474 [--url https://rook.example]
     python -m rook.core2.hub --config hub.yaml
     python -m rook.core2.hub --config hub.yaml passwd bake          # set or reset a person's sign-in password
+    python -m rook.core2.hub --config hub.yaml oauth approve BCDF-2345   # a connector page's code
     python -m rook.core2.hub --config hub.yaml token --person bake [--agent claude-code] [--label laptop]
     python -m rook.core2.hub --config hub.yaml recovery-key
     python -m rook.core2.hub --config hub.yaml secret list | set NAME [--description TEXT] | delete NAME
@@ -63,6 +64,7 @@ import os
 import secrets
 import signal
 import sys
+import time
 from pathlib import Path
 
 import yaml
@@ -148,6 +150,31 @@ def _new_password(name: str) -> str:
         if not first or first == getpass.getpass("Again: "):
             return first
         print("They don't match; try again.", file=sys.stderr)
+
+
+def oauth_cmd(cfg, code: str, person: str | None) -> int:
+    """Approve a waiting connector's code on the running hub: written to
+    ``<data>/oauth-approvals.json``, which the MCP door reads on the page's
+    next reload (a few seconds). Journaled by the hub when it takes it."""
+    owners = [n for n, u in cfg.users.items() if u.get("preset") == "owner"]
+    name = person or (owners[0] if owners else None)
+    if name not in owners:
+        print(f"oauth: {name!r} is not an owner in the config", file=sys.stderr)
+        return 2
+    norm = "".join(c for c in code.upper() if c.isalnum())
+    if len(norm) != 8:
+        print("oauth: a code is 8 letters and digits, e.g. BCDF-2345", file=sys.stderr)
+        return 2
+    path = cfg.data / "oauth-approvals.json"
+    try:
+        pending = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except ValueError:
+        pending = {}
+    pending[norm] = {"person": f"person:{name}", "by": "hub CLI", "ts": time.time()}
+    _write_private(path, json.dumps(pending))
+    print(f"Approved {norm[:4]}-{norm[4:]} for {name}: the connector's page goes on within a few seconds "
+          "(if no page shows that code within 10 minutes, nothing happens).")
+    return 0
 
 
 def passwd_cmd(cfg, name: str) -> int:
@@ -257,6 +284,10 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd")
     pw = sub.add_parser("passwd", help="set or reset a person's sign-in password (typed, or one line on stdin)")
     pw.add_argument("name", help="the user's name in the config")
+    oa = sub.add_parser("oauth", help="approve the code a connector's sign-in page shows (claude.ai adding Rook)")
+    oa.add_argument("action", choices=["approve"])
+    oa.add_argument("code", help="as the page shows it, e.g. BCDF-2345")
+    oa.add_argument("--person", help="the owner it goes through as (default: the first owner)")
     tok = sub.add_parser("token", help="mint a door token (printed once; only its hash is kept)")
     tok.add_argument("--person", help="the person it calls for (a user in the config)")
     tok.add_argument("--agent", help="the agent that calls (an agent in the config)")
@@ -295,6 +326,8 @@ def main(argv=None) -> int:
     except (OSError, ValueError) as e:
         print(f"config: {e}", file=sys.stderr)
         return 2
+    if args.cmd == "oauth":
+        return oauth_cmd(cfg, args.code, args.person)
     if args.cmd == "passwd":
         return passwd_cmd(cfg, args.name)
     if args.cmd == "recovery-key":

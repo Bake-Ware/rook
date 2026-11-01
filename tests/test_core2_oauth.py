@@ -91,7 +91,7 @@ def exchange(s, code, **over):
                        "redirect_uri": CB, "client_id": "claude", **over})
 
 
-def test_discovery_names_the_door_and_no_registration():
+def test_discovery_names_the_door_and_registration():
     s = shim()
     assert s.challenge() == 'Bearer resource_metadata="https://rook.example/.well-known/oauth-protected-resource/mcp"'
     for path in ("/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"):
@@ -104,14 +104,16 @@ def test_discovery_names_the_door_and_no_registration():
     assert meta["token_endpoint"] == "https://rook.example/token"
     assert meta["code_challenge_methods_supported"] == ["S256"]
     assert "none" in meta["token_endpoint_auth_methods_supported"]           # a public client: no secret
-    assert "registration_endpoint" not in meta
+    assert meta["registration_endpoint"] == "https://rook.example/register"   # claude.ai adds it from the URL alone
     assert s.owns("GET", "/authorize") and s.owns("POST", "/authorize") and s.owns("POST", "/token")
+    assert s.owns("GET", "/authorize/wait") and s.owns("POST", "/register")
     assert not s.owns("GET", "/token") and not s.owns("POST", "/mcp") and not s.owns("GET", "/oauth/register")
 
 
 def test_authorize_shows_a_sign_in_form_carrying_the_request():
     s = shim()
-    status, page, headers = s.handle("GET", "/authorize", urlencode(params(state='"><script>x</script>')), b"")
+    status, page, headers = s.handle("GET", "/authorize", urlencode(params(state='"><script>x</script>', pw="1")),
+                                     b"")
     assert status == 200 and headers["Content-Type"].startswith("text/html")
     assert "frame-ancestors 'none'" in headers["Content-Security-Policy"] and "Location" not in headers
     text = page.decode()
@@ -283,9 +285,9 @@ def test_claude_ai_flow_end_to_end(tmp_path):
             status, _, prm = await http(base + urlsplit(meta_url).path)
             assert status == 200 and prm["resource"] == "http://127.0.0.1:1/mcp"
             status, _, meta = await http(base + "/.well-known/oauth-authorization-server")
-            assert status == 200 and "registration_endpoint" not in meta
+            assert status == 200 and meta["registration_endpoint"] == "http://127.0.0.1:1/register"
 
-            status, hdrs, page = await http(base + "/authorize?" + urlencode(params()), raw=True)
+            status, hdrs, page = await http(base + "/authorize?" + urlencode(params(pw="1")), raw=True)
             assert status == 200 and b'name="password"' in page and hdrs["Content-Type"].startswith("text/html")
             for user, pw in (("bake", "wrong"), ("nobody", "open sesame"), ("", "")):
                 status, hdrs, page = await form_post(base + "/authorize", {**params(), "user": user, "password": pw})
@@ -385,10 +387,10 @@ def test_a_token_client_goes_straight_through_and_needs_its_token():
     status, out, _ = exchange(s, code, auth=basic, client_id=cid)
     assert status == 200 and out["access_token"] == out["refresh_token"] == good
     assert s.minter.tokens.keys() == {"person-tok", good}       # nothing new minted
-    # an unknown rook- id, or any other client id, still gets the sign-in form
+    # an unknown rook- id, or any other client id, still gets the sign-in page (code + password)
     for other in (f"rook-{'0' * 12}", "claude"):
         status, page, _ = s.handle("GET", "/authorize", urlencode(params(client_id=other)), b"")
-        assert status == 200 and b'name="password"' in page
+        assert status == 200 and b"Waiting for approval" in page and b"pw=1" in page
 
 
 def test_token_create_names_a_connector_that_works_without_a_password(tmp_path):
@@ -414,6 +416,103 @@ def test_token_create_names_a_connector_that_works_without_a_password(tmp_path):
                                                   "why": WHY}}
             status, _, out = await http(base + "/mcp", rpc_body("tools/call", call), bearer)
             assert status == 200 and out["result"]["isError"] is False, out
+        finally:
+            await hub.stop()
+    run(go())
+
+
+# -- approve by code: no password, no token pasted -------------------------------------------
+
+def _code_page(s, **over):
+    import re
+    status, page, headers = s.handle("GET", "/authorize", urlencode(params(**over)), b"")
+    text = page.decode()
+    assert status == 200 and "Waiting for approval" in text and headers["Cache-Control"] == "no-store"
+    code = re.search(r'class="big">([A-Z0-9]{4}-[A-Z0-9]{4})<', text).group(1)
+    wid = re.search(r"/authorize/wait\?w=([\w-]+)", text).group(1)
+    assert 'name="password"' not in text and "pw=1" in text          # the password form is one link away
+    return code, wid
+
+
+def test_an_owner_approves_the_code_and_the_page_goes_on():
+    clock = Clock()
+    notes = []
+    s = shim(clock)
+    s.note = lambda **f: notes.append(f)
+    code, wid = _code_page(s)
+    status, page, _ = s.handle("GET", "/authorize/wait", f"w={wid}", b"")
+    assert status == 200 and code.encode() in page                          # still waiting, same code
+    assert not s.approve("ZZZZ-ZZZZ", "person:bake")                        # a wrong code does nothing
+    assert s.approve(code.lower().replace("-", ""), "person:bake", by="agent:claude")   # case and dash don't matter
+    assert notes == [{"code": code, "person": "person:bake", "by": "agent:claude", "client": "claude.ai"}]
+    assert not s.approve(code, "person:bake")                               # once
+    c = code_of(s.handle("GET", "/authorize/wait", f"w={wid}", b""))
+    status, out, _ = exchange(s, c)
+    assert status == 200 and s.authenticate(out["access_token"]).person == "person:bake"
+    status, page, _ = s.handle("GET", "/authorize/wait", f"w={wid}", b"")     # the page itself is used up
+    assert b"expired or was used" in page
+    # codes expire after 10 minutes
+    code, wid = _code_page(s)
+    clock.t += 601
+    assert not s.approve(code, "person:bake")
+    assert b"expired" in s.handle("GET", "/authorize/wait", f"w={wid}", b"")[1]
+
+
+def test_the_hub_cli_approves_through_a_file(tmp_path):
+    clock = Clock()
+    s = shim(clock)
+    s.approvals_file = tmp_path / "oauth-approvals.json"
+    code, wid = _code_page(s)
+    s.approvals_file.write_text(json.dumps({
+        code.replace("-", ""): {"person": "person:bake", "by": "hub CLI", "ts": clock.t},
+        "OLDOLDOL": {"person": "person:bake", "ts": clock.t - 3600}}))
+    code_of(s.handle("GET", "/authorize/wait", f"w={wid}", b""))
+    assert json.loads(s.approvals_file.read_text()) == {}                   # taken; stale ones dropped
+
+
+def test_register_hands_out_a_public_client():
+    s = shim()
+    status, out, _ = s.handle("POST", "/register", "", json.dumps(
+        {"redirect_uris": [CB], "client_name": "Claude"}).encode())
+    assert status == 201 and out["client_id"].startswith("rook-") and out["token_endpoint_auth_method"] == "none"
+    assert "client_secret" not in out
+    for bad in (b"{}", b"nope", json.dumps({"redirect_uris": ["http://evil.example/cb"]}).encode()):
+        assert s.handle("POST", "/register", "", bad)[0] == 400
+
+
+def test_token_approve_cap_and_the_cli_on_a_running_hub(tmp_path):
+    import re
+    import subprocess
+    import sys
+
+    async def go():
+        hub, base = await start(tmp_path)
+        try:
+            status, _, page = await http(base + "/authorize?" + urlencode(params()), raw=True)
+            code = re.search(rb'class="big">([A-Z0-9-]{9})<', page).group(1).decode()
+            wid = re.search(rb"w=([\w-]+)", page).group(1).decode()
+            out = await hub.call(PERSON, {"worker": "rook", "cap": "token.approve", "args": {"code": "BCDF-2345"},
+                                         "why": WHY}, "test")
+            assert not out["ok"] and "no connector is waiting" in out["error"]
+            out = await hub.call(PERSON, {"worker": "rook", "cap": "token.approve", "args": {"code": code},
+                                          "why": WHY}, "test")
+            assert out["ok"], out
+            status, hdrs, _ = await http(base + "/authorize/wait?w=" + wid)
+            assert status == 302 and "code=" in hdrs["Location"]
+            entry = (await hub.journal_view(PERSON, {"kind": "oauth.approved"}))["entries"]
+            assert entry and entry[0]["code"] == code
+            # the CLI, while the hub runs
+            status, _, page = await http(base + "/authorize?" + urlencode(params()), raw=True)
+            code = re.search(rb'class="big">([A-Z0-9-]{9})<', page).group(1).decode()
+            wid = re.search(rb"w=([\w-]+)", page).group(1).decode()
+            cfg = tmp_path / "hub.yaml"
+            cfg.write_text(f"data: {hub.data}\nband: {hub.band}\nusers: {{bake: {{preset: owner}}}}\n")
+            r = await asyncio.to_thread(subprocess.run, [sys.executable, "-m", "rook.core2.hub", "--config", str(cfg),
+                                                         "oauth", "approve", code], capture_output=True, text=True,
+                                        timeout=60)
+            assert r.returncode == 0, r.stderr
+            status, hdrs, _ = await http(base + "/authorize/wait?w=" + wid)
+            assert status == 302
         finally:
             await hub.stop()
     run(go())
