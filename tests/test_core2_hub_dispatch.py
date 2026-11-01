@@ -946,6 +946,41 @@ def test_timeout_retries_only_idempotent_safe_caps(hub, monkeypatch):
     assert out["error"].startswith("timeout") and len(hub.tx.requests) == 1
 
 
+def _slow(req, n):
+    async def later():
+        await asyncio.sleep(0.3)
+        return {"id": req["id"], "from": WID, "ok": True, "result": "done"}
+    return later()
+
+
+def test_a_caps_own_timeout_argument_sets_the_wait(hub, monkeypatch):
+    """shell.exec is ``timeout: none`` with a timeout argument: the hub waits
+    as long as that argument says, not the 15 s default (found live: a
+    90 s shell.exec came back "timeout" after 20 s)."""
+    from rook.core2.hub import dispatch as dmod
+    monkeypatch.setattr(dmod, "TIMEOUT_GRACE", 0.0)
+    monkeypatch.setattr(dmod, "DEFAULT_TIMEOUT", 0.1)
+    hub.worker.caps["shell.exec"] = {**CAPS["shell.exec"], "timeout": None,
+                                     "args": {"timeout": {"type": "float", "default": 0.05, "max": 3600}}}
+    hub.tx.answer = _slow
+    assert call(hub, BAKE, "shell.exec", {"argv": ["sleep", "0.3"], "timeout": 1})[0]["result"] == "done"
+    out, _ = call(hub, BAKE, "shell.exec", {"argv": ["sleep", "0.3"]})       # the argument's default: 0.05 s
+    assert out["error"].startswith("timeout")
+    out, _ = call(hub, BAKE, "shell.exec", {"argv": ["sleep", "0.3"], "timeout": True})   # not a number
+    assert out["error"].startswith("timeout")
+
+
+def test_timeout_wait_rules():
+    from rook.core2.hub.dispatch import MAX_WAIT, _timeout
+    sh = {"timeout": None, "args": {"timeout": {"type": "float", "default": 30, "max": 3600}}}
+    assert _timeout(sh) == 30 and _timeout(sh, {"timeout": 90}) == 90
+    assert _timeout(sh, {"timeout": 10 ** 9}) == min(3600, MAX_WAIT)
+    assert _timeout({"timeout": "30s"}, {"timeout": 5}) == 30              # no timeout argument: ignored
+    assert _timeout({"timeout": "10s", "args": {"timeout": {"type": "float"}}}, {"timeout": 60}) == 60
+    assert _timeout({"timeout": "10s", "args": {"timeout": {"type": "float"}}}, {"timeout": 2}) == 10
+    assert _timeout({"timeout": None}) == _timeout({}) == 15.0
+
+
 def test_send_errors_and_bad_replies(hub):
     hub.tx.answer = lambda req, n: ConnectionError("relay down")
     assert call(hub, BAKE, "file.read")[0]["error"] == "send failed: relay down"

@@ -348,7 +348,7 @@ class Hub:
         self._loops: list[asyncio.Task] = []
         self._pending: dict[str, asyncio.Future] = {}
         self._replay = wire.ReplayCache()        # worker request nonces (13.1)
-        self._late: dict[str, str] = {}          # call id -> worker, for calls given up on (bounded)
+        self._late: dict[str, dict] = {}         # call id -> {worker, who made it}, for calls given up on (bounded)
         self._event_ids: dict[tuple, None] = {}  # (worker, event id) seen lately (bounded)
         self._event_refused: set = set()         # (worker, event, why) logged once
         self._locks: dict[str, asyncio.Lock] = {}
@@ -1018,10 +1018,17 @@ class Hub:
             fut = self._pending.get(msg["id"])
             if fut is not None and not fut.done():
                 fut.set_result(msg)
-            elif self._late.get(msg["id"]) == msg.get("from"):    # only calls this hub gave up on
-                del self._late[msg["id"]]
-                self._journal({"kind": "late_reply", "ts": self.clock(), "hub": self.hub_id,
+            elif (self._late.get(msg["id"]) or {}).get("worker") == msg.get("from"):  # only calls this hub gave up on
+                late = self._late.pop(msg["id"])
+                # Who made the call rides along, so the caller (an agent reads
+                # only its own entries, 11.4) finds how its call ended.
+                now = self.clock()
+                self._journal({"kind": "late_reply", "ts": now, "hub": self.hub_id,
                                "call": msg["id"], "worker": msg["from"], "ok": msg.get("ok") is True,
+                               "ms": int((now - late["sent"]) * 1000),
+                               **{k: late[k] for k in ("cap", "person", "agent", "session") if late.get(k)},
+                               **({"project": sess.project} if (sess := self.dispatcher.sessions.get(
+                                   late.get("session") or "")) is not None and sess.project else {}),
                                **({"error": str(msg.get("error"))[:500]} if msg.get("ok") is not True else {})})
 
     def worker_key(self, wid: Any) -> str | None:
@@ -1167,6 +1174,7 @@ class Hub:
             return await self._local(request)
         fut = self.loop.create_future()
         self._pending[request["id"]] = fut
+        sent = self.clock()
         try:
             await self.transport.send(band, request)
             return await fut
@@ -1177,7 +1185,10 @@ class Hub:
                 forget = getattr(self.transport, "forget", None)
                 if forget is not None:   # and the band stops sending it again
                     forget(band, request["id"])
-                self._late[request["id"]] = request["target"]
+                t = request.get("ticket") if isinstance(request.get("ticket"), dict) else {}
+                self._late[request["id"]] = {
+                    "worker": request["target"], "cap": request.get("cap"), "sent": sent,
+                    **{k: t[k] for k in ("person", "agent", "session") if isinstance(t.get(k), str)}}
                 while len(self._late) > 1000:
                     del self._late[next(iter(self._late))]
 
@@ -1480,6 +1491,12 @@ class Hub:
             viewer = {"person": caller.person}
         q = {k: v for k, v in filters.items() if k in ("call", "cap", "worker", "person", "agent", "project",
                                                        "chain", "kind", "session") and isinstance(v, str)}
+        if "worker" in q and q["worker"] != self.node and q["worker"] not in self.known:
+            # A worker's name works too (entries keep its id): every id that name has.
+            named = ([self.node] if q["worker"] == "rook" else []) + \
+                [k.id for k in self.known.values() if k.name == q["worker"]]
+            if named:
+                q["worker"] = named
         try:
             for k in ("since", "until"):
                 if filters.get(k) is not None:

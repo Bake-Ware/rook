@@ -743,13 +743,61 @@ def test_only_late_replies_to_our_own_calls_are_journaled(hubs):
         try:
             await w.announce()
             await until(lambda: "echo.say" in hub.dispatcher.workers.get(WID, runtime.Worker("", "", "", {}, {})).caps)
-            hub._late["a" * 32] = WID
+            hub._late["a" * 32] = {"worker": WID, "sent": hub.clock()}
             await w.to_hub({"id": "b" * 32, "from": WID, "ok": True, "result": 1})      # never asked
             await w.to_hub({"id": "a" * 32, "from": "c" * 32, "ok": True, "result": 1})  # wrong worker
             await w.to_hub({"id": "a" * 32, "from": WID, "ok": False, "error": "slow"})
             await until(lambda: hub.journal.query(kind="late_reply"))
             await asyncio.sleep(0.1)
             assert [(e["call"], e["error"]) for e in hub.journal.query(kind="late_reply")] == [("a" * 32, "slow")]
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_a_late_reply_names_who_made_the_call(hubs):
+    async def go():
+        hub, w, token = await hubs()
+        try:
+            await w.announce()
+            await until(lambda: "echo.say" in hub.dispatcher.workers.get(WID, runtime.Worker("", "", "", {}, {})).caps)
+            req = {"id": "f" * 32, "cap": "echo.say", "target": WID, "args": {},
+                   "ticket": {"person": "person:bake", "agent": "agent:claude-web", "session": "s_1"}}
+            hub.transport.forget = lambda band, rid: None
+            sent, hub.transport.send = hub.transport.send, (lambda band, msg: asyncio.sleep(0))  # lost on the way
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(hub._send(hub.band, req), 0.05)
+            hub.transport.send = sent
+            await w.to_hub({"id": "f" * 32, "from": WID, "ok": True, "result": 1})
+            await until(lambda: hub.journal.query(kind="late_reply"))
+            e = hub.journal.query(kind="late_reply")[0]
+            assert (e["call"], e["cap"], e["person"], e["agent"], e["session"], e["ok"]) == (
+                "f" * 32, "echo.say", "person:bake", "agent:claude-web", "s_1", True)
+            assert e["ms"] >= 0
+            # The agent finds it with its own viewer (it reads only its own entries).
+            seen = hub.journal.query(call="f" * 32, viewer={"agent": "agent:claude-web"})
+            assert [x["kind"] for x in seen] == ["late_reply"]
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_journal_worker_filter_takes_a_name(hubs, monkeypatch):
+    async def go():
+        hub, w, token = await hubs()
+        try:
+            await w.announce()
+            await until(lambda: WID in hub.known)
+            monkeypatch.setattr(hub.identities, "is_owner", lambda person: True)
+            owner = runtime.Caller(person="person:bake")
+            hub._journal({"kind": "note", "ts": hub.clock(), "worker": WID})
+            hub._journal({"kind": "note", "ts": hub.clock(), "worker": "0" * 32})
+            hub._journal({"kind": "note", "ts": hub.clock(), "worker": hub.node})
+            for name, want in ((hub.known[WID].name, [WID]), (WID, [WID]), ("rook", [hub.node]),
+                               ("nobody", [])):
+                out = await hub.journal_view(owner, {"kind": "note", "worker": name})
+                assert [e["worker"] for e in out["entries"]] == want, name
+            assert hub.journal.query(kind="note", worker=[]) == []
         finally:
             await hub.stop()
     run(go())
@@ -764,7 +812,7 @@ def test_a_call_the_hub_gives_up_on_stops_being_resent(hubs):
             req = {"id": "d" * 32, "cap": "echo.say", "target": "e" * 32, "args": {}}     # nobody answers
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(hub._send(hub.band, req), 0.1)      # dispatch's timeout
-            assert forgotten == [(hub.band, "d" * 32)] and hub._late["d" * 32] == "e" * 32
+            assert forgotten == [(hub.band, "d" * 32)] and hub._late["d" * 32]["worker"] == "e" * 32
         finally:
             await hub.stop()
     run(go())

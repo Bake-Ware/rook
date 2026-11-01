@@ -165,7 +165,7 @@ class JournalStore:
             row = self._db.execute("SELECT body FROM journal WHERE id = ?", (entry_id,)).fetchone()
         return json.loads(row[0]) if row else None
 
-    def query(self, *, call: str | None = None, cap: str | None = None, worker: str | None = None,
+    def query(self, *, call: str | None = None, cap: str | None = None, worker: str | list[str] | None = None,
               person: str | None = None, agent: str | None = None, actor: str | None = None,
               project: str | None = None, chain: str | None = None, kind: str | None = None,
               session: str | None = None, since: float | None = None, until: float | None = None,
@@ -173,8 +173,12 @@ class JournalStore:
         """Entries matching every filter given, newest first. ``cap`` ending in
         ``.*`` matches that prefix; ``actor`` is person or agent; ``since`` is
         inclusive, ``until`` exclusive. ``viewer`` limits to what they may
-        read (11.4)."""
+        read (11.4). ``worker`` may list several ids (one name, several workers)."""
         where, params = [], []
+        if isinstance(worker, (list, tuple)):
+            where.append(f"worker IN ({','.join('?' * len(worker))})" if worker else "0")
+            params += list(worker)
+            worker = None
         for col, val in (("call", call), ("worker", worker), ("person", person), ("agent", agent),
                          ("project", project), ("chain", chain), ("kind", kind), ("session", session)):
             if val is not None:

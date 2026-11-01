@@ -67,6 +67,7 @@ SESSION_SECS = 12 * 3600
 TICKET_SECS = 60
 DEFAULT_TIMEOUT = 15.0
 TIMEOUT_GRACE = 5.0
+MAX_WAIT = 3600.0       # the longest dispatch waits on one call, whatever a cap's timeout argument asks
 SUB_CALLS = 32         # core.call sub-calls one call in flight may make (13.1)
 REMINT = ("denied by worker: expired", "denied by worker: not_yet_valid")
 NO_RETRY = {"destructive", "physical"}
@@ -460,7 +461,7 @@ class Dispatcher:
             return {"id": cid, "ok": False, "error": entry["error"]}
         if "taints" in (meta.get("effects") or ()):
             s.tainted = True
-        wait = _timeout(meta) + TIMEOUT_GRACE
+        wait = _timeout(meta, call.args) + TIMEOUT_GRACE
         may_retry = bool(meta.get("idempotent")) and not NO_RETRY & set(_hold_effects(meta))
         entry["ticket"], carried, first = [], [], w
         alternates = list(alternates or ())
@@ -802,11 +803,31 @@ def _resolve(caps: dict, cap: str, contract: str | None = None) -> tuple[str, st
     return (named[0], cap, None) if named else (cap, None, None)
 
 
-def _timeout(meta: dict) -> float:
+def _timeout(meta: dict, args: Any = None) -> float:
+    """How long dispatch waits for the worker's reply (before the grace).
+
+    The cap's declared timeout, else the 15 s default. A cap with its own
+    ``timeout`` argument (shell.exec: "Seconds before the process is killed")
+    is waited on at least that long: the value passed, else the argument's
+    default. That is what bounds a ``timeout: none`` cap on the worker, so the
+    hub must not give up at 15 s while the worker is still running it."""
+    declared = meta.get("timeout", DEFAULT_TIMEOUT)
     try:
-        return parse_duration(meta["timeout"]) if "timeout" in meta else DEFAULT_TIMEOUT
-    except ValueError:
-        return DEFAULT_TIMEOUT
+        base = None if declared is None else parse_duration(declared)
+    except (TypeError, ValueError):
+        base = DEFAULT_TIMEOUT
+    spec = meta.get("args")
+    spec = spec.get("timeout") if isinstance(spec, dict) else None
+    if isinstance(spec, dict):
+        asked = args.get("timeout") if isinstance(args, dict) else None
+        if isinstance(asked, bool) or not isinstance(asked, (int, float)):
+            asked = spec.get("default")
+        if not isinstance(asked, bool) and isinstance(asked, (int, float)) and asked > 0:
+            top = spec.get("max")
+            ceiling = min(float(top), MAX_WAIT) if isinstance(top, (int, float)) and not isinstance(top, bool) \
+                else MAX_WAIT
+            base = max(base or 0.0, min(float(asked), ceiling))
+    return DEFAULT_TIMEOUT if base is None else base
 
 
 def _call_facts(meta: dict, elevate: bool) -> dict:
