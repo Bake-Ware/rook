@@ -13,7 +13,7 @@ from rook.core2.worker.loader import load_folder
 from rook.kit.actions import appliance_values, run_action
 from rook.kit.ctx import Ctx, KitError, invoke
 
-PLUGIN = load_folder(PLUGINS / "roku", os_name="linux")
+PLUGIN = load_folder(PLUGINS / "tv-roku", os_name="linux")
 
 APPS = ('<apps><app id="12" type="appl" version="5.1">Netflix</app>'
         '<app id="837" type="appl" version="2.0">YouTube</app>'
@@ -102,78 +102,78 @@ def call(roku, cap, args=None, *, up=True):
 
 
 def test_status(roku):
-    assert call(roku, "roku.status") == {
+    assert call(roku, "tv-roku.status") == {
         "name": "den-roku", "host": "127.0.0.1", "reachable": True, "power": "PowerOn", "on": True,
         "is_tv": True, "app": "YouTube", "app_id": "837", "player": "play",
         "device_name": "Den Roku", "model": "TCL Roku TV"}
 
 
 def test_status_unreachable_and_limited(roku):
-    got = call(roku, "roku.status", up=False)
+    got = call(roku, "tv-roku.status", up=False)
     assert got["reachable"] is False and got["on"] is False
     roku.limited = True
-    got = call(roku, "roku.status")
+    got = call(roku, "tv-roku.status")
     assert got["reachable"] is False and "Control by mobile apps" in got["error"]
 
 
 def test_apps_and_launch(roku):
-    assert [a["title"] for a in call(roku, "roku.app.list")["items"]] == ["Netflix", "Prime Video", "Xbox", "YouTube"]
-    got = call(roku, "roku.app.launch", {"app": "youtube", "params": {"contentId": "abc", "mediaType": "movie"}})
+    assert [a["title"] for a in call(roku, "tv-roku.app.list")["items"]] == ["Netflix", "Prime Video", "Xbox", "YouTube"]
+    got = call(roku, "tv-roku.app.launch", {"app": "youtube", "params": {"contentId": "abc", "mediaType": "movie"}})
     assert got == {"ok": True, "app_id": "837", "app": "YouTube"}
     assert roku.seen[-1] == ("POST", "/launch/837", {"contentId": "abc", "mediaType": "movie"})
     with pytest.raises(KitError, match="no channel matches"):
-        call(roku, "roku.app.launch", {"app": "hulu"})
+        call(roku, "tv-roku.app.launch", {"app": "hulu"})
 
 
 def test_keys_and_inputs(roku):
-    call(roku, "roku.hid.key", {"key": "ok"})
-    call(roku, "roku.hid.key", {"key": "escape"})
-    call(roku, "roku.hid.key", {"key": "FindRemote"})
-    call(roku, "roku.set_input", {"input": "hdmi2"})
+    call(roku, "tv-roku.hid.key", {"key": "ok"})
+    call(roku, "tv-roku.hid.key", {"key": "escape"})
+    call(roku, "tv-roku.hid.key", {"key": "FindRemote"})
+    call(roku, "tv-roku.set_input", {"input": "hdmi2"})
     assert roku.keys == ["Select", "Back", "FindRemote", "InputHDMI2"]
     for bad in ({"key": "Lit_a"}, {"key": "../launch/12"}, {"key": "home", "mods": ["ctrl"]}):
         with pytest.raises(ValueError, match="bad args"):
-            call(roku, "roku.hid.key", bad)
+            call(roku, "tv-roku.hid.key", bad)
 
 
 def test_type(roku):
-    assert call(roku, "roku.hid.type", {"text": "a b&", "enter": True}) == {"ok": True, "typed": 4, "enter": True}
+    assert call(roku, "tv-roku.hid.type", {"text": "a b&", "enter": True}) == {"ok": True, "typed": 4, "enter": True}
     assert roku.keys == ["Lit_a", "Lit_ ", "Lit_b", "Lit_&", "Enter"]
 
 
 def test_sound(roku):
     with pytest.raises(KitError, match="no volume level"):
-        call(roku, "roku.sound.set", {"level": 20})
-    got = call(roku, "roku.sound.set", {"step": -2, "mute": True})
+        call(roku, "tv-roku.sound.set", {"level": 20})
+    got = call(roku, "tv-roku.sound.set", {"step": -2, "mute": True})
     assert got["stepped"] == -2 and "toggles" in got["note"]
     assert roku.keys == ["VolumeDown", "VolumeDown", "VolumeMute"]
 
 
 def test_media(roku):
-    assert call(roku, "roku.media.play")["unchanged"]
-    assert call(roku, "roku.media.pause") == {"ok": True, "state": "pause"}
-    assert call(roku, "roku.media.pause")["unchanged"]
-    assert call(roku, "roku.media.play") == {"ok": True, "state": "play"}
+    assert call(roku, "tv-roku.media.play")["unchanged"]
+    assert call(roku, "tv-roku.media.pause") == {"ok": True, "state": "pause"}
+    assert call(roku, "tv-roku.media.pause")["unchanged"]
+    assert call(roku, "tv-roku.media.play") == {"ok": True, "state": "play"}
     roku.player = "none"
     with pytest.raises(KitError, match="nothing to play"):
-        call(roku, "roku.media.play")
-    call(roku, "roku.media.seek", {"by": -10})
-    call(roku, "roku.media.seek")
+        call(roku, "tv-roku.media.play")
+    call(roku, "tv-roku.media.seek", {"by": -10})
+    call(roku, "tv-roku.media.seek")
     assert roku.keys == ["Play", "Play", "Rev", "Fwd"]
 
 
 def test_power(roku):
-    assert call(roku, "roku.power.on")["already_on"]
-    assert call(roku, "roku.power.off") == {"ok": True}
-    assert call(roku, "roku.power.off")["already_off"]
-    got = call(roku, "roku.power.on", {"wait": 5})
+    assert call(roku, "tv-roku.power.on")["already_on"]
+    assert call(roku, "tv-roku.power.off") == {"ok": True}
+    assert call(roku, "tv-roku.power.off")["already_off"]
+    got = call(roku, "tv-roku.power.on", {"wait": 5})
     assert got["on"] and roku.keys == ["PowerOff", "PowerOn"]
-    assert call(roku, "roku.power.off", up=False)["already_off"]
+    assert call(roku, "tv-roku.power.off", up=False)["already_off"]
     with pytest.raises(KitError, match="Fast TV start"):
-        call(roku, "roku.power.on", up=False)
+        call(roku, "tv-roku.power.on", up=False)
 
 
 def test_no_instance():
-    ctx = Ctx(PLUGIN.manifest, ME, cap="roku.status")
+    ctx = Ctx(PLUGIN.manifest, ME, cap="tv-roku.status")
     with pytest.raises(KitError, match="no appliance instance"):
-        go(lambda: invoke(PLUGIN.caps["roku.status"].func, ctx, {}))
+        go(lambda: invoke(PLUGIN.caps["tv-roku.status"].func, ctx, {}))

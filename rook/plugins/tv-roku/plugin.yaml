@@ -4,7 +4,7 @@
 # each (config); state, apps, typing, volume steps and power need the
 # replies read, so they are scripts/roku.py.
 manifest: 1
-plugin: roku
+plugin: tv-roku
 version: 0.5.0
 title: Roku
 doc: Drive Roku players and Roku TVs (apps, remote buttons, typing, volume, power, inputs) over ECP.

@@ -156,7 +156,7 @@ async def launch(ctx, app: str, params: dict | None = None) -> dict:
         raise ctx.Error(f"{app!r} matches several channels: "
                         + ", ".join(f"{apps[k]} ({k})" for k in hits[:8]))
     if not hits:
-        raise ctx.Error(f"no channel matches {app!r}; roku.app.list lists them")
+        raise ctx.Error(f"no channel matches {app!r}; tv-roku.app.list lists them")
     query = urllib.parse.urlencode({str(k): str(v) for k, v in (params or {}).items()})
     await _call(r, "POST", f"/launch/{urllib.parse.quote(hits[0], safe='')}" + (f"?{query}" if query else ""))
     return {"ok": True, "app_id": hits[0], "app": apps[hits[0]]}

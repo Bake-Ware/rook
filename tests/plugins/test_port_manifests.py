@@ -15,7 +15,7 @@ PORTS = sorted(p.parent.name for p in PLUGINS.glob("*/plugin.yaml")
 
 def test_the_ports_are_there():
     assert PORTS == ["adb", "battery", "browser", "camera", "cec", "dongle", "file", "hid-desktop", "kvm",
-                     "notification-desktop", "roku", "screen-desktop", "shell", "torrent", "tv"]
+                     "notification-desktop", "screen-desktop", "shell", "torrent", "tv", "tv-roku"]
 
 
 @pytest.mark.parametrize("name", PORTS)

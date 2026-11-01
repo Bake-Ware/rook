@@ -116,7 +116,7 @@ runs where and what the phone app needs):
 - [camera](../../rook/plugins/camera/docs/manual.md), [battery](../../rook/plugins/battery/docs/manual.md).
 - [torrent](../../rook/plugins/torrent/docs/manual.md): Deluge.
 - [dongle](../../rook/plugins/dongle/docs/manual.md): the Rook RP2040 USB dongle.
-- Appliances ([what that means](workers.md#appliances)): [kvm](../../rook/plugins/kvm/docs/manual.md) (PiKVM), [tv](../../rook/plugins/tv/docs/manual.md) (LG webOS), [roku](../../rook/plugins/roku/docs/manual.md) (Roku over ECP), [adb](../../rook/plugins/adb/docs/manual.md) (Android over adb), [cec](../../rook/plugins/cec/docs/manual.md) (Pico-CEC); [appliance](../../rook/plugins/appliance/docs/manual.md) is the delegate worker's side.
+- Appliances ([what that means](workers.md#appliances)): [kvm](../../rook/plugins/kvm/docs/manual.md) (PiKVM), [tv](../../rook/plugins/tv/docs/manual.md) (LG webOS), [tv-roku](../../rook/plugins/tv-roku/docs/manual.md) (Roku over ECP), [adb](../../rook/plugins/adb/docs/manual.md) (Android over adb), [cec](../../rook/plugins/cec/docs/manual.md) (Pico-CEC); [appliance](../../rook/plugins/appliance/docs/manual.md) is the delegate worker's side.
 
 **Phone** (in the Rook Android app, which runs the 0.5 worker under
 Chaquopy once Settings > Band > Rook version says 0.5; 0.4 stays the default,
