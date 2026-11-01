@@ -38,6 +38,7 @@ Paths are relative to the file. An unknown key is an error.
 | `hardware` | what this machine has, for `requires.hardware` (`gpu`, `display`, `camera`, ...) |
 | `description` | what the machine is for, up to 280 characters, shown to people and agents |
 | `log` | `{level, format: text \| json}` |
+| `run_as` | a worker running as root (Linux): the account its normal calls run as. Without it a root worker refuses to run anything; `root` runs them as root, as 0.4 did |
 
 ## Commands
 

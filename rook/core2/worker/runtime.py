@@ -83,6 +83,7 @@ from .install import Installer
 from .update import TRIAL_SECS, UpdateError, Updater
 from .loader import LoadError, local_os
 from .security import ELEVATE_TIMEOUT, Call, Member, ReplayStore, TrustStore, WorkerGate, _write_atomic
+from . import security as _security
 
 log = logging.getLogger("rook.worker")
 
@@ -110,6 +111,7 @@ class Config:
     hardware: list = field(default_factory=list)      # what requires.hardware can match
     description: str | None = None                    # operator-written role, <= 280 characters
     log: dict = field(default_factory=dict)           # {level, format: text|json}
+    run_as: str | None = None                         # root workers: the account normal calls run as
 
 
 def load_config(path: str | Path) -> Config:
@@ -150,6 +152,16 @@ def check_config(cfg: Config) -> None:
             raise ValueError(f"{name} must be a {kind.__name__}")
     if cfg.description is not None and len(str(cfg.description)) > 280:
         raise ValueError("description is at most 280 characters")
+    if cfg.run_as is not None:
+        if not (isinstance(cfg.run_as, str) and cfg.run_as):
+            raise ValueError("run_as must be an account name")
+        try:
+            import pwd
+            pwd.getpwnam(cfg.run_as)
+        except ImportError:
+            raise ValueError("run_as is for Linux workers") from None
+        except KeyError:
+            raise ValueError(f"run_as: no account {cfg.run_as!r} on this machine") from None
 
 
 # -- logging --------------------------------------------------------------------
@@ -266,6 +278,7 @@ class Worker:
 
     async def _open(self) -> None:
         self.data.mkdir(parents=True, exist_ok=True, mode=0o700)
+        _security.RUN_AS = self.cfg.run_as          # who a root worker's normal calls run as
         self.worker_id = self._worker_id()
         self.key = worker_key(self.data / KEY_FILE)
         self.trust = TrustStore(self.cfg.anchor, self.cfg.memberships or self.data / "memberships.json",

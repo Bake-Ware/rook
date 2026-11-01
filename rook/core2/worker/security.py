@@ -562,6 +562,11 @@ class WorkerGate:
 
 # -- process launch (7.1) ----------------------------------------------------
 
+RUN_AS: str | None = None
+"""worker.yaml ``run_as``: the account a root worker runs normal calls as
+(the worker sets it at start; ``launch`` uses it when no ``run_as`` is given)."""
+
+
 class LaunchUnsupported(Exception):
     """No elevated launch on this platform yet."""
 
@@ -624,7 +629,8 @@ def launch_plan(argv: list[str], lease: dict | None, *, platform: str = sys.plat
         if lease is not None:
             return list(argv), {}
         if not run_as:
-            raise LaunchRefused("worker runs as root but no normal account (run_as) is set")
+            raise LaunchRefused("worker runs as root but no normal account (run_as) is set: "
+                            "set run_as in worker.yaml")
         import pwd
         pw = pwd.getpwnam(run_as)
         return list(argv), {"user": pw.pw_uid, "group": pw.pw_gid,
@@ -640,7 +646,7 @@ async def launch(argv: list[str], lease: dict | None = None, *, run_as: str | No
     or elevated when ``lease`` is the call's lease. ``kwargs`` go to
     ``asyncio.create_subprocess_exec`` (cwd, env, stdin, stdout, ...)."""
     try:
-        args, extra = launch_plan(argv, lease, run_as=run_as)
+        args, extra = launch_plan(argv, lease, run_as=run_as or RUN_AS)
     except LaunchUnsupported:
         raise ElevationError("unsupported") from None
     return await asyncio.create_subprocess_exec(*args, **extra, **kwargs)
