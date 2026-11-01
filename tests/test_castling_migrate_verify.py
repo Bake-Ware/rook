@@ -238,34 +238,81 @@ def _smoke():
 
 
 class FakeDoor:
-    def __init__(self, answers: dict, workers: list):
-        self.answers, self.workers, self.calls = answers, workers, []
+    """A hub door that pages like the real one: record lists by offset (active
+    and archived apart), stream.list by ``next``, stream.read by cursor."""
+
+    def __init__(self, records: dict, workers: list, streams=(), events=None, archived=None):
+        self.records, self.workers, self.calls = records, workers, []
+        self.archived = archived or {}
+        self.streams, self.events = list(streams), events or {}
 
     def request(self, method, path, body=None):
         return {"workers": self.workers}
 
     def call(self, cap, args, worker="rook"):
         self.calls.append((worker, cap, args))
-        if args.get("archived"):
-            return {"ok": True, "result": []}
-        return self.answers.get(cap, {"ok": True, "result": []})
+        if cap == "worker.ping":
+            return {"ok": worker in [w["name"] for w in self.workers]}
+        if cap == "secret.list":
+            return {"ok": True, "result": {"secrets": [{"name": f"s{i}"} for i in range(self.records.get(cap, 0))]}}
+        if cap == "stream.list":
+            rows = [st for st in self.streams if st["kind"] == args["kind"]]
+            o, n = args.get("offset", 0), args["limit"]
+            return {"ok": True, "result": {"streams": rows[o:o + n], "next": o + n if o + n < len(rows) else None}}
+        if cap == "stream.read":
+            evs = [e for e in self.events.get(args["stream"], ()) if not args.get("types") or e["type"] in args["types"]]
+            evs = [e for e in evs if e["seq"] > args.get("after", 0)][:args.get("limit", 200)]
+            return {"ok": True, "result": {"events": evs, "next": evs[-1]["seq"] if evs else args.get("after", 0)}}
+        total = (self.archived if args.get("archived") else self.records).get(cap, 0)
+        o, n = args.get("offset", 0), args.get("limit", 50)
+        return {"ok": True, "result": [{"id": f"r{i}"} for i in range(o, min(total, o + n))]}
 
 
-def test_smoke_checks_the_moved_stores_and_workers():
+def test_smoke_reads_every_moved_store_in_full():
     mod = _smoke()
-    rec = {"ok": True, "result": [{"id": "r"}] * 3}
-    door = FakeDoor({"worker.ping": {"ok": True}, "job.list": rec, "change.list": rec, "secret.list":
-                     {"ok": True, "result": {"secrets": [{"name": "a"}]}},
-                     "stream.list": {"ok": True, "result": {"streams": [{"id": "s1", "title": "Huddle"}]}},
-                     "stream.read": {"ok": True, "result": {"events": [{"seq": 1}]}}},
-                    [{"name": "cachyrig", "online": True}])
-    res = mod.run(door, ["cachyrig"], {"jobs (disabled, 0.4 definition kept)": 3, "change records": 4})
+    streams = [{"id": f"room{i}", "kind": "room", "title": "Room"} for i in range(250)] + \
+              [{"id": "h1", "kind": "huddle", "title": "Huddle"}]
+    events = {"room0": [{"seq": i, "type": "text"} for i in range(1, 1500)],
+              "h1": [{"seq": 1, "type": "status"}, {"seq": 2, "type": "text"}]}
+    moved = {"knowledge pages": 1203, "tasks": 3, "change records": 4, "secrets (names + value hashes)": 2,
+             "chat rooms and huddles -> streams": 251, "chat messages -> text events": 1500,
+             "huddle posts and questions -> status events": 1}
+    door = FakeDoor({"knowledge.list": 1000, "task.list": 3, "change.list": 3, "secret.list": 2},
+                    [{"name": "cachyrig", "online": True}], streams, events, archived={"knowledge.list": 203})
+    res = mod.run(door, ["cachyrig"], moved)
     assert any(ok and line.startswith("worker cachyrig: online, ping ok") for ok, line in res)
     failed = [line for ok, line in res if not ok]
-    assert failed == ['change.list {"limit": 200}: 3 (verify moved 4)']
-    assert all(cap != "shell.exec" for _, cap, _ in door.calls)                      # read-only
+    assert failed == ["change.list (all pages, active + archived): 3 (verify moved 4)"], failed
+    assert any(ok and line == "knowledge.list (all pages, active + archived): 1203 (verify moved 1203)"
+               for ok, line in res)
+    assert any(ok and line.startswith("rooms + huddles as streams: 251") for ok, line in res)
+    assert any(ok and line.startswith("text events in those streams: 1500") for ok, line in res)
+    assert {cap for _, cap, _ in door.calls} <= {"worker.ping", "secret.list", "stream.list", "stream.read"} | \
+        {cap for cap, _ in mod.RECORDS}                                              # read-only
     res = mod.run(FakeDoor({}, []), ["kaiju"], {})
     assert any(not ok and "kaiju" in line for ok, line in res)
+
+
+def test_smoke_sends_a_user_agent(monkeypatch):
+    mod = _smoke()
+    seen = {}
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b"{}"
+
+    def fake_urlopen(req, timeout):
+        seen.update(req.headers)
+        return Resp()
+    monkeypatch.setattr(mod.urllib.request, "urlopen", fake_urlopen)
+    mod.Door("https://hub.example", "t").request("GET", "/workers")
+    assert seen.get("User-agent", "").startswith("rook-cutover-smoke/")
 
 
 # -- the copy ----------------------------------------------------------------------------------
