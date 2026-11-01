@@ -6,10 +6,13 @@ at a time; plugins and agents add pages.
 
 ## Signing in
 
-Paste a token made for you: the first owner's is printed once by `init` (or
-written to `<data>/owner.token`), others come from `python -m
-rook.core2.hub --config hub.yaml token --person <name>`
-([People and presets](people.md#adding-a-person)). Agent tokens can't sign
+Your user name and password. `init` sets the owner's (asked on a
+terminal; otherwise made and left in `<data>/owner.password`, and the site
+offers to change it at your first sign-in). A hub moved from 0.4 takes 0.4's
+dashboard password. **Your account** (bottom of the sidebar) changes your
+password and shows the address claude.ai's connector takes. Lost it? On the
+hub's machine: `python -m rook.core2.hub --config hub.yaml passwd <name>`
+sets a new one at once. Tokens are for agents and apps, never for signing
 in. `doors: {http: {web: false}}` turns the site off.
 
 ## What is there

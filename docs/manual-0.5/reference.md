@@ -43,7 +43,8 @@ Paths are relative to the file. An unknown key is an error.
 
 | Command | What |
 |---|---|
-| `python -m rook.core2.hub --config hub.yaml init --owner <name> [--relay host:port \| --ws-url url] [--url https://…] [--bind addr]` | set up a new hub; prints the owner's token and recovery key once |
+| `python -m rook.core2.hub --config hub.yaml init --owner <name> [--relay host:port \| --ws-url url] [--url https://…] [--bind addr]` | set up a new hub; sets the owner's sign-in password, prints an API token and the recovery key once |
+| `python -m rook.core2.hub --config hub.yaml passwd <name>` | set or reset a person's sign-in password (typed, or one line on stdin); works at once |
 | `python -m rook.core2.hub --config hub.yaml` | run the hub (SIGINT or SIGTERM stops it) |
 | `python -m rook.core2.hub --config hub.yaml token --person <name> [--agent <name>] [--label text]` | mint a door token |
 | `python -m rook.core2.hub --config hub.yaml recovery-key` | show the owner's recovery key |

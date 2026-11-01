@@ -19,6 +19,7 @@ import nacl.utils
 import pytest
 import yaml
 
+from rook.core2.hub import passwords
 from rook.core2.hub.runtime import _key, load_config
 from rook.core2.hub.vault import Locked, Vault
 from rook.kit.ctx import Caller as KitCaller
@@ -539,3 +540,43 @@ def test_the_migration_writes_what_the_hub_reads(tmp_path):
     assert v.get("github-pat") == "ghp_1" and v.list()[0]["created"] == 5.0
     v.set("new-one", "n", by="person:bake")
     assert vault.names(data) == ["github-pat", "new-one"] and vault.get(data, "new-one") == "n"
+
+
+# -- sign-in -----------------------------------------------------------------------------
+
+def _add_04_secret(copy: Path, name: str, value: str) -> None:
+    box = nacl.secret.SecretBox((copy / "vault.key").read_bytes())
+    with sqlite3.connect(copy / "vault.db") as db:
+        db.execute("INSERT INTO secrets (name, value, description, created, updated, set_by) VALUES (?,?,?,?,?,?)",
+                   (name, box.encrypt(value.encode()), "dashboard", NOW, NOW, "u1"))
+
+
+def test_the_04_dashboard_password_becomes_the_owners_password(tmp_path, copy04):
+    """castling-switchover-decisions: "a normal username and password login,
+    like 0.4 is": the owner signs in to 0.5 with the password they use on 0.4."""
+    _add_04_secret(copy04, "rook-dashboard-password", "the-04-password")
+    cfg = make_05(tmp_path)
+    data = cfg.parent / "data"
+    data.mkdir()
+    passwords.set_password(data, "bake", "made-at-init", by=passwords.GENERATED)
+    (data / "owner.password").write_text("made-at-init\n")
+    dry = migrate(copy04, cfg)
+    assert dry["sign_in"] == {"person": "bake", "from": "rook-dashboard-password", "carried": True}
+    assert passwords.check(data, "bake", "made-at-init")                     # a dry run writes nothing
+    r = migrate(copy04, cfg, apply=True)
+    assert r["sign_in"]["carried"] and passwords.check(data, "bake", "the-04-password")
+    assert passwords.set_by(data, "bake") == "migrate" and not (data / "owner.password").exists()
+    text = render(r) + json.dumps(r) + (data / "migrate" / "report.md").read_text()
+    assert "the-04-password" not in text and "signs in with 0.4's dashboard password" in render(r)
+    # one the owner chose since is kept on a re-run
+    passwords.set_password(data, "bake", "mine-now", by="web")
+    again = migrate(copy04, cfg, apply=True)
+    assert not again["sign_in"]["carried"] and "set by web" in again["sign_in"]["why"]
+    assert passwords.check(data, "bake", "mine-now")
+
+
+def test_without_a_04_dashboard_password_init_s_stays(tmp_path, copy04):
+    cfg = make_05(tmp_path)
+    r = migrate(copy04, cfg, apply=True)
+    assert not r["sign_in"]["carried"] and "passwd bake" in r["sign_in"]["why"]
+    assert passwords.set_by(cfg.parent / "data", "bake") is None

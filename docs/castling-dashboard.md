@@ -20,11 +20,12 @@ agent made; the rest are under More. The site opens on your start page
 
 ## Sign in
 
-Open `http://127.0.0.1:8740/` and paste a token made for you: the first
-owner's is printed once by `init` (or written to `<data>/owner.token` on a
-first run without it), others come from
-`python -m rook.core2.hub --config hub.yaml token --person <name>`. An agent's
-token can't sign in. Behind TLS, set `doors: {http: {web: {secure_cookie: true}}}`;
+Open `http://127.0.0.1:8740/` and sign in with your user name and password
+(`rook/core2/hub/passwords.py`: `init` sets the owner's, `passwd <name>` sets
+or resets anyone's, the Account page `/account` changes your own; a hub moved
+from 0.4 takes 0.4's dashboard password). Tokens are for agents and apps; the
+desktop app may still post a person's own token as `{token}`, an agent's never
+signs in. Behind TLS, set `doors: {http: {web: {secure_cookie: true}}}`;
 `web: false` turns the site off.
 
 ## What a page can do

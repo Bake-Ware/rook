@@ -284,9 +284,11 @@ class _Handler(BaseHTTPRequestHandler):
             raise _Error(503, "hub unavailable") from None
 
 
-def _encode(body: dict | None) -> tuple[dict, bytes]:
+def _encode(body: dict | bytes | None) -> tuple[dict, bytes]:
     if body is None:
         return {}, b""
+    if isinstance(body, bytes):          # a page (OAuth sign-in); its Content-Type comes with it
+        return {}, body
     return {"Content-Type": "application/json"}, json.dumps(body, default=str).encode("utf-8")
 
 

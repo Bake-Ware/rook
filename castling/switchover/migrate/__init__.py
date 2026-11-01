@@ -17,6 +17,10 @@ hub.yaml init``):
   -> ``project.trust`` records; the rest is reported (:mod:`.convert`);
 - **vault**: every secret re-sealed under the 0.5 hub's key in
   ``<data>/vault.db`` (:mod:`.vault`); values are never printed or logged;
+- **sign-in**: 0.4's dashboard password (the vault's ``rook-dashboard-password``)
+  becomes the owner's 0.5 password (:mod:`rook.core2.hub.passwords`), so they
+  sign in with what they already use; a password the owner set themselves
+  since (``passwd``, the Account page) is kept;
 - **memory**: the 0.4 home agent's active memories -> the house agent's
   memory (unapproved learned procedures -> its notepad);
 - **knowledge, projects, tasks, concepts** -> workbench records, by the
@@ -50,6 +54,7 @@ from pathlib import Path
 
 import yaml
 
+from rook.core2.hub import passwords
 from rook.core2.hub.runtime import _key, _write_private, home_band, load_config
 from rook.kit.ctx import Caller
 from rook.kit.manifest import load as load_manifest
@@ -129,6 +134,8 @@ def _run(source: Source, cfg, cfg_path: Path, band: str, apply: bool, rename: di
         (cfg.data / "keys").mkdir(exist_ok=True, mode=0o700)
         _key(cfg.data / "keys" / "root.key")      # as the hub's first start would: the vault's key is derived from it
         report["secrets_written"] = vault.put(cfg.data, secrets)
+    report["sign_in"] = _sign_in(cfg.data, owner, secrets, apply)
+    if apply:
         report["memory"]["written"] = _write_memory(cfg.data, band, mems, jots)
         report["archive"] = archive.put(source.root, source.files(), cfg.data)
         if report["journal"]:
@@ -143,6 +150,26 @@ def _run(source: Source, cfg, cfg_path: Path, band: str, apply: bool, rename: di
 
 
 # -- writing -----------------------------------------------------------------
+
+DASHBOARD_PASSWORD = "rook-dashboard-password"      # 0.4's dashboard password, in its vault
+REPLACEABLE = (None, "init", passwords.GENERATED)   # not chosen by the person since: 0.4's wins
+
+
+def _sign_in(data: Path, owner: str, secrets: list, apply: bool) -> dict:
+    """The owner's 0.5 password from 0.4's dashboard password. The value is
+    never in the report."""
+    value = next((s["value"] for s in secrets if s["name"] == DASHBOARD_PASSWORD), None)
+    out = {"person": owner, "from": DASHBOARD_PASSWORD}
+    if not value:
+        return {**out, "carried": False, "why": f"no {DASHBOARD_PASSWORD} in the 0.4 vault: the owner keeps "
+                                                f"the password init set (passwd {owner} resets it)"}
+    was = passwords.set_by(data, owner)
+    if was not in REPLACEABLE:
+        return {**out, "carried": False, "why": f"kept the password set by {was}"}
+    if apply:
+        passwords.set_password(data, owner, value, by="migrate")
+        (data / "owner.password").unlink(missing_ok=True)      # init's made one no longer works
+    return {**out, "carried": True}
 
 def _check_stopped(cfg) -> None:
     """--apply writes the hub's stores: refuse while one of its doors answers."""
@@ -312,6 +339,13 @@ def render(r: dict) -> str:
                    f"{json.dumps(wb.get('skipped') or {})}")
         for x in wb.get("renamed") or ():
             out.append(f"- {x['type']} slug `{x['from']}` was taken: now `{x['to']}`")
+    si = r.get("sign_in") or {}
+    out.append("\n## Sign-in\n")
+    if si.get("carried"):
+        out.append(f"- **{si['person']}** signs in with 0.4's dashboard password (`{si['from']}`)"
+                   + ("" if r["applied"] else " (with --apply)"))
+    else:
+        out.append(f"- {si.get('person', 'the owner')}: {si.get('why', 'nothing to do')}")
     out.append("\n## Vault\n")
     out.append(f"- {len(r['secrets'])} secrets re-sealed under the 0.5 hub's key"
                + (f" ({len(r.get('secrets_written', []))} new)" if r["applied"] else "") + ":")

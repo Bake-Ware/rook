@@ -42,7 +42,7 @@ brings telesthete), in an empty folder:
 ```sh
 python path/to/rook/tests/e2e/relay.py 7474 &        # or a real telesthete-hub
 python -m rook.core2.hub --config hub/hub.yaml init --owner me --relay 127.0.0.1:7474
-#   prints the owner's sign-in token and the recovery key, once; the config holds the band key
+#   sets the owner's sign-in password, prints an API token and the recovery key, once; the config holds the band key
 python -m rook.core2.hub --config hub/hub.yaml &
 
 # A machine signs in as a person (spec 12). It shows a code; approve it as the owner.
@@ -63,10 +63,10 @@ discovery (`... enroll --discover`). Off this machine, enrollment needs https
 (`--insecure` overrides).
 
 Then, as the owner (or in a browser: open `http://127.0.0.1:8740/` and sign in
-with the token init printed; see docs/castling-dashboard.md):
+with your user name and password; see docs/castling-dashboard.md):
 
 ```sh
-H="Authorization: Bearer $TOKEN"       # the token init printed
+H="Authorization: Bearer $TOKEN"       # the API token init printed
 curl -s -H "$H" localhost:8740/workers
 curl -s -H "$H" localhost:8740/caps?worker=laptop
 curl -s -H "$H" -d '{"worker":"laptop","cap":"e2e.ping","args":{"text":"hi"},"why":"Trying the hub."}' localhost:8740/call

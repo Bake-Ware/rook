@@ -23,6 +23,7 @@ from rook.core2 import wire  # noqa: E402
 from rook.core2.enroll import device, mdns  # noqa: E402
 from rook.core2.enroll.hub import (CODE_SECS, MAX_PENDING, UNPOLLED_SECS, Enrollment, check_options,  # noqa: E402
                                    recovery_key)
+from rook.core2.hub import passwords  # noqa: E402
 from rook.core2.hub.__main__ import main as hub_main  # noqa: E402
 from rook.core2.hub.identity import Caller  # noqa: E402
 from rook.core2.hub.runtime import Config, Hub, Loopback, load_config  # noqa: E402
@@ -378,8 +379,12 @@ def test_init_sets_up_an_owner_hub_once(tmp_path, capsys):
     assert cfg.users == {"bake": {"preset": "owner"}} and cfg.enroll == {"url": "https://rook.example"}
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     key = recovery_key(cfg.data)
-    assert key in out and "Sign-in token for bake" in out
-    token = out.split("Sign-in token for bake, shown once (only its hash is kept):\n  ")[1].split()[0]
+    assert key in out and "API token for bake" in out
+    token = out.split("shown once (only its hash is kept):\n  ")[1].split()[0]
+    # no terminal: a password was made, left 0600 for the deploy, never printed
+    made = (cfg.data / "owner.password").read_text().strip()
+    assert made not in out and stat.S_IMODE((cfg.data / "owner.password").stat().st_mode) == 0o600
+    assert passwords.check(cfg.data, "bake", made) and passwords.set_by(cfg.data, "bake") == passwords.GENERATED
     assert hub_main(["--config", str(path), "init", "--owner", "bake", "--relay", "x:1"]) == 2   # once
     assert hub_main(["--config", str(path), "recovery-key"]) == 0
     assert capsys.readouterr().out.strip() == key
