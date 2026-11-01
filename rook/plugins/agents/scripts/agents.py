@@ -55,6 +55,7 @@ import asyncio
 import copy
 import json
 import logging
+import re
 import time
 from dataclasses import replace
 from functools import lru_cache
@@ -69,6 +70,17 @@ log = logging.getLogger("rook.plugin.agents")
 
 PLUGIN_DIR = Path(__file__).resolve().parent.parent
 BACKEND = "agent.backend"        # the contract every turn goes through; an agent may always run its own
+# A secret reference quoted in a turn's text (a memory, a page, a message) is
+# text to read, never a value to fill in: the hub fills {{secret:NAME}} in any
+# call's args. A word joiner between the braces keeps it looking the same.
+_SECRET_REF = re.compile(r"\{\{(\s*secret\s*:)")
+
+
+def inert(text: str) -> str:
+    """``text`` with every ``{{secret:`` made inert for the hub's vault."""
+    return _SECRET_REF.sub("{\u2060{\\1", text) if isinstance(text, str) and "{{" in text else text
+
+
 FIELDS = ("persona", "title", "summary", "prompt", "skills", "grants", "backend", "model",
           "always_on", "cwd")
 MAX_MEMORIES, MAX_NOTES = 200, 50
@@ -396,7 +408,7 @@ class Runtime:
         # Tainted stays tainted: a message from outside content (a Telegram
         # DM) makes the turn, and the harness's own calls, tainted too.
         who = Caller(person=ctx.person, agent=f"agent:{name}", band=ctx.band, why=why, tainted=ctx.caller.tainted)
-        args = {"prompt": prompt, "system": system, "timeout": self.settings["turn_timeout"]}
+        args = {"prompt": inert(prompt), "system": inert(system), "timeout": self.settings["turn_timeout"]}
         model = model or (a.get("model") or {}).get("two")
         if model and model != "default":
             args["model"] = model
