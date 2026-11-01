@@ -407,6 +407,6 @@ def test_the_move_follows_singular_plugin_names(tmp_path, full04, monkeypatch):
         assert v["ok"], verify.render(v)
         assert _kinds(v)["jobs (disabled, 0.4 definition kept)"]["moved"] == 2
         assert _kinds(v)["house agent memory (active -> memory or notepad)"]["moved"] == 4
-        assert "job.list" in [c for c, *_ in _smoke().CHECKS]        # the smoke checks name the same caps
+        assert "job.list" in [c for c, _ in _smoke().RECORDS]          # the smoke checks name the same caps
     finally:
         names.manifest.cache_clear()
