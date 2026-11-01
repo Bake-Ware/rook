@@ -21,6 +21,12 @@ agent, and for the agent itself.
    python -m rook.core2.hub --config hub/hub.yaml token --person bake --agent claude-code
    ```
 
+   Or without a terminal: an agent already connected calls `token.create`
+   `{agent: "<name>"}` for itself or another agent (it acts for the same
+   person), or a person uses the dashboard's **Tokens** page (Hub). Either
+   way the reply has the MCP address and a ready `claude mcp add` command;
+   a new agent name needs no `agents:` entry.
+
 3. Add the server to the agent. Claude Code:
 
    ```sh
