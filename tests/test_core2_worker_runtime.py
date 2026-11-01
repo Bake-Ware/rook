@@ -466,11 +466,13 @@ def test_load_config_resolves_paths_and_refuses_mistakes(tmp_path):
     path.write_text("data: ./state\nanchor: anchor.json\nname: kaiju\nplugins: [plugins]\n"
                     "bands: [{psk_env: ROOK_PSK, relay: 'relay:7474'}]\n")
     cfg = load_config(path)
+    assert cfg.run_as is None
     assert cfg.data == tmp_path / "state" and cfg.anchor == tmp_path / "anchor.json"
     assert cfg.plugins == [tmp_path / "plugins"] and cfg.bands[0]["psk_env"] == "ROOK_PSK"
     for bad, why in (("data: x\n", "anchor is required"), ("data: x\nanchor: a\nband: 1\n", "unknown keys: band"),
                      ("data: x\nanchor: a\nname: rook\n", "name must be"),
-                     ("data: x\nanchor: a\nworker_id: abc\n", "worker_id must be 32 hex")):
+                     ("data: x\nanchor: a\nworker_id: abc\n", "worker_id must be 32 hex"),
+                     ("data: x\nanchor: a\nrun_as: no-such-account-c10\n", "run_as: no account")):
         path.write_text(bad)
         with pytest.raises(ValueError, match=why):
             load_config(path)

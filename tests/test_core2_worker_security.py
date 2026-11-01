@@ -614,6 +614,27 @@ def test_launch_plan_linux():
         sec.launch_plan([], None, platform="linux", admin=False)
 
 
+def test_worker_yaml_run_as_is_the_default_account(monkeypatch):
+    """worker.yaml ``run_as`` (security.RUN_AS) is what launch drops to when a
+    plugin passes none: a root worker in a container runs calls."""
+    import pwd
+    me = pwd.getpwuid(os.getuid()).pw_name
+    seen = []
+
+    def plan(argv, lease, **kw):
+        seen.append(kw.get("run_as"))
+        return list(argv), {}
+    monkeypatch.setattr(sec, "launch_plan", plan)
+    monkeypatch.setattr(sec, "RUN_AS", me)
+
+    async def go():
+        for kw in ({}, {"run_as": "other"}):
+            p = await sec.launch(["true"], **kw)
+            await p.wait()
+    asyncio.run(asyncio.wait_for(go(), 20))
+    assert seen == [me, "other"]
+
+
 def test_root_without_run_as_never_elevates(tmp_path, monkeypatch):
     hub = Hub()
     gate = make_gate(tmp_path, hub)
