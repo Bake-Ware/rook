@@ -49,7 +49,8 @@ fi
 [ $upgrade = 1 ] || [ -n "$HUB" ] || die "--hub is required"
 [ $upgrade = 0 ] || [ -f "$CFG" ] || die "nothing to upgrade in $ROOT"
 NAME=${NAME:-$(hostname -s)}
-for c in tar git; do command -v $c >/dev/null || die "needs $c"; done
+command -v tar >/dev/null || die "needs tar"
+command -v git >/dev/null || die "needs git: pip fetches telesthete from GitHub (Debian: apt-get install -y git)"
 PYTHON=""
 for p in python3.13 python3.12 python3.11 python3; do
     if command -v $p >/dev/null && $p -c 'import sys, venv; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
@@ -132,7 +133,7 @@ After=network-online.target
 
 [Service]
 WorkingDirectory=$ROOT
-Environment=PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=$PY -m rook.core2.worker --config $CFG
 Restart=always
 RestartSec=5
