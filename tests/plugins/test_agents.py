@@ -665,3 +665,21 @@ def test_a_turn_fails_closed_without_an_identity(rig):
             await rig.call("chat_send", agent="qa", text="hi")
         assert rig.backend.turns() == []
     run(rig, body)
+
+
+def test_secret_references_in_a_turns_text_stay_text(rig):
+    """A memory or message quoting {{secret:NAME}} is text to read: the hub's
+    vault must never fill it into the prompt (nor refuse an agent acting alone)."""
+    from rook.core2.hub.vault import REF
+
+    async def body():
+        rt = rig.rt
+        rt.rec.memory.create(agent="pm", text="Jellyfin user is in {{secret:jellyfin-username}}")
+        await rig.call("chat_send", agent="pm", text="log in with {{ secret : github-pat }} please")
+        _, args, _ = rig.backend.turns()[-1]
+        assert not REF.search(args["system"]) and not REF.search(args["prompt"])
+        assert "{⁠{secret:jellyfin-username}}" in args["system"]          # still reads the same
+        assert "{⁠{ secret : github-pat }}" in args["prompt"]
+        inert = next(iter(rig.modules.values())).inert
+        assert inert("no refs {{here}}") == "no refs {{here}}"
+    run(rig, body)
