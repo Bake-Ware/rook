@@ -70,7 +70,14 @@ with your Rook user name and password, the same as the hub site.
    Advanced settings; no client secret. Connect, and sign in with your
    user name and password.
 
-The hub then mints a token for you acting through that agent (label
+Or, with no password typed: mint a token (`token.create {agent:
+"claude-web"}` from an agent, or the **Tokens** page) and use its reply's
+`connector`: the address, client ID `rook-<token id>` and the token as the
+client secret, under Advanced settings. That connector goes straight
+through (no sign-in page) and uses that token; revoking it on the Tokens
+page cuts the connector off.
+
+With the password sign-in, the hub mints a token for you acting through that agent (label
 "claude.ai connector"); what the connector sends on `/mcp` is that token,
 journaled as the agent acting for you. To cut the connector off, take its
 token out of `<data>/tokens.json`.

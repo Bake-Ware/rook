@@ -135,8 +135,13 @@ class McpDoor(HttpDoor):
         self.path = "/" + str(options.get("path", "/mcp")).strip("/")
         self.origins = set(options.get("origins") or ())
         self.oauth_agent = str(options.get("oauth_agent") or "claude-web")
-        self.oauth = OAuthShim(options["oauth"], self.path, hub.authenticate, self._mint, self._oauth_problem) \
-            if options.get("oauth") else None
+        self.oauth = OAuthShim(options["oauth"], self.path, hub.authenticate, self._mint, self._oauth_problem,
+                               token_client=self._token_client) if options.get("oauth") else None
+
+    def _token_client(self, client_id: str) -> bool:
+        """``rook-<id>``: a stored agent token (token.create) with that id."""
+        caller = self.hub.identities.token_by_id(client_id[len("rook-"):])
+        return bool(caller and caller.agent)
 
     def _oauth_problem(self) -> str | None:
         if self.oauth_agent not in self.hub.identities.agents:

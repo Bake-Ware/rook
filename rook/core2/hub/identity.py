@@ -136,6 +136,14 @@ class Identities:
         for d in [d for d in self._tokens if d not in keep]:
             del self._tokens[d]
 
+    def token_by_id(self, token_id: str) -> Caller | None:
+        """A stored token's caller by its id (the first 12 hex of its digest;
+        token.list shows it). Never a turn token."""
+        if not (isinstance(token_id, str) and len(token_id) == 12):
+            return None
+        hits = [c for d, c in self._tokens.items() if d.startswith(token_id)]
+        return hits[0] if len(hits) == 1 else None
+
     def revoke_token(self, token: str) -> None:
         self._tokens.pop(digest(token), None)
         self._turns.pop(digest(token), None)
