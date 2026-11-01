@@ -396,6 +396,9 @@ Watch items (ask Bake, not drift yet) are after the findings.
 
 **Fixed in #337:** #332 reverted; `rook/core2/hub/doors/mcp_oauth.py` is the 0.4 shim's shape on the MCP
 door (agent token = client secret = access token, no sign-in, no DCR, no store).
+**Sign-in added in #364:** `/authorize` is the hub's user name + password sign-in (Bake, Move-in: "a normal
+username and password login, like 0.4 is"); `/token` mints the person's token through the `claude-web` agent,
+so no client secret or pasted token. DCR still left out (question for Bake on castling-oauth).
 
 - **Decision.** 0.4 history: the full OAuth server was deleted on 2026-07-31 for bearer tokens;
   2baf1a2 (Aug 10) re-added only `oauth_shim.py` for claude.ai web (PKCE `/authorize`, no
