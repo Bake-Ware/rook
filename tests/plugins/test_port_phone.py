@@ -314,6 +314,15 @@ def test_phone_find_vibrate_torch(phone, java):
     cm.setTorchMode.assert_called_with("1", False)
 
 
+def test_phone_switch_asks_the_app_to_run_0_4(phone, java, tmp_path):
+    files = tmp_path / "files"
+    java.ctx.getFilesDir.return_value.getAbsolutePath.return_value = str(files)
+    assert phone.call("phone.switch", to="0.4") == {"to": "0.4", "asked": True}
+    assert json.loads((files / "rook05" / "switch.json").read_text()) == {"to": "0.4"}
+    assert "0.4 or" not in phone.err("phone.switch", to="0.5")    # only 0.4 today: the manifest refuses the rest
+    assert load(PLUGINS / "phone", CONTRACTS).caps["phone.switch"]["risk"] == "admin"
+
+
 def _screen(java, w=1000, h=2000):
     metrics = java.cls("android.util.DisplayMetrics").return_value
     metrics.widthPixels, metrics.heightPixels = w, h

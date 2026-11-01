@@ -7,6 +7,7 @@ its own; this is the module it calls:
     android.start(files_dir + "/rook/worker.yaml")   # blocks until stop()
     android.stop()                                    # from another thread
     android.kick()                                    # the default network changed
+    android.connected()                               # True once a band's link is up
 
 The config is the ordinary worker config (``python -m rook.core2.worker``);
 enrollment writes it and the anchor into the app's files. What differs:
@@ -112,3 +113,17 @@ def kick() -> bool:
     done.add_done_callback(lambda f: f.cancelled() or f.exception() is None
                            or log.error("redial failed: %s", f.exception()))
     return True
+
+
+def connected() -> bool:
+    """True while the running worker has a live link on any band: the app's
+    0.4 -> 0.5 switch goes back to 0.4 when this stays False."""
+    with _lock:
+        running = _running
+    if running is None or not running[2].started:
+        return False
+    t = running[2].transport
+    try:
+        return any(t.connected(band) for band in t.bands)
+    except (KeyError, AttributeError):
+        return False

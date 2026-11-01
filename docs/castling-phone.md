@@ -80,6 +80,20 @@ stops the running worker; Start runs the chosen one.
   and asks before it signs in (one-time code, hub id pinned). Signing in again
   says the new hub becomes home and every other band goes. Plain `http://` is
   refused except to the phone itself (`adb reverse` in testing).
+- **Switching from afar.** A phone nobody is holding switches with a
+  one-shot request file, `files/rook05/switch.json`, that the service looks
+  for every 15 s and removes when it takes it:
+  - to 0.5: `{"to": "0.5", "hub": "https://castling.bakeforge.com", "name":
+    "bakephone"}`, written by the 0.4 worker's `shell.exec` (the app's own
+    user). The phone signs in first while 0.4 keeps running (a hub with
+    security off approves at once; a refused sign-in leaves 0.4 running),
+    then runs 0.5. When no band link is up within `trial_seconds` (default
+    300; 0 = no trial) it goes back to 0.4 by itself.
+  - to 0.4: the 0.5 cap `phone.switch {to: "0.4"}` writes `{"to": "0.4"}`;
+    the phone runs 0.4 with its saved 0.4 settings.
+
+  Either way autostart stays on, and `files/rook05/switch-result.json`
+  (`{ok, text, version, at}`; `ok` null while it works) says how it went.
 - **What runs.** `castling_entry.py` (Chaquopy) is the 0.5 entry, beside the
   0.4 `worker_entry.py`. It enrolls with `rook.core2.enroll.device` (as
   `python -m rook.core2.worker enroll` does), and its `start(files_dir)`
