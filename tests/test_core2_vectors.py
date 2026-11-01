@@ -156,7 +156,7 @@ def test_hard_stops():
 def test_gate():
     v = vec("gate")
     for c in v["cases"]:
-        assert rights.gate_decision(c["results"]) == c["expect"], c["name"]
+        assert rights.gate_decision(c["results"], c.get("risk")) == c["expect"], c["name"]
 
 
 def test_journal():

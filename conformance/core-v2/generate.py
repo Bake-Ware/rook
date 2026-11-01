@@ -562,14 +562,24 @@ GATES = [
     ("unknown verdict counts as flag", [g("ml", "grant")], {"verdict": "flag", "by": ["ml"]}),
     ("allow can't undo a block", [g("ml", "block"), g("allowlist", "allow", confidence=1.0)],
      {"verdict": "block", "by": ["ml"]}),
+    # Tiering (castling-security): "reads log, writes/exec can hold, elevation must pass".
+    ("a flag on a read is logged, not held", [g("ml", "flag"), g("canary", "allow")],
+     {"verdict": "allow", "by": [], "logged": ["ml"]}, "read"),
+    ("a gate error on a read is logged, not held", [{"gate": "ml", "mode": "enforce", "error": "timeout"}],
+     {"verdict": "allow", "by": [], "logged": ["ml"]}, "read"),
+    ("a block on a read still refuses", [g("ml", "flag"), g("canary", "block")],
+     {"verdict": "block", "by": ["canary"]}, "read"),
+    ("a flag on a write holds", [g("ml", "flag")], {"verdict": "flag", "by": ["ml"]}, "write"),
 ]
 
 
 def gen_gate() -> dict:
     cases = []
-    for name, results, expect in GATES:
-        check(rights.gate_decision(results) == expect, f"gate {name}: {rights.gate_decision(results)}")
-        cases.append({"name": name, "results": results, "expect": expect})
+    for name, results, expect, *risk in GATES:
+        risk = risk[0] if risk else None
+        got = rights.gate_decision(results, risk)
+        check(got == expect, f"gate {name}: {got}")
+        cases.append({"name": name, "results": results, **({"risk": risk} if risk else {}), "expect": expect})
     return {"verdicts": list(rights.VERDICTS), "reasons": list(rights.GATE_REASONS), "cases": cases}
 
 
