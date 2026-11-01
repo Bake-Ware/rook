@@ -1257,7 +1257,7 @@ class Hub:
     def security_off(self) -> bool:
         """The ``hub.security`` setting is ``off`` (the default until an
         owner sets ``on``): nothing waits on a person (dispatch, enrollment,
-        sign-off). castling-switchover-decisions, "Move-in" (Bake, Oct 31)."""
+        sign-off). castling-switchover-decisions, "Usable first, security later" (Bake, Oct 31)."""
         settings = self.plugins.settings if hasattr(self, "plugins") else self.cfg.settings   # before start: the config
         value = (settings.get("hub") or {}).get("security", "off")
         return value not in ("on", True)        # YAML reads a bare on as true

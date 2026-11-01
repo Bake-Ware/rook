@@ -12,7 +12,7 @@ license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 
 settings:
-  # castling-switchover-decisions, "Move-in" and "Usable first, security later" (Bake, Oct 31).
+  # castling-switchover-decisions, "Usable first, security later" (Bake, Oct 31).
   security:
     type: str
     enum: ["off", "on"]

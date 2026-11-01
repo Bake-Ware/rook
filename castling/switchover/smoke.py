@@ -12,7 +12,7 @@ the hub's HTTP door, the way a client sees it:
 - the hub answers and lists its workers; each ``--worker`` is online and
   answers ``worker.ping``;
 - the hub has security off (``hub.status`` ``security``), so nothing in step 2
-  waits on a person (castling-switchover-decisions, "Move-in");
+  waits on a person (castling-switchover-decisions, "Usable first, security later");
 - every moved store reads back in full through its caps, paged to the end
   (active and archived records): knowledge, tasks, task comments, projects,
   concepts, huddles, jobs, change records, secret names, rooms and huddles

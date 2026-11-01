@@ -684,7 +684,7 @@ def test_workers_journal_and_settings_pages(site):
             assert {(s["plugin"], s["key"], s["value"], s["source"]) for s in listed} == {
                 ("board", "motto", "hello", "default"), ("board", "size", 3, "default"),
                 ("page", "dock", "house", "default"), ("hub", "security", "on", "config")}
-            # the security switch (castling-switchover-decisions, "Move-in"): a dropdown, owners only
+            # the security switch (castling-switchover-decisions, "Usable first, security later"): a dropdown, owners only
             sec = next(s for s in listed if (s["plugin"], s["key"]) == ("hub", "security"))
             assert sec["enum"] == ["off", "on"] and sec["default"] == "off"
             assert status["security"] == "on" and not hub.security_off()

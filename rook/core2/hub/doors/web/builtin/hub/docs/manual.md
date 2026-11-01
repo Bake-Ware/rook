@@ -11,8 +11,8 @@ What the hub knows about itself and its workers.
 
 ## Security: off or on
 
-One hub setting, `hub.security`, default `off` (Bake, Oct 31: "turn off
-approvals while we're moving in"). An owner flips it on **Settings**
+One hub setting, `hub.security`, default `off` (Bake, Oct 31: "I just want
+no approvals for right now"). An owner flips it on **Settings**
 (`hub.security`, Save) or with `setting.set {plugin: hub, key: security,
 value: on}`; the call is journaled like any other.
 

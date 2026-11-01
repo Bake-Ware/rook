@@ -193,8 +193,8 @@ def test_a_device_code_waits_for_the_person_and_can_be_refused(tmp_path):
 
 
 def test_with_security_off_a_device_code_is_approved_at_once_and_journaled(tmp_path):
-    """castling-switchover-decisions, "Move-in" (Bake, Oct 31): "turn off
-    approvals while we're moving in". The default hub.security (off)
+    """castling-switchover-decisions, "Usable first, security later" (Bake, Oct 31): "enrollment
+    approvals ...: off / not on the path". The default hub.security (off)
     approves a device code as the first owner; the journal names the machine."""
     said = []
 

@@ -1230,7 +1230,7 @@ def test_a_delegate_can_be_pinned_and_only_a_delegate(hub):
         "appliance den-lamp: no delegate serves light now"
 
 
-# -- security off (castling-switchover-decisions: "turn off approvals while we're moving in") --------
+# -- security off (castling-switchover-decisions: "no approvals for right now") --------
 
 def _security_off(hub):
     hub.security_off = lambda: True

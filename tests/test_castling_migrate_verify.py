@@ -298,7 +298,7 @@ def test_smoke_reads_every_moved_store_in_full():
 
 
 def test_smoke_fails_when_the_hub_is_security_is_not_off():
-    """Step 2 waits on nobody (castling-switchover-decisions, "Move-in"): a hub
+    """Step 2 waits on nobody (castling-switchover-decisions, "Usable first, security later"): a hub
     with hub.security on would hold calls and device codes, so smoke says so."""
     mod = _smoke()
     door = FakeDoor({}, [])

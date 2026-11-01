@@ -136,7 +136,7 @@ def test_sacred_needs_the_owner(tmp_path, gh):
 
 
 def test_with_security_off_sacred_needs_no_owner_sign_off(tmp_path, gh):
-    """castling-switchover-decisions, "Move-in": nothing waits on a person.
+    """castling-switchover-decisions, "Usable first, security later": nothing waits on a person.
     A sacred project's owner sign-off is skipped; reviewers still sign."""
     async def body(rig):
         tid = await task_in(rig, "sacred")
