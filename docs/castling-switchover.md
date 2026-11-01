@@ -320,7 +320,7 @@ Done in one sitting. Rook is down from 2.1 until the 0.5 hub answers in 2.3 (abo
    python3 /opt/rook05/src/castling/switchover/copy04.py /home/ubuntu/rook04-final     # as ubuntu: reads only
    sudo chown -R rook05: /home/ubuntu/rook04-final && sudo mv /home/ubuntu/rook04-final /var/lib/rook05/
    cd /opt/rook05/src     # as rook05
-   M="/opt/rook05/venv/bin/python -m castling.switchover.migrate --from /var/lib/rook05/rook04-final/data --to /var/lib/rook05/hub.yaml"
+   M="/opt/rook05/venv/bin/python -m castling.switchover.migrate --from /var/lib/rook05/rook04-final --to /var/lib/rook05/hub.yaml"   # copy04 writes the data at the copy's top
    $M                     # dry run: read the report
    $M --apply             # the move (hub stopped)
    $M --verify            # must say VERIFIED and exit 0
@@ -332,11 +332,12 @@ Done in one sitting. Rook is down from 2.1 until the 0.5 hub answers in 2.3 (abo
    then from anywhere, with an owner token
    (`... hub token --person bake`):
    `ROOK_TOKEN=... python castling/switchover/smoke.py --url https://rook05.bakeforge.com --verify-json verify.json`.
-   It checks the hub answers and the moved stores serve their items: rooms
-   and huddles (`stream.list`, `huddle.list`, a huddle read back with
-   `stream.read`), `job.list`, `change.list`, `knowledge.list`,
-   `task.list`, `project.list`, `secret.list` (it names the record caps from the checkout's
-   manifests, so plugin renames follow). All `[ok]`.
+   It checks the hub answers and every moved store reads back in full,
+   paged to the end (active and archived records): knowledge, tasks, task
+   comments, projects, concepts, huddles, jobs, change records, secret
+   names, rooms and huddles as streams and their text and status events;
+   each count must reach what `verify.json` says moved (it names the record
+   caps from the checkout's manifests, so plugin renames follow). All `[ok]`.
 4. **Bands and workers.** On each machine on the report's re-enroll
    checklist, the 0.5 worker beside the 0.4 one (its own venv, data and
    unit `rook05-worker`, as the sidecar), enrolled with the device code Bake

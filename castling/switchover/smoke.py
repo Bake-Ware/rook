@@ -11,11 +11,15 @@ the hub's HTTP door, the way a client sees it:
 
 - the hub answers and lists its workers; each ``--worker`` is online and
   answers ``worker.ping``;
-- the moved stores answer through their caps (rooms and huddles, huddles,
-  jobs, change records, knowledge, tasks, projects, secret names); with
-  ``--verify-json`` each must show at least as many items as verify moved
-  (up to a page);
+- every moved store reads back in full through its caps, paged to the end
+  (active and archived records): knowledge, tasks, task comments, projects,
+  concepts, huddles, jobs, change records, secret names, rooms and huddles
+  as streams, and their text and status events; with ``--verify-json`` each
+  count must reach what verify moved;
 - a migrated huddle reads back through ``stream.read``.
+
+Requests carry a User-Agent: Cloudflare's browser check (error 1010)
+refuses Python-urllib's default one.
 
 Exit 0 when every check passes. Prints counts and names, never a value.
 """
@@ -34,20 +38,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))       # run from a 
 from castling.switchover.migrate import names  # noqa: E402
 
 WHY = "Cutover smoke check: read-only."
-PAGE = 200
-# cap, args, the result's list key, verify kind whose "moved" it should reach. Record caps
-# are named from this checkout's manifests (castling/switchover/migrate/names.py).
-CHECKS = [
-    ("stream.list", {"kind": "room", "limit": PAGE}, "streams", None),
-    ("stream.list", {"kind": "huddle", "limit": PAGE}, "streams", None),
-    (names.cap("huddle", "list"), {"limit": PAGE}, "records", None),
-    (names.cap("jobs", "list"), {"limit": PAGE}, "records", "jobs (disabled, 0.4 definition kept)"),
-    (names.cap("changes", "list"), {"limit": PAGE}, "records", "change records"),
-    (names.cap("knowledge", "list"), {"limit": PAGE}, "records", "knowledge pages"),
-    (names.cap("tasks", "list"), {"limit": PAGE}, "records", "tasks"),
-    (names.cap("projects", "list"), {"limit": PAGE}, "records", "projects"),
-    ("secret.list", {}, "secrets", "secrets (names + value hashes)"),
+UA = "rook-cutover-smoke/1.0"
+PAGE = 500          # the kit's largest record page
+STREAM_PAGE = 200
+EVENT_PAGE = 1000   # rook.streams READ_LIMIT
+# A record store's list cap and the verify kind whose "moved" its full count must reach.
+# Record caps are named from this checkout's manifests (castling/switchover/migrate/names.py).
+RECORDS = [
+    (names.cap("knowledge", "list"), "knowledge pages"),
+    (names.cap("tasks", "list"), "tasks"),
+    (names.cap("tasks", "list", "comment"), "task notes -> comments"),
+    (names.cap("projects", "list"), "projects"),
+    (names.cap("concepts", "list"), "concepts"),
+    (names.cap("huddle", "list"), None),
+    (names.cap("jobs", "list"), "jobs (disabled, 0.4 definition kept)"),
+    (names.cap("changes", "list"), "change records"),
 ]
+STREAMS = "chat rooms and huddles -> streams"
+EVENTS = {"text": "chat messages -> text events", "status": "huddle posts and questions -> status events"}
+SECRETS = "secrets (names + value hashes)"
 
 
 class Door:
@@ -58,7 +67,7 @@ class Door:
         req = urllib.request.Request(self.url + path, method=method,
                                      data=json.dumps(body).encode() if body is not None else None,
                                      headers={"Authorization": f"Bearer {self.token}",
-                                              "Content-Type": "application/json"})
+                                              "Content-Type": "application/json", "User-Agent": UA})
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as r:
                 return json.loads(r.read() or b"{}")
@@ -80,6 +89,57 @@ def _items(res: dict, key: str) -> list:
     return v if isinstance(v, list) else []
 
 
+def _records(door: Door, cap: str) -> tuple[int, str | None]:
+    """Every record a list cap holds, active then archived, paged to the end."""
+    n = 0
+    for archived in (False, True):
+        offset = 0
+        while True:
+            r = door.call(cap, {"limit": PAGE, "offset": offset, **({"archived": True} if archived else {})})
+            if r.get("ok") is not True:
+                return n, r.get("error", "failed")
+            got = len(_items(r, "records"))
+            n, offset = n + got, offset + got
+            if got < PAGE:
+                break
+    return n, None
+
+
+def _streams(door: Door, kind: str) -> tuple[list, str | None]:
+    out, offset = [], 0
+    while True:
+        r = door.call("stream.list", {"kind": kind, "limit": STREAM_PAGE, "offset": offset})
+        if r.get("ok") is not True:
+            return out, r.get("error", "failed")
+        rows = _items(r, "streams")
+        out += rows
+        nxt = (r.get("result") or {}).get("next") if isinstance(r.get("result"), dict) else None
+        if not rows or nxt in (None, offset):
+            return out, None
+        offset = nxt
+
+
+def _events(door: Door, stream: str, kind: str) -> tuple[int, str | None]:
+    n, after = 0, 0
+    while True:
+        r = door.call("stream.read", {"stream": stream, "after": after, "limit": EVENT_PAGE, "types": [kind]})
+        if r.get("ok") is not True:
+            return n, r.get("error", "failed")
+        evs = _items(r, "events")
+        n += len(evs)
+        nxt = (r.get("result") or {}).get("next", after)
+        if not evs or nxt == after:
+            return n, None
+        after = nxt
+
+
+def _line(what: str, n: int, err: str | None, moved: dict, kind: str | None) -> tuple[bool, str]:
+    want = moved.get(kind, 0) if kind else 0
+    ok = err is None and n >= want
+    return ok, (f"{what}: {n}" + (f" (verify moved {moved[kind]})" if kind in moved else "")
+                + (f" {err}" if err else ""))
+
+
 def run(door: Door, workers: list, moved: dict) -> list[tuple[bool, str]]:
     out = []
     ws = door.request("GET", "/workers")
@@ -92,16 +152,27 @@ def run(door: Door, workers: list, moved: dict) -> list[tuple[bool, str]]:
         out.append((online and ping.get("ok") is True,
                     f"worker {name}: {'online' if online else 'NOT online'}, ping "
                     f"{'ok' if ping.get('ok') else ping.get('error', 'failed')}"))
-    for cap, args, key, kind in CHECKS:
-        r = door.call(cap, args)
-        n = len(_items(r, key))
-        if key == "records" and r.get("ok") is True:          # archived records list apart
-            n += len(_items(door.call(cap, {**args, "archived": True}), key))
-        want = min(moved.get(kind, 0), PAGE) if kind else 0
-        ok = r.get("ok") is True and n >= want
-        out.append((ok, f"{cap} {json.dumps(args)}: {n}" + (f" (verify moved {moved[kind]})" if kind in moved else "")
-                    + ("" if r.get("ok") else f" {r.get('error')}")))
-    huddles = _items(door.call("stream.list", {"kind": "huddle", "limit": 1}), "streams")
+    for cap, kind in RECORDS:
+        n, err = _records(door, cap)
+        out.append(_line(f"{cap} (all pages, active + archived)", n, err, moved, kind))
+    r = door.call("secret.list", {})
+    out.append(_line("secret.list", len(_items(r, "secrets")), None if r.get("ok") is True else r.get("error"),
+                     moved, SECRETS))
+    streams, errs = [], []
+    for k in ("room", "huddle"):
+        got, err = _streams(door, k)
+        streams += got
+        errs += [err] if err else []
+        out.append((err is None, f"stream.list {k} (all pages): {len(got)}" + (f" {err}" if err else "")))
+    out.append(_line("rooms + huddles as streams", len(streams), errs[0] if errs else None, moved, STREAMS))
+    for etype, kind in EVENTS.items():
+        n, err = 0, None
+        for st in streams:
+            got, e = _events(door, st["id"], etype)
+            n += got
+            err = err or e
+        out.append(_line(f"{etype} events in those streams", n, err, moved, kind))
+    huddles = [st for st in streams if st.get("kind") == "huddle"] or streams
     if huddles:
         r = door.call("stream.read", {"stream": huddles[0]["id"], "limit": 5})
         out.append((r.get("ok") is True and bool(_items(r, "events")),
