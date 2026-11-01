@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tokens</title>
+<style>
+  section { margin-bottom: 20px; }
+  .new { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .new input { min-width: 0; flex: 1 1 160px; max-width: 280px; }
+  .made { margin-top: 10px; padding: 10px; border: 1px solid var(--line); background: var(--card); }
+  .made code { display: block; word-break: break-all; margin: 4px 0 8px; user-select: all; }
+</style>
+</head>
+<body>
+<section>
+  <h2>New token</h2>
+  <div class="new">
+    <input id="agent" type="text" placeholder="agent name, e.g. claude-web" autocomplete="off">
+    <input id="label" type="text" placeholder="what it's for (optional)" autocomplete="off">
+    <button class="primary" id="mint">Create</button>
+  </div>
+  <div id="made"></div>
+</section>
+<section>
+  <h2>Tokens</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Agent</th><th>For</th><th>Label</th><th>Created</th><th></th></tr></thead>
+    <tbody id="rows"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+  </table></div>
+</section>
+<script>
+"use strict";
+const esc = rook.esc;
+
+async function load() {
+  const rows = document.getElementById("rows");
+  try {
+    const out = await rook.call("token.list");
+    if (!out.tokens.length) { rows.innerHTML = '<tr><td colspan="5" class="muted">No tokens.</td></tr>'; return; }
+    rows.innerHTML = out.tokens.map((t) => `<tr>
+      <td>${esc(t.agent || "(person)")}</td><td>${esc(t.person || "")}</td><td>${esc(t.label)}</td>
+      <td class="muted">${t.created ? rook.ago(t.created) : ""}</td>
+      <td><button data-id="${esc(t.id)}">Revoke</button></td></tr>`).join("");
+  } catch (x) {
+    rows.innerHTML = `<tr><td colspan="5" class="bad">${esc(x.message)}</td></tr>`;
+  }
+}
+
+document.getElementById("mint").addEventListener("click", async () => {
+  const box = document.getElementById("made");
+  const agent = document.getElementById("agent").value.trim();
+  if (!agent) return;
+  try {
+    const t = await rook.call("token.create", { agent, label: document.getElementById("label").value.trim() });
+    box.innerHTML = `<div class="made">Shown once. Token for ${esc(t.agent)} acting for ${esc(t.person)}:
+      <code>${esc(t.token)}</code>${t.mcp_url ? `MCP address: <code>${esc(t.mcp_url)}</code>
+      Claude Code: <code>${esc(t.claude_code)}</code>` : ""}</div>`;
+    load();
+  } catch (x) {
+    box.innerHTML = `<div class="made bad">${esc(x.message)}</div>`;
+  }
+});
+
+document.getElementById("rows").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-id]");
+  if (!b) return;
+  try { await rook.call("token.revoke", { id: b.dataset.id }); } catch (x) { b.textContent = x.message; return; }
+  load();
+});
+
+load();
+</script>
+</body>
+</html>

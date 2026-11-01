@@ -1,0 +1,48 @@
+# Door tokens for agents (castling-switchover-decisions, "Claude connects
+# itself"): an agent mints an MCP token for itself or another agent, acting
+# for the person it calls for, and the Tokens page lists and revokes them.
+# Only hashes are kept (<data>/tokens.json). Implemented by the hub
+# (rook.core2.hub.doors.web.tokens).
+manifest: 1
+plugin: token
+version: 0.5.0
+title: Tokens
+doc: Door tokens for agents (MCP, HTTP), acting for a person.
+package: core
+builtin: true
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+
+caps:
+  create:
+    doc: "Mint a door token for an agent (yourself or another) acting for the person you call for. Returned once; only its hash is kept. A new agent name gets the minting agent's rights (all, narrowed by the person's, when a person mints it). The reply carries the MCP address and a Claude Code command."
+    on: hub
+    risk: admin
+    scope: multi-user
+    effects: [persists]
+    args:
+      agent: { type: str, required: true, pattern: "^[a-z][a-z0-9_-]{0,39}$", doc: "The agent's name, e.g. claude-web." }
+      label: { type: str, doc: "What it's for (shown on the Tokens page)." }
+    result: { type: map }
+  list:
+    doc: "Door tokens (never the tokens themselves): id, person, agent, label, created. Owners see all; others their own."
+    on: hub
+    risk: read
+    scope: multi-user
+    idempotent: true
+    result: { type: map }
+  revoke:
+    doc: "Revoke a door token by its id (from token.list). It stops working at once. Owners: any; others: their own."
+    on: hub
+    risk: admin
+    scope: multi-user
+    effects: [persists]
+    args:
+      id: { type: str, required: true, pattern: "^[0-9a-f]{12}$" }
+    result: { type: map }
+
+pages:
+  tokens: { title: Tokens, file: pages/tokens.html, caps: ["token.*"], nav: { section: Hub } }
+
+docs: { manual: docs/manual.md }

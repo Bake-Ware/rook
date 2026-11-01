@@ -569,6 +569,9 @@ class Hub:
         self.identities.keep_tokens(stored)     # one taken out of the file is revoked now
         for d, rec in stored.items():
             try:
+                name = (rec.get("agent") or "").partition(":")[2]
+                if rec.get("rights") and name and name not in self.identities.agents:
+                    self.identities.add_agent(name, rec["rights"])      # minted by token.create
                 self.identities.add_token_digest(d, Caller(rec.get("person"), rec.get("agent")))
             except ValueError as e:
                 log.warning("bad token entry", extra={"fields": {"error": str(e)}})
@@ -1663,16 +1666,20 @@ def _errors(raw: Any) -> str:
     return "; ".join(str(i) for i in validate(raw) if i.level == "error")
 
 
-def add_token(data: Path, caller: Caller, label: str = "", identities: Identities | None = None) -> str:
+def add_token(data: Path, caller: Caller, label: str = "", identities: Identities | None = None,
+              rights: dict | None = None, by: str | None = None) -> str:
     """Mint a door token for ``caller`` and store its hash in
-    ``<data>/tokens.json``. The token itself is returned once, never stored."""
+    ``<data>/tokens.json``. The token itself is returned once, never stored.
+    ``rights``: an agent made by ``token.create`` (not in hub.yaml), kept
+    with its token; ``by``: who minted it."""
     if caller.problem():
         raise ValueError(caller.problem())
     token = _secrets.token_urlsafe(32)
     path = Path(data) / "tokens.json"
     tokens = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     tokens[digest(token)] = {"person": caller.person, "agent": caller.agent, "label": label,
-                             "created": int(time.time())}
+                             "created": int(time.time()),
+                             **({"rights": rights} if rights else {}), **({"by": by} if by else {})}
     _write_private(path, json.dumps(tokens, indent=1))
     if identities is not None:
         identities.add_token_digest(digest(token), caller)

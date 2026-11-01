@@ -35,6 +35,7 @@ from rook.kit.manifest.types import setting_spec
 
 from rook.core2 import CORE_VERSION
 from rook.core2.hub.identity import Caller
+from rook.core2.hub.doors.web.tokens import Tokens
 
 BUILTIN = Path(__file__).with_name("builtin")
 MADE = "page"                        # agent-made pages are page/<name>
@@ -230,6 +231,7 @@ def install(hub) -> None:
     hub.pages = Pages(hub)
     settings = Settings(hub)
     h = _Handlers(hub, settings)
+    tokens = Tokens(hub)
     table = {
         "page": {"page.list": h.pages_list, "page.view": h.pages_view, "page.get": h.pages_get,
                   "page.create": h.pages_create, "page.update": h.pages_update,
@@ -243,6 +245,7 @@ def install(hub) -> None:
         "journal": {"journal.search": h.journal_search},
         "setting": {"setting.list": settings.list, "setting.set": settings.set},
         "llm": {"llm.providers": h.llm_providers, "llm.models": h.llm_models, "llm.status": h.llm_status},
+        "token": {"token.create": tokens.create, "token.list": tokens.list, "token.revoke": tokens.revoke},
     }
     for plugin, handlers in table.items():
         hub.plugins.add_builtin(BUILTIN / plugin, handlers)
