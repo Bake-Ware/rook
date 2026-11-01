@@ -14,6 +14,13 @@ password login, like 0.4 is"; "no step may need Bake to ... read a token").
   ``claude-web``: an agent in hub.yaml, so the journal names it). That token
   is the access token and the refresh token; a refresh only re-checks it.
 
+**Token clients** (no password typed; castling-switchover-decisions, "Claude
+connects itself"): ``token.create`` mints an agent token and names a client
+id for it, ``rook-<token id>``. A connector set up with that client id and the
+token as its client secret goes straight through ``/authorize`` (no form),
+and ``/token`` hands back that same token only when the client secret is it.
+The client id alone gets nothing: a code is worth only its token.
+
 What claude.ai then sends on ``/mcp`` is an ordinary door token. Nothing is
 stored but codes (memory, 5 minutes, once each) and the token (by hash, in
 ``<data>/tokens.json``, label "claude.ai connector"); taking it out of that
@@ -39,6 +46,7 @@ import hashlib
 import hmac
 import html
 import ipaddress
+import re
 import secrets
 import time
 from typing import Callable
@@ -55,6 +63,7 @@ ASM = "/.well-known/oauth-authorization-server"
 Reply = tuple[int, "dict | bytes", dict]     # status, JSON body (or a page), extra headers
 PARAMS = ("response_type", "client_id", "redirect_uri", "code_challenge", "code_challenge_method", "state",
           "scope", "resource")
+TOKEN_CLIENT = re.compile(r"rook-[0-9a-f]{12}")
 PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'"
 
 
@@ -77,9 +86,11 @@ class OAuthShim:
     work on this hub yet (or None)."""
 
     def __init__(self, base: str, path: str, authenticate: Callable, mint: Callable,
-                 problem: Callable = lambda: None, clock: Callable = time.time):
+                 problem: Callable = lambda: None, clock: Callable = time.time,
+                 token_client: Callable = lambda client_id: False):
         self.base, self.path = check_url(base), path
         self.authenticate, self.mint, self.problem, self.clock = authenticate, mint, problem, clock
+        self.token_client = token_client      # client id -> True when it names a minted agent token
         self._codes: dict[str, dict] = {}
 
     @property
@@ -127,7 +138,11 @@ class OAuthShim:
             return _err("invalid_request", "PKCE with S256 is required")
         if any(len(v) > MAX_FIELD for v in q.values()):
             return _err("invalid_request", "a field is too long")
-        if person is None:
+        token_id = None
+        cid = q.get("client_id", "")
+        if person is None and TOKEN_CLIENT.fullmatch(cid) and self.token_client(cid):
+            token_id = cid[len("rook-"):]          # no form: /token checks the client secret is that token
+        if person is None and token_id is None:
             failed = "Wrong user name or password." if signing_in else ""
             return 200, _form(q, self.problem() or failed), {"Content-Type": "text/html; charset=utf-8",
                                                                "Content-Security-Policy": PAGE_CSP,
@@ -137,12 +152,12 @@ class OAuthShim:
             return _err("temporarily_unavailable", "too many sign-ins waiting; try again shortly", 503)
         code = secrets.token_urlsafe(32)
         self._codes[code] = {"challenge": q["code_challenge"], "redirect_uri": redirect, "person": person,
-                             "client_id": q.get("client_id", ""), "exp": self.clock() + CODE_SECS}
+                             "client_id": cid, "token_id": token_id, "exp": self.clock() + CODE_SECS}
         out = {"code": code, **({"state": q["state"]} if "state" in q else {})}
         return 302, None, {"Location": redirect + ("&" if "?" in redirect else "?") + urlencode(out)}
 
     def _token(self, form: dict, auth: str) -> Reply:
-        client_id, _ = _client(form, auth)      # a typed client secret is ignored: the sign-in is the trust
+        client_id, secret = _client(form, auth)   # a password sign-in ignores a typed secret; a token client needs it
         grant = form.get("grant_type")
         if grant == "authorization_code":
             self._gc()
@@ -156,6 +171,10 @@ class OAuthShim:
             calc = base64.urlsafe_b64encode(hashlib.sha256(form.get("code_verifier", "").encode()).digest())
             if not hmac.compare_digest(calc.rstrip(b"="), rec["challenge"].encode()):   # bytes: any text is safe
                 return _err("invalid_grant", "PKCE verification failed")
+            if rec["token_id"]:
+                if not secret or hashlib.sha256(secret.encode()).hexdigest()[:len(rec["token_id"])] != rec["token_id"]:
+                    return _err("invalid_client", "the client secret must be this client's Rook token", 401)
+                return self._issue(secret, "invalid_client", 401)
             try:
                 token = self.mint(rec["person"])
             except ValueError as e:

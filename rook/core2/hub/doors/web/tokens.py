@@ -77,6 +77,8 @@ class Tokens:
         if url:
             out["claude_code"] = (f"claude mcp add --transport http rook {url} "
                                   f"--header \"Authorization: Bearer {token}\"")
+            # claude.ai: custom connector at url; Advanced settings: this client id, the token as client secret.
+            out["connector"] = {"url": url, "client_id": f"rook-{out['id']}", "client_secret": token}
         return out
 
     async def list(self, ctx) -> dict:

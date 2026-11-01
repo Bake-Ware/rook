@@ -54,7 +54,9 @@ document.getElementById("mint").addEventListener("click", async () => {
     const t = await rook.call("token.create", { agent, label: document.getElementById("label").value.trim() });
     box.innerHTML = `<div class="made">Shown once. Token for ${esc(t.agent)} acting for ${esc(t.person)}:
       <code>${esc(t.token)}</code>${t.mcp_url ? `MCP address: <code>${esc(t.mcp_url)}</code>
-      Claude Code: <code>${esc(t.claude_code)}</code>` : ""}</div>`;
+      Claude Code: <code>${esc(t.claude_code)}</code>
+      claude.ai connector (Advanced settings): client ID <code>${esc(t.connector.client_id)}</code>
+      client secret: the token above.` : ""}</div>`;
     load();
   } catch (x) {
     box.innerHTML = `<div class="made bad">${esc(x.message)}</div>`;

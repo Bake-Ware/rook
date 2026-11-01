@@ -359,3 +359,61 @@ def test_a_bad_address_stops_the_hub_starting(tmp_path):
             await hub.start()
         await hub.stop()
     run(go())
+
+
+# -- token clients: an agent-minted token, no password typed ----------------------------
+
+def test_a_token_client_goes_straight_through_and_needs_its_token():
+    """client_id rook-<token id> skips the form; /token gives back only that token,
+    and only when the client secret is it (castling-switchover-decisions,
+    'Claude connects itself')."""
+    s = shim()
+    good = "agent-tok"
+    s.minter.tokens[good] = AGENT
+    tid = hashlib.sha256(good.encode()).hexdigest()[:12]
+    s.token_client = lambda cid: cid == f"rook-{tid}"
+    cid = f"rook-{tid}"
+    # no form, straight to the callback
+    code = code_of(s.handle("GET", "/authorize", urlencode(params(client_id=cid)), b""))
+    status, out, _ = exchange(s, code, client_id=cid)           # no secret
+    assert status == 401 and out["error"] == "invalid_client"
+    code = code_of(s.handle("GET", "/authorize", urlencode(params(client_id=cid)), b""))
+    status, out, _ = exchange(s, code, client_id=cid, client_secret="person-tok")   # a different token
+    assert status == 401
+    code = code_of(s.handle("GET", "/authorize", urlencode(params(client_id=cid)), b""))
+    basic = "Basic " + base64.b64encode(f"{cid}:{good}".encode()).decode()
+    status, out, _ = exchange(s, code, auth=basic, client_id=cid)
+    assert status == 200 and out["access_token"] == out["refresh_token"] == good
+    assert s.minter.tokens.keys() == {"person-tok", good}       # nothing new minted
+    # an unknown rook- id, or any other client id, still gets the sign-in form
+    for other in (f"rook-{'0' * 12}", "claude"):
+        status, page, _ = s.handle("GET", "/authorize", urlencode(params(client_id=other)), b"")
+        assert status == 200 and b'name="password"' in page
+
+
+def test_token_create_names_a_connector_that_works_without_a_password(tmp_path):
+    async def go():
+        hub, base = await start(tmp_path)
+        try:
+            minted = await hub.call(PERSON, {"worker": "rook", "cap": "token.create",
+                                            "args": {"agent": "claude-web"}, "why": WHY}, "test")
+            assert minted["ok"], minted
+            conn = minted["result"]["connector"]
+            assert conn["client_id"] == "rook-" + minted["result"]["id"]
+            assert conn["url"] == "http://127.0.0.1:1/mcp"
+            q = params(client_id=conn["client_id"])
+            status, hdrs, _ = await http(base + "/authorize?" + urlencode(q))
+            assert status == 302, status                              # no sign-in page
+            code = parse_qs(urlsplit(hdrs["Location"]).query)["code"][0]
+            status, _, tok = await form_post(base + "/token", {
+                "grant_type": "authorization_code", "code": code, "code_verifier": VERIFIER, "redirect_uri": CB,
+                "client_id": conn["client_id"], "client_secret": conn["client_secret"]})
+            assert status == 200 and tok["access_token"] == conn["client_secret"], tok
+            bearer = {"Authorization": f"Bearer {tok['access_token']}", "Content-Type": "application/json"}
+            call = {"name": "call", "arguments": {"worker": WID, "cap": "echo.say", "args": {"text": "hi"},
+                                                  "why": WHY}}
+            status, _, out = await http(base + "/mcp", rpc_body("tools/call", call), bearer)
+            assert status == 200 and out["result"]["isError"] is False, out
+        finally:
+            await hub.stop()
+    run(go())
