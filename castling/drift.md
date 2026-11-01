@@ -102,7 +102,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 32 | contradiction (mild) | Core service plugins call providers by plugin name, not contract. **Fixed: PR #344 (agents), PR #357 (notify, speech, agents' chat reply)** | `notify`, `speech`, `agents` |
 | 33 | renamed (low) | Plural namespaces `jobs.*`, `agents.*`, `pages.*`; `jobs.start` not `job.run` (**fixed, PR #353**) | `jobs`, `agents`, hub pages |
 | 34 | over-built (low) | Manifest 1.1/1.2 features nothing uses; jobs rolls its own webhook HMAC (**partly fixed, PR #349**: format frozen, unused keys reserved; code and the jobs webhook left) | `rook/kit/manifest`, `hub/plugins.py`, `jobs.py:870` |
-| 35 | missing | Step 2 waits on a person (device-code approvals, holds, sacred sign-off) on a hub with no way to give them: the Oct 31 lockout. Bake: "turn off approvals while we're moving in" (**fixed, PR #TBD**: `hub.security` off) | `dispatch.py`, `enroll/hub.py`, `github`, `tasks`, switchover step 2 |
+| 35 | missing | Step 2 waits on a person (device-code approvals, holds, sacred sign-off) on a hub with no way to give them: the Oct 31 lockout. Bake: "turn off approvals while we're moving in" (**fixed, PR #365**: `hub.security` off) | `dispatch.py`, `enroll/hub.py`, `github`, `tasks`, switchover step 2 |
 
 Watch items (ask Bake, not drift yet) are after the findings.
 
@@ -678,7 +678,7 @@ so no client secret or pasted token. DCR still left out (question for Bake on ca
   nothing holds (journaled `security: off`, `would_hold`), elevation ungated, device codes
   approved at once as the owner (journaled with the machine name), no owner sign-off on sacred
   projects. Vault stays encrypted, secrets masked. Settings page switch (owners), smoke and the
-  runbook check it. **Fixed, PR #TBD.**
+  runbook check it. **Fixed, PR #365.**
 
 ## Watch items (ask Bake; not drift yet)
 
