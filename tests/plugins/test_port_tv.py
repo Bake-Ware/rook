@@ -338,6 +338,30 @@ def test_screen_capture(tv, monkeypatch):
         call(tv, "tv.screen.capture")
 
 
+def test_screen_capture_never_follows_a_redirect():
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Moved(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", "http://169.254.169.254/latest/meta-data")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Moved)
+    threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+    try:
+        with pytest.raises(Exception, match="302"):
+            MOD._fetch(f"http://127.0.0.1:{srv.server_address[1]}/resources/abc/capture.jpg")
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 def test_power_off(tv):
     assert call(tv, "tv.power.off") == {"ok": True}
     assert sent(tv, MOD.POWER_OFF) == [{}]

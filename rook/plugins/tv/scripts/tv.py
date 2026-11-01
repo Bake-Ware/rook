@@ -622,10 +622,16 @@ async def open_url(ctx, url: str) -> dict:
     return {"ok": True}
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **kw):
+        return None
+
+
 def _fetch(url: str) -> bytes:
     """GET the capture the TV just wrote (its own self-signed HTTPS, or HTTP)."""
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),   # a TV is on the LAN
-                                         urllib.request.HTTPSHandler(context=_no_verify()))
+                                         urllib.request.HTTPSHandler(context=_no_verify()),
+                                         _NoRedirect())   # the capture comes from the TV, nowhere else
     with opener.open(url, timeout=REQUEST_TIMEOUT) as r:
         data = r.read(CAPTURE_MAX + 1)
     if len(data) > CAPTURE_MAX:
