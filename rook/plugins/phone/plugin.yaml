@@ -1,10 +1,10 @@
 # Things only a phone does: ring to be found, unlock its PIN screen, buzz,
-# the flashlight.
+# the flashlight, and go back to the app's Rook 0.4 worker.
 manifest: 1
 plugin: phone
 version: 0.5.0
 title: Phone
-doc: Find, unlock, vibrate and the flashlight of the phone running the Rook app.
+doc: Find, unlock, vibrate and the flashlight of the phone running the Rook app, and switching the app back to Rook 0.4.
 package: devices
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
@@ -55,4 +55,13 @@ caps:
     args:
       on: { type: bool, default: true }
     run: scripts/phone.py:torch
+  switch:
+    doc: "Switch the Rook app on this phone to another Rook version (0.4 only, today): within about 30 s the app stops this 0.5 worker and starts its 0.4 worker with its saved 0.4 settings, so the phone leaves this band. {to, asked}; the app's own result is files/rook05/switch-result.json (readable from 0.4's shell.exec)."
+    risk: admin
+    scope: local
+    effects: [persists]
+    timeout: 15s
+    args:
+      to: { type: str, enum: ["0.4"], doc: The Rook version the app runs next. }
+    run: scripts/phone.py:switch
 docs: { manual: docs/manual.md }

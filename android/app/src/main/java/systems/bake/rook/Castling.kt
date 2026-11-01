@@ -2,8 +2,10 @@ package systems.bake.rook
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import com.chaquo.python.PyObject
 import org.json.JSONObject
+import java.io.File
 
 /**
  * The 0.4/0.5 switch and the Rook 0.5 (Castling) side of the app.
@@ -53,6 +55,41 @@ object Castling {
         JSONObject(entry(ctx).callAttr("enroll", filesDir(ctx), target, name, listener, force).toString())
 
     fun cancel(ctx: Context) { entry(ctx).callAttr("cancel") }
+
+    /** True while the 0.5 worker has a live link to its hub. */
+    fun connected(ctx: Context): Boolean = entry(ctx).callAttr("connected").toBoolean()
+
+    // ---- the switch asked from afar ---------------------------------------
+    // `files/rook05/switch.json` is a one-shot request to run the other Rook:
+    // `{"to": "0.5", "hub": "<address>", "name": "<name>", "trial_seconds": 300}`
+    // (written by 0.4's shell.exec) or `{"to": "0.4"}` (0.5's phone.switch).
+    // WorkerService takes it and writes how it went to switch-result.json.
+
+    fun switchFile(ctx: Context) = File(ctx.applicationContext.filesDir, "rook05/switch.json")
+
+    /** The pending request, removed so it runs once; null when there is none or it isn't JSON. */
+    fun takeSwitch(ctx: Context): JSONObject? {
+        val f = switchFile(ctx)
+        if (!f.isFile) return null
+        val text = runCatching { f.readText() }.getOrNull()
+        f.delete()
+        return runCatching { JSONObject(text ?: "") }.getOrElse {
+            switchResult(ctx, false, "switch.json isn't a JSON object"); null
+        }
+    }
+
+    /** [ok] null: still working (e.g. a code waits for approval). */
+    fun switchResult(ctx: Context, ok: Boolean?, text: String) {
+        Log.i("RookCastling", "switch: $text")
+        runCatching {
+            val f = File(ctx.applicationContext.filesDir, "rook05/switch-result.json")
+            f.parentFile?.mkdirs()
+            val tmp = File(f.path + ".tmp")
+            tmp.writeText(JSONObject().put("ok", ok ?: JSONObject.NULL).put("text", text)
+                .put("version", version(ctx)).put("at", System.currentTimeMillis() / 1000).toString())
+            tmp.renameTo(f)
+        }
+    }
 
     /** A `rook://enroll?url=…&hub=…` link (the sign-in QR) -> (url, hub id), else null. */
     fun enrollLink(uri: Uri?): Pair<String, String?>? {

@@ -13,6 +13,7 @@ The Kotlin side (Castling.kt, WorkerService.kt) calls, off the main thread:
     castling_entry.start(files_dir)                               # blocks until stop()
     castling_entry.stop()
     castling_entry.kick(reason)                                   # the default network changed
+    castling_entry.connected()                                    # a band link is up
 
 ``target`` is the hub's address or the text of its sign-in QR
 (``rook://enroll?url=…&code=…&hub=…``, which the phone's camera hands the
@@ -171,3 +172,8 @@ def kick(reason: str = "") -> bool:
     from rook.core2.worker import android
     log.info("redial: %s", reason)
     return android.kick()
+
+
+def connected() -> bool:
+    from rook.core2.worker import android
+    return android.connected()

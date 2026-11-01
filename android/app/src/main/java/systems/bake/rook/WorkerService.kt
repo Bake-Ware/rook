@@ -13,6 +13,7 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import com.chaquo.python.PyObject
 import kotlin.concurrent.thread
@@ -54,6 +55,23 @@ class WorkerService : Service() {
         }
     }
 
+    /** The 0.4/0.5 switch asked from afar ([Castling.takeSwitch]): looked for every 15 s. */
+    @Volatile private var switching = false
+    private val switchTick = object : Runnable {
+        override fun run() {
+            if (!switching && Castling.switchFile(applicationContext).isFile) {
+                switching = true
+                thread(name = "rook-switch", isDaemon = true) {
+                    try { applySwitch() } catch (t: Throwable) {
+                        Log.e(TAG, "switch failed", t)
+                        Castling.switchResult(applicationContext, false, "the switch failed: ${t.message}")
+                    } finally { switching = false }
+                }
+            }
+            updateHandler.postDelayed(this, SWITCH_TICK_MS)
+        }
+    }
+
     /** ACTION_USER_PRESENT is not a manifest broadcast: attention hears unlocks while the worker runs. */
     private val unlockReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
@@ -73,6 +91,7 @@ class WorkerService : Service() {
         androidx.core.content.ContextCompat.registerReceiver(this, unlockReceiver,
             android.content.IntentFilter(Intent.ACTION_USER_PRESENT), androidx.core.content.ContextCompat.RECEIVER_EXPORTED)
         updateHandler.postDelayed(updateTick, 30_000)
+        updateHandler.postDelayed(switchTick, SWITCH_TICK_MS)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             try { getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback) }
             catch (t: Throwable) { Log.w(TAG, "network callback unavailable", t) }
@@ -164,7 +183,8 @@ class WorkerService : Service() {
         }
     }
 
-    private fun stopWorker() {
+    private fun stopWorker(join: Boolean = false) {
+        val running = workerThread
         try {
             entry?.callAttr("stop")
         } catch (t: Throwable) {
@@ -172,10 +192,73 @@ class WorkerService : Service() {
         }
         workerThread = null
         entry = null
+        if (join) running?.join(20_000)
+    }
+
+    /**
+     * Run the request in `files/rook05/switch.json` (on the switch thread).
+     * To 0.5: sign in first if this phone isn't signed in to that hub (the
+     * 0.4 worker keeps running meanwhile; a refused sign-in leaves it be),
+     * then run 0.5 and go back to 0.4 when no band link is up within
+     * `trial_seconds` (default 300, 0 = no trial). To 0.4: run 0.4.
+     */
+    private fun applySwitch() {
+        val ctx = applicationContext
+        val req = Castling.takeSwitch(ctx) ?: return
+        val prefs = getSharedPreferences("rook", MODE_PRIVATE)
+        when (req.optString("to")) {
+            Castling.V05 -> {
+                val hub = req.optString("hub").trim().trimEnd('/')
+                val name = req.optString("name").trim().ifEmpty { prefs.getString(Castling.NAME_PREF, null) ?: defaultName() }
+                val now = Castling.status(ctx)
+                val home = now.optBoolean("enrolled") && (hub.isEmpty() || now.optString("url").trimEnd('/') == hub)
+                if (!home) {
+                    if (hub.isEmpty()) { Castling.switchResult(ctx, false, "not signed in to a 0.5 hub, and the request names none"); return }
+                    Castling.switchResult(ctx, null, "signing in to $hub as $name")
+                    val got = Castling.enroll(ctx, hub, name, now.optBoolean("enrolled"), object : Castling.Listener {
+                        override fun say(text: String) = Castling.switchResult(ctx, null, text)
+                    })
+                    if (!got.optBoolean("ok")) {
+                        Castling.switchResult(ctx, false, "sign-in failed: ${got.optString("error")}; still on ${Castling.version(ctx)}")
+                        return
+                    }
+                }
+                val trial = req.optInt("trial_seconds", 300).coerceIn(0, 3600)
+                runAs(Castling.V05)
+                val deadline = SystemClock.elapsedRealtime() + trial * 1000L
+                while (trial > 0 && SystemClock.elapsedRealtime() < deadline) {
+                    Thread.sleep(5_000)
+                    if (runCatching { Castling.connected(ctx) }.getOrDefault(false)) break
+                }
+                if (trial > 0 && !runCatching { Castling.connected(ctx) }.getOrDefault(false)) {
+                    runAs(Castling.V04)
+                    Castling.switchResult(ctx, false, "Rook 0.5 didn't reach its hub within $trial s; back on 0.4")
+                } else Castling.switchResult(ctx, true, "on Rook 0.5 as $lastName")
+            }
+            Castling.V04 -> { runAs(Castling.V04); Castling.switchResult(ctx, true, "on Rook 0.4 as $lastName") }
+            else -> Castling.switchResult(ctx, false, "unknown Rook version '${req.optString("to")}' (0.4 or 0.5)")
+        }
+    }
+
+    /** Stop whichever worker runs and start Rook [v]'s with its saved settings; autostart stays on. */
+    private fun runAs(v: String) {
+        val prefs = getSharedPreferences("rook", MODE_PRIVATE)
+        stopWorker(join = true)
+        Castling.setVersion(applicationContext, v)
+        if (v == Castling.V05) runCatching { Castling.status(applicationContext).optString("name") }.getOrNull()
+            ?.takeIf { it.isNotEmpty() }?.let { prefs.edit().putString(Castling.NAME_PREF, it).apply() }
+        prefs.edit().putBoolean("autostart", true).apply()
+        val name = (if (v == Castling.V05) prefs.getString(Castling.NAME_PREF, null) else null)
+            ?: prefs.getString("name", defaultName()) ?: defaultName()
+        lastName = name
+        startForegroundCompat(NOTIF_ID, buildNotification("on band as $name"))
+        startWorker(prefs.getString("hub", BuildConfig.DEFAULT_HUB) ?: BuildConfig.DEFAULT_HUB,
+            prefs.getString("psk", BuildConfig.DEFAULT_PSK) ?: BuildConfig.DEFAULT_PSK, name)
     }
 
     override fun onDestroy() {
         updateHandler.removeCallbacks(updateTick)
+        updateHandler.removeCallbacks(switchTick)
         runCatching { unregisterReceiver(unlockReceiver) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             try { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }
@@ -264,6 +347,7 @@ class WorkerService : Service() {
         private const val TAG = "RookWorkerService"
         private const val CHANNEL_ID = "rook_worker"
         private const val NOTIF_ID = 1001
+        private const val SWITCH_TICK_MS = 15_000L
         const val EXTRA_HUB = "hub"
         const val EXTRA_PSK = "psk"
         const val EXTRA_NAME = "name"

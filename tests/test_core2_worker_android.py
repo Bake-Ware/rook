@@ -84,10 +84,32 @@ def test_the_service_starts_kicks_and_stops_it_from_its_threads(cfg, monkeypatch
         assert time.monotonic() < deadline and t.is_alive(), "worker didn't start"
         time.sleep(0.02)
     assert android.kick() is True
+    assert android.connected() is False          # no band in this config
     android.stop()
     t.join(15)
     assert not t.is_alive() and android._running is None
-    assert android.kick() is False
+    assert android.kick() is False and android.connected() is False
+
+
+def test_connected_is_any_band_link_up(monkeypatch):
+    """The app's 0.4 -> 0.5 switch goes back to 0.4 while this stays False."""
+    class T:
+        bands = ["a", "b"]
+        up: set = set()
+
+        def connected(self, band):
+            return band in self.up
+
+    class W:
+        started = True
+        transport = T()
+
+    monkeypatch.setattr(android, "_running", (None, None, W()))
+    assert android.connected() is False
+    T.up = {"b"}
+    assert android.connected() is True
+    W.started = False
+    assert android.connected() is False
 
 
 def test_a_stop_while_starting_ends_it_once_up(cfg, monkeypatch):
