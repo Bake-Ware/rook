@@ -143,8 +143,8 @@ def request_signoff(ctx, id, reviewers=None, note=None):
     experts = [] if reviewers or pool.get("signoff") == "none" else [f"role:{r}" for r in pool.get("roles") or []]
     reviewers = list(dict.fromkeys(reviewers or experts))
     # The project's trust level decides whether the person signs; not while
-    # the hub is moving in (nothing waits on a person: castling-switchover-decisions).
-    if level == "sacred" and not ctx.move_in:
+    # the hub's security is off (nothing waits on a person: castling-switchover-decisions).
+    if level == "sacred" and not ctx.security_off:
         reviewers += [o for o in ctx.owners() if o not in reviewers]
     if not reviewers:
         if pool.get("signoff") == "none" or level == "ship-it":

@@ -431,7 +431,7 @@ class Hub:
                                      hubkey=self.grant, clock=self.clock, secrets=self._secret_step,
                                      appliances=self.appliances, carry=self._carry,
                                      online=lambda wid: bool(self.known.get(wid) and self.known[wid].online),
-                                     move_in=self.move_in)
+                                     security_off=self.security_off)
         self.dispatcher.closed_doors = set(_read_doors(self.data))
         self._sync_hub()
         await self._load_library()
@@ -1254,12 +1254,13 @@ class Hub:
             log.error("journal entry had no canonical form", extra={"fields": {"error": str(e)}})
             self.journal.append({**entry, "args": "[no canonical form]"}, session)
 
-    def move_in(self) -> bool:
-        """The ``hub.security`` setting is ``move-in`` (the default until an
+    def security_off(self) -> bool:
+        """The ``hub.security`` setting is ``off`` (the default until an
         owner sets ``on``): nothing waits on a person (dispatch, enrollment,
         sign-off). castling-switchover-decisions, "Move-in" (Bake, Oct 31)."""
         settings = self.plugins.settings if hasattr(self, "plugins") else self.cfg.settings   # before start: the config
-        return (settings.get("hub") or {}).get("security", "move-in") != "on"
+        value = (settings.get("hub") or {}).get("security", "off")
+        return value not in ("on", True)        # YAML reads a bare on as true
 
     def _emit(self, event: str, payload: dict, source: str | None = None) -> None:
         """Every event on the hub: its own, hub plugins' (records, ``ctx.emit``)

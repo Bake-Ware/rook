@@ -314,8 +314,8 @@ Done in one sitting. Rook is down from 2.1 until the 0.5 hub answers in 2.3 (abo
 Before 2.1 (castling-process, "Access before any freeze"), on the new hub and
 by doing each: Bake signs in from a browser with his username and password;
 the supervising Claude session makes a real call through a connector to it;
-`hub.security` is `move-in` (the default; Settings, or `smoke.py` prints
-`[ok] hub.security: move-in`), so nothing below waits on a person: no
+`hub.security` is `off` (the default; Settings, or `smoke.py` prints
+`[ok] hub.security: off`), so nothing below waits on a person: no
 holds, no gate blocks, device codes approved at once. `readiness.py` lists
 these three.
 
@@ -340,7 +340,7 @@ these three.
    then from anywhere, with an owner token
    (`... hub token --person bake`):
    `ROOK_TOKEN=... python castling/switchover/smoke.py --url https://rook05.bakeforge.com --verify-json verify.json`.
-   It checks the hub answers, is in move-in, and every moved store reads back in full,
+   It checks the hub answers, has security off, and every moved store reads back in full,
    paged to the end (active and archived records): knowledge, tasks, task
    comments, projects, concepts, huddles, jobs, change records, secret
    names, rooms and huddles as streams and their text and status events;
@@ -349,7 +349,7 @@ these three.
 4. **Bands and workers.** On each machine on the report's re-enroll
    checklist, the 0.5 worker beside the 0.4 one (its own venv, data and
    unit `rook05-worker`, as the sidecar), enrolled with `worker enroll <url>`:
-   in move-in the hub approves the device code at once as the owner and
+   with security off the hub approves the device code at once as the owner and
    journals it with the machine name, so nobody waits. First cachyrig (its sidecar worker
    re-enrolls; the sidecar hub stays as staging, D7), then janitor,
    soundwave, sojourn, kaiju (with `speech-engine`, D6 for the service

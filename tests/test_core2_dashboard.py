@@ -167,7 +167,7 @@ def make_library(tmp_path: Path) -> Path:
 
 
 async def start(tmp_path: Path, **over):
-    # Tests written for hub.security on (holds, gates, device-code approval); move-in has its own tests.
+    # Tests written for hub.security on (holds, gates, device-code approval); security off has its own tests.
     over.setdefault("settings", {}).setdefault("hub", {"security": "on"})
     cfg = Config(data=tmp_path / "data", band=BAND, library=make_library(tmp_path),
                  users={"bake": {"preset": "owner"}, "kim": {"preset": "viewer"}},
@@ -684,22 +684,22 @@ def test_workers_journal_and_settings_pages(site):
             assert {(s["plugin"], s["key"], s["value"], s["source"]) for s in listed} == {
                 ("board", "motto", "hello", "default"), ("board", "size", 3, "default"),
                 ("page", "dock", "house", "default"), ("hub", "security", "on", "config")}
-            # the move-in switch (castling-switchover-decisions, "Move-in"): a dropdown, owners only
+            # the security switch (castling-switchover-decisions, "Move-in"): a dropdown, owners only
             sec = next(s for s in listed if (s["plugin"], s["key"]) == ("hub", "security"))
-            assert sec["enum"] == ["move-in", "on"] and sec["default"] == "move-in"
-            assert status["security"] == "on" and not hub.move_in()
+            assert sec["enum"] == ["off", "on"] and sec["default"] == "off"
+            assert status["security"] == "on" and not hub.security_off()
             _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "setting.set", "why": WHY,
-                                                    "args": {"plugin": "hub", "key": "security", "value": "move-in"}},
+                                                    "args": {"plugin": "hub", "key": "security", "value": "off"}},
                                   bearer=tokens["narrow"])
-            assert "denied" in out["error"] and not hub.move_in()
-            assert (await c.page(t, "setting.set", {"plugin": "hub", "key": "security", "value": "move-in"}))["ok"]
-            assert hub.move_in() and (await c.page(t, "hub.status"))["result"]["security"] == "move-in"
+            assert "denied" in out["error"] and not hub.security_off()
+            assert (await c.page(t, "setting.set", {"plugin": "hub", "key": "security", "value": "off"}))["ok"]
+            assert hub.security_off() and (await c.page(t, "hub.status"))["result"]["security"] == "off"
             flipped = hub.journal.query(cap="setting.set", limit=5)
-            assert any(e["args"] == {"plugin": "hub", "key": "security", "value": "move-in"} for e in flipped)
+            assert any(e["args"] == {"plugin": "hub", "key": "security", "value": "off"} for e in flipped)
             out = await c.page(t, "setting.set", {"plugin": "hub", "key": "security", "value": "yolo"})
             assert out["error"].startswith("bad value")
             assert (await c.page(t, "setting.set", {"plugin": "hub", "key": "security", "value": "on"}))["ok"]
-            assert not hub.move_in()
+            assert not hub.security_off()
             out = await c.page(t, "setting.set", {"plugin": "board", "key": "size", "value": "big"})
             assert out["error"].startswith("bad value")
             assert (await c.page(t, "setting.set", {"plugin": "board", "key": "motto", "value": "hi"}))["ok"]

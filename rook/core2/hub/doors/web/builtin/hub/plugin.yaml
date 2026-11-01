@@ -15,15 +15,15 @@ settings:
   # castling-switchover-decisions, "Move-in" and "Usable first, security later" (Bake, Oct 31).
   security:
     type: str
-    enum: [move-in, "on"]
-    default: move-in
+    enum: ["off", "on"]
+    default: "off"
     where: hub
     doc: >-
-      move-in: nothing waits on a person. Gates still run and journal what they would have done,
-      but no call is held or blocked, elevation is never refused by a gate, device codes are approved
-      at once (journaled with the machine name) and a sacred project needs no owner sign-off.
-      The vault stays encrypted and secrets stay masked in the journal. on: holds, gate blocks,
-      device-code approval and sacred sign-off apply.
+      off: nothing waits on a person. No gate runs and no call is held (each journal entry says
+      security: off), elevation is not gated, device codes are approved at once (journaled with the
+      machine name) and a sacred project needs no owner sign-off. Rights still apply; the vault stays
+      encrypted and secrets stay masked in the journal. on: gates, holds, device-code approval and
+      sacred sign-off apply.
 
 caps:
   status:

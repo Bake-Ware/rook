@@ -139,7 +139,7 @@ def plugin(folder: Path, name: str, text: str, scripts: dict) -> Path:
 
 
 def config(tmp_path: Path, library: Path | None = None, **over) -> Config:
-    # Tests written for hub.security on (holds, gates, device-code approval); move-in has its own tests.
+    # Tests written for hub.security on (holds, gates, device-code approval); security off has its own tests.
     over.setdefault("settings", {}).setdefault("hub", {"security": "on"})
     cfg = Config(data=tmp_path / "data", band=BAND, library=library,
                  users={"bake": {"preset": "owner"}, "kid": {"preset": "child"}},

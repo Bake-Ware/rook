@@ -452,7 +452,7 @@ class _Handlers:
                             "runs_on": p.manifest.get("runs_on"), "caps": len(p.manifest.get("caps") or {}),
                             "pages": sorted(p.manifest.get("pages") or {})}
                            for p in sorted(hub.plugins.plugins.values(), key=lambda p: p.name)],
-               "security": "move-in" if hub.move_in() else "on"}
+               "security": "off" if hub.security_off() else "on"}
         if ctx.caller.owner:
             out["people"] = [{"name": u.name, "preset": u.preset, "grants": list(u.grants)}
                              for u in sorted(hub.identities.users.values(), key=lambda u: u.name)]
@@ -597,8 +597,8 @@ class Settings:
     def settings(self, person: str) -> dict:
         return self.personal.get(person) or {}
 
-    def move_in(self) -> bool:
-        return self.hub.move_in()
+    def security_off(self) -> bool:
+        return self.hub.security_off()
 
     def providers(self, contract: str) -> list:
         """ctx.providers: a contract's provider caps, first installed first."""

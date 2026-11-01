@@ -1230,10 +1230,10 @@ def test_a_delegate_can_be_pinned_and_only_a_delegate(hub):
         "appliance den-lamp: no delegate serves light now"
 
 
-# -- move-in (castling-switchover-decisions: "turn off approvals while we're moving in") --------
+# -- security off (castling-switchover-decisions: "turn off approvals while we're moving in") --------
 
-def _moving_in(hub):
-    hub.move_in = lambda: True
+def _security_off(hub):
+    hub.security_off = lambda: True
     seen = []
     hub.gates = [gates.Gate("canary", lambda inp: seen.append(inp) or
                             {"verdict": "block", "confidence": 1.0, "reason": "canary"}, mode="enforce",
@@ -1242,14 +1242,14 @@ def _moving_in(hub):
     return seen
 
 
-def test_move_in_runs_no_gate_and_holds_nothing(hub):
+def test_security_off_runs_no_gate_and_holds_nothing(hub):
     """Bake, Oct 31 21:10: "Security gates, holds, approvals ...: off / not on
     the path". Rights still apply; what would have held is journaled."""
-    seen = _moving_in(hub)
+    seen = _security_off(hub)
     out, _ = call(hub, CLAUDE_FOR_BAKE, "file.delete", {"path": "/tmp/x"})
     assert out["ok"] and "held" not in out and not hub.holds and seen == []
     [e] = calls(hub)
-    assert e["decision"] == "allow" and e["security"] == "move-in" and e["would_hold"] == ["destructive"]
+    assert e["decision"] == "allow" and e["security"] == "off" and e["would_hold"] == ["destructive"]
     assert "gates" not in e and e["ok"] is True
     out, _ = call(hub, CLAUDE_FOR_BAKE, "shell.exec", {"argv": ["true"]})
     assert out["ok"] and "would_hold" not in calls(hub)[-1]
@@ -1257,9 +1257,9 @@ def test_move_in_runs_no_gate_and_holds_nothing(hub):
     assert not out["ok"] and out["error"].startswith("denied")
 
 
-def test_move_in_off_again_restores_gates_and_holds(hub):
-    seen = _moving_in(hub)
-    hub.move_in = lambda: False
+def test_security_off_off_again_restores_gates_and_holds(hub):
+    seen = _security_off(hub)
+    hub.security_off = lambda: False
     out, _ = call(hub, BAKE, "shell.exec")
     assert out["error"] == "denied: blocked by gate canary: canary" and seen
     hub.gates = []
@@ -1267,10 +1267,10 @@ def test_move_in_off_again_restores_gates_and_holds(hub):
     assert out["held"] is True
 
 
-def test_move_in_elevation_is_not_gated(hub):
-    seen = _moving_in(hub)
+def test_security_off_elevation_is_not_gated(hub):
+    seen = _security_off(hub)
     got = _elevating(hub)
     out, _ = call(hub, BAKE, "shell.exec")
     assert out["ok"] and got[0]["ok"] and "lease" in got[0]["result"] and seen == []
     [e] = elevations(hub)
-    assert e["decision"] == "allow" and e["security"] == "move-in" and "gates" not in e
+    assert e["decision"] == "allow" and e["security"] == "off" and "gates" not in e

@@ -160,7 +160,7 @@ def seed_vault(data: Path, **values) -> None:
 
 def config(tmp_path: Path, gh: FakeGitHub, vault: bool = True, security: str = "on", **github) -> Config:
     """``security``: the hub.security setting (these tests check sign-off with
-    it on; move-in is checked on its own)."""
+    it on; off is checked on its own)."""
     if vault:
         seed_vault(tmp_path / "data", **{"github-hub": TOKEN})
     lib = tmp_path / "lib"

@@ -11,7 +11,7 @@ the hub's HTTP door, the way a client sees it:
 
 - the hub answers and lists its workers; each ``--worker`` is online and
   answers ``worker.ping``;
-- the hub is in move-in (``hub.status`` ``security``), so nothing in step 2
+- the hub has security off (``hub.status`` ``security``), so nothing in step 2
   waits on a person (castling-switchover-decisions, "Move-in");
 - every moved store reads back in full through its caps, paged to the end
   (active and archived records): knowledge, tasks, task comments, projects,
@@ -147,11 +147,11 @@ def run(door: Door, workers: list, moved: dict) -> list[tuple[bool, str]]:
     ws = door.request("GET", "/workers")
     rows = ws.get("workers") if isinstance(ws.get("workers"), list) else []
     out.append(("error" not in ws, f"hub answers: {len(rows)} workers known"))
-    # Nothing in step 2 waits on a person: the hub must be in move-in (castling-switchover-decisions).
+    # Nothing in step 2 waits on a person: the hub must have security off (castling-switchover-decisions).
     st = door.call("hub.status", {})
     mode = (st.get("result") or {}).get("security") if st.get("ok") is True else None
-    out.append((mode == "move-in", f"hub.security: {mode or st.get('error', 'unknown')}"
-                + ("" if mode == "move-in" else " (step 2 needs move-in: device codes and holds would wait on a person)")))
+    out.append((mode == "off", f"hub.security: {mode or st.get('error', 'unknown')}"
+                + ("" if mode == "off" else " (step 2 needs security off: device codes and holds would wait on a person)")))
     for name in workers:
         row = next((w for w in rows if w.get("name") == name), None)
         online = bool(row and (row.get("online") or row.get("state") == "online"))

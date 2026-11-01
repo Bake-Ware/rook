@@ -135,7 +135,7 @@ def test_sacred_needs_the_owner(tmp_path, gh):
     on_rig(config(tmp_path, gh), body)
 
 
-def test_in_move_in_sacred_needs_no_owner_sign_off(tmp_path, gh):
+def test_with_security_off_sacred_needs_no_owner_sign_off(tmp_path, gh):
     """castling-switchover-decisions, "Move-in": nothing waits on a person.
     A sacred project's owner sign-off is skipped; reviewers still sign."""
     async def body(rig):
@@ -147,7 +147,7 @@ def test_in_move_in_sacred_needs_no_owner_sign_off(tmp_path, gh):
         await rig.qa.ok("task.signoff", id=tid, approve=True)
         out = await merge(rig, tid)
         assert out["ok"] and out["result"]["signoff"]["signers"] == ["agent:qa"]
-    on_rig(config(tmp_path, gh, security="move-in"), body)
+    on_rig(config(tmp_path, gh, security="off"), body)
 
 
 def test_review_routes_and_lands(tmp_path, gh):

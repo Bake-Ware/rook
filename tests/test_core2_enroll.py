@@ -34,7 +34,7 @@ from rook.core2.worker.security import TrustStore  # noqa: E402
 PSK = "e2e-enroll-test-band-key-0123456789"
 BAND = band_of(PSK)
 OWNER = Caller(person="person:bake")
-ON = {"hub": {"security": "on"}}       # device codes wait for a person (move-in approves them at once)
+ON = {"hub": {"security": "on"}}       # device codes wait for a person (security off approves them at once)
 
 
 def run(coro, timeout=30):
@@ -192,16 +192,16 @@ def test_a_device_code_waits_for_the_person_and_can_be_refused(tmp_path):
     assert no["ok"] and unknown == {"ok": False, "error": "unknown or expired code"}
 
 
-def test_in_move_in_a_device_code_is_approved_at_once_and_journaled(tmp_path):
+def test_with_security_off_a_device_code_is_approved_at_once_and_journaled(tmp_path):
     """castling-switchover-decisions, "Move-in" (Bake, Oct 31): "turn off
-    approvals while we're moving in". The default hub.security (move-in)
+    approvals while we're moving in". The default hub.security (off)
     approves a device code as the first owner; the journal names the machine."""
     said = []
 
     async def go():
         hub, tok = await started(tmp_path)
         try:
-            assert hub.move_in()
+            assert hub.security_off()
             bundle = await asyncio.to_thread(device.sign_in, url(hub), "janitor", say=said.append,
                                              sleep=lambda s: __import__("time").sleep(0.05))
             left = await _pending(hub, tok["bake"])
@@ -211,15 +211,22 @@ def test_in_move_in_a_device_code_is_approved_at_once_and_journaled(tmp_path):
     bundle, left, journaled = run(go())
     assert bundle["owner"] == "person:bake" and bundle["name"] == "janitor"
     [e] = journaled
-    assert (e["name"], e["person"], e["via"]) == ("janitor", "person:bake", "device code (move-in: approved at once)")
+    assert (e["name"], e["person"], e["via"]) == ("janitor", "person:bake", "device code (security off: approved at once)")
     assert left == [] and "approved at once" in said[0] and "approve code" not in said[0]
+
+
+def test_a_yaml_on_turns_security_on(tmp_path):
+    """hub.yaml's ``security: on`` loads as true (YAML 1.1); it must not read as off."""
+    for value, off in ((True, False), ("on", False), (False, True), ("off", True), (None, True)):
+        settings = {} if value is None else {"hub": {"security": value}}
+        assert Hub(config(tmp_path, settings=settings), transport=Loopback()).security_off() is off
 
 
 def test_with_security_on_a_device_code_waits(tmp_path):
     async def go():
         hub, tok = await started(tmp_path, settings=ON)
         try:
-            assert not hub.move_in()
+            assert not hub.security_off()
             out = await http(hub, "POST", "/enroll/device", {"name": "janitor"})
             return out, await _pending(hub, tok["bake"])
         finally:

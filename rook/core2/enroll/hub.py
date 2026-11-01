@@ -261,18 +261,18 @@ class Enrollment:
         log.info("device waiting", extra={"fields": {"name": name, "code": user, "address": address}})
         out = {"ok": True, "device_code": device, "user_code": user, "hub": self.hub.hub_id,
                "exp": exp, "interval": POLL_EVERY}
-        owner = self._move_in_owner()
+        owner = self._security_off_owner()
         if owner:
-            # Move-in: approved at once as the first owner; the bundle's
+            # Security off: approved at once as the first owner; the bundle's
             # journal entry names the machine (castling-switchover-decisions).
             self.devices[_digest(device)].update(by=owner, auto=True)
             out["approved"] = True
         return out
 
-    def _move_in_owner(self) -> str | None:
-        """The owner a device code is approved as in move-in, else None."""
+    def _security_off_owner(self) -> str | None:
+        """The owner a device code is approved as with security off, else None."""
         hub = self.hub
-        if not (getattr(hub, "move_in", None) and hub.move_in()):
+        if not (getattr(hub, "security_off", None) and hub.security_off()):
             return None
         owners = sorted(u.name for u in hub.identities.users.values() if u.preset == "owner")
         return f"person:{owners[0]}" if owners else None
@@ -291,7 +291,7 @@ class Enrollment:
         if not d.get("by"):
             return {"ok": True, "pending": True, "interval": POLL_EVERY}
         del self.devices[key]
-        return self._bundle(d["by"], d["name"], "device code (move-in: approved at once)" if d.get("auto")
+        return self._bundle(d["by"], d["name"], "device code (security off: approved at once)" if d.get("auto")
                             else "device code", d.get("key"))
 
     async def pending(self, caller) -> dict:
