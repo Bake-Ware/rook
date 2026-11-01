@@ -72,6 +72,7 @@ linked.
 - [llm](../../rook/core2/hub/doors/web/builtin/llm/docs/manual.md): which language models the hub can use.
 - [page](../../rook/core2/hub/doors/web/builtin/page/docs/manual.md): the hub site's pages.
 - [setting](../../rook/core2/hub/doors/web/builtin/setting/docs/manual.md): hub and per-person settings.
+- [token](../../rook/core2/hub/doors/web/builtin/token/docs/manual.md): door tokens for agents (an agent mints its own MCP token).
 - [backup](../../rook/core2/hub/backup/docs/manual.md): sealed backups of the hub that only the recovery key opens, and restoring one on a new machine.
 
 **Core services** (install on the hub):
