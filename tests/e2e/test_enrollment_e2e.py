@@ -29,6 +29,7 @@ class InitHub:
         self.recovery = re.search(r"shows it again\.\n  (\S+)", out)[1]
         cfg = yaml.safe_load((self.dir / "hub.yaml").read_text())
         cfg["log"] = {"level": "info", "format": "json"}
+        cfg.setdefault("settings", {}).setdefault("hub", {"security": "on"})   # these approve device codes
         (self.dir / "hub.yaml").write_text(yaml.safe_dump(cfg))
 
     def start(self) -> Door:

@@ -247,6 +247,8 @@ def merge(ctx, repo, number, sha, task, method="merge"):
         raise KitError("bad args: sha is the full 40-character head you checked")
     t = ctx.call("task.get", id=task)
     level, norm = _strictest(ctx, t.get("project"), repo)
+    if level == "sacred" and ctx.security_off:     # security off: no owner sign-off wait; reviewers still sign
+        level = "normal"
     rows = ctx.call("task.signoff.list", where={"task": t["id"]}, limit=500)
     p = pr(ctx, repo, number)
     logins = {k.lower(): v for k, v in (ctx.settings["logins"] or {}).items()}

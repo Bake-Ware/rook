@@ -311,6 +311,14 @@ lines, restart cloudflared. Nothing of 0.4 changed.
 
 Done in one sitting. Rook is down from 2.1 until the 0.5 hub answers in 2.3 (about 15 minutes).
 
+Before 2.1 (castling-process, "Access before any freeze"), on the new hub and
+by doing each: Bake signs in from a browser with his username and password;
+the supervising Claude session makes a real call through a connector to it;
+`hub.security` is `off` (the default; Settings, or `smoke.py` prints
+`[ok] hub.security: off`), so nothing below waits on a person: no
+holds, no gate blocks, device codes approved at once. `readiness.py` lists
+these three.
+
 1. **Freeze 0.4.** Say so in the castling huddle. On bakenetcanada:
    `sudo systemctl stop rook-band-mcp`. Nothing can write to 0.4 now, so
    the copy is final. Leave `telesthete-hub`, `cloudflared` and
@@ -332,7 +340,7 @@ Done in one sitting. Rook is down from 2.1 until the 0.5 hub answers in 2.3 (abo
    then from anywhere, with an owner token
    (`... hub token --person bake`):
    `ROOK_TOKEN=... python castling/switchover/smoke.py --url https://rook05.bakeforge.com --verify-json verify.json`.
-   It checks the hub answers and every moved store reads back in full,
+   It checks the hub answers, has security off, and every moved store reads back in full,
    paged to the end (active and archived records): knowledge, tasks, task
    comments, projects, concepts, huddles, jobs, change records, secret
    names, rooms and huddles as streams and their text and status events;
@@ -340,8 +348,9 @@ Done in one sitting. Rook is down from 2.1 until the 0.5 hub answers in 2.3 (abo
    caps from the checkout's manifests, so plugin renames follow). All `[ok]`.
 4. **Bands and workers.** On each machine on the report's re-enroll
    checklist, the 0.5 worker beside the 0.4 one (its own venv, data and
-   unit `rook05-worker`, as the sidecar), enrolled with the device code Bake
-   approves on the dashboard. First cachyrig (its sidecar worker
+   unit `rook05-worker`, as the sidecar), enrolled with `worker enroll <url>`:
+   with security off the hub approves the device code at once as the owner and
+   journals it with the machine name, so nobody waits. First cachyrig (its sidecar worker
    re-enrolls; the sidecar hub stays as staging, D7), then janitor,
    soundwave, sojourn, kaiju (with `speech-engine`, D6 for the service
    containers), bakephone (flip to 0.5 in the app, D4), Windows machines

@@ -158,7 +158,9 @@ def seed_vault(data: Path, **values) -> None:
         v.set(name, value, by="test")
 
 
-def config(tmp_path: Path, gh: FakeGitHub, vault: bool = True, **github) -> Config:
+def config(tmp_path: Path, gh: FakeGitHub, vault: bool = True, security: str = "on", **github) -> Config:
+    """``security``: the hub.security setting (these tests check sign-off with
+    it on; off is checked on its own)."""
     if vault:
         seed_vault(tmp_path / "data", **{"github-hub": TOKEN})
     lib = tmp_path / "lib"
@@ -170,7 +172,8 @@ def config(tmp_path: Path, gh: FakeGitHub, vault: bool = True, **github) -> Conf
     return Config(data=tmp_path / "data", band=BAND, library=lib,
                   users={"bake": {"preset": "owner"}, "amy": {"preset": "adult"}},
                   agents={"coder": {"grants": ["*"]}, "qa": {"grants": ["*"]}},
-                  settings={"github": {"api": gh.url, "token": "github-hub", **github}},
+                  settings={"github": {"api": gh.url, "token": "github-hub", **github},
+                            "hub": {"security": security}},
                   doors={"http": {"bind": "127.0.0.1:0"}})
 
 

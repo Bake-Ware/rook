@@ -245,6 +245,7 @@ class FakeDoor:
         self.records, self.workers, self.calls = records, workers, []
         self.archived = archived or {}
         self.streams, self.events = list(streams), events or {}
+        self.security = "off"
 
     def request(self, method, path, body=None):
         return {"workers": self.workers}
@@ -253,6 +254,8 @@ class FakeDoor:
         self.calls.append((worker, cap, args))
         if cap == "worker.ping":
             return {"ok": worker in [w["name"] for w in self.workers]}
+        if cap == "hub.status":
+            return {"ok": True, "result": {"security": self.security}}
         if cap == "secret.list":
             return {"ok": True, "result": {"secrets": [{"name": f"s{i}"} for i in range(self.records.get(cap, 0))]}}
         if cap == "stream.list":
@@ -287,10 +290,22 @@ def test_smoke_reads_every_moved_store_in_full():
                for ok, line in res)
     assert any(ok and line.startswith("rooms + huddles as streams: 251") for ok, line in res)
     assert any(ok and line.startswith("text events in those streams: 1500") for ok, line in res)
-    assert {cap for _, cap, _ in door.calls} <= {"worker.ping", "secret.list", "stream.list", "stream.read"} | \
+    assert any(ok and line == "hub.security: off" for ok, line in res)
+    assert {cap for _, cap, _ in door.calls} <= {"worker.ping", "hub.status", "secret.list", "stream.list", "stream.read"} | \
         {cap for cap, _ in mod.RECORDS}                                              # read-only
     res = mod.run(FakeDoor({}, []), ["kaiju"], {})
     assert any(not ok and "kaiju" in line for ok, line in res)
+
+
+def test_smoke_fails_when_the_hub_is_security_is_not_off():
+    """Step 2 waits on nobody (castling-switchover-decisions, "Usable first, security later"): a hub
+    with hub.security on would hold calls and device codes, so smoke says so."""
+    mod = _smoke()
+    door = FakeDoor({}, [])
+    door.security = "on"
+    res = mod.run(door, [], {})
+    assert [line for ok, line in res if not ok and line.startswith("hub.security")] == [
+        "hub.security: on (step 2 needs security off: device codes and holds would wait on a person)"]
 
 
 def test_smoke_sends_a_user_agent(monkeypatch):

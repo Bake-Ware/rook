@@ -11,6 +11,20 @@ runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 
+settings:
+  # castling-switchover-decisions, "Usable first, security later" (Bake, Oct 31).
+  security:
+    type: str
+    enum: ["off", "on"]
+    default: "off"
+    where: hub
+    doc: >-
+      off: nothing waits on a person. No gate runs and no call is held (each journal entry says
+      security: off), elevation is not gated, device codes are approved at once (journaled with the
+      machine name) and a sacred project needs no owner sign-off. Rights still apply; the vault stays
+      encrypted and secrets stay masked in the journal. on: gates, holds, device-code approval and
+      sacred sign-off apply.
+
 caps:
   status:
     doc: "What the hub runs: its id, band, core version, doors, plugins and (for owners) its people."

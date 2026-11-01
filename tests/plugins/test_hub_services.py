@@ -258,7 +258,8 @@ def test_notify_reaches_people_on_phone_telegram_and_discord(tmp_path):
             dc.base = dc_url
             cfg = Config(data=tmp_path / "data", band=BAND, library=library(tmp_path, "notify", "telegram", "discord"),
                          users=users(), doors={"http": {"bind": "127.0.0.1:0"}},
-                         settings={"telegram": {"token": "tg-bot", "api": tg_url, "poll": 1},
+                         settings={"hub": {"security": "on"},   # the sends_as hold on posts
+                                   "telegram": {"token": "tg-bot", "api": tg_url, "poll": 1},
                                    "discord": {"token": "dc-bot", "api": dc_url + "/api"}})
             hub = Hub(cfg, transport=Loopback())
             await hub.start()

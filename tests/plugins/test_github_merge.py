@@ -135,6 +135,21 @@ def test_sacred_needs_the_owner(tmp_path, gh):
     on_rig(config(tmp_path, gh), body)
 
 
+def test_with_security_off_sacred_needs_no_owner_sign_off(tmp_path, gh):
+    """castling-switchover-decisions, "Usable first, security later": nothing waits on a person.
+    A sacred project's owner sign-off is skipped; reviewers still sign."""
+    async def body(rig):
+        tid = await task_in(rig, "sacred")
+        asked = await rig.coder.ok("task.request_signoff", id=tid, reviewers=["agent:qa"])
+        assert [r["reviewer"] for r in asked["signoff"]] == ["agent:qa"]          # no owner added
+        out = await merge(rig, tid)
+        assert not out["ok"] and "agent:qa has not signed off yet" in out["error"]
+        await rig.qa.ok("task.signoff", id=tid, approve=True)
+        out = await merge(rig, tid)
+        assert out["ok"] and out["result"]["signoff"]["signers"] == ["agent:qa"]
+    on_rig(config(tmp_path, gh, security="off"), body)
+
+
 def test_review_routes_and_lands(tmp_path, gh):
     """The whole path: a task in a project with an expert pool asks for
     sign-off with no reviewers named, the agents asked are woken, one reviews

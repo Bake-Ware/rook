@@ -259,8 +259,23 @@ class Enrollment:
         self.devices[_digest(device)] = {"user_code": user, "name": name, "exp": exp, "started": now, "seen": now,
                                          "address": str(address)[:200] if address else None, "key": key}
         log.info("device waiting", extra={"fields": {"name": name, "code": user, "address": address}})
-        return {"ok": True, "device_code": device, "user_code": user, "hub": self.hub.hub_id,
-                "exp": exp, "interval": POLL_EVERY}
+        out = {"ok": True, "device_code": device, "user_code": user, "hub": self.hub.hub_id,
+               "exp": exp, "interval": POLL_EVERY}
+        owner = self._security_off_owner()
+        if owner:
+            # Security off: approved at once as the first owner; the bundle's
+            # journal entry names the machine (castling-switchover-decisions).
+            self.devices[_digest(device)].update(by=owner, auto=True)
+            out["approved"] = True
+        return out
+
+    def _security_off_owner(self) -> str | None:
+        """The owner a device code is approved as with security off, else None."""
+        hub = self.hub
+        if not (getattr(hub, "security_off", None) and hub.security_off()):
+            return None
+        owners = sorted(u.name for u in hub.identities.users.values() if u.preset == "owner")
+        return f"person:{owners[0]}" if owners else None
 
     async def device_poll(self, body: dict) -> dict:
         """``{device_code}``: still pending, refused, or the bundle (once)."""
@@ -276,7 +291,8 @@ class Enrollment:
         if not d.get("by"):
             return {"ok": True, "pending": True, "interval": POLL_EVERY}
         del self.devices[key]
-        return self._bundle(d["by"], d["name"], "device code", d.get("key"))
+        return self._bundle(d["by"], d["name"], "device code (security off: approved at once)" if d.get("auto")
+                            else "device code", d.get("key"))
 
     async def pending(self, caller) -> dict:
         """Devices waiting for someone to approve their code."""

@@ -145,8 +145,11 @@ def sign_in(url: str, name: str, code: str | None = None, pinned: str | None = N
         if not (isinstance(start.get("device_code"), str) and isinstance(start.get("user_code"), str)):
             raise EnrollError("the hub's answer has no device code")
         pinned = pinned or start.get("hub")
-        say(f"To add {name}, approve code {start['user_code']} on hub {start.get('hub')} "
-            "(the Rook app, the dashboard, or POST /enroll/approve).")
+        if start.get("approved"):            # a hub with security off approves at once
+            say(f"Adding {name} to hub {start.get('hub')} (approved at once: the hub's security is off).")
+        else:
+            say(f"To add {name}, approve code {start['user_code']} on hub {start.get('hub')} "
+                "(the Rook app, the dashboard, or POST /enroll/approve).")
         deadline = clock() + CODE_SECS       # the hub's own expiry ends it sooner
         while True:
             got = _post(url, "/enroll/poll", {"device_code": start["device_code"]})

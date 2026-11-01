@@ -29,6 +29,7 @@ let settings = [];
 function input(s, i) {
   const v = s.value;
   if (s.type === "bool") return `<input type="checkbox" data-i="${i}" ${v ? "checked" : ""}>`;
+  if (s.enum) return `<select data-i="${i}">${s.enum.map((o) => `<option value="${esc(o)}" ${o === v ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
   if (s.type === "int" || s.type === "float") return `<input type="number" data-i="${i}" step="${s.type === "int" ? 1 : "any"}" value="${v == null ? "" : esc(v)}">`;
   if (["str", "secret", "duration", "time", "url"].includes(s.type)) return `<input type="text" data-i="${i}" value="${v == null ? "" : esc(v)}">`;
   return `<textarea data-i="${i}">${v == null ? "" : esc(JSON.stringify(v, null, 2))}</textarea>`;
@@ -74,7 +75,7 @@ document.getElementById("settings").addEventListener("click", async (e) => {
   try {
     await rook.call("setting.set", { plugin: s.plugin, key: s.key, value },
       { why: `The person changed ${s.plugin}.${s.key} on the Settings page.` });
-    await loadSettings();
+    await Promise.all([loadSettings(), loadHub()]);
   } catch (x) {
     out.className = "out bad";
     out.textContent = x.message;
@@ -97,7 +98,8 @@ async function loadHub() {
     const h = await rook.call("hub.status");
     document.getElementById("hub").className = "";
     document.getElementById("hub").innerHTML = `<dl><dt>Hub id</dt><dd>${esc(h.hub)}</dd><dt>Band</dt><dd>${esc(h.band)}</dd>
-      <dt>Core</dt><dd>${esc(h.core)}</dd><dt>Doors</dt><dd>${esc(h.doors.join(", "))}</dd></dl>`;
+      <dt>Core</dt><dd>${esc(h.core)}</dd><dt>Doors</dt><dd>${esc(h.doors.join(", "))}</dd>
+      <dt>Security</dt><dd>${esc(h.security || "")}</dd></dl>`;
     document.getElementById("plugins").innerHTML = h.plugins.map((p) => `<tr><td>${esc(p.title)} <span class="muted">${esc(p.plugin)}</span></td>
       <td>${esc(p.version)}${p.builtin ? ' <span class="muted">built in</span>' : ""}</td><td>${esc(p.runs_on)}</td>
       <td>${p.caps}</td><td>${esc(p.pages.join(", "))}</td></tr>`).join("");

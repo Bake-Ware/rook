@@ -13,7 +13,7 @@ PLUGINS_DIR = REPO / "rook" / "plugins"
 def _jobs_band(b):
     (b.library / "jobs").symlink_to(PLUGINS_DIR / "jobs", target_is_directory=True)
     cfg = json.loads((b.hub_dir / "hub.yaml").read_text())
-    cfg["settings"] = {"job": {"tick": "100ms", "retry_after": "100ms"}}
+    cfg.setdefault("settings", {})["job"] = {"tick": "100ms", "retry_after": "100ms"}
     (b.hub_dir / "hub.yaml").write_text(json.dumps(cfg, indent=1))
     b.start_hub()
     b.start_worker()

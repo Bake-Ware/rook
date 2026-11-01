@@ -186,6 +186,7 @@ class Band:
             "doors": {"http": {"bind": "127.0.0.1:0"}, "mcp": {"bind": "127.0.0.1:0"}},
             "transport": {"bands": band},
             "log": {"level": "info", "format": "json"},
+            "settings": {"hub": {"security": "on"}},     # Tests written for hub.security on (holds, gates, device-code approval); security off has its own tests.
         }, indent=1))
         self.worker_dir.mkdir()
         # No anchor and no band: enrollment (start_worker) writes those.
