@@ -4,7 +4,7 @@
 # so every cap is scripts/tv.py, which keeps one connection per TV.
 manifest: 1
 plugin: tv
-version: 0.5.0
+version: 0.5.1
 title: LG webOS TVs
 doc: Drive LG webOS TVs (apps, inputs, volume, remote buttons, typing, power) over their control API.
 package: devices
@@ -153,6 +153,17 @@ caps:
     args:
       url: { type: str, required: true, max: 2000, pattern: "^[Hh][Tt][Tt][Pp][Ss]?://" }
     run: scripts/tv.py:open_url
+  screen.capture:
+    doc: What the TV shows, as a JPEG (960x540 on a CX). The remote's pointer is not in it, and apps that protect their video (Netflix...) may show black.
+    risk: read
+    scope: local
+    effects: [sensitive]
+    idempotent: true
+    timeout: 30s
+    args:
+      quality: { type: int, min: 1, max: 100, doc: "Accepted for the shared cap; the TV sets its own JPEG quality." }
+    result: { type: file, doc: A JPEG. }
+    run: scripts/tv.py:capture
   screen.on:
     doc: Turn the screen back on after screen.off.
     risk: write
@@ -195,7 +206,7 @@ caps:
       key: { type: secret, doc: A key paired elsewhere. }
       timeout: { type: int, default: 60, min: 10, max: 110 }
     run: scripts/tv.py:pair
-provides: [notification.post, app.launch, sound.set, media.play, media.pause, media.stop, media.seek, hid.key, hid.type, screen.on, power.off]
+provides: [notification.post, app.launch, sound.set, media.play, media.pause, media.stop, media.seek, hid.key, hid.type, screen.on, screen.capture, power.off]
 hooks:
   stop: scripts/tv.py:stop
 docs: { manual: docs/manual.md }

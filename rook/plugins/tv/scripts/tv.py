@@ -22,6 +22,8 @@ import re
 import socket
 import ssl
 import time
+import urllib.parse
+import urllib.request
 from typing import Any
 
 PORT, TLS_PORT = 3000, 3001
@@ -70,6 +72,8 @@ SOUND_OUTPUT = "com.webos.service.apiadapter/audio/getSoundOutput"
 GET_SETTINGS = "settings/getSystemSettings"
 INSERT_TEXT = "com.webos.service.ime/insertText"
 ENTER_KEY = "com.webos.service.ime/sendEnterKey"
+CAPTURE = "tv/executeOneShot"
+CAPTURE_MAX = 8 << 20   # a 960x540 JPEG is ~100 KB; refuse anything absurd
 MEDIA = {"play": "media.controls/play", "pause": "media.controls/pause",
          "stop": "media.controls/stop", "rewind": "media.controls/rewind",
          "fast_forward": "media.controls/fastForward"}
@@ -616,6 +620,42 @@ async def type_text(ctx, text: str = "", enter: bool = False, replace: bool = Fa
 async def open_url(ctx, url: str) -> dict:
     await _req(_TV(ctx), OPEN_URL, {"target": url})
     return {"ok": True}
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **kw):
+        return None
+
+
+def _fetch(url: str) -> bytes:
+    """GET the capture the TV just wrote (its own self-signed HTTPS, or HTTP)."""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),   # a TV is on the LAN
+                                         urllib.request.HTTPSHandler(context=_no_verify()),
+                                         _NoRedirect())   # the capture comes from the TV, nowhere else
+    with opener.open(url, timeout=REQUEST_TIMEOUT) as r:
+        data = r.read(CAPTURE_MAX + 1)
+    if len(data) > CAPTURE_MAX:
+        raise SSAPError("the capture is too large")
+    return data
+
+
+async def capture(ctx, quality: int | None = None) -> Any:
+    """What the TV shows, as a JPEG (960x540 on a CX): the TV writes a
+    capture and hands back its address on the TV itself, which is fetched
+    from there and nowhere else. The remote's pointer is not in it."""
+    tv = _TV(ctx)
+    got = await _req(tv, CAPTURE, {"path": "/tmp/capture.jpg", "method": "DISPLAY", "format": "JPG"})
+    uri = str(got.get("imageUri") or "")
+    u = urllib.parse.urlsplit(uri)
+    if u.scheme not in ("http", "https") or (u.hostname or "").lower() != tv.host.strip("[]").lower():
+        raise ctx.Error(f"{tv.name}: the TV gave no capture address of its own ({uri[:100]!r})")
+    try:
+        data = await asyncio.to_thread(_fetch, uri)
+    except Exception as e:
+        raise ctx.Error(f"{tv.name}: could not fetch the capture ({_why(e)})", retry=True) from None
+    if not data.startswith(b"\xff\xd8"):
+        raise ctx.Error(f"{tv.name}: the capture is not a JPEG")
+    return ctx.file(data=data, name="tv.jpg", mime="image/jpeg")
 
 
 async def screen_on(ctx) -> dict:

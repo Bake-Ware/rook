@@ -46,6 +46,7 @@ class FakeTV:
         self.prompt = "accept"      # accept | deny | ignore
         self.fail: dict[str, str] = {}
         self.port = None
+        self.image_uri = None
 
     def answer(self, uri, payload):
         uri = uri.removeprefix("ssap://")
@@ -83,6 +84,9 @@ class FakeTV:
             return {"returnValue": True, "socketPath": f"ws://127.0.0.1:{self.port}/pointer"}
         if uri == MOD.POWER_OFF:
             self.power = "Suspend"
+        if uri == MOD.CAPTURE:
+            return {"returnValue": True, "imageUri": self.image_uri or
+                    f"https://127.0.0.1:3001/resources/abc/capture.jpg"}
         return {"returnValue": True}
 
     async def handler(self, ws):
@@ -315,6 +319,47 @@ def test_open_url_and_screen(tv):
     call(tv, "tv.screen.off")
     call(tv, "tv.screen.on")
     assert [u for u, _ in tv.seen if "turn" in u] == [MOD.SCREEN_OFF, MOD.SCREEN_ON]
+
+
+def test_screen_capture(tv, monkeypatch):
+    fetched = []
+    jpeg = b"\xff\xd8\xff\xe0 fake jpeg"
+    monkeypatch.setattr(MOD, "_fetch", lambda url: fetched.append(url) or jpeg)
+    got = call(tv, "tv.screen.capture")
+    assert got.data == jpeg and got.mime == "image/jpeg"
+    assert sent(tv, MOD.CAPTURE) == [{"path": "/tmp/capture.jpg", "method": "DISPLAY", "format": "JPG"}]
+    assert fetched == ["https://127.0.0.1:3001/resources/abc/capture.jpg"]
+    tv.image_uri = "http://169.254.169.254/latest/meta-data"     # only ever the TV itself
+    with pytest.raises(KitError, match="no capture address of its own"):
+        call(tv, "tv.screen.capture")
+    tv.image_uri = None
+    monkeypatch.setattr(MOD, "_fetch", lambda url: b"<html>")
+    with pytest.raises(KitError, match="not a JPEG"):
+        call(tv, "tv.screen.capture")
+
+
+def test_screen_capture_never_follows_a_redirect():
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Moved(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", "http://169.254.169.254/latest/meta-data")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Moved)
+    threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+    try:
+        with pytest.raises(Exception, match="302"):
+            MOD._fetch(f"http://127.0.0.1:{srv.server_address[1]}/resources/abc/capture.jpg")
+    finally:
+        srv.shutdown()
+        srv.server_close()
 
 
 def test_power_off(tv):

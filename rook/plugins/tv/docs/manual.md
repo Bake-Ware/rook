@@ -21,6 +21,7 @@ take a host.
 | `tv.hid.key` | A remote button: home, back (or escape), up, down, left, right, enter (or ok), menu, exit, info, red/green/yellow/blue, play, pause, stop, rewind, fastforward, volumeup, volumedown, mute, channelup, channeldown, 0-9. No modifiers. |
 | `tv.hid.type` | Text into the field open on the TV (a search box). `replace` clears it first, `enter` submits, `app` types only if that app is in front. |
 | `tv.app.open_url` | An http(s) URL in the TV's browser. |
+| `tv.screen.capture` | What the TV shows, as a JPEG (960x540 on a CX), fetched from the TV itself. The remote's pointer isn't in it; protected video may be black. |
 | `tv.screen.off` / `tv.screen.on` | Just the panel; sound keeps playing. |
 | `tv.power.off` | Off. Already off is not an error. `force` changes nothing (a TV has one way off). |
 | `tv.power.on` | Wake-on-LAN, then waits up to `wait` s (0-60) for it to answer. Needs a MAC, the TV's "Turn on via Wi-Fi" setting, and the delegate on the TV's network. |
@@ -28,7 +29,7 @@ take a host.
 
 The TV also answers the shared device caps: `notification.post`,
 `app.launch`, `sound.set`, `media.play|pause|stop|seek`, `hid.key`,
-`hid.type`, `screen.on` and `power.off` sent to it reach the caps above.
+`hid.type`, `screen.on`, `screen.capture` and `power.off` sent to it reach the caps above.
 
 ## Pairing
 

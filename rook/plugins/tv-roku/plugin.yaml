@@ -1,0 +1,154 @@
+# Roku players and Roku TVs as appliances, over Roku's External Control
+# Protocol (ECP): plain HTTP on port 8060, no pairing. A delegate worker on
+# the Roku's network carries each call. Keys and inputs are one request
+# each (config); state, apps, typing, volume steps and power need the
+# replies read, so they are scripts/roku.py.
+manifest: 1
+plugin: tv-roku
+version: 0.5.0
+title: Roku
+doc: Drive Roku players and Roku TVs (apps, remote buttons, typing, volume, power, inputs) over ECP.
+package: devices
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+appliance:
+  discover:
+    - ssdp: "roku:ecp"
+  settings:
+    port: { type: int, default: 8060, min: 1, max: 65535, doc: "ECP's port (always 8060 on a Roku)." }
+caps:
+  status:
+    doc: "Live state: {on, power, app, app_id, player, name, model, is_tv, reachable}. power is the Roku's power-mode (PowerOn, DisplayOff, Ready...). Never fails on a Roku that doesn't answer: reachable false."
+    risk: read
+    scope: local
+    idempotent: true
+    timeout: 20s
+    run: scripts/roku.py:status
+  app.list:
+    doc: "Installed channels (apps): {items: [{id, title}]}."
+    risk: read
+    scope: local
+    idempotent: true
+    timeout: 20s
+    run: scripts/roku.py:app_list
+  app.launch:
+    doc: 'Launch a channel by id or by name ("YouTube", "netflix", "prime video"). params are its deep-link query (contentId, mediaType), e.g. {"contentId": "dQw4w9WgXcQ", "mediaType": "movie"} for a YouTube video.'
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 20s
+    args:
+      app: { type: str, required: true, max: 200 }
+      params: { type: json }
+    run: scripts/roku.py:launch
+  hid.key:
+    doc: "Press a remote button: home, back (or escape), up, down, left, right, select (or ok, enter), info (the * key), play (play/pause), rewind, fastforward, replay, search, backspace, volumeup, volumedown, mute, channelup, channeldown; or an ECP key name (InputHDMI2, FindRemote)."
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 15s
+    args:
+      key:
+        type: str
+        required: true
+        pattern: "^[A-Za-z0-9]{1,24}$"
+        map:
+          {
+            home: Home, back: Back, escape: Back, esc: Back, up: Up, down: Down, left: Left, right: Right,
+            select: Select, ok: Select, enter: Select, info: Info, play: Play, pause: Play, rewind: Rev,
+            fastforward: Fwd, replay: InstantReplay, search: Search, backspace: Backspace,
+            volumeup: VolumeUp, volumedown: VolumeDown, mute: VolumeMute, channelup: ChannelUp,
+            channeldown: ChannelDown
+          }
+      mods:
+        type: list
+        items: { type: str, enum: [ctrl, shift, alt, meta] }
+        max: 0
+        doc: Must be empty; a remote has no modifiers.
+    action:
+      http:
+        method: POST
+        url: "http://{{appliance.host}}:{{appliance.port}}/keypress/{{args.key}}"
+  hid.type:
+    doc: Type text into the text field open on the Roku (a search box), one character at a time as its keyboard would; enter presses Enter after it.
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 60s
+    args:
+      text: { type: str, required: true, max: 200 }
+      enter: { type: bool, default: false, doc: Press Enter after the text. }
+    run: scripts/roku.py:type_text
+  set_input:
+    doc: Switch a Roku TV to an input (a player has none).
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 15s
+    args:
+      input:
+        type: str
+        required: true
+        enum: [tuner, hdmi1, hdmi2, hdmi3, hdmi4, av1]
+        map: { tuner: InputTuner, hdmi1: InputHDMI1, hdmi2: InputHDMI2, hdmi3: InputHDMI3, hdmi4: InputHDMI4, av1: InputAV1 }
+    action:
+      http:
+        method: POST
+        url: "http://{{appliance.host}}:{{appliance.port}}/keypress/{{args.input}}"
+  sound.set:
+    doc: Move a Roku TV's volume by step (+3, -2), and/or press mute. ECP has no volume level and doesn't say whether the sound is muted, so level is refused and mute only toggles (the reply says so).
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 30s
+    args:
+      level: { type: int, min: 0, max: 100, doc: Not available on a Roku; refused. }
+      step: { type: int, min: -20, max: 20 }
+      mute: { type: bool, doc: Presses the mute button (a toggle). }
+    run: scripts/roku.py:sound
+  media.play:
+    doc: Play (or resume) the current channel's media; nothing when it is already playing.
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 15s
+    bind: { want: play }
+    run: scripts/roku.py:media
+  media.pause:
+    doc: Pause the current channel's media; nothing when it isn't playing.
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 15s
+    bind: { want: pause }
+    run: scripts/roku.py:media
+  media.seek:
+    doc: The remote's skip - forward (fast-forward) when by is blank or positive, back (rewind) when negative. ECP has no position seek, so the size of by is not used.
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 15s
+    args:
+      by: { type: int, doc: Seconds; only the sign counts here. }
+    run: scripts/roku.py:seek
+  power.on:
+    doc: Turn a Roku TV on and wait up to wait seconds (0-60) for it to say so. It answers in standby only with Fast TV start on (Settings > System > Power); a player has no power.
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 90s
+    args:
+      wait: { type: int, default: 15, min: 0, max: 60 }
+    run: scripts/roku.py:power_on
+  power.off:
+    doc: Turn a Roku TV off (to standby). Already off is not an error. force is accepted and changes nothing.
+    risk: write
+    scope: local
+    effects: [physical]
+    timeout: 20s
+    args:
+      force: { type: bool, default: false }
+    run: scripts/roku.py:power_off
+provides: [app.launch, hid.key, hid.type, sound.set, media.play, media.pause, media.seek, power.off]
+docs: { manual: docs/manual.md }
+# No check: an install has no appliance instance to call (castling/coverage.md N4).
