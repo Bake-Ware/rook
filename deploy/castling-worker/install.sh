@@ -10,7 +10,8 @@
 # Code: a codeload export of Bake-Ware/rook at REF (no git clone needed).
 # Unit: rook05-worker (Restart=always), enabled and started: a systemd --user
 # unit, or a system unit when run as root (containers without a user bus).
-# Root installs default to /opt/rook05. Downloads use curl, else python.
+# Root installs default to /opt/rook05 and run_as root (ROOK_RUN_AS=<account>
+# for another), as the 0.4 worker runs there. Downloads use curl, else python.
 # Joining: the device-code enrollment; a hub in move-in approves it at once
 # (castling-switchover-decisions, "Usable first"). --code (or ROOK_JOIN_CODE)
 # joins with a one-time code from the hub (POST /enroll/code) instead.
@@ -114,6 +115,8 @@ cfg = yaml.safe_load(path.read_text()) if path.exists() else {}
 cfg.setdefault("data", str(path.parent / "data"))
 cfg.setdefault("name", name)
 cfg["plugins"] = [str(plugins / p) for p in wanted if (plugins / p / "plugin.yaml").is_file()]
+if os.getuid() == 0:
+    cfg.setdefault("run_as", os.environ.get("ROOK_RUN_AS") or "root")   # as 0.4 ran on this machine
 if os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY"):
     cfg["hardware"] = sorted(set(cfg.get("hardware") or []) | {"display"})
 cfg.setdefault("log", {"level": "info", "format": "text"})
