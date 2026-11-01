@@ -44,6 +44,12 @@ MAX_HTML = 512 * 1024
 MAX_NOTE = 64 * 1024
 MAX_LAYOUT = 50
 EVERYONE = "*"                       # the hub's own start page (pages.json)
+SECURITY_PLUGINS = ("approval",)     # their pages exist only with hub.security on
+
+
+def _security_off(hub) -> bool:
+    off = getattr(hub, "security_off", None)
+    return bool(off()) if callable(off) else False
 
 
 @dataclass
@@ -93,7 +99,12 @@ class Pages:
 
     def all(self) -> dict[str, Page]:
         out = {}
+        # Security off: no approvals page anywhere (castling-switchover-decisions, "Usable first,
+        # security later": "I don't want a fucking approvals page"); back when an owner turns it on.
+        hidden = SECURITY_PLUGINS if _security_off(self.hub) else ()
         for p in list(self.hub.plugins.plugins.values()):
+            if p.name in hidden:
+                continue
             for name, spec in (p.manifest.get("pages") or {}).items():
                 if p.folder is None:
                     continue

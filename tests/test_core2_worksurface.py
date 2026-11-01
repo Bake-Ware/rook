@@ -111,11 +111,14 @@ def test_every_install_combination(tmp_path, combo):
         assert s == {"person": "person:bake", "start": None, "dock": "house" if agents else None,
                      "workbench": workbench}
 
-        # a lean sidebar: workers and approvals (+ what packages add); journal and settings by address
+        # a lean sidebar: workers and tokens (+ what packages add); journal and settings by address.
+        # hub.security is off by default: no approvals page anywhere (castling-switchover-decisions)
         listed = {p["page"]: p for p in (await c.call("page.list"))["result"]["pages"]}
         nav = {pid for pid, p in listed.items() if p["nav"]}
         work = {"task/tasks", "project/projects", "knowledge/knowledge"}
-        assert nav == {"hub/workers", "token/tokens", "approval/approvals", "board/board"} | (work if workbench else set())
+        assert nav == {"hub/workers", "token/tokens", "board/board"} | (work if workbench else set())
+        assert not any(pid.startswith("approval/") for pid in listed)
+        assert "no page approval/approvals" in (await c.open("approval/approvals")).get("error", "")
         assert {"journal/journal", "setting/settings"} <= set(listed) - nav
         for pid in ("journal/journal", "setting/settings"):
             assert (await c.open(pid))["ok"]
@@ -240,15 +243,15 @@ def test_start_page_per_person_and_the_hubs_own(tmp_path):
         assert out["result"] == {"start": "board/board", "for": "person:bake"}
         assert (await kim.call("page.site"))["result"]["start"] is None
         # an agent or job acting alone sets the hub's own: everyone without one of their own
-        assert (await bearer(bake, tokens["narrow"], "page.start", page="approval/approvals"))["result"]["for"] == "*"
-        assert (await kim.call("page.site"))["result"]["start"] == "approval/approvals"
+        assert (await bearer(bake, tokens["narrow"], "page.start", page="hub/workers"))["result"]["for"] == "*"
+        assert (await kim.call("page.site"))["result"]["start"] == "hub/workers"
         assert (await bake.call("page.site"))["result"]["start"] == "board/board"
         # an archived start page doesn't count
         await bake.call("page.archive", {"page": "board/board"})
-        assert (await bake.call("page.site"))["result"]["start"] == "approval/approvals"
+        assert (await bake.call("page.site"))["result"]["start"] == "hub/workers"
         await bake.call("page.restore", {"page": "board/board"})
-        assert (await bake.call("page.start", {}))["result"] == {"start": "approval/approvals", "for": "person:bake"}
-        assert web_caps._read_json(hub.data / "pages.json")["start"] == {"*": "approval/approvals"}
+        assert (await bake.call("page.start", {}))["result"] == {"start": "hub/workers", "for": "person:bake"}
+        assert web_caps._read_json(hub.data / "pages.json")["start"] == {"*": "hub/workers"}
     serve(tmp_path, go)
 
 
