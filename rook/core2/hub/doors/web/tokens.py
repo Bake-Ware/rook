@@ -94,6 +94,18 @@ class Tokens:
         rows.sort(key=lambda r: r.get("created") or 0, reverse=True)
         return {"tokens": rows, "mcp_url": self.mcp_url()}
 
+    async def approve(self, ctx, code: str) -> dict:
+        """An owner approves the code a connector's sign-in page shows: that
+        connector gets a token for this owner (mcp_oauth, approve by code)."""
+        if not ctx.caller.owner:
+            raise KitError("only an owner approves a connector's code")
+        door = next((d for d in getattr(self.hub, "doors", ()) if d.name == "mcp"), None)
+        if door is None or getattr(door, "oauth", None) is None:
+            raise KitError("the MCP door has no OAuth address (doors.mcp.oauth)")
+        if not door.oauth.approve(code, ctx.caller.person, by=ctx.caller.agent or ctx.caller.person):
+            raise KitError(f"no connector is waiting with code {code}")
+        return {"approved": code}
+
     async def revoke(self, ctx, id: str) -> dict:
         stored = self._stored()
         hits = [d for d in stored if d.startswith(id)]

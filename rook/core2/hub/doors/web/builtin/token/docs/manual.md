@@ -8,6 +8,7 @@ person and the agent may.
 |---|---|
 | `token.create` | `{agent, label?}`: a token for `agent` (yourself or another agent) acting for the person you call for. Returned once; only its hash is kept in `<data>/tokens.json`. A new agent name gets the minting agent's rights (every grant when a person mints it), which the person's rights narrow. The reply has `mcp_url` (when the MCP door has its public `oauth:` address), a ready `claude mcp add` command, and `connector` `{url, client_id, client_secret}` for a claude.ai custom connector that needs no password. |
 | `token.list` | The tokens (never the tokens themselves): id, agent, person, label, created. Owners see all, others their own. |
+| `token.approve` | `{code}`: an owner approves the code a connector's sign-in page shows (claude.ai adding Rook with only its address); it goes through as that owner. Codes last 10 minutes, work once, and are journaled (`oauth.approved`). |
 | `token.revoke` | `{id}`: the token stops working at once. The first owner's own token can't be revoked here, so an owner can't lock themselves out. |
 
 An agent setting itself up calls `token.create` with its own name and puts
