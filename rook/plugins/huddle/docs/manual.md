@@ -14,7 +14,7 @@ huddle.close huddle=<id>               (its creator or an owner)
 ```
 
 - `roles` are agent names from the agents package. A post that names one
-  (`@qa`), or `@all`, also goes to those agents (`agents.chat.send`), sent as
+  (`@qa`), or `@all`, also goes to those agents (`agent.chat.send`), sent as
   you, so they act with no more than you may. The reply says who was told.
 - `huddle.list`, `huddle.get` and `huddle.search` find huddles.
 

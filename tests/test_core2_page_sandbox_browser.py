@@ -62,7 +62,7 @@ def _run(shell_csp: str, tmp_path) -> list[str]:
             else:
                 way = WAYS[self.path.rsplit("/", 1)[1]]
                 doc = f"<!doctype html><html><head></head><body><script>var OUT = '{base}'; {way}</script></body></html>"
-                body, csp = inject(doc, {"page": "pages/x", "title": "x", "caps": [], "events": []}), PAGE_CSP
+                body, csp = inject(doc, {"page": "page/x", "title": "x", "caps": [], "events": []}), PAGE_CSP
             data = body.encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")

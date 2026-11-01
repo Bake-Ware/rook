@@ -134,7 +134,7 @@ def test_apply_then_verify_accounts_for_everything(tmp_path, full04):
     h = rec.execute('SELECT * FROM "r:huddle.huddle"').fetchone()
     assert (h["title"], h["state"], h["stream"], json.loads(h["roles"])) == (
         "Huddle: lab", "closed", streams["hud1"][0], ["qa"])
-    jobs = {j["name"]: j for j in rec.execute('SELECT * FROM "r:jobs.jobs"')}
+    jobs = {j["name"]: j for j in rec.execute('SELECT * FROM "r:job.job"')}
     j = jobs["nightly-audit"]
     assert j["enabled"] in (0, False, "false") and json.loads(j["trigger"]) == {"manual": True}
     assert json.loads(j["vars"])["definition04"] == DEFINITION and j["person"] == "bake"
@@ -179,7 +179,7 @@ def test_verify_finds_what_did_not_survive(tmp_path, full04):
     from rook.core2.hub.vault import Vault
     Vault(data).unlock().set("pikvm", "a-different-value", by="test")
     rec = sqlite3.connect(data / "records.db")
-    rec.execute('DELETE FROM "r:jobs.jobs" WHERE name=?', ("odd-name",))
+    rec.execute('DELETE FROM "r:job.job" WHERE name=?', ("odd-name",))
     rec.commit()
     rec.close()
     v = verify.verify(full04, cfg)
@@ -254,7 +254,7 @@ class FakeDoor:
 def test_smoke_checks_the_moved_stores_and_workers():
     mod = _smoke()
     rec = {"ok": True, "result": [{"id": "r"}] * 3}
-    door = FakeDoor({"worker.ping": {"ok": True}, "jobs.list": rec, "change.list": rec, "secret.list":
+    door = FakeDoor({"worker.ping": {"ok": True}, "job.list": rec, "change.list": rec, "secret.list":
                      {"ok": True, "result": {"secrets": [{"name": "a"}]}},
                      "stream.list": {"ok": True, "result": {"streams": [{"id": "s1", "title": "Huddle"}]}},
                      "stream.read": {"ok": True, "result": {"events": [{"seq": 1}]}}},

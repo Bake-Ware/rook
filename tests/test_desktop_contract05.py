@@ -56,11 +56,11 @@ def test_caps_the_app_calls_exist():
         m = yaml.safe_load((ROOT / "rook/plugins" / name / "plugin.yaml").read_text())
         return m["plugin"], set(m.get("caps") or {}), set(m.get("records") or {})
     plugin, own, _ = caps("agents")
-    assert plugin == "agents" and "chat.send" in own
-    for cap in ('"agents.chat.send"', '"pages.list"'):
+    assert plugin == "agent" and "chat.send" in own
+    for cap in ('"agent.chat.send"', '"page.list"'):
         assert cap in HUB05, cap
     # no workbench lists on 0.5 (castling-attention: the agent opens a page; drift #29)
-    for cap in ('"agents.list"', '"agents.agent.list"', '"task.list"', '"task.search"', '"knowledge.search"', '"project.list"'):
+    for cap in ('"agent.list"', '"agent.list"', '"task.list"', '"task.search"', '"knowledge.search"', '"project.list"'):
         assert cap not in HUB05, cap
     assert rust_const("HOUSE") in (ROOT / "rook/plugins/agents/plugin.yaml").read_text()
 

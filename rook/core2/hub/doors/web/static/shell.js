@@ -1,6 +1,6 @@
 // The hub site's shell: lists pages, opens one at a time in a sandboxed
 // frame, and carries that frame's calls and events (see bridge.js). The
-// shell's own calls are pages.* only (plus the dock agent's chat); a page's
+// shell's own calls are page.* only (plus the dock agent's chat); a page's
 // calls go with its token. With the agents package, the house agent's chat
 // dock sits beside every page.
 "use strict";
@@ -56,7 +56,7 @@ function link(p) {
 }
 
 async function loadNav() {
-  const [live, gone] = await Promise.all([call("pages.list"), call("pages.list", { archived: true })]);
+  const [live, gone] = await Promise.all([call("page.list"), call("page.list", { archived: true })]);
   pages = live.pages;
   const box = $("#pages"), more = $("#more div");
   box.replaceChildren();
@@ -80,7 +80,7 @@ async function loadNav() {
     const li = el("li");
     const restore = el("button", { className: "link" }, "Restore");
     restore.onclick = async () => {
-      await call("pages.restore", { page: p.page });
+      await call("page.restore", { page: p.page });
       await loadNav();
       location.hash = "#/" + p.page;
     };
@@ -200,7 +200,7 @@ $("#note-btn").onclick = async () => {
     box.hidden = true;
     return;
   }
-  const d = await call("pages.get", { page: current.page });
+  const d = await call("page.get", { page: current.page });
   box.replaceChildren();
   if (d.made) {
     const who = (d.made_by.authors || []).map((a) => [a.agent, a.person].filter(Boolean).join(" for "));
@@ -219,7 +219,7 @@ $("#archive-btn").onclick = async () => {
   const pid = current && current.page;
   if (!pid) return;
   try {
-    await call("pages.archive", { page: pid });
+    await call("page.archive", { page: pid });
   } catch (x) {
     return message(x.message, true);
   }
@@ -285,7 +285,7 @@ function show(ev) {
 
 async function refresh() {
   try {
-    site = await call("pages.site");
+    site = await call("page.site");
     await loadNav();
     if (current && !pages.some((p) => p.page === current.page)) {      // archived meanwhile
       history.replaceState(null, "", location.pathname);
@@ -295,7 +295,7 @@ async function refresh() {
 }
 
 async function read(wait) {
-  const r = await call("agents.chat.read", { agent: dock.agent, after: dock.next, limit: 500, wait },
+  const r = await call("agent.chat.read", { agent: dock.agent, after: dock.next, limit: 500, wait },
     "Reading the conversation in the site's dock.");
   for (const ev of r.events) show(ev);
   if (wait && r.events.some((ev) => ev.type === "turn")) refresh();   // it may have made, archived or started a page
@@ -309,7 +309,7 @@ async function say(text, quiet) {
   const body = quiet ? `${SITE} ${text}` : `${SITE} The person is${where || " on the hub site"}.\n${text}`;
   thinking(true);
   try {
-    await call("agents.chat.send", { agent: dock.agent, text: body, wait: false }, "Talking with the agent in the site's dock.");
+    await call("agent.chat.send", { agent: dock.agent, text: body, wait: false }, "Talking with the agent in the site's dock.");
   } catch (x) {
     thinking(false);
     bubble("bad", x.message);
@@ -331,8 +331,8 @@ async function startDock(agent) {
   if (dock.shown === 0) {           // first run: the agent asks how the person wants to use the site
     open = true;
     await say("First visit to the hub site. Welcome the person, ask how they want to use the site, " +
-      "and offer to make pages for what they want to keep an eye on (pages.components, pages.create) " +
-      "and to set their start page (pages.start).", true);
+      "and offer to make pages for what they want to keep an eye on (page.components, page.create) " +
+      "and to set their start page (page.start).", true);
   }
   dockOpen(open);
   for (;;) {
@@ -365,7 +365,7 @@ window.addEventListener("hashchange", () => open(wanted()));
 (async function start() {
   try {
     csrf = (await api("/web/api/me")).csrf;
-    site = await call("pages.site");
+    site = await call("page.site");
     await loadNav();
     open(wanted());
     if (site.dock) startDock(site.dock).catch((x) => bubble("bad", x.message));

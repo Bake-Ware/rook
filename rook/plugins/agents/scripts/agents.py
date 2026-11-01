@@ -1,8 +1,8 @@
 """The agents runtime (castling-agents): one mechanism for every agent.
 
-An agent is an ``agents.agent`` kit record (persona fields, grants, backend,
+An agent is an ``agent.agent`` kit record (persona fields, grants, backend,
 model, always-on; the kit gives its storage, history and the
-``agents.agent.*`` caps) plus:
+``agent.*`` caps) plus:
 
 - **sessions**: one durable ``session`` stream (rook.streams) per party it
   talks with (``person:<name>``, ``agent:<name>``, ``system:...``), so a
@@ -11,10 +11,10 @@ model, always-on; the kit gives its storage, history and the
   events (prompt, reply). Wake = attach a runner; it detaches after
   ``warm`` without input (never, for always-on agents). The backend's own
   session id (Claude Code's ``--resume``) rides in the stream's attrs.
-- **notepad**: private scratch notes (``agents.note``; ``note`` records with
+- **notepad**: private scratch notes (``agent.note``; ``note`` records with
   no caps of their own), shown back to the agent until a dream curates them.
 - **memory**: what the agent knows (``memory`` records, private: owners curate
-  them with ``agents.memory.*``); read-only while it works (built into the
+  them with ``agent.memory.*``); read-only while it works (built into the
   system prompt once per wake). The dream cycle (System Three, a light
   model) turns the notepad into memory and prunes both when the agent goes
   idle, and every ``dream_every`` for always-on agents.
@@ -74,12 +74,12 @@ FIELDS = ("persona", "title", "summary", "prompt", "skills", "grants", "backend"
 MAX_MEMORIES, MAX_NOTES = 200, 50
 _CLASHES: set = set()      # (persona, plugin) clashes already logged
 CATALOG_SECS = 60.0          # how stale the installed manifests' personas and skills may get
-ME = "plugin:agents"           # the actor of the plugin's own record writes (seeding, presence, dreams)
+ME = "plugin:agent"            # the actor of the plugin's own record writes (seeding, presence, dreams)
 
 DIRECTIVE = """\
 Pulling in other agents is expected and okay, not overstepping. When work
 touches another role - the code contradicts the ticket, scope is creeping, a
-release needs a decision - message that agent yourself with agents.chat.send
+release needs a decision - message that agent yourself with agent.chat.send
 (the consult skill says how). Hand work off directly to the next role; go
 through the project manager when it depends on other work."""
 
@@ -87,10 +87,10 @@ REACH = """\
 To get a decision from a person, ask them with approval.ask {question,
 options?, wait?}: it reaches them through the house agent, and the answer
 comes back to you. To get word to them, tell the house agent
-(agents.chat.send to house); it knows how and when to reach them."""
+(agent.chat.send to house); it knows how and when to reach them."""
 
 NOTEPAD = """\
-Jot anything worth keeping on your notepad with agents.note (agent: "{name}"):
+Jot anything worth keeping on your notepad with agent.note (agent: "{name}"):
 what you decide, what you learn, what people tell you, passing thoughts. It
 is private and cheap; a dream cycle curates it into your memory when you go
 idle. Your memory below is read-only while you work."""
@@ -130,7 +130,7 @@ def _rt(ctx) -> "Runtime":
 class Runtime:
     def __init__(self, ctx):
         sys = copy.copy(ctx)
-        sys.caller = Caller(band=ctx.band, owner=True, plugin="agents")
+        sys.caller = Caller(band=ctx.band, owner=True, plugin="agent")
         self.rec = sys.records                           # every row, as the plugin
         self.streams = ctx.streams                       # the hub's one store (castling-streams)
         self.settings = ctx.settings
@@ -159,7 +159,7 @@ class Runtime:
     # -- agents (records) -----------------------------------------------------
 
     def find(self, name: str, archived: bool = False) -> dict | None:
-        """The ``agents.agent`` record named ``name`` (an archived one too, with ``archived``)."""
+        """The ``agent.agent`` record named ``name`` (an archived one too, with ``archived``)."""
         for gone in ((False, True) if archived else (False,)):
             rows = self.rec.agent.list(where={"name": name}, archived=gone, limit=1)
             if rows:
@@ -250,7 +250,7 @@ class Runtime:
         return any(self.streams.get(sid).attrs.get("agent") == name for sid in self.runners)
 
     def presence(self, name: str) -> None:
-        """Keep the record's ``awake`` (agents.agent.list shows it) in step with the runners."""
+        """Keep the record's ``awake`` (agent.list shows it) in step with the runners."""
         a = self.find(name, archived=True)
         now = self.awake(name)
         if a is not None and bool(a.get("awake")) != now:
@@ -273,7 +273,7 @@ class Runtime:
             return None
         return self.streams.open("session", title=f"{name} with {party}", producer=f"agents.{name}",
                                  participants=[f"agent:{name}", party],
-                                 attrs={"plugin": "agents", "agent": name, "party": party}).id
+                                 attrs={"plugin": "agent", "agent": name, "party": party}).id
 
     def sessions(self, name: str, party: str | None = None) -> list:
         return [m for m in self.streams.list(kind="session", participant=party, open_only=True)
@@ -436,7 +436,7 @@ class Runtime:
             parts.append("Other agents on this band:\n" + "\n".join(others))
         skills = [f"- {s}: {self.catalog.skill_doc(s)}" for s in a.get("skills") or ()]
         if skills:
-            parts.append("## Skills\nRead a skill with agents.skill before you follow it.\n" + "\n".join(skills))
+            parts.append("## Skills\nRead a skill with agent.skill before you follow it.\n" + "\n".join(skills))
         parts.append("## Notepad\n" + NOTEPAD.format(name=name))
         mems = self.memories(name)[-MAX_MEMORIES:]
         if mems:
@@ -642,7 +642,7 @@ async def stop(ctx):
 
 
 async def on_created(ctx, event=None, payload=None):
-    """agents.agent.create: the persona's defaults fill what was left out,
+    """agent.create: the persona's defaults fill what was left out,
     and the agent gets its identity (agent:<name>, its own grants)."""
     rec, by = (payload or {}).get("record"), (payload or {}).get("by")
     if not rec or by == ME:          # the plugin's own seeding registers in ready()
@@ -705,7 +705,7 @@ async def inbound(ctx, event, payload, source=None):
     who = Caller(person=person, band=ctx.caller.band, tainted=True,
                  why=f"{person} wrote to {agent} on {label}")
     try:
-        got = await ctx.call_as(who, "agents.chat.send", {"agent": agent, "text": f"(on {label}) {text}"})
+        got = await ctx.call_as(who, "agent.chat.send", {"agent": agent, "text": f"(on {label}) {text}"})
         reply = got.get("text") if isinstance(got, dict) else None
         reply = reply or f"({agent} gave no reply)"
     except KitError as e:
@@ -750,7 +750,7 @@ async def on_asked(ctx, event, payload):
     who = Caller(person=person, band=ctx.caller.band, tainted=True,
                  why="agents: route a question for the person to the house agent")
     try:
-        await ctx.call_as(who, "agents.chat.send", {"agent": house, "text": text, "wait": False})
+        await ctx.call_as(who, "agent.chat.send", {"agent": house, "text": text, "wait": False})
     except Exception as e:      # noqa: BLE001 - it still waits on the Approvals page
         log.warning("question %s not passed to %s: %s", payload.get("hold"), house,
                     getattr(e, "message", None) or e)
@@ -771,7 +771,7 @@ async def on_signoff_requested(ctx, event, payload):
     if not (asker.person or asker.agent):
         return
     await _RT.ready(force=True)         # a persona installed since the last look is an agent now
-    for r in payload.get("reviewers") or []:        # agents.chat.send says when one isn't an agent
+    for r in payload.get("reviewers") or []:        # agent.chat.send says when one isn't an agent
         kind, _, name = str(r).partition(":")
         if kind not in ("agent", "role") or not name or f"agent:{name}" == by:
             continue
@@ -781,7 +781,7 @@ async def on_signoff_requested(ctx, event, payload):
                 f"github.review ... task={payload.get('id')}; otherwise task.signoff id={payload.get('id')} "
                 f"reviewer={r}.")
         try:
-            await ctx.call_as(asker, "agents.chat.send", {"agent": name, "text": text, "wait": False})
+            await ctx.call_as(asker, "agent.chat.send", {"agent": name, "text": text, "wait": False})
         except KitError as e:
             log.warning("sign-off request to %s not delivered: %s", name, e.message)
 
@@ -831,7 +831,7 @@ async def chat_send(ctx, agent, text, wait=True):
         # from inside a turn of its own acting alone: that turn would wait
         # on itself.
         if ctx.person is not None or rt.alone.get(agent):
-            raise ctx.Error("an agent can't message itself; use agents.note")
+            raise ctx.Error("an agent can't message itself; use agent.note")
     sid = rt.session(agent, party)
     ev = rt.streams.append(sid, "input", {"text": text}, by=party)
     fut = asyncio.get_running_loop().create_future()

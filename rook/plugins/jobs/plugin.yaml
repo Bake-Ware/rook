@@ -2,7 +2,7 @@
 # runs is one of: a cap call, an agent with a prompt, or a Python script with
 # a small workflow library (call a cap, wait, ask a person, notify, retry,
 # parallel); branching is just code. Triggers: cron, every, on an event (+
-# filter), manual, webhook (/p/jobs/hook, HMAC per job). A job runs as its
+# filter), manual, webhook (/p/job/hook, HMAC per job). A job runs as its
 # creator or as a persona (owners only); every call goes through dispatch
 # (why, rights, gates, journal). Runs are records. No checkpointing: a run cut
 # off by a hub restart is marked failed, so jobs should be safe to run twice.
@@ -14,7 +14,7 @@
 # Code: scripts/jobs.py (hub side), scripts/child.py (the script process and
 # its workflow library), templates/ (this plugin's ready-made jobs).
 manifest: 1
-plugin: jobs
+plugin: job
 version: 0.5.0
 title: Jobs
 doc: Scheduled, event, manual and webhook jobs that call caps, ask agents or run Python scripts.
@@ -34,7 +34,7 @@ settings:
   tick: { type: duration, default: 1s, doc: How often the scheduler looks for due jobs. }
 
 records:
-  jobs:
+  job:
     fields:
       name: { type: str, required: true, pattern: "^[a-z0-9][a-z0-9._-]{0,63}$" }
       doc: { type: str }
@@ -63,7 +63,7 @@ records:
     caps: [list, get, history, archive]
   run:
     fields:
-      job: { type: ref, to: jobs, required: true }
+      job: { type: ref, to: job, required: true }
       name: { type: str, doc: The job's name when it ran. }
       trigger: { type: str, enum: [cron, every, event, manual, webhook, catch_up, retry] }
       scheduled: { type: float, doc: The schedule slot this run is for. }
@@ -134,7 +134,7 @@ caps:
       timeout: { type: duration }
       notify: { type: str, enum: [failure, always, never] }
     result: { type: map }
-  start:
+  run:
     doc: Run a job now, as the job's own identity. With wait, answers when the run ends.
     risk: write
     scope: multi-user
@@ -161,7 +161,7 @@ caps:
     run: scripts/jobs.py:templates
     result: { type: list }
   install:
-    doc: Install a ready-made job (plugin/job from jobs.templates) as yours.
+    doc: Install a ready-made job (plugin/job from job.templates) as yours.
     risk: write
     scope: multi-user
     effects: [persists]

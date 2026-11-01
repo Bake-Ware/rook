@@ -3,9 +3,9 @@ manifests in this checkout, never spelled here: a plugin's namespace and
 record names may change (castling-caps rule 5, "Singular namespace = plugin
 name"; drift #33), and the move must follow whatever the hub loads.
 
-    record("jobs")            -> "jobs.jobs" today, "job.job" once the plugin is singular
-    record("agents", "memory") -> "agents.memory" / "agent.memory"
-    cap("jobs", "list")       -> the record's list cap: "jobs.list" / "job.list"
+    record("jobs")            -> "job.job" (the plugin was "jobs" before drift #33)
+    record("agents", "memory") -> "agent.memory" / "agent.memory"
+    cap("jobs", "list")       -> the record's list cap: "job.list" / "job.list"
 
 Folders are the plugin folders under ``rook/plugins`` (those don't change).
 """

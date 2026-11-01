@@ -58,15 +58,15 @@ Agents that need you go through the house agent.
 ## Talking to an agent
 
 - In the dashboard: the chat dock beside every page talks to the house
-  agent (the `pages.dock` setting picks another; blank turns it off).
-- As a call: `agents.chat.send {agent: "house", text: "..."}` on worker
-  `rook` waits for the reply; `agents.chat.read {agent, after}` reads your
+  agent (the `page.dock` setting picks another; blank turns it off).
+- As a call: `agent.chat.send {agent: "house", text: "..."}` on worker
+  `rook` waits for the reply; `agent.chat.read {agent, after}` reads your
   session with it (pass `next` back as `after`). A first turn takes about
   10 seconds.
 - On Telegram or Discord: link your account once (`telegram.link` or
   `discord.link`, then send the code to the bot), and a direct message to
   the bot goes to the house agent in your session with it; the bot sends
-  the reply. The `agents.chat_agent` setting picks another agent; blank
+  the reply. The `agent.chat_agent` setting picks another agent; blank
   turns it off.
 
 Each person has their own session with an agent, kept and resumed next
@@ -80,25 +80,25 @@ yours when it works for you.
 
 An agent wakes when addressed and stays awake for `warm` (10 minutes) after
 its last message. Always-on agents never sleep on idle. While it works an
-agent jots decisions and lessons on its notepad (`agents.note`); its memory
+agent jots decisions and lessons on its notepad (`agent.note`); its memory
 is read-only then. When it sleeps, a **dream cycle** on a light model (the
 backend's System Three: Haiku for Claude Code) turns the notepad into
 lasting memory and tidies both; always-on agents dream every 6 hours (`dream_every`).
 
 ## Your own agents and personas
 
-Agents are records on the hub: `agents.agent.list` shows them (and who is
-awake). `agents.agent.create {name, persona?, prompt?, grants?, skills?,
+Agents are records on the hub: `agent.list` shows them (and who is
+awake). `agent.create {name, persona?, prompt?, grants?, skills?,
 backend?, model?}` makes one; what you leave out comes from the persona.
-`agents.agent.update {id, revision, ...}` changes one (your edits win over
-later persona updates); `agents.agent.archive` stops one and keeps
+`agent.update {id, revision, ...}` changes one (your edits win over
+later persona updates); `agent.archive` stops one and keeps
 everything (and takes its identity off the hub until you restore it).
-Owners curate an agent's memory with `agents.memory.*`. A persona's
+Owners curate an agent's memory with `agent.memory.*`. A persona's
 **grants** are its own rights, checked on every call it makes; every agent
 may also run its own turns (`agent.backend`). `backend` is `default` (the
 hub's chosen provider) or one provider's cap, e.g.
 `agents-claude-code.turn`. Skills are markdown playbooks an agent follows
-(`agents.skill {name}` reads one). Any plugin can ship personas and skills
+(`agent.skill {name}` reads one). Any plugin can ship personas and skills
 in its manifest; each installed plugin's personas become agents. With the
 workbench, a knowledge page of kind `skill` is a skill too (the skill
 library lives in the knowledge store), so a concept's skills can be

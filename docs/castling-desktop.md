@@ -14,8 +14,8 @@ User guide: [desktop-app.md](desktop-app.md#a-rook-05-hub-preview).
 | Hub calls | `/api/band/call`, read-risk caps | HTTP door `POST /call` as the person, each with a why (journaled) |
 | Waiting on you | `approvals.list` | `GET /holds` |
 | Work, Knowledge, Sessions tabs | `task.read` deck, `knowledge.read` search, `/account/work/sessions` | none: the panel shows holds, the hub's pages and the house agent, and an agent opens a page when one is needed (castling-attention: "No built-in views needed for things like knowledge or tasks"; drift #29) |
-| Tray Dashboard menu | `ui/sections.json` | the hub's `pages.list`, by section, refreshed every 20 polls |
-| Quick ask | private chat room, or `home.ask` over MCP | `agents.chat.send` to `house`, in the person's own session (the dock's) |
+| Tray Dashboard menu | `ui/sections.json` | the hub's `page.list`, by section, refreshed every 20 polls |
+| Quick ask | private chat room, or `home.ask` over MCP | `agent.chat.send` to `house`, in the person's own session (the dock's) |
 | Ask about this page | the @home dock | the site's dock (`#dock-btn`) |
 | Notifications | chat rooms + approvals | holds; agents reach the screen through the worker's `notification.post` |
 | This computer's worker | the 0.4 band worker (service, task or bundle) | `python -m rook.core2.worker`, run by the app from `<settings>/worker05/` |

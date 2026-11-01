@@ -66,7 +66,7 @@ def hub_config(tmp_path, lib, **settings):
     return Config(data=tmp_path / "data", band=BAND, library=lib,
                   users={"bake": {"preset": "owner"}, "sam": {"preset": "adult"},
                          "guest": {"preset": "guest", "created": time.time()}},
-                  settings={"agents": {"warm": "5s"}, **settings}, doors={"http": {"bind": "127.0.0.1:0"}})
+                  settings={"agent": {"warm": "5s"}, **settings}, doors={"http": {"bind": "127.0.0.1:0"}})
 
 
 def run(cfg, body, timeout=40):
@@ -108,7 +108,7 @@ def test_a_voice_session(tmp_path):
     async def body(hub, owner):
         sam = hub.add_token(Caller(person="person:sam"), label="sam")
         guest = hub.add_token(Caller(person="person:guest"), label="guest")
-        assert {"speech", "speech-engine", "agents", "llm-openai"} <= set(hub.plugins.plugins)
+        assert {"speech", "speech-engine", "agent", "llm-openai"} <= set(hub.plugins.plugins)
         out = await call(hub, owner, "speech.open", device="bakephone")
         assert out["ok"] and out["result"]["agent"] == "house", out
         sid = out["result"]["stream"]
@@ -139,7 +139,7 @@ def test_a_voice_session(tmp_path):
         assert res["attrs"]["device"] == "bakephone"
         turn = hub.journal.query(cap="agents-local.turn", limit=1)[0]
         assert turn["person"] == "person:bake"
-        chat = await call(hub, owner, "agents.chat.read", agent="house")
+        chat = await call(hub, owner, "agent.chat.read", agent="house")
         assert "what is on my calendar" in json.dumps(chat["result"])     # one session with the agent
 
         # A pause: voice.turn says the person isn't done; the next part completes it.

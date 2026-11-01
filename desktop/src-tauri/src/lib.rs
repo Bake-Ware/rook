@@ -73,7 +73,7 @@ pub struct App {
     worker: Mutex<worker::Controller>,
     /// This computer's 0.5 worker, run by the app.
     worker05: Mutex<worker05::Controller>,
-    /// A 0.5 hub's pages by section (`pages.list`), for the tray and panel.
+    /// A 0.5 hub's pages by section (`page.list`), for the tray and panel.
     pages05: Mutex<Vec<sections::Section>>,
     quick_room: Mutex<Option<String>>,
     shortcuts: Mutex<(Option<Shortcut>, Option<Shortcut>)>,

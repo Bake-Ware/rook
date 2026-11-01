@@ -186,7 +186,7 @@ def _write_config(path: Path, users: dict, presets: dict, sacred: list) -> str |
 
 def _write_memory(data: Path, band: str, mems: list, jots: list) -> dict:
     """The house agent's memory and notepad as the agents plugin's kit
-    records (``agents.memory``, ``agents.note``) in the hub's records.db.
+    records (``agent.memory``, ``agent.note``) in the hub's records.db.
     A text already there is not written twice."""
     store = RecordStore(str(data / "records.db"))
     try:

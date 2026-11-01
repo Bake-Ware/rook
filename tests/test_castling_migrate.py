@@ -258,13 +258,13 @@ def test_apply_writes_the_05_hub_and_reruns_add_nothing(tmp_path, copy04):
         vault.get(data, "github-pat")
     (data / "keys" / "root.key").write_text(root)
     # memory: the house agent's
-    # (agents.memory / agents.note kit records, as the agents plugin reads them: drift #31)
+    # (agent.memory / agent.note kit records, as the agents plugin reads them: drift #31)
     store = RecordStore(str(data / "records.db"))
     store.register(load(REPO / "rook" / "plugins" / "agents").data, plugin_dir=REPO / "rook" / "plugins" / "agents")
     every = KitCaller(band=BAND, owner=True)
-    mem = [r["text"] for r in store.type("agents.memory").list(every, where={"agent": "house"}, order="created")]
-    notes = [r["text"] for r in store.type("agents.note").list(every, where={"agent": "house"})]
-    assert {r["creator"] for r in store.type("agents.memory").list(every)} == {"import:0.4"}
+    mem = [r["text"] for r in store.type("agent.memory").list(every, where={"agent": "house"}, order="created")]
+    notes = [r["text"] for r in store.type("agent.note").list(every, where={"agent": "house"})]
+    assert {r["creator"] for r in store.type("agent.memory").list(every)} == {"import:0.4"}
     store.close()
     assert mem == ["The NAS is in the closet.", "About bake: Likes dark mode.", "Back up before deploys."]
     assert notes == ["Restart the TV with cec."]

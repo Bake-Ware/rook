@@ -26,18 +26,18 @@ def test_a_worker_event_fires_a_job_and_shows_on_a_page(fresh):
     b = fresh
     (b.library / "jobs").symlink_to(PLUGINS_DIR / "jobs", target_is_directory=True)
     cfg = json.loads((b.hub_dir / "hub.yaml").read_text())
-    cfg["settings"] = {"jobs": {"tick": "100ms"}}
+    cfg["settings"] = {"job": {"tick": "100ms"}}
     (b.hub_dir / "hub.yaml").write_text(json.dumps(cfg, indent=1))
     b.start_hub()
     b.start_worker()
     b.wait_caps("e2e.receive")
 
     # a live page that hears e2e.* events, open in a signed-in browser
-    _ok(b.owner.call("pages.create", {"name": "texts", "title": "Texts", "note": "Texts as they arrive.",
+    _ok(b.owner.call("page.create", {"name": "texts", "title": "Texts", "note": "Texts as they arrive.",
                                       "html": "<p>texts</p>", "events": ["e2e.*"]}, worker="rook"))
     web = Browser(b.url)
     web.sign_in(b.owner_token)
-    opened = web.post("/web/api/open", {"page": "pages/texts"})
+    opened = web.post("/web/api/open", {"page": "page/texts"})
     assert opened["ok"], opened
 
     def poll(since=None):
@@ -45,13 +45,13 @@ def test_a_worker_event_fires_a_job_and_shows_on_a_page(fresh):
         return json.loads(web.request("GET", q)[2])
     seq = poll()["seq"]
 
-    job = _ok(b.owner.call("jobs.create", {
+    job = _ok(b.owner.call("job.create", {
         "name": "on-text", "trigger": {"on": "e2e.sms.received", "filter": {"body": "ping me"}},
         "script": SCRIPT}, worker="rook"))
     _ok(b.owner.call("e2e.receive", {"from": "+15550100", "body": "not this one"}))
     _ok(b.owner.call("e2e.receive", {"from": "+15550123", "body": "ping me"}))
 
-    runs = until(lambda: [r for r in _ok(b.owner.call("jobs.run.list", {"where": {"job": job["id"]}},
+    runs = until(lambda: [r for r in _ok(b.owner.call("job.run.list", {"where": {"job": job["id"]}},
                                                       worker="rook")) if r["state"] != "running"],
                  30, "the job's run")
     assert len(runs) == 1, runs           # the filter let only the second text through

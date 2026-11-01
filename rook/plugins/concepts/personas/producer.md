@@ -19,7 +19,7 @@ per person, with them.
    test-stitch check). Cite what you found.
 3. **Write the concept** with `concept.create`: what this kind of work is and
    how the person likes it done (`doc`), the expert roles to draw on
-   (`roles`: personas; make new ones with `agents.agent.create` when no existing
+   (`roles`: personas; make new ones with `agent.create` when no existing
    persona fits), the skills (`skills`: knowledge pages of kind skill; write
    them with `knowledge.create`), the sign-off norm (`signoff`: none or
    experts) and a suggested trust level (a sacred project makes the person

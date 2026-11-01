@@ -24,7 +24,7 @@ def test_manifest_examples_validate():
 
 def test_every_plugin_has_a_manual_listed_in_plugins_md():
     found = mc.plugins()
-    assert len(found) >= 30 and {"shell", "agents", "approval", "pages"} <= {n for n, _, _ in found}
+    assert len(found) >= 30 and {"shell", "agent", "approval", "page"} <= {n for n, _, _ in found}
     assert mc.plugin_problems() == []
 
 

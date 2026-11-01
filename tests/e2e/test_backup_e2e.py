@@ -25,7 +25,7 @@ def test_nightly_backup_to_a_worker_and_restore_elsewhere(fresh):
     (b.library / "jobs").symlink_to(PLUGINS_DIR / "jobs", target_is_directory=True)
     cfg = json.loads((b.hub_dir / "hub.yaml").read_text())
     # no target: the default is another worker of the owner's running backup-store (castling-backup)
-    cfg["settings"] = {"jobs": {"tick": "100ms"}, "backup": {"keep": 1}}
+    cfg["settings"] = {"job": {"tick": "100ms"}, "backup": {"keep": 1}}
     (b.hub_dir / "hub.yaml").write_text(json.dumps(cfg, indent=1))
     w = json.loads((b.worker_dir / "worker.yaml").read_text())
     w["plugins"].append(str(PLUGINS_DIR / "backup-store"))
@@ -37,11 +37,11 @@ def test_nightly_backup_to_a_worker_and_restore_elsewhere(fresh):
     b.wait_caps("backup-store.put")
 
     # the ready-made job, installed by the owner and started now
-    templates = _ok(b.owner.call("jobs.templates", worker="rook"))
+    templates = _ok(b.owner.call("job.templates", worker="rook"))
     assert any(t["template"] == "backup/nightly" and "cron" in t["trigger"] for t in templates)
-    job = _ok(b.owner.call("jobs.install", {"template": "backup/nightly", "name": "backup-nightly"},
+    job = _ok(b.owner.call("job.install", {"template": "backup/nightly", "name": "backup-nightly"},
                            worker="rook"))
-    run = _ok(b.owner.call("jobs.start", {"job": job["id"], "wait": True}, worker="rook"))
+    run = _ok(b.owner.call("job.run", {"job": job["id"], "wait": True}, worker="rook"))
     assert run["state"] == "ok", run
     first = run["result"]
     assert first["target"] == "worker:e2e-worker" and first["verified"]["hub"] == b.hub_id

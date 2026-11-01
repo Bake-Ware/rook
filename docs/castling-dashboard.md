@@ -2,7 +2,7 @@
 
 The hub's HTTP door serves the hub site on `/`: a shell that lists pages and
 opens one at a time. Pages come from plugins (`pages:` in a manifest) and from
-agents (`pages.create`). Design: knowledge pages castling-dashboard and
+agents (`page.create`). Design: knowledge pages castling-dashboard and
 castling-attention. Code: `rook/core2/hub/doors/web/`.
 
 ## What you get with each package
@@ -10,13 +10,13 @@ castling-attention. Code: `rook/core2/hub/doors/web/`.
 | Installed | The site |
 |---|---|
 | core | Workers and Approvals in the sidebar; Journal and Settings under More. Every page opens by its address (`#/plugin/name`). |
-| + agents | The house agent's chat dock beside every page (the `pages.dock` setting names the agent; blank turns it off). On your first visit it asks how you want to use the site. It builds pages for you and can set your start page. |
+| + agents | The house agent's chat dock beside every page (the `page.dock` setting names the agent; blank turns it off). On your first visit it asks how you want to use the site. It builds pages for you and can set your start page. |
 | + workbench | Tasks, Projects and Knowledge pages; the `task/list` component; every page an agent makes is built under a task linked to the page. |
 | both | All of the above. |
 
 The sidebar shows pages whose manifest entry has `nav:` and every page an
 agent made; the rest are under More. The site opens on your start page
-(`pages.start`), else the hub's own, else Workers.
+(`page.start`), else the hub's own, else Workers.
 
 ## Sign in
 
@@ -82,30 +82,30 @@ rook.component(async (el, props) => {
 });
 ```
 
-`pages.components` lists them. A layout page may call what its components
-declare (as they are now) plus its own `caps`. Core ships `pages/text`,
-`pages/value` (any cap's result: put that cap in the page's `caps`),
+`page.components` lists them. A layout page may call what its components
+declare (as they are now) plus its own `caps`. Core ships `page/text`,
+`page/value` (any cap's result: put that cap in the page's `caps`),
 `hub/workers`, `approval/holds` and `journal/recent`.
 
 ## Pages an agent makes
 
 ```
-pages.create {name, title, note, html | layout, caps?, events?, section?, task?}
-pages.update {page, change, title?, html? | layout?, note?, caps?, events?, section?}
-pages.archive {page, reason?}    pages.restore {page}    pages.get {page}    pages.list {archived?}
-pages.components    pages.site    pages.start {page?}
+page.create {name, title, note, html | layout, caps?, events?, section?, task?}
+page.update {page, change, title?, html? | layout?, note?, caps?, events?, section?}
+page.archive {page, reason?}    page.restore {page}    page.get {page}    page.list {archived?}
+page.components    page.site    page.start {page?}
 ```
 
 `layout` is `[{component, props?, title?, wide?}, ...]`, checked against each
-component's props. With the workbench, `pages.create` links the page to
+component's props. With the workbench, `page.create` links the page to
 `task` (relation `produced`), or makes that task (`Page: <title>`, in
-progress, assigned to the person to review); `pages.update` comments every
+progress, assigned to the person to review); `page.update` comments every
 change on it. A refusal there comes back as `task_error` and never undoes the
 page. The house agent's playbook is the agents package's `hub-pages` skill.
 
 Every page action is a cap, so a trigger can call it: a plugin hook
-`on: [{event: lab.experiment.ended, call: pages.archive, args: {page: pages/run}}]`
-(with `pages.archive` in its `uses`) retires a page when its experiment ends.
+`on: [{event: lab.experiment.ended, call: page.archive, args: {page: page/run}}]`
+(with `page.archive` in its `uses`) retires a page when its experiment ends.
 
 They live in `<data>/pages/<name>/` (`page.html`, `meta.json`, `NOTE.md`).
 `NOTE.md` says why the page exists and keeps the history of every change; the
@@ -117,7 +117,7 @@ Archive button sits in every page's bar.
 ## The dock
 
 With the agents package the shell talks to the dock agent through
-`agents.chat.send`/`agents.chat.read`, the only caps beyond `pages.*` it may
+`agent.chat.send`/`agent.chat.read`, the only caps beyond `page.*` it may
 send, and only with that agent. Those calls run in the person's own session,
 so the agent works with the person's rights. Each message carries a first line
 `[site] The person is on the page <id> (<title>).`; the dock hides it. The
