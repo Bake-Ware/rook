@@ -76,7 +76,7 @@ flying it".
 | R10 | The desktop app updates on 0.5 | Without it, a desktop fix means reinstalling by hand. | 2 (the move) |
 | R11 | Soak results written up (`docs/castling-soak.md`) | see "Soak bars" | none (follow-up, D5) |
 | R12 | The hardening review's report (`castling/review.md`) | see "Review findings" | none (follow-up, D5) |
-| R13 | The MCP door speaks OAuth | Done (`rook/core2/hub/doors/mcp_oauth.py`, the 0.4 shim's shape): with `oauth: <public address>` on the `mcp` door, claude.ai's connector uses an agent token as its client secret and that token as its access token. Needs the door reachable over public HTTPS. | 2.5 (for claude.ai) |
+| R13 | The MCP door speaks OAuth | Done (`rook/core2/hub/doors/mcp_oauth.py`, the 0.4 shim's shape): with `oauth: <public address>` on the `mcp` door, claude.ai's connector signs in with the person's user name and password (`/authorize`) and gets a token for them acting through the agent `claude-web`. Needs the door reachable over public HTTPS. | 2.5 (for claude.ai) |
 | R14 | Agents land work on 0.5 without 0.4: a task's sign-off (by its project's trust level), then `github.merge` at the signed-off head | Agents land PRs today through the 0.4 huddle's `huddle.vote` and the chair's pin. That flow ends when the 0.4 hub stops. On 0.5 sign-off replaces merge votes (castling-workbench). | 2 (the move) |
 
 These are also open and should be done or explicitly dropped before the
@@ -354,8 +354,8 @@ Done in one sitting. Rook is down from 2.1 until the 0.5 hub answers in 2.3 (abo
    token: `... hub token --person bake --agent <name>`. Claude Code:
    `claude mcp add --transport http rook05 https://rook05.bakeforge.com/mcp --header "Authorization: Bearer <token>"`,
    then a `worker.ping` on cachyrig through it. claude.ai: a custom connector
-   at `https://rook05.bakeforge.com/mcp` with the token as client secret
-   (R13). The house agent: `agent.chat.send` `{agent: house, text: "say ok"}`
+   at `https://<host>/mcp`; sign in with Bake's user name and password, no
+   token (R13). The house agent: `agent.chat.send` `{agent: house, text: "say ok"}`
    answers. Landing work: a task's sign-off, then `github.merge` (R14).
 6. **Chat bots.** Telegram and Discord on 0.5 (one hub per bot token; 0.4
    is stopped), then Bake relinks with `/link`.

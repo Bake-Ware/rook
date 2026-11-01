@@ -41,8 +41,8 @@ lets in (any other `Origin` is refused).
 ## claude.ai's connectors
 
 claude.ai's web and mobile connectors can't take a pasted header; they
-sign in with OAuth. The door does just enough OAuth for them, and the
-token stays the only credential:
+sign in with OAuth. The door does just enough OAuth for them: you sign in
+with your Rook user name and password, the same as the hub site.
 
 1. Put the door behind TLS at a public address and tell it that address:
 
@@ -55,16 +55,18 @@ token stays the only credential:
    `/.well-known/oauth-*` itself, so send all of those to it (or give it a
    hostname of its own).
 
-2. Mint a token for an agent acting for you, as above (say `--agent
-   claude-web`; list it under `agents:` first).
+2. The connector acts through the agent `claude-web` (`init` lists it
+   under `agents:`; `oauth_agent: <name>` on the door picks another).
 
-3. In claude.ai, add a custom connector with the address
-   `https://rook.example/mcp`. Under Advanced settings put any client ID
-   and the token as the client secret.
+3. In claude.ai: Settings, Connectors, Add custom connector, address
+   `https://rook.example/mcp` (your Account page on the hub site shows
+   it). If claude.ai asks for a client ID, type any (say `rook`) under
+   Advanced settings; no client secret. Connect, and sign in with your
+   user name and password.
 
-There's no sign-in page: the connector goes straight through, and what it
-sends on `/mcp` is that token, journaled as that agent acting for you. A
-person's own token is refused here. To cut the connector off, take its
+The hub then mints a token for you acting through that agent (label
+"claude.ai connector"); what the connector sends on `/mcp` is that token,
+journaled as the agent acting for you. To cut the connector off, take its
 token out of `<data>/tokens.json`.
 
 ## The seven tools

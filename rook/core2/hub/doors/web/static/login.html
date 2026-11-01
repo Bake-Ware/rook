@@ -9,10 +9,12 @@
 <body>
 <form class="login" method="post" action="/login">
   <div class="brand">Rook</div>
-  <label for="token">Your token</label>
-  <input id="token" name="token" type="password" autocomplete="current-password" required autofocus>
+  <label for="user">User name</label>
+  <input id="user" name="user" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+  <label for="password">Password</label>
+  <input id="password" name="password" type="password" autocomplete="current-password" required>
   <button type="submit">Sign in</button>
-  <div id="failed" class="muted" hidden>That token didn't work. Use a token made for you (not an agent's).</div>
+  <div id="failed" class="muted" hidden>Wrong user name or password.</div>
 </form>
 <script src="/web/static/login.js"></script>
 </body>

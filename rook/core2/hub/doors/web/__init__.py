@@ -1,10 +1,12 @@
 """The hub site (castling-dashboard): a shell that hosts pages, served by the
 HTTP door.
 
-- **Sign-in.** A person signs in with one of their door tokens (an agent's
-  token can't) and gets a session cookie (``HttpOnly``, ``SameSite=Strict``).
-  Requests the shell makes with it also carry the session's CSRF token in
-  ``X-Rook-CSRF``. TODO(castling:enrollment): sign-in without pasting a token.
+- **Sign-in.** A person signs in with their user name and password
+  (:mod:`rook.core2.hub.passwords`; set by ``init`` or ``passwd``) and gets
+  a session cookie (``HttpOnly``, ``SameSite=Strict``). An app holding the
+  person's own door token (the desktop app) may send ``{token}`` instead; an
+  agent's token never signs in. Requests the shell makes with the cookie
+  also carry the session's CSRF token in ``X-Rook-CSRF``.
 - **The shell** (``static/``) lists pages (``page.list``) and opens one at a
   time, the start page first (``page.site``). Its own calls are limited to
   ``page.*``, plus ``agent.chat.send``/``read`` with the dock agent: with
@@ -24,7 +26,7 @@ HTTP door.
 Routes (everything else is the JSON API in ``doors/http.py``)::
 
     GET  /                       the shell (signed in) or a redirect to /login
-    GET  /login, POST /login     {token}
+    GET  /login, POST /login     {user, password} (or an app's {token})
     POST /logout
     GET  /web/static/<file>
     GET  /web/api/me             {person, csrf}

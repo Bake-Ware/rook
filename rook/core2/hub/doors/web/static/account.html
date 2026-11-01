@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rook: your account</title>
+<link rel="stylesheet" href="/web/static/shell.css">
+</head>
+<body>
+<div class="login">
+  <div class="brand">Rook</div>
+  <div>Signed in as <b id="who"></b>. <a href="/">Back to the hub</a></div>
+  <div id="first" class="muted" hidden>This password was made for you when the hub was set up. Pick your own now, or keep it and go back to the hub.</div>
+  <form id="change" class="login inner">
+    <h2>Change your password</h2>
+    <label for="current">Current password</label>
+    <input id="current" type="password" autocomplete="current-password" required>
+    <label for="new">New password</label>
+    <input id="new" type="password" autocomplete="new-password" required>
+    <label for="again">New password again</label>
+    <input id="again" type="password" autocomplete="new-password" required>
+    <button type="submit">Change password</button>
+    <div id="out" class="muted" aria-live="polite"></div>
+  </form>
+  <div id="connector" hidden>
+    <h2>Claude on claude.ai and the phone</h2>
+    <p>In claude.ai: Settings, Connectors, Add custom connector. Paste this address, then sign in with this user name and password:</p>
+    <p><code id="mcp-url"></code></p>
+  </div>
+</div>
+<script src="/web/static/account.js"></script>
+</body>
+</html>

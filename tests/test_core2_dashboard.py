@@ -21,6 +21,7 @@ import pytest
 pytest.importorskip("nacl")
 pytest.importorskip("jsonschema")
 
+from rook.core2.hub import passwords  # noqa: E402
 from rook.core2.hub.doors.web import caps as web_caps  # noqa: E402
 from rook.core2.hub.doors.web.site import PAGE_CSP, inject  # noqa: E402
 from rook.core2.hub.identity import Caller  # noqa: E402
@@ -173,6 +174,8 @@ async def start(tmp_path: Path, **over):
                  **{"doors": {"http": {"bind": "127.0.0.1:0"}}, **over})
     hub = Hub(cfg, transport=Loopback())
     await hub.start()
+    for name in ("bake", "kim"):
+        passwords.set_password(cfg.data, name, f"{name}-pw", by="passwd")
     tokens = {
         "bake": (cfg.data / "owner.token").read_text().strip(),
         "kim": hub.add_token(Caller(person="person:kim")),
@@ -208,18 +211,23 @@ def test_sign_in_and_the_session_cookie(site):
             status, headers, body = await c.req("GET", "/login")
             assert status == 200 and b'action="/login"' in body and "frame-ancestors 'none'" in \
                 headers["Content-Security-Policy"]
+            assert b'name="user"' in body and b'name="password"' in body and b'name="token"' not in body
             assert (await c.json("GET", "/web/api/me"))[0] == 401
-            # an agent's token (alone or for a person) and a wrong one don't sign in
+            # a wrong password, an unknown name, or no password don't sign in
+            for bad in ({"user": "bake", "password": "nope"}, {"user": "eve", "password": "bake-pw"},
+                        {"user": "bake"}, {"user": "kim", "password": "bake-pw"}, {}):
+                assert (await c.req("POST", "/login", bad))[0] == 401, bad
+            # an app's token sign-in: an agent's token (alone or for a person) and a wrong one don't
             for bad in (tokens["claude"], tokens["narrow"], "nope"):
                 assert (await c.req("POST", "/login", {"token": bad}))[0] == 401
-            status, headers, _ = await c.req("POST", "/login", form="token=nope")
+            status, headers, _ = await c.req("POST", "/login", form="user=bake&password=nope")
             assert status == 303 and headers["Location"] == "/login?failed=1"
             # login CSRF: another site's form can't sign this browser in (review D11)
             for bad in ({"Origin": "http://evil.example"}, {"Origin": "null"}, {"Sec-Fetch-Site": "cross-site"}):
-                status, headers, _ = await c.req("POST", "/login", form=f"token={tokens['bake']}", headers=bad)
+                status, headers, _ = await c.req("POST", "/login", form="user=bake&password=bake-pw", headers=bad)
                 assert status == 403 and "Set-Cookie" not in headers, bad
             own = {"Origin": f"http://127.0.0.1:{c.port}", "Sec-Fetch-Site": "same-origin"}
-            status, headers, _ = await c.req("POST", "/login", form=f"token={tokens['bake']}", headers=own)
+            status, headers, _ = await c.req("POST", "/login", form="user=Bake&password=bake-pw", headers=own)
             assert status == 303 and headers["Location"] == "/"
             cookie = headers["Set-Cookie"]
             assert "HttpOnly" in cookie and "SameSite=Strict" in cookie and "Secure" not in cookie
@@ -250,6 +258,45 @@ def test_sign_in_and_the_session_cookie(site):
             status, _, _ = await c.req("POST", "/logout")
             assert status == 200
             assert (await c.json("GET", "/web/api/me"))[0] == 401
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_the_account_page_changes_the_password_and_names_the_connector(site, tmp_path):
+    """Castling-switchover-decisions: "a normal username and password login,
+    like 0.4 is"; anything the user must do gets a page."""
+    async def go():
+        hub, tokens = await site(doors={"http": {"bind": "127.0.0.1:0"},
+                                        "mcp": {"bind": "127.0.0.1:0", "oauth": "http://127.0.0.1:1"}})
+        try:
+            c = Client(hub)
+            assert (await c.req("GET", "/account"))[1]["Location"] == "/login"
+            # a password init made: the first sign-in goes to the account page to change it
+            passwords.set_password(hub.data, "bake", "made-1", by=passwords.GENERATED)
+            status, headers, _ = await c.req("POST", "/login", form="user=bake&password=made-1")
+            assert status == 303 and headers["Location"] == "/account?first=1"
+            c.cookie = headers["Set-Cookie"].split(";")[0]
+            status, headers, body = await c.req("GET", "/account")
+            assert status == 200 and b"account.js" in body and "script-src 'self'" in headers["Content-Security-Policy"]
+            assert (await c.req("GET", "/web/static/account.js"))[0] == 200
+            status, me = await c.json("GET", "/web/api/me")
+            assert me["connector"] == "http://127.0.0.1:1/mcp"
+            # change it: CSRF, then the current password
+            assert (await c.json("POST", "/web/api/password", {"current": "made-1", "password": "mine"}))[0] == 403
+            c.csrf = me["csrf"]
+            out = (await c.json("POST", "/web/api/password", {"current": "wrong", "password": "mine"}))[1]
+            assert not out["ok"] and "current password" in out["error"]
+            assert not (await c.json("POST", "/web/api/password", {"current": "made-1", "password": ""}))[1]["ok"]
+            assert (await c.json("POST", "/web/api/password", {"current": "made-1", "password": "mine"}))[1]["ok"]
+            assert passwords.set_by(hub.data, "bake") == "web"
+            other = Client(hub)
+            assert (await other.req("POST", "/login", {"user": "bake", "password": "made-1"}))[0] == 401
+            status, headers, _ = await other.req("POST", "/login", form="user=bake&password=mine")
+            assert status == 303 and headers["Location"] == "/"
+            # the way back in when it's lost: the hub CLI's passwd (passwords.set_password), no restart
+            passwords.set_password(hub.data, "bake", "reset", by="passwd")
+            assert (await other.req("POST", "/login", {"user": "bake", "password": "reset"}))[0] == 200
         finally:
             await hub.stop()
     run(go())

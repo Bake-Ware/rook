@@ -18,8 +18,10 @@ Options: ``bind: "127.0.0.1:8741"`` (port 0 picks one), ``path: /mcp``,
 ``origins: [...]``: browser origins allowed in; a request with any other
 ``Origin`` header is refused (DNS rebinding). Bind to localhost; put TLS in
 front before exposing it. ``oauth: https://rook.example`` (the door's public
-address) lets claude.ai's connectors in with an agent token as their OAuth
-client secret (:mod:`.mcp_oauth`).
+address) lets claude.ai's connectors in: the person signs in with their user
+name and password and the connector gets a token for them acting through the
+agent ``oauth_agent`` (default ``claude-web``, an agent in hub.yaml)
+(:mod:`.mcp_oauth`).
 
 Claude Code: ``claude mcp add --transport http rook http://127.0.0.1:8741/mcp
 --header "Authorization: Bearer <token>"``. Agents that only speak stdio use
@@ -35,7 +37,9 @@ from urllib.parse import urlsplit
 
 from ... import CORE_VERSION
 from .http import HttpDoor, _Error, _Handler
-from .mcp_oauth import OAuthShim
+from .. import passwords
+from ..identity import Caller
+from .mcp_oauth import OAuthShim, _fields
 
 log = logging.getLogger("rook.hub.door.mcp")
 
@@ -130,7 +134,23 @@ class McpDoor(HttpDoor):
         super().__init__(hub, options)
         self.path = "/" + str(options.get("path", "/mcp")).strip("/")
         self.origins = set(options.get("origins") or ())
-        self.oauth = OAuthShim(options["oauth"], self.path, hub.authenticate) if options.get("oauth") else None
+        self.oauth_agent = str(options.get("oauth_agent") or "claude-web")
+        self.oauth = OAuthShim(options["oauth"], self.path, hub.authenticate, self._mint, self._oauth_problem) \
+            if options.get("oauth") else None
+
+    def _oauth_problem(self) -> str | None:
+        if self.oauth_agent not in self.hub.identities.agents:
+            return (f"This hub has no agent {self.oauth_agent!r} for the connector yet: add "
+                    f"'{self.oauth_agent}: {{grants: [\"*\"]}}' under agents: in hub.yaml and restart the hub.")
+        return None
+
+    def _mint(self, person: str) -> str:
+        """The connector's token for a person who just signed in (on the hub's loop)."""
+        problem = self._oauth_problem()
+        if problem:
+            raise ValueError(problem)
+        log.info("connector signed in", extra={"fields": {"person": person, "agent": self.oauth_agent}})
+        return self.hub.add_token(Caller(person, f"agent:{self.oauth_agent}"), label="claude.ai connector")
 
     def challenge(self) -> str:
         return self.oauth.challenge() if self.oauth else "Bearer"
@@ -228,9 +248,13 @@ class _McpHandler(_Handler):
         if oauth and oauth.owns(method, url.path.rstrip("/") or "/"):
             body = self._raw() if method == "POST" else b""
             auth = self.headers.get("Authorization", "")
+            person = None
+            if (method, url.path.rstrip("/")) == ("POST", "/authorize"):     # scrypt here, not on the loop
+                f = _fields(body.decode("utf-8", "replace"))
+                person = passwords.sign_in(self.door.hub, f.get("user"), f.get("password"))
 
             async def answer():      # on the hub's loop, like every token check (and one codes dict)
-                return oauth.handle(method, url.path.rstrip("/"), url.query, body, auth)
+                return oauth.handle(method, url.path.rstrip("/"), url.query, body, auth, person=person)
             return self._run(answer())
         if url.path.rstrip("/") != self.door.path.rstrip("/"):
             raise _Error(404, "not found")

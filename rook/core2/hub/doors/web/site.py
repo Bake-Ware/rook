@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from rook.core2 import rights
+from rook.core2.hub import passwords
 from rook.core2.hub.identity import NONE, Caller
 from .caps import _read_json, _write, dock_agent
 
@@ -85,7 +86,7 @@ class Web:
 
     @staticmethod
     def owns(path: str) -> bool:
-        return path in ("/", "/login", "/logout") or path.startswith("/web/")
+        return path in ("/", "/login", "/logout", "/account") or path.startswith("/web/")
 
     def handle(self, req, method: str, path: str, query: str) -> tuple[int, dict, bytes]:
         """One request: (status, headers, body)."""
@@ -102,16 +103,17 @@ class Web:
                 return self._login(req)
             return self._file("login.html", csp=SHELL_CSP)
         sid, session = self._session(req)
-        if method == "GET" and path == "/":
+        if method == "GET" and path in ("/", "/account"):
             if session is None:
                 return 303, {"Location": "/login"}, b""
-            return self._file("shell.html", csp=SHELL_CSP)
+            return self._file("shell.html" if path == "/" else "account.html", csp=SHELL_CSP)
         if method == "GET" and path.startswith("/web/frame/"):
             return self._frame(sid, session, unquote(path[len("/web/frame/"):]))
         if session is None:
             raise _Error(401, "sign in first")
         if method == "GET" and path == "/web/api/me":
-            return _json(200, {"ok": True, "person": session.person, "csrf": session.csrf})
+            return _json(200, {"ok": True, "person": session.person, "csrf": session.csrf,
+                               "connector": self._connector()})
         if method == "GET" and path == "/web/api/events":
             return _json(200, self._poll(sid, query.get("token", ""), query.get("since")))
         if method != "POST":
@@ -123,6 +125,8 @@ class Web:
                 self._drop(sid)
             return 200, {"Set-Cookie": self._cookie("", 0), **_JSON}, b'{"ok": true}'
         body = req._body()
+        if path == "/web/api/password":
+            return _json(200, self._password(session.person, body))
         caller = Caller(person=session.person)
         if path == "/web/api/call":
             cap, args = body.get("cap"), body.get("args") or {}
@@ -161,25 +165,56 @@ class Web:
             if n < 0 or n > 4096:
                 raise _Error(413, "body too large")
             req._read = True
-            token = dict(parse_qsl(req.rfile.read(n).decode("utf-8", "replace"))).get("token", "")
-            form = True
+            fields, form = dict(parse_qsl(req.rfile.read(n).decode("utf-8", "replace"))), True
         else:
-            token, form = req._body().get("token", ""), False
-        caller = req._run(_auth(self.hub, str(token).strip()))
-        if caller is None or caller.agent or not caller.person:
+            fields, form = req._body(), False
+        person = self._check(req, fields)
+        if person is None:
             log.info("sign-in refused")
             if form:
                 return 303, {"Location": "/login?failed=1"}, b""
-            raise _Error(401, "that is not a person's token")
+            raise _Error(401, "wrong user name or password")
         sid = secrets.token_urlsafe(32)
         with self._lock:
-            self.sessions[_digest(sid)] = Session(caller.person, secrets.token_urlsafe(24), time.time() + SESSION_SECS)
+            self.sessions[_digest(sid)] = Session(person, secrets.token_urlsafe(24), time.time() + SESSION_SECS)
             self._save()
-        log.info("signed in", extra={"fields": {"person": caller.person}})
+        log.info("signed in", extra={"fields": {"person": person}})
         headers = {"Set-Cookie": self._cookie(sid, SESSION_SECS)}
         if form:
-            return 303, {**headers, "Location": "/"}, b""
+            # A password made for them at setup: offer to change it first.
+            first = passwords.set_by(self.hub.data, person.partition(":")[2]) == passwords.GENERATED
+            return 303, {**headers, "Location": "/account?first=1" if first else "/"}, b""
         return 200, {**headers, **_JSON}, b'{"ok": true}'
+
+    def _check(self, req, fields: dict) -> str | None:
+        """The person signing in (``person:<name>``), or None. A person signs
+        in with their user name and password (``passwords``); an app that
+        holds a person's own door token (the desktop app) may send
+        ``{"token"}`` instead. An agent's token never signs in."""
+        user = fields.get("user")
+        if isinstance(user, str) and user.strip():
+            return passwords.sign_in(self.hub, user, fields.get("password"))
+        token = fields.get("token")
+        if not isinstance(token, str) or not token.strip():
+            return None
+        caller = req._run(_auth(self.hub, token.strip()))
+        return caller.person if caller is not None and caller.person and not caller.agent else None
+
+    def _password(self, person: str, body: dict) -> dict:
+        """The signed-in person changes their own password (the Account page)."""
+        name, new = person.partition(":")[2], body.get("password")
+        if not passwords.check(self.hub.data, name, body.get("current")):
+            return {"ok": False, "error": "The current password is wrong."}
+        if not isinstance(new, str) or not new:
+            return {"ok": False, "error": "Type a new password."}
+        passwords.set_password(self.hub.data, name, new, by="web")
+        log.info("password changed", extra={"fields": {"person": person}})
+        return {"ok": True}
+
+    def _connector(self) -> str | None:
+        """The MCP door's address for claude.ai's connector, when it speaks OAuth."""
+        return next((d.oauth.resource for d in getattr(self.hub, "doors", ())
+                     if getattr(d, "oauth", None) is not None), None)
 
     def _session(self, req) -> tuple[str | None, Session | None]:
         sid = _cookie_value(req.headers.get("Cookie", ""), COOKIE)

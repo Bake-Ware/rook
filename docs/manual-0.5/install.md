@@ -19,7 +19,9 @@ deploy/castling-sidecar/install.sh --upgrade       # new code, same data and key
 ~/.rook-castling/src/deploy/castling-sidecar/check.sh   # smoke test
 ```
 
-Your sign-in token is in `~/.rook-castling/secrets/owner.token` and your
+Set your sign-in password with `python -m rook.core2.hub --config
+~/.rook-castling/hub/hub.yaml passwd <you>`; an API token for scripts is in
+`~/.rook-castling/secrets/owner.token` and your
 recovery key in `~/.rook-castling/secrets/recovery-key.txt`: keep a copy
 somewhere safe ([Backups](#backups)). The full guide, with ports, stop/start and uninstall,
 is `docs/castling-sidecar.md`.
@@ -37,7 +39,8 @@ pip install -e '.[manifest]'          # the hub validates plugin manifests with 
 python tests/e2e/relay.py 7474 &
 
 # 2. The hub: init writes hub/hub.yaml (with a new band key), makes the
-#    hub's keys and prints your sign-in token and recovery key, once.
+#    hub's keys, asks for your sign-in password, and prints an API token
+#    and the recovery key, once. Sign in at http://127.0.0.1:8740/.
 python -m rook.core2.hub --config hub/hub.yaml init --owner me --relay 127.0.0.1:7474
 python -m rook.core2.hub --config hub/hub.yaml &
 

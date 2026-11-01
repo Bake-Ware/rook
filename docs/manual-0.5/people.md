@@ -39,7 +39,9 @@ A grant is a pattern: `deluge.*` (every cap of a plugin), `light.set@downstairs-
 (a cap on matching machines or devices). `*` is the only wildcard. Give a
 guest a `created` time: without one, the 7 days have long passed.
 
-Restart the hub after editing people, then mint the person a sign-in
+Restart the hub after editing people, then give the person a sign-in
+password (`python -m rook.core2.hub --config hub/hub.yaml passwd autumn`; they
+can change it on their Account page). For their apps and scripts, mint a
 token:
 
 ```sh

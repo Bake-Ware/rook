@@ -1,7 +1,9 @@
-"""The MCP door's OAuth shim (rook/core2/hub/doors/mcp_oauth.py): claude.ai's
-connectors use an agent token as their client secret and get that same token
-back as their access token. Unit tests on the shim, then the whole flow over
-a real door on a hub in-process. Every test runs under a hard timeout."""
+"""The MCP door's OAuth shim (rook/core2/hub/doors/mcp_oauth.py): adding
+claude.ai's connector is paste the address, sign in with your Rook user name
+and password, done. /authorize is a sign-in form; /token mints the person's
+token through the connector's agent. Unit tests on the shim, then the whole
+flow over a real door on a hub in-process. Every test runs under a hard
+timeout."""
 from __future__ import annotations
 
 import asyncio
@@ -17,7 +19,7 @@ import pytest
 pytest.importorskip("nacl")
 pytest.importorskip("jsonschema")
 
-from rook.core2.hub import runtime  # noqa: E402
+from rook.core2.hub import passwords, runtime  # noqa: E402
 from rook.core2.hub.doors.mcp_oauth import OAuthShim, check_url  # noqa: E402
 from test_core2_hub_runtime import WHY, WID, FakeWorker, config, run, until  # noqa: E402
 
@@ -37,15 +39,37 @@ class Clock:
         return self.t
 
 
-def shim(tokens=None, clock=None):
-    tokens = {"agent-tok": AGENT, "person-tok": PERSON} if tokens is None else tokens
-    return OAuthShim("https://rook.example", "/mcp", tokens.get, clock or Clock())
+class Minter:
+    """The door's mint: a token per signed-in person, remembered like tokens.json."""
+
+    def __init__(self):
+        self.tokens = {"person-tok": PERSON}
+        self.problem = None
+
+    def __call__(self, person):
+        if self.problem:
+            raise ValueError(self.problem)
+        tok = f"tok-{len(self.tokens)}"
+        self.tokens[tok] = runtime.Caller(person=person, agent="agent:claude")
+        return tok
 
 
-def authorize(s, **over):
-    q = {"response_type": "code", "client_id": "claude", "redirect_uri": CB, "code_challenge": CHALLENGE,
-         "code_challenge_method": "S256", "state": "st", **over}
-    return s.handle("GET", "/authorize", urlencode(q), b"")
+def shim(clock=None, mint=None):
+    mint = mint or Minter()
+    s = OAuthShim("https://rook.example", "/mcp", mint.tokens.get, mint, lambda: mint.problem, clock or Clock())
+    s.minter = mint
+    return s
+
+
+def params(**over):
+    return {"response_type": "code", "client_id": "claude", "redirect_uri": CB, "code_challenge": CHALLENGE,
+            "code_challenge_method": "S256", "state": "st", **over}
+
+
+def authorize(s, person="person:bake", **over):
+    """The sign-in form posted: ``person`` is who the door's password check found."""
+    return s.handle("POST", "/authorize", "", urlencode({**params(**over), "user": "bake", "password": "x"}).encode(),
+                    person=person)
 
 
 def code_of(reply):
@@ -62,9 +86,9 @@ def token(s, auth="", **form):
     return s.handle("POST", "/token", "", urlencode(form).encode(), auth)
 
 
-def exchange(s, code, secret="agent-tok", **over):
+def exchange(s, code, **over):
     return token(s, **{"grant_type": "authorization_code", "code": code, "code_verifier": VERIFIER,
-                       "redirect_uri": CB, "client_id": "claude", "client_secret": secret, **over})
+                       "redirect_uri": CB, "client_id": "claude", **over})
 
 
 def test_discovery_names_the_door_and_no_registration():
@@ -79,38 +103,64 @@ def test_discovery_names_the_door_and_no_registration():
     assert meta["authorization_endpoint"] == "https://rook.example/authorize"
     assert meta["token_endpoint"] == "https://rook.example/token"
     assert meta["code_challenge_methods_supported"] == ["S256"]
+    assert "none" in meta["token_endpoint_auth_methods_supported"]           # a public client: no secret
     assert "registration_endpoint" not in meta
-    assert s.owns("GET", "/authorize") and s.owns("POST", "/token") and not s.owns("GET", "/token")
-    assert not s.owns("POST", "/mcp") and not s.owns("GET", "/oauth/register")
+    assert s.owns("GET", "/authorize") and s.owns("POST", "/authorize") and s.owns("POST", "/token")
+    assert not s.owns("GET", "/token") and not s.owns("POST", "/mcp") and not s.owns("GET", "/oauth/register")
 
 
-def test_the_token_is_the_secret_and_the_access_token():
+def test_authorize_shows_a_sign_in_form_carrying_the_request():
+    s = shim()
+    status, page, headers = s.handle("GET", "/authorize", urlencode(params(state='"><script>x</script>')), b"")
+    assert status == 200 and headers["Content-Type"].startswith("text/html")
+    assert "frame-ancestors 'none'" in headers["Content-Security-Policy"] and "Location" not in headers
+    text = page.decode()
+    assert 'name="user"' in text and 'name="password"' in text and 'action="/authorize"' in text
+    assert f'name="code_challenge" value="{CHALLENGE}"' in text and "claude.ai" in text
+    assert "<script>x" not in text and "&lt;script&gt;" in text               # escaped
+    assert s._codes == {}                                                     # nothing until signed in
+
+
+def test_a_wrong_password_shows_the_form_again():
+    s = shim()
+    status, page, headers = authorize(s, person=None)
+    assert status == 200 and b"Wrong user name or password." in page and "Location" not in headers
+    assert s._codes == {}
+
+
+def test_signing_in_mints_the_persons_token_through_the_connector_agent():
     s = shim()
     status, body, headers = exchange(s, code_of(authorize(s)))
-    assert status == 200 and body["access_token"] == "agent-tok" == body["refresh_token"]
-    assert body["token_type"] == "Bearer"
-    status, body, _ = token(s, grant_type="refresh_token", refresh_token="agent-tok")
-    assert status == 200 and body["access_token"] == "agent-tok"
+    assert status == 200 and body["access_token"] == body["refresh_token"] == "tok-1"
+    assert body["token_type"] == "Bearer" and headers == {"Pragma": "no-cache"}
+    assert s.minter.tokens["tok-1"] == AGENT
+    status, body, _ = token(s, grant_type="refresh_token", refresh_token="tok-1")
+    assert status == 200 and body["access_token"] == "tok-1"
 
 
-def test_basic_auth_carries_the_secret():
+def test_a_client_secret_is_not_needed_and_ignored():
     s = shim()
-    basic = "Basic " + base64.b64encode(b"claude:agent-tok").decode()
+    basic = "Basic " + base64.b64encode(b"claude:anything").decode()
     form = {"grant_type": "authorization_code", "code": code_of(authorize(s)), "code_verifier": VERIFIER}
     status, body, _ = token(s, basic, **form)
-    assert status == 200 and body["access_token"] == "agent-tok"
+    assert status == 200 and body["access_token"] == "tok-1"
 
 
-def test_bad_secrets_are_refused():
+def test_refreshes_need_a_connector_token():
     s = shim()
-    assert exchange(s, code_of(authorize(s)), secret="nope")[:2] == \
-        (401, {"error": "invalid_client", "error_description": "not a valid Rook token"})
-    status, body, _ = exchange(s, code_of(authorize(s)), secret="person-tok")
-    assert status == 401 and "agent's token" in body["error_description"]
-    assert exchange(s, code_of(authorize(s)), secret="")[0] == 401
-    assert token(s, grant_type="refresh_token", refresh_token="person-tok")[0] == 400
+    assert token(s, grant_type="refresh_token", refresh_token="person-tok")[0] == 400   # a person's own
     assert token(s, grant_type="refresh_token", refresh_token="gone")[1]["error"] == "invalid_grant"
     assert token(s, grant_type="password")[1]["error"] == "unsupported_grant_type"
+
+
+def test_a_hub_without_the_connector_agent_says_so():
+    s = shim()
+    s.minter.problem = "This hub has no agent 'claude-web' for the connector yet"
+    status, page, _ = s.handle("GET", "/authorize", urlencode(params()), b"")
+    assert status == 200 and b"no agent" in page
+    code = code_of(authorize(s))
+    status, body, _ = exchange(s, code)
+    assert status == 400 and "no agent" in body["error_description"]
 
 
 def test_codes_are_once_short_lived_and_bound():
@@ -143,8 +193,9 @@ def test_codes_are_once_short_lived_and_bound():
     ({"state": "x" * 5000}, "invalid_request"),
 ])
 def test_authorize_refuses_bad_requests(over, error):
-    status, body, headers = authorize(shim(), **over)
-    assert status == 400 and body["error"] == error and "Location" not in headers
+    for reply in (authorize(shim(), **over), shim().handle("GET", "/authorize", urlencode(params(**over)), b"")):
+        status, body, headers = reply
+        assert status == 400 and body["error"] == error and "Location" not in headers
 
 
 def test_loopback_callbacks_and_capacity():
@@ -179,8 +230,9 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _open = urllib.request.build_opener(_NoRedirect).open
 
 
-def http(url, data=None, headers=None, method=None):
-    """(status, headers, parsed body or None), in a thread, never following a redirect."""
+def http(url, data=None, headers=None, method=None, raw=False):
+    """(status, headers, parsed body or None), in a thread, never following a redirect.
+    A page (text/html) comes back as bytes."""
     def go():
         req = urllib.request.Request(url, data=data, method=method or ("POST" if data is not None else "GET"))
         for k, v in (headers or {}).items():
@@ -190,14 +242,17 @@ def http(url, data=None, headers=None, method=None):
                 status, hdrs, text = r.status, r.headers, r.read()
         except urllib.error.HTTPError as e:
             status, hdrs, text = e.code, e.headers, e.read()
+        if raw or (hdrs.get("Content-Type") or "").startswith("text/html"):
+            return status, hdrs, text
         return status, hdrs, json.loads(text) if text else None
     return asyncio.to_thread(go)
 
 
-async def start(tmp_path, oauth=True):
+async def start(tmp_path, oauth=True, agent="claude"):
     band = runtime.Loopback()
     cfg = config(tmp_path)
-    cfg.doors = {"mcp": {"bind": "127.0.0.1:0", **({"oauth": "http://127.0.0.1:1"} if oauth else {})}}
+    cfg.doors = {"mcp": {"bind": "127.0.0.1:0",
+                         **({"oauth": "http://127.0.0.1:1", "oauth_agent": agent} if oauth else {})}}
     hub = runtime.Hub(cfg, transport=band)
     await hub.start()
     w = FakeWorker(hub, band, tmp_path / "w")
@@ -210,11 +265,17 @@ def rpc_body(method, params=None):
     return json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}).encode()
 
 
+def form_post(url, fields):
+    return http(url, urlencode(fields).encode(), {"Content-Type": "application/x-www-form-urlencoded"})
+
+
 def test_claude_ai_flow_end_to_end(tmp_path):
+    """What claude.ai does, scripted: discover, open /authorize, sign in with
+    the user name and password, swap the code, call a tool, refresh."""
     async def go():
         hub, base = await start(tmp_path)
         try:
-            agent_token, person_token = hub.add_token(AGENT), hub.add_token(PERSON)
+            passwords.set_password(hub.data, "bake", "open sesame", by="passwd")
             status, hdrs, _ = await http(base + "/mcp", rpc_body("ping"), {"Content-Type": "application/json"})
             assert status == 401
             meta_url = hdrs["WWW-Authenticate"].split('resource_metadata="')[1].rstrip('"')
@@ -224,19 +285,23 @@ def test_claude_ai_flow_end_to_end(tmp_path):
             status, _, meta = await http(base + "/.well-known/oauth-authorization-server")
             assert status == 200 and "registration_endpoint" not in meta
 
-            async def sign_in(secret):
-                q = urlencode({"response_type": "code", "client_id": "claude", "redirect_uri": CB, "state": "st",
-                               "code_challenge": CHALLENGE, "code_challenge_method": "S256"})
-                status, hdrs, _ = await http(base + "/authorize?" + q)
-                assert status == 302
-                code = parse_qs(urlsplit(hdrs["Location"]).query)["code"][0]
-                form = urlencode({"grant_type": "authorization_code", "code": code, "code_verifier": VERIFIER,
-                                  "redirect_uri": CB, "client_id": "claude", "client_secret": secret}).encode()
-                return await http(base + "/token", form, {"Content-Type": "application/x-www-form-urlencoded"})
+            status, hdrs, page = await http(base + "/authorize?" + urlencode(params()), raw=True)
+            assert status == 200 and b'name="password"' in page and hdrs["Content-Type"].startswith("text/html")
+            for user, pw in (("bake", "wrong"), ("nobody", "open sesame"), ("", "")):
+                status, hdrs, page = await form_post(base + "/authorize", {**params(), "user": user, "password": pw})
+                assert status == 200 and b"Wrong user name or password." in page and "Location" not in hdrs
+            status, hdrs, _ = await form_post(base + "/authorize",
+                                              {**params(), "user": "Bake ", "password": "open sesame"})
+            assert status == 302
+            code = parse_qs(urlsplit(hdrs["Location"]).query)["code"][0]
+            status, hdrs, tok = await form_post(base + "/token", {
+                "grant_type": "authorization_code", "code": code, "code_verifier": VERIFIER, "redirect_uri": CB,
+                "client_id": "claude"})
+            assert status == 200 and hdrs["Cache-Control"] == "no-store", tok
+            assert hub.authenticate(tok["access_token"]) == AGENT          # the person, through the agent
+            stored = json.loads((hub.data / "tokens.json").read_text())[runtime.digest(tok["access_token"])]
+            assert stored["label"] == "claude.ai connector"
 
-            assert (await sign_in(person_token))[0] == 401
-            status, hdrs, tok = await sign_in(agent_token)
-            assert status == 200 and tok["access_token"] == agent_token and hdrs["Cache-Control"] == "no-store"
             bearer = {"Authorization": f"Bearer {tok['access_token']}", "Content-Type": "application/json"}
             call = {"name": "call", "arguments": {"worker": WID, "cap": "echo.say", "args": {"text": "hi"},
                                                   "why": WHY}}
@@ -245,15 +310,26 @@ def test_claude_ai_flow_end_to_end(tmp_path):
             entry = (await hub.journal_view(AGENT, {"cap": "echo.say"}))["entries"][0]
             assert (entry["agent"], entry["person"]) == ("agent:claude", "person:bake")
 
-            refresh = urlencode({"grant_type": "refresh_token", "refresh_token": tok["refresh_token"]}).encode()
-            assert (await http(base + "/token", refresh))[0] == 200
+            refresh = {"grant_type": "refresh_token", "refresh_token": tok["refresh_token"]}
+            assert (await form_post(base + "/token", refresh))[0] == 200
             tokens = hub.data / "tokens.json"                 # revoke = take the token out of tokens.json
             stored = json.loads(tokens.read_text())
-            stored.pop(runtime.digest(agent_token))
+            stored.pop(runtime.digest(tok["access_token"]))
             tokens.write_text(json.dumps(stored))
-            await until(lambda: hub.authenticate(agent_token) is None)
-            assert (await http(base + "/token", refresh))[0] == 400
+            await until(lambda: hub.authenticate(tok["access_token"]) is None)
+            assert (await form_post(base + "/token", refresh))[0] == 400
             assert (await http(base + "/mcp", rpc_body("ping"), bearer))[0] == 401
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_the_form_says_when_the_connector_agent_is_missing(tmp_path):
+    async def go():
+        hub, base = await start(tmp_path, agent="claude-web")
+        try:
+            status, _, page = await http(base + "/authorize?" + urlencode(params()), raw=True)
+            assert status == 200 and b"no agent &#x27;claude-web&#x27;" in page
         finally:
             await hub.stop()
     run(go())
