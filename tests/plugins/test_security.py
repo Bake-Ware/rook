@@ -150,7 +150,8 @@ def with_hub(tmp_path, lib, body, heuristics="enforce"):
                      users={"bake": {"preset": "owner"}},
                      agents={"claude": {"grants": ["*"]}, "security": {"grants": ["*"]},
                              "rogue": {"grants": ["*"]}},
-                     settings={"security": {"heuristics": heuristics}} if heuristics else {},
+                     settings={"hub": {"security": "on"},       # the gate runs only with security on
+                               **({"security": {"heuristics": heuristics}} if heuristics else {})},
                      doors={})
         hub = Hub(cfg, transport=Loopback())
         await hub.start()

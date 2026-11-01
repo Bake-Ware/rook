@@ -63,6 +63,15 @@ FOLLOW_UPS = [
     "the desktop app's \"Add this computer\" on one Linux and one Windows machine",
 ]
 
+# castling-process, "Access before any freeze" (Bake, Oct 31): checked by doing them, on the new
+# hub, before step 2.1 stops 0.4. In move-in (hub.security, the default) nothing in step 2 waits on
+# a person, so no approval is needed at all; smoke.py checks the mode.
+BEFORE_FREEZE = [
+    "Bake signed in to the new hub from a browser with his username and password",
+    "the supervising Claude session made a real call through a connector to the new hub",
+    "hub.security is move-in on the new hub (smoke.py: [ok] hub.security: move-in), so nothing waits on a person",
+]
+
 
 def todos() -> dict:
     out: dict = {}
@@ -135,6 +144,8 @@ def main(argv=None) -> int:
     for gate, ok, what, why in rows:
         hold = "holds cutover" if gate in CUTOVER else "follow-up"
         print(f"[{'x' if ok else ' '}] {gate} [{hold}] {what}  ({why})")
+    print("\nBefore step 2.1 stops 0.4, done on the new hub (Access before any freeze):")
+    print("\n".join(f"[ ] {p}" for p in BEFORE_FREEZE))
     print("\nFollow-ups for a person to tick (they hold nothing):")
     print("\n".join(f"[ ] {p}" for p in FOLLOW_UPS))
     if a.prs:

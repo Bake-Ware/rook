@@ -451,7 +451,8 @@ class _Handlers:
                             "title": p.manifest.get("title") or p.name, "builtin": bool(p.manifest.get("builtin")),
                             "runs_on": p.manifest.get("runs_on"), "caps": len(p.manifest.get("caps") or {}),
                             "pages": sorted(p.manifest.get("pages") or {})}
-                           for p in sorted(hub.plugins.plugins.values(), key=lambda p: p.name)]}
+                           for p in sorted(hub.plugins.plugins.values(), key=lambda p: p.name)],
+               "security": "move-in" if hub.move_in() else "on"}
         if ctx.caller.owner:
             out["people"] = [{"name": u.name, "preset": u.preset, "grants": list(u.grants)}
                              for u in sorted(hub.identities.users.values(), key=lambda u: u.name)]
@@ -596,6 +597,9 @@ class Settings:
     def settings(self, person: str) -> dict:
         return self.personal.get(person) or {}
 
+    def move_in(self) -> bool:
+        return self.hub.move_in()
+
     def providers(self, contract: str) -> list:
         """ctx.providers: a contract's provider caps, first installed first."""
         return self.hub.contracts.providers(contract)
@@ -640,7 +644,8 @@ class Settings:
                 "config" if key in self.base.get(name, {}) else "default"
             out.append({"plugin": name, "key": key, "type": spec.get("type"), "doc": spec.get("doc", ""),
                         "default": spec.get("default"), "secret": bool(spec.get("secret")),
-                        "value": values.get(key, spec.get("default")), "source": source})
+                        "value": values.get(key, spec.get("default")), "source": source,
+                        **({"enum": list(spec["enum"])} if spec.get("enum") else {})})
         who = self._person(ctx, person)
         if who and who != ctx.caller.person and not ctx.caller.owner:
             raise KitError("denied: only an owner reads someone else's settings")

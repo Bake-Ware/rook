@@ -140,7 +140,8 @@ def with_hub(tmp_path, body, settings=None):
     async def go():
         cfg = Config(data=tmp_path / "data", band=BAND, library=lib, users={"bake": {"preset": "owner"}},
                      agents={"claude": {"grants": ["*"]}}, doors={},
-                     settings={"security-ml": settings or {"min_calls": 50, "clean_nights": 2}})
+                     settings={"hub": {"security": "on"},       # the gate runs only with security on
+                               "security-ml": settings or {"min_calls": 50, "clean_nights": 2}})
         hub = Hub(cfg, transport=Loopback())
         await hub.start()
         try:

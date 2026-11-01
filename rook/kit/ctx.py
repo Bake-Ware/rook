@@ -202,6 +202,13 @@ class Ctx:
             raise KitError("no people here: per-person settings live on the hub")
         return _Settings(self._decls, {**self._values, **self._personal(person)}, self._resolve, None)
 
+    @property
+    def move_in(self) -> bool:
+        """Hub only: the hub is in move-in (its ``hub.security`` setting), so
+        nothing waits on a person, e.g. no owner sign-off on a sacred project."""
+        check = getattr(self._people, "move_in", None)
+        return bool(check and check())
+
     def owners(self) -> list[str]:
         """The hub's owners (``person:<name>``)."""
         if self._people is None:

@@ -34,6 +34,7 @@ from rook.core2.worker.security import TrustStore  # noqa: E402
 PSK = "e2e-enroll-test-band-key-0123456789"
 BAND = band_of(PSK)
 OWNER = Caller(person="person:bake")
+ON = {"hub": {"security": "on"}}       # device codes wait for a person (move-in approves them at once)
 
 
 def run(coro, timeout=30):
@@ -153,7 +154,7 @@ def test_a_device_code_waits_for_the_person_and_can_be_refused(tmp_path):
     said = []
 
     async def go():
-        hub, tok = await started(tmp_path)
+        hub, tok = await started(tmp_path, settings=ON)
         try:
             task = asyncio.create_task(asyncio.to_thread(
                 device.sign_in, url(hub), "tablet", key=wire.pub_text(sk), say=said.append,
@@ -189,6 +190,42 @@ def test_a_device_code_waits_for_the_person_and_can_be_refused(tmp_path):
     assert ok == {"ok": True, "name": "tablet", "decision": "approve"}
     assert bundle["owner"] == "person:ann" and bundle["name"] == "tablet"    # the approver owns it
     assert no["ok"] and unknown == {"ok": False, "error": "unknown or expired code"}
+
+
+def test_in_move_in_a_device_code_is_approved_at_once_and_journaled(tmp_path):
+    """castling-switchover-decisions, "Move-in" (Bake, Oct 31): "turn off
+    approvals while we're moving in". The default hub.security (move-in)
+    approves a device code as the first owner; the journal names the machine."""
+    said = []
+
+    async def go():
+        hub, tok = await started(tmp_path)
+        try:
+            assert hub.move_in()
+            bundle = await asyncio.to_thread(device.sign_in, url(hub), "janitor", say=said.append,
+                                             sleep=lambda s: __import__("time").sleep(0.05))
+            left = await _pending(hub, tok["bake"])
+            return bundle, left, hub.journal.query(kind="enroll")
+        finally:
+            await hub.stop()
+    bundle, left, journaled = run(go())
+    assert bundle["owner"] == "person:bake" and bundle["name"] == "janitor"
+    [e] = journaled
+    assert (e["name"], e["person"], e["via"]) == ("janitor", "person:bake", "device code (move-in: approved at once)")
+    assert left == [] and "approved at once" in said[0] and "approve code" not in said[0]
+
+
+def test_with_security_on_a_device_code_waits(tmp_path):
+    async def go():
+        hub, tok = await started(tmp_path, settings=ON)
+        try:
+            assert not hub.move_in()
+            out = await http(hub, "POST", "/enroll/device", {"name": "janitor"})
+            return out, await _pending(hub, tok["bake"])
+        finally:
+            await hub.stop()
+    out, pending = run(go())
+    assert out["ok"] and "approved" not in out and [p["name"] for p in pending] == ["janitor"]
 
 
 async def _pending(hub, token):
@@ -231,7 +268,7 @@ def test_who_may_enroll_see_the_recovery_key_and_invite(tmp_path):
 
 def test_codes_expire_and_waiting_devices_are_bounded(tmp_path):
     now = [1_800_000_000.0]
-    hub = Hub(config(tmp_path), transport=Loopback(), clock=lambda: now[0])
+    hub = Hub(config(tmp_path, settings=ON), transport=Loopback(), clock=lambda: now[0])
     hub.data, hub.hub_id = Path(tmp_path / "data"), "0" * 16
     hub.data.mkdir()
     e = Enrollment(hub, {})
@@ -258,7 +295,7 @@ def test_unpolled_device_codes_go_fast_so_a_flood_cannot_hold_the_queue(tmp_path
     # /enroll/device takes no token: codes nobody polls must not fill the
     # queue for ten minutes (review D4).
     now = [1_800_000_000.0]
-    hub = Hub(config(tmp_path), transport=Loopback(), clock=lambda: now[0])
+    hub = Hub(config(tmp_path, settings=ON), transport=Loopback(), clock=lambda: now[0])
     hub.data, hub.hub_id = Path(tmp_path / "data"), "0" * 16
     hub.data.mkdir()
     e = Enrollment(hub, {})

@@ -15,6 +15,13 @@ or a page's caps, and the target's ceiling), gates, holds, ticket, journal.
 Every call that reaches dispatch gets one journal entry; a held call gets a
 second when it is released or refused.
 
+Move-in (``move_in()`` true; the hub's ``hub.security`` setting, default
+``move-in``): gates and holds are skipped, so after rights the call goes;
+its entry says ``security: move-in`` and lists any hard stop it would have
+waited on (``would_hold``). ``core.elevate`` checks rights and the ceiling
+but no gate. castling-switchover-decisions (Bake, Oct 31): "Security gates,
+holds, approvals, enrollment approvals, elevation ...: off / not on the path."
+
 Collaborators are plain callables so nothing here knows the transport or the
 database:
 
@@ -137,12 +144,17 @@ class Dispatcher:
                  gates: list | None = None, secrets: Callable[[Any, Caller], Any] | None = None,
                  hubkey: dict | None = None, clock: Callable[[], float] = time.time,
                  appliances: Any = None, carry: Callable | None = None,
-                 online: Callable[[str], bool] | None = None):
+                 online: Callable[[str], bool] | None = None,
+                 move_in: Callable[[], bool] | None = None):
         self.hub_id, self.op_key, self.hubkey = hub_id, op_key, hubkey
         self.identities, self.workers = identities, workers
         self.send, self.journal, self.secrets, self.clock = send, journal, secrets, clock
         self.appliances, self.carry = appliances, carry
         self.online = online or (lambda wid: True)
+        # Move-in (castling-switchover-decisions, Bake Oct 31: "turn off all that
+        # security bullshit ... just don't fucking do it yet"): when true, no gate
+        # runs and nothing is held; the runtime reads the hub.security setting.
+        self.move_in = move_in or (lambda: False)
         self.gates: list = list(gates or ())
         self.sessions: dict[str, Session] = {}       # live ones; prune_sessions drops the rest
         self.projects: dict[str, set[str]] = {}       # agent -> projects its sessions were for
@@ -340,6 +352,13 @@ class Dispatcher:
         if refused:
             return deny(f"denied: {refused['layer']}: {refused['reason']}",
                         f"{refused['layer']}: {refused['reason']}")
+        # Move-in: no gates, no holds. What a hold would have waited on is journaled.
+        if self.move_in():
+            entry.update(decision="allow", security="move-in")
+            would = _hard_stops(meta, w, entry["risk"])
+            if would:
+                entry["would_hold"] = would
+            return await self._run(caller, s, w, call, meta, entry, routes[1:])
         # 6. gates
         results = await gates_mod.run(self.gates, _gate_input(caller, s, w, call, entry))
         entry["gates"] = results
@@ -398,10 +417,13 @@ class Dispatcher:
         inst = self._appliance(call.appliance)
         if inst is None or _plugin_caps(w, inst["plugin"]).get(call.cap) != meta:
             return False
-        if set(_hard_stops(meta, w, entry["risk"])) - set(_hard_stops(meta, first, entry["risk"])):
+        moving_in = entry.get("security") == "move-in"
+        if not moving_in and set(_hard_stops(meta, w, entry["risk"])) - set(_hard_stops(meta, first, entry["risk"])):
             return False
         if self._rights(caller, s, w, call, entry):
             return False
+        if moving_in:
+            return True
         results = await gates_mod.run(self.gates, _gate_input(caller, s, w, call, entry))
         return rights.gate_decision(results, entry["risk"])["verdict"] == "allow"
 
@@ -490,7 +512,7 @@ class Dispatcher:
                 out[k] = reply[k]
         if "elevated" in reply:
             entry["lease"] = reply["elevated"]
-        if out["ok"] and any(g.result for g in self.gates):
+        if out["ok"] and entry.get("security") != "move-in" and any(g.result for g in self.gates):
             out = await self._check_result(caller, s, w, call, entry, out)
         entry["ok"] = out["ok"]
         return out
@@ -701,9 +723,11 @@ class Dispatcher:
             return rights.check(layers, {"cap": "core.elevate", "risk": "admin", "effects": [], "target": target})
 
         out, results = refused(), None
+        moving_in = self.move_in()
         # An admin call (elevate up front, an ``upfront`` cap) met the gates
         # as admin at dispatch, where a person may have released its hold.
-        if out["ok"] and facts["risk"] != "admin":
+        # Move-in: no gate on elevation either; rights and the ceiling still apply.
+        if out["ok"] and facts["risk"] != "admin" and not moving_in:
             inp = _gate_input(caller, s, w, call, {**facts, "risk": "admin"})
             inp["elevation"] = reason if reason in ("upfront", "access_denied") else "access_denied"
             results = await gates_mod.run(self.gates, inp)
@@ -718,6 +742,8 @@ class Dispatcher:
                  "project": s.project, "person": caller.person, "agent": caller.agent}
         if results is not None:
             entry["gates"] = results
+        if moving_in:
+            entry["security"] = "move-in"
         if not out["ok"]:
             entry.update(decision="deny", layer=f"{out['layer']}: {out['reason']}")
             self._record(entry)

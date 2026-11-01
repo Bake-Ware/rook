@@ -102,6 +102,7 @@ that names a 0.4 piece, say which castling decision replaces it; and before Bake
 | 32 | contradiction (mild) | Core service plugins call providers by plugin name, not contract. **Fixed: PR #344 (agents), PR #357 (notify, speech, agents' chat reply)** | `notify`, `speech`, `agents` |
 | 33 | renamed (low) | Plural namespaces `jobs.*`, `agents.*`, `pages.*`; `jobs.start` not `job.run` (**fixed, PR #353**) | `jobs`, `agents`, hub pages |
 | 34 | over-built (low) | Manifest 1.1/1.2 features nothing uses; jobs rolls its own webhook HMAC (**partly fixed, PR #349**: format frozen, unused keys reserved; code and the jobs webhook left) | `rook/kit/manifest`, `hub/plugins.py`, `jobs.py:870` |
+| 35 | missing | Step 2 waits on a person (device-code approvals, holds, sacred sign-off) on a hub with no way to give them: the Oct 31 lockout. Bake: "turn off approvals while we're moving in" (**fixed, PR #TBD**: `hub.security` move-in) | `dispatch.py`, `enroll/hub.py`, `github`, `tasks`, switchover step 2 |
 
 Watch items (ask Bake, not drift yet) are after the findings.
 
@@ -664,6 +665,20 @@ so no client secret or pasted token. DCR still left out (question for Bake on ca
 - **Partly fixed:** PR #349: format frozen at 1.2, unused keys marked reserved
   (`conformance/manifest/README.md`, castling-manifest pages); their code and the jobs webhook move
   are left (vectors shared with other validators; churn without a user).
+
+## 35. Step 2 waits on a person who has no way to answer (missing)
+
+- **Decision.** castling-switchover-decisions, "Move-in" (Bake, Oct 31 ~20:55): "turn off approvals
+  while we're moving in... let's just make everything fucking YOLO"; "Usable first" (~21:10):
+  "Security gates, holds, approvals, enrollment approvals, elevation ...: off / not on the path."
+  castling-process, "Access before any freeze".
+- **Built instead.** Gates and hard stops held calls, device codes waited for a person, a sacred
+  project waited for the owner's sign-off; the second cutover attempt stalled at enrollment.
+- **Fix.** One hub setting `hub.security` (`move-in` | `on`, default `move-in`): no gate runs and
+  nothing holds (journaled `security: move-in`, `would_hold`), elevation ungated, device codes
+  approved at once as the owner (journaled with the machine name), no owner sign-off on sacred
+  projects. Vault stays encrypted, secrets masked. Settings page switch (owners), smoke and the
+  runbook check it. **Fixed, PR #TBD.**
 
 ## Watch items (ask Bake; not drift yet)
 

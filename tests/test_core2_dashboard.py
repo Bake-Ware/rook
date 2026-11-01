@@ -167,6 +167,8 @@ def make_library(tmp_path: Path) -> Path:
 
 
 async def start(tmp_path: Path, **over):
+    # Tests written for hub.security on (holds, gates, device-code approval); move-in has its own tests.
+    over.setdefault("settings", {}).setdefault("hub", {"security": "on"})
     cfg = Config(data=tmp_path / "data", band=BAND, library=make_library(tmp_path),
                  users={"bake": {"preset": "owner"}, "kim": {"preset": "viewer"}},
                  presets={"viewer": {"grants": ["page.*", "board.count", "approval.list"], "max_risk": "write"}},
@@ -681,14 +683,31 @@ def test_workers_journal_and_settings_pages(site):
             listed = (await c.page(t, "setting.list"))["result"]["settings"]
             assert {(s["plugin"], s["key"], s["value"], s["source"]) for s in listed} == {
                 ("board", "motto", "hello", "default"), ("board", "size", 3, "default"),
-                ("page", "dock", "house", "default")}
+                ("page", "dock", "house", "default"), ("hub", "security", "on", "config")}
+            # the move-in switch (castling-switchover-decisions, "Move-in"): a dropdown, owners only
+            sec = next(s for s in listed if (s["plugin"], s["key"]) == ("hub", "security"))
+            assert sec["enum"] == ["move-in", "on"] and sec["default"] == "move-in"
+            assert status["security"] == "on" and not hub.move_in()
+            _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "setting.set", "why": WHY,
+                                                    "args": {"plugin": "hub", "key": "security", "value": "move-in"}},
+                                  bearer=tokens["narrow"])
+            assert "denied" in out["error"] and not hub.move_in()
+            assert (await c.page(t, "setting.set", {"plugin": "hub", "key": "security", "value": "move-in"}))["ok"]
+            assert hub.move_in() and (await c.page(t, "hub.status"))["result"]["security"] == "move-in"
+            flipped = hub.journal.query(cap="setting.set", limit=5)
+            assert any(e["args"] == {"plugin": "hub", "key": "security", "value": "move-in"} for e in flipped)
+            out = await c.page(t, "setting.set", {"plugin": "hub", "key": "security", "value": "yolo"})
+            assert out["error"].startswith("bad value")
+            assert (await c.page(t, "setting.set", {"plugin": "hub", "key": "security", "value": "on"}))["ok"]
+            assert not hub.move_in()
             out = await c.page(t, "setting.set", {"plugin": "board", "key": "size", "value": "big"})
             assert out["error"].startswith("bad value")
             assert (await c.page(t, "setting.set", {"plugin": "board", "key": "motto", "value": "hi"}))["ok"]
             _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "board.motto", "why": WHY},
                                   bearer=tokens["bake"])
             assert out["result"] == {"motto": "hi"}           # the plugin sees it on its next call
-            assert json.loads((hub.data / "settings.json").read_text()) == {"board": {"motto": "hi"}}
+            assert json.loads((hub.data / "settings.json").read_text()) == {"board": {"motto": "hi"},
+                                                                            "hub": {"security": "on"}}
             # only owners set; null goes back to the default
             _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "setting.set", "why": WHY,
                                                     "args": {"plugin": "board", "key": "motto", "value": "x"}},
