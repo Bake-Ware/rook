@@ -4,19 +4,20 @@
 # unit, port or keys).
 #
 #   install.sh --hub https://castling.bakeforge.com [--name NAME] [--ref SHA]
-#              [--plugins "shell file ..."] [--root ~/.rook05]
+#              [--plugins "shell file ..."] [--root ~/.rook05] [--code CODE]
 #   install.sh --upgrade [--ref SHA]           # new code, same data and keys
 #
 # Code: a codeload export of Bake-Ware/rook at REF (no git clone needed).
 # Unit: systemd --user rook05-worker (Restart=always), enabled and started.
 # Joining: the device-code enrollment; a hub in move-in approves it at once
-# (castling-switchover-decisions, "Usable first").
+# (castling-switchover-decisions, "Usable first"). --code (or ROOK_JOIN_CODE)
+# joins with a one-time code from the hub (POST /enroll/code) instead.
 set -euo pipefail
 
 say() { printf '== %s\n' "$*"; }
 die() { printf 'install.sh: %s\n' "$*" >&2; exit 1; }
 
-HUB="" NAME="" REF="castling" PLUGINS="" ROOT="$HOME/.rook05" upgrade=0
+HUB="" CODE=${ROOK_JOIN_CODE:-} NAME="" REF="castling" PLUGINS="" ROOT="$HOME/.rook05" upgrade=0
 while [ $# -gt 0 ]; do
     case $1 in
         --hub) HUB=$2; shift 2 ;;
@@ -24,6 +25,7 @@ while [ $# -gt 0 ]; do
         --ref) REF=$2; shift 2 ;;
         --plugins) PLUGINS=$2; shift 2 ;;
         --root) ROOT=$2; shift 2 ;;
+        --code) CODE=$2; shift 2 ;;
         --upgrade) upgrade=1; shift ;;
         *) die "unknown argument $1" ;;
     esac
@@ -118,7 +120,8 @@ systemctl --user daemon-reload
 # -- join -------------------------------------------------------------------------------
 if ! grep -q '^anchor:' "$CFG"; then
     say "enroll $NAME with $HUB"
-    (cd "$ROOT" && timeout 600 "$PY" -m rook.core2.worker --config "$CFG" enroll "$HUB" --name "$NAME")
+    (cd "$ROOT" && timeout 600 "$PY" -m rook.core2.worker --config "$CFG" enroll "$HUB" --name "$NAME" \
+        ${CODE:+--code "$CODE"})
 fi
 systemctl --user enable $UNIT >/dev/null 2>&1 || true
 systemctl --user restart $UNIT
