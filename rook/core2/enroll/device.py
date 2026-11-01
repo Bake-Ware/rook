@@ -47,6 +47,8 @@ from .hub import CODE_SECS, NAME
 KEY_FILE = "worker.key"           # rook.core2.worker.runtime reads it
 
 HTTP_SECS = 30.0
+# A hub behind Cloudflare refuses Python-urllib's default User-Agent (error 1010).
+USER_AGENT = "rook-worker-enroll/0.5"
 
 
 class EnrollError(Exception):
@@ -82,7 +84,7 @@ def check_url(url: str, insecure: bool = False) -> None:
 
 def _post(url: str, path: str, body: dict) -> dict:
     req = urllib.request.Request(url + path, data=json.dumps(body).encode(), method="POST",
-                                 headers={"Content-Type": "application/json"})
+                                 headers={"Content-Type": "application/json", "User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=HTTP_SECS) as r:
             return json.loads(r.read())

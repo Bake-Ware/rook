@@ -54,7 +54,8 @@ def main(argv=None, stdin=None, stdout=None) -> int:
         mid = msg.get("id") if isinstance(msg, dict) and "method" in msg else None
         req = urllib.request.Request(args.url, data=line.encode("utf-8"), method="POST", headers={
             "Authorization": f"Bearer {token}", "Content-Type": "application/json",
-            "Accept": "application/json, text/event-stream"})
+            "Accept": "application/json, text/event-stream",
+            "User-Agent": "rook-mcp-stdio/0.5"})    # Cloudflare refuses urllib's default (1010)
         try:
             with urllib.request.urlopen(req, timeout=WAIT) as r:
                 body = r.read()

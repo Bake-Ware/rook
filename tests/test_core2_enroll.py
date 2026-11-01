@@ -401,3 +401,27 @@ def test_enroll_options_are_checked():
     for bad in ({"discover": True}, {"nope": 1}, {"services": {"voice": {}}}, {"url": 3}):
         with pytest.raises(ValueError):
             check_options(bad)
+
+
+def test_enroll_requests_send_a_user_agent(monkeypatch):
+    # A hub behind Cloudflare refuses Python-urllib's default User-Agent
+    # (error 1010): rook05.bakeforge.com answered 403 to it.
+    from rook.core2.enroll import device
+    seen = {}
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"ok": true}'
+
+    def fake_urlopen(req, timeout):
+        seen.update(req.headers)
+        return Resp()
+    monkeypatch.setattr(device.urllib.request, "urlopen", fake_urlopen)
+    assert device._post("https://hub.example", "/enroll/device", {})["ok"]
+    assert seen.get("User-agent", "").startswith("rook-") and "urllib" not in seen["User-agent"].lower()
