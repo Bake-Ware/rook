@@ -15,6 +15,9 @@ the rest are the hub's read views. The door is stateless: no MCP session
 ids; a caller's calls share their default Rook session unless they start one.
 
 Options: ``bind: "127.0.0.1:8741"`` (port 0 picks one), ``path: /mcp``,
+``wait: 45``: seconds a ``call`` holds its request open; a call still running
+then answers with a handle to follow instead (:meth:`Hub.call_or_follow`), so
+no request outlives a client's or a proxy's limit (Cloudflare cuts at 100 s).
 ``origins: [...]``: browser origins allowed in; a request with any other
 ``Origin`` header is refused (DNS rebinding). Bind to localhost; put TLS in
 front before exposing it. ``oauth: https://rook.example`` (the door's public
@@ -59,7 +62,11 @@ and shown to the person if the call is held.
 - Caps that answer {"stream": id} (terminals, processes, agent sessions): read and write it with stream. \
 call worker=rook cap=stream.list (or stream.search query=...) finds streams and the worker each is on; \
 chat rooms live on rook (call worker=rook cap=stream.open args={"title": ...} opens one).
+- A call still running after WAIT_S seconds answers {id, running: true, worker: "rook", stream} at once and keeps \
+running: follow it with stream worker=rook stream=<stream> wait=40 (pass back next) until a status event has \
+state done; that event carries the reply. Don't call again meanwhile.
 - Every call is journaled under your token's agent and person; journal reads it back."""
+WAIT = 45.0       # seconds a call may hold its request open (options.wait)
 
 _WHY = {"type": "string", "description": "One plain sentence: why you make this call. Journaled."}
 _READ = {"readOnlyHint": True}
@@ -67,7 +74,9 @@ _WORKER = {"type": "string", "description": "Worker name or id (workers lists th
 
 TOOLS = [
     {"name": "call",
-     "description": "Run one cap on one worker. Reply {id, ok, result | error}; held calls wait for a person.",
+     "description": "Run one cap on one worker. Reply {id, ok, result | error}; held calls wait for a person. "
+                    "A call still running after the door's wait answers {id, running, worker: rook, stream}: "
+                    "follow that stream for the reply.",
      "inputSchema": {"type": "object", "required": ["worker", "cap", "why"], "properties": {
          "worker": _WORKER,
          "cap": {"type": "string", "description": "The cap, e.g. shell.exec (caps lists them)."},
@@ -138,6 +147,10 @@ class McpDoor(HttpDoor):
         self.path = "/" + str(options.get("path", "/mcp")).strip("/")
         self.origins = set(options.get("origins") or ())
         self.oauth_agent = str(options.get("oauth_agent") or "claude-web")
+        self.wait = float(options.get("wait", WAIT))
+        if not 0 < self.wait <= 90:
+            raise ValueError("mcp door: wait is seconds, more than 0 and at most 90")
+        self.instructions = INSTRUCTIONS.replace("WAIT_S", f"{self.wait:g}")
         self.oauth = OAuthShim(options["oauth"], self.path, hub.authenticate, self._mint, self._oauth_problem,
                                token_client=self._token_client, approvals_file=Path(hub.data) / APPROVALS,
                                note=self._approved) if options.get("oauth") else None
@@ -176,7 +189,7 @@ class McpDoor(HttpDoor):
             return {"protocolVersion": asked if asked in PROTOCOLS else PROTOCOLS[0],
                     "capabilities": {"tools": {"listChanged": False}},
                     "serverInfo": {"name": "rook", "version": CORE_VERSION},
-                    "instructions": INSTRUCTIONS}
+                    "instructions": self.instructions}
         if method == "ping":
             return {}
         if method == "tools/list":
@@ -198,7 +211,7 @@ class McpDoor(HttpDoor):
 
     async def _call(self, caller, a: dict) -> dict:
         body = {k: a[k] for k in ("worker", "cap", "args", "why", "session", "appliance", "elevate") if k in a}
-        return await self.hub.call(caller, body, self.name)
+        return await self.hub.call_or_follow(caller, body, self.name, self.wait)
 
     async def _caps(self, caller, a: dict) -> dict:
         match, full = a.get("match") or "", a.get("full") is True

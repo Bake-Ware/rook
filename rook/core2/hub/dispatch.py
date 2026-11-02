@@ -121,6 +121,7 @@ class Call:
     layers: list = field(default_factory=list)  # extra [[name, rights]]: plugin uses, page caps
     contract: str | None = None                 # the contract the call is made by (4.1); dispatch sets it
     parent: str | None = None                   # a core.call sub-call: the call id it runs inside
+    id: str | None = None                       # the call id, when the door handed it out first (Hub.call_or_follow)
 
 
 @dataclass
@@ -252,7 +253,7 @@ class Dispatcher:
     # -- dispatch (10.1) ---------------------------------------------------
 
     async def dispatch(self, caller: Caller, call: Call) -> dict:
-        cid = _secrets.token_hex(16)
+        cid = call.id or _secrets.token_hex(16)
         entry = {"kind": "call", "ts": self.clock(), "call": cid, "hub": self.hub_id,
                  "cap": call.cap, "person": caller.person, "agent": caller.agent,
                  "session": call.session, "why": call.why, "args": call.args}
