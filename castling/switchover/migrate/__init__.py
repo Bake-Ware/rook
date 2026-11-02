@@ -11,8 +11,11 @@ hub.yaml init``):
 
 - **people**: 0.4 members and their active grants -> the config's ``users``
   (and ``member-<tier>`` presets); the config is backed up first
-  (``hub.yaml.pre-migrate``). API keys and chat links don't move: the report
-  lists who needs new ones;
+  (``hub.yaml.pre-migrate``). Chat links don't move: the report lists who
+  needs new ones;
+- **MCP keys**: 0.4's API keys and static token -> ``<data>/tokens.json``
+  (hashes only), each acting for its owner through an agent named after it,
+  so clients keep their key when the names move (:mod:`.tokens`);
 - **trust map**: sacred machines -> the config's ``sacred``; project levels
   -> ``project.trust`` records; the rest is reported (:mod:`.convert`);
 - **vault**: every secret re-sealed under the 0.5 hub's key in
@@ -60,7 +63,7 @@ from rook.kit.ctx import Caller
 from rook.kit.manifest import load as load_manifest
 from rook.kit.records import RecordStore
 
-from . import archive, convert, names, records, rooms, vault
+from . import archive, convert, names, records, rooms, tokens, vault
 from .source import NotACopy, Source, _tables
 
 IMPORTER = Path(__file__).resolve().parent.parent / "import_04.py"
@@ -115,12 +118,16 @@ def _run(source: Source, cfg, cfg_path: Path, band: str, apply: bool, rename: di
     notes += more
     secrets, more = source.secrets()
     notes += more
+    keys, more = tokens.keys(source.root, source.people(), mapping, secrets, cfg.agents)
+    notes += more
     mems, jots, skipped = convert.memory(source.memories(), {m["from"]: m["name"] for m in mapping})
     hub_url = (getattr(cfg, "enroll", None) or {}).get("url") or \
         f"http://{(cfg.doors.get('http') or {}).get('bind', '127.0.0.1:8740')}"
     report.update(
         people=mapping, presets={k: v for k, v in presets.items() if k not in cfg.presets}, sacred=sacred,
         secrets=[{"name": s["name"], "description": s["description"]} for s in secrets],
+        tokens=[{"id": k["digest"][:12], "label": k["label"], "person": k["person"], "agent": k["agent"]}
+                for k in keys],
         memory={"memory": len(mems), "notepad": len(jots), "skipped": skipped},
         journal=source.journal_stats(), workers=convert.checklist(workers, sacred, hub_url))
     if apply:
@@ -134,6 +141,7 @@ def _run(source: Source, cfg, cfg_path: Path, band: str, apply: bool, rename: di
         (cfg.data / "keys").mkdir(exist_ok=True, mode=0o700)
         _key(cfg.data / "keys" / "root.key")      # as the hub's first start would: the vault's key is derived from it
         report["secrets_written"] = vault.put(cfg.data, secrets)
+        report["tokens_written"] = tokens.put(cfg.data, keys)
     report["sign_in"] = _sign_in(cfg.data, owner, secrets, apply)
     if apply:
         report["memory"]["written"] = _write_memory(cfg.data, band, mems, jots)
@@ -350,6 +358,11 @@ def render(r: dict) -> str:
     out.append(f"- {len(r['secrets'])} secrets re-sealed under the 0.5 hub's key"
                + (f" ({len(r.get('secrets_written', []))} new)" if r["applied"] else "") + ":")
     out += [f"  - `{s['name']}`" + (f": {s['description']}" if s["description"] else "") for s in r["secrets"]]
+    out.append("\n## MCP keys\n")
+    tw = r.get("tokens_written")
+    out.append(f"- {len(r.get('tokens') or ())} 0.4 keys work on 0.5 unchanged (hashes in tokens.json)"
+               + (f": {tw['written']} new, {tw['kept']} already there" if tw else "") + ":")
+    out += [f"  - {t['label']}: {t['person']} through {t['agent']} (id {t['id']})" for t in r.get("tokens") or ()]
     m = r["memory"]
     out.append(f"\n## Memory\n\n- house agent: memories {m['memory']}, notepad items {m['notepad']}"
                + (f"; not moved: {json.dumps(m['skipped'])}" if m["skipped"] else ""))

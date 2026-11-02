@@ -37,7 +37,7 @@ sys.path.insert(0, str(REPO))
 from castling.switchover.migrate import migrate, render  # noqa: E402
 
 INNER = re.compile(r"(^|/)data/[^/]*nodb\.tar$")      # the data folder minus databases
-LOOSE = ("trust.json", "vault.key")                   # the loose files the migration reads
+LOOSE = ("trust.json", "vault.key", "oauth.json")     # the loose files the migration reads
 INIT_SECS = 60
 
 
@@ -81,7 +81,7 @@ def throwaway_hub(folder: Path, owner: str, url: str) -> Path:
     return cfg
 
 
-NOTE_KINDS = (("API key", "API keys to mint again"), ("link ", "chat links to make again"),
+NOTE_KINDS = (("API key", "API key notes"), ("link ", "chat links to make again"),
               ("chat space", "chat spaces to share again"), ("trust", "trust entries not carried over"),
               ("grant", "grant notes"))
 
@@ -107,6 +107,7 @@ def summary(r: dict, snapshot: str) -> str:
         "- workbench records: " + (f"not imported ({wb['not_imported']})" if wb.get("not_imported") else
                                    ", ".join(f"{k} {v}" for k, v in (wb.get("imported") or {}).items())),
         f"- vault: {len(r['secrets'])} secrets would be re-sealed (names in the private report only)",
+        f"- MCP keys carried (they keep working on 0.5): {len(r.get('tokens') or ())}",
         f"- house agent memory: {r['memory']['memory']} memories, {r['memory']['notepad']} notepad items; "
         f"not moved: {json.dumps(r['memory']['skipped'])}",
         f"- journal: {j.get('rows', 0)} calls archived read-only"

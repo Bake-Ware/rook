@@ -61,6 +61,10 @@ with your Rook user name and password, the same as the hub site.
    `/.well-known/oauth-*` itself, so send all of those to it (or give it a
    hostname of its own).
 
+   Reached at several names? List them all; the first is the one the hub
+   shows, and each client gets the address it used:
+   `oauth: ["https://rook.example", "https://mcp.rook.example"]`.
+
 2. The connector acts through the agent `claude-web` (`init` lists it
    under `agents:`; `oauth_agent: <name>` on the door picks another).
 

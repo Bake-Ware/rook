@@ -180,8 +180,8 @@ Summary (counts only):
   spaces and apostrophes. About 14 of the 38 are service containers whose
   calls are almost all the same periodic sweep (~186 calls each in four
   days). Bake decides which of them still need a worker at all (D6).
-- **For a person:** 16 API keys to mint again as 0.5 tokens, 1 Telegram
-  link, and 3 trust notes (above).
+- **For a person:** 1 Telegram link and 3 trust notes (above). (The 16 API
+  keys now move: see step 5.)
 
 That rehearsal left jobs, settings, chat, huddles, console rooms, roles and
 approvals behind. Since the fly-it rework every one of them is moved or
@@ -223,7 +223,8 @@ files on any open, which migrate then refused).
 | claims / hygiene findings | 231 / 469 | 0 | all | castling-workbench: "Drop verification flags and claims."; hygiene is "candidate for the PM's periodic sweeps" |
 | secrets (name + value hash) | 65 | 65 | 0 | |
 | people / accounts | 1 / 2 | 1 / 1 | 0 / 1 | castling-design: "Bake helps the other user directly." |
-| API keys / chat links | 16 / 1 | 0 | all | castling-design: "a clean cut"; clients get 0.5 tokens, Bake relinks |
+| MCP keys (API keys + static token) | 17 | 17 (hashes in tokens.json) | 0 | Bake, Nov 1: "migrate the existing... MCP keys... So they just pick up when DNS switches" |
+| chat links | 1 | 0 | all | Bake relinks |
 | workers | 38 | 38 on the re-enroll checklist | | castling-design: "workers re-enroll" |
 | trust: project levels / other entries | 1 / 9 | 1 / 0 | 0 / 9 | 0.5's trust map is sacred machines and project levels (castling-changes) |
 | chat rooms and huddles -> streams | 38 | 38 | 0 | |
@@ -359,12 +360,14 @@ these three.
    each online and answering `worker.ping`. Then one real call per kind of
    worker: `shell.exec` `["echo", "ok"]` on cachyrig, `battery.status` on
    bakephone.
-5. **MCP and agents.** Each 0.4 API key on the report's list gets a 0.5
-   token: `... hub token --person bake --agent <name>`. Claude Code:
-   `claude mcp add --transport http rook05 https://rook05.bakeforge.com/mcp --header "Authorization: Bearer <token>"`,
-   then a `worker.ping` on cachyrig through it. claude.ai: a custom connector
-   at `https://<host>/mcp`; sign in with Bake's user name and password, no
-   token (R13). The house agent: `agent.chat.send` `{agent: house, text: "say ok"}`
+5. **MCP and agents.** Nothing to do on the clients: the move carried every
+   0.4 API key and the static token (the report's "MCP keys"), and the MCP
+   door lists rook.bakeforge.com and mcp.bakeforge.com in `doors.mcp.oauth`,
+   so Claude Code, Hermes and 0.4's claude.ai connectors keep their key and
+   address when DNS moves. Check: a `worker.ping` on cachyrig through an
+   existing client. A claude.ai connector that signs in again later gets the
+   sign-in page (Bake's user name and password) instead of 0.4's
+   auto-approve. The house agent: `agent.chat.send` `{agent: house, text: "say ok"}`
    answers. Landing work: a task's sign-off, then `github.merge` (R14).
 6. **Chat bots.** Telegram and Discord on 0.5 (one hub per bot token; 0.4
    is stopped), then Bake relinks with `/link`.

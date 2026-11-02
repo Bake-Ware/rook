@@ -18,7 +18,7 @@ Options: ``bind: "127.0.0.1:8741"`` (port 0 picks one), ``path: /mcp``,
 ``origins: [...]``: browser origins allowed in; a request with any other
 ``Origin`` header is refused (DNS rebinding). Bind to localhost; put TLS in
 front before exposing it. ``oauth: https://rook.example`` (the door's public
-address) lets claude.ai's connectors in: the person signs in with their user
+address; a list for several names, the first shown) lets claude.ai's connectors in: the person signs in with their user
 name and password and the connector gets a token for them acting through the
 agent ``oauth_agent`` (default ``claude-web``, an agent in hub.yaml)
 (:mod:`.mcp_oauth`).
@@ -166,8 +166,8 @@ class McpDoor(HttpDoor):
         log.info("connector signed in", extra={"fields": {"person": person, "agent": self.oauth_agent}})
         return self.hub.add_token(Caller(person, f"agent:{self.oauth_agent}"), label="claude.ai connector")
 
-    def challenge(self) -> str:
-        return self.oauth.challenge() if self.oauth else "Bearer"
+    def challenge(self, host: str | None = None) -> str:
+        return self.oauth.challenge(host) if self.oauth else "Bearer"
 
     async def rpc(self, caller, method: str, params: dict) -> dict:
         """One JSON-RPC request to its result, or :class:`RpcError`."""
@@ -268,7 +268,8 @@ class _McpHandler(_Handler):
                 person = passwords.sign_in(self.door.hub, f.get("user"), f.get("password"))
 
             async def answer():      # on the hub's loop, like every token check (and one codes dict)
-                return oauth.handle(method, url.path.rstrip("/"), url.query, body, auth, person=person)
+                return oauth.handle(method, url.path.rstrip("/"), url.query, body, auth, person=person,
+                                    host=self.headers.get("Host"))
             return self._run(answer())
         if url.path.rstrip("/") != self.door.path.rstrip("/"):
             raise _Error(404, "not found")
