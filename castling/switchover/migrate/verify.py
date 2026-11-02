@@ -31,7 +31,7 @@ from pathlib import Path
 
 from rook.core2.hub.runtime import load_config
 
-from . import archive, names, rooms
+from . import archive, names, rooms, tokens
 from .source import Source, _tables, open_ro
 
 ARCHIVE_WHY = ("castling-design", "Migration from 0.4 is not a product feature ... export knowledge, projects/tasks, "
@@ -365,9 +365,10 @@ def _people(source: Source, cfg, mig: dict) -> list:
     other = [a for a in accts if a["id"] not in members]
     rows.append(_row("accounts", len(accts), len(accts) - len(other), len(other), why=WHY["other_user"],
                      note="accounts that were never members of the hub"))
-    tokens = sum(len(p["tokens"]) for p in people)
-    rows.append(_row("api keys", tokens, 0, tokens, why=WHY["clean"],
-                     note="each client gets a new 0.5 token (runbook); the report lists every key's label"))
+    keys, _ = tokens.keys(source.root, people, mig.get("people") or [], source.secrets()[0], cfg.agents)
+    lost = tokens.carried(cfg.data, keys)
+    rows.append(_row("MCP keys (API keys + static token)", len(keys), len(keys) - len(lost), missing=lost,
+                     note="hashes in tokens.json: each key works on 0.5 unchanged"))
     links = sum(len(p["chat_links"]) for p in people) + len(source.spaces())
     rows.append(_row("chat links and spaces", links, 0, links, why=WHY["clean"], note="relink with /link on 0.5"))
     workers = mig.get("workers") or []

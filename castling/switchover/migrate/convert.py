@@ -117,9 +117,6 @@ def people(rows: list[dict], existing: dict, worker_names: dict, several_bands: 
             for t, gid in tiers:
                 if t != top:
                     notes.append(f"{name}: grant {gid} was {t}-only; under {preset} it reaches {top} caps")
-        for t in p["tokens"]:
-            notes.append(f"{name}: 0.4 API key {t['label'] or t['agent_id']} isn't carried over: "
-                         f"mint a new one with `python -m rook.core2.hub --config <hub.yaml> token --person {name}`")
         for c in p["chat_links"]:
             notes.append(f"{name}: {c['platform']} link {c['handle'] or ''} isn't carried over: link again "
                          "once the 0.5 chat plugin runs")

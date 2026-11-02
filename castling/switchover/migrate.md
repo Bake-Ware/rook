@@ -76,8 +76,14 @@ what is missing.
 | the whole copy (every store, file and the journal) | `<data>/archive/0.4/`, byte for byte, read-only, with `MANIFEST.json`; never replayed into the 0.5 chains |
 | machines | a re-enrollment checklist: on each, `python -m rook.core2.worker --config worker.yaml enroll <hub>` |
 
-Not carried over, and listed under "For a person to look at": API keys (mint
-new ones with `... hub token --person <name>`), chat links and shared chat
+MCP keys move too: every 0.4 API key (`oauth.json`) and the static token (the
+0.4 vault's `rook-mcp-static-token`) becomes a `<data>/tokens.json` entry (its
+hash only) acting for its owner through an agent named after the key ("Claude
+web" -> `claude-web`), so each client keeps working with the key it has once
+the names point at the 0.5 hub. 0.4's claude.ai connectors used those keys as
+their access and refresh token, so they keep working too.
+
+Not carried over, and listed under "For a person to look at": chat links and shared chat
 spaces, guarded machines and `cap:`/`repo:`/`resource:` trust entries,
 exceptions, baselines and the borrowed-state ledger, per-grant tier ceilings
 below a person's highest one, knowledge areas. Forgotten, superseded and

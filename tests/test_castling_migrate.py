@@ -212,7 +212,7 @@ def test_dry_run_reports_everything_and_writes_nothing(tmp_path, copy04):
     assert workers["nas"]["enroll"].endswith("enroll http://" + load_config(cfg).doors["http"]["bind"] + " --name nas")
     notes = "\n".join(r["notes"])
     for words in ("g2 was read-only", "knowledge area 'recipes'", "discord:123", "fnmatch wildcards",
-                  "band band-a", "API key laptop", "telegram link", "chat space discord:123",
+                  "band band-a", "telegram link", "chat space discord:123",
                   "trust entry nas (guarded): worker:nas, cap:file.*", "were guarded in 0.4",
                   "1 exceptions entries", "sacred worker:*-tv matched living-room-tv"):
         assert words in notes, words

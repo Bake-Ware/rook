@@ -87,8 +87,8 @@ class HttpDoor:
         self._thread.start()
         log.info("door open", extra={"fields": {"door": self.name, "bind": f"{self.host}:{self.port}"}})
 
-    def challenge(self) -> str:
-        """The ``WWW-Authenticate`` a 401 carries."""
+    def challenge(self, host: str | None = None) -> str:
+        """The ``WWW-Authenticate`` a 401 carries (``host``: the request's Host header)."""
         return "Bearer"
 
     async def stop(self) -> None:
@@ -140,7 +140,7 @@ class _Handler(BaseHTTPRequestHandler):
         for k, v in headers.items():
             self.send_header(k, v)
         if status == 401:
-            self.send_header("WWW-Authenticate", self.door.challenge())
+            self.send_header("WWW-Authenticate", self.door.challenge(self.headers.get("Host")))
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()

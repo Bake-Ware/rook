@@ -47,6 +47,7 @@ class Tokens:
         """Where agents reach the MCP door from outside: its OAuth origin."""
         mcp = (self.hub.cfg.doors or {}).get("mcp") or {}
         origin = mcp.get("oauth")
+        origin = origin[0] if isinstance(origin, list) and origin else origin   # a list: the first is shown
         return f"{origin.rstrip('/')}/mcp" if isinstance(origin, str) and origin else None
 
     async def create(self, ctx, agent: str, label: str | None = None) -> dict:

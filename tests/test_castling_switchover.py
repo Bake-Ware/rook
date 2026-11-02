@@ -61,7 +61,7 @@ def test_snapshot_dry_run_writes_private_reports_and_a_names_free_summary(tmp_pa
     summary = (out / "summary.md").read_text()
     assert capsys.readouterr().out == summary
     for words in ("stores found: 8 of 12", "people: 3 (1 member-admin, 1 member-write, 1 owner)",
-                  "vault: 2 secrets", "machines to re-enroll: 3", "1 API keys to mint again"):
+                  "vault: 2 secrets", "machines to re-enroll: 3", "MCP keys carried (they keep working on 0.5): 0"):
         assert words in summary, words
     report = (out / "report.md").read_text()
     assert "github-pat" in report and "github-pat" not in summary          # names stay in the private report

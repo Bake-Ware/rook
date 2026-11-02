@@ -39,8 +39,12 @@ file cuts the connector off. No client registration: claude.ai takes any
 client id typed into the connector's Advanced settings.
 
 On with the door option ``oauth: https://rook.example``: the door's public
-address as clients reach it (https; http only on loopback). The door then
-answers, beside ``/mcp``::
+address as clients reach it (https; http only on loopback). A list names
+several (``[https://rook.example, https://mcp.rook.example]``, the first is
+the one the hub shows): a request gets the metadata of the address its Host
+header names, so the door answers on each, and moving a name to this hub is
+only a DNS change (Bake, Nov 1: "So they just pick up when DNS switches").
+The door then answers, beside ``/mcp``::
 
     GET  /.well-known/oauth-protected-resource[/mcp]   RFC 9728: names the issuer
     GET  /.well-known/oauth-authorization-server       RFC 8414 (no registration)
@@ -95,6 +99,14 @@ def check_url(url) -> str:
     return f"{u.scheme}://{u.netloc}"
 
 
+def check_urls(urls) -> list[str]:
+    """The ``oauth`` door option as a list of origins (one, or several)."""
+    urls = urls if isinstance(urls, (list, tuple)) else [urls]
+    if not urls:
+        raise ValueError("doors.mcp.oauth must name at least one public address")
+    return list(dict.fromkeys(check_url(u) for u in urls))
+
+
 class OAuthShim:
     """``authenticate(token)`` is the door's own bearer check (a Caller or
     None); ``mint(person)`` makes the connector's token for a signed-in
@@ -105,7 +117,8 @@ class OAuthShim:
                  problem: Callable = lambda: None, clock: Callable = time.time,
                  token_client: Callable = lambda client_id: False,
                  approvals_file=None, note: Callable = lambda **fields: None):
-        self.base, self.path = check_url(base), path
+        self.bases, self.path = check_urls(base), path
+        self.base = self.bases[0]
         self.authenticate, self.mint, self.problem, self.clock = authenticate, mint, problem, clock
         self.token_client = token_client      # client id -> True when it names a minted agent token
         self.approvals_file = approvals_file  # <data>/oauth-approvals.json: codes the hub CLI approved
@@ -117,9 +130,14 @@ class OAuthShim:
     def resource(self) -> str:
         return self.base + self.path
 
-    def challenge(self) -> str:
+    def origin(self, host: str | None = None) -> str:
+        """The configured address a request's Host header names, else the first."""
+        host = (host or "").strip().lower()
+        return next((b for b in self.bases if urlsplit(b).netloc.lower() == host), self.base)
+
+    def challenge(self, host: str | None = None) -> str:
         """The 401's ``WWW-Authenticate`` (RFC 9728 5.1)."""
-        return f'Bearer resource_metadata="{self.base}{PRM}{self.path}"'
+        return f'Bearer resource_metadata="{self.origin(host)}{PRM}{self.path}"'
 
     def owns(self, method: str, path: str) -> bool:
         return (method, path) in (("GET", "/authorize"), ("POST", "/authorize"), ("POST", "/token"),
@@ -127,19 +145,19 @@ class OAuthShim:
             (method == "GET" and path in (PRM, PRM + self.path, ASM, "/.well-known/openid-configuration"))
 
     def handle(self, method: str, path: str, query: str, body: bytes, auth: str = "",
-               person: str | None = None) -> Reply:
-        """One request to an owned path; ``auth`` is its Authorization header.
+               person: str | None = None, host: str | None = None) -> Reply:
+        """One request to an owned path; ``auth`` is its Authorization header,
+        ``host`` its Host header (which configured address it came in on).
         ``person``: who the POST /authorize form's user name and password
         signed in as (the door checks them off the hub's loop), or None."""
+        base = self.origin(host)
         if path in (PRM, PRM + self.path):
-            return 200, {"resource": self.resource, "authorization_servers": [self.base],
+            return 200, {"resource": base + self.path, "authorization_servers": [base],
                          "bearer_methods_supported": ["header"], "scopes_supported": [SCOPE]}, {}
         if path.startswith("/.well-known/"):
-            # No registration_endpoint: claude.ai then takes any client id
-            # typed into the connector (Advanced settings); no secret needed.
-            return 200, {"issuer": self.base, "authorization_endpoint": self.base + "/authorize",
-                         "token_endpoint": self.base + "/token", "response_types_supported": ["code"],
-                         "registration_endpoint": self.base + "/register",
+            return 200, {"issuer": base, "authorization_endpoint": base + "/authorize",
+                         "token_endpoint": base + "/token", "response_types_supported": ["code"],
+                         "registration_endpoint": base + "/register",
                          "grant_types_supported": ["authorization_code", "refresh_token"],
                          "code_challenge_methods_supported": ["S256"],
                          "token_endpoint_auth_methods_supported": ["none", "client_secret_post", "client_secret_basic"],
