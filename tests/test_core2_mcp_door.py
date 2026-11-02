@@ -263,6 +263,80 @@ def test_stream_tool_calls_the_stream_caps():
                                                              "body": {"text": "ls\n"}}, "why": WHY}, "mcp")]
 
 
+def test_a_long_call_hands_back_a_stream_to_follow(mcp_hub):
+    """A call still running after the door's wait answers at once with its id
+    and a hub stream; the call keeps running and its reply lands in the stream
+    (castling-streams: read by cursor, long-poll), under the same journal id."""
+    async def go():
+        hub, _, url, token = await mcp_hub()
+        hub.doors[0].wait = 0.3
+        gate, real = asyncio.Event(), hub.dispatcher.dispatch
+
+        async def slow(caller, call):
+            if call.cap == "echo.say":
+                await gate.wait()
+            return await real(caller, call)
+        hub.dispatcher.dispatch = slow
+        try:
+            err, out = await tool(url, token, "call", worker="kaiju", cap="echo.say", args={"text": "late"}, why=WHY)
+            assert not err and out["running"] and out["worker"] == "rook" and out["stream"].startswith("s_")
+            assert "ok" not in out and not hub.journal.query(call=out["id"])
+            meta = hub.streams.streams.get(out["stream"])
+            assert meta.kind == "call" and meta.attrs["call"] == out["id"]
+            assert set(meta.participants) == {"person:bake", "agent:claude"}
+            _, first = await tool(url, token, "stream", worker="rook", stream=out["stream"], why=WHY, after=0)
+            assert [e["data"].get("state") for e in first["result"]["events"] if e["type"] == "status"][-1] == "running"
+            _, wrote = await tool(url, token, "stream", worker="rook", stream=out["stream"], why=WHY,
+                                  input={"text": "hi"})
+            assert wrote["ok"] is False                     # core's stream: nobody else writes in it
+            gate.set()
+            _, more = await tool(url, token, "stream", worker="rook", stream=out["stream"], why=WHY,
+                                 after=first["result"]["next"], wait=5)
+            done = [e["data"] for e in more["result"]["events"] if e["data"].get("state") == "done"]
+            assert done and done[0]["reply"]["id"] == out["id"] and done[0]["reply"]["ok"] is True
+            assert done[0]["reply"]["result"]["said"] == "late"
+            await until(lambda: hub.streams.streams.get(out["stream"]).closed)
+            assert hub.journal.query(call=out["id"])[0]["ok"] is True
+            hub.dispatcher.dispatch = real                  # a quick call still answers in place
+            err, quick = await tool(url, token, "call", worker="kaiju", cap="echo.say", args={"text": "now"}, why=WHY)
+            assert not err and quick["ok"] and quick["result"]["said"] == "now" and "stream" not in quick
+        finally:
+            gate.set()
+            await hub.stop()
+    run(go())
+
+
+def test_a_followed_reply_too_big_for_one_event_keeps_its_outcome(mcp_hub):
+    async def go():
+        hub, _, url, token = await mcp_hub()
+        hub.doors[0].wait = 0.2
+
+        real = hub.dispatcher.dispatch
+
+        async def big(caller, call):
+            if call.cap != "echo.say":
+                return await real(caller, call)
+            await asyncio.sleep(0.5)
+            return {"id": call.id, "ok": True, "result": "x" * (1 << 20)}
+        hub.dispatcher.dispatch = big
+        try:
+            _, out = await tool(url, token, "call", worker="kaiju", cap="echo.say", args={"text": "x"}, why=WHY)
+            await until(lambda: hub.streams.streams.get(out["stream"]).closed)
+            events = (await hub.streams.streams.read(out["stream"], 0, 50))["events"]
+            done = [e.body for e in events if e.type == "status" and e.body.get("state") == "done"][0]
+            assert done["truncated"] and done["reply"]["id"] == out["id"] and done["reply"]["ok"] is True
+            assert len(done["reply"]["result"]) == 200_000
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_the_door_wait_is_bounded():
+    with pytest.raises(ValueError):
+        McpDoor(object(), {"wait": 120})
+    assert McpDoor(object(), {"wait": 20}).instructions.count("after 20 seconds") == 1
+
+
 def test_the_kill_switch_closes_every_path_and_survives_a_restart(mcp_hub, tmp_path):
     # Review D7: a closed MCP door refuses its reads and session starts too,
     # the same agent token on the HTTP door, and stays closed after a

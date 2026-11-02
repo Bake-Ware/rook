@@ -629,7 +629,9 @@ it.
   `idempotent: true` and never one with `destructive` or `physical`
   effects. Late replies are journaled.
 - The hub waits for a cap's declared `timeout` (manifest), else 15 s, plus
-  5 s.
+  5 s. A cap that declares a `timeout` argument (a number of seconds) is
+  waited on for at least the value the call passes (else that argument's
+  default), up to the argument's `max` and at most an hour.
 
 ### 6.6 Call context
 

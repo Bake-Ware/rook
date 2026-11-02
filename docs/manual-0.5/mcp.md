@@ -119,6 +119,14 @@ The hub is worker `rook`: `call worker=rook cap=task.list ...`.
   person its name and stop. It runs once they approve; `journal call=<id>`
   shows how it went. Never work around a hold, and never retry a denial in
   another shape.
+- **Long calls hand back a stream.** A call still running after the door's
+  `wait` (45 s by default, `doors.mcp.wait` in hub.yaml) answers at once with
+  `{id, running: true, worker: "rook", stream}` and keeps running. Follow it
+  with `stream worker=rook stream=<stream> after=<next> wait=40` until a
+  `status` event has `state: done`: that event carries the reply (`{id, ok,
+  result | error}`), and the stream then closes. Don't call again meanwhile;
+  `journal call=<id>` shows the outcome too. No request stays open longer
+  than the wait, so a client's or Cloudflare's limit (100 s) never cuts a call.
 - **Timeouts aren't failures.** A timed-out call may still be running:
   read `journal call=<id>` before trying anything with side effects again.
 - **You act as two.** Your token is an agent acting for a person: you get

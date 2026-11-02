@@ -72,6 +72,7 @@ from rook.kit.ctx import Caller as KitCaller, KitError
 from rook.kit.manifest import check, normalize, validate
 from rook.kit.manifest.diff import semver_key
 from rook.kit.records import RecordStore
+from rook.streams import StreamError, StreamSpec
 
 from .. import CORE_VERSION, rights, wire
 from ..builtin import CORE, STREAM
@@ -91,6 +92,10 @@ from .appliance import caps as appliance_caps
 from .backup import caps as backup_caps
 
 log = logging.getLogger("rook.hub")
+
+# A followed call's stream (Hub.call_or_follow): only core's status events
+# (running, then done with the reply); durable, so a caller may come back late.
+CALL_STREAM = StreamSpec(("status",), durable=True)
 
 HEX32 = re.compile(r"[0-9a-f]{32}")
 ANNOUNCE_EVERY = 30.0         # hub announce, ±20 % (5.4)
@@ -1379,9 +1384,11 @@ class Hub:
 
     # -- the door API ---------------------------------------------------------------
 
-    async def call(self, caller: Caller, body: dict, door: str, layers: list | None = None) -> dict:
+    async def call(self, caller: Caller, body: dict, door: str, layers: list | None = None,
+                   call_id: str | None = None) -> dict:
         """``{worker, cap, args?, why, session?, appliance?, elevate?}`` from a door.
-        ``layers`` narrows it further (a dashboard page's declared caps)."""
+        ``layers`` narrows it further (a dashboard page's declared caps);
+        ``call_id`` is the id when the door handed it out already."""
         cap, target = body.get("cap"), body.get("worker")
         args, sid = body.get("args"), body.get("session")
         if not (isinstance(cap, str) and cap and isinstance(target, str) and target):
@@ -1394,9 +1401,68 @@ class Hub:
         why = body.get("why") if isinstance(body.get("why"), str) else ""
         reply = await self.dispatcher.dispatch(caller, Call(
             cap=cap, target=target, args=args, why=why, session=sid or self._door_session(caller),
-            appliance=appliance, elevate=body.get("elevate") is True, door=door, layers=list(layers or ())))
+            appliance=appliance, elevate=body.get("elevate") is True, door=door, layers=list(layers or ()),
+            id=call_id))
         self._announce(reply)
         return reply
+
+    async def call_or_follow(self, caller: Caller, body: dict, door: str, wait: float) -> dict:
+        """:meth:`call` for a door whose client gives up on a long request (an
+        MCP client, a proxy's response limit). The call's reply when it comes
+        within ``wait`` seconds; otherwise the call keeps running and the
+        caller gets a handle at once: ``{id, running: true, worker: "rook",
+        stream}``. The stream (kind ``call``, on the hub, readable by the
+        caller's person and agent) gets a ``status`` event ``{state:
+        "running"}`` now and ``{state: "done", reply}`` when the call ends,
+        then closes; ``stream.read`` with ``wait`` follows it
+        (castling-streams: one API, read by cursor, long-poll). The journal
+        entry carries the same id. Generic: nothing here knows the cap."""
+        cid = _secrets.token_hex(16)
+        task = asyncio.get_running_loop().create_task(self.call(caller, body, door, call_id=cid))
+        done, _ = await asyncio.wait({task}, timeout=max(0.0, float(wait)))
+        if done:
+            return task.result()
+        self._tasks.add(task)
+        try:
+            meta = self.streams.streams.open(
+                "call", spec=CALL_STREAM, producer="hub",
+                title=f"{body.get('cap')} on {body.get('worker')}: {str(body.get('why') or '')[:120]}",
+                participants=[p for p in (caller.person, caller.agent) if p],
+                attrs={"plugin": "core", "call": cid, "cap": body.get("cap"), "worker": body.get("worker"),
+                       "door": door, **({"band": self.band} if self.band else {})})
+            self.streams.streams.append(meta.id, "status", {"state": "running", "call": cid}, by="hub")
+        except Exception:
+            log.exception("call stream failed", extra={"fields": {"call": cid}})
+            task.add_done_callback(self._done)
+            return {"id": cid, "running": True,
+                    "error": "still running, and no stream to follow it: journal call=<id> shows how it went"}
+        task.add_done_callback(lambda t: self._call_done(meta.id, cid, t))
+        return {"id": cid, "running": True, "worker": "rook", "stream": meta.id,
+                "follow": f"Still running after {wait:g}s. stream worker=rook stream={meta.id} after=<next> "
+                          "wait=40 until a status event has state done: it carries the reply "
+                          "(journal call=<id> shows the outcome too)."}
+
+    def _call_done(self, sid: str, cid: str, t: asyncio.Task) -> None:
+        """A followed call ended: its reply into its stream, which then closes."""
+        self._tasks.discard(t)
+        if t.cancelled():
+            reply = {"id": cid, "ok": False, "error": "the hub stopped before the call ended"}
+        elif t.exception() is not None:
+            log.error("followed call failed", exc_info=t.exception())
+            reply = {"id": cid, "ok": False, "error": "internal error"}
+        else:
+            reply = t.result()
+        s = self.streams.streams
+        try:
+            try:
+                s.append(sid, "status", {"state": "done", "reply": reply}, by="hub")
+            except StreamError:           # larger than one event: keep the outcome, point at the rest
+                short = {k: reply[k] for k in ("id", "ok", "error", "held", "hold") if k in reply}
+                s.append(sid, "status", {"state": "done", "truncated": True, "reply": {
+                    **short, "result": json.dumps(reply.get("result"), default=str)[:200_000]}}, by="hub")
+            s.close(sid, by="hub")
+        except Exception:
+            log.exception("call stream write failed", extra={"fields": {"call": cid, "stream": sid}})
 
     def _announce(self, reply: dict) -> None:
         """A held call becomes a card: ``hold.created`` (for door calls and
