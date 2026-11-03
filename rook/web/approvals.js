@@ -8,7 +8,6 @@ export async function mountApprovals(root, opts = {}){
   useCss();
   let data = {pending: [], trust: [], recent: [], settings: {}}, timer = null, busy = false;
   const status = h('p', {class: 'mg-status', role: 'status'});
-  const warn = h('p', {class: 'mg-box mg-pad mg-bad', role: 'alert', hidden: true});
   const note = h('p');
   const waiting = h('div', {style: 'display:flex;flex-direction:column;gap:10px'});
   const recent = h('div', {class: 'mg-box'});
@@ -20,7 +19,7 @@ export async function mountApprovals(root, opts = {}){
   root.replaceChildren(h('div', {class: 'mg ap'},
     h('div', {class: 'mg-bar'}, h('h2', {class: 'ap-h'}, 'Waiting', count), info(note, 'How approvals work'),
       h('span', {class: 'mg-grow'}), btn('↻', 'icon', () => refresh().catch(fail), {'aria-label': 'Refresh', title: 'Refresh'})),
-    warn, status, waiting,
+    status, waiting,
     h('div', {class: 'mg-bar ap-recent'}, h('h2', {text: 'Recent'})), recent, relayHead, relayed));
 
   function fail(e){ status.textContent = e.message; }
@@ -94,8 +93,6 @@ export async function mountApprovals(root, opts = {}){
 
   function draw(){
     const s = data.settings || {};
-    warn.hidden = !data.weak_message;
-    warn.textContent = data.weak_message || '';
     const n = data.pending.length + (data.trust || []).length;
     count.textContent = String(n); count.hidden = !n;
     note.textContent = 'Only the hard stops and the trust map hold a call. Agents wait up to ' + Math.round(s.wait_secs || 0) +

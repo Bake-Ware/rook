@@ -84,9 +84,6 @@ log = logging.getLogger(__name__)
 #: The house agent's front door (rook/hub/plugins/home/front.py; the Decisions page).
 FRONT_ACTIONS = ("front_count", "front_view", "front_answer", "front_explain", "front_overturn",
                  "front_playbook_save")
-WEAK_FRONT = ("This sign-in uses a password that is stored as a band secret, so agents could "
-              "sign in as you with it. It can't say yes to an action. Answer on your phone's "
-              "card, or change the password (or remove that secret) and sign in again.")
 ROLE_ACTIONS = ("role_list", "role_get", "role_history", "role_presets", "role_memory",
                 "role_workspace", "role_sessions", "role_set", "role_delete", "role_move",
                 "role_memory_edit")
@@ -221,15 +218,7 @@ def routes(get_node: Callable[[], Any], accounts):
         if action == "front_explain":
             return front.explain(str(data.get("ask") or ""), bool(data.get("more")))
         if action == "front_answer":
-            a = front.store.find_ask(str(data.get("ask") or ""))
             decision = str(data.get("decision") or "")
-            if a is not None and a.get("action") and decision == "yes":
-                weak = True
-                with contextlib.suppress(Exception):
-                    from ....remote.account_web import COOKIE
-                    weak = bool(accounts.session_weak(request.cookies.get(COOKIE, "")))
-                if weak:
-                    raise PermissionError(WEAK_FRONT)
             return await front.answer(str(data.get("ask") or ""), decision, by=who,
                                       quote=f"{'Yes' if decision == 'yes' else 'No'} on the "
                                             "dashboard's Decisions page",

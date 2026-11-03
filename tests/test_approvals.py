@@ -484,17 +484,10 @@ async def test_agent_hub_tool_call_is_held_through_mcp(tmp_path, monkeypatch):
 
 # -- the dashboard API ------------------------------------------------------------------
 
-def dashboard(tmp_path, principal, *, weak_sessions=(), vaulted=lambda *v: False):
+def dashboard(tmp_path, principal):
     from rook.remote.approvals_web import ApprovalsWeb
     az = authorizer(tmp_path)
-
-    async def credential_is_vaulted(*values):
-        return vaulted(*values)
-
-    store = SimpleNamespace(session_weak=lambda tok: tok in set(weak_sessions))
-    server = SimpleNamespace(_band=SimpleNamespace(authz=az), _authz=az,
-                             _accounts=SimpleNamespace(store=store),
-                             credential_is_vaulted=credential_is_vaulted)
+    server = SimpleNamespace(_band=SimpleNamespace(authz=az), _authz=az)
 
     @web.middleware
     async def who(request, handler):
@@ -620,7 +613,7 @@ async def test_integration_commands_are_held(tmp_path):
     assert "Held for approval" not in out and sent[-1]["cap"] == "worker.restart"  # admin goes
 
 
-# -- an agent-usable sign-in can't approve (permissions 3.11, bypass 1) --------------------
+# -- any signed-in owner decides, whatever the password (hotfix 2026-11-03) ---------------
 
 def _vault(tmp_path):
     from rook.band_mcp import secret_mask
@@ -645,81 +638,23 @@ def test_secret_masker_contains_value_and_encoded_forms(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_is_secret_route_returns_only_a_boolean(tmp_path):
-    from starlette.applications import Starlette
-    from starlette.testclient import TestClient
-    from rook.band_mcp import secret_mask
-    from rook.band_mcp.mask_web import is_secret_route
-    v, _ = _vault(tmp_path)
-    try:
-        v.set("dash-pass", "correct horse battery", "", "human:u1")
-        app = Starlette(routes=[is_secret_route("tok")])
-        c = TestClient(app)
-        hdr = {"Authorization": "Bearer tok"}
-        assert c.post("/internal/is-secret", json={"value": "nope"}, headers=hdr).json() == {"secret": False}
-        r = c.post("/internal/is-secret", json={"value": "correct horse battery"}, headers=hdr)
-        assert r.json() == {"secret": True}                 # only a boolean: no names, no values
-        assert c.post("/internal/is-secret", json={"value": "x"}).status_code == 401
-    finally:
-        secret_mask.install(None)
-
-
-@pytest.mark.asyncio
-async def test_basic_auth_with_a_vaulted_password_cannot_approve(tmp_path):
+async def test_a_password_kept_in_the_vault_still_approves(tmp_path):
+    """Bake (2026-11-03): "remove that restriction". A sign-in whose password
+    is also a vault secret is no longer marked weak: the owner decides."""
     import base64
     principal = [OWNER]
-    app, az = dashboard(tmp_path, principal, vaulted=lambda *v: "s3cret-pass" in v)
+    app, az = dashboard(tmp_path, principal)
     az.approvals.config_source.fixed = cfg(wait_secs=0)
     async with TestClient(TestServer(app)) as http:
         held = await az.resolve(stop(az), RM)
-        good = {"Authorization": "Basic " + base64.b64encode(b"op:other-pass").decode()}
-        bad = {"Authorization": "Basic " + base64.b64encode(b"op:s3cret-pass").decode()}
-        d = await (await http.get("/api/approvals", headers=bad)).json()
-        assert d["can_decide"] is False and d["weak_credential"] and d["weak_message"]
-        r = await http.post(f"/api/approvals/{held['hold']}", json={"decision": "approve"}, headers=bad)
-        assert r.status == 403 and (await r.json())["weak_credential"]
-        assert az.approvals.queue.get(held["hold"])["state"] == "pending"
-        r = await http.post(f"/api/approvals/{held['hold']}", json={"decision": "approve"}, headers=good)
+        hdr = {"Authorization": "Basic " + base64.b64encode(b"op:s3cret-pass").decode()}
+        http.session.cookie_jar.update_cookies({"rook_session": "any", "rook_account": "any"})
+        d = await (await http.get("/api/approvals", headers=hdr)).json()
+        assert not {"can_decide", "weak_credential", "weak_message"} & set(d)
+        r = await http.post(f"/api/approvals/{held['hold']}", json={"decision": "approve"},
+                            headers=hdr)
         assert r.status == 200
-        assert (await (await http.get("/api/approvals", headers=good)).json())["can_decide"] is True
-
-
-@pytest.mark.asyncio
-async def test_a_flagged_session_cookie_cannot_approve(tmp_path):
-    principal = [OWNER]
-    app, az = dashboard(tmp_path, principal, weak_sessions=["weaktok"])
-    az.approvals.config_source.fixed = cfg(wait_secs=0)
-    async with TestClient(TestServer(app)) as http:
-        held = await az.resolve(stop(az), RM)
-        http.session.cookie_jar.update_cookies({"rook_account": "weaktok"})
-        r = await http.post(f"/api/approvals/{held['hold']}", json={"decision": "approve"})
-        assert r.status == 403 and az.approvals.queue.get(held["hold"])["state"] == "pending"
-
-
-@pytest.mark.asyncio
-async def test_approvals_fail_closed_when_the_vault_is_unreachable(tmp_path):
-    import base64
-    principal = [OWNER]
-    app, az = dashboard(tmp_path, principal, vaulted=lambda *v: None)  # None = can't tell
-    az.approvals.config_source.fixed = cfg(wait_secs=0)
-    async with TestClient(TestServer(app)) as http:
-        held = await az.resolve(stop(az), RM)
-        hdr = {"Authorization": "Basic " + base64.b64encode(b"op:any").decode()}
-        r = await http.post(f"/api/approvals/{held['hold']}", json={"decision": "approve"}, headers=hdr)
-        assert r.status == 403
-
-
-def test_weak_session_flag_round_trips(tmp_path, monkeypatch):
-    from rook.remote.accounts import AccountStore
-    from rook.remote.enrollment import EnrollmentStore
-    monkeypatch.setenv("ROOK_ENROLLMENT_DB", str(tmp_path / "enroll.db"))
-    store = AccountStore(EnrollmentStore())
-    tok = store.dashboard_session()
-    store.mark_weak_session(tok)
-    assert store.session_weak(tok)
-    assert not store.session_weak(store.dashboard_session())
-    store.dashboard_logout(tok)
-    assert not store.session_weak(tok)
+        assert az.approvals.queue.get(held["hold"])["state"] == "approved"
 
 
 # -- retired: hub-host holds, spread limit, operator contact -------------------------------

@@ -179,15 +179,13 @@ class AccountWeb:
         reached over plain HTTP (rook.remote.public_url.cookie_secure)."""
         set_cookie(response,request,self.origin,name,value,**kw)
 
-    def start_session(self,response,request,uid,weak=False):
+    def start_session(self,response,request,uid):
         token=self.store.new_session(uid)
-        if weak:
-            self.store.mark_weak_session(token)
         self.set_cookie(response,request,COOKIE,token,max_age=30*86400)
         return response
 
-    def signed_in(self,uid,request,weak=False):
-        return self.start_session(self.redirect(),request,uid,weak=weak)
+    def signed_in(self,uid,request):
+        return self.start_session(self.redirect(),request,uid)
 
     def csrf(self,request,data,user):
         if request.headers.get('Origin',self.origin)!=self.origin:
@@ -232,14 +230,7 @@ class AccountWeb:
                 return self.throttled(wait)
             return self.response('Sign in','<p>Invalid credentials. <a href="/account/login">Try again</a>.</p>',401)
         shared_throttle().success(keys)
-        pw=data.get('password','')
-        user=data.get('username','')
-        weak=False
-        check=getattr(self.server,'credential_is_vaulted',None)
-        if callable(check):
-            got=await check(pw, f"{user}:{pw}" if user else "")
-            weak=got is not False   # True or unknown (fail closed for approvals)
-        return self.signed_in(uid,request,weak=weak)
+        return self.signed_in(uid,request)
 
     def throttled(self,seconds):
         """429 for an address the login throttle locked out (rook.core.throttle)."""

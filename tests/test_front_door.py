@@ -503,14 +503,9 @@ async def test_the_decisions_page_answers_overturns_and_edits_the_playbook(front
     from rook.hub.plugins.huddle.web import routes
 
     class Accounts:
-        weak = False
-
         def session(self, token):
             return {"id": "1", "username": "bake", "name": "Bake", "admin": True,
                     "csrf": "tok"} if token == "s" else None
-
-        def session_weak(self, token):
-            return self.weak
     accounts = Accounts()
     a = front.front.make_ask("action", "Restart pianobar? (pianobar.restart on pianobar)",
                              "The playbook says ask first.", more="details",
@@ -534,10 +529,6 @@ async def test_the_decisions_page_answers_overturns_and_edits_the_playbook(front
         assert "## Just do it" in view["playbook"]["text"]
         code, body = await api(action="front_explain", ask=a["id"], more=True)
         assert body["result"]["more"] == "details"
-        accounts.weak = True
-        code, body = await api(action="front_answer", ask=a["id"], decision="yes")
-        assert code == 403 and "band secret" in body["error"] and not _ran(front, "pianobar.restart")
-        accounts.weak = False
         code, body = await api(action="front_answer", ask=a["id"], decision="yes")
         assert code == 200 and body["result"]["note"] == "Done: restart pianobar."
         assert front.front.store.find_ask(a["id"])["decided_by"] == "Bake"

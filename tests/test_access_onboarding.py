@@ -338,11 +338,10 @@ async def test_the_people_page_shows_owners_everything_and_members_their_own(nod
     from types import SimpleNamespace
     from starlette.applications import Starlette
     from rook.hub.plugins.access.web import routes
-    names = {"u_op": "Operator", "u_bake": "Bake", "u_kid": "Kid", "u_new": "New", "weak": "Bake"}
+    names = {"u_op": "Operator", "u_bake": "Bake", "u_kid": "Kid", "u_new": "New"}
     accounts = SimpleNamespace(
-        session=lambda c: {"id": "u_bake" if c == "weak" else c, "name": names.get(c, c),
-                           "csrf": "k", "admin": c == "u_op"} if c else None,
-        session_weak=lambda c: c == "weak")
+        session=lambda c: {"id": c, "name": names.get(c, c),
+                           "csrf": "k", "admin": c == "u_op"} if c else None)
     app = Starlette(routes=routes(lambda: node, accounts))
     api = "/people/account-api"
     hdr = {u: {"Cookie": f"rook_account={u}"} for u in names}
@@ -366,11 +365,6 @@ async def test_the_people_page_shows_owners_everything_and_members_their_own(nod
         assert view["owner"] is True and view["can_edit"] is True
         assert [m["name"] for m in view["choices"]["machines"]] == ["kids-pc"]
         assert view["waiting"]["requests"][0]["words"] == "the kids pc please"
-        weak = await c.post(api, headers=hdr["weak"], json={"csrf": "k", "action": "grant",
-                                                            "user": "u_new", "kind": "worker",
-                                                            "ref": "w_pc"})
-        assert weak.status_code == 403 and "agents" in weak.json()["error"]
-        assert (await c.get(api, headers=hdr["weak"])).json()["can_edit"] is False
         got = (await c.post(api, headers=hdr["u_bake"], json={
             "csrf": "k", "action": "grant", "user": "u_new", "kind": "worker", "ref": "w_pc",
             "tier": "read", "note": "homework only"})).json()
