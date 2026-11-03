@@ -16,6 +16,8 @@ from pathlib import Path
 
 NAME = re.compile(r"rook-hub-([0-9a-f]{8,64})-(\d{8}T\d{6}Z)\.rookbak")
 MAX_DATA = 6 * 1024 * 1024        # base64 of 4 MiB, with room
+PART = 4 << 20                    # bytes asked of backup.part at a time
+TRIES = 3                         # tries per part before pull gives up
 
 
 def _folder(ctx) -> Path:
@@ -30,6 +32,54 @@ def _name(ctx, name: str) -> str:
     return name
 
 
+def _drop_parts(folder: Path, name: str) -> None:
+    """A new upload of a hub's backup: what an earlier one left is dropped."""
+    hub = NAME.fullmatch(name).group(1)
+    keep = folder / (name + ".part")
+    for old in folder.glob(f"rook-hub-{hub}-*.rookbak.part"):
+        if old != keep:
+            old.unlink(missing_ok=True)
+
+
+def pull(ctx, name, size, sha256):
+    folder, name = _folder(ctx), _name(ctx, name)
+    if (folder / name).exists():
+        raise ctx.Error(f"{name} is here already")
+    _drop_parts(folder, name)
+    part = folder / (name + ".part")
+    h = hashlib.sha256()
+    fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            offset = 0
+            while offset < size:
+                for tries in range(TRIES):       # a lost or timed-out part is asked for again
+                    try:
+                        got = ctx.call("backup.part", name=name, offset=offset, size=min(PART, size - offset))
+                        break
+                    except Exception:
+                        if tries == TRIES - 1:
+                            raise
+                try:
+                    raw = base64.b64decode(got["data"], validate=True)
+                except (binascii.Error, ValueError, KeyError, TypeError):
+                    raise ctx.Error(f"{name}: the hub's part at {offset} isn't base64") from None
+                if not raw:
+                    raise ctx.Error(f"{name}: the hub sent nothing at {offset} of {size} bytes")
+                f.write(raw)
+                h.update(raw)
+                offset += len(raw)
+            f.flush()
+            os.fsync(f.fileno())
+        if offset != size or h.hexdigest() != sha256:
+            raise ctx.Error(f"{name}: got {offset} bytes and they don't match its sha256; pull it again")
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
+    os.replace(part, folder / name)
+    return {"name": name, "size": size, "kept": True}
+
+
 def put(ctx, name, offset, data, sha256=None):
     folder, name = _folder(ctx), _name(ctx, name)
     if (folder / name).exists():
@@ -42,10 +92,7 @@ def put(ctx, name, offset, data, sha256=None):
         raise ctx.Error("data is not base64") from None
     part = folder / (name + ".part")
     if offset == 0:                # a new upload: what an earlier one of this hub left is dropped
-        hub = NAME.fullmatch(name).group(1)
-        for old in folder.glob(f"rook-hub-{hub}-*.rookbak.part"):
-            if old != part:
-                old.unlink(missing_ok=True)
+        _drop_parts(folder, name)
     have = part.stat().st_size if part.exists() else 0
     if offset not in (0, have):
         raise ctx.Error(f"offset {offset}: {have} bytes are here; send from {have} (or 0 to start again)")

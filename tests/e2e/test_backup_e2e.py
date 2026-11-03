@@ -46,11 +46,15 @@ def test_nightly_backup_to_a_worker_and_restore_elsewhere(fresh):
     first = run["result"]
     assert first["target"] == "worker:e2e-worker" and first["verified"]["hub"] == b.hub_id
     assert [p.name for p in store.iterdir()] == [first["name"]]
-    assert b.worker_calls("backup-store.put") >= 1 and b.worker_calls("backup-store.get") >= 1
-    # every part went through dispatch as the job's creator, with a why
-    puts = b.owner.get("/journal?cap=backup-store.put&limit=5")["entries"]
-    assert puts and all(e["person"] == "person:bake" and e["decision"] == "allow" for e in puts)
-    assert all(e["args"]["data"] == "[redacted]" for e in puts)       # the journal never keeps the blob
+    # the worker pulled it (backup.part replies travel over Drop), and the hub read it back
+    assert b.worker_calls("backup-store.pull") == 1 and b.worker_calls("backup-store.put") == 0
+    assert b.worker_calls("backup-store.get") >= 1
+    # the pull and every part it asked for went through dispatch as the job's creator
+    pulls = b.owner.get("/journal?cap=backup-store.pull&limit=5")["entries"]
+    parts = b.owner.get("/journal?cap=backup.part&limit=50")["entries"]
+    assert pulls and parts and all(e["person"] == "person:bake" and e["decision"] == "allow"
+                                   for e in pulls + parts)
+    assert all("data" not in (e.get("args") or {}) for e in parts)    # the journal never keeps the blob
 
     # a second run keeps one (keep: 1): the first is pruned on the worker
     time.sleep(1.1)                         # names have the second in them

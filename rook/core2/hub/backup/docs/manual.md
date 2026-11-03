@@ -16,6 +16,7 @@ is gone: save it when `init` shows it (`recovery-key` shows it again).
 | `backup.run` | Back up now: seal, push to the target, fetch the copy back and restore it into a scratch folder to check it, then delete this hub's backups past `keep`. Returns the file's name, size and what the check found. |
 | `backup.list` | This hub's backups on the target, newest first. |
 | `backup.verify` | Fetch a backup (the newest, unless `name`) and restore it into scratch with this hub's recovery key: every file against its SHA-256, the root key is this hub's, the config loads, each database passes SQLite's check. |
+| `backup.part` | Part of the backup being sent to a worker target, while `backup.run` sends it (`backup-store.pull` calls it). Nothing else is served. |
 
 Owners only (in person, through their agents, or a job they made).
 
@@ -39,7 +40,11 @@ Targets:
 - `dir:/mnt/usb/rook`: a folder (a disk, a network mount). Files are 0600 in a 0700 folder.
 - `worker:janitor`: another worker on the band, through its
   [backup-store](../../../../plugins/backup-store/docs/manual.md) plugin
-  (install it there first): that worker, always.
+  (install it there first): that worker, always. The worker pulls the
+  backup from the hub in 4 MiB parts. A big reply travels over Drop, which
+  asks again for lost pieces, so this works across a lossy path. A
+  backup-store older than 0.5.1, which has no `pull`, is sent small parts
+  instead.
 - `rclone:gdrive:rook-backups`: anything [rclone](https://rclone.org) reaches
   (S3, Google Drive, B2, SFTP, ...). Set the remote up with `rclone config`
   as the hub's account; rclone keeps its own credentials.

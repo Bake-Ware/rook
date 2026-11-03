@@ -13,7 +13,7 @@ from pathlib import Path
 
 from rook.kit.ctx import KitError
 
-from . import KEEP, BackupError, backups, fetch_verify, run, target
+from . import KEEP, BackupError, backups, fetch_verify, run, serve_part, target
 
 MANIFEST = Path(__file__).parent
 STORE = "backup-store.put"
@@ -80,5 +80,13 @@ def install(hub) -> None:
             name = found[0]["name"]
         return {"name": name, "target": t.label, **fetch_verify(t, name, hub.data)}
 
+    def part(ctx, name: str, offset: int = 0, size: int = 4 << 20) -> dict:
+        if not ctx.caller.owner:
+            raise KitError("denied: only an owner backs up the hub")
+        try:
+            return serve_part(name, offset, size)
+        except BackupError as e:
+            raise KitError(str(e)) from None
+
     hub.plugins.add_builtin(MANIFEST, {"backup.run": guard(run_), "backup.list": guard(list_),
-                                       "backup.verify": guard(verify)})
+                                       "backup.verify": guard(verify), "backup.part": part})

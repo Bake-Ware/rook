@@ -349,13 +349,19 @@ def test_guards_one_at_a_time_no_target_inside_data_env_names(tmp_path):
     assert out["env"] == ["ROOK_PSK"]
 
 
-def store_call(tmp_path: Path):
+def part_call(cap, args, caller):
+    """The hub side of a worker's ``ctx.call``: backup-store.pull asks for ``backup.part``."""
+    assert cap == "backup.part", cap
+    return bk.serve_part(**args)
+
+
+def store_call(tmp_path: Path, hub_call=part_call):
     """``call(cap, args)`` into the real backup-store plugin, in a worker host."""
     folder = tmp_path / "store"
 
     def call(cap, args):
         async def body():
-            host = Host(os_name="linux", data_root=tmp_path / "wdata")
+            host = Host(os_name="linux", data_root=tmp_path / "wdata", dispatch=hub_call)
             await host.load(REPO / "rook" / "plugins" / "backup-store")
             await host.set_settings("backup-store", local={"folder": str(folder)})
             try:
@@ -404,6 +410,82 @@ def test_a_worker_target_stores_through_backup_store(tmp_path, monkeypatch):
     summary = bk.restore(folder / kept, recovery_key(data), tmp_path / "new" / "hub.yaml")
     assert summary["hub"] == bk.hub_id_of(data)
     assert [b["name"] for b in bk.backups(t)] == [kept]
+
+
+def test_the_worker_pulls_the_backup_over_replies_and_old_stores_get_small_puts(tmp_path, monkeypatch):
+    """A band request goes inline (~1 KB datagrams, never re-asked for), a big
+    reply over Drop: so the worker pulls the backup with backup.part (Nov 3:
+    4 MiB puts from bakenetus never reached kaiju). A backup-store from before
+    pull is sent small puts."""
+    monkeypatch.setattr(bk, "PART", 4096)                # backup.part answers 4 KiB: many parts
+    monkeypatch.setattr(bk, "PUSH_PART", 4096)
+    cfg = make_hub(tmp_path / "hub", library=False)
+    data = cfg.parent / "data"
+    asked = []
+
+    def hub_call(cap, args, caller):
+        asked.append(args["offset"])
+        if len(asked) == 2:
+            raise CallError("timeout: the call may still be running")     # one lost part: asked again
+        return part_call(cap, args, caller)
+
+    call, folder = store_call(tmp_path, hub_call)
+    seen = []
+
+    def watch(cap, args):
+        seen.append(cap)
+        return call(cap, args)
+
+    out = bk.run(config=cfg, data=data, library=None, spec="worker:janitor", call=watch, keep=1)
+    assert out["verified"]["databases"] == 3 and os.listdir(folder) == [out["name"]]
+    assert "backup-store.put" not in seen and seen.count("backup-store.pull") == 1
+    assert asked[1] == asked[2] and len(asked) == -(-out["size"] // 4096) + 1
+    assert bk._SERVING == {}                                   # served only while the push ran
+    with pytest.raises(bk.BackupError, match="not being pushed"):
+        bk.serve_part(out["name"])
+
+    # a backup-store 0.5.0 (no pull): small inline puts instead
+    old, puts = tmp_path / "old", []
+
+    def old_store(cap, args):
+        if cap == "backup-store.pull":
+            raise CallError("denied: unknown capability: backup-store.pull")
+        if cap == "backup-store.put":
+            puts.append(len(base64.b64decode(args["data"])))
+        return old_call(cap, args)
+
+    old_call, old_folder = store_call(old)
+    out = bk.run(config=cfg, data=data, library=None, spec="worker:janitor", call=old_store, keep=1)
+    assert os.listdir(old_folder) == [out["name"]] and max(puts) == 4096 and len(puts) > 1
+    # any other failure of pull is the run's failure, not a fallback
+    def broken(cap, args):
+        raise CallError("backup-store.pull: disk full")
+    with pytest.raises(CallError, match="disk full"):
+        bk.run(config=cfg, data=data, library=None, spec="worker:janitor", call=broken, keep=1)
+
+
+def test_pull_keeps_nothing_that_does_not_match(tmp_path):
+    src = tmp_path / "x.rookbak"
+    src.write_bytes(os.urandom(100_000))
+    name = names("ab" * 8, 1)[0]
+    call, folder = store_call(tmp_path)
+    bk._SERVING[name] = src
+    try:
+        with pytest.raises(CallError, match="don't match its sha256"):
+            call("backup-store.pull", {"name": name, "size": 100_000, "sha256": "0" * 64})
+        with pytest.raises(CallError, match="sent nothing"):           # shorter than it says
+            call("backup-store.pull", {"name": name, "size": 200_000, "sha256": "0" * 64})
+        assert os.listdir(folder) == []                               # no .part left behind
+        import hashlib
+        good = hashlib.sha256(src.read_bytes()).hexdigest()
+        assert call("backup-store.pull", {"name": name, "size": 100_000, "sha256": good})["kept"]
+        assert (folder / name).read_bytes() == src.read_bytes()
+        with pytest.raises(CallError, match="here already"):
+            call("backup-store.pull", {"name": name, "size": 100_000, "sha256": good})
+    finally:
+        bk._SERVING.pop(name, None)
+    with pytest.raises(CallError, match="not being pushed"):
+        call("backup-store.pull", {"name": names("cd" * 8, 1)[0], "size": 10, "sha256": good})
 
 
 def test_an_rclone_target(tmp_path):
