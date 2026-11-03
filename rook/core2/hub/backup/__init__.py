@@ -74,9 +74,14 @@ SKIP_SUFFIX = ("-wal", "-shm", "-journal", ".tmp")
 SQLITE = b"SQLite format 3\x00"
 MANIFEST = "rook-backup.json"
 KEEP = 7
-PART = 4 << 20                       # bytes per worker-target call (base64 ~5.6 MB)
+PART = 4 << 20                       # bytes per backup-store.get / backup.part reply (base64 ~5.6 MB)
+PUSH_PART = 32 << 10                 # bytes per backup-store.put, for a backup-store without pull: a
+                                     # request travels inline (~1 KB datagrams, never re-asked for), so a
+                                     # big one is lost on a lossy path; a reply this big goes over Drop
 RCLONE_SECS = 3600
 _ONE = threading.Lock()              # one backup at a time in this process
+_SERVING: dict[str, Path] = {}       # name -> the sealed file a worker target is pulling now (backup.part)
+_SERVING_LOCK = threading.Lock()
 
 
 class BackupError(Exception):
@@ -543,9 +548,39 @@ class DirTarget:
         (self.path / name).unlink(missing_ok=True)
 
 
+def serve_part(name: str, offset: int = 0, size: int = PART) -> dict:
+    """``backup.part``: part of the sealed file a worker target is pulling
+    right now (``WorkerTarget.put``), base64, ``eof`` on the last. Nothing
+    else is served: only that one file, and only while its push runs."""
+    with _SERVING_LOCK:
+        path = _SERVING.get(str(name))
+    if path is None:
+        raise BackupError(f"{name} is not being pushed to a worker now")
+    offset, size = int(offset), max(1, min(int(size), PART))
+    if offset < 0:
+        raise BackupError("offset is 0 or more")
+    with open(path, "rb") as f:
+        total = os.fstat(f.fileno()).st_size
+        f.seek(offset)
+        data = f.read(size)
+    return {"data": base64.b64encode(data).decode("ascii"), "eof": offset + len(data) >= total}
+
+
+def _no_pull(e: Exception) -> bool:
+    """The worker's backup-store is older than ``pull`` (0.5.0)."""
+    text = str(getattr(e, "message", "") or e)
+    return "backup-store.pull" in text and "unknown" in text.lower()
+
+
 class WorkerTarget:
     """Another worker on the band, through its ``backup-store`` plugin.
-    ``call(cap, args)`` runs a cap on that worker (the hub's dispatch)."""
+    ``call(cap, args)`` runs a cap on that worker (the hub's dispatch).
+
+    The worker pulls the backup (``backup-store.pull``, which calls
+    ``backup.part`` back on the hub): replies this big travel over Drop, which
+    asks again for what got lost, so a backup gets across a lossy path in
+    4 MiB parts. A backup-store without ``pull`` is sent ``put`` parts of
+    ``PUSH_PART`` instead."""
 
     def __init__(self, worker: str, call: Callable[[str, dict], Any] | None):
         if call is None:
@@ -556,11 +591,29 @@ class WorkerTarget:
     def put(self, src: Path, name: str) -> None:
         h = hashlib.sha256()
         with open(src, "rb") as f:
+            while chunk := f.read(1 << 20):
+                h.update(chunk)
+        with _SERVING_LOCK:
+            _SERVING[name] = src
+        try:
+            self.call("backup-store.pull", {"name": name, "size": src.stat().st_size, "sha256": h.hexdigest()})
+            return
+        except Exception as e:
+            if not _no_pull(e):
+                raise
+        finally:
+            with _SERVING_LOCK:
+                _SERVING.pop(name, None)
+        self._push(src, name)
+
+    def _push(self, src: Path, name: str) -> None:
+        h = hashlib.sha256()
+        with open(src, "rb") as f:
             offset = 0
             while True:
-                chunk = f.read(PART)
+                chunk = f.read(PUSH_PART)
                 h.update(chunk)
-                last = len(chunk) < PART
+                last = len(chunk) < PUSH_PART
                 self.call("backup-store.put", {"name": name, "offset": offset,
                                                "data": base64.b64encode(chunk).decode("ascii"),
                                                **({"sha256": h.hexdigest()} if last else {})})

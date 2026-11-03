@@ -55,6 +55,19 @@ caps:
       name: { type: str, pattern: "^rook-hub-[0-9a-f]{8,64}-[0-9]{8}T[0-9]{6}Z\\.rookbak$", doc: "A backup from backup.list; blank: the newest." }
     result: { type: map }
 
+  part:
+    doc: "Part of the backup a worker target is pulling right now (base64, at most 4 MiB from offset; eof on the last). backup-store.pull calls it during backup.run; nothing else is served."
+    on: hub
+    risk: read
+    scope: multi-user
+    idempotent: true
+    timeout: 120s
+    args:
+      name: { type: str, required: true, pattern: "^rook-hub-[0-9a-f]{8,64}-[0-9]{8}T[0-9]{6}Z\\.rookbak$" }
+      offset: { type: int, default: 0, min: 0 }
+      size: { type: int, default: 4194304, min: 1, max: 4194304 }
+    result: { type: map }
+
 jobs:
   nightly:
     doc: "Every night at 03:40 (the jobs timezone): back up the hub to the target (by default another worker running backup-store) and check the copy."
