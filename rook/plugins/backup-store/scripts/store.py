@@ -12,12 +12,14 @@ import binascii
 import hashlib
 import os
 import re
+import time
 from pathlib import Path
 
 NAME = re.compile(r"rook-hub-([0-9a-f]{8,64})-(\d{8}T\d{6}Z)\.rookbak")
 MAX_DATA = 6 * 1024 * 1024        # base64 of 4 MiB, with room
 PART = 4 << 20                    # bytes asked of backup.part at a time
-TRIES = 3                         # tries per part before pull gives up
+TRIES = 5                         # tries per part before pull gives up,
+WAIT = 1.0                        # waiting 1, 2, 4, 8 s between them (the hub not heard yet, a blip)
 
 
 def _folder(ctx) -> Path:
@@ -60,6 +62,7 @@ def pull(ctx, name, size, sha256):
                     except Exception:
                         if tries == TRIES - 1:
                             raise
+                        time.sleep(WAIT * 2 ** tries)
                 try:
                     raw = base64.b64decode(got["data"], validate=True)
                 except (binascii.Error, ValueError, KeyError, TypeError):
