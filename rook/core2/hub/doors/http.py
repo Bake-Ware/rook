@@ -14,6 +14,8 @@ agent, or an agent for a person).
     POST /doors/<name>    {open: bool}  owners: the kill switch (close or open a door; kept across restarts)
     GET  /health          no token
     GET  /updates/desktop.json  no token: the desktop app's files in Rook's latest release (its update check)
+    GET  /apk.json[?channel=beta], /apk[?channel=beta]  no token: the phone app's update check and
+                          download, from files an owner put in the data folder (:mod:`..apkfeed`)
     *    /p/<plugin><path>  a hub plugin's ``routes:`` entry: ``auth: user`` takes the
                           bearer token, ``hmac``/``token`` a signature or token under the
                           route's secret (HubPlugins.route_allows), ``none`` anyone
@@ -44,10 +46,12 @@ import json
 import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from rook.kit.ctx import Caller as KitCaller, KitError
 
+from ..apkfeed import ApkFeed
 from .web import Web
 
 log = logging.getLogger("rook.hub.door.http")
@@ -55,6 +59,7 @@ log = logging.getLogger("rook.hub.door.http")
 MAX_BODY = 1 << 20
 OPEN = {"/enroll/claim": "claim", "/enroll/device": "device_start", "/enroll/poll": "device_poll"}
 WAIT = 900.0     # longest a request waits for the hub (dispatch has its own timeouts)
+CHUNK = 1 << 20  # a file goes out this much at a time
 
 
 def _reject(token: str):
@@ -72,6 +77,7 @@ class HttpDoor:
         self._server: ThreadingHTTPServer | None = None
         web = options.get("web", {} if self.name == "http" else False)    # the site is on the plain door only
         self.web = None if web is False else Web(hub, web if isinstance(web, dict) else {})
+        self._apk: ApkFeed | None = None
         self._thread: threading.Thread | None = None
 
     async def start(self) -> None:
@@ -86,6 +92,12 @@ class HttpDoor:
         self._thread = threading.Thread(target=self._server.serve_forever, name="rook-http-door", daemon=True)
         self._thread.start()
         log.info("door open", extra={"fields": {"door": self.name, "bind": f"{self.host}:{self.port}"}})
+
+    @property
+    def apk(self) -> ApkFeed:
+        if self._apk is None:
+            self._apk = ApkFeed(self.hub.data)
+        return self._apk
 
     def challenge(self, host: str | None = None) -> str:
         """The ``WWW-Authenticate`` a 401 carries (``host``: the request's Host header)."""
@@ -126,6 +138,8 @@ class _Handler(BaseHTTPRequestHandler):
                 status, headers, data = self.door.web.handle(self, method, url.path, url.query)
             else:
                 status, body, *extra = self._route(method)     # (status, body[, headers])
+                if isinstance(body, _File):
+                    return self._send_file(body)
                 headers, data = _encode(body)
                 headers.update(*extra)
         except _Error as e:
@@ -157,6 +171,13 @@ class _Handler(BaseHTTPRequestHandler):
         if method == "GET" and path == "/updates/desktop.json":     # the desktop app checks before sign-in
             from ..updates import desktop_feed
             return 200, desktop_feed()
+        if method == "GET" and path in ("/apk.json", "/apk"):      # the phone app checks before sign-in
+            got = self.door.apk.pick(dict(parse_qsl(url.query)).get("channel"))
+            if got is None:
+                raise _Error(404, "no app update here")
+            if path == "/apk.json":
+                return 200, got[1]
+            return 200, _File(got[0], "application/vnd.android.package-archive", "rook-worker.apk")
         if method == "POST" and path in OPEN:      # a device enrolling has no token yet
             extra = {"address": self._address()} if OPEN[path] == "device_start" else {}
             return 200, self._run(getattr(hub.enroll, OPEN[path])(self._body(), **extra))
@@ -196,6 +217,39 @@ class _Handler(BaseHTTPRequestHandler):
         if any(p == path for _, p in routes) or path in OPEN or path.startswith("/holds/"):
             raise _Error(405, "method not allowed")
         raise _Error(404, "not found")
+
+    def _send_file(self, f: _File) -> None:
+        try:
+            src = f.path.open("rb")
+            size = f.path.stat().st_size
+        except OSError:
+            log.exception("file not readable")
+            data = b'{"ok": false, "error": "internal error"}'
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        with src:
+            self.send_response(200)
+            self.send_header("Content-Type", f.type)
+            self.send_header("Content-Disposition", f"attachment; filename={f.name}")
+            self.send_header("Content-Length", str(size))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            left = size
+            try:
+                while left > 0:
+                    chunk = src.read(min(CHUNK, left))
+                    if not chunk:        # the file shrank under us: the client sees a short body
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+            except OSError:              # the phone went away mid-download
+                pass
+            if left:
+                self.close_connection = True
 
     def _address(self) -> str:
         """Where a request came from, for a person to judge: the peer, and
@@ -290,6 +344,13 @@ def _encode(body: dict | bytes | None) -> tuple[dict, bytes]:
     if isinstance(body, bytes):          # a page (OAuth sign-in); its Content-Type comes with it
         return {}, body
     return {"Content-Type": "application/json"}, json.dumps(body, default=str).encode("utf-8")
+
+
+class _File:
+    """A file a route answers with: streamed, not read into memory."""
+
+    def __init__(self, path: Path, type: str, name: str):
+        self.path, self.type, self.name = path, type, name
 
 
 class _Error(Exception):
