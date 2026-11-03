@@ -404,12 +404,7 @@ async def test_the_approvals_page_shows_who_relayed_a_decision(hub, tmp_path):
     assert (await cap(hub, "approvals.relay", {"item": h["id"], "decision": "approve",
                                                "relayed_by": SAID}))["ok"]
 
-    async def creds(*_):
-        return False
-    server = SimpleNamespace(_band=SimpleNamespace(authz=SimpleNamespace(approvals=hub.ap)),
-                             _accounts=SimpleNamespace(store=SimpleNamespace(
-                                 session_weak=lambda tok: False)),
-                             credential_is_vaulted=creds)
+    server = SimpleNamespace(_band=SimpleNamespace(authz=SimpleNamespace(approvals=hub.ap)))
 
     @web.middleware
     async def who(request, handler):
@@ -468,19 +463,10 @@ def test_only_a_person_on_the_tokens_page_turns_relaying_on(tmp_path, monkeypatc
         client.post(endpoint, headers=headers, json={'op': 'relay', 'id': 'house',
                                                      'enabled': True, 'csrf': csrf})
         assert ap.queue.relayer("agent:home")
-        # A sign-in with a password agents could read cannot change it.
-        store.mark_weak_session(token)
-        r = client.post(endpoint, headers=headers, json={'op': 'relay', 'id': 'house',
-                                                         'enabled': False, 'csrf': csrf})
-        assert r.status_code == 403 and r.json()['weak_credential']
-        assert ap.queue.relayer("agent:home")
         # Revoking the client's only key stops it relaying.
-        weak_free = store.new_session(account.bootstrap_id)
-        h2 = {'Cookie': 'rook_account=' + weak_free}
-        c2 = store.session(weak_free)['csrf']
-        assert client.post(endpoint, headers=h2, json={'op': 'revoke', 'id': made['id'],
-                                                       'confirm': True,
-                                                       'csrf': c2}).status_code == 200
+        assert client.post(endpoint, headers=headers, json={'op': 'revoke', 'id': made['id'],
+                                                            'confirm': True,
+                                                            'csrf': csrf}).status_code == 200
         assert ap.queue.relayer(f"token:{made['agent_id']}") is None
     with sqlite3.connect(ap.queue.path) as db:
         log = db.execute("SELECT principal, enabled FROM relayer_log ORDER BY at").fetchall()

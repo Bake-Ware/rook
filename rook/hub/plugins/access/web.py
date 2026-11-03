@@ -11,7 +11,6 @@ may use it; what it sees depends on who it is:
   ``revoke``, ``role``, ``settle``. Each runs the matching ``users.*`` cap in
   process as this owner, so the caps' own checks and history apply; the
   words kept are "<name> on the People page" plus the owner's note.
-  A sign-in agents could also use (a weak session) can look but not change.
 * **anyone else** sees their own access and asks for more in their own words
   (``request``: ``users.request``).
 
@@ -26,7 +25,6 @@ from typing import Any, Callable
 from starlette.routing import Route
 
 from ....remote.account_api import account_api, json_reply
-from ....remote.account_web import COOKIE
 from ... import access as _access
 from ...authz import current_principal, principal_for_user
 
@@ -34,8 +32,6 @@ log = logging.getLogger("rook.hub.plugins.access.web")
 
 PATH = "/people/account-api"
 UNAVAILABLE = "Access is not set up on this hub (no data directory)."
-WEAK = ("This sign-in also works for agents, so it can't change who may do what. Sign in with "
-        "Google or a password only you know.")
 OWNER_ACTIONS = ("grant", "revoke", "role", "settle")
 NOTE_MAX = 500
 
@@ -92,9 +88,6 @@ def routes(get_node: Callable[[], Any], accounts):
             with contextlib.suppress(Exception):
                 owner = store.is_owner(str(user["id"]))
         principal = principal_for_user(user, owner)
-        weak = True
-        with contextlib.suppress(Exception):
-            weak = bool(accounts.session_weak(request.cookies.get(COOKIE, "")))
         try:
             if body is not None:
                 action = str(body.get("action") or "")
@@ -102,8 +95,6 @@ def routes(get_node: Callable[[], Any], accounts):
                     if not owner:
                         return json_reply({"error": "Only an owner changes who may do what.",
                                            "csrf": user["csrf"]}, 403)
-                    if weak:
-                        return json_reply({"error": WEAK, "csrf": user["csrf"]}, 403)
                     name = str(user.get("name") or user.get("username") or user["id"])
                     note = " ".join(str(body.get("note") or "").split())[:NOTE_MAX]
                     words = f"{name} on the People page" + (f": {note}" if note else "")
@@ -134,7 +125,7 @@ def routes(get_node: Callable[[], Any], accounts):
             log.exception("people account API failed")
             return json_reply({"error": "The request failed; see the MCP log.",
                                "csrf": user["csrf"]}, 500)
-        return json_reply({"csrf": user["csrf"], "can_edit": owner and not weak, **data})
+        return json_reply({"csrf": user["csrf"], "can_edit": owner, **data})
 
     return [Route(PATH, api, methods=["GET", "POST"])]
 

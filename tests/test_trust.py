@@ -417,14 +417,7 @@ def test_trust_changes_are_never_relayed():
 def dashboard(tmp_path, principal, store):
     from rook.remote.trust_web import TrustWeb
     az = authorizer(tmp_path, store)
-
-    async def credential_is_vaulted(*values):
-        return False
-
-    server = SimpleNamespace(_band=SimpleNamespace(authz=az), _authz=az,
-                             _accounts=SimpleNamespace(store=SimpleNamespace(
-                                 session_weak=lambda tok: False)),
-                             credential_is_vaulted=credential_is_vaulted)
+    server = SimpleNamespace(_band=SimpleNamespace(authz=az), _authz=az)
 
     @web.middleware
     async def who(request, handler):
@@ -447,7 +440,7 @@ async def test_dashboard_person_views_and_changes_with_words(tmp_path):
     async with TestClient(TestServer(dashboard(tmp_path, principal, st))) as http:
         assert (await (await http.get("/api/trust?count=1")).json()) == {"waiting": 1}
         data = await (await http.get("/api/trust")).json()
-        assert data["map"]["version"] == 5 and "kaiju" in data["summary"] and data["can_edit"]
+        assert data["map"]["version"] == 5 and "kaiju" in data["summary"]
         r = await http.post("/api/trust", json={"op": "set_entry", "data": {
             "id": "kaiju", "level": "guarded", "targets": ["worker:kaiju"]}})
         assert r.status == 409 and "words" in (await r.json())["error"]

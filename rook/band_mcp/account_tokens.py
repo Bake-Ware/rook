@@ -11,15 +11,11 @@ from starlette.routing import Route
 
 from ..remote.account_api import account_api, json_reply
 from ..remote.accounts import AccountStore
-from ..remote.account_web import COOKIE, NO_STORE
+from ..remote.account_web import NO_STORE
 
 #: The Tokens page's "May relay my approvals" (rook/hub/relay.py): who may
 #: approve or deny waiting items on the person's behalf. Only this
-#: operator-account route writes it, and never for a sign-in that used a
-#: password agents could also read (a vault value).
-WEAK_RELAY = ('This sign-in uses a password that is stored as a band secret, so agents could sign '
-              'in as you with it. It can\'t change who may relay your approvals. Change the '
-              'password (or remove that secret) and sign in again.')
+#: operator-account route writes it.
 HOUSE_AGENT = 'house'
 
 
@@ -159,13 +155,6 @@ def build_account_token_routes(provider, chat=None, accounts=None, approvals=Non
                 q = queue()
                 if q is None:
                     return response({'error': 'Approvals are unavailable on this hub.'}, 503)
-                weak = True
-                try:
-                    weak = bool(accounts.session_weak(request.cookies.get(COOKIE, '')))
-                except Exception:
-                    pass  # unknown: fail closed
-                if weak:
-                    return response({'error': WEAK_RELAY, 'weak_credential': True}, 403)
                 enabled = data.get('enabled')
                 if not isinstance(enabled, bool):
                     raise ValueError('enabled must be true or false.')

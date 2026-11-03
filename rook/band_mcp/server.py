@@ -2181,13 +2181,9 @@ class McpService:
         # /internal/mask: the dashboard masks vault values through this process
         # (it holds no vault key itself). Token file beside the stores.
         try:
-            from .mask_web import (ensure_token as _mask_token, is_secret_route as _is_secret,
-                                   route as _mask_route)
+            from .mask_web import ensure_token as _mask_token, route as _mask_route
             _mtok = _mask_token(mcp._rook_store_dir)
             app.router.routes.insert(0, _mask_route(_mtok))
-            # /internal/is-secret: the dashboard asks whether a sign-in password
-            # is a vault value, so it can't approve holds (permissions 3.11).
-            app.router.routes.insert(0, _is_secret(_mtok))
             # /internal/band-call: the dashboard's cap buttons run here, as the
             # signed-in person, instead of going out on the band themselves.
             from .dashboard_call import route as _band_call_route

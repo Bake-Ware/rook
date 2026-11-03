@@ -75,9 +75,6 @@ Agents can't switch it on or off; only you can.
   script that deletes files its own way), and the journal shows it.
 - The hub checks calls that pass through it. Calls one worker sends straight
   to another do not pass the hub and are not checked.
-- A dashboard or account password that you also keep as a band secret can't be
-  used to approve held calls, because an agent could sign in with it. The
-  Approvals page warns you and disables the buttons.
 - Approving by voice is weaker than the dashboard: a voiceprint is not a
   password. It counts only when the voice is sure it is you, and it is off
   until you turn it on ([[manual-phone-attention]]).

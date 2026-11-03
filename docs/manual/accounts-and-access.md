@@ -174,12 +174,6 @@ why it was held. **Recent** lists past decisions. The number next to
 Only the operator or a band owner can approve here, and secret values are
 never shown on the page. Agents can't approve anything.
 
-A sign-in made with a password that is also stored as a band secret can't
-approve held calls, because an agent could use that password too. The page
-shows a warning and the buttons are disabled. Change the password (or remove
-the secret) and sign in again. If you keep your dashboard password in the
-vault so an agent can log in as you, that is exactly this case.
-
 **Deciding from your phone or by voice.** Your phone's cards and the voice
 can decide for you once you tick **May relay my approvals** on their rows
 on the **Tokens** page. Each decision is kept for good with your name and

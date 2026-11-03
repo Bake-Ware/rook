@@ -848,28 +848,11 @@ settings, tokens, secrets) always need the dashboard. Voice is weaker than
 the dashboard: anyone near the phone can answer, and a band PSK holder could
 in principle forge the phone's reply (§6.3 item 2).
 
-**Agent-usable credentials cannot approve.** An agent can put any vault
-secret into call arguments as `{{secret:name}}`, and the hub substitutes it
-before the call. So a dashboard or account password kept in the vault is a
-credential the agent can use: it could `curl` the Approvals API (or POST
-`/login`) with it and approve its own hold. To stop that, a sign-in made with
-a value the vault knows cannot decide holds.
-
-- At sign-in (the dashboard `/login` form, HTTP Basic auth, and account local
-  login) the submitted password, and the `user:pass` pair, are checked
-  against the vault while the plaintext is in hand. The vault lives in the MCP
-  process, so the dashboard asks it over the internal endpoint it already uses
-  for masking: `POST /internal/is-secret` (Bearer `mask.token`) returns only
-  `{"secret": true|false}` — never a name or a value — comparing the string
-  and its known encoded forms (`|b64`, …) in constant time per form. In
-  `rook hub serve` (one process) the vault is called directly.
-- A cookie session opened with such a credential is flagged (a `weak_session`
-  row keyed by the session token's digest; no plaintext stored). Basic auth
-  is checked per request. The session still uses the dashboard normally, but
-  `/api/approvals` decisions return 403 and the Approvals page shows a warning
-  and disables the buttons.
-- If the vault can't be reached, approvals fail **closed** (the sign-in is
-  treated as weak); signing in still works.
+**Sign-ins and vault values.** Removed 2026-11-03 (hotfix, Bake: "remove that
+restriction"): a sign-in made with a password that is also a vault secret used
+to be flagged weak and could not decide holds, change the trust map, relays or
+grants. A signed-in owner now decides whatever the password is. Hard stops
+still ask the person, and relayed approvals of hard stops stay refused.
 
 **Workers on the hub's own machine.** A worker that runs on the hub box as
 the hub's user can rewrite `approvals.db`, `policy.json` and the settings
@@ -930,8 +913,8 @@ of:
    unverified) with no on-behalf-of chain (a job run never relays or lists,
    even under an enabled token's identity), listed in `approvals.db`
    `relayers`. Only the dashboard's
-   Tokens page writes that table (operator account, CSRF, and never for a
-   weak sign-in, as for approving holds); no cap, tool or setting does.
+   Tokens page writes that table (operator account, CSRF); no cap, tool or
+   setting does.
    Revoking a client's last token removes it. Every change is in the
    append-only `relayer_log`;
 2. `relayed_by {who, quote, session}` is complete: the person, their words,

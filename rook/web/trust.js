@@ -151,7 +151,7 @@ export async function mountTrust(root, opts = {}){
 
   function draw(){
     const m = data.map, can = data.can_edit !== false;
-    warn.hidden = !data.weak_message; warn.textContent = data.weak_message || '';
+    warn.hidden = true; warn.textContent = '';
     version.textContent = 'v' + m.version;
     summary.textContent = data.summary || '';
     if(m.error){ warn.hidden = false; warn.textContent = 'The map file is unreadable; the hub keeps the last good version: ' + m.error; }

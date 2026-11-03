@@ -12,8 +12,7 @@
 * ``GET /account/trust/assets/trust.js``: the page module (static).
 
 Both API routes need a *person* who is a band owner or admin, as the
-Approvals page does (same login, same weak-credential refusal, same-origin
-JSON POSTs). This is the only place the trust map is loosened: no cap, MCP
+Approvals page does (same login, same-origin JSON POSTs). This is the only place the trust map is loosened: no cap, MCP
 tool, relay or setting does that.
 """
 from __future__ import annotations
@@ -70,12 +69,9 @@ class TrustWeb:
         waiting = doc["pending_proposals"] + len(doc.get("notices") or ())
         if request.query.get("count"):
             return web.json_response({"waiting": waiting}, headers=NO_STORE)
-        weak = await self._ap._weak(request)
         return web.json_response({
             "map": doc, "summary": st.summary(), "history": st.history(60),
-            "waiting": waiting, "can_edit": not weak,
-            "weak_message": ApprovalsWeb.WEAK_MSG.replace("approve held calls",
-                                                          "change the trust map") if weak else None,
+            "waiting": waiting,
         }, headers=NO_STORE)
 
     async def decisions(self, request: web.Request) -> web.Response:
@@ -107,8 +103,6 @@ class TrustWeb:
         person = self._ap._person()
         if person is None:
             return self._err("Only a band owner or admin can change the trust map.", 403)
-        if await self._ap._weak(request):
-            return self._err(ApprovalsWeb.WEAK_MSG, 403)
         if request.content_type != "application/json":
             return self._err("send JSON", 415)
         try:
