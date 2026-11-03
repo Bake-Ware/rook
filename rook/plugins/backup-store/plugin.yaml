@@ -5,7 +5,7 @@
 # are sealed under the owner's recovery key before they leave the hub.
 manifest: 1
 plugin: backup-store
-version: 0.5.1
+version: 0.5.2
 title: Backup store
 doc: Holds the hub's sealed backups in a folder on this worker.
 package: core
@@ -21,7 +21,7 @@ settings:
     doc: Where the backups are kept (~ is the worker account's home).
 caps:
   pull:
-    doc: "Fetch a backup from the hub while its backup.run pushes it (backup.part, 4 MiB at a time: replies that big travel over Drop, which asks again for lost pieces), check its size and sha256, and keep it. This is how the hub's backup.run sends a backup here."
+    doc: "Fetch a backup from the hub while its backup.run pushes it (backup.part, 4 MiB at a time: replies that big travel over Drop, which asks again for lost pieces), up to 24 parts a round; once the whole file is here, check its size and sha256 and keep it. This is how the hub's backup.run sends a backup here."
     risk: write
     scope: local
     effects: [persists]
@@ -30,7 +30,8 @@ caps:
       name: { type: str, required: true, pattern: "^rook-hub-[0-9a-f]{8,64}-[0-9]{8}T[0-9]{6}Z\\.rookbak$" }
       size: { type: int, required: true, min: 1 }
       sha256: { type: str, required: true, pattern: "^[0-9a-f]{64}$" }
-    result: { type: map }
+      offset: { type: int, default: 0, min: 0, doc: "Where this round starts: 0 starts over; else what the last round received." }
+    result: { type: map, doc: "{name, size, kept: true} once the whole file is here and checked, else {name, received}: call again from received (at most 24 parts a round: the hub allows 32 sub-calls in one call)." }
     run: scripts/store.py:pull
   put:
     doc: "Write part of a backup, at offset (0 starts it). The last part gives sha256 of the whole file: it is checked, then the file is kept under its name."

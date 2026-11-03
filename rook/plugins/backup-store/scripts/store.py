@@ -18,6 +18,8 @@ from pathlib import Path
 NAME = re.compile(r"rook-hub-([0-9a-f]{8,64})-(\d{8}T\d{6}Z)\.rookbak")
 MAX_DATA = 6 * 1024 * 1024        # base64 of 4 MiB, with room
 PART = 4 << 20                    # bytes asked of backup.part at a time
+PARTS = 24                        # backup.part calls in one pull (tries count): the hub allows 32
+                                  # sub-calls in one call, so a big backup takes several pulls
 TRIES = 5                         # tries per part before pull gives up,
 WAIT = 1.0                        # waiting 1, 2, 4, 8 s between them (the hub not heard yet, a blip)
 
@@ -43,19 +45,26 @@ def _drop_parts(folder: Path, name: str) -> None:
             old.unlink(missing_ok=True)
 
 
-def pull(ctx, name, size, sha256):
+def pull(ctx, name, size, sha256, offset=0):
     folder, name = _folder(ctx), _name(ctx, name)
     if (folder / name).exists():
         raise ctx.Error(f"{name} is here already")
-    _drop_parts(folder, name)
     part = folder / (name + ".part")
-    h = hashlib.sha256()
-    fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    if offset == 0:                # a new pull: what an earlier upload of this hub left is dropped
+        _drop_parts(folder, name)
+        flags = os.O_TRUNC
+    else:                          # the hub's next round: carry on where the last one stopped
+        have = part.stat().st_size if part.exists() else 0
+        if have != offset:
+            raise ctx.Error(f"offset {offset}: {have} bytes are here; pull from {have} (or 0 to start again)")
+        flags = os.O_APPEND
+    calls = 0
+    fd = os.open(part, os.O_WRONLY | os.O_CREAT | flags, 0o600)
     try:
         with os.fdopen(fd, "wb") as f:
-            offset = 0
-            while offset < size:
+            while offset < size and calls < PARTS:
                 for tries in range(TRIES):       # a lost or timed-out part is asked for again
+                    calls += 1
                     try:
                         got = ctx.call("backup.part", name=name, offset=offset, size=min(PART, size - offset))
                         break
@@ -70,10 +79,15 @@ def pull(ctx, name, size, sha256):
                 if not raw:
                     raise ctx.Error(f"{name}: the hub sent nothing at {offset} of {size} bytes")
                 f.write(raw)
-                h.update(raw)
                 offset += len(raw)
             f.flush()
             os.fsync(f.fileno())
+        if offset < size:
+            return {"name": name, "received": offset}
+        h = hashlib.sha256()
+        with open(part, "rb") as f:
+            while chunk := f.read(1 << 20):
+                h.update(chunk)
         if offset != size or h.hexdigest() != sha256:
             raise ctx.Error(f"{name}: got {offset} bytes and they don't match its sha256; pull it again")
     except BaseException:

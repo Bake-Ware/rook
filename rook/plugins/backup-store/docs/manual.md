@@ -9,7 +9,7 @@ never has a key and can't read them.
 
 | Cap | What it does |
 |---|---|
-| `backup-store.pull` | Fetch a backup from the hub while its `backup.run` sends it: asks the hub's `backup.part` for 4 MiB at a time, checks the size and SHA-256, then keeps the file. This is how the hub sends a backup here. A big reply travels over Drop, which asks again for lost pieces; a request doesn't, so pulling gets a backup across a lossy path where pushing doesn't. |
+| `backup-store.pull` | Fetch a backup from the hub while its `backup.run` sends it: asks the hub's `backup.part` for 4 MiB at a time, checks the size and SHA-256, then keeps the file. One call takes at most 24 parts, because the hub allows a call 32 sub-calls. It returns how far it got, and the hub calls it again from there until the file is kept. This is how the hub sends a backup here. A big reply travels over Drop, which asks again for lost pieces; a request doesn't, so pulling gets a backup across a lossy path where pushing doesn't. |
 | `backup-store.put` | (Hubs that predate `pull`.) Part of a backup at `offset` (base64, up to 4 MiB). The last part carries the whole file's `sha256`: it is checked, then the file is kept. A finished backup is never overwritten. |
 | `backup-store.list` | The backups here and their sizes. |
 | `backup-store.get` | Part of a backup (base64) from `offset`; `eof` on the last. |

@@ -417,7 +417,7 @@ def test_the_worker_pulls_the_backup_over_replies_and_old_stores_get_small_puts(
     reply over Drop: so the worker pulls the backup with backup.part (Nov 3:
     4 MiB puts from bakenetus never reached kaiju). A backup-store from before
     pull is sent small puts."""
-    monkeypatch.setattr(bk, "PART", 4096)                # backup.part answers 4 KiB: many parts
+    monkeypatch.setattr(bk, "PART", 1024)                # backup.part answers 1 KiB: many parts, several rounds
     monkeypatch.setattr(bk, "PUSH_PART", 4096)
     cfg = make_hub(tmp_path / "hub", library=False)
     data = cfg.parent / "data"
@@ -438,8 +438,10 @@ def test_the_worker_pulls_the_backup_over_replies_and_old_stores_get_small_puts(
 
     out = bk.run(config=cfg, data=data, library=None, spec="worker:janitor", call=watch, keep=1)
     assert out["verified"]["databases"] == 3 and os.listdir(folder) == [out["name"]]
-    assert "backup-store.put" not in seen and seen.count("backup-store.pull") == 1
-    assert asked[1] == asked[2] and len(asked) == -(-out["size"] // 4096) + 1
+    # each pull is one round of at most 24 backup.part calls (the hub allows a call 32 sub-calls)
+    rounds = seen.count("backup-store.pull")
+    assert "backup-store.put" not in seen and rounds >= 2 and rounds == -(-len(asked) // 24)
+    assert asked[1] == asked[2] and len(asked) == -(-out["size"] // 1024) + 1
     assert bk._SERVING == {}                                   # served only while the push ran
     with pytest.raises(bk.BackupError, match="not being pushed"):
         bk.serve_part(out["name"])
@@ -471,6 +473,8 @@ def test_pull_keeps_nothing_that_does_not_match(tmp_path):
     call, folder = store_call(tmp_path)
     bk._SERVING[name] = src
     try:
+        with pytest.raises(CallError, match="0 bytes are here; pull from 0"):    # a round must carry on
+            call("backup-store.pull", {"name": name, "size": 100_000, "sha256": "0" * 64, "offset": 4096})
         with pytest.raises(CallError, match="don't match its sha256"):
             call("backup-store.pull", {"name": name, "size": 100_000, "sha256": "0" * 64})
         with pytest.raises(CallError, match="sent nothing"):           # shorter than it says

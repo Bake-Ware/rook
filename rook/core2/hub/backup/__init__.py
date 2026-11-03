@@ -579,7 +579,9 @@ class WorkerTarget:
     The worker pulls the backup (``backup-store.pull``, which calls
     ``backup.part`` back on the hub): replies this big travel over Drop, which
     asks again for what got lost, so a backup gets across a lossy path in
-    4 MiB parts. A backup-store without ``pull`` is sent ``put`` parts of
+    4 MiB parts. A pull takes at most 24 parts (the hub allows a call 32
+    sub-calls), so a big backup takes several rounds, each from where the
+    last stopped. A backup-store without ``pull`` is sent ``put`` parts of
     ``PUSH_PART`` instead."""
 
     def __init__(self, worker: str, call: Callable[[str, dict], Any] | None):
@@ -593,13 +595,21 @@ class WorkerTarget:
         with open(src, "rb") as f:
             while chunk := f.read(1 << 20):
                 h.update(chunk)
+        size, offset = src.stat().st_size, 0
         with _SERVING_LOCK:
             _SERVING[name] = src
         try:
-            self.call("backup-store.pull", {"name": name, "size": src.stat().st_size, "sha256": h.hexdigest()})
-            return
+            while True:          # one round per pull: the hub allows a call 32 sub-calls
+                got = self.call("backup-store.pull", {"name": name, "size": size, "sha256": h.hexdigest(),
+                                                      "offset": offset}) or {}
+                if got.get("kept"):
+                    return
+                received = int(got.get("received") or 0)
+                if received <= offset:
+                    raise BackupError(f"{self.label}: the pull stopped at {offset} of {size} bytes")
+                offset = received
         except Exception as e:
-            if not _no_pull(e):
+            if offset or not _no_pull(e):
                 raise
         finally:
             with _SERVING_LOCK:
