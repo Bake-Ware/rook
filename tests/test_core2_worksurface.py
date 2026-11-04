@@ -109,7 +109,7 @@ def test_every_install_combination(tmp_path, combo):
         await c.sign_in(tokens["bake"])
         s = (await c.call("page.site"))["result"]
         assert s == {"person": "person:bake", "start": None, "dock": "house" if agents else None,
-                     "workbench": workbench}
+                     "workbench": workbench, "setup": {"done": True}}
 
         # a lean sidebar: workers and tokens (+ what packages add); journal and settings by address.
         # hub.security is off by default: no approvals page anywhere (castling-switchover-decisions)
