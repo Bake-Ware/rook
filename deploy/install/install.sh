@@ -23,6 +23,10 @@
 #   --open             just open the site again with a new sign-in link
 set -euo pipefail
 
+# Everything is in main, so bash has read the whole script before any of it runs
+# (under curl | bash its stdin is the script itself).
+main() {
+
 ROOT="$HOME/.rook" NAME=rook HTTP_PORT=8740 MCP_PORT=8741 RELAY_PORT=7474
 AI="" REF="c12/first-run" BOOT=1 BROWSER_OPEN=1 ONLY_OPEN=0
 while [ $# -gt 0 ]; do
@@ -132,14 +136,14 @@ if ! command -v opencode >/dev/null; then
     command -v opencode >/dev/null || die "OpenCode installed but isn't on PATH (see $LOG)"
 fi
 OPENCODE=$(command -v opencode)
-say "OpenCode $("$OPENCODE" --version 2>/dev/null | head -1) at $OPENCODE"
+say "OpenCode $("$OPENCODE" --version </dev/null 2>/dev/null | head -1) at $OPENCODE"
 # Free models need no account. Test them with an empty config (as Rook runs
 # them), best first, until one answers.
 probe=$ROOT/.probe
 mkdir -p "$probe/config/opencode"
 echo '{"autoupdate": false, "share": "disabled"}' > "$probe/config/opencode/opencode.json"
 models=$(cd "$probe" && XDG_CONFIG_HOME="$probe/config" OPENCODE_DISABLE_AUTOUPDATE=1 \
-    timeout 120 "$OPENCODE" models 2>>"$LOG" | grep '^opencode/' || true)
+    timeout 120 "$OPENCODE" models </dev/null 2>>"$LOG" | grep '^opencode/' || true)
 [ -n "$models" ] || die "OpenCode lists no free models (is this computer online? see $LOG)"
 ordered=$( { for m in opencode/glm-5.3-flash-free opencode/deepseek-v4.1-flash-free opencode/mimo-v2.6-flash-free opencode/big-pickle; do
                  printf '%s\n' "$models" | grep -qx "$m" && echo "$m"; done
@@ -149,7 +153,7 @@ MODEL=""
 for m in $ordered; do
     say "Testing $m ..."
     reply=$(cd "$probe" && XDG_CONFIG_HOME="$probe/config" OPENCODE_DISABLE_AUTOUPDATE=1 \
-        timeout 60 "$OPENCODE" run --format json -m "$m" "Say ok and nothing else." 2>>"$LOG" |
+        timeout 60 "$OPENCODE" run --format json -m "$m" "Say ok and nothing else." </dev/null 2>>"$LOG" |
         grep -o '"type":"text","text":"[^"]*"' | tail -1 | sed 's/.*"text":"\(.*\)"/\1/' || true)
     if [ -n "$reply" ]; then MODEL=$m; break; fi
 done
@@ -298,7 +302,7 @@ curl -s -o /dev/null --max-time 2 "$URL/health" || die "the hub didn't start (jo
 say "Hub: $URL"
 qr=$(curl -sf --max-time 10 -H "Authorization: Bearer $TOKEN" -d '{}' "$URL/enroll/code" |
     "$PY" -c 'import json,sys; print(json.load(sys.stdin)["qr"])') || die "the hub gave no enrollment code"
-(cd "$ROOT/worker" && "$PY" -m rook.core2.worker --config "$WORKER_CFG" enroll "$qr" --name "$WORKER_NAME") >>"$LOG" 2>&1 ||
+(cd "$ROOT/worker" && "$PY" -m rook.core2.worker --config "$WORKER_CFG" enroll "$qr" --name "$WORKER_NAME") </dev/null >>"$LOG" 2>&1 ||
     die "this machine didn't join the hub (see $LOG)"
 systemctl --user start "$NAME-worker"
 say "This machine ($WORKER_NAME) is joining the hub ..."
@@ -320,3 +324,6 @@ TOKEN=""
 step "Done"
 open_site
 say "Your house agent will walk you through the rest."
+}
+
+main "$@"
