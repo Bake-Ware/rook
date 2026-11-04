@@ -246,7 +246,7 @@ cfg = {"data": "./data", "name": name,
        "settings": {"agents-opencode": {"opencode": opencode, "model": model,
                                         "door_url": f"http://127.0.0.1:{mcp}/mcp"}},
        "log": {"level": "info", "format": "text"}}
-path.write_text(yaml.safe_dump(cfg, sort_keys=False))
+Path(path).write_text(yaml.safe_dump(cfg, sort_keys=False))
 EOF
 
 # -- the units --------------------------------------------------------------------
