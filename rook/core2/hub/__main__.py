@@ -3,6 +3,7 @@
     python -m rook.core2.hub --config hub.yaml init --owner bake --relay relay.example:7474 [--url https://rook.example]
     python -m rook.core2.hub --config hub.yaml
     python -m rook.core2.hub --config hub.yaml passwd bake          # set or reset a person's sign-in password
+    python -m rook.core2.hub --config hub.yaml login-link [bake]    # a one-time sign-in link (15 minutes)
     python -m rook.core2.hub --config hub.yaml oauth approve BCDF-2345   # a connector page's code
     python -m rook.core2.hub --config hub.yaml token --person bake [--agent claude-code] [--label laptop]
     python -m rook.core2.hub --config hub.yaml recovery-key
@@ -21,7 +22,9 @@ key), makes the hub's keys, sets the owner's sign-in password, and prints an
 API token for the owner's apps and scripts and the recovery key, once. On a
 terminal it asks for the password; otherwise (a deploy script) it makes one
 and leaves it in ``<data>/owner.password`` (0600), never printed: the site
-offers to change it at the first sign-in. ``passwd NAME`` sets or resets a
+offers to change it at the first sign-in. ``--no-password`` sets none: the
+owner signs in with a one-time link (``login-link``) and sets a password on
+their Account page later (the first-run installer, deploy/install). ``passwd NAME`` sets or resets a
 person's password (asked on a terminal, else one line on stdin): the way
 back in when one is lost. People sign in with their user name and password;
 tokens are for agents and apps. ``backup`` makes a sealed backup (rook.core2.hub.backup)
@@ -94,7 +97,8 @@ async def serve(cfg) -> None:
         await hub.stop()
 
 
-def init(path: Path, owner: str, relay: str | None, ws_url: str | None, url: str | None, bind: str) -> int:
+def init(path: Path, owner: str, relay: str | None, ws_url: str | None, url: str | None, bind: str,
+         password: bool = True) -> int:
     """The owner hub's first run: config, keys, owner token, recovery key."""
     if path.exists():
         print(f"init: {path} exists; this hub is set up already", file=sys.stderr)
@@ -122,10 +126,15 @@ def init(path: Path, owner: str, relay: str | None, ws_url: str | None, url: str
     (cfg.data / "keys").mkdir(parents=True, exist_ok=True, mode=0o700)
     root = _key(cfg.data / "keys" / "root.key")
     token = add_token(cfg.data, Caller(person=f"person:{owner}"), "first owner")
+    # A new hub: the site opens on the house agent's first-run walk-through
+    # until it marks setup done (hub.setup).
+    _write_private(cfg.data / "setup.json", json.dumps({"done": False}))
     print(f"Rook hub {wire.key_id(bytes(root.verify_key))} set up in {path.parent} (band {home_band(cfg)[:8]}).")
     site = url or "http://" + bind
-    typed = _new_password(owner) if sys.stdin.isatty() else ""
-    if typed:
+    typed = _new_password(owner) if password and sys.stdin.isatty() else ""
+    if not password:
+        print(f"\nSign in at {site} with a one-time link (login-link {owner}); set a password on the Account page.")
+    elif typed:
         passwords.set_password(cfg.data, owner, typed, by="init")
         print(f"\nSign in at {site} as {owner} with the password you just typed.")
     else:
@@ -140,6 +149,23 @@ def init(path: Path, owner: str, relay: str | None, ws_url: str | None, url: str
           f"while it lives, the recovery-key command shows it again.\n  {recovery_key(cfg.data)}")
     print(f"\nStart it:  python -m rook.core2.hub --config {path}")
     print(f"Add a machine:  python -m rook.core2.worker --config worker.yaml enroll {url or 'http://' + bind}")
+    return 0
+
+
+def login_link_cmd(cfg, name: str | None, base: str | None) -> int:
+    """Print a one-time sign-in link for an owner (default: the first)."""
+    from . import login_links
+    owners = [n for n, u in cfg.users.items() if u.get("preset") == "owner"]
+    name = name or (owners[0] if owners else None)
+    if name not in cfg.users:
+        print(f"login-link: no user {name!r} in the config", file=sys.stderr)
+        return 2
+    if not base:
+        bind = (cfg.doors.get("http") or {}).get("bind", "127.0.0.1:8740")
+        host, _, port = str(bind).rpartition(":")
+        base = f"http://{'127.0.0.1' if host in ('', '0.0.0.0', '::', '[::]') else host}:{port}"
+    code = login_links.make(cfg.data, f"person:{name}")
+    print(f"{base.rstrip('/')}/login/link?code={code}")
     return 0
 
 
@@ -298,6 +324,11 @@ def main(argv=None) -> int:
     ini.add_argument("--ws-url", help="or its WebSocket address")
     ini.add_argument("--url", help="where devices reach this hub's door (https://...), for enrollment")
     ini.add_argument("--bind", default="127.0.0.1:8740", help="the HTTP door's address (default %(default)s)")
+    ini.add_argument("--no-password", action="store_true",
+                     help="set no password: sign in with login-link, set one on the Account page")
+    ll = sub.add_parser("login-link", help="print a one-time sign-in link for the site (good for 15 minutes)")
+    ll.add_argument("name", nargs="?", help="the user (default: the first owner)")
+    ll.add_argument("--url", help="the site's address as the browser reaches it (default: the HTTP door's)")
     sub.add_parser("recovery-key", help="show the owner's recovery key")
     sec = sub.add_parser("secret", help="the hub's vault: list, set (value on stdin) or delete a secret")
     sec.add_argument("action", choices=["list", "set", "delete"])
@@ -314,7 +345,8 @@ def main(argv=None) -> int:
     res.add_argument("--name", help="with --target: which backup (default: the newest)")
     args = ap.parse_args(argv)
     if args.cmd == "init":
-        return init(Path(args.config), args.owner, args.relay, args.ws_url, args.url, args.bind)
+        return init(Path(args.config), args.owner, args.relay, args.ws_url, args.url, args.bind,
+                    password=not args.no_password)
     if args.cmd == "restore":
         try:
             return restore_cmd(Path(args.config), args.file, args.target, args.name)
@@ -330,6 +362,8 @@ def main(argv=None) -> int:
         return oauth_cmd(cfg, args.code, args.person)
     if args.cmd == "passwd":
         return passwd_cmd(cfg, args.name)
+    if args.cmd == "login-link":
+        return login_link_cmd(cfg, args.name, args.url)
     if args.cmd == "recovery-key":
         print(recovery_key(cfg.data))
         return 0

@@ -1,0 +1,46 @@
+# An agent.backend provider: one agent turn in the OpenCode CLI on this
+# worker. The first-run "none" path (Bake, Nov 4: "Our first usecase is
+# none/opencode"): OpenCode's free models need no account. `opencode run
+# --format json`, resumed by session id; the prompt goes in on stdin. Code:
+# scripts/opencode.py.
+manifest: 1
+plugin: agents-opencode
+version: 0.5.1
+title: OpenCode backend
+doc: Agent turns in the OpenCode CLI (free models need no account), for the agents package.
+package: agents
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+platforms: [linux, macos, windows]
+settings:
+  opencode: { default: opencode, doc: "The opencode program: a name on PATH or a full path." }
+  model: { doc: "System Two's model when the agent names none, as provider/model (opencode models lists them); blank: OpenCode's own default." }
+  model_three: { doc: "System Three's model (dream cycles), provider/model; blank: the model setting." }
+  door_url: { type: url, default: "http://127.0.0.1:8741/mcp", doc: "The hub's MCP door as this worker reaches it. Each turn reaches it with that turn's own token (the agent, for the person behind it)." }
+  own_tools: { type: bool, default: false, doc: "Let turns use OpenCode's own tools (shell, file edits, web fetch) on this worker. Off: Rook's caps only, so every action goes through the hub and its journal." }
+  isolate: { type: bool, default: true, doc: "Leave out the signed-in user's own OpenCode config (its MCP servers, agents, plugins, instructions); only its model providers are kept." }
+caps:
+  turn:
+    doc: One agent turn in OpenCode; pass session back to continue the conversation.
+    risk: exec
+    scope: local
+    timeout: 30m
+    run: scripts/opencode.py:turn
+    args:
+      prompt: { type: str, required: true }
+      session: { type: str, doc: "The OpenCode session id to resume; blank: a new session." }
+      cwd: { type: str, doc: "The folder OpenCode works in; blank: this plugin's work folder." }
+      model: { type: str, doc: "provider/model, or two/three for System Two/Three; blank: the model setting." }
+      effort: { type: str, doc: "OpenCode's --variant (provider-specific reasoning effort: minimal, high, max ...); blank: its own." }
+      system: { type: str, doc: "The agent's instructions. Sent at the head of a new session's first message (OpenCode's free models refuse a custom system prompt)." }
+      timeout: { type: duration, default: 20m, doc: How long the turn may take. }
+      door: { type: secret, doc: "The turn's door token, from the agents runtime: the turn's Rook MCP server uses it. Never journaled." }
+    result:
+      type: map
+      fields:
+        text: { type: str, required: true }
+        session: { type: str, required: true }
+        usage: { type: map, items: { type: int } }
+provides:
+  agent.backend: agents-opencode.turn
+docs: { manual: docs/manual.md }

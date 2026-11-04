@@ -204,6 +204,22 @@ class Pages:
         _write(self._state_path, json.dumps({"archived": self.archived, "start": self.starts}, indent=1))
 
 
+SETUP_FILE = "setup.json"
+
+
+def setup_state(hub, install: bool = False) -> dict:
+    """First-run setup: ``{done}``, and with ``install`` the facts the
+    installer left (``<data>/setup.json`` ``install``: folder, units, ports,
+    backend). ``init`` writes the file for a new hub; a hub without one
+    (set up before there was a first-run walk-through) counts as done."""
+    path = Path(hub.data) / SETUP_FILE
+    state = _read_json(path)
+    out = {"done": bool(state.get("done")) or not path.exists()}
+    if install and isinstance(state.get("install"), dict):
+        out["install"] = state["install"]
+    return out
+
+
 def dock_agent(hub) -> str | None:
     """The agent in the site's chat dock: the ``page.dock`` setting, when
     the agents package is installed."""
@@ -250,7 +266,7 @@ def install(hub) -> None:
                   "page.components": h.pages_components, "page.site": h.pages_site,
                   "page.start": h.pages_start},
         "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers, "hub.manifests": h.hub_manifests,
-                "hub.door": h.hub_door},
+                "hub.door": h.hub_door, "hub.setup": h.hub_setup},
         "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide,
                      "approval.ask": h.approval_ask, "approval.get": h.approval_get},
         "journal": {"journal.search": h.journal_search},
@@ -442,7 +458,7 @@ class _Handlers:
         the dock (with the agents package)."""
         pages = self.hub.pages
         return {"person": ctx.caller.person, "start": pages.start(ctx.caller.person), "dock": dock_agent(self.hub),
-                "workbench": self._workbench()}
+                "workbench": self._workbench(), "setup": setup_state(self.hub)}
 
     async def pages_start(self, ctx, page: str | None = None) -> dict:
         pages = self.hub.pages
@@ -479,6 +495,16 @@ class _Handlers:
         if not out["ok"]:
             raise KitError(out["error"])
         return {"closed": out["closed"]}
+
+    async def hub_setup(self, ctx, done: bool | None = None) -> dict:
+        if done is not None:
+            if not ctx.caller.owner:
+                raise KitError("only an owner (or their agent) marks setup finished")
+            path = Path(self.hub.data) / SETUP_FILE
+            state = _read_json(path)
+            state.update({"done": bool(done), "ts": time.time(), "by": _author(ctx)})
+            _write(path, json.dumps(state, indent=1))
+        return setup_state(self.hub, install=True)
 
     async def hub_workers(self, ctx) -> dict:
         return {"workers": (await self.hub.workers_view(_who(ctx)))["workers"]}

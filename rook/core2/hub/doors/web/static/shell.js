@@ -286,9 +286,12 @@ function show(ev) {
 async function refresh() {
   try {
     site = await call("page.site");
+    const setup = setupMode();
     await loadNav();
     if (current && !pages.some((p) => p.page === current.page)) {      // archived meanwhile
       history.replaceState(null, "", location.pathname);
+      open(wanted());
+    } else if (!current && !setup) {                                   // setup just finished
       open(wanted());
     }
   } catch (x) { /* next time */ }
@@ -316,6 +319,16 @@ async function say(text, quiet) {
   }
 }
 
+// Setup mode: first-run setup isn't finished (hub.setup), so the site is the
+// house agent's chat; "Skip to the hub" leaves it for this visit.
+let skipped = false;
+function setupMode() {
+  const on = !skipped && !!dock.agent && !!site.setup && !site.setup.done;
+  document.body.classList.toggle("setup", on);
+  $("#dock-close").textContent = on ? "Skip to the hub" : "\u00d7";
+  return on;
+}
+
 async function startDock(agent) {
   dock.agent = agent;
   $("#dock-name").textContent = agent === "house" ? "House agent" : agent;
@@ -328,7 +341,13 @@ async function startDock(agent) {
     $("#dock").hidden = $("#dock-btn").hidden = true;
     return;
   }
-  if (dock.shown === 0) {           // first run: the agent asks how the person wants to use the site
+  if (setupMode()) {                // a new hub: the chat is the whole site until setup is done
+    open = true;
+    if (dock.shown === 0) {
+      await say("First visit to a new hub; setup isn't finished. Greet the person warmly and start " +
+        "setting up with them: read the first-run skill (agent.skill name=first-run) and follow it.", true);
+    }
+  } else if (dock.shown === 0) {    // first run: the agent asks how the person wants to use the site
     open = true;
     await say("First visit to the hub site. Welcome the person, ask how they want to use the site, " +
       "and offer to make pages for what they want to keep an eye on (page.components, page.create) " +
@@ -358,7 +377,15 @@ $("#dock-text").onkeydown = (e) => {
   }
 };
 $("#dock-btn").onclick = () => dockOpen(!document.body.classList.contains("dock-open"));
-$("#dock-close").onclick = () => dockOpen(false);
+$("#dock-close").onclick = () => {
+  if (document.body.classList.contains("setup")) {
+    skipped = true;
+    setupMode();
+    if (!current) open(wanted());
+    return;
+  }
+  dockOpen(false);
+};
 
 window.addEventListener("hashchange", () => open(wanted()));
 
@@ -367,7 +394,7 @@ window.addEventListener("hashchange", () => open(wanted()));
     csrf = (await api("/web/api/me")).csrf;
     site = await call("page.site");
     await loadNav();
-    open(wanted());
+    if (!(site.dock && site.setup && !site.setup.done)) open(wanted());
     if (site.dock) startDock(site.dock).catch((x) => bubble("bad", x.message));
   } catch (x) {
     message(String((x && x.message) || x), true);

@@ -16,7 +16,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from rook.core2 import rights
-from rook.core2.hub import passwords
+from rook.core2.hub import login_links, passwords
 from rook.core2.hub.identity import NONE, Caller
 from .caps import _read_json, _write, dock_agent
 
@@ -86,7 +86,7 @@ class Web:
 
     @staticmethod
     def owns(path: str) -> bool:
-        return path in ("/", "/login", "/logout", "/account") or path.startswith("/web/")
+        return path in ("/", "/login", "/login/link", "/logout", "/account") or path.startswith("/web/")
 
     def handle(self, req, method: str, path: str, query: str) -> tuple[int, dict, bytes]:
         """One request: (status, headers, body)."""
@@ -102,6 +102,8 @@ class Web:
             if method == "POST":
                 return self._login(req)
             return self._file("login.html", csp=SHELL_CSP)
+        if method == "GET" and path == "/login/link":
+            return self._link(query.get("code"))
         sid, session = self._session(req)
         if method == "GET" and path in ("/", "/account"):
             if session is None:
@@ -113,7 +115,9 @@ class Web:
             raise _Error(401, "sign in first")
         if method == "GET" and path == "/web/api/me":
             return _json(200, {"ok": True, "person": session.person, "csrf": session.csrf,
-                               "connector": self._connector()})
+                               "connector": self._connector(),
+                               "password": passwords.set_by(self.hub.data, session.person.partition(":")[2])
+                               is not None})
         if method == "GET" and path == "/web/api/events":
             return _json(200, self._poll(sid, query.get("token", ""), query.get("since")))
         if method != "POST":
@@ -174,10 +178,7 @@ class Web:
             if form:
                 return 303, {"Location": "/login?failed=1"}, b""
             raise _Error(401, "wrong user name or password")
-        sid = secrets.token_urlsafe(32)
-        with self._lock:
-            self.sessions[_digest(sid)] = Session(person, secrets.token_urlsafe(24), time.time() + SESSION_SECS)
-            self._save()
+        sid = self._start(person)
         log.info("signed in", extra={"fields": {"person": person}})
         headers = {"Set-Cookie": self._cookie(sid, SESSION_SECS)}
         if form:
@@ -185,6 +186,25 @@ class Web:
             first = passwords.set_by(self.hub.data, person.partition(":")[2]) == passwords.GENERATED
             return 303, {**headers, "Location": "/account?first=1" if first else "/"}, b""
         return 200, {**headers, **_JSON}, b'{"ok": true}'
+
+    def _link(self, code) -> tuple[int, dict, bytes]:
+        """A one-time sign-in link (``login_links``; the installer opens
+        one): a session, then the site. A used or old link goes to /login."""
+        person = login_links.take(self.hub.data, code)
+        if person is None or self.hub.identities.user(person) is None:
+            log.info("sign-in link refused")
+            return 303, {"Location": "/login?link=1", "Cache-Control": "no-store"}, b""
+        sid = self._start(person)
+        log.info("signed in with a link", extra={"fields": {"person": person}})
+        return 303, {"Set-Cookie": self._cookie(sid, SESSION_SECS), "Location": "/",
+                     "Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}, b""
+
+    def _start(self, person: str) -> str:
+        sid = secrets.token_urlsafe(32)
+        with self._lock:
+            self.sessions[_digest(sid)] = Session(person, secrets.token_urlsafe(24), time.time() + SESSION_SECS)
+            self._save()
+        return sid
 
     def _check(self, req, fields: dict) -> str | None:
         """The person signing in (``person:<name>``), or None. A person signs
@@ -201,9 +221,11 @@ class Web:
         return caller.person if caller is not None and caller.person and not caller.agent else None
 
     def _password(self, person: str, body: dict) -> dict:
-        """The signed-in person changes their own password (the Account page)."""
+        """The signed-in person sets their own password (the Account page): the
+        current one is asked for once they have one."""
         name, new = person.partition(":")[2], body.get("password")
-        if not passwords.check(self.hub.data, name, body.get("current")):
+        has = passwords.set_by(self.hub.data, name) is not None
+        if has and not passwords.check(self.hub.data, name, body.get("current")):
             return {"ok": False, "error": "The current password is wrong."}
         if not isinstance(new, str) or not new:
             return {"ok": False, "error": "Type a new password."}
