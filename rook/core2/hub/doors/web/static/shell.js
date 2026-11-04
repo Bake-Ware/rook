@@ -244,6 +244,7 @@ $("#signout").onclick = async () => {
 // -- the dock: the house agent beside every page ----------------------------------
 
 const SITE = "[site]";      // a line the site adds for the agent: where the person is
+const SETUP_KICKOFF = "First visit to a new hub";
 const dock = { agent: null, next: 0, shown: 0 };
 
 function dockOpen(open) {
@@ -252,9 +253,26 @@ function dockOpen(open) {
   if (open) $("#dock-text").focus();
 }
 
+// The agent's replies: plain text with **bold**, `code` and links to this
+// hub's own pages (/account, #/page) - built as nodes, never as HTML.
+function rich(text) {
+  const box = el("div");
+  for (const part of text.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]\n]+\]\((?:\/|#)[^)\s]*\))/)) {
+    if (!part) continue;
+    let m;
+    if ((m = /^\*\*(.+)\*\*$/.exec(part))) box.append(el("b", {}, m[1]));
+    else if ((m = /^`(.+)`$/.exec(part))) box.append(/^\/[a-z]*$/.test(m[1]) ? el("a", { href: m[1] }, m[1]) : el("code", {}, m[1]));
+    else if ((m = /^\[(.+)\]\(((?:\/|#)[^)]*)\)$/.exec(part))) box.append(el("a", { href: m[2] }, m[1]));
+    else box.append(document.createTextNode(part));
+  }
+  return box.childNodes;
+}
+
 function bubble(cls, text) {
   const log = $("#dock-log");
-  log.append(el("div", { className: "said " + cls }, text));
+  const div = el("div", { className: "said " + cls });
+  if (cls === "them") div.append(...rich(text)); else div.textContent = text;
+  log.append(div);
   while (log.children.length > 200) log.firstChild.remove();
   log.scrollTop = log.scrollHeight;
 }
@@ -270,7 +288,10 @@ function show(ev) {
     if (text.startsWith(SITE)) {
       const nl = text.indexOf("\n");
       const rest = nl < 0 ? "" : text.slice(nl + 1).trim();
-      if (!rest) return bubble("aside", text.slice(SITE.length).trim().split(".")[0]);
+      if (!rest) {
+        if (text.includes(SETUP_KICKOFF)) return;      // the setup walk-through starting: no banner
+        return bubble("aside", text.slice(SITE.length).trim().split(".")[0]);
+      }
       text = rest;
     }
     bubble("me", text);
@@ -325,6 +346,7 @@ let skipped = false;
 function setupMode() {
   const on = !skipped && !!dock.agent && !!site.setup && !site.setup.done;
   document.body.classList.toggle("setup", on);
+  $("#dock-account").hidden = !on;
   $("#dock-close").textContent = on ? "Skip to the hub" : "\u00d7";
   return on;
 }
@@ -344,7 +366,7 @@ async function startDock(agent) {
   if (setupMode()) {                // a new hub: the chat is the whole site until setup is done
     open = true;
     if (dock.shown === 0) {
-      await say("First visit to a new hub; setup isn't finished. Greet the person warmly and start " +
+      await say(SETUP_KICKOFF + "; setup isn't finished. Greet the person warmly and start " +
         "setting up with them: read the first-run skill (agent.skill name=first-run) and follow it.", true);
     }
   } else if (dock.shown === 0) {    // first run: the agent asks how the person wants to use the site

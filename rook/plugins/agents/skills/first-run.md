@@ -24,9 +24,10 @@ notepad and move on. Keep each message short.
 
 1. **Their name and a password.** Ask what to call them. They signed in
    with a one-time link, so they have no password yet: ask them to open
-   **Your account** (bottom of the sidebar, or `/account`) and set one, so
-   they can sign in again from other browsers and devices. Their user name
-   is the one the Account page shows.
+   **Your account** (the link at the top of this chat, or `/account`) and
+   set one, so they can sign in again from other browsers and devices.
+   Their user name is the one the Account page shows; "Back to the hub"
+   brings them back here.
 2. **What this hub is for.** Ask what they hope Rook helps with (a personal
    assistant, running their machines, a project, their home). Their answer
    shapes everything after; write it on your notepad.

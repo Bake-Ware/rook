@@ -304,6 +304,66 @@ def test_the_account_page_changes_the_password_and_names_the_connector(site, tmp
     run(go())
 
 
+def test_a_one_time_link_signs_in_and_a_password_is_set_later(site):
+    """First run (Bake, Nov 4: "no terminal commands, tokens or password files
+    for the person"): the installer opens a one-time sign-in link; the owner
+    has no password until they set one on the Account page."""
+    from rook.core2.hub import login_links
+
+    async def go():
+        hub, tokens = await site()
+        try:
+            (hub.data / passwords.FILE).unlink()                 # init --no-password: none at all
+            c = Client(hub)
+            code = login_links.make(hub.data, "person:bake")
+            assert code not in (hub.data / login_links.FILE).read_text()      # only its hash is kept
+            status, headers, _ = await c.req("GET", f"/login/link?code={code}")
+            assert status == 303 and headers["Location"] == "/" and "HttpOnly" in headers["Set-Cookie"]
+            c.cookie = headers["Set-Cookie"].split(";")[0]
+            status, me = await c.json("GET", "/web/api/me")
+            assert me["person"] == "person:bake" and me["password"] is False
+            # once only; an unknown or an old one goes to the sign-in page
+            old = login_links.make(hub.data, "person:bake", secs=-1)
+            for bad in (code, "nope", old, ""):
+                status, headers, _ = await Client(hub).req("GET", f"/login/link?code={bad}")
+                assert status == 303 and headers["Location"] == "/login?link=1" and "Set-Cookie" not in headers
+            # no password yet: set one without a current one; after that the current one is asked for
+            c.csrf = me["csrf"]
+            assert (await c.json("POST", "/web/api/password", {"password": "mine"}))[1]["ok"]
+            assert (await c.json("GET", "/web/api/me"))[1]["password"] is True
+            out = (await c.json("POST", "/web/api/password", {"password": "theirs"}))[1]
+            assert not out["ok"] and "current password" in out["error"]
+            status, _, _ = await Client(hub).req("POST", "/login", form="user=bake&password=mine")
+            assert status == 303
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_setup_state_and_hub_setup(site):
+    """A new hub (init writes setup.json) opens on the setup chat until the
+    house agent marks setup done; a hub set up before that counts as done."""
+    async def go():
+        hub, tokens = await site()
+        try:
+            c = Client(hub)
+            await c.sign_in(tokens["bake"])
+            assert (await c.call("page.site"))["result"]["setup"] == {"done": True}     # no setup.json
+            (hub.data / "setup.json").write_text(json.dumps({"done": False, "install": {"machine": "box"}}))
+            assert (await c.call("page.site"))["result"]["setup"] == {"done": False}   # no install facts here
+            call = {"worker": "rook", "cap": "hub.setup", "args": {}, "why": WHY}
+            status, out = await c.json("POST", "/call", call, bearer=tokens["claude"])
+            assert out["result"] == {"done": False, "install": {"machine": "box"}}
+            status, out = await c.json("POST", "/call", {**call, "args": {"done": True}}, bearer=tokens["kim"])
+            assert not out["ok"]                                           # not an owner
+            status, out = await c.json("POST", "/call", {**call, "args": {"done": True}}, bearer=tokens["claude"])
+            assert out["ok"] and out["result"]["done"] is True and out["result"]["install"] == {"machine": "box"}
+            assert (await c.call("page.site"))["result"]["setup"] == {"done": True}
+        finally:
+            await hub.stop()
+    run(go())
+
+
 def test_sessions_survive_a_restart_and_end_with_the_person(site, tmp_path):
     async def go():
         hub, tokens = await site()
@@ -792,7 +852,7 @@ def test_every_builtin_cap_is_known():
         declared |= set(load(folder).data["caps"])
     assert declared == {
         "page.list", "page.view", "page.get", "page.create", "page.update", "page.archive", "page.restore",
-        "page.components", "page.site", "page.start", "hub.status", "hub.workers", "hub.manifests", "hub.door", "approval.list", "approval.decide", "approval.ask", "approval.get", "journal.search", "setting.list",
+        "page.components", "page.site", "page.start", "hub.status", "hub.workers", "hub.manifests", "hub.door", "hub.setup", "approval.list", "approval.decide", "approval.ask", "approval.get", "journal.search", "setting.list",
         "setting.set", "llm.providers", "llm.models", "llm.status", "token.create", "token.list", "token.revoke", "token.approve"}
 
 

@@ -75,3 +75,6 @@ body.setup .said { font-size: 15px; }
 @media (max-width: 720px) {
   body.setup #dock { position: static; height: 100%; border-top: 0; }
 }
+#dock-account { margin-right: 14px; color: var(--muted); font-size: 13px; font-weight: 400; }
+.said a { color: inherit; }
+.said code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
