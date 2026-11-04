@@ -173,7 +173,7 @@ mkdir -p "$SRC.new"
 if [ -n "$here" ] && [ -f "$here/../../rook/core2/hub/__main__.py" ] && git -C "$here" rev-parse HEAD >/dev/null 2>&1; then
     sha=$(git -C "$here" rev-parse HEAD)
     say "Code: this checkout, commit ${sha:0:8}"
-    git -C "$here" archive "$sha" | tar -x -C "$SRC.new"
+    git -C "$(git -C "$here" rev-parse --show-toplevel)" archive "$sha" | tar -x -C "$SRC.new"
 else
     say "Code: Bake-Ware/rook $REF"
     curl -fsSL "https://codeload.github.com/Bake-Ware/rook/tar.gz/$REF" | tar -xz -C "$SRC.new" --strip-components=1 ||
