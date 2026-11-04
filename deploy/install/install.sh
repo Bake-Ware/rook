@@ -21,6 +21,7 @@
 #   --no-boot          don't start it at login (units are written and started, not enabled)
 #   --no-browser       print the sign-in link instead of opening a browser
 #   --open             just open the site again with a new sign-in link
+#   --uninstall        stop and remove it (the folder is moved aside to DIR.removed-<time>, not deleted)
 set -euo pipefail
 
 # Everything is in main, so bash has read the whole script before any of it runs
@@ -28,7 +29,7 @@ set -euo pipefail
 main() {
 
 ROOT="$HOME/.rook" NAME=rook HTTP_PORT=8740 MCP_PORT=8741 RELAY_PORT=7474
-AI="" REF="c12/first-run" BOOT=1 BROWSER_OPEN=1 ONLY_OPEN=0
+AI="" REF="c12/first-run" BOOT=1 BROWSER_OPEN=1 ONLY_OPEN=0 UNINSTALL=0
 while [ $# -gt 0 ]; do
     case $1 in
         --dir) ROOT=$2; shift 2 ;;
@@ -41,6 +42,7 @@ while [ $# -gt 0 ]; do
         --no-boot) BOOT=0; shift ;;
         --no-browser) BROWSER_OPEN=0; shift ;;
         --open) ONLY_OPEN=1; shift ;;
+        --uninstall) UNINSTALL=1; shift ;;
         -h|--help) sed -n '2,25p' "$0" 2>/dev/null || true; exit 0 ;;
         *) printf 'install.sh: unknown option %s\n' "$1" >&2; exit 2 ;;
     esac
@@ -74,6 +76,22 @@ open_site() {
         printf '\n  %s\n\n' "$link"
     fi
 }
+
+if [ $UNINSTALL = 1 ]; then
+    for u in "$NAME-worker" "$NAME-hub" "$NAME-relay"; do
+        systemctl --user disable --now "$u" >/dev/null 2>&1 || true
+        rm -f "$UNIT_DIR/$u.service"
+    done
+    systemctl --user daemon-reload
+    if [ -d "$ROOT" ]; then
+        aside="$ROOT.removed-$(date +%Y%m%d-%H%M%S)"
+        mv "$ROOT" "$aside"
+        bold "Rook is stopped and removed; its folder is now $aside (delete it when you like)."
+    else
+        bold "Rook's units are removed; there was no $ROOT."
+    fi
+    exit 0
+fi
 
 if [ $ONLY_OPEN = 1 ]; then
     [ -f "$HUB_CFG" ] || die "nothing installed in $ROOT"
