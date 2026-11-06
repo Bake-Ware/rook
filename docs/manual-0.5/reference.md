@@ -46,6 +46,7 @@ Paths are relative to the file. An unknown key is an error.
 |---|---|
 | `python -m rook.core2.hub --config hub.yaml init --owner <name> [--relay host:port \| --ws-url url] [--url https://…] [--bind addr]` | set up a new hub; sets the owner's sign-in password, prints an API token and the recovery key once |
 | `python -m rook.core2.hub --config hub.yaml passwd <name>` | set or reset a person's sign-in password (typed, or one line on stdin); works at once |
+| `python -m rook.core2.hub --config hub.yaml login-link [NAME] [--url URL]` | a one-time sign-in link to the hub site for NAME (default: the first owner; single use, 15 minutes; only its hash is kept; `--url`: the address the browser reaches). The installer opens one; `init --no-password` hubs start this way |
 | `python -m rook.core2.hub --config hub.yaml oauth approve <CODE> [--person NAME]` | approve the code a connector's sign-in page shows (claude.ai adding Rook); the page goes on within seconds ([MCP](mcp.md#claudeais-connectors)) |
 | `python -m rook.core2.hub --config hub.yaml` | run the hub (SIGINT or SIGTERM stops it) |
 | `python -m rook.core2.hub --config hub.yaml token --person <name> [--agent <name>] [--label text]` | mint a door token |
