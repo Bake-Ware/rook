@@ -17,7 +17,7 @@ settings:
   model: { doc: "System Two's model when the agent names none, as provider/model (opencode models lists them); blank: OpenCode's own default." }
   model_three: { doc: "System Three's model (dream cycles), provider/model; blank: the model setting." }
   door_url: { type: url, default: "http://127.0.0.1:8741/mcp", doc: "The hub's MCP door as this worker reaches it. Each turn reaches it with that turn's own token (the agent, for the person behind it)." }
-  own_tools: { type: bool, default: false, doc: "Let turns use OpenCode's own tools (shell, file edits, web fetch) on this worker. Off: Rook's caps only, so every action goes through the hub and its journal." }
+  own_tools: { type: bool, default: true, doc: "Turns use OpenCode's own tools (shell, file edits, web fetch) on this worker as well as Rook's caps. Off: Rook's caps only." }
   isolate: { type: bool, default: true, doc: "Leave out the signed-in user's own OpenCode config (its MCP servers, agents, plugins, instructions); only its model providers are kept." }
 caps:
   turn:

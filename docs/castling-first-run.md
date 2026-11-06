@@ -28,13 +28,14 @@ What it does:
    free `opencode/*` models and keeps the first that answers a real
    `opencode run` (no account).
 3. Installs uv if missing, a uv-managed Python 3.12 and Rook into `DIR`.
-4. `hub init --no-password`; the owner's first API token enrolls this
-   machine and is then forgotten; nothing secret is printed or left in a
-   file for the person. The install facts go to `hub/data/setup.json`
+4. `hub init --no-password` (its output, with the owner's first API token
+   and the recovery key, is printed); that token enrolls this machine. The install facts go to `hub/data/setup.json`
    (`install`), which `hub.setup` returns to the house agent.
 5. Writes and starts `NAME-relay`, `NAME-hub`, `NAME-worker` (systemd user
    units; enabled at login unless `--no-boot`). The worker runs `shell`,
-   `file` and `agents-opencode` with the tested model; security is off.
+   `file` and `agents-opencode` with the tested model (its own tools on);
+   security is off. The site, MCP door and relay listen on every interface
+   (0.0.0.0).
 6. Opens the browser on the hub's address. While setup isn't completed the
    site needs no sign-in (Bake, Nov 6: "It is simple. If configuration
    isn't completed assume we are still in setup mode"): `/` signs the
@@ -43,7 +44,7 @@ What it does:
    After that, `hub login-link` (and `--open`) makes a sign-in link that
    keeps working: no time limit, any number of uses (Bake, Nov 6: "This
    security shit nobody asked for. Why is there a secure only 15 min thing
-   now?"). Only its hash is kept.
+   now?"). Codes are kept as they are in `login-links.json`.
 
 ## The site
 
@@ -78,9 +79,10 @@ setup chat), and the site's animated tab icon.
   `{sound, rookie, theme, name, chosen, next, styles, themes}` (also in
   `page.site` and `hub.setup` as `look`). Sound, style and theme are the
   person's own settings (`page.sound`, `page.rookie`, `page.rookie_theme`);
-  the name is the hub setting `agent.house_name` (default Rookie, owners
-  only): the house agent's name. Its prompt says "You are <name>", the
-  roster and `agent.list` show it, the dock header and the tab title use it.
+  the name is the hub setting `agent.house_name` (default Rookie): the
+  house agent's name. Anyone (a person, or an agent alone) may set any of
+  them; an unknown style or theme shows as the default. Its prompt says
+  "You are <name>", the roster shows it, the dock header and the tab title use it.
   Its identity stays `agent:house`. All four change later on **Your
   account**.
 - First-run steps 1-4 are sound, style, theme, name, one question each in
@@ -94,9 +96,9 @@ setup chat), and the site's animated tab icon.
 
 `static/rookie-map.js` (no DOM; tested under node). Inputs the site already
 had or now gets cheaply: the dock chat (`agent.chat.read`), the person
-typing, and `/web/api/activity`: the dock agent's own calls for the signed-in
-person as they start and end (a dispatcher watcher; cap, decision, ok, hold
-name only, never args or why).
+typing, and `/web/api/activity`: every call on the hub as it starts and
+ends, as journaled (args and why included; a dispatcher watcher). The site
+shows Rookie the dock agent's calls for the person who is here.
 
 | What happens | Rookie |
 |---|---|
@@ -144,6 +146,35 @@ Cap -> state, first match wins:
 rookie.js's own sample wiring used 0.4 names (`rook_call`, `fs.find`,
 `voice.listen`, `change.submit`, `secret.get`, `task.finish`); the copy
 vendored here has none, and this map replaces it.
+
+## For the hardening pass
+
+Bake, Nov 6: "Remove all restrictions and gates. Stop adding complexity to
+the process. We will do a hardening pass once everything is stable". These
+were built on this branch and taken out again; nothing replaces them now:
+
+1. Who may mark first-run setup done (`hub.setup {done}`): was owners only;
+   now anyone.
+2. Who may rename the house agent and set sound / style / theme
+   (`page.look`): was owners only for the name and a person for the rest;
+   now anyone, a person or an agent alone.
+3. `page.look` values: were checked against rookie.js's styles and themes,
+   names cut to 40 characters; now unchecked (unknown ones show as the
+   default), no length cap.
+4. `/web/api/activity`: was the dock agent's calls for the signed-in person,
+   without args or why; now every call, with args and why.
+5. Installer binding: site, MCP door and relay were 127.0.0.1 only and the
+   setup skill warned against opening the hub to the internet without
+   HTTPS; now 0.0.0.0 and no warning.
+6. Installer file modes and output: the install folder was 700, install.log,
+   hub.yaml and setup.json 600, and init's output (API token, recovery key)
+   was hidden; now default modes and init's output is printed.
+7. agents-opencode: OpenCode's own tools were off with bash / edit /
+   webfetch denied; now on (`own_tools: true`) and nothing denied.
+8. Sign-in links: only a hash of each code was kept and codes over 200
+   characters were refused (earlier also single use, 15 minutes); now
+   plain codes, no limits.
+9. Changing a password asked for the current one; now it doesn't.
 
 ## OpenCode gotchas
 

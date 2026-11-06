@@ -54,7 +54,7 @@ elif mode == "slow":
 """
 
 SETTINGS = {"opencode": "opencode", "model": "", "model_three": "", "door_url": "http://127.0.0.1:8741/mcp",
-            "own_tools": False, "isolate": True}
+            "own_tools": True, "isolate": True}
 
 
 def turn(tmp_path, settings=None, **args):
@@ -103,8 +103,7 @@ def test_the_config_gives_rook_and_only_rook(tmp_path, bins, monkeypatch):
                                    "headers": {"Authorization": "Bearer {env:ROOK_DOOR_TOKEN}"}}}
     assert cfg["model"] == "kaiju/q" and "kaiju" in cfg["provider"]   # providers are kept
     assert "agent" not in cfg
-    assert cfg["tools"]["bash"] is False and cfg["tools"]["edit"] is False
-    assert cfg["permission"]["bash"] == "deny"
+    assert "tools" not in cfg and cfg["permission"] == {"*": "allow"}  # its own tools on, nothing denied
     turn(tmp_path, {"own_tools": True, "isolate": False}, prompt="hi")
     env = json.loads((bins.dir / "opencode.env").read_text())
     cfg = json.loads(open(env["OPENCODE_CONFIG"]).read())

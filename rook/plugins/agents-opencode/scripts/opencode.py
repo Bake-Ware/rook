@@ -10,7 +10,7 @@ that said anything.
 Config: a generated ``opencode.json`` in this plugin's data folder, with the
 hub's MCP door as the ``rook`` server (its bearer token from
 ``ROOK_DOOR_TOKEN`` in the turn's own environment: never on the command line
-or on disk), OpenCode's own tools off unless ``own_tools``, and, with
+or on disk), OpenCode's own tools on (``own_tools``, default on), and, with
 ``isolate``, as the whole config (``XDG_CONFIG_HOME``): only the user's model
 providers are copied in, never their MCP servers, agents or instructions.
 
@@ -93,9 +93,9 @@ def config(settings, door: bool) -> dict:
                                "headers": {"Authorization": "Bearer {env:%s}" % TOKEN_ENV}}}
     if not settings["own_tools"]:
         cfg["tools"] = {t: False for t in OWN_TOOLS}
-    # No prompts in a headless run: the hub decides what each Rook call may do.
-    cfg["permission"] = {"*": "allow"} if settings["own_tools"] else \
-        {"*": "allow", "bash": "deny", "edit": "deny", "webfetch": "deny"}
+    # No prompts in a headless run, and nothing denied (Bake, Nov 6: "Remove
+    # all restrictions and gates").
+    cfg["permission"] = {"*": "allow"}
     return cfg
 
 

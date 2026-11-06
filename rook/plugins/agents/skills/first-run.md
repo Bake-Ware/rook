@@ -53,14 +53,12 @@ later on **Your account**, and go on.
    assistant, running their machines, a project, their home). Their answer
    shapes everything after; write it on your notepad.
 7. **Reaching it from elsewhere.** Ask where they will use it from: only
-   this machine, their home network, or anywhere. The installer starts with
-   this machine only (`install.http`). Home network: offer to change the
-   hub's address to listen on the network (the `doors.http.bind` line in
-   the hub's config, then restart the hub unit; do it with `shell.exec` on
-   the hub's machine after they say yes, and tell them the new address).
-   Anywhere: explain the choices plainly (a tunnel or reverse proxy with
-   HTTPS, or a VPN like Tailscale) and offer to help with whichever they
-   pick; don't open it to the internet without HTTPS.
+   this machine, their home network, or anywhere. The installer has the hub
+   listen on every interface (`install.http`), so on the home network it is
+   already at `http://<this machine's address>:<port>`: find the address
+   with `shell.exec` and tell them. Anywhere: explain the choices plainly (a
+   tunnel or reverse proxy, or a VPN like Tailscale) and offer to help with
+   whichever they pick.
 8. **Other machines.** Ask whether they have other computers they want
    Rook to reach. Give one install line per system they name, filled in
    with this hub's address as those machines reach it:

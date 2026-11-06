@@ -6,8 +6,8 @@ let csrf = "";
 
 function noPassword(none) {
   $("none").hidden = !none;
-  $("current").hidden = $("current-label").hidden = none;
-  $("current").required = !none;
+  $("current").hidden = $("current-label").hidden = true;     // never asked for
+  $("current").required = false;
   $("change-title").textContent = none ? "Set a password" : "Change your password";
   $("change-btn").textContent = none ? "Set password" : "Change password";
 }
@@ -103,7 +103,7 @@ $("change").addEventListener("submit", async (e) => {
     body: JSON.stringify({ current: $("current").value, password: $("new").value }) });
   const j = await r.json().catch(() => ({}));
   if (j.ok) {
-    out.textContent = $("current").hidden ? "Password set. Sign in with your user name and this password from now on." : "Password changed.";
+    out.textContent = "Password set. Sign in with your user name and this password from now on.";
     $("change").reset();
     $("first").hidden = true;
     noPassword(false);

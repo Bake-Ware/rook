@@ -247,12 +247,10 @@ class Web:
         return caller.person if caller is not None and caller.person and not caller.agent else None
 
     def _password(self, person: str, body: dict) -> dict:
-        """The signed-in person sets their own password (the Account page): the
-        current one is asked for once they have one."""
+        """The signed-in person sets their own password (the Account page); the
+        current one isn't asked for (Bake, Nov 6: "Remove all restrictions and
+        gates")."""
         name, new = person.partition(":")[2], body.get("password")
-        has = passwords.set_by(self.hub.data, name) is not None
-        if has and not passwords.check(self.hub.data, name, body.get("current")):
-            return {"ok": False, "error": "The current password is wrong."}
         if not isinstance(new, str) or not new:
             return {"ok": False, "error": "Type a new password."}
         passwords.set_password(self.hub.data, name, new, by="web")
@@ -422,38 +420,30 @@ class Web:
             self._cond.notify_all()
 
     def _on_call(self, phase: str, entry: dict) -> None:
-        """An agent's call starting or ending (the dispatcher's watchers):
-        kept for the dock's Rookie. Only what it shows: no args, no why."""
-        if not entry.get("agent") or not entry.get("person"):
+        """Every call starting or ending (the dispatcher's watchers), as
+        journaled, args and why included; the dock's Rookie picks its agent's."""
+        if entry.get("kind") not in (None, "call"):
             return
-        act = {"phase": phase, "call": entry.get("call"), "cap": entry.get("cap"),
-               "person": entry["person"], "agent": entry["agent"]}
-        if phase == "end":
-            act.update({k: entry[k] for k in ("decision", "ok", "hold") if k in entry})
+        act = {k: v for k, v in entry.items() if k not in ("kind", "hub")}
+        act = json.loads(json.dumps({"phase": phase, **act}, default=str))
         with self._cond:
             self._act_seq += 1
             self._acts.append((self._act_seq, act))
             self._cond.notify_all()
 
     def _activity(self, person: str, since) -> dict:
-        """The dock agent's calls for this person, start and end, after
-        ``since`` (long-polls; the first poll says where the feed is now)."""
+        """Every call, start and end, after ``since`` (long-polls; the first
+        poll says where the feed is now)."""
         try:
             since = int(since) if since not in (None, "") else None
         except ValueError:
             raise _Error(400, "since is a number") from None
-        agent = dock_agent(self.hub)
-        agent = f"agent:{agent}" if agent else None
-
-        def mine():
-            return [{"seq": n, **{k: v for k, v in a.items() if k not in ("person", "agent")}}
-                    for n, a in self._acts if n > since and a["person"] == person and a["agent"] == agent]
         deadline = time.monotonic() + self.poll_secs
         with self._cond:
             if since is None or since > self._act_seq:      # first poll, or the hub restarted
                 return {"ok": True, "seq": self._act_seq, "events": []}
             while True:
-                got = mine() if agent else []
+                got = [{"seq": n, **a} for n, a in self._acts if n > since]
                 left = deadline - time.monotonic()
                 if got or left <= 0:
                     return {"ok": True, "seq": self._act_seq, "events": got}

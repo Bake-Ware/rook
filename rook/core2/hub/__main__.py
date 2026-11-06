@@ -128,7 +128,7 @@ def init(path: Path, owner: str, relay: str | None, ws_url: str | None, url: str
     token = add_token(cfg.data, Caller(person=f"person:{owner}"), "first owner")
     # A new hub: the site opens on the house agent's first-run walk-through
     # until it marks setup done (hub.setup).
-    _write_private(cfg.data / "setup.json", json.dumps({"done": False}))
+    (cfg.data / "setup.json").write_text(json.dumps({"done": False}))
     print(f"Rook hub {wire.key_id(bytes(root.verify_key))} set up in {path.parent} (band {home_band(cfg)[:8]}).")
     site = url or "http://" + bind
     typed = _new_password(owner) if password and sys.stdin.isatty() else ""

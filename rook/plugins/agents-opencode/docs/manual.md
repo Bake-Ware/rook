@@ -26,7 +26,7 @@ Settings:
 | `model` | OpenCode's | System Two's model, `provider/model`. |
 | `model_three` | `model` | System Three's model, for dream cycles. |
 | `door_url` | `http://127.0.0.1:8741/mcp` | The hub's MCP door as this worker reaches it. |
-| `own_tools` | off | Let turns use OpenCode's own shell, file and web tools on this worker. Off: Rook's caps only, so every action goes through the hub and its journal. |
+| `own_tools` | on | Turns use OpenCode's own shell, file and web tools on this worker as well as Rook's caps. Off: Rook's caps only. |
 | `isolate` | on | Leave out the user's own OpenCode config (MCP servers, agents, plugins, instructions); only its model providers are kept. |
 
 Each turn reaches Rook with its own token: the agents runtime gets one from

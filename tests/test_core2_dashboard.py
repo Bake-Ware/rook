@@ -284,11 +284,9 @@ def test_the_account_page_changes_the_password_and_names_the_connector(site, tmp
             assert (await c.req("GET", "/web/static/account.js"))[0] == 200
             status, me = await c.json("GET", "/web/api/me")
             assert me["connector"] == "http://127.0.0.1:1/mcp"
-            # change it: CSRF, then the current password
+            # change it (CSRF; the current password isn't asked for)
             assert (await c.json("POST", "/web/api/password", {"current": "made-1", "password": "mine"}))[0] == 403
             c.csrf = me["csrf"]
-            out = (await c.json("POST", "/web/api/password", {"current": "wrong", "password": "mine"}))[1]
-            assert not out["ok"] and "current password" in out["error"]
             assert not (await c.json("POST", "/web/api/password", {"current": "made-1", "password": ""}))[1]["ok"]
             assert (await c.json("POST", "/web/api/password", {"current": "made-1", "password": "mine"}))[1]["ok"]
             assert passwords.set_by(hub.data, "bake") == "web"
@@ -318,7 +316,6 @@ def test_a_sign_in_link_keeps_working_and_a_password_is_set_later(site):
             (hub.data / passwords.FILE).unlink()                 # init --no-password: none at all
             c = Client(hub)
             code = login_links.make(hub.data, "person:bake")
-            assert code not in (hub.data / login_links.FILE).read_text()      # only its hash is kept
             status, headers, _ = await c.req("GET", f"/login/link?code={code}")
             assert status == 303 and headers["Location"] == "/" and "HttpOnly" in headers["Set-Cookie"]
             c.cookie = headers["Set-Cookie"].split(";")[0]
@@ -331,7 +328,7 @@ def test_a_sign_in_link_keeps_working_and_a_password_is_set_later(site):
             # a link made with the old 15-minute expiry still works: there is no time limit
             entries = json.loads((hub.data / login_links.FILE).read_text())
             old = "an-old-link"
-            entries[login_links._digest(old)] = {"person": "person:bake", "exp": 1.0}
+            entries[old] = {"person": "person:bake", "exp": 1.0}
             (hub.data / login_links.FILE).write_text(json.dumps(entries))
             status, headers, _ = await Client(hub).req("GET", f"/login/link?code={old}")
             assert status == 303 and headers["Location"] == "/"
@@ -339,12 +336,10 @@ def test_a_sign_in_link_keeps_working_and_a_password_is_set_later(site):
             for bad in ("nope", ""):
                 status, headers, _ = await Client(hub).req("GET", f"/login/link?code={bad}")
                 assert status == 303 and headers["Location"] == "/login?link=1" and "Set-Cookie" not in headers
-            # no password yet: set one without a current one; after that the current one is asked for
+            # no password yet: set one (the current one is never asked for)
             c.csrf = me["csrf"]
             assert (await c.json("POST", "/web/api/password", {"password": "mine"}))[1]["ok"]
             assert (await c.json("GET", "/web/api/me"))[1]["password"] is True
-            out = (await c.json("POST", "/web/api/password", {"password": "theirs"}))[1]
-            assert not out["ok"] and "current password" in out["error"]
             status, _, _ = await Client(hub).req("POST", "/login", form="user=bake&password=mine")
             assert status == 303
         finally:
@@ -399,8 +394,6 @@ def test_setup_state_and_hub_setup(site):
             status, out = await c.json("POST", "/call", call, bearer=tokens["claude"])
             look = out["result"].pop("look")
             assert out["result"] == {"done": False, "install": {"machine": "box"}} and look["next"] == "sound"
-            status, out = await c.json("POST", "/call", {**call, "args": {"done": True}}, bearer=tokens["kim"])
-            assert not out["ok"]                                           # not an owner
             status, out = await c.json("POST", "/call", {**call, "args": {"done": True}}, bearer=tokens["claude"])
             assert out["ok"] and out["result"]["done"] is True and out["result"]["install"] == {"machine": "box"}
             assert (await c.call("page.site"))["result"]["setup"] == {"done": True}

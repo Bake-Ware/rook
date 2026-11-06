@@ -507,7 +507,7 @@ function setupMode() {
   return on;
 }
 
-// The dock agent's calls for this person, as they start and end (Rookie's states).
+// Calls as they start and end (the feed has every call); Rookie's states.
 async function activity() {
   let since = "";
   for (;;) {
@@ -517,7 +517,10 @@ async function activity() {
         await sleep(5000);
         continue;
       }
-      for (const ev of r.events) rookie.driver.activity(ev);
+      for (const ev of r.events) {
+        // Rookie shows what the dock agent does for whoever is here.
+        if (ev.agent === "agent:" + dock.agent && ev.person === site.person) rookie.driver.activity(ev);
+      }
       since = r.seq;
     } catch (x) {
       await sleep(3000);

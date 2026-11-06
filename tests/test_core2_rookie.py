@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 
 from rook.core2.hub.doors.web import caps as web_caps
-from rook.core2.hub.doors.web import site as web_site
 from tests.test_core2_dashboard import WHY, Client, Hub, Loopback, run, site  # noqa: F401 - the fixture
 from tests.test_core2_worksurface import bearer as ws_bearer, serve as ws_serve
 
@@ -53,17 +52,12 @@ def test_look_and_feel_saves_loads_and_belongs_to_each_person(site):
             assert (await bake.call("page.site"))["result"]["look"]["theme"] == "gameboy"
             mine = (await kim.call("page.look"))["result"]                      # kim's own
             assert (mine["sound"], mine["rookie"], mine["next"]) == (False, "pixel", "sound")
-            for bad, err in (({"rookie": "clippy"}, "no Rookie style"), ({"theme": "plaid"}, "no Rookie theme")):
-                out = await bake.call("page.look", bad)
-                assert not out["ok"] and err in out["error"]
             stored = json.loads((hub.data / "person-settings.json").read_text())
             assert stored["person:bake"]["page"] == {"sound": True, "rookie": "kawaii", "rookie_theme": "gameboy"}
             # the house agent sets a typed answer for the person it acts for
             call = {"worker": "rook", "cap": "page.look", "args": {"rookie": "none", "sound": False}, "why": WHY}
             status, out = await bake.json("POST", "/call", call, bearer=tokens["claude"])
             assert out["ok"] and out["result"]["rookie"] == "none" and out["result"]["sound"] is False
-            status, out = await bake.json("POST", "/call", call, bearer=tokens["narrow"])
-            assert not out["ok"]                                    # an agent alone has no look
         finally:
             await hub.stop()
         # and it loads again after a restart (the session survives it too)
@@ -85,9 +79,8 @@ def test_a_fresh_hub_asks_sound_style_theme_name_first_and_the_name_is_the_house
     and survives a restart. The skill and the site's kickoff ask them first."""
     async def go(hub, tokens):
         (hub.data / "setup.json").write_text(json.dumps({"done": False}))
-        c, kim = Client(hub), Client(hub)
+        c = Client(hub)
         await c.sign_in(tokens["bake"])
-        await kim.sign_in(tokens["kim"])
         s = (await c.call("page.site"))["result"]
         assert s["setup"] == {"done": False} and s["look"]["name"] == "Rookie"
         out = await ws_bearer(c, tokens["bake"], "hub.setup")
@@ -99,8 +92,6 @@ def test_a_fresh_hub_asks_sound_style_theme_name_first_and_the_name_is_the_house
             assert out["ok"], out
         assert order == ["sound", "rookie", "theme", "name"] and out["result"]["next"] is None
         assert out["result"]["name"] == "Juniper"
-        # a viewer can't rename the house agent
-        assert not (await kim.call("page.look", {"name": "Bob"}))["ok"]
         # the name is the house agent's: its prompt, the hub setting
         reply = (await c.call("agent.chat.send", {"agent": "house", "text": "who are you"}))["result"]["text"]
         assert reply.startswith('You are Juniper, the agent "house"')
@@ -117,28 +108,24 @@ def test_a_fresh_hub_asks_sound_style_theme_name_first_and_the_name_is_the_house
     assert "in order: sound, Rookie's style, \" +\n        \"Rookie's theme, Rookie's name" in kickoff
 
 
-def test_the_activity_feed_shows_the_dock_agents_calls_for_you_only(site, monkeypatch):
-    monkeypatch.setattr(web_site, "dock_agent", lambda hub: "claude")
-
+def test_the_activity_feed_has_every_call_as_journaled(site):
+    """Rookie's feed: every call on the hub, start and end, with its args and
+    why (Bake, Nov 6: "Remove all restrictions and gates"); the site picks the
+    dock agent's calls for the person who is here."""
     async def go():
         hub, tokens = await site()
         try:
-            bake, kim = Client(hub), Client(hub)
-            await bake.sign_in(tokens["bake"])
-            await kim.sign_in(tokens["kim"])
-            seq = (await bake.json("GET", "/web/api/activity"))[1]["seq"]
-            kseq = (await kim.json("GET", "/web/api/activity"))[1]["seq"]
-            call = {"worker": "rook", "cap": "page.list", "args": {}, "why": "a secret why"}
-            await bake.json("POST", "/call", call, bearer=tokens["claude"])          # agent claude for bake
-            await bake.json("POST", "/call", call, bearer=tokens["bake"])            # bake alone: not shown
-            status, out = await bake.json("GET", f"/web/api/activity?since={seq}")
-            evs = out["events"]
-            assert [(e["phase"], e["cap"]) for e in evs] == [("start", "page.list"), ("end", "page.list")]
-            assert evs[1]["ok"] is True and evs[1]["decision"] == "allow" and evs[0]["call"] == evs[1]["call"]
-            assert "a secret why" not in json.dumps(out) and "args" not in evs[0]
-            next(d for d in hub.doors if d.name == "http").web.poll_secs = 0.2
-            status, out = await kim.json("GET", f"/web/api/activity?since={kseq}")
-            assert out["events"] == []                                               # not kim's
+            c = Client(hub)
+            await c.sign_in(tokens["bake"])
+            seq = (await c.json("GET", "/web/api/activity"))[1]["seq"]
+            call = {"worker": "rook", "cap": "page.list", "args": {"archived": True}, "why": "checking the pages"}
+            await c.json("POST", "/call", call, bearer=tokens["claude"])
+            status, out = await c.json("GET", f"/web/api/activity?since={seq}")
+            mine = [e for e in out["events"] if e.get("why") == "checking the pages"]
+            assert [e["phase"] for e in mine] == ["start", "end"]
+            assert mine[0]["cap"] == "page.list" and mine[0]["args"] == {"archived": True}
+            assert mine[0]["agent"] == "agent:claude" and mine[0]["person"] == "person:bake"
+            assert mine[1]["ok"] is True and mine[0]["call"] == mine[1]["call"]
         finally:
             await hub.stop()
     run(go())

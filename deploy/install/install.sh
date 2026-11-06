@@ -7,7 +7,7 @@
 # It asks what you use for AI now, sets that up and tests it, installs the
 # hub site, the band relay and a worker for this machine as systemd user
 # units, and opens the site (no sign-in until setup is completed). The house agent
-# takes it from there. Nothing it prints is a token, key or password.
+# takes it from there.
 #
 # Options (all optional; to run beside other installs give a new --dir,
 # --name and ports):
@@ -127,9 +127,7 @@ for p in "$HTTP_PORT" "$MCP_PORT"; do
     if (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then die "port $p is in use; pick others with --http-port / --mcp-port"; fi
 done
 mkdir -p "$ROOT"
-chmod 700 "$ROOT"
 : > "$LOG"
-chmod 600 "$LOG"
 
 # -- 1. What do you use for AI now? ----------------------------------------------
 if [ -z "$AI" ]; then
@@ -213,15 +211,15 @@ UV_PYTHON_PREFERENCE=only-managed uv venv -q --python 3.12 "$VENV" >>"$LOG" 2>&1
 uv pip install -q --python "$PY" -e "$SRC[manifest]" >>"$LOG" 2>&1 || die "Rook's packages didn't install (see $LOG)"
 
 # -- the hub: config, keys, no password (the site asks for one) -------------------
+# Everything listens on every interface (0.0.0.0); init's output (API token,
+# recovery key) is printed as it comes (Bake, Nov 6: "Remove all restrictions
+# and gates"; docs/castling-first-run.md "For the hardening pass").
 mkdir -p "$ROOT/hub" "$ROOT/worker" "$UNIT_DIR"
-secret=$(mktemp "$ROOT/.init.XXXXXX")
-"$PY" -m rook.core2.hub --config "$HUB_CFG" init --owner "$OWNER" --no-password \
-    --relay "127.0.0.1:$RELAY_PORT" --url "$URL" --bind "127.0.0.1:$HTTP_PORT" > "$secret" </dev/null ||
-    { rm -f "$secret"; die "the hub didn't set up (see $LOG)"; }
-# The owner's first API token enrolls this machine below and is then
-# forgotten; init's printout (token, recovery key) is never shown.
-TOKEN=$(awk '/^API token/{getline; print $1; exit}' "$secret")
-rm -f "$secret"
+initout=$("$PY" -m rook.core2.hub --config "$HUB_CFG" init --owner "$OWNER" --no-password \
+    --relay "127.0.0.1:$RELAY_PORT" --url "$URL" --bind "0.0.0.0:$HTTP_PORT" </dev/null) ||
+    die "the hub didn't set up (see $LOG)"
+printf '%s\n' "$initout"
+TOKEN=$(printf '%s\n' "$initout" | awk '/^API token/{getline; print $1; exit}')
 [ -n "$TOKEN" ] || die "the hub set up without a token for enrolling this machine"
 plugins=$SRC/rook/plugins
 HUB_PLUGINS="agents notify changes tasks projects knowledge concepts whiteboard"
@@ -237,12 +235,11 @@ path, mcp = Path(sys.argv[1]), sys.argv[2]
 text = path.read_text()
 head = "".join(l for l in text.splitlines(True) if l.startswith("#"))
 cfg = yaml.safe_load(text)
-cfg["doors"]["mcp"] = {"bind": f"127.0.0.1:{mcp}"}
+cfg["doors"]["mcp"] = {"bind": f"0.0.0.0:{mcp}"}
 cfg["contracts"] = {"agent.backend": "agents-opencode.turn"}
 cfg["log"] = {"level": "info", "format": "text"}
 path.write_text(head + yaml.safe_dump(cfg, sort_keys=False))
 EOF
-chmod 600 "$HUB_CFG"
 "$PY" - "$ROOT" "$NAME" "$WORKER_NAME" "$HTTP_PORT" "$MCP_PORT" "$RELAY_PORT" "$MODEL" "$sha" <<'EOF'
 import json, os, sys, time
 from pathlib import Path
@@ -253,13 +250,11 @@ state["install"] = {
     "by": "deploy/install/install.sh", "when": time.strftime("%Y-%m-%d %H:%M %Z"), "version": sha,
     "folder": root, "hub_config": f"{root}/hub/hub.yaml", "worker_config": f"{root}/worker/worker.yaml",
     "machine": worker, "units": [f"{name}-relay", f"{name}-hub", f"{name}-worker"],
-    "http": f"127.0.0.1:{http} (this machine only)", "mcp": f"127.0.0.1:{mcp}",
-    "relay": f"127.0.0.1:{relay} (UDP, this machine only)", "security": "off",
+    "http": f"0.0.0.0:{http} (every interface)", "mcp": f"0.0.0.0:{mcp}",
+    "relay": f"0.0.0.0:{relay} (UDP, every interface)", "security": "off",
     "ai": {"choice": "none", "backend": "agents-opencode.turn", "model": model,
            "note": "OpenCode's free model: no account. Switch by installing another agents-* backend."}}
-fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-with os.fdopen(fd, "w") as f:
-    json.dump(state, f, indent=1)
+path.write_text(json.dumps(state, indent=1))
 EOF
 "$PY" - "$WORKER_CFG" "$WORKER_NAME" "$plugins" "$WORKER_PLUGINS" "$OPENCODE" "$MODEL" "$MCP_PORT" <<'EOF'
 import sys, yaml
@@ -280,7 +275,7 @@ cat > "$UNIT_DIR/$NAME-relay.service" <<EOF
 Description=Rook: band relay (UDP 127.0.0.1:$RELAY_PORT)
 
 [Service]
-ExecStart=$PY $SRC/tests/e2e/relay.py $RELAY_PORT
+ExecStart=$PY $SRC/tests/e2e/relay.py $RELAY_PORT 0.0.0.0
 Restart=on-failure
 RestartSec=3
 
@@ -343,7 +338,6 @@ for _ in $(seq 45); do
     then online=1; break; fi
     sleep 2
 done
-TOKEN=""
 [ $online = 1 ] && say "This machine is on the hub." || say "This machine hasn't reached the hub yet; it keeps trying (journalctl --user -u $NAME-worker)."
 
 step "Done"

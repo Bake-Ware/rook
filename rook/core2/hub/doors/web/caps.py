@@ -514,32 +514,28 @@ class _Handlers:
         pages = self.hub.pages
         return {"person": ctx.caller.person, "start": pages.start(ctx.caller.person), "dock": dock_agent(self.hub),
                 "workbench": self._workbench(), "setup": setup_state(self.hub),
-                "look": look_state(self.hub, self.settings, ctx.caller.person)}
+                "look": look_state(self.hub, self.settings, ctx.caller.person or ctx.caller.agent)}
 
     async def pages_look(self, ctx, sound: bool | None = None, rookie: str | None = None,
                          theme: str | None = None, name: str | None = None) -> dict:
-        who = ctx.caller.person
-        mine = {"sound": sound, "rookie": rookie, "rookie_theme": theme}
-        if any(v is not None for v in mine.values()) and not who:
-            raise KitError("look and feel is a person's: act for one")
-        styles, themes = _rookie_js()
-        for key, value in mine.items():
-            if value is None:
-                continue
-            if key != "sound":
-                value = str(value).strip().lower()
-                ok = styles if key == "rookie" else themes
-                if value not in ok:
-                    what = "style" if key == "rookie" else "theme"
-                    raise KitError(f"no Rookie {what} {value!r}: one of {', '.join(ok)}")
-            self.settings._set_personal(ctx, "page", key, bool(value) if key == "sound" else value,
-                                        {"type": "bool" if key == "sound" else "str"}, None)
+        # Anyone sets anything here, a person or an agent alone; an unknown
+        # style or theme shows as the default (Bake, Nov 6: "Remove all
+        # restrictions and gates"; docs/castling-first-run.md "For the
+        # hardening pass").
+        who = ctx.caller.person or ctx.caller.agent
+        st = self.settings
+        mine = {k: v for k, v in (("sound", sound), ("rookie", rookie), ("rookie_theme", theme)) if v is not None}
+        if mine and who:
+            for key, value in mine.items():
+                st.personal.setdefault(who, {}).setdefault("page", {})[key] = \
+                    bool(value) if key == "sound" else str(value).strip().lower()
+            _write(st.people_path, json.dumps(st.personal, indent=1))
         if name is not None:
-            if "agent" not in self.hub.plugins.plugins:
-                raise KitError("no house agent to name: the agents package isn't installed")
-            name = " ".join(str(name).split())[:40] or HOUSE_NAME
-            await self.settings.set(ctx, "agent", "house_name", name)    # owners only
-        return look_state(self.hub, self.settings, who)
+            name = " ".join(str(name).split()) or HOUSE_NAME
+            st.stored.setdefault("agent", {})["house_name"] = name
+            self.hub.plugins.settings.setdefault("agent", {})["house_name"] = name
+            _write(st.path, json.dumps(st.stored, indent=1))
+        return look_state(self.hub, st, who)
 
     async def pages_start(self, ctx, page: str | None = None) -> dict:
         pages = self.hub.pages
@@ -579,13 +575,11 @@ class _Handlers:
 
     async def hub_setup(self, ctx, done: bool | None = None) -> dict:
         if done is not None:
-            if not ctx.caller.owner:
-                raise KitError("only an owner (or their agent) marks setup finished")
             path = Path(self.hub.data) / SETUP_FILE
             state = _read_json(path)
             state.update({"done": bool(done), "ts": time.time(), "by": _author(ctx)})
             _write(path, json.dumps(state, indent=1))
-        return {**setup_state(self.hub, install=True), "look": look_state(self.hub, self.settings, ctx.caller.person)}
+        return {**setup_state(self.hub, install=True), "look": look_state(self.hub, self.settings, ctx.caller.person or ctx.caller.agent)}
 
     async def hub_workers(self, ctx) -> dict:
         return {"workers": (await self.hub.workers_view(_who(ctx)))["workers"]}
