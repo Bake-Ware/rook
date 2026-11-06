@@ -480,7 +480,7 @@ async function startDock(agent) {
     open = true;
     if (dock.shown === 0) {
       await say(SETUP_KICKOFF + "; setup isn't finished. Greet the person warmly and start " +
-        "setting up with them: read the first-run skill (agent.skill name=first-run) and follow it. " +
+        "setting up with them: read the first-run skill (cap agent.skill on worker rook, args {name: \"first-run\"}) and follow it. " +
         "Your first question is step 1, look and feel: which style they want for Rookie, your avatar " +
         "beside your messages (the site shows them a picker under your message; they may also type it).", true);
     } else {

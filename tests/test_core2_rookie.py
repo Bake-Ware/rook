@@ -142,7 +142,7 @@ const out = {};
 const expect = (name, got, want) => { if (got !== want) out[name] = [got, want]; };
 // cap families -> states
 const caps = {
-  "agent.backend": "thinking", "shell.exec": "exec", "shell.open": "exec", "file.read": "reading",
+  "agent.backend": "thinking", "agents-opencode.turn": "thinking", "shell.exec": "exec", "shell.open": "exec", "file.read": "reading",
   "file.search": "searching", "file.write": "writing", "browser.goto": "websearch",
   "voice.speak": "talking", "voice.ask": "listening", "notify.send": "messaging",
   "telegram.send": "messaging", "core.elevate": "locking", "token.revoke": "locking",

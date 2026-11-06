@@ -80,7 +80,7 @@ name only, never args or why).
 |---|---|
 | The person types in the chat box | `listening` (4 s after the last key) |
 | A message went to the agent, no reply yet | `thinking` |
-| The agent's turn (`agent.backend` running) | `thinking` |
+| The agent's turn (`agent.backend` and its provider's `*.turn` running) | `thinking` |
 | A call starts: the newest call in flight shows, by cap (below) | a DOING state |
 | A call is held (waits on the person) | `waiting`, until it is released or refused |
 | A call is denied | `confused` (2.5 s) |
@@ -93,7 +93,7 @@ Cap -> state, first match wins:
 
 | Caps | State |
 |---|---|
-| `agent.backend` | `thinking` |
+| `agent.backend`, last word `turn` (its provider: `agents-opencode.turn`, ...) | `thinking` |
 | `agent.chat.send`, `approval.ask` | `messaging` |
 | `agent.skill` | `reading` |
 | `agent.note`, `stream.write` | `writing` |

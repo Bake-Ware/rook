@@ -45,6 +45,7 @@
     ["media.", "music"], ["sound.", "music"],
   ];
   const VERB = {
+    turn: "thinking",                     // an AI backend's turn (agents-opencode.turn, ...)
     search: "searching", find: "searching",
     read: "reading", get: "reading", list: "reading", stat: "reading", status: "reading", view: "reading",
     diff: "reading", skill: "reading", manifests: "reading", workers: "reading",
