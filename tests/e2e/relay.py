@@ -25,15 +25,15 @@ class Relay(asyncio.DatagramProtocol):
                 self.transport.sendto(data, peer)
 
 
-async def main(port: int) -> None:
+async def main(port: int, host: str = "127.0.0.1") -> None:
     transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
-        Relay, local_addr=("127.0.0.1", port))
+        Relay, local_addr=(host, port))
     print(transport.get_extra_info("socket").getsockname()[1], flush=True)
     await asyncio.Event().wait()
 
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main(int(sys.argv[1]) if len(sys.argv) > 1 else 0))
+        asyncio.run(main(int(sys.argv[1]) if len(sys.argv) > 1 else 0, *sys.argv[2:3]))
     except KeyboardInterrupt:
         pass

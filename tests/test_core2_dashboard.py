@@ -284,11 +284,9 @@ def test_the_account_page_changes_the_password_and_names_the_connector(site, tmp
             assert (await c.req("GET", "/web/static/account.js"))[0] == 200
             status, me = await c.json("GET", "/web/api/me")
             assert me["connector"] == "http://127.0.0.1:1/mcp"
-            # change it: CSRF, then the current password
+            # change it (CSRF; the current password isn't asked for)
             assert (await c.json("POST", "/web/api/password", {"current": "made-1", "password": "mine"}))[0] == 403
             c.csrf = me["csrf"]
-            out = (await c.json("POST", "/web/api/password", {"current": "wrong", "password": "mine"}))[1]
-            assert not out["ok"] and "current password" in out["error"]
             assert not (await c.json("POST", "/web/api/password", {"current": "made-1", "password": ""}))[1]["ok"]
             assert (await c.json("POST", "/web/api/password", {"current": "made-1", "password": "mine"}))[1]["ok"]
             assert passwords.set_by(hub.data, "bake") == "web"
@@ -299,6 +297,106 @@ def test_the_account_page_changes_the_password_and_names_the_connector(site, tmp
             # the way back in when it's lost: the hub CLI's passwd (passwords.set_password), no restart
             passwords.set_password(hub.data, "bake", "reset", by="passwd")
             assert (await other.req("POST", "/login", {"user": "bake", "password": "reset"}))[0] == 200
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_a_sign_in_link_keeps_working_and_a_password_is_set_later(site):
+    """First run (Bake, Nov 4: "no terminal commands, tokens or password files
+    for the person"): the installer opens a sign-in link; the owner has no
+    password until they set one on the Account page. A link keeps working: no
+    time limit, any number of uses (Bake, Nov 6: "This security shit nobody
+    asked for. Why is there a secure only 15 min thing now?")."""
+    from rook.core2.hub import login_links
+
+    async def go():
+        hub, tokens = await site()
+        try:
+            (hub.data / passwords.FILE).unlink()                 # init --no-password: none at all
+            c = Client(hub)
+            code = login_links.make(hub.data, "person:bake")
+            status, headers, _ = await c.req("GET", f"/login/link?code={code}")
+            assert status == 303 and headers["Location"] == "/" and "HttpOnly" in headers["Set-Cookie"]
+            c.cookie = headers["Set-Cookie"].split(";")[0]
+            status, me = await c.json("GET", "/web/api/me")
+            assert me["person"] == "person:bake" and me["password"] is False
+            # the same link again, in other browsers: it keeps signing in
+            for _ in range(3):
+                status, headers, _ = await Client(hub).req("GET", f"/login/link?code={code}")
+                assert status == 303 and headers["Location"] == "/" and "Set-Cookie" in headers
+            # a link made with the old 15-minute expiry still works: there is no time limit
+            entries = json.loads((hub.data / login_links.FILE).read_text())
+            old = "an-old-link"
+            entries[old] = {"person": "person:bake", "exp": 1.0}
+            (hub.data / login_links.FILE).write_text(json.dumps(entries))
+            status, headers, _ = await Client(hub).req("GET", f"/login/link?code={old}")
+            assert status == 303 and headers["Location"] == "/"
+            # only a code the hub never made goes to the sign-in page
+            for bad in ("nope", ""):
+                status, headers, _ = await Client(hub).req("GET", f"/login/link?code={bad}")
+                assert status == 303 and headers["Location"] == "/login?link=1" and "Set-Cookie" not in headers
+            # no password yet: set one (the current one is never asked for)
+            c.csrf = me["csrf"]
+            assert (await c.json("POST", "/web/api/password", {"password": "mine"}))[1]["ok"]
+            assert (await c.json("GET", "/web/api/me"))[1]["password"] is True
+            status, _, _ = await Client(hub).req("POST", "/login", form="user=bake&password=mine")
+            assert status == 303
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_until_setup_is_completed_the_site_needs_no_sign_in(site):
+    """Bake, Nov 6: "It is simple. If configuration isn't completed assume we
+    are still in setup mode": opening the hub is being the owner, straight into
+    the setup chat; normal sign-in starts once setup is marked done."""
+    async def go():
+        hub, tokens = await site()
+        try:
+            (hub.data / "setup.json").write_text(json.dumps({"done": False}))
+            c = Client(hub)
+            status, headers, _ = await c.req("GET", "/login")
+            assert status == 303 and headers["Location"] == "/"
+            status, headers, body = await c.req("GET", "/")
+            assert status == 200 and b"dock" in body and "HttpOnly" in headers["Set-Cookie"]
+            c.cookie = headers["Set-Cookie"].split(";")[0]
+            status, me = await c.json("GET", "/web/api/me")
+            assert me["person"] == "person:bake"                      # the owner
+            c.csrf = me["csrf"]
+            assert (await c.call("page.site"))["result"]["setup"] == {"done": False}
+            assert (await c.call("hub.setup", {"done": True}))["ok"] is False   # the shell calls page.* only
+            call = {"worker": "rook", "cap": "hub.setup", "args": {"done": True}, "why": WHY}
+            assert (await c.json("POST", "/call", call, bearer=tokens["claude"]))[1]["ok"]
+            # setup completed: a new browser signs in as usual; the setup browser stays signed in
+            fresh = Client(hub)
+            status, headers, _ = await fresh.req("GET", "/")
+            assert status == 303 and headers["Location"] == "/login" and "Set-Cookie" not in headers
+            assert (await fresh.req("GET", "/login"))[0] == 200
+            assert (await c.json("GET", "/web/api/me"))[1]["person"] == "person:bake"
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_setup_state_and_hub_setup(site):
+    """A new hub (init writes setup.json) opens on the setup chat until the
+    house agent marks setup done; a hub set up before that counts as done."""
+    async def go():
+        hub, tokens = await site()
+        try:
+            c = Client(hub)
+            await c.sign_in(tokens["bake"])
+            assert (await c.call("page.site"))["result"]["setup"] == {"done": True}     # no setup.json
+            (hub.data / "setup.json").write_text(json.dumps({"done": False, "install": {"machine": "box"}}))
+            assert (await c.call("page.site"))["result"]["setup"] == {"done": False}   # no install facts here
+            call = {"worker": "rook", "cap": "hub.setup", "args": {}, "why": WHY}
+            status, out = await c.json("POST", "/call", call, bearer=tokens["claude"])
+            look = out["result"].pop("look")
+            assert out["result"] == {"done": False, "install": {"machine": "box"}} and look["next"] == "sound"
+            status, out = await c.json("POST", "/call", {**call, "args": {"done": True}}, bearer=tokens["claude"])
+            assert out["ok"] and out["result"]["done"] is True and out["result"]["install"] == {"machine": "box"}
+            assert (await c.call("page.site"))["result"]["setup"] == {"done": True}
         finally:
             await hub.stop()
     run(go())
@@ -683,7 +781,9 @@ def test_workers_journal_and_settings_pages(site):
             listed = (await c.page(t, "setting.list"))["result"]["settings"]
             assert {(s["plugin"], s["key"], s["value"], s["source"]) for s in listed} == {
                 ("board", "motto", "hello", "default"), ("board", "size", 3, "default"),
-                ("page", "dock", "house", "default"), ("hub", "security", "on", "config")}
+                ("page", "dock", "house", "default"), ("hub", "security", "on", "config"),
+                ("page", "rookie", "pixel", "default"), ("page", "sound", False, "default"),
+                ("page", "rookie_theme", "stone", "default")}     # yours, per person
             # the security switch (castling-switchover-decisions, "Usable first, security later"): a dropdown, owners only
             sec = next(s for s in listed if (s["plugin"], s["key"]) == ("hub", "security"))
             assert sec["enum"] == ["off", "on"] and sec["default"] == "off"
@@ -792,7 +892,7 @@ def test_every_builtin_cap_is_known():
         declared |= set(load(folder).data["caps"])
     assert declared == {
         "page.list", "page.view", "page.get", "page.create", "page.update", "page.archive", "page.restore",
-        "page.components", "page.site", "page.start", "hub.status", "hub.workers", "hub.manifests", "hub.door", "approval.list", "approval.decide", "approval.ask", "approval.get", "journal.search", "setting.list",
+        "page.components", "page.site", "page.start", "page.look", "hub.status", "hub.workers", "hub.manifests", "hub.door", "hub.setup", "approval.list", "approval.decide", "approval.ask", "approval.get", "journal.search", "setting.list",
         "setting.set", "llm.providers", "llm.models", "llm.status", "token.create", "token.list", "token.revoke", "token.approve"}
 
 

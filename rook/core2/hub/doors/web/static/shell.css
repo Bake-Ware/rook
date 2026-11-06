@@ -56,7 +56,6 @@ body.dock-open #dock { display: flex; }
 .said.them { align-self: flex-start; background: var(--bg); border: 1px solid var(--line); }
 .said.aside { align-self: center; color: var(--muted); font-size: 12px; padding: 0; }
 .said.bad { align-self: flex-start; color: var(--bad); }
-#dock.thinking #dock-log::after { content: "\2026"; color: var(--muted); align-self: flex-start; padding: 0 10px; }
 #dock-form { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--line); }
 #dock-form textarea { flex: 1; font: inherit; resize: none; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
 #more { margin-top: 12px; color: var(--muted); }
@@ -64,3 +63,34 @@ body.dock-open #dock { display: flex; }
 @media (max-width: 720px) {
   #dock { position: fixed; z-index: 3; inset: auto 0 0 0; width: 100%; height: 70vh; border-left: 0; border-top: 1px solid var(--line); }
 }
+/* setup mode: a new hub opens straight into the house agent's chat */
+body.setup #nav, body.setup main { display: none; }
+body.setup #dock { display: flex; flex: 1; width: auto; border-left: 0; background: var(--bg); }
+body.setup #dock-head, body.setup #dock-log, body.setup #dock-form { width: min(760px, 100%); margin: 0 auto; }
+body.setup #dock-head { border-bottom: 0; padding-top: 16px; font-size: 16px; }
+body.setup #dock-close { font-size: 13px; }
+body.setup #dock-form { border-top: 0; padding-bottom: 16px; }
+body.setup .said { font-size: 15px; }
+@media (max-width: 720px) {
+  body.setup #dock { position: static; height: 100%; border-top: 0; }
+}
+#dock-account { margin-right: 14px; color: var(--muted); font-size: 13px; font-weight: 400; }
+.said a { color: inherit; }
+.said code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* Rookie beside the house agent's newest message; the look-and-feel picker */
+.row.them { display: flex; align-items: flex-end; gap: 6px; max-width: 100%; }
+.row.them .gutter { width: 64px; flex: none; }
+.row.them .said.them { max-width: calc(100% - 70px); }
+#dock-log.no-rookie .gutter { display: none; }
+.rookie canvas { display: block; }
+.dots { color: var(--muted); padding: 0 4px 6px; }
+.picker { display: flex; flex-wrap: wrap; gap: 6px; }
+.picker button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px; background: var(--bg); }
+.picker .face { min-width: 64px; min-height: 50px; }
+.looks { display: flex; flex-wrap: wrap; gap: 6px; }
+.looks button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px; }
+.login .looks button { background: none; color: inherit; border-color: var(--line); padding: 4px; }
+.login .looks button.on { border-color: var(--accent); }
+.looks .face { min-width: 64px; min-height: 50px; }
+.picker form.name { display: flex; gap: 6px; width: 100%; }
+.picker form.name input { flex: 1; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }

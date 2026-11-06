@@ -12,22 +12,40 @@
   <div>Signed in as <b id="who"></b>. <a href="/">Back to the hub</a></div>
   <div id="first" class="muted" hidden>This password was made for you when the hub was set up. Pick your own now, or keep it and go back to the hub.</div>
   <form id="change" class="login inner">
-    <h2>Change your password</h2>
-    <label for="current">Current password</label>
+    <h2 id="change-title">Change your password</h2>
+    <div id="none" class="muted" hidden>You don't have a password yet. Pick one: once setup is completed, you sign in with your user name and this password.</div>
+    <label for="current" id="current-label">Current password</label>
     <input id="current" type="password" autocomplete="current-password" required>
     <label for="new">New password</label>
     <input id="new" type="password" autocomplete="new-password" required>
     <label for="again">New password again</label>
     <input id="again" type="password" autocomplete="new-password" required>
-    <button type="submit">Change password</button>
+    <button type="submit" id="change-btn">Change password</button>
     <div id="out" class="muted" aria-live="polite"></div>
   </form>
+  <div id="look">
+    <h2>Look and feel</h2>
+    <label><input type="checkbox" id="sound"> Sound</label>
+    <div class="muted">Rookie's style</div>
+    <div id="looks" class="looks"></div>
+    <div class="muted">Rookie's theme</div>
+    <div id="themes" class="looks"></div>
+    <form id="name-form" class="login inner">
+      <label for="name">Rookie's name (the house agent's name)</label>
+      <input id="name" type="text" maxlength="40">
+      <button type="submit">Rename</button>
+    </form>
+    <div id="look-out" class="bad" aria-live="polite"></div>
+  </div>
   <div id="connector" hidden>
     <h2>Claude on claude.ai and the phone</h2>
     <p>In claude.ai: Settings, Connectors, Add custom connector. Paste this address, then sign in with this user name and password:</p>
     <p><code id="mcp-url"></code></p>
   </div>
 </div>
+<!-- rookie.js: Rookie, the house agent's avatar, by Bake (castling-wave12/rookie.js, sha256 fd17c3ee...).
+     Vendored unchanged as a drop-in: replace the file to update it; the site reads its SKINS. -->
+<script src="/web/static/rookie.js"></script>
 <script src="/web/static/account.js"></script>
 </body>
 </html>

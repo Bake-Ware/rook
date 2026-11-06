@@ -136,6 +136,8 @@ def _rt(ctx) -> "Runtime":
     global _RT
     if _RT is None:
         _RT = Runtime(ctx)
+    else:
+        _RT.settings = ctx.settings      # each call's are current (setting.set, page.look name)
     return _RT
 
 
@@ -273,7 +275,7 @@ class Runtime:
 
     def view(self, a: dict) -> dict:
         return {k: a.get(k) for k in ("name", "title", "summary", "persona", "backend", "always_on",
-                                      "archived")} | {"awake": self.awake(a["name"])}
+                                      "archived")} | {"title": self.title(a), "awake": self.awake(a["name"])}
 
     # -- sessions --------------------------------------------------------------
 
@@ -333,7 +335,7 @@ class Runtime:
                     break                    # archived, or idle for warm
                 if "text" not in ev.body:
                     continue                 # signals and resizes mean nothing to an agent yet
-                key = (json.dumps([a.get(k) for k in FIELDS], sort_keys=True), a.get("dreamed"))
+                key = (json.dumps([a.get(k) for k in FIELDS], sort_keys=True), a.get("dreamed"), self.title(a))
                 if system is None or built != key:     # an edit or a dream (not presence)
                     system, built = self.system_prompt(a), key
                 await self.turn(a, prod, ev, system)
@@ -434,15 +436,23 @@ class Runtime:
 
     # -- the system prompt -------------------------------------------------------
 
+    def title(self, a: dict) -> str:
+        """What an agent is called. The house agent's name is the house_name
+        setting (first-run setup asks it: Bake, Nov 5 2026, "then rookie name.
+        This will be the name of the home agent"); its identity stays."""
+        if a["name"] == (self.settings.get("house") or "house") and self.settings.get("house_name"):
+            return str(self.settings["house_name"])
+        return a.get("title") or a["name"]
+
     def system_prompt(self, a: dict) -> str:
         name = a["name"]
-        parts = [f"You are {a.get('title') or name}, the agent \"{name}\" on this Rook band "
+        parts = [f"You are {self.title(a)}, the agent \"{name}\" on this Rook band "
                  f"(identity agent:{name}). You act with your own identity; acting for a person "
                  "you can do only what both of you may.", (a.get("prompt") or "").strip(),
                  "## Working with others\n" + DIRECTIVE]
         if name != "house":
             parts.append(REACH)
-        others = [f"- {o['name']}: {o.get('title') or o['name']} - {o.get('summary') or ''}".rstrip(" -")
+        others = [f"- {o['name']}: {self.title(o)} - {o.get('summary') or ''}".rstrip(" -")
                   for o in self.agents() if o["name"] != name]
         if others:
             parts.append("Other agents on this band:\n" + "\n".join(others))

@@ -244,6 +244,7 @@ $("#signout").onclick = async () => {
 // -- the dock: the house agent beside every page ----------------------------------
 
 const SITE = "[site]";      // a line the site adds for the agent: where the person is
+const SETUP_KICKOFF = "First visit to a new hub";
 const dock = { agent: null, next: 0, shown: 0 };
 
 function dockOpen(open) {
@@ -252,15 +253,182 @@ function dockOpen(open) {
   if (open) $("#dock-text").focus();
 }
 
-function bubble(cls, text) {
+// The agent's replies: plain text with **bold**, `code` and links to this
+// hub's own pages (/account, #/page) - built as nodes, never as HTML.
+function rich(text) {
+  const box = el("div");
+  for (const part of text.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]\n]+\]\((?:\/|#)[^)\s]*\))/)) {
+    if (!part) continue;
+    let m;
+    if ((m = /^\*\*(.+)\*\*$/.exec(part))) box.append(el("b", {}, m[1]));
+    else if ((m = /^`(.+)`$/.exec(part))) box.append(/^\/[a-z]*$/.test(m[1]) ? el("a", { href: m[1] }, m[1]) : el("code", {}, m[1]));
+    else if ((m = /^\[(.+)\]\(((?:\/|#)[^)]*)\)$/.exec(part))) box.append(el("a", { href: m[2] }, m[1]));
+    else box.append(document.createTextNode(part));
+  }
+  return box.childNodes;
+}
+
+// One line in the chat log, above the "thinking" row while there is one.
+function addRow(node) {
   const log = $("#dock-log");
-  log.append(el("div", { className: "said " + cls }, text));
+  log.insertBefore(node, $("#dock-wait"));
   while (log.children.length > 200) log.firstChild.remove();
   log.scrollTop = log.scrollHeight;
 }
 
+function bubble(cls, text) {
+  const div = el("div", { className: "said " + cls });
+  if (cls === "them") {
+    div.append(...rich(text));
+    const row = el("div", { className: "row them" });
+    row.append(el("div", { className: "gutter" }), div);
+    addRow(row);
+    rookieBeside(row);
+  } else {
+    div.textContent = text;
+    addRow(div);
+  }
+}
+
 function thinking(on) {
-  $("#dock").classList.toggle("thinking", on);
+  let wait = $("#dock-wait");
+  if (on && !wait) {
+    wait = el("div", { id: "dock-wait", className: "row them" });
+    wait.append(el("div", { className: "gutter" }), el("span", { className: "dots" }, "\u2026"));
+    $("#dock-log").append(wait);
+    rookieBeside(wait);
+  } else if (!on && wait) {
+    wait.remove();
+    const rows = document.querySelectorAll("#dock-log .row.them");
+    if (rows.length) rookieBeside(rows[rows.length - 1]);
+  }
+  $("#dock-log").scrollTop = $("#dock-log").scrollHeight;
+}
+
+// -- Rookie: the house agent's avatar beside its messages --------------------------
+// rookie.js is a vendored drop-in (Rookie.mount, .set, .say, .setSkin, .setTheme,
+// .sound, .enter, Rookie.favicon, SKINS, THEMES); rookie-map.js turns what the
+// site sees into its states (docs/castling-first-run.md).
+
+const rookie = { inst: null, fav: null, driver: null, holder: null, picker: null,
+  look: { sound: false, rookie: "pixel", theme: "stone", name: "Rookie" } };
+
+// Both the one in the chat and the tab icon follow the driver.
+const rookieBoth = {
+  set(s) { if (rookie.inst) rookie.inst.set(s); if (rookie.fav) rookie.fav.set(s); },
+  say(text, o) { if (rookie.inst) rookie.inst.say(text, o); if (rookie.fav) rookie.fav.set("talking"); },
+};
+
+function rookieFavicon() {
+  if (rookie.fav || !window.Rookie || !Rookie.favicon) return;
+  const skin = Rookie.SKINS.includes(rookie.look.rookie) && rookie.look.rookie !== "none" ? rookie.look.rookie : "pixel";
+  rookie.fav = Rookie.favicon({ skin, theme: rookie.look.theme });
+  if (!rookie.driver) rookie.driver = new RookieMap.Driver(rookieBoth);
+}
+
+function rookieInit() {
+  if (rookie.inst || !window.Rookie) return;
+  rookie.holder = el("div", { className: "rookie" });
+  rookie.inst = Rookie.mount(rookie.holder, { scale: 2, skin: rookie.look.rookie, theme: rookie.look.theme, state: "hidden" });
+  if (!rookie.driver) rookie.driver = new RookieMap.Driver(rookieBoth);
+  setInterval(() => rookie.driver.tick(), 1000);
+  applyLook(rookie.look);
+}
+
+// Rookie's first appearance: the transporter, once.
+function rookieBeside(row) {
+  if (!rookie.holder) return;
+  const first = !rookie.holder.parentNode;
+  row.querySelector(".gutter").append(rookie.holder);
+  if (first && rookie.inst.enter) {
+    rookie.inst.enter(rookie.driver.state());
+    rookie.driver.shown = rookie.driver.state();
+  }
+}
+
+function lookName(name) {
+  if (dock.agent !== "house") return;
+  $("#dock-name").textContent = name;
+  document.title = name;
+}
+
+// Look and feel: the first four setup steps (sound, Rookie's style, theme,
+// name; page.look). Sound, style and theme are the person's; the name is the
+// house agent's. The agent sets typed answers itself.
+function applyLook(look) {
+  if (!look) return;
+  rookie.look = look;
+  lookName(look.name);
+  const skins = window.Rookie ? Rookie.SKINS : [];
+  const shown = look.rookie !== "none" && skins.includes(look.rookie);
+  for (const b of [rookie.inst, rookie.fav]) {
+    if (!b) continue;
+    if (b === rookie.inst) {
+      b.sound = !!look.sound;
+      if (shown) b.setSkin(look.rookie);
+    } else {
+      b.setSkin(shown ? look.rookie : "pixel");
+    }
+    if (b.setTheme) b.setTheme(look.theme);
+  }
+  $("#dock-log").classList.toggle("no-rookie", look.rookie === "none");
+  if (rookie.picker && rookie.picker.step !== look.next) {
+    for (const i of rookie.picker.insts) i.destroy();
+    rookie.picker.box.remove();
+    rookie.picker = null;
+  }
+}
+
+async function lookAnswer(step, value, said) {
+  try {
+    const out = await call("page.look", { [step]: value }, "The person answered a look-and-feel question.");
+    site.look = out;
+    applyLook(out);
+  } catch (x) {
+    return bubble("bad", x.message);
+  }
+  say(`The person answered look and feel, ${step}: ${said}. ` +
+    (site.look.next ? `Ask the next one (${site.look.next}).` : "Go on with setup."), true);
+}
+
+function lookPicker() {
+  const look = site.look;
+  const step = look && look.next;
+  if (rookie.picker || !step || !window.Rookie || !document.body.classList.contains("setup")) return;
+  const box = el("div", { className: "picker" });
+  const insts = [];
+  const option = (label, skin, theme, onclick) => {
+    const b = el("button", { type: "button", title: label });
+    const face = el("div", { className: "face" });
+    b.append(face, el("span", {}, label));
+    if (skin && skin !== "none" && Rookie.SKINS.includes(skin)) insts.push(Rookie.mount(face, { scale: 2, skin, theme, state: "happy" }));
+    b.onclick = onclick;
+    box.append(b);
+  };
+  if (step === "sound") {
+    option("Sound on", null, null, () => lookAnswer("sound", true, "yes"));
+    option("No sound", null, null, () => lookAnswer("sound", false, "no"));
+  } else if (step === "rookie") {
+    for (const k of look.styles) option(k === "none" ? "none (hide it)" : k, k, look.theme, () => lookAnswer("rookie", k, k));
+  } else if (step === "theme") {
+    const skin = look.rookie === "none" ? "pixel" : look.rookie;
+    for (const k of look.themes) option(k, skin, k, () => lookAnswer("theme", k, k));
+  } else if (step === "name") {
+    const form = el("form", { className: "name" });
+    const input = el("input", { type: "text", maxLength: 40, placeholder: look.name, value: "" });
+    const save = el("button", { type: "submit" }, "Name it");
+    const skip = el("button", { type: "button" }, `Keep ${look.name}`);
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const name = input.value.trim() || look.name;
+      lookAnswer("name", name, name);
+    };
+    skip.onclick = () => lookAnswer("name", look.name, look.name);
+    form.append(input, save, skip);
+    box.append(form);
+  }
+  rookie.picker = { box, insts, step };
+  addRow(box);
 }
 
 function show(ev) {
@@ -270,25 +438,34 @@ function show(ev) {
     if (text.startsWith(SITE)) {
       const nl = text.indexOf("\n");
       const rest = nl < 0 ? "" : text.slice(nl + 1).trim();
-      if (!rest) return bubble("aside", text.slice(SITE.length).trim().split(".")[0]);
+      if (!rest) {
+        if (text.includes(SETUP_KICKOFF)) return;      // the setup walk-through starting: no banner
+        return bubble("aside", text.slice(SITE.length).trim().split(".")[0]);
+      }
       text = rest;
     }
     bubble("me", text);
   } else if (ev.type === "turn" && d.role === "reply") {
+    thinking(false);
     bubble("them", d.text);
-    thinking(false);
+    lookPicker();
   } else if (ev.type === "status" && d.state === "error") {
-    bubble("bad", d.error || "Something went wrong.");
     thinking(false);
+    bubble("bad", d.error || "Something went wrong.");
+    lookPicker();
   }
 }
 
 async function refresh() {
   try {
     site = await call("page.site");
+    applyLook(site.look);
+    const setup = setupMode();
     await loadNav();
     if (current && !pages.some((p) => p.page === current.page)) {      // archived meanwhile
       history.replaceState(null, "", location.pathname);
+      open(wanted());
+    } else if (!current && !setup) {                                   // setup just finished
       open(wanted());
     }
   } catch (x) { /* next time */ }
@@ -297,7 +474,10 @@ async function refresh() {
 async function read(wait) {
   const r = await call("agent.chat.read", { agent: dock.agent, after: dock.next, limit: 500, wait },
     "Reading the conversation in the site's dock.");
-  for (const ev of r.events) show(ev);
+  for (const ev of r.events) {
+    show(ev);
+    if (wait && rookie.driver) rookie.driver.chat(ev);     // live only: history doesn't animate
+  }
   if (wait && r.events.some((ev) => ev.type === "turn")) refresh();   // it may have made, archived or started a page
   dock.shown += r.events.length;
   dock.next = r.next;
@@ -316,9 +496,42 @@ async function say(text, quiet) {
   }
 }
 
+// Setup mode: first-run setup isn't finished (hub.setup), so the site is the
+// house agent's chat; "Skip to the hub" leaves it for this visit.
+let skipped = false;
+function setupMode() {
+  const on = !skipped && !!dock.agent && !!site.setup && !site.setup.done;
+  document.body.classList.toggle("setup", on);
+  $("#dock-account").hidden = !on;
+  $("#dock-close").textContent = on ? "Skip to the hub" : "\u00d7";
+  return on;
+}
+
+// Calls as they start and end (the feed has every call); Rookie's states.
+async function activity() {
+  let since = "";
+  for (;;) {
+    try {
+      const r = await api(`/web/api/activity?since=${since}`);
+      if (!r.ok) {
+        await sleep(5000);
+        continue;
+      }
+      for (const ev of r.events) {
+        // Rookie shows what the dock agent does for whoever is here.
+        if (ev.agent === "agent:" + dock.agent && ev.person === site.person) rookie.driver.activity(ev);
+      }
+      since = r.seq;
+    } catch (x) {
+      await sleep(3000);
+    }
+  }
+}
+
 async function startDock(agent) {
   dock.agent = agent;
-  $("#dock-name").textContent = agent === "house" ? "House agent" : agent;
+  $("#dock-name").textContent = agent === "house" ? rookie.look.name : agent;
+  rookieInit();
   $("#dock").hidden = $("#dock-btn").hidden = false;
   let open = true;
   try { open = localStorage.getItem("rook.dock") !== "0" && innerWidth > 720; } catch (x) { /* private mode */ }
@@ -328,13 +541,25 @@ async function startDock(agent) {
     $("#dock").hidden = $("#dock-btn").hidden = true;
     return;
   }
-  if (dock.shown === 0) {           // first run: the agent asks how the person wants to use the site
+  if (setupMode()) {                // a new hub: the chat is the whole site until setup is done
+    open = true;
+    if (dock.shown === 0) {
+      await say(SETUP_KICKOFF + "; setup isn't finished. Greet the person warmly and start " +
+        "setting up with them: read the first-run skill (cap agent.skill on worker rook, args {name: \"first-run\"}) and follow it. " +
+        "Open with the four look-and-feel questions, one per message, in order: sound, Rookie's style, " +
+        "Rookie's theme, Rookie's name (the name becomes yours); hub.setup's look.next says which is next. " +
+        "The site shows the person a picker under your question; they may also type the answer (set it with page.look).", true);
+    } else {
+      lookPicker();                 // a reload before they picked
+    }
+  } else if (dock.shown === 0) {    // first run: the agent asks how the person wants to use the site
     open = true;
     await say("First visit to the hub site. Welcome the person, ask how they want to use the site, " +
       "and offer to make pages for what they want to keep an eye on (page.components, page.create) " +
       "and to set their start page (page.start).", true);
   }
   dockOpen(open);
+  if (rookie.driver) activity();
   for (;;) {
     try {
       await read(55);
@@ -351,6 +576,7 @@ $("#dock-form").onsubmit = (e) => {
   $("#dock-text").value = "";
   say(text, false);
 };
+$("#dock-text").oninput = () => rookie.driver && rookie.driver.key();
 $("#dock-text").onkeydown = (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
@@ -358,7 +584,15 @@ $("#dock-text").onkeydown = (e) => {
   }
 };
 $("#dock-btn").onclick = () => dockOpen(!document.body.classList.contains("dock-open"));
-$("#dock-close").onclick = () => dockOpen(false);
+$("#dock-close").onclick = () => {
+  if (document.body.classList.contains("setup")) {
+    skipped = true;
+    setupMode();
+    if (!current) open(wanted());
+    return;
+  }
+  dockOpen(false);
+};
 
 window.addEventListener("hashchange", () => open(wanted()));
 
@@ -366,8 +600,10 @@ window.addEventListener("hashchange", () => open(wanted()));
   try {
     csrf = (await api("/web/api/me")).csrf;
     site = await call("page.site");
+    if (site.look) rookie.look = site.look;
+    rookieFavicon();
     await loadNav();
-    open(wanted());
+    if (!(site.dock && site.setup && !site.setup.done)) open(wanted());
     if (site.dock) startDock(site.dock).catch((x) => bubble("bad", x.message));
   } catch (x) {
     message(String((x && x.message) || x), true);

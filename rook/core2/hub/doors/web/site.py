@@ -16,9 +16,9 @@ from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from rook.core2 import rights
-from rook.core2.hub import passwords
+from rook.core2.hub import login_links, passwords
 from rook.core2.hub.identity import NONE, Caller
-from .caps import _read_json, _write, dock_agent
+from .caps import _read_json, _write, dock_agent, setup_state
 
 log = logging.getLogger("rook.hub.door.web")
 
@@ -30,6 +30,7 @@ FRAME_SECS = 60
 TOKENS_PER_SESSION = 32
 POLL_SECS = 20.0
 EVENTS_KEPT = 500
+ACTS_KEPT = 200
 DOCK_CAPS = ("agent.chat.send", "agent.chat.read")     # the shell's chat dock, with the dock agent only
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
          ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml"}
@@ -81,12 +82,16 @@ class Web:
         self._seq = 0
         self._cond = threading.Condition()
         hub.listeners.append(self._on_event)
+        self._acts: collections.deque = collections.deque(maxlen=ACTS_KEPT)
+        self._act_seq = 0
+        if getattr(hub, "dispatcher", None) is not None:
+            hub.dispatcher.watchers.append(self._on_call)
 
     # -- routing ----------------------------------------------------------------
 
     @staticmethod
     def owns(path: str) -> bool:
-        return path in ("/", "/login", "/logout", "/account") or path.startswith("/web/")
+        return path in ("/", "/login", "/login/link", "/logout", "/account") or path.startswith("/web/")
 
     def handle(self, req, method: str, path: str, query: str) -> tuple[int, dict, bytes]:
         """One request: (status, headers, body)."""
@@ -98,24 +103,42 @@ class Web:
     def _route(self, req, method, path, query):
         if method == "GET" and path.startswith("/web/static/"):
             return self._static(path[len("/web/static/"):])
+        setup = self._setup_owner()
         if path == "/login":
             if method == "POST":
                 return self._login(req)
+            if setup:                  # still in setup: no sign-in, straight to the setup chat
+                return 303, {"Location": "/"}, b""
             return self._file("login.html", csp=SHELL_CSP)
+        if method == "GET" and path == "/login/link":
+            return self._link(query.get("code"))
         sid, session = self._session(req)
         if method == "GET" and path in ("/", "/account"):
-            if session is None:
+            cookie = {}
+            if session is None and setup:
+                # Setup isn't completed: whoever opens the hub is the owner
+                # setting it up (Bake, Nov 6: "It is simple. If configuration
+                # isn't completed assume we are still in setup mode").
+                sid = self._start(setup)
+                cookie = {"Set-Cookie": self._cookie(sid, SESSION_SECS)}
+                log.info("setup mode: signed in as the owner", extra={"fields": {"person": setup}})
+            elif session is None:
                 return 303, {"Location": "/login"}, b""
-            return self._file("shell.html" if path == "/" else "account.html", csp=SHELL_CSP)
+            status, headers, body = self._file("shell.html" if path == "/" else "account.html", csp=SHELL_CSP)
+            return status, {**headers, **cookie}, body
         if method == "GET" and path.startswith("/web/frame/"):
             return self._frame(sid, session, unquote(path[len("/web/frame/"):]))
         if session is None:
             raise _Error(401, "sign in first")
         if method == "GET" and path == "/web/api/me":
             return _json(200, {"ok": True, "person": session.person, "csrf": session.csrf,
-                               "connector": self._connector()})
+                               "connector": self._connector(),
+                               "password": passwords.set_by(self.hub.data, session.person.partition(":")[2])
+                               is not None})
         if method == "GET" and path == "/web/api/events":
             return _json(200, self._poll(sid, query.get("token", ""), query.get("since")))
+        if method == "GET" and path == "/web/api/activity":
+            return _json(200, self._activity(session.person, query.get("since")))
         if method != "POST":
             raise _Error(404, "not found")
         if not secrets.compare_digest(req.headers.get("X-Rook-CSRF", "").encode(), session.csrf.encode()):
@@ -174,10 +197,7 @@ class Web:
             if form:
                 return 303, {"Location": "/login?failed=1"}, b""
             raise _Error(401, "wrong user name or password")
-        sid = secrets.token_urlsafe(32)
-        with self._lock:
-            self.sessions[_digest(sid)] = Session(person, secrets.token_urlsafe(24), time.time() + SESSION_SECS)
-            self._save()
+        sid = self._start(person)
         log.info("signed in", extra={"fields": {"person": person}})
         headers = {"Set-Cookie": self._cookie(sid, SESSION_SECS)}
         if form:
@@ -185,6 +205,32 @@ class Web:
             first = passwords.set_by(self.hub.data, person.partition(":")[2]) == passwords.GENERATED
             return 303, {**headers, "Location": "/account?first=1" if first else "/"}, b""
         return 200, {**headers, **_JSON}, b'{"ok": true}'
+
+    def _link(self, code) -> tuple[int, dict, bytes]:
+        """A sign-in link (``login_links``; the installer opens one): a
+        session, then the site. An unknown link goes to /login."""
+        person = login_links.take(self.hub.data, code)
+        if person is None or self.hub.identities.user(person) is None:
+            log.info("sign-in link refused")
+            return 303, {"Location": "/login?link=1", "Cache-Control": "no-store"}, b""
+        sid = self._start(person)
+        log.info("signed in with a link", extra={"fields": {"person": person}})
+        return 303, {"Set-Cookie": self._cookie(sid, SESSION_SECS), "Location": "/",
+                     "Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}, b""
+
+    def _setup_owner(self) -> str | None:
+        """While first-run setup isn't completed (``hub.setup``), the owner
+        the site signs everyone in as (the first one); else None."""
+        if setup_state(self.hub)["done"]:
+            return None
+        return next((f"person:{u.name}" for u in self.hub.identities.users.values() if u.preset == "owner"), None)
+
+    def _start(self, person: str) -> str:
+        sid = secrets.token_urlsafe(32)
+        with self._lock:
+            self.sessions[_digest(sid)] = Session(person, secrets.token_urlsafe(24), time.time() + SESSION_SECS)
+            self._save()
+        return sid
 
     def _check(self, req, fields: dict) -> str | None:
         """The person signing in (``person:<name>``), or None. A person signs
@@ -201,10 +247,10 @@ class Web:
         return caller.person if caller is not None and caller.person and not caller.agent else None
 
     def _password(self, person: str, body: dict) -> dict:
-        """The signed-in person changes their own password (the Account page)."""
+        """The signed-in person sets their own password (the Account page); the
+        current one isn't asked for (Bake, Nov 6: "Remove all restrictions and
+        gates")."""
         name, new = person.partition(":")[2], body.get("password")
-        if not passwords.check(self.hub.data, name, body.get("current")):
-            return {"ok": False, "error": "The current password is wrong."}
         if not isinstance(new, str) or not new:
             return {"ok": False, "error": "Type a new password."}
         passwords.set_password(self.hub.data, name, new, by="web")
@@ -372,6 +418,36 @@ class Web:
             self._seq += 1
             self._events.append((self._seq, event, json.loads(json.dumps(payload, default=str)), whose))
             self._cond.notify_all()
+
+    def _on_call(self, phase: str, entry: dict) -> None:
+        """Every call starting or ending (the dispatcher's watchers), as
+        journaled, args and why included; the dock's Rookie picks its agent's."""
+        if entry.get("kind") not in (None, "call"):
+            return
+        act = {k: v for k, v in entry.items() if k not in ("kind", "hub")}
+        act = json.loads(json.dumps({"phase": phase, **act}, default=str))
+        with self._cond:
+            self._act_seq += 1
+            self._acts.append((self._act_seq, act))
+            self._cond.notify_all()
+
+    def _activity(self, person: str, since) -> dict:
+        """Every call, start and end, after ``since`` (long-polls; the first
+        poll says where the feed is now)."""
+        try:
+            since = int(since) if since not in (None, "") else None
+        except ValueError:
+            raise _Error(400, "since is a number") from None
+        deadline = time.monotonic() + self.poll_secs
+        with self._cond:
+            if since is None or since > self._act_seq:      # first poll, or the hub restarted
+                return {"ok": True, "seq": self._act_seq, "events": []}
+            while True:
+                got = [{"seq": n, **a} for n, a in self._acts if n > since]
+                left = deadline - time.monotonic()
+                if got or left <= 0:
+                    return {"ok": True, "seq": self._act_seq, "events": got}
+                self._cond.wait(left)
 
     def _whose(self, event: str, payload) -> str | None:
         """Whose data an event is, like a private record (review D6): its
