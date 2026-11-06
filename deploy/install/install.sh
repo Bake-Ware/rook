@@ -6,7 +6,7 @@
 #
 # It asks what you use for AI now, sets that up and tests it, installs the
 # hub site, the band relay and a worker for this machine as systemd user
-# units, and opens the site signed in (a one-time link). The house agent
+# units, and opens the site (no sign-in until setup is completed). The house agent
 # takes it from there. Nothing it prints is a token, key or password.
 #
 # Options (all optional; to run beside other installs give a new --dir,
@@ -20,7 +20,7 @@
 #   --ref REF          the Rook branch or commit to install (curl installs only)
 #   --no-boot          don't start it at login (units are written and started, not enabled)
 #   --no-browser       print the sign-in link instead of opening a browser
-#   --open             just open the site again with a new sign-in link
+#   --open             just open the site again (after setup: with a sign-in link)
 #   --uninstall        stop and remove it (the folder is moved aside to DIR.removed-<time>, not deleted)
 set -euo pipefail
 
@@ -64,15 +64,22 @@ WORKER_NAME=$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo this-
 LOG=$ROOT/install.log
 export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"
 
+# While setup isn't completed the site needs no sign-in: the hub's address
+# opens straight into the setup chat (Bake, Nov 6: "If configuration isn't
+# completed assume we are still in setup mode"). After setup, --open gives a
+# sign-in link (login-link; it keeps working).
 open_site() {
-    local link
-    link=$("$PY" -m rook.core2.hub --config "$HUB_CFG" login-link --url "$URL") || die "couldn't make a sign-in link"
+    local link=$URL
+    if "$PY" -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("done") else 1)' \
+        "$ROOT/hub/data/setup.json" 2>/dev/null; then
+        link=$("$PY" -m rook.core2.hub --config "$HUB_CFG" login-link --url "$URL") || die "couldn't make a sign-in link"
+    fi
     if [ $BROWSER_OPEN = 1 ] && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; } &&
         command -v xdg-open >/dev/null && xdg-open "$link" >/dev/null 2>&1; then
         bold "Rook is open in your browser."
-        say "If it isn't, run this installer again with --open for a fresh sign-in link."
+        say "If it isn't, open $URL"
     else
-        bold "Open this in a browser on this computer to sign in (works once, for 15 minutes):"
+        bold "Open this in a browser on this computer:"
         printf '\n  %s\n\n' "$link"
     fi
 }

@@ -35,18 +35,27 @@ What it does:
 5. Writes and starts `NAME-relay`, `NAME-hub`, `NAME-worker` (systemd user
    units; enabled at login unless `--no-boot`). The worker runs `shell`,
    `file` and `agents-opencode` with the tested model; security is off.
-6. Opens the browser on a one-time sign-in link (`hub login-link`: single
-   use, 15 minutes, only its hash is kept).
+6. Opens the browser on the hub's address. While setup isn't completed the
+   site needs no sign-in (Bake, Nov 6: "It is simple. If configuration
+   isn't completed assume we are still in setup mode"): `/` signs the
+   browser in as the (first) owner and opens the setup chat; `/login` sends
+   it there too. Normal sign-in starts once `hub.setup {done: true}`.
+   After that, `hub login-link` (and `--open`) makes a sign-in link that
+   keeps working: no time limit, any number of uses (Bake, Nov 6: "This
+   security shit nobody asked for. Why is there a secure only 15 min thing
+   now?"). Only its hash is kept.
 
 ## The site
 
 While `hub.setup` says setup isn't done, the site is the house agent's chat,
 full screen (with "Your account" and "Skip to the hub"). The house agent
 follows the `first-run` skill (rook/plugins/agents/skills/first-run.md): look
-and feel (Rookie's style, always the first question), name and password (Account page), what the hub is for, reaching it from
+and feel (sound, Rookie's style, theme, name), the person's name and a
+password for after setup (Account page), what the hub is for, reaching it from
 elsewhere, other machines, voice / phone / Telegram / Discord, backups, then a
 knowledge page "How this hub is set up and why", and `hub.setup {done: true}`.
-Hubs set up before this (no `setup.json`) count as done.
+Hubs set up before this (no `setup.json`) count as done. Until setup is
+done nobody signs in: opening the site is being the owner.
 
 ## Rookie
 

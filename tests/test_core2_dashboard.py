@@ -304,10 +304,12 @@ def test_the_account_page_changes_the_password_and_names_the_connector(site, tmp
     run(go())
 
 
-def test_a_one_time_link_signs_in_and_a_password_is_set_later(site):
+def test_a_sign_in_link_keeps_working_and_a_password_is_set_later(site):
     """First run (Bake, Nov 4: "no terminal commands, tokens or password files
-    for the person"): the installer opens a one-time sign-in link; the owner
-    has no password until they set one on the Account page."""
+    for the person"): the installer opens a sign-in link; the owner has no
+    password until they set one on the Account page. A link keeps working: no
+    time limit, any number of uses (Bake, Nov 6: "This security shit nobody
+    asked for. Why is there a secure only 15 min thing now?")."""
     from rook.core2.hub import login_links
 
     async def go():
@@ -322,9 +324,19 @@ def test_a_one_time_link_signs_in_and_a_password_is_set_later(site):
             c.cookie = headers["Set-Cookie"].split(";")[0]
             status, me = await c.json("GET", "/web/api/me")
             assert me["person"] == "person:bake" and me["password"] is False
-            # once only; an unknown or an old one goes to the sign-in page
-            old = login_links.make(hub.data, "person:bake", secs=-1)
-            for bad in (code, "nope", old, ""):
+            # the same link again, in other browsers: it keeps signing in
+            for _ in range(3):
+                status, headers, _ = await Client(hub).req("GET", f"/login/link?code={code}")
+                assert status == 303 and headers["Location"] == "/" and "Set-Cookie" in headers
+            # a link made with the old 15-minute expiry still works: there is no time limit
+            entries = json.loads((hub.data / login_links.FILE).read_text())
+            old = "an-old-link"
+            entries[login_links._digest(old)] = {"person": "person:bake", "exp": 1.0}
+            (hub.data / login_links.FILE).write_text(json.dumps(entries))
+            status, headers, _ = await Client(hub).req("GET", f"/login/link?code={old}")
+            assert status == 303 and headers["Location"] == "/"
+            # only a code the hub never made goes to the sign-in page
+            for bad in ("nope", ""):
                 status, headers, _ = await Client(hub).req("GET", f"/login/link?code={bad}")
                 assert status == 303 and headers["Location"] == "/login?link=1" and "Set-Cookie" not in headers
             # no password yet: set one without a current one; after that the current one is asked for
@@ -335,6 +347,38 @@ def test_a_one_time_link_signs_in_and_a_password_is_set_later(site):
             assert not out["ok"] and "current password" in out["error"]
             status, _, _ = await Client(hub).req("POST", "/login", form="user=bake&password=mine")
             assert status == 303
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_until_setup_is_completed_the_site_needs_no_sign_in(site):
+    """Bake, Nov 6: "It is simple. If configuration isn't completed assume we
+    are still in setup mode": opening the hub is being the owner, straight into
+    the setup chat; normal sign-in starts once setup is marked done."""
+    async def go():
+        hub, tokens = await site()
+        try:
+            (hub.data / "setup.json").write_text(json.dumps({"done": False}))
+            c = Client(hub)
+            status, headers, _ = await c.req("GET", "/login")
+            assert status == 303 and headers["Location"] == "/"
+            status, headers, body = await c.req("GET", "/")
+            assert status == 200 and b"dock" in body and "HttpOnly" in headers["Set-Cookie"]
+            c.cookie = headers["Set-Cookie"].split(";")[0]
+            status, me = await c.json("GET", "/web/api/me")
+            assert me["person"] == "person:bake"                      # the owner
+            c.csrf = me["csrf"]
+            assert (await c.call("page.site"))["result"]["setup"] == {"done": False}
+            assert (await c.call("hub.setup", {"done": True}))["ok"] is False   # the shell calls page.* only
+            call = {"worker": "rook", "cap": "hub.setup", "args": {"done": True}, "why": WHY}
+            assert (await c.json("POST", "/call", call, bearer=tokens["claude"]))[1]["ok"]
+            # setup completed: a new browser signs in as usual; the setup browser stays signed in
+            fresh = Client(hub)
+            status, headers, _ = await fresh.req("GET", "/")
+            assert status == 303 and headers["Location"] == "/login" and "Set-Cookie" not in headers
+            assert (await fresh.req("GET", "/login"))[0] == 200
+            assert (await c.json("GET", "/web/api/me"))[1]["person"] == "person:bake"
         finally:
             await hub.stop()
     run(go())

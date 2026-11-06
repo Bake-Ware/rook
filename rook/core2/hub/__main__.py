@@ -3,7 +3,7 @@
     python -m rook.core2.hub --config hub.yaml init --owner bake --relay relay.example:7474 [--url https://rook.example]
     python -m rook.core2.hub --config hub.yaml
     python -m rook.core2.hub --config hub.yaml passwd bake          # set or reset a person's sign-in password
-    python -m rook.core2.hub --config hub.yaml login-link [bake]    # a one-time sign-in link (15 minutes)
+    python -m rook.core2.hub --config hub.yaml login-link [bake]    # a sign-in link (keeps working)
     python -m rook.core2.hub --config hub.yaml oauth approve BCDF-2345   # a connector page's code
     python -m rook.core2.hub --config hub.yaml token --person bake [--agent claude-code] [--label laptop]
     python -m rook.core2.hub --config hub.yaml recovery-key
@@ -23,7 +23,7 @@ API token for the owner's apps and scripts and the recovery key, once. On a
 terminal it asks for the password; otherwise (a deploy script) it makes one
 and leaves it in ``<data>/owner.password`` (0600), never printed: the site
 offers to change it at the first sign-in. ``--no-password`` sets none: the
-owner signs in with a one-time link (``login-link``) and sets a password on
+owner signs in with a sign-in link (``login-link``) and sets a password on
 their Account page later (the first-run installer, deploy/install). ``passwd NAME`` sets or resets a
 person's password (asked on a terminal, else one line on stdin): the way
 back in when one is lost. People sign in with their user name and password;
@@ -133,7 +133,7 @@ def init(path: Path, owner: str, relay: str | None, ws_url: str | None, url: str
     site = url or "http://" + bind
     typed = _new_password(owner) if password and sys.stdin.isatty() else ""
     if not password:
-        print(f"\nSign in at {site} with a one-time link (login-link {owner}); set a password on the Account page.")
+        print(f"\nOpen {site}: until setup is completed it needs no sign-in; set a password on the Account page.")
     elif typed:
         passwords.set_password(cfg.data, owner, typed, by="init")
         print(f"\nSign in at {site} as {owner} with the password you just typed.")
@@ -153,7 +153,7 @@ def init(path: Path, owner: str, relay: str | None, ws_url: str | None, url: str
 
 
 def login_link_cmd(cfg, name: str | None, base: str | None) -> int:
-    """Print a one-time sign-in link for an owner (default: the first)."""
+    """Print a sign-in link for an owner (default: the first); it keeps working."""
     from . import login_links
     owners = [n for n, u in cfg.users.items() if u.get("preset") == "owner"]
     name = name or (owners[0] if owners else None)
@@ -326,7 +326,7 @@ def main(argv=None) -> int:
     ini.add_argument("--bind", default="127.0.0.1:8740", help="the HTTP door's address (default %(default)s)")
     ini.add_argument("--no-password", action="store_true",
                      help="set no password: sign in with login-link, set one on the Account page")
-    ll = sub.add_parser("login-link", help="print a one-time sign-in link for the site (good for 15 minutes)")
+    ll = sub.add_parser("login-link", help="print a sign-in link for the site (it keeps working: no time limit, any number of uses)")
     ll.add_argument("name", nargs="?", help="the user (default: the first owner)")
     ll.add_argument("--url", help="the site's address as the browser reaches it (default: the HTTP door's)")
     sub.add_parser("recovery-key", help="show the owner's recovery key")

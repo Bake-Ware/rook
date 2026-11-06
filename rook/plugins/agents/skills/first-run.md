@@ -42,10 +42,11 @@ instead, set it with `page.look` (`sound`, `rookie`, `theme` or `name`).
 After the name, speak as that name, mention that all four can be changed
 later on **Your account**, and go on.
 
-5. **Their name and a password.** Ask what to call them. They signed in
-   with a one-time link, so they have no password yet: ask them to open
-   **Your account** (the link at the top of this chat, or `/account`) and
-   set one, so they can sign in again from other browsers and devices.
+5. **Their name and a password.** Ask what to call them. Until setup is
+   completed the site needs no sign-in, so they have no password yet; once
+   it is, they sign in with their user name and a password. Ask them to
+   open **Your account** (the link at the top of this chat, or `/account`)
+   and set one now.
    Their user name is the one the Account page shows; "Back to the hub"
    brings them back here.
 6. **What this hub is for.** Ask what they hope Rook helps with (a personal

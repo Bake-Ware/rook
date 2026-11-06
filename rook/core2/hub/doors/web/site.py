@@ -18,7 +18,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 from rook.core2 import rights
 from rook.core2.hub import login_links, passwords
 from rook.core2.hub.identity import NONE, Caller
-from .caps import _read_json, _write, dock_agent
+from .caps import _read_json, _write, dock_agent, setup_state
 
 log = logging.getLogger("rook.hub.door.web")
 
@@ -103,17 +103,29 @@ class Web:
     def _route(self, req, method, path, query):
         if method == "GET" and path.startswith("/web/static/"):
             return self._static(path[len("/web/static/"):])
+        setup = self._setup_owner()
         if path == "/login":
             if method == "POST":
                 return self._login(req)
+            if setup:                  # still in setup: no sign-in, straight to the setup chat
+                return 303, {"Location": "/"}, b""
             return self._file("login.html", csp=SHELL_CSP)
         if method == "GET" and path == "/login/link":
             return self._link(query.get("code"))
         sid, session = self._session(req)
         if method == "GET" and path in ("/", "/account"):
-            if session is None:
+            cookie = {}
+            if session is None and setup:
+                # Setup isn't completed: whoever opens the hub is the owner
+                # setting it up (Bake, Nov 6: "It is simple. If configuration
+                # isn't completed assume we are still in setup mode").
+                sid = self._start(setup)
+                cookie = {"Set-Cookie": self._cookie(sid, SESSION_SECS)}
+                log.info("setup mode: signed in as the owner", extra={"fields": {"person": setup}})
+            elif session is None:
                 return 303, {"Location": "/login"}, b""
-            return self._file("shell.html" if path == "/" else "account.html", csp=SHELL_CSP)
+            status, headers, body = self._file("shell.html" if path == "/" else "account.html", csp=SHELL_CSP)
+            return status, {**headers, **cookie}, body
         if method == "GET" and path.startswith("/web/frame/"):
             return self._frame(sid, session, unquote(path[len("/web/frame/"):]))
         if session is None:
@@ -195,8 +207,8 @@ class Web:
         return 200, {**headers, **_JSON}, b'{"ok": true}'
 
     def _link(self, code) -> tuple[int, dict, bytes]:
-        """A one-time sign-in link (``login_links``; the installer opens
-        one): a session, then the site. A used or old link goes to /login."""
+        """A sign-in link (``login_links``; the installer opens one): a
+        session, then the site. An unknown link goes to /login."""
         person = login_links.take(self.hub.data, code)
         if person is None or self.hub.identities.user(person) is None:
             log.info("sign-in link refused")
@@ -205,6 +217,13 @@ class Web:
         log.info("signed in with a link", extra={"fields": {"person": person}})
         return 303, {"Set-Cookie": self._cookie(sid, SESSION_SECS), "Location": "/",
                      "Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}, b""
+
+    def _setup_owner(self) -> str | None:
+        """While first-run setup isn't completed (``hub.setup``), the owner
+        the site signs everyone in as (the first one); else None."""
+        if setup_state(self.hub)["done"]:
+            return None
+        return next((f"person:{u.name}" for u in self.hub.identities.users.values() if u.preset == "owner"), None)
 
     def _start(self, person: str) -> str:
         sid = secrets.token_urlsafe(32)
