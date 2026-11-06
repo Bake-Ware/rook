@@ -16,23 +16,25 @@ import pytest
 from rook.core2.hub.doors.web import caps as web_caps
 from rook.core2.hub.doors.web import site as web_site
 from tests.test_core2_dashboard import WHY, Client, Hub, Loopback, run, site  # noqa: F401 - the fixture
+from tests.test_core2_worksurface import bearer as ws_bearer, serve as ws_serve
 
 STATIC = Path(web_caps.__file__).with_name("static")
 SKILL = Path(__file__).resolve().parents[1] / "rook/plugins/agents/skills/first-run.md"
 
 
-def test_rookie_js_is_vendored_and_its_styles_are_read_from_it():
+def test_rookie_js_is_vendored_and_its_styles_and_themes_are_read_from_it():
     text = (STATIC / "rookie.js").read_text()
     assert "window.Rookie" in text          # a drop-in: any rookie.js that defines Rookie
-    styles = web_caps.rookie_styles()
+    styles, themes = web_caps.rookie_styles(), web_caps.rookie_themes()
     assert styles[0] == "pixel" and "none" in styles and len(styles) >= 9
     assert set(styles) == set(re.findall(r"\bSKINS\.([a-z0-9_]+)\s*=\s*\{", text)) | {"none"}
+    assert themes[0] == "stone" and {"gameboy", "matrix", "rose"} <= set(themes)
     for page in ("shell.html", "account.html"):
         html = (STATIC / page).read_text()
         assert "rookie.js: Rookie" in html and '<script src="/web/static/rookie.js">' in html
 
 
-def test_the_style_saves_loads_and_belongs_to_each_person(site):
+def test_look_and_feel_saves_loads_and_belongs_to_each_person(site):
     async def go():
         hub, tokens = await site()
         try:
@@ -40,20 +42,26 @@ def test_the_style_saves_loads_and_belongs_to_each_person(site):
             await bake.sign_in(tokens["bake"])
             await kim.sign_in(tokens["kim"])
             look = (await bake.call("page.site"))["result"]["look"]
-            assert look["rookie"] == "pixel" and look["chosen"] is False and "kawaii" in look["styles"]
-            out = await bake.call("page.look", {"rookie": "Kawaii"})
-            assert out["ok"] and out["result"]["rookie"] == "kawaii" and out["result"]["chosen"] is True
-            assert (await bake.call("page.site"))["result"]["look"]["rookie"] == "kawaii"
-            assert (await kim.call("page.look"))["result"] == {**look, "chosen": False}   # kim's own
-            bad = await bake.call("page.look", {"rookie": "clippy"})
-            assert not bad["ok"] and "no Rookie style" in bad["error"]
-            # kept as the per-person setting page.rookie: the Settings page shows it
+            assert (look["sound"], look["rookie"], look["theme"]) == (False, "pixel", "stone")
+            assert look["next"] == "sound" and "kawaii" in look["styles"] and "gameboy" in look["themes"]
+            out = await bake.call("page.look", {"sound": True, "rookie": "Kawaii", "theme": "gameboy"})
+            assert out["ok"], out
+            r = out["result"]
+            assert (r["sound"], r["rookie"], r["theme"]) == (True, "kawaii", "gameboy")
+            assert r["chosen"] == {"sound": True, "rookie": True, "theme": True, "name": True}   # no agents here
+            assert r["next"] is None
+            assert (await bake.call("page.site"))["result"]["look"]["theme"] == "gameboy"
+            mine = (await kim.call("page.look"))["result"]                      # kim's own
+            assert (mine["sound"], mine["rookie"], mine["next"]) == (False, "pixel", "sound")
+            for bad, err in (({"rookie": "clippy"}, "no Rookie style"), ({"theme": "plaid"}, "no Rookie theme")):
+                out = await bake.call("page.look", bad)
+                assert not out["ok"] and err in out["error"]
             stored = json.loads((hub.data / "person-settings.json").read_text())
-            assert stored["person:bake"]["page"]["rookie"] == "kawaii"
+            assert stored["person:bake"]["page"] == {"sound": True, "rookie": "kawaii", "rookie_theme": "gameboy"}
             # the house agent sets a typed answer for the person it acts for
-            call = {"worker": "rook", "cap": "page.look", "args": {"rookie": "none"}, "why": WHY}
+            call = {"worker": "rook", "cap": "page.look", "args": {"rookie": "none", "sound": False}, "why": WHY}
             status, out = await bake.json("POST", "/call", call, bearer=tokens["claude"])
-            assert out["ok"] and out["result"]["rookie"] == "none"
+            assert out["ok"] and out["result"]["rookie"] == "none" and out["result"]["sound"] is False
             status, out = await bake.json("POST", "/call", call, bearer=tokens["narrow"])
             assert not out["ok"]                                    # an agent alone has no look
         finally:
@@ -63,39 +71,50 @@ def test_the_style_saves_loads_and_belongs_to_each_person(site):
         await hub2.start()
         try:
             bake.port = next(d.port for d in hub2.doors if d.name == "http")
-            assert (await bake.call("page.site"))["result"]["look"] == {
-                "rookie": "none", "chosen": True, "styles": web_caps.rookie_styles()}
+            look = (await bake.call("page.site"))["result"]["look"]
+            assert (look["sound"], look["rookie"], look["theme"]) == (False, "none", "gameboy")
         finally:
             await hub2.stop()
     run(go())
 
 
-def test_a_fresh_hub_asks_look_and_feel_first(site):
-    """On a fresh hub (init writes setup.json {done: false}) setup isn't
-    done and no style is chosen; hub.setup tells the house agent so, and its
-    first-run skill and the site's kickoff make the style the first question."""
-    async def go():
-        hub, tokens = await site()
-        try:
-            (hub.data / "setup.json").write_text(json.dumps({"done": False}))
-            c = Client(hub)
-            await c.sign_in(tokens["bake"])
-            s = (await c.call("page.site"))["result"]
-            assert s["setup"] == {"done": False} and s["look"]["chosen"] is False
-            call = {"worker": "rook", "cap": "hub.setup", "args": {}, "why": WHY}
-            status, out = await c.json("POST", "/call", call, bearer=tokens["claude"])
-            assert out["result"]["done"] is False and out["result"]["look"]["chosen"] is False
-        finally:
-            await hub.stop()
-    run(go())
+def test_a_fresh_hub_asks_sound_style_theme_name_first_and_the_name_is_the_house_agents(tmp_path):
+    """A fresh hub (init writes setup.json {done: false}) with the agents
+    package: setup isn't done and look.next walks sound, style, theme, name
+    in that order; the name becomes the house agent's (its prompt)
+    and survives a restart. The skill and the site's kickoff ask them first."""
+    async def go(hub, tokens):
+        (hub.data / "setup.json").write_text(json.dumps({"done": False}))
+        c, kim = Client(hub), Client(hub)
+        await c.sign_in(tokens["bake"])
+        await kim.sign_in(tokens["kim"])
+        s = (await c.call("page.site"))["result"]
+        assert s["setup"] == {"done": False} and s["look"]["name"] == "Rookie"
+        out = await ws_bearer(c, tokens["bake"], "hub.setup")
+        assert out["result"]["done"] is False and out["result"]["look"]["next"] == "sound"
+        order = []
+        for step, value in (("sound", True), ("rookie", "comic"), ("theme", "amber"), ("name", "  Juniper  ")):
+            order.append((await c.call("page.look"))["result"]["next"])
+            out = await c.call("page.look", {step: value})
+            assert out["ok"], out
+        assert order == ["sound", "rookie", "theme", "name"] and out["result"]["next"] is None
+        assert out["result"]["name"] == "Juniper"
+        # a viewer can't rename the house agent
+        assert not (await kim.call("page.look", {"name": "Bob"}))["ok"]
+        # the name is the house agent's: its prompt, the hub setting
+        reply = (await c.call("agent.chat.send", {"agent": "house", "text": "who are you"}))["result"]["text"]
+        assert reply.startswith('You are Juniper, the agent "house"')
+        assert json.loads((hub.data / "settings.json").read_text())["agent"]["house_name"] == "Juniper"
+    ws_serve(tmp_path, go, ("agents",))
     text = SKILL.read_text()
     steps = re.findall(r"^(\d+)\. \*\*(.+?)\*\*", text, re.M)
-    assert steps[0] == ("1", "Look and feel.") and steps[1][1].startswith("Their name")
-    first = text[text.index("1. **Look and feel.**"):text.index("2. **")]
-    assert "FIRST question" in first and "page.look" in first and "Rookie" in first
+    assert [t for _, t in steps[:5]] == ["Sound.", "Rookie's style.", "Rookie's theme.", "Rookie's name.",
+                                        "Their name and a password."]
+    first = text[text.index("1. **Sound.**"):text.index("5. **")]
+    assert "FIRST question" in first and "page.look" in first and "YOUR name" in first
     shell = (STATIC / "shell.js").read_text()
     kickoff = shell[shell.index("SETUP_KICKOFF + "):shell.index("true);", shell.index("SETUP_KICKOFF + "))]
-    assert "first question is step 1, look and feel" in kickoff
+    assert "in order: sound, Rookie's style, \" +\n        \"Rookie's theme, Rookie's name" in kickoff
 
 
 def test_the_activity_feed_shows_the_dock_agents_calls_for_you_only(site, monkeypatch):
@@ -159,7 +178,7 @@ for (const s of new Set([...src.matchAll(/"([a-z]+)"/g)].map((m) => m[1])))
     out["state " + s] = "not in rookie.js";
 // the driver
 let t = 0, seen = [], said = [];
-const rk = { set: (s) => seen.push(s), say: (text, o) => said.push([text, o.then]) };
+const rk = { set: (s) => seen.push(s), say: (text, o) => said.push([text, o.then]) };   // like shell.js's rookieBoth
 const d = new M.Driver(rk, () => t);
 expect("start idle", d.tick(), "idle");
 expect("typing", d.key(), "listening");

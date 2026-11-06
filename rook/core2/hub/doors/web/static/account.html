@@ -25,9 +25,17 @@
   </form>
   <div id="look">
     <h2>Look and feel</h2>
-    <div class="muted">Rookie, the house agent's avatar beside its messages.</div>
+    <label><input type="checkbox" id="sound"> Sound</label>
+    <div class="muted">Rookie's style</div>
     <div id="looks" class="looks"></div>
-    <div id="look-out" class="muted" aria-live="polite"></div>
+    <div class="muted">Rookie's theme</div>
+    <div id="themes" class="looks"></div>
+    <form id="name-form" class="login inner">
+      <label for="name">Rookie's name (the house agent's name)</label>
+      <input id="name" type="text" maxlength="40">
+      <button type="submit">Rename</button>
+    </form>
+    <div id="look-out" class="bad" aria-live="polite"></div>
   </div>
   <div id="connector" hidden>
     <h2>Claude on claude.ai and the phone</h2>
@@ -35,7 +43,7 @@
     <p><code id="mcp-url"></code></p>
   </div>
 </div>
-<!-- rookie.js: Rookie, the house agent's avatar, by Bake (castling-wave12/rookie.js, sha256 97135e1f...).
+<!-- rookie.js: Rookie, the house agent's avatar, by Bake (castling-wave12/rookie.js, sha256 fd17c3ee...).
      Vendored unchanged as a drop-in: replace the file to update it; the site reads its SKINS. -->
 <script src="/web/static/rookie.js"></script>
 <script src="/web/static/account.js"></script>

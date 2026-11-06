@@ -35,32 +35,58 @@ async function lookCall(args) {
   return j.result;
 }
 
-async function looks() {
-  let look;
-  try { look = await lookCall({}); } catch (x) { $("look").hidden = true; return; }
-  const box = $("looks");
-  for (const k of look.styles) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.title = k;
-    b.className = k === look.rookie ? "on" : "";
-    const face = document.createElement("div");
-    face.className = "face";
-    const name = document.createElement("span");
-    name.textContent = k === "none" ? "none (hide it)" : k;
-    b.append(face, name);
-    if (k !== "none" && window.Rookie && Rookie.SKINS.includes(k)) Rookie.mount(face, { scale: 2, skin: k });
-    b.onclick = async () => {
-      try {
-        const now = await lookCall({ rookie: k });
-        for (const o of box.children) o.className = o.title === now.rookie ? "on" : "";
-        $("look-out").textContent = "";
-      } catch (x) {
-        $("look-out").textContent = x.message;
-      }
-    };
-    box.append(b);
+// Sound, Rookie's style and theme are yours; its name is the house agent's
+// (owners rename it). Previews take the theme you have.
+let look = null;
+const faces = [];
+
+function pickers() {
+  for (const f of faces.splice(0)) f.destroy();
+  for (const [box, items, key] of [[$("looks"), look.styles, "rookie"], [$("themes"), look.themes, "theme"]]) {
+    box.replaceChildren();
+    for (const k of items) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.title = k;
+      b.className = k === look[key] ? "on" : "";
+      const face = document.createElement("div");
+      face.className = "face";
+      const name = document.createElement("span");
+      name.textContent = k === "none" ? "none (hide it)" : k;
+      b.append(face, name);
+      const skin = key === "rookie" ? k : (look.rookie === "none" ? "pixel" : look.rookie);
+      const theme = key === "theme" ? k : look.theme;
+      if (skin !== "none" && window.Rookie && Rookie.SKINS.includes(skin)) faces.push(Rookie.mount(face, { scale: 2, skin, theme }));
+      b.onclick = () => change({ [key]: k });
+      box.append(b);
+    }
   }
+}
+
+async function change(args) {
+  try {
+    look = await lookCall(args);
+    $("look-out").textContent = "";
+  } catch (x) {
+    $("look-out").textContent = x.message;
+  }
+  render();
+}
+
+function render() {
+  $("sound").checked = !!look.sound;
+  $("name").value = look.name;
+  pickers();
+}
+
+async function looks() {
+  try { look = await lookCall({}); } catch (x) { $("look").hidden = true; return; }
+  $("sound").onchange = () => change({ sound: $("sound").checked });
+  $("name-form").onsubmit = (e) => {
+    e.preventDefault();
+    if ($("name").value.trim()) change({ name: $("name").value.trim() });
+  };
+  render();
 }
 
 $("change").addEventListener("submit", async (e) => {

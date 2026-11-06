@@ -1,5 +1,6 @@
-"""The fake house agent: "make a page <name>", "archive <page>", the
-site's first-visit note, else an echo."""
+"""The fake house agent: "make a page <name>", "archive <page>", "who are
+you" (its system prompt's first line), the site's first-visit note, else an
+echo."""
 import json
 
 
@@ -10,6 +11,8 @@ async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, sys
     said = prompt.strip().splitlines()[-1].strip()
     if "First visit to the hub site" in prompt:
         return {"text": "Welcome! How do you want to use the site?", "session": "s1"}
+    if said == "who are you":                 # the first line of its system prompt
+        return {"text": (system or "").strip().splitlines()[0], "session": session or "s1"}
     words = said.split()
     if said.startswith("make a page ") and len(words) == 4:
         name = words[3]

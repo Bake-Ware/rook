@@ -221,32 +221,58 @@ def setup_state(hub, install: bool = False) -> dict:
 
 
 ROOKIE_JS = Path(__file__).with_name("static") / "rookie.js"
-_styles: tuple = (None, ())
+_rookie: tuple = (None, (), ())
+LOOK_STEPS = ("sound", "rookie", "theme", "name")      # first-run asks these first, in this order
+HOUSE_NAME = "Rookie"
 
 
-def rookie_styles() -> list:
-    """Rookie's styles: the skins the vendored ``static/rookie.js`` defines
-    (``SKINS.<name>={...}``), read from the file itself so a new rookie.js
-    drops in without a code change."""
-    global _styles
+def _rookie_js() -> tuple:
+    """(styles, themes) the vendored ``static/rookie.js`` defines, read from
+    the file itself (``SKINS.<name>={``, the ``THEMES={...}`` keys) so a new
+    rookie.js drops in without a code change."""
+    global _rookie
     try:
         mtime = ROOKIE_JS.stat().st_mtime
     except OSError:
-        return ["none"]
-    if _styles[0] != mtime:
-        found = re.findall(r"\bSKINS\.([a-z][a-z0-9_]*)\s*=\s*\{", ROOKIE_JS.read_text(encoding="utf-8"))
-        _styles = (mtime, tuple(dict.fromkeys(found + ["none"])))
-    return list(_styles[1])
+        return ["none"], ["stone"]
+    if _rookie[0] != mtime:
+        text = ROOKIE_JS.read_text(encoding="utf-8")
+        styles = re.findall(r"\bSKINS\.([a-z][a-z0-9_]*)\s*=\s*\{", text)
+        block = re.search(r"\bTHEMES\s*=\s*\{(.*?)\n\s*\};", text, re.S)
+        themes = re.findall(r"^\s*([a-z][a-z0-9_]*)\s*:\s*\{", block[1], re.M) if block else []
+        _rookie = (mtime, tuple(dict.fromkeys(styles + ["none"])), tuple(themes or ["stone"]))
+    return list(_rookie[1]), list(_rookie[2])
 
 
-def look_state(settings, person: str | None) -> dict:
-    """A person's look and feel (castling-first-run, Bake Nov 5: "Add the
-    rookie style as the first question it asks the user"): Rookie's style,
-    whether they picked it, and the styles there are. A theme joins later."""
+def rookie_styles() -> list:
+    return _rookie_js()[0]
+
+
+def rookie_themes() -> list:
+    return _rookie_js()[1]
+
+
+def house_name(hub) -> str:
+    return str((hub.plugins.settings.get("agent") or {}).get("house_name") or HOUSE_NAME)
+
+
+def look_state(hub, settings, person: str | None) -> dict:
+    """A person's look and feel (castling-first-run; Bake, Nov 5 2026: "prompt
+    the user if they want sound first, then rookie style then rookie theme,
+    then rookie name. This will be the name of the home agent"): sound,
+    Rookie's style and theme (theirs), Rookie's name (the house agent's, the
+    hub's), which were answered, and the first that wasn't (``next``)."""
     mine = (settings.settings(person) if person else {}).get("page") or {}
-    style = mine.get("rookie")
-    return {"rookie": style if style in rookie_styles() else "pixel", "chosen": "rookie" in mine,
-            "styles": rookie_styles()}
+    styles, themes = _rookie_js()
+    chosen = {"sound": "sound" in mine, "rookie": "rookie" in mine, "theme": "rookie_theme" in mine,
+              # no agents package, no house agent to name
+              "name": "house_name" in settings.stored.get("agent", {}) or "agent" not in hub.plugins.plugins}
+    return {"sound": bool(mine.get("sound", False)),
+            "rookie": mine["rookie"] if mine.get("rookie") in styles else "pixel",
+            "theme": mine["rookie_theme"] if mine.get("rookie_theme") in themes else themes[0],
+            "name": house_name(hub), "chosen": chosen,
+            "next": next((k for k in LOOK_STEPS if not chosen[k]), None),
+            "styles": styles, "themes": themes}
 
 
 def dock_agent(hub) -> str | None:
@@ -488,18 +514,32 @@ class _Handlers:
         pages = self.hub.pages
         return {"person": ctx.caller.person, "start": pages.start(ctx.caller.person), "dock": dock_agent(self.hub),
                 "workbench": self._workbench(), "setup": setup_state(self.hub),
-                "look": look_state(self.settings, ctx.caller.person)}
+                "look": look_state(self.hub, self.settings, ctx.caller.person)}
 
-    async def pages_look(self, ctx, rookie: str | None = None) -> dict:
+    async def pages_look(self, ctx, sound: bool | None = None, rookie: str | None = None,
+                         theme: str | None = None, name: str | None = None) -> dict:
         who = ctx.caller.person
-        if rookie is not None:
-            if not who:
-                raise KitError("look and feel is a person's: act for one")
-            style = str(rookie).strip().lower()
-            if style not in rookie_styles():
-                raise KitError(f"no Rookie style {rookie!r}: one of {', '.join(rookie_styles())}")
-            self.settings._set_personal(ctx, "page", "rookie", style, {"type": "str"}, None)
-        return look_state(self.settings, who)
+        mine = {"sound": sound, "rookie": rookie, "rookie_theme": theme}
+        if any(v is not None for v in mine.values()) and not who:
+            raise KitError("look and feel is a person's: act for one")
+        styles, themes = _rookie_js()
+        for key, value in mine.items():
+            if value is None:
+                continue
+            if key != "sound":
+                value = str(value).strip().lower()
+                ok = styles if key == "rookie" else themes
+                if value not in ok:
+                    what = "style" if key == "rookie" else "theme"
+                    raise KitError(f"no Rookie {what} {value!r}: one of {', '.join(ok)}")
+            self.settings._set_personal(ctx, "page", key, bool(value) if key == "sound" else value,
+                                        {"type": "bool" if key == "sound" else "str"}, None)
+        if name is not None:
+            if "agent" not in self.hub.plugins.plugins:
+                raise KitError("no house agent to name: the agents package isn't installed")
+            name = " ".join(str(name).split())[:40] or HOUSE_NAME
+            await self.settings.set(ctx, "agent", "house_name", name)    # owners only
+        return look_state(self.hub, self.settings, who)
 
     async def pages_start(self, ctx, page: str | None = None) -> dict:
         pages = self.hub.pages
@@ -545,7 +585,7 @@ class _Handlers:
             state = _read_json(path)
             state.update({"done": bool(done), "ts": time.time(), "by": _author(ctx)})
             _write(path, json.dumps(state, indent=1))
-        return {**setup_state(self.hub, install=True), "look": look_state(self.settings, ctx.caller.person)}
+        return {**setup_state(self.hub, install=True), "look": look_state(self.hub, self.settings, ctx.caller.person)}
 
     async def hub_workers(self, ctx) -> dict:
         return {"workers": (await self.hub.workers_view(_who(ctx)))["workers"]}

@@ -306,66 +306,128 @@ function thinking(on) {
 }
 
 // -- Rookie: the house agent's avatar beside its messages --------------------------
-// rookie.js is a vendored drop-in (Rookie.mount, .set, .say, .setSkin, SKINS);
-// rookie-map.js turns what the site sees into its states (docs/castling-first-run.md).
+// rookie.js is a vendored drop-in (Rookie.mount, .set, .say, .setSkin, .setTheme,
+// .sound, .enter, Rookie.favicon, SKINS, THEMES); rookie-map.js turns what the
+// site sees into its states (docs/castling-first-run.md).
 
-const rookie = { inst: null, driver: null, holder: null, style: "pixel", picker: null };
+const rookie = { inst: null, fav: null, driver: null, holder: null, picker: null,
+  look: { sound: false, rookie: "pixel", theme: "stone", name: "Rookie" } };
+
+// Both the one in the chat and the tab icon follow the driver.
+const rookieBoth = {
+  set(s) { if (rookie.inst) rookie.inst.set(s); if (rookie.fav) rookie.fav.set(s); },
+  say(text, o) { if (rookie.inst) rookie.inst.say(text, o); if (rookie.fav) rookie.fav.set("talking"); },
+};
+
+function rookieFavicon() {
+  if (rookie.fav || !window.Rookie || !Rookie.favicon) return;
+  const skin = Rookie.SKINS.includes(rookie.look.rookie) && rookie.look.rookie !== "none" ? rookie.look.rookie : "pixel";
+  rookie.fav = Rookie.favicon({ skin, theme: rookie.look.theme });
+  if (!rookie.driver) rookie.driver = new RookieMap.Driver(rookieBoth);
+}
 
 function rookieInit() {
   if (rookie.inst || !window.Rookie) return;
   rookie.holder = el("div", { className: "rookie" });
-  rookie.inst = Rookie.mount(rookie.holder, { scale: 2, skin: rookie.style });
-  rookie.driver = new RookieMap.Driver(rookie.inst);
+  rookie.inst = Rookie.mount(rookie.holder, { scale: 2, skin: rookie.look.rookie, theme: rookie.look.theme, state: "hidden" });
+  if (!rookie.driver) rookie.driver = new RookieMap.Driver(rookieBoth);
   setInterval(() => rookie.driver.tick(), 1000);
-  rookieStyle(rookie.style);
+  applyLook(rookie.look);
 }
 
+// Rookie's first appearance: the transporter, once.
 function rookieBeside(row) {
-  if (rookie.holder) row.querySelector(".gutter").append(rookie.holder);
+  if (!rookie.holder) return;
+  const first = !rookie.holder.parentNode;
+  row.querySelector(".gutter").append(rookie.holder);
+  if (first && rookie.inst.enter) {
+    rookie.inst.enter(rookie.driver.state());
+    rookie.driver.shown = rookie.driver.state();
+  }
 }
 
-function rookieStyle(style) {
-  rookie.style = style || "pixel";
-  if (!rookie.inst) return;
-  const none = rookie.style === "none" || !Rookie.SKINS.includes(rookie.style);
-  $("#dock-log").classList.toggle("no-rookie", rookie.style === "none");
-  if (!none) rookie.inst.setSkin(rookie.style);
+function lookName(name) {
+  if (dock.agent !== "house") return;
+  $("#dock-name").textContent = name;
+  document.title = name;
 }
 
-// Look and feel: the first setup step (Rookie's style today; a theme later).
-// The choice is page.look, per person; the agent can set it from a typed answer.
+// Look and feel: the first four setup steps (sound, Rookie's style, theme,
+// name; page.look). Sound, style and theme are the person's; the name is the
+// house agent's. The agent sets typed answers itself.
 function applyLook(look) {
   if (!look) return;
-  rookieStyle(look.rookie);
-  if (look.chosen && rookie.picker) {
+  rookie.look = look;
+  lookName(look.name);
+  const skins = window.Rookie ? Rookie.SKINS : [];
+  const shown = look.rookie !== "none" && skins.includes(look.rookie);
+  for (const b of [rookie.inst, rookie.fav]) {
+    if (!b) continue;
+    if (b === rookie.inst) {
+      b.sound = !!look.sound;
+      if (shown) b.setSkin(look.rookie);
+    } else {
+      b.setSkin(shown ? look.rookie : "pixel");
+    }
+    if (b.setTheme) b.setTheme(look.theme);
+  }
+  $("#dock-log").classList.toggle("no-rookie", look.rookie === "none");
+  if (rookie.picker && rookie.picker.step !== look.next) {
     for (const i of rookie.picker.insts) i.destroy();
     rookie.picker.box.remove();
     rookie.picker = null;
   }
 }
 
+async function lookAnswer(step, value, said) {
+  try {
+    const out = await call("page.look", { [step]: value }, "The person answered a look-and-feel question.");
+    site.look = out;
+    applyLook(out);
+  } catch (x) {
+    return bubble("bad", x.message);
+  }
+  say(`The person answered look and feel, ${step}: ${said}. ` +
+    (site.look.next ? `Ask the next one (${site.look.next}).` : "Go on with setup."), true);
+}
+
 function lookPicker() {
   const look = site.look;
-  if (rookie.picker || !look || look.chosen || !window.Rookie || !document.body.classList.contains("setup")) return;
+  const step = look && look.next;
+  if (rookie.picker || !step || !window.Rookie || !document.body.classList.contains("setup")) return;
   const box = el("div", { className: "picker" });
   const insts = [];
-  for (const k of look.styles) {
-    const b = el("button", { type: "button", title: k });
+  const option = (label, skin, theme, onclick) => {
+    const b = el("button", { type: "button", title: label });
     const face = el("div", { className: "face" });
-    b.append(face, el("span", {}, k === "none" ? "none (hide it)" : k));
-    if (k !== "none" && Rookie.SKINS.includes(k)) insts.push(Rookie.mount(face, { scale: 2, skin: k, state: "happy" }));
-    b.onclick = async () => {
-      try {
-        site.look = await call("page.look", { rookie: k }, "The person picked Rookie's style.");
-      } catch (x) {
-        return bubble("bad", x.message);
-      }
-      applyLook(site.look);
-      say(`The person picked Rookie's style: ${k} (look and feel). Go on with setup.`, true);
-    };
+    b.append(face, el("span", {}, label));
+    if (skin && skin !== "none" && Rookie.SKINS.includes(skin)) insts.push(Rookie.mount(face, { scale: 2, skin, theme, state: "happy" }));
+    b.onclick = onclick;
     box.append(b);
+  };
+  if (step === "sound") {
+    option("Sound on", null, null, () => lookAnswer("sound", true, "yes"));
+    option("No sound", null, null, () => lookAnswer("sound", false, "no"));
+  } else if (step === "rookie") {
+    for (const k of look.styles) option(k === "none" ? "none (hide it)" : k, k, look.theme, () => lookAnswer("rookie", k, k));
+  } else if (step === "theme") {
+    const skin = look.rookie === "none" ? "pixel" : look.rookie;
+    for (const k of look.themes) option(k, skin, k, () => lookAnswer("theme", k, k));
+  } else if (step === "name") {
+    const form = el("form", { className: "name" });
+    const input = el("input", { type: "text", maxLength: 40, placeholder: look.name, value: "" });
+    const save = el("button", { type: "submit" }, "Name it");
+    const skip = el("button", { type: "button" }, `Keep ${look.name}`);
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const name = input.value.trim() || look.name;
+      lookAnswer("name", name, name);
+    };
+    skip.onclick = () => lookAnswer("name", look.name, look.name);
+    form.append(input, save, skip);
+    box.append(form);
   }
-  rookie.picker = { box, insts };
+  rookie.picker = { box, insts, step };
   addRow(box);
 }
 
@@ -465,8 +527,8 @@ async function activity() {
 
 async function startDock(agent) {
   dock.agent = agent;
+  $("#dock-name").textContent = agent === "house" ? rookie.look.name : agent;
   rookieInit();
-  $("#dock-name").textContent = agent === "house" ? "House agent" : agent;
   $("#dock").hidden = $("#dock-btn").hidden = false;
   let open = true;
   try { open = localStorage.getItem("rook.dock") !== "0" && innerWidth > 720; } catch (x) { /* private mode */ }
@@ -481,8 +543,9 @@ async function startDock(agent) {
     if (dock.shown === 0) {
       await say(SETUP_KICKOFF + "; setup isn't finished. Greet the person warmly and start " +
         "setting up with them: read the first-run skill (cap agent.skill on worker rook, args {name: \"first-run\"}) and follow it. " +
-        "Your first question is step 1, look and feel: which style they want for Rookie, your avatar " +
-        "beside your messages (the site shows them a picker under your message; they may also type it).", true);
+        "Open with the four look-and-feel questions, one per message, in order: sound, Rookie's style, " +
+        "Rookie's theme, Rookie's name (the name becomes yours); hub.setup's look.next says which is next. " +
+        "The site shows the person a picker under your question; they may also type the answer (set it with page.look).", true);
     } else {
       lookPicker();                 // a reload before they picked
     }
@@ -534,7 +597,8 @@ window.addEventListener("hashchange", () => open(wanted()));
   try {
     csrf = (await api("/web/api/me")).csrf;
     site = await call("page.site");
-    if (site.look) rookie.style = site.look.rookie;
+    if (site.look) rookie.look = site.look;
+    rookieFavicon();
     await loadNav();
     if (!(site.dock && site.setup && !site.setup.done)) open(wanted());
     if (site.dock) startDock(site.dock).catch((x) => bubble("bad", x.message));

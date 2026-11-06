@@ -51,22 +51,35 @@ Hubs set up before this (no `setup.json`) count as done.
 ## Rookie
 
 Bake, Nov 5 2026: "Yeah add it and translate for 0.5. Add the rookie style
-as the first question it asks the user". Rookie is the house agent's pixel
-avatar, beside its newest message in the dock (and the setup chat).
+as the first question it asks the user", then: "Ok added sounds and themes
+prompt the user if they want sound first, then rookie style then rookie
+theme, then rookie name. This will be the name of the home agent". Rookie
+is the house agent's avatar, beside its newest message in the dock (and the
+setup chat), and the site's animated tab icon.
 
 - `static/rookie.js` is Bake's file, vendored unchanged (a drop-in: replace
   it and nothing else changes). Where it is loaded (shell.html,
-  account.html) a comment says where it came from. The site takes the
-  styles from `Rookie.SKINS`; the hub reads them from the same file
-  (`SKINS.<name>={`) for `page.look`, plus `none`.
-- The style is a per-person setting, `page.rookie` (default `pixel`), set
-  with `page.look {rookie}`; `page.look` and `page.site` return `{rookie,
-  chosen, styles}`, `hub.setup` returns it as `look`. `none` hides Rookie.
-  Change it later on **Your account** (Look and feel).
-- First-run step 1 is **Look and feel** (Rookie's style now; a theme will
-  join it): the agent asks it in its greeting, the site shows a picker of
-  live previews under that message until one is chosen, and the agent sets
-  a typed answer with `page.look`. Then the rest of setup.
+  account.html) a comment says where it came from. The site takes styles
+  and themes from `Rookie.SKINS` / `Rookie.THEMES`; the hub reads the same
+  lists from the file (`SKINS.<name>={`, the `THEMES={...}` keys).
+- Rookie comes in with `enter()` the first time it shows; `Rookie.favicon`
+  animates the tab icon with the same states; `sound` follows the person's
+  answer (off until they give one).
+- Look and feel = `page.look {sound, rookie, theme, name}`; it returns
+  `{sound, rookie, theme, name, chosen, next, styles, themes}` (also in
+  `page.site` and `hub.setup` as `look`). Sound, style and theme are the
+  person's own settings (`page.sound`, `page.rookie`, `page.rookie_theme`);
+  the name is the hub setting `agent.house_name` (default Rookie, owners
+  only): the house agent's name. Its prompt says "You are <name>", the
+  roster and `agent.list` show it, the dock header and the tab title use it.
+  Its identity stays `agent:house`. All four change later on **Your
+  account**.
+- First-run steps 1-4 are sound, style, theme, name, one question each in
+  that order (`next` is the first unanswered). The agent asks; the site
+  shows the matching picker (live previews; the themes on the chosen style;
+  a name box with "Keep Rookie") under its question until it is answered,
+  and the agent sets typed answers with `page.look`. Then the rest of setup,
+  the agent speaking as its new name.
 
 ### 0.5 events -> Rookie states
 

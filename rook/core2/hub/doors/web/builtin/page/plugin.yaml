@@ -17,7 +17,9 @@ source: https://github.com/Bake-Ware/rook
 
 settings:
   dock: { type: str, where: hub, default: house, doc: "The agent in the site's chat dock (with the agents package); blank: no dock." }
-  rookie: { type: str, where: person, default: pixel, doc: "Your look and feel: Rookie's style beside the house agent (a skin rookie.js ships; none hides it). Set by page.look; first-run setup asks it first." }
+  sound: { type: bool, where: person, default: false, doc: "Your look and feel: Rookie's sounds (a chiptune blip as it changes state). Off until you answer; set by page.look." }
+  rookie: { type: str, where: person, default: pixel, doc: "Your look and feel: Rookie's style beside the house agent (a skin rookie.js ships; none hides it). Set by page.look." }
+  rookie_theme: { type: str, where: person, default: stone, doc: "Your look and feel: Rookie's colour theme (one rookie.js ships). Set by page.look." }
 
 caps:
   list:
@@ -125,15 +127,19 @@ caps:
     result: { type: map }
   look:
     doc: >-
-      Your look and feel on the hub site. Today: Rookie, the house agent's avatar (rookie=<style>; styles
-      lists them, none hides it); a theme comes later. Blank: just say what you have. chosen is false
-      until you pick one (first-run setup asks this first).
+      Look and feel on the hub site, the first four first-run questions in this order: sound (yes/no),
+      Rookie's style, Rookie's theme, Rookie's name. The name is the house agent's name (the agents
+      setting house_name; owners only). Give any of them to set it; blank: just say what you have.
+      chosen says which were answered, next is the first one that wasn't (null when all were).
     on: hub
     risk: write
     scope: multi-user
     effects: [persists]
     args:
-      rookie: { type: str, doc: "Rookie's style, one of styles (e.g. pixel, kawaii, none)." }
+      sound: { type: bool, doc: "Rookie's sounds on or off." }
+      rookie: { type: str, doc: "Rookie's style, one of styles (e.g. pixel, kawaii; none hides it)." }
+      theme: { type: str, doc: "Rookie's colour theme, one of themes (e.g. stone, gameboy)." }
+      name: { type: str, doc: "Rookie's name: the house agent's name from now on (owners only)." }
     result: { type: map }
   start:
     doc: >-

@@ -92,3 +92,5 @@ body.setup .said { font-size: 15px; }
 .login .looks button { background: none; color: inherit; border-color: var(--line); padding: 4px; }
 .login .looks button.on { border-color: var(--accent); }
 .looks .face { min-width: 64px; min-height: 50px; }
+.picker form.name { display: flex; gap: 6px; width: 100%; }
+.picker form.name input { flex: 1; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }

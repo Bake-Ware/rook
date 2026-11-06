@@ -353,8 +353,8 @@ def test_setup_state_and_hub_setup(site):
             assert (await c.call("page.site"))["result"]["setup"] == {"done": False}   # no install facts here
             call = {"worker": "rook", "cap": "hub.setup", "args": {}, "why": WHY}
             status, out = await c.json("POST", "/call", call, bearer=tokens["claude"])
-            assert out["result"] == {"done": False, "install": {"machine": "box"},
-                                     "look": {"rookie": "pixel", "chosen": False, "styles": web_caps.rookie_styles()}}
+            look = out["result"].pop("look")
+            assert out["result"] == {"done": False, "install": {"machine": "box"}} and look["next"] == "sound"
             status, out = await c.json("POST", "/call", {**call, "args": {"done": True}}, bearer=tokens["kim"])
             assert not out["ok"]                                           # not an owner
             status, out = await c.json("POST", "/call", {**call, "args": {"done": True}}, bearer=tokens["claude"])
@@ -745,7 +745,8 @@ def test_workers_journal_and_settings_pages(site):
             assert {(s["plugin"], s["key"], s["value"], s["source"]) for s in listed} == {
                 ("board", "motto", "hello", "default"), ("board", "size", 3, "default"),
                 ("page", "dock", "house", "default"), ("hub", "security", "on", "config"),
-                ("page", "rookie", "pixel", "default")}     # yours, per person
+                ("page", "rookie", "pixel", "default"), ("page", "sound", False, "default"),
+                ("page", "rookie_theme", "stone", "default")}     # yours, per person
             # the security switch (castling-switchover-decisions, "Usable first, security later"): a dropdown, owners only
             sec = next(s for s in listed if (s["plugin"], s["key"]) == ("hub", "security"))
             assert sec["enum"] == ["off", "on"] and sec["default"] == "off"
