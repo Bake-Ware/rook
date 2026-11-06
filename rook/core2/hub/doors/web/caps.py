@@ -220,6 +220,35 @@ def setup_state(hub, install: bool = False) -> dict:
     return out
 
 
+ROOKIE_JS = Path(__file__).with_name("static") / "rookie.js"
+_styles: tuple = (None, ())
+
+
+def rookie_styles() -> list:
+    """Rookie's styles: the skins the vendored ``static/rookie.js`` defines
+    (``SKINS.<name>={...}``), read from the file itself so a new rookie.js
+    drops in without a code change."""
+    global _styles
+    try:
+        mtime = ROOKIE_JS.stat().st_mtime
+    except OSError:
+        return ["none"]
+    if _styles[0] != mtime:
+        found = re.findall(r"\bSKINS\.([a-z][a-z0-9_]*)\s*=\s*\{", ROOKIE_JS.read_text(encoding="utf-8"))
+        _styles = (mtime, tuple(dict.fromkeys(found + ["none"])))
+    return list(_styles[1])
+
+
+def look_state(settings, person: str | None) -> dict:
+    """A person's look and feel (castling-first-run, Bake Nov 5: "Add the
+    rookie style as the first question it asks the user"): Rookie's style,
+    whether they picked it, and the styles there are. A theme joins later."""
+    mine = (settings.settings(person) if person else {}).get("page") or {}
+    style = mine.get("rookie")
+    return {"rookie": style if style in rookie_styles() else "pixel", "chosen": "rookie" in mine,
+            "styles": rookie_styles()}
+
+
 def dock_agent(hub) -> str | None:
     """The agent in the site's chat dock: the ``page.dock`` setting, when
     the agents package is installed."""
@@ -264,7 +293,7 @@ def install(hub) -> None:
                   "page.create": h.pages_create, "page.update": h.pages_update,
                   "page.archive": h.pages_archive, "page.restore": h.pages_restore,
                   "page.components": h.pages_components, "page.site": h.pages_site,
-                  "page.start": h.pages_start},
+                  "page.start": h.pages_start, "page.look": h.pages_look},
         "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers, "hub.manifests": h.hub_manifests,
                 "hub.door": h.hub_door, "hub.setup": h.hub_setup},
         "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide,
@@ -458,7 +487,19 @@ class _Handlers:
         the dock (with the agents package)."""
         pages = self.hub.pages
         return {"person": ctx.caller.person, "start": pages.start(ctx.caller.person), "dock": dock_agent(self.hub),
-                "workbench": self._workbench(), "setup": setup_state(self.hub)}
+                "workbench": self._workbench(), "setup": setup_state(self.hub),
+                "look": look_state(self.settings, ctx.caller.person)}
+
+    async def pages_look(self, ctx, rookie: str | None = None) -> dict:
+        who = ctx.caller.person
+        if rookie is not None:
+            if not who:
+                raise KitError("look and feel is a person's: act for one")
+            style = str(rookie).strip().lower()
+            if style not in rookie_styles():
+                raise KitError(f"no Rookie style {rookie!r}: one of {', '.join(rookie_styles())}")
+            self.settings._set_personal(ctx, "page", "rookie", style, {"type": "str"}, None)
+        return look_state(self.settings, who)
 
     async def pages_start(self, ctx, page: str | None = None) -> dict:
         pages = self.hub.pages
@@ -504,7 +545,7 @@ class _Handlers:
             state = _read_json(path)
             state.update({"done": bool(done), "ts": time.time(), "by": _author(ctx)})
             _write(path, json.dumps(state, indent=1))
-        return setup_state(self.hub, install=True)
+        return {**setup_state(self.hub, install=True), "look": look_state(self.settings, ctx.caller.person)}
 
     async def hub_workers(self, ctx) -> dict:
         return {"workers": (await self.hub.workers_view(_who(ctx)))["workers"]}

@@ -268,17 +268,105 @@ function rich(text) {
   return box.childNodes;
 }
 
-function bubble(cls, text) {
+// One line in the chat log, above the "thinking" row while there is one.
+function addRow(node) {
   const log = $("#dock-log");
-  const div = el("div", { className: "said " + cls });
-  if (cls === "them") div.append(...rich(text)); else div.textContent = text;
-  log.append(div);
+  log.insertBefore(node, $("#dock-wait"));
   while (log.children.length > 200) log.firstChild.remove();
   log.scrollTop = log.scrollHeight;
 }
 
+function bubble(cls, text) {
+  const div = el("div", { className: "said " + cls });
+  if (cls === "them") {
+    div.append(...rich(text));
+    const row = el("div", { className: "row them" });
+    row.append(el("div", { className: "gutter" }), div);
+    addRow(row);
+    rookieBeside(row);
+  } else {
+    div.textContent = text;
+    addRow(div);
+  }
+}
+
 function thinking(on) {
-  $("#dock").classList.toggle("thinking", on);
+  let wait = $("#dock-wait");
+  if (on && !wait) {
+    wait = el("div", { id: "dock-wait", className: "row them" });
+    wait.append(el("div", { className: "gutter" }), el("span", { className: "dots" }, "\u2026"));
+    $("#dock-log").append(wait);
+    rookieBeside(wait);
+  } else if (!on && wait) {
+    wait.remove();
+    const rows = document.querySelectorAll("#dock-log .row.them");
+    if (rows.length) rookieBeside(rows[rows.length - 1]);
+  }
+  $("#dock-log").scrollTop = $("#dock-log").scrollHeight;
+}
+
+// -- Rookie: the house agent's avatar beside its messages --------------------------
+// rookie.js is a vendored drop-in (Rookie.mount, .set, .say, .setSkin, SKINS);
+// rookie-map.js turns what the site sees into its states (docs/castling-first-run.md).
+
+const rookie = { inst: null, driver: null, holder: null, style: "pixel", picker: null };
+
+function rookieInit() {
+  if (rookie.inst || !window.Rookie) return;
+  rookie.holder = el("div", { className: "rookie" });
+  rookie.inst = Rookie.mount(rookie.holder, { scale: 2, skin: rookie.style });
+  rookie.driver = new RookieMap.Driver(rookie.inst);
+  setInterval(() => rookie.driver.tick(), 1000);
+  rookieStyle(rookie.style);
+}
+
+function rookieBeside(row) {
+  if (rookie.holder) row.querySelector(".gutter").append(rookie.holder);
+}
+
+function rookieStyle(style) {
+  rookie.style = style || "pixel";
+  if (!rookie.inst) return;
+  const none = rookie.style === "none" || !Rookie.SKINS.includes(rookie.style);
+  $("#dock-log").classList.toggle("no-rookie", rookie.style === "none");
+  if (!none) rookie.inst.setSkin(rookie.style);
+}
+
+// Look and feel: the first setup step (Rookie's style today; a theme later).
+// The choice is page.look, per person; the agent can set it from a typed answer.
+function applyLook(look) {
+  if (!look) return;
+  rookieStyle(look.rookie);
+  if (look.chosen && rookie.picker) {
+    for (const i of rookie.picker.insts) i.destroy();
+    rookie.picker.box.remove();
+    rookie.picker = null;
+  }
+}
+
+function lookPicker() {
+  const look = site.look;
+  if (rookie.picker || !look || look.chosen || !window.Rookie || !document.body.classList.contains("setup")) return;
+  const box = el("div", { className: "picker" });
+  const insts = [];
+  for (const k of look.styles) {
+    const b = el("button", { type: "button", title: k });
+    const face = el("div", { className: "face" });
+    b.append(face, el("span", {}, k === "none" ? "none (hide it)" : k));
+    if (k !== "none" && Rookie.SKINS.includes(k)) insts.push(Rookie.mount(face, { scale: 2, skin: k, state: "happy" }));
+    b.onclick = async () => {
+      try {
+        site.look = await call("page.look", { rookie: k }, "The person picked Rookie's style.");
+      } catch (x) {
+        return bubble("bad", x.message);
+      }
+      applyLook(site.look);
+      say(`The person picked Rookie's style: ${k} (look and feel). Go on with setup.`, true);
+    };
+    box.append(b);
+  }
+  rookie.picker = { box, insts };
+  addRow(box);
 }
 
 function show(ev) {
@@ -296,17 +384,20 @@ function show(ev) {
     }
     bubble("me", text);
   } else if (ev.type === "turn" && d.role === "reply") {
+    thinking(false);
     bubble("them", d.text);
-    thinking(false);
+    lookPicker();
   } else if (ev.type === "status" && d.state === "error") {
-    bubble("bad", d.error || "Something went wrong.");
     thinking(false);
+    bubble("bad", d.error || "Something went wrong.");
+    lookPicker();
   }
 }
 
 async function refresh() {
   try {
     site = await call("page.site");
+    applyLook(site.look);
     const setup = setupMode();
     await loadNav();
     if (current && !pages.some((p) => p.page === current.page)) {      // archived meanwhile
@@ -321,7 +412,10 @@ async function refresh() {
 async function read(wait) {
   const r = await call("agent.chat.read", { agent: dock.agent, after: dock.next, limit: 500, wait },
     "Reading the conversation in the site's dock.");
-  for (const ev of r.events) show(ev);
+  for (const ev of r.events) {
+    show(ev);
+    if (wait && rookie.driver) rookie.driver.chat(ev);     // live only: history doesn't animate
+  }
   if (wait && r.events.some((ev) => ev.type === "turn")) refresh();   // it may have made, archived or started a page
   dock.shown += r.events.length;
   dock.next = r.next;
@@ -351,8 +445,27 @@ function setupMode() {
   return on;
 }
 
+// The dock agent's calls for this person, as they start and end (Rookie's states).
+async function activity() {
+  let since = "";
+  for (;;) {
+    try {
+      const r = await api(`/web/api/activity?since=${since}`);
+      if (!r.ok) {
+        await sleep(5000);
+        continue;
+      }
+      for (const ev of r.events) rookie.driver.activity(ev);
+      since = r.seq;
+    } catch (x) {
+      await sleep(3000);
+    }
+  }
+}
+
 async function startDock(agent) {
   dock.agent = agent;
+  rookieInit();
   $("#dock-name").textContent = agent === "house" ? "House agent" : agent;
   $("#dock").hidden = $("#dock-btn").hidden = false;
   let open = true;
@@ -367,7 +480,11 @@ async function startDock(agent) {
     open = true;
     if (dock.shown === 0) {
       await say(SETUP_KICKOFF + "; setup isn't finished. Greet the person warmly and start " +
-        "setting up with them: read the first-run skill (agent.skill name=first-run) and follow it.", true);
+        "setting up with them: read the first-run skill (agent.skill name=first-run) and follow it. " +
+        "Your first question is step 1, look and feel: which style they want for Rookie, your avatar " +
+        "beside your messages (the site shows them a picker under your message; they may also type it).", true);
+    } else {
+      lookPicker();                 // a reload before they picked
     }
   } else if (dock.shown === 0) {    // first run: the agent asks how the person wants to use the site
     open = true;
@@ -376,6 +493,7 @@ async function startDock(agent) {
       "and to set their start page (page.start).", true);
   }
   dockOpen(open);
+  if (rookie.driver) activity();
   for (;;) {
     try {
       await read(55);
@@ -392,6 +510,7 @@ $("#dock-form").onsubmit = (e) => {
   $("#dock-text").value = "";
   say(text, false);
 };
+$("#dock-text").oninput = () => rookie.driver && rookie.driver.key();
 $("#dock-text").onkeydown = (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
@@ -415,6 +534,7 @@ window.addEventListener("hashchange", () => open(wanted()));
   try {
     csrf = (await api("/web/api/me")).csrf;
     site = await call("page.site");
+    if (site.look) rookie.style = site.look.rookie;
     await loadNav();
     if (!(site.dock && site.setup && !site.setup.done)) open(wanted());
     if (site.dock) startDock(site.dock).catch((x) => bubble("bad", x.message));

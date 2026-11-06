@@ -30,6 +30,7 @@ FRAME_SECS = 60
 TOKENS_PER_SESSION = 32
 POLL_SECS = 20.0
 EVENTS_KEPT = 500
+ACTS_KEPT = 200
 DOCK_CAPS = ("agent.chat.send", "agent.chat.read")     # the shell's chat dock, with the dock agent only
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
          ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml"}
@@ -81,6 +82,10 @@ class Web:
         self._seq = 0
         self._cond = threading.Condition()
         hub.listeners.append(self._on_event)
+        self._acts: collections.deque = collections.deque(maxlen=ACTS_KEPT)
+        self._act_seq = 0
+        if getattr(hub, "dispatcher", None) is not None:
+            hub.dispatcher.watchers.append(self._on_call)
 
     # -- routing ----------------------------------------------------------------
 
@@ -120,6 +125,8 @@ class Web:
                                is not None})
         if method == "GET" and path == "/web/api/events":
             return _json(200, self._poll(sid, query.get("token", ""), query.get("since")))
+        if method == "GET" and path == "/web/api/activity":
+            return _json(200, self._activity(session.person, query.get("since")))
         if method != "POST":
             raise _Error(404, "not found")
         if not secrets.compare_digest(req.headers.get("X-Rook-CSRF", "").encode(), session.csrf.encode()):
@@ -394,6 +401,44 @@ class Web:
             self._seq += 1
             self._events.append((self._seq, event, json.loads(json.dumps(payload, default=str)), whose))
             self._cond.notify_all()
+
+    def _on_call(self, phase: str, entry: dict) -> None:
+        """An agent's call starting or ending (the dispatcher's watchers):
+        kept for the dock's Rookie. Only what it shows: no args, no why."""
+        if not entry.get("agent") or not entry.get("person"):
+            return
+        act = {"phase": phase, "call": entry.get("call"), "cap": entry.get("cap"),
+               "person": entry["person"], "agent": entry["agent"]}
+        if phase == "end":
+            act.update({k: entry[k] for k in ("decision", "ok", "hold") if k in entry})
+        with self._cond:
+            self._act_seq += 1
+            self._acts.append((self._act_seq, act))
+            self._cond.notify_all()
+
+    def _activity(self, person: str, since) -> dict:
+        """The dock agent's calls for this person, start and end, after
+        ``since`` (long-polls; the first poll says where the feed is now)."""
+        try:
+            since = int(since) if since not in (None, "") else None
+        except ValueError:
+            raise _Error(400, "since is a number") from None
+        agent = dock_agent(self.hub)
+        agent = f"agent:{agent}" if agent else None
+
+        def mine():
+            return [{"seq": n, **{k: v for k, v in a.items() if k not in ("person", "agent")}}
+                    for n, a in self._acts if n > since and a["person"] == person and a["agent"] == agent]
+        deadline = time.monotonic() + self.poll_secs
+        with self._cond:
+            if since is None or since > self._act_seq:      # first poll, or the hub restarted
+                return {"ok": True, "seq": self._act_seq, "events": []}
+            while True:
+                got = mine() if agent else []
+                left = deadline - time.monotonic()
+                if got or left <= 0:
+                    return {"ok": True, "seq": self._act_seq, "events": got}
+                self._cond.wait(left)
 
     def _whose(self, event: str, payload) -> str | None:
         """Whose data an event is, like a private record (review D6): its

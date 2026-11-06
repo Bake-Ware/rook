@@ -157,6 +157,10 @@ class Dispatcher:
         # security bullshit ... just don't fucking do it yet"): when true, no gate
         # runs and nothing is held; the runtime reads the hub.security setting.
         self.security_off = security_off or (lambda: False)
+        # Watchers see each call start and end (``fn(phase, entry)``, phase
+        # "start" or "end"; the entry as journaled): the site's Rookie shows
+        # what the house agent is doing. They must not block or raise.
+        self.watchers: list = []
         self.gates: list = list(gates or ())
         self.sessions: dict[str, Session] = {}       # live ones; prune_sessions drops the rest
         self.projects: dict[str, set[str]] = {}       # agent -> projects its sessions were for
@@ -259,6 +263,7 @@ class Dispatcher:
                  "session": call.session, "why": call.why, "args": call.args}
         if call.parent:
             entry["parent"] = call.parent
+        self._watch("start", entry)
         out = {"id": cid, "ok": False, "error": "internal error"}
         try:
             out = await self._dispatch(caller, call, entry)
@@ -281,6 +286,15 @@ class Dispatcher:
         except Exception:
             log.critical("journal append failed", exc_info=True,
                          extra={"fields": {"call": entry.get("call"), "kind": entry.get("kind")}})
+        if entry.get("kind") == "call":
+            self._watch("end", entry)
+
+    def _watch(self, phase: str, entry: dict) -> None:
+        for fn in self.watchers:
+            try:
+                fn(phase, entry)
+            except Exception:
+                log.exception("call watcher failed")
 
     async def _dispatch(self, caller: Caller, call: Call, entry: dict) -> dict:
         cid = entry["call"]

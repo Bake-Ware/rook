@@ -17,6 +17,7 @@ source: https://github.com/Bake-Ware/rook
 
 settings:
   dock: { type: str, where: hub, default: house, doc: "The agent in the site's chat dock (with the agents package); blank: no dock." }
+  rookie: { type: str, where: person, default: pixel, doc: "Your look and feel: Rookie's style beside the house agent (a skin rookie.js ships; none hides it). Set by page.look; first-run setup asks it first." }
 
 caps:
   list:
@@ -121,6 +122,18 @@ caps:
     risk: read
     scope: multi-user
     idempotent: true
+    result: { type: map }
+  look:
+    doc: >-
+      Your look and feel on the hub site. Today: Rookie, the house agent's avatar (rookie=<style>; styles
+      lists them, none hides it); a theme comes later. Blank: just say what you have. chosen is false
+      until you pick one (first-run setup asks this first).
+    on: hub
+    risk: write
+    scope: multi-user
+    effects: [persists]
+    args:
+      rookie: { type: str, doc: "Rookie's style, one of styles (e.g. pixel, kawaii, none)." }
     result: { type: map }
   start:
     doc: >-
