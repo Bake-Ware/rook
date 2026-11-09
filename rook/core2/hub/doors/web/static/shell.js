@@ -293,7 +293,7 @@ function msg(cls, who) {
 // directives (chat-widgets.js): [[open: ...]] and [[point: ...]] run when the
 // message arrives live; on a reload the last [[open: ...]] is shown again.
 function bubble(cls, text, live) {
-  if (cls === "me") retire();                 // the person answered: older choices are spent
+  if (cls === "me" || cls === "them") retire();     // only the newest message's choices stay live
   if (cls === "aside" || cls === "bad") {
     addRow(el("div", { className: "msg " + cls }, text));
     return;
@@ -426,7 +426,7 @@ const VIEWS = {
   account(args) {
     const pane = workView("account", "Your account", "Your name, and a password for signing in once setup is done.");
     const form = el("form", { className: "work-form tick" });
-    const name = field(form, "What should Rookie call you?", { dataset: { target: "account.name" }, input: { type: "text", value: args.name || "", autocomplete: "name" } });
+    const name = field(form, `What should ${agentName()} call you?`, { dataset: { target: "account.name" }, input: { type: "text", value: args.name || "", autocomplete: "name" } });
     const pw = field(form, "Password", { dataset: { target: "account.password" }, input: { type: "password", autocomplete: "new-password" } });
     const again = field(form, "Password again", { dataset: { target: "account.again" }, input: { type: "password", autocomplete: "new-password" } });
     const save = el("button", { type: "submit" }, "Save");

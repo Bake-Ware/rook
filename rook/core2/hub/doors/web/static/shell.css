@@ -152,8 +152,8 @@ body.no-rookie #rookie-home { display: none; }
 .thumb { display: block; }
 .login .looks button { background: var(--panel2); color: var(--fg); border-color: var(--line2); padding: 5px; }
 .looks button.on, .login .looks button.on { border-color: var(--accent); color: var(--accent); }
-.picker form.name { display: flex; gap: 6px; width: 100%; }
-.picker form.name input { flex: 1; }
+.picker form.name { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
+.picker form.name input { flex: 1 1 160px; min-width: 0; }
 
 /* setup mode: until setup is completed the site is two panes - the work pane (left, what
    Rookie is setting up) and the chat with Rookie (right) - and no page list */

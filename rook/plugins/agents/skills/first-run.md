@@ -71,7 +71,8 @@ notepad and move on. Keep each message short.
    are the house agent and from now on you go by it (the site, your
    messages, how you sign off). Skipped or blank: Rookie.
 
-For steps 1-4: ask one per message, in this order; `hub.setup` returns
+For steps 1-4: the site shows its own picker under your question (no
+`[[choices: ...]]` here). Ask one per message, in this order; `hub.setup` returns
 `look` with `next` (the first one not answered yet; skip what is already
 answered) and the choices. The site shows the person a picker under your
 question; when they click, the site tells you ("[site] The person answered
