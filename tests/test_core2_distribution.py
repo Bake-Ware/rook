@@ -447,19 +447,10 @@ def test_satisfies_reads_the_whole_range_before_answering():
         satisfies("0.0.0", ">=1.0,~2")     # the first comparator fails; the second is still unreadable
 
 
-def test_install_reports_refusals_and_change_record(tmp_path):
-    inst, host = worker(tmp_path)
+def test_install_reports_refusals(tmp_path):
+    inst, _ = worker(tmp_path)
     folder = make_plugin(tmp_path, files={"scripts/stats.py": "def collect(ctx): return 1"})
-    seen = []
-
-    def record(plan):
-        seen.append((plan.plugin, plan.trust))
-        raise RuntimeError("needs a person")
-
-    report = ship(folder, inst, change_record=record)
-    assert not report["ok"] and "change record refused: needs a person" in report["reason"]
-    assert seen == [("echo", "code")] and not host.loaded
-    assert ship(folder, inst, change_record=lambda plan: None)["ok"]
+    assert ship(folder, inst)["ok"]
     unreachable = run(d.install(folder, d.WorkerEnv("9" * 32, "linux", "3.11"), d.MemoryTransport(),
                                 signer=HUB_SK, hub=HUB_ID, resolve=no_uv))
     assert not unreachable["ok"] and "not reachable" in unreachable["reason"]

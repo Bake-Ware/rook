@@ -24,10 +24,7 @@ part. Content sections (personas, skills, docs, ...) are seeded into hub
 stores from the hub's own copy (:attr:`Plan.content`).
 
 The hub's ``POST /plugins/push`` sends the bundle with
-``core.plugin.install`` and, when the change plugin is installed, leaves a
-change record (castling-changes); core never needs that plugin. Code that
-calls :func:`install` directly may pass ``change_record``: it gets the
-:class:`Plan` before anything is pushed and refuses the install by raising.
+``core.plugin.install``.
 """
 
 from __future__ import annotations
@@ -357,21 +354,14 @@ async def push(plan: Plan, transport: Transport) -> dict:
 async def install(folder, env: WorkerEnv | None, transport: Transport, *, signer, hub: str,
                   current: dict | None = None, cache: Path | None = None,
                   seed: Callable[[dict], Any] | None = None,
-                  change_record: Callable[[Plan], Any] | None = None,
                   fetch: Callable = fetch_url, resolve: Callable = resolve_python) -> dict:
-    """prepare -> change record -> push -> seed hub content once the worker
+    """prepare -> push -> seed hub content once the worker
     reports success. Always returns a report; ``reason`` says why it failed."""
     try:
         plan = prepare(folder, env, signer=signer, hub=hub, current=current, cache=cache,
                        fetch=fetch, resolve=resolve)
     except Refused as e:
         return {"ok": False, "reason": str(e)}
-    if change_record is not None:
-        try:
-            change_record(plan)
-        except Exception as e:
-            return {"ok": False, "plugin": plan.plugin, "version": plan.version,
-                    "reason": f"change record refused: {e}"}
     try:
         report = await push(plan, transport)
     except Exception as e:
