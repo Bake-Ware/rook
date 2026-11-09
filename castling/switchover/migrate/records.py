@@ -1,14 +1,10 @@
-"""0.4 jobs and change records -> 0.5 records of the jobs and change plugins.
+"""0.4 jobs -> the migrate report; 0.4 change records -> 0.5 change records.
 
-**Jobs** (castling-jobs: a job is "one or more steps" with triggers, runs as
-its creator). 0.4 jobs were step graphs; 0.5 jobs are a cap call, an agent
-prompt or a script. The move doesn't guess a translation (castling-design:
-"an agent imports and reshapes them into 0.5"): each 0.4 job becomes a 0.5
-job record of the same name, **disabled**, triggered by hand only, owned by
-the hub's owner, with the whole 0.4 definition in ``vars.definition04`` and
-its 0.4 state (enabled, triggers, owner) beside it. Nothing runs until
-someone reshapes and enables it. Run history stays in the archive (0.5 keeps
-runs 30 days).
+**Jobs**: 0.4 jobs were step graphs; a 0.5 job is a trigger and one call
+(castling design: "Jobs: a time or an event fires ONE call. Nothing more").
+The move makes no job records: each 0.4 job's definition and state go in
+the report, so a person or an agent rebuilds the ones still wanted as
+trigger-plus-call jobs. Run history stays in the archive.
 
 **Change records** (castling-changes: "later agents read past changes to
 learn why things are the way they are"; records only, castling-caps C2):
@@ -17,21 +13,17 @@ each 0.4 change becomes a ``change`` record: what, why, category, machines
 and the 0.4 outcome (kept, rolled back, failed). The run log stays in the
 archive.
 
-A re-run skips what is there: jobs by name, changes by (what, time).
+A re-run skips changes that are there, by (what, time).
 """
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 
 from rook.kit.ctx import Caller
 
 from . import names
 from .source import _tables
-
-JOB_NAME = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-
 
 def _json(v, default):
     try:
@@ -53,48 +45,20 @@ def _all(rtype, caller, **where) -> list:
     return [r for archived in (False, True) for r in rtype.list(caller, where=where, archived=archived, limit=500)]
 
 
-def job_name(name: str, taken: set) -> str:
-    base = re.sub(r"[^a-z0-9._-]+", "-", str(name or "").lower()).strip("-._")[:60] or "job"
-    if not JOB_NAME.match(base):
-        base = "j-" + base
-    out, n = base, 1
-    while out in taken:
-        n += 1
-        out = f"{base[:60]}-{n}"
-    return out
-
-
-def jobs(db: sqlite3.Connection | None, store, band: str, owner: str) -> dict:
-    report = {"jobs": 0, "skipped": 0, "renamed": []}
+def jobs(db: sqlite3.Connection | None) -> dict:
+    """Every 0.4 job's definition and state, for the report."""
+    out = []
     if db is None or "jobs" not in _tables(db):
-        return report
-    rtype = store.type(names.record("jobs"))
-    caller = Caller(person=owner, band=band, owner=True, why="import from 0.4")
-    taken = {r["name"] for r in _all(rtype, caller)}
+        return {"jobs": out}
     triggers = {}
     if "triggers" in _tables(db):
         for t in db.execute("SELECT job_id, idx, kind, next_at, done FROM triggers ORDER BY job_id, idx"):
             triggers.setdefault(t["job_id"], []).append(dict(t))
     for j in db.execute("SELECT * FROM jobs ORDER BY created, id"):
-        if any(r["vars"] and (r["vars"] or {}).get("id04") == j["id"] for r in _all(rtype, caller)):
-            report["skipped"] += 1
-            continue
-        definition = _json(j["definition"], {})
-        name = job_name(j["name"], taken)
-        taken.add(name)
-        if name != j["name"]:
-            report["renamed"].append({"from": j["name"], "to": name})
-        doc = (definition.get("description") or "").strip()
-        doc = (doc + "\n\n" if doc else "") + ("Imported from 0.4, disabled: its 0.4 definition is in "
-                                               "vars.definition04. Reshape it into a cap call, agent prompt "
-                                               "or script, then enable it.")
-        store.clock = lambda j=j: j["created"]
-        rtype.create(caller, name=name, doc=doc, trigger={"manual": True}, enabled=False, notify="never",
-                     vars={"id04": j["id"], "definition04": definition, "enabled04": bool(j["enabled"]),
-                           "paused04": j["paused_reason"], "owner04": j["owner"],
-                           "triggers04": triggers.get(j["id"], []), "runs04": j["run_count"]})
-        report["jobs"] += 1
-    return report
+        out.append({"id04": j["id"], "name": j["name"], "definition04": _json(j["definition"], {}),
+                    "enabled04": bool(j["enabled"]), "paused04": j["paused_reason"], "owner04": j["owner"],
+                    "triggers04": triggers.get(j["id"], []), "runs04": j["run_count"]})
+    return {"jobs": out}
 
 
 def changes(db: sqlite3.Connection | None, store, band: str, tasks: dict) -> dict:

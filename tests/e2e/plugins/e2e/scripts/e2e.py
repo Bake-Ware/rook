@@ -2,8 +2,9 @@ import os
 import time
 
 
-def ping(ctx, text=""):
-    return {"text": text, "person": ctx.caller.person, "agent": ctx.caller.agent, "pid": os.getpid()}
+def ping(ctx, text="", event=None):
+    return {"text": text, "person": ctx.caller.person, "agent": ctx.caller.agent, "pid": os.getpid(),
+            **({"event": event} if event else {})}
 
 
 def admin(ctx):

@@ -35,10 +35,12 @@ jobs:
   attention:
     doc: "Every 15 minutes the house agent looks over what is trying to reach the person and curates it (its attention skill)."
     trigger: { every: 15m }
-    agent:
-      persona: house
-      prompt: "Attention pass: follow your attention skill (agent.skill attention). Look at what has arrived for the people you look after since your last pass, curate what matters into attention records, and reach them only if something can't wait."
+    call: agent.chat.send
+    args:
+      agent: house
+      text: "Attention pass: follow your attention skill (agent.skill attention). Look at what has arrived for the people you look after since your last pass, curate what matters into attention records, and reach them only if something can't wait."
     as: persona
+    persona: house
     enabled: true
 
 skills:

@@ -1316,8 +1316,7 @@ class Hub:
         """Dispatch a call a hub plugin makes. With a person or agent it runs
         as them: in the call's session, or (a job acting for its creator or
         persona, ``ctx.call_as``) in a session of their own for such calls,
-        apart from their door session so its taint stays there. TODO(castling:jobs):
-        a session per run, tainted by a webhook's body. Without (a hook),
+        apart from their door session so its taint stays there. Without (a hook),
         as ``system:plugin.<name>`` (a dot no plugin name has, so no plugin
         can be ``system:hub``). ``uses`` is the plugin's extra layer;
         ``target`` names the worker (``ctx.call_on``, ``ctx.call_as``), else

@@ -82,7 +82,7 @@ linked.
 - [telegram](../../rook/plugins/telegram/docs/manual.md) and [discord](../../rook/plugins/discord/docs/manual.md): the band's bots.
 - [llm-anthropic](../../rook/plugins/llm-anthropic/docs/manual.md), [llm-openai](../../rook/plugins/llm-openai/docs/manual.md), [llm-cli](../../rook/plugins/llm-cli/docs/manual.md): model providers.
 - [security](../../rook/plugins/security/docs/manual.md): the gate ([Security plugins](security.md)).
-- [job](../../rook/plugins/jobs/docs/manual.md): scheduled, event, manual and webhook jobs ([Jobs](jobs.md)).
+- [job](../../rook/plugins/jobs/docs/manual.md): scheduled, event and manual jobs, each one call ([Jobs](jobs.md)).
 - [change](../../rook/plugins/changes/docs/manual.md): change records: what, why, risk, testing, rollback and steps, as full as the project's trust level asks. Records only: they gate and run nothing.
 - [backup-store](../../rook/plugins/backup-store/docs/manual.md): keeps the hub's sealed backups on another worker (backup target `worker:<name>`).
 

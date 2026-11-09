@@ -396,8 +396,9 @@ were never revoked). Work done on 0.5 meanwhile stays on 0.5 (there is no
 
 ### After cutover (built on 0.5, holding nothing)
 
-- Reshape the 12 imported jobs (disabled; `vars.definition04` holds each
-  0.4 definition). Only `soundwave-lxc-traffic-audit` was enabled on 0.4.
+- Rebuild the 0.4 jobs still wanted as trigger-plus-call jobs; the migrate
+  report (`report.json`, `jobs`) holds each 0.4 definition. Only
+  `soundwave-lxc-traffic-audit` was enabled on 0.4.
 - Re-enter the hub settings that matter (timezone, voice engine, front
   door) as 0.5 settings; the archive has `settings.db`.
 - Windows: ConPTY (N19), the desktop app's 0.5 worker on Windows; the watch

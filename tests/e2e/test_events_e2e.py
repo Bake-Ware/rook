@@ -1,8 +1,8 @@
 """Worker events reach the hub (gate R2) on a real 0.5 band (hub, worker and
 relay as processes, see harness.py): a text arriving on the worker
 (``e2e.sms.received``, emitted the way the phone's sms plugin does) fires an
-owner's job on the hub, whose call reaches the worker in a tainted session,
-and shows on a live page."""
+owner's job on the hub, whose call reaches the worker in a tainted session
+and sees the text, and shows on a live page."""
 from __future__ import annotations
 
 import json
@@ -11,10 +11,6 @@ from harness import REPO, until
 from test_dashboard_e2e import Browser
 
 PLUGINS_DIR = REPO / "rook" / "plugins"
-SCRIPT = ("def main(job):\n"
-          "    p = job.payload\n"
-          "    pong = job.call('e2e.ping', {'text': 'from ' + p['from']}, on=p['worker'], why='answer a text')\n"
-          "    return {'text': pong['text'], 'person': p['person'], 'worker': p['worker']}\n")
 
 
 def _ok(out: dict):
@@ -47,7 +43,7 @@ def test_a_worker_event_fires_a_job_and_shows_on_a_page(fresh):
 
     job = _ok(b.owner.call("job.create", {
         "name": "on-text", "trigger": {"on": "e2e.sms.received", "filter": {"body": "ping me"}},
-        "script": SCRIPT}, worker="rook"))
+        "call": "e2e.ping", "worker": "e2e-worker", "args": {"text": "a text came"}}, worker="rook"))
     _ok(b.owner.call("e2e.receive", {"from": "+15550100", "body": "not this one"}))
     _ok(b.owner.call("e2e.receive", {"from": "+15550123", "body": "ping me"}))
 
@@ -57,12 +53,13 @@ def test_a_worker_event_fires_a_job_and_shows_on_a_page(fresh):
     assert len(runs) == 1, runs           # the filter let only the second text through
     run = runs[0]
     assert (run["trigger"], run["state"]) == ("event", "ok"), run
-    assert run["result"] == {"text": "from +15550123", "person": "person:bake", "worker": "e2e-worker"}
+    text = {"from": "+15550123", "body": "ping me", "person": "person:bake", "worker": "e2e-worker"}
+    assert run["result"]["event"] == {"name": "e2e.sms.received", "payload": text}       # the call saw the text
+    assert run["result"]["person"] == "person:bake"
     assert run["event"]["name"] == "e2e.sms.received" and run["event"]["taints"] is True
-    assert run["event"]["payload"] == {"from": "+15550123", "body": "ping me", "person": "person:bake",
-                                       "worker": "e2e-worker"}
+    assert run["event"]["payload"] == text
     entry = b.owner.get("/journal?cap=e2e.ping&limit=1")["entries"][0]
-    assert entry["why"] == "job on-text: answer a text" and entry["person"] == "person:bake"
+    assert entry["why"].startswith("job on-text (run ") and entry["person"] == "person:bake"
 
     def texts():
         got = [e for e in poll(seq)["events"] if e["event"] == "e2e.sms.received"]

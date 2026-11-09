@@ -11,7 +11,7 @@ myplugin/
   scripts/*.py     code for run: caps, hooks and gates
   docs/manual.md   the plugin's manual page
   pages/*          dashboard pages (hub plugins)
-  skills/*.md  personas/*.md  jobs/*.py
+  skills/*.md  personas/*.md
 ```
 
 The manifest is the whole contract. The hub validates it, answers "what
@@ -302,8 +302,9 @@ inbound message) that names nobody reaches owners' pages only.
 `on:` hooks and goes to the hub, which takes it only when the payload fits
 the declared fields (no others) and the worker's ceiling grants the name.
 The hub sets `person` (whoever owns the worker) and `worker` (its name) on
-the payload: an event from a machine is its owner's data, and a hook or job
-can answer on the same machine with `ctx.call_on(payload["worker"], ...)`.
+the payload: an event from a machine is its owner's data, and a hook (or a
+cap a job hands the event to) can answer on the same machine with
+`ctx.call_on(payload["worker"], ...)`.
 While the hub is away the worker keeps the newest 1000 events and sends
 them when it is back. Mark outside content (an inbound message, another
 app's notification) `taints: true`: hooks and jobs that act on it run their

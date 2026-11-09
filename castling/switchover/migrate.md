@@ -71,7 +71,7 @@ what is missing.
 | the home agent's memory | the house agent's memory; learned procedures nobody approved go on its notepad |
 | knowledge, concepts, projects, tasks | workbench records (`castling/switchover/import_04.py`) |
 | chat rooms and huddles | streams in `<data>/stream-events.db` (full history) and `huddle` records |
-| jobs | disabled `jobs` records; the 0.4 definition is in `vars.definition04` for an agent to reshape |
+| jobs | no job records: each 0.4 definition is in the report (`report.json`, `jobs`) to rebuild as trigger-plus-call jobs |
 | change records | `change` records |
 | the whole copy (every store, file and the journal) | `<data>/archive/0.4/`, byte for byte, read-only, with `MANIFEST.json`; never replayed into the 0.5 chains |
 | machines | a re-enrollment checklist: on each, `python -m rook.core2.worker --config worker.yaml enroll <hub>` |
