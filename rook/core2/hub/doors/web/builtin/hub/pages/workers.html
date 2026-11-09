@@ -2,76 +2,482 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Workers</title>
+<!-- The 0.4 dashboard's Workers view (rook/web/index.html, theme.css), on 0.5's data
+     (Bake, Nov 9: "I want the workers page to be the same as the older site"): stat tiles,
+     the versions bar and heartbeat bars, workers grouped (by operating system, band or
+     none) with a band chip, version, battery and a draining heartbeat per row, and the
+     details under each row. -->
 <style>
-  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
-  .dot.on { background: var(--ok); }
-  .detail td { background: var(--card); }
-  dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; }
-  dt { color: var(--muted); }
-  dd { margin: 0; }
+  body { padding: 14px 24px 40px; }
+  button, input, select { border-radius: 0; font: 10px var(--mono); background: var(--panel2); border: 1px solid var(--line2);
+    color: var(--fg); }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 14px; }
+  .controls input[type=search] { flex: 0 1 220px; min-width: 0; padding: 6px 9px; font: 12px var(--sans); }
+  .controls label { display: flex; align-items: center; gap: 7px; font: 9px var(--mono); letter-spacing: .7px;
+    text-transform: uppercase; color: var(--dim2); }
+  .controls select { padding: 5px 6px; }
+  .view-toggle { display: flex; }
+  .view-toggle button { padding: 5px 9px; color: var(--dim); }
+  .view-toggle button + button { border-left: 0; }
+  .view-toggle button[aria-pressed=true] { background: var(--accent-bg-strong); border-color: var(--accent-line); color: var(--accent); }
+
+  /* the stat tiles */
+  .stats { display: flex; gap: 10px; align-items: stretch; flex-wrap: wrap; margin-bottom: 16px; }
+  .tile { position: relative; background: var(--overlay); border: 1px solid var(--line); padding: 7px 10px; }
+  .tile:before { content: ''; position: absolute; top: -1px; left: -1px; width: 5px; height: 5px;
+    border-top: 1px solid var(--corner); border-left: 1px solid var(--corner); pointer-events: none; }
+  .tile .l { font: 8px var(--mono); letter-spacing: .7px; text-transform: uppercase; color: var(--dim); margin: 3px 0; }
+  .tile.mini { min-width: 84px; display: flex; flex-direction: column; justify-content: center; }
+  .tile.mini .k { font: 400 21px/1 var(--mono); color: var(--accent); }
+  .tile.online .k { color: var(--good); } .tile.stale .k { color: var(--bad); }
+  .tile.ver { min-width: 210px; max-width: 460px; display: flex; flex-direction: column; justify-content: center; }
+  .verbar { display: flex; height: 5px; overflow: hidden; background: var(--panel2); border: 1px solid var(--line); }
+  .verbar span { display: block; height: 100%; }
+  .verleg { display: flex; flex-wrap: wrap; gap: 3px 12px; margin-top: 4px; font: 9px var(--mono); color: var(--dim);
+    max-height: 26px; overflow: auto; }
+  .verleg span { white-space: nowrap; } .verleg b { color: var(--fg); font-weight: 500; }
+  .vdot { display: inline-block; width: 7px; height: 7px; margin-right: 5px; }
+  .tile.hb { flex: 1; min-width: 220px; display: flex; flex-direction: column; }
+  .bars { display: flex; align-items: flex-end; gap: 4px; height: 28px; flex: 1; min-height: 20px; }
+  .bar { flex: 1 1 0; min-width: 5px; max-width: 26px; position: relative; height: 100%; cursor: pointer; }
+  .bar .fill { position: absolute; bottom: 0; left: 0; right: 0; height: 60%; background: var(--c, var(--good)); transition: height .25s linear; }
+  .bar .peak { position: absolute; left: 0; right: 0; bottom: 60%; height: 2px; background: var(--fg-soft); }
+  .bar.beat .fill { filter: brightness(1.6); }
+  .bar.hl .fill { outline: 1px solid var(--fg); }
+
+  /* the list */
+  .listhead, .row { display: grid; grid-template-columns: 12px 9px minmax(100px, 1fr) 110px 150px 64px 150px; gap: 14px;
+    align-items: center; }
+  .listhead { padding: 2px 16px 8px; font: 9px var(--mono); letter-spacing: .7px; text-transform: uppercase; color: var(--dim2); }
+  .list { background: var(--overlay); border: 1px solid var(--line); position: relative; }
+  .list:before { content: ''; position: absolute; top: -1px; left: -1px; width: 5px; height: 5px;
+    border-top: 1px solid var(--corner); border-left: 1px solid var(--corner); }
+  .worker-group + .worker-group { border-top: 1px solid var(--line); }
+  .worker-group-heading { font: 10px var(--mono); letter-spacing: 1px; text-transform: uppercase; color: var(--accent);
+    margin: 0; padding: 9px 14px; background: var(--group-bg); cursor: pointer; user-select: none; }
+  .worker-group-heading::before { content: '\25BE  '; color: var(--dim); }
+  .worker-group.collapsed .worker-group-heading::before { content: '\25B8  '; }
+  .worker-group.collapsed .worker-group-items { display: none; }
+  .worker-group-heading:hover { color: var(--accent-hi); }
+  .item { border-top: 1px solid var(--line); }
+  .worker-group-items .item:first-child { border-top: 1px solid var(--line-soft); }
+  .item.hl { background: var(--accent-bg); box-shadow: inset 3px 0 0 var(--accent); }
+  .row { padding: 9px 16px; cursor: pointer; }
+  .row:hover, .item.open .row { background: var(--hover); }
+  .caret { padding: 0; background: none; border: 0; color: var(--dim); font: 12px var(--mono); cursor: pointer; }
+  .item.open .caret { color: var(--accent); }
+  .st { width: 9px; height: 9px; background: var(--good); }
+  .name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; min-width: 0; }
+  .name .n { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+  .name .id { font: 9px var(--mono); color: var(--dim2); }
+  .tag { font: 9px var(--mono); letter-spacing: .5px; padding: 1px 5px; border: 1px solid var(--line2); color: var(--dim); }
+  .tag.hub { color: var(--accent); border-color: var(--accent-line); }
+  .tag.bad { color: var(--bad); border-color: #6b4336; }
+  .tag.off { color: var(--dim2); }
+  .worker-description { flex: 1 1 100%; color: var(--dim); font: 11px/1.6 var(--sans); overflow-wrap: anywhere; }
+  .worker-band { justify-self: start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--good); background: var(--good-bg); border: 1px solid var(--good-line); font: 10px var(--mono); padding: 5px 8px; cursor: pointer; }
+  .ver { font: 10px var(--mono); color: var(--good); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ver.none { color: var(--dim2); } .ver.old { color: var(--accent); }
+  .batt { display: inline-flex; align-items: center; gap: 4px; font: 10px var(--mono); color: var(--good); }
+  .batt.warn { color: var(--warn); } .batt.low { color: var(--bad); }
+  .batt .ico { position: relative; display: inline-block; width: 18px; height: 9px; border: 1px solid currentColor; }
+  .batt .ico:after { content: ''; position: absolute; right: -3px; top: 2px; width: 2px; height: 3px; background: currentColor; }
+  .batt .ico i { position: absolute; left: 1px; top: 1px; bottom: 1px; background: currentColor; }
+  .seen { display: flex; align-items: center; gap: 8px; font: 10px var(--mono); color: var(--dim); }
+  .seenbar { flex: 1; height: 4px; background: var(--panel2); border: 1px solid var(--line-soft); }
+  .seenbar i { display: block; height: 100%; width: 100%; }
+  .seen .t { width: 30px; text-align: right; }
+
+  .detail { display: none; padding: 6px 16px 14px 48px; }
+  .item.open .detail { display: block; }
+  .meta { font: 10px var(--mono); color: var(--dim); margin-bottom: 8px; overflow-wrap: anywhere; }
+  .facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 0 0 10px; font-size: 12px; }
+  .facts dt { font: 9px/1.9 var(--mono); letter-spacing: .6px; text-transform: uppercase; color: var(--dim2); }
+  .facts dd { margin: 0; color: var(--fg-soft); overflow-wrap: anywhere; }
+  .chips-title { font: 9px var(--mono); letter-spacing: 1px; text-transform: uppercase; color: var(--dim); margin: 2px 0 6px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip { border: 1px solid var(--line2); color: var(--fg-soft); font: 10px var(--mono); padding: 3px 7px; }
+  .problem { margin-top: 8px; color: var(--bad); font-size: 12px; }
+  .empty { padding: 26px 16px; color: var(--dim); }
+  .foot { margin-top: 10px; font: 9px var(--mono); letter-spacing: .7px; color: var(--dim2); }
+
+  /* grid: a card per worker */
+  body[data-layout=grid] .listhead { display: none; }
+  body[data-layout=grid] .list { background: none; border: 0; }
+  body[data-layout=grid] .list:before { display: none; }
+  body[data-layout=grid] .worker-group { border: 0; margin-bottom: 16px; }
+  body[data-layout=grid] .worker-group-heading { background: none; padding: 2px 0 10px; }
+  body[data-layout=grid] .worker-group-items { columns: 300px; column-gap: 12px; }
+  body[data-layout=grid] .item { display: inline-block; vertical-align: top; width: 100%; break-inside: avoid; margin: 0 0 12px;
+    border: 1px solid var(--line); background: var(--panel); }
+  body[data-layout=grid] .row { grid-template-columns: 12px 9px minmax(0, 1fr) auto; gap: 8px 10px; padding: 12px; }
+  body[data-layout=grid] .row > .worker-band, body[data-layout=grid] .row > .ver { grid-column: 3; }
+  body[data-layout=grid] .row > .batt-slot { grid-column: 4; grid-row: 1; }
+  body[data-layout=grid] .row > .seen { grid-column: 3 / 5; }
+  body[data-layout=grid] .detail { padding: 0 12px 12px; }
+
+  @media (max-width: 800px) {
+    body { padding: 12px; }
+    .listhead { display: none; }
+    .row { grid-template-columns: 12px 9px minmax(0, 1fr) auto; gap: 6px 10px; }
+    .row > .worker-band, .row > .ver { grid-column: 3; }
+    .row > .batt-slot { grid-column: 4; grid-row: 1; }
+    .row > .seen { grid-column: 3 / 5; }
+    .detail { padding-left: 16px; }
+    .tile.hb { flex-basis: 100%; }
+  }
+
+  /* the 3D fleet view: the 0.4 dashboard's (rook/web/theme.css, rook-scene.js mountFleet) */
+  .listhead, .list, .fleet-scene { transition: opacity .3s ease; }
+  body.fading .listhead, body.fading .list, body.fading .fleet-scene { opacity: 0; }
+  body[data-layout=scene] .listhead, body[data-layout=scene] .list { display: none; }
+  .fleet-scene { position: relative; height: min(76vh, 860px); min-height: 460px; border: 1px solid var(--line); overflow: hidden;
+    background: radial-gradient(ellipse at 50% 64%, var(--scene-1) 0%, var(--scene-2) 58%, var(--scene-3) 100%); }
+  .fleet-scene[hidden] { display: none; }
+  .fleet-scene[data-mode=unavailable]::after { content: 'The 3D view needs WebGL, which this browser did not provide.'; position: absolute;
+    inset: 0; display: grid; place-items: center; font: 11px var(--mono); color: var(--dim); }
+  .fleet-stage, .fleet-labels { position: absolute; inset: 0; } .fleet-stage canvas { display: block; width: 100%; height: 100%; }
+  .fleet-labels { pointer-events: none; overflow: hidden; }
+  .fleet-labels, .fleet-legend { transition: opacity .5s ease; } .fleet-intro .fleet-labels, .fleet-intro .fleet-legend { opacity: 0; }
+  .fleet-label { position: absolute; left: 0; top: 0; font: 9px var(--mono); letter-spacing: .5px; color: #cfd3bd; white-space: nowrap;
+    text-shadow: 0 1px 2px #000, 0 0 7px #0c0f0b; will-change: transform; transition: opacity .25s ease; }
+  .fleet-label.away { opacity: 0 !important; }
+  .fleet-label.quiet { color: #868b76; } .fleet-label.on { color: var(--accent); font-size: 11px; z-index: 2000 !important; }
+  .fleet-label.hub { color: var(--accent); font-size: 11px; letter-spacing: 2.5px; }
+  .fleet-label.group { color: var(--accent); text-transform: uppercase; letter-spacing: 1.8px; opacity: .8; }
+  .fleet-legend { position: absolute; left: 14px; bottom: 10px; right: 14px; font: 9px var(--mono); color: var(--dim); letter-spacing: .4px;
+    white-space: pre-wrap; pointer-events: none; }
+  .fleet-card { position: absolute; right: 14px; top: 14px; width: 280px; max-height: calc(100% - 28px); overflow: auto; padding: 14px 16px 16px;
+    background: var(--overlay); border: 1px solid var(--line2); box-shadow: 0 12px 40px var(--shadow); }
+  .fleet-card[hidden] { display: none; }
+  .fleet-card-kind { font: 9px var(--mono); letter-spacing: 1.6px; color: var(--dim); }
+  .fleet-card h3 { margin: 4px 0 6px; font-size: 17px; color: var(--accent); font-weight: 600; }
+  .fleet-card h4 { margin: 12px 0 5px; font: 9px var(--mono); letter-spacing: 1px; text-transform: uppercase; color: var(--dim); }
+  .fleet-card p { margin: 0 0 6px; font-size: 12px; line-height: 1.45; } .fleet-card-facts { font: 10px var(--mono) !important; color: var(--dim); }
+  .fleet-card .chips { margin-top: 8px; }
+  .fleet-card-close { position: absolute; right: 8px; top: 6px; background: none; border: 0; color: var(--dim); font-size: 18px; cursor: pointer; }
+  @media (prefers-reduced-motion: reduce) { .listhead, .list, .fleet-scene, .fleet-labels, .fleet-legend, .fleet-label { transition: none; } }
+  @media (max-width: 800px) { .fleet-card { left: 10px; right: 10px; top: auto; bottom: 34px; width: auto; max-height: 46%; } }
 </style>
 </head>
-<body>
-<div class="scroll">
-<table>
-  <thead><tr><th>Worker</th><th>Plugins</th><th>Last seen</th></tr></thead>
-  <tbody id="rows"><tr><td colspan="3" class="muted">Loading…</td></tr></tbody>
-</table>
+<body data-layout="list">
+<div class="controls">
+  <input type="search" id="filter" placeholder="Filter" aria-label="Filter workers" autocomplete="off" spellcheck="false">
+  <label>Group <select id="group" aria-label="Group by"><option value="os">Operating system</option><option value="band">Band</option><option value="none">No grouping</option></select></label>
+  <label>Sort <select id="sort" aria-label="Sort"><option value="name">Name</option><option value="os">Operating system</option><option value="band">Band</option><option value="status">Online first</option></select></label>
+  <div class="view-toggle" role="group" aria-label="Worker view">
+    <button type="button" data-layout="list" aria-pressed="true">&#9776; List</button><button type="button" data-layout="grid" aria-pressed="false">&#9638; Grid</button><button type="button" data-layout="scene" aria-pressed="false" title="3D">&#9820; 3D</button>
+  </div>
 </div>
+<section class="stats">
+  <div class="tile mini"><div class="k" id="k-total">0</div><div class="l">workers</div></div>
+  <div class="tile mini online"><div class="k" id="k-online">0</div><div class="l">online</div></div>
+  <div class="tile mini stale"><div class="k" id="k-stale">0</div><div class="l">stale</div></div>
+  <div class="tile ver"><div class="l">versions</div><div class="verbar" id="verbar"></div><div class="verleg" id="verleg"></div></div>
+  <div class="tile hb"><div class="l">heartbeats</div><div class="bars" id="bars"></div></div>
+</section>
+<div class="listhead"><span></span><span></span><span>worker</span><span>band</span><span>version</span><span></span><span>heartbeat</span></div>
+<div class="list" id="list"><div class="empty">Loading&hellip;</div></div>
+<div class="fleet-scene" id="fleet-scene" hidden></div>
+<div class="foot" id="foot"></div>
 <script>
 "use strict";
-const open = new Set();
-let workers = [];
+// Heartbeats come every 30 s (+-20 %); the hub calls a worker offline after 90 s.
+const WINDOW = 90;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => rook.esc(s);
+let workers = [], bands = {}, skew = 0, loaded = false;
+const open = new Set(), folded = new Set(), rows = new Map();     // id -> {wrap, bar, ...}
+let layoutSig = "";
 
-function detail(w) {
-  const items = [["Id", w.id], ["Core", w.core || "incompatible"], ["Version", w.version], ["About", w.description],
-    ["Plugins", (w.plugins || []).join(", ")]];
-  for (const [k, v] of Object.entries(w.facts || {})) items.push([k, typeof v === "object" ? JSON.stringify(v) : v]);
+const OS = { linux: "Linux", windows: "Windows", macos: "macOS", darwin: "macOS", android: "Android", termux: "Android" };
+function osOf(w) {
+  if (w.hub) return "Hub";
+  const os = String((w.facts || {}).os || "").toLowerCase();
+  return OS[os] || (os ? os[0].toUpperCase() + os.slice(1) : "Unknown");
+}
+function bandName(b) { return bands[b] || (b ? String(b).slice(0, 8) : "no band"); }
+// the Rook release for the hub and every worker (Bake's review, Nov 9: "show the Rook version (0.5.x) for both")
+function versionLabel(w) { return w.version ? "v" + w.version : ""; }
+function age(w) { return w.hub ? 0 : Math.max(0, Date.now() / 1000 + skew - (w.last_seen || 0)); }
+function fresh(w) { return w.online === false && !w.hub ? 0 : Math.max(0, Math.min(1, 1 - age(w) / WINDOW)); }
+function col(f) { return f > 0.5 ? "var(--good)" : f > 0.22 ? "var(--warn)" : "var(--bad)"; }
+
+// Battery rides the heartbeat: a battery plugin's status hook ({percent, status|charging}).
+function battery(w) {
+  const st = w.status || {};
+  const b = st.battery || st["battery-android"];
+  if (!b || b.percent == null) return "";
+  const p = Math.max(0, Math.min(100, Math.round(Number(b.percent))));
+  const charging = b.charging === true || /charg|full|plug/i.test(String(b.status || "")) && !/discharg|not/i.test(String(b.status || ""));
+  const cls = charging ? "" : p <= 15 ? "low" : p <= 35 ? "warn" : "";
+  return `<span class="batt ${cls}" title="battery ${p}%${charging ? " · charging" : ""}">` +
+    `<span class="ico"><i style="width:${Math.max(1, Math.round(p / 100 * 14))}px"></i></span>` +
+    (charging ? "⚡" : "") + `<span>${p}%</span></span>`;
+}
+
+function details(w) {
+  const f = w.facts || {};
+  const items = [["Rook", w.version], ["Core protocol", w.core || "incompatible"], ["OS", [f.os, f.arch].filter(Boolean).join(" · ")],
+    ["CPUs", f.cpus], ["Python", f.python], ["Owner", w.owner ? String(w.owner).replace(/^person:/, "") : ""],
+    ["Band", bandName(w.band)], ["Last seen", w.hub ? "now (the hub)" : rook.ago(w.last_seen)]];
+  for (const [k, v] of Object.entries(f)) {
+    if (!["os", "arch", "cpus", "python"].includes(k)) items.push([k, typeof v === "object" ? JSON.stringify(v) : v]);
+  }
   for (const [k, v] of Object.entries(w.unavailable || {})) items.push(["Can't serve " + k, v]);
-  if (w.problem) items.push(["Problem", w.problem]);
-  return "<dl>" + items.filter(([, v]) => v !== undefined && v !== null && v !== "")
-    .map(([k, v]) => `<dt>${rook.esc(k)}</dt><dd>${rook.esc(v)}</dd>`).join("") + "</dl>";
+  const dl = items.filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
+  const plugins = (w.plugins || []).slice().sort();
+  return `<div class="meta">worker_id ${esc(w.id)}</div><dl class="facts">${dl}</dl>` +
+    `<div class="chips-title">Plugins · ${plugins.length}</div>` +
+    `<div class="chips">${plugins.map((p) => `<span class="chip">${esc(p)}</span>`).join("")}</div>` +
+    (w.problem ? `<div class="problem">${esc(w.problem)}</div>` : "");
+}
+
+function rowFor(w) {
+  let m = rows.get(w.id);
+  if (!m) {
+    const wrap = document.createElement("div");
+    wrap.className = "item";
+    wrap.innerHTML = `<div class="row"><button type="button" class="caret" aria-expanded="false">▸</button><span class="st"></span>
+      <span class="name"></span><button type="button" class="worker-band"></button><span class="ver"></span>
+      <span class="batt-slot"></span><span class="seen"><span class="seenbar"><i></i></span><span class="t"></span></span></div>
+      <div class="detail"></div>`;
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    bar.innerHTML = '<span class="fill"></span><span class="peak"></span>';
+    bar.onmouseenter = () => { wrap.classList.add("hl"); bar.classList.add("hl"); };
+    bar.onmouseleave = () => { wrap.classList.remove("hl"); bar.classList.remove("hl"); };
+    bar.onclick = () => { toggle(w.id); wrap.scrollIntoView({ block: "nearest", behavior: "smooth" }); };
+    m = { wrap, bar, st: wrap.querySelector(".st"), sb: wrap.querySelector(".seenbar i"), t: wrap.querySelector(".seen .t"),
+      fill: bar.querySelector(".fill"), peakEl: bar.querySelector(".peak"), peak: 0.6, beat: -9, seen: 0 };
+    wrap.querySelector(".row").onclick = () => toggle(m.w.id);
+    wrap.querySelector(".worker-band").onclick = (e) => {
+      e.stopPropagation();
+      $("group").value = "band";
+      render();
+    };
+    rows.set(w.id, m);
+  }
+  if (m.seen && w.last_seen > m.seen) m.beat = performance.now();      // a heartbeat came in
+  m.seen = w.last_seen || 0;
+  m.w = w;
+  const tags = (w.hub ? '<span class="tag hub">hub</span>' : "") +
+    (!w.hub && !w.online ? '<span class="tag off">offline</span>' : "") +
+    (w.sacred ? '<span class="tag">sacred</span>' : "") +
+    (w.problem ? `<span class="tag bad" title="${esc(w.problem)}">needs attention</span>` : "");
+  m.wrap.querySelector(".name").innerHTML = `<span class="n">${esc(w.name)}</span><span class="id">${esc(String(w.id).slice(0, 8))}</span>` +
+    tags + (w.description ? `<span class="worker-description">${esc(w.description)}</span>` : "");
+  const band = m.wrap.querySelector(".worker-band");
+  band.textContent = bandName(w.band);
+  band.title = "Group by band";
+  const ver = m.wrap.querySelector(".ver");
+  ver.textContent = versionLabel(w) || "—";
+  ver.className = "ver" + (versionLabel(w) ? (w.core ? "" : " old") : " none");
+  ver.title = (w.hub ? "The hub, Rook " : "Worker, Rook ") + (w.version || "unknown") + " · core protocol " + (w.core || "incompatible");
+  m.wrap.querySelector(".batt-slot").innerHTML = battery(w);
+  m.bar.title = w.name;
+  const isOpen = open.has(w.id);
+  m.wrap.classList.toggle("open", isOpen);
+  m.wrap.querySelector(".caret").setAttribute("aria-expanded", String(isOpen));
+  m.wrap.querySelector(".caret").setAttribute("aria-label", "Details for " + w.name);
+  if (isOpen) m.wrap.querySelector(".detail").innerHTML = details(w);
+  return m;
+}
+
+function toggle(id) {
+  open.has(id) ? open.delete(id) : open.add(id);
+  const m = rows.get(id);
+  if (m) rowFor(m.w);
+}
+
+function shown() {
+  const q = $("filter").value.trim().toLowerCase();
+  return q ? workers.filter((w) => (w.name + " " + (w.description || "") + " " + osOf(w)).toLowerCase().includes(q)) : workers;
 }
 
 function render() {
-  const rows = document.getElementById("rows");
-  if (!workers.length) {
-    rows.innerHTML = '<tr><td colspan="3" class="muted">No workers yet.</td></tr>';
-    return;
+  const list = shown(), grouping = $("group").value, sorting = $("sort").value;
+  const group = (w) => grouping === "os" ? osOf(w) : grouping === "band" ? bandName(w.band) : "";
+  const key = (w) => sorting === "os" ? osOf(w) : sorting === "band" ? bandName(w.band) :
+    sorting === "status" ? String(fresh(w) <= 0) : w.name;
+  const ord = list.slice().sort((a, b) => (b.hub ? 1 : 0) - (a.hub ? 1 : 0) || group(a).localeCompare(group(b)) ||
+    key(a).localeCompare(key(b)) || a.name.localeCompare(b.name));
+  const ids = new Set(ord.map((w) => w.id));
+  for (const [id, m] of rows) {
+    if (!workers.some((w) => w.id === id)) { m.wrap.remove(); m.bar.remove(); rows.delete(id); }
   }
-  rows.innerHTML = workers.map((w) => {
-    const state = w.hub ? "the hub" : w.online ? "online" : "offline";
-    const warn = w.problem ? ` <span class="warn" title="${rook.esc(w.problem)}">!</span>` : "";
-    let html = `<tr class="click" data-id="${rook.esc(w.id)}">
-      <td><span class="dot ${w.online ? "on" : ""}" title="${state}"></span>${rook.esc(w.name)}${warn}</td>
-      <td>${(w.plugins || []).length}</td>
-      <td class="muted">${w.hub ? "now" : rook.ago(w.last_seen)}</td></tr>`;
-    if (open.has(w.id)) html += `<tr class="detail"><td colspan="3">${detail(w)}</td></tr>`;
-    return html;
-  }).join("");
+  for (const w of ord) rowFor(w);
+  const sig = JSON.stringify([grouping, ord.map((w) => [w.id, group(w)]), [...folded]]);
+  if (sig !== layoutSig) {
+    layoutSig = sig;
+    const box = $("list"), bars = $("bars");
+    box.replaceChildren();
+    bars.replaceChildren();
+    let prev = null, items = null;
+    for (const w of ord) {
+      const label = group(w);
+      if (items === null || label !== prev) {
+        const section = document.createElement("section");
+        section.className = "worker-group" + (folded.has(label) ? " collapsed" : "");
+        if (grouping !== "none") {
+          const h = document.createElement("h2");
+          h.className = "worker-group-heading";
+          h.textContent = label + " / " + ord.filter((x) => group(x) === label).length;
+          h.tabIndex = 0;
+          h.setAttribute("role", "button");
+          h.setAttribute("aria-expanded", String(!folded.has(label)));
+          const flip = () => { folded.has(label) ? folded.delete(label) : folded.add(label); render(); };
+          h.onclick = flip;
+          h.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); } };
+          section.append(h);
+        }
+        items = document.createElement("div");
+        items.className = "worker-group-items";
+        section.append(items);
+        box.append(section);
+        prev = label;
+      }
+      const m = rows.get(w.id);
+      items.append(m.wrap);
+      bars.append(m.bar);
+    }
+    if (!ord.length) box.innerHTML = `<div class="empty">${loaded ? (workers.length ? "No worker matches." : "No workers yet.") : "Loading…"}</div>`;
+  }
+  versions(list);
+  if (document.body.dataset.layout === "scene") syncFleet();
+  $("foot").textContent = Object.keys(bands).length > 1 ? "all bands · " + list.length + " workers" :
+    "band " + bandName(Object.keys(bands)[0]) + " · " + list.length + " workers";
 }
 
-document.getElementById("rows").addEventListener("click", (e) => {
-  const tr = e.target.closest("tr.click");
-  if (!tr) return;
-  open.has(tr.dataset.id) ? open.delete(tr.dataset.id) : open.add(tr.dataset.id);
-  render();
-});
+function versions(list) {
+  const c = {};
+  for (const w of list) {
+    const v = versionLabel(w) || "none";
+    c[v] = (c[v] || 0) + 1;
+  }
+  const ent = Object.entries(c).sort((a, b) => b[1] - a[1]), total = list.length || 1;
+  const palette = ["var(--accent)", "var(--blue)", "var(--good)", "#a78bfa", "#e06c9f"];
+  const colFor = (v) => v === "none" ? "var(--dim2)" : v === "hub" ? "var(--fg-soft)" : palette[ent.findIndex((e) => e[0] === v) % palette.length];
+  $("verbar").innerHTML = ent.map((e) => `<span style="width:${e[1] / total * 100}%;background:${colFor(e[0])}"></span>`).join("");
+  $("verleg").innerHTML = ent.map((e) => `<span title="${esc(e[0])}"><i class="vdot" style="background:${colFor(e[0])}"></i>` +
+    `${e[0] === "none" ? "no version" : esc(e[0])} <b>×${e[1]}</b></span>`).join("");
+}
+
+// Every frame: the heartbeat bars drain from each worker's last heartbeat.
+function frame() {
+  let online = 0, stale = 0, total = 0;
+  const now = performance.now();
+  for (const [, m] of rows) {
+    total++;
+    const f = fresh(m.w), c = col(f);
+    m.peak = Math.max(f, m.peak - 0.0037);
+    m.fill.style.setProperty("--c", c);
+    m.fill.style.height = Math.max(4, f * 100) + "%";
+    m.peakEl.style.bottom = Math.max(4, m.peak * 100) + "%";
+    m.peakEl.style.background = col(m.peak);
+    m.bar.classList.toggle("beat", now - m.beat < 220);
+    m.sb.style.width = (f * 100).toFixed(1) + "%";
+    m.sb.style.background = c;
+    m.st.style.background = c;
+    m.st.style.opacity = (0.28 + 0.72 * f).toFixed(2);
+    m.t.textContent = m.w.hub ? "hub" : f <= 0 ? "off" : Math.round(age(m.w)) + "s";
+    if (f <= 0.001) stale++; else online++;
+  }
+  $("k-total").textContent = total;
+  $("k-online").textContent = online;
+  $("k-stale").textContent = stale;
+  requestAnimationFrame(frame);
+}
 
 async function load() {
   try {
-    workers = (await rook.call("hub.workers")).workers;
+    const r = await rook.call("hub.workers");
+    workers = r.workers || [];
+    bands = r.bands || {};
+    if (r.now) skew = r.now - Date.now() / 1000;      // the hub's clock, not this browser's
+    loaded = true;
     render();
   } catch (x) {
-    document.getElementById("rows").innerHTML = `<tr><td colspan="3" class="bad">${rook.esc(x.message)}</td></tr>`;
+    $("list").innerHTML = `<div class="empty bad">${esc(x.message)}</div>`;
   }
 }
 
+$("filter").oninput = render;
+$("group").onchange = render;
+$("sort").onchange = render;
+// The 3D view (Bake, Nov 9: "I liked the 3d rook from the old version"): the
+// 0.4 fleet scene, a chessboard of pieces, one per worker, the hub as the rook.
+let fleet = null, fleetEnter = false, layoutBusy = false;
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function fleetCard(card, id) {
+  const w = workers.find((x) => x.id === id);
+  if (!w) return false;
+  const add = (tag, text, cls) => { const e = document.createElement(tag); if (cls) e.className = cls; e.textContent = text; card.append(e); return e; };
+  add("div", w.hub ? "HUB · ROOK" : (osOf(w) === "Android" ? "PHONE" : "COMPUTER") + " · PAWN", "fleet-card-kind");
+  add("h3", w.name || w.id);
+  if (w.description) add("p", w.description);
+  const a = age(w);
+  add("p", [versionLabel(w), bandName(w.band), w.hub ? "the hub" : fresh(w) <= 0 ? "quiet for " + Math.round(a) + "s" : "seen " + Math.round(a) + "s ago",
+    osOf(w)].filter(Boolean).join(" · "), "fleet-card-facts");
+  add("p", "worker_id " + w.id, "fleet-card-facts");
+  const plugins = (w.plugins || []).slice().sort();
+  if (plugins.length) {
+    add("h4", "Plugins · " + plugins.length);
+    const chips = add("div", "", "chips");
+    for (const p of plugins) { const c = document.createElement("span"); c.className = "chip"; c.textContent = p; chips.append(c); }
+  }
+  return true;
+}
+
+function syncFleet() {
+  const host = $("fleet-scene"), on = document.body.dataset.layout === "scene";
+  host.hidden = !on;
+  if (!on) { if (fleet) fleet.setActive(false); return; }
+  const lib = window.RookLib && window.RookLib["rook-scene"];
+  if (!lib) return;                                   // it's still parsing; the rooklib event comes back here
+  if (!fleet) fleet = lib.mountFleet(host, { quietAfter: WINDOW, renderCard: fleetCard });
+  const grouping = $("group").value;
+  fleet.update(shown().map((w) => ({ id: w.id, name: w.name || w.id,
+    group: grouping === "os" ? osOf(w) : grouping === "band" ? bandName(w.band) : "",
+    kind: osOf(w) === "Android" ? "phone" : "computer", hub: !!w.hub, age: age(w), banned: false,
+    description: w.description || "", version: versionLabel(w).replace(/^v/, ""), bandName: bandName(w.band),
+    battery: ((w.status || {}).battery || (w.status || {})["battery-android"] || {}).percent ?? null,
+    serves: null, caps: w.caps || [] })));
+  if (fleetEnter) { fleetEnter = false; fleet.enter(); }
+  fleet.setActive(true);
+}
+window.addEventListener("rooklib", syncFleet);
+
+async function setLayout(layout) {
+  if (layoutBusy || layout === document.body.dataset.layout) return;
+  layoutBusy = true;
+  try {
+    // Into 3D: the page fades, then the scene pulls back from the rook. Out of it: the reverse.
+    if (!calm && layout === "scene") { document.body.classList.add("fading"); await pause(320); }
+    if (!calm && document.body.dataset.layout === "scene" && fleet) { await fleet.leave(); document.body.classList.add("fading"); }
+    document.body.dataset.layout = layout;
+    if (layout === "scene") fleetEnter = true;
+    for (const o of document.querySelectorAll(".view-toggle button")) o.setAttribute("aria-pressed", String(o.dataset.layout === layout));
+    syncFleet();
+    if (!calm) await pause(30);
+  } finally {
+    layoutBusy = false;
+    document.body.classList.remove("fading");
+  }
+}
+for (const b of document.querySelectorAll(".view-toggle button")) b.onclick = () => setLayout(b.dataset.layout);
 rook.on("worker.*", load);
 rook.on("plugin.*", load);
-setInterval(load, 30000);     // last-seen times
+setInterval(load, 15000);         // heartbeats land every 30 s; the bars drain in between
 load();
+requestAnimationFrame(frame);
 </script>
+<script type="module" data-rook-lib="rook-scene"></script>
 </body>
 </html>

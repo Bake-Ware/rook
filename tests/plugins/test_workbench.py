@@ -81,7 +81,8 @@ def test_caps_are_the_decided_names():
             *(f"project.{v}" for v in ("list", "get", "search", "create", "update", "archive", "history")),
             *(f"project.trust.{v}" for v in ("list", "get", "create", "update")),
             *(f"concept.{v}" for v in ("list", "get", "search", "create", "update", "archive", "history", "pool")),
-            *(f"knowledge.{v}" for v in ("list", "get", "search", "create", "update", "archive", "history", "link")),
+            *(f"knowledge.{v}" for v in ("list", "get", "search", "create", "update", "archive", "history", "link",
+                                                     "review")),
             "whiteboard.read", "whiteboard.write", "whiteboard.clear"}
         caps = b.plugins.caps()
         # an agent that may edit a project can't loosen its trust level

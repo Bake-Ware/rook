@@ -4,15 +4,32 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rook</title>
+<link rel="icon" href="/web/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/web/static/fonts.css">
 <link rel="stylesheet" href="/web/static/shell.css">
 </head>
 <body>
+<!-- The 0.4 dashboard's margin drawing: the 3D rook (rook-scene.js) over an SVG sketch. -->
+  <div class="rook-art" id="rook-art" aria-hidden="true" data-mode="sketch">
+    <svg class="rook-sketch" viewBox="0 0 600 760" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <defs><pattern id="rook-hatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(-32)"><path d="M0 0V9" class="art-hatch" stroke-width=".6" opacity=".4"/></pattern></defs>
+      <g class="art-line" stroke-width=".65" opacity=".6"><ellipse cx="310" cy="622" rx="174" ry="62"/><ellipse cx="310" cy="622" rx="205" ry="76" stroke-dasharray="3 5"/><path d="M76 622H543M310 110V716M160 205V635M149 205H173M149 623H173" stroke-dasharray="4 5"/></g>
+      <g class="art-ink" stroke-width="1.4"><path d="M209 604L215 579L243 564L254 519L266 333L247 310L232 305V236L251 218V183L280 171V208L306 203V162L339 165V204L367 214V176L392 191V235L404 251V306L386 324L365 344L372 528L385 569L411 590V617L378 639L253 639Z" class="art-fill"/>
+      <path d="M254 519L266 333L306 348L302 554L269 568L243 564Z" fill="url(#rook-hatch)"/>
+      <path d="M232 305L305 328L404 306M247 310L306 348L386 324M215 579L276 603L385 569M209 604L276 627L411 590M276 627V646M280 171L298 183V211M339 165L351 183V210M367 214L391 236M251 218L278 229L306 221L338 230L368 226L392 241M243 564L302 581L385 569M266 333L302 350L365 344"/>
+      </g><g class="art-ink" opacity=".22"><path d="M211 608L218 581L247 565L257 520L269 334M233 309L305 333L405 309M247 643L380 642L413 619"/></g>
+    </svg>
+    <div class="rook-canvas"></div>
+    <span class="plate-number">FIG. 01 / CASTELLUM</span>
+    <span class="plate-caption"><b>ROOK / YOUR MACHINES, YOUR MOVE</b><br>ENCRYPTED · AGENT MESH · POWERFUL</span>
+  </div>
 <nav id="nav">
-  <div class="brand">Rook</div>
+  <div class="brand"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h3v2h2V3h4v2h2V3h3v5l-2 2v7l2 2v2H5v-2l2-2v-7L5 8z"/></svg><span>ROOK</span></div>
   <div id="pages"></div>
   <details id="more" hidden><summary>More</summary><div></div></details>
   <details id="archived" hidden><summary>Archived</summary><ul></ul></details>
   <span class="grow"></span>
+  <button class="art-toggle link" id="art-toggle" type="button" hidden>Pause artwork</button>
   <a id="account" href="/account">Your account</a>
   <button id="signout" class="link">Sign out</button>
 </nav>
@@ -22,16 +39,25 @@
     <h1 id="title"></h1>
     <span class="grow"></span>
     <button id="note-btn" hidden>About</button>
-    <button id="archive-btn" hidden>Archive</button>
-    <button id="dock-btn" hidden aria-label="Chat">Chat</button>
+    <!-- no Chat button (Bake, Nov 9): Rookie opens the chat. This one is never shown; the desktop app clicks it (OPEN_DOCK_JS_05). -->
+    <button id="dock-btn" class="offscreen" tabindex="-1" aria-hidden="true">Chat</button>
   </header>
-  <div id="stage"><div id="msg" hidden></div><aside id="note" hidden></aside></div>
+  <div id="stage"><div id="msg" hidden></div><section id="work" hidden></section><aside id="note" hidden></aside></div>
 </main>
 <aside id="dock" hidden>
-  <div id="dock-head"><span id="dock-name"></span><span class="grow"></span><button id="dock-close" class="link" aria-label="Close">&times;</button></div>
+  <div id="dock-head"><div id="rookie-home"></div><span id="dock-name"></span><span class="grow"></span><button id="dock-skip" class="link" hidden>Skip to the hub</button><button id="dock-close" aria-label="Close the chat" title="Close the chat">&times;</button></div>
   <div id="dock-log" aria-live="polite"></div>
   <form id="dock-form"><textarea id="dock-text" rows="2" placeholder="Ask, or tell it what to set up"></textarea><button>Send</button></form>
 </aside>
+<!-- rookie.js: Rookie, the house agent's avatar, by Bake (castling-wave12/rookie.js, sha256 fd17c3ee...).
+     Vendored unchanged as a drop-in: replace the file to update it; the site reads its STATES and SKINS.
+     rookie-map.js is our 0.5 wiring (events -> states). -->
+<script src="/web/static/rookie.js"></script>
+<script src="/web/static/rookie-map.js"></script>
+<script src="/web/static/chat-widgets.js"></script>
+<div id="rookie-park" aria-hidden="true"></div>
+<div id="rookie-say" role="status" hidden></div>
 <script src="/web/static/shell.js"></script>
+<script type="module" src="/web/static/art.js"></script>
 </body>
 </html>

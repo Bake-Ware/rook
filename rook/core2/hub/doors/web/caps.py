@@ -96,6 +96,11 @@ class Pages:
         state = _read_json(self._state_path)
         self.archived: dict = state.get("archived", {})
         self.starts: dict = state.get("start", {})          # person:<name> or * -> page
+        # Public pages (Bake, Nov 9: "a way to make a given page publicly
+        # accessible for things like reports or reference"): anyone opens
+        # them at /public/<page> without signing in, acting as whoever made them
+        # public. page -> {at, by, person}.
+        self.public: dict = state.get("public", {})
 
     def all(self) -> dict[str, Page]:
         out = {}
@@ -201,7 +206,104 @@ class Pages:
         return None
 
     def save_state(self) -> None:
-        _write(self._state_path, json.dumps({"archived": self.archived, "start": self.starts}, indent=1))
+        _write(self._state_path, json.dumps({"archived": self.archived, "start": self.starts,
+                                             "public": self.public}, indent=1))
+
+
+def public_path(pid: str) -> str:
+    """Where a public page opens without signing in."""
+    return "/public/" + pid
+
+
+def _owners(hub) -> list:
+    return [f"person:{u.name}" for u in hub.identities.users.values() if u.preset == "owner"]
+
+
+SETUP_FILE = "setup.json"
+
+
+def setup_state(hub, install: bool = False) -> dict:
+    """First-run setup: ``{done}``, and with ``install`` the facts the
+    installer left (``<data>/setup.json`` ``install``: folder, units, ports,
+    backend). ``init`` writes the file for a new hub; a hub without one
+    (set up before there was a first-run walk-through) counts as done."""
+    path = Path(hub.data) / SETUP_FILE
+    state = _read_json(path)
+    out = {"done": bool(state.get("done")) or not path.exists()}
+    if install and isinstance(state.get("install"), dict):
+        out["install"] = state["install"]
+    return out
+
+
+ROOKIE_JS = Path(__file__).with_name("static") / "rookie.js"
+_rookie: tuple = (None, (), ())
+LOOK_STEPS = ("sound", "rookie", "theme", "name")      # first-run asks these first, in this order
+HOUSE_NAME = "Rookie"
+
+
+def _rookie_js() -> tuple:
+    """(styles, themes) the vendored ``static/rookie.js`` defines, read from
+    the file itself (``SKINS.<name>={``, the ``THEMES={...}`` keys) so a new
+    rookie.js drops in without a code change."""
+    global _rookie
+    try:
+        mtime = ROOKIE_JS.stat().st_mtime
+    except OSError:
+        return ["none"], ["stone"]
+    if _rookie[0] != mtime:
+        text = ROOKIE_JS.read_text(encoding="utf-8")
+        styles = re.findall(r"\bSKINS\.([a-z][a-z0-9_]*)\s*=\s*\{", text)
+        block = re.search(r"\bTHEMES\s*=\s*\{(.*?)\n\s*\};", text, re.S)
+        themes = re.findall(r"^\s*([a-z][a-z0-9_]*)\s*:\s*\{", block[1], re.M) if block else []
+        _rookie = (mtime, tuple(dict.fromkeys(styles + ["none"])), tuple(themes or ["stone"]))
+    return list(_rookie[1]), list(_rookie[2])
+
+
+def rookie_styles() -> list:
+    return _rookie_js()[0]
+
+
+def rookie_themes() -> list:
+    return _rookie_js()[1]
+
+
+def house_name(hub) -> str:
+    return str((hub.plugins.settings.get("agent") or {}).get("house_name") or HOUSE_NAME)
+
+
+def look_state(hub, settings, person: str | None) -> dict:
+    """A person's look and feel (castling-first-run; Bake, Nov 5 2026: "prompt
+    the user if they want sound first, then rookie style then rookie theme,
+    then rookie name. This will be the name of the home agent"): sound,
+    Rookie's style and theme (theirs), Rookie's name (the house agent's, the
+    hub's), which were answered, and the first that wasn't (``next``)."""
+    mine = (settings.settings(person) if person else {}).get("page") or {}
+    styles, themes = _rookie_js()
+    chosen = {"sound": "sound" in mine, "rookie": "rookie" in mine, "theme": "rookie_theme" in mine,
+              # no agents package, no house agent to name
+              "name": "house_name" in settings.stored.get("agent", {}) or "agent" not in hub.plugins.plugins}
+    return {"sound": bool(mine.get("sound", False)),
+            "rookie": mine["rookie"] if mine.get("rookie") in styles else "pixel",
+            "theme": mine["rookie_theme"] if mine.get("rookie_theme") in themes else themes[0],
+            "name": house_name(hub), "chosen": chosen,
+            "next": next((k for k in LOOK_STEPS if not chosen[k]), None),
+            "styles": styles, "themes": themes}
+
+
+def backend_ready(hub) -> bool:
+    """Whether a turn of the house agent can run now: some installed
+    provider of ``agent.backend`` and a worker (online) or the hub serving
+    it. Right after an install the worker takes a few seconds to join; the
+    site waits for this before starting setup."""
+    try:
+        cap = hub.contracts.choose("agent.backend")
+    except Exception:          # nothing provides it yet
+        return False
+    target = hub._target_for(cap)
+    if target is None:
+        return False
+    k = hub.known.get(target)
+    return target == hub.node or bool(k and k.online)
 
 
 def dock_agent(hub) -> str | None:
@@ -248,12 +350,13 @@ def install(hub) -> None:
                   "page.create": h.pages_create, "page.update": h.pages_update,
                   "page.archive": h.pages_archive, "page.restore": h.pages_restore,
                   "page.components": h.pages_components, "page.site": h.pages_site,
-                  "page.start": h.pages_start},
+                  "page.start": h.pages_start, "page.look": h.pages_look, "page.public": h.pages_public},
         "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers, "hub.manifests": h.hub_manifests,
-                "hub.door": h.hub_door},
+                "hub.door": h.hub_door, "hub.setup": h.hub_setup},
         "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide,
                      "approval.ask": h.approval_ask, "approval.get": h.approval_get},
         "journal": {"journal.search": h.journal_search},
+        "trust": {"trust.map": h.trust_map, "trust.sacred": h.trust_sacred},
         "setting": {"setting.list": settings.list, "setting.set": settings.set},
         "llm": {"llm.providers": h.llm_providers, "llm.models": h.llm_models, "llm.status": h.llm_status},
         "token": {"token.create": tokens.create, "token.list": tokens.list, "token.revoke": tokens.revoke,
@@ -280,6 +383,7 @@ class _Handlers:
             if (pid in pages.archived) != archived:
                 continue
             row = page.view()
+            row["public"] = pid in pages.public
             if archived:
                 row["archived"] = pages.archived[pid]
             out.append(row)
@@ -291,7 +395,8 @@ class _Handlers:
     async def pages_get(self, ctx, page: str) -> dict:
         pages = self.hub.pages
         p = pages.get(page)
-        out = {**p.view(), "archived": pages.archived.get(page)}
+        out = {**p.view(), "archived": pages.archived.get(page), "public": pages.public.get(page),
+               "public_url": public_path(page) if page in pages.public else None}
         if p.made:
             out.update(made_by=p.made, note=pages.note(p), layout=p.layout)
         else:
@@ -434,6 +539,20 @@ class _Handlers:
             pages.save_state()
         return {"page": page, "archived": False}
 
+    async def pages_public(self, ctx, page: str, public: bool = True) -> dict:
+        """Make a page readable by anyone at /public/<page>, no sign-in; its calls
+        act as the person who made it public (an agent alone: the hub's first
+        owner). Off makes it private again (Bake, Nov 9)."""
+        pages = self.hub.pages
+        pages.get(page)
+        if public:
+            person = ctx.caller.person or next(iter(_owners(self.hub)), None)
+            pages.public[page] = {"at": time.time(), "by": ctx.caller.actor, "person": person}
+        else:
+            pages.public.pop(page, None)
+        pages.save_state()
+        return {"page": page, "public": bool(public), "url": public_path(page) if public else None}
+
     async def pages_components(self, ctx) -> dict:
         return {"components": [c.view() for _, c in sorted(self.hub.pages.components().items())]}
 
@@ -442,7 +561,29 @@ class _Handlers:
         the dock (with the agents package)."""
         pages = self.hub.pages
         return {"person": ctx.caller.person, "start": pages.start(ctx.caller.person), "dock": dock_agent(self.hub),
-                "workbench": self._workbench()}
+                "workbench": self._workbench(), "setup": setup_state(self.hub), "ready": backend_ready(self.hub),
+                "look": look_state(self.hub, self.settings, ctx.caller.person or ctx.caller.agent)}
+
+    async def pages_look(self, ctx, sound: bool | None = None, rookie: str | None = None,
+                         theme: str | None = None, name: str | None = None) -> dict:
+        # Anyone sets anything here, a person or an agent alone; an unknown
+        # style or theme shows as the default (Bake, Nov 6: "Remove all
+        # restrictions and gates"; docs/castling-first-run.md "For the
+        # hardening pass").
+        who = ctx.caller.person or ctx.caller.agent
+        st = self.settings
+        mine = {k: v for k, v in (("sound", sound), ("rookie", rookie), ("rookie_theme", theme)) if v is not None}
+        if mine and who:
+            for key, value in mine.items():
+                st.personal.setdefault(who, {}).setdefault("page", {})[key] = \
+                    bool(value) if key == "sound" else str(value).strip().lower()
+            _write(st.people_path, json.dumps(st.personal, indent=1))
+        if name is not None:
+            name = " ".join(str(name).split()) or HOUSE_NAME
+            st.stored.setdefault("agent", {})["house_name"] = name
+            self.hub.plugins.settings.setdefault("agent", {})["house_name"] = name
+            _write(st.path, json.dumps(st.stored, indent=1))
+        return look_state(self.hub, st, who)
 
     async def pages_start(self, ctx, page: str | None = None) -> dict:
         pages = self.hub.pages
@@ -480,8 +621,21 @@ class _Handlers:
             raise KitError(out["error"])
         return {"closed": out["closed"]}
 
+    async def hub_setup(self, ctx, done: bool | None = None) -> dict:
+        if done is not None:
+            path = Path(self.hub.data) / SETUP_FILE
+            state = _read_json(path)
+            state.update({"done": bool(done), "ts": time.time(), "by": _author(ctx)})
+            _write(path, json.dumps(state, indent=1))
+        return {**setup_state(self.hub, install=True), "look": look_state(self.hub, self.settings, ctx.caller.person or ctx.caller.agent)}
+
     async def hub_workers(self, ctx) -> dict:
-        return {"workers": (await self.hub.workers_view(_who(ctx)))["workers"]}
+        """The workers, the hub first; ``now`` is the hub's clock (heartbeat
+        ages on the Workers page), ``bands`` names the bands."""
+        hub = self.hub
+        named = ((getattr(hub.cfg, "transport", None) or {}).get("bands") or [{}])[0]
+        return {"workers": (await hub.workers_view(_who(ctx)))["workers"], "now": hub.clock(),
+                "bands": {hub.band: (named.get("name") if isinstance(named, dict) else None) or "home"}}
 
     async def hub_manifests(self, ctx, section: str | None = None) -> dict:
         """Hub plugins first, then what workers announce. ``folder`` (where the
@@ -535,6 +689,94 @@ class _Handlers:
         return {"entries": out["entries"]}
 
 
+    # -- trust: the 0.4 trust map on 0.5's model --------------------------------------
+
+    async def trust_map(self, ctx) -> dict:
+        """Everything that decides what agents may do to what, in one read.
+        Projects and agents come from their plugins (as the caller); a
+        plugin that isn't installed leaves its part empty with a note."""
+        from rook.core2 import rights
+        hub = self.hub
+        security = "off" if _security_off(hub) else "on"
+        sacred = set(hub.cfg.sacred)
+        machines = [{"id": k.id, "name": k.name, "online": bool(k.online), "last_seen": k.last_seen,
+                     "description": k.description or "", "level": "sacred" if k.name in sacred else "normal"}
+                    for k in sorted(hub.known.values(), key=lambda k: k.name)]
+        named = {m["name"] for m in machines}
+        machines += [{"id": None, "name": n, "online": False, "last_seen": None, "description": "",
+                      "level": "sacred", "unknown": True} for n in sorted(sacred - named)]
+        out = {"security": security, "levels": TRUST_LEVELS, "everything_else": "normal",
+               "hard_stops": [*rights.HARD_STOP_EFFECTS, "reveals a secret", "sacred machine"],
+               "machines": machines, "projects": [], "agents": [], "missing": []}
+        projects = await self._plugin_rows(ctx, "project.list", {"limit": 500})
+        levels = await self._plugin_rows(ctx, "project.trust.list", {"limit": 500})
+        if projects is None:
+            out["missing"].append("projects")
+        else:
+            by = {t.get("project"): t for t in levels or ()}
+            for pr in projects:
+                t = by.get(pr.get("id")) or {}
+                out["projects"].append({"id": pr.get("id"), "title": pr.get("title") or pr.get("slug") or pr.get("id"),
+                                        "slug": pr.get("slug"), "state": pr.get("state"),
+                                        "level": t.get("level") or "normal", "set": bool(t), "note": t.get("note") or "",
+                                        "trust_id": t.get("id"), "revision": t.get("revision")})
+        agents = await self._plugin_rows(ctx, "agent.list", {"limit": 500})
+        if agents is None:
+            out["missing"].append("agents")
+        for a in agents or ():
+            out["agents"].append({"name": a.get("name"), "title": a.get("title") or "", "id": a.get("id"),
+                                  "revision": a.get("revision"), "persona": a.get("persona") or "",
+                                  "grants": list(a.get("grants") or []), "source": "agents"})
+        listed = {a["name"] for a in out["agents"]}
+        for name, r in sorted(hub.cfg.agents.items()):
+            if name not in listed:
+                out["agents"].append({"name": name, "title": "", "grants": list((r or {}).get("grants") or []),
+                                      "source": "hub.yaml"})
+        out["waiting"] = len((await hub.holds_view(_who(ctx)))["holds"])
+        out["history"] = await self._trust_history(ctx)
+        out["summary"] = _trust_summary(out)
+        return out
+
+    async def _plugin_rows(self, ctx, cap: str, args: dict) -> list | None:
+        """A plugin's record list as the caller; None when it isn't there."""
+        reply = await self.hub.call_as(ctx.caller, cap, args)
+        if not reply.get("ok"):
+            return None
+        res = reply.get("result")
+        if isinstance(res, dict):
+            res = next((v for k, v in res.items() if isinstance(v, list)), [])
+        return res if isinstance(res, list) else []
+
+    async def _trust_history(self, ctx) -> list:
+        """Recent trust changes, as the journal shows them to the caller."""
+        rows = []
+        for cap in ("trust.sacred", "project.trust.*", "setting.set", "agent.update"):
+            got = await self.hub.journal_view(_who(ctx), {"cap": cap, "limit": 30})
+            for e in got.get("entries") or ():
+                args = e.get("args") or {}
+                if cap == "setting.set" and (args.get("plugin"), args.get("key")) != ("hub", "security"):
+                    continue
+                if cap == "agent.update" and "grants" not in args:
+                    continue
+                if e.get("risk") == "read" or e.get("ok") is False or e.get("decision") in ("deny", "held", "refused"):
+                    continue          # reads (trust.map's own project.trust.list) and what didn't happen
+                rows.append({"at": e.get("ts"), "cap": e.get("cap"), "args": args, "why": e.get("why") or "",
+                             "person": e.get("person"), "agent": e.get("agent")})
+        rows.sort(key=lambda r: r["at"] or 0, reverse=True)
+        return rows[:40]
+
+    async def trust_sacred(self, ctx, worker: str, sacred: bool = True) -> dict:
+        hub = self.hub
+        k = hub.known.get(worker) or next((k for k in hub.known.values() if k.name == worker), None)
+        name = k.name if k else worker
+        names = [n for n in hub.cfg.sacred if n != name] + ([name] if sacred else [])
+        hub.cfg.sacred = names
+        for w in hub.dispatcher.workers.values():
+            if w.name == name and w.id != hub.node:
+                w.sacred = bool(sacred)
+        saved = _save_sacred(hub.cfg)
+        return {"worker": name, "sacred": bool(sacred), "sacred_machines": list(names), "saved": saved}
+
     # -- llm: the llm.complete providers ------------------------------------------
 
     async def llm_providers(self, ctx) -> dict:
@@ -575,6 +817,51 @@ class _Handlers:
         if not reply.get("ok"):
             raise KitError(str(reply.get("error") or "failed"))
         return reply.get("result") or {}
+
+
+TRUST_LEVELS = [
+    {"level": "sacred", "text": "Changes only on your say-so: every call that isn't a read waits on you (with security on). "
+                                "A sacred project's changes get the full record and your sign-off."},
+    {"level": "normal", "text": "Agents go ahead; hard stops still wait on you (with security on). "
+                                "A normal project's changes get the full record."},
+    {"level": "ship-it", "text": "Agents just go. A ship-it project's changes get a one-line note."},
+]
+
+
+def _trust_summary(m: dict) -> str:
+    """What agents are told, in plain words, from the map."""
+    sacred = [x["name"] for x in m["machines"] if x["level"] == "sacred"]
+    lines = []
+    if m["security"] == "off":
+        lines.append("Security is off: nothing waits on a person; hard stops are only journaled (would_hold).")
+    else:
+        lines.append("Security is on: hard stops (" + ", ".join(m["hard_stops"]) + ") wait on a person.")
+    lines.append("Sacred machines: " + (", ".join(sacred) if sacred else "none") + ". Anything not listed is normal.")
+    for level in ("sacred", "ship-it"):
+        ps = [p["title"] for p in m["projects"] if p["level"] == level]
+        if ps:
+            lines.append(f"{level} projects: " + ", ".join(ps) + ".")
+    lines.append("Every other project is normal.")
+    return " ".join(lines)
+
+
+def _save_sacred(cfg) -> str | None:
+    """Write ``sacred`` into the hub's YAML file, keeping its comment lines
+    at the top (as install.sh does). None when the hub has no file."""
+    import yaml
+    path = getattr(cfg, "file", None)
+    if not path:
+        return None
+    path = Path(path)
+    text = path.read_text(encoding="utf-8")
+    head = "".join(line for line in text.splitlines(True) if line.startswith("#"))
+    raw = yaml.safe_load(text) or {}
+    raw["sacred"] = list(cfg.sacred)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(head + yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    os.chmod(tmp, path.stat().st_mode & 0o7777)
+    os.replace(tmp, path)
+    return str(path)
 
 
 def _plugin_of(cap: str) -> str:

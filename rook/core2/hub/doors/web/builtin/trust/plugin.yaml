@@ -1,0 +1,49 @@
+# The trust map (Bake, Nov 9: "Let's bring over the trust map ... pages too"):
+# the 0.4 Trust map page on 0.5's model - sacred machines (hub.yaml
+# sacred:), project trust levels (project.trust.*), the hard stops, the
+# security switch (hub.security) and what each agent may do (its grants).
+# Implemented by the hub (rook.core2.hub.doors.web.caps).
+manifest: 1
+plugin: trust
+version: 0.5.0
+title: Trust
+doc: What agents may do to what, in one place.
+package: core
+builtin: true
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+
+caps:
+  map:
+    doc: >-
+      The trust map in one read: security (off or on), the hard stops, every machine and whether it is
+      sacred, every project's trust level (project.trust), what each agent may do (grants), how many calls
+      wait on a person, a plain summary of what agents are told, and recent trust changes from the journal.
+    on: hub
+    risk: read
+    scope: multi-machine
+    idempotent: true
+    result: { type: map }
+  sacred:
+    doc: >-
+      Make a machine sacred (every call there that isn't a read is a hard stop: it waits on a person while
+      security is on) or normal again. Kept in hub.yaml's sacred list and applied at once.
+    on: hub
+    risk: admin
+    scope: multi-machine
+    effects: [persists]
+    args:
+      worker: { type: str, required: true, doc: "The machine's name or id." }
+      sacred: { type: bool, default: true, doc: "false: normal again." }
+    result: { type: map }
+
+pages:
+  trust:
+    title: Trust map
+    file: pages/trust.html
+    caps: [trust.map, trust.sacred, "project.list", "project.trust.*", "agent.list", "agent.update", setting.set, approval.list, journal.search]
+    events: ["worker.*", "hold.*", "approval.*"]
+    nav: { section: Trust }
+
+docs: { manual: docs/manual.md }

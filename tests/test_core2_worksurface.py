@@ -108,15 +108,20 @@ def test_every_install_combination(tmp_path, combo):
         c = Client(hub)
         await c.sign_in(tokens["bake"])
         s = (await c.call("page.site"))["result"]
+        assert s.pop("ready") is bool(agents)              # the fake brain serves agent.backend
+        look = s.pop("look")
+        assert look["next"] == "sound" and look["name"] == "Rookie"
+        assert look["chosen"]["name"] is not agents         # no agents package: no house agent to name
         assert s == {"person": "person:bake", "start": None, "dock": "house" if agents else None,
-                     "workbench": workbench}
+                     "workbench": workbench, "setup": {"done": True}}
 
-        # a lean sidebar: workers and tokens (+ what packages add); journal and settings by address.
+        # a lean sidebar: workers, tokens and the trust map (Bake, Nov 9: "Let's bring over the trust
+        # map") (+ what packages add); journal and settings by address.
         # hub.security is off by default: no approvals page anywhere (castling-switchover-decisions)
         listed = {p["page"]: p for p in (await c.call("page.list"))["result"]["pages"]}
         nav = {pid for pid, p in listed.items() if p["nav"]}
         work = {"task/tasks", "project/projects", "knowledge/knowledge"}
-        assert nav == {"hub/workers", "token/tokens", "board/board"} | (work if workbench else set())
+        assert nav == {"hub/workers", "token/tokens", "trust/trust", "board/board"} | (work if workbench else set())
         assert not any(pid.startswith("approval/") for pid in listed)
         assert "no page approval/approvals" in (await c.open("approval/approvals")).get("error", "")
         assert {"journal/journal", "setting/settings"} <= set(listed) - nav

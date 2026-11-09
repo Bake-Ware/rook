@@ -27,7 +27,7 @@ source: https://github.com/Bake-Ware/rook
 # through its notify channel (the notify.channel.send contract).
 # hub.manifests: the personas and skills every installed plugin ships;
 # knowledge.get: skills kept as knowledge pages (kind skill), with the workbench.
-uses: ["agent.backend", "notify.channel.send", "hub.manifests", "knowledge.get"]
+uses: ["agent.backend", "notify.channel.send", "hub.manifests", "knowledge.get", "hub.setup"]
 
 settings:
   warm: { type: duration, default: 10m, doc: How long an agent that isn't always-on stays awake after its last message. }
@@ -35,6 +35,7 @@ settings:
   dream_every: { type: duration, default: 6h, doc: How often an always-on agent gets a dream pass. }
   chat_agent: { default: house, doc: "The agent that answers people's direct messages to the band's Telegram and Discord bots (once they linked their account); blank: none does." }
   house: { type: str, default: house, doc: "The agent that reaches the person: questions agents ask them (approval.ask) go to it; blank: they wait on the Approvals page only." }
+  house_name: { type: str, where: hub, default: Rookie, doc: "The house agent's name: what it calls itself and what the hub site calls it (first-run setup asks it; Your account changes it). Its identity stays agent:<house>." }
 
 # Stored as kit records (castling-plugins "Records"; castling-caps rule 6):
 # the kit gives the storage, history and the agent.* and
@@ -172,7 +173,7 @@ personas:
     title: House agent
     summary: "The person's personal assistant and guardian of the house: knows how and when to reach them."
     prompt: personas/house.md
-    skills: [reach-the-user, presence, attention, hub-pages, consult, notepad, housekeeping]
+    skills: [first-run, reach-the-user, presence, attention, hub-pages, consult, notepad, housekeeping]
     grants: ["*"]
     always_on: true
   security:
@@ -184,6 +185,7 @@ personas:
     always_on: true
 
 skills:
+  first-run: skills/first-run.md
   reach-the-user: skills/reach-the-user.md
   presence: skills/presence.md
   consult: skills/consult.md

@@ -73,6 +73,7 @@ linked.
 - [page](../../rook/core2/hub/doors/web/builtin/page/docs/manual.md): the hub site's pages.
 - [setting](../../rook/core2/hub/doors/web/builtin/setting/docs/manual.md): hub and per-person settings.
 - [token](../../rook/core2/hub/doors/web/builtin/token/docs/manual.md): door tokens for agents (an agent mints its own MCP token).
+- [trust](../../rook/core2/hub/doors/web/builtin/trust/docs/manual.md): the trust map: sacred machines, project levels, hard stops and what each agent may do.
 - [backup](../../rook/core2/hub/backup/docs/manual.md): sealed backups of the hub that only the recovery key opens, and restoring one on a new machine.
 
 **Core services** (install on the hub):
@@ -90,6 +91,7 @@ linked.
 - [agent](../../rook/plugins/agents/docs/manual.md): the agents runtime and the ready-made personas ([Agents](agents.md)).
 - [agents-claude-code](../../rook/plugins/agents-claude-code/docs/manual.md): agent turns in the Claude Code CLI.
 - [agents-codex](../../rook/plugins/agents-codex/docs/manual.md): agent turns in the Codex CLI.
+- [agents-opencode](../../rook/plugins/agents-opencode/docs/manual.md): agent turns in OpenCode (`opencode run`), the first-run default with a free model.
 - [attention](../../rook/plugins/attention/docs/manual.md): the house agent reads what tries to get your attention and keeps what matters in one place.
 - [claudecode](../../rook/plugins/claudecode/docs/manual.md): Claude Code rules written once on the hub.
 - [decide](../../rook/plugins/decide/docs/manual.md): one-pass decision model for typed questions.

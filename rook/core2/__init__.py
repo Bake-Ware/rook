@@ -8,3 +8,6 @@ it one function at a time against conformance/core-v2/vectors.
 """
 
 CORE_VERSION = "2.0"
+# The Rook release a hub or worker shows (the Workers page): 0.5, "Castling".
+# CORE_VERSION is the wire protocol, not the release (Bake's review, Nov 9).
+ROOK_VERSION = "0.5.0"
