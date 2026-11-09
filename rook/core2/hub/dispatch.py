@@ -179,6 +179,8 @@ class Dispatcher:
             raise ValueError(f"caller: {caller.problem()}")
         if not isinstance(caps, list) or not all(isinstance(c, str) and c for c in caps):
             raise ValueError("caps must be a list of patterns")
+        if project is not None and not (isinstance(project, str) and project):
+            raise ValueError("project must be a name")
         now = self.clock()
         s = Session(_secrets.token_hex(16), caller.person, caller.agent, list(caps), project, task,
                     now, now + SESSION_SECS)
