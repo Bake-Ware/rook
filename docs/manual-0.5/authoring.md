@@ -317,7 +317,10 @@ calls in a tainted session, which the security gate watches more closely.
 `provides: [screen.capture]`; a grant on `screen.capture` then covers your
 cap when someone calls it by that name), `routes` (HTTP endpoints of a hub plugin, under `/p/<plugin>/`),
 `personas`, `skills`, `concepts`, `components`, `jobs` ([Jobs](jobs.md)),
-`assets` (large downloads with their sha256). Each section has its own
+`shell` (script and style files the hub site's own pages load, outside the
+page sandbox, and the caps they may call through the site as the signed-in
+person: `shell: {dock: {file: shell/dock.js, caps: [agent.chat.send]}}`; the
+agents package's chat dock is one), `assets` (large downloads with their sha256). Each section has its own
 knowledge page, `castling-manifest-<section>`; the index is
 `castling-manifest`. The JSON Schema is
 `conformance/manifest/manifest.schema.json`.

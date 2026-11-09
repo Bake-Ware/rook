@@ -88,6 +88,19 @@ Three models (its `model` and `model_three` settings); an agent's
 `model: {two, three}` overrides them. Settings: `warm`, `turn_timeout`,
 `dream_every`, `chat_agent`.
 
+## On the hub site
+
+The agents package adds the house agent to the hub site itself (`shell:` in
+its manifest, files in `shell/`): the chat dock beside every page with
+Rookie, its avatar, the work pane and the guided first run, and the look
+pickers on Your account. `agent.site` is what the dock needs: the agent in
+it (the `dock` setting, `house`; blank: no dock), whether it can answer yet
+(a worker serving `agent.backend` is online) and your look and feel.
+`agent.look {sound?, rookie?, theme?, name?}` sets the look and feel: sound,
+Rookie's style and theme are yours (the per-person settings `sound`,
+`rookie`, `rookie_theme`), the name is the house agent's (`house_name`;
+blank: Rookie). Blank ones haven't been chosen: first-run setup asks them.
+
 ## Identity
 
 Each agent is `agent:<name>` on the hub, with its own grants plus
