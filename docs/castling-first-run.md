@@ -48,15 +48,73 @@ What it does:
 
 ## The site
 
-While `hub.setup` says setup isn't done, the site is the house agent's chat,
-full screen (with "Your account" and "Skip to the hub"). The house agent
-follows the `first-run` skill (rook/plugins/agents/skills/first-run.md): look
-and feel (sound, Rookie's style, theme, name), the person's name and a
-password for after setup (Account page), what the hub is for, reaching it from
-elsewhere, other machines, voice / phone / Telegram / Discord, backups, then a
-knowledge page "How this hub is set up and why", and `hub.setup {done: true}`.
-Hubs set up before this (no `setup.json`) count as done. Until setup is
-done nobody signs in: opening the site is being the owner.
+Bake, Nov 9 2026: "I want this to be more like a two pane thing where like
+the chat and rookie are on one side and the left is like stuff we're setting
+up. Have the rookie avatar move to things it's talking about on the page."
+and "I want it to guide the setup entirely".
+
+While `hub.setup` says setup isn't done, the site is two panes, no page
+list: the **work pane** on the left (what is being set up right now) and the
+house agent's chat on the right, with Rookie at its head. After setup the
+same chat is the right column beside every page (the bar's Chat button
+shows or hides it), and pages fill the left. Until setup is done nobody
+signs in: opening the site is being the owner. Hubs set up before this (no
+`setup.json`) count as done.
+
+The house agent follows the `first-run` skill
+(rook/plugins/agents/skills/first-run.md): look and feel (sound, Rookie's
+style, theme, name), the person's name and a password (account view), what
+the hub is for, reaching this site (with the firewall directive below),
+other machines (what a worker is first), voice / phone / Telegram / Discord,
+backups, then a knowledge page "How this hub is set up and why", and
+`hub.setup {done: true}`.
+
+### What the agent can put in a message
+
+A line of its own in `[[...]]` (`static/chat-widgets.js`, node-tested):
+
+| Line | What the site does |
+|---|---|
+| `[[choices: A \| B \| C]]` | buttons under the message; a click answers with that text |
+| `[[open: vault \| new=host_password \| for=sudo on box]]` | the Vault view on the left: the key filled in, the cursor in the value field, Rookie pointing at it |
+| `[[open: account]]` | the account view: the person's name and a password (`name=` pre-fills) |
+| `[[open: network \| home=http://192.168.1.20:8740 \| status=...]]` | the three ways to reach this site, in plain words, with the addresses and what the agent checked |
+| `[[open: page hub/workers]]` | a hub page on the left |
+| `[[point: vault.value]]` | Rookie travels to that target and back |
+
+Targets: `account.name`, `account.password`, `account.again`,
+`account.save`, `vault.key`, `vault.value`, `vault.description`,
+`vault.save`, `vault.list`, `network.local`, `network.home`,
+`network.anywhere`, `network.status`, `page`. When the person saves in a
+view, the site tells the agent ("[site] Secret host_password saved in the
+vault", "[site] Account saved ...").
+
+The work views are drawn by the shell (same page), so the agent can fill
+and focus a field and Rookie can point at it; hub pages stay sandboxed
+frames (Rookie points at the page as a whole).
+
+- **Secrets:** the Vault view lists names (`GET /web/api/secrets`, never
+  values) and saves with `POST /web/api/secret {name, value, description}`
+  into the hub's vault. A password is never typed in the chat.
+- **Root:** the agent opens the vault with `new=host_password`, then runs
+  `shell.exec` with `argv: [sudo, -S, -p, "", ...]` and `stdin` = the vault
+  reference (secret:host_password in double braces) plus a newline; the hub
+  fills the value in at dispatch.
+- **Reaching this site:** for anything but "Just this computer" the skill
+  makes the agent check the binds, find the LAN address, detect the
+  firewall (ufw, firewalld, nftables/iptables), open the site, MCP door and
+  relay ports, and verify from the LAN address before saying it works
+  (Bake's test hub listened on 0.0.0.0 while ufw blocked 8760).
+
+### The brand
+
+Bake, Nov 9: "get the styles from the old site. We spent a lot of time
+tuning the brand". `static/shell.css` (shell, sign-in and account pages)
+uses the 0.4 dashboard's rook-dark tokens (`rook/web/theme.css`,
+`themes/rook-dark.json`) and bake-ware.github.io/rook: olive and amber, DM
+Sans and IBM Plex Mono (Google Fonts, allowed in the shell's CSP), square
+corners with the schematic corner tick, small spaced mono labels, the 0.4
+chat's message look, and the rook mark from the landing page's icon.
 
 ## Rookie
 
@@ -64,17 +122,22 @@ Bake, Nov 5 2026: "Yeah add it and translate for 0.5. Add the rookie style
 as the first question it asks the user", then: "Ok added sounds and themes
 prompt the user if they want sound first, then rookie style then rookie
 theme, then rookie name. This will be the name of the home agent". Rookie
-is the house agent's avatar, beside its newest message in the dock (and the
-setup chat), and the site's animated tab icon.
+is the house agent's avatar at the head of the chat, and the site's animated
+tab icon. Bake, Nov 9: "make sure rookie like animates to these locations.
+Like not just like pop in at random places. And only one instance of it on
+any page at a time": there is exactly one live Rookie on a page (the chat's;
+`Rookie.mount` is called once). When the agent points at something he lifts
+off from the chat, hops along a curved path to it, settles, and goes back
+the same way (shell.js `travel()`). The tab icon copies his canvas, and the
+pickers (chat and Your account) draw still thumbnails with `Rookie.bake`.
 
 - `static/rookie.js` is Bake's file, vendored unchanged (a drop-in: replace
   it and nothing else changes). Where it is loaded (shell.html,
   account.html) a comment says where it came from. The site takes styles
   and themes from `Rookie.SKINS` / `Rookie.THEMES`; the hub reads the same
   lists from the file (`SKINS.<name>={`, the `THEMES={...}` keys).
-- Rookie comes in with `enter()` the first time it shows; `Rookie.favicon`
-  animates the tab icon with the same states; `sound` follows the person's
-  answer (off until they give one).
+- Rookie comes in with `enter()` the first time he shows; `sound` follows
+  the person's answer (off until they give one).
 - Look and feel = `page.look {sound, rookie, theme, name}`; it returns
   `{sound, rookie, theme, name, chosen, next, styles, themes}` (also in
   `page.site` and `hub.setup` as `look`). Sound, style and theme are the

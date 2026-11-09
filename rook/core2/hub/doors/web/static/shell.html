@@ -4,11 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="/web/static/shell.css">
 </head>
 <body>
 <nav id="nav">
-  <div class="brand">Rook</div>
+  <div class="brand"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h3v2h2V3h4v2h2V3h3v5l-2 2v7l2 2v2H5v-2l2-2v-7L5 8z"/></svg><span>ROOK</span></div>
   <div id="pages"></div>
   <details id="more" hidden><summary>More</summary><div></div></details>
   <details id="archived" hidden><summary>Archived</summary><ul></ul></details>
@@ -25,10 +27,10 @@
     <button id="archive-btn" hidden>Archive</button>
     <button id="dock-btn" hidden aria-label="Chat">Chat</button>
   </header>
-  <div id="stage"><div id="msg" hidden></div><aside id="note" hidden></aside></div>
+  <div id="stage"><div id="msg" hidden></div><section id="work" hidden></section><aside id="note" hidden></aside></div>
 </main>
 <aside id="dock" hidden>
-  <div id="dock-head"><span id="dock-name"></span><span class="grow"></span><a id="dock-account" href="/account" hidden>Your account</a><button id="dock-close" class="link" aria-label="Close">&times;</button></div>
+  <div id="dock-head"><div id="rookie-home"></div><span id="dock-name"></span><span class="grow"></span><button id="dock-close" class="link" aria-label="Close">&times;</button></div>
   <div id="dock-log" aria-live="polite"></div>
   <form id="dock-form"><textarea id="dock-text" rows="2" placeholder="Ask, or tell it what to set up"></textarea><button>Send</button></form>
 </aside>
@@ -37,6 +39,7 @@
      rookie-map.js is our 0.5 wiring (events -> states). -->
 <script src="/web/static/rookie.js"></script>
 <script src="/web/static/rookie-map.js"></script>
+<script src="/web/static/chat-widgets.js"></script>
 <script src="/web/static/shell.js"></script>
 </body>
 </html>

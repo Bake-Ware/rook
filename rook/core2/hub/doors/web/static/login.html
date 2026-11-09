@@ -4,11 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rook: sign in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="/web/static/shell.css">
 </head>
 <body>
 <form class="login" method="post" action="/login">
-  <div class="brand">Rook</div>
+  <div class="brand"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h3v2h2V3h4v2h2V3h3v5l-2 2v7l2 2v2H5v-2l2-2v-7L5 8z"/></svg><span>ROOK</span></div>
   <label for="user">User name</label>
   <input id="user" name="user" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
   <label for="password">Password</label>

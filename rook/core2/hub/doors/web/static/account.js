@@ -38,10 +38,20 @@ async function lookCall(args) {
 // Sound, Rookie's style and theme are yours; its name is the house agent's
 // (owners rename it). Previews take the theme you have.
 let look = null;
-const faces = [];
+
+// A still picture of Rookie (Rookie.bake): no live Rookie on this page.
+function thumb(skin, theme) {
+  const c = document.createElement("canvas");
+  if (!window.Rookie || !Rookie.bake || skin === "none" || !Rookie.SKINS.includes(skin)) return c;
+  const { canvas, manifest } = Rookie.bake({ skin, theme, scale: 2, rows: ["happy"] });
+  const [w, h] = manifest.cell;
+  c.width = w;
+  c.height = h;
+  c.getContext("2d").drawImage(canvas, 0, 0, w, h, 0, 0, w, h);
+  return c;
+}
 
 function pickers() {
-  for (const f of faces.splice(0)) f.destroy();
   for (const [box, items, key] of [[$("looks"), look.styles, "rookie"], [$("themes"), look.themes, "theme"]]) {
     box.replaceChildren();
     for (const k of items) {
@@ -56,7 +66,7 @@ function pickers() {
       b.append(face, name);
       const skin = key === "rookie" ? k : (look.rookie === "none" ? "pixel" : look.rookie);
       const theme = key === "theme" ? k : look.theme;
-      if (skin !== "none" && window.Rookie && Rookie.SKINS.includes(skin)) faces.push(Rookie.mount(face, { scale: 2, skin, theme }));
+      face.append(thumb(skin, theme));
       b.onclick = () => change({ [key]: k });
       box.append(b);
     }

@@ -114,6 +114,7 @@ async function open(pid) {
   const n = ++opening;
   document.body.classList.remove("nav-open");
   closePage();
+  $("#work").hidden = true;                 // a hub page replaces a work view
   if (!pid) return message("No pages yet.");
   const r = await api("/web/api/open", { page: pid });
   if (n !== opening) return;      // another page was asked for meanwhile
@@ -276,71 +277,345 @@ function addRow(node) {
   log.scrollTop = log.scrollHeight;
 }
 
-function bubble(cls, text) {
-  const div = el("div", { className: "said " + cls });
-  if (cls === "them") {
-    div.append(...rich(text));
-    const row = el("div", { className: "row them" });
-    row.append(el("div", { className: "gutter" }), div);
-    addRow(row);
-    rookieBeside(row);
-  } else {
-    div.textContent = text;
-    addRow(div);
+function agentName() {
+  return dock.agent === "house" ? rookie.look.name : dock.agent;
+}
+
+function msg(cls, who) {
+  const row = el("div", { className: "msg " + cls });
+  const label = el("div", { className: "who" });
+  label.append(el("b", {}, who));
+  row.append(label);
+  return row;
+}
+
+// A message. The agent's may carry choices (buttons under it) and work-pane
+// directives (chat-widgets.js): [[open: ...]] and [[point: ...]] run when the
+// message arrives live; on a reload the last [[open: ...]] is shown again.
+function bubble(cls, text, live) {
+  if (cls === "me") retire();                 // the person answered: older choices are spent
+  if (cls === "aside" || cls === "bad") {
+    addRow(el("div", { className: "msg " + cls }, text));
+    return;
   }
+  const row = msg(cls, cls === "them" ? agentName() : "You");
+  const parts = cls === "them" && window.ChatWidgets ? ChatWidgets.parse(text) : [{ kind: "text", text }];
+  const later = [];
+  for (const part of parts) {
+    if (part.kind === "text") {
+      const box = el("div", { className: "text" });
+      if (cls === "them") box.append(...rich(part.text)); else box.textContent = part.text;
+      row.append(box);
+    } else if (part.kind === "choices") {
+      row.append(choices(part));
+    } else if (part.kind === "open") {
+      work.last = part;
+      if (live) later.push(() => openView(part.view, part.arg, part.args));
+    } else if (part.kind === "point" && live) {
+      later.push(() => setTimeout(() => point(part.target), 700));
+    }
+  }
+  if (row.children.length > 1) addRow(row);
+  for (const fn of later) fn();
+}
+
+function retire() {
+  for (const w of document.querySelectorAll("#dock-log .widget:not(.done)")) {
+    w.classList.add("done");
+    for (const c of w.querySelectorAll("button, input")) c.disabled = true;
+  }
+}
+
+function choices(part) {
+  const box = el("div", { className: "widget choices" });
+  for (const item of part.items) {
+    const b = el("button", { type: "button" }, item);
+    b.onclick = () => {
+      b.classList.add("picked");
+      say(item, false);
+    };
+    box.append(b);
+  }
+  return box;
+}
+
+// -- the work pane: the real thing being set up, driven by the agent ------------------
+// Built-in views the shell draws itself, so the agent can pre-fill a field,
+// focus it and have Rookie point at it (data-target ids); a hub page opens as
+// usual ("page hub/workers"). Bake, Nov 9: "I want it to guide the setup entirely".
+
+const work = { last: null, view: null };
+
+function workView(name, title, note) {
+  closePage();
+  const pane = $("#work");
+  pane.replaceChildren();
+  pane.hidden = false;
+  pane.dataset.view = work.view = name;
+  $("#title").textContent = title;
+  const head = el("header");
+  head.append(el("h2", {}, title));
+  if (note) head.append(el("p", { className: "muted" }, note));
+  pane.append(head);
+  return pane;
+}
+
+function field(form, label, attrs) {
+  const id = "w-" + attrs.dataset.target.replace(/\W/g, "-");
+  const input = el("input", { id, ...attrs.input });
+  input.dataset.target = attrs.dataset.target;
+  form.append(el("label", { htmlFor: id }, label), input);
+  return input;
+}
+
+function openView(view, arg, args) {
+  args = args || {};
+  if (view === "page") {
+    $("#work").hidden = true;
+    location.hash = "#/" + arg;
+    return;
+  }
+  const make = VIEWS[view];
+  if (!make) return bubble("bad", `There's no ${view} view here yet.`);
+  make(args);
+}
+
+const VIEWS = {
+  async vault(args) {
+    const pane = workView("vault", "Vault", "Secrets the hub keeps sealed. Rookie uses them by name; their values are never shown.");
+    const list = el("ul", { className: "secrets" });
+    list.dataset.target = "vault.list";
+    const form = el("form", { className: "work-form tick" });
+    form.append(el("h3", {}, "New secret"));
+    const key = field(form, "Key", { dataset: { target: "vault.key" }, input: { type: "text", value: args.new || args.key || "", autocomplete: "off", required: true } });
+    const value = field(form, "Value", { dataset: { target: "vault.value" }, input: { type: "password", autocomplete: "new-password", required: true } });
+    const what = field(form, "What it's for", { dataset: { target: "vault.description" }, input: { type: "text", value: args.description || args.for || "" } });
+    const save = el("button", { type: "submit" }, "Save");
+    save.dataset.target = "vault.save";
+    const out = el("div", { className: "out" });
+    form.append(save, out);
+    pane.append(form, el("h3", {}, "In the vault"), list);
+    const load = async () => {
+      const r = await api("/web/api/secrets");
+      list.replaceChildren(...(r.secrets || []).map((x) => {
+        const li = el("li");
+        li.append(el("code", {}, x.name), el("span", { className: "muted" }, x.description || ""));
+        return li;
+      }));
+      if (!(r.secrets || []).length) list.append(el("li", { className: "muted" }, r.ok ? "Nothing yet." : r.error || ""));
+    };
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const r = await api("/web/api/secret", { name: key.value.trim(), value: value.value, description: what.value.trim() });
+      if (!r.ok) {
+        out.textContent = r.error || "That didn't save.";
+        return;
+      }
+      value.value = "";
+      out.textContent = `Saved as ${r.name}.`;
+      load();
+      // Never the braces here: a vault reference in chat text would be filled in.
+      say(`Secret ${r.name} saved in the vault. The person typed it in the Vault pane; use it as a vault ` +
+        `reference (secret:${r.name} in double braces).`, true);
+    };
+    load();
+    (args.new || args.key ? value : key).focus();
+    if (args.new || args.key) setTimeout(() => point("vault.value"), 500);
+  },
+
+  account(args) {
+    const pane = workView("account", "Your account", "Your name, and a password for signing in once setup is done.");
+    const form = el("form", { className: "work-form tick" });
+    const name = field(form, "What should Rookie call you?", { dataset: { target: "account.name" }, input: { type: "text", value: args.name || "", autocomplete: "name" } });
+    const pw = field(form, "Password", { dataset: { target: "account.password" }, input: { type: "password", autocomplete: "new-password" } });
+    const again = field(form, "Password again", { dataset: { target: "account.again" }, input: { type: "password", autocomplete: "new-password" } });
+    const save = el("button", { type: "submit" }, "Save");
+    save.dataset.target = "account.save";
+    const out = el("div", { className: "out" });
+    form.append(save, out);
+    pane.append(form);
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      if (pw.value !== again.value) {
+        out.textContent = "The passwords don't match.";
+        return;
+      }
+      const setPw = !!pw.value;
+      if (setPw) {
+        const r = await api("/web/api/password", { password: pw.value });
+        if (!r.ok) {
+          out.textContent = r.error || "That didn't save.";
+          return;
+        }
+      }
+      pw.value = again.value = "";
+      out.textContent = "Saved.";
+      const who = name.value.trim();
+      say(`Account saved. In the Account pane the person ${who ? `asked to be called "${who}"` : "gave no name"}` +
+        `${setPw ? " and set a password" : " and set no password"}. Go on.`, true);
+    };
+    (name.value ? pw : name).focus();
+    setTimeout(() => point(name.value ? "account.password" : "account.name"), 500);
+  },
+
+  network(args) {
+    const pane = workView("network", "Reaching this site", "Where you'll open this site from.");
+    const here = location.origin;
+    const rows = [
+      ["network.local", "Just this computer", `Only a browser on this machine opens it: ${args.local || here}`],
+      ["network.home", "Other devices at home", `Phones and laptops on your home network open it at ${args.home || "this machine's address (Rookie finds it)"}. This machine's firewall has to let them in.`],
+      ["network.anywhere", "From anywhere", args.anywhere || "Away from home too: through a tunnel, a VPN like Tailscale, or a port forward on your router."],
+    ];
+    for (const [target, title, text] of rows) {
+      const card = el("div", { className: "card tick" });
+      card.dataset.target = target;
+      card.append(el("h3", {}, title), el("p", {}, text));
+      pane.append(card);
+    }
+    if (args.status) {
+      const st = el("pre", { className: "status" }, args.status);
+      st.dataset.target = "network.status";
+      pane.append(st);
+    }
+    if (args.point) setTimeout(() => point(args.point), 500);
+  },
+};
+
+// Setup's work pane before Rookie opens anything: just the brand mark.
+function idleWork() {
+  const pane = workView("idle", "Setup", "");
+  pane.querySelector("header").remove();
+  const mark = el("div", { className: "idle" });
+  mark.innerHTML = '<svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h3v2h2V3h4v2h2V3h3v5l-2 2v7l2 2v2H5v-2l2-2v-7L5 8z"/></svg>';
+  pane.append(mark);
+}
+
+// Rookie walks over to a target in the work pane, points at it, and comes back
+// (Bake, Nov 9: "make sure rookie like animates to these locations. Like not
+// just like pop in at random places"): he lifts off from where he is, hops
+// along a curved path to the target, settles, and goes home the same way.
+function travel(x, y, done) {
+  const h = rookie.holder;
+  const from = h.getBoundingClientRect();
+  const ms = Math.round(Math.min(1600, Math.max(600, Math.hypot(x - from.left, y - from.top) * 1.4)));
+  if (!h.classList.contains("away")) {                  // lift off exactly where he stands
+    h.style.transition = "none";
+    Object.assign(h.style, { left: from.left + "px", top: from.top + "px" });
+    h.classList.add("away");
+    void h.offsetWidth;
+  }
+  rookie.travelling = true;
+  rookie.inst.set("happy");                              // hopping along
+  // x and y ease differently, so the path curves instead of cutting straight across
+  h.style.transition = `left ${ms}ms cubic-bezier(.45,0,.55,1), top ${ms}ms cubic-bezier(.2,.75,.3,1)`;
+  Object.assign(h.style, { left: x + "px", top: y + "px" });
+  clearTimeout(rookie.arrive);
+  rookie.arrive = setTimeout(() => {
+    rookie.travelling = false;
+    done();
+  }, ms + 30);
+}
+
+function point(target) {
+  const t = target === "page" ? current && current.frame : document.querySelector(`[data-target="${CSS.escape(target)}"]`);
+  if (!t) return;
+  t.scrollIntoView({ block: "center", behavior: "smooth" });
+  t.classList.add("pointed");
+  setTimeout(() => t.classList.remove("pointed"), 6000);
+  const h = rookie.holder;
+  if (!h || !rookie.inst || document.body.classList.contains("no-rookie")) return;
+  clearTimeout(rookie.back);
+  setTimeout(() => {                                      // after the scroll settles
+    const me = h.getBoundingClientRect(), r = t.getBoundingClientRect();
+    const x = r.right + 10 + me.width < innerWidth ? r.right + 10 : Math.max(8, r.left - me.width - 10);
+    const y = Math.max(8, r.top + r.height / 2 - me.height / 2);
+    travel(x, y, () => {
+      rookie.inst.set("talking");                        // there: this one
+      rookie.back = setTimeout(() => {
+        const home = $("#rookie-home").getBoundingClientRect();
+        travel(home.left, home.top, () => {
+          h.classList.remove("away");
+          h.removeAttribute("style");
+          rookie.driver.shown = null;
+          rookie.driver.show();
+        });
+      }, 4000);
+    });
+  }, 400);
 }
 
 function thinking(on) {
   let wait = $("#dock-wait");
   if (on && !wait) {
-    wait = el("div", { id: "dock-wait", className: "row them" });
-    wait.append(el("div", { className: "gutter" }), el("span", { className: "dots" }, "\u2026"));
+    wait = msg("them wait", agentName());
+    wait.id = "dock-wait";
+    wait.append(el("div", { className: "dots" }, "\u2026"));
     $("#dock-log").append(wait);
-    rookieBeside(wait);
   } else if (!on && wait) {
     wait.remove();
-    const rows = document.querySelectorAll("#dock-log .row.them");
-    if (rows.length) rookieBeside(rows[rows.length - 1]);
   }
   $("#dock-log").scrollTop = $("#dock-log").scrollHeight;
 }
 
 // -- Rookie: the house agent's avatar beside its messages --------------------------
 // rookie.js is a vendored drop-in (Rookie.mount, .set, .say, .setSkin, .setTheme,
-// .sound, .enter, Rookie.favicon, SKINS, THEMES); rookie-map.js turns what the
+// .sound, .enter, Rookie.bake, SKINS, THEMES); rookie-map.js turns what the
 // site sees into its states (docs/castling-first-run.md).
 
-const rookie = { inst: null, fav: null, driver: null, holder: null, picker: null,
+// Exactly one live Rookie on a page (Bake, Nov 9: "only one instance of it on
+// any page at a time"): the one in the chat's head. The tab icon copies his
+// frames; pickers draw static thumbnails (Rookie.bake), never a live one.
+const rookie = { inst: null, driver: null, holder: null, picker: null, travelling: false,
   look: { sound: false, rookie: "pixel", theme: "stone", name: "Rookie" } };
 
-// Both the one in the chat and the tab icon follow the driver.
 const rookieBoth = {
-  set(s) { if (rookie.inst) rookie.inst.set(s); if (rookie.fav) rookie.fav.set(s); },
-  say(text, o) { if (rookie.inst) rookie.inst.say(text, o); if (rookie.fav) rookie.fav.set("talking"); },
+  set(s) { if (rookie.inst && !rookie.travelling) rookie.inst.set(s); },
+  say(text, o) { if (rookie.inst && !rookie.travelling) rookie.inst.say(text, o); },
 };
 
+// The tab icon: the live Rookie's canvas, copied (no second instance).
 function rookieFavicon() {
-  if (rookie.fav || !window.Rookie || !Rookie.favicon) return;
-  const skin = Rookie.SKINS.includes(rookie.look.rookie) && rookie.look.rookie !== "none" ? rookie.look.rookie : "pixel";
-  rookie.fav = Rookie.favicon({ skin, theme: rookie.look.theme });
-  if (!rookie.driver) rookie.driver = new RookieMap.Driver(rookieBoth);
+  let link = document.querySelector('link[rel~="icon"]');
+  if (!link) {
+    link = el("link", { rel: "icon" });
+    document.head.append(link);
+  }
+  const out = el("canvas", { width: 32, height: 32 });
+  const ctx = out.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+  let last = "";
+  setInterval(() => {
+    const c = rookie.inst && rookie.inst.canvas;
+    if (!c || document.body.classList.contains("no-rookie")) return;
+    ctx.clearRect(0, 0, 32, 32);
+    ctx.drawImage(c, 0, 0, c.width, c.height, 0, 3, 32, 25);
+    const url = out.toDataURL("image/png");
+    if (url !== last) link.href = last = url;
+  }, 300);
+}
+
+// A still picture of Rookie in a style and theme, for pickers.
+function rookieThumb(skin, theme) {
+  const c = el("canvas", { className: "thumb" });
+  if (!window.Rookie || !Rookie.bake || skin === "none" || !Rookie.SKINS.includes(skin)) return c;
+  const { canvas, manifest } = Rookie.bake({ skin, theme, scale: 2, rows: ["happy"] });
+  const [w, h] = manifest.cell;
+  c.width = w;
+  c.height = h;
+  c.getContext("2d").drawImage(canvas, 0, 0, w, h, 0, 0, w, h);
+  return c;
 }
 
 function rookieInit() {
   if (rookie.inst || !window.Rookie) return;
   rookie.holder = el("div", { className: "rookie" });
+  $("#rookie-home").append(rookie.holder);
   rookie.inst = Rookie.mount(rookie.holder, { scale: 2, skin: rookie.look.rookie, theme: rookie.look.theme, state: "hidden" });
-  if (!rookie.driver) rookie.driver = new RookieMap.Driver(rookieBoth);
+  rookie.driver = new RookieMap.Driver(rookieBoth);
+  rookieFavicon();
   setInterval(() => rookie.driver.tick(), 1000);
   applyLook(rookie.look);
-}
-
-// Rookie's first appearance: the transporter, once.
-function rookieBeside(row) {
-  if (!rookie.holder) return;
-  const first = !rookie.holder.parentNode;
-  row.querySelector(".gutter").append(rookie.holder);
-  if (first && rookie.inst.enter) {
+  if (rookie.inst.enter) {            // his first appearance: the transporter, once
     rookie.inst.enter(rookie.driver.state());
     rookie.driver.shown = rookie.driver.state();
   }
@@ -349,6 +624,7 @@ function rookieBeside(row) {
 function lookName(name) {
   if (dock.agent !== "house") return;
   $("#dock-name").textContent = name;
+  for (const b of document.querySelectorAll("#dock-log .msg.them .who b")) b.textContent = name;
   document.title = name;
 }
 
@@ -361,19 +637,13 @@ function applyLook(look) {
   lookName(look.name);
   const skins = window.Rookie ? Rookie.SKINS : [];
   const shown = look.rookie !== "none" && skins.includes(look.rookie);
-  for (const b of [rookie.inst, rookie.fav]) {
-    if (!b) continue;
-    if (b === rookie.inst) {
-      b.sound = !!look.sound;
-      if (shown) b.setSkin(look.rookie);
-    } else {
-      b.setSkin(shown ? look.rookie : "pixel");
-    }
-    if (b.setTheme) b.setTheme(look.theme);
+  if (rookie.inst) {
+    rookie.inst.sound = !!look.sound;
+    if (shown) rookie.inst.setSkin(look.rookie);
+    if (rookie.inst.setTheme) rookie.inst.setTheme(look.theme);
   }
-  $("#dock-log").classList.toggle("no-rookie", look.rookie === "none");
+  document.body.classList.toggle("no-rookie", look.rookie === "none");
   if (rookie.picker && rookie.picker.step !== look.next) {
-    for (const i of rookie.picker.insts) i.destroy();
     rookie.picker.box.remove();
     rookie.picker = null;
   }
@@ -396,12 +666,11 @@ function lookPicker() {
   const step = look && look.next;
   if (rookie.picker || !step || !window.Rookie || !document.body.classList.contains("setup")) return;
   const box = el("div", { className: "picker" });
-  const insts = [];
   const option = (label, skin, theme, onclick) => {
     const b = el("button", { type: "button", title: label });
     const face = el("div", { className: "face" });
+    if (skin) face.append(rookieThumb(skin, theme));
     b.append(face, el("span", {}, label));
-    if (skin && skin !== "none" && Rookie.SKINS.includes(skin)) insts.push(Rookie.mount(face, { scale: 2, skin, theme, state: "happy" }));
     b.onclick = onclick;
     box.append(b);
   };
@@ -427,11 +696,11 @@ function lookPicker() {
     form.append(input, save, skip);
     box.append(form);
   }
-  rookie.picker = { box, insts, step };
+  rookie.picker = { box, step };
   addRow(box);
 }
 
-function show(ev) {
+function show(ev, live) {
   const d = ev.data || {};
   if (ev.type === "input" && typeof d.text === "string") {
     let text = d.text;
@@ -447,7 +716,7 @@ function show(ev) {
     bubble("me", text);
   } else if (ev.type === "turn" && d.role === "reply") {
     thinking(false);
-    bubble("them", d.text);
+    bubble("them", d.text, live);
     lookPicker();
   } else if (ev.type === "status" && d.state === "error") {
     thinking(false);
@@ -475,7 +744,7 @@ async function read(wait) {
   const r = await call("agent.chat.read", { agent: dock.agent, after: dock.next, limit: 500, wait },
     "Reading the conversation in the site's dock.");
   for (const ev of r.events) {
-    show(ev);
+    show(ev, wait > 0);
     if (wait && rookie.driver) rookie.driver.chat(ev);     // live only: history doesn't animate
   }
   if (wait && r.events.some((ev) => ev.type === "turn")) refresh();   // it may have made, archived or started a page
@@ -502,7 +771,6 @@ let skipped = false;
 function setupMode() {
   const on = !skipped && !!dock.agent && !!site.setup && !site.setup.done;
   document.body.classList.toggle("setup", on);
-  $("#dock-account").hidden = !on;
   $("#dock-close").textContent = on ? "Skip to the hub" : "\u00d7";
   return on;
 }
@@ -534,7 +802,7 @@ async function startDock(agent) {
   rookieInit();
   $("#dock").hidden = $("#dock-btn").hidden = false;
   let open = true;
-  try { open = localStorage.getItem("rook.dock") !== "0" && innerWidth > 720; } catch (x) { /* private mode */ }
+  try { open = localStorage.getItem("rook.dock") !== "0" && innerWidth > 760; } catch (x) { /* private mode */ }
   try {
     while ((await read(0)) >= 500) { /* catch up on a long conversation */ }
   } catch (x) {                     // not someone who may talk to it: no dock
@@ -544,13 +812,17 @@ async function startDock(agent) {
   if (setupMode()) {                // a new hub: the chat is the whole site until setup is done
     open = true;
     if (dock.shown === 0) {
+      idleWork();
       await say(SETUP_KICKOFF + "; setup isn't finished. Greet the person warmly and start " +
         "setting up with them: read the first-run skill (cap agent.skill on worker rook, args {name: \"first-run\"}) and follow it. " +
         "Open with the four look-and-feel questions, one per message, in order: sound, Rookie's style, " +
         "Rookie's theme, Rookie's name (the name becomes yours); hub.setup's look.next says which is next. " +
-        "The site shows the person a picker under your question; they may also type the answer (set it with page.look).", true);
+        "The site shows the person a picker under your question; they may also type the answer (set it with page.look). " +
+        "The left of the screen is your work pane: open what you set up there with [[open: ...]] (the skill says how).", true);
     } else {
       lookPicker();                 // a reload before they picked
+      if (work.last) openView(work.last.view, work.last.arg, work.last.args);    // what we were working on
+      else idleWork();
     }
   } else if (dock.shown === 0) {    // first run: the agent asks how the person wants to use the site
     open = true;
@@ -601,7 +873,6 @@ window.addEventListener("hashchange", () => open(wanted()));
     csrf = (await api("/web/api/me")).csrf;
     site = await call("page.site");
     if (site.look) rookie.look = site.look;
-    rookieFavicon();
     await loadNav();
     if (!(site.dock && site.setup && !site.setup.done)) open(wanted());
     if (site.dock) startDock(site.dock).catch((x) => bubble("bad", x.message));
