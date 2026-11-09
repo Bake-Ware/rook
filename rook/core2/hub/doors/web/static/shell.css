@@ -58,7 +58,6 @@ code, pre { font-family: var(--mono); }
 #account { padding-top: 12px; font: 10px var(--mono) !important; color: var(--dim) !important; }
 #signout { padding: 4px 8px 0; }
 .grow { flex: 1; }
-.offscreen { display: none !important; }
 
 /* -- one page, full width ------------------------------------------------------------- */
 main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -88,148 +87,12 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .muted { color: var(--dim); font-size: 12.5px; }
 .bad { color: var(--bad); }
 
-/* -- the chat: the right pane, Rookie at its head; pages and work views fill the left -- */
-#dock { width: 420px; flex: none; display: none; flex-direction: column; background: var(--panel);
-  border-left: 1px solid var(--line); position: relative; z-index: 2; }
-body.dock-open #dock { display: flex; }
-#dock-head { display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 16px; border-bottom: 1px solid var(--line);
-  font: 500 11px var(--mono); letter-spacing: 1.5px; text-transform: uppercase; color: var(--accent); }
-/* the chat's X, top right (Bake, Nov 9) */
-#dock-close { width: 34px; height: 34px; padding: 0; flex: none; display: grid; place-items: center; background: none;
-  border: 1px solid transparent; color: var(--dim); font: 300 24px/1 var(--sans); letter-spacing: 0; }
-#dock-close:hover { border-color: var(--line2); color: var(--accent); }
-#dock-skip { letter-spacing: .3px; text-transform: none; }
-#rookie-home { width: 64px; height: 50px; flex: none; }
-.rookie canvas { display: block; }
-/* travelling: the one Rookie leaves the chat and hops across the page (shell.js travel()) */
-.rookie.away { position: fixed; z-index: 60; pointer-events: none; filter: drop-shadow(0 6px 10px var(--shadow)); }
-/* the chat closed: he waits in the bottom-right corner; a click opens the chat */
-#rookie-park { position: fixed; right: 18px; bottom: 16px; width: 64px; height: 50px; pointer-events: none; visibility: hidden; }
-.rookie.parked { pointer-events: auto; cursor: pointer; }
-.rookie.parked:hover { filter: drop-shadow(0 0 6px var(--accent-dim)) drop-shadow(0 6px 10px var(--shadow)); }
-body.no-rookie .rookie.parked { display: none; }
-/* his speech bubble: a few words beside him, wherever he is */
-#rookie-say { position: fixed; z-index: 61; max-width: 240px; padding: 7px 11px; background: var(--panel);
-  border: 1px solid var(--accent-line); color: var(--fg); font: 500 12px/1.4 var(--sans); cursor: pointer;
-  box-shadow: 0 8px 24px var(--shadow); transition: opacity .5s ease; }
-#rookie-say:after { content: ''; position: absolute; top: calc(50% + 4px); right: -6px; width: 9px; height: 9px;
-  background: var(--panel); border: solid var(--accent-line); border-width: 1px 1px 0 0; transform: rotate(45deg); }
-#rookie-say.right:after { right: auto; left: -6px; border-width: 0 0 1px 1px; }
-#rookie-say.fade { opacity: 0; }
-#rookie-say:hover { border-color: var(--accent); }
-body.no-rookie #rookie-home { display: none; }
-#dock-log { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 14px 16px; display: flex;
-  flex-direction: column; gap: 12px; }
-.msg { display: flex; flex-direction: column; gap: 4px; max-width: 94%; align-self: flex-start; }
-.msg.me { align-self: flex-end; align-items: flex-end; }
-.msg .who { font: 500 10px var(--mono); letter-spacing: .5px; color: var(--dim); }
-.msg .who b { font-weight: 500; color: var(--accent); }
-.msg.me .who b { color: var(--fg-soft); }
-.msg .text { padding: 9px 12px; background: var(--panel2); border: 1px solid var(--line); font-size: 13.5px;
-  line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
-.msg.me .text { background: var(--accent-bg); border-color: var(--accent-line); }
-.msg .text a { color: var(--accent); }
-.msg .text code { font-size: 12.5px; color: var(--accent-hi); }
-.msg.aside { align-self: center; color: var(--dim); font: 10px var(--mono); letter-spacing: .3px; }
-.msg.bad { color: var(--bad); font-size: 13px; }
-.msg .dots { color: var(--dim); font: 14px var(--mono); padding: 0 4px; }
-#dock-form { display: flex; gap: 8px; align-items: flex-end; padding: 10px 12px; border-top: 1px solid var(--line); }
-#dock-form textarea { flex: 1; min-width: 0; resize: none; min-height: 42px; max-height: 160px; font-size: 13.5px; }
-#dock-form button { background: var(--accent-bg); border-color: var(--accent-line); color: var(--accent); padding: 10px 14px; }
-
-/* -- the work pane: what Rookie is setting up with you (vault, account, network) ---------- */
-#work { flex: 1; min-width: 0; overflow-y: auto; padding: 26px 32px 60px; display: flex; flex-direction: column; gap: 16px; }
-#work header h2 { margin: 0; font: 450 26px var(--sans); letter-spacing: -.5px; }
-#work header p { margin: 4px 0 0; }
-#work h3 { margin: 6px 0 0; font: 10px var(--mono); letter-spacing: 1.2px; text-transform: uppercase; color: var(--dim2); }
-.work-form { display: flex; flex-direction: column; gap: 7px; max-width: 520px; padding: 18px; background: var(--panel);
-  border: 1px solid var(--line); }
-.work-form label { font: 10px var(--mono); letter-spacing: .8px; text-transform: uppercase; color: var(--dim); margin-top: 4px; }
-.work-form button { align-self: flex-start; margin-top: 6px; background: var(--accent-bg); border-color: var(--accent-line); color: var(--accent); padding: 9px 16px; }
-.work-form .out { font: 11px var(--mono); color: var(--good); }
-.secrets { list-style: none; margin: 0; padding: 0; max-width: 720px; border: 1px solid var(--line); background: var(--panel); }
-.secrets li { display: flex; gap: 14px; align-items: baseline; padding: 8px 14px; border-top: 1px solid var(--line-soft); }
-.secrets li:first-child { border-top: 0; }
-.secrets code { color: var(--accent); font-size: 12px; }
-#work .card { max-width: 720px; padding: 14px 18px; background: var(--panel); border: 1px solid var(--line); }
-#work .card h3 { margin: 0 0 4px; color: var(--accent); }
-#work .card p { margin: 0; font-size: 13.5px; color: var(--fg-soft); }
-#work .status { max-width: 720px; margin: 0; padding: 12px 14px; background: var(--panel2); border: 1px solid var(--line); font-size: 12px; white-space: pre-wrap; }
-#work .idle { margin: auto; opacity: .25; }
-#work .idle .mark { width: 120px; height: 120px; fill: var(--accent); }
-/* what Rookie points at */
-.pointed { outline: 2px solid var(--accent); outline-offset: 4px; transition: outline-color .3s; }
-
-/* widgets inside a message (chat-widgets.js) */
-.widget.choices { display: flex; flex-wrap: wrap; gap: 6px; }
-.widget.choices button { background: var(--accent-bg); border-color: var(--accent-line); color: var(--accent); padding: 7px 12px; }
-.widget.choices button:hover { background: var(--accent-bg-strong); }
-.widget.choices button.picked { background: var(--accent); color: var(--on-accent); opacity: 1; }
-
-/* the look-and-feel pickers (sound, Rookie's style, theme, name) */
-.picker, .looks { display: flex; flex-wrap: wrap; gap: 6px; }
-.picker button, .looks button { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 5px;
-  background: var(--panel2); }
-.picker .face, .looks .face { min-width: 64px; min-height: 50px; }
-.thumb { display: block; }
-.login .looks button { background: var(--panel2); color: var(--fg); border-color: var(--line2); padding: 5px; }
-.looks button.on, .login .looks button.on { border-color: var(--accent); color: var(--accent); }
-.picker form.name { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
-.picker form.name input { flex: 1 1 160px; min-width: 0; }
-
-/* look and feel on the left (VIEWS.look): a stage the one live Rookie walks onto and is
-   shown big on (.staged, scaled from his corner), the four steps, the step's picker */
-:root { --stage-scale: 3; }
-.look-stage { position: relative; display: grid; place-items: center; min-height: 230px; max-width: 720px;
-  border: 1px solid var(--line); background: radial-gradient(ellipse at 50% 85%, var(--accent-bg) 0, transparent 60%), var(--overlay); }
-#look-spot { width: calc(64px * var(--stage-scale)); height: calc(50px * var(--stage-scale)); }
-.look-stage .floor { position: absolute; left: 50%; bottom: 26px; width: 240px; height: 26px; transform: translateX(-50%);
-  border: 1px dashed var(--line2); border-radius: 50%; opacity: .6; pointer-events: none; }
-.rookie.staged { transform: scale(var(--stage-scale)); transform-origin: 0 0; filter: none; }
-.rookie.staged canvas { image-rendering: pixelated; }
-body.no-rookie .rookie.staged { display: none; }
-.look-steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; max-width: 720px; }
-.look-steps button { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; border: 1px solid var(--line);
-  background: var(--panel2); color: var(--dim); font: 11px var(--mono); letter-spacing: .4px; text-transform: none; }
-.look-steps .n { color: var(--dim2); }
-.look-steps b { color: var(--fg-soft); font-weight: 500; }
-.look-steps li.on button { border-color: var(--accent); color: var(--accent); }
-.look-steps li.chosen:not(.on) button:hover { border-color: var(--accent-line); }
-.look-steps button:disabled { opacity: .5; cursor: default; }
-.look-pick { display: flex; flex-direction: column; gap: 10px; max-width: 720px; }
-.look-pick .looks { gap: 8px; }
-.look-pick .looks button { min-width: 96px; padding: 8px 10px; }
-.look-pick .looks button.picked { border-color: var(--accent); color: var(--accent); }
-.look-pick .glyph { display: grid; place-items: center; width: 64px; height: 50px; font-size: 26px; color: var(--accent); }
-.look-pick form.name { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
-.look-pick form.name input { flex: 1 1 200px; min-width: 0; font-size: 15px; padding: 9px 12px; }
-#work .card.done h3 { color: var(--good); }
-#work .card.done button { margin-top: 8px; }
-.work-form .signin { margin: 2px 0 0; font-size: 13px; color: var(--fg-soft); }
-.work-form .signin b { color: var(--accent); font-family: var(--mono); font-weight: 500; }
-.work-form .out.bad { color: var(--bad); }
-
-/* setup mode: until setup is completed the site is two panes - the work pane (left, what
-   Rookie is setting up) and the chat with Rookie (right) - and no page list */
-body.setup #nav { display: none; }
-body.setup #bar { display: none; }
-body.setup #dock { display: flex; width: min(460px, 42vw); }
-body.setup #dock-head { padding: 14px 18px; font-size: 12px; }
-body.setup .msg .text { font-size: 14px; }
-
 @media (max-width: 760px) {
   #menu { display: inline-block; }
   #nav { position: fixed; z-index: 30; inset: 0 auto 0 0; transform: translateX(-100%); transition: transform .15s; }
   body.nav-open #nav { transform: none; }
   #bar { padding: 10px 14px; }
   #note { position: fixed; inset: 52px 0 0 auto; width: min(340px, 100%); }
-  #dock { position: fixed; z-index: 35; inset: auto 0 0 0; width: 100%; height: 70vh; border-left: 0; border-top: 1px solid var(--line2); }
-  body.setup { flex-direction: column; }
-  body.setup main { flex: 1 1 45%; min-height: 0; }
-  body.setup #dock { position: static; width: 100%; height: auto; flex: 1 1 55%; min-height: 0; }
-  #work { padding: 16px; }
-  :root { --stage-scale: 2; }
-  .look-stage { min-height: 140px; }
 }
 
 /* -- a page in the sidebar and its ... menu (Archive, Make public) ------------------------ */
@@ -251,7 +114,7 @@ body.setup .msg .text { font-size: 14px; }
 .page-menu .public-link .muted { width: 100%; font-size: 11.5px; }
 .page-menu .public-link input { flex: 1 1 160px; min-width: 0; padding: 5px 7px; font: 11px var(--mono); }
 
-/* -- a public page (/public/<page>): just the page, no sidebar or chat ------------------------- */
+/* -- a public page (/public/<page>): just the page, no sidebar ----------------------------------- */
 body.public #bar .mark { width: 18px; height: 18px; fill: var(--accent); flex: none; }
 body.public #bar h1 { font-size: 18px; }
 
@@ -274,10 +137,8 @@ main { position: relative; z-index: 1; }
 .rook-art .plate-caption b { font-weight: 400; color: var(--accent); }
 .rook-sketch .art-line { stroke: var(--art-line); } .rook-sketch .art-ink { stroke: var(--art-ink); }
 .rook-sketch .art-hatch { stroke: var(--art-hatch); } .rook-sketch .art-fill { fill: var(--art-fill); }
-body.setup .rook-art { opacity: .3; }
 .art-toggle { color: var(--dim2); font: 9px var(--mono); letter-spacing: .25px; padding: 0 8px; }
 .art-toggle:hover { color: var(--accent); }
-#work .work-form, #work .card, #work .secrets, #work .status { background: var(--overlay); }
 @media (min-width: 1650px) { .rook-art { right: 1vw; opacity: .5; } }
 @media (max-width: 800px) { .rook-art { right: -120px; top: 190px; width: 560px; height: 700px; min-height: 0; opacity: .22; } }
-@media (prefers-reduced-motion: reduce) { .rook-art, #rookie-say { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .rook-art { transition: none; } }

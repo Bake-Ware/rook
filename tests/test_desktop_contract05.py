@@ -66,9 +66,8 @@ def test_caps_the_app_calls_exist():
 
 
 def test_dock_markup_for_ask_about_this_page():
-    shell = (ROOT / "rook/core2/hub/doors/web/static/shell.html").read_text(encoding="utf-8")
-    js = (ROOT / "rook/core2/hub/doors/web/static/shell.js").read_text(encoding="utf-8")
-    assert 'id="dock-btn"' in shell and 'id="dock-text"' in shell
+    js = (ROOT / "rook/plugins/agents/shell/dock.js").read_text(encoding="utf-8")
+    assert 'id="dock-btn"' in js and 'id="dock-text"' in js
     assert '"dock-open"' in js
     m = re.search(r'const OPEN_DOCK_JS_05: &str = "(.*?)";\n', LIB, re.S)
     assert m and "dock-btn" in m.group(1) and "dock-text" in m.group(1) and "dock-open" in m.group(1)

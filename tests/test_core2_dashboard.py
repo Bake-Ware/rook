@@ -246,7 +246,7 @@ def test_sign_in_and_the_session_cookie(site):
             # the shell calls page.* only
             status, out = await c.json("POST", "/web/api/call", {"cap": "hub.workers"})
             assert status == 403 and "page.*" in out["error"]
-            # no agents package: no dock, so no chat either
+            # no agents package: no shell part declares the agents' chat
             status, out = await c.json("POST", "/web/api/call", {"cap": "agent.chat.send",
                                                                  "args": {"agent": "house", "text": "hi"}})
             assert status == 403
@@ -359,7 +359,7 @@ def test_until_setup_is_completed_the_site_needs_no_sign_in(site):
             status, headers, _ = await c.req("GET", "/login")
             assert status == 303 and headers["Location"] == "/"
             status, headers, body = await c.req("GET", "/")
-            assert status == 200 and b"dock" in body and "HttpOnly" in headers["Set-Cookie"]
+            assert status == 200 and b"shell.js" in body and "HttpOnly" in headers["Set-Cookie"]
             c.cookie = headers["Set-Cookie"].split(";")[0]
             status, me = await c.json("GET", "/web/api/me")
             assert me["person"] == "person:bake"                      # the owner
@@ -392,8 +392,7 @@ def test_setup_state_and_hub_setup(site):
             assert (await c.call("page.site"))["result"]["setup"] == {"done": False}   # no install facts here
             call = {"worker": "rook", "cap": "hub.setup", "args": {}, "why": WHY}
             status, out = await c.json("POST", "/call", call, bearer=tokens["claude"])
-            look = out["result"].pop("look")
-            assert out["result"] == {"done": False, "install": {"machine": "box"}} and look["next"] == "sound"
+            assert out["result"] == {"done": False, "install": {"machine": "box"}}
             status, out = await c.json("POST", "/call", {**call, "args": {"done": True}}, bearer=tokens["claude"])
             assert out["ok"] and out["result"]["done"] is True and out["result"]["install"] == {"machine": "box"}
             assert (await c.call("page.site"))["result"]["setup"] == {"done": True}
@@ -781,9 +780,7 @@ def test_workers_journal_and_settings_pages(site):
             listed = (await c.page(t, "setting.list"))["result"]["settings"]
             assert {(s["plugin"], s["key"], s["value"], s["source"]) for s in listed} == {
                 ("board", "motto", "hello", "default"), ("board", "size", 3, "default"),
-                ("page", "dock", "house", "default"), ("hub", "security", "on", "config"),
-                ("page", "rookie", "pixel", "default"), ("page", "sound", False, "default"),
-                ("page", "rookie_theme", "stone", "default")}     # yours, per person
+                ("hub", "security", "on", "config")}
             # the security switch (castling-switchover-decisions, "Usable first, security later"): a dropdown, owners only
             sec = next(s for s in listed if (s["plugin"], s["key"]) == ("hub", "security"))
             assert sec["enum"] == ["off", "on"] and sec["default"] == "off"
@@ -892,7 +889,7 @@ def test_every_builtin_cap_is_known():
         declared |= set(load(folder).data["caps"])
     assert declared == {
         "page.list", "page.view", "page.get", "page.create", "page.update", "page.archive", "page.restore", "page.public",
-        "page.components", "page.site", "page.start", "page.look", "hub.status", "hub.workers", "hub.manifests", "hub.door", "hub.setup", "approval.list", "approval.decide", "approval.ask", "approval.get", "journal.search", "setting.list",
+        "page.components", "page.site", "page.start", "hub.status", "hub.workers", "hub.manifests", "hub.door", "hub.setup", "approval.list", "approval.decide", "approval.ask", "approval.get", "journal.search", "setting.list",
         "setting.set", "llm.providers", "llm.models", "llm.status", "token.create", "token.list", "token.revoke", "token.approve",
         "trust.map", "trust.sacred"}
 

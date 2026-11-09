@@ -13,7 +13,7 @@ the ones agents make.
 | `page.archive` / `page.restore` | Take a page off the site without losing it, or bring it back. |
 | `page.public` | Make a page readable by anyone at `/public/<page>` without signing in (a report, a reference), or private again with `public: false`. Its calls act as whoever made it public. |
 | `page.components` | The ready-made components a layout can use, with their props and caps. |
-| `page.site` | Your start page and the agent in the chat dock. |
+| `page.site` | Your start page, and whether first-run setup is done. |
 | `page.start` | Set the page the site opens on: yours, or (acting for nobody) the hub's. |
 
 A `layout` is a list of components (`[{component, props?, title?, wide?}]`).
@@ -24,8 +24,5 @@ every few seconds if you like), `hub/workers`, `approval/holds` and
 Every call a page makes runs as the person viewing it, and only for the
 caps the page declared. With the workbench, each page an agent makes is
 built under a task assigned to the person to review.
-
-Setting: `dock` (hub), the agent in the site's chat dock (default `house`;
-blank: no dock).
 
 How pages are built and the `window.rook` API: `docs/castling-dashboard.md`.

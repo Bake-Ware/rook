@@ -578,7 +578,7 @@ class _Checker:
         for section in ("skills", "docs"):
             for name, rel in (d.get(section) or {}).items():
                 self.file(rel, (section, name))
-        for section in ("pages", "components"):
+        for section in ("pages", "components", "shell"):
             for name, item in (d.get(section) or {}).items():
                 self.file(item["file"], (section, name, "file"))
                 if "props" in item:

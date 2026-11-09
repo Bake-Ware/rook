@@ -411,8 +411,8 @@ class Runtime:
         if not isinstance(state, dict) or state.get("done", True) or path is None:
             return ""
         _, body = _front(path.read_text(encoding="utf-8"))
-        look = state.get("look") or {}
-        nxt = f" The next look-and-feel question is: {look['next']}." if look.get("next") else ""
+        step = look_state(ctx)["next"]
+        nxt = f" The next look-and-feel question is: {step}." if step else ""
         return ("\n\n---\nSetup isn't finished: you are walking this person through first-run setup. "
                 f"Carry on from the first step not done yet.{nxt} The first-run skill, in full:\n\n" + body.strip())
 
@@ -461,8 +461,8 @@ class Runtime:
         """What an agent is called. The house agent's name is the house_name
         setting (first-run setup asks it: Bake, Nov 5 2026, "then rookie name.
         This will be the name of the home agent"); its identity stays."""
-        if a["name"] == (self.settings.get("house") or "house") and self.settings.get("house_name"):
-            return str(self.settings["house_name"])
+        if a["name"] == (self.settings.get("house") or "house"):
+            return str(self.settings.get("house_name") or HOUSE_NAME)
         return a.get("title") or a["name"]
 
     def system_prompt(self, a: dict) -> str:
@@ -935,3 +935,81 @@ async def skill(ctx, name):
         raise ctx.Error(f"no skill {name}")
     return {"name": name, "description": page.get("title", ""), "text": (page.get("body") or "").strip(),
             "page": page.get("slug") or page.get("id")}
+
+
+# -- the hub site: the chat dock and the look and feel (shell/) ------------------------
+
+LOOK_STEPS = ("sound", "rookie", "theme", "name")      # first-run asks these first, in this order
+HOUSE_NAME = "Rookie"
+ROOKIE_JS = PLUGIN_DIR / "shell" / "rookie.js"
+
+
+@lru_cache(maxsize=2)
+def _rookie_js(mtime: float) -> tuple:
+    text = ROOKIE_JS.read_text(encoding="utf-8")
+    styles = re.findall(r"\bSKINS\.([a-z][a-z0-9_]*)\s*=\s*\{", text)
+    block = re.search(r"\bTHEMES\s*=\s*\{(.*?)\n\s*\};", text, re.S)
+    themes = re.findall(r"^\s*([a-z][a-z0-9_]*)\s*:\s*\{", block[1], re.M) if block else []
+    return tuple(dict.fromkeys(styles + ["none"])), tuple(themes or ["stone"])
+
+
+def rookie_js() -> tuple[list, list]:
+    """(styles, themes) the vendored ``shell/rookie.js`` defines, read from
+    the file itself (``SKINS.<name>={``, the ``THEMES={...}`` keys) so a new
+    rookie.js drops in without a code change."""
+    try:
+        styles, themes = _rookie_js(ROOKIE_JS.stat().st_mtime)
+    except OSError:
+        return ["none"], ["stone"]
+    return list(styles), list(themes)
+
+
+def look_state(ctx) -> dict:
+    """A person's look and feel (castling-first-run; Bake, Nov 5 2026: "prompt
+    the user if they want sound first, then rookie style then rookie theme,
+    then rookie name. This will be the name of the home agent"): sound,
+    Rookie's style and theme (theirs), Rookie's name (the house agent's, the
+    hub's), which were answered (a blank setting: not yet), and the first
+    that wasn't (``next``)."""
+    s = ctx.settings
+    styles, themes = rookie_js()
+    chosen = {"sound": s["sound"] is not None, "rookie": s["rookie"] is not None,
+              "theme": s["rookie_theme"] is not None, "name": s["house_name"] is not None}
+    return {"sound": bool(s["sound"]),
+            "rookie": s["rookie"] if s["rookie"] in styles else "pixel",
+            "theme": s["rookie_theme"] if s["rookie_theme"] in themes else themes[0],
+            "name": s["house_name"] or HOUSE_NAME, "chosen": chosen,
+            "next": next((k for k in LOOK_STEPS if not chosen[k]), None),
+            "styles": styles, "themes": themes}
+
+
+async def backend_ready(ctx) -> bool:
+    """Whether a turn of the house agent can run now: a plugin providing
+    ``agent.backend`` on the hub or on a worker that is online. Right after
+    an install the worker takes a few seconds to join; the site waits for
+    this before starting setup."""
+    plugins = {c.partition(".")[0] for c in ctx.providers(BACKEND)}
+    try:
+        workers = (await ctx.call("hub.workers"))["workers"] if plugins else ()
+    except Exception:          # noqa: BLE001 - not theirs to see: not ready for them
+        return False
+    return any(w.get("online") and plugins & set(w.get("plugins") or ()) for w in workers)
+
+
+async def site(ctx):
+    """What the hub site's chat dock needs (shell/dock.js)."""
+    return {"dock": ctx.settings["dock"] or None, "ready": await backend_ready(ctx), "look": look_state(ctx)}
+
+
+async def look(ctx, sound=None, rookie=None, theme=None, name=None):
+    # Anyone sets anything here, a person or an agent alone; an unknown
+    # style or theme shows as the default (Bake, Nov 6: "Remove all
+    # restrictions and gates"; docs/castling-first-run.md "For the
+    # hardening pass"). Sound, style and theme are the person's own.
+    if ctx.person:
+        for key, value in (("sound", sound), ("rookie", rookie), ("rookie_theme", theme)):
+            if value is not None:
+                ctx.settings.set(key, bool(value) if key == "sound" else str(value).strip().lower())
+    if name is not None:
+        ctx.settings.set("house_name", " ".join(str(name).split()) or HOUSE_NAME)
+    return look_state(ctx)
