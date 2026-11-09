@@ -246,7 +246,10 @@ $("#signout").onclick = async () => {
 
 const SITE = "[site]";      // a line the site adds for the agent: where the person is
 const SETUP_KICKOFF = "First visit to a new hub";
-const dock = { agent: null, next: 0, shown: 0 };
+const dock = { agent: null, next: 0, shown: 0, replies: 0, kicking: false };
+// A turn that failed because no worker serves the agent's backend yet (the
+// worker joins a few seconds after an install): not a message; wait and retry.
+const NOT_READY = /no single worker serves|nothing provides agent\.backend/i;
 
 function dockOpen(open) {
   document.body.classList.toggle("dock-open", open);
@@ -715,11 +718,16 @@ function show(ev, live) {
     }
     bubble("me", text);
   } else if (ev.type === "turn" && d.role === "reply") {
+    dock.replies++;
     thinking(false);
     bubble("them", d.text, live);
     lookPicker();
   } else if (ev.type === "status" && d.state === "error") {
     thinking(false);
+    if (NOT_READY.test(d.error || "")) {
+      if (live && setupMode() && !dock.replies) kickoff();
+      return;
+    }
     bubble("bad", d.error || "Something went wrong.");
     lookPicker();
   }
@@ -796,6 +804,39 @@ async function activity() {
   }
 }
 
+// Until a worker serves the agent's backend, "Getting ready..." and wait.
+async function untilReady() {
+  if (site.ready) return;
+  let row = $("#dock-ready");
+  if (!row) {
+    row = el("div", { id: "dock-ready", className: "msg aside" }, "Getting ready\u2026");
+    addRow(row);
+  }
+  while (!site.ready) {
+    await sleep(2000);
+    try { site = await call("page.site"); } catch (x) { /* next time */ }
+  }
+  row.remove();
+}
+
+// The setup walk-through starts (or starts again, when the agent never got
+// to answer): once the backend is there.
+async function kickoff() {
+  if (dock.kicking) return;
+  dock.kicking = true;
+  try {
+    await untilReady();
+    await say(SETUP_KICKOFF + "; setup isn't finished. Greet the person warmly and start " +
+      "setting up with them: read the first-run skill (cap agent.skill on worker rook, args {name: \"first-run\"}) and follow it. " +
+      "Open with the four look-and-feel questions, one per message, in order: sound, Rookie's style, " +
+      "Rookie's theme, Rookie's name (the name becomes yours); hub.setup's look.next says which is next. " +
+      "The site shows the person a picker under your question; they may also type the answer (set it with page.look). " +
+      "The left of the screen is your work pane: open what you set up there with [[open: ...]] (the skill says how).", true);
+  } finally {
+    dock.kicking = false;
+  }
+}
+
 async function startDock(agent) {
   dock.agent = agent;
   $("#dock-name").textContent = agent === "house" ? rookie.look.name : agent;
@@ -811,14 +852,9 @@ async function startDock(agent) {
   }
   if (setupMode()) {                // a new hub: the chat is the whole site until setup is done
     open = true;
-    if (dock.shown === 0) {
+    if (!dock.replies) {           // a new hub, or the agent never got to answer
       idleWork();
-      await say(SETUP_KICKOFF + "; setup isn't finished. Greet the person warmly and start " +
-        "setting up with them: read the first-run skill (cap agent.skill on worker rook, args {name: \"first-run\"}) and follow it. " +
-        "Open with the four look-and-feel questions, one per message, in order: sound, Rookie's style, " +
-        "Rookie's theme, Rookie's name (the name becomes yours); hub.setup's look.next says which is next. " +
-        "The site shows the person a picker under your question; they may also type the answer (set it with page.look). " +
-        "The left of the screen is your work pane: open what you set up there with [[open: ...]] (the skill says how).", true);
+      await kickoff();
     } else {
       lookPicker();                 // a reload before they picked
       if (work.last) openView(work.last.view, work.last.arg, work.last.args);    // what we were working on

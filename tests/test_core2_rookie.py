@@ -105,7 +105,7 @@ def test_a_fresh_hub_asks_sound_style_theme_name_first_and_the_name_is_the_house
     assert "FIRST question" in first and "page.look" in first and "YOUR name" in first
     shell = (STATIC / "shell.js").read_text()
     kickoff = shell[shell.index("SETUP_KICKOFF + "):shell.index("true);", shell.index("SETUP_KICKOFF + "))]
-    assert "in order: sound, Rookie's style, \" +\n        \"Rookie's theme, Rookie's name" in kickoff
+    assert "in order: sound, Rookie's style, Rookie's theme, Rookie's name" in re.sub(r'"\s*\+\s*"', "", kickoff)
 
 
 def test_the_activity_feed_has_every_call_as_journaled(site):

@@ -275,6 +275,22 @@ def look_state(hub, settings, person: str | None) -> dict:
             "styles": styles, "themes": themes}
 
 
+def backend_ready(hub) -> bool:
+    """Whether a turn of the house agent can run now: some installed
+    provider of ``agent.backend`` and a worker (online) or the hub serving
+    it. Right after an install the worker takes a few seconds to join; the
+    site waits for this before starting setup."""
+    try:
+        cap = hub.contracts.choose("agent.backend")
+    except Exception:          # nothing provides it yet
+        return False
+    target = hub._target_for(cap)
+    if target is None:
+        return False
+    k = hub.known.get(target)
+    return target == hub.node or bool(k and k.online)
+
+
 def dock_agent(hub) -> str | None:
     """The agent in the site's chat dock: the ``page.dock`` setting, when
     the agents package is installed."""
@@ -513,7 +529,7 @@ class _Handlers:
         the dock (with the agents package)."""
         pages = self.hub.pages
         return {"person": ctx.caller.person, "start": pages.start(ctx.caller.person), "dock": dock_agent(self.hub),
-                "workbench": self._workbench(), "setup": setup_state(self.hub),
+                "workbench": self._workbench(), "setup": setup_state(self.hub), "ready": backend_ready(self.hub),
                 "look": look_state(self.hub, self.settings, ctx.caller.person or ctx.caller.agent)}
 
     async def pages_look(self, ctx, sound: bool | None = None, rookie: str | None = None,

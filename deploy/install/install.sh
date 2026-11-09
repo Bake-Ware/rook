@@ -330,15 +330,23 @@ if [ $BOOT = 1 ]; then
     systemctl --user enable "$NAME-relay" "$NAME-hub" "$NAME-worker" >>"$LOG" 2>&1 || true
     say "Rook starts when you log in."
 fi
-# The worker reaches the hub at its first keepalive (~20 s); the house agent needs it.
-online=0
-for _ in $(seq 45); do
-    if curl -s --max-time 5 -H "Authorization: Bearer $TOKEN" "$URL/workers" | "$PY" -c \
-        "import json,sys; sys.exit(0 if any(w.get('name')=='$WORKER_NAME' and w.get('online') for w in json.load(sys.stdin)['workers']) else 1)" 2>/dev/null
-    then online=1; break; fi
+# The worker reaches the hub at its first keepalive (~20 s), then announces
+# its plugins; the house agent needs it serving agent.backend. Wait for the
+# same "ready" the site waits on (page.site) before saying Done.
+ready=0
+for _ in $(seq 75); do
+    if curl -s --max-time 5 -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+        -d '{"worker": "rook", "cap": "page.site", "args": {}, "why": "The installer waits until the house agent can answer."}' \
+        "$URL/call" | "$PY" -c \
+        "import json,sys; sys.exit(0 if (json.load(sys.stdin).get('result') or {}).get('ready') else 1)" 2>/dev/null
+    then ready=1; break; fi
     sleep 2
 done
-[ $online = 1 ] && say "This machine is on the hub." || say "This machine hasn't reached the hub yet; it keeps trying (journalctl --user -u $NAME-worker)."
+if [ $ready = 1 ]; then
+    say "This machine is on the hub and your house agent is ready."
+else
+    say "This machine hasn't reached the hub yet; it keeps trying (journalctl --user -u $NAME-worker). The site waits for it."
+fi
 
 step "Done"
 open_site

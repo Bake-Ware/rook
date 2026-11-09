@@ -108,6 +108,7 @@ def test_every_install_combination(tmp_path, combo):
         c = Client(hub)
         await c.sign_in(tokens["bake"])
         s = (await c.call("page.site"))["result"]
+        assert s.pop("ready") is bool(agents)              # the fake brain serves agent.backend
         look = s.pop("look")
         assert look["next"] == "sound" and look["name"] == "Rookie"
         assert look["chosen"]["name"] is not agents         # no agents package: no house agent to name

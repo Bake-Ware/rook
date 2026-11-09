@@ -15,6 +15,7 @@ import pytest
 from rook.core2.hub.doors.web import caps as web_caps
 from rook.core2.hub.doors.web.site import SHELL_CSP
 from tests.test_core2_dashboard import Client, run, site  # noqa: F401 - the fixture
+from tests.test_core2_worksurface import serve as ws_serve
 
 STATIC = Path(web_caps.__file__).with_name("static")
 REPO = Path(__file__).resolve().parents[1]
@@ -137,3 +138,63 @@ def test_the_site_wears_the_04_brand():
         html = (STATIC / page).read_text()
         assert "fonts.googleapis.com/css2?family=DM+Sans" in html and 'class="mark"' in html
     assert '<section id="work"' in (STATIC / "shell.html").read_text()        # the work pane
+
+
+# -- right after an install: the worker isn't there yet ---------------------------------
+
+def test_page_site_says_when_the_house_agent_can_answer(site, tmp_path):
+    """No provider of agent.backend served yet (the worker joins a few seconds
+    after an install): ready is false and the site waits ("Getting ready...")."""
+    async def go():
+        hub, tokens = await site()
+        try:
+            c = Client(hub)
+            await c.sign_in(tokens["bake"])
+            assert (await c.call("page.site"))["result"]["ready"] is False
+        finally:
+            await hub.stop()
+    run(go())
+
+    async def agents(hub, tokens):                # the fake brain serves agent.backend on the hub
+        c = Client(hub)
+        await c.sign_in(tokens["bake"])
+        assert (await c.call("page.site"))["result"]["ready"] is True
+    ws_serve(tmp_path / "agents", agents, ("agents",))
+
+
+def test_every_turn_carries_the_setup_skill_until_setup_is_done(tmp_path):
+    async def go(hub, tokens):
+        c = Client(hub)
+        await c.sign_in(tokens["bake"])
+
+        async def ask(text):
+            out = await c.call("agent.chat.send", {"agent": "house", "text": text})
+            assert out["ok"], out
+            return out["result"]["text"]
+        assert await ask("are we in setup") == "setup brief: no"           # no setup.json: done
+        (hub.data / "setup.json").write_text(json.dumps({"done": False}))
+        assert await ask("are we in setup") == "setup brief: yes"
+        assert await ask("are we in setup") == "setup brief: yes"         # every turn, not just the first
+        (hub.data / "setup.json").write_text(json.dumps({"done": True}))
+        assert await ask("are we in setup") == "setup brief: no"
+    ws_serve(tmp_path, go, ("agents",))
+
+
+def test_the_site_waits_for_the_backend_and_never_shows_not_ready_as_a_message():
+    shell = (STATIC / "shell.js").read_text()
+    kick = shell[shell.index("async function kickoff()"):shell.index("async function startDock(")]
+    assert kick.index("await untilReady()") < kick.index("await say(SETUP_KICKOFF")
+    assert "Getting ready" in shell[shell.index("async function untilReady()"):]
+    nr = re.search(r"const NOT_READY = /(.+)/i;", shell)[1].replace("\\.", ".")
+    assert re.search(nr, "no single worker serves agents-opencode.turn", re.I)
+    err = shell[shell.index('ev.type === "status" && d.state === "error"'):]
+    err = err[:err.index('bubble("bad"')]
+    assert "NOT_READY.test" in err and "return;" in err and "kickoff()" in err
+    start = shell[shell.index("async function startDock("):]
+    assert "if (!dock.replies)" in start                 # the agent never got to answer: kick off again
+
+
+def test_the_installer_waits_for_the_house_agent_before_done():
+    sh = (REPO / "deploy/install/install.sh").read_text()
+    wait = sh[sh.index("ready=0"):sh.index('step "Done"')]
+    assert '"cap": "page.site"' in wait and "get('ready')" in wait

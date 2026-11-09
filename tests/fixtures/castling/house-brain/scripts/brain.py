@@ -1,6 +1,6 @@
 """The fake house agent: "make a page <name>", "archive <page>", "who are
-you" (its system prompt's first line), the site's first-visit note, else an
-echo."""
+you" (its system prompt's first line), "are we in setup" (whether the turn
+carried the first-run skill), the site's first-visit note, else an echo."""
 import json
 
 
@@ -8,7 +8,11 @@ async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, sys
                door=None):
     if system and "curate an agent's memory" in system:
         return {"text": json.dumps({"add": []}), "session": "dream"}
-    said = prompt.strip().splitlines()[-1].strip()
+    message, _, brief = prompt.partition("\n\n---\nSetup isn't finished")     # the setup brief comes after
+    said = message.strip().splitlines()[-1].strip()
+    if said == "are we in setup":
+        has = "The first-run skill, in full" in brief
+        return {"text": f"setup brief: {'yes' if has else 'no'}", "session": session or "s1"}
     if "First visit to the hub site" in prompt:
         return {"text": "Welcome! How do you want to use the site?", "session": "s1"}
     if said == "who are you":                 # the first line of its system prompt

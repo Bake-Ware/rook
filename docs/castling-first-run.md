@@ -69,6 +69,23 @@ other machines (what a worker is first), voice / phone / Telegram / Discord,
 backups, then a knowledge page "How this hub is set up and why", and
 `hub.setup {done: true}`.
 
+### Right after an install
+
+The worker joins a few seconds after the installer starts it, and until it
+serves `agent.backend` no turn can run. `page.site` says `ready` (some
+provider of `agent.backend` installed and its worker online); the site
+shows "Getting ready..." and starts the walk-through only when it is true.
+A turn that fails because nothing serves the backend yet is never shown as
+a message: the site waits and sends the kickoff again, and on a reload it
+starts again when the agent never got to answer. The installer waits for
+the same `ready` (through `page.site`) before it says Done.
+
+While setup isn't done, every turn of the house agent carries the first-run
+skill in its message (`setup_brief` in the agents runtime, from
+`hub.setup`): OpenCode keeps only a session's first instructions, and
+without this the agent drifted into a generic assistant after a failed
+start.
+
 ### What the agent can put in a message
 
 A line of its own in `[[...]]` (`static/chat-widgets.js`, node-tested):

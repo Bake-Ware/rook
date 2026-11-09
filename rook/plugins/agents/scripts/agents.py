@@ -376,7 +376,8 @@ class Runtime:
             try:
                 # another harness can't resume this one's session
                 same = meta.attrs.get("harness_backend") == a.get("backend")
-                res = await self.backend(ctx, a, f"Message from {ev.by}:\n\n{ev.body['text']}",
+                setup = await self.setup_brief(ctx, a)
+                res = await self.backend(ctx, a, f"Message from {ev.by}:\n\n{ev.body['text']}{setup}",
                                          system=system, session=meta.attrs.get("harness") if same else None,
                                          door=True, why=f"agent {name} answers {ev.by}")
             except asyncio.CancelledError:
@@ -394,6 +395,26 @@ class Runtime:
                                      **({"usage": res["usage"]} if res.get("usage") else {})})
         if not fut.done():
             fut.set_result({"text": res["text"], "seq": reply.seq})
+
+    async def setup_brief(self, ctx, a: dict) -> str:
+        """While first-run setup isn't done, every turn of the house agent
+        carries the first-run skill, so a turn never drifts into being a
+        generic assistant (a backend that keeps only its first message's
+        instructions, like OpenCode, forgets them otherwise)."""
+        if a["name"] != (self.settings.get("house") or "house"):
+            return ""
+        try:
+            state = await ctx.call("hub.setup")
+        except Exception:          # noqa: BLE001 - no hub.setup, or not this person's: no brief
+            return ""
+        path = self.catalog.skills.get("first-run")
+        if not isinstance(state, dict) or state.get("done", True) or path is None:
+            return ""
+        _, body = _front(path.read_text(encoding="utf-8"))
+        look = state.get("look") or {}
+        nxt = f" The next look-and-feel question is: {look['next']}." if look.get("next") else ""
+        return ("\n\n---\nSetup isn't finished: you are walking this person through first-run setup. "
+                f"Carry on from the first step not done yet.{nxt} The first-run skill, in full:\n\n" + body.strip())
 
     def fail(self, prod, fut, error: str) -> None:
         prod.append("status", {"state": "error", "error": error})
