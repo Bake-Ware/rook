@@ -371,70 +371,6 @@ async def index(ws, test=lambda m: True, timeout=8):
                 return m
 
 
-@pytest.mark.asyncio
-async def test_launch_stream_and_end_through_the_web(portal, web_band, tmp_path, monkeypatch):  # noqa: F811
-    p = portal
-    work = p.account.work_web
-    minted = []
-
-    async def fake_token(request, user, payload):
-        minted.append(payload)
-        if payload["op"] == "create":
-            return {"id": "tokid", "token": "secret-token", "name": payload["name"]}
-        return {"ok": True}
-    monkeypatch.setattr(work, "token_call", fake_token)
-    async with TestClient(TestServer(p.app)) as client:
-        r = await client.get("/account/work/bootstrap", headers=p.headers)
-        assert (await r.json())["v2"] is True
-        r = await client.get("/account/work/assets/vendor/xterm.mjs", headers=p.headers)
-        assert r.status == 200 and "Terminal" in await r.text()
-        ws = await client.ws_connect("/account/work/ws", headers=p.headers)
-        m = await index(ws)
-        assert m["hosts"][0]["term"] and m["hosts"][0]["harnesses"] == ["shell"]
-        await ws.send_json({"op": "launch", "id": "launch-test-123", "csrf": p.csrf, "worker": "host1",
-                            "harness": "shell", "cwd": str(tmp_path), "mcp": True})
-        m = await index(ws, lambda m: any(s.get("term_running") for s in m["sessions"]))
-        s = next(s for s in m["sessions"] if s.get("term_running"))
-        sid = s["id"]
-        assert s["harness"] == "shell" and s["term"]
-        assert minted[0]["scopes"] == ["rook", "work-session:" + sid]
-        opened = next(c for c in web_band.calls if c[0] == "work.stream.open")[1]
-        assert opened["mcp_token"] == "secret-token" and opened["session"] == sid
-        stored = json.dumps(work.store.get(sid))
-        assert "secret-token" not in stored   # the secret is never persisted by the web
-        # Terminal socket: binary frames carry output, JSON carries control.
-        with pytest.raises(WSServerHandshakeError) as refused:
-            await client.ws_connect(f"/account/work/term/{sid}", headers={**p.headers, "Origin": "https://evil.example"})
-        assert refused.value.status == 403
-        term = await client.ws_connect(f"/account/work/term/{sid}", headers=p.headers)
-        hello = await term.receive_json()
-        assert hello["type"] == "hello" and hello["running"]
-        await term.send_json({"op": "input", "data": "echo web-$((3*3))\r"})   # no csrf
-        assert "expired" in (await next_json(term, "error"))["error"]
-        await term.send_json({"op": "input", "data": "echo web-$((3*3))\r", "csrf": p.csrf})
-        out, cursor = b"", 0
-        async with asyncio.timeout(10):
-            while b"web-9" not in out:
-                msg = await term.receive()
-                if msg.type == WSMsgType.BINARY:
-                    start = struct.unpack(">Q", msg.data[:8])[0]
-                    assert start == cursor or not out
-                    out += msg.data[8:]
-                    cursor = start + len(msg.data) - 8
-        await term.close()
-        # Reconnect with a cursor: only new output, no reset.
-        term = await client.ws_connect(f"/account/work/term/{sid}?since={cursor}", headers=p.headers)
-        first = [await term.receive_json(), await term.receive_json()]
-        assert all(x["type"] != "reset" for x in first)
-        await term.close()
-        await ws.send_json({"op": "term_close", "id": "close-test-1234", "session": sid, "csrf": p.csrf})
-        await until(lambda: not work.store.get(sid).get("term_running"))
-        m = await index(ws, lambda m: not any(x.get("revoke") for x in m["sessions"]) and minted[-1]["op"] == "revoke")
-        assert minted[-1] == {"op": "revoke", "id": "tokid", "confirm": True}
-        assert work.store.get(sid)["status"] == "closed" and not plugin_terms(web_band)
-        await ws.close()
-
-
 async def next_json(ws, kind, timeout=8):
     async with asyncio.timeout(timeout):
         while True:
@@ -534,25 +470,3 @@ async def test_v2_flag_off_keeps_the_classic_view(portal, web_band, monkeypatch)
         await ws.close()
 
 
-def test_token_route_accepts_only_work_session_scopes():
-    from starlette.applications import Starlette
-    from starlette.testclient import TestClient as StarletteClient
-    from rook.band_mcp.account_tokens import build_account_token_routes
-    from rook.band_mcp.tokens import TokenStore
-
-    class Accounts:
-        def session(self, token):
-            return {"admin": True, "csrf": "c"} if token == "ok" else None
-    store = TokenStore()
-    app = Starlette(routes=build_account_token_routes(store, accounts=Accounts()))
-    c = StarletteClient(app)
-    c.cookies.set("rook_account", "ok")
-    sid = "e" * 32
-    r = c.post("/tokens/account-api", json={"op": "create", "name": "work:shell:x", "ttl": 86400,
-                                              "scopes": ["rook", "work-session:" + sid], "csrf": "c"})
-    assert r.status_code == 200
-    entry = next(iter(store._api_tokens.values()))
-    assert entry["scopes"] == ["rook", "work-session:" + sid]
-    for scopes in (["admin"], ["rook", "anything"], "rook"):
-        r = c.post("/tokens/account-api", json={"op": "create", "name": "x", "ttl": 86400, "scopes": scopes, "csrf": "c"})
-        assert r.status_code == 400

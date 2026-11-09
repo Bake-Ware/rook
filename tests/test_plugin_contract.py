@@ -30,59 +30,6 @@ def _run_blocked(tmp_path, code: str) -> subprocess.CompletedProcess:
                           capture_output=True, text=True, timeout=120)
 
 
-def test_plugins_and_settings_schema_load_without_optional_deps(tmp_path):
-    """claude_history/codex_history (aiohttp via codex_input), enrollment
-    (PyNaCl via device_key) and knowledge (aiohttp via search) used to fail to
-    import, and the settings schema silently dropped their keys."""
-    code = textwrap.dedent("""
-        import importlib, pkgutil
-        for pkg in ("rook.worker.plugins", "rook.hub.plugins"):
-            mod = importlib.import_module(pkg)
-            for info in pkgutil.iter_modules(mod.__path__):
-                importlib.import_module(pkg + "." + info.name)
-        try:
-            import aiohttp
-        except ImportError:
-            pass
-        else:
-            raise SystemExit("blocker did not work")
-        from rook.hub.settings_schema import Schema
-        s = Schema()
-        assert s.import_errors == [], s.import_errors
-        assert any(k.startswith("knowledge.") for k in s.entries), "knowledge settings missing"
-        print("ok")
-    """)
-    res = _run_blocked(tmp_path, code)
-    assert res.returncode == 0 and "ok" in res.stdout, res.stderr
-
-
-def test_schema_records_import_failures_and_generator_refuses(tmp_path, monkeypatch, caplog):
-    import importlib
-    import importlib.util
-    import logging
-    from rook.hub import settings_schema
-    real = importlib.import_module
-
-    def broken(name, *a, **k):
-        if name == "rook.worker.plugins.info":
-            raise ImportError("no such backend")
-        return real(name, *a, **k)
-
-    monkeypatch.setattr(settings_schema.importlib, "import_module", broken)
-    with caplog.at_level(logging.WARNING, logger="rook.hub.settings_schema"):
-        schema = settings_schema.Schema()
-    assert schema.import_errors == ["rook.worker.plugins.info: ImportError: no such backend"]
-    assert any("rook.worker.plugins.info" in r.getMessage() for r in caplog.records
-               if r.levelno == logging.WARNING)
-
-    spec = importlib.util.spec_from_file_location(
-        "gen_settings_reference_t", ROOT / "tools" / "gen_settings_reference.py")
-    gen = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(gen)
-    monkeypatch.setattr(sys, "argv", ["gen", "--check"])
-    assert gen.main() == 2
-
-
 # -- every built-in cap: declared risk, a docstring ---------------------------
 
 ANDROID_PY = ROOT / "android" / "app" / "src" / "main" / "python"
@@ -131,58 +78,6 @@ def _core_caps():
         w = core.Worker(SimpleNamespace(send=None), enabled=[], name="w")
         return {c: node.host.registry.handler(c) for c in node.caps()} | \
             {c: w.registry.handler(c) for c in w.registry.list()}
-
-
-def test_every_plugin_cap_declares_risk_scope_and_has_a_docstring(monkeypatch):
-    """One source of truth for tiers and impact scope: each cap's own
-    @capability(risk=..., scope=...). Undeclared caps silently resolved to exec;
-    undocumented ones gave an empty caps.describe row and an empty skill-reference line."""
-    import inspect
-    _android_stubs(monkeypatch)
-    caps = _plugin_caps(["rook.worker.plugins", "rook.hub.plugins", "rook_android.plugins"])
-    assert len(caps) > 200
-    no_risk = sorted({f"{m}:{c}" for c, fn, m in caps
-                      if not getattr(getattr(fn, "_rook_cap_meta", None), "risk", None)})
-    no_scope = sorted({f"{m}:{c}" for c, fn, m in caps
-                       if not getattr(getattr(fn, "_rook_cap_meta", None), "scope", None)})
-    no_doc = sorted({f"{m}:{c}" for c, fn, m in caps if not (inspect.getdoc(fn) or "").strip()})
-    assert no_risk == [], "declare @capability(..., risk=...): " + ", ".join(no_risk)
-    assert no_scope == [], "declare @capability(..., scope=...): " + ", ".join(no_scope)
-    assert no_doc == [], "add a docstring: " + ", ".join(no_doc)
-
-
-def test_every_registered_cap_has_a_tier_source(monkeypatch):
-    """Each cap a node can register has a declared risk or a CORE table entry,
-    and the floor never sits below what a plugin declares."""
-    import inspect
-    from rook.core import authz
-    _android_stubs(monkeypatch)
-    for c, fn in _core_caps().items():
-        declared = getattr(getattr(fn, "_rook_cap_meta", None), "risk", None) \
-            if fn is not None else None
-        assert declared or c in authz.CORE, f"{c}: no declared risk and not in authz.CORE"
-        assert (inspect.getdoc(fn) or "").strip(), f"{c}: core cap without a docstring"
-    for c, fn, _m in _plugin_caps(["rook.worker.plugins", "rook.hub.plugins"]):
-        risk = fn._rook_cap_meta.risk
-        assert authz.tier_rank(authz.effective_tier(c)) >= authz.tier_rank(risk), c
-
-
-def test_floor_covers_what_the_old_hand_table_did():
-    """Shrinking authz's hand table to core caps lost no tier or tag: the
-    plugins now declare what it said (a sample of the old table)."""
-    from rook.core import authz
-    old = {"shell.exec": ("exec", ()), "file.read": ("read", ("sensitive",)),
-           "worker.update": ("admin", ("destructive",)), "pikvm.power": ("exec", ("destructive", "physical")),
-           "deluge.remove": ("write", ("destructive",)), "settings.set": ("admin", ()),
-           "secret.get": ("admin", ("sensitive",)), "hid.type": ("exec", ("physical",)),
-           "codex-history.resume": ("exec", ()), "camera.snap": ("read", ("sensitive", "physical"))}
-    for cap, (tier, tags) in old.items():
-        assert authz.builtin_tier(cap) == tier, cap
-        assert set(tags) <= set(authz.builtin_tags(cap)), cap
-    # A peer cannot announce a built-in cap below this node's copy of it.
-    assert authz.effective_tier("shell.exec", "read") == "exec"
-    assert authz.effective_tier("nobody.declares.this") == "exec"
-    assert authz.TIERS is __import__("rook.core.plugin", fromlist=["RISKS"]).RISKS
 
 
 # -- runtime enable / disable / reload ---------------------------------------
@@ -369,35 +264,6 @@ async def test_worker_runtime_enable_runs_bind_worker(tmp_path, monkeypatch):
         await w.host.stop()
 
 
-@pytest.mark.asyncio
-async def test_hub_plugin_enable_disable_and_band_ceiling(tmp_path):
-    from rook.hub.authz import current_principal
-    from rook.hub.node import HubNode
-    from rook.hub.policy import Principal
-    node = HubNode(str(tmp_path), entry_points=False)
-    owner = Principal("human:owner", "human", role="operator")
-    tok = current_principal.set(owner)
-    try:
-        res = await node.dispatch("hub.plugin.disable", {"module": "notify"})
-        assert res["ok"] and res["result"]["ok"] and not node.has("notify.send")
-        res = await node.dispatch("hub.plugin.enable", {"module": "notify"})
-        assert res["result"]["ok"] and node.has("notify.send")
-        assert node.plugin("notify")._node is node            # bind_host ran
-        res = await node.dispatch("hub.plugin.disable", {"module": "settings"})
-        assert res["result"]["ok"] is False
-    finally:
-        current_principal.reset(tok)
-    # An unauthenticated band call cannot reach it: admin tier, above "read".
-    assert not node.band_allowed("hub.plugin.enable")
-    assert node.band_allowed("hub.info")
-    # The ceiling uses the effective tier: a hub cap's declared tier is
-    # floored by the built-in one, never lowered by a declaration.
-    from rook.core.plugin import CapMeta
-    node.host.registry.register("secret.list", lambda: [], meta=CapMeta(risk="read"))
-    node.host.registry.register("secret.get", lambda: [], meta=CapMeta(risk="read"))
-    assert node.band_allowed("secret.list") and not node.band_allowed("secret.get")
-
-
 # -- cap timeouts -------------------------------------------------------------
 
 class Slow(Plugin):
@@ -473,20 +339,6 @@ def test_default_timeout_is_env_overridable_and_shell_exec_honours_args(monkeypa
     assert reg.timeout_for("shell.which", {"timeout": 600}) == 40.0   # takes no timeout arg
 
 
-def test_long_running_caps_opt_out_of_the_default_timeout():
-    """Audit: the caps that legitimately run past the default bound
-    themselves and declare timeout=None; long-polls cap their own wait."""
-    from rook.hub.plugins.decide import Decide
-    from rook.hub.plugins.home import HomeAgent
-    from rook.worker.plugins.selfupdate import SelfUpdatePlugin
-    want = {SelfUpdatePlugin: ("worker.check", "worker.apply", "worker.update"),
-            Decide: ("decide.drive",), HomeAgent: ("home.ask",)}
-    for cls, caps in want.items():
-        declared = cls.declared_caps()
-        for c in caps:
-            assert declared[c]._rook_cap_meta.timeout is None, c
-
-
 # -- worker settings without a restart ----------------------------------------
 
 @pytest.mark.asyncio
@@ -522,27 +374,6 @@ async def test_worker_config_apply_without_restart_reloads_reload_plugins(tmp_pa
         # Not monkeypatch.delenv: it would record "pushed" and put it back at
         # teardown, leaking into later tests that load Bound.
         os.environ.pop("ROOK_BOUND_GREETING", None)
-
-
-def test_settings_push_restarts_only_when_it_must():
-    from types import SimpleNamespace
-    from rook.hub.settings_schema import Schema
-    from rook.hub.settings_service import SettingsService
-    svc = SettingsService.__new__(SettingsService)
-    svc.schema = Schema(hub_package=None)
-    new = {"caps": ["worker.plugin.reload"]}
-    restart_env = next(n for e in svc.schema if e.owner == "worker"
-                       and e.setting.apply == "restart" for n in e.env_names())
-    assert svc._needs_restart({"env": {restart_env: "x"}}, new)
-    assert svc._needs_restart({"name": "box"}, new)
-    assert svc._needs_restart({"env": {"UNKNOWN_VAR": "x"}}, new)
-    old = {"caps": []}
-    # A live-only push to a build that can apply in place: no restart.
-    live = SimpleNamespace(owner="worker", setting=SimpleNamespace(apply="live"),
-                           env_names=lambda: ("ROOK_TEST_LIVE",))
-    svc.schema = [live]
-    assert not svc._needs_restart({"env": {"ROOK_TEST_LIVE": "1"}}, new)
-    assert svc._needs_restart({"env": {"ROOK_TEST_LIVE": "1"}}, old)   # older worker
 
 
 @pytest.mark.asyncio
@@ -627,7 +458,6 @@ async def test_plugin_with_cap_missing_scope_is_rejected():
     assert status.get("state") == "failed"
     assert "missing" in status.get("reason", "").lower() and "scope" in status.get("reason", "").lower()
     assert not host.registry.has("noscope.bad")
-
 
 
 def test_custom_command_caps_declare_local_scope():

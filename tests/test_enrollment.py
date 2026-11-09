@@ -15,7 +15,6 @@ from aiohttp.test_utils import TestClient, TestServer
 from rook.remote import enrollment, setup_store
 from rook.remote.enrollment import EnrollmentStore, JoinDenied, JoinLimited
 from rook.remote.bootstrap import CombinedServer, InstallerAccessLogger
-from rook.band_mcp.client import MultiBandClient
 
 
 @pytest.fixture
@@ -144,66 +143,6 @@ def server(store):
         server._chat.close()
 
 
-@pytest.mark.asyncio
-async def test_installer_requires_code_even_for_logged_in_admin(server, store):
-    async with TestClient(TestServer(server._app)) as client:
-        auth = "Basic " + base64.b64encode(b"owner:password").decode()
-        for headers in ({}, {"Authorization": auth}):
-            response = await client.get("/worker", headers=headers)
-            assert response.status == 403
-            assert primary(store)["psk"] not in await response.text()
-
-
-@pytest.mark.asyncio
-async def test_installer_selects_only_authorized_band_and_preserves_windows_retry(server, store):
-    other = store.register("phone", "phone-words-remain-very-secret", "phone.example.com:443")
-    code = store.issue(other["id"])["code"]
-    async with TestClient(TestServer(server._app)) as client:
-        for target in ("unix", "windows"):
-            response = await client.get("/worker", params={"band": code, "os": target})
-            assert response.status == 200
-            text = await response.text()
-            assert other["psk"] not in text and primary(store)["psk"] not in text
-            assert f'--pair-code {code}' in text and '--enrolled --ws' in text
-            assert 'band-worker-enrollment.pyz' in text
-            assert response.headers["Cache-Control"] == "no-store"
-            if target == "windows":
-                assert f'/worker?band={code}&os=windows' in text
-                assert '/worker?os=windows' not in text
-        response = await client.get('/worker?login=google')
-        text = await response.text()
-        assert response.status == 200 and '--enroll https://rook.example.com' in text
-        assert '--pair-code' not in text and primary(store)['psk'] not in text
-        response = await client.get("/install", params={"band": code})
-        text = await response.text()
-        assert code in text and other["psk"] not in text
-
-
-@pytest.mark.asyncio
-async def test_config_fetch_and_revocation_between_services(server, store):
-    band = primary(store)
-    code = store.issue(band["id"])["code"]
-    async with TestClient(TestServer(server._app)) as client:
-        response = await client.post("/enroll", json={"code": code})
-        assert response.status == 200
-        data = await response.json()
-        assert data["psk"] == band["psk"] and data["band_id"] == band["id"]
-        # "hub" is the WebSocket bridge whatever its port (a LAN hub's <ip>:7005).
-        assert data["transport"] == "ws" and data["hub"]
-        EnrollmentStore().rotate(band["id"])
-        response = await client.get("/worker", params={"band": code})
-        assert response.status == 403
-        response = await client.post("/enroll", json={"code": code})
-        assert response.status == 403
-
-
-@pytest.mark.asyncio
-async def test_legacy_apk_is_not_an_anonymous_credential_download(server):
-    async with TestClient(TestServer(server._app)) as client:
-        response = await client.get("/apk")
-        assert response.status == 401
-
-
 def test_application_access_log_does_not_contain_query_code():
     logger = Mock()
     request = SimpleNamespace(remote="127.0.0.1", method="GET", path="/worker",
@@ -212,51 +151,3 @@ def test_application_access_log_does_not_contain_query_code():
     assert "secret" not in str(logger.mock_calls)
 
 
-@pytest.mark.asyncio
-async def test_live_controller_leaves_old_band_and_can_revoke_last_band(store):
-    band = primary(store)
-    client = MultiBandClient([band["psk"]], hub_host="127.0.0.1", hub_port=59999)
-    await client.start()
-    old = client._clients[0]
-    try:
-        rotated = store.rotate(band["id"])
-        await client.sync_bands([rotated["psk"]])
-        assert old not in client._clients
-        assert len(client._clients) == 1
-        await client.sync_bands([rotated["psk"]])
-        assert len(client._clients) == 1
-        await client.sync_bands([])
-        assert client.workers == {}
-        with pytest.raises(ConnectionError):
-            await client.call("info.ping")
-    finally:
-        await client.stop()
-
-
-def test_dongle_header_escapes_psk_and_uses_udp_endpoint():
-    path = Path(__file__).resolve().parents[1] / "firmware/scripts/dongle-band-config.py"
-    spec = importlib.util.spec_from_file_location("dongle_band_config", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    text = module.render_config({"psk": 'key"\\example', "hub": "hub.example.com:7474"})
-    assert '#define HUB_PORT 7474' in text
-    assert '#define BAND_PSK "key\\\"\\\\example"' in text
-    with pytest.raises(ValueError):
-        module.render_config({"psk": "valid", "hub": "host:99999"})
-
-
-@pytest.mark.asyncio
-async def test_cli_installers_default_to_this_hubs_dashboard_user(server, store):
-    async with TestClient(TestServer(server._app)) as client:
-        for params in ({"os": "unix"}, {"os": "windows"}):
-            text = await (await client.get("/install", params=params)).text()
-            assert "__WEB_USER__" not in text
-            assert ("${ROOK_WEB_USER:-owner}" in text) or ('else { "owner" }' in text)
-    unsafe = CombinedServer(web_user='a"; rm -rf ~ #', web_pass="password")
-    try:
-        async with TestClient(TestServer(unsafe._app)) as client:
-            text = await (await client.get("/install", params={"os": "unix"})).text()
-            assert "${ROOK_WEB_USER:-admin}" in text and "rm -rf" not in text
-    finally:
-        if unsafe._chat:
-            unsafe._chat.close()

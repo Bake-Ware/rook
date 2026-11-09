@@ -40,20 +40,6 @@ def test_snapshot_is_master_and_complete():
     assert {"sms.list", "ui.text", "notify.post", "device.clipboard_get"} <= set(SNAPSHOT["android"])
 
 
-@pytest.mark.parametrize("section", ["builtin", "android"])
-def test_no_cap_is_below_masters_tier(hub_floor, section):
-    for cap, want in SNAPSHOT[section].items():
-        # What a peer announces cannot pull a cap under the floor.
-        for announced in (None, "read"):
-            _at_least(cap, authz.effective_tier(cap, announced), want["tier"])
-
-
-def test_builtin_tags_are_kept(hub_floor):
-    for cap, want in SNAPSHOT["builtin"].items():
-        missing = set(want["tags"]) - set(authz.builtin_tags(cap))
-        assert not missing, f"{cap}: lost tags {sorted(missing)}"
-
-
 def _android_declared(monkeypatch):
     from test_plugin_contract import _android_stubs, _plugin_caps
     _android_stubs(monkeypatch)

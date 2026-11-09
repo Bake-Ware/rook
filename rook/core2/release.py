@@ -79,8 +79,7 @@ def _pyproject(source: Path) -> dict:
 def layout(source: Path) -> list[tuple[str, str]]:
     """(source path, path in the release) pairs: ``rook`` itself plus the
     wheel's ``force-include`` entries that land inside it (the manifest
-    schema, the manual, the skill...), so a release holds what an installed
-    wheel does."""
+    schema), so a release holds what an installed wheel does."""
     extra = (((_pyproject(source).get("tool") or {}).get("hatch") or {}).get("build") or {})
     extra = ((extra.get("targets") or {}).get("wheel") or {}).get("force-include") or {}
     pairs = [(PACKAGE, PACKAGE)]

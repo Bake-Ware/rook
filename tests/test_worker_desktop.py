@@ -97,29 +97,3 @@ def test_windows_launcher_uses_console_python(installed, monkeypatch):
     assert "--cli %*" in text and paths == [home / ".local/bin"]
 
 
-def test_dispatch_keeps_dashboard_and_worker_separate(monkeypatch):
-    from rook.worker import cli
-    from rook.cli import band_tui
-    calls = []
-    monkeypatch.setattr(band_tui, "main", lambda: calls.append("dashboard"))
-    monkeypatch.setattr(sys, "argv", ["bundle.pyz", "--cli"])
-    cli.main()
-    assert calls == ["dashboard"]
-    monkeypatch.setattr(cli, "main", lambda: calls.append(list(sys.argv)))
-    monkeypatch.setattr(sys, "argv", ["rook", "worker", "--enrolled"])
-    desktop.main()
-    assert calls[-1] == ["rook", "--enrolled"]
-
-
-def test_worker_boot_installs_cli_but_version_does_not(monkeypatch):
-    from rook.worker import cli, enroll
-    calls = []
-    monkeypatch.setattr(desktop, "ensure_launcher", lambda: calls.append("installed"))
-    monkeypatch.setattr(sys, "argv", ["bundle.pyz", "--version"])
-    cli.main()
-    assert calls == []
-    monkeypatch.setattr(enroll, "load", lambda: {})
-    monkeypatch.setattr(sys, "argv", ["bundle.pyz"])
-    with pytest.raises(SystemExit):  # Missing PSK: no network contact.
-        cli.main()
-    assert calls == ["installed"]

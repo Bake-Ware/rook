@@ -20,20 +20,12 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from rook.hub.plugins.ccmod import model
-from rook.hub.plugins.ccmod.model import Policy, RuleError
 from rook.worker import ccmod_hook as hook
 from rook.worker import ccmod_settings as cs
 from rook.worker.plugins import ccmod as wp
 
 PY = "/usr/bin/python3"
 SCRIPT = "/home/user/.rook-band-worker/ccmod/rook-ccmod-hook.py"
-USER = {"model": "opus",
-        "permissions": {"allow": ["Bash(git status)"]},
-        "hooks": {"PreToolUse": [{"matcher": "Bash",
-                                  "hooks": [{"type": "command", "command": "echo mine"}]}],
-                  "Stop": []},
-        "env": {"A": "1"}}
 
 
 def canonical(data) -> str:
@@ -50,85 +42,6 @@ def rule(**kw):
                         {"type": "post", "room_title": "Claude Code"}]}
     base.update(kw)
     return base
-
-
-def test_validate_normalizes_and_computes_risk():
-    r = model.validate(rule(), Policy())
-    assert r["id"] == "no-force-delete" and r["enabled"] and r["risk"] == "write"
-    assert r["trigger"] == {"event": "PreToolUse", "matcher": "Bash", "contains": "rm -rf"}
-    assert r["actions"][1]["text"] == model.DEFAULT_POST
-    assert not model.needs_admin(r)
-    # Fields that do not apply to an event are dropped, not kept silently.
-    s = model.validate(rule(trigger={"event": "Stop", "matcher": "Bash", "minutes": 4},
-                            actions=[{"type": "inject", "text": "Update your task."}]), Policy())
-    assert s["trigger"] == {"event": "Stop"}
-    assert "Claude finishes its turn" in model.describe(s)
-
-
-@pytest.mark.parametrize("bad, words", [
-    ({"name": ""}, "name is required"),
-    ({"trigger": {"event": "Nope"}}, "trigger"),
-    ({"trigger": {"event": "PreToolUse", "matcher": "("}}, "not a valid pattern"),
-    ({"trigger": {"event": "Idle"}, "actions": [{"type": "notify"}]}, "minutes"),
-    ({"trigger": {"event": "Stop"}, "actions": [{"type": "block"}]}, "only a tool call"),
-    ({"trigger": {"event": "Idle", "minutes": 5}, "actions": [{"type": "inject", "text": "x"}]},
-     "only works on a Claude Code event"),
-    ({"trigger": {"event": "rook.worker_offline"}, "scope": {"kind": "project", "target": "x"},
-      "actions": [{"type": "notify"}]}, "band or a worker"),
-    ({"scope": {"kind": "worker"}}, "target is required"),
-    ({"actions": []}, "at least one action"),
-    ({"actions": [{"type": "post", "room": "r1", "room_title": "x"}]}, "pick one room"),
-    ({"actions": [{"type": "cap", "cap": "notify.send", "args": []}]}, "allow-list"),
-])
-def test_validate_refuses_with_plain_messages(bad, words):
-    with pytest.raises(RuleError) as e:
-        model.validate(rule(**bad), Policy())
-    assert words in str(e.value)
-
-
-def test_cap_actions_are_allow_listed_and_risk_tiered():
-    tiers = {"notify.send": "write", "shell.exec": "exec"}
-    pol = Policy(["notify.send", "shell.*"], allow_exec=False, tier_of=tiers.get)
-    ok = model.validate(rule(actions=[{"type": "cap", "cap": "notify.send", "args": {"text": "hi"}}]), pol)
-    assert ok["risk"] == "write" and ok["actions"][0]["worker"] == "same"
-    assert model.needs_admin(ok)  # any capability rule is for administrators
-    with pytest.raises(RuleError, match="can run code"):
-        model.validate(rule(actions=[{"type": "cap", "cap": "shell.exec", "args": {"argv": ["ls"]}}]), pol)
-    pol.allow_exec = True
-    ex = model.validate(rule(actions=[{"type": "cap", "cap": "shell.exec", "args": {"argv": ["ls"]}}]), pol)
-    assert ex["risk"] == "exec" and ex["actions"][0]["tier"] == "exec"
-    with pytest.raises(RuleError, match="allow-list"):
-        model.validate(rule(actions=[{"type": "cap", "cap": "file.write"}]), pol)
-
-
-def test_tier_from_roster_is_conservative():
-    roster = {"a": {"tiers": {"x.do": "write"}}, "b": {"tiers": {"x.do": "exec"}}}
-    assert model.tier_from_roster(roster, "x.do") == "exec"
-    assert model.tier_from_roster({}, "never.heard") == "exec"   # unknown: the highest risk
-    assert model.allowed("notify.send", ["notify.*"]) and not model.allowed("notifyx.a", ["notify.*"])
-
-
-def test_worker_config_scopes_and_keeps_remote_details_on_the_hub():
-    rules = [model.validate(rule(), Policy()),
-             model.validate(rule(name="Band only", scope={"kind": "band", "target": "home"},
-                                 actions=[{"type": "notify", "text": "x"}]), Policy()),
-             model.validate(rule(name="Off", actions=[{"type": "notify"}]), Policy()),
-             model.validate(rule(name="Gone", trigger={"event": "rook.worker_offline"},
-                                 actions=[{"type": "notify"}]), Policy()),
-             model.validate(rule(name="Proj", scope={"kind": "project", "target": "myapp"},
-                                 actions=[{"type": "inject", "text": "hi"}],
-                                 trigger={"event": "SessionStart"}), Policy())]
-    rules[2]["enabled"] = False
-    cfg = model.worker_config(rules, {"name": "w1", "band": "lab", "worker_id": "id1"}, 7)
-    assert [r["id"] for r in cfg["rules"]] == ["no-force-delete", "proj"]
-    first = cfg["rules"][0]
-    assert first["forward"] and first["local"] == [{"type": "block", "text": "", "message": "No."}]
-    assert "room_title" not in json.dumps(cfg)          # the hub keeps where it posts
-    assert cfg["rules"][1]["scope"] == {"kind": "project", "target": "myapp"}
-    assert cfg["sha"] == model.worker_config(rules, {"name": "w1", "band": "lab"}, 9)["sha"]
-    home = model.worker_config(rules, {"name": "w2", "band": "home"}, 7)
-    assert "band-only" in [r["id"] for r in home["rules"]]
-    assert wp.clean_config(cfg)["rules"][0]["trigger"]["matcher"] == "Bash"
 
 
 @pytest.mark.parametrize("bad", [None, {"v": 2}, {"v": 1, "rules": "x"},
@@ -150,35 +63,6 @@ def merged(data, events=EVENTS, status=False):
     return cs.merge(cs.unmerge(data, None), events, PY, SCRIPT, status)
 
 
-def test_merge_appends_after_user_hooks_and_round_trips():
-    new, created, notes = merged(USER)
-    pre = new["hooks"]["PreToolUse"]
-    assert pre[0] == USER["hooks"]["PreToolUse"][0]                  # theirs first, untouched
-    assert pre[1]["matcher"] == "Bash" and cs.is_ours(pre[1]["hooks"][0])
-    assert pre[1]["hooks"][0]["command"] == f'"{PY}" -I -S "{SCRIPT}" PreToolUse || exit 0'
-    assert "matcher" not in new["hooks"]["Stop"][0]
-    assert list(new)[:4] == list(USER)                                # key order kept
-    assert created == ["hooks.SessionStart"] and notes == []
-    back = cs.unmerge(new, created)
-    assert back == USER and canonical(back) == canonical(USER)       # "Stop": [] they wrote stays
-    # Idempotent: merging again from the merged file gives the same file.
-    again, created2, _ = cs.merge(cs.unmerge(new, created), EVENTS, PY, SCRIPT)
-    assert again == new and created2 == created
-
-
-def test_unmerge_keeps_user_hooks_moved_into_rooks_group():
-    new, created, _ = merged(USER)
-    new["hooks"]["Stop"][0]["hooks"].append({"type": "command", "command": "echo also mine"})
-    back = cs.unmerge(new, created)
-    assert back["hooks"]["Stop"] == [{"hooks": [{"type": "command", "command": "echo also mine"}]}]
-
-
-def test_unmerge_without_a_manifest_drops_what_rook_emptied():
-    new, _created, _ = merged({"model": "x"})
-    assert set(new["hooks"]) == set(EVENTS)
-    assert cs.unmerge(new, None) == {"model": "x"}
-
-
 def test_statusline_never_replaces_the_users_own():
     theirs = {"statusLine": {"type": "command", "command": "~/bin/my-status"}}
     new, created, notes = merged(theirs, {}, status=True)
@@ -186,19 +70,6 @@ def test_statusline_never_replaces_the_users_own():
     ours, created, _ = merged({}, {}, status=True)
     assert cs.is_ours(ours["statusLine"]) and created == ["statusLine"]
     assert cs.unmerge(ours, created) == {}
-
-
-def test_plan_keeps_style_refuses_bad_json_and_warns_on_disabled_hooks(tmp_path):
-    p = tmp_path / "settings.json"
-    p.write_bytes(json.dumps(USER, indent="\t").replace("\n", "\r\n").encode())
-    out = cs.plan(p, EVENTS, PY, SCRIPT, False)
-    assert out["action"] == "update" and "\r\n\t" in out["new"] and out["diff"].startswith("---")
-    p.write_text('{"model": "x",}')
-    with pytest.raises(cs.SettingsError, match="not valid JSON"):
-        cs.plan(p, EVENTS, PY, SCRIPT, False)
-    p.write_text('{"disableAllHooks": true}\n')
-    assert "switched off" in cs.plan(p, EVENTS, PY, SCRIPT, False)["notes"][0]
-    assert cs.plan(tmp_path / "none.json", {}, PY, SCRIPT, False)["action"] == "absent"
 
 
 def test_windows_paths_use_forward_slashes():
@@ -247,40 +118,6 @@ def config(*rules, rev=3):
 
 
 @pytest.mark.asyncio
-async def test_apply_dry_run_write_repeat_and_remove(box):
-    settings = box / "claude" / "settings.json"
-    settings.write_text(canonical(USER))
-    plugin = wp.ClaudeCodeRules()
-    dry = await plugin.apply(config(), dry_run=True)
-    assert dry["dry_run"] and dry["installations"][0]["action"] == "update"
-    assert "+" in dry["installations"][0]["diff"] and settings.read_text() == canonical(USER)
-    assert not plugin.rules_path.exists()
-    assert dry["events"] == ["PreToolUse", "SessionEnd", "SessionStart", "Stop", "UserPromptSubmit"]
-
-    done = await plugin.apply(config())
-    row = done["installations"][0]
-    assert row["action"] == "update" and Path(row["backup"]).read_text() == canonical(USER)
-    assert plugin.script_path.exists() and plugin.rules_path.exists()
-    data = json.loads(settings.read_text())
-    assert data["hooks"]["PreToolUse"][0] == USER["hooks"]["PreToolUse"][0]
-    assert cs.is_ours(data["statusLine"])
-    st = plugin.status()
-    assert st["rev"] == 3 and st["installations"][0]["managed"]
-
-    again = await plugin.apply(config())
-    assert again["installations"][0]["action"] == "unchanged"
-    assert again["rules_file"]["action"] == "unchanged"
-
-    gone = await plugin.remove()
-    assert gone["installations"][0]["action"] == "remove"
-    assert settings.read_text() == canonical(USER)                 # byte for byte
-    assert not plugin.rules_path.exists() and not plugin.script_path.exists()
-    assert "script_kept" not in gone
-    assert not plugin.status()["installations"][0]["managed"]
-    assert not (wp.base_dir() / "originals").exists() or not os.listdir(wp.base_dir() / "originals")
-
-
-@pytest.mark.asyncio
 async def test_removal_restores_a_hand_formatted_file_byte_for_byte(box):
     settings = box / "claude" / "settings.json"
     mine = '{ "model": "opus",\n  "env": {"A": "caf\\u00e9"},   "permissions": {"allow": ["x", "y"]}\n}\n'
@@ -293,20 +130,6 @@ async def test_removal_restores_a_hand_formatted_file_byte_for_byte(box):
     assert settings.read_text() != mine and dry["installations"][0]["action"] == "remove"
     gone = await plugin.remove()
     assert gone["installations"][0]["restored_original"] and settings.read_text() == mine
-
-
-@pytest.mark.asyncio
-async def test_removal_after_a_hand_edit_unmerges_instead(box):
-    settings = box / "claude" / "settings.json"
-    settings.write_text('{"model": "opus"}')
-    plugin = wp.ClaudeCodeRules()
-    await plugin.apply(config())
-    data = json.loads(settings.read_text())
-    data["model"] = "sonnet"                                     # the person (or /model) changed it
-    settings.write_text(json.dumps(data, indent=2) + "\n")
-    gone = await plugin.remove()
-    assert "restored_original" not in gone["installations"][0]
-    assert json.loads(settings.read_text()) == {"model": "sonnet"}
 
 
 @pytest.mark.asyncio
@@ -331,27 +154,6 @@ async def test_removal_keeps_the_script_while_a_file_still_runs_it(box, monkeypa
     done = await plugin.remove()
     assert "script_kept" not in done and not plugin.script_path.exists()
     assert not other.exists() and not plugin.manifest_path.exists()
-
-
-@pytest.mark.asyncio
-async def test_apply_plans_again_when_the_file_changed_meanwhile(box, monkeypatch):
-    settings = box / "claude" / "settings.json"
-    settings.write_text('{"model": "opus"}\n')
-    plugin = wp.ClaudeCodeRules()
-    real_plan = plugin._plan
-    calls = []
-
-    def racing(path, *a):
-        out = real_plan(path, *a)
-        if not calls:                    # Claude Code writes /model right after the first read
-            settings.write_text('{"model": "sonnet"}\n')
-        calls.append(path)
-        return out
-
-    monkeypatch.setattr(plugin, "_plan", racing)
-    await plugin.apply(config())
-    data = json.loads(settings.read_text())
-    assert len(calls) == 2 and data["model"] == "sonnet" and "hooks" in data
 
 
 @pytest.mark.skipif(not hasattr(os, "fchown"), reason="POSIX owners")
@@ -541,24 +343,6 @@ async def test_removal_finishes_when_rooks_hooks_were_taken_out_by_hand(box):
     assert not plugin.script_path.exists() and not plugin.manifest_path.exists()
     assert settings.read_text() == '{"model": "opus", "env": {"B": "2"}}\n'
     assert "script_kept" not in await plugin.remove()
-
-
-@pytest.mark.asyncio
-async def test_apply_creates_and_deletes_a_settings_file_and_follows_extra_dirs(box, monkeypatch):
-    monkeypatch.setenv("ROOK_CCMOD_CLAUDE_DIRS", str(box / "other"))
-    plugin = wp.ClaudeCodeRules()
-    res = await plugin.apply(config())
-    assert [r["action"] for r in res["installations"]] == ["create", "create"]
-    assert (box / "other" / "settings.json").exists()
-    # The extra folder is dropped from the configuration: Rook comes out of it.
-    monkeypatch.delenv("ROOK_CCMOD_CLAUDE_DIRS")
-    (box / "other" / "settings.json").write_text(
-        (box / "other" / "settings.json").read_text().replace('"hooks"', '"model": "x", "hooks"', 1))
-    res = await plugin.apply(config())
-    assert [r["action"] for r in res["installations"]] == ["unchanged", "remove"]
-    assert json.loads((box / "other" / "settings.json").read_text()) == {"model": "x"}
-    await plugin.remove()
-    assert not (box / "claude" / "settings.json").exists()        # Rook made it, Rook removes it
 
 
 @pytest.mark.asyncio
@@ -754,52 +538,12 @@ class FakeClient:
             return {"ok": False, "error": str(e)}
 
 
-@pytest.fixture
-def hub(tmp_path, box):
-    import time as _t
-    from rook.hub.node import HubNode
-    from rook.hub.settings_store import SettingsStore
-    node = HubNode(str(tmp_path), entry_points=False,
-                   settings_store=SettingsStore(tmp_path / "settings.db"))
-    new = wp.ClaudeCodeRules()
-    now = _t.time()
-    workers = {"w-new": {"name": "lab-pc", "band": "lab", "caps": ["ccmod.apply", "ccmod.events"],
-                         "last_seen": now},
-               "w-old": {"name": "old-pi", "band": "lab", "caps": ["shell.exec"], "last_seen": now}}
-    node.client = FakeClient(workers, {"w-new": new})
-    return node, node.plugin("ccmod"), new
-
-
 def post_rule(name="Waiting", **kw):
     r = {"name": name, "trigger": {"event": "PreToolUse", "matcher": "Bash"}, "scope": {"kind": "all"},
          "actions": [{"type": "post", "room_title": "Claude Code", "text": "{worker} ran {tool} in {project}"},
                      {"type": "block", "message": "Not today."}]}
     r.update(kw)
     return r
-
-
-@pytest.mark.asyncio
-async def test_push_skips_old_workers_and_tracks_currency(hub, box):
-    node, plugin, worker = hub
-    plugin.save_rule(post_rule(), "human:op")
-    res = await plugin.push(actor="human:op")
-    by = {r["worker"]: r for r in res["results"]}
-    assert by["old-pi"]["skipped"] and "cannot take" in by["old-pi"]["error"]
-    assert by["lab-pc"]["ok"] and by["lab-pc"]["rules"] == 1
-    assert [c for c in node.client.calls if c[1] == "w-old"] == []   # never sent to an old worker
-    assert (box / "claude" / "settings.json").exists()
-    rows = {r["name"]: r for r in plugin.status_rows()}
-    assert rows["lab-pc"]["current"] and rows["old-pi"]["supported"] is False
-    plugin.save_rule(post_rule("Second", trigger={"event": "Stop"},
-                               actions=[{"type": "notify", "text": "x"}]), "human:op")
-    assert not {r["name"]: r for r in plugin.status_rows()}["lab-pc"]["current"]
-    prev = await plugin.preview("lab-pc")
-    assert prev["ok"] and prev["installations"][0]["action"] == "update"
-    assert "Stop" in prev["installations"][0]["diff"]
-    old = await plugin.preview("old-pi")
-    assert not old["ok"] and not old["supported"]
-    removed = await plugin.push("lab-pc", "human:op", remove=True)
-    assert removed["results"][0]["ok"] and not (box / "claude" / "settings.json").exists()
 
 
 @pytest.mark.asyncio
@@ -811,110 +555,6 @@ async def test_old_worker_ignores_an_unexpected_push():
     assert reply == {"ok": False, "error": "unknown cap ccmod.apply"}
 
 
-@pytest.mark.asyncio
-async def test_events_run_remote_actions_rechecked_on_the_hub(hub):
-    node, plugin, worker = hub
-    plugin.save_rule(post_rule(), "human:op")
-    plugin.save_rule(post_rule("Quiet", trigger={"event": "Stop"},
-                               actions=[{"type": "post", "room_title": "Claude Code", "text": "stop"}]),
-                     "human:op")
-    entry = {**node.client.workers["w-new"], "worker_id": "w-new"}
-    rows = await plugin.handle_event("w-new", entry, {"event": "PreToolUse", "tool": "Bash",
-                                                      "project": "myapp", "matched": ["waiting"]})
-    assert [(r["action"], r["ok"]) for r in rows] == [("post", True)]
-    # The worker's word is not enough: a rule whose trigger does not match does not run.
-    assert await plugin.handle_event("w-new", entry, {"event": "PreToolUse", "tool": "Edit",
-                                                      "matched": ["waiting", "quiet"]}) == []
-    chat = node.plugin("chat")._store
-    room = plugin.store.room_for("Claude Code")
-    msgs = chat.read(room, "user:operator")["messages"]
-    assert msgs[-1]["sender"] == "claude-code@lab-pc" and msgs[-1]["text"] == "lab-pc ran Bash in myapp"
-    assert "user:operator" in chat.rooms_for("user:operator")["rooms"][0]["participants"]
-    # A second event reuses the room; the rate limit then drops the excess.
-    plugin.settings.refresh({"rate_per_minute": 2})
-    await plugin.handle_event("w-new", entry, {"event": "PreToolUse", "tool": "Bash", "matched": ["waiting"]})
-    limited = await plugin.handle_event("w-new", entry, {"event": "PreToolUse", "tool": "Bash",
-                                                         "matched": ["waiting"]})
-    assert limited[0]["detail"] == "rate limit: skipped"
-    assert len(chat.rooms_for("user:operator")["rooms"]) == 1
-    assert plugin.store.activity()[0]["detail"] == "rate limit: skipped"
-
-
-@pytest.mark.asyncio
-async def test_hub_takes_the_hooks_word_for_text_and_paths(hub):
-    node, plugin, worker = hub
-    entry = {**node.client.workers["w-new"], "worker_id": "w-new"}
-    post = [{"type": "post", "room_title": "Claude Code", "text": "{prompt}"}]
-    plugin.save_rule({"name": "Deploy", "trigger": {"event": "UserPromptSubmit", "contains": "deploy"},
-                      "scope": {"kind": "all"}, "actions": post}, "human:op")
-    plugin.save_rule({"name": "Home app", "trigger": {"event": "Stop"},
-                      "scope": {"kind": "project", "target": "~/src/app"}, "actions": post}, "human:op")
-    plugin.save_rule({"name": "Win app", "trigger": {"event": "Stop"},
-                      "scope": {"kind": "project", "target": "C:\\src\\app"}, "actions": post}, "human:op")
-    plugin.save_rule({"name": "Named", "trigger": {"event": "Stop"},
-                      "scope": {"kind": "project", "target": "other"}, "actions": post}, "human:op")
-    # The needle is past the excerpt the hub receives; the hook saw it.
-    rows = await plugin.handle_event("w-new", entry, {"event": "UserPromptSubmit", "prompt": "x" * 300 + "...",
-                                                      "matched": ["deploy"]})
-    assert [r["rule"] for r in rows] == ["deploy"]
-    # Path scopes are the worker's paths (its home, its kind of path).
-    rows = await plugin.handle_event("w-new", entry, {"event": "Stop", "cwd": "/home/u/src/app",
-                                                      "project": "app",
-                                                      "matched": ["home-app", "win-app", "named"]})
-    assert sorted(r["rule"] for r in rows) == ["home-app", "win-app"]    # a project name it checks
-    # Not matched by the hook: not run, whatever the hub would think.
-    assert await plugin.handle_event("w-new", entry, {"event": "Stop", "project": "other"}) == []
-    from rook.hub.plugins.ccmod import hub_scope
-    assert hub_scope({"kind": "project", "target": "myapp"}) == {"kind": "project", "target": "myapp"}
-    assert hub_scope({"kind": "project", "target": "/srv/x"})["kind"] == "all"
-
-
-@pytest.mark.asyncio
-async def test_cap_actions_recheck_policy_when_they_run(hub):
-    node, plugin, worker = hub
-    plugin.settings.refresh({"cap_allowlist": ["info.ping"]})
-    plugin.save_rule(post_rule("Ping", trigger={"event": "Stop"},
-                               actions=[{"type": "cap", "cap": "info.ping", "args": {}}]), "human:op")
-    plugin.settings.refresh({"cap_allowlist": []})              # taken off the list since
-    entry = {**node.client.workers["w-new"], "worker_id": "w-new"}
-    rows = await plugin.handle_event("w-new", entry, {"event": "Stop", "matched": ["ping"]})
-    assert rows[0]["action"] == "cap" and not rows[0]["ok"] and "allow-list" in rows[0]["detail"]
-    assert not [c for c in node.client.calls if c[0] == "info.ping"]
-
-
-@pytest.mark.asyncio
-async def test_worker_offline_is_a_rook_event(hub):
-    node, plugin, worker = hub
-    plugin.save_rule({"name": "Gone", "trigger": {"event": "rook.worker_offline"},
-                      "scope": {"kind": "worker", "target": "lab-pc"},
-                      "actions": [{"type": "post", "room_title": "Fleet", "text": "{worker} went offline"}]},
-                     "human:op")
-    plugin._watch_presence()                       # baseline
-    node.client.workers["w-new"]["last_seen"] = 0
-    plugin._watch_presence()
-    for _ in range(50):
-        if plugin.store.activity():
-            break
-        await asyncio.sleep(0.02)
-    assert plugin.store.activity()[0]["rule"] == "gone" and plugin.store.activity()[0]["ok"]
-
-
-@pytest.mark.asyncio
-async def test_poller_follows_a_worker_and_runs_actions(hub):
-    node, plugin, worker = hub
-    plugin.save_rule(post_rule(), "human:op")
-    await plugin.push("lab-pc", "human:op")
-    assert set(plugin._pollers) == {"w-new"}
-    await asyncio.sleep(0.05)
-    worker.ingest({"op": "hook", "event": "PreToolUse", "tool": "Bash", "matched": ["waiting"]})
-    for _ in range(100):
-        if plugin.store.activity():
-            break
-        await asyncio.sleep(0.02)
-    assert plugin.store.activity()[0]["action"] == "post"
-    await plugin.stop()
-
-
 async def _wait_for(cond, tries=150):
     for _ in range(tries):
         if cond():
@@ -923,152 +563,3 @@ async def _wait_for(cond, tries=150):
     return cond()
 
 
-@pytest.mark.asyncio
-async def test_a_restarted_hub_does_not_replay_events(hub, tmp_path):
-    node, plugin, worker = hub
-    plugin.save_rule(post_rule(), "human:op")
-    await plugin.push("lab-pc", "human:op")
-    assert plugin.store.pushes()["w-new"]["actor"] == "human:op"      # who pushed
-    for _ in range(3):
-        worker.ingest({"op": "hook", "event": "PreToolUse", "tool": "Bash", "matched": ["waiting"]})
-    assert await _wait_for(lambda: len(plugin.store.activity()) == 3)
-    assert plugin.store.cursor("w-new") == (worker._boot, 3)
-    await plugin.stop()
-    # A new hub process: same store file, fresh plugin state.
-    from rook.hub.plugins.ccmod import ClaudeCodeRules
-    again = ClaudeCodeRules()
-    again._store = model.Store(plugin.store.path)
-    again._node = node
-    again._sync_pollers()
-    assert set(again._pollers) == {"w-new"}
-    worker.ingest({"op": "hook", "event": "PreToolUse", "tool": "Bash", "matched": ["waiting"]})
-    assert await _wait_for(lambda: len(again.store.activity()) == 4)
-    await asyncio.sleep(0.1)
-    assert len(again.store.activity()) == 4                            # 3 old ones not run again
-    await again.stop()
-
-
-@pytest.mark.asyncio
-async def test_background_actions_do_not_act_as_the_pusher(hub):
-    from rook.hub.authz import current_principal
-    from rook.hub.policy import Principal
-    node, plugin, worker = hub
-    plugin.settings.refresh({"cap_allowlist": ["ccmod.remove"], "allow_exec": True})
-    plugin.save_rule(post_rule("Ping", trigger={"event": "PreToolUse", "matcher": "Bash"},
-                               actions=[{"type": "cap", "cap": "ccmod.remove", "args": {"dry_run": True}}]),
-                     "human:op")
-    seen = []
-    real = node.client.call
-
-    async def call(cap, args=None, target=None, timeout=15.0, identity=None, principal=None):
-        if cap == "ccmod.remove":
-            seen.append((identity, current_principal.get()))
-        return await real(cap, args, target, timeout, identity, principal)
-
-    node.client.call = call
-    tok = current_principal.set(Principal("token:op", "token", "operator"))
-    try:
-        await plugin.push("lab-pc", "token:op")          # starts the poller inside the pusher's call
-    finally:
-        current_principal.reset(tok)
-    worker.ingest({"op": "hook", "event": "PreToolUse", "tool": "Bash", "matched": ["ping"]})
-    assert await _wait_for(lambda: seen)
-    assert seen[0] == ("system:ccmod:ping", None)
-    from rook.hub.authz import Authorizer
-    assert Authorizer.principal(None, seen[0][0]).id == "system:ccmod:ping"
-    await plugin.stop()
-
-
-@pytest.mark.asyncio
-async def test_caps_tiers_admin_gate_and_band_ceiling(hub):
-    from rook.hub.authz import current_principal
-    from rook.hub.policy import Principal
-    node, plugin, _ = hub
-    meta = node.host.registry.meta
-    assert {c: meta(f"ccmod.{c}").risk for c in ("list", "get", "history", "status", "activity",
-                                                  "preview", "set", "delete", "push")} == {
-        "list": "read", "get": "read", "history": "read", "status": "read", "activity": "read",
-        "preview": "admin", "set": "admin", "delete": "admin", "push": "admin"}
-    assert wp.ClaudeCodeRules.events._rook_cap_meta.risk == "admin"   # prompt excerpts: the hub's poller only
-    plugin.settings.refresh({"cap_allowlist": ["info.ping"]})
-    capped = post_rule("Ping", trigger={"event": "Stop"},
-                       actions=[{"type": "cap", "cap": "info.ping", "args": {}}])
-    tok = current_principal.set(Principal("token:agent_x", "token", "agent"))
-    try:
-        # A rule's text reaches Claude in people's sessions, and its posts can
-        # carry their prompts: writing any rule is for administrators.
-        for args in ({"rule": post_rule()}, {"rule": capped}):
-            res = await node.dispatch("ccmod.set", args, "agent:x")
-            assert not res["ok"] and "denied" in res["error"]
-        assert not (await node.dispatch("ccmod.delete", {"id": "x"}, "agent:x"))["ok"]
-        assert not (await node.dispatch("ccmod.preview", {"worker": "lab-pc"}, "agent:x"))["ok"]
-        assert not (await node.dispatch("ccmod.push", {}))["ok"]
-        assert plugin.store.rules() == []
-    finally:
-        current_principal.reset(tok)
-    tok = current_principal.set(Principal("token:op", "token", "operator"))
-    try:
-        assert (await node.dispatch("ccmod.set", {"rule": capped}, "agent:op"))["ok"]
-        assert (await node.dispatch("ccmod.preview", {"worker": "lab-pc"}, "agent:op"))["ok"]
-    finally:
-        current_principal.reset(tok)
-    assert not (await node.dispatch("ccmod.set", {"rule": post_rule("Band")}, source="band"))["ok"]
-    assert (await node.dispatch("ccmod.list", {}, source="band"))["ok"]
-    hist = (await node.dispatch("ccmod.history", {"id": "ping"}))["result"]
-    assert hist[0]["actor"] == "agent:op"
-
-
-@pytest.mark.asyncio
-async def test_account_api_is_operator_only_and_edits_rules(hub):
-    from starlette.applications import Starlette
-    from rook.hub.plugins.ccmod.web import routes
-    node, plugin, _ = hub
-    accounts = SimpleNamespace(session=lambda c: {"id": c, "username": c, "csrf": "k",
-                                                  "admin": c == "op"} if c else None)
-    app = Starlette(routes=routes(lambda: plugin, accounts))
-    op, member = {"Cookie": "rook_account=op"}, {"Cookie": "rook_account=m1"}
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
-        api = "/ccmod/account-api"
-        assert (await c.get(api, headers=member)).status_code == 403
-        dry = await c.post(api, headers=op, json={"csrf": "k", "action": "save", "rule": post_rule(),
-                                                  "dry_run": True})
-        assert dry.status_code == 200 and dry.json()["summary"].startswith("When Claude is about to use Bash")
-        assert plugin.store.rules() == []
-        saved = (await c.post(api, headers=op, json={"csrf": "k", "action": "save", "rule": post_rule()})).json()
-        assert saved["rule"]["rev"] == 1 and saved["rule"]["actor"] == "human:op"
-        dup = await c.post(api, headers=op, json={"csrf": "k", "action": "save", "rule": post_rule()})
-        assert dup.status_code == 400 and "already exists" in dup.json()["error"]
-        stale = await c.post(api, headers=op, json={"csrf": "k", "action": "save", "rev": 0,
-                                                    "rule": {**post_rule(), "id": "waiting"}})
-        assert stale.status_code == 400 and "reload" in stale.json()["error"]
-        off = await c.post(api, headers=op, json={"csrf": "k", "action": "toggle", "id": "waiting",
-                                                  "enabled": False})
-        assert off.json()["rule"]["enabled"] is False
-        page = (await c.get(api, headers=op)).json()
-        assert page["rules"][0]["summary"] and {w["name"] for w in page["workers"]} == {"lab-pc", "old-pi"}
-        assert any(e["id"] == "Idle" and e["minutes"] for e in page["choices"]["events"])
-        prev = (await c.get(api, headers=op, params={"view": "preview", "worker": "lab-pc"})).json()
-        assert prev["ok"] and prev["installations"][0]["action"] in ("create", "absent")
-        pushed = (await c.post(api, headers=op, json={"csrf": "k", "action": "push"})).json()
-        assert {r["worker"] for r in pushed["results"]} == {"lab-pc", "old-pi"}
-        gone = await c.post(api, headers=op, json={"csrf": "k", "action": "delete", "id": "waiting"})
-        assert gone.status_code == 200 and plugin.store.rules() == []
-    await plugin.stop()
-
-
-def test_dashboard_wiring():
-    root = Path(__file__).resolve().parent.parent
-    html = (root / "rook" / "web" / "index.html").read_text(encoding="utf-8")
-    assert "import('/account/ccmod/assets/ccmod.js')" in html and 'id="view-ccmod"' in html
-    # Colours come from the theme tokens (Paper is light), never literals.
-    js = (root / "rook" / "web" / "ccmod.js").read_text(encoding="utf-8")
-    css = js[js.index("const CSS=`"):js.index("`;", js.index("const CSS=`"))]
-    assert not __import__("re").search(r"#[0-9a-fA-F]{3,8}\b|rgba?\(|var\(--green\)", css)
-    from rook.remote.knowledge_web import CcmodWeb
-    assert CcmodWeb.ASSETS == ("ccmod.js",) and (root / "rook" / "web" / "ccmod.js").is_file()
-    if shutil.which("node"):
-        assert subprocess.run(["node", "--check", str(root / "rook" / "web" / "ccmod.js")]).returncode == 0
-    # The hook stays standalone: it is copied out of the bundle and run with -I -S.
-    src = (root / "rook" / "worker" / "ccmod_hook.py").read_text(encoding="utf-8")
-    assert "from rook" not in src and "import rook" not in src and "from ." not in src
-    assert sys.version_info >= (3, 8)

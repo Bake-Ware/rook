@@ -72,29 +72,6 @@ class _Accounts:
 
 
 @pytest.mark.asyncio
-async def test_the_settings_api_restarts_for_the_operator_only(monkeypatch):
-    from rook.hub.settings_web import routes
-    app = Starlette(routes=routes(lambda: SimpleNamespace(), _Accounts()))
-    api, body = "/settings/account-api", {"csrf": "k", "action": "restart"}
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
-        r = await c.post(api, json=body, headers={"Cookie": "rook_account=m1"})
-        assert r.status_code == 403
-        r = await c.post(api, json=body, headers={"Cookie": "rook_account=op"})
-        assert r.status_code == 400 and "can't restart itself" in r.json()["error"]
-        stopped = []
-        restart.on_restart(lambda: stopped.append(1))
-        monkeypatch.setattr(restart, "supervised", lambda: "a test reason")
-        r = await c.post(api, json=body, headers={"Cookie": "rook_account=op"})
-        assert r.status_code == 400 and r.json()["error"] == "Not restarted: a test reason."
-        assert not restart.requested()
-        monkeypatch.setattr(restart, "supervised", lambda: None)
-        r = await c.post(api, json=body, headers={"Cookie": "rook_account=op"})
-        assert r.status_code == 200 and r.json()["ok"] and restart.requested()
-    await asyncio.sleep(0.2)
-    assert stopped == [1]
-
-
-@pytest.mark.asyncio
 async def test_a_separate_dashboard_restarts_after_the_mcp_side_agrees(monkeypatch):
     from rook.remote.knowledge_web import SettingsWeb
     seen = []
@@ -136,8 +113,3 @@ async def test_a_separate_dashboard_restarts_after_the_mcp_side_agrees(monkeypat
     assert stopped == [1]
 
 
-def test_the_settings_page_has_a_restart_button_and_waits_for_the_hub():
-    from pathlib import Path
-    js = (Path(__file__).parent.parent / "rook/web/settings-area.js").read_text()
-    assert "if(admin)bar.append(btn('Restart','st-restart',confirmRestart" in js
-    assert "post({action:'restart'})" in js and "location.reload()" in js

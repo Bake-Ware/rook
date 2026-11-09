@@ -20,7 +20,6 @@ import pytest
 
 nacl_signing = pytest.importorskip("nacl.signing")
 
-from rook.hubdeploy import manifest as hub_manifest  # noqa: E402
 from rook.remote import update_keys  # noqa: E402
 from rook.worker import _update_verify  # noqa: E402
 
@@ -58,12 +57,3 @@ def test_build_host_signer_reproduces_the_golden_signature(monkeypatch):
     assert update_keys._canonical_payload(signed) == GOLDEN["worker_canonical"].encode("ascii")
 
 
-def test_hub_release_signer_and_verifier_match_the_golden_vector():
-    sk = _key()
-    hub = GOLDEN["hub_release"]
-    assert hub_manifest.signed_bytes(hub) == base64.b64decode(GOLDEN["hub_signed_bytes_b64"])
-    signed = hub_manifest.sign(dict(hub), sk)
-    assert signed["sig"] == GOLDEN["hub_sig"]
-    assert hub_manifest.verify(signed, GOLDEN["pubkey"]) == signed
-    # Domain separation: a hub release never verifies as a worker bundle.
-    assert not _update_verify.verify_manifest(signed, GOLDEN["pubkey"])

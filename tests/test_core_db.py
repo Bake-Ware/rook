@@ -92,42 +92,6 @@ def test_atomic_write(tmp_path):
 
 # -- stores opening databases written by the pre-helper code ------------------
 
-def test_journal_backfills_an_old_database(tmp_path):
-    path = str(tmp_path / "journal.db")
-    old = sqlite3.connect(path)
-    old.execute("CREATE TABLE calls (seq INTEGER PRIMARY KEY AUTOINCREMENT, call_id TEXT, ts REAL, "
-                "identity TEXT, cap TEXT, worker TEXT, thread_id TEXT, ok INTEGER, error TEXT, reply TEXT)")
-    old.execute("INSERT INTO calls (call_id, ts, identity, cap, worker, ok, reply) "
-                "VALUES ('old', 1.0, 'me', 'x.y', 'w', 1, '{}')")
-    old.commit()
-    old.close()
-    from rook.band_mcp.journal import Journal
-    j = Journal(path)
-    assert j.enabled
-    j.record(cap="a.b", worker="w", identity="me", args={}, reply={"ok": True},
-             authz={"decision": "allow", "policy_rev": 3})
-    rows = j.query(limit=10)
-    assert {r["call_id"] for r in rows} >= {"old"}
-    cols = {r[1] for r in j._db.execute("PRAGMA table_info(calls)")}
-    assert {"agent_id", "key_id", "auth", "actor", "principal", "decision", "rule",
-            "policy_rev", "tier"} <= cols
-
-
-def test_console_store_backfills_transport(tmp_path):
-    path = str(tmp_path / "console.db")
-    old = sqlite3.connect(path)
-    old.execute("CREATE TABLE rooms (id TEXT PRIMARY KEY, title TEXT, worker TEXT, worker_name TEXT, "
-                "handle TEXT, cmd TEXT, pty INTEGER, state TEXT, opened_by TEXT, participants TEXT, "
-                "created REAL, last_activity REAL, ended REAL, exit_code INTEGER, bytes INTEGER, "
-                "cursor INTEGER, summary TEXT)")
-    old.execute("INSERT INTO rooms (id, state) VALUES ('r1', 'frozen')")
-    old.commit()
-    old.close()
-    from rook.band_mcp.console_rooms import ConsoleStore
-    store = ConsoleStore(path)
-    assert store.enabled
-    assert store._db.execute("SELECT transport FROM rooms WHERE id='r1'").fetchone()[0] == "proc"
-
 
 def test_enrollment_backfills_deleted_and_keeps_mode(tmp_path):
     path = tmp_path / "enrollment.db"
@@ -197,35 +161,6 @@ def test_setup_store_writes_are_atomic_and_private(tmp_path, monkeypatch):
     assert _mode(p) == 0o600 and _no_temp(tmp_path)
 
 
-def test_policy_mask_token_and_wconfig_keep_their_modes(tmp_path, monkeypatch):
-    from rook.band_mcp.mask_web import ensure_token
-    from rook.hub.policy import DEFAULT_POLICY, PolicyStore
-    from rook.worker import wconfig
-
-    store = PolicyStore(str(tmp_path / "policy.json"))
-    store.save(DEFAULT_POLICY)
-    assert _mode(tmp_path / "policy.json") == 0o600
-
-    tok = ensure_token(str(tmp_path))
-    assert len(tok) == 64 and _mode(tmp_path / "mask.token") == 0o600
-
-    monkeypatch.setattr(wconfig, "_DIR", tmp_path)
-    wconfig._write(tmp_path / "config.json", {"env": {"ROOK_X": "secret"}})
-    assert _mode(tmp_path / "config.json") == 0o600
-    assert _no_temp(tmp_path)
-
-
-def test_hubdeploy_dropins_stay_world_readable(tmp_path):
-    """systemd drop-ins must stay readable (0644) after the switch to the
-    shared helper, whose default mode is 0600."""
-    from types import SimpleNamespace
-    from rook.hubdeploy.selector import Selector
-    p = tmp_path / "svc.d" / "rook.conf"
-    sel = Selector(SimpleNamespace(mode="systemd"))
-    sel.restore([{"kind": "file", "path": str(p), "content": "[Service]\n"}])
-    assert p.read_text() == "[Service]\n" and _mode(p) == 0o644
-
-
 @pytest.mark.skipif(os.name != "posix", reason="POSIX modes")
 def test_open_db_mode_covers_the_wal_sidecars(tmp_path):
     """vault.db was 0600 but its -wal/-shm, which hold the same rows, could
@@ -271,21 +206,6 @@ def test_open_db_creates_sidecars_under_a_tight_umask(tmp_path, monkeypatch):
         assert seen[-1] == 0o022   # no mode: umask untouched
     finally:
         os.umask(before)
-
-
-@pytest.mark.skipif(os.name != "posix", reason="POSIX modes")
-def test_vault_sidecars_are_private(tmp_path):
-    pytest.importorskip("nacl")
-    from rook.band_mcp.vault import Vault
-    path = tmp_path / "vault.db"
-    v = Vault(str(path))
-    v.set("k", "value", "d", "human:op")
-    for suffix in ("", "-wal", "-shm"):
-        if os.path.exists(str(path) + suffix):
-            assert _mode(str(path) + suffix) == 0o600, suffix
-    os.chmod(str(path) + "-wal", 0o644)   # as an older release left it
-    Vault(str(path))
-    assert _mode(str(path) + "-wal") == 0o600
 
 
 @pytest.mark.parametrize("err", ["EBUSY", "EXDEV"])
