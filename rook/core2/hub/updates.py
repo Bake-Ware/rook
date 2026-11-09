@@ -14,8 +14,7 @@ going back band-wide is a rollout of an older held version. Each worker gets
 dispatch and the journal as the person who started the rollout; the worker
 pulls, verifies, smoke-checks and restarts into it on trial. The hub then
 waits up to ``gate`` seconds for the worker to report that release confirmed
-(``worker.status``). With the change plugin installed the rollout leaves one
-change record when it ends; core never needs it. Plugins keep updating
+(``worker.status``). Plugins keep updating
 through distribution (``POST /plugins/push``); the hub updates itself by its
 deploy, not here.
 
@@ -285,37 +284,10 @@ class Updates:
                     w["state"], w["reason"] = "not started", w.get("reason") or "the rollout stopped"
             updated = [w["name"] for w in ro["workers"] if w["state"] == "updated"]
             failed = {w["name"]: w.get("reason") for w in ro["workers"] if w["state"] == "failed"}
-            try:        # the record first: a rollout that reads as ended has its record
-                if status != "interrupted" and (updated or failed):
-                    ro["change"] = await self._record(ro, who, status, updated, failed)
-            finally:
-                ro["status"], ro["ended"] = status, round(time.time(), 3)
-                self._save_rollout()
-                self._history({"event": f"rollout.{status}", "rollout": ro["id"], "version": ro["version"],
-                               "updated": updated, "failed": failed})
-
-    async def _record(self, ro: dict, who: KitCaller, status: str, updated: list, failed: dict) -> str | None:
-        """The rollout's one change record (when the change plugin is installed)."""
-        froms = sorted({w.get("from") or "the installed core" for w in ro["workers"] if w["name"] in updated
-                        or w["name"] in failed})
-        try:
-            return await self.hub.note_change(who, {
-                "what": f"Update the core of {len(updated) + len(failed)} worker(s) to {ro['version']} "
-                        f"(rollout {ro['id']})",
-                "why": who.why, "category": "update", "workers": [*updated, *failed], "caps": ["worker.update"],
-                "risk": "Each worker restarts on the new core; a core that doesn't serve its home hub is rolled "
-                        "back by the worker itself.",
-                "testing": f"Each worker smoke-checks the release, then must report it confirmed within "
-                           f"{ro.get('gate', GATE)}s; the first that doesn't stops the rollout.",
-                "rollback": f"update.rollout of the version they had ({', '.join(froms)}), or worker.update "
-                            "{version} on one worker.",
-                "steps": "Canaries one by one, then the rest a batch at a time: the hub offers the release over "
-                         "Drop and calls worker.update on each.",
-                "outcome": (f"{status}: updated {', '.join(updated) or 'none'}"
-                            + "".join(f"; {n} failed: {r}" for n, r in failed.items()))[:1000]})
-        except Exception as e:          # the record is best effort; the history and journal have it
-            log.warning("rollout change record not written", extra={"fields": {"error": str(e)}})
-            return None
+            ro["status"], ro["ended"] = status, round(time.time(), 3)
+            self._save_rollout()
+            self._history({"event": f"rollout.{status}", "rollout": ro["id"], "version": ro["version"],
+                           "updated": updated, "failed": failed})
 
     async def _one(self, w: dict, blob: bytes, who: KitCaller) -> bool:
         """Update one worker and wait for it to come back confirmed."""

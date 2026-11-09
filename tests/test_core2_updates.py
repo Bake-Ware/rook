@@ -329,8 +329,6 @@ class FakeHub:
 
     def __init__(self, data: Path, workers: dict):
         self.data, self.op, self.hub_id, self.node = data, OP, HUB, "hubnode"
-        self.plugins = SimpleNamespace(plugins={"change": object()})
-        self.changes: list = []          # change records the rollouts left (Hub.note_change)
         self.known = {n: SimpleNamespace(id=n, name=n, version="0.5.0", online=True, band="b") for n in workers}
         self.dispatcher = SimpleNamespace(workers={n: SimpleNamespace(caps={"worker.update": {}} if up else {})
                                                    for n, up in workers.items()})
@@ -338,12 +336,6 @@ class FakeHub:
         self.fail: dict = {}            # worker -> how it fails: "refuse" | "rollback"
         self.calls: list = []
         self.cores = {n: {"running": None, "trial": None, "failed": None} for n in workers}
-
-    async def note_change(self, who, record):
-        if "change" not in self.plugins.plugins:
-            return None
-        self.changes.append((who.person, record))
-        return f"c{len(self.changes)}"
 
     async def call_as(self, who, cap, args, target=None, **kw):
         self.calls.append((cap, target, who.person))
@@ -410,10 +402,6 @@ def test_rollout_goes_canary_first_then_batches_and_skips_what_it_cannot_update(
     assert all(p == "bake" for _, _, p in hub.calls)                     # as the person who started it
     assert [(cap, t) for cap, t, _ in hub.calls if cap == "worker.update"][1:] == \
         [("worker.update", "a"), ("worker.update", "b")]
-    # one change record for the whole rollout, as the person, written when it ended
-    [(by, rec)] = hub.changes
-    assert by == "bake" and rec["category"] == "update" and rec["workers"] == ["c", "a", "b"]
-    assert rec["outcome"] == "done: updated c, a, b" and status["rollout"]["change"] == "c1"
     assert status["rollout"]["status"] == "done"
     assert {w["name"]: w["state"] for w in status["rollout"]["workers"]} == \
         {"c": "updated", "a": "updated", "b": "updated", "d": "skipped", "phone": "skipped"}
@@ -436,7 +424,6 @@ def test_a_failing_canary_stops_the_rollout(tmp_path, monkeypatch):
     assert states["a"] == ("failed", "rolled back on the worker: did not come up")
     assert states["b"][0] == states["c"][0] == "not started"
     assert [t for cap, t, _ in hub.calls if cap == "worker.update"] == ["a"]
-    assert hub.changes[0][1]["outcome"] == "failed: updated none; a failed: rolled back on the worker: did not come up"
 
 
 def test_a_refused_update_and_a_worker_that_never_comes_back_fail(tmp_path, monkeypatch):
@@ -474,20 +461,6 @@ def test_rollout_refusals(tmp_path, monkeypatch):
         with pytest.raises(KitError, match="already on 0.5.1"):
             await up.rollout(ctx(), "0.5.1")
     asyncio.run(go())
-
-
-def test_a_rollout_needs_no_change_plugin(tmp_path, monkeypatch):
-    hub, up = make(tmp_path, monkeypatch, {"a": True})
-    hub._target = "0.5.1"
-    hub.plugins.plugins.clear()
-
-    async def go():
-        await up.rollout(ctx(), "0.5.1", source=str(source(tmp_path)))
-        await finish(up)
-        return (await up.status(ctx()))["rollout"]
-    ro = asyncio.run(go())
-    assert ro["status"] == "done" and ro["change"] is None and not hub.changes
-    assert [t for cap, t, _ in hub.calls if cap == "worker.update"] == ["a"]
 
 
 def test_a_held_update_stops_the_rollout(tmp_path, monkeypatch):
