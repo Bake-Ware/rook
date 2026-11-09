@@ -41,8 +41,8 @@ let look = null;
 
 // A still picture of Rookie (Rookie.bake): no live Rookie on this page.
 function thumb(skin, theme) {
+  if (!window.Rookie || !Rookie.bake || skin === "none" || !Rookie.SKINS.includes(skin)) return document.createElement("span");
   const c = document.createElement("canvas");
-  if (!window.Rookie || !Rookie.bake || skin === "none" || !Rookie.SKINS.includes(skin)) return c;
   const { canvas, manifest } = Rookie.bake({ skin, theme, scale: 2, rows: ["happy"] });
   const [w, h] = manifest.cell;
   c.width = w;

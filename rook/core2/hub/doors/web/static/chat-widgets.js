@@ -1,5 +1,5 @@
-// What the house agent can put in a chat message besides words: a line of
-// its own in [[...]] (Bake, Nov 9: "it needs to provide clickable suggestions
+// What the house agent can put in a chat message besides words: a block in
+// [[...]], best on a line of its own (Bake, Nov 9: "it needs to provide clickable suggestions
 // more often"; "I want rookie to open like a work pane with the vault ... I
 // want it to guide the setup entirely"):
 //
@@ -18,40 +18,43 @@
 "use strict";
 
 (function (root) {
-  const LINE = /^\s*\[\[\s*(choices|open|point)\s*:\s*([\s\S]*?)\s*\]\]\s*$/i;
+  const BLOCK = /\[\[\s*(choices|open|point)\s*:\s*([^\]]*?)\s*\]\]/gi;
 
-  function parse(text) {
-    const out = [];
-    let buf = [];
-    const flush = () => {
-      const t = buf.join("\n").replace(/^\n+|\n+$/g, "");
-      if (t) out.push({ kind: "text", text: t });
-      buf = [];
-    };
-    for (const line of String(text || "").split("\n")) {
-      const m = LINE.exec(line);
-      const parts = m ? m[2].split("|").map((s) => s.trim()).filter(Boolean) : [];
-      if (!m || !parts.length) {
-        buf.push(line);
-        continue;
-      }
-      flush();
-      const kind = m[1].toLowerCase();
-      if (kind === "choices") {
-        out.push({ kind, items: parts });
-      } else if (kind === "point") {
-        out.push({ kind, target: parts[0] });
-      } else {
-        const [view, ...rest] = parts[0].split(/\s+/);
-        const args = {};
-        for (const p of parts.slice(1)) {
-          const eq = p.indexOf("=");
-          if (eq > 0) args[p.slice(0, eq).trim()] = p.slice(eq + 1).trim();
-        }
-        out.push({ kind, view: view.toLowerCase(), arg: rest.join(" "), args });
-      }
+  // One [[...]] block -> a part, or null (empty: left as words).
+  function block(kind, body) {
+    const parts = body.split("|").map((s) => s.trim()).filter(Boolean);
+    if (!parts.length) return null;
+    kind = kind.toLowerCase();
+    if (kind === "choices") return { kind, items: parts };
+    if (kind === "point") return { kind, target: parts[0] };
+    const [view, ...rest] = parts[0].split(/\s+/);
+    const args = {};
+    for (const p of parts.slice(1)) {
+      const eq = p.indexOf("=");
+      if (eq > 0) args[p.slice(0, eq).trim()] = p.slice(eq + 1).trim();
     }
-    flush();
+    return { kind, view: view.toLowerCase(), arg: rest.join(" "), args };
+  }
+
+  // Blocks count wherever they are in the message (agents don't always give
+  // them a line of their own); the words around them stay words.
+  function parse(text) {
+    text = String(text || "");
+    const out = [];
+    const words = (t) => {
+      t = t.replace(/^[ \t]*\n+|\n+[ \t]*$/g, "").trim();
+      if (t) out.push({ kind: "text", text: t });
+    };
+    let at = 0, m;
+    BLOCK.lastIndex = 0;
+    while ((m = BLOCK.exec(text))) {
+      const part = block(m[1], m[2]);
+      if (!part) continue;
+      words(text.slice(at, m.index));
+      out.push(part);
+      at = m.index + m[0].length;
+    }
+    words(text.slice(at));
     return out;
   }
 

@@ -59,8 +59,11 @@ def test_the_agent_can_put_choices_and_work_pane_lines_in_a_message(tmp_path):
         {"kind": "point", "target": "vault.value"},
         {"kind": "text", "text": "Type it on the left.\n[[nonsense: x]]"},     # unknown lines stay words
     ]
-    assert parse(tmp_path, "plain [[choices: a | b]] inside a line") == [
-        {"kind": "text", "text": "plain [[choices: a | b]] inside a line"}]
+    # agents don't always give a block its own line: it counts anywhere
+    assert parse(tmp_path, "Which style? [[choices: Pixel | Voxel]] or type one.") == [
+        {"kind": "text", "text": "Which style?"}, {"kind": "choices", "items": ["Pixel", "Voxel"]},
+        {"kind": "text", "text": "or type one."}]
+    assert parse(tmp_path, "empty [[choices: ]] stays") == [{"kind": "text", "text": "empty [[choices: ]] stays"}]
 
 
 def test_one_live_rookie_per_page():

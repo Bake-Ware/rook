@@ -596,8 +596,8 @@ function rookieFavicon() {
 
 // A still picture of Rookie in a style and theme, for pickers.
 function rookieThumb(skin, theme) {
+  if (!window.Rookie || !Rookie.bake || skin === "none" || !Rookie.SKINS.includes(skin)) return el("span", { className: "thumb none" });
   const c = el("canvas", { className: "thumb" });
-  if (!window.Rookie || !Rookie.bake || skin === "none" || !Rookie.SKINS.includes(skin)) return c;
   const { canvas, manifest } = Rookie.bake({ skin, theme, scale: 2, rows: ["happy"] });
   const [w, h] = manifest.cell;
   c.width = w;
