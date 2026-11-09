@@ -353,8 +353,7 @@ def install(hub) -> None:
         "trust": {"trust.map": h.trust_map, "trust.sacred": h.trust_sacred},
         "setting": {"setting.list": settings.list, "setting.set": settings.set},
         "llm": {"llm.providers": h.llm_providers, "llm.models": h.llm_models, "llm.status": h.llm_status},
-        "token": {"token.create": tokens.create, "token.list": tokens.list, "token.revoke": tokens.revoke,
-                  "token.approve": tokens.approve},
+        "token": {"token.create": tokens.create, "token.list": tokens.list, "token.revoke": tokens.revoke},
     }
     for plugin, handlers in table.items():
         hub.plugins.add_builtin(BUILTIN / plugin, handlers)

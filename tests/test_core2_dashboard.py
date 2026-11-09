@@ -871,7 +871,7 @@ def test_every_builtin_cap_is_known():
     assert declared == {
         "page.list", "page.view", "page.get", "page.create", "page.update", "page.archive", "page.restore", "page.public",
         "page.components", "page.site", "page.start", "page.look", "hub.status", "hub.workers", "hub.manifests", "hub.door", "hub.setup", "approval.list", "approval.decide", "approval.ask", "approval.get", "journal.search", "setting.list",
-        "setting.set", "llm.providers", "llm.models", "llm.status", "token.create", "token.list", "token.revoke", "token.approve",
+        "setting.set", "llm.providers", "llm.models", "llm.status", "token.create", "token.list", "token.revoke",
         "trust.map", "trust.sacred"}
 
 
