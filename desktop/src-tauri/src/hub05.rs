@@ -28,7 +28,7 @@ pub const HOUSE: &str = "house";
 /// The hub site's session cookie (rook/core2/hub/doors/web/site.py COOKIE).
 pub const WEB_COOKIE: &str = "rook_web";
 /// Dashboard pages (`#/<plugin>/<page>`, rook/core2/hub/doors/web/static/shell.js).
-pub const APPROVALS_PAGE: &str = "/#/approval/approvals";
+pub const JOURNAL_PAGE: &str = "/#/journal/journal";
 
 #[derive(Clone)]
 pub struct Hub05 {
@@ -166,7 +166,7 @@ async fn door_json(resp: reqwest::Response) -> Result<Value, HubError> {
 pub fn call_result(v: Value) -> Result<Value, HubError> {
     if v.get("held").and_then(Value::as_bool) == Some(true) {
         return Err(HubError::Agent(format!(
-            "This waits for your approval ({}). Approve it on the dashboard's Approvals page.",
+            "This waits for your approval ({}).",
             text(&v, "hold")
         )));
     }
@@ -287,7 +287,7 @@ pub fn hold_items(v: &Value) -> Vec<Waiting> {
                 text: first_line(&text(h, "why"), 200),
                 who,
                 age: String::new(),
-                link: APPROVALS_PAGE.into(),
+                link: JOURNAL_PAGE.into(),
             })
         })
         .collect()
@@ -364,7 +364,7 @@ mod tests {
         assert_eq!(w[0].title, "torrent.delete on cachyrig");
         assert_eq!(w[0].who, "claude-code");
         assert_eq!(w[0].text, "Free the disk.");
-        assert_eq!((w[0].kind.as_str(), w[0].link.as_str()), ("hold", APPROVALS_PAGE));
+        assert_eq!((w[0].kind.as_str(), w[0].link.as_str()), ("hold", JOURNAL_PAGE));
         assert_eq!(w[1].who, "kid");
         assert!(hold_items(&json!({"ok": true})).is_empty());
     }
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn pages_group_by_section_and_drop_odd_ids() {
         let v = json!({"pages": [
-            {"page": "approval/approvals", "title": "Approvals", "section": "Hub"},
+            {"page": "token/tokens", "title": "Tokens", "section": "Hub"},
             {"page": "task/tasks", "title": "Tasks", "section": "Work"},
             {"page": "hub/workers", "title": "Workers", "section": "Hub"},
             {"page": "made/x y", "title": "Bad"},

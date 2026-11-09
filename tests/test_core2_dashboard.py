@@ -67,6 +67,7 @@ caps:
     run: scripts/board.py:motto
 pages:
   board: { title: Board, file: pages/board.html, caps: ["board.count", "board.motto"], events: ["board.*"], nav: { section: Home } }
+  holds: { title: Holds, file: pages/board.html, caps: [approval.list], events: ["hold.*"] }
 emits:
   board.inbox: { doc: A message came in from outside., taints: true, payload: { text: { type: str } } }
   board.note: { doc: A note for someone., payload: { person: { type: str }, text: { type: str } } }
@@ -442,7 +443,7 @@ def test_a_page_plugin_renders_sandboxed_with_the_bridge(site):
             await c.sign_in(tokens["bake"])
             listed = (await c.call("page.list"))["result"]["pages"]
             ids = [p["page"] for p in listed]
-            assert {"board/board", "hub/workers", "approval/approvals", "journal/journal",
+            assert {"board/board", "hub/workers", "journal/journal",
                     "setting/settings"} <= set(ids)
             board = next(p for p in listed if p["page"] == "board/board")
             assert board["section"] == "Home" and board["caps"] == ["board.count", "board.motto"]
@@ -514,7 +515,7 @@ def test_pages_run_under_the_viewers_rights(site):
             assert (await kim.page(t, "board.count"))["ok"]
             out = await kim.page(t, "board.motto")         # declared by the page, not granted to kim
             assert out["error"] == "denied: person: grants"
-            t = (await kim.open("approval/approvals"))["token"]
+            t = (await kim.open("board/holds"))["token"]
             assert (await kim.page(t, "approval.list"))["result"] == {"holds": []}
         finally:
             await hub.stop()
@@ -670,7 +671,7 @@ def test_page_events_reach_only_the_people_they_belong_to(site):
             await bake.sign_in(tokens["bake"])
             pages = {}
             for who, c in (("ann", ann), ("bake", bake)):
-                for page in ("board/board", "approval/approvals"):
+                for page in ("board/board", "board/holds"):
                     t = (await c.open(page))["token"]
                     pages[who, page] = (c, t, (await c.json("GET", f"/web/api/events?token={t}"))[1]["seq"])
             hub._emit("board.inbox", {"text": "a stranger's text"}, "board")
@@ -689,11 +690,11 @@ def test_page_events_reach_only_the_people_they_belong_to(site):
                 return [(e["event"], e["payload"].get("text") or e["payload"].get("hold") or e["payload"].get("n"))
                         for e in out["events"]]
             assert await heard("ann", "board/board") == [("board.note", "for ann"), ("board.changed", 1)]
-            assert await heard("ann", "approval/approvals") == [("hold.created", "h_2")]
+            assert await heard("ann", "board/holds") == [("hold.created", "h_2")]
             assert await heard("bake", "board/board") == [
                 ("board.inbox", "a stranger's text"), ("board.note", "for bake"), ("board.note", "for ann"),
                 ("board.changed", 1)]
-            assert [h for _, h in await heard("bake", "approval/approvals")] == ["h_1", "h_2", "h_3"]
+            assert [h for _, h in await heard("bake", "board/holds")] == ["h_1", "h_2", "h_3"]
             # hold.decided says whose hold it was
             got = []
             hub.listeners.append(lambda e, p, src: got.append(p) if e == "hold.decided" else None)
@@ -708,26 +709,13 @@ def test_page_events_reach_only_the_people_they_belong_to(site):
 
 # -- the core pages' caps ------------------------------------------------------------
 
-def test_approvals_page_answers_holds(site):
+def test_only_the_person_answers_a_hard_stop(site):
     async def go():
         hub, tokens = await site()
         try:
             c = Client(hub)
             await c.sign_in(tokens["bake"])
-            _, held = await c.json("POST", "/call", {"worker": "rook", "cap": "board.wipe", "why": WHY},
-                                   bearer=tokens["claude"])
-            assert held["held"], held
-            t = (await c.open("approval/approvals"))["token"]
-            holds = (await c.page(t, "approval.list"))["result"]["holds"]
-            assert [h["hold"] for h in holds] == [held["hold"]] and holds[0]["cap"] == "board.wipe"
-            out = await c.page(t, "approval.decide", {"hold": held["hold"], "decision": "approve"})
-            assert out["ok"] and out["result"]["ok"] and out["result"]["result"] == {"wiped": True}, out
-            out = await c.page(t, "approval.decide", {"hold": held["hold"], "decision": "approve"})
-            assert "unknown hold" in out["error"]
-            out = await c.page(t, "approval.decide", {"hold": "h_x", "decision": "maybe"})
-            assert out["error"].startswith("bad args")
-
-            # nothing but the person answers a hard stop: not an agent acting for them ...
+            # not an agent acting for them ...
             _, held = await c.json("POST", "/call", {"worker": "rook", "cap": "board.wipe", "why": WHY},
                                    bearer=tokens["claude"])
             for path, body in ((f"/holds/{held['hold']}", {"decision": "approve"}),
@@ -893,7 +881,7 @@ def test_every_builtin_cap_is_known():
     assert declared == {
         "page.list", "page.view", "page.get", "page.create", "page.update", "page.archive", "page.restore", "page.public",
         "page.components", "page.site", "page.start", "page.look", "hub.status", "hub.workers", "hub.manifests", "hub.door", "hub.setup", "approval.list", "approval.decide", "approval.ask", "approval.get", "journal.search", "setting.list",
-        "setting.set", "llm.providers", "llm.models", "llm.status", "token.create", "token.list", "token.revoke", "token.approve",
+        "setting.set", "llm.providers", "llm.models", "llm.status", "token.create", "token.list", "token.revoke",
         "trust.map", "trust.sacred"}
 
 
@@ -950,13 +938,11 @@ def test_approval_ask_is_the_one_question_path(site):
             out = await call("bake", "approval.decide", hold=q2, answer="sdc")
             assert "one of: sda, sdb" in out["error"]
 
-            # the person on the Approvals page
-            c = Client(hub)
-            await c.sign_in(tokens["bake"])
-            t = (await c.open("approval/approvals"))["token"]
-            out = await c.page(t, "approval.decide", {"hold": q1, "answer": "Yes, after lunch"})
-            assert out["ok"] and out["result"] == {"ok": True, "hold": q1, "answered": True,
-                                                   "answer": "Yes, after lunch", "by": "person:bake"}, out
+            # the person, with their own token
+            _, out = await Client(hub).json("POST", f"/holds/{q1}", {"answer": "Yes, after lunch"},
+                                            bearer=tokens["bake"])
+            assert out == {"ok": True, "hold": q1, "answered": True,
+                           "answer": "Yes, after lunch", "by": "person:bake"}, out
             out = await call("claude", "approval.get", hold=q1)
             assert out["result"]["answer"] == "Yes, after lunch" and out["result"]["by"] == "person:bake"
             assert not (await call("kim", "approval.get", hold=q1))["ok"]

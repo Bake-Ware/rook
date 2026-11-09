@@ -78,14 +78,11 @@ mod tests {
             id: "hub".into(),
             title: "Hub".into(),
             pages: vec![Page {
-                hash: "/approval/approvals".into(),
-                title: "Approvals".into(),
+                hash: "/hub/workers".into(),
+                title: "Workers".into(),
             }],
         }];
-        assert_eq!(
-            path_for("page:/approval/approvals", &hub05).as_deref(),
-            Some("/#/approval/approvals")
-        );
+        assert_eq!(path_for("page:/hub/workers", &hub05).as_deref(), Some("/#/hub/workers"));
         assert_eq!(path_for(&menu_id("sessions"), &hub05), None);
     }
 }

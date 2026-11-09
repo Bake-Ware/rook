@@ -129,7 +129,7 @@ const LEVEL_TEXT = {};
 const LEVEL_CLASS = { "sacred": "mg-bad", "normal": "mg-normal", "ship-it": "mg-good" };
 const SECURITY_TEXT = {
   "off": "Nothing waits on you: hard stops and sacred machines are journaled (would_hold), not held.",
-  "on": "Hard stops and anything that isn't a read on a sacred machine wait on you (Approvals).",
+  "on": "Hard stops and anything that isn't a read on a sacred machine wait on you.",
 };
 let data = null, busy = false;
 
@@ -263,9 +263,8 @@ function draw() {
   warn.hidden = !(m.missing || []).length;
   warn.textContent = (m.missing || []).length ? "Not installed here: " + m.missing.join(", ") + " (their part of the map is empty)." : "";
 
-  notices.replaceChildren(...(m.waiting ? [h("div", { class: "mg-box mg-pad callout", style: "flex-direction:row;align-items:center;justify-content:space-between" },
-    h("span", { class: "mg-warn", text: m.waiting + (m.waiting === 1 ? " call waits" : " calls wait") + " on a person." }),
-    btn("Approvals", "soft", () => rook.open("approval/approvals")))] : []));
+  notices.replaceChildren(...(m.waiting ? [h("div", { class: "mg-box mg-pad callout" },
+    h("span", { class: "mg-warn", text: m.waiting + (m.waiting === 1 ? " call waits" : " calls wait") + " on a person." }))] : []));
 
   security.replaceChildren(
     seg([["off", "off", SECURITY_TEXT.off], ["on", "on", SECURITY_TEXT.on]], m.security, (v) => {

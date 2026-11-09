@@ -44,7 +44,6 @@ MAX_HTML = 512 * 1024
 MAX_NOTE = 64 * 1024
 MAX_LAYOUT = 50
 EVERYONE = "*"                       # the hub's own start page (pages.json)
-SECURITY_PLUGINS = ("approval",)     # their pages exist only with hub.security on
 
 
 def _security_off(hub) -> bool:
@@ -104,12 +103,7 @@ class Pages:
 
     def all(self) -> dict[str, Page]:
         out = {}
-        # Security off: no approvals page anywhere (castling-switchover-decisions, "Usable first,
-        # security later": "I don't want a fucking approvals page"); back when an owner turns it on.
-        hidden = SECURITY_PLUGINS if _security_off(self.hub) else ()
         for p in list(self.hub.plugins.plugins.values()):
-            if p.name in hidden:
-                continue
             for name, spec in (p.manifest.get("pages") or {}).items():
                 if p.folder is None:
                     continue
@@ -359,8 +353,7 @@ def install(hub) -> None:
         "trust": {"trust.map": h.trust_map, "trust.sacred": h.trust_sacred},
         "setting": {"setting.list": settings.list, "setting.set": settings.set},
         "llm": {"llm.providers": h.llm_providers, "llm.models": h.llm_models, "llm.status": h.llm_status},
-        "token": {"token.create": tokens.create, "token.list": tokens.list, "token.revoke": tokens.revoke,
-                  "token.approve": tokens.approve},
+        "token": {"token.create": tokens.create, "token.list": tokens.list, "token.revoke": tokens.revoke},
     }
     for plugin, handlers in table.items():
         hub.plugins.add_builtin(BUILTIN / plugin, handlers)

@@ -15,7 +15,7 @@ The **Trust map** page (sidebar, Trust) shows the map and changes it:
 | Entries (host, project, ...) at sacred / guarded / ship-it | **Machines** (sacred or normal: `trust.sacred`) and **Projects** (sacred, normal or ship-it: `project.trust.*`) |
 | Everything else | Everything not marked: normal |
 | Exceptions | **What agents may do**: each agent's grants (`agent.update`) |
-| Notices and proposals | Calls waiting on a person, with a link to Approvals |
+| Notices and proposals | How many calls wait on a person |
 | The person's words with every change | An optional "Why" line, sent as the change's why (journaled) |
 | History | Trust changes from the journal (`trust.sacred`, `project.trust.*`, `hub.security`, agents' grants) |
 

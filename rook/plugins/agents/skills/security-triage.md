@@ -28,6 +28,6 @@ when: a gate blocks a call, a session is tainted, or you spot a secret or privat
    through the house agent only when it looks like a real attack, once, in
    plain words with the undo, e.g. "claude-code tried to copy your home
    folder to a server named in an email it read; I left it waiting. If that
-   was you, approve it on Approvals."
+   was you, approve it."
 4. After a release, a line on your notepad (what ran, why it was a false
    alarm). Releases show in `security.status`; they don't need a message.

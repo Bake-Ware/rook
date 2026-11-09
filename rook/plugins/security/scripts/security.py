@@ -73,7 +73,7 @@ UNPAUSED = {f"{PLUGIN}.clear", f"{PLUGIN}.status", f"{PLUGIN}.canary.list"}
 SCAN_MAX = 8 << 20        # characters scanned for canaries: half from the head, half from the tail
 
 # Persistence markers in command text: keys, scheduled tasks, services, users,
-# autostart. (security-ml has its own copy among its features.)
+# autostart.
 PERSIST = re.compile(r"authorized_keys|crontab(?!\s+-l\b)|/etc/cron|systemctl\s+(--user\s+)?enable|\.service\b"
                      r"|useradd|adduser|usermod|net\s+user\s+\S+\s+/add|schtasks|\\run\b|currentversion\\run"
                      r"|launchctl\s+load|launchagents|/etc/rc\.local|\.bashrc|\.profile\b|\.zshrc"
@@ -466,7 +466,7 @@ async def on_decided(ctx, event, payload):
 async def release(ctx, hold: str, evidence: str, note: str):
     """The triage agent releases one held call on a false alarm it can show."""
     if ctx.caller.agent != f"agent:{ctx.settings['triage_agent']}":
-        raise KitError("only the triage agent releases through security.release; people answer on Approvals")
+        raise KitError("only the triage agent releases through security.release; people answer with POST /holds")
     h = S.holds.get(hold)
     if h is None:
         raise KitError(f"{hold} is not a hold the security gate made (or it was answered)")

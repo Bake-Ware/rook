@@ -53,16 +53,6 @@ only when something is actually wrong.
 
 Details and caps: [the security plugin's manual](../../rook/plugins/security/docs/manual.md).
 
-## `security-ml`: the classifier
-
-A small model that scores every call against what usually happens on your
-band, in well under a millisecond on the hub's CPU. Ships in **shadow**
-mode. It retrains nightly from the journal, never from flagged calls, and
-replaces its model only after three passing nights. `security-ml.explain`
-shows what it would say about a call without running it.
-
-Details: [the security-ml plugin's manual](../../rook/plugins/security-ml/docs/manual.md).
-
 ## Writing a gate
 
 A plugin's manifest declares it:

@@ -1,7 +1,6 @@
 # A one-pass decision model (Diffucision, or the typed decision engine)
-# answering a batch of typed questions about one state: the gate
-# classifier's upgrade path (castling-caps), and decide.drive, a screen loop
-# on it (kept by Bake's C3 amendment). Code: scripts/decide.py.
+# answering a batch of typed questions about one state, and decide.drive, a
+# screen loop on it (kept by Bake's C3 amendment). Code: scripts/decide.py.
 manifest: 1
 plugin: decide
 version: 0.5.0

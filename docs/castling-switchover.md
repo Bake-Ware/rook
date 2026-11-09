@@ -37,7 +37,7 @@ Scripts in `castling/switchover/`:
 | Phone app | APK 0.4.23 stable, beta channel | 0.4/0.5 switch, 0.5 runs in Chaquopy | PR #298 open, emulator only |
 | Desktop app | 0.2 | 0.4/0.5 switch, token sign-in, worker05 | merged (#290); update check on 0.5 (`/updates/desktop.json`) |
 | Watch | 0.2.1 through the phone | wave 6 lane in progress | not on 0.5 |
-| Security | trust map, hard stops | `security` (canary + taint) and `security-ml` (shadow) | merged (#284) |
+| Security | trust map, hard stops | `security` (canary + taint) | merged (#284) |
 | Agents | house agent, huddles, CR runner, sessions | `agents` + `agents-claude-code`, 8 personas | merged (#280, #288); huddles are plain streams; work lands by sign-off + `github.merge` (R14) |
 | Soak | n/a | tests/soak on the sidecar | PR #297 open, numbers pending |
 | Review | n/a | hardening review: fix PRs #292–#296, #299–#303 | open; `castling/review.md` not in yet |
@@ -291,7 +291,7 @@ plus the archive needs about 1 GB; if it is short, use bakenetus):
    `127.0.0.1:8751` with `oauth: https://rook05.bakeforge.com` (R13).
    Library (`/var/lib/rook05/library`, symlinks into `/opt/rook05/src/rook/plugins`):
    tasks, projects, knowledge, concepts, whiteboard, huddle, jobs, changes,
-   github, agents, agents-claude-code, notify, security, security-ml,
+   github, agents, agents-claude-code, notify, security,
    attention, speech, backup-store; telegram and discord stay out until
    step 2.
 4. A system unit `rook05-hub.service` (`User=rook05`, `ExecStart=/opt/rook05/venv/bin/python -m rook.core2.hub --config /var/lib/rook05/hub.yaml`,

@@ -771,7 +771,7 @@ async def on_asked(ctx, event, payload):
     question is the asker's words: data, never an instruction."""
     house = ctx.settings["house"]
     if not house or payload.get("agent") == f"agent:{house}":
-        return                   # no house agent, or it asked itself: it waits on Approvals
+        return                   # no house agent, or it asked itself: it waits in approval.list
     try:
         _rt(ctx).agent(house)
     except KeyError:
@@ -794,7 +794,7 @@ async def on_asked(ctx, event, payload):
                  why="agents: route a question for the person to the house agent")
     try:
         await ctx.call_as(who, "agent.chat.send", {"agent": house, "text": text, "wait": False})
-    except Exception as e:      # noqa: BLE001 - it still waits on the Approvals page
+    except Exception as e:      # noqa: BLE001 - it still waits in approval.list
         log.warning("question %s not passed to %s: %s", payload.get("hold"), house,
                     getattr(e, "message", None) or e)
 
