@@ -891,6 +891,20 @@ class Settings:
             hub.plugins.settings.setdefault(plugin, {}).update(values)
         hub.plugins.people = self
 
+    def store(self, plugin: str, key: str, value, person: str | None) -> None:
+        """``ctx.settings.set``: a hub plugin writes its own setting, a
+        ``where: person`` one for the person it acts for."""
+        spec = (self.hub.plugins.plugins[plugin].manifest.get("settings") or {}).get(key) or {}
+        if spec.get("where") == "person":
+            if not person:
+                raise KitError(f"{plugin}.{key} is a per-person setting: there's no person here")
+            self.personal.setdefault(person, {}).setdefault(plugin, {})[key] = value
+            _write(self.people_path, json.dumps(self.personal, indent=1))
+            return
+        self.stored.setdefault(plugin, {})[key] = value
+        self.hub.plugins.settings.setdefault(plugin, {})[key] = copy.deepcopy(value)
+        _write(self.path, json.dumps(self.stored, indent=1))
+
     # -- the people view hub plugins get --------------------------------------
 
     def owners(self) -> list:
