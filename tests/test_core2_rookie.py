@@ -209,5 +209,5 @@ def test_the_map_table_is_in_the_docs():
     src = (STATIC / "rookie-map.js").read_text()
     exact = dict(re.findall(r'^\s+"([a-z.-]+)": "([a-z]+)",', src, re.M))
     for cap, state in exact.items():
-        row = next((ln for ln in doc.splitlines() if f"`{cap}`" in ln), None)
+        row = next((ln for ln in doc.splitlines() if ln.startswith("|") and f"`{cap}`" in ln), None)
         assert row is not None and f"`{state}`" in row, cap
