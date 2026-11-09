@@ -1,5 +1,5 @@
 """Helpers for the Castling 0.5 end-to-end tests: real processes on
-localhost, a UDP relay (relay.py), ``python -m rook.core2.hub`` and
+localhost, a UDP relay (rook.core2.relay), ``python -m rook.core2.hub`` and
 ``python -m rook.core2.worker``, with generated keys and configs in a temp
 folder, talking over the real Telesthete transport. Tests drive the hub
 through its HTTP door.
@@ -200,7 +200,7 @@ class Band:
         self.kid_token = self.hub_cli("token", "--person", "kid")
 
     def start_relay(self) -> str:
-        self.relay = self._spawn("relay", [sys.executable, str(HERE / "relay.py")], self.root)
+        self.relay = self._spawn("relay", [sys.executable, "-m", "rook.core2.relay"], self.root)
         port = until(lambda: self.relay.lines and self.relay.lines[0].strip().isdigit() and self.relay.lines[0],
                      START_SECS, "the relay's port")
         self.relay_addr = f"127.0.0.1:{int(port)}"

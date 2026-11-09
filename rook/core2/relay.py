@@ -1,8 +1,8 @@
-"""A minimal Telesthete relay for the e2e tests: it forwards each datagram to
-the other peers of its band (the first 16 bytes), like telesthete-hub does,
-without routing. It prints its port on stdout and runs until killed.
+"""A minimal Telesthete relay: it forwards each datagram to the other peers
+of its band (the first 16 bytes), like telesthete-hub does, without routing.
+It prints its port on stdout and runs until killed.
 
-    python tests/e2e/relay.py [port]
+    python -m rook.core2.relay [port [host]]
 """
 import asyncio
 import sys

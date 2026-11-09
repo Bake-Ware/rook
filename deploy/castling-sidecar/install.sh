@@ -54,7 +54,7 @@ cat > "$UNIT_DIR/rook-castling-relay.service" <<EOF
 Description=Rook 0.5 sidecar: band relay (UDP 127.0.0.1:$RELAY_PORT)
 
 [Service]
-ExecStart=$PY $SRC/tests/e2e/relay.py $RELAY_PORT
+ExecStart=$PY -m rook.core2.relay $RELAY_PORT
 Restart=on-failure
 RestartSec=3
 
