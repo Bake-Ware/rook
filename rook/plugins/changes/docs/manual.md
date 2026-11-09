@@ -37,8 +37,8 @@ Then `change.update id=... revision=... outcome="Deployed, plays."`.
 ## Automating it
 
 When applying, testing and undoing a change are automated, they are a job
-(the jobs plugin: a script with its steps and branching) and the record links
-it: `job` (applies and tests) and `rollback_job` (undoes). Rolling back is
+(the jobs plugin: one call to a hub plugin script cap with the steps and
+branching) and the record links it: `job` (applies and tests) and `rollback_job` (undoes). Rolling back is
 `job.run` on the rollback job.
 
 ## Afterwards
