@@ -28,6 +28,8 @@ SESSION_SECS = 30 * 86400
 TOKEN_SECS = 12 * 3600
 FRAME_SECS = 60
 TOKENS_PER_SESSION = 32
+PUBLIC = "public"            # the "session" of page tokens a public page's viewers hold
+PUBLIC_TOKENS = 512
 POLL_SECS = 20.0
 EVENTS_KEPT = 500
 ACTS_KEPT = 200
@@ -81,6 +83,7 @@ class Web:
                 self.sessions[d] = Session(s["person"], s.get("csrf") or secrets.token_urlsafe(24), s["exp"])
         self.tokens: dict[str, PageToken] = {}
         self.frames: dict[str, tuple[str, float]] = {}       # nonce -> (page token, exp)
+        self.public_tokens: list = []                        # page tokens public viewers hold, oldest first
         self._events: collections.deque = collections.deque(maxlen=EVENTS_KEPT)
         self._seq = 0
         self._cond = threading.Condition()
@@ -94,7 +97,7 @@ class Web:
 
     @staticmethod
     def owns(path: str) -> bool:
-        return path in ("/", "/login", "/login/link", "/logout", "/account") or path.startswith("/web/")
+        return path in ("/", "/login", "/login/link", "/logout", "/account") or path.startswith(("/web/", "/p/"))
 
     def handle(self, req, method: str, path: str, query: str) -> tuple[int, dict, bytes]:
         """One request: (status, headers, body)."""
@@ -106,6 +109,9 @@ class Web:
     def _route(self, req, method, path, query):
         if method == "GET" and path.startswith("/web/static/"):
             return self._static(path[len("/web/static/"):])
+        public = self._public_route(req, method, path, query)
+        if public is not None:
+            return public
         setup = self._setup_owner()
         if path == "/login":
             if method == "POST":
@@ -179,6 +185,43 @@ class Web:
         if path == "/web/api/page":
             return _json(200, self._page_call(req, sid, caller, body))
         raise _Error(404, "not found")
+
+    # -- public pages -------------------------------------------------------------
+
+    def _public_route(self, req, method, path, query):
+        """A public page (``page.public``; Bake, Nov 9: "a way to make a given
+        page publicly accessible for things like reports or reference"):
+        anyone opens /p/<page> without signing in. Its calls act as the
+        person who made it public, within the page's own grants. None: not
+        a public route."""
+        if method == "GET" and path.startswith("/p/"):
+            return self._file("public.html", csp=SHELL_CSP)
+        if not path.startswith("/web/api/public/"):
+            return None
+        what = path[len("/web/api/public/"):]
+        if method == "GET" and what == "events":
+            return _json(200, self._poll(PUBLIC, query.get("token", ""), query.get("since")))
+        if method != "POST":
+            raise _Error(404, "not found")
+        body = req._body()
+        if what == "open":
+            pid = body.get("page")
+            caller = self._publisher(pid)
+            return _json(200, self._open(req, PUBLIC, caller, pid))
+        if what == "page":
+            t = self._token(PUBLIC, body.get("token"))
+            return _json(200, self._page_call(req, PUBLIC, self._publisher(t.page), body))
+        raise _Error(404, "not found")
+
+    def _publisher(self, pid) -> Caller:
+        """Who a public page acts as: the person who made it public."""
+        rec = self.hub.pages.public.get(pid) if isinstance(pid, str) else None
+        if rec is None:
+            raise _Error(404, "This page isn't public.")
+        person = rec.get("person")
+        if not person or self.hub.identities.user(person) is None:
+            raise _Error(404, "This page isn't public any more.")
+        return Caller(person=person)
 
     # -- sign-in ----------------------------------------------------------------
 
@@ -336,13 +379,13 @@ class Web:
         dsid = req._run(self._page_session(_page_caller(page, caller)))
         now = time.time()
         with self._lock:
-            s = self.sessions.get(sid)
-            if s is None:
+            held = self.public_tokens if sid == PUBLIC else getattr(self.sessions.get(sid), "tokens", None)
+            if held is None:
                 raise _Error(401, "sign in first")
             self.tokens[token] = PageToken(sid, pid, dsid, now + TOKEN_SECS)
-            s.tokens.append(token)
-            while len(s.tokens) > TOKENS_PER_SESSION:
-                self.tokens.pop(s.tokens.pop(0), None)
+            held.append(token)
+            while len(held) > (PUBLIC_TOKENS if sid == PUBLIC else TOKENS_PER_SESSION):
+                self.tokens.pop(held.pop(0), None)
             self.frames = {n: f for n, f in self.frames.items() if f[1] > now}
             self.frames[nonce] = (token, now + FRAME_SECS)
         return {"ok": True, "token": token, "frame": f"/web/frame/{nonce}", "page": reply["result"]}
@@ -357,6 +400,9 @@ class Web:
     def _frame(self, sid, session, nonce: str):
         with self._lock:
             token, exp = self.frames.pop(nonce, (None, 0))
+        t = self.tokens.get(token) if token else None
+        if t is not None and t.session == PUBLIC:      # a public page's viewer: no sign-in
+            sid, session = PUBLIC, True
         if session is None or token is None or exp < time.time():
             return 404, {"Content-Type": "text/plain; charset=utf-8"}, b"This page link has been used or expired."
         t = self._token(sid, token)
@@ -498,6 +544,8 @@ class Web:
             raise _Error(403, str(getattr(e, "message", e))) from None
         with self._lock:
             person = self.sessions[sid].person if sid in self.sessions else None
+        if sid == PUBLIC:
+            person = self._publisher(t.page).person
         owner = self.hub.identities.is_owner(person)
         layers = [["person", self.hub.identities.person_rights(person) if person else NONE],
                   ["page", {"grants": page.events}], *self._authors(page)]

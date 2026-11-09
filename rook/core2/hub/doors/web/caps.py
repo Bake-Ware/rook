@@ -96,6 +96,11 @@ class Pages:
         state = _read_json(self._state_path)
         self.archived: dict = state.get("archived", {})
         self.starts: dict = state.get("start", {})          # person:<name> or * -> page
+        # Public pages (Bake, Nov 9: "a way to make a given page publicly
+        # accessible for things like reports or reference"): anyone opens
+        # them at /p/<page> without signing in, acting as whoever made them
+        # public. page -> {at, by, person}.
+        self.public: dict = state.get("public", {})
 
     def all(self) -> dict[str, Page]:
         out = {}
@@ -201,7 +206,17 @@ class Pages:
         return None
 
     def save_state(self) -> None:
-        _write(self._state_path, json.dumps({"archived": self.archived, "start": self.starts}, indent=1))
+        _write(self._state_path, json.dumps({"archived": self.archived, "start": self.starts,
+                                             "public": self.public}, indent=1))
+
+
+def public_path(pid: str) -> str:
+    """Where a public page opens without signing in."""
+    return "/p/" + pid
+
+
+def _owners(hub) -> list:
+    return [f"person:{u.name}" for u in hub.identities.users.values() if u.preset == "owner"]
 
 
 SETUP_FILE = "setup.json"
@@ -335,7 +350,7 @@ def install(hub) -> None:
                   "page.create": h.pages_create, "page.update": h.pages_update,
                   "page.archive": h.pages_archive, "page.restore": h.pages_restore,
                   "page.components": h.pages_components, "page.site": h.pages_site,
-                  "page.start": h.pages_start, "page.look": h.pages_look},
+                  "page.start": h.pages_start, "page.look": h.pages_look, "page.public": h.pages_public},
         "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers, "hub.manifests": h.hub_manifests,
                 "hub.door": h.hub_door, "hub.setup": h.hub_setup},
         "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide,
@@ -367,6 +382,7 @@ class _Handlers:
             if (pid in pages.archived) != archived:
                 continue
             row = page.view()
+            row["public"] = pid in pages.public
             if archived:
                 row["archived"] = pages.archived[pid]
             out.append(row)
@@ -378,7 +394,8 @@ class _Handlers:
     async def pages_get(self, ctx, page: str) -> dict:
         pages = self.hub.pages
         p = pages.get(page)
-        out = {**p.view(), "archived": pages.archived.get(page)}
+        out = {**p.view(), "archived": pages.archived.get(page), "public": pages.public.get(page),
+               "public_url": public_path(page) if page in pages.public else None}
         if p.made:
             out.update(made_by=p.made, note=pages.note(p), layout=p.layout)
         else:
@@ -521,6 +538,20 @@ class _Handlers:
             pages.save_state()
         return {"page": page, "archived": False}
 
+    async def pages_public(self, ctx, page: str, public: bool = True) -> dict:
+        """Make a page readable by anyone at /p/<page>, no sign-in; its calls
+        act as the person who made it public (an agent alone: the hub's first
+        owner). Off makes it private again (Bake, Nov 9)."""
+        pages = self.hub.pages
+        pages.get(page)
+        if public:
+            person = ctx.caller.person or next(iter(_owners(self.hub)), None)
+            pages.public[page] = {"at": time.time(), "by": ctx.caller.actor, "person": person}
+        else:
+            pages.public.pop(page, None)
+        pages.save_state()
+        return {"page": page, "public": bool(public), "url": public_path(page) if public else None}
+
     async def pages_components(self, ctx) -> dict:
         return {"components": [c.view() for _, c in sorted(self.hub.pages.components().items())]}
 
@@ -598,7 +629,12 @@ class _Handlers:
         return {**setup_state(self.hub, install=True), "look": look_state(self.hub, self.settings, ctx.caller.person or ctx.caller.agent)}
 
     async def hub_workers(self, ctx) -> dict:
-        return {"workers": (await self.hub.workers_view(_who(ctx)))["workers"]}
+        """The workers, the hub first; ``now`` is the hub's clock (heartbeat
+        ages on the Workers page), ``bands`` names the bands."""
+        hub = self.hub
+        named = ((getattr(hub.cfg, "transport", None) or {}).get("bands") or [{}])[0]
+        return {"workers": (await hub.workers_view(_who(ctx)))["workers"], "now": hub.clock(),
+                "bands": {hub.band: (named.get("name") if isinstance(named, dict) else None) or "home"}}
 
     async def hub_manifests(self, ctx, section: str | None = None) -> dict:
         """Hub plugins first, then what workers announce. ``folder`` (where the

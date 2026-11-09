@@ -111,6 +111,19 @@ caps:
     args:
       page: { type: str, required: true }
     result: { type: map }
+  public:
+    doc: >-
+      Make a page public: anyone opens it at /p/<page> (the url in the result) without signing in, a
+      read-only view with no chat or sidebar, for reports and reference. Its calls act as whoever made
+      it public. public=false makes it private again.
+    on: hub
+    risk: write
+    scope: multi-user
+    effects: [persists]
+    args:
+      page: { type: str, required: true }
+      public: { type: bool, default: true, doc: "false: private again." }
+    result: { type: map }
   components:
     doc: The ready-made components a page layout can use, with their props and the caps they call.
     on: hub

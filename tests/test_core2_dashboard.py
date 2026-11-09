@@ -538,7 +538,7 @@ def test_archive_and_restore_are_caps_and_lose_nothing(site):
             assert "archived" in (await c.page(t, "board.count"))["error"]   # open pages stop too
             assert (await c.call("page.restore", {"page": "board/board"}))["ok"]
             assert (await c.open("board/board"))["ok"]
-            assert json.loads((hub.data / "pages.json").read_text()) == {"archived": {}, "start": {}}
+            assert json.loads((hub.data / "pages.json").read_text()) == {"archived": {}, "start": {}, "public": {}}
             # an agent (or a job) archives the same way, through the HTTP door
             _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "page.archive",
                                                     "args": {"page": "journal/journal"}, "why": WHY},
@@ -891,7 +891,7 @@ def test_every_builtin_cap_is_known():
     for folder in web_caps.BUILTIN.iterdir():
         declared |= set(load(folder).data["caps"])
     assert declared == {
-        "page.list", "page.view", "page.get", "page.create", "page.update", "page.archive", "page.restore",
+        "page.list", "page.view", "page.get", "page.create", "page.update", "page.archive", "page.restore", "page.public",
         "page.components", "page.site", "page.start", "page.look", "hub.status", "hub.workers", "hub.manifests", "hub.door", "hub.setup", "approval.list", "approval.decide", "approval.ask", "approval.get", "journal.search", "setting.list",
         "setting.set", "llm.providers", "llm.models", "llm.status", "token.create", "token.list", "token.revoke", "token.approve"}
 

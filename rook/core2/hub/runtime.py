@@ -1522,9 +1522,9 @@ class Hub:
 
     async def workers_view(self, caller: Caller) -> dict:
         out = [{"id": self.node, "name": "rook", "online": True, "hub": True, "core": CORE_VERSION,
-                "plugins": sorted(self.plugins.plugins)}]
+                "plugins": sorted(self.plugins.plugins), "band": self.band, "last_seen": self.clock()}]
         for k in sorted(self.known.values(), key=lambda k: k.name):
-            out.append({"id": k.id, "name": k.name, "online": k.online, "last_seen": k.last_seen,
+            out.append({"id": k.id, "name": k.name, "online": k.online, "last_seen": k.last_seen, "band": k.band,
                         "core": k.core, "version": k.version, "description": k.description,
                         "facts": k.facts, "plugins": [e["plugin"] for e in k.manifests],
                         "unavailable": k.unavailable, "status": k.status, "problem": k.problem,

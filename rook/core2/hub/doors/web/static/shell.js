@@ -49,10 +49,111 @@ function message(text, bad) {
 let pages = [];
 let site = { start: null, dock: null };
 
+// A page in the sidebar: its link and a ... menu with what can be done to it
+// (Bake, Nov 9: "archive should be a function on the sidebar per page. Like an
+// ellipse. in that ellipse I want a way to make a given page publicly accessible").
 function link(p) {
+  const row = el("div", { className: "nav-row" + (p.public ? " public" : "") });
   const a = el("a", { href: "#/" + p.page }, p.title);
   a.dataset.page = p.page;
-  return a;
+  const more = el("button", { type: "button", className: "page-menu-btn", title: "More for " + p.title }, "\u22ef");
+  more.setAttribute("aria-label", "More for " + p.title);
+  more.setAttribute("aria-haspopup", "menu");
+  more.onclick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    pageMenu(more, p);
+  };
+  row.append(a, more);
+  return row;
+}
+
+// The ... menu: Archive, and Make public (with the public link to copy).
+const menuBox = el("div", { id: "page-menu", className: "page-menu" });
+menuBox.setAttribute("role", "menu");
+menuBox.hidden = true;
+document.body.append(menuBox);
+function hideMenu() {
+  menuBox.hidden = true;
+  for (const b of document.querySelectorAll(".page-menu-btn[aria-expanded]")) b.removeAttribute("aria-expanded");
+}
+document.addEventListener("click", (e) => {
+  if (!menuBox.hidden && !menuBox.contains(e.target)) hideMenu();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") hideMenu();
+});
+
+function publicUrl(pid) {
+  return location.origin + "/p/" + pid;
+}
+
+function pageMenu(trigger, p) {
+  const again = !menuBox.hidden && menuBox.dataset.page === p.page;
+  hideMenu();
+  if (again) return;
+  menuBox.dataset.page = p.page;
+  menuBox.replaceChildren();
+  const item = (label, run, cls) => {
+    const b = el("button", { type: "button", className: cls || "" }, label);
+    b.setAttribute("role", "menuitem");
+    b.onclick = run;
+    menuBox.append(b);
+    return b;
+  };
+  const pub = item(p.public ? "\u2713 Public" : "Make public", async () => {
+    try {
+      await call("page.public", { page: p.page, public: !p.public }, p.public ?
+        "The person made a page private again." : "The person made a page public from the sidebar.");
+    } catch (x) {
+      return message(x.message, true);
+    }
+    p.public = !p.public;
+    await loadNav();
+    const row = [...document.querySelectorAll("#nav .nav-row")].find((r) => r.firstChild.dataset.page === p.page);
+    hideMenu();
+    if (row) pageMenu(row.querySelector(".page-menu-btn"), p);      // open again, with the link
+  });
+  pub.setAttribute("role", "menuitemcheckbox");
+  pub.setAttribute("aria-checked", String(!!p.public));
+  pub.dataset.target = "page.public";
+  if (p.public) {
+    const url = publicUrl(p.page);
+    const box = el("div", { className: "public-link" });
+    const field = el("input", { type: "text", readOnly: true, value: url });
+    field.onclick = () => field.select();
+    const copy = el("button", { type: "button" }, "Copy link");
+    copy.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch (x) {                    // no clipboard (plain http): select it for a manual copy
+        field.select();
+        document.execCommand && document.execCommand("copy");
+      }
+      copy.textContent = "Copied";
+      setTimeout(() => (copy.textContent = "Copy link"), 1500);
+    };
+    box.append(el("div", { className: "muted" }, "Anyone with this link can view it, no sign-in."), field, copy);
+    menuBox.append(box);
+  }
+  item("Archive", async () => {
+    hideMenu();
+    try {
+      await call("page.archive", { page: p.page }, "The person archived a page from the sidebar.");
+    } catch (x) {
+      return message(x.message, true);
+    }
+    await loadNav();
+    if (current && current.page === p.page) {
+      history.replaceState(null, "", location.pathname);
+      open(wanted());
+    }
+  }, "danger");
+  menuBox.hidden = false;
+  trigger.setAttribute("aria-expanded", "true");
+  const r = trigger.getBoundingClientRect();
+  menuBox.style.left = Math.max(8, Math.min(innerWidth - menuBox.offsetWidth - 8, r.left)) + "px";
+  menuBox.style.top = Math.max(8, Math.min(innerHeight - menuBox.offsetHeight - 8, r.bottom + 4)) + "px";
 }
 
 async function loadNav() {
@@ -136,7 +237,7 @@ async function open(pid) {
   $("#stage").prepend(frame);
   current = cur;
   $("#title").textContent = r.page.title;
-  $("#note-btn").hidden = $("#archive-btn").hidden = false;
+  $("#note-btn").hidden = false;
   mark();
 }
 
@@ -145,7 +246,7 @@ function closePage() {
   current = null;
   mark();
   $("#title").textContent = "";
-  $("#note").hidden = $("#note-btn").hidden = $("#archive-btn").hidden = true;
+  $("#note").hidden = $("#note-btn").hidden = true;
 }
 
 function toFrame(cur, msg) {
@@ -216,19 +317,6 @@ $("#note-btn").onclick = async () => {
   box.hidden = false;
 };
 
-$("#archive-btn").onclick = async () => {
-  const pid = current && current.page;
-  if (!pid) return;
-  try {
-    await call("page.archive", { page: pid });
-  } catch (x) {
-    return message(x.message, true);
-  }
-  history.replaceState(null, "", location.pathname);
-  await loadNav();
-  open(wanted());
-};
-
 $("#menu").onclick = () => document.body.classList.toggle("nav-open");
 $("#nav").onclick = (e) => {
   const a = e.target.closest("a");
@@ -254,8 +342,21 @@ const NOT_READY = /no single worker serves|nothing provides agent\.backend/i;
 function dockOpen(open) {
   document.body.classList.toggle("dock-open", open);
   try { localStorage.setItem("rook.dock", open ? "1" : "0"); } catch (x) { /* private mode */ }
-  if (open) $("#dock-text").focus();
+  if (open) {
+    scrollChat();
+    $("#dock-text").focus();
+  }
 }
+
+// The chat shows its newest message when it opens and as messages come
+// (Bake, Nov 9: "Scroll chat to the bottom when it starts/opens"). Again on
+// the next frame and once the fonts are in: a hidden log has no height yet.
+function scrollChat() {
+  const log = $("#dock-log");
+  log.scrollTop = log.scrollHeight;
+  requestAnimationFrame(() => (log.scrollTop = log.scrollHeight));
+}
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(scrollChat);
 
 // The agent's replies: plain text with **bold**, `code` and links to this
 // hub's own pages (/account, #/page) - built as nodes, never as HTML.
@@ -277,7 +378,7 @@ function addRow(node) {
   const log = $("#dock-log");
   log.insertBefore(node, $("#dock-wait"));
   while (log.children.length > 200) log.firstChild.remove();
-  log.scrollTop = log.scrollHeight;
+  scrollChat();
 }
 
 function agentName() {
@@ -557,7 +658,7 @@ function thinking(on) {
   } else if (!on && wait) {
     wait.remove();
   }
-  $("#dock-log").scrollTop = $("#dock-log").scrollHeight;
+  scrollChat();
 }
 
 // -- Rookie: the house agent's avatar beside its messages --------------------------
@@ -867,6 +968,7 @@ async function startDock(agent) {
       "and to set their start page (page.start).", true);
   }
   dockOpen(open);
+  scrollChat();
   if (rookie.driver) activity();
   for (;;) {
     try {
