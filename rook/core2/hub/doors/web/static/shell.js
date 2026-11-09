@@ -339,13 +339,19 @@ const dock = { agent: null, next: 0, shown: 0, replies: 0, kicking: false };
 // worker joins a few seconds after an install): not a message; wait and retry.
 const NOT_READY = /no single worker serves|nothing provides agent\.backend/i;
 
+// Bake, Nov 9: "I want to have like an X at the top right, and move the rookie
+// avatar to the bottom right corner when closed. Remove the chat button from
+// the like top nav on pages. Clicking rookie opens the chat sidebar."
 function dockOpen(open) {
+  const was = document.body.classList.contains("dock-open");
+  if (!open && was && rookie.holder && !document.body.classList.contains("setup")) liftOff();   // he walks out before the chat goes
   document.body.classList.toggle("dock-open", open);
   try { localStorage.setItem("rook.dock", open ? "1" : "0"); } catch (x) { /* private mode */ }
   if (open) {
     scrollChat();
     $("#dock-text").focus();
   }
+  if (rookie.holder && open !== was) goHome();
 }
 
 // The chat shows its newest message when it opens and as messages come
@@ -396,13 +402,15 @@ function msg(cls, who) {
 // A message. The agent's may carry choices (buttons under it) and work-pane
 // directives (chat-widgets.js): [[open: ...]] and [[point: ...]] run when the
 // message arrives live; on a reload the last [[open: ...]] is shown again.
-function bubble(cls, text, live) {
+function bubble(cls, text, live, seq) {
   if (cls === "me" || cls === "them") retire();     // only the newest message's choices stay live
   if (cls === "aside" || cls === "bad") {
     addRow(el("div", { className: "msg " + cls }, text));
     return;
   }
   const row = msg(cls, cls === "them" ? agentName() : "You");
+  if (seq != null) row.dataset.seq = seq;
+  let said = "";
   const parts = cls === "them" && window.ChatWidgets ? ChatWidgets.parse(text) : [{ kind: "text", text }];
   const later = [];
   for (const part of parts) {
@@ -416,10 +424,18 @@ function bubble(cls, text, live) {
       work.last = part;
       if (live) later.push(() => openView(part.view, part.arg, part.args));
     } else if (part.kind === "point" && live) {
-      later.push(() => setTimeout(() => point(part.target), 700));
+      said = said || part.say;
+      later.push(() => setTimeout(() => point(part.target, part.say), 700));
+    } else if (part.kind === "say") {
+      if (live && !said) {
+        said = part.text;
+        later.push(() => setTimeout(() => speak(part.text, seq), 300));
+      }
     }
   }
   if (row.children.length > 1) addRow(row);
+  // closed chat, no words of its own for Rookie: the reply's first few words
+  if (live && cls === "them" && !said && chatClosed()) later.push(() => speak(shortLine(text), seq));
   for (const fn of later) fn();
 }
 
@@ -598,16 +614,23 @@ function idleWork() {
 // (Bake, Nov 9: "make sure rookie like animates to these locations. Like not
 // just like pop in at random places"): he lifts off from where he is, hops
 // along a curved path to the target, settles, and goes home the same way.
+function liftOff() {                                    // out of the chat, exactly where he stands
+  const h = rookie.holder;
+  if (h.classList.contains("away")) return h.getBoundingClientRect();
+  const from = h.getBoundingClientRect();
+  h.style.transition = "none";
+  Object.assign(h.style, { left: from.left + "px", top: from.top + "px" });
+  h.classList.add("away");
+  document.body.append(h);                             // stays drawn when the chat closes
+  void h.offsetWidth;
+  return from;
+}
+
 function travel(x, y, done) {
   const h = rookie.holder;
-  const from = h.getBoundingClientRect();
+  const from = liftOff();
   const ms = Math.round(Math.min(1600, Math.max(600, Math.hypot(x - from.left, y - from.top) * 1.4)));
-  if (!h.classList.contains("away")) {                  // lift off exactly where he stands
-    h.style.transition = "none";
-    Object.assign(h.style, { left: from.left + "px", top: from.top + "px" });
-    h.classList.add("away");
-    void h.offsetWidth;
-  }
+  h.classList.remove("parked");
   rookie.travelling = true;
   rookie.inst.set("happy");                              // hopping along
   // x and y ease differently, so the path curves instead of cutting straight across
@@ -620,7 +643,54 @@ function travel(x, y, done) {
   }, ms + 30);
 }
 
-function point(target) {
+// Where Rookie lives: in the chat's head while it's open (or during setup),
+// else parked in the bottom-right corner, where a click opens the chat.
+function homeSpot() {
+  const open = document.body.classList.contains("dock-open") || document.body.classList.contains("setup");
+  return open ? null : $("#rookie-park").getBoundingClientRect();
+}
+
+function settle() {
+  const h = rookie.holder;
+  if (!homeSpot()) {
+    h.classList.remove("away", "parked");
+    h.removeAttribute("style");
+    $("#rookie-home").append(h);
+  } else {
+    h.classList.add("parked");
+  }
+  rookie.driver.shown = null;
+  rookie.driver.show();
+}
+
+function goHome() {
+  const h = rookie.holder;
+  if (!h || !rookie.inst) return;
+  clearTimeout(rookie.back);
+  requestAnimationFrame(() => {
+    const park = homeSpot();
+    if (!park && !h.classList.contains("away")) return;          // already home in the chat
+    const to = park || $("#rookie-home").getBoundingClientRect();
+    travel(to.left, to.top, settle);
+  });
+}
+
+window.addEventListener("resize", () => {               // the corner moves with the window
+  const h = rookie.holder, park = homeSpot();
+  if (h && park && h.classList.contains("parked")) Object.assign(h.style, { transition: "none", left: park.left + "px", top: park.top + "px" });
+});
+
+// He starts where he lives (the chat is open, or he's parked), no walk.
+function placeRookie() {
+  const park = homeSpot();
+  if (!park) return;
+  const h = rookie.holder;
+  h.classList.add("away", "parked");
+  Object.assign(h.style, { left: park.left + "px", top: park.top + "px" });
+  document.body.append(h);
+}
+
+function point(target, said) {
   const t = target === "page" ? current && current.frame : document.querySelector(`[data-target="${CSS.escape(target)}"]`);
   if (!t) return;
   t.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -635,17 +705,74 @@ function point(target) {
     const y = Math.max(8, r.top + r.height / 2 - me.height / 2);
     travel(x, y, () => {
       rookie.inst.set("talking");                        // there: this one
+      speak(said || "Right here");
       rookie.back = setTimeout(() => {
-        const home = $("#rookie-home").getBoundingClientRect();
-        travel(home.left, home.top, () => {
-          h.classList.remove("away");
-          h.removeAttribute("style");
-          rookie.driver.shown = null;
-          rookie.driver.show();
-        });
+        const to = homeSpot() || $("#rookie-home").getBoundingClientRect();
+        travel(to.left, to.top, settle);
       }, 4000);
     });
   }, 400);
+}
+
+// Rookie's speech bubbles (Bake, Nov 9: "I want rookie to make little chat
+// bubbles too with short like "Right here" "Enter username and password" "The
+// dashboard task is done""): a few words beside him wherever he is. The agent
+// says them with [[say: ...]] (or [[point: target | words]]); the site makes
+// them for replies and finished work while the chat is closed. They fade; a
+// click opens the chat at that message.
+const bubbleState = { timer: 0, frame: 0, seq: null };
+
+function shortLine(text) {
+  const words = String(text || "").replace(/\[\[[^\]]*\]\]/g, " ").replace(/[*`#>_]/g, "")
+    .split(/(?<=[.!?])\s/)[0].trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return "";
+  return words.length > 8 ? words.slice(0, 7).join(" ") + "\u2026" : words.join(" ");
+}
+
+function speak(text, seq) {
+  text = String(text || "").trim().slice(0, 120);
+  const box = $("#rookie-say"), h = rookie.holder;
+  if (!text || !box || !h || document.body.classList.contains("no-rookie")) return;
+  box.textContent = text;
+  bubbleState.seq = seq == null ? null : seq;
+  box.hidden = false;
+  box.classList.remove("fade");
+  const follow = () => {                                  // stays beside him while he walks
+    const r = h.getBoundingClientRect(), w = box.offsetWidth, ht = box.offsetHeight;
+    const right = r.left - w - 6 < 8;
+    box.classList.toggle("right", right);
+    box.style.left = Math.max(8, Math.min(innerWidth - w - 8, right ? r.right + 6 : r.left - w - 6)) + "px";
+    box.style.top = Math.max(8, Math.min(innerHeight - ht - 8, r.top + r.height / 2 - ht / 2 - 10)) + "px";
+    bubbleState.frame = requestAnimationFrame(follow);
+  };
+  cancelAnimationFrame(bubbleState.frame);
+  follow();
+  clearTimeout(bubbleState.timer);
+  bubbleState.timer = setTimeout(() => {
+    box.classList.add("fade");
+    bubbleState.timer = setTimeout(() => {
+      box.hidden = true;
+      cancelAnimationFrame(bubbleState.frame);
+    }, 600);
+  }, Math.min(9000, 3200 + text.length * 60));
+}
+
+function chatClosed() {
+  return !document.body.classList.contains("dock-open") && !document.body.classList.contains("setup");
+}
+
+// The calls worth a word when the chat is closed (the agent's own [[say]] wins).
+function sayFor(ev) {
+  if (ev.phase !== "end") return "";
+  if (ev.decision === "held") return "I need your OK";
+  if (ev.ok === false) return "";
+  const args = JSON.stringify(ev.args || {});
+  if (/^task\.(update|done|close)$/.test(ev.cap) && /"(done|closed)"/.test(args)) return "That task is done";
+  if (ev.cap === "page.create") return "Your new page is ready";
+  if (ev.cap === "page.components" || ev.cap === "page.update") return "Page updated";
+  if (/^job\.(create|add)$/.test(ev.cap)) return "Job set up";
+  if (ev.cap === "knowledge.create") return "Saved to the wiki";
+  return "";
 }
 
 function thinking(on) {
@@ -821,7 +948,7 @@ function show(ev, live) {
   } else if (ev.type === "turn" && d.role === "reply") {
     dock.replies++;
     thinking(false);
-    bubble("them", d.text, live);
+    bubble("them", d.text, live, ev.seq);
     lookPicker();
   } else if (ev.type === "status" && d.state === "error") {
     thinking(false);
@@ -880,7 +1007,7 @@ let skipped = false;
 function setupMode() {
   const on = !skipped && !!dock.agent && !!site.setup && !site.setup.done;
   document.body.classList.toggle("setup", on);
-  $("#dock-close").textContent = on ? "Skip to the hub" : "\u00d7";
+  $("#dock-skip").hidden = !on;
   return on;
 }
 
@@ -896,7 +1023,11 @@ async function activity() {
       }
       for (const ev of r.events) {
         // Rookie shows what the dock agent does for whoever is here.
-        if (ev.agent === "agent:" + dock.agent && ev.person === site.person) rookie.driver.activity(ev);
+        if (ev.agent === "agent:" + dock.agent && ev.person === site.person) {
+          rookie.driver.activity(ev);
+          const line = chatClosed() && sayFor(ev);
+          if (line) speak(line);
+        }
       }
       since = r.seq;
     } catch (x) {
@@ -942,13 +1073,13 @@ async function startDock(agent) {
   dock.agent = agent;
   $("#dock-name").textContent = agent === "house" ? rookie.look.name : agent;
   rookieInit();
-  $("#dock").hidden = $("#dock-btn").hidden = false;
+  $("#dock").hidden = false;
   let open = true;
   try { open = localStorage.getItem("rook.dock") !== "0" && innerWidth > 760; } catch (x) { /* private mode */ }
   try {
     while ((await read(0)) >= 500) { /* catch up on a long conversation */ }
   } catch (x) {                     // not someone who may talk to it: no dock
-    $("#dock").hidden = $("#dock-btn").hidden = true;
+    $("#dock").hidden = true;
     return;
   }
   if (setupMode()) {                // a new hub: the chat is the whole site until setup is done
@@ -967,6 +1098,8 @@ async function startDock(agent) {
       "and offer to make pages for what they want to keep an eye on (page.components, page.create) " +
       "and to set their start page (page.start).", true);
   }
+  if (!open) document.body.classList.remove("dock-open");
+  if (rookie.holder && !open) placeRookie();
   dockOpen(open);
   scrollChat();
   if (rookie.driver) activity();
@@ -993,7 +1126,21 @@ $("#dock-text").onkeydown = (e) => {
     $("#dock-form").requestSubmit();
   }
 };
-$("#dock-btn").onclick = () => dockOpen(!document.body.classList.contains("dock-open"));
+$("#dock-skip").onclick = () => $("#dock-close").onclick();
+$("#dock-btn").onclick = () => dockOpen(true);          // never shown: the desktop app's "ask about this page"
+$("#rookie-say").onclick = () => {                       // the chat, at that message
+  $("#rookie-say").hidden = true;
+  dockOpen(true);
+  const row = bubbleState.seq != null && document.querySelector(`#dock-log [data-seq="${bubbleState.seq}"]`);
+  if (row) setTimeout(() => {
+    row.scrollIntoView({ block: "center" });
+    row.classList.add("pointed");
+    setTimeout(() => row.classList.remove("pointed"), 2500);
+  }, 50);
+};
+document.addEventListener("click", (e) => {               // Rookie in his corner: open the chat
+  if (rookie.holder && rookie.holder.classList.contains("parked") && rookie.holder.contains(e.target)) dockOpen(true);
+});
 $("#dock-close").onclick = () => {
   if (document.body.classList.contains("setup")) {
     skipped = true;

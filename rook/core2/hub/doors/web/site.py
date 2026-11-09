@@ -3,6 +3,7 @@ the HTTP door's request threads; hub work goes to the hub's loop through the
 handler's ``_run``."""
 from __future__ import annotations
 
+import base64
 import collections
 import hashlib
 import json
@@ -35,14 +36,15 @@ EVENTS_KEPT = 500
 ACTS_KEPT = 200
 DOCK_CAPS = ("agent.chat.send", "agent.chat.read")     # the shell's chat dock, with the dock agent only
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-         ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml"}
+         ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".woff2": "font/woff2"}
 
 # frame-src 'self' is load-bearing: it governs every navigation of the page
 # frames the shell embeds, including one a page starts itself
 # (location = "https://elsewhere/?d=..."), so a page can't carry data off the
 # hub that way (review D5; tests/test_core2_page_sandbox_browser.py).
-# The brand's fonts (DM Sans, IBM Plex Mono) come from Google Fonts, as on the
-# 0.4 dashboard and bake-ware.github.io/rook.
+# The brand's fonts (DM Sans, IBM Plex Mono) are the hub's own files
+# (static/fonts, the ones Google Fonts serves the 0.4 dashboard); Google Fonts
+# stays allowed for pages saved before.
 SHELL_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; "
              "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; frame-src 'self'; "
              "connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
@@ -570,7 +572,7 @@ class Web:
     # -- files --------------------------------------------------------------------
 
     def _static(self, name: str):
-        if not re.fullmatch(r"[a-z0-9-]+\.(js|css|svg)", name):
+        if not re.fullmatch(r"[a-z0-9-]+\.(js|css|svg)|fonts/[a-z0-9-]+\.woff2", name):
             raise _Error(404, "not found")
         return self._file(name)
 
@@ -580,6 +582,8 @@ class Web:
             raise _Error(404, "not found")
         headers = {"Content-Type": TYPES[path.suffix], "X-Content-Type-Options": "nosniff",
                    "Referrer-Policy": "same-origin"}
+        if path.suffix in (".woff2",) or path.name == "rook-scene.js":     # big and never changes within a version
+            headers["Cache-Control"] = "max-age=86400"
         if csp:
             headers.update({"Content-Security-Policy": csp, "X-Frame-Options": "DENY"})
         return 200, headers, path.read_bytes()
@@ -599,7 +603,8 @@ def inject(doc: str, info: dict) -> str:
     """The page with the bridge and the base style ahead of its own."""
     data = json.dumps(info).replace("<", "\\u003c")
     head = (f"<script>window.__rookPage={data};\n{_asset('bridge.js')}</script>\n"
-            f"<style>{_asset('page.css')}</style>\n")
+            f"<style>{_page_fonts()}\n{_asset('page.css')}</style>\n")
+    doc = LIB.sub(lambda m: _lib(m.group(1)), doc)
     m = re.search(r"<head\b[^>]*>", doc, re.I)
     if m:
         return doc[:m.end()] + "\n" + head + doc[m.end():]
@@ -611,6 +616,48 @@ def inject(doc: str, info: dict) -> str:
 
 def _asset(name: str) -> str:
     return (STATIC / name).read_text(encoding="utf-8")
+
+
+# A page has no network, so the brand fonts go in as data: URLs (font-src
+# data: in PAGE_CSP), made once.
+_FONTS: list = []
+
+
+def _page_fonts() -> str:
+    if not _FONTS:
+        css = _asset("fonts.css")
+        for name in re.findall(r"/web/static/fonts/([a-z0-9-]+\.woff2)", css):
+            data = base64.b64encode((STATIC / "fonts" / name).read_bytes()).decode("ascii")
+            css = css.replace(f"/web/static/fonts/{name}", f"data:font/woff2;base64,{data}")
+        _FONTS.append(css)
+    return _FONTS[0]
+
+
+# Shared libraries a page can ask for (it can't load scripts): a
+# <script type="module" data-rook-lib="NAME"></script> becomes the library,
+# inline, with its exports on window.RookLib[NAME] and a "rooklib" event once
+# it ran. rook-scene: the 0.4 dashboard's three.js rook and fleet view
+# (rook/web/scene; mountRook, mountFleet).
+LIBS = {"rook-scene": "rook-scene.js"}
+LIB = re.compile(r'<script\b[^>]*\bdata-rook-lib="([a-z0-9-]+)"[^>]*>\s*</script>', re.I)
+_LIB_CACHE: dict = {}
+
+
+def _lib(name: str) -> str:
+    if name not in LIBS:
+        return f"<!-- no library {name} -->"
+    if name not in _LIB_CACHE:
+        code = _asset(LIBS[name])
+        m = re.search(r"export\s*\{([^}]*)\}\s*;?", code)
+        pairs = []
+        for part in (m.group(1).split(",") if m else ()):
+            local, _, exported = part.strip().partition(" as ")
+            pairs.append(f"{json.dumps(exported.strip() or local.strip())}:{local.strip()}")
+        exports = (f";(window.RookLib=window.RookLib||{{}})[{json.dumps(name)}]={{{','.join(pairs)}}};"
+                   f"window.dispatchEvent(new CustomEvent('rooklib',{{detail:{json.dumps(name)}}}));")
+        body = code[:m.start()] + exports + code[m.end():] if m else code
+        _LIB_CACHE[name] = '<script type="module">' + body.replace("</script", "<\\/script") + "</script>"
+    return _LIB_CACHE[name]
 
 
 async def _auth(hub, token: str):

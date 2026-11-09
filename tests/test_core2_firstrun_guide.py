@@ -57,7 +57,7 @@ def test_the_agent_can_put_choices_and_work_pane_lines_in_a_message(tmp_path):
         {"kind": "choices", "items": ["Just this computer", "Other devices at home", "From anywhere"]},
         {"kind": "open", "view": "vault", "arg": "", "args": {"new": "host_password", "for": "sudo on box"}},
         {"kind": "open", "view": "page", "arg": "hub/workers", "args": {}},
-        {"kind": "point", "target": "vault.value"},
+        {"kind": "point", "target": "vault.value", "say": ""},
         {"kind": "text", "text": "Type it on the left.\n[[nonsense: x]]"},     # unknown lines stay words
     ]
     # agents don't always give a block its own line: it counts anywhere
@@ -133,10 +133,16 @@ def test_the_site_wears_the_04_brand():
     css = (STATIC / "shell.css").read_text()
     for token in ("--bg: #101310", "--accent: #d8ad6d", "--good: #a4bc92", "'DM Sans'", "'IBM Plex Mono'"):
         assert token in css
-    assert "fonts.googleapis.com" in SHELL_CSP and "fonts.gstatic.com" in SHELL_CSP
-    for page in ("shell.html", "account.html", "login.html"):
+    # the fonts are the hub's own (static/fonts), for the shell's pages and, inlined, every page
+    fonts = (STATIC / "fonts.css").read_text()
+    assert "'DM Sans'" in fonts and "'IBM Plex Mono'" in fonts
+    for name in re.findall(r"/web/static/fonts/([a-z0-9-]+\.woff2)", fonts):
+        assert (STATIC / "fonts" / name).read_bytes()[:4] == b"wOF2", name
+    for page in ("shell.html", "account.html", "login.html", "public.html"):
         html = (STATIC / page).read_text()
-        assert "fonts.googleapis.com/css2?family=DM+Sans" in html and 'class="mark"' in html
+        assert '/web/static/fonts.css' in html and "googleapis" not in html, page
+        if page != "public.html":
+            assert 'class="mark"' in html
     assert '<section id="work"' in (STATIC / "shell.html").read_text()        # the work pane
 
 

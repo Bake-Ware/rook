@@ -10,14 +10,7 @@
      none) with a band chip, version, battery and a draining heartbeat per row, and the
      details under each row. -->
 <style>
-  :root { color-scheme: dark;
-    --bg: #101310; --panel: #151914; --panel2: #131812; --hover: #20271a; --line: #2b322a; --line2: #444a3c;
-    --line-soft: #20261d; --corner: #6d735f; --group-bg: #121611;
-    --fg: #e2e3d9; --fg-soft: #cfd3bd; --muted: #92998c; --dim: #92998c; --dim2: #818b75;
-    --accent: #d8ad6d; --accent-hi: #f0c98c; --accent-bg: #292b20; --accent-bg-strong: #343322; --accent-line: #514b35;
-    --good: #a4bc92; --good-bg: #20271b; --good-line: #38432d; --warn: #d8ad6d; --bad: #dca58d; --blue: #8fb3c9;
-    --sans: 'DM Sans', system-ui, sans-serif; --mono: 'IBM Plex Mono', ui-monospace, monospace; }
-  body { background: var(--bg); color: var(--fg); font: 14px/1.5 var(--sans); padding: 14px 24px 40px; }
+  body { padding: 14px 24px 40px; }
   button, input, select { border-radius: 0; font: 10px var(--mono); background: var(--panel2); border: 1px solid var(--line2);
     color: var(--fg); }
   .controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 14px; }
@@ -32,7 +25,7 @@
 
   /* the stat tiles */
   .stats { display: flex; gap: 10px; align-items: stretch; flex-wrap: wrap; margin-bottom: 16px; }
-  .tile { position: relative; background: var(--panel); border: 1px solid var(--line); padding: 7px 10px; }
+  .tile { position: relative; background: var(--overlay); border: 1px solid var(--line); padding: 7px 10px; }
   .tile:before { content: ''; position: absolute; top: -1px; left: -1px; width: 5px; height: 5px;
     border-top: 1px solid var(--corner); border-left: 1px solid var(--corner); pointer-events: none; }
   .tile .l { font: 8px var(--mono); letter-spacing: .7px; text-transform: uppercase; color: var(--dim); margin: 3px 0; }
@@ -58,7 +51,7 @@
   .listhead, .row { display: grid; grid-template-columns: 12px 9px minmax(100px, 1fr) 110px 150px 64px 150px; gap: 14px;
     align-items: center; }
   .listhead { padding: 2px 16px 8px; font: 9px var(--mono); letter-spacing: .7px; text-transform: uppercase; color: var(--dim2); }
-  .list { background: var(--panel); border: 1px solid var(--line); position: relative; }
+  .list { background: var(--overlay); border: 1px solid var(--line); position: relative; }
   .list:before { content: ''; position: absolute; top: -1px; left: -1px; width: 5px; height: 5px;
     border-top: 1px solid var(--corner); border-left: 1px solid var(--corner); }
   .worker-group + .worker-group { border-top: 1px solid var(--line); }
@@ -136,6 +129,38 @@
     .detail { padding-left: 16px; }
     .tile.hb { flex-basis: 100%; }
   }
+
+  /* the 3D fleet view: the 0.4 dashboard's (rook/web/theme.css, rook-scene.js mountFleet) */
+  .listhead, .list, .fleet-scene { transition: opacity .3s ease; }
+  body.fading .listhead, body.fading .list, body.fading .fleet-scene { opacity: 0; }
+  body[data-layout=scene] .listhead, body[data-layout=scene] .list { display: none; }
+  .fleet-scene { position: relative; height: min(76vh, 860px); min-height: 460px; border: 1px solid var(--line); overflow: hidden;
+    background: radial-gradient(ellipse at 50% 64%, var(--scene-1) 0%, var(--scene-2) 58%, var(--scene-3) 100%); }
+  .fleet-scene[hidden] { display: none; }
+  .fleet-scene[data-mode=unavailable]::after { content: 'The 3D view needs WebGL, which this browser did not provide.'; position: absolute;
+    inset: 0; display: grid; place-items: center; font: 11px var(--mono); color: var(--dim); }
+  .fleet-stage, .fleet-labels { position: absolute; inset: 0; } .fleet-stage canvas { display: block; width: 100%; height: 100%; }
+  .fleet-labels { pointer-events: none; overflow: hidden; }
+  .fleet-labels, .fleet-legend { transition: opacity .5s ease; } .fleet-intro .fleet-labels, .fleet-intro .fleet-legend { opacity: 0; }
+  .fleet-label { position: absolute; left: 0; top: 0; font: 9px var(--mono); letter-spacing: .5px; color: #cfd3bd; white-space: nowrap;
+    text-shadow: 0 1px 2px #000, 0 0 7px #0c0f0b; will-change: transform; transition: opacity .25s ease; }
+  .fleet-label.away { opacity: 0 !important; }
+  .fleet-label.quiet { color: #868b76; } .fleet-label.on { color: var(--accent); font-size: 11px; z-index: 2000 !important; }
+  .fleet-label.hub { color: var(--accent); font-size: 11px; letter-spacing: 2.5px; }
+  .fleet-label.group { color: var(--accent); text-transform: uppercase; letter-spacing: 1.8px; opacity: .8; }
+  .fleet-legend { position: absolute; left: 14px; bottom: 10px; right: 14px; font: 9px var(--mono); color: var(--dim); letter-spacing: .4px;
+    white-space: pre-wrap; pointer-events: none; }
+  .fleet-card { position: absolute; right: 14px; top: 14px; width: 280px; max-height: calc(100% - 28px); overflow: auto; padding: 14px 16px 16px;
+    background: var(--overlay); border: 1px solid var(--line2); box-shadow: 0 12px 40px var(--shadow); }
+  .fleet-card[hidden] { display: none; }
+  .fleet-card-kind { font: 9px var(--mono); letter-spacing: 1.6px; color: var(--dim); }
+  .fleet-card h3 { margin: 4px 0 6px; font-size: 17px; color: var(--accent); font-weight: 600; }
+  .fleet-card h4 { margin: 12px 0 5px; font: 9px var(--mono); letter-spacing: 1px; text-transform: uppercase; color: var(--dim); }
+  .fleet-card p { margin: 0 0 6px; font-size: 12px; line-height: 1.45; } .fleet-card-facts { font: 10px var(--mono) !important; color: var(--dim); }
+  .fleet-card .chips { margin-top: 8px; }
+  .fleet-card-close { position: absolute; right: 8px; top: 6px; background: none; border: 0; color: var(--dim); font-size: 18px; cursor: pointer; }
+  @media (prefers-reduced-motion: reduce) { .listhead, .list, .fleet-scene, .fleet-labels, .fleet-legend, .fleet-label { transition: none; } }
+  @media (max-width: 800px) { .fleet-card { left: 10px; right: 10px; top: auto; bottom: 34px; width: auto; max-height: 46%; } }
 </style>
 </head>
 <body data-layout="list">
@@ -144,7 +169,7 @@
   <label>Group <select id="group" aria-label="Group by"><option value="os">Operating system</option><option value="band">Band</option><option value="none">No grouping</option></select></label>
   <label>Sort <select id="sort" aria-label="Sort"><option value="name">Name</option><option value="os">Operating system</option><option value="band">Band</option><option value="status">Online first</option></select></label>
   <div class="view-toggle" role="group" aria-label="Worker view">
-    <button type="button" data-layout="list" aria-pressed="true">&#9776; List</button><button type="button" data-layout="grid" aria-pressed="false">&#9638; Grid</button>
+    <button type="button" data-layout="list" aria-pressed="true">&#9776; List</button><button type="button" data-layout="grid" aria-pressed="false">&#9638; Grid</button><button type="button" data-layout="scene" aria-pressed="false" title="3D">&#9820; 3D</button>
   </div>
 </div>
 <section class="stats">
@@ -156,6 +181,7 @@
 </section>
 <div class="listhead"><span></span><span></span><span>worker</span><span>band</span><span>version</span><span></span><span>heartbeat</span></div>
 <div class="list" id="list"><div class="empty">Loading&hellip;</div></div>
+<div class="fleet-scene" id="fleet-scene" hidden></div>
 <div class="foot" id="foot"></div>
 <script>
 "use strict";
@@ -321,6 +347,7 @@ function render() {
     if (!ord.length) box.innerHTML = `<div class="empty">${loaded ? (workers.length ? "No worker matches." : "No workers yet.") : "Loading…"}</div>`;
   }
   versions(list);
+  if (document.body.dataset.layout === "scene") syncFleet();
   $("foot").textContent = Object.keys(bands).length > 1 ? "all bands · " + list.length + " workers" :
     "band " + bandName(Object.keys(bands)[0]) + " · " + list.length + " workers";
 }
@@ -381,17 +408,75 @@ async function load() {
 $("filter").oninput = render;
 $("group").onchange = render;
 $("sort").onchange = render;
-for (const b of document.querySelectorAll(".view-toggle button")) {
-  b.onclick = () => {
-    document.body.dataset.layout = b.dataset.layout;
-    for (const o of document.querySelectorAll(".view-toggle button")) o.setAttribute("aria-pressed", String(o === b));
-  };
+// The 3D view (Bake, Nov 9: "I liked the 3d rook from the old version"): the
+// 0.4 fleet scene, a chessboard of pieces, one per worker, the hub as the rook.
+let fleet = null, fleetEnter = false, layoutBusy = false;
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function fleetCard(card, id) {
+  const w = workers.find((x) => x.id === id);
+  if (!w) return false;
+  const add = (tag, text, cls) => { const e = document.createElement(tag); if (cls) e.className = cls; e.textContent = text; card.append(e); return e; };
+  add("div", w.hub ? "HUB · ROOK" : (osOf(w) === "Android" ? "PHONE" : "COMPUTER") + " · PAWN", "fleet-card-kind");
+  add("h3", w.name || w.id);
+  if (w.description) add("p", w.description);
+  const a = age(w);
+  add("p", [versionLabel(w), bandName(w.band), w.hub ? "the hub" : fresh(w) <= 0 ? "quiet for " + Math.round(a) + "s" : "seen " + Math.round(a) + "s ago",
+    osOf(w)].filter(Boolean).join(" · "), "fleet-card-facts");
+  add("p", "worker_id " + w.id, "fleet-card-facts");
+  const plugins = (w.plugins || []).slice().sort();
+  if (plugins.length) {
+    add("h4", "Plugins · " + plugins.length);
+    const chips = add("div", "", "chips");
+    for (const p of plugins) { const c = document.createElement("span"); c.className = "chip"; c.textContent = p; chips.append(c); }
+  }
+  return true;
 }
+
+function syncFleet() {
+  const host = $("fleet-scene"), on = document.body.dataset.layout === "scene";
+  host.hidden = !on;
+  if (!on) { if (fleet) fleet.setActive(false); return; }
+  const lib = window.RookLib && window.RookLib["rook-scene"];
+  if (!lib) return;                                   // it's still parsing; the rooklib event comes back here
+  if (!fleet) fleet = lib.mountFleet(host, { quietAfter: WINDOW, renderCard: fleetCard });
+  const grouping = $("group").value;
+  fleet.update(shown().map((w) => ({ id: w.id, name: w.name || w.id,
+    group: grouping === "os" ? osOf(w) : grouping === "band" ? bandName(w.band) : "",
+    kind: osOf(w) === "Android" ? "phone" : "computer", hub: !!w.hub, age: age(w), banned: false,
+    description: w.description || "", version: versionLabel(w).replace(/^v/, ""), bandName: bandName(w.band),
+    battery: ((w.status || {}).battery || (w.status || {})["battery-android"] || {}).percent ?? null,
+    serves: null, caps: w.caps || [] })));
+  if (fleetEnter) { fleetEnter = false; fleet.enter(); }
+  fleet.setActive(true);
+}
+window.addEventListener("rooklib", syncFleet);
+
+async function setLayout(layout) {
+  if (layoutBusy || layout === document.body.dataset.layout) return;
+  layoutBusy = true;
+  try {
+    // Into 3D: the page fades, then the scene pulls back from the rook. Out of it: the reverse.
+    if (!calm && layout === "scene") { document.body.classList.add("fading"); await pause(320); }
+    if (!calm && document.body.dataset.layout === "scene" && fleet) { await fleet.leave(); document.body.classList.add("fading"); }
+    document.body.dataset.layout = layout;
+    if (layout === "scene") fleetEnter = true;
+    for (const o of document.querySelectorAll(".view-toggle button")) o.setAttribute("aria-pressed", String(o.dataset.layout === layout));
+    syncFleet();
+    if (!calm) await pause(30);
+  } finally {
+    layoutBusy = false;
+    document.body.classList.remove("fading");
+  }
+}
+for (const b of document.querySelectorAll(".view-toggle button")) b.onclick = () => setLayout(b.dataset.layout);
 rook.on("worker.*", load);
 rook.on("plugin.*", load);
 setInterval(load, 15000);         // heartbeats land every 30 s; the bars drain in between
 load();
 requestAnimationFrame(frame);
 </script>
+<script type="module" data-rook-lib="rook-scene"></script>
 </body>
 </html>

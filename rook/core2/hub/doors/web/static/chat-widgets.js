@@ -9,16 +9,21 @@
 //       opens a view in the work pane (left): vault, account, network, or
 //       "page hub/workers" (a hub page); key=value lines pre-fill it, and it
 //       focuses the field the person needs to touch
-//   [[point: vault.value]]
-//       Rookie walks over to that target in the work pane and back
+//   [[point: vault.value | Enter the password here]]
+//       Rookie walks over to that target in the work pane and back; the
+//       words after | are his speech bubble there (default "Right here")
+//   [[say: The dashboard task is done]]
+//       a speech bubble beside Rookie, a few words (Bake, Nov 9: "I want
+//       rookie to make little chat bubbles too")
 //
 // parse(text) -> [{kind: "text", text} | {kind: "choices", items} |
-//                 {kind: "open", view, arg, args} | {kind: "point", target}]
+//                 {kind: "open", view, arg, args} | {kind: "point", target, say} |
+//                 {kind: "say", text}]
 // No DOM here: tests run it under node.
 "use strict";
 
 (function (root) {
-  const BLOCK = /\[\[\s*(choices|open|point)\s*:\s*([^\]]*?)\s*\]\]/gi;
+  const BLOCK = /\[\[\s*(choices|open|point|say)\s*:\s*([^\]]*?)\s*\]\]/gi;
 
   // One [[...]] block -> a part, or null (empty: left as words).
   function block(kind, body) {
@@ -26,7 +31,8 @@
     if (!parts.length) return null;
     kind = kind.toLowerCase();
     if (kind === "choices") return { kind, items: parts };
-    if (kind === "point") return { kind, target: parts[0] };
+    if (kind === "point") return { kind, target: parts[0], say: parts.slice(1).join(" | ") };
+    if (kind === "say") return { kind, text: parts.join(" | ") };
     const [view, ...rest] = parts[0].split(/\s+/);
     const args = {};
     for (const p of parts.slice(1)) {

@@ -28,7 +28,11 @@ right now. You drive it with lines of their own in your message:
   the address on their network, `status=` a line about what you checked),
   `page hub/workers` (any hub page by name: the Workers page shows machines
   joining).
-- `[[point: TARGET]]` - Rookie walks over to that thing on the left and back.
+- `[[point: TARGET | a few words]]` - Rookie walks over to that thing on the
+  left, says the words in a speech bubble there ("Enter username and
+  password"; without words: "Right here"), and goes back.
+- `[[say: a few words]]` - a speech bubble beside Rookie ("The dashboard
+  task is done"). Keep it to a few words; the full message is in the chat.
   Targets: `account.name`, `account.password`, `account.save`, `vault.key`,
   `vault.value`, `vault.save`, `vault.list`, `network.local`, `network.home`,
   `network.anywhere`, `network.status`, `page` (the open hub page).

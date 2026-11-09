@@ -9,7 +9,9 @@
   --accent: #d8ad6d; --accent-dim: #695637; --accent-hi: #f0c98c; --accent-bg: #292b20; --accent-bg-strong: #343322;
   --accent-line: #514b35; --on-accent: #17140c;
   --good: #a4bc92; --good-bg: #20271b; --good-line: #38432d; --bad: #dca58d; --bad-bg: #30271f; --bad-line: #6b4336;
-  --shadow: rgba(0, 0, 0, .5);
+  --shadow: rgba(0, 0, 0, .5); --backdrop: #050a06bf;
+  --group-bg: #101610; --banner-bg: #1f1c12; --good-fg: #becbac; --warn: #d8ad6d; --warn-bg: #1c150a; --warn-line: #3a2f18;
+  --art-line: #9aa780; --art-ink: #c2aa7e; --art-hatch: #aa9870; --art-fill: #303628; --art-text: #b6a377; --art-text2: #a6ad91;
   --sans: 'DM Sans', system-ui, sans-serif; --mono: 'IBM Plex Mono', ui-monospace, monospace;
   --nav-width: 176px;
 }
@@ -56,6 +58,7 @@ code, pre { font-family: var(--mono); }
 #account { padding-top: 12px; font: 10px var(--mono) !important; color: var(--dim) !important; }
 #signout { padding: 4px 8px 0; }
 .grow { flex: 1; }
+.offscreen { display: none !important; }
 
 /* -- one page, full width ------------------------------------------------------------- */
 main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -64,7 +67,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 #bar h1 { font: 450 22px var(--sans); letter-spacing: -.5px; margin: 0; }
 #menu { display: none; }
 #stage { flex: 1; display: flex; min-height: 0; }
-#stage iframe { flex: 1; border: 0; width: 100%; height: 100%; background: var(--bg); }
+#stage iframe { flex: 1; border: 0; width: 100%; height: 100%; background: transparent; color-scheme: dark; }
 #note { width: 340px; flex: none; border-left: 1px solid var(--line); padding: 14px; overflow-y: auto; background: var(--panel); }
 #note pre { white-space: pre-wrap; word-break: break-word; font: 12px/1.5 var(--mono); margin: 0; }
 #msg { padding: 24px; color: var(--dim); }
@@ -87,14 +90,33 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
 /* -- the chat: the right pane, Rookie at its head; pages and work views fill the left -- */
 #dock { width: 420px; flex: none; display: none; flex-direction: column; background: var(--panel);
-  border-left: 1px solid var(--line); position: relative; }
+  border-left: 1px solid var(--line); position: relative; z-index: 2; }
 body.dock-open #dock { display: flex; }
-#dock-head { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line);
+#dock-head { display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 16px; border-bottom: 1px solid var(--line);
   font: 500 11px var(--mono); letter-spacing: 1.5px; text-transform: uppercase; color: var(--accent); }
+/* the chat's X, top right (Bake, Nov 9) */
+#dock-close { width: 34px; height: 34px; padding: 0; flex: none; display: grid; place-items: center; background: none;
+  border: 1px solid transparent; color: var(--dim); font: 300 24px/1 var(--sans); letter-spacing: 0; }
+#dock-close:hover { border-color: var(--line2); color: var(--accent); }
+#dock-skip { letter-spacing: .3px; text-transform: none; }
 #rookie-home { width: 64px; height: 50px; flex: none; }
 .rookie canvas { display: block; }
 /* travelling: the one Rookie leaves the chat and hops across the page (shell.js travel()) */
 .rookie.away { position: fixed; z-index: 60; pointer-events: none; filter: drop-shadow(0 6px 10px var(--shadow)); }
+/* the chat closed: he waits in the bottom-right corner; a click opens the chat */
+#rookie-park { position: fixed; right: 18px; bottom: 16px; width: 64px; height: 50px; pointer-events: none; visibility: hidden; }
+.rookie.parked { pointer-events: auto; cursor: pointer; }
+.rookie.parked:hover { filter: drop-shadow(0 0 6px var(--accent-dim)) drop-shadow(0 6px 10px var(--shadow)); }
+body.no-rookie .rookie.parked { display: none; }
+/* his speech bubble: a few words beside him, wherever he is */
+#rookie-say { position: fixed; z-index: 61; max-width: 240px; padding: 7px 11px; background: var(--panel);
+  border: 1px solid var(--accent-line); color: var(--fg); font: 500 12px/1.4 var(--sans); cursor: pointer;
+  box-shadow: 0 8px 24px var(--shadow); transition: opacity .5s ease; }
+#rookie-say:after { content: ''; position: absolute; top: calc(50% + 4px); right: -6px; width: 9px; height: 9px;
+  background: var(--panel); border: solid var(--accent-line); border-width: 1px 1px 0 0; transform: rotate(45deg); }
+#rookie-say.right:after { right: auto; left: -6px; border-width: 0 0 1px 1px; }
+#rookie-say.fade { opacity: 0; }
+#rookie-say:hover { border-color: var(--accent); }
 body.no-rookie #rookie-home { display: none; }
 #dock-log { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 14px 16px; display: flex;
   flex-direction: column; gap: 12px; }
@@ -198,3 +220,30 @@ body.setup .msg .text { font-size: 14px; }
 /* -- a public page (/public/<page>): just the page, no sidebar or chat ------------------------- */
 body.public #bar .mark { width: 18px; height: 18px; fill: var(--accent); flex: none; }
 body.public #bar h1 { font-size: 18px; }
+
+/* -- the margin drawing behind every page, as on the 0.4 dashboard (rook/web/rook-art.css):
+   the SVG sketch, then the 3D rook (art.js, rook-scene.js) --------------------------------- */
+body { isolation: isolate; }
+main { position: relative; z-index: 1; }
+@media (min-width: 761px) { #nav { position: relative; z-index: 1; } }
+.rook-art { position: fixed; z-index: 0; pointer-events: none; right: -70px; top: 120px; width: min(760px, 62vw);
+  height: min(820px, calc(100vh - 100px)); min-height: 480px; opacity: .43; contain: strict;
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 12%, #000 82%, transparent 100%); transition: opacity .5s ease; }
+.rook-canvas, .rook-sketch { position: absolute; inset: 0; width: 100%; height: 100%; }
+.rook-canvas canvas { display: block; width: 100%; height: 100%; }
+.rook-canvas { opacity: 0; }
+.rook-art[data-mode=webgl] .rook-canvas { opacity: 1; }
+.rook-art[data-mode=webgl] .rook-sketch { display: none; }
+.rook-art .plate-number { position: absolute; left: 16%; top: 15%; font: 9px var(--mono); letter-spacing: 2px; color: var(--art-text);
+  writing-mode: vertical-rl; transform: rotate(180deg); }
+.rook-art .plate-caption { position: absolute; left: 3%; bottom: 13%; font: 8px/1.9 var(--mono); letter-spacing: 1px; color: var(--art-text2); text-align: left; }
+.rook-art .plate-caption b { font-weight: 400; color: var(--accent); }
+.rook-sketch .art-line { stroke: var(--art-line); } .rook-sketch .art-ink { stroke: var(--art-ink); }
+.rook-sketch .art-hatch { stroke: var(--art-hatch); } .rook-sketch .art-fill { fill: var(--art-fill); }
+body.setup .rook-art { opacity: .3; }
+.art-toggle { color: var(--dim2); font: 9px var(--mono); letter-spacing: .25px; padding: 0 8px; }
+.art-toggle:hover { color: var(--accent); }
+#work .work-form, #work .card, #work .secrets, #work .status { background: var(--overlay); }
+@media (min-width: 1650px) { .rook-art { right: 1vw; opacity: .5; } }
+@media (max-width: 800px) { .rook-art { right: -120px; top: 190px; width: 560px; height: 700px; min-height: 0; opacity: .22; } }
+@media (prefers-reduced-motion: reduce) { .rook-art, #rookie-say { transition: none; } }

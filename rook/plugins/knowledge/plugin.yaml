@@ -22,6 +22,10 @@ records:
       parent: { type: ref, to: knowledge.knowledge, doc: The folder page this sits under. }
       tags: { type: list, items: { type: str } }
       sources: { type: list, items: { type: map }, doc: "[{key, kind, ref, quote, note, by, when}]: body cites one as [^key]." }
+      verification: { type: str, enum: [unverified, verified, disputed], doc: "A person's review (knowledge.review); blank: unverified." }
+      review_note: { type: str, doc: "What's wrong (a dispute) or a note from the review." }
+      reviewed_by: { type: str }
+      reviewed_at: { type: float }
     index: [kind]
     search: [title, body]
     semantic: [body]
@@ -87,6 +91,17 @@ caps:
             note: { type: str }
     result: { type: map }
     run: scripts/knowledge.py:update
+  review:
+    doc: "Verify a page, dispute it (say what's wrong in note: an agent fixes it) or set it back to unverified, as on the 0.4 Knowledge page."
+    risk: write
+    scope: multi-user
+    args:
+      id: { type: str, required: true, doc: Id or slug. }
+      verdict: { type: str, required: true, enum: [verified, disputed, unverified] }
+      note: { type: str }
+      revision: { type: int, doc: "The revision you reviewed; blank: the current one." }
+    result: { type: map }
+    run: scripts/knowledge.py:review
   link:
     doc: "Add a source or related link to a page (a commit, a task, the person's words), or remove=true to take it off (by key, else by kind and ref)."
     risk: write
@@ -122,4 +137,4 @@ skills:
 docs: { manual: docs/manual.md }
 
 pages:
-  knowledge: { title: Knowledge, file: pages/knowledge.html, caps: ["knowledge.list", "knowledge.search", "knowledge.get"], nav: { section: Work } }
+  knowledge: { title: Knowledge, file: pages/knowledge.html, caps: ["knowledge.list", "knowledge.search", "knowledge.get", "knowledge.create", "knowledge.update", "knowledge.archive", "knowledge.history", "knowledge.review"], events: ["knowledge.*"], nav: { section: Work } }

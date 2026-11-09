@@ -95,7 +95,7 @@ def test_the_workers_page_is_the_04_one(site):
     page = WORKERS.read_text()
     for part in ('id="k-total"', 'id="k-online"', 'id="k-stale"', 'id="verbar"', 'id="bars"',
                  '<option value="os">Operating system</option>', '<option value="band">Band</option>',
-                 "worker-group-heading", "worker-band", "batt", "seenbar", 'data-layout="grid"', "--accent: #d8ad6d"):
+                 "worker-group-heading", "worker-band", "batt", "seenbar", 'data-layout="grid"', 'data-layout="scene"', 'id="fleet-scene"', 'data-rook-lib="rook-scene"', "var(--overlay)"):
         assert part in page, part
 
     async def go():

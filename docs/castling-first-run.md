@@ -108,7 +108,8 @@ A line of its own in `[[...]]` (`static/chat-widgets.js`, node-tested):
 | `[[open: account]]` | the account view: the person's name and a password (`name=` pre-fills) |
 | `[[open: network \| home=http://192.168.1.20:8740 \| status=...]]` | the three ways to reach this site, in plain words, with the addresses and what the agent checked |
 | `[[open: page hub/workers]]` | a hub page on the left |
-| `[[point: vault.value]]` | Rookie travels to that target and back |
+| `[[point: vault.value \| Enter the password here]]` | Rookie travels to that target, says the words in a bubble there (default "Right here") and goes back |
+| `[[say: The dashboard task is done]]` | a speech bubble beside Rookie, wherever he is; a click opens the chat at that message |
 
 Targets: `account.name`, `account.password`, `account.again`,
 `account.save`, `vault.key`, `vault.value`, `vault.description`,
@@ -167,8 +168,53 @@ accessible for things like reports or reference".
   list or grid, and per row a band chip, the version, the battery (a battery
   plugin's status rides the heartbeat) and a heartbeat draining over 90 s,
   with the details (facts, plugins, what it can't serve) under the row.
-  `hub.workers` gives `now` (the hub's clock) and `bands`. No 3D view and no
-  per-worker actions yet.
+  `hub.workers` gives `now` (the hub's clock) and `bands`. **3D** is the
+  0.4 fleet scene (one piece per worker, the hub as the rook). No per-worker
+  actions yet.
+
+### The Rook look, the 3D rook, Knowledge and Trust map, Rookie in the corner
+
+Bake, Nov 9: "The like workers background is missing. I liked the 3d rook
+from the old version. Let's bring over the trust map and knowledge pages
+too. make sure the default styles are using the old rook style." And: "Also
+for the house agent chat, I want to have like an X at the top right, and move
+the rookie avatar to the bottom right corner when closed. Remove the chat
+button from the like top nav on pages. Clicking rookie opens the chat
+sidebar. I want rookie to make little chat bubbles too with short like
+"Right here" "Enter username and password" "The dashboard task is done" etc".
+
+- **The Rook look is the default everywhere.** `static/page.css` (injected
+  into every page) carries rook/web/theme.css's rook-dark tokens and the 0.4
+  controls: square corners, DM Sans and IBM Plex Mono, olive and amber.
+  Earlier page names (`--muted`, `--card`, `--ok`) map onto them. The fonts
+  are the hub's own files (`static/fonts`, OFL, the ones Google Fonts serves
+  0.4): the shell, account, sign-in and public pages load them with
+  `fonts.css`; pages, which have no network, get them inlined as `data:`
+  fonts.
+- **The margin drawing** behind every page, as on 0.4: the SVG sketch, then
+  the three.js rook (`static/rook-scene.js`, built from rook/web/scene,
+  loaded by `art.js` when the browser is idle). Pages are clear, so it shows
+  behind them; panels sit on `--overlay`. "Pause artwork" at the foot of the
+  sidebar stops it.
+- **Libraries for pages**: a page can't load scripts, so
+  `<script type="module" data-rook-lib="rook-scene"></script>` is replaced
+  with the library, inline, its exports on `window.RookLib["rook-scene"]`
+  and a `rooklib` event when it has run (`site.py` `LIBS`). The Workers
+  page's 3D view uses it.
+- **Knowledge** (knowledge/knowledge) is the 0.4 Knowledge view on 0.5's
+  records; `knowledge.review` keeps 0.4's verify / dispute. **Trust map**
+  (trust/trust) is the 0.4 Trust map on 0.5's model.
+- **The chat**: an X at its top right closes it (in setup it also skips to
+  the hub, as "Skip to the hub" does). The bar has no Chat button. When the
+  chat closes, Rookie walks out of it to the bottom-right corner and waits
+  there (still the one instance); a click on him opens the chat and he walks
+  back.
+- **Rookie's speech bubbles**: a few words beside him, wherever he is. The
+  agent says them with `[[say: ...]]`, or `[[point: TARGET | words]]` when
+  he points at something (default "Right here"). With the chat closed the
+  site makes them too: a reply's first few words, "That task is done", "Your
+  new page is ready", "I need your OK" for a hold. They fade after a few
+  seconds; a click opens the chat at that message.
 
 ## Rookie
 
@@ -303,6 +349,11 @@ were built on this branch and taken out again; nothing replaces them now:
     with `--permission-mode auto` under the person's own subscription, so
     the house agent edits files and runs commands on this machine without
     asking. Consider a narrower mode or `allowed_tools`.
+12. Trust map (`trust.map`, `trust.sacred`, Nov 9): anyone who can call
+    `trust.sacred` (rights and risk `admin` only, no owner-only rule) marks a
+    machine sacred or not and it is written to hub.yaml; anyone who opens
+    the page sees every agent's grants and every project's level. Consider:
+    owners only for `trust.sacred`, and grants shown only to owners.
 
 ## OpenCode gotchas
 
