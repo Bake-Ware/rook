@@ -1,6 +1,6 @@
 """The attention plugin (rook/plugins/attention) on a real 0.5 hub with the
-jobs plugin: its ready-made job is installed active and runs the house agent
-with the attention skill (castling-attention: "an aggregation job on the hub
+jobs plugin: its ready-made job is installed active and calls the house
+agent with the attention skill (castling-attention: "an aggregation job on the hub
 run by the house agent"), and what the house agent curates is attention
 records (attention.list), private to the owners. The agents package is a
 stand-in (test_jobs.HOUSE) that writes what the house agent was sent."""
@@ -48,13 +48,14 @@ def test_attention_pass_is_a_house_agent_job(rig_cfg):
                                         if j["source"] == "attention/attention"], what="the seeded job"))[0]
             assert (job["creator"], job["run_as"], job["persona"], job["enabled"]) == (
                 "plugin:attention", "persona", "house", True)
-            assert job["trigger"] == {"every": "15m"} and "attention skill" in job["agent"]["prompt"]
+            assert job["trigger"] == {"every": "15m"} and job["call"] == "agent.chat.send"
+            assert job["args"]["agent"] == "house" and "attention skill" in job["args"]["text"]
 
             r = await rig.bake.ok("job.run", job=job["id"], wait=True)
             assert r["state"] == "ok" and r["as_who"] == "agent:house", r
             sent = [json.loads(x) for x in inbox.read_text().splitlines()]
             assert sent[-1]["agent"] == "house" and sent[-1]["from"] == "agent:house"
-            assert sent[-1]["text"] == job["agent"]["prompt"] and sent[-1]["wait"] is True
+            assert sent[-1]["text"] == job["args"]["text"] and sent[-1]["wait"] is True
         finally:
             await rig.stop()
     run(body)

@@ -1,16 +1,13 @@
 """The jobs plugin (rook/plugins/jobs) on a real 0.5 hub, in-process with a
-loopback band, driven through the HTTP door: schedules, events, webhooks,
-scripts and their workflow library, identities, retries, asks, recovery
-after a restart, and templates from other plugins' manifests.
+loopback band, driven through the HTTP door: schedules, events (the call
+gets the event), identities, timeouts, recovery after a restart, and
+templates from other plugins' manifests.
 
-A ``probe`` hub plugin gives the jobs something to call, and ``tell``
-provides ``notify.send`` (it writes what it was asked to send to a file).
-Every test body runs under a hard timeout; HTTP requests run in a thread
-with their own socket timeout."""
+A ``probe`` hub plugin gives the jobs something to call. Every test body
+runs under a hard timeout; HTTP requests run in a thread with their own
+socket timeout."""
 
 import asyncio
-import hashlib
-import hmac
 import json
 import sys
 import time
@@ -53,14 +50,13 @@ caps:
     scope: self
     on: hub
     run: scripts/probe.py:echo
-    args: { text: { type: str } }
-  flaky:
-    doc: Fail until the nth call.
-    risk: write
+    args: { text: { type: str }, event: { type: map } }
+  sleep:
+    doc: Sleep a while.
+    risk: read
     scope: self
     on: hub
-    run: scripts/probe.py:flaky
-    args: { key: { type: str, required: true }, fails: { type: int, default: 0 } }
+    run: scripts/probe.py:sleep
   happen:
     doc: Emit probe.happened.
     risk: write
@@ -94,16 +90,13 @@ jobs:
 """
 
 PROBE_PY = """\
-COUNTS = {}
+import asyncio
 
-def echo(ctx, text=None):
-    return {"text": text, "person": ctx.person, "agent": ctx.agent}
+def echo(ctx, text=None, event=None):
+    return {"text": text, "person": ctx.person, "agent": ctx.agent, **({"event": event} if event else {})}
 
-def flaky(ctx, key, fails=0):
-    COUNTS[key] = COUNTS.get(key, 0) + 1
-    if COUNTS[key] <= fails:
-        raise ctx.Error(f"not yet ({COUNTS[key]})", retry=True)
-    return {"tries": COUNTS[key]}
+async def sleep(ctx):
+    await asyncio.sleep(30)
 
 def happen(ctx, what):
     ctx.emit("probe.happened", {"what": what})
@@ -112,37 +105,6 @@ def happen(ctx, what):
 def me(ctx, request):
     return {"person": ctx.person, "query": request["query"]}
 """
-
-TELL = """\
-manifest: 1
-plugin: tell
-version: 1.0.0
-doc: A notify.send provider that writes to a file.
-runs_on: hub
-caps:
-  send:
-    doc: Write the message down.
-    risk: write
-    scope: self
-    on: hub
-    run: scripts/tell.py:send
-    args:
-      text: { type: str, required: true }
-      to: { type: str }
-      title: { type: str }
-provides:
-  notify.send: tell.send
-"""
-
-TELL_PY = """\
-import json
-
-def send(ctx, text, to=None, title=None):
-    with open(ctx.data / "sent.jsonl", "a") as f:
-        f.write(json.dumps({"text": text, "to": to, "title": title}) + "\\n")
-    return {"sent": True}
-"""
-
 
 def plugin(lib: Path, name: str, text: str, scripts: dict) -> None:
     (lib / name / "scripts").mkdir(parents=True)
@@ -155,13 +117,12 @@ def plugin(lib: Path, name: str, text: str, scripts: dict) -> None:
 def cfg(tmp_path):
     lib = tmp_path / "lib"
     plugin(lib, "probe", PROBE, {"probe.py": PROBE_PY})
-    plugin(lib, "tell", TELL, {"tell.py": TELL_PY})
     (lib / "jobs").symlink_to(PLUGINS / "jobs", target_is_directory=True)
     return Config(data=tmp_path / "data", band=BAND, library=lib,
                   users={"bake": {"preset": "owner"}, "amy": {"preset": "adult"}, "pat": {"preset": "adult"}},
-                  agents={"helper": {"grants": ["probe.echo", "notify.send"]}},
-                  settings={"job": {"tick": "50ms", "retry_after": "50ms", "timeout": "20s"}},
-                  contracts={"notify.send": "tell.send"}, doors={"http": {"bind": "127.0.0.1:0"}})
+                  agents={"helper": {"grants": ["probe.echo"]}},
+                  settings={"job": {"tick": "50ms", "timeout": "20s"}},
+                  doors={"http": {"bind": "127.0.0.1:0"}})
 
 
 class Door:
@@ -210,10 +171,6 @@ class Rig:
     async def stop(self) -> None:
         await self.hub.stop()
 
-    def sent(self) -> list[dict]:
-        f = self.hub.data / "plugins" / "tell" / "sent.jsonl"
-        return [json.loads(line) for line in f.read_text().splitlines()] if f.exists() else []
-
     def runs(self, job: str) -> list[dict]:
         return self.hub.records.type("job.run").list(_owner(), where={"job": job}, order="created", limit=500)
 
@@ -242,15 +199,15 @@ def run(body, timeout=60):
 
 
 def done(rig, job, n=1):
-    return lambda: [r for r in rig.runs(job) if r["state"] not in ("running", "waiting")][n - 1:] and \
-        [r for r in rig.runs(job) if r["state"] not in ("running", "waiting")]
+    return lambda: [r for r in rig.runs(job) if r["state"] != "running"][n - 1:] and \
+        [r for r in rig.runs(job) if r["state"] != "running"]
 
 
 # -- cron and checks (no hub) ---------------------------------------------------------
 
 def test_manifest_is_clean():
     raw, issues = check(PLUGINS / "jobs")
-    assert raw is not None and [i.code for i in issues] == ["route-auth-none"], [str(i) for i in issues]
+    assert raw is not None and issues == [], [str(i) for i in issues]
 
 
 def test_cron():
@@ -282,16 +239,13 @@ def test_who_may_make_what():
     for job, msg in (({**base, "trigger": {"every": "5m", "manual": True}}, "exactly one of cron"),
                      ({**base, "trigger": {"cron": "nope"}}, "cron"),
                      ({**base, "trigger": {"every": "0.5s"}}, "1s or more"),
-                     ({**base, "trigger": {"webhook": "my-secret"}}, "webhook: true"),
+                     ({**base, "trigger": {"webhook": True}}, "exactly one of cron"),
+                     ({**base, "trigger": {"manual": "yes"}}, "manual: true"),
                      ({**base, "trigger": {"every": "5m", "filter": {"a": 1}}}, "goes with on"),
-                     ({**base, "script": "def main(job): pass"}, "exactly one of call"),
-                     ({"name": "j", "trigger": {"manual": True}, "agent": {"persona": "pm"}}, "prompt"),
-                     ({**base, "call": None, "agent": {"prompt": "hi"}, "worker": "nas"}, "worker goes with"),
                      ({**base, "run_as": "persona"}, "names its persona")):
         with pytest.raises(KitError, match=msg):
             check_job(job, owner=True)
     for job, msg in (({**base, "run_as": "persona", "persona": "pm"}, "owner"),
-                     ({**base, "call": None, "script": "x"}, "owner"),
                      ({**base, "trigger": {"on": "worker.online"}}, "owner")):
         with pytest.raises(KitError, match=msg):
             check_job(job, owner=False)
@@ -319,6 +273,7 @@ def test_every_job_runs_as_its_creator_on_the_named_worker(cfg):
             assert await rig.pat.ok("job.list") == [] and await rig.pat.ok("job.run.list") == []
             assert len(await rig.bake.ok("job.run.list", where={"job": job["id"]})) >= 2
             assert not (await rig.pat.call("job.run", job="tick"))["ok"]
+            assert not (await rig.amy.call("job.create", name="nocall", trigger={"manual": True}))["ok"]
             # a name is the band's once
             out = await rig.pat.call("job.create", name="tick", trigger={"manual": True}, call="probe.echo")
             assert not out["ok"] and "already called tick" in out["error"]
@@ -327,129 +282,6 @@ def test_every_job_runs_as_its_creator_on_the_named_worker(cfg):
             n = len(rig.runs(job["id"]))
             await asyncio.sleep(1.5)
             assert len(rig.runs(job["id"])) <= n + 1 and got["revision"] == job["revision"] + 1
-        finally:
-            await rig.stop()
-    run(body)
-
-
-def test_script_jobs_and_the_workflow_library(cfg):
-    script = """
-import time
-
-def main(job):
-    print("starting", job.trigger, job.vars)
-    a, b = job.parallel(lambda: job.call("probe.echo", {"text": "a"}, why="first"),
-                        lambda: job.call("probe.echo", {"text": "b"}, on="rook"))
-    tries = job.retry(lambda: job.call("probe.flaky", {"key": "k", "fails": 1}), times=3, wait="10ms")
-    try:
-        job.call("probe.nope")
-    except job.Error as e:
-        job.log("refused:", e.message)
-    t = time.monotonic(); job.wait("50ms")
-    job.notify("all done", title="Script")
-    return {"a": a["text"], "b": b["text"], "tries": tries["tries"], "waited": time.monotonic() - t >= 0.05,
-            "vars": job.vars, "last": job.last}
-"""
-
-    async def body():
-        rig = await Rig(cfg).start()
-        try:
-            out = await rig.amy.call("job.create", name="s", trigger={"manual": True}, script=script)
-            assert not out["ok"] and "owner" in out["error"]              # scripts run on the hub
-            job = await rig.bake.ok("job.create", name="s", trigger={"manual": True}, script=script,
-                                    vars={"x": 1})
-            r = await rig.bake.ok("job.run", job="s", vars={"y": 2}, wait=True)
-            assert r["state"] == "ok", r
-            assert r["result"] == {"a": "a", "b": "b", "tries": 2, "waited": True, "vars": {"x": 1, "y": 2},
-                                   "last": None}
-            assert r["log"][0] == "starting manual {'x': 1, 'y': 2}"
-            assert any(line.startswith("refused: ") and "probe.nope" in line for line in r["log"])
-            assert rig.sent()[-1] == {"text": "all done", "to": "bake", "title": "Script"}
-            whys = {e["why"] for e in rig.calls("probe.echo")}
-            assert {"job s: first", "job s: probe.echo"} <= whys
-            assert all(e["person"] == "person:bake" for e in rig.calls("probe.echo"))
-            r2 = await rig.bake.ok("job.run", job=job["id"], wait=True)
-            assert r2["result"]["last"] == r["started"]                  # the last good run
-
-            # a script that raises, one that never says done, one that prints garbage
-            for name, src, err in (("boom", "def main(job):\n    raise ValueError('nope')\n", "ValueError: nope"),
-                                   ("gone", "import os\ndef main(job):\n    os._exit(3)\n", "exit 3"),
-                                   ("nomain", "x = 1\n", "no function main")):
-                await rig.bake.ok("job.create", name=name, trigger={"manual": True}, script=src, notify="never")
-                r = await rig.bake.ok("job.run", job=name, wait=True)
-                assert r["state"] == "failed" and err in r["error"], r
-        finally:
-            await rig.stop()
-    run(body)
-
-
-def test_ask_answer_cancel_and_timeout(cfg):
-    asker = """
-def main(job):
-    a = job.ask("Ship it?", ["yes", "no"], timeout="20s")
-    b = job.ask("Anyone?", timeout="100ms")
-    return [a, b]
-"""
-
-    async def body():
-        rig = await Rig(cfg).start()
-        try:
-            await rig.bake.ok("job.create", name="asker", trigger={"manual": True}, script=asker)
-            rid = (await rig.bake.ok("job.run", job="asker"))["run"]
-            await until(lambda: rig.hub.records.type("job.run").get(_owner(), rid)["state"] == "waiting",
-                        what="the ask")
-            rec = rig.hub.records.type("job.run").get(_owner(), rid)
-            assert rec["asking"] == {"question": "Ship it?", "options": ["yes", "no"]}
-            # The one ask (castling-caps C4): it waits on Approvals for the job's person.
-            asks = [h for h in (await rig.bake.ok("approval.list"))["holds"] if h["kind"] == "ask"]
-            assert [(a["question"], a["options"], a["person"]) for a in asks] == [
-                ("Ship it?", ["yes", "no"], "person:bake")]
-            hold = asks[0]["hold"]
-            assert not (await rig.pat.call("approval.decide", hold=hold, answer="yes"))["ok"]     # not pat's
-            out = await rig.bake.call("approval.decide", hold=hold, answer="maybe")
-            assert not out["ok"] and "one of: yes, no" in out["error"]
-            assert (await rig.bake.ok("approval.decide", hold=hold, answer="yes"))["answered"]
-            assert rig.sent() == []                       # no notice of its own: the ask is the card
-            rec = await until(lambda: (r := rig.hub.records.type("job.run").get(_owner(), rid))["state"] == "ok"
-                              and r, what="the run")
-            assert rec["result"] == ["yes", None] and rec["asking"] is None
-
-            await rig.bake.ok("job.create", name="sleeper", trigger={"manual": True}, notify="never",
-                              script="import time\ndef main(job):\n    time.sleep(30)\n")
-            rid = (await rig.bake.ok("job.run", job="sleeper"))["run"]
-            out = await rig.bake.call("job.run", job="sleeper")
-            assert not out["ok"] and "still running" in out["error"]            # one run at a time
-            await asyncio.sleep(0.3)
-            assert (await rig.bake.ok("job.cancel", run=rid))["state"] == "cancelled"
-            assert rig.hub.records.type("job.run").get(_owner(), rid)["state"] == "cancelled"
-
-            await rig.bake.ok("job.create", name="slow", trigger={"manual": True}, notify="never",
-                              timeout="300ms", script="import time\ndef main(job):\n    time.sleep(30)\n")
-            r = await rig.bake.ok("job.run", job="slow", wait=True)
-            assert r["state"] == "failed" and r["error"] == "timed out after 300ms"
-        finally:
-            await rig.stop()
-    run(body)
-
-
-def test_retries_then_notice(cfg):
-    async def body():
-        rig = await Rig(cfg).start()
-        try:
-            job = await rig.amy.ok("job.create", name="flaky", trigger={"manual": True}, call="probe.flaky",
-                                   args={"key": "f1", "fails": 2}, retries=2)
-            await rig.amy.ok("job.run", job="flaky")
-            runs = await until(lambda: (r := rig.runs(job["id"])) and r[-1]["state"] == "ok" and r, what="ok")
-            assert [(r["attempt"], r["trigger"], r["state"]) for r in runs] == [
-                (1, "manual", "failed"), (2, "retry", "failed"), (3, "retry", "ok")]
-            assert rig.sent() == []                                  # it came good: nobody told
-
-            job = await rig.amy.ok("job.create", name="broken", trigger={"manual": True}, call="probe.flaky",
-                                   args={"key": "f2", "fails": 5}, retries=1)
-            await rig.amy.ok("job.run", job="broken")
-            await until(lambda: rig.sent(), what="the notice")
-            assert rig.sent() == [{"text": "Job broken failed: not yet (2)", "to": "amy", "title": "Job broken"}]
-            assert [r["state"] for r in rig.runs(job["id"])] == ["failed", "failed"]
         finally:
             await rig.stop()
     run(body)
@@ -484,38 +316,7 @@ def send(ctx, agent, text, wait=True):
 """
 
 
-def test_notices_go_through_the_house_agent(cfg):
-    """castling-agents "Reaching the user": jobs don't pick a channel; the
-    house agent gets word to the person. notify.send only without agents."""
-    plugin(cfg.library, "agents", HOUSE, {"house.py": HOUSE_PY})
-    script = "def main(job):\n    job.notify('backup missing', title='Backups')\n"
-
-    async def body():
-        rig = await Rig(cfg).start()
-        inbox = rig.hub.data / "plugins" / "agent" / "inbox.jsonl"
-        told = lambda: [json.loads(x) for x in inbox.read_text().splitlines()] if inbox.exists() else []  # noqa: E731
-        try:
-            await rig.amy.ok("job.create", name="broken", trigger={"manual": True}, call="probe.flaky",
-                             args={"key": "h1", "fails": 5})
-            await rig.amy.ok("job.run", job="broken")
-            got = (await until(told, what="the house agent's notice"))[0]
-            assert got["agent"] == "house" and got["wait"] is False and got["from"] == "system:plugin.job"
-            assert "for amy (Job broken)" in got["text"] and got["text"].endswith("Job broken failed: not yet (1)")
-            await rig.bake.ok("job.create", name="s", trigger={"manual": True}, script=script, notify="never")
-            r = await rig.bake.ok("job.run", job="s", wait=True)
-            assert r["state"] == "ok", r
-            got = told()[-1]
-            assert got["from"] == "person:bake" and "for bake (Backups)" in got["text"]
-            assert got["text"].endswith("backup missing")
-            assert rig.sent() == []                       # never straight to a channel
-            assert {e["why"] for e in rig.calls("agent.chat.send")} >= {
-                "job broken: tell amy", "job s: tell bake: Backups"}
-        finally:
-            await rig.stop()
-    run(body)
-
-
-def test_event_jobs_with_filters(cfg):
+def test_event_jobs_hand_the_event_to_their_call(cfg):
     async def body():
         rig = await Rig(cfg).start()
         try:
@@ -523,44 +324,50 @@ def test_event_jobs_with_filters(cfg):
             assert not out["ok"] and "owner" in out["error"]
             job = await rig.bake.ok("job.create", name="ev", trigger={"on": "probe.happened",
                                                                        "filter": {"what": ["door", "window"]}},
-                                    script="def main(job):\n    return job.payload\n")
+                                    call="probe.echo", args={"text": "heard"})
             await rig.bake.ok("probe.happen", what="cat")
             await rig.bake.ok("probe.happen", what="door")
             runs = await until(done(rig, job["id"]), what="the event run")
-            assert runs[0]["trigger"] == "event" and runs[0]["result"] == {"what": "door"}
+            assert runs[0]["trigger"] == "event" and runs[0]["state"] == "ok", runs
             assert runs[0]["event"] == {"name": "probe.happened", "payload": {"what": "door"}}
+            assert runs[0]["result"]["text"] == "heard"
+            assert runs[0]["result"]["event"] == {"name": "probe.happened", "payload": {"what": "door"}}
             await asyncio.sleep(0.3)
             assert len(rig.runs(job["id"])) == 1                     # cat didn't pass the filter
+
+            # a cap without an event arg is called with its own args only
+            plain = await rig.bake.ok("job.create", name="plain", trigger={"on": "probe.happened"},
+                                      call="probe.secret")
+            await rig.bake.ok("probe.happen", what="window")
+            runs = await until(done(rig, plain["id"]), what="the plain run")
+            assert runs[0]["state"] == "ok" and "event" not in runs[0]["result"], runs
         finally:
             await rig.stop()
     run(body)
 
 
-def test_webhooks_are_signed_per_job(cfg):
+def test_timeout_and_one_run_at_a_time(cfg):
     async def body():
         rig = await Rig(cfg).start()
         try:
-            job = await rig.amy.ok("job.create", name="hook", trigger={"webhook": True}, call="probe.echo",
-                                   args={"text": "pushed"})
-            hook = job["webhook"]
-            assert hook == await rig.amy.ok("job.webhook", id="hook")
-            assert not (await rig.pat.call("job.webhook", id=job["id"]))["ok"]
-            body_ = json.dumps({"ref": "main"}).encode()
-            sig = "sha256=" + hmac.new(hook["key"].encode(), body_, hashlib.sha256).hexdigest()
+            await rig.bake.ok("job.create", name="slow", trigger={"manual": True}, call="probe.sleep",
+                              timeout="300ms")
+            rid = (await rig.bake.ok("job.run", job="slow"))["run"]
+            out = await rig.bake.call("job.run", job="slow")
+            assert not out["ok"] and "still running" in out["error"]
+            rec = await until(lambda: (r := rig.hub.records.type("job.run").get(_owner(), rid))["state"] != "running"
+                              and r, what="the timeout")
+            assert rec["state"] == "failed" and rec["error"] == "timed out after 300ms"
+        finally:
+            await rig.stop()
+    run(body)
+
+
+def test_user_routes_take_the_bearer_token(cfg):
+    async def body():
+        rig = await Rig(cfg).start()
+        try:
             anon = Door(rig.hub, "")
-            status, out = await anon.request("POST", hook["path"], body_, auth=False)
-            assert status == 401 and out["error"] == "unknown job or bad signature"
-            status, out = await anon.request("POST", hook["path"].replace(job["id"], "r_0000000000000000"), body_,
-                                             {"X-Rook-Signature": sig}, auth=False)
-            assert status == 401 and out["error"] == "unknown job or bad signature"
-            status, out = await anon.request("POST", hook["path"], body_, {"X-Hub-Signature-256": sig}, auth=False)
-            assert status == 200 and out["ok"], out
-            runs = await until(done(rig, job["id"]), what="the webhook run")
-            assert runs[0]["trigger"] == "webhook" and runs[0]["event"]["payload"] == {"ref": "main"}
-            assert runs[0]["result"]["person"] == "person:amy"
-            assert (await anon.request("GET", hook["path"], auth=False))[0] == 405
-            assert (await anon.request("POST", "/p/job/nope", b"{}", auth=False))[0] == 404
-            # auth: user routes take the bearer token
             assert (await anon.request("GET", "/p/probe/me?x=1", auth=False))[0] == 401
             status, out = await rig.amy.request("GET", "/p/probe/me?x=1")
             assert status == 200 and out == {"person": "person:amy", "query": {"x": "1"}}
@@ -585,18 +392,18 @@ def test_persona_jobs_and_plugin_templates(cfg):
                                      **{"as": "persona", "persona": "helper"})
             assert not out["ok"] and "owner" in out["error"]
             await rig.bake.ok("job.create", name="p", trigger={"manual": True}, call="probe.secret",
-                              notify="never", **{"as": "persona", "persona": "helper"})
+                              **{"as": "persona", "persona": "helper"})
             r = await rig.bake.ok("job.run", job="p", wait=True)
             assert r["state"] == "failed" and r["error"].startswith("denied: agent"), r
 
             seen = {m["plugin"]: m for m in (await rig.amy.ok("hub.manifests", section="jobs"))["manifests"]}
-            assert set(seen) == {"backup", "job", "probe"} and "folder" not in seen["probe"]     # paths: owners only
+            assert set(seen) == {"backup", "probe"} and "folder" not in seen["probe"]     # paths: owners only
             assert seen["probe"]["jobs"]["sweep"]["as"] == "persona"
             seen = (await rig.bake.ok("hub.manifests", section="jobs"))["manifests"]
             assert all(m["folder"] for m in seen)
             listed = {t["template"]: t for t in await rig.amy.ok("job.templates")}
-            assert {"probe/sweep", "probe/offered", "job/security-scan"} <= set(listed)
-            assert listed["probe/offered"]["installed"] is False and listed["probe/offered"]["does"] == "call"
+            assert {"probe/sweep", "probe/offered"} <= set(listed)
+            assert listed["probe/offered"]["installed"] is False and listed["probe/offered"]["call"] == "probe.echo"
             mine = await rig.amy.ok("job.install", template="probe/offered", name="mine")
             assert (mine["source"], mine["person"], mine["run_as"]) == ("probe/offered", "person:amy", "creator")
             r = await rig.amy.ok("job.run", job="mine", wait=True)
@@ -615,34 +422,14 @@ def test_persona_jobs_and_plugin_templates(cfg):
     run(body)
 
 
-def test_security_scan_template(cfg):
-    async def body():
-        rig = await Rig(cfg).start()
-        try:
-            for _ in range(3):        # refused: pat may not read amy's job
-                await rig.pat.call("job.cancel", run="r_nope")
-                await rig.bake.call("probe.nope")
-            job = await rig.bake.ok("job.install", template="job/security-scan", vars={"threshold": 2})
-            assert job["trigger"] == {"every": "5m"} and job["plugin"] == "job"
-            r = await rig.bake.ok("job.run", job="security-scan", wait=True)
-            assert r["state"] == "ok", r
-            assert r["result"]["denied"] >= 3 and r["result"]["told"] is True
-            assert rig.sent()[-1]["title"] == "Security scan" and "refused" in rig.sent()[-1]["text"]
-        finally:
-            await rig.stop()
-    run(body)
-
-
 def test_restart_fails_open_runs_and_catches_up(cfg):
     async def body():
         rig = await Rig(cfg).start()
-        await rig.bake.ok("job.create", name="long", trigger={"manual": True}, retries=0,
-                          script="import time\ndef main(job):\n    time.sleep(30)\n")
+        await rig.bake.ok("job.create", name="long", trigger={"manual": True}, call="probe.sleep")
         rid = (await rig.bake.ok("job.run", job="long"))["run"]
         catch = await rig.bake.ok("job.create", name="catch", trigger={"every": "1s"}, call="probe.echo",
-                                  catch_up=True, notify="never")
-        skip = await rig.bake.ok("job.create", name="skip", trigger={"every": "1s"}, call="probe.echo",
-                                 notify="never")
+                                  catch_up=True)
+        skip = await rig.bake.ok("job.create", name="skip", trigger={"every": "1s"}, call="probe.echo")
         await until(done(rig, catch["id"]), what="a catch run")
         await until(done(rig, skip["id"]), what="a skip run")
         await asyncio.sleep(0.3)
@@ -662,9 +449,6 @@ def test_restart_fails_open_runs_and_catches_up(cfg):
             assert not [r for r in rig.runs(skip["id"]) if r["trigger"] == "catch_up"]
             rec = rig.hub.records.type("job.run").get(_owner(), rid)
             assert (rec["state"], rec["error"]) == ("failed", "interrupted: the hub restarted before it finished")
-            await until(lambda: rig.sent(), what="the notice")
-            assert rig.sent() == [{"text": "Job long failed: interrupted: the hub restarted before it finished",
-                                   "to": "bake", "title": "Job long"}]
         finally:
             await rig.stop()
     run(body)
