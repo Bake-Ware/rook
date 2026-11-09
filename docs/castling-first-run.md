@@ -5,7 +5,7 @@ questions required: what do you use for AI now? ... Then it installs the hub
 site, and opens it in the browser. This then detects the state of the
 configuration and the user gets the home agent chat using sensible defaults.
 At which point the home agent walks them through setting up the rest of the
-system." First use case: none / OpenCode. No terminal commands, tokens or
+system." First use cases: none / OpenCode, and Claude Code. No terminal commands, tokens or
 password files for the person.
 
 ## Install (Linux)
@@ -22,9 +22,17 @@ commit). Options: `--dir` (default `~/.rook`), `--name` (unit prefix, default
 
 What it does:
 
-1. Asks what you use for AI now. Only "none" is built: the others say
-   "coming soon" and fall back to it.
-2. None: installs OpenCode (opencode.ai's installer) if missing, lists its
+1. Asks what you use for AI now. "Claude Code" (1, `--ai claude`) and
+   "none" (6) are built: the others say "coming soon" and fall back to none.
+2. Claude Code (Bake, Nov 9: "start it in claude code mode"): uses the
+   `claude` CLI already on the machine, or installs it with the official
+   installer (`curl -fsSL https://claude.ai/install.sh | bash`). If
+   `claude auth status` says it isn't signed in, it asks the person to run
+   `claude` once in another terminal to sign in and press Enter (three
+   tries; with no terminal it stops and says so). Then one short turn the
+   way Rook runs it (`claude -p --output-format json --permission-mode auto
+   --setting-sources project,local --strict-mcp-config`) has to answer.
+   None: installs OpenCode (opencode.ai's installer) if missing, lists its
    free `opencode/*` models and keeps the first that answers a real
    `opencode run` (no account).
 3. Installs uv if missing, a uv-managed Python 3.12 and Rook into `DIR`.
@@ -33,8 +41,11 @@ What it does:
    (`install`), which `hub.setup` returns to the house agent.
 5. Writes and starts `NAME-relay`, `NAME-hub`, `NAME-worker` (systemd user
    units; enabled at login unless `--no-boot`). The worker runs `shell`,
-   `file` and `agents-opencode` with the tested model (its own tools on);
-   security is off. The site, MCP door and relay listen on every interface
+   `file` and the backend: `agents-claude-code` (`claude` = the tested
+   path, `permission_mode: auto`, `door_url` = this hub's MCP door; the
+   hub's `agent.backend` contract is `agents-claude-code.turn`) or
+   `agents-opencode` with the tested model (its own tools on); security is
+   off. The site, MCP door and relay listen on every interface
    (0.0.0.0).
 6. Opens the browser on the hub's address. While setup isn't completed the
    site needs no sign-in (Bake, Nov 6: "It is simple. If configuration
@@ -288,6 +299,10 @@ were built on this branch and taken out again; nothing replaces them now:
     public API takes no CSRF token and public page tokens (512 kept) live
     12 hours. Consider: read-risk calls only, no `approval.decide`, an
     unguessable link instead of the page id, rate limits.
+11. Claude Code mode (`--ai claude`, Nov 9): agent turns run Claude Code
+    with `--permission-mode auto` under the person's own subscription, so
+    the house agent edits files and runs commands on this machine without
+    asking. Consider a narrower mode or `allowed_tools`.
 
 ## OpenCode gotchas
 

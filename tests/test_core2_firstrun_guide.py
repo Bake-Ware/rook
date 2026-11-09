@@ -198,3 +198,64 @@ def test_the_installer_waits_for_the_house_agent_before_done():
     sh = (REPO / "deploy/install/install.sh").read_text()
     wait = sh[sh.index("ready=0"):sh.index('step "Done"')]
     assert '"cap": "page.site"' in wait and "get('ready')" in wait
+
+
+# -- Claude Code mode (Bake, Nov 9: "start it in claude code mode") -------------------
+
+def _claude_step(tmp_path, auth: str, reply: str):
+    """Run the installer's Claude Code step with a stand-in claude on PATH."""
+    sh = (REPO / "deploy/install/install.sh").read_text()
+    step = sh[sh.index("if [ $AI = claude ]; then"):sh.index('step "Setting up your AI: OpenCode')]
+    step = step[:step.rindex("else")] + "fi\n"
+    helpers = sh[sh.index("bold() {"):sh.index("SRC=$ROOT/src")] + sh[sh.index("ask() {"):sh.index('bold "Rook"')]
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    fake = bindir / "claude"
+    fake.write_text("#!/bin/sh\n"
+                    'case "$1" in\n'
+                    "  --version) echo '9.9.9 (Claude Code)' ;;\n"
+                    f"  auth) echo '{{\"loggedIn\": {auth}}}' ;;\n"
+                    f"  *) echo \"$*\" > \"$ROOK_ARGS\"; cat > /dev/null; echo '{reply}' ;;\n"
+                    "esac\n")
+    fake.chmod(0o755)
+    script = tmp_path / "step.sh"
+    script.write_text("set -euo pipefail\nAI=claude ROOT=$1 LOG=$1/install.log\n" + helpers + step +
+                      'echo "CLAUDE=$CLAUDE MODEL=$MODEL"\n')
+    env = {"PATH": f"{bindir}:/usr/bin:/bin", "HOME": str(tmp_path), "ROOK_ARGS": str(tmp_path / "args")}
+    root = tmp_path / "root"
+    root.mkdir()
+    return subprocess.run(["setsid", "bash", str(script), str(root)], env=env, capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL, timeout=60), tmp_path / "args"
+
+
+def test_the_installer_sets_up_claude_code_and_tests_it(tmp_path):
+    ok = '{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"s1"}'
+    proc, args = _claude_step(tmp_path, "true", ok)
+    assert proc.returncode == 0, proc.stderr
+    assert 'Claude Code answered "ok"' in proc.stdout and "MODEL=opus" in proc.stdout
+    assert str(tmp_path / "bin" / "claude") in proc.stdout
+    sent = args.read_text()                # the test turn runs the way Rook runs it
+    assert "-p --output-format json --permission-mode auto" in sent and "--strict-mcp-config" in sent
+
+
+def test_the_installer_asks_for_a_claude_sign_in(tmp_path):
+    proc, _ = _claude_step(tmp_path, "false", "{}")
+    assert proc.returncode != 0
+    assert "In another terminal run:  claude" in proc.stdout
+    assert "run claude once to sign in" in proc.stderr
+
+
+def test_the_installer_stops_when_claude_code_does_not_answer(tmp_path):
+    bad = '{"type":"result","subtype":"success","is_error":true,"result":"Invalid API key"}'
+    proc, _ = _claude_step(tmp_path, "true", bad)
+    assert proc.returncode != 0 and "didn't answer a test prompt" in proc.stderr
+
+
+def test_claude_mode_configures_the_worker_and_the_hub():
+    sh = (REPO / "deploy/install/install.sh").read_text()
+    assert "none|claude) ;;" in sh                   # option 1 is no longer "coming soon"
+    assert "if [ $AI = claude ]; then BACKEND=agents-claude-code; else BACKEND=agents-opencode; fi" in sh
+    assert 'cfg["contracts"] = {"agent.backend": f"{backend}.turn"}' in sh
+    assert ('{"agents-claude-code": {"claude": claude, "permission_mode": "auto", "door_url": door}}' in sh
+            and 'door = f"http://127.0.0.1:{mcp}/mcp"' in sh)
+    assert "curl -fsSL https://claude.ai/install.sh | bash" in sh

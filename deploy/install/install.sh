@@ -4,7 +4,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/c12/first-run/deploy/install/install.sh | bash
 #   deploy/install/install.sh                 # from a checkout: installs that checkout's commit
 #
-# It asks what you use for AI now, sets that up and tests it, installs the
+# It asks what you use for AI now, sets that up and tests it (1 = Claude Code on
+# this machine; the rest start on OpenCode's free model for now), installs the
 # hub site, the band relay and a worker for this machine as systemd user
 # units, and opens the site (no sign-in until setup is completed). The house agent
 # takes it from there.
@@ -143,15 +144,52 @@ if [ -z "$AI" ]; then
     esac
 fi
 case $AI in
-    none) ;;
-    claude|codex|gemini|api|local)
+    none|claude) ;;
+    codex|gemini|api|local)
         say "Setting Rook up with that is coming soon. For now you'll start with a free model"
         say "(no account needed); your house agent can switch it later."
         AI=none ;;
     *) die "--ai is one of none, claude, codex, gemini, api, local" ;;
 esac
 
-# -- 2. Set it up and test it: none = OpenCode with a free model ------------------
+# -- 2. Set it up and test it -------------------------------------------------------
+# claude = the Claude Code CLI on this machine, under the subscription it is
+# signed in with (Bake, Nov 9: "start it in claude code mode"); none =
+# OpenCode with a free model.
+CLAUDE="" OPENCODE="" MODEL=""
+if [ $AI = claude ]; then
+step "Setting up your AI: Claude Code"
+if ! command -v claude >/dev/null; then
+    say "Installing Claude Code (claude.ai's installer) ..."
+    curl -fsSL https://claude.ai/install.sh | bash >>"$LOG" 2>&1 || die "Claude Code didn't install (see $LOG)"
+    command -v claude >/dev/null || die "Claude Code installed but isn't on PATH (see $LOG)"
+fi
+CLAUDE=$(command -v claude)
+say "Claude Code $("$CLAUDE" --version </dev/null 2>/dev/null | head -1) at $CLAUDE"
+signed_in() { "$CLAUDE" auth status </dev/null 2>>"$LOG" | grep '"loggedIn": *true' >/dev/null; }
+for _ in 1 2 3; do
+    signed_in && break
+    say "Claude Code isn't signed in yet. In another terminal run:  claude"
+    say "sign in with your Claude account there, then come back here."
+    [ -r /dev/tty ] || die "Claude Code isn't signed in: run claude once to sign in, then run this again"
+    ask "  Press Enter once you've signed in: " "" >/dev/null
+done
+signed_in || die "Claude Code still isn't signed in: run claude once to sign in, then run this again"
+# One short turn the way Rook runs it: no MCP servers or settings of yours,
+# permission mode auto.
+say "Testing it ..."
+probe=$ROOT/.probe
+mkdir -p "$probe"
+out=$(cd "$probe" && printf 'Say ok and nothing else.' | timeout 120 "$CLAUDE" -p --output-format json \
+    --permission-mode auto --setting-sources project,local --strict-mcp-config 2>>"$LOG" || true)
+rm -rf "$probe"
+printf '%s\n' "$out" >>"$LOG"
+reply=$(printf '%s' "$out" | grep -o '"result":"[^"]*"' | head -1 | sed 's/^"result":"\(.*\)"$/\1/' || true)
+printf '%s' "$out" | grep '"is_error":false' >/dev/null && [ -n "$reply" ] ||
+    die "Claude Code didn't answer a test prompt (see $LOG; run claude once to check it works)"
+MODEL=opus
+say "It works: Claude Code answered \"$reply\"."
+else
 step "Setting up your AI: OpenCode with a free model"
 if ! command -v opencode >/dev/null; then
     say "Installing OpenCode (opencode.ai) ..."
@@ -183,6 +221,7 @@ done
 rm -rf "$probe"
 [ -n "$MODEL" ] || die "none of OpenCode's free models answered (they may be busy; try again in a while; see $LOG)"
 say "It works: $MODEL answered \"$reply\"."
+fi
 
 # -- 3. Rook itself -------------------------------------------------------------
 step "Installing Rook in $ROOT"
@@ -223,27 +262,28 @@ TOKEN=$(printf '%s\n' "$initout" | awk '/^API token/{getline; print $1; exit}')
 [ -n "$TOKEN" ] || die "the hub set up without a token for enrolling this machine"
 plugins=$SRC/rook/plugins
 HUB_PLUGINS="agents notify changes tasks projects knowledge concepts whiteboard"
-WORKER_PLUGINS="shell file agents-opencode"
+if [ $AI = claude ]; then BACKEND=agents-claude-code; else BACKEND=agents-opencode; fi
+WORKER_PLUGINS="shell file $BACKEND"
 mkdir -p "$ROOT/hub/library"
 for p in $HUB_PLUGINS $WORKER_PLUGINS; do
     [ -f "$plugins/$p/plugin.yaml" ] && ln -sfn "$plugins/$p" "$ROOT/hub/library/$p"
 done
-"$PY" - "$HUB_CFG" "$MCP_PORT" <<'EOF'
+"$PY" - "$HUB_CFG" "$MCP_PORT" "$BACKEND" <<'EOF'
 import sys, yaml
 from pathlib import Path
-path, mcp = Path(sys.argv[1]), sys.argv[2]
+path, mcp, backend = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 text = path.read_text()
 head = "".join(l for l in text.splitlines(True) if l.startswith("#"))
 cfg = yaml.safe_load(text)
 cfg["doors"]["mcp"] = {"bind": f"0.0.0.0:{mcp}"}
-cfg["contracts"] = {"agent.backend": "agents-opencode.turn"}
+cfg["contracts"] = {"agent.backend": f"{backend}.turn"}
 cfg["log"] = {"level": "info", "format": "text"}
 path.write_text(head + yaml.safe_dump(cfg, sort_keys=False))
 EOF
-"$PY" - "$ROOT" "$NAME" "$WORKER_NAME" "$HTTP_PORT" "$MCP_PORT" "$RELAY_PORT" "$MODEL" "$sha" <<'EOF'
+"$PY" - "$ROOT" "$NAME" "$WORKER_NAME" "$HTTP_PORT" "$MCP_PORT" "$RELAY_PORT" "$MODEL" "$sha" "$AI" <<'EOF'
 import json, os, sys, time
 from pathlib import Path
-root, name, worker, http, mcp, relay, model, sha = sys.argv[1:]
+root, name, worker, http, mcp, relay, model, sha, ai = sys.argv[1:]
 path = Path(root) / "hub" / "data" / "setup.json"
 state = json.loads(path.read_text()) if path.exists() else {}
 state["install"] = {
@@ -252,19 +292,27 @@ state["install"] = {
     "machine": worker, "units": [f"{name}-relay", f"{name}-hub", f"{name}-worker"],
     "http": f"0.0.0.0:{http} (every interface)", "mcp": f"0.0.0.0:{mcp}",
     "relay": f"0.0.0.0:{relay} (UDP, every interface)", "security": "off",
-    "ai": {"choice": "none", "backend": "agents-opencode.turn", "model": model,
-           "note": "OpenCode's free model: no account. Switch by installing another agents-* backend."}}
+    "ai": ({"choice": "claude", "backend": "agents-claude-code.turn", "model": model,
+            "note": "Claude Code on this machine, under the Claude subscription it is signed in with "
+                    "(permission mode auto). Switch by installing another agents-* backend."}
+           if ai == "claude" else
+           {"choice": "none", "backend": "agents-opencode.turn", "model": model,
+            "note": "OpenCode's free model: no account. Switch by installing another agents-* backend."})}
 path.write_text(json.dumps(state, indent=1))
 EOF
-"$PY" - "$WORKER_CFG" "$WORKER_NAME" "$plugins" "$WORKER_PLUGINS" "$OPENCODE" "$MODEL" "$MCP_PORT" <<'EOF'
+"$PY" - "$WORKER_CFG" "$WORKER_NAME" "$plugins" "$WORKER_PLUGINS" "$OPENCODE" "$MODEL" "$MCP_PORT" "$CLAUDE" <<'EOF'
 import sys, yaml
 from pathlib import Path
-path, name, plugins, wanted, opencode, model, mcp = sys.argv[1:]
+path, name, plugins, wanted, opencode, model, mcp, claude = sys.argv[1:]
 plugins = Path(plugins)
+door = f"http://127.0.0.1:{mcp}/mcp"
+if claude:
+    backend = {"agents-claude-code": {"claude": claude, "permission_mode": "auto", "door_url": door}}
+else:
+    backend = {"agents-opencode": {"opencode": opencode, "model": model, "door_url": door}}
 cfg = {"data": "./data", "name": name,
        "plugins": [str(plugins / p) for p in wanted.split() if (plugins / p / "plugin.yaml").is_file()],
-       "settings": {"agents-opencode": {"opencode": opencode, "model": model,
-                                        "door_url": f"http://127.0.0.1:{mcp}/mcp"}},
+       "settings": backend,
        "log": {"level": "info", "format": "text"}}
 Path(path).write_text(yaml.safe_dump(cfg, sort_keys=False))
 EOF
@@ -305,7 +353,7 @@ After=$NAME-hub.service
 
 [Service]
 WorkingDirectory=$ROOT/worker
-Environment=PATH=$(dirname "$OPENCODE"):$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=$(dirname "${CLAUDE:-$OPENCODE}"):$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=$PY -m rook.core2.worker --config $WORKER_CFG
 Restart=always
 RestartSec=5
