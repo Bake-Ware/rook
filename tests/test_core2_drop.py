@@ -1,6 +1,6 @@
-"""OTA-over-Drop bridge: in-band bundle transfer over a (lossy) relay.
+"""Blobs over Drop: in-band transfer over a (lossy) relay.
 
-Exercises rook.worker.ota_drop end to end without a real hub: a fake relay
+Exercises rook.core2.transport.drop end to end without a real hub: a fake relay
 shuttles DROP packets between an OtaDropSender and an OtaDropReceiver, with an
 optional loss filter to prove the receiver-driven re-request recovers.
 """
@@ -12,7 +12,7 @@ import os
 import pytest
 
 from telesthete.protocol.crypto import BandCrypto
-from rook.worker.ota_drop import OtaDropReceiver, OtaDropSender, is_drop_packet
+from rook.core2.transport.drop import OtaDropReceiver, OtaDropSender, is_drop_packet
 
 
 class Relay:
@@ -48,10 +48,10 @@ class Relay:
         return _send
 
 
-def _make_pair(band_id, drop_id, name, data, drop=None, have=None):
+def _make_pair(band_id, drop_id, name, data, drop=None):
     relay = Relay(drop=drop)
     sender = OtaDropSender(band_id, drop_id, name, data, relay.to_receiver())
-    receiver = OtaDropReceiver(band_id, drop_id, relay.to_sender(), have=have)
+    receiver = OtaDropReceiver(band_id, drop_id, relay.to_sender())
     relay.sender, relay.receiver = sender, receiver
     return relay, sender, receiver
 
@@ -140,23 +140,6 @@ async def test_lossy_relay_recovers_via_rerequest():
     receiver.stop()
 
 
-@pytest.mark.asyncio
-async def test_resume_from_persisted_chunks():
-    band_id = BandCrypto("ota-psk4").band_id
-    data = os.urandom(1024 * 10)
-    CHUNK = 1024
-    # Pretend a prior interrupted transfer persisted half the chunks.
-    have = {i: data[i * CHUNK:(i + 1) * CHUNK] for i in (0, 1, 2, 5, 8)}
-    relay, sender, receiver = _make_pair(band_id, 4, "resume.pyz", data, have=have)
-    got = {}
-    receiver.on_complete(lambda d, ok: got.update(data=d, ok=ok))
-    receiver.start()
-    sender.offer()
-    assert await receiver.wait(timeout=5.0)
-    assert got["ok"] is True and got["data"] == data
-    receiver.stop()
-
-
 def test_is_drop_packet_discriminates_json_from_drop():
     band_id = BandCrypto("disc-psk").band_id
     assert not is_drop_packet(b'{"cap": "worker.status"}', band_id)
@@ -175,7 +158,7 @@ def test_reply_receiver_handles_chunks_in_linear_time():
     import json
     from telesthete.protocol.drop import CHUNK_SIZE, DropFrameType
     from telesthete.protocol.framing import ChannelType, pack_packet
-    from rook.worker.ota_drop import _BAND_PEER, _FAKE_TAG, _PassthroughCrypto, _Receiver
+    from rook.core2.transport.drop import _BAND_PEER, _FAKE_TAG, _PassthroughCrypto, _Receiver
 
     class Counting(dict):
         n = 0

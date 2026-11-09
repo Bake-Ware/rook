@@ -209,7 +209,7 @@ def test_requests_are_addressed_and_replies_go_to_rr():
 
 
 def wire_route(name):
-    from rook.worker.wire.codec import route_id_for
+    from rook.core2.transport.codec import route_id_for
     return route_id_for(name)
 
 
@@ -623,7 +623,7 @@ def test_a_pull_keeps_several_windows_in_flight_and_asks_again_for_gaps():
     missing below the frontier is asked again in one REQUEST."""
     from telesthete.protocol.framing import unpack_packet
     from rook.core2.transport.drop import WindowedPull
-    from rook.worker.ota_drop import OtaDropSender
+    from rook.core2.transport.drop import OtaDropSender
 
     async def main():
         band_id = bytes.fromhex(BAND)

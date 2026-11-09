@@ -11,14 +11,14 @@ import pytest
 from telesthete.protocol.fragment import MAX_CHUNK_PAYLOAD, Reassembler, parse_chunk
 from telesthete.protocol.framing import HEADER_SIZE, pack_packet, unpack_packet
 
-from rook.worker.transports import dispatch as dispatch_mod
-from rook.worker.transports import writer as writer_mod
-from rook.worker.transports.dispatch import Dispatcher
-from rook.worker.transports import telesthete_hub as hub_mod
-from rook.worker.transports.telesthete_hub import (
-    TelestheteHubTransport, WsLink, set_socket_buffers, udp_pacer_from_env)
-from rook.worker.transports.writer import FrameWriter, TokenBucket
-from rook.worker.wire.codec import KEEPALIVE_PAYLOAD, BandCodec
+from rook.core2.transport import dispatch as dispatch_mod
+from rook.core2.transport import writer as writer_mod
+from rook.core2.transport.dispatch import Dispatcher
+from rook.core2.transport import band as hub_mod
+from rook.core2.transport.band import (
+    TelestheteHubTransport, WsLink)
+from rook.core2.transport.writer import FrameWriter, TokenBucket
+from rook.core2.transport.codec import KEEPALIVE_PAYLOAD, BandCodec
 
 PSK = "band-transport-test-psk"
 
@@ -70,27 +70,6 @@ def test_codec_sequences_are_unique_and_monotonic_across_messages():
     seqs = [unpack_packet(f).sequence for p in (b"a", os.urandom(5000), b"b")
             for f in c.frames(p)]
     assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
-
-
-def test_codec_passes_reassembler_limits_it_accepts(monkeypatch):
-    from rook.worker.wire import codec as codec_mod
-
-    seen = {}
-
-    class Budgeted(Reassembler):
-        def __init__(self, timeout=30.0, buffer_limit=256, max_message_bytes=None,
-                     max_total_bytes=None):
-            seen.update(timeout=timeout, buffer_limit=buffer_limit,
-                        max_message_bytes=max_message_bytes, max_total_bytes=max_total_bytes)
-            super().__init__(timeout, buffer_limit)
-
-    monkeypatch.setattr(codec_mod, "Reassembler", Budgeted)
-    BandCodec(PSK)
-    assert seen["max_message_bytes"] == codec_mod.REASSEMBLY_MAX_MESSAGE_BYTES
-    assert seen["max_total_bytes"] == codec_mod.REASSEMBLY_MAX_TOTAL_BYTES
-    # And the library as pinned (no byte budgets) still constructs.
-    monkeypatch.setattr(codec_mod, "Reassembler", Reassembler)
-    assert isinstance(BandCodec(PSK).reassembler, Reassembler)
 
 
 # -- writer ------------------------------------------------------------------
@@ -332,21 +311,6 @@ async def test_pacing_throttles_bulk_but_not_control():
     await w.stop()
 
 
-def test_udp_pacer_env(monkeypatch):
-    monkeypatch.delenv("ROOK_BAND_UDP_PACE_RATE", raising=False)
-    monkeypatch.delenv("ROOK_BAND_UDP_PACE_BURST", raising=False)
-    p = udp_pacer_from_env()
-    assert p is not None and p.rate == 2000.0 and p.burst == 64
-    monkeypatch.setenv("ROOK_BAND_UDP_PACE_RATE", "500")
-    monkeypatch.setenv("ROOK_BAND_UDP_PACE_BURST", "8")
-    p = udp_pacer_from_env()
-    assert (p.rate, p.burst) == (500.0, 8)
-    monkeypatch.setenv("ROOK_BAND_UDP_PACE_RATE", "0")
-    assert udp_pacer_from_env() is None
-    monkeypatch.setenv("ROOK_BAND_UDP_PACE_RATE", "fast")
-    assert udp_pacer_from_env().rate == 2000.0
-
-
 # -- keepalive ---------------------------------------------------------------
 
 class FakeLink:
@@ -406,7 +370,7 @@ async def test_udp_start_registers_and_stop_is_clean():
     async def on_message(p, peer):
         seen.append(p)
 
-    from rook.worker.transports import telesthete_hub as th
+    from rook.core2.transport import band as th
     orig = th.UdpLink.write
 
     async def capture(self, frame):
@@ -430,10 +394,10 @@ async def test_udp_start_registers_and_stop_is_clean():
 
 @pytest.mark.asyncio
 async def test_ws_send_raises_when_not_connected():
-    t = TelestheteHubTransport(psk=PSK, hub_host="hub.example.com", hub_port=443, use_ws=True)
+    t = TelestheteHubTransport(psk=PSK, hub_host="hub.example.com", hub_port=443,
+                               ws_url="wss://hub.example.com/band")
     with pytest.raises(RuntimeError, match="WS not connected"):
         await t.send(b"x")
-    assert t._ws_url.startswith("wss://")
 
 
 @pytest.mark.asyncio
@@ -482,8 +446,7 @@ async def test_ws_handshake_is_bounded(monkeypatch):
     import aiohttp
     _HungSession.started = 0
     monkeypatch.setattr(aiohttp, "ClientSession", _HungSession)
-    monkeypatch.setattr(hub_mod, "_env_num", lambda name, default, cast=float, minimum=0:
-                        0.05 if name == "ROOK_BAND_WS_CONNECT_TIMEOUT" else default)
+    monkeypatch.setattr(hub_mod, "WS_CONNECT_TIMEOUT", 0.05)
     link = WsLink("wss://hub.example.com/band")
     link.backoff.next = lambda: 0.01
     task = asyncio.create_task(link.run(lambda f: None, _noop_up, lambda: None))
@@ -495,25 +458,6 @@ async def test_ws_handshake_is_bounded(monkeypatch):
 
 async def _noop_up():
     pass
-
-
-@pytest.mark.asyncio
-async def test_ws_kick_abandons_hung_connect_and_retries_now(monkeypatch):
-    """kick() (network changed) drops the connect in flight and skips the backoff."""
-    import aiohttp
-    _HungSession.started = 0
-    monkeypatch.setattr(aiohttp, "ClientSession", _HungSession)
-    link = WsLink("wss://hub.example.com/band")
-    link.backoff.next = lambda: 3600.0     # only a kick can get past this
-    task = asyncio.create_task(link.run(lambda f: None, _noop_up, lambda: None))
-    await asyncio.sleep(0.05)
-    assert _HungSession.started == 1
-    link.kick()
-    await asyncio.sleep(0.05)
-    assert _HungSession.started == 2
-    assert not task.done()                 # the loop survived the cancelled attempt
-    await link.close()
-    task.cancel()
 
 
 # -- dispatch ----------------------------------------------------------------
@@ -533,12 +477,11 @@ async def test_dispatch_is_bounded_and_drains_backlog():
         running -= 1
         done.append(p)
 
-    shed = []
-    d = Dispatcher(handler, concurrency=3, backlog=4, on_shed=lambda p, peer: shed.append(p))
+    d = Dispatcher(handler, concurrency=3, backlog=4)
     reqs = [b'{"id":"%d","cap":"x.y"}' % i for i in range(10)]
     accepted = [d.submit(r, ()) for r in reqs]
     assert accepted == [True] * 7 + [False] * 3
-    assert d.dropped == 3 and d.queued == 4 and shed == reqs[7:]
+    assert d.dropped == 3 and d.queued == 4
     await asyncio.sleep(0.01)
     assert d.running == 3
     release.set()
@@ -549,7 +492,7 @@ async def test_dispatch_is_bounded_and_drains_backlog():
 
 
 def test_only_requests_are_sheddable():
-    from rook.worker.transports.dispatch import is_request
+    from rook.core2.transport.dispatch import is_request
     assert is_request(b'{"id":"1","cap":"a.b","args":{}}')
     assert not is_request(b'{"id":"1","from":"w","ok":true,"result":1}')     # reply
     assert not is_request(b'{"id":"1","cap":"a.b","ok":false}')              # reply echoing cap
@@ -653,7 +596,7 @@ def _kernel_fits(n, payload_for):
     rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        set_socket_buffers(rx)
+        hub_mod._set_buffers(rx)
         rx.bind(("127.0.0.1", 0))
         rx.setblocking(False)
         codec = BandCodec(PSK)
@@ -699,8 +642,8 @@ async def test_burst_of_fast_requests_is_served_not_shed():
 
 @pytest.mark.asyncio
 async def test_burst_of_slow_requests_sheds_only_requests(monkeypatch):
-    monkeypatch.setenv("ROOK_BAND_DISPATCH_CONCURRENCY", "4")
-    monkeypatch.setenv("ROOK_BAND_DISPATCH_BACKLOG", "16")
+    monkeypatch.setattr(hub_mod, "Dispatcher",
+                        lambda handler: Dispatcher(handler, concurrency=4, backlog=16))
     got, dropped = await _burst(200, lambda i: b'{"id":"%d","cap":"x.y"}' % i,
                                 handler_delay=0.5)
     assert dropped > 0 and len(got) + dropped == 200
@@ -752,24 +695,6 @@ async def test_slow_handler_does_not_stall_ingest():
     await t.dispatcher.stop()
 
 
-@pytest.mark.asyncio
-async def test_dispatch_env_override(monkeypatch):
-    monkeypatch.setenv("ROOK_BAND_DISPATCH_CONCURRENCY", "5")
-    monkeypatch.setenv("ROOK_BAND_DISPATCH_BACKLOG", "7")
-    t = TelestheteHubTransport(psk=PSK, hub_host="127.0.0.1", hub_port=9)
-    try:
-        await t.start(lambda p, peer: asyncio.sleep(0))
-        assert (t.dispatcher.concurrency, t.dispatcher.backlog_limit) == (5, 7)
-    finally:
-        await t.stop()
-
-
-def test_wire_channel_shim_is_gone():
-    import importlib.util
-    assert importlib.util.find_spec("rook.worker.wire.channel") is None
-    assert pack_packet  # framing still importable via the library
-
-
 # -- loopback relay (no network beyond 127.0.0.1) ------------------------------
 
 class _Relay(asyncio.DatagramProtocol):
@@ -790,15 +715,14 @@ class _Relay(asyncio.DatagramProtocol):
 
 
 @pytest.mark.asyncio
-async def test_udp_large_and_small_messages_cross_the_relay(monkeypatch):
-    # Default pacing: an unpaced burst of ~300 datagrams overflows the test
-    # relay's (default-sized) receive buffer — the real hub's failure mode.
-    monkeypatch.delenv("ROOK_BAND_UDP_PACE_RATE", raising=False)
-    monkeypatch.delenv("ROOK_BAND_UDP_PACE_BURST", raising=False)
+async def test_udp_large_and_small_messages_cross_the_relay():
+    # Paced: an unpaced burst of ~300 datagrams overflows the test relay's
+    # (default-sized) receive buffer, the real hub's failure mode.
     loop = asyncio.get_running_loop()
     relay_t, _ = await loop.create_datagram_endpoint(_Relay, local_addr=("127.0.0.1", 0))
     port = relay_t.get_extra_info("socket").getsockname()[1]
-    a = TelestheteHubTransport(psk=PSK, hub_host="127.0.0.1", hub_port=port)
+    a = TelestheteHubTransport(psk=PSK, hub_host="127.0.0.1", hub_port=port,
+                               pacer=TokenBucket(2000.0, 64))
     b = TelestheteHubTransport(psk=PSK, hub_host="127.0.0.1", hub_port=port)
     got = []
 

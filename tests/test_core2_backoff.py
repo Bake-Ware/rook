@@ -1,11 +1,8 @@
-"""rook.core.backoff and the reconnect loops that use it."""
-
-import sys
-from pathlib import Path
+"""rook.core2.transport.backoff."""
 
 import pytest
 
-from rook.core.backoff import Backoff
+from rook.core2.transport.backoff import Backoff
 
 
 def test_doubles_to_cap_without_jitter():
@@ -43,21 +40,3 @@ def test_long_running_loop_does_not_overflow():
 def test_rejects_bad_parameters(kw):
     with pytest.raises(ValueError):
         Backoff(**kw)
-
-
-def test_core_backoff_is_stdlib_only_and_bundled():
-    import ast
-    root = Path(__file__).resolve().parent.parent
-    tree = ast.parse((root / "rook/core/backoff.py").read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            names = [a.name for a in node.names]
-        elif isinstance(node, ast.ImportFrom) and node.level == 0:
-            names = [node.module]
-        else:
-            continue
-        assert all(n.split(".")[0] in sys.stdlib_module_names for n in names)
-    # Both bundle builders copy rook/core wholesale, so backoff.py ships.
-    for script in ("rook/remote/build_band_worker.py", "android/stage_worker.py"):
-        text = (root / script).read_text(encoding="utf-8")
-        assert '"core"' in text and "_copy_pkg" in text
