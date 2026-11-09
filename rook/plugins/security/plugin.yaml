@@ -4,8 +4,7 @@
 # owner action (spec 10.2). Canary hits block (near-zero false positives);
 # the taint and pinned-task heuristics only journal what they would have
 # held until an owner sets heuristics: enforce ("ship in shadow mode first",
-# no alarm fatigue). The CPU classifier is its own plugin (security-ml),
-# shadow first. Code: scripts/security.py.
+# no alarm fatigue). Code: scripts/security.py.
 manifest: 1
 plugin: security
 version: 0.5.0

@@ -1,7 +1,6 @@
 """The security plugins on a real hub and worker (see harness.py): a canary
 in a call's args is refused before any ticket, one in a result is withheld,
-the session stays paused until the owner lifts it, and the classifier
-journals its shadow verdict on every call."""
+and the session stays paused until the owner lifts it."""
 from __future__ import annotations
 
 import shutil
@@ -12,8 +11,7 @@ from harness import REPO, until
 
 
 def test_canaries_block_on_a_real_band(fresh, tmp_path):
-    for name in ("security", "security-ml"):
-        shutil.copytree(REPO / "rook" / "plugins" / name, fresh.library / name)
+    shutil.copytree(REPO / "rook" / "plugins" / "security", fresh.library / "security")
     fresh.start_hub()
     fresh.start_worker()
     fresh.wait_caps("e2e.ping", "shell.exec", "file.write")
@@ -23,12 +21,12 @@ def test_canaries_block_on_a_real_band(fresh, tmp_path):
     assert made["ok"], made
     key, decoy = made["result"]["tokens"][1], made["result"]["decoy"]
 
-    # an ordinary call: both gates read it, nothing is held
+    # an ordinary call: the gate reads it, nothing is held
     ping = owner.call("e2e.ping", {"text": "hello"})
     assert ping["ok"], ping
     [entry] = owner.get(f"/journal?call={ping['id']}")["entries"]
     assert [(g["gate"], g["mode"], g["verdict"]) for g in entry["gates"] if "stage" not in g] == [
-        ("security", "enforce", "allow"), ("security-ml", "shadow", "allow")]
+        ("security", "enforce", "allow")]
 
     if local_os() != "windows":
         # the decoy's one allowed write, then reading it back is a hit: the result is withheld
