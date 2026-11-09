@@ -117,19 +117,16 @@ def test_every_install_combination(tmp_path, combo):
 
         # a lean sidebar: workers, tokens and the trust map (Bake, Nov 9: "Let's bring over the trust
         # map") (+ what packages add); journal and settings by address.
-        # hub.security is off by default: no approvals page anywhere (castling-switchover-decisions)
         listed = {p["page"]: p for p in (await c.call("page.list"))["result"]["pages"]}
         nav = {pid for pid, p in listed.items() if p["nav"]}
         work = {"task/tasks", "project/projects", "knowledge/knowledge"}
         assert nav == {"hub/workers", "token/tokens", "trust/trust", "board/board"} | (work if workbench else set())
-        assert not any(pid.startswith("approval/") for pid in listed)
-        assert "no page approval/approvals" in (await c.open("approval/approvals")).get("error", "")
         assert {"journal/journal", "setting/settings"} <= set(listed) - nav
         for pid in ("journal/journal", "setting/settings"):
             assert (await c.open(pid))["ok"]
 
         comps = {x["component"] for x in (await c.call("page.components"))["result"]["components"]}
-        assert {"page/text", "page/value", "hub/workers", "approval/holds", "journal/recent"} <= comps
+        assert {"page/text", "page/value", "hub/workers", "journal/recent"} <= comps
         assert ("task/list" in comps) == workbench
 
         # a page build: with the workbench it is a task linked to the page

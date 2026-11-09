@@ -39,7 +39,7 @@ async fn live_hub05_round_trip() {
     assert!(h.attention().await.unwrap().is_some());
     let pages = h.pages().await.unwrap();
     let hub = pages.iter().find(|s| s.title == "Hub").expect("the Hub section");
-    assert!(hub.pages.iter().any(|p| p.hash == "/approval/approvals"), "{pages:?}");
+    assert!(hub.pages.iter().any(|p| p.hash == "/hub/workers"), "{pages:?}");
 
     if std::env::var("ROOK_TEST_ASK05").is_ok() {
         let a = h

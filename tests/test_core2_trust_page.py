@@ -23,7 +23,7 @@ def test_the_trust_page_is_the_04_one():
     for part in ("Trust map ", "Everything else", "What agents may do", "Hard stops", "History",
                  "How the trust map works", "What agents are told:", "class: \"seg\"", "mg-box", "mg-tag",
                  '"trust.sacred"', '"project.trust.update"', '"project.trust.create"', '"agent.update"',
-                 '"setting.set"', 'rook.open("approval/approvals")', "var(--overlay)"):
+                 '"setting.set"', "var(--overlay)"):
         assert part in page, part
     assert "prompt(" not in page and "confirm(" not in page and "alert(" not in page   # no modals in the sandbox
     assert ":root" not in page                       # the base style's tokens, not its own

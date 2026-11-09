@@ -19,7 +19,7 @@ in. `doors: {http: {web: false}}` turns the site off.
 
 | Installed | You get |
 |---|---|
-| the hub alone | **Workers** and **Approvals** in the sidebar; **Journal** and **Settings** under More |
+| the hub alone | **Workers** in the sidebar; **Journal** and **Settings** under More |
 | + agents | the house agent's **chat dock** beside every page. On your first visit it asks how you want to use the site; it builds pages for you and can set your start page |
 | + workbench | **Tasks**, **Projects** and **Knowledge** pages; every page an agent makes is built under a task, so you can review it |
 
@@ -27,7 +27,6 @@ The site opens on your start page, else the hub's, else Workers. On a
 phone, the dock is a sheet behind the Chat button.
 
 - **Workers**: every machine, online or not, its plugins and what it can't serve.
-- **Approvals**: calls waiting for you ([Holds](holds.md)).
 - **Journal**: what was done, by whom, and why ([The journal](journal.md)).
 - **Settings**: the hub's plugin settings and your own ([Settings](settings.md)).
 

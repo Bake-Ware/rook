@@ -466,7 +466,7 @@ async def on_decided(ctx, event, payload):
 async def release(ctx, hold: str, evidence: str, note: str):
     """The triage agent releases one held call on a false alarm it can show."""
     if ctx.caller.agent != f"agent:{ctx.settings['triage_agent']}":
-        raise KitError("only the triage agent releases through security.release; people answer on Approvals")
+        raise KitError("only the triage agent releases through security.release; people answer with POST /holds")
     h = S.holds.get(hold)
     if h is None:
         raise KitError(f"{hold} is not a hold the security gate made (or it was answered)")

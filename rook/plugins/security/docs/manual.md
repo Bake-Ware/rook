@@ -66,7 +66,7 @@ the same caller made exactly that call there from a clean session before)
 it releases that one call with `security.release`; the plugin checks the
 evidence itself and refuses hard stops, persistence, sending data out,
 canary hits, paused sessions and calls other gates also held. At most 5 releases an hour. The
-rest wait for you on Approvals.
+rest wait for you (`GET /holds`).
 
 `security.status` shows canaries, paused sessions, holds and recent alerts.
 

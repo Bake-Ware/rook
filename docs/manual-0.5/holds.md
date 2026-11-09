@@ -16,8 +16,7 @@ caller's own words: it never grants anything.
 ## What waits for you
 
 **Hard stops** always wait, and only you can release them, from a place
-where you are there yourself: the dashboard's Approvals page, or
-`POST /holds` with your own token. Not an agent acting for you, not the
+where you are there yourself: `POST /holds` with your own token. Not an agent acting for you, not the
 security agent, and not a job or plugin acting as you (the
 `approval.decide` cap never answers a hard stop):
 
@@ -38,8 +37,6 @@ with the layer that refused it, for example `denied: person: risk`.
 
 ## Answering
 
-- **Dashboard**: the Approvals page lists what waits, with the cap, the
-  machine, who asks and their why. Approve or refuse there.
 - **HTTP**: `GET /holds`, then `POST /holds/<hold> {"decision": "approve"}`
   (or `"refuse"`).
 

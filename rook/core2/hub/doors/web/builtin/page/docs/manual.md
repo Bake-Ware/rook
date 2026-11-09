@@ -18,7 +18,7 @@ the ones agents make.
 
 A `layout` is a list of components (`[{component, props?, title?, wide?}]`).
 Core ships `page/text` (a note), `page/value` (any cap's result, refreshed
-every few seconds if you like), `hub/workers`, `approval/holds` and
+every few seconds if you like), `hub/workers` and
 `journal/recent`; plugins ship more.
 
 Every call a page makes runs as the person viewing it, and only for the

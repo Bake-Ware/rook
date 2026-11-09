@@ -5,9 +5,8 @@
 // viewer's rights are the most it can do.
 //
 //   const r = await rook.call("hub.workers");            // the cap's result
-//   await rook.call("approval.decide", {hold, decision: "approve"}, {why: "..."});
 //   rook.on("worker.*", (payload, event) => reload());  // events it declared
-//   rook.open("approval/approvals");                     // go to another page
+//   rook.open("journal/journal");                        // go to another page
 //
 // A component (manifest components:) is a script that registers its render
 // function; a layout page mounts each one into its card:

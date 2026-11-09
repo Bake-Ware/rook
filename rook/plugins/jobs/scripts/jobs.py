@@ -617,7 +617,7 @@ class Runtime:
     async def ask(self, live: Live, who: Caller, msg: dict):
         """A script's question for the person: the one ask (approval.ask,
         castling-caps C4), asked as the job's identity. None on timeout (the
-        question stays on Approvals; an answer after that goes nowhere)."""
+        question stays in approval.list; an answer after that goes nowhere)."""
         q, options = msg.get("question"), msg.get("options")
         if not (isinstance(q, str) and q):
             raise KitError("ask takes a question")

@@ -39,7 +39,7 @@ which the hub injects ahead of the page's own code:
 const r = await rook.call("hub.workers");                    // the cap's result, or throws
 await rook.call("board.note.create", {text: "milk"}, {why: "Added on the board page."});
 rook.on("worker.*", (payload, event) => reload());          // events the page declared
-rook.open("approval/approvals");                              // go to another page
+rook.open("journal/journal");                                 // go to another page
 rook.page;                                                    // {page, title, caps, events}
 rook.esc(text); rook.ago(ts); rook.time(ts);                  // small helpers
 ```
@@ -60,7 +60,7 @@ pages:
 ```
 
 The core pages are builtin plugins in `rook/core2/hub/doors/web/builtin/`:
-Workers (`hub.workers`), Approvals (`approval.list`, `approval.decide`),
+Workers (`hub.workers`),
 Journal (`journal.search`) and Settings (`hub.status`, `setting.list`,
 `setting.set`).
 
@@ -86,7 +86,7 @@ rook.component(async (el, props) => {
 `page.components` lists them. A layout page may call what its components
 declare (as they are now) plus its own `caps`. Core ships `page/text`,
 `page/value` (any cap's result: put that cap in the page's `caps`),
-`hub/workers`, `approval/holds` and `journal/recent`.
+`hub/workers` and `journal/recent`.
 
 ## Pages an agent makes
 
