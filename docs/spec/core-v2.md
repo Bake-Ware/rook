@@ -2,7 +2,9 @@
 
 Status: **2.0 draft** for Castling (Rook 0.5). A clean cut from
 [core v1](core-v1.md): no v1 peer interoperates with a v2 peer, and every
-machine of a band moves together. Companion material:
+machine of a band moves together. What a worker must do (join, announce
+its caps, answer calls, heartbeat) is the [minimal worker profile](worker-profile.md);
+everything else here a worker may do. Companion material:
 
 - `conformance/core-v2/vectors/*.json`: test vectors for the pure functions
   (canonical JSON, signed objects, ticket checks, worker requests, version
@@ -1232,7 +1234,8 @@ no longer in flight.
 |---|---|---|
 | **wire** | 2.1 (core v1 transport sections) | v1 `band_crypto`, `fragments`, `frames` |
 | **encoding** | 3.2, 3.3 | `canonical`, `signatures` |
-| **worker** | wire, encoding, 2.2, 5.3, 5.5, 5.8, 6, 7.3, 9.3, 13 | `version`, `tickets`, `leases`, `memberships`, `requests` (making proofs) |
+| **worker** | wire and [the minimal worker profile](worker-profile.md) | |
+| **full worker** (optional extensions) | worker, encoding, 2.2, 5.3, 5.5, 5.8, 6, 7.3, 9.3, 13 | `version`, `tickets`, `leases`, `memberships`, `requests` (making proofs) |
 | **hub** | wire, encoding, all of the above plus 8, 10, 11, 13.1 | `rights`, `presets`, `gate`, `journal`, `requests` (checking proofs) |
 
 `conformance/core-v2/README.md` describes the vector files. The Python

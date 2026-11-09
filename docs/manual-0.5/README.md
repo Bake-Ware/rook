@@ -41,7 +41,7 @@ moves over all at once.
 ## Reference
 
 - [Reference](reference.md): `hub.yaml`, `worker.yaml`, the command line, the HTTP door.
-- The protocol: `docs/spec/core-v2.md`. The manifest schema: `conformance/manifest/manifest.schema.json`.
+- The protocol: `docs/spec/core-v2.md`; the least a worker must speak: `docs/spec/worker-profile.md`. The manifest schema: `conformance/manifest/manifest.schema.json`.
 - Running a real 0.5 band on localhost for testing: `docs/castling-e2e.md`.
 
 ## Writing these pages
