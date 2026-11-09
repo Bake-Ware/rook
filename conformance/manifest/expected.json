@@ -248,11 +248,6 @@
     },
     {
       "level": "error",
-      "path": "/jobs/j",
-      "code": "job-action"
-    },
-    {
-      "level": "error",
       "path": "/jobs/j/trigger",
       "code": "job-trigger"
     },

@@ -674,7 +674,7 @@
     },
     "job": {
       "type": "object",
-      "required": ["trigger"],
+      "required": ["trigger", "call"],
       "properties": {
         "doc": {"type": "string"},
         "trigger": {
@@ -685,21 +685,14 @@
             "every": {"$ref": "#/$defs/duration"},
             "on": {"$ref": "#/$defs/glob"},
             "filter": {"type": "object"},
-            "manual": {"type": "boolean"},
-            "webhook": {"type": ["boolean", "string"]}
+            "manual": {"type": "boolean"}
           }
         },
-        "agent": {
-          "type": "object",
-          "required": ["prompt"],
-          "properties": {"persona": {"type": "string"}, "prompt": {"type": "string"}}
-        },
-        "run": {"$ref": "#/$defs/run_ref"},
         "call": {"$ref": "#/$defs/cap_name"},
         "args": {"type": "object"},
         "as": {"enum": ["creator", "persona"]},
+        "persona": {"type": "string"},
         "enabled": {"type": "boolean"},
-        "retries": {"type": "integer", "minimum": 0},
         "catch_up": {"type": "boolean"}
       }
     }

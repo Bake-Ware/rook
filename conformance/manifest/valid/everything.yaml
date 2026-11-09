@@ -146,10 +146,11 @@ jobs:
   digest:
     doc: Daily digest.
     trigger: { cron: "0 8 * * *" }
-    agent: { persona: liaison, prompt: Summarize yesterday. }
+    call: llm.complete
+    args: { prompt: Summarize yesterday. }
     as: persona
+    persona: liaison
     enabled: false
-    retries: 2
     catch_up: true
   on-message:
     trigger: { on: telegram.message.received, filter: { from: mom } }

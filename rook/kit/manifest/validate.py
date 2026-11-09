@@ -586,12 +586,7 @@ class _Checker:
         for name, job in (d.get("jobs") or {}).items():
             path = ("jobs", name)
             if len(set(job["trigger"]) - {"filter"}) != 1:
-                self.error(path + ("trigger",), "job-trigger",
-                           "a trigger is exactly one of cron, every, on, manual, webhook")
-            if sum(k in job for k in ("agent", "run", "call")) != 1:
-                self.error(path, "job-action", "a job has exactly one of agent, run, call")
-            if "run" in job:
-                self.run(job["run"], path + ("run",))
+                self.error(path + ("trigger",), "job-trigger", "a trigger is exactly one of cron, every, on, manual")
 
     def presets(self):
         if self.core:
