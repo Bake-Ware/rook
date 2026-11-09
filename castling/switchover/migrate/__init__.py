@@ -29,8 +29,9 @@ hub.yaml init``):
 - **knowledge, projects, tasks, concepts** -> workbench records, by the
   0.4 workbench importer beside this package (``castling/switchover/import_04.py``);
 - **chat rooms and huddles** -> the hub's streams, full history
-  (:mod:`.rooms`); **jobs** -> disabled 0.5 jobs holding their 0.4
-  definition, **change records** -> ``change`` records (:mod:`.records`);
+  (:mod:`.rooms`); **jobs** -> their 0.4 definitions in the report, to
+  rebuild as trigger-plus-call jobs; **change records** -> ``change`` records
+  (:mod:`.records`);
 - **the whole copy** (every store and file, the journal too) -> ``<data>/archive/0.4/``,
   byte for byte and read-only (:mod:`.archive`); the journal is never
   replayed into the 0.5 chains;
@@ -68,7 +69,7 @@ from .source import NotACopy, Source, _tables
 
 IMPORTER = Path(__file__).resolve().parent.parent / "import_04.py"
 PLUGINS = Path(__file__).resolve().parents[3] / "rook" / "plugins"
-CARRIED = ("huddle", "jobs", "changes")            # plugin folders whose records the move writes
+CARRIED = ("huddle", "changes")            # plugin folders whose records the move writes
 HOUSE = "house"                                   # the house agent (rook/plugins/agents)
 AGENTS = Path(__file__).resolve().parents[3] / "rook" / "plugins" / "agents"   # its records: memory, note
 
@@ -136,7 +137,7 @@ def _run(source: Source, cfg, cfg_path: Path, band: str, apply: bool, rename: di
     report["workbench"], new_ids = _workbench(source, cfg, band, apply, levels, notes)
     owner = next((p["name"] for p in mapping if p["preset"] == "owner"),
                  next((n for n, u in cfg.users.items() if (u or {}).get("preset") == "owner"), "owner"))
-    _carry(source, cfg, band, apply, new_ids, owner, report)
+    _carry(source, cfg, band, apply, new_ids, report)
     if apply:
         (cfg.data / "keys").mkdir(exist_ok=True, mode=0o700)
         _key(cfg.data / "keys" / "root.key")      # as the hub's first start would: the vault's key is derived from it
@@ -282,9 +283,9 @@ def _workbench(source: Source, cfg, band: str, apply: bool, levels: dict, notes:
     return out, new_ids
 
 
-def _carry(source: Source, cfg, band: str, apply: bool, new_ids: dict, owner: str, report: dict) -> None:
-    """Chat rooms and huddles -> streams, jobs and changes -> records (into
-    memory on a dry run, to count them)."""
+def _carry(source: Source, cfg, band: str, apply: bool, new_ids: dict, report: dict) -> None:
+    """Chat rooms and huddles -> streams, changes -> records (into memory on
+    a dry run, to count them); 0.4 jobs -> the report."""
     store = RecordStore(str(cfg.data / "records.db") if apply else ":memory:")
     try:
         for folder in CARRIED:
@@ -292,7 +293,7 @@ def _carry(source: Source, cfg, band: str, apply: bool, new_ids: dict, owner: st
             store.register(m.data, plugin_dir=m.folder)
         report["rooms"] = rooms.put(source.db("chat"), str(cfg.data / "stream-events.db") if apply else ":memory:",
                                     store, band, new_ids)
-        report["jobs"] = records.jobs(source.db("jobs"), store, band, owner)
+        report["jobs"] = records.jobs(source.db("jobs"))
         report["changes"] = records.changes(source.db("changes"), store, band, new_ids)
     finally:
         store.close()
@@ -370,9 +371,9 @@ def render(r: dict) -> str:
     out.append("\n## Chat, jobs and change records\n")
     out.append(f"- rooms {rm.get('rooms', 0)} and huddles {rm.get('huddles', 0)} as streams: {rm.get('messages', 0)} "
                f"messages, {rm.get('posts', 0)} huddle posts; already there: {rm.get('skipped', 0)}")
-    out.append(f"- jobs {jb.get('jobs', 0)} (disabled; each keeps its 0.4 definition in vars.definition04); "
-               f"already there: {jb.get('skipped', 0)}")
-    out += [f"  - job `{x['from']}` is now `{x['to']}`" for x in jb.get("renamed") or ()]
+    out.append(f"- 0.4 jobs {len(jb.get('jobs') or ())}: not moved; rebuild the ones still wanted as "
+               f"trigger-plus-call jobs (each definition is in report.json under jobs)")
+    out += [f"  - `{j['name']}`" + ("" if j["enabled04"] else " (was off)") for j in jb.get("jobs") or ()]
     out.append(f"- change records {ch.get('changes', 0)}; already there: {ch.get('skipped', 0)}")
     a = r.get("archive")
     if a:

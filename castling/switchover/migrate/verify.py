@@ -61,6 +61,7 @@ WHY = {
                                         "via caps"),
     "sessions": ("castling-streams", "History readers and the mirror become importers that write into a stream."),
     "archive": ARCHIVE_WHY,
+    "jobs": ("castling-design", "Jobs: a time or an event fires ONE call. Nothing more."),
 }
 
 # Every table of every 0.4 store -> the kind that accounts for it. FTS
@@ -479,15 +480,9 @@ def _jobs_changes(source: Source, dest: Dest) -> list:
     rows = []
     jdb = source.db("jobs")
     if jdb is not None and "jobs" in _tables(jdb):
-        have = {}
-        for r in dest.records(names.record("jobs")):
-            v = _json(r.get("vars"), {})
-            if v.get("id04"):
-                have[v["id04"]] = (v, r)
-        miss = [j["name"] for j in jdb.execute("SELECT id, name, definition FROM jobs")
-                if j["id"] not in have or have[j["id"]][0].get("definition04") != _json(j["definition"], {})]
         n = _count(jdb, "jobs")
-        rows.append(_row("jobs (disabled, 0.4 definition kept)", n, n - len(miss), missing=miss))
+        rows.append(_row("jobs", n, 0, n, why=WHY["jobs"],
+                         note="each 0.4 definition is in the migrate report, to rebuild as trigger-plus-call jobs"))
         runs = sum(_count(jdb, t) for t in ("runs", "history", "notices"))
         rows.append(_row("job runs and history", runs, 0, runs, why=WHY["archive"]))
     cdb = source.db("changes")
