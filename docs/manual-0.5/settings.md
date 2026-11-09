@@ -16,7 +16,7 @@ settings:
   torrent: { console: /usr/bin/deluge-console }
 # hub.yaml
 settings:
-  page: { dock: house }
+  agent: { dock: house }
 ```
 
 Values set on the Settings page (or with the cap `setting.set`) are kept in

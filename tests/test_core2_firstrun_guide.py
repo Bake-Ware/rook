@@ -19,6 +19,7 @@ from tests.test_core2_worksurface import serve as ws_serve
 
 STATIC = Path(web_caps.__file__).with_name("static")
 REPO = Path(__file__).resolve().parents[1]
+SHELL = REPO / "rook/plugins/agents/shell"
 SKILL = REPO / "rook/plugins/agents/skills/first-run.md"
 
 
@@ -38,7 +39,7 @@ console.log(JSON.stringify(W.parse(process.argv[3])));
 def parse(tmp_path, text):
     script = tmp_path / "parse.js"
     script.write_text(PARSE)
-    r = subprocess.run([_node(), str(script), str(STATIC / "chat-widgets.js"), text],
+    r = subprocess.run([_node(), str(script), str(SHELL / "chat-widgets.js"), text],
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
@@ -72,15 +73,15 @@ def test_one_live_rookie_per_page():
     mounts exactly one (the chat's, which travels); the tab icon copies his
     canvas and the pickers draw still thumbnails (Rookie.bake); the account
     page mounts none."""
-    shell = (STATIC / "shell.js").read_text()
+    shell = (SHELL / "dock.js").read_text()
     assert len(re.findall(r"\bRookie\.mount\(", shell)) == 1
     assert "Rookie.bake(" in shell
-    for f in STATIC.glob("*.js"):
+    for f in [*STATIC.glob("*.js"), *SHELL.glob("*.js")]:
         if f.name == "rookie.js":
             continue
         code = f.read_text()
         assert not re.search(r"\bRookie\.favicon\(", code), f.name              # it mounts a hidden second one
-        if f.name != "shell.js":
+        if f.name != "dock.js":
             assert not re.search(r"\bRookie\.mount\(", code), f.name
     # the one Rookie travels: a smooth path both ways, never placed at a new spot without one
     travel = shell[shell.index("function travel("):shell.index("function point(")]
@@ -143,28 +144,20 @@ def test_the_site_wears_the_04_brand():
         assert '/web/static/fonts.css' in html and "googleapis" not in html, page
         if page != "public.html":
             assert 'class="mark"' in html
-    assert '<section id="work"' in (STATIC / "shell.html").read_text()        # the work pane
+    assert '<section id="work"' in (SHELL / "dock.js").read_text()            # the work pane
 
 
 # -- right after an install: the worker isn't there yet ---------------------------------
 
-def test_page_site_says_when_the_house_agent_can_answer(site, tmp_path):
+def test_agent_site_says_when_the_house_agent_can_answer(tmp_path):
     """No provider of agent.backend served yet (the worker joins a few seconds
     after an install): ready is false and the site waits ("Getting ready...")."""
-    async def go():
-        hub, tokens = await site()
-        try:
-            c = Client(hub)
-            await c.sign_in(tokens["bake"])
-            assert (await c.call("page.site"))["result"]["ready"] is False
-        finally:
-            await hub.stop()
-    run(go())
-
     async def agents(hub, tokens):                # the fake brain serves agent.backend on the hub
         c = Client(hub)
         await c.sign_in(tokens["bake"])
-        assert (await c.call("page.site"))["result"]["ready"] is True
+        assert (await c.call("agent.site"))["result"]["ready"] is True
+        await hub.plugins.unload("agents-local")   # its provider gone: nothing serves agent.backend
+        assert (await c.call("agent.site"))["result"]["ready"] is False
     ws_serve(tmp_path / "agents", agents, ("agents",))
 
 
@@ -187,7 +180,7 @@ def test_every_turn_carries_the_setup_skill_until_setup_is_done(tmp_path):
 
 
 def test_the_site_waits_for_the_backend_and_never_shows_not_ready_as_a_message():
-    shell = (STATIC / "shell.js").read_text()
+    shell = (SHELL / "dock.js").read_text()
     kick = shell[shell.index("async function kickoff()"):shell.index("async function startDock(")]
     assert kick.index("await untilReady()") < kick.index("await say(setupBrief(")
     assert "Getting ready" in shell[shell.index("async function untilReady()"):]
@@ -203,7 +196,7 @@ def test_the_site_waits_for_the_backend_and_never_shows_not_ready_as_a_message()
 def test_the_installer_waits_for_the_house_agent_before_done():
     sh = (REPO / "deploy/install/install.sh").read_text()
     wait = sh[sh.index("ready=0"):sh.index('step "Done"')]
-    assert '"cap": "page.site"' in wait and "get('ready')" in wait
+    assert '"cap": "agent.site"' in wait and "get('ready')" in wait
 
 
 # -- Claude Code mode (Bake, Nov 9: "start it in claude code mode") -------------------

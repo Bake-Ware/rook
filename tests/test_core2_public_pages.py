@@ -82,7 +82,7 @@ def test_the_sidebar_has_a_menu_per_page_and_no_archive_button():
 
 
 def test_the_chat_scrolls_to_the_newest_message():
-    shell = (STATIC / "shell.js").read_text()
+    shell = (Path(__file__).resolve().parents[1] / "rook/plugins/agents/shell/dock.js").read_text()
     opened = shell[shell.index("function dockOpen("):shell.index("function scrollChat(")]
     assert "scrollChat()" in opened
     add = shell[shell.index("function addRow("):shell.index("function agentName(")]

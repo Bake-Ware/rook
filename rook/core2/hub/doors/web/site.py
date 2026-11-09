@@ -19,7 +19,8 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 from rook.core2 import rights
 from rook.core2.hub import login_links, passwords
 from rook.core2.hub.identity import NONE, Caller
-from .caps import _read_json, _write, dock_agent, setup_state
+from rook.kit.manifest.validate import glob_match
+from .caps import _inside, _read_json, _write, setup_state
 
 log = logging.getLogger("rook.hub.door.web")
 
@@ -34,7 +35,6 @@ PUBLIC_TOKENS = 512
 POLL_SECS = 20.0
 EVENTS_KEPT = 500
 ACTS_KEPT = 200
-DOCK_CAPS = ("agent.chat.send", "agent.chat.read")     # the shell's chat dock, with the dock agent only
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
          ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".ico": "image/x-icon"}
 
@@ -139,7 +139,9 @@ class Web:
             elif session is None:
                 return 303, {"Location": "/login"}, b""
             status, headers, body = self._file("shell.html" if path == "/" else "account.html", csp=SHELL_CSP)
-            return status, {**headers, **cookie}, body
+            return status, {**headers, **cookie}, self._with_parts(body)
+        if method == "GET" and path.startswith("/web/plugin/"):
+            return self._part(path[len("/web/plugin/"):])
         if method == "GET" and path.startswith("/web/frame/"):
             return self._frame(sid, session, unquote(path[len("/web/frame/"):]))
         if session is None:
@@ -174,15 +176,14 @@ class Web:
         caller = Caller(person=session.person)
         if path == "/web/api/call":
             cap, args = body.get("cap"), body.get("args") or {}
-            agent = dock_agent(self.hub)
-            dock = agent is not None and cap in DOCK_CAPS and isinstance(args, dict) and args.get("agent") == agent
-            if not (isinstance(cap, str) and cap.startswith("page.") or dock):
-                raise _Error(403, "the shell calls page.* (and the dock agent's chat) only")
-            why = body.get("why") if isinstance(body.get("why"), str) and body["why"].strip() else \
-                "Talking with the agent in the site's dock." if dock else "Using the hub site."
-            # A message to the dock agent runs in the person's own door session:
-            # the agent's turn works with their rights, not the shell's page.*.
-            session = req._run(self._dock_session(caller) if dock else self._shell_session(caller))
+            part = isinstance(cap, str) and any(glob_match(g, cap) for _, _, spec in self._parts()
+                                                for g in spec.get("caps") or ())
+            if not (isinstance(cap, str) and cap.startswith("page.") or part):
+                raise _Error(403, "the shell calls page.* (and what plugins' shell parts declare) only")
+            why = body.get("why") if isinstance(body.get("why"), str) and body["why"].strip() else "Using the hub site."
+            # A cap a plugin's shell part declares runs in the person's own door
+            # session (their rights), not the shell's page.* one.
+            session = req._run(self._person_session(caller) if part else self._shell_session(caller))
             return _json(200, req._run(self.hub.call(caller, {
                 "worker": "rook", "cap": cap, "args": args, "why": why, "session": session}, "web")))
         if path == "/web/api/open":
@@ -458,7 +459,7 @@ class Web:
         """The shell's dispatch session: page.* only."""
         return self.hub._session(self.hub._door_sessions, ("web", caller.person), caller, ["page.*"])
 
-    async def _dock_session(self, caller: Caller) -> str:
+    async def _person_session(self, caller: Caller) -> str:
         return self.hub._door_session(caller)
 
     async def _page_session(self, caller: Caller) -> str:
@@ -477,7 +478,8 @@ class Web:
 
     def _on_call(self, phase: str, entry: dict) -> None:
         """Every call starting or ending (the dispatcher's watchers), as
-        journaled, args and why included; the dock's Rookie picks its agent's."""
+        journaled, args and why included: the live feed behind
+        ``/web/api/activity``."""
         if entry.get("kind") not in (None, "call"):
             return
         act = {k: v for k, v in entry.items() if k not in ("kind", "hub")}
@@ -553,6 +555,40 @@ class Web:
                 self._cond.wait(left)
 
     # -- files --------------------------------------------------------------------
+
+    def _parts(self) -> list:
+        """What plugins add to the shell itself (manifest ``shell:``): script
+        and style files the shell's pages load, and the caps they may call
+        through ``/web/api/call``. ``[(plugin, name, spec)]``."""
+        return [(p, name, spec) for p in list(self.hub.plugins.plugins.values()) if p.folder is not None
+                for name, spec in (p.manifest.get("shell") or {}).items()]
+
+    def _with_parts(self, html: bytes) -> bytes:
+        """A shell page with the plugins' parts: styles in the head, scripts
+        after the shell's own."""
+        links, scripts = [], []
+        for p, name, spec in self._parts():
+            url = f"/web/plugin/{p.name}/{name}"
+            if spec["file"].endswith(".css"):
+                links.append(f'<link rel="stylesheet" href="{url}">\n')
+            else:
+                scripts.append(f'<script src="{url}"></script>\n')
+        text = html.decode("utf-8").replace("</head>", "".join(links) + "</head>", 1)
+        return text.replace("</body>", "".join(scripts) + "</body>", 1).encode("utf-8")
+
+    def _part(self, path: str):
+        plugin, _, name = path.partition("/")
+        spec = next((s for p, n, s in self._parts() if (p.name, n) == (plugin, name)), None)
+        suffix = Path(spec["file"]).suffix if spec else ""
+        if suffix not in (".js", ".css"):
+            raise _Error(404, "not found")
+        folder = Path(self.hub.plugins.plugins[plugin].folder)
+        try:
+            text = _inside(folder / spec["file"], folder, f"{plugin}/{name}")
+        except Exception:
+            raise _Error(404, "not found") from None
+        return 200, {"Content-Type": TYPES[suffix], "X-Content-Type-Options": "nosniff",
+                     "Referrer-Policy": "same-origin"}, text.encode("utf-8")
 
     def _static(self, name: str):
         if not re.fullmatch(r"[a-z0-9-]+\.(js|css|svg)|fonts/[a-z0-9-]+\.woff2", name):

@@ -20,7 +20,8 @@ from tests.test_core2_dashboard import Client, run, site  # noqa: F401 - the fix
 
 STATIC = Path(web_caps.__file__).with_name("static")
 REPO = Path(__file__).resolve().parents[1]
-SHELL = (STATIC / "shell.js").read_text()
+PART = REPO / "rook/plugins/agents/shell"
+SHELL = (PART / "dock.js").read_text()
 SKILL = (REPO / "rook/plugins/agents/skills/first-run.md").read_text()
 
 
@@ -46,7 +47,7 @@ def test_site_notes_never_show_as_the_persons_words():
 
 
 def test_ui_text_uses_the_agents_name():
-    for f in [*STATIC.glob("*.js"), *STATIC.glob("*.html")]:
+    for f in [*STATIC.glob("*.js"), *STATIC.glob("*.html"), *PART.glob("*.js")]:
         if f.name in ("rookie.js", "rook-scene.js"):
             continue
         text = f.read_text()
@@ -54,7 +55,7 @@ def test_ui_text_uses_the_agents_name():
             code = line.split("//")[0]
             assert not re.search(r"""["'`>][^"'`<]*\bRookie (uses|finds|is|will)\b""", code), (f.name, line)
     assert "agentName()} uses them by name" in SHELL and "(${agentName()} finds it)" in SHELL
-    assert 'class="agent-name"' in (STATIC / "account.html").read_text()
+    assert 'class="agent-name"' in (PART / "look.js").read_text()
 
 
 def test_a_view_shows_when_its_job_is_done():
@@ -70,11 +71,11 @@ def test_the_look_and_feel_is_on_the_left_and_instant(tmp_path):
     look = SHELL[SHELL.index("  look() {"):SHELL.index("// The welcome view")]
     assert 'id: "look-spot"' in look and "goHome" in look                    # he walks onto the stage
     assert 'if (onStage()) return $("#look-spot").getBoundingClientRect();' in SHELL
-    css = (STATIC / "shell.css").read_text()
+    css = (PART / "dock.css").read_text()
     assert ".rookie.staged { transform: scale(var(--stage-scale));" in css
     assert len(re.findall(r"\bRookie\.mount\(", SHELL)) == 1                  # still one live Rookie
     answer = SHELL[SHELL.index("async function lookAnswer("):SHELL.index("function lookDone(")]
-    assert 'call("page.look"' in answer and "say(" not in answer             # no agent turn per click
+    assert 'call("agent.look"' in answer and "say(" not in answer             # no agent turn per click
     assert "lookStep(out.next)" in answer and "lookDone(out)" in answer
     step = _fn("lookStep")
     for list_ in ("look.styles", "look.themes"):                              # every option, not just the first
@@ -119,9 +120,11 @@ def test_a_reload_focuses_the_field_again():
 
 
 def test_an_address_with_no_page_says_so():
-    op = SHELL[SHELL.index("async function open(pid)"):SHELL.index("function closePage(")]
+    core = (STATIC / "shell.js").read_text()
+    op = core[core.index("async function open(pid)"):core.index("function closePage(")]
     assert "No such page" in op and "message(`No such page: ${pid}.`, true, true)" in op
-    assert "Go to the start page" in _fn("message")
+    message = core[core.index("function message("):core.index("\n}\n", core.index("function message("))]
+    assert "Go to the start page" in message
 
 
 def test_the_favicon_needs_no_sign_in(site):

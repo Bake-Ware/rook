@@ -384,11 +384,11 @@ if [ $BOOT = 1 ]; then
 fi
 # The worker reaches the hub at its first keepalive (~20 s), then announces
 # its plugins; the house agent needs it serving agent.backend. Wait for the
-# same "ready" the site waits on (page.site) before saying Done.
+# same "ready" the site waits on (agent.site) before saying Done.
 ready=0
 for _ in $(seq 75); do
     if curl -s --max-time 5 -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-        -d '{"worker": "rook", "cap": "page.site", "args": {}, "why": "The installer waits until the house agent can answer."}' \
+        -d '{"worker": "rook", "cap": "agent.site", "args": {}, "why": "The installer waits until the house agent can answer."}' \
         "$URL/call" | "$PY" -c \
         "import json,sys; sys.exit(0 if (json.load(sys.stdin).get('result') or {}).get('ready') else 1)" 2>/dev/null
     then ready=1; break; fi

@@ -9,9 +9,10 @@ HTTP door.
   also carry the session's CSRF token in ``X-Rook-CSRF``.
 - **The shell** (``static/``) lists pages (``page.list``) and opens one at a
   time, the start page first (``page.site``). Its own calls are limited to
-  ``page.*``, plus ``agent.chat.send``/``read`` with the dock agent: with
-  the agents package, the house agent's chat dock sits beside every page
-  (castling-dashboard: forefront, not a page of its own).
+  ``page.*``. A plugin adds to the shell itself with ``shell:`` in its
+  manifest: script and style files the shell's pages load (served at
+  ``/web/plugin/<plugin>/<name>``), and the caps they may call through the
+  shell, as the signed-in person.
 - **Pages** run sandboxed: each is its own document served with
   ``Content-Security-Policy: sandbox allow-scripts`` (an opaque origin: no
   cookies, no hub API) and ``connect-src 'none'``. Opening one is a
@@ -29,12 +30,14 @@ Routes (everything else is the JSON API in ``doors/http.py``)::
     GET  /login, POST /login     {user, password} (or an app's {token})
     POST /logout
     GET  /web/static/<file>
+    GET  /web/plugin/<plugin>/<name>   a plugin's shell part (manifest ``shell:``)
     GET  /web/api/me             {person, csrf}
-    POST /web/api/call           {cap, args?, why?}           page.* (and the dock's chat), as the person
+    POST /web/api/call           {cap, args?, why?}           page.* (and plugins' shell caps), as the person
     POST /web/api/open           {page}                       -> {token, frame, page}
     GET  /web/frame/<nonce>      the page's document, once
     POST /web/api/page           {token, cap, args?, why?, worker?}
     GET  /web/api/events?token=&since=   long poll, up to 20 s
+    GET  /web/api/activity?since=        every call starting and ending, long poll
 """
 from .site import Web
 

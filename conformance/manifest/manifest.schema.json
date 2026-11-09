@@ -221,6 +221,18 @@
         }
       }
     },
+    "shell": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/$defs/name"},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["file"],
+        "properties": {
+          "file": {"$ref": "#/$defs/rel_path"},
+          "caps": {"$ref": "#/$defs/globs"}
+        }
+      }
+    },
     "jobs": {
       "type": "object",
       "propertyNames": {"$ref": "#/$defs/name"},

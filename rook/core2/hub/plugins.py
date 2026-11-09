@@ -318,8 +318,10 @@ class HubPlugins:
         async def dispatch(c: str, a: dict, who: Caller, target: str | None = None,
                            contract: str | None = None) -> Any:
             return _result(await self._call(who, c, a, uses=self.uses(p.name), target=target, contract=contract))
+        store = getattr(self.people, "store", None)
         return Ctx(p.manifest, caller, dispatch=dispatch, settings=self.settings.get(p.name, {}),
                    resolve_secret=self.resolve_secret, records=self.records, emit=self.emit,
+                   store_setting=store and (lambda key, value, secret: store(p.name, key, value, caller.person)),
                    data_dir=self._data(p) if self.data_dir else None, cap=cap, people=self.people,
                    streams=self.streams)
 

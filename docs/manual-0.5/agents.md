@@ -58,7 +58,7 @@ Agents that need you go through the house agent.
 ## Talking to an agent
 
 - In the dashboard: the chat dock beside every page talks to the house
-  agent (the `page.dock` setting picks another; blank turns it off).
+  agent (the agents setting `dock` picks another; blank turns it off).
 - As a call: `agent.chat.send {agent: "house", text: "..."}` on worker
   `rook` waits for the reply; `agent.chat.read {agent, after}` reads your
   session with it (pass `next` back as `after`). A first turn takes about

@@ -13,51 +13,53 @@ from pathlib import Path
 
 import pytest
 
-from rook.core2.hub.doors.web import caps as web_caps
-from tests.test_core2_dashboard import WHY, Client, Hub, Loopback, run, site  # noqa: F401 - the fixture
-from tests.test_core2_worksurface import bearer as ws_bearer, serve as ws_serve
+from rook.core2.hub.identity import Caller
+from rook.kit.ctx import load_run
+from tests.test_core2_dashboard import Client, Hub, Loopback, run, site  # noqa: F401 - the fixture
+from tests.test_core2_worksurface import WHY, bearer as ws_bearer, serve as ws_serve, start as ws_start
 
-STATIC = Path(web_caps.__file__).with_name("static")
-SKILL = Path(__file__).resolve().parents[1] / "rook/plugins/agents/skills/first-run.md"
+AGENTS = Path(__file__).resolve().parents[1] / "rook/plugins/agents"
+SHELL = AGENTS / "shell"
+SKILL = AGENTS / "skills/first-run.md"
 
 
 def test_rookie_js_is_vendored_and_its_styles_and_themes_are_read_from_it():
-    text = (STATIC / "rookie.js").read_text()
+    text = (SHELL / "rookie.js").read_text()
     assert "window.Rookie" in text          # a drop-in: any rookie.js that defines Rookie
-    styles, themes = web_caps.rookie_styles(), web_caps.rookie_themes()
+    styles, themes = load_run(AGENTS, "scripts/agents.py:rookie_js", {})()
     assert styles[0] == "pixel" and "none" in styles and len(styles) >= 9
     assert set(styles) == set(re.findall(r"\bSKINS\.([a-z0-9_]+)\s*=\s*\{", text)) | {"none"}
     assert themes[0] == "stone" and {"gameboy", "matrix", "rose"} <= set(themes)
-    for page in ("shell.html", "account.html"):
-        html = (STATIC / page).read_text()
-        assert "rookie.js: Rookie" in html and '<script src="/web/static/rookie.js">' in html
+    manifest = (AGENTS / "plugin.yaml").read_text()
+    assert "rookie.js is Rookie by Bake" in manifest and "rookie: { file: shell/rookie.js }" in manifest
 
 
-def test_look_and_feel_saves_loads_and_belongs_to_each_person(site):
+def test_look_and_feel_saves_loads_and_belongs_to_each_person(tmp_path):
     async def go():
-        hub, tokens = await site()
+        hub, tokens = await ws_start(tmp_path, ("agents",))
         try:
             bake, kim = Client(hub), Client(hub)
             await bake.sign_in(tokens["bake"])
             await kim.sign_in(tokens["kim"])
-            look = (await bake.call("page.site"))["result"]["look"]
+            look = (await bake.call("agent.site"))["result"]["look"]
             assert (look["sound"], look["rookie"], look["theme"]) == (False, "pixel", "stone")
             assert look["next"] == "sound" and "kawaii" in look["styles"] and "gameboy" in look["themes"]
-            out = await bake.call("page.look", {"sound": True, "rookie": "Kawaii", "theme": "gameboy"})
+            out = await bake.call("agent.look", {"sound": True, "rookie": "Kawaii", "theme": "gameboy"})
             assert out["ok"], out
             r = out["result"]
             assert (r["sound"], r["rookie"], r["theme"]) == (True, "kawaii", "gameboy")
-            assert r["chosen"] == {"sound": True, "rookie": True, "theme": True, "name": True}   # no agents here
-            assert r["next"] is None
-            assert (await bake.call("page.site"))["result"]["look"]["theme"] == "gameboy"
-            mine = (await kim.call("page.look"))["result"]                      # kim's own
+            assert r["chosen"] == {"sound": True, "rookie": True, "theme": True, "name": False}
+            assert r["next"] == "name"
+            assert (await bake.call("agent.site"))["result"]["look"]["theme"] == "gameboy"
+            mine = (await kim.call("agent.look"))["result"]                     # kim's own
             assert (mine["sound"], mine["rookie"], mine["next"]) == (False, "pixel", "sound")
             stored = json.loads((hub.data / "person-settings.json").read_text())
-            assert stored["person:bake"]["page"] == {"sound": True, "rookie": "kawaii", "rookie_theme": "gameboy"}
-            # the house agent sets a typed answer for the person it acts for
-            call = {"worker": "rook", "cap": "page.look", "args": {"rookie": "none", "sound": False}, "why": WHY}
-            status, out = await bake.json("POST", "/call", call, bearer=tokens["claude"])
-            assert out["ok"] and out["result"]["rookie"] == "none" and out["result"]["sound"] is False
+            assert stored["person:bake"]["agent"] == {"sound": True, "rookie": "kawaii", "rookie_theme": "gameboy"}
+            # an agent sets a typed answer for the person it acts for
+            house = hub.add_token(Caller(person="person:bake", agent="agent:house"))
+            call = {"worker": "rook", "cap": "agent.look", "args": {"rookie": "none", "sound": False}, "why": WHY}
+            status, out = await bake.json("POST", "/call", call, bearer=house)
+            assert out["ok"] and out["result"]["rookie"] == "none" and out["result"]["sound"] is False, out
         finally:
             await hub.stop()
         # and it loads again after a restart (the session survives it too)
@@ -65,7 +67,7 @@ def test_look_and_feel_saves_loads_and_belongs_to_each_person(site):
         await hub2.start()
         try:
             bake.port = next(d.port for d in hub2.doors if d.name == "http")
-            look = (await bake.call("page.site"))["result"]["look"]
+            look = (await bake.call("agent.site"))["result"]["look"]
             assert (look["sound"], look["rookie"], look["theme"]) == (False, "none", "gameboy")
         finally:
             await hub2.stop()
@@ -81,14 +83,14 @@ def test_a_fresh_hub_asks_sound_style_theme_name_first_and_the_name_is_the_house
         (hub.data / "setup.json").write_text(json.dumps({"done": False}))
         c = Client(hub)
         await c.sign_in(tokens["bake"])
-        s = (await c.call("page.site"))["result"]
-        assert s["setup"] == {"done": False} and s["look"]["name"] == "Rookie"
-        out = await ws_bearer(c, tokens["bake"], "hub.setup")
-        assert out["result"]["done"] is False and out["result"]["look"]["next"] == "sound"
+        assert (await c.call("page.site"))["result"]["setup"] == {"done": False}
+        assert (await c.call("agent.site"))["result"]["look"]["name"] == "Rookie"
+        out = await ws_bearer(c, tokens["bake"], "agent.look")
+        assert out["result"]["next"] == "sound"
         order = []
         for step, value in (("sound", True), ("rookie", "comic"), ("theme", "amber"), ("name", "  Juniper  ")):
-            order.append((await c.call("page.look"))["result"]["next"])
-            out = await c.call("page.look", {step: value})
+            order.append((await c.call("agent.look"))["result"]["next"])
+            out = await c.call("agent.look", {step: value})
             assert out["ok"], out
         assert order == ["sound", "rookie", "theme", "name"] and out["result"]["next"] is None
         assert out["result"]["name"] == "Juniper"
@@ -102,18 +104,18 @@ def test_a_fresh_hub_asks_sound_style_theme_name_first_and_the_name_is_the_house
     assert [t for _, t in steps[:5]] == ["Sound.", "Rookie's style.", "Rookie's theme.", "Rookie's name.",
                                         "Their name and a password."]
     first = text[text.index("1. **Sound.**"):text.index("5. **")]
-    assert "The site asks steps 1-4 itself" in first and "page.look" in first and "YOUR name" in first
+    assert "The site asks steps 1-4 itself" in first and "agent.look" in first and "YOUR name" in first
     # the site asks them, on the left, in this order; the agent hears once they're done
-    shell = (STATIC / "shell.js").read_text()
+    shell = (SHELL / "dock.js").read_text()
     assert '["sound", "rookie", "theme", "name"].map(' in shell
     brief = shell[shell.index("function setupBrief("):shell.index("async function kickoff(")]
     assert "already picked the look and feel" in brief and "step 5" in brief
 
 
 def test_the_activity_feed_has_every_call_as_journaled(site):
-    """Rookie's feed: every call on the hub, start and end, with its args and
-    why (Bake, Nov 6: "Remove all restrictions and gates"); the site picks the
-    dock agent's calls for the person who is here."""
+    """The site's live feed Rookie reads: every call on the hub, start and
+    end, with its args and why (Bake, Nov 6: "Remove all restrictions and
+    gates"); the dock picks its agent's calls for the person who is here."""
     async def go():
         hub, tokens = await site()
         try:
@@ -200,7 +202,7 @@ def test_the_05_event_to_state_map(tmp_path):
     node = _node()
     script = tmp_path / "map_test.js"
     script.write_text(MAP_TEST)
-    r = subprocess.run([node, str(script), str(STATIC / "rookie.js"), str(STATIC / "rookie-map.js")],
+    r = subprocess.run([node, str(script), str(SHELL / "rookie.js"), str(SHELL / "rookie-map.js")],
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout.strip().splitlines()[-1]) == {}
@@ -208,7 +210,7 @@ def test_the_05_event_to_state_map(tmp_path):
 
 def test_the_map_table_is_in_the_docs():
     doc = (Path(__file__).resolve().parents[1] / "docs/castling-first-run.md").read_text()
-    src = (STATIC / "rookie-map.js").read_text()
+    src = (SHELL / "rookie-map.js").read_text()
     exact = dict(re.findall(r'^\s+"([a-z.-]+)": "([a-z]+)",', src, re.M))
     for cap, state in exact.items():
         row = next((ln for ln in doc.splitlines() if ln.startswith("|") and f"`{cap}`" in ln), None)

@@ -158,8 +158,8 @@ class Dispatcher:
         # runs and nothing is held; the runtime reads the hub.security setting.
         self.security_off = security_off or (lambda: False)
         # Watchers see each call start and end (``fn(phase, entry)``, phase
-        # "start" or "end"; the entry as journaled): the site's Rookie shows
-        # what the house agent is doing. They must not block or raise.
+        # "start" or "end"; the entry as journaled): the site's live feed
+        # (/web/api/activity). They must not block or raise.
         self.watchers: list = []
         self.gates: list = list(gates or ())
         self.sessions: dict[str, Session] = {}       # live ones; prune_sessions drops the rest

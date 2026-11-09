@@ -229,84 +229,6 @@ def setup_state(hub, install: bool = False) -> dict:
     return out
 
 
-ROOKIE_JS = Path(__file__).with_name("static") / "rookie.js"
-_rookie: tuple = (None, (), ())
-LOOK_STEPS = ("sound", "rookie", "theme", "name")      # first-run asks these first, in this order
-HOUSE_NAME = "Rookie"
-
-
-def _rookie_js() -> tuple:
-    """(styles, themes) the vendored ``static/rookie.js`` defines, read from
-    the file itself (``SKINS.<name>={``, the ``THEMES={...}`` keys) so a new
-    rookie.js drops in without a code change."""
-    global _rookie
-    try:
-        mtime = ROOKIE_JS.stat().st_mtime
-    except OSError:
-        return ["none"], ["stone"]
-    if _rookie[0] != mtime:
-        text = ROOKIE_JS.read_text(encoding="utf-8")
-        styles = re.findall(r"\bSKINS\.([a-z][a-z0-9_]*)\s*=\s*\{", text)
-        block = re.search(r"\bTHEMES\s*=\s*\{(.*?)\n\s*\};", text, re.S)
-        themes = re.findall(r"^\s*([a-z][a-z0-9_]*)\s*:\s*\{", block[1], re.M) if block else []
-        _rookie = (mtime, tuple(dict.fromkeys(styles + ["none"])), tuple(themes or ["stone"]))
-    return list(_rookie[1]), list(_rookie[2])
-
-
-def rookie_styles() -> list:
-    return _rookie_js()[0]
-
-
-def rookie_themes() -> list:
-    return _rookie_js()[1]
-
-
-def house_name(hub) -> str:
-    return str((hub.plugins.settings.get("agent") or {}).get("house_name") or HOUSE_NAME)
-
-
-def look_state(hub, settings, person: str | None) -> dict:
-    """A person's look and feel (castling-first-run; Bake, Nov 5 2026: "prompt
-    the user if they want sound first, then rookie style then rookie theme,
-    then rookie name. This will be the name of the home agent"): sound,
-    Rookie's style and theme (theirs), Rookie's name (the house agent's, the
-    hub's), which were answered, and the first that wasn't (``next``)."""
-    mine = (settings.settings(person) if person else {}).get("page") or {}
-    styles, themes = _rookie_js()
-    chosen = {"sound": "sound" in mine, "rookie": "rookie" in mine, "theme": "rookie_theme" in mine,
-              # no agents package, no house agent to name
-              "name": "house_name" in settings.stored.get("agent", {}) or "agent" not in hub.plugins.plugins}
-    return {"sound": bool(mine.get("sound", False)),
-            "rookie": mine["rookie"] if mine.get("rookie") in styles else "pixel",
-            "theme": mine["rookie_theme"] if mine.get("rookie_theme") in themes else themes[0],
-            "name": house_name(hub), "chosen": chosen,
-            "next": next((k for k in LOOK_STEPS if not chosen[k]), None),
-            "styles": styles, "themes": themes}
-
-
-def backend_ready(hub) -> bool:
-    """Whether a turn of the house agent can run now: some installed
-    provider of ``agent.backend`` and a worker (online) or the hub serving
-    it. Right after an install the worker takes a few seconds to join; the
-    site waits for this before starting setup."""
-    try:
-        cap = hub.contracts.choose("agent.backend")
-    except Exception:          # nothing provides it yet
-        return False
-    target = hub._target_for(cap)
-    if target is None:
-        return False
-    k = hub.known.get(target)
-    return target == hub.node or bool(k and k.online)
-
-
-def dock_agent(hub) -> str | None:
-    """The agent in the site's chat dock: the ``page.dock`` setting, when
-    the agents package is installed."""
-    name = hub.plugins.settings.get("page", {}).get("dock", "house")
-    return name if name and "agent" in hub.plugins.plugins else None
-
-
 def _plugin_folder(hub, pid: str) -> Path:
     return Path(hub.plugins.plugins[pid.partition("/")[0]].folder)
 
@@ -337,14 +259,14 @@ def install(hub) -> None:
     """Register the builtin plugins on the hub node and load stored settings."""
     hub.pages = Pages(hub)
     settings = Settings(hub)
-    h = _Handlers(hub, settings)
+    h = _Handlers(hub)
     tokens = Tokens(hub)
     table = {
         "page": {"page.list": h.pages_list, "page.view": h.pages_view, "page.get": h.pages_get,
                   "page.create": h.pages_create, "page.update": h.pages_update,
                   "page.archive": h.pages_archive, "page.restore": h.pages_restore,
                   "page.components": h.pages_components, "page.site": h.pages_site,
-                  "page.start": h.pages_start, "page.look": h.pages_look, "page.public": h.pages_public},
+                  "page.start": h.pages_start, "page.public": h.pages_public},
         "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers, "hub.manifests": h.hub_manifests,
                 "hub.door": h.hub_door, "hub.setup": h.hub_setup},
         "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide,
@@ -364,8 +286,8 @@ def _who(ctx) -> Caller:
 
 
 class _Handlers:
-    def __init__(self, hub, settings):
-        self.hub, self.settings = hub, settings
+    def __init__(self, hub):
+        self.hub = hub
 
     # -- pages ------------------------------------------------------------------
 
@@ -550,33 +472,10 @@ class _Handlers:
         return {"components": [c.view() for _, c in sorted(self.hub.pages.components().items())]}
 
     async def pages_site(self, ctx) -> dict:
-        """What the shell needs: the caller's start page and the agent in
-        the dock (with the agents package)."""
+        """What the shell needs: the caller's start page."""
         pages = self.hub.pages
-        return {"person": ctx.caller.person, "start": pages.start(ctx.caller.person), "dock": dock_agent(self.hub),
-                "workbench": self._workbench(), "setup": setup_state(self.hub), "ready": backend_ready(self.hub),
-                "look": look_state(self.hub, self.settings, ctx.caller.person or ctx.caller.agent)}
-
-    async def pages_look(self, ctx, sound: bool | None = None, rookie: str | None = None,
-                         theme: str | None = None, name: str | None = None) -> dict:
-        # Anyone sets anything here, a person or an agent alone; an unknown
-        # style or theme shows as the default (Bake, Nov 6: "Remove all
-        # restrictions and gates"; docs/castling-first-run.md "For the
-        # hardening pass").
-        who = ctx.caller.person or ctx.caller.agent
-        st = self.settings
-        mine = {k: v for k, v in (("sound", sound), ("rookie", rookie), ("rookie_theme", theme)) if v is not None}
-        if mine and who:
-            for key, value in mine.items():
-                st.personal.setdefault(who, {}).setdefault("page", {})[key] = \
-                    bool(value) if key == "sound" else str(value).strip().lower()
-            _write(st.people_path, json.dumps(st.personal, indent=1))
-        if name is not None:
-            name = " ".join(str(name).split()) or HOUSE_NAME
-            st.stored.setdefault("agent", {})["house_name"] = name
-            self.hub.plugins.settings.setdefault("agent", {})["house_name"] = name
-            _write(st.path, json.dumps(st.stored, indent=1))
-        return look_state(self.hub, st, who)
+        return {"person": ctx.caller.person, "start": pages.start(ctx.caller.person),
+                "workbench": self._workbench(), "setup": setup_state(self.hub)}
 
     async def pages_start(self, ctx, page: str | None = None) -> dict:
         pages = self.hub.pages
@@ -620,7 +519,7 @@ class _Handlers:
             state = _read_json(path)
             state.update({"done": bool(done), "ts": time.time(), "by": _author(ctx)})
             _write(path, json.dumps(state, indent=1))
-        return {**setup_state(self.hub, install=True), "look": look_state(self.hub, self.settings, ctx.caller.person or ctx.caller.agent)}
+        return setup_state(self.hub, install=True)
 
     async def hub_workers(self, ctx) -> dict:
         """The workers, the hub first; ``now`` is the hub's clock (heartbeat
@@ -883,6 +782,20 @@ class Settings:
         for plugin, values in self.stored.items():
             hub.plugins.settings.setdefault(plugin, {}).update(values)
         hub.plugins.people = self
+
+    def store(self, plugin: str, key: str, value, person: str | None) -> None:
+        """``ctx.settings.set``: a hub plugin writes its own setting, a
+        ``where: person`` one for the person it acts for."""
+        spec = (self.hub.plugins.plugins[plugin].manifest.get("settings") or {}).get(key) or {}
+        if spec.get("where") == "person":
+            if not person:
+                raise KitError(f"{plugin}.{key} is a per-person setting: there's no person here")
+            self.personal.setdefault(person, {}).setdefault(plugin, {})[key] = value
+            _write(self.people_path, json.dumps(self.personal, indent=1))
+            return
+        self.stored.setdefault(plugin, {})[key] = value
+        self.hub.plugins.settings.setdefault(plugin, {})[key] = copy.deepcopy(value)
+        _write(self.path, json.dumps(self.stored, indent=1))
 
     # -- the people view hub plugins get --------------------------------------
 

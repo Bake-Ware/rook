@@ -8,6 +8,7 @@ door. Every test runs under a hard timeout (``run``)."""
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 import subprocess
 import time
@@ -59,7 +60,8 @@ def library(tmp_path: Path, packages=()) -> Path:
 async def start(tmp_path: Path, packages=()):
     cfg = Config(data=tmp_path / "data", band=BAND, library=library(tmp_path, packages),
                  users={"bake": {"preset": "owner"}, "kim": {"preset": "viewer"}},
-                 presets={"viewer": {"grants": ["page.*", "board.count", "agent.chat.*"], "max_risk": "write"}},
+                 presets={"viewer": {"grants": ["page.*", "board.count", "agent.chat.*", "agent.site", "agent.look"],
+                                     "max_risk": "write"}},
                  agents={"narrow": {"grants": ["page.*", "board.count"]}},
                  settings={"agent": {"warm": "300ms"}},
                  doors={"http": {"bind": "127.0.0.1:0"}})
@@ -108,12 +110,21 @@ def test_every_install_combination(tmp_path, combo):
         c = Client(hub)
         await c.sign_in(tokens["bake"])
         s = (await c.call("page.site"))["result"]
-        assert s.pop("ready") is bool(agents)              # the fake brain serves agent.backend
-        look = s.pop("look")
-        assert look["next"] == "sound" and look["name"] == "Rookie"
-        assert look["chosen"]["name"] is not agents         # no agents package: no house agent to name
-        assert s == {"person": "person:bake", "start": None, "dock": "house" if agents else None,
-                     "workbench": workbench, "setup": {"done": True}}
+        assert s == {"person": "person:bake", "start": None, "workbench": workbench, "setup": {"done": True}}
+        # the dock is the agents package's part of the shell: none in core, not even its files
+        status, _, shell = await c.req("GET", "/")
+        assert status == 200 and (b"/web/plugin/agent/dock" in shell) is agents
+        if not agents:
+            assert not re.search(rb"dock|rookie|chat", shell, re.I)
+            assert (await c.req("GET", "/web/plugin/agent/dock"))[0] == 404
+            static = Path(web_caps.__file__).with_name("static")
+            for f in ("shell.js", "shell.css", "account.js", "account.html"):
+                assert not re.search(r"dock|rookie|house|chat", (static / f).read_text(), re.I), f
+        else:
+            dock = (await c.call("agent.site"))["result"]
+            assert dock["dock"] == "house" and dock["ready"] is True    # the fake brain serves agent.backend
+            assert dock["look"]["next"] == "sound" and dock["look"]["name"] == "Rookie"
+            assert dock["look"]["chosen"]["name"] is False
 
         # a lean sidebar: workers, tokens and the trust map (Bake, Nov 9: "Let's bring over the trust
         # map") (+ what packages add); journal and settings by address.
@@ -151,11 +162,9 @@ def test_every_install_combination(tmp_path, combo):
         else:
             assert made["result"] == {"page": "page/home"}           # tasks are not core
 
-        # the dock's chat is the shell's only way past page.*, and only with the dock agent
+        # past page.*, the shell calls only what plugins' shell parts declare (the dock's chat)
         status, out = await c.json("POST", "/web/api/call", {"cap": "agent.chat.read", "args": {"agent": "house"}})
         assert (status, out.get("ok")) == ((200, True) if agents else (403, False)), out
-        for args in ({"agent": "pm"}, {}, {"agent": ["house"]}):
-            assert (await c.json("POST", "/web/api/call", {"cap": "agent.chat.read", "args": args}))[0] == 403
         assert (await c.json("POST", "/web/api/call", {"cap": "agent.list", "args": {"agent": "house"}}))[0] == 403
     serve(tmp_path, go, packages)
 
@@ -318,9 +327,9 @@ def test_the_component_and_workbench_javascript_parses():
     node = shutil.which("node")
     if node is None:
         pytest.skip("no node")
-    import re
     scratch = []
-    files = sorted(web_caps.BUILTIN.glob("*/components/*.js")) + sorted(PLUGINS.glob("*/components/*.js"))
+    files = sorted(web_caps.BUILTIN.glob("*/components/*.js")) + sorted(PLUGINS.glob("*/components/*.js")) + \
+        sorted(PLUGINS.glob("*/shell/*.js"))
     pages = sorted(PLUGINS.glob("*/pages/*.html"))
     assert {p.stem for p in pages} >= {"tasks", "projects", "knowledge"}
     try:
@@ -349,5 +358,5 @@ def test_the_docks_long_poll_fits_the_chat_read_timeout():
     from rook.kit._types import parse_duration
     from rook.kit.manifest import load
     read = load(PLUGINS / "agents").data["caps"]["agent.chat.read"]
-    js = (Path(web_caps.__file__).with_name("static") / "shell.js").read_text()
+    js = (PLUGINS / "agents" / "shell" / "dock.js").read_text()
     assert "await read(55)" in js and parse_duration(read["timeout"]) > read["args"]["wait"]["max"] >= 55

@@ -22,6 +22,7 @@ from tests.test_core2_dashboard import Client, run, site  # noqa: F401 - the fix
 
 STATIC = Path(web_caps.__file__).with_name("static")
 REPO = Path(__file__).resolve().parents[1]
+SHELL = REPO / "rook/plugins/agents/shell"
 
 
 def _root_tokens(css: str) -> dict:
@@ -78,27 +79,25 @@ def test_the_shell_draws_the_04_rook_behind_every_page():
 
 
 def test_the_chat_has_an_x_and_no_chat_button():
-    html = (STATIC / "shell.html").read_text()
-    head = html[html.index('<div id="dock-head">'):html.index("</div>", html.index('id="dock-name"'))]
+    js = (SHELL / "dock.js").read_text()
+    head = js[js.index('<div id="dock-head">'):js.index("</div>", js.index('id="dock-name"'))]
     assert head.rstrip().endswith('<button id="dock-close" aria-label="Close the chat" title="Close the chat">&times;</button>')
-    bar = html[html.index('<header id="bar">'):html.index("</header>")]
+    bar = js[js.index('$("#bar").insertAdjacentHTML('):js.index('$("#note").insertAdjacentHTML(')]
     assert '<button id="dock-btn" class="offscreen"' in bar        # never shown; the desktop app clicks it
-    assert ".offscreen { display: none !important; }" in (STATIC / "shell.css").read_text()
-    js = (STATIC / "shell.js").read_text()
+    assert ".offscreen { display: none !important; }" in (SHELL / "dock.css").read_text()
     assert '$("#dock-btn").onclick = () => dockOpen(true);' in js
     assert '$("#dock-skip").hidden = !on;' in js                  # setup: "Skip to the hub" beside the X
 
 
 def test_rookie_waits_in_the_corner_and_opens_the_chat():
-    js = (STATIC / "shell.js").read_text()
+    js = (SHELL / "dock.js").read_text()
     open_ = js[js.index("function dockOpen("):js.index("function scrollChat(")]
     assert "liftOff()" in open_ and "goHome()" in open_
     assert '$("#rookie-park").getBoundingClientRect()' in js and 'h.classList.add(onStage() ? "staged" : "parked")' in js
     assert 'rookie.holder.classList.contains("parked") && rookie.holder.contains(e.target)) dockOpen(true)' in js
     assert "document.body.append(h);" in js                       # out of the chat, so he stays drawn when it closes
-    html = (STATIC / "shell.html").read_text()
-    assert html.count("Rookie.mount") == 0 and js.count("Rookie.mount(") == 1      # still one Rookie
-    css = (STATIC / "shell.css").read_text()
+    assert (STATIC / "shell.html").read_text().count("Rookie.mount") == 0 and js.count("Rookie.mount(") == 1
+    css = (SHELL / "dock.css").read_text()
     assert "#rookie-park { position: fixed; right: 18px; bottom: 16px;" in css and ".rookie.parked { pointer-events: auto; cursor: pointer; }" in css
 
 
@@ -110,7 +109,7 @@ def _node():
 
 
 def test_rookies_speech_bubbles(tmp_path):
-    js = (STATIC / "shell.js").read_text()
+    js = (SHELL / "dock.js").read_text()
     funcs = "".join(js[js.index(f"function {n}("):js.index("\n}\n", js.index(f"function {n}(")) + 3]
                     for n in ("shortLine", "sayFor"))
     script = tmp_path / "t.js"

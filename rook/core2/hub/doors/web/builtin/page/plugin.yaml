@@ -15,12 +15,6 @@ runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 
-settings:
-  dock: { type: str, where: hub, default: house, doc: "The agent in the site's chat dock (with the agents package); blank: no dock." }
-  sound: { type: bool, where: person, default: false, doc: "Your look and feel: Rookie's sounds (a chiptune blip as it changes state). Off until you answer; set by page.look." }
-  rookie: { type: str, where: person, default: pixel, doc: "Your look and feel: Rookie's style beside the house agent (a skin rookie.js ships; none hides it). Set by page.look." }
-  rookie_theme: { type: str, where: person, default: stone, doc: "Your look and feel: Rookie's colour theme (one rookie.js ships). Set by page.look." }
-
 caps:
   list:
     doc: The pages on the hub site, by section. Archived ones only with archived=true.
@@ -132,27 +126,11 @@ caps:
     idempotent: true
     result: { type: map }
   site:
-    doc: What the site shows you first - your start page - and the agent in its chat dock.
+    doc: What the site shows you first - your start page - and whether first-run setup is done.
     on: hub
     risk: read
     scope: multi-user
     idempotent: true
-    result: { type: map }
-  look:
-    doc: >-
-      Look and feel on the hub site, the first four first-run questions in this order: sound (yes/no),
-      Rookie's style, Rookie's theme, Rookie's name. The name is the house agent's name (the agents
-      setting house_name; owners only). Give any of them to set it; blank: just say what you have.
-      chosen says which were answered, next is the first one that wasn't (null when all were).
-    on: hub
-    risk: write
-    scope: multi-user
-    effects: [persists]
-    args:
-      sound: { type: bool, doc: "Rookie's sounds on or off." }
-      rookie: { type: str, doc: "Rookie's style, one of styles (e.g. pixel, kawaii; none hides it)." }
-      theme: { type: str, doc: "Rookie's colour theme, one of themes (e.g. stone, gameboy)." }
-      name: { type: str, doc: "Rookie's name: the house agent's name from now on (owners only)." }
     result: { type: map }
   start:
     doc: >-

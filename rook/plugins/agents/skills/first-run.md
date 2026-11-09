@@ -76,10 +76,10 @@ person clicks through them and the site says its lines for you. When all
 four are done you hear it once ("[site] First visit to a new hub ... already
 picked the look and feel ..."): greet them by your new name in a sentence
 or two (who you are: their house agent, the assistant that runs this hub
-with them) and go on with step 5. `hub.setup` returns `look` (what was
-chosen, and `next`, the first step not answered). If the person types to
+with them) and go on with step 5. `agent.look` says what was chosen (and
+`next`, the first step not answered). If the person types to
 you while a look step is still open, answer briefly; when what they typed
-answers it, set it with `page.look` (`sound`, `rookie`, `theme` or `name`)
+answers it, set it with `agent.look` (`sound`, `rookie`, `theme` or `name`)
 and the site moves on. Don't start step 5 until the site says the look and
 feel is done.
 

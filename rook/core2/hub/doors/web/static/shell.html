@@ -39,24 +39,9 @@
     <h1 id="title"></h1>
     <span class="grow"></span>
     <button id="note-btn" hidden>About</button>
-    <!-- no Chat button (Bake, Nov 9): Rookie opens the chat. This one is never shown; the desktop app clicks it (OPEN_DOCK_JS_05). -->
-    <button id="dock-btn" class="offscreen" tabindex="-1" aria-hidden="true">Chat</button>
   </header>
-  <div id="stage"><div id="msg" hidden></div><section id="work" hidden></section><aside id="note" hidden></aside></div>
+  <div id="stage"><div id="msg" hidden></div><aside id="note" hidden></aside></div>
 </main>
-<aside id="dock" hidden>
-  <div id="dock-head"><div id="rookie-home"></div><span id="dock-name"></span><span class="grow"></span><button id="dock-skip" class="link" hidden>Skip to the hub</button><button id="dock-close" aria-label="Close the chat" title="Close the chat">&times;</button></div>
-  <div id="dock-log" aria-live="polite"></div>
-  <form id="dock-form"><textarea id="dock-text" rows="2" placeholder="Ask, or tell it what to set up"></textarea><button>Send</button></form>
-</aside>
-<!-- rookie.js: Rookie, the house agent's avatar, by Bake (castling-wave12/rookie.js, sha256 fd17c3ee...).
-     Vendored unchanged as a drop-in: replace the file to update it; the site reads its STATES and SKINS.
-     rookie-map.js is our 0.5 wiring (events -> states). -->
-<script src="/web/static/rookie.js"></script>
-<script src="/web/static/rookie-map.js"></script>
-<script src="/web/static/chat-widgets.js"></script>
-<div id="rookie-park" aria-hidden="true"></div>
-<div id="rookie-say" role="status" hidden></div>
 <script src="/web/static/shell.js"></script>
 <script type="module" src="/web/static/art.js"></script>
 </body>
