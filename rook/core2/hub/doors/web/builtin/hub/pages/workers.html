@@ -200,7 +200,8 @@ function osOf(w) {
   return OS[os] || (os ? os[0].toUpperCase() + os.slice(1) : "Unknown");
 }
 function bandName(b) { return bands[b] || (b ? String(b).slice(0, 8) : "no band"); }
-function versionLabel(w) { return w.hub ? "core " + (w.core || "?") : w.version ? "v" + w.version : ""; }
+// the Rook release for the hub and every worker (Bake's review, Nov 9: "show the Rook version (0.5.x) for both")
+function versionLabel(w) { return w.version ? "v" + w.version : ""; }
 function age(w) { return w.hub ? 0 : Math.max(0, Date.now() / 1000 + skew - (w.last_seen || 0)); }
 function fresh(w) { return w.online === false && !w.hub ? 0 : Math.max(0, Math.min(1, 1 - age(w) / WINDOW)); }
 function col(f) { return f > 0.5 ? "var(--good)" : f > 0.22 ? "var(--warn)" : "var(--bad)"; }
@@ -220,7 +221,7 @@ function battery(w) {
 
 function details(w) {
   const f = w.facts || {};
-  const items = [["Core", w.core || "incompatible"], ["Version", w.version], ["OS", [f.os, f.arch].filter(Boolean).join(" · ")],
+  const items = [["Rook", w.version], ["Core protocol", w.core || "incompatible"], ["OS", [f.os, f.arch].filter(Boolean).join(" · ")],
     ["CPUs", f.cpus], ["Python", f.python], ["Owner", w.owner ? String(w.owner).replace(/^person:/, "") : ""],
     ["Band", bandName(w.band)], ["Last seen", w.hub ? "now (the hub)" : rook.ago(w.last_seen)]];
   for (const [k, v] of Object.entries(f)) {
@@ -276,7 +277,7 @@ function rowFor(w) {
   const ver = m.wrap.querySelector(".ver");
   ver.textContent = versionLabel(w) || "—";
   ver.className = "ver" + (versionLabel(w) ? (w.core ? "" : " old") : " none");
-  ver.title = w.hub ? "The hub, core " + (w.core || "?") : "Worker " + (w.version || "unknown") + " · core " + (w.core || "incompatible");
+  ver.title = (w.hub ? "The hub, Rook " : "Worker, Rook ") + (w.version || "unknown") + " · core protocol " + (w.core || "incompatible");
   m.wrap.querySelector(".batt-slot").innerHTML = battery(w);
   m.bar.title = w.name;
   const isOpen = open.has(w.id);
@@ -355,7 +356,7 @@ function render() {
 function versions(list) {
   const c = {};
   for (const w of list) {
-    const v = w.hub ? "hub" : versionLabel(w) || "none";
+    const v = versionLabel(w) || "none";
     c[v] = (c[v] || 0) + 1;
   }
   const ent = Object.entries(c).sort((a, b) => b[1] - a[1]), total = list.length || 1;

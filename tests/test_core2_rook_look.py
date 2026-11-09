@@ -93,7 +93,7 @@ def test_rookie_waits_in_the_corner_and_opens_the_chat():
     js = (STATIC / "shell.js").read_text()
     open_ = js[js.index("function dockOpen("):js.index("function scrollChat(")]
     assert "liftOff()" in open_ and "goHome()" in open_
-    assert '$("#rookie-park").getBoundingClientRect()' in js and 'h.classList.add("parked")' in js
+    assert '$("#rookie-park").getBoundingClientRect()' in js and 'h.classList.add(onStage() ? "staged" : "parked")' in js
     assert 'rookie.holder.classList.contains("parked") && rookie.holder.contains(e.target)) dockOpen(true)' in js
     assert "document.body.append(h);" in js                       # out of the chat, so he stays drawn when it closes
     html = (STATIC / "shell.html").read_text()

@@ -119,7 +119,7 @@ ask() {   # ask PROMPT DEFAULT: one line from the terminal (works under curl | b
 
 bold "Rook"
 say "This sets up a Rook hub on this computer: a home for your AI assistant and your machines."
-[ "$(uname -s)" = Linux ] || die "this installer is for Linux for now (macOS and Windows are coming)."
+[ "$(uname -s)" = Linux ] || die "this installer is for Linux."
 command -v systemctl >/dev/null || die "it needs systemd (systemctl) to keep Rook running."
 command -v curl >/dev/null || die "it needs curl; install it with your package manager and run this again."
 command -v git >/dev/null || die "it needs git; install it with your package manager and run this again."
@@ -250,16 +250,20 @@ UV_PYTHON_PREFERENCE=only-managed uv venv -q --python 3.12 "$VENV" >>"$LOG" 2>&1
 uv pip install -q --python "$PY" -e "$SRC[manifest]" >>"$LOG" 2>&1 || die "Rook's packages didn't install (see $LOG)"
 
 # -- the hub: config, keys, no password (the site asks for one) -------------------
-# Everything listens on every interface (0.0.0.0); init's output (API token,
-# recovery key) is printed as it comes (Bake, Nov 6: "Remove all restrictions
-# and gates"; docs/castling-first-run.md "For the hardening pass").
+# Everything listens on every interface (0.0.0.0; docs/castling-first-run.md
+# "For the hardening pass"). Of init's output a new user sees only the
+# recovery key (at the end); its developer lines (how to start the hub, add a
+# machine) are for people running it by hand, and the API token stays in this
+# script, for enrolling this machine (Bake's review, Nov 9).
 mkdir -p "$ROOT/hub" "$ROOT/worker" "$UNIT_DIR"
 initout=$("$PY" -m rook.core2.hub --config "$HUB_CFG" init --owner "$OWNER" --no-password \
     --relay "127.0.0.1:$RELAY_PORT" --url "$URL" --bind "0.0.0.0:$HTTP_PORT" </dev/null) ||
     die "the hub didn't set up (see $LOG)"
-printf '%s\n' "$initout"
 TOKEN=$(printf '%s\n' "$initout" | awk '/^API token/{getline; print $1; exit}')
+RECOVERY=$(printf '%s\n' "$initout" | awk '/^Recovery key/{on=1; next} on && /^  [^ ]/{print $1; exit}')
+initout=""
 [ -n "$TOKEN" ] || die "the hub set up without a token for enrolling this machine"
+say "Hub set up in $ROOT/hub (you sign in as $OWNER)."
 plugins=$SRC/rook/plugins
 HUB_PLUGINS="agents notify changes tasks projects knowledge concepts whiteboard"
 if [ $AI = claude ]; then BACKEND=agents-claude-code; else BACKEND=agents-opencode; fi
@@ -367,7 +371,7 @@ step "Starting Rook"
 systemctl --user start "$NAME-relay" "$NAME-hub"
 for _ in $(seq 60); do curl -s -o /dev/null --max-time 2 "$URL/health" && break; sleep 1; done
 curl -s -o /dev/null --max-time 2 "$URL/health" || die "the hub didn't start (journalctl --user -u $NAME-hub)"
-say "Hub: $URL"
+say "The hub is running."
 qr=$(curl -sf --max-time 10 -H "Authorization: Bearer $TOKEN" -d '{}' "$URL/enroll/code" |
     "$PY" -c 'import json,sys; print(json.load(sys.stdin)["qr"])') || die "the hub gave no enrollment code"
 (cd "$ROOT/worker" && "$PY" -m rook.core2.worker --config "$WORKER_CFG" enroll "$qr" --name "$WORKER_NAME") </dev/null >>"$LOG" 2>&1 ||
@@ -394,6 +398,12 @@ if [ $ready = 1 ]; then
     say "This machine is on the hub and your house agent is ready."
 else
     say "This machine hasn't reached the hub yet; it keeps trying (journalctl --user -u $NAME-worker). The site waits for it."
+fi
+
+if [ -n "$RECOVERY" ]; then
+    step "Your recovery key"
+    say "Keep it somewhere safe, away from this computer: it brings this hub back if this computer dies."
+    printf '\n  %s\n' "$RECOVERY"
 fi
 
 step "Done"

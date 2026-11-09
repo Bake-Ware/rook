@@ -36,8 +36,11 @@ What it does:
    free `opencode/*` models and keeps the first that answers a real
    `opencode run` (no account).
 3. Installs uv if missing, a uv-managed Python 3.12 and Rook into `DIR`.
-4. `hub init --no-password` (its output, with the owner's first API token
-   and the recovery key, is printed); that token enrolls this machine. The install facts go to `hub/data/setup.json`
+4. `hub init --no-password`. Of its output the installer shows only the
+   recovery key, at the end with one plain sentence; the owner's first API
+   token stays in the script and enrolls this machine (more tokens: the
+   Tokens page), and init's developer lines ("Start it", "Add a machine")
+   aren't shown. The site's address is printed once, at the end. The install facts go to `hub/data/setup.json`
    (`install`), which `hub.setup` returns to the house agent.
 5. Writes and starts `NAME-relay`, `NAME-hub`, `NAME-worker` (systemd user
    units; enabled at login unless `--no-boot`). The worker runs `shell`,
@@ -67,8 +70,8 @@ and "I want it to guide the setup entirely".
 While `hub.setup` says setup isn't done, the site is two panes, no page
 list: the **work pane** on the left (what is being set up right now) and the
 house agent's chat on the right, with Rookie at its head. After setup the
-same chat is the right column beside every page (the bar's Chat button
-shows or hides it), and pages fill the left. Until setup is done nobody
+same chat is the right column beside every page (Rookie in the corner
+opens it, its X closes it), and pages fill the left. Until setup is done nobody
 signs in: opening the site is being the owner. Hubs set up before this (no
 `setup.json`) count as done.
 
@@ -85,7 +88,8 @@ backups, then a knowledge page "How this hub is set up and why", and
 The worker joins a few seconds after the installer starts it, and until it
 serves `agent.backend` no turn can run. `page.site` says `ready` (some
 provider of `agent.backend` installed and its worker online); the site
-shows "Getting ready..." and starts the walk-through only when it is true.
+shows "Getting ready..." and starts the walk-through only when it is true
+(after the look and feel, which the site asks itself; see Rookie below).
 A turn that fails because nothing serves the backend yet is never shown as
 a message: the site waits and sends the kickoff again, and on a reload it
 starts again when the agent never got to answer. The installer waits for
@@ -116,7 +120,16 @@ Targets: `account.name`, `account.password`, `account.again`,
 `vault.save`, `vault.list`, `network.local`, `network.home`,
 `network.anywhere`, `network.status`, `page`. When the person saves in a
 view, the site tells the agent ("[site] Secret host_password saved in the
-vault", "[site] Account saved ...").
+vault", "[site] Account saved ..."). Those `[site]` notes are the agent's
+only: the chat never shows them as the person's words. A note can carry the
+person's own words for it on a `[shown]` line ("Saved my account", "Saved
+host_password in the vault"), and that is what the chat shows as theirs.
+A view whose job is done shows it (a tick, "Saved: Bake", "You'll sign in
+as bake", a way to do it again), on a reload too, never a blank form the
+conversation has left. After a reload the field the view was opened for
+has the cursor again. The account view shows the sign-in user name (the
+one the installer made from the computer's login): what the agent calls the
+person is only a name.
 
 The work views are drawn by the shell (same page), so the agent can fill
 and focus a field and Rookie can point at it; hub pages stay sandboxed
@@ -229,7 +242,7 @@ any page at a time": there is exactly one live Rookie on a page (the chat's;
 `Rookie.mount` is called once). When the agent points at something he lifts
 off from the chat, hops along a curved path to it, settles, and goes back
 the same way (shell.js `travel()`). The tab icon copies his canvas, and the
-pickers (chat and Your account) draw still thumbnails with `Rookie.bake`.
+pickers (the look steps and Your account) draw still thumbnails with `Rookie.bake`.
 
 - `static/rookie.js` is Bake's file, vendored unchanged (a drop-in: replace
   it and nothing else changes). Where it is loaded (shell.html,
@@ -248,12 +261,21 @@ pickers (chat and Your account) draw still thumbnails with `Rookie.bake`.
   "You are <name>", the roster shows it, the dock header and the tab title use it.
   Its identity stays `agent:house`. All four change later on **Your
   account**.
-- First-run steps 1-4 are sound, style, theme, name, one question each in
-  that order (`next` is the first unanswered). The agent asks; the site
-  shows the matching picker (live previews; the themes on the chosen style;
-  a name box with "Keep Rookie") under its question until it is answered,
-  and the agent sets typed answers with `page.look`. Then the rest of setup,
-  the agent speaking as its new name.
+- First-run steps 1-4 are sound, style, theme, name, in that order (`next`
+  is the first unanswered). The site asks them itself, on the left (Bake's
+  review, Nov 9: "Put the look-and-feel there ... so the four steps happen
+  on the left like everything else and the chat just narrates", and "Make
+  them instant"): a stage the one live Rookie walks onto and is shown big
+  on (`.staged`, CSS-scaled; the thumbnails are still pictures), the four
+  steps with what was chosen (a click goes back to one), and the step's
+  picker. A click calls `page.look`, Rookie changes at once, and the next
+  picker shows with a line in the agent's voice in the chat (and a few
+  words from Rookie); no agent turn. The agent hears once, when all four
+  are done (the setup kickoff, with what was picked), or earlier when the
+  person types instead of clicking (it then sets a typed answer with
+  `page.look` and the site moves on). Then the rest of setup, the agent
+  speaking as its new name. Before the review each step was a full agent
+  turn (10 to 30 s with Claude Code; a typed name took over 90 s).
 
 ### 0.5 events -> Rookie states
 
@@ -329,9 +351,9 @@ were built on this branch and taken out again; nothing replaces them now:
 5. Installer binding: site, MCP door and relay were 127.0.0.1 only and the
    setup skill warned against opening the hub to the internet without
    HTTPS; now 0.0.0.0 and no warning.
-6. Installer file modes and output: the install folder was 700, install.log,
-   hub.yaml and setup.json 600, and init's output (API token, recovery key)
-   was hidden; now default modes and init's output is printed.
+6. Installer file modes: the install folder was 700, install.log, hub.yaml
+   and setup.json 600; now default modes. (Output: init's API token was
+   printed for a while; since the review pass only the recovery key is.)
 7. agents-opencode: OpenCode's own tools were off with bash / edit /
    webfetch denied; now on (`own_tools: true`) and nothing denied.
 8. Sign-in links: only a hash of each code was kept and codes over 200
@@ -354,6 +376,20 @@ were built on this branch and taken out again; nothing replaces them now:
     machine sacred or not and it is written to hub.yaml; anyone who opens
     the page sees every agent's grants and every project's level. Consider:
     owners only for `trust.sacred`, and grants shown only to owners.
+
+13. Setup mode and the network step (review pass, Nov 9; for Bake to
+    decide, nothing built): while setup is unfinished anyone who opens the
+    site is the owner. Step 7 can open the hub to the home network or the
+    internet before setup is marked done, and it stays that way if the
+    person wanders off mid-setup. Consider: no setup-mode sign-in from
+    anything but this computer, or marking setup done before step 7 opens
+    the hub up.
+
+### Open questions for Bake
+
+- **Twelve steps before the first useful thing** (review pass, Nov 9).
+  Steps 9 to 11 (voice / phone / chat apps, backups, the write-up) could be
+  offered after setup is marked done instead of before it. Not changed.
 
 ## OpenCode gotchas
 

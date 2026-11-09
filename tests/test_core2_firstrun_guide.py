@@ -189,7 +189,7 @@ def test_every_turn_carries_the_setup_skill_until_setup_is_done(tmp_path):
 def test_the_site_waits_for_the_backend_and_never_shows_not_ready_as_a_message():
     shell = (STATIC / "shell.js").read_text()
     kick = shell[shell.index("async function kickoff()"):shell.index("async function startDock(")]
-    assert kick.index("await untilReady()") < kick.index("await say(SETUP_KICKOFF")
+    assert kick.index("await untilReady()") < kick.index("await say(setupBrief(")
     assert "Getting ready" in shell[shell.index("async function untilReady()"):]
     nr = re.search(r"const NOT_READY = /(.+)/i;", shell)[1].replace("\\.", ".")
     assert re.search(nr, "no single worker serves agents-opencode.turn", re.I)

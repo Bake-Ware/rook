@@ -860,15 +860,13 @@ def worker_key(path: Path) -> SigningKey:
 
 
 def _version() -> str:
-    """The core release this process runs, else the installed package's version."""
+    """The core release this process runs, else the Rook release of this
+    code (ROOK_VERSION; the Python package's own version is still 0.4's)."""
     running = boot.running()
     if running:
         return running
-    try:
-        from importlib.metadata import version
-        return version("rook")
-    except Exception:
-        return "unknown"
+    from .. import ROOK_VERSION
+    return ROOK_VERSION
 
 
 def _facts() -> dict:

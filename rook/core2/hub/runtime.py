@@ -74,7 +74,7 @@ from rook.kit.manifest.diff import semver_key
 from rook.kit.records import RecordStore
 from rook.streams import StreamError, StreamSpec
 
-from .. import CORE_VERSION, rights, wire
+from .. import CORE_VERSION, ROOK_VERSION, rights, wire
 from ..builtin import CORE, STREAM
 from ..enroll.hub import Enrollment, check_options as check_enroll, recovery_key
 from . import distribute, streams as hub_streams
@@ -1521,7 +1521,7 @@ class Hub:
         return {"ok": True}
 
     async def workers_view(self, caller: Caller) -> dict:
-        out = [{"id": self.node, "name": "rook", "online": True, "hub": True, "core": CORE_VERSION,
+        out = [{"id": self.node, "name": "rook", "online": True, "hub": True, "core": CORE_VERSION, "version": ROOK_VERSION,
                 "plugins": sorted(self.plugins.plugins), "band": self.band, "last_seen": self.clock()}]
         for k in sorted(self.known.values(), key=lambda k: k.name):
             out.append({"id": k.id, "name": k.name, "online": k.online, "last_seen": k.last_seen, "band": k.band,

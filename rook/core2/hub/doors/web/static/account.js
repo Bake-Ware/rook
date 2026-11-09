@@ -86,6 +86,7 @@ async function change(args) {
 function render() {
   $("sound").checked = !!look.sound;
   $("name").value = look.name;
+  for (const n of document.querySelectorAll(".agent-name")) n.textContent = look.name;      // never a fixed "Rookie"
   pickers();
 }
 

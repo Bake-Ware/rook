@@ -177,6 +177,38 @@ body.no-rookie #rookie-home { display: none; }
 .picker form.name { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
 .picker form.name input { flex: 1 1 160px; min-width: 0; }
 
+/* look and feel on the left (VIEWS.look): a stage the one live Rookie walks onto and is
+   shown big on (.staged, scaled from his corner), the four steps, the step's picker */
+:root { --stage-scale: 3; }
+.look-stage { position: relative; display: grid; place-items: center; min-height: 230px; max-width: 720px;
+  border: 1px solid var(--line); background: radial-gradient(ellipse at 50% 85%, var(--accent-bg) 0, transparent 60%), var(--overlay); }
+#look-spot { width: calc(64px * var(--stage-scale)); height: calc(50px * var(--stage-scale)); }
+.look-stage .floor { position: absolute; left: 50%; bottom: 26px; width: 240px; height: 26px; transform: translateX(-50%);
+  border: 1px dashed var(--line2); border-radius: 50%; opacity: .6; pointer-events: none; }
+.rookie.staged { transform: scale(var(--stage-scale)); transform-origin: 0 0; filter: none; }
+.rookie.staged canvas { image-rendering: pixelated; }
+body.no-rookie .rookie.staged { display: none; }
+.look-steps { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; max-width: 720px; }
+.look-steps button { display: flex; gap: 8px; align-items: baseline; padding: 6px 10px; border: 1px solid var(--line);
+  background: var(--panel2); color: var(--dim); font: 11px var(--mono); letter-spacing: .4px; text-transform: none; }
+.look-steps .n { color: var(--dim2); }
+.look-steps b { color: var(--fg-soft); font-weight: 500; }
+.look-steps li.on button { border-color: var(--accent); color: var(--accent); }
+.look-steps li.chosen:not(.on) button:hover { border-color: var(--accent-line); }
+.look-steps button:disabled { opacity: .5; cursor: default; }
+.look-pick { display: flex; flex-direction: column; gap: 10px; max-width: 720px; }
+.look-pick .looks { gap: 8px; }
+.look-pick .looks button { min-width: 96px; padding: 8px 10px; }
+.look-pick .looks button.picked { border-color: var(--accent); color: var(--accent); }
+.look-pick .glyph { display: grid; place-items: center; width: 64px; height: 50px; font-size: 26px; color: var(--accent); }
+.look-pick form.name { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
+.look-pick form.name input { flex: 1 1 200px; min-width: 0; font-size: 15px; padding: 9px 12px; }
+#work .card.done h3 { color: var(--good); }
+#work .card.done button { margin-top: 8px; }
+.work-form .signin { margin: 2px 0 0; font-size: 13px; color: var(--fg-soft); }
+.work-form .signin b { color: var(--accent); font-family: var(--mono); font-weight: 500; }
+.work-form .out.bad { color: var(--bad); }
+
 /* setup mode: until setup is completed the site is two panes - the work pane (left, what
    Rookie is setting up) and the chat with Rookie (right) - and no page list */
 body.setup #nav { display: none; }
@@ -196,6 +228,8 @@ body.setup .msg .text { font-size: 14px; }
   body.setup main { flex: 1 1 45%; min-height: 0; }
   body.setup #dock { position: static; width: 100%; height: auto; flex: 1 1 55%; min-height: 0; }
   #work { padding: 16px; }
+  :root { --stage-scale: 2; }
+  .look-stage { min-height: 140px; }
 }
 
 /* -- a page in the sidebar and its ... menu (Archive, Make public) ------------------------ */

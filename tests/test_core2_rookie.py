@@ -102,10 +102,12 @@ def test_a_fresh_hub_asks_sound_style_theme_name_first_and_the_name_is_the_house
     assert [t for _, t in steps[:5]] == ["Sound.", "Rookie's style.", "Rookie's theme.", "Rookie's name.",
                                         "Their name and a password."]
     first = text[text.index("1. **Sound.**"):text.index("5. **")]
-    assert "FIRST question" in first and "page.look" in first and "YOUR name" in first
+    assert "The site asks steps 1-4 itself" in first and "page.look" in first and "YOUR name" in first
+    # the site asks them, on the left, in this order; the agent hears once they're done
     shell = (STATIC / "shell.js").read_text()
-    kickoff = shell[shell.index("SETUP_KICKOFF + "):shell.index("true);", shell.index("SETUP_KICKOFF + "))]
-    assert "in order: sound, Rookie's style, Rookie's theme, Rookie's name" in re.sub(r'"\s*\+\s*"', "", kickoff)
+    assert '["sound", "rookie", "theme", "name"].map(' in shell
+    brief = shell[shell.index("function setupBrief("):shell.index("async function kickoff(")]
+    assert "already picked the look and feel" in brief and "step 5" in brief
 
 
 def test_the_activity_feed_has_every_call_as_journaled(site):

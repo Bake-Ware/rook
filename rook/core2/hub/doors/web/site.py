@@ -36,7 +36,7 @@ EVENTS_KEPT = 500
 ACTS_KEPT = 200
 DOCK_CAPS = ("agent.chat.send", "agent.chat.read")     # the shell's chat dock, with the dock agent only
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-         ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".woff2": "font/woff2"}
+         ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".ico": "image/x-icon"}
 
 # frame-src 'self' is load-bearing: it governs every navigation of the page
 # frames the shell embeds, including one a page starts itself
@@ -99,7 +99,8 @@ class Web:
 
     @staticmethod
     def owns(path: str) -> bool:
-        return path in ("/", "/login", "/login/link", "/logout", "/account") or path.startswith(("/web/", "/public/"))
+        return path in ("/", "/login", "/login/link", "/logout", "/account", "/favicon.ico") or \
+            path.startswith(("/web/", "/public/"))
 
     def handle(self, req, method: str, path: str, query: str) -> tuple[int, dict, bytes]:
         """One request: (status, headers, body)."""
@@ -111,6 +112,8 @@ class Web:
     def _route(self, req, method, path, query):
         if method == "GET" and path.startswith("/web/static/"):
             return self._static(path[len("/web/static/"):])
+        if method == "GET" and path == "/favicon.ico":     # the rook, for any tab, signed in or not
+            return self._file("favicon.ico")
         public = self._public_route(req, method, path, query)
         if public is not None:
             return public
@@ -313,10 +316,11 @@ class Web:
         return {"ok": True}
 
     def _secret(self, person: str, body: dict) -> dict:
-        """A secret typed into the chat (a ``[[secret: NAME]]`` box: a sudo
-        password, an API key) goes straight into the hub's vault; the chat
-        only hears that it was saved (Bake, Nov 9: "this chat interface needs
-        to be able to pull in other aspects like add a secret")."""
+        """The Vault work view's Save (the house agent opens it with the key
+        filled in for a sudo password or an API key): straight into the
+        hub's vault; the chat only hears that it was saved (Bake, Nov 9:
+        "this chat interface needs to be able to pull in other aspects like
+        add a secret")."""
         name, value = body.get("name"), body.get("value")
         if not isinstance(name, str) or not isinstance(value, str):
             return {"ok": False, "error": "Give a name and a value."}
@@ -324,7 +328,7 @@ class Web:
             self.hub.vault.set(name.strip(), value, by=person, description=body.get("description") or None)
         except Exception as e:                 # a locked vault, a name it can't take
             return {"ok": False, "error": str(e)}
-        log.info("secret saved from the chat", extra={"fields": {"person": person, "name": name}})
+        log.info("secret saved from the vault view", extra={"fields": {"person": person, "name": name}})
         return {"ok": True, "name": name.strip()}
 
     def _connector(self) -> str | None:
@@ -582,7 +586,7 @@ class Web:
             raise _Error(404, "not found")
         headers = {"Content-Type": TYPES[path.suffix], "X-Content-Type-Options": "nosniff",
                    "Referrer-Policy": "same-origin"}
-        if path.suffix in (".woff2",) or path.name == "rook-scene.js":     # big and never changes within a version
+        if path.suffix in (".woff2", ".ico") or path.name == "rook-scene.js":     # big and never changes within a version
             headers["Cache-Control"] = "max-age=86400"
         if csp:
             headers.update({"Content-Security-Policy": csp, "X-Frame-Options": "DENY"})
