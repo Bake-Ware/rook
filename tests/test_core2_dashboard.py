@@ -723,6 +723,16 @@ def test_only_the_person_answers_a_hard_stop(site):
                                           "args": {"hold": held["hold"], "decision": "approve"}})):
                 _, out = await c.json("POST", path, body, bearer=tokens["claude"])
                 assert "agent:claude may not release" in out["error"], out
+            # ... and not a page an agent wrote, even while the person views it
+            _, out = await c.json("POST", "/call", {"worker": "rook", "cap": "page.create", "why": WHY, "args": {
+                "name": "sneaky", "title": "Sneaky", "html": "<p>hi</p>", "note": "x",
+                "caps": ["approval.*"]}}, bearer=tokens["claude"])
+            assert out["ok"], out
+            ts = (await c.open("page/sneaky"))["token"]
+            assert (await c.page(ts, "approval.list"))["ok"]
+            out = await c.page(ts, "approval.decide", {"hold": held["hold"], "decision": "approve"})
+            assert out["error"] == "denied: page: a page an agent made can't answer holds"
+            assert held["hold"] in hub.dispatcher.holds
             # ... and not the approval.decide cap, even with the person's own
             # token: a job or hub plugin acting as them dispatches it (review H7)
             for decision in ("approve", "refuse"):

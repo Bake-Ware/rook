@@ -431,6 +431,9 @@ class Web:
         cap = body.get("cap")
         if not isinstance(cap, str) or not cap:
             raise _Error(400, "cap is required")
+        if page.made and cap == "approval.decide":
+            # Agent-written code runs as the viewer: it must never answer the viewer's holds.
+            return {"ok": False, "error": "denied: page: a page an agent made can't answer holds"}
         worker = body.get("worker") if isinstance(body.get("worker"), str) else None
         if worker is None:
             worker = req._run(_target(self.hub, cap)) or "rook"
