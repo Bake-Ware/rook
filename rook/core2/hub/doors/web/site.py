@@ -97,7 +97,7 @@ class Web:
 
     @staticmethod
     def owns(path: str) -> bool:
-        return path in ("/", "/login", "/login/link", "/logout", "/account") or path.startswith(("/web/", "/p/"))
+        return path in ("/", "/login", "/login/link", "/logout", "/account") or path.startswith(("/web/", "/public/"))
 
     def handle(self, req, method: str, path: str, query: str) -> tuple[int, dict, bytes]:
         """One request: (status, headers, body)."""
@@ -191,10 +191,10 @@ class Web:
     def _public_route(self, req, method, path, query):
         """A public page (``page.public``; Bake, Nov 9: "a way to make a given
         page publicly accessible for things like reports or reference"):
-        anyone opens /p/<page> without signing in. Its calls act as the
+        anyone opens /public/<page> without signing in. Its calls act as the
         person who made it public, within the page's own grants. None: not
         a public route."""
-        if method == "GET" and path.startswith("/p/"):
+        if method == "GET" and path.startswith("/public/"):
             return self._file("public.html", csp=SHELL_CSP)
         if not path.startswith("/web/api/public/"):
             return None

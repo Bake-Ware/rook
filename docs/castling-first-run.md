@@ -133,6 +133,32 @@ Sans and IBM Plex Mono (Google Fonts, allowed in the shell's CSP), square
 corners with the schematic corner tick, small spaced mono labels, the 0.4
 chat's message look, and the rook mark from the landing page's icon.
 
+### Pages in the sidebar, public pages, Workers
+
+Bake, Nov 9: "Scroll chat to the bottom when it starts/opens. I want the
+workers page to be the same as the older site. I don't like the archive
+button where it is, archive should be a function on the sidebar per page.
+Like an ellipse. in that ellipse I want a way to make a given page publicly
+accessible for things like reports or reference".
+
+- The chat shows its newest message when it opens, after its history
+  loads, and as messages come (`scrollChat()` in shell.js).
+- Each page in the sidebar has a ... menu: **Make public** (then the public
+  link with Copy link) and **Archive**. The bar has no Archive button.
+- `page.public {page, public}`: a public page opens at `/public/<page>` for
+  anyone, no sign-in: the page alone (public.html), no sidebar or chat. Its
+  calls go through `/web/api/public/*` and act as whoever made it public,
+  within the page's own grants; making it private again stops the link and
+  the page tokens it gave out. Kept in `pages.json` (`public`).
+- **Workers** (hub/workers) is the 0.4 dashboard's Workers view on 0.5's
+  data: workers / online / stale tiles, the versions bar, a heartbeat bar per
+  worker, grouping by operating system, band or none (groups fold), sort,
+  list or grid, and per row a band chip, the version, the battery (a battery
+  plugin's status rides the heartbeat) and a heartbeat draining over 90 s,
+  with the details (facts, plugins, what it can't serve) under the row.
+  `hub.workers` gives `now` (the hub's clock) and `bands`. No 3D view and no
+  per-worker actions yet.
+
 ## Rookie
 
 Bake, Nov 5 2026: "Yeah add it and translate for 0.5. Add the rookie style
@@ -255,6 +281,13 @@ were built on this branch and taken out again; nothing replaces them now:
    characters were refused (earlier also single use, 15 minutes); now
    plain codes, no limits.
 9. Changing a password asked for the current one; now it doesn't.
+10. Public pages (`page.public`, Nov 9): anyone with the /public/<page> link
+    opens the page without signing in, and its calls run as the person who
+    made it public, within the page's own grants: writes included, and on
+    an approvals page a public viewer could answer that person's holds. The
+    public API takes no CSRF token and public page tokens (512 kept) live
+    12 hours. Consider: read-risk calls only, no `approval.decide`, an
+    unguessable link instead of the page id, rate limits.
 
 ## OpenCode gotchas
 

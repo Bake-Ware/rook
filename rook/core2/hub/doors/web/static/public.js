@@ -1,11 +1,11 @@
-// A public page (page.public): anyone opens /p/<page> without signing in. Just
+// A public page (page.public): anyone opens /public/<page> without signing in. Just
 // the page, read-only: no sidebar, no chat. Its calls go with a public page
 // token and act as whoever made it public, within the page's own grants.
 "use strict";
 
 const $ = (sel) => document.querySelector(sel);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const pid = decodeURIComponent(location.pathname.replace(/^\/p\//, ""));
+const pid = decodeURIComponent(location.pathname.replace(/^\/public\//, ""));
 let cur = null;
 
 async function api(path, body) {
@@ -49,7 +49,7 @@ window.addEventListener("message", async (e) => {
     cur.listening = true;
     listen();
   } else if (m.kind === "open" && /^[a-z0-9][a-z0-9_-]*\/[a-z0-9][a-z0-9_-]*$/.test(String(m.page))) {
-    location.href = "/p/" + m.page;          // another public page; a private one says so
+    location.href = "/public/" + m.page;          // another public page; a private one says so
   }
 });
 

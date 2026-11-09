@@ -11,7 +11,7 @@ the ones agents make.
 | `page.create` | Make a page: `{name, title, note, html \| layout, caps?, events?, section?, task?}`. |
 | `page.update` | Change one: `{page, change, ...}`; `change` says what and why, kept in its history. |
 | `page.archive` / `page.restore` | Take a page off the site without losing it, or bring it back. |
-| `page.public` | Make a page readable by anyone at `/p/<page>` without signing in (a report, a reference), or private again with `public: false`. Its calls act as whoever made it public. |
+| `page.public` | Make a page readable by anyone at `/public/<page>` without signing in (a report, a reference), or private again with `public: false`. Its calls act as whoever made it public. |
 | `page.components` | The ready-made components a layout can use, with their props and caps. |
 | `page.site` | Your start page and the agent in the chat dock. |
 | `page.start` | Set the page the site opens on: yours, or (acting for nobody) the hub's. |

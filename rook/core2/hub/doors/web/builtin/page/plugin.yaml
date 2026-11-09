@@ -113,7 +113,7 @@ caps:
     result: { type: map }
   public:
     doc: >-
-      Make a page public: anyone opens it at /p/<page> (the url in the result) without signing in, a
+      Make a page public: anyone opens it at /public/<page> (the url in the result) without signing in, a
       read-only view with no chat or sidebar, for reports and reference. Its calls act as whoever made
       it public. public=false makes it private again.
     on: hub

@@ -28,14 +28,14 @@ def test_a_public_page_opens_without_signing_in(site):
             assert status == 404 and "isn't public" in out["error"]
 
             out = await owner.call("page.public", {"page": "hub/workers"})
-            assert out["ok"] and out["result"] == {"page": "hub/workers", "public": True, "url": "/p/hub/workers"}
+            assert out["ok"] and out["result"] == {"page": "hub/workers", "public": True, "url": "/public/hub/workers"}
             row = next(p for p in (await owner.call("page.list"))["result"]["pages"] if p["page"] == "hub/workers")
             assert row["public"] is True
             got = (await owner.call("page.get", {"page": "hub/workers"}))["result"]
-            assert got["public"]["person"] == "person:bake" and got["public_url"] == "/p/hub/workers"
+            assert got["public"]["person"] == "person:bake" and got["public_url"] == "/public/hub/workers"
 
             # the public view: just the page, no chat or sidebar
-            status, headers, body = await anon.req("GET", "/p/hub/workers")
+            status, headers, body = await anon.req("GET", "/public/hub/workers")
             assert status == 200 and b"public.js" in body and b"dock" not in body and b'id="nav"' not in body
             out = (await anon.json("POST", "/web/api/public/open", {"page": "hub/workers"}))[1]
             assert out["ok"] and out["page"]["title"] == "Workers"
@@ -65,13 +65,18 @@ def test_a_public_page_opens_without_signing_in(site):
     run(go())
 
 
+def test_public_pages_leave_plugin_webhooks_alone():
+    from rook.core2.hub.doors.web.site import Web
+    assert Web.owns("/public/hub/workers") and not Web.owns("/p/bot/signed")       # /p/<plugin>/... are webhooks
+
+
 def test_the_sidebar_has_a_menu_per_page_and_no_archive_button():
     html = (STATIC / "shell.html").read_text()
     assert "archive-btn" not in html
     shell = (STATIC / "shell.js").read_text()
     assert "archive-btn" not in shell
     menu = shell[shell.index("function pageMenu("):shell.index("function mark(")]
-    assert '"page.archive"' in menu and '"page.public"' in menu and "Copy link" in menu and "/p/" in shell
+    assert '"page.archive"' in menu and '"page.public"' in menu and "Copy link" in menu and "/public/" in shell
     link = shell[shell.index("function link("):shell.index("function pageMenu(")]
     assert "\\u22ef" in link                                      # the ... beside each page
 

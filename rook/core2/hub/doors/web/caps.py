@@ -98,7 +98,7 @@ class Pages:
         self.starts: dict = state.get("start", {})          # person:<name> or * -> page
         # Public pages (Bake, Nov 9: "a way to make a given page publicly
         # accessible for things like reports or reference"): anyone opens
-        # them at /p/<page> without signing in, acting as whoever made them
+        # them at /public/<page> without signing in, acting as whoever made them
         # public. page -> {at, by, person}.
         self.public: dict = state.get("public", {})
 
@@ -212,7 +212,7 @@ class Pages:
 
 def public_path(pid: str) -> str:
     """Where a public page opens without signing in."""
-    return "/p/" + pid
+    return "/public/" + pid
 
 
 def _owners(hub) -> list:
@@ -539,7 +539,7 @@ class _Handlers:
         return {"page": page, "archived": False}
 
     async def pages_public(self, ctx, page: str, public: bool = True) -> dict:
-        """Make a page readable by anyone at /p/<page>, no sign-in; its calls
+        """Make a page readable by anyone at /public/<page>, no sign-in; its calls
         act as the person who made it public (an agent alone: the hub's first
         owner). Off makes it private again (Bake, Nov 9)."""
         pages = self.hub.pages

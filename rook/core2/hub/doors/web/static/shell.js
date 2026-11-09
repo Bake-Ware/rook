@@ -85,7 +85,7 @@ document.addEventListener("keydown", (e) => {
 });
 
 function publicUrl(pid) {
-  return location.origin + "/p/" + pid;
+  return location.origin + "/public/" + pid;
 }
 
 function pageMenu(trigger, p) {
