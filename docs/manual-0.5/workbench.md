@@ -2,9 +2,10 @@
 
 The workbench is where people and agents keep their work: **tasks** inside
 **projects**, a shared **knowledge** wiki, **concepts** that say what kind
-of work a project is, and a **whiteboard** on every task and project. It
-runs on the hub (put `tasks`, `projects`, `knowledge`, `concepts` and
-`whiteboard` in the library) and adds Tasks, Projects and Knowledge pages to
+of work a project is, a **whiteboard** on every task and project, and
+[change records](../../rook/plugins/changes/docs/manual.md). It runs on
+the hub (put `tasks`, `projects`, `knowledge`, `concepts`, `whiteboard` and
+`changes` in the library) and adds Tasks, Projects and Knowledge pages to
 the site. All of it is plain caps on worker `rook`, so agents use it the
 same way you do.
 
@@ -12,9 +13,7 @@ same way you do.
 
 - A **project** is ongoing work with a goal. Its **trust level**
   (`project.trust.*`, admin caps, so an agent allowed to edit the project
-  can't loosen it) says how much ceremony a change gets: `sacred`
-  (a full change record, and the owner signs off), `normal` (the record),
-  `ship-it` (a one-line note).
+  can't loosen it) is `sacred`, `normal` or `ship-it`.
 - A **task** is one piece of work. Its title says the result, not the
   activity; its `criteria` say what done means.
 
