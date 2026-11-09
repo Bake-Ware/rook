@@ -76,6 +76,10 @@ def test_the_look_and_feel_is_on_the_left_and_instant(tmp_path):
     answer = SHELL[SHELL.index("async function lookAnswer("):SHELL.index("function lookDone(")]
     assert 'call("page.look"' in answer and "say(" not in answer             # no agent turn per click
     assert "lookStep(out.next)" in answer and "lookDone(out)" in answer
+    step = _fn("lookStep")
+    for list_ in ("look.styles", "look.themes"):                              # every option, not just the first
+        loop = step[step.index(f"for (const k of {list_}) {{"):]
+        assert "const b = option(" in loop[:loop.index("}")]
     done = SHELL[SHELL.index("function lookDone("):SHELL.index("function lookStart(")]
     assert "lookDone.sent" in done and "kickoff()" in done                   # the agent hears once
     start = SHELL[SHELL.index("async function startDock("):]

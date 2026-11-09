@@ -1064,10 +1064,16 @@ function lookStep(step) {
     first = option("Sound on", null, null, true);
     option("No sound", null, null, false);
   } else if (step === "rookie") {
-    for (const k of look.styles) first = first || option(k === "none" ? "none (hide me)" : k, k, look.theme, k);
+    for (const k of look.styles) {
+      const b = option(k === "none" ? "none (hide me)" : k, k, look.theme, k);
+      first = first || b;
+    }
   } else if (step === "theme") {
     const skin = look.rookie === "none" ? "pixel" : look.rookie;
-    for (const k of look.themes) first = first || option(k, skin, k, k);
+    for (const k of look.themes) {
+      const b = option(k, skin, k, k);
+      first = first || b;
+    }
   } else if (step === "name") {
     const form = el("form", { className: "name" });
     const input = el("input", { type: "text", maxLength: 40, placeholder: look.name, value: "" });
