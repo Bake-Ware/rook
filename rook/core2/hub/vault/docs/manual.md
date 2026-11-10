@@ -28,6 +28,13 @@ when it needs it.
 | `secret.delete` | erase one; the person answers first |
 | `secret.reveal` | show a value; the person answers first, every time |
 
+## The Vault page
+
+The site's Vault page (under More, at `#/secret/vault`) lists the secrets by
+name, what each is for, who set it and when; never a value. Save adds one,
+or replaces the value of one with the same name (Replace fills in the name).
+Delete erases one.
+
 ## From the hub's machine
 
     python -m rook.core2.hub --config hub.yaml secret list

@@ -108,10 +108,10 @@ def test_the_skill_has_no_mac_and_no_decision_quotes():
     assert 'die "this installer is for Linux."' in sh and "macOS" not in sh
 
 
-def test_the_vault_endpoint_is_the_vault_views():
+def test_the_vault_view_uses_the_vault_caps():
     site_py = (STATIC.parent / "site.py").read_text()
-    assert "[[secret" not in site_py and "The Vault work view's Save" in site_py
-    assert 'api("/web/api/secret"' in SHELL                                  # still used: not dead
+    assert "/web/api/secret" not in site_py and "/web/api/secret" not in SHELL   # one way: secret.*
+    assert 'call("secret.set"' in SHELL and 'call("secret.list"' in SHELL
 
 
 def test_a_reload_focuses_the_field_again():

@@ -34,6 +34,7 @@ from rook.kit.manifest import compile_fields
 from rook.kit.manifest.types import setting_spec
 
 from rook.core2 import CORE_VERSION
+from rook.core2.hub import passwords
 from rook.core2.hub.identity import Caller
 from rook.core2.hub.doors.web.tokens import Tokens
 
@@ -246,7 +247,7 @@ def install(hub) -> None:
                   "page.components": h.pages_components, "page.site": h.pages_site,
                   "page.start": h.pages_start, "page.public": h.pages_public},
         "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers, "hub.manifests": h.hub_manifests,
-                "hub.door": h.hub_door, "hub.sacred": h.hub_sacred,
+                "hub.door": h.hub_door, "hub.sacred": h.hub_sacred, "hub.person": h.hub_person,
                 "hub.joins": h.hub_joins, "hub.join": h.hub_join, "hub.join_code": h.hub_join_code},
         "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide,
                      "approval.ask": h.approval_ask, "approval.get": h.approval_get},
@@ -435,7 +436,7 @@ class _Handlers:
 
     async def hub_status(self, ctx) -> dict:
         hub = self.hub
-        out = {"hub": hub.hub_id, "node": hub.node, "band": hub.band, "core": CORE_VERSION,
+        out = {"hub": hub.hub_id, "node": hub.node, "band": hub.band, **hub.enroll.address(), "core": CORE_VERSION,
                "doors": [d.name for d in hub.doors], "closed_doors": sorted(hub.dispatcher.closed_doors),
                "plugins": [{"plugin": p.name, "version": str(p.manifest["version"]),
                             "title": p.manifest.get("title") or p.name, "builtin": bool(p.manifest.get("builtin")),
@@ -465,8 +466,23 @@ class _Handlers:
         for w in hub.dispatcher.workers.values():
             if w.name == name and w.id != hub.node:
                 w.sacred = bool(sacred)
-        saved = _save_sacred(hub.cfg)
+        saved = _save_config(hub.cfg, "sacred")
         return {"worker": name, "sacred": bool(sacred), "sacred_machines": list(names), "saved": saved}
+
+    async def hub_person(self, ctx, name: str, preset: str | None = None, password: str | None = None,
+                         remove: bool = False) -> dict:
+        hub = self.hub
+        if remove:
+            hub.cfg.users.pop(name, None)
+            hub.identities.users.pop(name, None)
+        elif preset:
+            u = hub.cfg.users.get(name) or {"created": int(time.time())}
+            hub.identities.add_user(name, preset, u.get("grants") or [], u.get("created", 0))
+            hub.cfg.users[name] = {**u, "preset": preset}
+        if password and not remove:
+            passwords.set_password(hub.data, name, password, by=ctx.caller.person or "site")
+        return {"person": name, "removed": bool(remove), "preset": (hub.cfg.users.get(name) or {}).get("preset"),
+                "password": bool(password and not remove), "saved": _save_config(hub.cfg, "users")}
 
     async def hub_workers(self, ctx) -> dict:
         """The workers, the hub first; ``now`` is the hub's clock (heartbeat
@@ -584,9 +600,9 @@ def _or_raise(out: dict) -> dict:
     return out
 
 
-def _save_sacred(cfg) -> str | None:
-    """Write ``sacred`` into the hub's YAML file, keeping its comment lines
-    at the top (as install.sh does). None when the hub has no file."""
+def _save_config(cfg, key: str) -> str | None:
+    """Write ``key`` (sacred, users) into the hub's YAML file, keeping its comment
+    lines at the top (as install.sh does). None when the hub has no file."""
     import yaml
     path = getattr(cfg, "file", None)
     if not path:
@@ -595,7 +611,7 @@ def _save_sacred(cfg) -> str | None:
     text = path.read_text(encoding="utf-8")
     head = "".join(line for line in text.splitlines(True) if line.startswith("#"))
     raw = yaml.safe_load(text) or {}
-    raw["sacred"] = list(cfg.sacred)
+    raw[key] = copy.deepcopy(getattr(cfg, key))
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(head + yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
     os.chmod(tmp, path.stat().st_mode & 0o7777)

@@ -233,17 +233,24 @@ class Enrollment:
 
     # -- the config bundle (8) --------------------------------------------------------------
 
-    def _band(self) -> dict:
-        """The home band as a device joins it: id, PSK, the relay or WebSocket
-        address devices use (``enroll.relay``/``ws_url``, else the hub's own)."""
+    def _first_band(self) -> dict:
         bands = (self.hub.cfg.transport or {}).get("bands") or []
-        first = bands[0] if bands else {}
+        return bands[0] if bands else {}
+
+    def address(self) -> dict:
+        """The relay or WebSocket address devices join the home band at
+        (``enroll.relay``/``ws_url``, else the hub's own)."""
+        first = self._first_band()
+        out = {k: self.opts.get(k) or first.get(k) for k in ("relay", "ws_url")}
+        return {k: v for k, v in out.items() if v}
+
+    def _band(self) -> dict:
+        """The home band as a device joins it: id, PSK and its address."""
+        first = self._first_band()
         psk = first.get("psk") or os.environ.get(first.get("psk_env") or "", "")
         if not psk:
             raise ValueError("this hub has no band to join (transport.bands)")
-        out = {"id": self.hub.band, "psk": psk, "relay": self.opts.get("relay") or first.get("relay"),
-               "ws_url": self.opts.get("ws_url") or first.get("ws_url")}
-        return {k: v for k, v in out.items() if v}
+        return {"id": self.hub.band, "psk": psk, **self.address()}
 
     def _services(self, person: str) -> dict:
         """``enroll.services`` this person's preset may have, keys resolved."""

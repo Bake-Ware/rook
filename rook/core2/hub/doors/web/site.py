@@ -153,11 +153,6 @@ class Web:
                                is not None})
         if method == "GET" and path == "/web/api/events":
             return _json(200, self._poll(sid, query.get("token", ""), query.get("since")))
-        if method == "GET" and path == "/web/api/secrets":       # the Vault work view: names, never values
-            try:
-                return _json(200, {"ok": True, "secrets": self.hub.vault.list(), "locked": self.hub.vault.locked})
-            except Exception as e:
-                return _json(200, {"ok": False, "error": str(e)})
         if method == "GET" and path == "/web/api/activity":
             return _json(200, self._activity(session.person, query.get("since")))
         if method != "POST":
@@ -171,8 +166,6 @@ class Web:
         body = req._body()
         if path == "/web/api/password":
             return _json(200, self._password(session.person, body))
-        if path == "/web/api/secret":
-            return _json(200, self._secret(session.person, body))
         caller = Caller(person=session.person)
         if path == "/web/api/call":
             cap, args = body.get("cap"), body.get("args") or {}
@@ -316,22 +309,6 @@ class Web:
         passwords.set_password(self.hub.data, name, new, by="web")
         log.info("password changed", extra={"fields": {"person": person}})
         return {"ok": True}
-
-    def _secret(self, person: str, body: dict) -> dict:
-        """The Vault work view's Save (opened with the key filled in for a
-        sudo password or an API key): straight into the
-        hub's vault; the chat only hears that it was saved (Bake, Nov 9:
-        "this chat interface needs to be able to pull in other aspects like
-        add a secret")."""
-        name, value = body.get("name"), body.get("value")
-        if not isinstance(name, str) or not isinstance(value, str):
-            return {"ok": False, "error": "Give a name and a value."}
-        try:
-            self.hub.vault.set(name.strip(), value, by=person, description=body.get("description") or None)
-        except Exception as e:                 # a locked vault, a name it can't take
-            return {"ok": False, "error": str(e)}
-        log.info("secret saved from the vault view", extra={"fields": {"person": person, "name": name}})
-        return {"ok": True, "name": name.strip()}
 
     def _connector(self) -> str | None:
         """The MCP door's address for claude.ai's connector, when it speaks OAuth."""

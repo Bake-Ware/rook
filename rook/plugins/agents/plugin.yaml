@@ -207,7 +207,7 @@ shell:
   rookie: { file: shell/rookie.js }
   rookie-map: { file: shell/rookie-map.js }
   chat-widgets: { file: shell/chat-widgets.js }
-  dock: { file: shell/dock.js, caps: [agent.chat.send, agent.chat.read, agent.site, agent.look] }
+  dock: { file: shell/dock.js, caps: [agent.chat.send, agent.chat.read, agent.site, agent.look, secret.list, secret.set] }
   look: { file: shell/look.js, caps: [agent.look] }
 
 # Children and guests may talk to agents (inside their presets' limits).

@@ -50,4 +50,7 @@ caps:
       name: { type: str, required: true }
     result: { type: map, fields: { name: { type: str }, value: { type: secret } } }
 
+pages:
+  vault: { title: Vault, file: pages/vault.html, caps: [secret.list, secret.set, secret.delete] }
+
 docs: { manual: docs/manual.md }

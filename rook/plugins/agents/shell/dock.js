@@ -234,14 +234,15 @@ const VIEWS = {
     const wanted = args.new || args.key || "";
     let names = [];
     const load = async () => {
-      const r = await api("/web/api/secrets");
-      names = (r.secrets || []).map((x) => x.name);
-      list.replaceChildren(...(r.secrets || []).map((x) => {
+      let r;
+      try { r = await call("secret.list", {}, "Listing the vault in the Vault pane."); } catch (x) { r = { secrets: [], error: x.message }; }
+      names = r.secrets.map((x) => x.name);
+      list.replaceChildren(...r.secrets.map((x) => {
         const li = el("li");
         li.append(el("code", {}, x.name), el("span", { className: "muted" }, x.description || ""));
         return li;
       }));
-      if (!(r.secrets || []).length) list.append(el("li", { className: "muted" }, r.ok ? "Nothing yet." : r.error || ""));
+      if (!r.secrets.length) list.append(el("li", { className: "muted" }, r.error || "Nothing yet."));
     };
     const done = (name) => slot.replaceChildren(doneCard("vault.done", `Saved ${name}`,
       [`It's sealed in the vault; ${agentName()} uses it by name.`], ["Add another secret", () => form("")]));
@@ -257,9 +258,12 @@ const VIEWS = {
       f.append(save, out);
       f.onsubmit = async (e) => {
         e.preventDefault();
-        const r = await api("/web/api/secret", { name: key.value.trim(), value: value.value, description: what.value.trim() });
-        if (!r.ok) {
-          out.textContent = r.error || "That didn't save.";
+        let r;
+        try {
+          r = await call("secret.set", { name: key.value.trim(), value: value.value, description: what.value.trim() },
+            "The person saved a secret in the Vault pane.");
+        } catch (x) {
+          out.textContent = x.message;
           return;
         }
         value.value = "";

@@ -16,8 +16,16 @@
 </head>
 <body>
 <section><h2>Hub</h2><div id="hub" class="muted">Loading…</div></section>
-<section id="people-box" hidden><h2>People</h2><div class="scroll"><table><thead><tr><th>Name</th><th>Preset</th><th>Extra grants</th></tr></thead>
-  <tbody id="people"></tbody></table></div></section>
+<section id="people-box" hidden><h2>People</h2><div class="scroll"><table><thead><tr><th>Name</th><th>Preset</th><th>Extra grants</th><th></th></tr></thead>
+  <tbody id="people"></tbody></table></div>
+  <form id="person" class="row" style="margin-top:8px">
+    <input name="name" placeholder="name" autocomplete="off" required>
+    <select name="preset"><option>adult</option><option>owner</option><option>child</option><option>guest</option></select>
+    <input name="password" type="password" placeholder="password (optional)" autocomplete="new-password">
+    <button class="primary">Add</button><span id="person-out" class="muted"></span>
+  </form>
+  <h2>Agents</h2><div class="scroll"><table><thead><tr><th>Name</th><th>Grants</th></tr></thead>
+  <tbody id="agents"></tbody></table></div></section>
 <section><h2>Plugin settings</h2><div id="settings" class="muted">Loading…</div></section>
 <section><h2>Plugins</h2><div class="scroll"><table><thead><tr><th>Plugin</th><th>Version</th><th>Runs on</th><th>Caps</th><th>Pages</th></tr></thead>
   <tbody id="plugins"></tbody></table></div></section>
@@ -98,6 +106,7 @@ async function loadHub() {
     const h = await rook.call("hub.status");
     document.getElementById("hub").className = "";
     document.getElementById("hub").innerHTML = `<dl><dt>Hub id</dt><dd>${esc(h.hub)}</dd><dt>Band</dt><dd>${esc(h.band)}</dd>
+      <dt>Relay</dt><dd>${esc(h.relay || h.ws_url || "none")}</dd><dt>Joining</dt><dd><a href="#" id="workers">on the Workers page</a></dd>
       <dt>Core</dt><dd>${esc(h.core)}</dd><dt>Doors</dt><dd>${esc(h.doors.join(", "))}</dd>
       <dt>Security</dt><dd>${esc(h.security || "")}</dd></dl>`;
     document.getElementById("plugins").innerHTML = h.plugins.map((p) => `<tr><td>${esc(p.title)} <span class="muted">${esc(p.plugin)}</span></td>
@@ -106,13 +115,45 @@ async function loadHub() {
     if (h.people) {
       document.getElementById("people-box").hidden = false;
       document.getElementById("people").innerHTML = h.people.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.preset)}</td>
-        <td class="muted">${esc(u.grants.join(", "))}</td></tr>`).join("");
+        <td class="muted">${esc(u.grants.join(", "))}</td><td class="row" data-name="${esc(u.name)}">
+        <input type="password" placeholder="new password" autocomplete="new-password"><button data-act="password">Set password</button>
+        <button data-act="remove">Remove</button><span class="out muted"></span></td></tr>`).join("");
+      document.getElementById("agents").innerHTML = h.agents.map((a) => `<tr><td>${esc(a.name)}</td>
+        <td class="muted">${esc(a.grants.join(", "))}</td></tr>`).join("") || '<tr><td colspan="2" class="muted">None in the config.</td></tr>';
     }
+    document.getElementById("workers").onclick = (e) => { e.preventDefault(); rook.open("hub/workers"); };
   } catch (x) {
     document.getElementById("hub").className = "bad";
     document.getElementById("hub").textContent = x.message;
   }
 }
+
+async function person(args, out) {
+  try {
+    await rook.call("hub.person", args, { why: `The person changed ${args.name} on the Settings page.` });
+    await loadHub();
+  } catch (x) {
+    out.className = "out bad";
+    out.textContent = x.message;
+  }
+}
+
+document.getElementById("person").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const f = e.target.elements, args = { name: f.name.value.trim(), preset: f.preset.value };
+  if (f.password.value) args.password = f.password.value;
+  e.target.reset();
+  person(args, document.getElementById("person-out"));
+});
+
+document.getElementById("people").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  const cell = b.closest("td"), name = cell.dataset.name, pw = cell.querySelector("input");
+  if (b.dataset.act === "remove") return person({ name, remove: true }, cell.querySelector(".out"));
+  if (!pw.value) return pw.focus();
+  person({ name, password: pw.value }, cell.querySelector(".out"));
+});
 
 loadHub();
 loadSettings();
