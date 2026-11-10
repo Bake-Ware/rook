@@ -34,7 +34,7 @@ it has a value.
 
 Some caps are shared contracts that several plugins can provide:
 `llm.complete` (Claude API, an OpenAI-compatible server, a Claude Code or
-Codex subscription), `notify.send`, `agent.backend`. Pick the provider in
+Codex subscription), `notify.send`, `voice.tts`. Pick the provider in
 `hub.yaml`:
 
 ```yaml

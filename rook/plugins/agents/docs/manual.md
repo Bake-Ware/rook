@@ -81,11 +81,12 @@ playbooks; `agent.skill {name}` reads one.
 ## Backends
 
 Turns go only through the `agent.backend` contract. An agent with backend
-`default` uses the hub's chosen provider; naming one provider's cap
+`default` uses the `backend` setting's provider (the installer sets it;
+blank: the first installed); naming one provider's cap
 (`agents-claude-code.turn`, `agents-codex.turn`, or any plugin that provides
 the contract) pins it there. Each backend has its own System Two and System
 Three models (its `model` and `model_three` settings); an agent's
-`model: {two, three}` overrides them. Settings: `warm`, `turn_timeout`,
+`model: {two, three}` overrides them. Settings: `backend`, `warm`, `turn_timeout`,
 `dream_every`, `chat_agent`.
 
 ## On the hub site

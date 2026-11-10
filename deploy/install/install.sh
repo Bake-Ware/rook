@@ -270,23 +270,27 @@ mkdir -p "$ROOT/hub/library"
 for p in $HUB_PLUGINS $WORKER_PLUGINS; do
     [ -f "$plugins/$p/plugin.yaml" ] && ln -sfn "$plugins/$p" "$ROOT/hub/library/$p"
 done
-"$PY" - "$HUB_CFG" "$MCP_PORT" "$BACKEND" <<'EOF'
+"$PY" - "$HUB_CFG" "$MCP_PORT" <<'EOF'
 import sys, yaml
 from pathlib import Path
-path, mcp, backend = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+path, mcp = Path(sys.argv[1]), sys.argv[2]
 text = path.read_text()
 head = "".join(l for l in text.splitlines(True) if l.startswith("#"))
 cfg = yaml.safe_load(text)
 cfg["doors"]["mcp"] = {"bind": f"0.0.0.0:{mcp}"}
-cfg["contracts"] = {"agent.backend": f"{backend}.turn"}
 cfg["log"] = {"level": "info", "format": "text"}
 path.write_text(head + yaml.safe_dump(cfg, sort_keys=False))
 EOF
-# Guided setup (agent.setup): not done yet, and the install facts.
-[ -e "$ROOT/hub/library/agents" ] && "$PY" - "$ROOT" "$NAME" "$WORKER_NAME" "$HTTP_PORT" "$MCP_PORT" "$RELAY_PORT" "$MODEL" "$sha" "$AI" <<'EOF'
+# The agents' engine (the agents plugin's backend setting), guided setup
+# (agent.setup): not done yet, and the install facts.
+[ -e "$ROOT/hub/library/agents" ] && "$PY" - "$ROOT" "$NAME" "$WORKER_NAME" "$HTTP_PORT" "$MCP_PORT" "$RELAY_PORT" "$MODEL" "$sha" "$AI" "$BACKEND" <<'EOF'
 import json, os, sys, time
 from pathlib import Path
-root, name, worker, http, mcp, relay, model, sha, ai = sys.argv[1:]
+root, name, worker, http, mcp, relay, model, sha, ai, backend = sys.argv[1:]
+settings = Path(root) / "hub" / "data" / "settings.json"
+stored = json.loads(settings.read_text()) if settings.exists() else {}
+stored.setdefault("agent", {})["backend"] = f"{backend}.turn"
+settings.write_text(json.dumps(stored, indent=1))
 path = Path(root) / "hub" / "data" / "plugins" / "agent" / "setup.json"
 path.parent.mkdir(parents=True, exist_ok=True)
 state = json.loads(path.read_text()) if path.exists() else {}
@@ -299,10 +303,10 @@ state["install"] = {
     "relay": f"0.0.0.0:{relay} (UDP, every interface)", "security": "off",
     "ai": ({"choice": "claude", "backend": "agents-claude-code.turn", "model": model,
             "note": "Claude Code on this machine, under the Claude subscription it is signed in with "
-                    "(permission mode auto). Switch by installing another agents-* backend."}
+                    "(permission mode auto). Switch: install another agents-* backend and pick it in the agents plugin's backend setting."}
            if ai == "claude" else
            {"choice": "none", "backend": "agents-opencode.turn", "model": model,
-            "note": "OpenCode's free model: no account. Switch by installing another agents-* backend."})}
+            "note": "OpenCode's free model: no account. Switch: install another agents-* backend and pick it in the agents plugin's backend setting."})}
 path.write_text(json.dumps(state, indent=1))
 EOF
 "$PY" - "$WORKER_CFG" "$WORKER_NAME" "$plugins" "$WORKER_PLUGINS" "$OPENCODE" "$MODEL" "$MCP_PORT" "$CLAUDE" <<'EOF'

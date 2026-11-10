@@ -304,7 +304,8 @@ def test_claude_mode_configures_the_worker_and_the_hub():
     sh = (REPO / "deploy/install/install.sh").read_text()
     assert "none|claude) ;;" in sh                   # option 1 is no longer "coming soon"
     assert "if [ $AI = claude ]; then BACKEND=agents-claude-code; else BACKEND=agents-opencode; fi" in sh
-    assert 'cfg["contracts"] = {"agent.backend": f"{backend}.turn"}' in sh
+    assert "contracts" not in sh                     # hub.yaml names no engine: the agents plugin's setting does
+    assert 'stored.setdefault("agent", {})["backend"] = f"{backend}.turn"' in sh
     assert ('{"agents-claude-code": {"claude": claude, "permission_mode": "auto", "door_url": door}}' in sh
             and 'door = f"http://127.0.0.1:{mcp}/mcp"' in sh)
     assert "curl -fsSL https://claude.ai/install.sh | bash" in sh
