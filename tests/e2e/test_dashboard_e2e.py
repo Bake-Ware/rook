@@ -95,7 +95,7 @@ def test_the_house_agent_makes_and_archives_a_page_from_the_dock(fresh):
         assert out.get("ok"), out
         return out["result"]
 
-    assert shell("page.site") == {"person": "person:bake", "start": None, "workbench": True, "setup": {"done": True}}
+    assert shell("page.site") == {"person": "person:bake", "start": None, "workbench": True}
     dock = shell("agent.site")
     assert dock["dock"] == "house" and dock["look"]["next"] == "sound"     # look and feel comes first
     assert shell("agent.chat.read", agent="house")["events"] == []         # first run

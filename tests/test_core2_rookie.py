@@ -75,15 +75,16 @@ def test_look_and_feel_saves_loads_and_belongs_to_each_person(tmp_path):
 
 
 def test_a_fresh_hub_asks_sound_style_theme_name_first_and_the_name_is_the_house_agents(tmp_path):
-    """A fresh hub (init writes setup.json {done: false}) with the agents
-    package: setup isn't done and look.next walks sound, style, theme, name
+    """A fresh hub the installer made, with the agents package: setup isn't done and look.next walks sound, style, theme, name
     in that order; the name becomes the house agent's (its prompt)
     and survives a restart. The skill and the site's kickoff ask them first."""
     async def go(hub, tokens):
-        (hub.data / "setup.json").write_text(json.dumps({"done": False}))
+        state = hub.data / "plugins" / "agent" / "setup.json"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        state.write_text(json.dumps({"done": False}))         # the installer's
         c = Client(hub)
         await c.sign_in(tokens["bake"])
-        assert (await c.call("page.site"))["result"]["setup"] == {"done": False}
+        assert (await c.call("agent.site"))["result"]["setup"] == {"done": False}
         assert (await c.call("agent.site"))["result"]["look"]["name"] == "Rookie"
         out = await ws_bearer(c, tokens["bake"], "agent.look")
         assert out["result"]["next"] == "sound"

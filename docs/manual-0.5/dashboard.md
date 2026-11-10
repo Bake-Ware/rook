@@ -8,7 +8,12 @@ at a time; plugins and agents add pages.
 
 Your user name and password. `init` sets the owner's (asked on a
 terminal; otherwise made and left in `<data>/owner.password`, and the site
-offers to change it at your first sign-in). A hub moved from 0.4 takes 0.4's
+offers to change it at your first sign-in). With `init --no-password` (the
+installer) the new hub is open until it is claimed: init leaves
+`<data>/unclaimed`, and while it is there anyone who opens the site is the
+owner. Setting a password (Your account, or `passwd`) removes it for good;
+from then on a new browser gets the sign-in page. A hub without it is never
+open. A hub moved from 0.4 takes 0.4's
 dashboard password. **Your account** (bottom of the sidebar) changes your
 password and shows the address claude.ai's connector takes. Lost it? On the
 hub's machine: `python -m rook.core2.hub --config hub.yaml passwd <name>`
@@ -20,7 +25,7 @@ in. `doors: {http: {web: false}}` turns the site off.
 | Installed | You get |
 |---|---|
 | the hub alone | **Workers** and **Jobs** in the sidebar; **Journal** and **Settings** under More |
-| + agents | the house agent's **chat dock** beside every page. On your first visit it asks how you want to use the site; it builds pages for you and can set your start page. With `trust` in the library, the **Trust map** too |
+| + agents | the house agent's **chat dock** beside every page. A hub the installer made opens on its guided first run (`agent.setup`); after that, on your first visit it asks how you want to use the site; it builds pages for you and can set your start page. With `trust` in the library, the **Trust map** too |
 | + workbench | **Tasks**, **Projects** and **Knowledge** pages; every page an agent makes is built under a task, so you can review it |
 
 The site opens on your start page, else the hub's, else Workers. On a

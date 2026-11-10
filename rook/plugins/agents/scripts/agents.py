@@ -403,12 +403,8 @@ class Runtime:
         instructions, like OpenCode, forgets them otherwise)."""
         if a["name"] != (self.settings.get("house") or "house"):
             return ""
-        try:
-            state = await ctx.call("hub.setup")
-        except Exception:          # noqa: BLE001 - no hub.setup, or not this person's: no brief
-            return ""
         path = self.catalog.skills.get("first-run")
-        if not isinstance(state, dict) or state.get("done", True) or path is None:
+        if setup_state(ctx)["done"] or path is None:
             return ""
         _, body = _front(path.read_text(encoding="utf-8"))
         step = look_state(ctx)["next"]
@@ -941,6 +937,7 @@ async def skill(ctx, name):
 
 LOOK_STEPS = ("sound", "rookie", "theme", "name")      # first-run asks these first, in this order
 HOUSE_NAME = "Rookie"
+SETUP_FILE = "setup.json"      # in the plugin's data: {done, install} (the installer writes it)
 ROOKIE_JS = PLUGIN_DIR / "shell" / "rookie.js"
 
 
@@ -998,7 +995,34 @@ async def backend_ready(ctx) -> bool:
 
 async def site(ctx):
     """What the hub site's chat dock needs (shell/dock.js)."""
-    return {"dock": ctx.settings["dock"] or None, "ready": await backend_ready(ctx), "look": look_state(ctx)}
+    return {"dock": ctx.settings["dock"] or None, "ready": await backend_ready(ctx), "look": look_state(ctx),
+            "setup": setup_state(ctx)}
+
+
+def _setup_file(ctx) -> dict:
+    try:
+        state = json.loads((ctx.data / SETUP_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def setup_state(ctx, install: bool = False) -> dict:
+    """First-run setup: ``{done}`` (no file: done; the installer writes
+    done false), and with ``install`` the facts it left (folder, units,
+    ports, backend)."""
+    state = _setup_file(ctx)
+    out = {"done": bool(state.get("done", True))}
+    if install and isinstance(state.get("install"), dict):
+        out["install"] = state["install"]
+    return out
+
+
+async def setup(ctx, done=None):
+    if done is not None:
+        state = {**_setup_file(ctx), "done": bool(done), "ts": time.time(), "by": ctx.caller.actor}
+        (ctx.data / SETUP_FILE).write_text(json.dumps(state, indent=1), encoding="utf-8")
+    return setup_state(ctx, install=True)
 
 
 async def look(ctx, sound=None, rookie=None, theme=None, name=None):

@@ -47,8 +47,6 @@ class Backend:
                     out.append({"plugin": plugin, "version": m["version"], args["section"]: m[args["section"]],
                                 "folder": str(PLUGINS / folder)})
             return {"manifests": out}
-        if cap == "hub.setup":             # first-run setup: done (the hub's builtin)
-            return {"done": True}
         if cap == "knowledge.get":
             if args["id"] not in self.pages:
                 raise KitError(f"no page {args['id']}")

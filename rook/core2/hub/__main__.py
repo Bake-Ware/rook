@@ -22,8 +22,8 @@ API token for the owner's apps and scripts and the recovery key, once. On a
 terminal it asks for the password; otherwise (a deploy script) it makes one
 and leaves it in ``<data>/owner.password`` (0600), never printed: the site
 offers to change it at the first sign-in. ``--no-password`` sets none: the
-owner signs in with a sign-in link (``login-link``) and sets a password on
-their Account page later (the first-run installer, deploy/install). ``passwd NAME`` sets or resets a
+site is open (everyone is the owner) until the owner sets a password on
+their Account page (the first-run installer, deploy/install). ``passwd NAME`` sets or resets a
 person's password (asked on a terminal, else one line on stdin): the way
 back in when one is lost. People sign in with their user name and password;
 tokens are for agents and apps. ``backup`` makes a sealed backup (rook.core2.hub.backup)
@@ -124,14 +124,12 @@ def init(path: Path, owner: str, relay: str | None, ws_url: str | None, url: str
     (cfg.data / "keys").mkdir(parents=True, exist_ok=True, mode=0o700)
     root = _key(cfg.data / "keys" / "root.key")
     token = add_token(cfg.data, Caller(person=f"person:{owner}"), "first owner")
-    # A new hub: the site opens on the house agent's first-run walk-through
-    # until it marks setup done (hub.setup).
-    (cfg.data / "setup.json").write_text(json.dumps({"done": False}))
     print(f"Rook hub {wire.key_id(bytes(root.verify_key))} set up in {path.parent} (band {home_band(cfg)[:8]}).")
     site = url or "http://" + bind
     typed = _new_password(owner) if password and sys.stdin.isatty() else ""
     if not password:
-        print(f"\nOpen {site}: until setup is completed it needs no sign-in; set a password on the Account page.")
+        (cfg.data / passwords.UNCLAIMED).touch()
+        print(f"\nOpen {site}: it needs no sign-in until you set a password on the Your account page.")
     elif typed:
         passwords.set_password(cfg.data, owner, typed, by="init")
         print(f"\nSign in at {site} as {owner} with the password you just typed.")
@@ -294,7 +292,7 @@ def main(argv=None) -> int:
     ini.add_argument("--url", help="where devices reach this hub's door (https://...), for enrollment")
     ini.add_argument("--bind", default="127.0.0.1:8740", help="the HTTP door's address (default %(default)s)")
     ini.add_argument("--no-password", action="store_true",
-                     help="set no password: sign in with login-link, set one on the Account page")
+                     help="set no password: the site is open until the owner sets one on the Account page")
     ll = sub.add_parser("login-link", help="print a sign-in link for the site (it keeps working: no time limit, any number of uses)")
     ll.add_argument("name", nargs="?", help="the user (default: the first owner)")
     ll.add_argument("--url", help="the site's address as the browser reaches it (default: the HTTP door's)")

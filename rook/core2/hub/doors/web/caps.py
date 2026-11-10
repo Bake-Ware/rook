@@ -208,22 +208,6 @@ def _owners(hub) -> list:
     return [f"person:{u.name}" for u in hub.identities.users.values() if u.preset == "owner"]
 
 
-SETUP_FILE = "setup.json"
-
-
-def setup_state(hub, install: bool = False) -> dict:
-    """First-run setup: ``{done}``, and with ``install`` the facts the
-    installer left (``<data>/setup.json`` ``install``: folder, units, ports,
-    backend). ``init`` writes the file for a new hub; a hub without one
-    (set up before there was a first-run walk-through) counts as done."""
-    path = Path(hub.data) / SETUP_FILE
-    state = _read_json(path)
-    out = {"done": bool(state.get("done")) or not path.exists()}
-    if install and isinstance(state.get("install"), dict):
-        out["install"] = state["install"]
-    return out
-
-
 def _plugin_folder(hub, pid: str) -> Path:
     return Path(hub.plugins.plugins[pid.partition("/")[0]].folder)
 
@@ -263,7 +247,7 @@ def install(hub) -> None:
                   "page.components": h.pages_components, "page.site": h.pages_site,
                   "page.start": h.pages_start, "page.public": h.pages_public},
         "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers, "hub.manifests": h.hub_manifests,
-                "hub.door": h.hub_door, "hub.setup": h.hub_setup, "hub.sacred": h.hub_sacred,
+                "hub.door": h.hub_door, "hub.sacred": h.hub_sacred,
                 "hub.joins": h.hub_joins, "hub.join": h.hub_join, "hub.join_code": h.hub_join_code},
         "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide,
                      "approval.ask": h.approval_ask, "approval.get": h.approval_get},
@@ -470,7 +454,7 @@ class _Handlers:
         """What the shell needs: the caller's start page."""
         pages = self.hub.pages
         return {"person": ctx.caller.person, "start": pages.start(ctx.caller.person),
-                "workbench": self._workbench(), "setup": setup_state(self.hub)}
+                "workbench": self._workbench()}
 
     async def pages_start(self, ctx, page: str | None = None) -> dict:
         pages = self.hub.pages
@@ -508,14 +492,6 @@ class _Handlers:
         if not out["ok"]:
             raise KitError(out["error"])
         return {"closed": out["closed"]}
-
-    async def hub_setup(self, ctx, done: bool | None = None) -> dict:
-        if done is not None:
-            path = Path(self.hub.data) / SETUP_FILE
-            state = _read_json(path)
-            state.update({"done": bool(done), "ts": time.time(), "by": _author(ctx)})
-            _write(path, json.dumps(state, indent=1))
-        return setup_state(self.hub, install=True)
 
     async def hub_sacred(self, ctx, worker: str, sacred: bool = True) -> dict:
         hub = self.hub

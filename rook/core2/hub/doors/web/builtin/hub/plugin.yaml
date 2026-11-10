@@ -47,18 +47,6 @@ caps:
     args:
       section: { type: str, doc: "A manifest section, e.g. jobs; blank: whole manifests." }
     result: { type: map }
-  setup:
-    doc: >-
-      First-run setup: whether it is finished. While it isn't, the site opens straight into the house
-      agent's chat, which walks the owner through setting up (the first-run skill). done=true when the
-      walk-through is over; done=false starts it again. Blank done: just say where it stands.
-    on: hub
-    risk: write
-    scope: multi-user
-    effects: [persists]
-    args:
-      done: { type: bool, doc: "true: setup is finished; false: not (the site opens on the setup chat again)." }
-    result: { type: map }
   sacred:
     doc: "Make a machine sacred (every call there that isn't a read is a hard stop) or normal again; kept in hub.yaml's sacred list."
     on: hub

@@ -15,7 +15,7 @@ import pytest
 from rook.core2.hub.doors.web import caps as web_caps
 from rook.core2.hub.doors.web.site import SHELL_CSP
 from tests.test_core2_dashboard import Client, run, site  # noqa: F401 - the fixture
-from tests.test_core2_worksurface import serve as ws_serve
+from tests.test_core2_worksurface import bearer as ws_bearer, serve as ws_serve
 
 STATIC = Path(web_caps.__file__).with_name("static")
 REPO = Path(__file__).resolve().parents[1]
@@ -170,12 +170,62 @@ def test_every_turn_carries_the_setup_skill_until_setup_is_done(tmp_path):
             out = await c.call("agent.chat.send", {"agent": "house", "text": text})
             assert out["ok"], out
             return out["result"]["text"]
-        assert await ask("are we in setup") == "setup brief: no"           # no setup.json: done
-        (hub.data / "setup.json").write_text(json.dumps({"done": False}))
+        state = hub.data / "plugins" / "agent" / "setup.json"      # the agents plugin's own data
+        state.parent.mkdir(parents=True, exist_ok=True)
+        assert await ask("are we in setup") == "setup brief: no"           # none: done (an existing hub)
+        state.write_text(json.dumps({"done": False}))                      # what the installer writes
         assert await ask("are we in setup") == "setup brief: yes"
-        assert await ask("are we in setup") == "setup brief: yes"         # every turn, not just the first
-        (hub.data / "setup.json").write_text(json.dumps({"done": True}))
+        assert await ask("are we in setup") == "setup brief: yes"          # every turn, not just the first
+        state.write_text(json.dumps({"done": True}))
         assert await ask("are we in setup") == "setup brief: no"
+    ws_serve(tmp_path, go, ("agents",))
+
+
+def test_agent_setup_keeps_the_state_and_the_install_facts(tmp_path):
+    """Guided setup is the agents package's: agent.setup reads and sets it,
+    in the plugin's own data, where the installer leaves its facts."""
+    async def go(hub, tokens):
+        c = Client(hub)
+        await c.sign_in(tokens["bake"])
+        state = hub.data / "plugins" / "agent" / "setup.json"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        assert (await c.call("agent.site"))["result"]["setup"] == {"done": True}    # none: done
+        state.write_text(json.dumps({"done": False, "install": {"machine": "box"}}))   # the installer's
+        assert (await c.call("agent.site"))["result"]["setup"] == {"done": False}   # no install facts here
+        out = await ws_bearer(c, tokens["bake"], "agent.setup")
+        assert out["result"] == {"done": False, "install": {"machine": "box"}}
+        out = await ws_bearer(c, tokens["bake"], "agent.setup", done=True)
+        assert out["ok"] and out["result"] == {"done": True, "install": {"machine": "box"}}
+        assert (await c.call("agent.site"))["result"]["setup"] == {"done": True}
+    ws_serve(tmp_path, go, ("agents",))
+
+
+def test_guided_setup_does_not_keep_the_site_open(tmp_path):
+    """castling-design, Agents: after the hub is claimed "the site asks for
+    sign-in even while guided setup continues". The same core rule as a hub
+    without the agents package (test_core2_dashboard)."""
+    from rook.core2.hub import passwords
+
+    async def go(hub, tokens):
+        (hub.data / passwords.UNCLAIMED).touch()             # init --no-password
+        state = hub.data / "plugins" / "agent" / "setup.json"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        state.write_text(json.dumps({"done": False}))         # the installer's
+        c = Client(hub)
+        status, headers, _ = await c.req("GET", "/")
+        assert status == 200 and "HttpOnly" in headers["Set-Cookie"]
+        c.cookie = headers["Set-Cookie"].split(";")[0]
+        me = (await c.json("GET", "/web/api/me"))[1]
+        assert me["person"] == "person:bake"
+        c.csrf = me["csrf"]
+        assert (await c.call("agent.site"))["result"]["setup"] == {"done": False}
+        assert (await c.json("POST", "/web/api/password", {"password": "mine"}))[1]["ok"]
+        assert (await c.call("agent.site"))["result"]["setup"] == {"done": False}  # setup carries on
+        fresh = Client(hub)
+        status, headers, _ = await fresh.req("GET", "/")
+        assert status == 303 and headers["Location"] == "/login" and "Set-Cookie" not in headers
+        assert (await fresh.req("GET", "/login"))[0] == 200
+        assert (await fresh.req("POST", "/login", {"user": "bake", "password": "mine"}))[0] == 200
     ws_serve(tmp_path, go, ("agents",))
 
 

@@ -281,7 +281,7 @@ const VIEWS = {
   },
 
   async account(args, live) {
-    const pane = workView("account", "Your account", "Your name, and a password for signing in once setup is done.");
+    const pane = workView("account", "Your account", "Your name, and a password: once it is set, this site asks for sign-in.");
     const user = userName();
     const slot = el("div");
     pane.append(slot);
@@ -878,7 +878,7 @@ async function say(text, quiet, shown, note) {
   }
 }
 
-// Setup mode: first-run setup isn't finished (hub.setup), so the site is the
+// Setup mode: first-run setup isn't finished (agent.setup), so the site is the
 // house agent's chat; "Skip to the hub" leaves it for this visit.
 let skipped = false;
 function setupMode() {

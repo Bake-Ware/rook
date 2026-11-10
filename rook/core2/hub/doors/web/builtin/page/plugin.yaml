@@ -126,7 +126,7 @@ caps:
     idempotent: true
     result: { type: map }
   site:
-    doc: What the site shows you first - your start page - and whether first-run setup is done.
+    doc: What the site shows you first - your start page.
     on: hub
     risk: read
     scope: multi-user
