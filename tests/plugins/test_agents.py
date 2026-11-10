@@ -115,8 +115,6 @@ class Rig:
     def __init__(self, tmp_path, **settings):
         self.manifest = load(AGENTS, CONTRACTS).data
         self.data = tmp_path / "agents"
-        self.data.mkdir()
-        (self.data / "setup.json").write_text('{"done": true}')      # first-run setup is over
         self.settings = {"warm": "10s", **settings}
         self.backend = Backend()
         self.people = People()

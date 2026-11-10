@@ -94,15 +94,8 @@ async def until(pred, timeout=5.0):
     raise AssertionError("condition not met in time")
 
 
-
-def _setup_done(data) -> None:
-    """First-run setup is over (the agents plugin's state), so turns carry no setup brief."""
-    (data / "plugins" / "agent").mkdir(parents=True)
-    (data / "plugins" / "agent" / "setup.json").write_text('{"done": true}')
-
 def test_agents_on_the_hub(tmp_path):
     lib = tmp_path / "lib"
-    _setup_done(tmp_path / "data")
     (lib / "agents-local" / "scripts").mkdir(parents=True)
     (lib / "agents-local" / "plugin.yaml").write_text(BRAIN)
     (lib / "agents-local" / "scripts" / "brain.py").write_text(BRAIN_PY)
@@ -261,7 +254,6 @@ def send(ctx, to, text, title=None):
 
 def test_a_linked_persons_direct_message_reaches_the_house_agent(tmp_path):
     lib = tmp_path / "lib"
-    _setup_done(tmp_path / "data")
     for name, manifest, script, code in (("agents-local", BRAIN, "brain.py", BRAIN_PY),
                                          ("telegram", TELEGRAM, "bot.py", TELEGRAM_PY)):
         (lib / name / "scripts").mkdir(parents=True)

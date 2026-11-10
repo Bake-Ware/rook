@@ -937,7 +937,7 @@ async def skill(ctx, name):
 
 LOOK_STEPS = ("sound", "rookie", "theme", "name")      # first-run asks these first, in this order
 HOUSE_NAME = "Rookie"
-SETUP_FILE = "setup.json"      # in the plugin's data: {done, install} (the installer writes install)
+SETUP_FILE = "setup.json"      # in the plugin's data: {done, install} (the installer writes it)
 ROOKIE_JS = PLUGIN_DIR / "shell" / "rookie.js"
 
 
@@ -1008,10 +1008,11 @@ def _setup_file(ctx) -> dict:
 
 
 def setup_state(ctx, install: bool = False) -> dict:
-    """First-run setup: ``{done}`` (no file yet: not done), and with
-    ``install`` the facts the installer left (folder, units, ports, backend)."""
+    """First-run setup: ``{done}`` (no file: done; the installer writes
+    done false), and with ``install`` the facts it left (folder, units,
+    ports, backend)."""
     state = _setup_file(ctx)
-    out = {"done": bool(state.get("done"))}
+    out = {"done": bool(state.get("done", True))}
     if install and isinstance(state.get("install"), dict):
         out["install"] = state["install"]
     return out

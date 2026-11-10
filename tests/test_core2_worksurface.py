@@ -126,7 +126,7 @@ def test_every_install_combination(tmp_path, combo):
             assert dock["dock"] == "house" and dock["ready"] is True    # the fake brain serves agent.backend
             assert dock["look"]["next"] == "sound" and dock["look"]["name"] == "Rookie"
             assert dock["look"]["chosen"]["name"] is False
-            assert dock["setup"] == {"done": False}                     # a new hub: guided setup
+            assert dock["setup"] == {"done": True}       # guided setup only when the installer asks for it
 
         # a lean sidebar: workers and tokens (+ what packages add: the agents package's trust map,
         # "it matters most to the agents"); journal and settings by address.

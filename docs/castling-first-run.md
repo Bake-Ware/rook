@@ -53,8 +53,10 @@ What it does:
    (0.0.0.0).
 6. Opens the browser on the hub's address. A new hub is open until it is
    claimed (castling-design, Agents: "creating the first user claims it"):
-   while no owner has a password, `/` signs the browser in as the (first)
-   owner and `/login` sends it there too. This is core's sign-in, with or
+   `init --no-password` leaves `hub/data/unclaimed`, and while it is there
+   `/` signs the browser in as the (first) owner and `/login` sends it
+   there too. Setting any password removes it for good; a hub without it
+   (every hub made before) is never open. This is core's sign-in, with or
    without the agents package. Once the owner sets a password (step 5 of
    the walk-through) a new browser gets the sign-in page, even while guided
    setup carries on; the browser that set it stays signed in.
@@ -75,9 +77,10 @@ list: the **work pane** on the left (what is being set up right now) and the
 house agent's chat on the right, with Rookie at its head. After setup the
 same chat is the right column beside every page (Rookie in the corner
 opens it, its X closes it), and pages fill the left. The agents plugin
-keeps the state in its own data (`setup.json`); with none yet setup isn't
-done, so any hub that gets the agents package opens on the walk-through
-once (the owner can skip it).
+keeps the state in its own data (`setup.json`), which the installer writes
+with `done: false`; with none, setup counts as done, so an existing hub
+never starts the walk-through by surprise. A hub made by hand with `init`
+gets it only after `agent.setup {done: false}`.
 
 The house agent follows the `first-run` skill
 (rook/plugins/agents/skills/first-run.md): look and feel (sound, Rookie's
