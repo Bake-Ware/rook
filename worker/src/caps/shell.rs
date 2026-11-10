@@ -144,14 +144,13 @@ async fn drain(mut r: impl AsyncRead + Unpin) -> (std::io::Result<Vec<u8>>, bool
     }
 }
 
-/// The process and its group: TERM, 2 s, then KILL.
+/// The process and its group: TERM, up to 2 s for the process, then KILL
+/// what is left of the group (a child that outlives its shell too).
 async fn kill(child: &mut Child) {
     #[cfg(unix)]
     if let Some(pid) = child.id() {
         unsafe { libc::killpg(pid as i32, libc::SIGTERM) };
-        if tokio::time::timeout(Duration::from_secs(2), child.wait()).await.is_ok() {
-            return;
-        }
+        let _ = tokio::time::timeout(Duration::from_secs(2), child.wait()).await;
         unsafe { libc::killpg(pid as i32, libc::SIGKILL) };
     }
     let _ = child.kill().await;
@@ -580,5 +579,40 @@ fn signal(child: &Arc<Mutex<std::process::Child>>, name: &str) {
     {
         let _ = name;
         let _ = child.lock().unwrap().kill();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_timeout_kills_the_whole_group_even_after_the_shell_is_gone() {
+        let dir = std::env::temp_dir().join(format!("rook-shell-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cases = [
+            "sleep 30 & echo $! > {pid}", // the shell is gone before the timeout
+            "(trap '' TERM; exec sleep 30) & echo $! > {pid}; wait", // the shell dies on TERM, its child doesn't
+        ];
+        for (i, cmd) in cases.iter().enumerate() {
+            let pidfile = dir.join(format!("pid{i}"));
+            let a = json!({"cmd": cmd.replace("{pid}", pidfile.to_str().unwrap()), "timeout": 0.5});
+            let err = exec(Args(a.as_object().unwrap())).await.unwrap_err();
+            assert!(err.starts_with("timed out after 0.5s"), "{err}");
+            let pid: i32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+            let mut gone = false;
+            for _ in 0..100 {
+                if unsafe { libc::kill(pid, 0) } != 0 {
+                    gone = true;
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            if !gone {
+                unsafe { libc::kill(pid, libc::SIGKILL) };
+            }
+            assert!(gone, "{cmd}: the child outlived the timeout");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

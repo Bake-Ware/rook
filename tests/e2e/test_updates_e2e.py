@@ -101,6 +101,9 @@ def test_a_release_that_does_not_come_up_is_rolled_back_by_the_worker(fresh, mon
     w = ro["workers"][0]
     assert ro["status"] == "failed" and w["state"] == "failed", ro
     assert "rolled back on the worker" in w["reason"] and reason in w["reason"]
-    rel = release_of(b)
+    # the rollout can learn of the rollback before the worker has restarted out of it
+    rel = until(lambda: (r := b.owner.call("worker.status", {})).get("ok") and
+                r["result"]["release"]["running"] is None and r["result"]["release"],
+                60, "the worker back on its installed core")
     assert rel["running"] is None and rel["current"] is None and rel["failed"]["version"] == "0.5.1-broken.1"
     assert b.owner.call("e2e.ping", {"text": "back on the installed core"})["ok"]

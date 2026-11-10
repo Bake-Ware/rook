@@ -65,6 +65,22 @@ def test_frames_and_fragments_match_the_vectors():
         assert emitted == c["emits"], c["label"]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX sh and process groups")
+def test_exec_times_out_when_a_child_outlives_the_shell(tmp_path):
+    rw, pidfile = script(), tmp_path / "pid"
+    with pytest.raises(rw.Err, match="timed out after 0.5s"):
+        rw.exec_(cmd=f"sleep 30 & echo $! > {pidfile}", timeout=0.5)
+    pid = int(pidfile.read_text())
+    for _ in range(100):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("the background child outlived the timeout")
+
+
 def test_the_embedded_manifests_are_the_sources():
     r = subprocess.run([sys.executable, str(ROOT / "worker" / "gen_script_manifests.py"), "--check"],
                        capture_output=True, text=True)
