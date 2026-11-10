@@ -612,9 +612,8 @@ def launch_plan(argv: list[str], lease: dict | None, *, platform: str = sys.plat
     starts normal calls with the signed-in user's filtered (non-admin) token
     via CreateProcessAsUser; elevated calls use the linked full token. A
     per-user worker without a service can't elevate without a UAC prompt,
-    so it reports ``elevation: unsupported``. macOS would match Linux
-    (``sudo -n``) but is untested, so it is stubbed too. Until then a
-    non-Linux worker running as an administrator refuses normal launches.
+    so it reports ``elevation: unsupported``. Until then a non-Linux worker
+    running as an administrator refuses normal launches.
     """
     if not argv or not all(isinstance(a, str) for a in argv):
         raise ValueError("argv must be a non-empty list of strings")

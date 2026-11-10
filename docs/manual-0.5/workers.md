@@ -54,7 +54,7 @@ account needs a sudoers rule you add yourself). No answer from the hub in
 10 seconds and the call fails: elevation fails closed. Leases end when
 rights change, when the worker loses the hub, or when it restarts. A worker
 running as root refuses to run normal calls as root. Elevation on Windows
-and macOS is not built yet.
+is not built yet.
 
 ## Ceilings
 

@@ -1,6 +1,6 @@
 # Rook desktop
 
-A tray app for a Rook hub, for Windows, macOS and Linux. Version 0.2 is a
+A tray app for a Rook hub, for Windows and Linux. Version 0.2 is a
 preview. User guide: [docs/desktop-app.md](../docs/desktop-app.md). Voice
 design: [docs/design/desktop-voice.md](../docs/design/desktop-voice.md).
 
@@ -41,7 +41,7 @@ wins there by a wide margin. The rest of Rook is Python and Rust already
 (the relay is Rust), and the ONNX wake word runs well in Rust (tract).
 
 The cost is that the dashboard renders in each platform's webview (WebView2
-on Windows, WKWebView on macOS, WebKitGTK on Linux) rather than one Chromium.
+on Windows, WebKitGTK on Linux) rather than one Chromium.
 The dashboard is plain HTML, CSS and JS that already works in Safari and
 Firefox, so this is a small risk; WebKitGTK is the one to test.
 
@@ -145,13 +145,13 @@ ROOK_TEST_HUB05=http://127.0.0.1:8740 ROOK_TEST_TOKEN05=<a person's token> \
 ```
 
 CI (`.github/workflows/desktop.yml`) runs fmt, clippy and the tests on Linux
-and builds unsigned bundles on Linux, macOS and Windows. Actions are pinned
+and builds unsigned bundles on Linux and Windows. Actions are pinned
 by commit, the Tauri CLI by exact version, and cargo runs with `--locked`.
 
 ## Known limits (v0.1)
 
-- **Signing:** bundles are unsigned. macOS Gatekeeper and Windows SmartScreen
-  will warn. Signing and notarisation are not wired into CI yet.
+- **Signing:** bundles are unsigned. Windows SmartScreen will warn.
+  Signing is not wired into CI yet.
 - **Global hotkeys on Linux need X11.** Under Wayland the hotkey does not
   register (a platform limit of global shortcuts); use the tray menu, or a
   desktop-environment shortcut that runs the app's "Ask" action (follow-up).

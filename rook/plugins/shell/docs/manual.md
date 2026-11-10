@@ -13,12 +13,11 @@ which is stronger than any permission rule (a NAS can carry only `file`).
 
 ## Shells
 
-`cmd` runs in `/bin/sh -c` on Linux and macOS and in PowerShell on Windows
+`cmd` runs in `/bin/sh -c` on Linux and in PowerShell on Windows
 (PowerShell 7 when installed), so `ls`, `cat`, pipes and `$env:X` mean
 something everywhere. `shell` picks another: `sh`, `bash`, `powershell`,
 `cmd` (Windows only). On Windows, `sh` and `bash` are Git for Windows' own,
-never WSL's. A reply names the shell unless it was plain `sh` on Linux or
-macOS.
+never WSL's. A reply names the shell unless it was plain `sh` on Linux.
 
 On Windows `argv[0]` is found the way a shell finds it: PATHEXT (`npm` is
 `npm.cmd`), npm shims run their real target, and `python3` that only finds

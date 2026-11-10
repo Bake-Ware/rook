@@ -133,11 +133,11 @@ def test_plugin_level_requirements_disable_every_cap_and_hooks(tmp_path):
     async def body():
         src = counter(tmp_path)
         y = src / "plugin.yaml"
-        y.write_text(y.read_text().replace("doc: Counts.", "doc: Counts.\nplatforms: [macos]"))
+        y.write_text(y.read_text().replace("doc: Counts.", "doc: Counts.\nplatforms: [windows]"))
         host = Host(os_name="linux")
         p = await host.load(src)
         assert p.caps == {}
-        assert set(p.unavailable.values()) == {"not on linux (runs on macos)"}
+        assert set(p.unavailable.values()) == {"not on linux (runs on windows)"}
         assert "counter" not in host.scheduler.plugins   # hooks never started
         await host.close()
     go(body)
