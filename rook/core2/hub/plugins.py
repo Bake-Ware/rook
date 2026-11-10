@@ -162,13 +162,14 @@ class HubPlugins:
 
     def add_builtin(self, folder: str | Path, handlers: dict) -> HubPlugin:
         """A builtin plugin the hub implements itself (``builtin: true``, no
-        ``run:``): each of its ``on: hub`` caps runs ``handlers[cap](ctx, **args)``."""
+        ``run:``): each of its caps (``on: hub``, or a worker's ``on: worker``)
+        runs ``handlers[cap](ctx, **args)``."""
         m = load(folder)
         if m.plugin in self.plugins:
             raise KitError(f"{m.plugin} is already loaded on the hub")
         p = HubPlugin(m.plugin, m.data, m.folder)
         for cap, meta in m.data["caps"].items():
-            if meta.get("on") == "hub":
+            if meta.get("on") == "hub" or (meta.get("on") == "worker" and m.data["runs_on"] == "hub"):
                 self._add(p, cap, HubCap(meta, handlers[cap]))
         self.plugins[p.name] = p
         return p

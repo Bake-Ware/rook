@@ -138,7 +138,8 @@ def test_the_rust_worker_on_a_real_hub(tmp_path, binary):
 
             async def learned():        # the hub has fetched its manifests (core.manifests)
                 caps = (await door(hub, token, "/caps?worker=rusty"))["workers"].get("rusty", {}).get("caps", {})
-                return {"worker.ping", "shell.exec", "file.read", "net.open", "serial.open"} <= set(caps)
+                return {"worker.ping", "shell.exec", "file.read", "net.open", "serial.open",
+                        "appliance.discover", "kvm.power.status"} <= set(caps)   # hub scripts for it too
             await until(learned)
             out = await call("worker.ping")
             assert out["ok"] and out["result"]["pong"] is True, out

@@ -1487,6 +1487,8 @@ def test_a_hub_plugin_serves_a_workers_cap_and_an_appliances(hubs, tmp_path):
             await w.announce(facts={"os": "linux"})
             await until(lambda: "probe.uptime" in hub.dispatcher.workers[WID].caps)
             assert "needy.poke" not in hub.dispatcher.workers[WID].caps         # it serves no serial.open
+            assert "appliance.discover" not in hub.dispatcher.workers[WID].caps  # nor net.udp (the hub's builtin's)
+            assert "appliance.discover" in hub.plugins.worker_caps()["appliance"][1]
             _, caps = await http(hub, "GET", "/caps?worker=kaiju", token=token)
             assert "probe.uptime" in caps["workers"]["kaiju"]["caps"]
 

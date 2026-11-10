@@ -121,12 +121,15 @@ Pico-CEC bridge. Its plugin has an `appliance:` section (how to find it,
 its per-device settings), and a worker that can reach the device carries
 its calls. Each device is an instance with its own name, called like a
 worker (`worker=living-room-tv cap=tv.power.off`). The hub keeps the
-registry: `appliance.add` onboards one from the worker that reaches it
-(running the plugin's pair cap first, when it has one), `appliance.list`
-and `appliance.remove`. A call goes to the known-good delegate (or the next
+registry: `appliance.discover` (a cap of each worker that serves `net.udp`)
+looks for devices on that worker's network, `appliance.add` onboards one
+from the worker that reaches it (running the plugin's pair cap first, when
+it has one), `appliance.list` and `appliance.remove`. A call goes to the known-good delegate (or the next
 online one) with the instance's address and settings, secrets read from the
 vault for that call; the ticket binds them. The plugins for these ship
-(`kvm`, `tv`, `adb`, `cec`).
+(`kvm`, `tv`, `tv-roku`, `adb`, `cec`) and run on the hub: they reach the
+device through the delegate's `shell.exec` or its network streams
+(`net.open`, `net.udp`, which the Rust worker serves).
 
 Worker plugin settings marked `secret` (and `where: hub` ones) are kept on
 the hub (`setting.set`, a vault name for a secret) and sent with each call:
