@@ -5,6 +5,7 @@ offline when stopped. Its manifest hashes are the Python worker's."""
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import secrets
 import shutil
@@ -23,8 +24,8 @@ from rook.core2.transport import TelestheteLink, band_of  # noqa: E402
 from test_core2_minimal_worker import Relay, door, until  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-MANIFESTS = {"worker": ROOT / "rook/core2/builtin/worker.yaml", "shell": ROOT / "rook/plugins/shell/plugin.yaml",
-             "file": ROOT / "rook/plugins/file/plugin.yaml"}
+MANIFESTS = {"worker": ROOT / "rook/core2/builtin/worker.yaml", "stream": ROOT / "rook/core2/builtin/stream.yaml",
+             "shell": ROOT / "rook/plugins/shell/plugin.yaml", "file": ROOT / "rook/plugins/file/plugin.yaml"}
 
 
 @pytest.fixture(scope="module")
@@ -123,6 +124,48 @@ def test_the_rust_worker_on_a_real_hub(tmp_path, binary):
             assert not out["ok"] and "not found" in out["error"], out
             out = await call("worker.log")
             assert not out["ok"] and "journal" in out["error"], out
+
+            # A terminal, the way an agent drives one: open it, type, read the output back, close it.
+            out = await call("shell.open", argv=["/bin/sh"], cols=80, rows=24)
+            assert out["ok"], out
+            sid = out["result"]["stream"]
+            out = await call("stream.write", stream=sid, body={"text": "echo $((6*7))\r"})
+            assert out["ok"], out
+            seen, after = b"", 0
+            while b"42\r\n" not in seen:
+                got = (await call("stream.read", stream=sid, after=after, wait=5))["result"]
+                seen += b"".join(base64.b64decode(e["b64"]) for e in got["events"] if e["type"] == "bytes")
+                after = got["next"]
+            assert (await call("worker.status"))["result"]["streams_open"] == 1
+
+            async def indexed(open_only=True):
+                out = await door(hub, token, "/call", {"worker": "rook", "cap": "stream.list",
+                                                       "args": {"worker": "rusty", "open": open_only},
+                                                       "why": "Test the Rust worker."})
+                return {r["id"]: r for r in out["result"]["streams"]}
+            row = (await until(indexed))[sid]
+            assert (row["kind"], row["worker"], row["attrs"]["pty"]) == ("terminal", "rusty", True), row
+            out = await call("stream.close", stream=sid)
+            assert out["ok"] and out["result"]["closed"], out
+            got = (await call("stream.read", stream=sid, after=after))["result"]
+            assert got["closed"] and got["events"][-1]["data"]["state"] == "closed", got
+
+            async def unindexed():
+                return sid not in await indexed() and sid in await indexed(False)
+            await until(unindexed)
+
+            # A process on pipes: output merged, closed with its exit code.
+            out = await call("shell.open", cmd="echo out; echo err >&2; exit 4", pty=False)
+            pid = out["result"]["stream"]
+
+            async def finished():
+                got = (await call("stream.read", stream=pid, wait=5))["result"]
+                return got if got["closed"] else None
+            got = await until(finished)
+            assert b"".join(base64.b64decode(e["b64"]) for e in got["events"] if e["type"] == "bytes") == b"out\nerr\n"
+            assert got["events"][-1]["data"] == {"exit": 4, "state": "closed"}, got
+            listed_here = (await call("stream.list"))["result"]["streams"]
+            assert {r["id"]: r["kind"] for r in listed_here} == {sid: "terminal", pid: "process"}
 
             async def answered_hub():   # its announce on first hearing the hub's, so what comes next is a heartbeat
                 return len(heard) >= 2

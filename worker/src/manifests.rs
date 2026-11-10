@@ -32,9 +32,9 @@ pub fn load(text: &str) -> Manifest {
     }
 }
 
-/// The plugins this worker serves. `stream` waits for the stream caps (stage 2).
+/// The plugins this worker serves.
 pub fn served() -> Vec<Manifest> {
-    FILES.iter().filter(|(name, _)| *name != "stream").map(|(_, text)| load(text)).collect()
+    FILES.iter().map(|(_, text)| load(text)).collect()
 }
 
 fn to_json(y: &Yaml) -> Value {
