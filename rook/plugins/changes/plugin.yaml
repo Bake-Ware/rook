@@ -9,7 +9,7 @@
 # those calls as to any other.
 #
 # How much a record must say follows the project's trust level
-# (project.trust): sacred and normal want the full record, ship-it a
+# (trust.level, from the trust plugin): sacred and normal want the full record, ship-it a
 # one-line note. No project, or no workbench: normal.
 #
 # Applying, testing and rolling back are not this plugin's job: when they are
@@ -29,7 +29,7 @@ package: core
 runs_on: hub
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-uses: ["project.get", "project.list", "project.trust.list"]
+uses: ["project.get", "project.list", "trust.level.list"]
 
 records:
   change:

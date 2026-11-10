@@ -1,0 +1,50 @@
+# The trust map (castling-design, Agents: "Trust map (sacred machines and
+# project levels): lives here"): core's sacred flag (hub.sacred), project
+# levels (this plugin's records), the hard stops, security and agents' grants.
+manifest: 1
+plugin: trust
+version: 0.5.0
+title: Trust
+doc: What agents may do to what, in one place.
+package: agents
+runs_on: hub
+license: Apache-2.0
+source: https://github.com/Bake-Ware/rook
+uses: ["hub.status", "hub.workers", "project.list", "agent.list", "approval.list", "journal.search"]
+
+records:
+  level:
+    fields:
+      project: { type: str, required: true, unique: true, doc: "The project's id." }
+      level:
+        type: str
+        enum: [sacred, normal, ship-it]
+        required: true
+        doc: "How much ceremony a change gets: sacred = full change record and the owner signs off; normal = full record, proceeds; ship-it = a one-line note."
+      note: { type: str, doc: Why this level. }
+    index: [project]
+    history: true
+    caps: [list, get, create, update]
+    risk: { create: admin, update: admin }
+
+caps:
+  map:
+    doc: >-
+      The trust map in one read: security (off or on), the hard stops, every machine and whether it is
+      sacred, every project's trust level (trust.level), what each agent may do (grants), how many calls
+      wait on a person, a plain summary of what agents are told, and recent trust changes from the journal.
+    risk: read
+    scope: multi-machine
+    idempotent: true
+    result: { type: map }
+    run: scripts/trust.py:map
+
+pages:
+  trust:
+    title: Trust map
+    file: pages/trust.html
+    caps: [trust.map, "trust.level.*", hub.sacred, hub.status, hub.workers, "project.list", "agent.list", "agent.update", setting.set, approval.list, journal.search]
+    events: ["worker.*", "hold.*", "approval.*"]
+    nav: { section: Trust }
+
+docs: { manual: docs/manual.md }

@@ -167,7 +167,7 @@ def config(tmp_path: Path, gh: FakeGitHub, vault: bool = True, security: str = "
     (lib / "agents" / "scripts").mkdir(parents=True)
     (lib / "agents" / "plugin.yaml").write_text(AGENTS)
     (lib / "agents" / "scripts" / "agents.py").write_text(AGENTS_PY)
-    for name in ("huddle", "github", "tasks", "projects", "concepts"):
+    for name in ("huddle", "github", "tasks", "projects", "concepts", "trust"):
         (lib / name).symlink_to(PLUGINS / name, target_is_directory=True)
     return Config(data=tmp_path / "data", band=BAND, library=lib,
                   users={"bake": {"preset": "owner"}, "amy": {"preset": "adult"}},

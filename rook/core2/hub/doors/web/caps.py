@@ -46,11 +46,6 @@ MAX_LAYOUT = 50
 EVERYONE = "*"                       # the hub's own start page (pages.json)
 
 
-def _security_off(hub) -> bool:
-    off = getattr(hub, "security_off", None)
-    return bool(off()) if callable(off) else False
-
-
 @dataclass
 class Page:
     id: str                  # <plugin>/<name>
@@ -268,11 +263,10 @@ def install(hub) -> None:
                   "page.components": h.pages_components, "page.site": h.pages_site,
                   "page.start": h.pages_start, "page.public": h.pages_public},
         "hub": {"hub.status": h.hub_status, "hub.workers": h.hub_workers, "hub.manifests": h.hub_manifests,
-                "hub.door": h.hub_door, "hub.setup": h.hub_setup},
+                "hub.door": h.hub_door, "hub.setup": h.hub_setup, "hub.sacred": h.hub_sacred},
         "approval": {"approval.list": h.approval_list, "approval.decide": h.approval_decide,
                      "approval.ask": h.approval_ask, "approval.get": h.approval_get},
         "journal": {"journal.search": h.journal_search},
-        "trust": {"trust.map": h.trust_map, "trust.sacred": h.trust_sacred},
         "setting": {"setting.list": settings.list, "setting.set": settings.set},
         "llm": {"llm.providers": h.llm_providers, "llm.models": h.llm_models, "llm.status": h.llm_status},
         "token": {"token.create": tokens.create, "token.list": tokens.list, "token.revoke": tokens.revoke},
@@ -504,7 +498,8 @@ class _Handlers:
         if ctx.caller.owner:
             out["people"] = [{"name": u.name, "preset": u.preset, "grants": list(u.grants)}
                              for u in sorted(hub.identities.users.values(), key=lambda u: u.name)]
-            out["agents"] = sorted(hub.identities.agents)
+            out["agents"] = [{"name": n, "grants": list(r.get("grants") or [])}
+                             for n, r in sorted(hub.identities.agents.items())]
         return out
 
     async def hub_door(self, ctx, door: str, open: bool) -> dict:
@@ -520,6 +515,18 @@ class _Handlers:
             state.update({"done": bool(done), "ts": time.time(), "by": _author(ctx)})
             _write(path, json.dumps(state, indent=1))
         return setup_state(self.hub, install=True)
+
+    async def hub_sacred(self, ctx, worker: str, sacred: bool = True) -> dict:
+        hub = self.hub
+        k = hub.known.get(worker) or next((k for k in hub.known.values() if k.name == worker), None)
+        name = k.name if k else worker
+        names = [n for n in hub.cfg.sacred if n != name] + ([name] if sacred else [])
+        hub.cfg.sacred = names
+        for w in hub.dispatcher.workers.values():
+            if w.name == name and w.id != hub.node:
+                w.sacred = bool(sacred)
+        saved = _save_sacred(hub.cfg)
+        return {"worker": name, "sacred": bool(sacred), "sacred_machines": list(names), "saved": saved}
 
     async def hub_workers(self, ctx) -> dict:
         """The workers, the hub first; ``now`` is the hub's clock (heartbeat
@@ -580,95 +587,6 @@ class _Handlers:
             raise KitError(out["error"])
         return {"entries": out["entries"]}
 
-
-    # -- trust: the 0.4 trust map on 0.5's model --------------------------------------
-
-    async def trust_map(self, ctx) -> dict:
-        """Everything that decides what agents may do to what, in one read.
-        Projects and agents come from their plugins (as the caller); a
-        plugin that isn't installed leaves its part empty with a note."""
-        from rook.core2 import rights
-        hub = self.hub
-        security = "off" if _security_off(hub) else "on"
-        sacred = set(hub.cfg.sacred)
-        machines = [{"id": k.id, "name": k.name, "online": bool(k.online), "last_seen": k.last_seen,
-                     "description": k.description or "", "level": "sacred" if k.name in sacred else "normal"}
-                    for k in sorted(hub.known.values(), key=lambda k: k.name)]
-        named = {m["name"] for m in machines}
-        machines += [{"id": None, "name": n, "online": False, "last_seen": None, "description": "",
-                      "level": "sacred", "unknown": True} for n in sorted(sacred - named)]
-        out = {"security": security, "levels": TRUST_LEVELS, "everything_else": "normal",
-               "hard_stops": [*rights.HARD_STOP_EFFECTS, "reveals a secret", "sacred machine"],
-               "machines": machines, "projects": [], "agents": [], "missing": []}
-        projects = await self._plugin_rows(ctx, "project.list", {"limit": 500})
-        levels = await self._plugin_rows(ctx, "project.trust.list", {"limit": 500})
-        if projects is None:
-            out["missing"].append("projects")
-        else:
-            by = {t.get("project"): t for t in levels or ()}
-            for pr in projects:
-                t = by.get(pr.get("id")) or {}
-                out["projects"].append({"id": pr.get("id"), "title": pr.get("title") or pr.get("slug") or pr.get("id"),
-                                        "slug": pr.get("slug"), "state": pr.get("state"),
-                                        "level": t.get("level") or "normal", "set": bool(t), "note": t.get("note") or "",
-                                        "trust_id": t.get("id"), "revision": t.get("revision")})
-        agents = await self._plugin_rows(ctx, "agent.list", {"limit": 500})
-        if agents is None:
-            out["missing"].append("agents")
-        for a in agents or ():
-            out["agents"].append({"name": a.get("name"), "title": a.get("title") or "", "id": a.get("id"),
-                                  "revision": a.get("revision"), "persona": a.get("persona") or "",
-                                  "grants": list(a.get("grants") or []), "source": "agents"})
-        listed = {a["name"] for a in out["agents"]}
-        for name, r in sorted(hub.cfg.agents.items()):
-            if name not in listed:
-                out["agents"].append({"name": name, "title": "", "grants": list((r or {}).get("grants") or []),
-                                      "source": "hub.yaml"})
-        out["waiting"] = len((await hub.holds_view(_who(ctx)))["holds"])
-        out["history"] = await self._trust_history(ctx)
-        out["summary"] = _trust_summary(out)
-        return out
-
-    async def _plugin_rows(self, ctx, cap: str, args: dict) -> list | None:
-        """A plugin's record list as the caller; None when it isn't there."""
-        reply = await self.hub.call_as(ctx.caller, cap, args)
-        if not reply.get("ok"):
-            return None
-        res = reply.get("result")
-        if isinstance(res, dict):
-            res = next((v for k, v in res.items() if isinstance(v, list)), [])
-        return res if isinstance(res, list) else []
-
-    async def _trust_history(self, ctx) -> list:
-        """Recent trust changes, as the journal shows them to the caller."""
-        rows = []
-        for cap in ("trust.sacred", "project.trust.*", "setting.set", "agent.update"):
-            got = await self.hub.journal_view(_who(ctx), {"cap": cap, "limit": 30})
-            for e in got.get("entries") or ():
-                args = e.get("args") or {}
-                if cap == "setting.set" and (args.get("plugin"), args.get("key")) != ("hub", "security"):
-                    continue
-                if cap == "agent.update" and "grants" not in args:
-                    continue
-                if e.get("risk") == "read" or e.get("ok") is False or e.get("decision") in ("deny", "held", "refused"):
-                    continue          # reads (trust.map's own project.trust.list) and what didn't happen
-                rows.append({"at": e.get("ts"), "cap": e.get("cap"), "args": args, "why": e.get("why") or "",
-                             "person": e.get("person"), "agent": e.get("agent")})
-        rows.sort(key=lambda r: r["at"] or 0, reverse=True)
-        return rows[:40]
-
-    async def trust_sacred(self, ctx, worker: str, sacred: bool = True) -> dict:
-        hub = self.hub
-        k = hub.known.get(worker) or next((k for k in hub.known.values() if k.name == worker), None)
-        name = k.name if k else worker
-        names = [n for n in hub.cfg.sacred if n != name] + ([name] if sacred else [])
-        hub.cfg.sacred = names
-        for w in hub.dispatcher.workers.values():
-            if w.name == name and w.id != hub.node:
-                w.sacred = bool(sacred)
-        saved = _save_sacred(hub.cfg)
-        return {"worker": name, "sacred": bool(sacred), "sacred_machines": list(names), "saved": saved}
-
     # -- llm: the llm.complete providers ------------------------------------------
 
     async def llm_providers(self, ctx) -> dict:
@@ -709,32 +627,6 @@ class _Handlers:
         if not reply.get("ok"):
             raise KitError(str(reply.get("error") or "failed"))
         return reply.get("result") or {}
-
-
-TRUST_LEVELS = [
-    {"level": "sacred", "text": "Changes only on your say-so: every call that isn't a read waits on you (with security on). "
-                                "A sacred project's changes get the full record and your sign-off."},
-    {"level": "normal", "text": "Agents go ahead; hard stops still wait on you (with security on). "
-                                "A normal project's changes get the full record."},
-    {"level": "ship-it", "text": "Agents just go. A ship-it project's changes get a one-line note."},
-]
-
-
-def _trust_summary(m: dict) -> str:
-    """What agents are told, in plain words, from the map."""
-    sacred = [x["name"] for x in m["machines"] if x["level"] == "sacred"]
-    lines = []
-    if m["security"] == "off":
-        lines.append("Security is off: nothing waits on a person; hard stops are only journaled (would_hold).")
-    else:
-        lines.append("Security is on: hard stops (" + ", ".join(m["hard_stops"]) + ") wait on a person.")
-    lines.append("Sacred machines: " + (", ".join(sacred) if sacred else "none") + ". Anything not listed is normal.")
-    for level in ("sacred", "ship-it"):
-        ps = [p["title"] for p in m["projects"] if p["level"] == level]
-        if ps:
-            lines.append(f"{level} projects: " + ", ".join(ps) + ".")
-    lines.append("Every other project is normal.")
-    return " ".join(lines)
 
 
 def _save_sacred(cfg) -> str | None:

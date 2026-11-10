@@ -31,7 +31,7 @@ task depends on other work.
 **Sign-off** (`task.request_signoff reviewers=[...]`): any task can ask for
 sign-off before it is done. With no reviewers named it goes to the expert
 roles of the project's concepts (`concept.pool`), as `role:<name>`; on a
-sacred project (`project.trust`) the owners are added, since the trust level
+sacred project (`trust.level`, from the trust plugin) the owners are added, since the trust level
 decides whether the person signs. With the agents package installed, the
 agents asked are messaged with the request (as the one asking). Reviewers
 answer with `task.signoff approve=true|false` (`reviewer=` when they answer

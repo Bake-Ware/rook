@@ -319,7 +319,7 @@ def test_a_copy_without_04_knowledge_skips_the_workbench(tmp_path, copy04):
 
 
 @pytest.mark.skipif(not IMPORTER.exists(), reason="the workbench importer (PR #277) isn't in this checkout")
-def test_apply_imports_the_workbench_and_project_trust(tmp_path, copy04):
+def test_apply_imports_the_workbench_and_project_levels(tmp_path, copy04):
     import importlib.util
     cfg = make_05(tmp_path)
     dry = migrate(copy04, cfg)
@@ -335,7 +335,7 @@ def test_apply_imports_the_workbench_and_project_trust(tmp_path, copy04):
     me = mod.Caller(agent="agent:x", band=BAND)
     try:
         project = store.type("project.project").list(me)[0]
-        assert store.type("project.trust").list(me)[0]["project"] == project["id"]
+        assert store.type("trust.level").list(me)[0]["project"] == project["id"]
         assert len(store.type("task.task").list(me)) == 3
     finally:
         store.close()

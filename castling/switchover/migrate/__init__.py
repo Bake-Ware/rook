@@ -17,7 +17,7 @@ hub.yaml init``):
   (hashes only), each acting for its owner through an agent named after it,
   so clients keep their key when the names move (:mod:`.tokens`);
 - **trust map**: sacred machines -> the config's ``sacred``; project levels
-  -> ``project.trust`` records; the rest is reported (:mod:`.convert`);
+  -> ``trust.level`` records; the rest is reported (:mod:`.convert`);
 - **vault**: every secret re-sealed under the 0.5 hub's key in
   ``<data>/vault.db`` (:mod:`.vault`); values are never printed or logged;
 - **sign-in**: 0.4's dashboard password (the vault's ``rook-dashboard-password``)
@@ -301,7 +301,7 @@ def _carry(source: Source, cfg, band: str, apply: bool, new_ids: dict, report: d
 
 def _project_trust(mod, imp, store, band: str, levels: dict, notes: list) -> list:
     caller = mod.Caller(agent="import:0.4", band=band, why="import from 0.4")
-    rtype, done = store.type("project.trust"), []
+    rtype, done = store.type("trust.level"), []
     for slug, level in levels.items():
         old = next((r["id"] for r in imp.rows.values() if r["kind"] == "project" and r["slug"] == slug), None)
         if old not in imp.new:

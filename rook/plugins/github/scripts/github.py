@@ -195,8 +195,13 @@ def _level(ctx, project) -> tuple[str, str]:
     if not project:
         return "normal", "experts"
     p = ctx.call("project.get", id=project)
-    trust = ctx.call("project.trust.list", where={"project": p["id"]}, limit=1)
     norm = (ctx.call("concept.pool", concepts=p["concepts"]).get("signoff") if p.get("concepts") else None)
+    try:
+        trust = ctx.call("trust.level.list", where={"project": p["id"]}, limit=1)
+    except KitError as e:
+        if not e.message.startswith(("unknown capability", "no single worker")):
+            raise
+        trust = []                      # no trust plugin: every project is normal
     return (trust[0]["level"] if trust else "normal"), norm or "experts"
 
 

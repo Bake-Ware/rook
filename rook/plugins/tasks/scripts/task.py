@@ -129,8 +129,13 @@ def _project(ctx, t):
     if not t.get("project"):
         return "normal", {}
     p = ctx.call("project.get", id=t["project"])
-    trust = ctx.call("project.trust.list", where={"project": p["id"]}, limit=1)
     pool = ctx.call("concept.pool", concepts=p["concepts"]) if p.get("concepts") else {}
+    try:
+        trust = ctx.call("trust.level.list", where={"project": p["id"]}, limit=1)
+    except ctx.Error as e:
+        if not e.message.startswith(("unknown capability", "no single worker")):
+            raise
+        trust = []                      # no trust plugin: every project is normal
     return (trust[0]["level"] if trust else "normal"), pool
 
 
