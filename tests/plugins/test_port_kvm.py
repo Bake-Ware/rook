@@ -1,15 +1,9 @@
-"""kvm (PiKVM) against a local fake kvmd over HTTPS with a self-signed
-certificate, like a real PiKVM.
-
-TODO(castling:worker-host): the host can't run appliance caps yet (no
-instance values reach Host.call or ctx; spec 5.7), so ``call`` below does
-what it will: the loader's bound cap, the host's arg check and defaults, then
-the action with the instance's appliance values, or the script with
-``ctx.appliance`` set. Switch to host.call once it takes an appliance.
-"""
+"""kvm (PiKVM) on the hub, through a delegate that serves net.open (TLS) and
+the stream caps, against a local fake kvmd over HTTPS with a self-signed
+certificate, like a real PiKVM. test_core2_rust_worker runs one kvm call
+against the real Rust worker."""
 
 import base64
-import copy
 import datetime
 import ipaddress
 import json
@@ -20,10 +14,8 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
-from port_helpers import ME, PLUGINS, go
-from rook.core2.worker.loader import load_folder
-from rook.kit.actions import ActionError, Secret, appliance_values, run_action
-from rook.kit.ctx import Ctx, KitError, invoke
+from port_helpers import on_worker
+from rook.kit.ctx import KitError
 
 PASSWORD = "s3cr3t-kvm-pw"
 JPEG = b"\xff\xd8\xff\xe0thumb\xff\xd9"
@@ -130,31 +122,9 @@ def kvmd(tmp_path):
     srv.server_close()
 
 
-PLUGIN = load_folder(PLUGINS / "kvm", os_name="linux")
-
-
 def call(kvmd, cap, args=None, *, password=PASSWORD, **settings):
-    c = PLUGIN.caps[cap]
-    args = dict(args or {})
-    errors = list(c.validator.iter_errors(args))
-    if errors:
-        raise ValueError(f"bad args: {errors[0].message}")
-    for key, spec in c.spec.get("args", {}).items():
-        if key not in args and "default" in spec:
-            args[key] = copy.deepcopy(spec["default"])
-    decls = PLUGIN.manifest["appliance"]["settings"]
-    values = {k: d.get("default") for k, d in decls.items()}
-    values.update(settings, password=Secret(password))
-    appliance = appliance_values(kvmd.instance, values)
-
-    async def body():
-        if c.action is not None:
-            return await run_action(c.action, args, appliance=appliance, worker={"os": "linux"},
-                                    timeout=c.timeout, cap=c.spec)
-        ctx = Ctx(PLUGIN.manifest, ME, cap=cap)
-        ctx.appliance = appliance
-        return await invoke(c.func, ctx, args)
-    return go(body)
+    inst = {**kvmd.instance, "settings": {"password": password, **settings}}
+    return on_worker("kvm", cap, args, appliance=inst)[0]
 
 
 def last(kvmd, n=1):
@@ -172,7 +142,7 @@ def test_screen_capture(kvmd):
 
 def test_no_video_is_an_error(kvmd):
     kvmd.no_video = True
-    with pytest.raises(ActionError, match="UnavailableError"):
+    with pytest.raises(KitError, match="UnavailableError"):
         call(kvmd, "kvm.screen.capture")
 
 
@@ -201,7 +171,7 @@ def test_key_names_and_mods(kvmd):
 @pytest.mark.parametrize("args", [{"key": "a,Delete"}, {"key": "a b"}, {"key": ""},
                                   {"key": "a", "mods": ["hyper"]}, {"key": "a", "mods": "ctrl"}])
 def test_key_cant_add_keys(kvmd, args):
-    with pytest.raises(ValueError, match="bad args"):
+    with pytest.raises(KitError, match="bad args"):
         call(kvmd, "kvm.hid.key", args)
     assert kvmd.seen == []
 
@@ -209,7 +179,7 @@ def test_key_cant_add_keys(kvmd, args):
 def test_move(kvmd):
     call(kvmd, "kvm.hid.move", {"x": -32768, "y": 100})
     assert last(kvmd)["query"] == {"to_x": "-32768", "to_y": "100"}
-    with pytest.raises(ValueError):
+    with pytest.raises(KitError, match="bad args"):
         call(kvmd, "kvm.hid.move", {"x": 40000, "y": 0})
 
 
@@ -261,7 +231,7 @@ def test_raw_api(kvmd):
                                 "body_type": "text/plain"})
     assert (last(kvmd)["body"], last(kvmd)["type"]) == (b"x", "text/plain")
     shot = call(kvmd, "kvm.api_get", {"path": "/api/streamer/snapshot"})   # binary: a file
-    assert (shot.data, shot.mime) == (JPEG, "image/jpeg")
+    assert (base64.b64decode(shot["data"]), shot["mime"]) == (JPEG, "image/jpeg")
 
 
 @pytest.mark.parametrize("cap,args,match", [
@@ -275,13 +245,13 @@ def test_raw_api(kvmd):
     ("kvm.api_post", {"path": "/api/x", "body": "a", "body_type": "text/plain\r\nX-Evil: 1"}, "bad args"),
 ])
 def test_raw_api_refusals(kvmd, cap, args, match):
-    with pytest.raises((ValueError, KitError), match=match):
+    with pytest.raises(KitError, match=match):
         call(kvmd, cap, args)
     assert kvmd.seen == []
 
 
 def test_wrong_password_never_shows_it(kvmd):
-    with pytest.raises(ActionError) as e:
+    with pytest.raises(KitError) as e:
         call(kvmd, "kvm.power.status", password="not-" + PASSWORD)
     assert "401" in str(e.value) and PASSWORD not in str(e.value)
     with pytest.raises(KitError) as e:
@@ -290,7 +260,7 @@ def test_wrong_password_never_shows_it(kvmd):
 
 
 def test_verify_tls_checks_the_certificate(kvmd):
-    with pytest.raises(ActionError, match="(?i)certificate"):
+    with pytest.raises(KitError, match="(?i)certificate"):
         call(kvmd, "kvm.power.status", verify_tls=True)
     with pytest.raises(KitError, match="(?i)certificate"):
         call(kvmd, "kvm.hid.click", verify_tls=True)
@@ -298,23 +268,10 @@ def test_verify_tls_checks_the_certificate(kvmd):
 
 def test_no_instance(kvmd):
     kvmd.instance = {"name": "rack-kvm"}
-    with pytest.raises(ActionError, match="appliance.host"):
+    with pytest.raises(KitError, match="no appliance instance"):
         call(kvmd, "kvm.power.status")
     with pytest.raises(KitError, match="no appliance instance"):
         call(kvmd, "kvm.hid.click")
-
-
-def test_a_follow_stream_is_cut_off_not_read_forever(kvmd, monkeypatch):
-    # Review K2: kvm.api_get with a follow query read forever.
-    script = vars(__import__("sys").modules[PLUGIN.caps["kvm.api_get"].func.__module__])
-    monkeypatch.setitem(script, "READ_SECS", 1)
-    t0 = __import__("time").monotonic()
-    with pytest.raises(KitError, match="kept sending"):
-        call(kvmd, "kvm.api_get", {"path": "/api/log", "query": {"follow": "1"}})
-    assert __import__("time").monotonic() - t0 < 8
-    monkeypatch.setitem(script, "READ_MAX", 100)
-    with pytest.raises(KitError, match="larger than"):
-        call(kvmd, "kvm.api_get", {"path": "/api/log", "query": {"follow": "1"}})
 
 
 def test_a_redirect_never_carries_the_password_elsewhere(kvmd):

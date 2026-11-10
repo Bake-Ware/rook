@@ -42,6 +42,7 @@ class Stream:
         self.after = 0
         self.closed = False
         self.datagrams: list[tuple[bytes, str | None]] = []
+        self.max_bytes: int | None = None
 
     @classmethod
     async def open(cls, ctx, worker: str, cap: str, **args) -> "Stream":
@@ -84,6 +85,8 @@ class Stream:
                 data = base64.b64decode(ev["b64"])
                 self.buf += data
                 self.datagrams.append((data, ev.get("by")))
+                if self.max_bytes is not None and len(self.buf) > self.max_bytes:
+                    raise KitError(f"the answer is larger than {self.max_bytes >> 20} MiB (a stream?)")
                 new = True
             elif ev.get("type") == "status" and ev.get("error"):
                 raise KitError(str(ev["error"]))
@@ -149,16 +152,19 @@ class Stream:
 # -- HTTP/1.1, one request per connection ----------------------------------------------
 
 async def http(ctx, worker: str, method: str, host: str, port: int, path: str, *, headers: dict | None = None,
-               body: bytes | str = b"", tls: bool = False, verify: bool = True,
-               timeout: float = 10.0) -> tuple[int, dict, bytes]:
+               body: bytes | str = b"", tls: bool = False, verify: bool = True, timeout: float = 10.0,
+               max_bytes: int = 16 << 20) -> tuple[int, dict, bytes]:
     """One request through the worker: (status, headers with lower-case
-    names, body). The connection is closed after it."""
+    names, body). The connection is closed after it. An answer that takes
+    longer than ``timeout`` or is larger than ``max_bytes`` (a stream that
+    never ends) is a KitError."""
     data = body.encode() if isinstance(body, str) else body
     lines = [f"{method} {path} HTTP/1.1", f"Host: {host}:{port}", "Connection: close",
              *(f"{k}: {v}" for k, v in (headers or {}).items())]
     if data or method in ("POST", "PUT", "PATCH"):
         lines.append(f"Content-Length: {len(data)}")
     async with await Stream.tcp(ctx, worker, host, port, tls=tls, verify=verify) as s:
+        s.max_bytes = max_bytes
         await s.send(("\r\n".join(lines) + "\r\n\r\n").encode() + data)
         head = (await s.read_until(b"\r\n\r\n", timeout)).decode("latin-1")
         status_line, *rest = head.split("\r\n")
