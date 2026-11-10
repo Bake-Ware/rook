@@ -5,6 +5,7 @@
 
 pub mod caps;
 pub mod config;
+pub mod drop;
 pub mod link;
 pub mod manifests;
 pub mod streams;
@@ -54,6 +55,7 @@ pub struct Worker {
     /// The hub's node id and when its announce was last heard.
     hub: Mutex<Option<(String, Instant)>>,
     waiting: Mutex<HashMap<String, oneshot::Sender<Value>>>,
+    replies: drop::Replies,
 }
 
 /// Events for the hub, sent in order as `core.event` batches.
@@ -108,7 +110,7 @@ impl Worker {
         };
         Ok(Arc::new(Worker {
             cfg, link, band, manifests, entries, started: now(), streams, outbox,
-            hub: Mutex::new(None), waiting: Mutex::new(HashMap::new()),
+            hub: Mutex::new(None), waiting: Mutex::new(HashMap::new()), replies: drop::Replies::default(),
         }))
     }
 
@@ -143,6 +145,11 @@ impl Worker {
         let mut reassembler = link::reassembler();
         loop {
             let payload = self.link.recv(&mut reassembler).await?;
+            if payload.first() != Some(&b'{') {
+                let me = self.clone();
+                tokio::spawn(async move { me.replies.feed(&me.link, &payload).await });
+                continue;
+            }
             let Ok(Value::Object(msg)) = serde_json::from_slice::<Value>(&payload) else { continue };
             let text = |k: &str| msg.get(k).and_then(Value::as_str);
             if text("kind") == Some("announce") && text("name") == Some("rook") {
@@ -171,13 +178,20 @@ impl Worker {
                 .iter()
                 .filter_map(|k| msg.get("ticket").and_then(|t| t[*k].as_str()).map(String::from))
                 .collect();
+            let drop = msg.get("accept").and_then(Value::as_array).is_some_and(|a| a.contains(&json!("drop")));
             let me = self.clone();
             tokio::spawn(async move {
                 let reply = match me.call(&cap, Args(&args), who).await {
                     Ok(result) => json!({"id": id, "from": me.cfg.worker_id, "ok": true, "result": result}),
                     Err(error) => json!({"id": id, "from": me.cfg.worker_id, "ok": false, "error": error}),
                 };
-                me.send(&reply).await;
+                let data = reply.to_string();
+                if drop && data.len() > drop::THRESHOLD {
+                    let desc = me.replies.serve(&id, &me.cfg.worker_id, data.into_bytes());
+                    me.send(&json!({"id": id, "from": me.cfg.worker_id, "ok": reply["ok"], "drop": desc})).await;
+                } else if let Err(e) = me.link.send(data.as_bytes()).await {
+                    eprintln!("rook-worker: send failed: {e}");
+                }
             });
         }
     }

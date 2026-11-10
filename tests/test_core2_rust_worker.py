@@ -118,6 +118,10 @@ def test_the_rust_worker_on_a_real_hub(tmp_path, binary):
             assert out["result"] == {"matches": [{"path": str(target), "line": 2, "text": "world"}]}, out
             out = await call("file.list", path=str(tmp_path / "files"))
             assert [(e["name"], e["type"], e["size"]) for e in out["result"]["entries"]] == [("note.txt", "file", 13)]
+            big = secrets.token_bytes(3 * 1024 * 1024)      # a 4 MiB reply: it comes over Drop
+            (tmp_path / "files" / "big.bin").write_bytes(big)
+            out = await call("file.read", path=str(tmp_path / "files" / "big.bin"), encoding="base64")
+            assert out["ok"] and base64.b64decode(out["result"]["content"]) == big, str(out)[:300]
             out = await call("file.stat", path=str(tmp_path / "nope"))
             assert out["result"] == {"exists": False}, out
             out = await call("file.read", path=str(tmp_path / "nope"))
