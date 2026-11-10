@@ -226,8 +226,7 @@ impl Controller {
             return Info {
                 mode: "core2",
                 status: "not-installed",
-                detail: "This computer isn't a worker on your 0.5 hub yet. Add it here: it joins as yours."
-                    .into(),
+                detail: "This computer isn't a worker on your 0.5 hub yet. Add it here: it joins as yours.".into(),
                 can_start: false,
                 can_stop: false,
             };

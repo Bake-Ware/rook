@@ -61,28 +61,23 @@ async fn add_this_computer(h: &Hub05, origin: &str, python: PathBuf) {
     let dir = std::env::temp_dir().join(format!("rook-desktop-live05-{}", std::process::id()));
     let layout = worker05::Layout::new(&dir);
     let name = format!("desktop-test-{}", std::process::id());
-    let (l, py, o, n, approver) = (
+    let code = h.join_code().await.unwrap();
+    let (l, py, o, n, c) = (
         layout.clone(),
         python.clone(),
         origin.to_string(),
         name.clone(),
-        h.clone(),
+        code.clone(),
     );
-    let said = tokio::task::spawn_blocking(move || {
-        worker05::enroll(&l, &py, &o, Some(&n), |code| {
-            tokio::runtime::Handle::current()
-                .block_on(approver.approve_device(&code))
-                .map_err(|e| e.to_string())
-        })
-    })
-    .await
-    .unwrap()
-    .unwrap();
+    let said = tokio::task::spawn_blocking(move || worker05::enroll(&l, &py, &o, &c, Some(&n)))
+        .await
+        .unwrap()
+        .unwrap();
     println!("{said}");
     assert!(layout.enrolled());
     // Enrolling again is refused: the worker keeps its home hub.
     let (l, py, o) = (layout.clone(), python.clone(), origin.to_string());
-    let again = tokio::task::spawn_blocking(move || worker05::enroll(&l, &py, &o, None, |_| Ok(())))
+    let again = tokio::task::spawn_blocking(move || worker05::enroll(&l, &py, &o, &code, None))
         .await
         .unwrap();
     assert!(again.is_err());
