@@ -82,6 +82,7 @@ class FakeNet:
     def __init__(self, serial: dict | None = None):
         self.streams: dict[str, dict] = {}
         self.serial = serial or {}
+        self.sent: list[tuple[bytes, str | None]] = []     # every stream.write: (data, to)
 
     def _new(self) -> tuple[str, dict]:
         import secrets
@@ -149,6 +150,7 @@ class FakeNet:
         if cap == "stream.write":
             body = a["body"]
             data = base64.b64decode(body["bytes"]) if "bytes" in body else body["text"].encode()
+            self.sent.append((data, body.get("to")))
             st["send"](data, body.get("to"))
             return {"seq": len(st["events"])}
         if cap == "stream.read":
@@ -169,13 +171,14 @@ class FakeNet:
 
 
 def on_worker(plugin: str, cap: str, args: dict | None = None, *, os_name: str = "linux",
-              appliance: dict | None = None, settings: dict | None = None, net: FakeNet | None = None):
+              appliance: dict | None = None, settings: dict | None = None, net: FakeNet | None = None,
+              data: Path | None = None):
     """Run a hub plugin's ``on: worker`` cap as the hub does, for a worker that
     serves only the primitives: the real shell and file plugins, and ``net``
     (a FakeNet: the Rust worker's net.*, serial.open and stream.*).
     ``ctx.worker`` names it and ``ctx.call_on`` reaches it. Returns (result,
     [(cap, args)] it called); a failure raises KitError. ``settings``: the
-    plugin's hub settings."""
+    plugin's hub settings; ``data``: the hub's plugin data folder (the plugin's is data/<plugin>)."""
     from rook.core2.hub.plugins import HubPlugins
     from rook.core2.worker.host import CallError, Host
     from rook.kit.contracts import Contracts
@@ -201,7 +204,7 @@ def on_worker(plugin: str, cap: str, args: dict | None = None, *, os_name: str =
             except CallError as e:
                 return {"ok": False, "error": e.message}
         hub = HubPlugins(records=RecordStore(), contracts=Contracts(), call=call,
-                         settings={plugin: settings} if settings else None)
+                         settings={plugin: settings} if settings else None, data_dir=data)
         await hub.load(PLUGINS / plugin)
         try:
             return await hub.run(cap, args, ME, worker={"id": "w1", "name": "kaiju", "os": os_name},
