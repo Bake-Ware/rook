@@ -20,6 +20,3 @@ records:
   item:
     fields: { name: { type: str } }
     aliases: { list: [bad2.items], delete: [bad2.drop] }
-routes:
-  bare: { path: /bare, run: scripts/s.py:hook, auth: hmac }
-  literal: { path: /literal, run: scripts/s.py:hook, auth: { token: hunter2 } }

@@ -34,16 +34,8 @@ caps:
     doc: Echo the band motto.
     risk: read
     scope: self
-    requires: { settings: [motto] }
     action:
       exec: { argv: [echo, "{{settings.motto}}"] }
-  gone:
-    doc: Needs a binary nobody has.
-    risk: read
-    scope: self
-    requires: { bins: [rook-no-such-binary] }
-    action:
-      exec: { argv: [rook-no-such-binary] }
   windows:
     doc: Windows only.
     risk: read
@@ -51,11 +43,3 @@ caps:
     platforms: [windows]
     action:
       exec: { argv: [cmd, /c, ver] }
-  lamp:
-    doc: Needs a lamp.
-    risk: write
-    scope: local
-    effects: [physical]
-    requires: { hardware: [lamp] }
-    action:
-      exec: { argv: [echo, "on"] }

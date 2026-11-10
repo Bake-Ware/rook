@@ -16,9 +16,6 @@ agent, or an agent for a person).
     GET  /updates/desktop.json  no token: the desktop app's files in Rook's latest release (its update check)
     GET  /apk.json[?channel=beta], /apk[?channel=beta]  no token: the phone app's update check and
                           download, from files an owner put in the data folder (:mod:`..apkfeed`)
-    *    /p/<plugin><path>  a hub plugin's ``routes:`` entry: ``auth: user`` takes the
-                          bearer token, ``hmac``/``token`` a signature or token under the
-                          route's secret (HubPlugins.route_allows), ``none`` anyone
 
 Enrollment (spec 8; rook.core2.enroll.hub):
 
@@ -45,8 +42,6 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlsplit
-
-from rook.kit.ctx import Caller as KitCaller, KitError
 
 from ..apkfeed import ApkFeed
 from .web import Web
@@ -178,8 +173,6 @@ class _Handler(BaseHTTPRequestHandler):
         if method == "POST" and path in OPEN:      # a device enrolling has no token yet
             extra = {"address": self._address()} if OPEN[path] == "ask" else {}
             return 200, self._run(getattr(hub.enroll, OPEN[path])(self._body(), **extra))
-        if path.startswith("/p/"):
-            return self._plugin_route(method, url)
         caller = self._run(self._auth())
         body = self._body() if method == "POST" else None
         if method == "POST" and path.startswith("/doors/") and path.count("/") == 2:
@@ -257,38 +250,6 @@ class _Handler(BaseHTTPRequestHandler):
         ``enroll.url`` (plain http: this door has no TLS of its own)."""
         host = self.headers.get("Host")
         return f"http://{host}" if host else None
-
-    def _plugin_route(self, method: str, url):
-        hub = self.door.hub
-        plugin, _, rest = url.path[len("/p/"):].partition("/")
-        path = "/" + rest.rstrip("/")
-        route = hub.plugins.route(plugin, path)
-        if route is None:
-            raise _Error(404, "not found")
-        if method not in route.methods:
-            raise _Error(405, "method not allowed")
-        if route.auth not in ("user", "none") and route.secret is None:
-            raise _Error(501, f"this {route.auth} route names no secret")
-        body = self._raw()
-        headers = {k.lower(): v for k, v in self.headers.items()}
-        if route.auth in ("hmac", "token") and not hub.plugins.route_allows(plugin, route, headers, body):
-            raise _Error(401, "unauthorized")
-        caller = None
-        if route.auth == "user":
-            who = self._run(self._auth())
-            if (refused := hub.door_refused(who, self.door.name)):
-                raise _Error(503, refused)
-            caller = KitCaller(person=who.person, agent=who.agent, band=hub.band, why=f"{plugin} route {path}",
-                               owner=hub.identities.is_owner(who.person))
-        request = {"method": method, "path": path, "query": dict(parse_qsl(url.query)),
-                   "headers": headers, "body": body}
-        try:
-            out = self._run(hub.plugins.serve(plugin, path, request, caller))
-        except PermissionError as e:
-            raise _Error(401, str(e) or "unauthorized") from None
-        except KitError as e:
-            raise _Error(400, e.message) from None
-        return 200, out if isinstance(out, dict) else {"ok": True, "result": out}
 
     async def _auth(self):
         header = self.headers.get("Authorization", "")

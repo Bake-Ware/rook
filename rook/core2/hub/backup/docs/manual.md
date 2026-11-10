@@ -58,9 +58,9 @@ after a night the hub was down. A failed run notifies you.
 ## What is in a backup
 
 `hub.yaml`, `data/` and `library/`. Each database is copied with SQLite's
-online backup, so it is whole while the hub runs. Left out: the asset
-download cache (`data/assets/`), `-wal`/`-shm` files (folded into the
-copies), half-written `.tmp` files and the scratch folder `data/.backup/`.
+online backup, so it is whole while the hub runs. Left out: `-wal`/`-shm`
+files (folded into the copies), half-written `.tmp` files and the scratch
+folder `data/.backup/`.
 Library plugins linked from a checkout are copied as files.
 
 One backup runs at a time, and a `dir:` target inside the hub's data or

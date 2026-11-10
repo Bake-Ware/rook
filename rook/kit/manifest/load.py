@@ -72,8 +72,7 @@ def load(path, contracts: dict | None = None) -> Manifest:
 
 def _field_defaults(fields: dict):
     for spec in fields.values():
-        if "schema" not in spec:
-            spec.setdefault("type", "str")
+        spec.setdefault("type", "str")
         spec.setdefault("required", False)
 
 
@@ -84,7 +83,7 @@ def normalize(data: dict) -> dict:
     plugin = out["plugin"]
     runs_on = out.setdefault("runs_on", "worker")
     out.setdefault("builtin", False)
-    for key in ("uses", "replaces", "check"):
+    for key in ("uses", "check"):
         out.setdefault(key, [])
     for spec in out.setdefault("settings", {}).values():
         spec.setdefault("type", "secret" if spec.get("secret") else "str")
@@ -94,7 +93,7 @@ def normalize(data: dict) -> dict:
         spec.setdefault("secret", spec["type"] == "secret")
     caps = {}
     for rel, cap in out.get("caps", {}).items():
-        c = {"effects": [], "tags": [], "args": {}, "idempotent": False, "elevation": "never",
+        c = {"effects": [], "args": {}, "idempotent": False, "elevation": "never",
              "on": runs_on, "aliases": [], **cap}
         if "platforms" in out:
             c.setdefault("platforms", out["platforms"])
@@ -106,7 +105,7 @@ def normalize(data: dict) -> dict:
             c["unavailable"] = f"unknown action type: {', '.join(unknown)}"
         caps[cap_name(plugin, rel)] = c
     for name, c in record_caps(out).items():
-        caps[name] = {"tags": [], "args": {}, "idempotent": c["risk"] == "read",
+        caps[name] = {"args": {}, "idempotent": c["risk"] == "read",
                       "elevation": "never", "aliases": [], **c}
     out["caps"] = caps
     # provides as {contract: full cap name}; each such cap lists the
@@ -119,8 +118,6 @@ def normalize(data: dict) -> dict:
         _field_defaults(rec["fields"])
     for contract in out.get("contracts", {}).values():
         contract.setdefault("route", "provider")
-    for route in out.get("routes", {}).values():
-        route.setdefault("auth", "user")
     for ev in out.get("emits", {}).values():
         ev.setdefault("taints", False)
         _field_defaults(ev.setdefault("payload", {}))

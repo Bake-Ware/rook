@@ -211,8 +211,7 @@ def _bind(data: dict, folder: Path | None, handlers, os_name: str, hardware: set
         for name, spec in norm["caps"].items():
             if spec.get("on", "worker") != "worker":
                 continue   # a hub cap: the hub serves it
-            why = p.reason or spec.get("unavailable") or _platform(spec.get("platforms"), os_name) \
-                or _missing(spec.get("requires") or {}, os_name, hardware, settings, decls)
+            why = p.reason or spec.get("unavailable") or _platform(spec.get("platforms"), os_name)
             func = None
             if why is None and "run" in spec:
                 func = p.resolve(spec["run"])

@@ -70,8 +70,6 @@ caps:
     scope: self
     on: hub
     run: scripts/probe.py:echo
-routes:
-  me: { path: /me, methods: [GET], run: scripts/probe.py:me }
 jobs:
   sweep:
     doc: Installed active, as the helper persona.
@@ -101,9 +99,6 @@ async def sleep(ctx):
 def happen(ctx, what):
     ctx.emit("probe.happened", {"what": what})
     return {"ok": True}
-
-def me(ctx, request):
-    return {"person": ctx.person, "query": request["query"]}
 """
 
 def plugin(lib: Path, name: str, text: str, scripts: dict) -> None:
@@ -358,19 +353,6 @@ def test_timeout_and_one_run_at_a_time(cfg):
             rec = await until(lambda: (r := rig.hub.records.type("job.run").get(_owner(), rid))["state"] != "running"
                               and r, what="the timeout")
             assert rec["state"] == "failed" and rec["error"] == "timed out after 300ms"
-        finally:
-            await rig.stop()
-    run(body)
-
-
-def test_user_routes_take_the_bearer_token(cfg):
-    async def body():
-        rig = await Rig(cfg).start()
-        try:
-            anon = Door(rig.hub, "")
-            assert (await anon.request("GET", "/p/probe/me?x=1", auth=False))[0] == 401
-            status, out = await rig.amy.request("GET", "/p/probe/me?x=1")
-            assert status == 200 and out == {"person": "person:amy", "query": {"x": "1"}}
         finally:
             await rig.stop()
     run(body)

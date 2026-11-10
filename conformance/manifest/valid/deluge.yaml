@@ -14,8 +14,6 @@ caps:
     doc: List torrents.
     risk: read
     scope: local
-    tags: [media]
-    tip: Use state to filter; ids work with torrents.remove.
     examples: [{ args: { state: Seeding } }]
     args: { state: { type: str, enum: [Downloading, Seeding, Paused] } }
     result: { type: list, items: { type: map, fields: { id: { type: str }, name: { type: str } } } }

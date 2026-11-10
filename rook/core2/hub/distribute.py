@@ -1,7 +1,7 @@
 """Plugin distribution, hub side: how a plugin in the hub's library gets to a
 worker (castling-plugins "Distribution", castling-manifest-lifecycle).
 
-    plan = prepare("library/deluge", env, signer=op_key, hub=hub_id, cache=assets_dir)
+    plan = prepare("library/deluge", env, signer=op_key, hub=hub_id)
     report = await push(plan, transport)          # the worker installs, checks, rolls back
     if report["ok"]: seed(plan.content)
 
@@ -9,11 +9,10 @@ or all of it at once: ``await install(folder, env, transport, signer=..., hub=..
 
 ``prepare`` validates the manifest, derives the trust class, resolves
 ``requires.python`` with uv against the target worker's environment (a
-conflict refuses with uv's reason instead of breaking the worker), fetches
-``assets`` with their sha256 checked, and signs the file-hash list for that
-worker (``plugin.sig``, a ``rook-plugin`` signed object, spec 10.7). ``push``
-builds the bundle (a tar of the plugin folder, the assets under
-``assets/<name>`` and ``plugin.sig``) and hands it to a :class:`Transport`.
+conflict refuses with uv's reason instead of breaking the worker), and
+signs the file-hash list for that worker (``plugin.sig``, a ``rook-plugin``
+signed object, spec 10.7). ``push`` builds the bundle (a tar of the plugin
+folder and ``plugin.sig``) and hands it to a :class:`Transport`.
 The worker side is :mod:`rook.core2.worker.install`.
 
 Worker parts and hub content split per plugin, not per file: the worker's
@@ -29,30 +28,24 @@ The hub's ``POST /plugins/push`` sends the bundle with
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
-import shutil
 import subprocess
 import tarfile
 import tempfile
 import time
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from rook.core2 import wire
-from rook.kit.manifest import ManifestError, check_bump, file_hashes, load, satisfies, trust_class
+from rook.kit.manifest import ManifestError, check_bump, file_hashes, load, trust_class
 
 SIG_TYP = "rook-plugin"
 SIG_FILE = "plugin.sig"
-ASSET_DIR = "assets"
-CONTENT = ("personas", "skills", "docs", "concepts", "pages", "components", "jobs", "presets")
+CONTENT = ("personas", "skills", "docs", "pages", "components", "jobs", "presets")
 UV_TIMEOUT = 180         # seconds for one uv resolution
-FETCH_TIMEOUT = 60       # seconds of socket silence before an asset download fails
 
 # A requirement line: PEP 508 starts with a project name. Anything else in a
 # requirements file (``-e``, ``--index-url``, ``-r``) is an option to uv.
@@ -89,11 +82,11 @@ class Plan:
     trust: str                  # config | page | code (derived, never declared)
     folder: Path
     worker: str | None          # worker_id, None when nothing goes to a worker
-    files: dict[str, Path]      # bundle path -> source file (folder + assets)
+    files: dict[str, Path]      # bundle path -> source file
     python: list[str]           # pins the worker installs before loading
     sig: dict | None            # plugin.sig, None without a worker part
     content: dict               # hub content to seed (see hub_content)
-    hub_runs: bool              # the hub hosts caps, hooks, routes or records
+    hub_runs: bool              # the hub hosts caps, hooks or records
 
 
 class Transport(Protocol):
@@ -131,7 +124,7 @@ def needs_worker(data: dict) -> bool:
 def hub_runs(data: dict) -> bool:
     if any(c.get("on") == "hub" for c in data["caps"].values()):
         return True
-    if data.get("routes") or data.get("records"):
+    if data.get("records"):
         return True
     return data["runs_on"] == "hub" and bool(data["caps"] or data.get("hooks"))
 
@@ -199,54 +192,6 @@ def resolve_python(requirements: list[str], env: WorkerEnv, *, run=subprocess.ru
     return pins
 
 
-# -- assets ---------------------------------------------------------------------------
-
-def fetch_url(url: str, dest: Path, *, timeout: float = FETCH_TIMEOUT) -> None:
-    """Download ``url`` to ``dest``. Only http(s): the hash check makes the
-    transport irrelevant to integrity, but a manifest must not read hub files."""
-    if urllib.parse.urlsplit(url).scheme not in ("http", "https"):
-        raise Refused(f"asset url must be http or https: {url}")
-    with urllib.request.urlopen(url, timeout=timeout) as resp, open(dest, "wb") as out:
-        shutil.copyfileobj(resp, out, 1 << 20)
-
-
-def _sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def fetch_assets(assets: dict, cache: Path, *, fetch: Callable = fetch_url) -> dict[str, Path]:
-    """Each asset as a file in ``cache`` named by its sha256, downloaded once
-    and hash-checked (and size-checked when the manifest gives one)."""
-    cache.mkdir(parents=True, exist_ok=True)
-    out = {}
-    for name, a in sorted(assets.items()):
-        path = cache / a["sha256"]
-        if path.is_file() and _sha256(path) == a["sha256"]:
-            out[name] = path
-            continue
-        part = cache / f"{a['sha256']}.part"
-        try:
-            fetch(a["url"], part)
-            got = _sha256(part)
-            if got != a["sha256"]:
-                raise Refused(f"asset {name}: sha256 is {got}, the manifest says {a['sha256']}")
-            if "size" in a and part.stat().st_size != a["size"]:
-                raise Refused(f"asset {name}: {part.stat().st_size} bytes, the manifest says {a['size']}")
-        except Refused:
-            part.unlink(missing_ok=True)
-            raise
-        except Exception as e:
-            part.unlink(missing_ok=True)
-            raise Refused(f"asset {name}: download failed: {e}") from e
-        part.replace(path)
-        out[name] = path
-    return out
-
-
 # -- prepare, sign, push ----------------------------------------------------------------
 
 def sign_files(signer, *, hub: str, worker: str, plugin: str, version: str,
@@ -258,15 +203,10 @@ def sign_files(signer, *, hub: str, worker: str, plugin: str, version: str,
 
 
 def prepare(folder, env: WorkerEnv | None, *, signer, hub: str, current: dict | None = None,
-            cache: Path | None = None, fetch: Callable = fetch_url,
-            resolve: Callable = resolve_python, now: int | None = None,
-            installed: dict | None = None) -> Plan:
+            resolve: Callable = resolve_python, now: int | None = None) -> Plan:
     """Everything up to the push, for one target worker (``env``; None for a
     hub-only plugin). ``current`` is the parsed manifest that worker runs now,
-    if any: a breaking change without a major bump is refused. ``installed``
-    ({plugin: version} the band runs) checks ``requires.plugins``: the caps
-    this plugin calls (``uses``) are the dependency, the range says which
-    versions of their plugin it was written against."""
+    if any: a breaking change without a major bump is refused."""
     folder = Path(folder).resolve()
     try:
         m = load(folder)
@@ -282,16 +222,6 @@ def prepare(folder, env: WorkerEnv | None, *, signer, hub: str, current: dict | 
         if errors:
             raise Refused(f"{m.plugin} {current.get('version')} -> {m.version}: "
                           + "; ".join(i.message for i in errors))
-    for dep, rng in ((data.get("requires") or {}).get("plugins") or {}).items():
-        if installed is None:
-            break
-        have = installed.get(dep)
-        try:
-            ok = have is not None and satisfies(have, rng)
-        except ValueError as e:
-            raise Refused(f"{m.plugin} requires.plugins.{dep}: {e}") from None
-        if not ok:
-            raise Refused(f"{m.plugin} needs {dep} {rng}: " + ("not installed" if have is None else f"the band has {have}"))
     try:
         trust = trust_class(folder)
         hashes = file_hashes(folder)
@@ -306,15 +236,6 @@ def prepare(folder, env: WorkerEnv | None, *, signer, hub: str, current: dict | 
         raise Refused(f"{m.plugin} runs on {', '.join(platforms)}, not {env.os}")
     plan.python = resolve((data.get("requires") or {}).get("python") or [], env)
     files = {rel: folder / rel for rel in hashes}
-    if data.get("assets"):
-        if cache is None:
-            raise ValueError("this plugin has assets: pass an asset cache directory")
-        for name, path in fetch_assets(data["assets"], cache, fetch=fetch).items():
-            rel = f"{ASSET_DIR}/{name}"
-            if rel in files:
-                raise Refused(f"{rel} is both a file in the folder and an asset")
-            files[rel] = path
-            hashes[rel] = data["assets"][name]["sha256"]
     plan.worker = env.worker_id
     plan.files = dict(sorted(files.items()))
     plan.sig = sign_files(signer, hub=hub, worker=env.worker_id, plugin=m.plugin, version=m.version,
@@ -352,14 +273,12 @@ async def push(plan: Plan, transport: Transport) -> dict:
 
 
 async def install(folder, env: WorkerEnv | None, transport: Transport, *, signer, hub: str,
-                  current: dict | None = None, cache: Path | None = None,
-                  seed: Callable[[dict], Any] | None = None,
-                  fetch: Callable = fetch_url, resolve: Callable = resolve_python) -> dict:
+                  current: dict | None = None, seed: Callable[[dict], Any] | None = None,
+                  resolve: Callable = resolve_python) -> dict:
     """prepare -> push -> seed hub content once the worker
     reports success. Always returns a report; ``reason`` says why it failed."""
     try:
-        plan = prepare(folder, env, signer=signer, hub=hub, current=current, cache=cache,
-                       fetch=fetch, resolve=resolve)
+        plan = prepare(folder, env, signer=signer, hub=hub, current=current, resolve=resolve)
     except Refused as e:
         return {"ok": False, "reason": str(e)}
     try:

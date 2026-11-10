@@ -53,15 +53,12 @@ def _args(rtype: RecordType, verb: str) -> dict:
                 "limit": {"type": "int", "default": 50, "min": 1, "max": 500},
                 "offset": {"type": "int", "default": 0, "min": 0},
                 "order": {"type": "str", "doc": "Field to sort by; prefix - for descending (default -updated)."}}
-    if verb == "get":
-        return {**rid, "history": {"type": "bool", "default": False},
-                "backlinks": {"type": "bool", "default": False}}
     if verb == "search":
         return {"query": {"type": "str", "required": True, "doc": "Words to find (all must match)."},
                 "limit": {"type": "int", "default": 20, "min": 1, "max": 200}}
     if verb == "create":
         return _field_args(rtype, creating=True)
-    if verb == "history":
+    if verb in ("get", "history"):
         return rid
     revision = {"revision": {"type": "int", "required": rtype.rdef.history,
                              "doc": "Current revision (refused if the record changed since)."}}

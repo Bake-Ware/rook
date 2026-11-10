@@ -11,30 +11,14 @@
     "version": {"$ref": "#/$defs/semver"},
     "title": {"type": "string"},
     "doc": {"type": "string"},
-    "icon": {"type": "string"},
-    "author": {"type": "string"},
     "license": {"type": "string"},
     "source": {"type": "string"},
     "package": {"enum": ["core", "agents", "workbench", "devices"]},
     "runs_on": {"$ref": "#/$defs/home"},
     "builtin": {"type": "boolean"},
     "platforms": {"$ref": "#/$defs/platforms"},
-    "replaces": {"type": "array", "items": {"$ref": "#/$defs/plugin_name"}},
     "requires": {"$ref": "#/$defs/requires"},
     "uses": {"$ref": "#/$defs/globs"},
-    "assets": {
-      "type": "object",
-      "propertyNames": {"$ref": "#/$defs/name"},
-      "additionalProperties": {
-        "type": "object",
-        "required": ["url", "sha256"],
-        "properties": {
-          "url": {"type": "string"},
-          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-          "size": {"type": "integer", "minimum": 0}
-        }
-      }
-    },
     "settings": {"$ref": "#/$defs/settings"},
     "caps": {
       "type": "object",
@@ -93,32 +77,6 @@
         }
       }
     },
-    "routes": {
-      "type": "object",
-      "propertyNames": {"$ref": "#/$defs/name"},
-      "additionalProperties": {
-        "type": "object",
-        "required": ["path", "run"],
-        "properties": {
-          "path": {"type": "string", "pattern": "^/"},
-          "methods": {
-            "type": "array",
-            "items": {"enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]}
-          },
-          "run": {"$ref": "#/$defs/run_ref"},
-          "auth": {
-            "anyOf": [
-              {"enum": ["user", "hmac", "token", "none"]},
-              {
-                "type": "object",
-                "oneOf": [{"required": ["hmac"]}, {"required": ["token"]}],
-                "properties": {"hmac": {"type": "string"}, "token": {"type": "string"}, "header": {"type": "string", "pattern": "^[A-Za-z0-9-]+$"}}
-              }
-            ]
-          }
-        }
-      }
-    },
     "contracts": {
       "type": "object",
       "propertyNames": {"$ref": "#/$defs/cap_name"},
@@ -158,20 +116,6 @@
     },
     "skills": {"$ref": "#/$defs/file_map"},
     "docs": {"$ref": "#/$defs/file_map"},
-    "concepts": {
-      "type": "object",
-      "propertyNames": {"$ref": "#/$defs/name"},
-      "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "doc": {"type": "string"},
-          "roles": {"$ref": "#/$defs/strings"},
-          "skills": {"$ref": "#/$defs/strings"},
-          "signoff": {"type": "string"},
-          "trust": {"type": "string"}
-        }
-      }
-    },
     "pages": {
       "type": "object",
       "propertyNames": {"$ref": "#/$defs/name"},
@@ -183,7 +127,6 @@
           "file": {"$ref": "#/$defs/rel_path"},
           "caps": {"$ref": "#/$defs/globs"},
           "events": {"$ref": "#/$defs/globs"},
-          "sizes": {"$ref": "#/$defs/strings"},
           "nav": {"type": "object", "properties": {"section": {"type": "string"}}}
         }
       }
@@ -286,12 +229,6 @@
     "requires": {
       "type": "object",
       "properties": {
-        "rook": {"type": "string"},
-        "plugins": {
-          "type": "object",
-          "propertyNames": {"$ref": "#/$defs/plugin_name"},
-          "additionalProperties": {"type": "string"}
-        },
         "python": {"$ref": "#/$defs/strings"},
         "bins": {"$ref": "#/$defs/strings"},
         "hardware": {"$ref": "#/$defs/strings"},
@@ -303,7 +240,7 @@
                "file", "secret", "ref", "list", "map", "url", "path"]
     },
     "typespec": {
-      "description": "The type language. type defaults to str; schema: is raw JSON Schema.",
+      "description": "The type language. type defaults to str.",
       "type": "object",
       "properties": {
         "type": {"$ref": "#/$defs/type_name"},
@@ -316,8 +253,7 @@
         "items": {"$ref": "#/$defs/typespec"},
         "fields": {"$ref": "#/$defs/fields"},
         "to": {"type": "string"},
-        "doc": {"type": "string"},
-        "schema": {"type": "object"}
+        "doc": {"type": "string"}
       }
     },
     "fields": {
@@ -340,7 +276,6 @@
         "fields": {"$ref": "#/$defs/fields"},
         "to": {"type": "string"},
         "doc": {"type": "string"},
-        "schema": {"type": "object"},
         "join": {"type": "string"},
         "map": {"type": "object"}
       }
@@ -348,7 +283,7 @@
     "setting": {
       "type": "object",
       "properties": {
-        "type": {"anyOf": [{"$ref": "#/$defs/type_name"}, {"const": "oauth"}]},
+        "type": {"$ref": "#/$defs/type_name"},
         "required": {"type": "boolean"},
         "default": true,
         "enum": {"type": "array", "minItems": 1},
@@ -359,13 +294,10 @@
         "fields": {"$ref": "#/$defs/fields"},
         "to": {"type": "string"},
         "doc": {"type": "string"},
-        "schema": {"type": "object"},
         "where": {"enum": ["worker", "hub", "person"]},
         "apply": {"enum": ["live", "reload", "restart"]},
         "secret": {"type": "boolean"},
-        "setup": {"type": "string"},
-        "provider": {"type": "string"},
-        "scopes": {"$ref": "#/$defs/strings"}
+        "setup": {"type": "string"}
       }
     },
     "settings": {
@@ -381,8 +313,6 @@
         "risk": {"$ref": "#/$defs/risk"},
         "scope": {"$ref": "#/$defs/scope"},
         "effects": {"type": "array", "items": {"$ref": "#/$defs/name"}},
-        "tags": {"$ref": "#/$defs/strings"},
-        "tip": {"type": "string"},
         "examples": {
           "type": "array",
           "items": {
@@ -415,10 +345,8 @@
           }
         },
         "platforms": {"$ref": "#/$defs/platforms"},
-        "requires": {"$ref": "#/$defs/requires"},
         "on": {"$ref": "#/$defs/home"},
         "aliases": {"type": "array", "items": {"$ref": "#/$defs/cap_name"}},
-        "deprecated": {"type": "string"},
         "action": {"$ref": "#/$defs/action"},
         "run": {"$ref": "#/$defs/run_ref"}
       }
@@ -593,7 +521,6 @@
         },
         "index": {"$ref": "#/$defs/strings"},
         "search": {"$ref": "#/$defs/strings"},
-        "semantic": {"$ref": "#/$defs/strings"},
         "history": {"type": "boolean"},
         "private": {"type": "boolean"},
         "retain": {"$ref": "#/$defs/duration"},
@@ -606,7 +533,6 @@
           "propertyNames": {"enum": ["list", "get", "search", "create", "update", "archive", "delete", "history"]},
           "additionalProperties": {"$ref": "#/$defs/risk"}
         },
-        "migrations": {"$ref": "#/$defs/rel_path"},
         "aliases": {
           "type": "object",
           "propertyNames": {"enum": ["list", "get", "search", "create", "update", "archive", "delete", "history"]},
@@ -628,7 +554,6 @@
         "fields": {"$ref": "#/$defs/fields"},
         "to": {"type": "string"},
         "doc": {"type": "string"},
-        "schema": {"type": "object"},
         "unique": {"type": "boolean"}
       }
     },
@@ -662,7 +587,6 @@
         "always_on": {"type": "boolean"},
         "backend": {"enum": ["default", "claude-code", "codex", "local", "api"]},
         "model": {"$ref": "#/$defs/string_map"},
-        "voice": {"type": "string"},
         "create": {"enum": ["default", "offer"]}
       }
     },

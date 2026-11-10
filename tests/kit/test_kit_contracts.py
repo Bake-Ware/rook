@@ -15,19 +15,13 @@ DISCORD = {"plugin": "discord", "provides": {"notify.send": "post"},
 BAKE = Caller(person="bake", agent="claude", why="tell Bake")
 
 
-def test_default_is_first_installed_and_choice_wins():
+def test_default_is_first_installed():
     c = Contracts()
     c.load(CORE)
     c.load(TELEGRAM)
     c.load(DISCORD)
     assert c.providers("notify.send") == ["telegram.send", "discord.post"]
     assert c.choose("notify.send") == "telegram.send"
-    c.set_choice("notify.send", "discord.post")
-    assert c.choose("notify.send") == "discord.post"
-    c.set_choice("notify.send", None)
-    assert c.choose("notify.send") == "telegram.send"
-    with pytest.raises(KitError, match="doesn't provide"):
-        c.set_choice("notify.send", "shell.exec")
     assert c.contract("notify.send")["doc"] == "Get a message to a person."
     assert c.contracts() == ["notify.send"]
 

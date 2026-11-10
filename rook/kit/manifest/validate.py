@@ -336,27 +336,14 @@ class _Checker:
         self.aliases()
         for name, spec in (d.get("settings") or {}).items():
             self.setting(spec, ("settings", name))
-        self.requires(d.get("requires"), ("requires",))
+        for i, name in enumerate((d.get("requires") or {}).get("settings") or ()):
+            if name not in self.settings:
+                self.error(("requires", "settings", i), "unknown-setting", f"no setting {name!r} is declared")
         for rel, cap in (d.get("caps") or {}).items():
             self.cap(rel, cap, ("caps", rel))
         self.records()
         self.events()
         self.hooks()
-        for name, route in (d.get("routes") or {}).items():
-            path = ("routes", name)
-            self.run(route["run"], path + ("run",))
-            auth = route.get("auth")
-            if auth == "none":  # omitted = user
-                self.warn(path + ("auth",), "route-auth-none", "this route takes requests from anyone")
-            elif auth in ("hmac", "token"):
-                self.warn(path + ("auth",), "route-auth-secret",
-                          f"name the secret ({{{auth}: \"{{{{settings.x}}}}\"}}): this route is not served")
-            elif isinstance(auth, dict):
-                secret = auth.get("hmac", auth.get("token", ""))
-                if not _LONE_TEMPLATE.fullmatch(secret.strip()):
-                    self.warn(path + ("auth",), "route-auth-literal",
-                              "a secret written in the manifest is public: use {{settings.x}} or {{secret:NAME}}")
-            self.templates(auth, path + ("auth",))
         for name, c in (d.get("contracts") or {}).items():
             self.type_(c.get("args", {}), ("contracts", name, "args"), fields=True)
             if "result" in c:
@@ -369,24 +356,7 @@ class _Checker:
         self.presets()
         return self.issues
 
-    def requires(self, req, path):
-        from .diff import satisfies   # diff imports this module
-        for i, name in enumerate((req or {}).get("settings") or ()):
-            if name not in self.settings:
-                self.error(path + ("settings", i), "unknown-setting", f"no setting {name!r} is declared")
-        ranges = [(("rook",), (req or {})["rook"])] if "rook" in (req or {}) else []
-        ranges += [(("plugins", n), r) for n, r in ((req or {}).get("plugins") or {}).items()]
-        for sub, rng in ranges:
-            try:
-                satisfies("0.0.0", rng)
-            except ValueError:
-                self.warn(path + sub, "bad-range", f"{rng!r} is not a version range (>=1.2,<2): not checked")
-
     def setting(self, spec, path):
-        if spec.get("type") == "oauth":
-            self.error(path + ("type",), "oauth-unsupported",
-                       "oauth settings are reserved and not supported in manifest v1")
-            return
         self.type_(setting_spec(spec), path)
 
     def cap(self, rel, cap, path):
@@ -410,7 +380,6 @@ class _Checker:
             elif name in args:
                 self.error(path + ("bind", name), "bind-shadows-arg",
                            f"{name} is both a declared arg and bound")
-        self.requires(cap.get("requires"), path + ("requires",))
         compiled = self.type_(args, path + ("args",), fields=True)
         if compiled is not None:
             for i, ex in enumerate(cap.get("examples") or ()):
@@ -505,7 +474,7 @@ class _Checker:
             fields = spec["fields"]
             for fname, f in fields.items():
                 self.type_(f, path + ("fields", fname))
-            for key in ("index", "search", "semantic"):
+            for key in ("index", "search"):
                 for i, fname in enumerate(spec.get(key) or ()):
                     if fname not in fields:
                         self.error(path + (key, i), "unknown-field", f"no field {fname!r} in {rec}")
@@ -514,8 +483,6 @@ class _Checker:
                     self.error(path + ("caps", i), "record-verb", "search needs search fields")
                 elif verb == "history" and not spec.get("history"):
                     self.error(path + ("caps", i), "record-verb", "history needs history: true")
-            if "migrations" in spec:
-                self.file(spec["migrations"], path + ("migrations",))
 
     def events(self):
         for name, ev in (self.data.get("emits") or {}).items():

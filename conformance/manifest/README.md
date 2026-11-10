@@ -8,8 +8,8 @@ reference validator is `rook.kit.manifest`
 Format 1.1 adds optional keys only, so files still say `manifest: 1`; the
 list of additions is on `castling-manifest-lifecycle`. `valid/v1-1.yaml`,
 `valid/argv-lint.yaml` and `invalid/v1-1*.yaml` cover them. Format 1.2
-(also additive: `provides` as a list, record `aliases`, route `hmac`/`token`
-secrets and `header`) is covered by `valid/v1-2.yaml` and `invalid/v1-2*.yaml`.
+(also additive: `provides` as a list, record `aliases`) is covered by
+`valid/v1-2.yaml` and `invalid/v1-2*.yaml`.
 
 **The format is frozen at 1.2** (Oct 31 2026, castling drift audit #34).
 1.1 and 1.2 were Claude's calls under Bake's delegation of the schema, not
@@ -17,10 +17,9 @@ Bake's decisions, and each closed a gap the 0.4 converter found rather than
 something a 0.5 plugin needed. No new keys, and no new rendering logic in
 `action` (castling-plugins, Bake: "No loops, conditionals or variables in
 YAML; logic means `run:`"): a cap that needs more uses `run:`. These keys
-have no user among the plugins in this repo and are **reserved**. They still
-validate, but don't build on them until a plugin needs one: the bare
-namespace cap `""`, `requires.plugins` ranges, route `auth: {hmac|token}`,
-record `aliases`, `assets`, `replaces` and `concepts`.
+have no user among the plugins in this repo, only among the converted 0.4
+manifests in `castling/manifests`: the bare namespace cap `""` and record
+`aliases`.
 
 | File | What |
 |---|---|
@@ -48,7 +47,7 @@ aliases, custom tags, duplicate keys, non-string keys.
 
 ## Canonical form
 
-For hashing and signing: the parsed manifest as JSON with sorted keys, no
-whitespace, ASCII-escaped (`canonical_json`). The signed file-hash list is
+For hashing and signing: the parsed manifest as RFC 8785 canonical JSON
+(`rook.core2.wire.canonical`). The signed file-hash list is
 every file in the plugin folder except `plugin.sig`, as sorted
 `path -> sha256`; symlinks are refused.
