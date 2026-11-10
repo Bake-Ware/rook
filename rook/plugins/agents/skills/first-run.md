@@ -149,9 +149,15 @@ feel is done.
 9. **Voice, the phone app, Telegram or Discord.** Offer each in one line,
    with choices; set up only what they want. Say plainly what isn't ready yet instead of
    guessing at steps.
-10. **Backups.** Follow the housekeeping skill: say whether the hub is
+10. **Checking their notifications.** Only if `job.templates` lists an
+   `attention` job not yet installed: ask "Want me to check your
+   notifications every 15 minutes?" with `[[choices: Yes | Not now]]`. On
+   yes, `job.install` that template (it runs as you, the house agent); on
+   anything else install nothing, and tell them they can turn it on later
+   under Ready-made on the Jobs page, or by asking you.
+11. **Backups.** Follow the housekeeping skill: say whether the hub is
    backed up anywhere and offer what fits.
-11. **Write it down.** Make a knowledge page titled "How this hub is set up
+12. **Write it down.** Make a knowledge page titled "How this hub is set up
    and why" (`knowledge.create`): their look and feel and your name, what they want it for, who they are, how
    they reach it, which machines, what they chose and declined and why, and
    the install facts. Tell them it's there.

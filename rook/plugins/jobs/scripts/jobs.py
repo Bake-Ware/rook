@@ -385,21 +385,24 @@ class Runtime:
 
     async def seed(self) -> None:
         """Install every plugin's ``enabled: true`` persona job (as that
-        plugin); refresh the ones nobody edited when the plugin changes;
+        plugin); refresh the ones nobody edited when the plugin changes, even
+        once it no longer ships enabled (a job already running stays);
         archive the ones a plugin dropped. A person's edits and archives win."""
         self.seeded = time.time()
         offered = {}
         for m in await self.manifests():
             for name, spec in m["jobs"].items():
-                if spec.get("enabled") and spec.get("as") == "persona":
+                if spec.get("as") == "persona":
                     offered[f"{m['plugin']}/{name}"] = (m, name, spec)
         seeded = [j for archived in (False, True)
                   for j in self.sys.records.job.list(archived=archived, limit=500)
                   if j["source"] and (j["creator"] or "").startswith("plugin:")]
         have = {j["source"]: j for j in seeded}
         for source, (m, name, spec) in offered.items():
-            fields = {**template_fields(m, name, spec), "enabled": True}
             j = have.get(source)
+            if j is None and not spec.get("enabled"):
+                continue
+            fields = {**template_fields(m, name, spec), "enabled": True}
             try:
                 check_job(fields, owner=True)
                 if j is None:
@@ -409,6 +412,7 @@ class Runtime:
                     _as(self.ctx, who).records.job.create(**fields)
                 elif not j["edited"] and j["source_version"] != fields["source_version"]:
                     fields.pop("name")
+                    fields.pop("enabled")
                     self.sys.records.job.update(j["id"], revision=j["revision"], **fields)
             except KitError as e:
                 log.warning("plugin job not installed", extra={"fields": {"job": source, "error": e.message}})

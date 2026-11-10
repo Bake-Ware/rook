@@ -49,8 +49,10 @@ and their runs are private: their person and the owners see them.
 
 Any plugin can ship jobs in its manifest (`jobs:`, each a trigger and a
 `call`). `job.templates` lists them; `job.install template=plugin/job` makes
-one yours (it runs as you). A plugin's `enabled: true` job that runs as a
-persona is installed active; edit it and plugin updates leave it alone.
+one yours (it runs as you, or as its persona if it names one). A plugin's
+`enabled: true` job that runs as a persona is installed active; edit it and
+plugin updates leave it alone. One installed that way keeps running when a
+later version of the plugin no longer ships it enabled.
 
 ## The Jobs page
 
