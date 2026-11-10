@@ -78,12 +78,10 @@ says why.
 | `POST /holds/<hold>` | `{decision: approve \| refuse}` | answer one ([Holds](holds.md)) |
 | `POST /plugins/push` | `{worker, plugin, why}` | owners: install a library plugin on a worker, through a change record |
 | `POST /doors/<name>` | `{open: true \| false}` | owners: the kill switch ([Security plugins](security.md#the-kill-switch)) |
-| `POST /enroll/code` | `{}` | a one-time code and its QR text |
+| `POST /enroll/code` | `{}` | a one-time code and its QR text (also `hub.join_code`) |
 | `POST /enroll/claim` | `{code, name}` | no token: a device claims its config, once |
-| `POST /enroll/device` | `{name}` | no token: a device code to poll and a code to show |
-| `POST /enroll/poll` | `{device_code}` | no token: pending, refused, or the config, once |
-| `GET /enroll/pending` | | devices waiting for approval |
-| `POST /enroll/approve` | `{code, decision?}` | approve or refuse a device's code |
+| `POST /enroll/ask` | `{name}` | no token: ask to join (it waits for Join on the Workers page); a ticket to poll with |
+| `POST /enroll/poll` | `{ticket}` | no token: pending, refused, or the config, once |
 | `GET /recovery-key` | | owners: the recovery key |
 | `POST /bands/invite` | `{role?, ceiling?}` | owners: an invite to this hub's band |
 | `POST /memberships` | `{worker, why, invite? \| band?, role?, ceiling?}` | owners: a worker's other bands |

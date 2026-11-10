@@ -8,7 +8,7 @@
 //!   signed in with that cookie;
 //! * everything else is the HTTP door's JSON API with `Authorization:
 //!   Bearer <token>`: `POST /call` (every call carries a why, journaled),
-//!   `GET /holds` (what waits on the person) and `POST /enroll/approve` (this
+//!   `GET /holds` (what waits on the person) and `POST /enroll/code` (this
 //!   computer's worker, see `worker05`). Calls run as the person, with their
 //!   rights; nothing here widens them.
 //!
@@ -133,15 +133,13 @@ impl Hub05 {
         })
     }
 
-    /// Approve a device code (`POST /enroll/approve`) as the signed-in person.
-    pub async fn approve_device(&self, code: &str) -> Result<(), HubError> {
+    /// A one-time code for this computer's worker to join with (`POST /enroll/code`), as the signed-in person.
+    pub async fn join_code(&self) -> Result<String, HubError> {
         let v = self
-            .json(
-                self.req(reqwest::Method::POST, "/enroll/approve")
-                    .json(&json!({"code": code})),
-            )
+            .json(self.req(reqwest::Method::POST, "/enroll/code").json(&json!({})))
             .await?;
-        call_result(v).map(|_| ())
+        let code = text(&v, "code");
+        call_result(v).map(|_| code)
     }
 }
 

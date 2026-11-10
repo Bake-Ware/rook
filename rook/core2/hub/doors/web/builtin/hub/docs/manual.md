@@ -20,14 +20,15 @@ value: on}`; the call is journaled like any other.
 - `off`: nothing waits on a person. No gate runs and no call is held
   (each journal entry says `security: off`, and `would_hold` lists a
   hard stop it would have waited on); `core.elevate` checks rights and the
-  ceiling but no gate; a device code is approved at once as the first
-  owner (the `enroll` journal entry names the machine).
-- `on`: gates, holds and device-code approval apply.
+  ceiling but no gate.
+- `on`: gates and holds apply.
 
 Either way the vault stays encrypted and secrets stay masked in the journal.
 
 The **Workers** page (in the sidebar) shows `hub.workers` and refreshes
-when a worker comes online, goes offline or changes its plugins. The
+when a worker comes online, goes offline or changes its plugins. Machines
+asking to join (`hub.joins`) are listed at the top under **Wants to join**,
+each with a **Join** and a **No** button (`hub.join`). The
 `hub/workers` component puts the same list on any page (`only:` a few
 worker names).
 

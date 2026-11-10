@@ -62,10 +62,10 @@ def test_sign_in_refuses_plain_http_off_the_phone_and_a_second_home(tmp_path, mo
     assert json.loads(castling_entry.status(str(tmp_path)))["enrolled"] is True
 
 
-def test_a_waiting_sign_in_shows_the_code_and_cancels(tmp_path, monkeypatch):
+def test_a_waiting_sign_in_says_so_and_cancels(tmp_path, monkeypatch):
     def post(url, path, body):
-        if path == "/enroll/device":
-            return {"ok": True, "device_code": "d" * 32, "user_code": "BCDF-GHJK", "hub": "0123456789abcdef"}
+        if path == "/enroll/ask":
+            return {"ok": True, "ticket": "d" * 32, "hub": "0123456789abcdef"}
         return {"ok": True, "pending": True, "interval": 1}
     monkeypatch.setattr(device, "_post", post)
     said, out = [], []
@@ -79,9 +79,9 @@ def test_a_waiting_sign_in_shows_the_code_and_cancels(tmp_path, monkeypatch):
     t.start()
     deadline = time.monotonic() + 10
     while not said:
-        assert time.monotonic() < deadline, "no code shown"
+        assert time.monotonic() < deadline, "nothing said"
         time.sleep(0.02)
-    assert "approve code BCDF-GHJK on hub 0123456789abcdef" in said[0]
+    assert "waiting for someone to let this machine in" in said[0] and "0123456789abcdef" in said[0]
     castling_entry.cancel()
     t.join(10)
     assert not t.is_alive() and json.loads(out[0]) == {"ok": False, "error": "sign-in cancelled"}
