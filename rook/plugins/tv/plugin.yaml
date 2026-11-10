@@ -200,7 +200,7 @@ caps:
     doc: 'Pair with the TV (onboarding). Without key the TV shows an "allow this device?" prompt that a person must accept with the remote within timeout seconds; with key, check a key paired elsewhere. Returns {paired, settings: {client_key}} for onboarding to keep in the vault as the instance''s client_key.'
     risk: admin
     scope: local
-    effects: [physical, sensitive, persists]
+    effects: [physical, sensitive]
     timeout: 120s
     args:
       key: { type: secret, doc: A key paired elsewhere. }

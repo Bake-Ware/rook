@@ -339,8 +339,6 @@ class Runtime:
         rec = _as(self.ctx, who).records.run.create(
             job=job["id"], name=job["name"], trigger=trigger, scheduled=scheduled, by=by,
             as_who=self.who(who), state="running", started=time.time(), event=event)
-        if (event or {}).get("taints"):
-            who = replace(who, tainted=True)
         task = self.running[job["id"]] = self.spawn(self.execute(job, rec["id"], who, event))
         task.add_done_callback(lambda _: self.running.pop(job["id"], None))
         return rec["id"]
@@ -465,9 +463,7 @@ async def on_event(ctx, event, payload):
     for job in rt.jobs():
         trig = job["trigger"]
         if "on" in trig and fnmatch.fnmatchcase(event, trig["on"]) and _matches(trig.get("filter"), payload):
-            # outside content (taints): the run's call goes in a tainted session
-            rt.fire(job, "event", event={"name": event, "payload": payload,
-                                         **({"taints": True} if ctx.caller.tainted else {})})
+            rt.fire(job, "event", event={"name": event, "payload": payload})
 
 
 # -- caps ---------------------------------------------------------------------------------

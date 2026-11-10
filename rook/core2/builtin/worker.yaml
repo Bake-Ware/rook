@@ -74,7 +74,7 @@ caps:
       streams are open here.
     risk: admin
     scope: self
-    effects: [persists]
+    effects: []
     timeout: 20m
     args:
       bundle: { type: map, doc: "The release's Drop descriptor: id, size, sha256." }

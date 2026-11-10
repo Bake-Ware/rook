@@ -31,7 +31,7 @@ caps:
     doc: A still JPEG from a camera (Linux and Termux by camera number, Windows by device name).
     risk: read
     scope: local
-    effects: [sensitive, personal]
+    effects: [sensitive]
     timeout: 30s
     args:
       camera: { type: int, default: 0, min: 0, max: 63, doc: "The camera's number from camera.list (/dev/video<N> on Linux)." }

@@ -2,7 +2,7 @@
 # lives in a hub plugin script cap the job calls; there is no workflow here.
 # Triggers: cron, every, on an event (+ filter), manual. A job runs as its
 # creator or as a persona (owners only); its call goes through dispatch (why,
-# rights, gates, journal). A call fired by an event gets event: {name,
+# rights, journal). A call fired by an event gets event: {name,
 # payload} when its cap takes an event arg. Runs are records. No
 # checkpointing: a run cut off by a hub restart is marked failed.
 #
@@ -61,7 +61,7 @@ records:
       ended: { type: float }
       result: { type: json }
       error: { type: str }
-      event: { type: map, doc: "{name, payload, taints?}: the event that started it; taints: outside content, so the run's call was tainted." }
+      event: { type: map, doc: "{name, payload}: the event that started it." }
     index: [job, state]
     private: true
     retain: 30d
@@ -72,7 +72,7 @@ caps:
     doc: "Make a job: a trigger and one call (+ worker, args). as: persona and on triggers are for owners."
     risk: write
     scope: multi-user
-    effects: [persists]
+    effects: []
     run: scripts/jobs.py:create
     args:
       name: { type: str, required: true, pattern: "^[a-z0-9][a-z0-9._-]{0,63}$" }
@@ -91,7 +91,7 @@ caps:
     doc: Change a job (pass its current revision). The same owner-only rules as create.
     risk: write
     scope: multi-user
-    effects: [persists]
+    effects: []
     run: scripts/jobs.py:update
     args:
       id: { type: str, required: true, doc: The job's id or name. }
@@ -129,7 +129,7 @@ caps:
     doc: Install a ready-made job (plugin/job from job.templates) as yours.
     risk: write
     scope: multi-user
-    effects: [persists]
+    effects: []
     run: scripts/jobs.py:install
     args:
       template: { type: str, required: true, doc: "plugin/job" }

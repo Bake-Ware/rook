@@ -10,7 +10,7 @@ Every request carries ``Authorization: Bearer <token>``. A token belongs to
 an agent acting for a person (``python -m rook.core2.hub --config hub.yaml
 token --person bake --agent claude-code``), so dispatch intersects what both
 may do. Every tool ends at the hub's door API like the HTTP door's routes:
-``call`` goes through dispatch (why, rights, gates, holds, ticket, journal),
+``call`` goes through dispatch (why, rights, holds, ticket, journal),
 the rest are the hub's read views. The door is stateless: no MCP session
 ids; a caller's calls share their default Rook session unless they start one.
 

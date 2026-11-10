@@ -14,7 +14,7 @@ caps:
     doc: "Events in a window, soonest first, ongoing ones included: {start, end, timezone_offset_min, events: [{title, start, end, all_day, location, calendar, account, account_type, start_ms, end_ms, event_id, declined?}]}. Times are phone-local ISO; all-day events use dates."
     risk: read
     scope: local
-    effects: [personal]
+    effects: []
     idempotent: true
     timeout: 30s
     args:
@@ -26,7 +26,7 @@ caps:
     doc: "Add an event to a calendar on the phone: {event_id, calendar, start, end}. calendar names one by name or account; blank: the primary one the phone may write to."
     risk: write
     scope: local
-    effects: [personal]
+    effects: []
     timeout: 30s
     args:
       title: { type: str, required: true, min: 1, max: 500 }
@@ -41,7 +41,7 @@ caps:
     doc: Change an event by event_id (from calendar.list), only the fields given. Moving start alone keeps the event's length.
     risk: write
     scope: local
-    effects: [personal]
+    effects: []
     timeout: 30s
     args:
       event_id: { type: int, required: true, min: 1 }
@@ -56,7 +56,7 @@ caps:
     doc: Delete an event by event_id (from calendar.list), every occurrence of it. Not undone.
     risk: write
     scope: local
-    effects: [personal, destructive]
+    effects: [destructive]
     timeout: 30s
     args:
       event_id: { type: int, required: true, min: 1 }

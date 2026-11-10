@@ -119,24 +119,6 @@
         }
       }
     },
-    "gate": {
-      "type": "object",
-      "required": ["run"],
-      "properties": {
-        "run": {"$ref": "#/$defs/run_ref"},
-        "result": {"$ref": "#/$defs/run_ref"},
-        "match": {
-          "type": "object",
-          "properties": {
-            "risk": {"type": "array", "items": {"$ref": "#/$defs/risk"}},
-            "effects": {"type": "array", "items": {"$ref": "#/$defs/name"}},
-            "caps": {"$ref": "#/$defs/globs"}
-          }
-        },
-        "budget": {"$ref": "#/$defs/duration"},
-        "mode": {"enum": ["shadow", "enforce"]}
-      }
-    },
     "contracts": {
       "type": "object",
       "propertyNames": {"$ref": "#/$defs/cap_name"},

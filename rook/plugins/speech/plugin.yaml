@@ -40,7 +40,7 @@ caps:
     doc: Start a voice session with an agent. Send what you say with speech.hear; read the replies with speech.read.
     risk: write
     scope: multi-user
-    effects: [persists]
+    effects: []
     run: scripts/speech.py:open_session
     args:
       agent: { type: str, pattern: "^[a-z][a-z0-9_-]{0,39}$", doc: "blank: the speech.agent setting." }
@@ -57,7 +57,7 @@ caps:
     doc: "One utterance: audio (or typed text) into the session. Answers what was heard, the speaker, and System One's spoken reply; the agent's reply follows in speech.read."
     risk: write
     scope: multi-user
-    effects: [persists, personal]
+    effects: []
     timeout: 2m
     run: scripts/speech.py:hear
     args:

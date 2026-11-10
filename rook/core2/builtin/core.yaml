@@ -52,7 +52,7 @@ caps:
     on: worker
     risk: admin
     scope: self
-    effects: [persists]
+    effects: []
     args:
       membership: { type: map, required: true }
       connect: { type: map, doc: "The band's relay or ws_url and PSK (a secret reference)." }
@@ -71,7 +71,7 @@ caps:
     on: worker
     risk: admin
     scope: self
-    effects: [persists]
+    effects: []
     timeout: 20m
     args:
       bundle: { type: map, required: true, doc: "The bundle's Drop descriptor: id, size, sha256." }
@@ -81,7 +81,7 @@ caps:
     on: worker
     risk: admin
     scope: self
-    effects: [persists]
+    effects: []
     args:
       plugin: { type: str, required: true }
     result: { type: map }
@@ -489,7 +489,7 @@ emits:
       agent: { type: str }
       why: { type: str }
       session: { type: str }
-      reasons: { type: list, items: { type: str }, doc: "Why it waits: hard stops, \"gate <name>\"." }
+      reasons: { type: list, items: { type: str }, doc: The hard stops it waits on. }
   hold.decided:
     doc: A person answered a hold.
     payload:

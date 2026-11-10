@@ -17,11 +17,10 @@ no approvals for right now"). An owner flips it on **Settings**
 (`hub.security`, Save) or with `setting.set {plugin: hub, key: security,
 value: on}`; the call is journaled like any other.
 
-- `off`: nothing waits on a person. No gate runs and no call is held
-  (each journal entry says `security: off`, and `would_hold` lists a
-  hard stop it would have waited on); `core.elevate` checks rights and the
-  ceiling but no gate.
-- `on`: gates and holds apply.
+- `off`: nothing waits on a person. No call is held (each journal entry
+  says `security: off`, and `would_hold` lists a hard stop it would have
+  waited on).
+- `on`: the hard stops hold.
 
 Either way the vault stays encrypted and secrets stay masked in the journal.
 

@@ -46,7 +46,7 @@ page's bar) takes a page off the site without losing it; **Restore** in the
 sidebar brings it back.
 
 A page can never do more than the person viewing it: every call it makes
-runs as you, through dispatch (rights, gates, holds, journal), and only for
+runs as you, through dispatch (rights, holds, journal), and only for
 the caps the page declared. It runs sandboxed, with no network of its own,
 and it can't answer holds.
 

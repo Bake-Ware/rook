@@ -51,7 +51,7 @@ caps:
     on: hub
     risk: write
     scope: multi-user
-    effects: [persists]
+    effects: []
     args:
       name: { type: str, required: true, doc: "Lowercase letters, digits, - and _; the page is page/<name>." }
       title: { type: str, required: true }
@@ -71,7 +71,7 @@ caps:
     on: hub
     risk: write
     scope: multi-user
-    effects: [persists]
+    effects: []
     args:
       page: { type: str, required: true }
       change: { type: str, required: true, doc: "What changed and why, for the history." }
@@ -88,7 +88,7 @@ caps:
     on: hub
     risk: write
     scope: multi-user
-    effects: [persists]
+    effects: []
     undo: page.restore
     args:
       page: { type: str, required: true }
@@ -99,7 +99,7 @@ caps:
     on: hub
     risk: write
     scope: multi-user
-    effects: [persists]
+    effects: []
     args:
       page: { type: str, required: true }
     result: { type: map }
@@ -111,7 +111,7 @@ caps:
     on: hub
     risk: write
     scope: multi-user
-    effects: [persists]
+    effects: []
     args:
       page: { type: str, required: true }
       public: { type: bool, default: true, doc: "false: private again." }
@@ -137,7 +137,7 @@ caps:
     on: hub
     risk: write
     scope: multi-user
-    effects: [persists]
+    effects: []
     args:
       page: { type: str, doc: "plugin/name; blank: the default." }
     result: { type: map }

@@ -27,7 +27,7 @@
 ## What happens on a call
 
 ```
- agent or person ──door──▶ hub: who is it? why? rights? gates? holds?
+ agent or person ──door──▶ hub: who is it? why? rights? holds?
                              │   signs one ticket for this exact call
                              ▼
                   relay (sees only encrypted frames)
@@ -38,7 +38,7 @@
 1. The caller names a worker, a cap, its arguments and a **why**: one plain
    sentence saying why. No why, no call.
 2. The hub checks what every layer allows (the person, the agent, the
-   session, the worker's ceiling), asks the security gates, and **holds**
+   session, the worker's ceiling) and **holds**
    the call for a person when it must ([Holds](holds.md)).
 3. It signs a ticket bound to that call: the cap, the exact arguments, the
    worker, who it is for, and the why. A ticket lives about a minute and
@@ -55,8 +55,7 @@
   hub's signature.
 - **Protection stays out of your way.** Most calls just run. You are asked
   only for the few that need a person: erasing data for good, revealing a
-  secret, sending as you, spending money, or changing a machine you marked
-  sacred.
+  secret, sending as you, or changing a machine you marked sacred.
 - **Agents talk to caps, not shells.** A plugin turns a ten-step shell
   struggle into one clear call that says what it does, so both the hub and
   you can judge it.

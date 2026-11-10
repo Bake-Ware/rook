@@ -25,7 +25,7 @@ moves over all at once.
 13. [The workbench](workbench.md): tasks, projects, knowledge, concepts and whiteboards.
 14. [Jobs](jobs.md): things that run on a schedule or an event.
 15. [Streams](streams.md): terminals, processes and other live things.
-16. [Security plugins](security.md): the gates that watch every call.
+16. [Security](security.md): the switch, the hard stops, the kill switch.
 
 ## For agents
 

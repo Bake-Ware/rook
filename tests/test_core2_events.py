@@ -1,7 +1,7 @@
 """Worker events reach the hub (gate R2; spec 13 ``core.event``): the
 worker's bounded outbox (rook/core2/worker/events.py), the real worker and
 hub runtimes on the loopback relay, the checks the hub makes before an
-event goes to hooks, jobs and pages, and the taint it carries. Every test
+event goes to hooks, jobs and pages. Every test
 has a hard timeout."""
 from __future__ import annotations
 
@@ -78,7 +78,7 @@ LISTEN_PY = """
 HEARD = []
 
 async def on_phone(ctx, event, payload):
-    HEARD.append({"event": event, "payload": payload, "tainted": ctx.caller.tainted})
+    HEARD.append({"event": event, "payload": payload})
 
 def heard(ctx):
     return HEARD
@@ -272,7 +272,7 @@ async def _heard(hub) -> list:
     return out["result"]
 
 
-def test_a_worker_event_reaches_hub_hooks_listeners_and_taints(band):
+def test_a_worker_event_reaches_hub_hooks_and_listeners(band):
     make_worker, make_hub = band
 
     async def body():
@@ -295,20 +295,7 @@ def test_a_worker_event_reaches_hub_hooks_listeners_and_taints(band):
             if heard:
                 break
             await asyncio.sleep(0.02)
-        assert heard == [{"event": "phone.sms.received", "payload": payload, "tainted": True}]
-        assert hub.taints("phone.sms.received") and not hub.taints("phone.moved")
-
-        # a hook acting on it calls in a tainted session of its own; a clean caller stays clean
-        await hub.call_as(KitCaller(plugin="listen", tainted=True), "phone.receive",
-                          {"from": "+1", "body": "x"}, uses=["phone.receive"])
-        await hub.call_as(KitCaller(plugin="listen"), "phone.receive", {"from": "+1", "body": "y"},
-                          uses=["phone.receive"])
-        dirty = hub.dispatcher.sessions[hub._component_sessions[("plugin.listen", True)]]
-        clean = hub.dispatcher.sessions[hub._component_sessions[("plugin.listen", False)]]
-        assert dirty.tainted and not clean.tainted
-        await hub.call_as(KitCaller(person="person:bake", tainted=True), "phone.receive",
-                          {"from": "+1", "body": "z"})
-        assert hub.dispatcher.sessions[hub._acting_sessions[("person:bake", None, True)]].tainted
+        assert heard == [{"event": "phone.sms.received", "payload": payload}]
 
         await hub.stop()
         await w.stop()
@@ -406,24 +393,3 @@ def test_a_ceiling_keeps_events_from_a_guest_hub(band, tmp_path):
     go(body)
 
 
-def test_a_page_that_receives_a_tainting_event_acts_in_a_tainted_session(tmp_path):
-    from test_core2_dashboard import Client, start
-
-    async def body():
-        hub, tokens = await start(tmp_path)
-        try:
-            hub.taints = lambda event: event == "board.inbox"       # as if a manifest declared it taints
-            c = Client(hub)
-            await c.sign_in(tokens["bake"])
-            t = (await c.open("board/board"))["token"]
-            session = hub.dispatcher.sessions[next(d for d in hub.doors if d.name == "http").web.tokens[t].dispatch]
-            seq = (await c.json("GET", f"/web/api/events?token={t}"))[1]["seq"]
-            hub._emit("board.changed", {"n": 1}, "board")
-            _, got = await c.json("GET", f"/web/api/events?token={t}&since={seq}")
-            assert [e["event"] for e in got["events"]] == ["board.changed"] and not session.tainted
-            hub._emit("board.inbox", {"text": "from outside"}, "board")
-            _, got = await c.json("GET", f"/web/api/events?token={t}&since={got['seq']}")
-            assert [e["event"] for e in got["events"]] == ["board.inbox"] and session.tainted
-        finally:
-            await hub.stop()
-    go(body)

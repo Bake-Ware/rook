@@ -117,12 +117,12 @@ def test_agents_on_the_hub(tmp_path):
             # personas (castling-dashboard) are made on the next look.
             # Agents are kit records (drift #31).
             out = await call(hub, owner, "agent.list")
-            assert out["ok"] and {a["name"] for a in out["result"]} >= {"house", "security"}, out
+            assert out["ok"] and {a["name"] for a in out["result"]} >= {"house"}, out
             rt = next(m for m in hub.plugins._modules["agent"].values() if hasattr(m, "_RT"))._RT
             await rt.ready(force=True)
             out = await call(hub, owner, "agent.list")
             assert out["ok"] and sorted(a["name"] for a in out["result"]) == [
-                "archivist", "house", "lead", "pm", "producer", "qa", "security", "writer"], out
+                "archivist", "house", "lead", "pm", "producer", "qa", "writer"], out
             assert not any(a["awake"] for a in out["result"] if a["name"] != "house"), out
             got = next(a for a in out["result"] if a["name"] == "producer")
             assert got["persona"] == "producer" and "assembling a crew" in got["prompt"], got
@@ -279,13 +279,9 @@ def test_a_linked_persons_direct_message_reaches_the_house_agent(tmp_path):
             assert outbox() == [{"to": "bake", "text": "brain: (on Telegram) what's on today?", "by": None}]
             turn = hub.journal.query(cap="agents-local.turn", limit=1)[0]
             assert (turn["person"], turn["agent"], turn["ok"]) == ("person:bake", "agent:house", True)
-            assert hub.dispatcher.sessions[turn["session"]].tainted            # outside content
             await until(lambda: hub.journal.query(cap="telegram.send", limit=1))   # journaled as the call ends
             sent = hub.journal.query(cap="telegram.send", limit=1)[0]
             assert sent["contract"] == "notify.channel.send"                  # the reply goes by contract
-            # ... and so is the session its harness's calls run in (its turn token's).
-            door = hub._door_sessions[("person:bake", "agent:house")]
-            assert hub.dispatcher.sessions[door].tainted
             out = await call(hub, owner, "agent.chat.read", agent="house")     # their one session with it
             assert "what's on today?" in json.dumps(out["result"]), out
 
