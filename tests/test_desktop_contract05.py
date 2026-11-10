@@ -41,7 +41,7 @@ def test_site_sign_in_cookie_and_csrf():
 def test_page_ids_the_panel_links_to_exist():
     plugins = ROOT / "rook/plugins"
     builtin = ROOT / "rook/core2/hub/doors/web/builtin"
-    for const in ("APPROVALS_PAGE",):
+    for const in ("JOURNAL_PAGE",):
         plugin, page = rust_const(const).removeprefix("/#/").split("/")
         manifests = [*plugins.glob("*/plugin.yaml"), *builtin.glob("*/plugin.yaml")]
         found = [m for m in manifests if (yaml.safe_load(m.read_text()) or {}).get("plugin") == plugin]
