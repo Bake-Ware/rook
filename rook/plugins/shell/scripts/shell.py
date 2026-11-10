@@ -209,22 +209,25 @@ async def _start(ctx, argv, cwd, env, *, stdin=False, merge=False, slave=None):
 
 
 async def _kill(proc) -> None:
-    """End the process and everything in its session (sh -c's children too).
-    TERM first: an elevated process is sudo, which passes TERM on to the
-    command it runs as root, where our KILL could only reach sudo itself."""
+    """End the process and everything in its session (sh -c's children too),
+    whether or not the process itself has already exited: TERM, then KILL
+    what is left. TERM first: an elevated process is sudo, which passes TERM
+    on to the command it runs as root, where our KILL could only reach sudo
+    itself."""
     for sig, grace in ((signal.SIGTERM, 2), (getattr(signal, "SIGKILL", None), 5)):
-        if proc.returncode is not None:
-            return
         try:
             if IS_WIN:
+                if proc.returncode is not None:
+                    return
                 proc.kill()
             else:
                 os.killpg(proc.pid, sig)
-        except (ProcessLookupError, PermissionError):
+        except ProcessLookupError:
+            return
+        except PermissionError:
             pass
         try:
             await asyncio.wait_for(proc.wait(), grace)
-            return
         except asyncio.TimeoutError:
             pass
 

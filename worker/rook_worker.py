@@ -362,8 +362,13 @@ def exec_(argv=None, cmd=None, stdin=None, timeout=30.0, cwd=None, env=None, she
             proc.stdin.close()
         except OSError:
             pass
+    deadline = time.monotonic() + float(timeout)
     try:
         code = proc.wait(timeout=float(timeout))
+        for t in readers:            # a child that outlives the process holds its output open
+            t.join(max(0.0, deadline - time.monotonic()))
+        if any(t.is_alive() for t in readers):
+            raise subprocess.TimeoutExpired(command, timeout)
     except subprocess.TimeoutExpired:
         try:
             os.killpg(proc.pid, signal.SIGKILL) if not IS_WIN else proc.kill()
@@ -371,8 +376,6 @@ def exec_(argv=None, cmd=None, stdin=None, timeout=30.0, cwd=None, env=None, she
             pass
         raise Err(f"timed out after {float(timeout):g}s and was killed; anything it already did "
                   "still happened. Use shell.open for long jobs.") from None
-    for t in readers:
-        t.join()
     stderr = err[0].decode("utf-8", "replace")
     reply = {"ok": code == 0, "code": code, "stdout": out[0].decode("utf-8", "replace"), "stderr": stderr}
     if out[1] or err[1]:
