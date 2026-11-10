@@ -981,15 +981,24 @@ def look_state(ctx) -> dict:
 
 async def backend_ready(ctx) -> bool:
     """Whether a turn of the house agent can run now: a plugin providing
-    ``agent.backend`` on the hub or on a worker that is online. Right after
-    an install the worker takes a few seconds to join; the site waits for
-    this before starting setup."""
+    ``agent.backend`` on a worker that is online, or on the hub (one with a
+    ``worker`` setting, where its program runs, once that worker is online).
+    Right after an install the worker takes a few seconds to join; the site
+    waits for this before starting setup."""
     plugins = {c.partition(".")[0] for c in ctx.providers(BACKEND)}
     try:
         workers = (await ctx.call("hub.workers"))["workers"] if plugins else ()
+        online = {w["name"] for w in workers if w.get("online") and not w.get("hub")}
+        hub = plugins & {p for w in workers if w.get("hub") for p in w.get("plugins") or ()}
+        if any(w.get("online") and (plugins - hub) & set(w.get("plugins") or ()) for w in workers):
+            return True
+        for p in hub:              # turns go to the hub's own, whatever a worker announces
+            where = [s["value"] for s in (await ctx.call("setting.list", plugin=p))["settings"] if s["key"] == "worker"]
+            if not where or where[0] in online:
+                return True
     except Exception:          # noqa: BLE001 - not theirs to see: not ready for them
         return False
-    return any(w.get("online") and plugins & set(w.get("plugins") or ()) for w in workers)
+    return False
 
 
 async def site(ctx):
