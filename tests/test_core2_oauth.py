@@ -157,7 +157,7 @@ def test_refreshes_need_a_connector_token():
 
 def test_a_hub_without_the_connector_agent_says_so():
     s = shim()
-    s.minter.problem = "This hub has no agent 'claude-web' for the connector yet"
+    s.minter.problem = "This hub has no agent 'connector' for the connector yet"
     status, page, _ = s.handle("GET", "/authorize", urlencode(params()), b"")
     assert status == 200 and b"no agent" in page
     code = code_of(authorize(s))
@@ -302,7 +302,7 @@ def test_claude_ai_flow_end_to_end(tmp_path):
             assert status == 200 and hdrs["Cache-Control"] == "no-store", tok
             assert hub.authenticate(tok["access_token"]) == AGENT          # the person, through the agent
             stored = json.loads((hub.data / "tokens.json").read_text())[runtime.digest(tok["access_token"])]
-            assert stored["label"] == "claude.ai connector"
+            assert stored["label"] == "connector"
 
             bearer = {"Authorization": f"Bearer {tok['access_token']}", "Content-Type": "application/json"}
             call = {"name": "call", "arguments": {"worker": WID, "cap": "echo.say", "args": {"text": "hi"},
@@ -328,10 +328,10 @@ def test_claude_ai_flow_end_to_end(tmp_path):
 
 def test_the_form_says_when_the_connector_agent_is_missing(tmp_path):
     async def go():
-        hub, base = await start(tmp_path, agent="claude-web")
+        hub, base = await start(tmp_path, agent="connector")
         try:
             status, _, page = await http(base + "/authorize?" + urlencode(params()), raw=True)
-            assert status == 200 and b"no agent &#x27;claude-web&#x27;" in page
+            assert status == 200 and b"no agent &#x27;connector&#x27;" in page
         finally:
             await hub.stop()
     run(go())
@@ -398,7 +398,7 @@ def test_token_create_names_a_connector_that_works_without_a_password(tmp_path):
         hub, base = await start(tmp_path)
         try:
             minted = await hub.call(PERSON, {"worker": "rook", "cap": "token.create",
-                                            "args": {"agent": "claude-web"}, "why": WHY}, "test")
+                                            "args": {"agent": "connector"}, "why": WHY}, "test")
             assert minted["ok"], minted
             conn = minted["result"]["connector"]
             assert conn["client_id"] == "rook-" + minted["result"]["id"]

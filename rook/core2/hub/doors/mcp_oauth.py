@@ -11,7 +11,7 @@ password login, like 0.4 is"; "no step may need Bake to ... read a token").
   bound to that person, the redirect, the client id and PKCE.
 * ``/token`` checks the code and mints a door token for the person acting
   through the connector's agent (door option ``oauth_agent``, default
-  ``claude-web``: an agent in hub.yaml, so the journal names it). That token
+  ``connector``: an agent in hub.yaml, so the journal names it). That token
   is the access token and the refresh token; a refresh only re-checks it.
 
 **Token clients** (no password typed; castling-switchover-decisions, "Claude
@@ -26,7 +26,7 @@ address alone.
 
 What claude.ai then sends on ``/mcp`` is an ordinary door token. Nothing is
 stored but codes (memory, 5 minutes, once each) and the token (by hash, in
-``<data>/tokens.json``, label "claude.ai connector"); taking it out of that
+``<data>/tokens.json``, label "connector"); taking it out of that
 file cuts the connector off. No client registration: claude.ai takes any
 client id typed into the connector's Advanced settings.
 

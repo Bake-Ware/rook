@@ -23,7 +23,7 @@ no request outlives a client's or a proxy's limit (Cloudflare cuts at 100 s).
 front before exposing it. ``oauth: https://rook.example`` (the door's public
 address; a list for several names, the first shown) lets claude.ai's connectors in: the person signs in with their user
 name and password and the connector gets a token for them acting through the
-agent ``oauth_agent`` (default ``claude-web``, an agent in hub.yaml)
+agent ``oauth_agent`` (default ``connector``, an agent in hub.yaml)
 (:mod:`.mcp_oauth`).
 
 Claude Code: ``claude mcp add --transport http rook http://127.0.0.1:8741/mcp
@@ -144,7 +144,7 @@ class McpDoor(HttpDoor):
         super().__init__(hub, options)
         self.path = "/" + str(options.get("path", "/mcp")).strip("/")
         self.origins = set(options.get("origins") or ())
-        self.oauth_agent = str(options.get("oauth_agent") or "claude-web")
+        self.oauth_agent = str(options.get("oauth_agent") or "connector")
         self.wait = float(options.get("wait", WAIT))
         if not 0 < self.wait <= 90:
             raise ValueError("mcp door: wait is seconds, more than 0 and at most 90")
@@ -169,7 +169,7 @@ class McpDoor(HttpDoor):
         if problem:
             raise ValueError(problem)
         log.info("connector signed in", extra={"fields": {"person": person, "agent": self.oauth_agent}})
-        return self.hub.add_token(Caller(person, f"agent:{self.oauth_agent}"), label="claude.ai connector")
+        return self.hub.add_token(Caller(person, f"agent:{self.oauth_agent}"), label="connector")
 
     def challenge(self, host: str | None = None) -> str:
         return self.oauth.challenge(host) if self.oauth else "Bearer"

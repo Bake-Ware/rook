@@ -64,7 +64,7 @@ def test_init_on_a_terminal_asks_for_the_password(tmp_path, monkeypatch, capsys)
     assert not (cfg.data / "owner.password").exists()
     out = capsys.readouterr()
     assert "chosen" not in out.out and "don't match" in out.err and "Sign in at http://127.0.0.1:8740 as bake" in out.out
-    assert cfg.agents == {"claude-web": {"grants": ["*"]}}         # the connector's agent
+    assert cfg.agents == {"connector": {"grants": ["*"]}}         # the connector's agent
 
 
 def test_passwd_sets_and_resets_from_stdin(tmp_path, monkeypatch, capsys):
