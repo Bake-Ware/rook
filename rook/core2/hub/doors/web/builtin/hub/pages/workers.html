@@ -212,10 +212,9 @@ function age(w) { return w.hub ? 0 : Math.max(0, Date.now() / 1000 + skew - (w.l
 function fresh(w) { return w.online === false && !w.hub ? 0 : Math.max(0, Math.min(1, 1 - age(w) / WINDOW)); }
 function col(f) { return f > 0.5 ? "var(--good)" : f > 0.22 ? "var(--warn)" : "var(--bad)"; }
 
-// Battery rides the heartbeat: a battery plugin's status hook ({percent, status|charging}).
+// Battery rides the heartbeat: the phone app's battery-android status hook ({percent, status|charging}).
 function battery(w) {
-  const st = w.status || {};
-  const b = st.battery || st["battery-android"];
+  const b = (w.status || {})["battery-android"];
   if (!b || b.percent == null) return "";
   const p = Math.max(0, Math.min(100, Math.round(Number(b.percent))));
   const charging = b.charging === true || /charg|full|plug/i.test(String(b.status || "")) && !/discharg|not/i.test(String(b.status || ""));
