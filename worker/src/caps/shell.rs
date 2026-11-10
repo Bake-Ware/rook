@@ -1,8 +1,10 @@
 //! shell.exec, shell.which, shell.env: the contract of rook/plugins/shell
 //! (plugin.yaml, scripts/shell.py), `cmd` run by sh, bash, PowerShell or cmd.
 
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use regex::Regex;
@@ -11,6 +13,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
 
 use super::{Args, Reply};
+use crate::streams::{Body, Streams};
 
 const OUT_MAX: usize = 8 << 20;
 const DENIED: [&str; 10] = [
@@ -291,5 +294,185 @@ pub fn env(a: Args<'_>) -> Reply {
             Ok(Value::Object(vars.into_iter().map(|(k, v)| (k.clone(), json!(shown(&k, v)))).collect()))
         }
         _ => Err("give name or prefix".into()),
+    }
+}
+
+/// shell.open: a command (default: a login shell) as a live stream, on a
+/// terminal (pty=true) or on pipes with output merged. Output becomes
+/// `bytes` events; input events are typed, signalled or resize it; the
+/// stream closes with the exit code.
+pub fn open(a: Args<'_>, streams: &Arc<Streams>, participants: Vec<String>, attrs: Map<String, Value>) -> Reply {
+    let (mut argv, mut cmd) = (a.strings("argv")?, a.str("cmd")?);
+    if argv.is_none() && cmd.is_none() {
+        argv = Some(if cfg!(windows) {
+            vec![powershell().unwrap_or_else(|| "powershell.exe".into()), "-NoLogo".into()]
+        } else {
+            vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()), "-l".into()]
+        });
+        cmd = None;
+    }
+    let (argv, ran) = command(argv, cmd, a.str("shell")?)?;
+    let pty = a.bool("pty", true)?;
+    if pty && cfg!(windows) {
+        return Err("pty is not available on Windows workers yet; use pty=false".into());
+    }
+    let size = (a.int("cols", 120)?.clamp(1, 1000) as u16, a.int("rows", 32)?.clamp(1, 1000) as u16);
+    let cwd = a.str("cwd")?;
+    let title = a.str("title")?.filter(|t| !t.is_empty()).unwrap_or_else(|| argv.join(" "));
+    let mut c = std::process::Command::new(&argv[0]);
+    c.args(&argv[1..]).envs(a.env("env")?);
+    if let Some(dir) = &cwd {
+        c.current_dir(dir);
+    }
+    let (child, output, master) = if pty { spawn_pty(&mut c, size) } else { spawn_pipes(&mut c) }
+        .map_err(|e| spawn_error(e, &argv[0], cwd.as_deref()))?;
+    let here = std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
+    let mut meta = attrs;
+    meta.insert("cwd".into(), json!(cwd.unwrap_or(here)));
+    meta.insert("pty".into(), json!(pty));
+    meta.insert("argv".into(), json!(argv));
+    if let Some(shell) = ran {
+        meta.insert("shell".into(), json!(shell));
+    }
+    let pid = child.id();
+    meta.insert("pid".into(), json!(pid));
+    let opened = streams.open(if pty { "terminal" } else { "process" }, &title, "shell.open", participants, meta);
+    let sid = opened.id.clone();
+    let _ = streams.append(&sid, "status", Body::Json(json!({"state": "started", "pid": pid})), "shell.open");
+    let child = Arc::new(Mutex::new(child));
+    let input = output.input;
+    {
+        let child = child.clone();
+        std::thread::spawn(move || feed(opened.input, input, master, child));
+    }
+    let streams = streams.clone();
+    let mut out = output.read;
+    std::thread::spawn(move || {
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            match out.read(&mut buf) {
+                Ok(0) | Err(_) => break, // EOF, or EIO once a pty's last writer is gone
+                Ok(n) => {
+                    if streams.append(&sid, "bytes", Body::Bytes(buf[..n].to_vec()), "shell.open").is_err() {
+                        signal(&child, "KILL"); // closed under it (stream.close)
+                        break;
+                    }
+                }
+            }
+        }
+        let code = loop {
+            if let Ok(Some(status)) = child.lock().unwrap().try_wait() {
+                break Some(exit_code(&status));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let mut status = Map::new();
+        status.insert("exit".into(), json!(code));
+        streams.close(&sid, "shell.open", status);
+    });
+    Ok(json!({"stream": opened.id}))
+}
+
+struct Pipes {
+    read: Box<dyn Read + Send>,
+    input: Box<dyn Write + Send>,
+}
+
+type Spawned = (std::process::Child, Pipes, Option<Master>);
+
+fn spawn_pipes(c: &mut std::process::Command) -> std::io::Result<Spawned> {
+    let (read, write) = std::io::pipe()?;
+    c.stdin(Stdio::piped()).stdout(write.try_clone()?).stderr(write);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        c.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000);
+    }
+    let mut child = c.spawn()?;
+    let stdin = child.stdin.take().unwrap();
+    Ok((child, Pipes { read: Box::new(read), input: Box::new(stdin) }, None))
+}
+
+#[cfg(unix)]
+type Master = std::os::fd::OwnedFd;
+#[cfg(not(unix))]
+type Master = ();
+
+#[cfg(unix)]
+fn spawn_pty(c: &mut std::process::Command, (cols, rows): (u16, u16)) -> std::io::Result<Spawned> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::process::CommandExt;
+    let (mut m, mut s) = (0, 0);
+    let ws = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
+    if unsafe { libc::openpty(&mut m, &mut s, std::ptr::null_mut(), std::ptr::null(), &ws) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let (master, slave) = unsafe { (OwnedFd::from_raw_fd(m), OwnedFd::from_raw_fd(s)) };
+    c.stdin(Stdio::from(slave.try_clone()?)).stdout(Stdio::from(slave.try_clone()?)).stderr(Stdio::from(slave));
+    // A new session with the pty as its controlling terminal: job control and Ctrl-C work.
+    unsafe {
+        c.pre_exec(|| {
+            if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let child = c.spawn()?;
+    let read = std::fs::File::from(master.try_clone()?);
+    let input = std::fs::File::from(master.try_clone()?);
+    Ok((child, Pipes { read: Box::new(read), input: Box::new(input) }, Some(master)))
+}
+
+#[cfg(not(unix))]
+fn spawn_pty(_: &mut std::process::Command, _: (u16, u16)) -> std::io::Result<Spawned> {
+    Err(std::io::Error::other("pty is not available on Windows workers yet; use pty=false"))
+}
+
+/// Input events to the process until the stream closes.
+fn feed(events: std::sync::mpsc::Receiver<Value>, mut input: Box<dyn Write + Send>, master: Option<Master>, child: Arc<Mutex<std::process::Child>>) {
+    while let Ok(body) = events.recv() {
+        if let Some(text) = body["text"].as_str() {
+            if input.write_all(text.as_bytes()).and_then(|_| input.flush()).is_err() {
+                return; // the process closed its input
+            }
+        } else if let Some(sig) = body["signal"].as_str() {
+            signal(&child, sig);
+        } else if let (Some(cols), Some(rows)) = (body["resize"][0].as_u64(), body["resize"][1].as_u64()) {
+            #[cfg(unix)]
+            if let Some(m) = &master {
+                use std::os::fd::AsRawFd;
+                let ws = libc::winsize { ws_row: rows.min(1000) as u16, ws_col: cols.min(1000) as u16, ws_xpixel: 0, ws_ypixel: 0 };
+                unsafe { libc::ioctl(m.as_raw_fd(), libc::TIOCSWINSZ, &ws) };
+            }
+            #[cfg(not(unix))]
+            let _ = (&master, cols, rows);
+        }
+    }
+}
+
+/// A signal to the process's group; on Windows every signal ends it.
+fn signal(child: &Arc<Mutex<std::process::Child>>, name: &str) {
+    #[cfg(unix)]
+    {
+        let sig = match name {
+            "INT" => libc::SIGINT,
+            "TERM" => libc::SIGTERM,
+            "KILL" => libc::SIGKILL,
+            "QUIT" => libc::SIGQUIT,
+            _ => libc::SIGHUP,
+        };
+        let pid = child.lock().unwrap().id();
+        unsafe { libc::killpg(pid as i32, sig) };
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = name;
+        let _ = child.lock().unwrap().kill();
     }
 }

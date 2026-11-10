@@ -78,6 +78,10 @@ impl Link {
         }
     }
 
+    pub fn band_id(&self) -> BandId {
+        self.band_id
+    }
+
     /// One payload as sealed CHANNEL frames on route 0 (to everyone).
     pub fn frames(&self, payload: &[u8]) -> Vec<Vec<u8>> {
         fragment(payload, MAX_CHUNK_PAYLOAD, &random::<16>())
