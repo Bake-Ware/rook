@@ -82,8 +82,7 @@ class Host:
                  dispatch: Callable | None = None, resolve_secret: Callable[[str], Any] | None = None,
                  store_setting: Callable | None = None, emit: Callable | None = None,
                  data_root: str | Path | None = None, streams: Any = None,
-                 contracts: dict | None = None, may_receive: Callable | None = None,
-                 hook_timeout: float = 30.0, gate: WorkerGate | None = None):
+                 contracts: dict | None = None, hook_timeout: float = 30.0, gate: WorkerGate | None = None):
         self.os_name = os_name or local_os()
         self.hardware = set(hardware)
         self.dispatch = dispatch
@@ -93,7 +92,7 @@ class Host:
         self.data_root = Path(data_root) if data_root else None
         self.streams = streams
         self.contracts = contracts
-        self.scheduler = Scheduler(dispatch=dispatch, timeout=hook_timeout, may_receive=may_receive)
+        self.scheduler = Scheduler(dispatch=dispatch, timeout=hook_timeout)
         self.plugins: dict[str, Plugin] = {}
         self.previous: dict[str, Plugin] = {}    # one kept version per plugin, for rollback
         self._local: dict[str, dict] = {}         # worker-local setting values per plugin

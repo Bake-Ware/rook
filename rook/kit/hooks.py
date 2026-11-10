@@ -20,8 +20,7 @@ their declared ``args``.
 The scheduler never lets a hook take down another: errors are logged and the
 next tick runs. :meth:`Scheduler.stop` cancels a plugin's timers and in-flight
 runs, unsubscribes its events and then runs its ``stop`` hook, so unloading a
-plugin leaves nothing behind. Core's own periodic work (record pruning) uses
-:meth:`Scheduler.every` under an owner name and stops the same way.
+plugin leaves nothing behind.
 """
 
 from __future__ import annotations
@@ -63,16 +62,11 @@ class _Plugin:
 
 
 class Scheduler:
-    """One per process. ``dispatch(cap, args, caller)`` runs ``call:`` targets;
-    ``may_receive(plugin, event)`` filters which events reach ``on`` hooks."""
+    """One per process. ``dispatch(cap, args, caller)`` runs ``call:`` targets."""
 
-    def __init__(self, dispatch: Callable[[str, dict, Caller], Any] | None = None,
-                 timeout: float = 30.0, may_receive: Callable[[str, str], bool] | None = None):
+    def __init__(self, dispatch: Callable[[str, dict, Caller], Any] | None = None, timeout: float = 30.0):
         self.dispatch = dispatch
         self.timeout = timeout
-        # Event grants are hub state: core passes its check here so a plugin's
-        # on: hooks only see events it was granted (default: all).
-        self.may_receive = may_receive
         self._plugins: dict[str, _Plugin] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -146,13 +140,6 @@ class Scheduler:
         except Exception as e:
             return {"error": _message(e)}
 
-    def every(self, owner: str, interval: str | float, fn: Callable[[], Any]) -> None:
-        """Core's own periodic work, e.g. ``every("records", "1d", store.prune)``.
-        ``fn`` may be sync (run in a thread) or async. Stopped by ``stop(owner)``."""
-        self._loop = asyncio.get_running_loop()
-        p = self._plugins.setdefault(owner, _Plugin(owner))
-        self._spawn(p, self._tick(p, parse_duration(interval), _Target(f"every {interval}", func=fn)))
-
     # -- events ---------------------------------------------------------------
 
     def publish(self, event: str, payload: Mapping | None = None, source: str | None = None) -> None:
@@ -165,8 +152,6 @@ class Scheduler:
 
     def _fan_out(self, event: str, payload: dict, source: str | None = None) -> None:
         for p in list(self._plugins.values()):
-            if p.on and self.may_receive is not None and not self.may_receive(p.name, event):
-                continue
             for pattern, target in p.on:
                 if fnmatch.fnmatchcase(event, pattern):
                     args = {"event": event, "payload": payload} if target.func else {}
@@ -202,10 +187,6 @@ class Scheduler:
             if self.dispatch is None:
                 raise KitError("no dispatcher for call hooks")
             res = self.dispatch(target.cap, {**target.args, **args}, caller)
-            return await res if inspect.isawaitable(res) else res
-        if p.make_ctx is None:   # core work
-            res = target.func() if inspect.iscoroutinefunction(target.func) else \
-                await asyncio.to_thread(target.func)
             return await res if inspect.isawaitable(res) else res
         return await invoke(target.func, p.make_ctx(caller), args)
 
