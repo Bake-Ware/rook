@@ -12,7 +12,7 @@ moves over all at once.
 
 1. [How Rook fits together](concepts.md): bands, the hub, workers, caps, people and agents.
 2. [Install and first run](install.md): a hub, a relay, your first sign-in.
-3. [Adding machines](enrollment.md): enrolling a worker, joining another band.
+3. [Adding machines](enrollment.md): enrolling a worker.
 4. [People and presets](people.md): owners, adults, children, guests, agents and tokens.
 5. [Workers and appliances](workers.md): what a worker runs, ceilings, sacred machines, devices without a worker.
 6. [Plugins](plugins.md): installing, updating and rolling back, and every plugin that ships.

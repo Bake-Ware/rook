@@ -1,7 +1,5 @@
-"""Enrollment as real processes (spec 9, 12): an owner hub set up with
-``hub init``, a fresh worker that asks to join and is let in with one tap,
-then a second hub's band joined as a guest under a ceiling the home hub's
-owner set, and left again."""
+"""Enrollment as real processes (spec 3.7): an owner hub set up with
+``hub init``, and a fresh worker that asks to join and is let in with one tap."""
 from __future__ import annotations
 
 import json
@@ -41,14 +39,14 @@ class InitHub:
         return self.door
 
 
-def test_a_fresh_worker_is_let_in_with_one_tap_and_joins_a_second_band_as_a_guest(request, tmp_path):
+def test_a_fresh_worker_is_let_in_with_one_tap(request, tmp_path):
     b = Band(tmp_path)
     request.node._e2e_band = b
     try:
         b.start_relay()
-        home, other = InitHub(b, "home", "bake"), InitHub(b, "other", "ann")
-        assert home.hub_id != other.hub_id and re.fullmatch(r"([A-Z2-7]{4}-){7}[A-Z2-7]{4}", home.recovery)
-        bake, ann = home.start(), other.start()
+        home = InitHub(b, "home", "bake")
+        assert re.fullmatch(r"([A-Z2-7]{4}-){7}[A-Z2-7]{4}", home.recovery)
+        bake = home.start()
         assert bake.get("/recovery-key")["recovery_key"] == home.recovery
 
         # A fresh machine: nothing but a config naming its plugins.
@@ -78,31 +76,5 @@ def test_a_fresh_worker_is_let_in_with_one_tap_and_joins_a_second_band_as_a_gues
         home_ping = until(lambda: (r := bake.call("e2e.ping", {"text": "home"}, worker="laptop"))["ok"] and r,
                           30, "a first call at home")
         assert home_ping["result"]
-
-        # The other hub invites; the home hub's owner accepts with a ceiling of their own.
-        invite = ann.post("/bands/invite", {"role": "guest", "ceiling": {"grants": ["e2e.*"]}})["invite"]
-        joined = bake.post("/memberships", {"worker": "laptop", "invite": invite, "why": WHY,
-                                            "ceiling": {"grants": ["e2e.ping"], "max_risk": "read"}})
-        assert joined["ok"], joined
-        entry = bake.get(f"/journal?call={joined['id']}")["entries"][0]
-        assert entry["args"]["connect"]["psk"].startswith("{{secret:band-psk-")      # never the key itself
-        worker.wait_log("joined band")
-        guest = until(lambda: next((w for w in ann.get("/workers")["workers"] if w["name"] == "laptop"
-                                    and w["online"]), None), 30, "the other hub to see the laptop")
-        assert guest["id"] == wid and guest["owner"] is None
-        # online comes with the announce; the caps once the hub has fetched the manifests
-        until(lambda: "e2e.ping" in (ann.get("/caps?worker=laptop").get("workers", {}).get("laptop") or {})
-              .get("caps", {}), 30, "the other hub to list the laptop's caps")
-        pinged = ann.call("e2e.ping", {"text": "guest"}, worker="laptop")
-        assert pinged["ok"], pinged
-        refused = ann.call("e2e.admin", worker="laptop")
-        assert not refused["ok"] and refused["error"].startswith("denied: ceiling"), refused
-        assert bake.call("e2e.admin", worker="laptop")["ok"]                  # home is untouched
-
-        # Off the band again: the worker leaves it.
-        left = bake.post("/memberships", {"worker": "laptop", "band": invite["band"], "role": "removed", "why": WHY})
-        assert left["ok"], left
-        worker.wait_log("left band")
-        assert bake.call("e2e.ping", {"text": "still home"}, worker="laptop")["ok"]
     finally:
         b.close()

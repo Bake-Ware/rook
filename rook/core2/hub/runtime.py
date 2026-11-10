@@ -37,8 +37,7 @@ What it owns:
 - **Backups** (:mod:`.backup`): ``backup.*`` caps for owners, sealed
   under the recovery key, pushed to the ``backup`` plugin's target.
 - **Enrollment** (:mod:`rook.core2.enroll.hub`): devices signing in as a
-  person, the config bundle, the owner's recovery key, other hubs' invites
-  and the memberships this hub signs for its workers (spec 9, 12).
+  person, the config bundle, the owner's recovery key (spec 3.7).
 - **Doors** (:mod:`.doors`): the ways in. They authenticate a token and call
   the async door API below (:meth:`Hub.call`, :meth:`Hub.workers_view`, ...).
 
@@ -582,12 +581,10 @@ class Hub:
             except ValueError as e:
                 log.warning("bad token entry", extra={"fields": {"error": str(e)}})
 
-    def _secret_step(self, args: Any, caller: Caller, cap: str, target: str | None = None) -> Any:
-        """Dispatch's secret step. Band keys go by enrollment's rule (an
-        owner's own ``core.trust.set``); every other ``{{secret:NAME}}`` is
-        the vault's, and only in a call to a worker: the hub's own caps keep
-        the reference as text, so a page, task or record never stores a value."""
-        args = self.enroll.resolve(args, caller, cap)
+    def _secret_step(self, args: Any, caller: Caller, target: str | None = None) -> Any:
+        """Dispatch's secret step: ``{{secret:NAME}}`` is the vault's, and only
+        in a call to a worker: the hub's own caps keep the reference as text,
+        so a page, task or record never stores a value."""
         if target == self.node:
             return args
         return resolver(self.vault, self.identities.is_owner)(args, caller)

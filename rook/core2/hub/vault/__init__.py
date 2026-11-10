@@ -38,9 +38,6 @@ NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 # A reference anywhere in a string: "Bearer {{secret:gh-token}}" works.
 REF = re.compile(r"\{\{\s*secret:\s*([A-Za-z0-9][A-Za-z0-9._-]{0,63})\s*\}\}")
 LONE_REF = re.compile(r"\s*" + REF.pattern + r"\s*")
-# Band keys belong to enrollment's membership flow (core.trust.set, an owner
-# in person); the vault never hands one out.
-RESERVED = re.compile(r"band-psk-.*")
 
 ROOT = b"rook-vault-v1"          # BLAKE2b personalisation: the root key's vault key
 RECOVERY = b"rook-vault-rk1"     # ... and the recovery key's
@@ -271,8 +268,6 @@ class Vault:
 def _check_name(name: Any) -> None:
     if not isinstance(name, str) or not NAME.fullmatch(name):
         raise VaultError("a secret's name is 1-64 letters, digits, '.', '_' or '-', starting with a letter or digit")
-    if RESERVED.fullmatch(name):
-        raise VaultError("band-psk-* names belong to band memberships")
 
 
 def substitute(value: Any, lookup: Callable[[str], str]) -> Any:
@@ -293,8 +288,6 @@ def resolver(vault: Vault, is_owner: Callable[[str | None], bool]) -> Callable[.
     an unknown name or a locked vault fails the call."""
     def resolve(args: Any, caller) -> Any:
         def lookup(name: str) -> str:
-            if RESERVED.fullmatch(name):
-                raise ValueError("band keys travel only in core.trust.set")
             if not is_owner(caller.person):
                 raise ValueError("only an owner's calls use vault secrets")
             try:

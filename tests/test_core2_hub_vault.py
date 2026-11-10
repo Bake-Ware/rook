@@ -50,7 +50,7 @@ def test_values_are_sealed_and_never_listed(tmp_path):
     assert v.delete("gh-token") and not v.delete("gh-token") and v.names() == []
     with pytest.raises(KeyError):
         v.get("gh-token")
-    for bad in ("", "-x", "a b", "x" * 65, "band-psk-" + "0" * 32):
+    for bad in ("", "-x", "a b", "x" * 65):
         with pytest.raises(VaultError):
             v.set(bad, "v", by="t")
     with pytest.raises(VaultError):
@@ -114,8 +114,6 @@ def test_references_resolve_for_owners_only(tmp_path):
         resolve(args, who(None, "agent:x"))
     with pytest.raises(ValueError, match="nope is not in the vault"):
         resolve({"t": "{{secret:nope}}"}, who("person:bake"))
-    with pytest.raises(ValueError, match="core.trust.set"):
-        resolve({"t": "x{{secret:band-psk-%s}}" % ("0" * 32)}, who("person:bake"))
     locked = Vault(tmp_path / "data")
     with pytest.raises(ValueError, match="locked"):
         resolver(locked, lambda p: True)({"t": "{{secret:gh}}"}, who("person:bake"))

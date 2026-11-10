@@ -235,15 +235,14 @@ def test_an_agents_token_gets_a_join_code_and_the_machine_joins_with_no_tap(tmp_
     assert pending == []
 
 
-def test_who_may_enroll_see_the_recovery_key_and_invite(tmp_path):
+def test_who_may_enroll_and_see_the_recovery_key(tmp_path):
     async def go():
         hub, tok = await started(tmp_path)
         try:
             out = {}
             for who in ("bake", "ann", "kid", "claude", "claude-for-bake", "root-for-bake"):
                 out[who] = [(await http(hub, m, p, b, tok[who])).get("error")
-                            for m, p, b in (("POST", "/enroll/code", {}), ("GET", "/recovery-key", None),
-                                            ("POST", "/bands/invite", {"ceiling": {"grants": ["e2e.*"]}}))]
+                            for m, p, b in (("POST", "/enroll/code", {}), ("GET", "/recovery-key", None))]
             key = await http(hub, "GET", "/recovery-key", None, tok["bake"])
             open_ = await http(hub, "POST", "/enroll/ask", {"name": "rook"})
             noauth = await http(hub, "POST", "/enroll/code", {})
@@ -252,12 +251,12 @@ def test_who_may_enroll_see_the_recovery_key_and_invite(tmp_path):
             await hub.stop()
     out, key, open_, noauth, hub = run(go())
     alone = "denied: only an owner, signed in as themselves"
-    assert out["bake"] == [None, None, None]
-    assert out["ann"] == [None, alone, alone]
-    assert out["kid"] == [None, alone, alone]
-    assert out["claude"] == ["denied: setting up a machine needs a person", alone, alone]
-    assert out["claude-for-bake"] == [None, alone, alone]       # an agent with a token joins machines
-    assert out["root-for-bake"] == [None, alone, alone]
+    assert out["bake"] == [None, None]
+    assert out["ann"] == [None, alone]
+    assert out["kid"] == [None, alone]
+    assert out["claude"] == ["denied: setting up a machine needs a person", alone]
+    assert out["claude-for-bake"] == [None, alone]       # an agent with a token joins machines
+    assert out["root-for-bake"] == [None, alone]
     assert key["recovery_key"] == recovery_key(hub.data) == \
         (hub.data / "keys" / "recovery.key").read_text().strip()
     assert len(key["recovery_key"]) == 39 and key["recovery_key"].count("-") == 7
@@ -313,55 +312,6 @@ def test_unpolled_requests_go_fast_so_a_flood_cannot_hold_the_queue(tmp_path):
         assert [(d["name"], d["address"], d["age"]) for d in pending] == [("laptop", "10.0.0.7", int(UNPOLLED_SECS * 4 / 3))]
         return await e.ask({"name": "tablet"})
     assert run(go())["ok"]
-
-
-def test_membership_requests_are_checked_and_band_keys_resolve_for_owners_only(tmp_path):
-    async def go():
-        hub, tok = await started(tmp_path)
-        other, otok = await started(tmp_path / "other", transport={"bands": [{"psk": "the-other-band-key-abcdef",
-                                                                             "relay": "10.0.0.2:7474"}]})
-        try:
-            invite = (await http(other, "POST", "/bands/invite", {"ceiling": {"grants": ["e2e.ping"]}},
-                                 otok["bake"]))["invite"]
-            own = (await http(hub, "POST", "/bands/invite", {"role": "co-owner"}, tok["bake"]))["invite"]
-            out = {
-                "kid": await http(hub, "POST", "/memberships", {"worker": "x", "invite": invite}, tok["kid"]),
-                "unknown": await http(hub, "POST", "/memberships", {"worker": "nope", "invite": invite}, tok["bake"]),
-            }
-            hub.dispatcher.workers["w" * 32] = __import__("rook.core2.hub.dispatch", fromlist=["x"]).Worker(
-                "w" * 32, "kaiju", BAND, {}, {"grants": ["*"]})
-            for name, body in (("own", {"invite": own}), ("forged", {"invite": {**invite, "hub": "0" * 16}}),
-                               ("badpsk", {"invite": {**invite, "connect": {**invite["connect"], "psk": "x"}}}),
-                               ("noband", {"band": "1" * 32, "role": "guest", "ceiling": {"grants": []}}),
-                               ("homerole", {"role": "guest"}), ("noceiling", {"invite": {**invite, "ceiling": None}})):
-                out[name] = await http(hub, "POST", "/memberships", {"worker": "kaiju", "why": "test", **body},
-                                       tok["bake"])
-            ref = "{{secret:band-psk-%s}}" % invite["band"]
-            resolved = hub.enroll.resolve({"connect": {"psk": ref}, "x": [ref, "keep"]}, OWNER, "core.trust.set")
-            with pytest.raises(ValueError, match="only an owner"):
-                hub.enroll.resolve({"psk": ref}, Caller(person="person:ann"), "core.trust.set")
-            # an agent acting for the owner, or any other cap, never gets a band key
-            with pytest.raises(ValueError, match="only an owner"):
-                hub.enroll.resolve({"psk": ref}, Caller(person=OWNER.person, agent="agent:claude"), "core.trust.set")
-            with pytest.raises(ValueError, match="only in core.trust.set"):
-                hub.enroll.resolve({"argv": ["echo", ref]}, OWNER, "shell.exec")
-            return invite, out, resolved
-        finally:
-            await other.stop()
-            await hub.stop()
-    invite, out, resolved = run(go())
-    assert invite["role"] == "guest" and invite["connect"] == {"psk": "the-other-band-key-abcdef",
-                                                               "relay": "10.0.0.2:7474"}
-    assert out["kid"]["error"].startswith("denied")
-    assert out["unknown"]["error"] == "unknown worker: nope"
-    assert out["own"]["error"] == "bad invite: it is for this hub's own band"
-    assert out["forged"]["error"] == "bad invite: its hub is not key_id(root)"
-    assert out["badpsk"]["error"] == "bad invite: its PSK is for another band"
-    assert out["noband"]["error"].startswith("unknown band")
-    assert out["homerole"]["error"].endswith("the role is home")
-    assert "ceiling" in out["noceiling"]["error"]
-    # the bad-ceiling invite was still a valid invite: its band is known now, its key resolves
-    assert resolved == {"connect": {"psk": "the-other-band-key-abcdef"}, "x": ["the-other-band-key-abcdef", "keep"]}
 
 
 def test_local_network_discovery_finds_the_hub(tmp_path):

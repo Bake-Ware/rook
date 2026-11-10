@@ -20,7 +20,7 @@ agent, or an agent for a person).
                           bearer token, ``hmac``/``token`` a signature or token under the
                           route's secret (HubPlugins.route_allows), ``none`` anyone
 
-Enrollment (spec 12; rook.core2.enroll.hub):
+Enrollment (spec 3.7; rook.core2.enroll.hub):
 
     POST /enroll/code     {}  a one-time code and its QR text, for a device to claim (also hub.join_code)
     POST /enroll/claim    {code, name}       no token: the device's config bundle, once
@@ -28,8 +28,6 @@ Enrollment (spec 12; rook.core2.enroll.hub):
     POST /enroll/poll     {ticket}           no token: pending, refused, or the bundle (once)
                           (someone lets it in on the Workers page: hub.joins, hub.join)
     GET  /recovery-key    owners, in person: the recovery key
-    POST /bands/invite    {role?, ceiling?}  owners, in person: an invite to this hub's band
-    POST /memberships     {worker, why, invite? | band?, role?, ceiling?}  owners: a worker's other bands
 
 Replies are JSON objects with ``ok``; a refused call is still 200 (the body
 says why). Bind to localhost: put TLS in front before exposing it.
@@ -202,8 +200,6 @@ class _Handler(BaseHTTPRequestHandler):
             ("POST", "/plugins/push"): lambda: hub.push_plugin(caller, body, self.door.name),
             ("POST", "/enroll/code"): lambda: hub.enroll.new_code(caller, self._base()),
             ("GET", "/recovery-key"): lambda: hub.enroll.recovery(caller),
-            ("POST", "/bands/invite"): lambda: hub.enroll.invite(caller, body),
-            ("POST", "/memberships"): lambda: hub.enroll.membership(caller, body, self.door.name),
         }
         if (method, path) in routes:
             return 200, self._run(routes[(method, path)]())

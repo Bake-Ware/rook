@@ -52,10 +52,10 @@ and macOS is not built yet.
 ## Ceilings
 
 A **ceiling** is the most a hub may ever do on a worker, kept on the
-worker and signed by its home hub. Your home hub's ceiling is "everything"
-until you narrow it; other bands get only the ceiling you set when you let
-them in ([Adding machines](enrollment.md#joining-another-band)). A ceiling
-is a rights object:
+worker. The Python worker keeps one per hub it trusts (its home hub's is
+"everything") and announces it; the Rust worker has none. Nothing on the
+hub changes ceilings any more: they are dormant until the hardening pass.
+A ceiling is a rights object:
 
 ```json
 {"grants": ["tv.*", "light.*@downstairs-*"], "max_risk": "write", "effects": ["physical"]}

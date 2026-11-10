@@ -29,7 +29,7 @@ database:
   and returns the reply. TODO(castling:wiring): the band connection.
 - ``journal(entry)``: stores an entry; the store assigns ``id``, ``chain``,
   ``prev`` and ``hash`` (11.3). TODO(castling:journal): journal_store.append.
-- ``secrets(args, caller, cap, target) -> args``: substitutes secret
+- ``secrets(args, caller, target) -> args``: substitutes secret
   references for the wire; the gates and the journal only ever see the
   unresolved args, and values come back as ``[redacted]`` in the call's
   error and result. The journal also redacts args the cap declares
@@ -471,7 +471,7 @@ class Dispatcher:
         answers becomes the known-good route."""
         cid = entry["call"]
         try:
-            args = self.secrets(call.args, caller, call.cap, w.id) if self.secrets else call.args
+            args = self.secrets(call.args, caller, w.id) if self.secrets else call.args
             ahash = wire.args_hash(args)
         except Exception as e:
             entry.update(ok=False, error=f"secret: {e}")

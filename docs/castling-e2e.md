@@ -84,13 +84,6 @@ curl -s -H "$H" -d '{"worker":"laptop","plugin":"tv","why":"Install tv."}' local
 curl -s -H "$H" -d '{"worker":"laptop","cap":"core.plugin.rollback","args":{"plugin":"tv"},"why":"Back a version."}' localhost:8740/call
 ```
 
-Another hub's band, as a guest (spec 9.1): its owner makes an invite
-(`POST /bands/invite {"role": "guest", "ceiling": {"grants": ["e2e.*"]}}`),
-the home hub's owner accepts it for a worker with a ceiling of their own
-(`POST /memberships {"worker": "laptop", "invite": {…}, "ceiling": {…}, "why": "…"}`)
-and takes it off again with `{"worker", "band", "role": "removed", "why"}`.
-`{"worker", "role": "home", "ceiling"}` narrows the home band's ceiling.
-
 More tokens: `python -m rook.core2.hub --config hub/hub.yaml token --person me --agent claude-code`
 (add the agent under `agents:` first). `... recovery-key` shows the owner's recovery key again.
 

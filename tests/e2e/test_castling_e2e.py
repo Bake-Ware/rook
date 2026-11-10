@@ -208,33 +208,6 @@ def test_a_replayed_ticket_is_refused_by_the_worker(band):
     assert [r["text"] for r in [e["args"] for e in band.owner.get("/journal?cap=e2e.ping")["entries"]]] == ["once"]
 
 
-def test_the_worker_ceiling_holds_even_when_the_hub_grants_more(band):
-    """The home hub narrows its own ceiling on the worker (a signed
-    membership through core.trust.set). The hub then refuses what's outside
-    it, and the worker refuses a validly signed hub ticket for it too."""
-    narrowed = band.owner.post("/memberships", {"worker": "e2e-worker", "role": "home", "why": WHY,
-                                                "ceiling": {"grants": ["e2e.ping"]}})
-    assert narrowed["ok"], narrowed
-    # the announce carries the new ceiling; the hub's dispatch applies it
-    via_hub = until(lambda: (r := band.owner.call("e2e.admin")) and not r["ok"] and r, 20, "the narrowed announce")
-    assert via_hub["error"].startswith("denied: ceiling: "), via_hub
-    assert band.owner.call("e2e.ping", {"text": "still"})["ok"]
-
-    async def straight_to_the_worker(t):
-        cid = secrets.token_hex(16)
-        req = {"id": cid, "cap": "e2e.admin", "target": band.worker_id, "args": {},
-               "ticket": band.ticket("e2e.admin", {}, cid)}
-        return await t.request(band.band, req, 10)
-    direct = on_band(band, straight_to_the_worker)
-    assert direct["ok"] is False and direct["error"] == "denied by worker: outside_ceiling", direct
-
-    # the home hub widens it again; core.trust.set is never outside a home ceiling
-    widened = band.owner.post("/memberships", {"worker": "e2e-worker", "role": "home", "why": WHY})
-    assert widened["ok"], widened
-    band.wait_caps("e2e.admin")
-    assert band.owner.call("e2e.admin")["ok"]
-
-
 def test_a_destructive_cap_is_held_for_the_person(band):
     held = band.owner.call("e2e.wipe")
     assert held["held"] and not held["ok"] and held["error"] == "held: destructive", held
