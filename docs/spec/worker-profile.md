@@ -125,7 +125,7 @@ A worker MAY do any of these; the hub requires none of them.
 | Elevation and leases (`core.elevate`, `core.lease.drop`) | 7, 13 |
 | Several bands, memberships, the trust store (`core.trust.*`) | 9, 13 |
 | Streams (terminals, processes): caps that answer `{"stream": id}` | 13, `rook/core2/builtin/stream.yaml` |
-| Pushed plugins and self-update (`plugin.sig`, `release.sig`) | 13 |
+| Pushed plugins and self-update (`plugin.sig`, `release.sig`); a worker that runs one built file names it in `facts.artifact` and takes only core releases that hold it | 13, docs/castling-updates.md |
 | Appliances behind a delegate (`appliance`, `carry`) | 5.7, 6.1 |
 | Transport extensions: `route`, `drop`, `z`, `ack` (listed in `features`) | 2.1 |
 | Version negotiation beyond stating `core` | 2.2 |
