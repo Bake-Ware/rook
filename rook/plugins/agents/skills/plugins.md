@@ -175,23 +175,25 @@ worker's cap as the hub would (see `tests/plugins/test_port_battery.py`).
 
 ## 5. Put it on the hub
 
-The hub loads its plugins at start, one folder per plugin, from its
-library (`library:` in its `hub.yaml`, relative to that file). No cap loads
-a plugin into a running hub. With a worker on the hub's machine (the
-installers put one there):
+The hub's plugins live in its library (`library:` in its `hub.yaml`,
+relative to that file), one folder per plugin. With a worker on the hub's
+machine (the installers put one there):
 
-1. Find the hub: `shell.exec {cmd: "systemctl --user list-units '*hub*'"}`,
-   then `systemctl --user cat <unit>`: its `ExecStart` is
-   `<python> -m rook.core2.hub --config <hub.yaml>`. `file.read` that
-   config for `library:`.
+1. `hub.manifests` gives the folder of a plugin already loaded, so its
+   parent is the library. Else find the hub: `shell.exec {cmd:
+   "systemctl --user list-units '*hub*'"}`, then `systemctl --user cat
+   <unit>`: its `ExecStart` is `<python> -m rook.core2.hub --config
+   <hub.yaml>`. `file.read` that config for `library:`.
 2. `file.write {path, content, create_parents: true}` each file into
    `<library>/<plugin>/`.
-3. `shell.exec` the validator with that same `<python>`.
-4. Restart the unit (`systemctl --user restart <unit>`). That ends every
-   call in flight, the one asking included. A plugin with errors is
-   skipped and logged; the hub still starts.
-5. `hub.status` lists the plugin; its caps show on every worker it fits.
-   Bump `version` for every later change.
+3. `hub.load {plugin}` on `rook`. The hub checks the folder and loads it
+   while it runs: its caps, pages, records and jobs, and the caps it gives
+   workers, at once. A loaded version is replaced (its hooks stop). A
+   folder with errors is refused with the validator's words, and the old
+   version runs on; fix and call again. A record type can only gain
+   fields: changing a field's type is refused the same way.
+4. Bump `version` for every later change, write the files, `hub.load`
+   again. Only taking a plugin out of the library needs a hub restart.
 
 ## Keep it small
 

@@ -20,9 +20,12 @@ and finds it in kaiju's caps; nothing is installed on kaiju
 
 The hub's **library** (`library:` in `hub.yaml`) is the folder of plugins
 it trusts, one folder per plugin. At start the hub validates each one,
-refuses any with errors (they are logged), and runs their hub parts. The
-library is read again at every push, so a new version is just new files
-there.
+refuses any with errors (they are logged), and runs their hub parts.
+`hub.load {plugin}` does the same for one folder while the hub runs: a new
+plugin, or a new version in place of the loaded one (its hooks stop; a
+folder with errors is refused with the reasons and the old version runs
+on). Only taking a plugin out of the library needs a restart. The library
+is read again at every push, so a new version is just new files there.
 
 ## Installing a plugin on a worker
 
