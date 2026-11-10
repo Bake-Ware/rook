@@ -102,7 +102,8 @@ The hub loads every plugin folder in its **library** (`library:` in
 `hub.yaml`) at start; `hub.load` loads one added later. Point it at the plugins you want, for example
 symlinks into `rook/plugins/`:
 
-- `agents` and `agents-claude-code` or `agents-codex`: the house agent and the
+- `agents` and `agents-claude-code`, `agents-codex` or `agents-opencode`
+  (set its `worker` to the machine its CLI runs on): the house agent and the
   other ready-made agents ([Agents](agents.md)); `attention`: the house
   agent's attention pass over what tries to reach you (needs `jobs`; off
   until you say yes when guided setup asks).

@@ -98,7 +98,8 @@ its manifest, files in `shell/`): the chat dock beside every page with
 Rookie, its avatar, the work pane and the guided first run, and the look
 pickers on Your account. `agent.site` is what the dock needs: the agent in
 it (the `dock` setting, `house`; blank: no dock), whether it can answer yet
-(a worker serving `agent.backend` is online), your look and feel and
+(a worker serving `agent.backend` is online, or for a hub-run backend
+with a `worker` setting, that worker), your look and feel and
 whether first-run setup is done. `agent.setup {done?}` reads or sets that
 (kept in the plugin's data as `setup.json`, which the installer writes
 with `done: false`; none: done), with `install`, the facts the installer
