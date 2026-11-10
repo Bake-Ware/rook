@@ -31,17 +31,38 @@ pub fn tcp(a: Args<'_>, streams: &Arc<Streams>, participants: Vec<String>, mut a
     let writer = sock.try_clone().map_err(|e| e.to_string())?;
     attrs.insert("host".into(), json!(host));
     attrs.insert("port".into(), json!(port));
-    Ok(pump(streams, "socket", &format!("{host}:{port}"), "net.open", participants, attrs, Box::new(sock), Box::new(writer)))
+    Ok(pump(
+        streams,
+        "socket",
+        &format!("{host}:{port}"),
+        "net.open",
+        participants,
+        attrs,
+        Box::new(sock),
+        Box::new(writer),
+    ))
 }
 
 pub fn serial(a: Args<'_>, streams: &Arc<Streams>, participants: Vec<String>, mut attrs: Map<String, Value>) -> Reply {
     let port = a.need("port")?;
     let baud = a.int("baud", 115200)?;
-    let dev = serialport::new(&port, baud as u32).timeout(POLL).open().map_err(|e| format!("{port}: {e}"))?;
+    let dev = serialport::new(&port, baud as u32)
+        .timeout(POLL)
+        .open()
+        .map_err(|e| format!("{port}: {e}"))?;
     let writer = dev.try_clone().map_err(|e| format!("{port}: {e}"))?;
     attrs.insert("port".into(), json!(port));
     attrs.insert("baud".into(), json!(baud));
-    Ok(pump(streams, "serial", &port, "serial.open", participants, attrs, Box::new(dev), Box::new(writer)))
+    Ok(pump(
+        streams,
+        "serial",
+        &port,
+        "serial.open",
+        participants,
+        attrs,
+        Box::new(dev),
+        Box::new(writer),
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -82,11 +103,19 @@ fn pump(
             match r.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => {
-                    if streams.append(&sid, "bytes", Body::Bytes(buf[..n].to_vec()), producer).is_err() {
+                    if streams
+                        .append(&sid, "bytes", Body::Bytes(buf[..n].to_vec()), producer)
+                        .is_err()
+                    {
                         break;
                     }
                 }
-                Err(e) if matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock | ErrorKind::Interrupted) => {
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        ErrorKind::TimedOut | ErrorKind::WouldBlock | ErrorKind::Interrupted
+                    ) =>
+                {
                     if stop.load(Ordering::Relaxed) {
                         break;
                     }

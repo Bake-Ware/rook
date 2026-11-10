@@ -49,7 +49,11 @@ impl Args<'_> {
             None => Ok(None),
             Some(Value::Array(a)) => a
                 .iter()
-                .map(|v| v.as_str().map(String::from).ok_or(format!("{k} must be a list of strings")))
+                .map(|v| {
+                    v.as_str()
+                        .map(String::from)
+                        .ok_or(format!("{k} must be a list of strings"))
+                })
                 .collect::<Result<_, _>>()
                 .map(Some),
             Some(_) => Err(format!("{k} must be a list of strings")),

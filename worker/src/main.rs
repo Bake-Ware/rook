@@ -5,7 +5,8 @@
 
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: rook-worker --config <worker.yaml> [enroll <hub> [--code CODE] [--name NAME] [--insecure] [--force]]";
+const USAGE: &str =
+    "usage: rook-worker --config <worker.yaml> [enroll <hub> [--code CODE] [--name NAME] [--insecure] [--force]]";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -57,13 +58,29 @@ fn enroll(config: &std::path::Path, args: &[String]) -> i32 {
             _ => fail(USAGE, 2),
         }
     }
-    let Some(hub) = hub else { fail("enroll: give the hub's address (or the text of its QR)", 2) };
+    let Some(hub) = hub else {
+        fail("enroll: give the hub's address (or the text of its QR)", 2)
+    };
     let rt = tokio::runtime::Runtime::new().expect("a tokio runtime");
     let say = |s: &str| println!("{s}");
-    match rt.block_on(rook_worker::enroll::enroll(config, &hub, code.as_deref(), name.as_deref(), insecure, force, &say)) {
+    match rt.block_on(rook_worker::enroll::enroll(
+        config,
+        &hub,
+        code.as_deref(),
+        name.as_deref(),
+        insecure,
+        force,
+        &say,
+    )) {
         Ok(e) => {
-            println!("Enrolled {} ({}) with hub {}, owned by {}.\nStart it:  rook-worker --config {}",
-                     e.name, e.worker_id, e.hub, e.owner.as_str().unwrap_or("?"), e.config.display());
+            println!(
+                "Enrolled {} ({}) with hub {}, owned by {}.\nStart it:  rook-worker --config {}",
+                e.name,
+                e.worker_id,
+                e.hub,
+                e.owner.as_str().unwrap_or("?"),
+                e.config.display()
+            );
             0
         }
         Err(e) => {

@@ -29,12 +29,20 @@ pub struct Enrolled {
 pub fn parse_target(text: &str) -> Result<(String, Option<String>, Option<String>), String> {
     if let Some(query) = text.strip_prefix("rook://enroll").map(|q| q.trim_start_matches('?')) {
         let get = |k: &str| {
-            query.split('&').find_map(|kv| kv.split_once('=').filter(|(n, _)| *n == k).map(|(_, v)| decode(v)))
+            query
+                .split('&')
+                .find_map(|kv| kv.split_once('=').filter(|(n, _)| *n == k).map(|(_, v)| decode(v)))
         };
-        let url = get("url").filter(|u| !u.is_empty()).ok_or("the QR has no hub address")?;
+        let url = get("url")
+            .filter(|u| !u.is_empty())
+            .ok_or("the QR has no hub address")?;
         return Ok((url.trim_end_matches('/').into(), get("code"), get("hub")));
     }
-    let url = if text.contains("://") { text.to_string() } else { format!("https://{text}") };
+    let url = if text.contains("://") {
+        text.to_string()
+    } else {
+        format!("https://{text}")
+    };
     Ok((url.trim_end_matches('/').into(), None, None))
 }
 
@@ -61,16 +69,23 @@ pub fn check_url(url: &str, insecure: bool) -> Result<(), String> {
     if url.starts_with("https://") || insecure {
         return Ok(());
     }
-    let Some(rest) = url.strip_prefix("http://") else { return Err(format!("not a hub address: {url}")) };
+    let Some(rest) = url.strip_prefix("http://") else {
+        return Err(format!("not a hub address: {url}"));
+    };
     let host = rest.split(['/', '?']).next().unwrap_or("");
-    let host = host.rsplit_once(':').map_or(host, |(h, p)| if p.chars().all(|c| c.is_ascii_digit()) { h } else { host });
+    let host = host.rsplit_once(':').map_or(
+        host,
+        |(h, p)| if p.chars().all(|c| c.is_ascii_digit()) { h } else { host },
+    );
     let host = host.trim_matches(['[', ']']);
     let loopback = host == "localhost" || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
     if loopback {
         Ok(())
     } else {
-        Err(format!("{url} is plain http: the band key would cross the network in the clear. \
-                     Use the hub's https address, or --insecure if you mean it"))
+        Err(format!(
+            "{url} is plain http: the band key would cross the network in the clear. \
+                     Use the hub's https address, or --insecure if you mean it"
+        ))
     }
 }
 
@@ -83,7 +98,10 @@ async fn post(client: &reqwest::Client, url: &str, path: &str, body: Value) -> R
         .await
         .map_err(|e| format!("can't reach the hub at {url}: {e}"))?;
     let status = r.status();
-    let text = r.text().await.map_err(|e| format!("can't reach the hub at {url}: {e}"))?;
+    let text = r
+        .text()
+        .await
+        .map_err(|e| format!("can't reach the hub at {url}: {e}"))?;
     match serde_json::from_str::<Value>(&text) {
         Ok(Value::Object(mut m)) => {
             if !status.is_success() {
@@ -97,7 +115,13 @@ async fn post(client: &reqwest::Client, url: &str, path: &str, body: Value) -> R
 }
 
 /// Claim `code`, or ask and wait to be let in; the checked bundle.
-pub async fn sign_in(url: &str, name: &str, code: Option<&str>, pinned: Option<&str>, say: &(dyn Fn(&str) + Sync)) -> Result<Value, String> {
+pub async fn sign_in(
+    url: &str,
+    name: &str,
+    code: Option<&str>,
+    pinned: Option<&str>,
+    say: &(dyn Fn(&str) + Sync),
+) -> Result<Value, String> {
     let client = reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(Duration::from_secs(30))
@@ -111,10 +135,15 @@ pub async fn sign_in(url: &str, name: &str, code: Option<&str>, pinned: Option<&
         if start["ok"] != true {
             return Err(format!("the hub refused: {}", start["error"].as_str().unwrap_or("?")));
         }
-        let ticket = start["ticket"].as_str().ok_or("the hub's answer has no ticket")?.to_string();
+        let ticket = start["ticket"]
+            .as_str()
+            .ok_or("the hub's answer has no ticket")?
+            .to_string();
         let hub = start["hub"].as_str().unwrap_or("?");
         pinned = pinned.or(Some(hub.to_string()));
-        say(&format!("{name} is waiting for someone to let this machine in on the Workers page of hub {hub}."));
+        say(&format!(
+            "{name} is waiting for someone to let this machine in on the Workers page of hub {hub}."
+        ));
         let deadline = Instant::now() + Duration::from_secs(CODE_SECS);
         loop {
             let got = post(&client, url, "/enroll/poll", json!({"ticket": ticket})).await?;
@@ -153,14 +182,21 @@ fn check_bundle(b: &Value, pinned: Option<&str>) -> Result<Value, String> {
         return Err("the bundle has no worker id".into());
     }
     if pinned.is_some_and(|p| p != hub_id) {
-        return Err(format!("the bundle is from hub {hub_id}, not {}: refused", pinned.unwrap()));
+        return Err(format!(
+            "the bundle is from hub {hub_id}, not {}: refused",
+            pinned.unwrap()
+        ));
     }
     Ok(b.clone())
 }
 
 fn load(config: &Path) -> Result<Yaml, String> {
     match fs::read_to_string(config) {
-        Ok(text) => Ok(YamlLoader::load_from_str(&text).map_err(|e| format!("{}: {e}", config.display()))?.into_iter().next().unwrap_or(Yaml::Null)),
+        Ok(text) => Ok(YamlLoader::load_from_str(&text)
+            .map_err(|e| format!("{}: {e}", config.display()))?
+            .into_iter()
+            .next()
+            .unwrap_or(Yaml::Null)),
         Err(_) => Ok(Yaml::Null),
     }
 }
@@ -175,20 +211,33 @@ pub fn home_of(config: &Path) -> Result<Option<String>, String> {
     let raw = load(config)?;
     let anchor = base(config).join(raw["anchor"].as_str().unwrap_or("anchor.json"));
     Ok(fs::read_to_string(anchor).ok().map(|t| {
-        serde_json::from_str::<Value>(&t).ok().and_then(|v| v["hub"].as_str().map(String::from)).unwrap_or_else(|| "?".into())
+        serde_json::from_str::<Value>(&t)
+            .ok()
+            .and_then(|v| v["hub"].as_str().map(String::from))
+            .unwrap_or_else(|| "?".into())
     }))
 }
 
 fn name_ok(n: &str) -> bool {
     let b = n.as_bytes();
-    !b.is_empty() && b.len() <= 63 && b[0].is_ascii_alphanumeric()
-        && b.iter().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(c)) && n != "rook"
+    !b.is_empty()
+        && b.len() <= 63
+        && b[0].is_ascii_alphanumeric()
+        && b.iter().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(c))
+        && n != "rook"
 }
 
 pub fn default_name(config: &Path) -> String {
     let raw = load(config).unwrap_or(Yaml::Null);
-    let name = raw["name"].as_str().map(String::from).unwrap_or_else(|| crate::config::hostname().split('.').next().unwrap_or("").to_string());
-    if name_ok(&name) { name } else { "worker".into() }
+    let name = raw["name"]
+        .as_str()
+        .map(String::from)
+        .unwrap_or_else(|| crate::config::hostname().split('.').next().unwrap_or("").to_string());
+    if name_ok(&name) {
+        name
+    } else {
+        "worker".into()
+    }
 }
 
 fn write(path: &Path, text: &str, mode: u32) -> Result<(), String> {
@@ -216,47 +265,103 @@ pub fn install(config: &Path, bundle: &Value, url: &str, force: bool) -> Result<
         _ => return Err(format!("{}: not a mapping", config.display())),
     };
     let key = |k: &str| Yaml::String(k.into());
-    let data_rel = raw.get(&key("data")).and_then(Yaml::as_str).unwrap_or("data").to_string();
-    let anchor_rel = raw.get(&key("anchor")).and_then(Yaml::as_str).unwrap_or("anchor.json").to_string();
+    let data_rel = raw
+        .get(&key("data"))
+        .and_then(Yaml::as_str)
+        .unwrap_or("data")
+        .to_string();
+    let anchor_rel = raw
+        .get(&key("anchor"))
+        .and_then(Yaml::as_str)
+        .unwrap_or("anchor.json")
+        .to_string();
     let (data, anchor) = (base(config).join(&data_rel), base(config).join(&anchor_rel));
     if anchor.exists() {
         if !force {
             return Err(already(home_of(config)?));
         }
-        let memberships = raw.get(&key("memberships")).and_then(Yaml::as_str).map_or(data.join("memberships.json"), |m| base(config).join(m));
-        for old in [memberships, data.join("bands.json"), data.join("services.json"), anchor.clone()] {
+        let memberships = raw
+            .get(&key("memberships"))
+            .and_then(Yaml::as_str)
+            .map_or(data.join("memberships.json"), |m| base(config).join(m));
+        for old in [
+            memberships,
+            data.join("bands.json"),
+            data.join("services.json"),
+            anchor.clone(),
+        ] {
             let _ = fs::remove_file(old);
         }
     }
     let (hub, band) = (&bundle["hub"], &bundle["band"]);
-    write(&anchor, &format!("{}\n", json!({"hub": hub["hub_id"], "root": hub["root"], "band": band["id"]})), 0o644)?;
-    let link: serde_json::Map<String, Value> =
-        ["psk", "relay", "ws_url"].iter().filter(|k| band[**k].is_string()).map(|k| (k.to_string(), band[*k].clone())).collect();
+    write(
+        &anchor,
+        &format!(
+            "{}\n",
+            json!({"hub": hub["hub_id"], "root": hub["root"], "band": band["id"]})
+        ),
+        0o644,
+    )?;
+    let link: serde_json::Map<String, Value> = ["psk", "relay", "ws_url"]
+        .iter()
+        .filter(|k| band[**k].is_string())
+        .map(|k| (k.to_string(), band[*k].clone()))
+        .collect();
     let band_id = band["id"].as_str().unwrap_or_default();
-    write(&data.join("bands.json"), &serde_json::to_string_pretty(&json!({band_id: link})).unwrap(), 0o600)?;
+    write(
+        &data.join("bands.json"),
+        &serde_json::to_string_pretty(&json!({band_id: link})).unwrap(),
+        0o600,
+    )?;
     if bundle["services"].as_object().is_some_and(|s| !s.is_empty()) {
-        write(&data.join("services.json"), &serde_json::to_string_pretty(&bundle["services"]).unwrap(), 0o600)?;
+        write(
+            &data.join("services.json"),
+            &serde_json::to_string_pretty(&bundle["services"]).unwrap(),
+            0o600,
+        )?;
     }
     let url = hub["url"].as_str().filter(|u| !u.is_empty()).unwrap_or(url);
     let enrollment = json!({"hub": hub["hub_id"], "url": url, "owner": bundle["owner"], "at": crate::now() as u64});
-    write(&data.join("enrollment.json"), &serde_json::to_string_pretty(&enrollment).unwrap(), 0o600)?;
+    write(
+        &data.join("enrollment.json"),
+        &serde_json::to_string_pretty(&enrollment).unwrap(),
+        0o600,
+    )?;
     raw.insert(key("data"), Yaml::String(data_rel));
     raw.insert(key("anchor"), Yaml::String(anchor_rel));
-    raw.insert(key("name"), Yaml::String(bundle["name"].as_str().unwrap_or_default().into()));
-    raw.insert(key("worker_id"), Yaml::String(bundle["worker_id"].as_str().unwrap_or_default().into()));
+    raw.insert(
+        key("name"),
+        Yaml::String(bundle["name"].as_str().unwrap_or_default().into()),
+    );
+    raw.insert(
+        key("worker_id"),
+        Yaml::String(bundle["worker_id"].as_str().unwrap_or_default().into()),
+    );
     let mut out = String::new();
-    YamlEmitter::new(&mut out).dump(&Yaml::Hash(raw)).map_err(|e| e.to_string())?;
+    YamlEmitter::new(&mut out)
+        .dump(&Yaml::Hash(raw))
+        .map_err(|e| e.to_string())?;
     write(config, &format!("{out}\n"), 0o600)
 }
 
 fn already(hub: Option<String>) -> String {
-    format!("this worker's home is already hub {}. Enrolling again (--force) makes the new hub \
-             its home and drops every other band", hub.unwrap_or_else(|| "?".into()))
+    format!(
+        "this worker's home is already hub {}. Enrolling again (--force) makes the new hub \
+             its home and drops every other band",
+        hub.unwrap_or_else(|| "?".into())
+    )
 }
 
 /// The whole enrollment: find the hub, sign in, write the files.
-pub async fn enroll(config: &Path, target: &str, code: Option<&str>, name: Option<&str>, insecure: bool,
-                    force: bool, say: &(dyn Fn(&str) + Sync)) -> Result<Enrolled, String> {
+pub async fn enroll(
+    config: &Path,
+    target: &str,
+    code: Option<&str>,
+    name: Option<&str>,
+    insecure: bool,
+    force: bool,
+    say: &(dyn Fn(&str) + Sync),
+) -> Result<Enrolled, String> {
     let (url, qr_code, pinned) = parse_target(target)?;
     check_url(&url, insecure)?;
     if !force {
@@ -282,12 +387,21 @@ mod tests {
 
     #[test]
     fn targets_and_addresses() {
-        assert_eq!(parse_target("rook.example").unwrap(), ("https://rook.example".into(), None, None));
-        let (url, code, hub) = parse_target("rook://enroll?url=https%3A%2F%2Frook.example%2F&code=ab-c_1&hub=19c7").unwrap();
-        assert_eq!((url.as_str(), code.as_deref(), hub.as_deref()), ("https://rook.example", Some("ab-c_1"), Some("19c7")));
+        assert_eq!(
+            parse_target("rook.example").unwrap(),
+            ("https://rook.example".into(), None, None)
+        );
+        let (url, code, hub) =
+            parse_target("rook://enroll?url=https%3A%2F%2Frook.example%2F&code=ab-c_1&hub=19c7").unwrap();
+        assert_eq!(
+            (url.as_str(), code.as_deref(), hub.as_deref()),
+            ("https://rook.example", Some("ab-c_1"), Some("19c7"))
+        );
         assert!(check_url("http://127.0.0.1:8750", false).is_ok());
         assert!(check_url("http://[::1]:8750/x", false).is_ok());
-        assert!(check_url("http://192.168.1.4:8750", false).unwrap_err().contains("plain http"));
+        assert!(check_url("http://192.168.1.4:8750", false)
+            .unwrap_err()
+            .contains("plain http"));
         assert!(check_url("http://192.168.1.4:8750", true).is_ok());
     }
 }

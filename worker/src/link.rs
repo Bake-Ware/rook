@@ -52,7 +52,8 @@ impl Link {
         let (host, port) = match relay.rsplit_once(':') {
             Some((h, p)) if !h.is_empty() => (
                 h.trim_matches(['[', ']']),
-                p.parse().map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, format!("bad relay port: {relay}")))?,
+                p.parse()
+                    .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, format!("bad relay port: {relay}")))?,
             ),
             _ => (relay, DEFAULT_RELAY_PORT),
         };
@@ -92,7 +93,13 @@ impl Link {
 
     fn seal(&self, seq: u64, chunk: &[u8]) -> Vec<u8> {
         let mut out = vec![0u8; HEADER_LEN];
-        Header { band_id: self.band_id, channel_type: ChannelType::Channel, channel_id: 0, sequence: seq }.write(&mut out);
+        Header {
+            band_id: self.band_id,
+            channel_type: ChannelType::Channel,
+            channel_id: 0,
+            sequence: seq,
+        }
+        .write(&mut out);
         let sealed = self
             .aead
             .encrypt(&nonce(seq), Payload { msg: chunk, aad: b"" })
@@ -110,7 +117,15 @@ impl Link {
         if h.band_id != self.band_id || !matches!(h.channel_type, ChannelType::Channel | ChannelType::Addressed) {
             return None;
         }
-        self.aead.decrypt(&nonce(h.sequence), Payload { msg: &frame[HEADER_LEN..], aad: b"" }).ok()
+        self.aead
+            .decrypt(
+                &nonce(h.sequence),
+                Payload {
+                    msg: &frame[HEADER_LEN..],
+                    aad: b"",
+                },
+            )
+            .ok()
     }
 
     pub async fn send(&self, payload: &[u8]) -> io::Result<()> {
@@ -131,7 +146,14 @@ impl Link {
                 Ok((n, _)) => n,
                 // Windows reports an earlier send's ICMP "port unreachable"
                 // here (a relay that restarted): not this socket's end.
-                Err(e) if matches!(e.kind(), std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionRefused) => continue,
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionRefused
+                    ) =>
+                {
+                    continue
+                }
                 Err(e) => return Err(e),
             };
             if let Some(chunk) = self.open(&buf[..n]) {
@@ -161,7 +183,10 @@ mod tests {
     use serde_json::Value;
 
     fn unhex(s: &str) -> Vec<u8> {
-        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
     }
 
     /// conformance/vectors/frames.json: the whole pipeline, byte for byte.
@@ -179,10 +204,19 @@ mod tests {
                 .enumerate()
                 .map(|(i, c)| hex(&link.seal(first + i as u64, c)))
                 .collect();
-            let want: Vec<String> = case["frames"].as_array().unwrap().iter().map(|f| f.as_str().unwrap().to_string()).collect();
+            let want: Vec<String> = case["frames"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f.as_str().unwrap().to_string())
+                .collect();
             assert_eq!(got, want, "{}", case["label"]);
             let mut r = reassembler();
-            let back = want.iter().filter_map(|f| r.feed(&link.open(&unhex(f)).unwrap())).next().unwrap();
+            let back = want
+                .iter()
+                .filter_map(|f| r.feed(&link.open(&unhex(f)).unwrap()))
+                .next()
+                .unwrap();
             assert_eq!(back, message);
         }
     }
@@ -191,7 +225,10 @@ mod tests {
     fn band_id_matches_the_vectors() {
         let v: Value = serde_json::from_str(include_str!("../../conformance/vectors/band_crypto.json")).unwrap();
         for case in v["cases"].as_array().unwrap() {
-            assert_eq!(band_id_hex(case["psk"].as_str().unwrap()), case["band_id"].as_str().unwrap());
+            assert_eq!(
+                band_id_hex(case["psk"].as_str().unwrap()),
+                case["band_id"].as_str().unwrap()
+            );
         }
     }
 }

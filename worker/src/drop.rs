@@ -88,7 +88,9 @@ impl Replies {
         }
         let out = {
             let mut serving = self.serving.lock().unwrap();
-            let Some((sender, _)) = serving.get_mut(&did) else { return true };
+            let Some((sender, _)) = serving.get_mut(&did) else {
+                return true;
+            };
             let (out, done) = sender.handle_frame(ANY, frame);
             if done == Some(true) {
                 serving.remove(&did); // the caller has it, verified
@@ -107,7 +109,13 @@ impl Replies {
             }
             let mut packet = vec![0u8; HEADER_LEN];
             let sequence = self.seq.fetch_add(1, Ordering::Relaxed);
-            Header { band_id: link.band_id(), channel_type: ChannelType::Drop, channel_id: did, sequence }.write(&mut packet);
+            Header {
+                band_id: link.band_id(),
+                channel_type: ChannelType::Drop,
+                channel_id: did,
+                sequence,
+            }
+            .write(&mut packet);
             packet.extend_from_slice(frame);
             packet.extend_from_slice(&TAG);
             if let Err(e) = link.send(&packet).await {
@@ -120,7 +128,8 @@ impl Replies {
     /// Pull a blob the hub offered (`desc` = {id, size, sha256}): REQUESTs
     /// for the chunks still missing until all arrived and the hash matches.
     pub async fn pull(&self, link: &Link, desc: &Value, timeout: Duration) -> Result<Vec<u8>, String> {
-        let (Some(did), Some(size), Some(sha)) = (desc["id"].as_u64(), desc["size"].as_u64(), desc["sha256"].as_str()) else {
+        let (Some(did), Some(size), Some(sha)) = (desc["id"].as_u64(), desc["size"].as_u64(), desc["sha256"].as_str())
+        else {
             return Err("malformed drop descriptor".into());
         };
         let did = did as u16;
