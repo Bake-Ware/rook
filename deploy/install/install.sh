@@ -4,11 +4,13 @@
 #   curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/c12/first-run/deploy/install/install.sh | bash
 #   deploy/install/install.sh                 # from a checkout: installs that checkout's commit
 #
-# It asks what you use for AI now, sets that up and tests it (1 = Claude Code on
-# this machine; the rest start on OpenCode's free model for now), installs the
+# It asks which level you want (minimal: the hub and core; assistant: plus
+# Rook's own agents; team: plus tasks, projects and knowledge), then, with
+# agents, what you use for AI now, and sets that up and tests it (1 = Claude
+# Code on this machine; the rest start on OpenCode's free model for now), installs the
 # hub site, the band relay and a worker for this machine as systemd user
-# units, and opens the site (no sign-in until you set a password). The house agent
-# takes it from there.
+# units, and opens the site (no sign-in until you set a password). With
+# agents, the house agent takes it from there.
 #
 # Options (all optional; to run beside other installs give a new --dir,
 # --name and ports):
@@ -17,6 +19,7 @@
 #   --http-port N      the hub site (default 8740)
 #   --mcp-port N       the hub's MCP door for agents (default 8741)
 #   --relay-port N     the band relay, UDP (default 7474)
+#   --level LEVEL      skip the question: minimal, assistant, team
 #   --ai CHOICE        skip the question: none, claude, codex, gemini, api, local
 #   --ref REF          the Rook branch or commit to install (curl installs only)
 #   --no-boot          don't start it at login (units are written and started, not enabled)
@@ -30,7 +33,7 @@ set -euo pipefail
 main() {
 
 ROOT="$HOME/.rook" NAME=rook HTTP_PORT=8740 MCP_PORT=8741 RELAY_PORT=7474
-AI="" REF="c12/first-run" BOOT=1 BROWSER_OPEN=1 ONLY_OPEN=0 UNINSTALL=0
+LEVEL="" AI="" REF="c12/first-run" BOOT=1 BROWSER_OPEN=1 ONLY_OPEN=0 UNINSTALL=0
 while [ $# -gt 0 ]; do
     case $1 in
         --dir) ROOT=$2; shift 2 ;;
@@ -38,13 +41,14 @@ while [ $# -gt 0 ]; do
         --http-port) HTTP_PORT=$2; shift 2 ;;
         --mcp-port) MCP_PORT=$2; shift 2 ;;
         --relay-port) RELAY_PORT=$2; shift 2 ;;
+        --level) LEVEL=$2; shift 2 ;;
         --ai) AI=$2; shift 2 ;;
         --ref) REF=$2; shift 2 ;;
         --no-boot) BOOT=0; shift ;;
         --no-browser) BROWSER_OPEN=0; shift ;;
         --open) ONLY_OPEN=1; shift ;;
         --uninstall) UNINSTALL=1; shift ;;
-        -h|--help) sed -n '2,25p' "$0" 2>/dev/null || true; exit 0 ;;
+        -h|--help) sed -n '2,28p' "$0" 2>/dev/null || true; exit 0 ;;
         *) printf 'install.sh: unknown option %s\n' "$1" >&2; exit 2 ;;
     esac
 done
@@ -128,7 +132,25 @@ done
 mkdir -p "$ROOT"
 : > "$LOG"
 
-# -- 1. What do you use for AI now? ----------------------------------------------
+# -- 1. Which level? ---------------------------------------------------------------
+# A level is only which plugins the hub's library holds: each manifest's package.
+if [ -z "$LEVEL" ]; then
+    step "Which level do you want?"
+    say "1) Minimal: the hub, your machines and core; bring your own agents over MCP"
+    say "2) Assistant: plus Rook's own agents (the house agent, Rookie)"
+    say "3) Team: plus tasks, projects and knowledge"
+    case $(ask "  Pick one [3]: " 3) in
+        1) LEVEL=minimal ;; 2) LEVEL=assistant ;; *) LEVEL=team ;;
+    esac
+fi
+case $LEVEL in
+    minimal|assistant|team) ;;
+    *) die "--level is one of minimal, assistant, team" ;;
+esac
+
+CLAUDE="" OPENCODE="" MODEL=""
+if [ $LEVEL != minimal ]; then
+# -- 2. What do you use for AI now? ----------------------------------------------
 if [ -z "$AI" ]; then
     step "What do you use for AI now?"
     say "1) A Claude subscription (Claude Code)"
@@ -150,11 +172,10 @@ case $AI in
     *) die "--ai is one of none, claude, codex, gemini, api, local" ;;
 esac
 
-# -- 2. Set it up and test it -------------------------------------------------------
+# -- 3. Set it up and test it -------------------------------------------------------
 # claude = the Claude Code CLI on this machine, under the subscription it is
 # signed in with (Bake, Nov 9: "start it in claude code mode"); none =
 # OpenCode with a free model.
-CLAUDE="" OPENCODE="" MODEL=""
 if [ $AI = claude ]; then
 step "Setting up your AI: Claude Code"
 if ! command -v claude >/dev/null; then
@@ -220,8 +241,9 @@ rm -rf "$probe"
 [ -n "$MODEL" ] || die "none of OpenCode's free models answered (they may be busy; try again in a while; see $LOG)"
 say "It works: $MODEL answered \"$reply\"."
 fi
+fi
 
-# -- 3. Rook itself -------------------------------------------------------------
+# -- 4. Rook itself -------------------------------------------------------------
 step "Installing Rook in $ROOT"
 if ! command -v uv >/dev/null; then
     say "Installing uv (the Python tool Rook installs with) ..."
@@ -263,8 +285,19 @@ initout=""
 [ -n "$TOKEN" ] || die "the hub set up without a token for enrolling this machine"
 say "Hub set up in $ROOT/hub (you sign in as $OWNER)."
 plugins=$SRC/rook/plugins
-HUB_PLUGINS="agents notify changes tasks projects knowledge concepts whiteboard"
-if [ $AI = claude ]; then BACKEND=agents-claude-code; else BACKEND=agents-opencode; fi
+# The level's packages, from each manifest's package:; this machine's worker
+# runs the shell and file device plugins and, with agents, the engine.
+HUB_PLUGINS=$("$PY" - "$plugins" "$LEVEL" <<'EOF'
+import sys, yaml
+from pathlib import Path
+packages = {"minimal": {"core"}, "assistant": {"core", "agents"}, "team": {"core", "agents", "workbench"}}[sys.argv[2]]
+for manifest in sorted(Path(sys.argv[1]).glob("*/plugin.yaml")):
+    if (yaml.safe_load(manifest.read_text()) or {}).get("package") in packages:
+        print(manifest.parent.name)
+EOF
+) || die "couldn't read the plugins' manifests"
+BACKEND=""
+if [ -n "$CLAUDE" ]; then BACKEND=agents-claude-code; elif [ -n "$OPENCODE" ]; then BACKEND=agents-opencode; fi
 WORKER_PLUGINS="shell file $BACKEND"
 mkdir -p "$ROOT/hub/library"
 for p in $HUB_PLUGINS $WORKER_PLUGINS; do
@@ -315,9 +348,10 @@ from pathlib import Path
 path, name, plugins, wanted, opencode, model, mcp, claude = sys.argv[1:]
 plugins = Path(plugins)
 door = f"http://127.0.0.1:{mcp}/mcp"
+backend = {}
 if claude:
     backend = {"agents-claude-code": {"claude": claude, "permission_mode": "auto", "door_url": door}}
-else:
+elif opencode:
     backend = {"agents-opencode": {"opencode": opencode, "model": model, "door_url": door}}
 cfg = {"data": "./data", "name": name,
        "plugins": [str(plugins / p) for p in wanted.split() if (plugins / p / "plugin.yaml").is_file()],
@@ -362,7 +396,7 @@ After=$NAME-hub.service
 
 [Service]
 WorkingDirectory=$ROOT/worker
-Environment=PATH=$(dirname "${CLAUDE:-$OPENCODE}"):$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=$(dirname "${CLAUDE:-${OPENCODE:-$PY}}"):$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=$PY -m rook.core2.worker --config $WORKER_CFG
 Restart=always
 RestartSec=5
@@ -392,6 +426,7 @@ fi
 # same "ready" the site waits on (agent.site) before saying Done.
 ready=0
 for _ in $(seq 75); do
+    [ -e "$ROOT/hub/library/agents" ] || break
     if curl -s --max-time 5 -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
         -d '{"worker": "rook", "cap": "agent.site", "args": {}, "why": "The installer waits until the house agent can answer."}' \
         "$URL/call" | "$PY" -c \
@@ -399,7 +434,9 @@ for _ in $(seq 75); do
     then ready=1; break; fi
     sleep 2
 done
-if [ $ready = 1 ]; then
+if [ ! -e "$ROOT/hub/library/agents" ]; then
+    say "This machine is joining the hub; the Workers page shows it."
+elif [ $ready = 1 ]; then
     say "This machine is on the hub and your house agent is ready."
 else
     say "This machine hasn't reached the hub yet; it keeps trying (journalctl --user -u $NAME-worker). The site waits for it."
@@ -413,7 +450,7 @@ fi
 
 step "Done"
 open_site
-say "Your house agent will walk you through the rest."
+if [ -e "$ROOT/hub/library/agents" ]; then say "Your house agent will walk you through the rest."; fi
 }
 
 main "$@"
