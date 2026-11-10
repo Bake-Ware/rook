@@ -303,8 +303,9 @@ def test_claude_mode_configures_the_worker_and_the_hub():
     assert 'if [ -n "$CLAUDE" ]; then BACKEND=agents-claude-code; elif [ -n "$OPENCODE" ]; then BACKEND=agents-opencode; fi' in sh
     assert "contracts" not in sh                     # hub.yaml names no engine: the agents plugin's setting does
     assert 'stored.setdefault("agent", {})["backend"] = f"{backend}.turn"' in sh
-    assert ('{"agents-claude-code": {"claude": claude, "permission_mode": "auto", "door_url": door}}' in sh
-            and 'door = f"http://127.0.0.1:{mcp}/mcp"' in sh)
+    # the engine is a hub script: its settings (the worker that runs the CLI too) are the hub's
+    assert ('stored["agents-claude-code"] = {"worker": worker, "claude": claude, "permission_mode": "auto", '
+            '"door_url": door}' in sh and 'door = f"http://127.0.0.1:{mcp}/mcp"' in sh)
     assert "curl -fsSL https://claude.ai/install.sh | bash" in sh
 
 
@@ -333,9 +334,9 @@ def test_each_level_links_its_packages_plugins_from_their_manifests():
     assert {"agents", "trust", "agents-claude-code", "agents-opencode"} <= assistant
     assert team - assistant == {p for p, pkg in package.items() if pkg == "workbench"}
     assert {"tasks", "projects", "knowledge", "concepts", "whiteboard", "changes"} <= team
-    # this machine's worker runs shell and file, as before
+    # this machine's worker runs shell and file; the engine runs on the hub
     sh = (REPO / "deploy/install/install.sh").read_text()
-    assert 'WORKER_PLUGINS="shell file $BACKEND"' in sh
+    assert 'WORKER_PLUGINS="shell file"' in sh
 
 
 def _level_step(tmp_path, *args):
