@@ -8,7 +8,7 @@ the API; the `stream.*` caps and the hub relay sit on top of it.
 ## Model
 
 A **stream** has an id (`s_…`), a **kind** (`terminal`, `process`, `room`,
-`session`, `voice`, `inbox`, or any other a plugin names with its spec), a
+`huddle`, `session`, `voice`, `inbox`, or any other a plugin names), a
 **host** (the worker that owns its producer, or `hub`), participants, free
 `attrs` (cwd, pid, exit code, …) and a **spec**, the same three fields a cap
 declares in `plugin.yaml`:

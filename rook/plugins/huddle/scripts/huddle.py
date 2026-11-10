@@ -13,9 +13,8 @@ import copy
 import re
 
 from rook.kit.ctx import Caller, KitError
-from rook.streams import StreamError, StreamSpec
+from rook.streams import StreamError
 
-HUDDLE = StreamSpec(("text",), durable=True)     # every post kept
 _MENTION = re.compile(r"@([a-z][a-z0-9_-]{0,39})")
 _RT: "Runtime | None" = None
 
@@ -63,7 +62,7 @@ async def start(ctx, title, roles=None, project=None):
     if not title:
         raise KitError("bad args: title says what the huddle is for")
     roles = list(dict.fromkeys(roles or []))
-    meta = rt.streams.open("huddle", spec=HUDDLE, title=title, producer="huddle", participants=[_actor(ctx)],
+    meta = rt.streams.open("huddle", title=title, producer="huddle", participants=[_actor(ctx)],
                            attrs={"plugin": "huddle", "roles": roles, **({"project": project} if project else {})})
     h = ctx.records.huddle.create(title=title, roles=roles, stream=meta.id, state="open",
                                   **({"project": project} if project else {}))
