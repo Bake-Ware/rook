@@ -267,7 +267,7 @@ rm -rf "$SRC"
 mv "$SRC.new" "$SRC"
 say "Python and Rook's packages (a minute or two the first time) ..."
 UV_PYTHON_PREFERENCE=only-managed uv venv -q --python 3.12 "$VENV" >>"$LOG" 2>&1 || die "uv couldn't make Python 3.12 (see $LOG)"
-uv pip install -q --python "$PY" -e "$SRC[manifest]" >>"$LOG" 2>&1 || die "Rook's packages didn't install (see $LOG)"
+uv pip install -q --python "$PY" -e "${SRC}[manifest]" >>"$LOG" 2>&1 || die "Rook's packages didn't install (see $LOG)"
 
 # -- the hub: config, keys, no password (the site asks for one) -------------------
 # Everything listens on every interface (0.0.0.0; docs/castling-first-run.md

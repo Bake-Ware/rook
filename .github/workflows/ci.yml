@@ -49,7 +49,7 @@ jobs:
         run: python tools/ci_annotate.py pytest-results.xml
 
   checks:
-    name: generated docs, conformance vectors, JS syntax
+    name: conformance vectors, generated manifests, JS syntax, installers
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -63,44 +63,52 @@ jobs:
         with:
           node-version: "22"
       - name: Install rook
-        run: python -m pip install -e .
-      - name: docs/operations/settings-reference.md is up to date
-        run: python tools/gen_settings_reference.py --check
-      - name: skills/rook/references/tools.md is up to date
-        run: python tools/gen_skill_reference.py --check
+        run: python -m pip install -e ".[manifest]"
       - name: conformance vectors are up to date
-        run: python conformance/generate.py --check
-      - name: node --check the dashboard's JavaScript
-        run: find rook/web -name '*.js' -print0 | xargs -0 -n1 node --check
-      - name: shellcheck the hub installer
-        run: shellcheck scripts/install-hub.sh scripts/local-hub.sh
+        run: python conformance/core-v2/generate.py --check
+      - name: the single-file worker's embedded manifests are up to date
+        run: python worker/gen_script_manifests.py --check
+      - name: node --check the hub site's and the plugins' JavaScript
+        # rook-scene.js is a vendored, minified bundle.
+        run: find rook/core2/hub rook/plugins -name '*.js' ! -name 'rook-scene.js' -print0 | xargs -0 -n1 node --check
+      - name: shellcheck the installers
+        run: shellcheck --severity=warning deploy/install/install.sh deploy/castling-sidecar/install.sh deploy/castling-worker/install.sh
+
+  worker:
+    name: Rust worker (fmt, clippy, tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable, 2026-10-14
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: worker
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
 
   manual:
-    # Advisory on pull requests: features without a manual page and CHANGELOG
-    # bullets that name none are reported here but never block a merge (page
-    # parsing and links are in pytest). tools/release_prep.py runs the same
-    # check with --release and refuses to cut a release with a stale manual.
-    name: user manual coverage (advisory)
+    # Advisory on pull requests: the manual's pages and links are also checked
+    # in pytest (tests/test_manual05.py).
+    name: user manual (advisory)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: pyproject.toml
       - name: Install rook
-        run: python -m pip install -e .
-      - name: The manual covers every feature and the CHANGELOG names its pages
-        env:
-          BASE_REF: ${{ github.base_ref }}
-        run: |
-          if [ -n "$BASE_REF" ]; then
-            python tools/manual_check.py --base "origin/$BASE_REF"
-          else
-            python tools/manual_check.py
-          fi
+        run: python -m pip install -e ".[manifest]"
+      - name: The 0.5 manual is consistent
+        run: python tools/manual05_check.py
