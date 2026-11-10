@@ -1011,10 +1011,9 @@ secret's value (`sensitive` on a secret-revealing cap), `sends_as`, and
 `spends`.
 
 Lasting changes (deploys, configuration, plugin installs, trust and grant
-edits, deletes; guidance, not a hard rule) get a **change record** in the
-journal (what, why, risk, testing, rollback, steps), with ceremony scaled
-by the project's trust level: `sacred` needs the record and owner
-approval, `normal` the record, `ship-it` a one-line note.
+edits, deletes; guidance, not a hard rule) get a **change record** (what,
+why, risk, testing, rollback, steps) where the workbench's change plugin is
+installed. Records only: they gate nothing.
 
 ## 11. Journal
 
@@ -1065,8 +1064,8 @@ rights in Postgres). Vectors: `journal.json`.
 
 ### 11.4 Retention and reading
 
-- A project chain lives and dies with its project: pruned some time after
-  the project closes, the whole chain at once, never with gaps.
+- A project chain is kept. A session's project is only a name the hub
+  stamps on its entries.
 - The `general` chain is pruned by age (30 to 90 days) in daily segments;
   each day starts from the previous day's final hash.
 - Owners read everything; others read their own actions; agents read their
