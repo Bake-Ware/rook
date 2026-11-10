@@ -171,8 +171,10 @@ def test_every_turn_carries_the_setup_skill_until_setup_is_done(tmp_path):
             assert out["ok"], out
             return out["result"]["text"]
         state = hub.data / "plugins" / "agent" / "setup.json"      # the agents plugin's own data
-        assert not state.exists()
-        assert await ask("are we in setup") == "setup brief: yes"          # none yet: not done
+        state.parent.mkdir(parents=True, exist_ok=True)
+        assert await ask("are we in setup") == "setup brief: no"           # none: done (an existing hub)
+        state.write_text(json.dumps({"done": False}))                      # what the installer writes
+        assert await ask("are we in setup") == "setup brief: yes"
         assert await ask("are we in setup") == "setup brief: yes"          # every turn, not just the first
         state.write_text(json.dumps({"done": True}))
         assert await ask("are we in setup") == "setup brief: no"
@@ -187,7 +189,8 @@ def test_agent_setup_keeps_the_state_and_the_install_facts(tmp_path):
         await c.sign_in(tokens["bake"])
         state = hub.data / "plugins" / "agent" / "setup.json"
         state.parent.mkdir(parents=True, exist_ok=True)
-        state.write_text(json.dumps({"install": {"machine": "box"}}))
+        assert (await c.call("agent.site"))["result"]["setup"] == {"done": True}    # none: done
+        state.write_text(json.dumps({"done": False, "install": {"machine": "box"}}))   # the installer's
         assert (await c.call("agent.site"))["result"]["setup"] == {"done": False}   # no install facts here
         out = await ws_bearer(c, tokens["bake"], "agent.setup")
         assert out["result"] == {"done": False, "install": {"machine": "box"}}
@@ -204,7 +207,10 @@ def test_guided_setup_does_not_keep_the_site_open(tmp_path):
     from rook.core2.hub import passwords
 
     async def go(hub, tokens):
-        assert passwords.set_by(hub.data, "bake") is None    # init --no-password
+        (hub.data / passwords.UNCLAIMED).touch()             # init --no-password
+        state = hub.data / "plugins" / "agent" / "setup.json"
+        state.parent.mkdir(parents=True, exist_ok=True)
+        state.write_text(json.dumps({"done": False}))         # the installer's
         c = Client(hub)
         status, headers, _ = await c.req("GET", "/")
         assert status == 200 and "HttpOnly" in headers["Set-Cookie"]

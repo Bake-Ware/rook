@@ -128,6 +128,7 @@ def init(path: Path, owner: str, relay: str | None, ws_url: str | None, url: str
     site = url or "http://" + bind
     typed = _new_password(owner) if password and sys.stdin.isatty() else ""
     if not password:
+        (cfg.data / passwords.UNCLAIMED).touch()
         print(f"\nOpen {site}: it needs no sign-in until you set a password on the Your account page.")
     elif typed:
         passwords.set_password(cfg.data, owner, typed, by="init")

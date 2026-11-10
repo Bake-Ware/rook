@@ -351,12 +351,18 @@ def test_a_sign_in_link_keeps_working_and_a_password_is_set_later(site):
 def test_a_hub_is_open_until_the_owner_sets_a_password(site):
     """castling-design, Agents: "A new hub is open only until it is claimed:
     creating the first user claims it; after that the site asks for sign-in".
-    Core alone (no agents package): while no owner has a password, opening
-    the hub is being the owner; once one is set a new browser signs in."""
+    Core alone (no agents package): on a hub init made without a password
+    (its unclaimed marker), opening the hub is being the owner; once a
+    password is set a new browser signs in. A hub without the marker (every
+    hub made before) is never open, password or not."""
     async def go():
         hub, tokens = await site()
         try:
-            (hub.data / passwords.FILE).unlink()                 # init --no-password
+            (hub.data / passwords.FILE).unlink()                 # a passwordless owner, signing in with links
+            status, headers, _ = await Client(hub).req("GET", "/")
+            assert status == 303 and headers["Location"] == "/login" and "Set-Cookie" not in headers
+            assert (await Client(hub).req("GET", "/login"))[0] == 200
+            (hub.data / passwords.UNCLAIMED).touch()             # init --no-password: a new hub
             c = Client(hub)
             status, headers, _ = await c.req("GET", "/login")
             assert status == 303 and headers["Location"] == "/"
@@ -368,6 +374,7 @@ def test_a_hub_is_open_until_the_owner_sets_a_password(site):
             c.csrf = me["csrf"]
             assert "setup" not in (await c.call("page.site"))["result"]
             assert (await c.json("POST", "/web/api/password", {"password": "mine"}))[1]["ok"]
+            assert not passwords.unclaimed(hub.data)
             # claimed: a new browser gets the sign-in page; this one stays signed in
             fresh = Client(hub)
             status, headers, _ = await fresh.req("GET", "/")

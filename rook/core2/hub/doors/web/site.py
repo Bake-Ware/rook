@@ -278,12 +278,12 @@ class Web:
                      "Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}, b""
 
     def _unclaimed_owner(self) -> str | None:
-        """While no owner has a password, the owner the site signs everyone
-        in as (the first one); else None."""
-        owners = [u.name for u in self.hub.identities.users.values() if u.preset == "owner"]
-        if not owners or any(passwords.set_by(self.hub.data, n) for n in owners):
+        """On a new hub nobody has set a password on yet
+        (``passwords.unclaimed``), the owner the site signs everyone in as
+        (the first one); else None."""
+        if not passwords.unclaimed(self.hub.data):
             return None
-        return f"person:{owners[0]}"
+        return next((f"person:{u.name}" for u in self.hub.identities.users.values() if u.preset == "owner"), None)
 
     def _start(self, person: str) -> str:
         sid = secrets.token_urlsafe(32)

@@ -83,3 +83,19 @@ def test_passwd_sets_and_resets_from_stdin(tmp_path, monkeypatch, capsys):
     assert hub_main(["--config", str(path), "passwd", "bake"]) == 2          # empty
     assert passwords.check(data, "bake", "new one")
     assert "no user 'eve'" in capsys.readouterr().err
+
+
+def test_only_init_without_a_password_leaves_the_hub_unclaimed(tmp_path, monkeypatch):
+    """castling-design, Agents: "A new hub is open only until it is claimed".
+    The marker is init's alone; setting a password (here passwd) removes it."""
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+    path, rc = _init(tmp_path / "with")                              # a password is made
+    assert rc == 0 and not passwords.unclaimed(load_config(path).data)
+    path = tmp_path / "new" / "hub.yaml"
+    assert hub_main(["--config", str(path), "init", "--owner", "bake", "--relay", "127.0.0.1:7474",
+                     "--no-password"]) == 0
+    data = load_config(path).data
+    assert passwords.unclaimed(data) and passwords.set_by(data, "bake") is None
+    monkeypatch.setattr(sys, "stdin", io.StringIO("mine\n"))
+    assert hub_main(["--config", str(path), "passwd", "bake"]) == 0
+    assert not passwords.unclaimed(data)

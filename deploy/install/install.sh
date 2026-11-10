@@ -70,8 +70,7 @@ export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"
 # (login-link; it keeps working).
 open_site() {
     local link=$URL
-    if "$PY" -c 'import sys; from rook.core2.hub import passwords; sys.exit(0 if passwords.set_by(*sys.argv[1:]) else 1)' \
-        "$ROOT/hub/data" "$OWNER" 2>/dev/null; then
+    if [ ! -e "$ROOT/hub/data/unclaimed" ]; then
         link=$("$PY" -m rook.core2.hub --config "$HUB_CFG" login-link --url "$URL") || die "couldn't make a sign-in link"
     fi
     if [ $BROWSER_OPEN = 1 ] && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; } &&
@@ -283,7 +282,7 @@ cfg["contracts"] = {"agent.backend": f"{backend}.turn"}
 cfg["log"] = {"level": "info", "format": "text"}
 path.write_text(head + yaml.safe_dump(cfg, sort_keys=False))
 EOF
-# The install facts, for the agents plugin's guided setup (agent.setup).
+# Guided setup (agent.setup): not done yet, and the install facts.
 [ -e "$ROOT/hub/library/agents" ] && "$PY" - "$ROOT" "$NAME" "$WORKER_NAME" "$HTTP_PORT" "$MCP_PORT" "$RELAY_PORT" "$MODEL" "$sha" "$AI" <<'EOF'
 import json, os, sys, time
 from pathlib import Path
@@ -291,6 +290,7 @@ root, name, worker, http, mcp, relay, model, sha, ai = sys.argv[1:]
 path = Path(root) / "hub" / "data" / "plugins" / "agent" / "setup.json"
 path.parent.mkdir(parents=True, exist_ok=True)
 state = json.loads(path.read_text()) if path.exists() else {}
+state.setdefault("done", False)          # a new hub: the house agent guides the setup
 state["install"] = {
     "by": "deploy/install/install.sh", "when": time.strftime("%Y-%m-%d %H:%M %Z"), "version": sha,
     "folder": root, "hub_config": f"{root}/hub/hub.yaml", "worker_config": f"{root}/worker/worker.yaml",
