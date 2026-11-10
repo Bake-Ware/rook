@@ -38,7 +38,7 @@ lets Codex call Rook's tools without asking: the hub decides what each call
 may do. The hub ends the token when the turn does.
 
 Turns run in the folder the agent names, else in
-`~/.rook-agents/agents-codex/work` on the worker (the same one every turn).
+`~/.rook-plugins/agents-codex/work` on the worker (the same one every turn).
 Install Codex on the worker and sign in once (`codex login`) before agents
 use it. A hub that ran this plugin on a worker (before 0.6): set `worker`
 and copy the other settings from that worker's `worker.yaml` to the hub's,

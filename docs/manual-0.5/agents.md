@@ -33,7 +33,7 @@ Put `agents` in the hub's library, and a backend:
   The installer picks this one or Claude Code and sets its `worker` to the
   machine it installs on.
 - Each keeps its work folder and generated config on that worker, in
-  `~/.rook-agents/<plugin>/`.
+  `~/.rook-plugins/<plugin>/`.
 - `llm-cli`, `llm-anthropic` or `llm-openai` if other plugins need plain
   completions (`llm.complete`); agents themselves think through
   `agent.backend`.

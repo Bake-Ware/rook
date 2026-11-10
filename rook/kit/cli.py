@@ -8,7 +8,7 @@ the caps it reaches (``shell.exec``, or ``shell.open`` with ``stream.read``,
     ctx = itself(ctx)                                # its calls to the worker as the plugin itself
     w = worker(ctx)                                  # the setting, or a plain error
     home = await Place.of(ctx, w)                    # its separator and home folder
-    work = await home.folder("work")                 # ~/.rook-agents/<plugin>/work
+    work = await home.folder("work")                 # ~/.rook-plugins/<plugin>/work
     code, tail = await stream(ctx, w, argv, stdin=prompt, cwd=work, timeout="20m",
                               name="Claude Code", setting="claude", line=seen)
 """
@@ -74,12 +74,12 @@ class Place:
         return str(await self.ctx.call_on(self.wid, "shell.env", name=name, default=default) or default)
 
     async def folder(self, *parts: str) -> str:
-        """The plugin's own folder on the worker, ``~/.rook-agents/<plugin>``
+        """The plugin's own folder on the worker, ``~/.rook-plugins/<plugin>``
         (or a folder in it), made if missing: what it keeps there from one
         call to the next."""
         if not self.home:
             raise KitError(f"{self.wid} has no home folder (HOME or USERPROFILE) to keep files in")
-        return await self.mkdir(self.join(self.home, ".rook-agents", self.ctx.plugin, *parts))
+        return await self.mkdir(self.join(self.home, ".rook-plugins", self.ctx.plugin, *parts))
 
     async def mkdir(self, path: str) -> str:
         """``path`` exists afterwards (a ``.rook`` marker file in it)."""

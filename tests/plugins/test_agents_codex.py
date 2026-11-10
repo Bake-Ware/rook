@@ -80,7 +80,7 @@ def test_a_turn_and_its_resume(tmp_path, bins, home):
     assert call["argv"] == ["exec", "--json", "--skip-git-repo-check",
                             "-c", 'developer_instructions="You are \\"pm\\".\\nBe brief."',
                             "--ignore-user-config", "--ignore-rules", "-"]
-    assert (home / ".rook-agents" / "agents-codex" / "work").is_dir()     # its own folder on the worker
+    assert (home / ".rook-plugins" / "agents-codex" / "work").is_dir()     # its own folder on the worker
     out = turn(tmp_path, {"model": "gpt-6-sol", "sandbox": "workspace-write", "isolate": False,
                           "config": ['mcp_servers.rook.url="http://hub:8751/mcp"']},
                prompt="again", session="sess-9", effort="high", cwd=str(tmp_path))

@@ -32,12 +32,12 @@ the hub for that turn (the agent, for the person behind the message) and
 passes its name as `door` (`{{secret:turn-...}}`). The plugin hands that name
 on as `ROOK_DOOR_TOKEN` in the process's environment and the hub puts the
 token there on the way to the worker; the plugin never holds it. The turn's
-`rook` MCP server comes from `~/.rook-agents/agents-claude-code/rook-mcp.json`
+`rook` MCP server comes from `~/.rook-plugins/agents-claude-code/rook-mcp.json`
 on the worker, which names the variable (`Bearer ${ROOK_DOOR_TOKEN}`), never
 the token. The journal keeps the name; the hub ends the token when the turn
 does.
 
-On the worker, everything lives in `~/.rook-agents/agents-claude-code/`:
+On the worker, everything lives in `~/.rook-plugins/agents-claude-code/`:
 `work/`, where turns run unless the agent names a folder (Claude Code keys
 its sessions by folder, so it is the same one every turn), and
 `rook-mcp.json`. Install Claude Code on the worker and sign in once
@@ -55,14 +55,32 @@ signed in". Once, on the hub:
 1. Set `agents-claude-code.worker` to the worker that ran it (its name).
 2. Copy the other settings from that worker's `worker.yaml`
    (`settings: agents-claude-code:`) to the hub's: `claude` (a full path or
-   `~/...`), `door_url` (the hub's MCP door as that worker reaches it),
+   `~/...`), `door_url` (the hub's MCP door as that worker reaches it), and
    `permission_mode`, `allowed_tools`, `model`, `model_three`, `mcp_config`,
-   `isolate`, as they were set.
-3. To keep each agent's Claude Code session, set that agent's `cwd`
-   (`agent.update`, `cwd`) to the old work folder on that worker:
-   `<the worker's data folder>/plugin-data/agents-claude-code/work`
+   `isolate` as they were set.
+3. To keep an agent's Claude Code session, set that agent's `cwd` to the old
+   work folder on that worker: `<the worker's data folder>/plugin-data/agents-claude-code/work`
    (e.g. `~/.rook-castling/worker/data/plugin-data/agents-claude-code/work`).
    Left as is, the agent's next turn starts a new session in
-   `~/.rook-agents/agents-claude-code/work`.
+   `~/.rook-plugins/agents-claude-code/work`.
 4. Take `agents-claude-code` out of that worker's `plugins:` when the worker
    is next upgraded.
+
+As calls (an owner, or an agent acting for one; each is `worker: rook`, the
+cap, the args, and a `why`), for a worker `cachyrig` whose `worker.yaml` had
+`claude: ~/.local/bin/claude`, `door_url: https://<hub>/mcp` and
+`allowed_tools: [mcp__rook]`:
+
+```
+setting.set  {"plugin": "agents-claude-code", "key": "worker", "value": "cachyrig"}
+setting.set  {"plugin": "agents-claude-code", "key": "claude", "value": "~/.local/bin/claude"}
+setting.set  {"plugin": "agents-claude-code", "key": "door_url", "value": "https://<hub>/mcp"}
+setting.set  {"plugin": "agents-claude-code", "key": "allowed_tools", "value": ["mcp__rook"]}
+agent.list   {"where": {"name": "house"}}
+             -> [{"id": "<id>", "revision": <n>, ...}]
+agent.update {"id": "<id>", "revision": <n>,
+              "cwd": "~/.rook-castling/worker/data/plugin-data/agents-claude-code/work"}
+```
+
+Any other setting the worker had goes the same way (`"key": "permission_mode"`,
+...). tests/test_core2_engine_upgrade.py makes these same calls.

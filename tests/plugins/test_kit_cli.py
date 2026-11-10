@@ -120,5 +120,5 @@ def test_place_home_and_folders(tmp_path, monkeypatch):
         place = await Place.of(ctx, "w1")
         return place.expand("~/bin/claude"), await place.folder("work")
     program, work = run(body)
-    assert program == f"{tmp_path}/bin/claude" and work == f"{tmp_path}/.rook-agents/tester/work"
-    assert (tmp_path / ".rook-agents" / "tester" / "work").is_dir()
+    assert program == f"{tmp_path}/bin/claude" and work == f"{tmp_path}/.rook-plugins/tester/work"
+    assert (tmp_path / ".rook-plugins" / "tester" / "work").is_dir()

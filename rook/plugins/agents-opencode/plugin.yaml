@@ -32,7 +32,7 @@ caps:
     args:
       prompt: { type: str, required: true }
       session: { type: str, doc: "The OpenCode session id to resume; blank: a new session." }
-      cwd: { type: str, doc: "The folder on the worker OpenCode works in; blank: ~/.rook-agents/agents-opencode/work there." }
+      cwd: { type: str, doc: "The folder on the worker OpenCode works in; blank: ~/.rook-plugins/agents-opencode/work there." }
       model: { type: str, doc: "provider/model, or two/three for System Two/Three; blank: the model setting." }
       effort: { type: str, doc: "OpenCode's --variant (provider-specific reasoning effort: minimal, high, max ...); blank: its own." }
       system: { type: str, doc: "The agent's instructions. Sent at the head of a new session's first message (OpenCode's free models refuse a custom system prompt)." }

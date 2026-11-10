@@ -8,7 +8,7 @@ stdin. OpenCode prints JSON events: ``text`` parts (the reply), ``tool_use``,
 that said anything.
 
 Config: a generated ``opencode.json`` on the worker
-(``~/.rook-agents/agents-opencode/config/opencode/``), with the hub's MCP door
+(``~/.rook-plugins/agents-opencode/config/opencode/``), with the hub's MCP door
 as the ``rook`` server (its bearer token from ``ROOK_DOOR_TOKEN`` in the
 turn's own environment, where the hub puts the token named by ``door``: never
 on the command line or on disk), OpenCode's own tools on (``own_tools``,

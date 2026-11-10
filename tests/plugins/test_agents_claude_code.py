@@ -59,7 +59,7 @@ def test_a_turn_and_its_resume(home, bins, tmp_path):
     assert call["argv"] == ["-p", "--output-format", "json", "--model", "opus",
                             "--append-system-prompt", "You are pm.",
                             "--setting-sources", "project,local", "--strict-mcp-config"]
-    work = home / ".rook-agents" / "agents-claude-code" / "work"
+    work = home / ".rook-plugins" / "agents-claude-code" / "work"
     assert (bins.dir / "claude.cwd").read_text() == str(work)        # the same folder every turn
     (opened,) = [a for c, a in seen if c == "shell.open"]
     assert opened["pty"] is False and opened["stdin"] == "hello" and "env" not in opened
@@ -149,7 +149,7 @@ with open(os.path.join(os.path.dirname(sys.argv[0]), "mcp.seen"), "w") as f:
     argv = bins.calls("claude")[0]["argv"]
     assert argv[argv.index("--allowedTools") + 1] == "Read,mcp__rook"
     i = argv.index("--mcp-config")
-    config = home / ".rook-agents" / "agents-claude-code" / "rook-mcp.json"
+    config = home / ".rook-plugins" / "agents-claude-code" / "rook-mcp.json"
     assert argv[i + 1:i + 3] == ["/dev/null", str(config)] and argv[i + 3] == "--setting-sources"
     assert json.loads((bins.dir / "mcp.seen").read_text()) == [{"mcpServers": {"rook": {
         "type": "http", "url": "http://127.0.0.1:8741/mcp",

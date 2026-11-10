@@ -115,14 +115,15 @@ def test_an_older_worker_announcing_the_worker_run_engine(tmp_path, monkeypatch,
         assert not log.exists()
 
         for key, value in (("worker", "kaiju"), ("claude", str(fake)),
-                           ("door_url", f"http://127.0.0.1:{hub.doors[0].port}")):
+                           ("door_url", f"http://127.0.0.1:{hub.doors[0].port}"), ("allowed_tools", ["mcp__rook"])):
             done = await call("setting.set", {"plugin": "agents-claude-code", "key": key, "value": value})
             assert done["ok"], done
         assert (await call("agent.site"))["result"]["ready"] is True       # its worker is online
         out = await call("agent.chat.send", {"agent": "tester", "text": "check your door"})
         assert out["ok"] and out["result"]["text"] == "door ok", out
         (ran,) = [json.loads(line) for line in log.read_text().splitlines()]
-        assert ran["cwd"] == str(home / ".rook-agents" / "agents-claude-code" / "work")
+        assert ran["cwd"] == str(home / ".rook-plugins" / "agents-claude-code" / "work")
+        assert ran["argv"][ran["argv"].index("--allowedTools") + 1] == "mcp__rook"       # named once
         turn = hub.journal.query(cap="agents-claude-code.turn", limit=1)[0]
         assert turn["worker"] == node                                    # the hub's plugin, not the old one
         opened = hub.journal.query(cap="shell.open", limit=1)[0]
@@ -131,8 +132,18 @@ def test_an_older_worker_announcing_the_worker_run_engine(tmp_path, monkeypatch,
         assert (back["person"], back["agent"], back["ok"]) == ("person:bake", "agent:tester", True)
         [token] = [t for t in tokens if t]                   # resolved once, on the hop to the worker
         assert not [e for e in hub.journal.query(limit=500) if token in json.dumps(e)]
-        written = [p.read_text() for p in (home / ".rook-agents").rglob("*") if p.is_file()]
+        written = [p.read_text() for p in (home / ".rook-plugins").rglob("*") if p.is_file()]
         assert any("${ROOK_DOOR_TOKEN}" in text for text in written) and not any(token in t for t in written)
+
+        # Step 3 of the manual: the agent's session keeps resuming in the old plugin's work folder.
+        old = tmp_path / "wdata" / "plugin-data" / "agents-claude-code" / "work"
+        old.mkdir(parents=True)
+        (rec,) = (await call("agent.list", {"where": {"name": "tester"}}))["result"]
+        done = await call("agent.update", {"id": rec["id"], "revision": rec["revision"], "cwd": str(old)})
+        assert done["ok"], done
+        out = await call("agent.chat.send", {"agent": "tester", "text": "again"})
+        assert out["ok"] and out["result"]["text"] == "door ok", out
+        assert json.loads(log.read_text().splitlines()[-1])["cwd"] == str(old)
         await hub.stop()
         await worker.stop()
 

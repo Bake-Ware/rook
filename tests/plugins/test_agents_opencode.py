@@ -88,7 +88,7 @@ def test_a_turn_and_its_resume(tmp_path, bins, monkeypatch):
     assert bins.calls("opencode")[1]["argv"][-4:] == ["--session", "ses_abc", "--variant", "high"]
     # a resumed session has its instructions already
     assert (bins.dir / "opencode.stdin").read_text().endswith("---\nagain\n---\n")
-    assert (tmp_path / "home" / ".rook-agents" / "agents-opencode" / "work").is_dir()
+    assert (tmp_path / "home" / ".rook-plugins" / "agents-opencode" / "work").is_dir()
 
 
 def test_the_config_gives_rook_and_only_rook(tmp_path, bins, monkeypatch):
@@ -104,7 +104,7 @@ def test_the_config_gives_rook_and_only_rook(tmp_path, bins, monkeypatch):
     assert env["ROOK_DOOR_TOKEN"] == REF          # by name, in the environment (the hub resolves it there)
     assert REF not in json.dumps(bins.calls("opencode")[0]["argv"])
     cfg_text = open(env["OPENCODE_CONFIG"]).read()
-    assert env["OPENCODE_CONFIG"] == str(tmp_path / "home" / ".rook-agents" / "agents-opencode" / "config"
+    assert env["OPENCODE_CONFIG"] == str(tmp_path / "home" / ".rook-plugins" / "agents-opencode" / "config"
                                          / "opencode" / "opencode.json")
     assert REF not in cfg_text                                        # never on disk
     cfg = json.loads(cfg_text)

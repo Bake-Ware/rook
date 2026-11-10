@@ -71,9 +71,9 @@ $S/uninstall.sh --purge   # ... and delete it instead
 
 Logs: `journalctl --user -u rook-castling-hub -f` (and `-worker`, `-relay`).
 Agent turns also leave Claude Code transcripts under
-`~/.claude/projects/-home-bake--rook-agents-agents-claude-code-work/`
+`~/.claude/projects/-home-bake--rook-plugins-agents-claude-code-work/`
 (Claude Code's own folder, for the engine's work folder
-`~/.rook-agents/agents-claude-code/work`; uninstall leaves both, delete them
+`~/.rook-plugins/agents-claude-code/work`; uninstall leaves both, delete them
 by hand).
 
 Settings by environment, read by every script: `ROOK_CASTLING_HOME`,

@@ -33,7 +33,7 @@ caps:
     args:
       prompt: { type: str, required: true }
       session: { type: str, doc: "The Codex session id to resume; blank: a new session." }
-      cwd: { type: str, doc: "The folder on the worker Codex works in; blank: ~/.rook-agents/agents-codex/work there." }
+      cwd: { type: str, doc: "The folder on the worker Codex works in; blank: ~/.rook-plugins/agents-codex/work there." }
       model: { type: str, doc: "A Codex model id, or two/three for System Two/Three; blank: the model setting." }
       effort: { type: str, doc: "Codex's model_reasoning_effort (minimal, low, medium, high, xhigh); blank: its own." }
       system: { type: str, doc: Codex's developer instructions for the turn. }

@@ -11,7 +11,7 @@ usage.
 agents runtime. It goes on untouched as ``ROOK_DOOR_TOKEN`` in the process's
 environment; the hub puts the token there on the way to the worker. The
 turn's Rook MCP server is the door at ``door_url``, from an MCP config on the
-worker (``~/.rook-agents/agents-claude-code/rook-mcp.json``) that names that
+worker (``~/.rook-plugins/agents-claude-code/rook-mcp.json``) that names that
 variable, so no file and no command line holds the token.
 """
 from __future__ import annotations

@@ -43,7 +43,7 @@ process's environment, where the hub puts the token on the way to the
 worker: never on the command line, on disk or in the journal. Tools run
 without prompts: the hub decides what each call may do.
 
-On the worker, everything lives in `~/.rook-agents/agents-opencode/`:
+On the worker, everything lives in `~/.rook-plugins/agents-opencode/`:
 `work/`, where turns run unless the agent names a folder (the same one every
 turn), and `config/opencode/opencode.json`, written each turn (with
 `isolate`, `config/` is OpenCode's whole config folder). A hub that ran this
