@@ -26,15 +26,9 @@ import kotlin.concurrent.thread
  * on the watch, on whatever earbuds or glasses are paired to it. [WatchVoiceListener] hands
  * over the channel the watch opened on [WearLink.PATH].
  *
- * Rook 0.4 (the default): a [VoiceClient] on the same voice server, account and conversation as
- * the phone's own voice; a phone voice session that is open is closed first (the server allows
- * one connection per conversation). The watch gets the app's chat so far ([WearLink.HISTORY])
- * and its turns join that chat ([VoiceBus]), so the phone, its Chat widget and the watch show
- * one conversation.
- *
- * Rook 0.5 (Settings > Band > Rook version): a [WatchSpeech] session on the hub's `speech`
- * plugin, through the hub's door with the person's token. The watch gets that session's
- * history; the phone's 0.4 chat is left alone. The watch app and the link are the same.
+ * The voice session is a [WatchSpeech] session on the hub's `speech` plugin, through the hub's
+ * door with the person's token. The watch gets that session's history; the phone's own chat is
+ * left alone.
  */
 class WatchBridge private constructor(private val ctx: Context, val channel: ChannelClient.Channel) {
     companion object {
@@ -70,15 +64,10 @@ class WatchBridge private constructor(private val ctx: Context, val channel: Cha
     @Volatile private var closed = false
     @Volatile private var writer: LinkWriter? = null
     @Volatile private var client: WatchVoice? = null
-    /** Chosen once per conversation: the phone's 0.4/0.5 switch. */
-    private val v05 = Castling.on(ctx)
     private var downCodec = WearLink.CODEC_PCM
     private val down = LinkedBlockingQueue<Down>(1024)
     private val frameLock = Any()
     private var opened = false
-    private var everOpened = false
-    private var attempts = 0
-    private var sentHistory = false
     private val pending = ArrayDeque<Pair<ByteArray, Boolean>>()
     @Volatile private var lastState = ""
     @Volatile private var lastActivityAt = SystemClock.elapsedRealtime()
@@ -151,32 +140,10 @@ class WatchBridge private constructor(private val ctx: Context, val channel: Cha
     /** Main thread. */
     private fun connectVoice() {
         if (closed) return
-        if (v05) { thread(name = "watch-speech-setup") { connectSpeech() }; return }
-        val prefs = ctx.getSharedPreferences("rook", Context.MODE_PRIVATE)
-        val url = prefs.getString("voice_url", "") ?: ""
-        if (url.isEmpty()) { tell(WearLink.ERROR, "Set up voice in the Rook app on the phone first"); close("no voice server"); return }
-        if (!sentHistory) { sentHistory = true; sendHistory() }
-        // One connection per conversation: the phone's own open session gives way to the watch.
-        if (attempts == 0 && VoiceService.inst?.sessionOpen() == true) {
-            try { VoiceService.endSession(ctx) } catch (e: Exception) { Log.w(TAG, "could not end the phone's voice session", e) }
-            attempts++
-            main.postDelayed({ connectVoice() }, 800)
-            return
-        }
-        attempts++
-        client = V04(VoiceClient(ctx, url, prefs.getBoolean("voice_insecure", false), listener,
-            ownMic = false, token = prefs.getString("voice_token", "") ?: "", sink = sink)).also { it.connect() }
+        thread(name = "watch-speech-setup") { connectSpeech() }
     }
 
-    private class V04(val c: VoiceClient) : WatchVoice {
-        override fun connect() = c.connect()
-        override fun pushFrame(frame: ByteArray, speech: Boolean) = c.pushFrame(frame, speech = speech)
-        override fun interrupt() = c.interrupt()
-        override fun reportPlayback(turn: Int, frames: Long) = c.reportPlayback(turn, frames)
-        override fun close() = c.close()
-    }
-
-    /** Rook 0.5, off the main thread (the sign-in status is Python's): the hub's speech plugin. */
+    /** Off the main thread (the sign-in status is Python's): the hub's speech plugin. */
     private fun connectSpeech() {
         val prefs = ctx.getSharedPreferences("rook", Context.MODE_PRIVATE)
         val status = try { Castling.status(ctx) } catch (e: Exception) { null }
@@ -197,7 +164,6 @@ class WatchBridge private constructor(private val ctx: Context, val channel: Cha
             warn = { msg, e -> Log.w(TAG, msg, e) })
         main.post {
             if (closed) return@post
-            attempts++
             client = speech      // before connect: its onOpen hands over the frames kept meanwhile
             speech.connect()
         }
@@ -213,25 +179,10 @@ class WatchBridge private constructor(private val ctx: Context, val channel: Cha
             set(v) { prefs.edit().putInt("speech05_seq", v).apply() }
     }
 
-    /** Main thread: the app's chat so far, by the Chat widget's rules; written off the main thread. */
-    private fun sendHistory() {
-        val chat = WidgetTranscript(capacity = HISTORY_LINES)
-        VoiceBus.replay(chat, 0)
-        val lines = chat.snapshot().map { Transcript.Line(if (it.user) Transcript.Who.USER else Transcript.Who.ROOK, it.text) }
-        if (lines.isEmpty()) return
-        val json = Transcript.of(lines, HISTORY_LINES).toJson()
-        thread(name = "watch-history") { tell(WearLink.HISTORY, json) }
-    }
-
-    /** Any thread: a watch turn joins the app's chat (0.4: the 0.5 session keeps its own). */
-    private fun chat(event: (VoiceBus.Listener) -> Unit) {
-        if (!v05) main.post { if (!closed) VoiceBus.emit(event = event) }
-    }
-
     private val listener = object : VoiceClient.Listener {
         override fun onOpen() {
             synchronized(frameLock) {
-                opened = true; everOpened = true
+                opened = true
                 while (pending.isNotEmpty()) pending.removeFirst().let { (f, s) -> client?.pushFrame(f, speech = s) }
             }
         }
@@ -242,14 +193,12 @@ class WatchBridge private constructor(private val ctx: Context, val channel: Cha
         override fun onTranscript(text: String) {
             lastActivityAt = SystemClock.elapsedRealtime()
             tell(WearLink.HEARD, JSONObject().put("text", text))
-            chat { it.onTranscript(text) }
         }
         override fun onAssistantDelta(text: String) {
             tell(WearLink.REPLY, JSONObject().put("text", text))
-            chat { it.onAssistantDelta(text) }
         }
-        override fun onAssistantDone() { tell(WearLink.REPLY_DONE); chat { it.onAssistantDone() } }
-        override fun onInterrupt() { chat { it.onInterrupt() } }
+        override fun onAssistantDone() { tell(WearLink.REPLY_DONE) }
+        override fun onInterrupt() {}
         override fun onError(msg: String) { tell(WearLink.ERROR, msg) }
         override fun onBye(mode: String, afterMs: Long) {
             main.postDelayed({ close("the assistant said goodbye") }, afterMs.coerceIn(0L, 15_000L))
@@ -259,9 +208,7 @@ class WatchBridge private constructor(private val ctx: Context, val channel: Cha
                 synchronized(frameLock) { opened = false }
                 client = null
                 if (closed) return@post
-                // Refused while the phone's session let go of the conversation: try again shortly.
-                if (!v05 && !everOpened && attempts < 4) main.postDelayed({ connectVoice() }, 1500)
-                else close("voice connection closed")
+                close("voice connection closed")
             }
         }
     }

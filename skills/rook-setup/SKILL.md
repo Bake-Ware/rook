@@ -105,7 +105,7 @@ machine only, so a second machine needs a relay others can reach (Telesthete's
 `telesthete-hub`) and TLS in front of the hub first: walk them through
 [Install and first run](../../docs/manual-0.5/install.md#before-it-leaves-this-machine),
 then [Adding machines](../../docs/manual-0.5/enrollment.md) (the Android app:
-Settings > Band > Rook version > 0.5 preview).
+Settings > Band).
 
 **Telegram or Discord.** Make a bot, store its token in the vault
 (`~/.rook-castling/venv/bin/python -m rook.core2.hub --config ~/.rook-castling/hub/hub.yaml secret set telegram-bot`,

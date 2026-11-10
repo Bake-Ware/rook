@@ -14,20 +14,14 @@ dependencies = [
     # DropReceiver. Pinned to telesthete main at the v0.3.0 tag.
     "telesthete @ git+https://github.com/Bake-Ware/telesthete@f3fc597402a76f78cec9da0487de0725aaf77eb2",
     "pynacl>=1.5",
-    "cryptography>=42",
     "aiohttp>=3.9",
     "websockets>=12.0",
-    "Pillow>=12.3,<13",
     # Plugin manifests (rook.kit.manifest). Pure-Python fallback, so it
     # installs everywhere a worker runs.
     "pyyaml>=6",
 ]
 
 [project.optional-dependencies]
-# Screen capture on desktop workers (X11 / Windows / macOS).
-desktop = [
-    "mss>=9.0",
-]
 # Browser control on a worker (browser.* caps). After installing, fetch the
 # browser once: python -m playwright install chromium
 browser = [
@@ -45,15 +39,13 @@ dev = [
     "pytest-asyncio>=0.23",
     "httpx>=0.27",
     "mcp>=1.27.1,<2",  # tests/test_core2_mcp_door.py talks to the MCP door as a client
+    "cryptography>=42",  # tests make throwaway TLS certificates
     "pyyaml>=6",  # castling/tools/convert.py
 ]
 
 [project.urls]
 Homepage = "https://github.com/Bake-Ware/rook"
 Issues = "https://github.com/Bake-Ware/rook/issues"
-
-[project.scripts]
-rook-worker = "rook.worker.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]
