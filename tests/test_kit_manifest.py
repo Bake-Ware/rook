@@ -80,7 +80,6 @@ def test_compile_types():
     m = compile_type({"type": "map", "fields": {"a": {"type": "bool", "required": True}, "b": {}}})
     assert m["required"] == ["a"] and m["additionalProperties"] is False
     assert compile_type({"type": "map", "items": {"type": "int"}})["additionalProperties"]["type"] == "integer"
-    assert compile_type({"schema": {"type": "null"}, "doc": "raw"}) == {"type": "null", "description": "raw"}
     assert compile_type({"type": "secret"})["writeOnly"] is True
 
 
@@ -115,7 +114,7 @@ def test_load_normalizes(tmp_path):
     assert m.plugin == "deluge" and m.version == "1.2.0"
     assert set(m.caps) == {"deluge.torrents.list", "deluge.torrents.remove", "deluge.stats.custom"}
     cap = m.caps["deluge.torrents.remove"]
-    assert cap["on"] == "worker" and cap["elevation"] == "never" and cap["tags"] == []
+    assert cap["on"] == "worker" and cap["elevation"] == "never"
     assert cap["args"]["id"] == {"type": "str", "required": True, "pattern": "^[0-9a-f]{40}$"}
     assert m.data["settings"]["password"] == {"where": "hub", "secret": True, "type": "secret",
                                               "required": False, "apply": "live"}

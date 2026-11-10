@@ -18,7 +18,6 @@ caps:
     scope: local
     args: { op: { type: str } }
     bind: { op: b }
-    requires: { settings: [missing] }
     run: scripts/b.py:B.run
   c:
     doc: Bad regex, join on a non-list, tls.verify from an arg.

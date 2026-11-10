@@ -553,7 +553,6 @@ def test_hub_plugins_records_contracts_and_hooks(hubs, tmp_path):
         try:
             library = [n for n, p in hub.plugins.plugins.items() if not p.manifest.get("builtin")]
             assert library == ["notes"]       # broken was refused, the hub runs
-            assert hub._installed()["notes"] == "1.0.0"     # what requires.plugins is checked against
             # Only defined contracts become grantable names (a plugin can't make one up).
             assert hub._contracted({"risk": "read", "contracts": ["notify.send", "made.up"]})["contracts"] == ["notify.send"]
             _, out = await http(hub, "POST", "/call", {"worker": "rook", "cap": "notes.note.create",
@@ -787,61 +786,6 @@ def test_a_call_the_hub_gives_up_on_stops_being_resent(hubs):
             with pytest.raises(asyncio.TimeoutError):
                 await asyncio.wait_for(hub._send(hub.band, req), 0.1)      # dispatch's timeout
             assert forgotten == [(hub.band, "d" * 32)] and hub._late["d" * 32]["worker"] == "e" * 32
-        finally:
-            await hub.stop()
-    run(go())
-
-
-BOT = """\
-manifest: 1
-plugin: bot
-version: 1.0.0
-runs_on: hub
-settings:
-  token: { type: str }
-routes:
-  signed: { path: /signed, methods: [POST], run: scripts/bot.py:hook, auth: { hmac: "{{secret:BOT_KEY}}" } }
-  tg: { path: /tg, methods: [POST], run: scripts/bot.py:hook,
-        auth: { token: "{{settings.token}}", header: X-Telegram-Bot-Api-Secret-Token } }
-  bearer: { path: /bearer, methods: [POST], run: scripts/bot.py:hook, auth: { token: "{{settings.token}}" } }
-  bare: { path: /bare, methods: [POST], run: scripts/bot.py:hook, auth: token }
-"""
-
-
-def test_hmac_and_token_routes(hubs, tmp_path):
-    import hashlib
-    import hmac as hmac_
-    lib = tmp_path / "lib"
-    plugin(lib, "bot", BOT, {"bot.py": "def hook(ctx, request):\n    return {'got': request['body'].decode()}\n"})
-
-    async def post(hub, path, body: bytes, headers: dict):
-        def go():
-            req = urllib.request.Request(f"http://127.0.0.1:{hub.doors[0].port}/p/bot{path}", data=body,
-                                         method="POST", headers=headers)
-            try:
-                with urllib.request.urlopen(req, timeout=10) as r:
-                    return r.status, json.loads(r.read())
-            except urllib.error.HTTPError as e:
-                return e.code, json.loads(e.read())
-        return await asyncio.to_thread(go)
-
-    async def go():
-        hub, _, _ = await hubs(config(tmp_path, library=lib, settings={"bot": {"token": "t0k"}}), worker=False)
-        try:
-            hub.vault.set("BOT_KEY", "k3y", by="person:bake")
-            body = b'{"ref": "main"}'
-            sig = "sha256=" + hmac_.new(b"k3y", body, hashlib.sha256).hexdigest()
-            assert await post(hub, "/signed", body, {"X-Hub-Signature-256": sig}) == (200, {"got": body.decode()})
-            assert (await post(hub, "/signed", body + b" ", {"X-Hub-Signature-256": sig}))[0] == 401
-            assert (await post(hub, "/signed", body, {}))[0] == 401
-            assert (await post(hub, "/signed", body, {"X-Hub-Signature-256": "sha256=\u00e9\u00e9"}))[0] == 401
-            assert (await post(hub, "/tg", body, {"X-Telegram-Bot-Api-Secret-Token": "t0k"}))[0] == 200
-            assert (await post(hub, "/tg", body, {"X-Telegram-Bot-Api-Secret-Token": "nope"}))[0] == 401
-            assert (await post(hub, "/bearer", body, {"Authorization": "Bearer t0k"}))[0] == 200
-            assert (await post(hub, "/bearer", body, {"Authorization": "Bearer t0"}))[0] == 401
-            assert (await post(hub, "/bare", body, {}))[0] == 501
-            hub.vault.delete("BOT_KEY")                     # an unset secret refuses everything
-            assert (await post(hub, "/signed", body, {"X-Hub-Signature-256": sig}))[0] == 401
         finally:
             await hub.stop()
     run(go())

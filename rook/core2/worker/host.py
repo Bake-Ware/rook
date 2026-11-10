@@ -575,8 +575,7 @@ def _handled_by_host(ctx, **args):
 
 
 def _required_settings(manifest: Mapping) -> set:
-    reqs = [manifest.get("requires") or {}, *((c.get("requires") or {}) for c in manifest["caps"].values())]
-    return {s for r in reqs for s in r.get("settings") or ()}
+    return set((manifest.get("requires") or {}).get("settings") or ())
 
 
 def _redact(text: str, secrets: list[str]) -> str:
