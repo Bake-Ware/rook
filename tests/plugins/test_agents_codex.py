@@ -1,14 +1,15 @@
-"""agents-codex.turn against a fake ``codex`` on PATH (port_helpers.Bins): the
-argv it builds (new session and resume), the prompt on stdin, the JSONL
-events it reads, errors and the timeout. The fake prints the event shapes a
+"""agents-codex.turn on the hub against a fake ``codex`` on the PATH of a
+worker with only the primitives (port_helpers.on_worker): the argv it builds
+(new session and resume), the prompt on stdin, the JSONL events it reads,
+errors and the timeout. The fake prints the event shapes a
 real ``codex exec --json`` 0.160 printed on Oct 31 2026."""
 
 import json
 
 import pytest
 
-from port_helpers import CONTRACTS, ME, PLUGINS, go
-from rook.kit.ctx import Ctx, KitError, invoke, load_run
+from port_helpers import CONTRACTS, PLUGINS, on_worker
+from rook.kit.ctx import KitError
 from rook.kit.manifest import load
 
 FOLDER = PLUGINS / "agents-codex"
@@ -46,7 +47,16 @@ elif mode == "slow":
     time.sleep(30)
 """
 
-SETTINGS = {"codex": "codex", "model": "", "model_three": "", "sandbox": "", "config": [], "isolate": True}
+SETTINGS = {"worker": "w1", "model": "", "model_three": ""}
+
+
+@pytest.fixture
+def home(tmp_path, monkeypatch):
+    folder = tmp_path / "home"
+    folder.mkdir()
+    monkeypatch.setenv("HOME", str(folder))
+    monkeypatch.delenv("OS", raising=False)
+    return folder
 
 
 def test_defaults_follow_castling_inference():
@@ -57,13 +67,10 @@ def test_defaults_follow_castling_inference():
 
 
 def turn(tmp_path, settings=None, **args):
-    m = load(FOLDER, CONTRACTS).data
-    ctx = Ctx(m, ME, settings={**SETTINGS, **(settings or {})}, data_dir=tmp_path / "data", cap="turn")
-    func = load_run(FOLDER, "scripts/codex.py:turn", {})
-    return go(lambda: invoke(func, ctx, args))
+    return on_worker("agents-codex", "agents-codex.turn", args, settings={**SETTINGS, **(settings or {})})[0]
 
 
-def test_a_turn_and_its_resume(tmp_path, bins):
+def test_a_turn_and_its_resume(tmp_path, bins, home):
     bins.add("codex", CODEX)
     out = turn(tmp_path, prompt="hello", system='You are "pm".\nBe brief.')
     assert out == {"text": "hi: hello", "session": "01a19312-6afd-7340-a485-9a577ddfd14f",
@@ -73,7 +80,7 @@ def test_a_turn_and_its_resume(tmp_path, bins):
     assert call["argv"] == ["exec", "--json", "--skip-git-repo-check",
                             "-c", 'developer_instructions="You are \\"pm\\".\\nBe brief."',
                             "--ignore-user-config", "--ignore-rules", "-"]
-    assert (tmp_path / "data" / "work").is_dir()                   # its own work folder by default
+    assert (home / ".rook-plugins" / "agents-codex" / "work").is_dir()     # its own folder on the worker
     out = turn(tmp_path, {"model": "gpt-6-sol", "sandbox": "workspace-write", "isolate": False,
                           "config": ['mcp_servers.rook.url="http://hub:8751/mcp"']},
                prompt="again", session="sess-9", effort="high", cwd=str(tmp_path))
@@ -91,7 +98,7 @@ def test_a_turn_and_its_resume(tmp_path, bins):
     ("three", {"model": "gpt-6-sol"}, []),                          # blank: Codex's own default
     ("o9", {}, ["-m", "o9"]),
 ])
-def test_system_names_pick_the_settings_models(tmp_path, bins, model, settings, expect):
+def test_system_names_pick_the_settings_models(tmp_path, bins, home, model, settings, expect):
     bins.add("codex", CODEX)
     turn(tmp_path, settings, prompt="x", model=model)
     argv = bins.calls("codex")[0]["argv"]
@@ -101,14 +108,14 @@ def test_system_names_pick_the_settings_models(tmp_path, bins, model, settings, 
 
 @pytest.mark.parametrize("args", [{"session": "--dangerously-bypass-approvals-and-sandbox"},
                                   {"model": "--oss"}])
-def test_session_and_model_are_never_options(tmp_path, bins, args):
+def test_session_and_model_are_never_options(tmp_path, bins, home, args):
     bins.add("codex", CODEX)
     with pytest.raises(KitError, match="bad args"):
         turn(tmp_path, prompt="hi", **args)
     assert not bins.calls("codex")
 
 
-def test_config_lines_are_key_value_never_options(tmp_path, bins):
+def test_config_lines_are_key_value_never_options(tmp_path, bins, home):
     bins.add("codex", CODEX)
     with pytest.raises(KitError, match="not key=value"):
         turn(tmp_path, {"config": ["--dangerously-bypass-approvals-and-sandbox"]}, prompt="hi")
@@ -120,14 +127,14 @@ def test_config_lines_are_key_value_never_options(tmp_path, bins):
     ("silent", "Codex answered without a reply"),
     ("crash", r"Codex failed \(exit 1\): Not logged in"),
 ])
-def test_failures_say_why(tmp_path, bins, monkeypatch, mode, error):
+def test_failures_say_why(tmp_path, bins, home, monkeypatch, mode, error):
     bins.add("codex", CODEX)
     monkeypatch.setenv("FAKE_CODEX", mode)
     with pytest.raises(KitError, match=error):
         turn(tmp_path, prompt="x")
 
 
-def test_a_slow_turn_is_killed(tmp_path, bins, monkeypatch):
+def test_a_slow_turn_is_killed(tmp_path, bins, home, monkeypatch):
     bins.add("codex", CODEX)
     monkeypatch.setenv("FAKE_CODEX", "slow")
     with pytest.raises(KitError, match="took longer than 300ms") as e:
@@ -135,11 +142,13 @@ def test_a_slow_turn_is_killed(tmp_path, bins, monkeypatch):
     assert e.value.retry
 
 
-def test_missing_program_and_folder(tmp_path, bins):
+def test_missing_program_and_folder(tmp_path, bins, home):
     with pytest.raises(KitError, match="nope not found: install Codex"):
         turn(tmp_path, {"codex": "nope"}, prompt="x")
-    with pytest.raises(KitError, match="no folder"):
+    with pytest.raises(KitError, match="not found: .*missing"):
         turn(tmp_path, prompt="x", cwd=str(tmp_path / "missing"))
+    with pytest.raises(KitError, match="set agents-codex.worker"):
+        turn(tmp_path, {"worker": ""}, prompt="x")
 
 
 def test_it_provides_the_agent_backend_contract():
@@ -161,18 +170,20 @@ def test_the_agents_package_offers_only_backends_that_exist():
         assert m["provides"] == {"agent.backend": f"agents-{name}.turn"}
 
 
-def test_a_turn_reaches_rook_with_its_own_door_token(tmp_path, bins):
-    bins.add("codex", CODEX + """
-with open(os.path.join(os.path.dirname(sys.argv[0]), "codex.token"), "w") as f:
-    f.write(os.environ.get("ROOK_DOOR_TOKEN", ""))
-""")
-    turn(tmp_path, prompt="hi", door="tok-123")
+def test_a_turn_reaches_rook_with_its_own_door_token(tmp_path, bins, home):
+    """The token's name goes on untouched in the process's environment; the
+    hub resolves it on the hop to the worker (this fake worker doesn't)."""
+    bins.add("codex", CODEX)
+    ref = "{{secret:turn-abc}}"
+    out, seen = on_worker("agents-codex", "agents-codex.turn", {"prompt": "hi", "door": ref}, settings=SETTINGS)
     argv = bins.calls("codex")[0]["argv"]
     assert argv[argv.index('mcp_servers.rook.url="http://127.0.0.1:8741/mcp"') - 1] == "-c"
     assert 'mcp_servers.rook.bearer_token_env_var="ROOK_DOOR_TOKEN"' in argv
-    assert "tok-123" not in " ".join(argv)                    # never on the command line
-    assert (bins.dir / "codex.token").read_text() == "tok-123"  # only in the turn's environment
+    assert ref not in " ".join(argv)                           # never on the command line
+    (opened,) = [a for c, a in seen if c == "shell.open"]
+    assert opened["env"] == {"ROOK_DOOR_TOKEN": ref}
+    assert bins.calls("codex")[0]["env"]["ROOK_DOOR_TOKEN"] == ref
     turn(tmp_path, prompt="hi")
     assert not any("mcp_servers.rook" in a for a in bins.calls("codex")[1]["argv"])
     with pytest.raises(KitError, match="door_url"):
-        turn(tmp_path, {"door_url": ""}, prompt="hi", door="tok-123")
+        turn(tmp_path, {"door_url": ""}, prompt="hi", door=ref)

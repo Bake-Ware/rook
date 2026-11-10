@@ -1,16 +1,17 @@
-"""agents-opencode.turn against a fake ``opencode`` on PATH (port_helpers.Bins):
-the argv it builds, the instructions at the head of a new session's first
-message (free models refuse a custom system prompt), the generated config
-(the door as the ``rook`` MCP server, token only in the environment, own
-tools off), the JSON events it reads, and failures. The fake prints the event
-shapes a real ``opencode run --format json`` 1.18.35 printed on Nov 4 2026."""
+"""agents-opencode.turn on the hub against a fake ``opencode`` on the PATH of a
+worker with only the primitives (port_helpers.on_worker): the argv it builds,
+the instructions at the head of a new session's first message (free models
+refuse a custom system prompt), the generated config (the door as the
+``rook`` MCP server, token only in the environment, own tools off), the JSON
+events it reads as they come, and failures. The fake prints the event shapes
+a real ``opencode run --format json`` 1.18.35 printed on Nov 4 2026."""
 
 import json
 
 import pytest
 
-from port_helpers import CONTRACTS, ME, PLUGINS, go
-from rook.kit.ctx import Ctx, KitError, invoke, load_run
+from port_helpers import CONTRACTS, PLUGINS, on_worker
+from rook.kit.ctx import KitError
 from rook.kit.manifest import load
 
 FOLDER = PLUGINS / "agents-opencode"
@@ -53,15 +54,22 @@ elif mode == "slow":
     time.sleep(30)
 """
 
-SETTINGS = {"opencode": "opencode", "model": "", "model_three": "", "door_url": "http://127.0.0.1:8741/mcp",
-            "own_tools": True, "isolate": True}
+SETTINGS = {"worker": "w1"}
+REF = "{{secret:turn-abc}}"
+
+
+@pytest.fixture(autouse=True)
+def home(tmp_path, monkeypatch):
+    folder = tmp_path / "home"
+    folder.mkdir()
+    monkeypatch.setenv("HOME", str(folder))
+    monkeypatch.delenv("OS", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    return folder
 
 
 def turn(tmp_path, settings=None, **args):
-    m = load(FOLDER, CONTRACTS).data
-    ctx = Ctx(m, ME, settings={**SETTINGS, **(settings or {})}, data_dir=tmp_path / "data", cap="turn")
-    func = load_run(FOLDER, "scripts/opencode.py:turn", {})
-    return go(lambda: invoke(func, ctx, args))
+    return on_worker("agents-opencode", "agents-opencode.turn", args, settings={**SETTINGS, **(settings or {})})[0]
 
 
 def test_a_turn_and_its_resume(tmp_path, bins, monkeypatch):
@@ -80,7 +88,7 @@ def test_a_turn_and_its_resume(tmp_path, bins, monkeypatch):
     assert bins.calls("opencode")[1]["argv"][-4:] == ["--session", "ses_abc", "--variant", "high"]
     # a resumed session has its instructions already
     assert (bins.dir / "opencode.stdin").read_text().endswith("---\nagain\n---\n")
-    assert (tmp_path / "data" / "work").is_dir()
+    assert (tmp_path / "home" / ".rook-plugins" / "agents-opencode" / "work").is_dir()
 
 
 def test_the_config_gives_rook_and_only_rook(tmp_path, bins, monkeypatch):
@@ -91,12 +99,14 @@ def test_the_config_gives_rook_and_only_rook(tmp_path, bins, monkeypatch):
                                          ' "agent": {"mine": {}},}\n')
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "userconf"))
     bins.add("opencode", OPENCODE)
-    turn(tmp_path, prompt="hi", door="tok-123")
+    turn(tmp_path, prompt="hi", door=REF)
     env = json.loads((bins.dir / "opencode.env").read_text())
-    assert env["ROOK_DOOR_TOKEN"] == "tok-123"                        # only in the turn's environment
-    assert "tok-123" not in json.dumps(bins.calls("opencode")[0]["argv"])
+    assert env["ROOK_DOOR_TOKEN"] == REF          # by name, in the environment (the hub resolves it there)
+    assert REF not in json.dumps(bins.calls("opencode")[0]["argv"])
     cfg_text = open(env["OPENCODE_CONFIG"]).read()
-    assert "tok-123" not in cfg_text                                  # never on disk
+    assert env["OPENCODE_CONFIG"] == str(tmp_path / "home" / ".rook-plugins" / "agents-opencode" / "config"
+                                         / "opencode" / "opencode.json")
+    assert REF not in cfg_text                                        # never on disk
     cfg = json.loads(cfg_text)
     assert env["XDG_CONFIG_HOME"] != str(tmp_path / "userconf")       # isolated from the user's config
     assert cfg["mcp"] == {"rook": {"type": "remote", "url": "http://127.0.0.1:8741/mcp", "enabled": True,
@@ -110,7 +120,7 @@ def test_the_config_gives_rook_and_only_rook(tmp_path, bins, monkeypatch):
     assert "mcp" not in cfg and "tools" not in cfg and env["ROOK_DOOR_TOKEN"] is None
     assert env["XDG_CONFIG_HOME"] == str(tmp_path / "userconf")
     with pytest.raises(KitError, match="door_url"):
-        turn(tmp_path, {"door_url": ""}, prompt="hi", door="tok-123")
+        turn(tmp_path, {"door_url": ""}, prompt="hi", door=REF)
 
 
 @pytest.mark.parametrize("model, settings, expect", [
@@ -137,7 +147,7 @@ def test_args_are_never_options(tmp_path, bins, args):
 @pytest.mark.parametrize("mode, error", [
     ("limit", "OpenCode: AI_APICallError: Free usage limit reached"),
     ("error", "OpenCode: Model not found: x/y"),
-    ("crash", r"OpenCode failed \(exit 3\): \nboom"),
+    ("crash", r"OpenCode failed \(exit 3\): boom"),
 ])
 def test_failures_say_why_without_waiting(tmp_path, bins, monkeypatch, mode, error):
     bins.add("opencode", OPENCODE)
@@ -154,10 +164,12 @@ def test_a_slow_turn_is_killed(tmp_path, bins, monkeypatch):
     assert e.value.retry
 
 
-def test_missing_program_and_folder(tmp_path, bins):
+def test_missing_worker_program_and_folder(tmp_path, bins):
+    with pytest.raises(KitError, match="set agents-opencode.worker"):
+        turn(tmp_path, {"worker": ""}, prompt="x")
     with pytest.raises(KitError, match="nope not found: install OpenCode"):
         turn(tmp_path, {"opencode": "nope"}, prompt="x")
-    with pytest.raises(KitError, match="no folder"):
+    with pytest.raises(KitError, match="not found: .*missing"):
         turn(tmp_path, prompt="x", cwd=str(tmp_path / "missing"))
 
 

@@ -342,8 +342,9 @@ pub fn env(a: Args<'_>) -> Reply {
 
 /// shell.open: a command (default: a login shell) as a live stream, on a
 /// terminal (pty=true) or on pipes with output merged. Output becomes
-/// `bytes` events; input events are typed, signalled or resize it; the
-/// stream closes with the exit code.
+/// `bytes` events; `stdin` is written first (on pipes, its end closes the
+/// input); input events are typed, signalled or resize it; the stream closes
+/// with the exit code.
 pub fn open(a: Args<'_>, streams: &Arc<Streams>, participants: Vec<String>, attrs: Map<String, Value>) -> Reply {
     let (mut argv, mut cmd) = (a.strings("argv")?, a.str("cmd")?);
     if argv.is_none() && cmd.is_none() {
@@ -410,9 +411,10 @@ pub fn open(a: Args<'_>, streams: &Arc<Streams>, participants: Vec<String>, attr
     );
     let child = Arc::new(Mutex::new(child));
     let input = output.input;
+    let stdin = a.str("stdin")?.map(|text| (text, !pty));
     {
         let child = child.clone();
-        std::thread::spawn(move || feed(opened.input, input, master, child));
+        std::thread::spawn(move || feed(opened.input, input, stdin, master, child));
     }
     let streams = streams.clone();
     let mut out = output.read;
@@ -533,9 +535,16 @@ fn spawn_pty(_: &mut std::process::Command, _: (u16, u16)) -> std::io::Result<Sp
 fn feed(
     events: std::sync::mpsc::Receiver<Value>,
     mut input: Box<dyn Write + Send>,
+    stdin: Option<(String, bool)>,
     master: Option<Master>,
     child: Arc<Mutex<std::process::Child>>,
 ) {
+    if let Some((text, close)) = stdin {
+        let _ = input.write_all(text.as_bytes()).and_then(|_| input.flush());
+        if close {
+            input = Box::new(std::io::sink()); // the end of its input: it reads to here
+        }
+    }
     while let Ok(body) = events.recv() {
         if let Some(data) = crate::streams::input_data(&body) {
             if input.write_all(&data).and_then(|_| input.flush()).is_err() {
@@ -585,6 +594,8 @@ fn signal(child: &Arc<Mutex<std::process::Child>>, name: &str) {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use base64::engine::general_purpose::STANDARD as B64;
+    use base64::Engine;
 
     #[tokio::test]
     async fn a_timeout_kills_the_whole_group_even_after_the_shell_is_gone() {
@@ -614,5 +625,33 @@ mod tests {
             assert!(gone, "{cmd}: the child outlived the timeout");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn open_feeds_stdin_and_on_pipes_ends_it() {
+        let streams = Streams::new(Box::new(|_, _| {}));
+        let a = json!({"argv": ["sh", "-c", "wc -c; echo err >&2"], "stdin": "hello\n", "pty": false});
+        let sid = open(Args(a.as_object().unwrap()), &streams, vec![], Map::new()).unwrap()["stream"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let (mut out, mut next, mut exit) = (Vec::new(), 0u64, None);
+        while exit.is_none() {
+            let q = json!({"stream": sid, "after": next, "wait": 5});
+            let got = streams.read(Args(q.as_object().unwrap())).await.unwrap();
+            next = got["next"].as_u64().unwrap();
+            for ev in got["events"].as_array().unwrap() {
+                if ev["type"] == "bytes" {
+                    out.extend(B64.decode(ev["b64"].as_str().unwrap()).unwrap());
+                } else if ev["data"]["state"] == "closed" {
+                    exit = Some(ev["data"]["exit"].clone());
+                }
+            }
+        }
+        assert_eq!(
+            String::from_utf8(out).unwrap().split_whitespace().collect::<Vec<_>>(),
+            ["6", "err"]
+        );
+        assert_eq!(exit, Some(json!(0)));
     }
 }

@@ -1,36 +1,35 @@
-"""agents-opencode.turn: one agent turn in the OpenCode CLI.
+"""agents-opencode.turn: one agent turn in the OpenCode CLI, run from the hub
+as a process (shell.open) on the worker named by the ``worker`` setting.
 
 ``opencode run --format json [-s ID] [-m M] [--variant V]`` with the prompt on
-stdin, started through the worker's launch path (as the normal user).
-OpenCode prints JSON events: ``text`` parts (the reply), ``tool_use``,
+stdin. OpenCode prints JSON events: ``text`` parts (the reply), ``tool_use``,
 ``step_start`` / ``step_finish`` (tokens; reason ``stop`` ends the turn) and
 ``error``; each carries ``sessionID``. The reply is the text of the last step
 that said anything.
 
-Config: a generated ``opencode.json`` in this plugin's data folder, with the
-hub's MCP door as the ``rook`` server (its bearer token from
-``ROOK_DOOR_TOKEN`` in the turn's own environment: never on the command line
-or on disk), OpenCode's own tools on (``own_tools``, default on), and, with
-``isolate``, as the whole config (``XDG_CONFIG_HOME``): only the user's model
-providers are copied in, never their MCP servers, agents or instructions.
+Config: a generated ``opencode.json`` on the worker
+(``~/.rook-plugins/agents-opencode/config/opencode/``), with the hub's MCP door
+as the ``rook`` server (its bearer token from ``ROOK_DOOR_TOKEN`` in the
+turn's own environment, where the hub puts the token named by ``door``: never
+on the command line or on disk), OpenCode's own tools on (``own_tools``,
+default on), and, with ``isolate``, as the whole config
+(``XDG_CONFIG_HOME``): only the user's model providers are copied in from
+their own config on the worker, never their MCP servers, agents or
+instructions.
 
 OpenCode's free ``opencode/*`` models refuse a custom system prompt (a
 custom agent or ``instructions`` hangs the turn on retries), so the agent's
 instructions go at the head of a new session's first message instead.
-OpenCode retries a failing model quietly; its error log lines (stderr) end
-the turn at once with that error instead of waiting out the timeout.
+OpenCode retries a failing model quietly; its error log lines end the turn at
+once with that error instead of waiting out the timeout.
 """
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import json
-import os
 import re
-from pathlib import Path
 
-from rook.core2.worker.security import launch
-from rook.kit._types import parse_duration
+from rook.kit.cli import Place, itself, stream, worker
+from rook.kit.ctx import KitError
 
 # A session id or provider/model name, never an option.
 _WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/\[\]-]{0,159}")
@@ -72,21 +71,22 @@ def strip_jsonc(text: str) -> str:
     return re.sub(r",(\s*[}\]])", r"\1", "".join(out))
 
 
-def user_config() -> dict:
-    base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "opencode"
+async def user_config(ctx, place: Place) -> dict:
+    """The user's own OpenCode config on the worker, {} when there is none."""
+    base = await place.env("XDG_CONFIG_HOME") or place.join(place.home, ".config")
     for name in ("opencode.json", "opencode.jsonc", "config.json"):
-        p = base / name
-        if p.is_file():
-            with contextlib.suppress(OSError, ValueError):
-                cfg = json.loads(strip_jsonc(p.read_text(encoding="utf-8")))
-                return cfg if isinstance(cfg, dict) else {}
+        try:
+            got = await ctx.call_on(place.wid, "file.read", path=place.join(base, "opencode", name))
+            cfg = json.loads(strip_jsonc(got["content"]))
+        except (KitError, ValueError):
+            continue
+        return cfg if isinstance(cfg, dict) else {}
     return {}
 
 
-def config(settings, door: bool) -> dict:
+def config(settings, door: bool, user: dict) -> dict:
     cfg: dict = {"$schema": "https://opencode.ai/config.json", "autoupdate": False, "share": "disabled"}
     if settings["isolate"]:
-        user = user_config()
         cfg.update({k: user[k] for k in PROVIDER_KEYS if k in user})
     if door:
         cfg["mcp"] = {SERVER: {"type": "remote", "url": settings["door_url"], "enabled": True,
@@ -107,8 +107,8 @@ def model_for(settings, model: str | None) -> str:
     return model
 
 
-def argv(settings, *, session=None, model=None, effort=None) -> list[str]:
-    out = [settings["opencode"] or "opencode", "run", "--format", "json", "--print-logs", "--log-level", "ERROR"]
+def argv(settings, *, program="opencode", session=None, model=None, effort=None) -> list[str]:
+    out = [program, "run", "--format", "json", "--print-logs", "--log-level", "ERROR"]
     if session:
         out += ["--session", session]
     model = model_for(settings, model)
@@ -128,43 +128,32 @@ def message(prompt: str, system: str | None, session: str | None) -> str:
 
 async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, system=None, timeout="20m",
                door=None):
-    work = Path(cwd).expanduser() if cwd else ctx.data / "work"
-    if not cwd:
-        work.mkdir(parents=True, exist_ok=True)
-    elif not work.is_dir():
-        raise ctx.Error(f"no folder {work}")
     for name, value in (("session", session), ("model", model), ("effort", effort)):
         if value and not _WORD.fullmatch(value):
             raise ctx.Error(f"bad args: {name} is an id or a name, not {value[:40]!r}")
     if door and not ctx.settings["door_url"]:
         raise ctx.Error("set agents-opencode.door_url to the hub's MCP door to give agents Rook")
-    home = ctx.data / "config"
-    (home / "opencode").mkdir(parents=True, exist_ok=True)
-    cfg_file = home / "opencode" / "opencode.json"
-    cfg_file.write_text(json.dumps(config(ctx.settings, bool(door)), indent=1), encoding="utf-8")
-    env = {**os.environ, "OPENCODE_DISABLE_AUTOUPDATE": "1", "OPENCODE_CONFIG": str(cfg_file)}
+    ctx = itself(ctx)
+    w = worker(ctx)
+    place = await Place.of(ctx, w)
+    work = place.expand(cwd) if cwd else await place.folder("work")
+    home = await place.folder("config")
+    cfg_file = place.join(home, "opencode", "opencode.json")
+    user = await user_config(ctx, place) if ctx.settings["isolate"] else {}
+    await ctx.call_on(w, "file.write", path=cfg_file, content=json.dumps(config(ctx.settings, bool(door), user),
+                                                                          indent=1), create_parents=True)
+    env = {"OPENCODE_DISABLE_AUTOUPDATE": "1", "OPENCODE_CONFIG": cfg_file}
     if ctx.settings["isolate"]:
-        env["XDG_CONFIG_HOME"] = str(home)
+        env["XDG_CONFIG_HOME"] = home
     if door:
         env[TOKEN_ENV] = door
-    cmd = argv(ctx.settings, session=session, model=model, effort=effort)
-    try:
-        proc = await launch(cmd, getattr(ctx, "lease", None), cwd=str(work), stdin=asyncio.subprocess.PIPE,
-                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
-                            limit=16 * 1024 * 1024)      # one JSON event per line, tool output and all
-    except FileNotFoundError:
-        raise ctx.Error(f"{cmd[0]} not found: install OpenCode or set agents-opencode.opencode") from None
+    cmd = argv(ctx.settings, program=place.expand(ctx.settings["opencode"] or "opencode"), session=session,
+               model=model, effort=effort)
     st = _Turn()
-    try:
-        await asyncio.wait_for(_run(proc, message(prompt, system, session), st), parse_duration(timeout))
-    except asyncio.TimeoutError:
-        raise ctx.Error(f"OpenCode took longer than {timeout}", retry=True) from None
-    finally:
-        if proc.returncode is None:      # timed out, failed or cancelled: no orphan turn
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
-            await proc.wait()
-    return st.result(ctx, proc.returncode)
+    code, tail = await stream(ctx, w, cmd, stdin=message(prompt, system, session), cwd=work, timeout=timeout,
+                              name="OpenCode", setting="agents-opencode.opencode", env=env, line=st.line)
+    st.err_tail = st.err_tail.strip() or tail
+    return st.result(ctx, code)
 
 
 class _Turn:
@@ -193,6 +182,24 @@ class _Turn:
             data = err.get("data") if isinstance(err.get("data"), dict) else {}
             self.error = str(data.get("message") or err.get("name") or "OpenCode failed")[:500]
 
+    def line(self, text: str) -> bool:
+        """One output line: an event, or an error log line that ends the turn."""
+        if text.startswith("{"):
+            try:
+                ev = json.loads(text)
+            except ValueError:
+                return False
+            if isinstance(ev, dict):
+                self.feed(ev)
+            return False
+        self.err_tail = (self.err_tail + "\n" + text)[-2000:]        # what its log said
+        m = _LOG_ERROR.search(text)
+        if m and self.log_error is None:
+            # OpenCode would retry quietly until the timeout: stop now with its error.
+            self.log_error = m.group(1).replace('\\"', '"')[:500]
+            return True
+        return False
+
     def text(self) -> str:
         for step in reversed(self.steps):
             if any(t.strip() for t in step):
@@ -208,33 +215,4 @@ class _Turn:
             raise ctx.Error(f"OpenCode: {why}", retry="limit" in why.lower())
         if self.done:
             raise ctx.Error("OpenCode answered without a reply or a session id")
-        raise ctx.Error(f"OpenCode failed (exit {code}): {self.err_tail[-500:] or 'no output'}")
-
-
-async def _run(proc, prompt: str, st: _Turn) -> None:
-    proc.stdin.write(prompt.encode("utf-8"))
-    with contextlib.suppress(BrokenPipeError, ConnectionResetError):
-        await proc.stdin.drain()
-    proc.stdin.close()
-
-    async def out():
-        async for line in proc.stdout:
-            with contextlib.suppress(ValueError):
-                ev = json.loads(line)
-                if isinstance(ev, dict):
-                    st.feed(ev)
-
-    async def err():
-        async for raw in proc.stderr:
-            line = raw.decode("utf-8", "replace").rstrip()
-            st.err_tail = (st.err_tail + "\n" + line)[-2000:]
-            m = _LOG_ERROR.search(line)
-            if m and st.log_error is None:
-                st.log_error = m.group(1).replace('\\"', '"')[:500]
-                # OpenCode would retry quietly until the timeout: stop now with its error.
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
-                return
-
-    await asyncio.gather(out(), err())
-    await proc.wait()
+        raise ctx.Error(f"OpenCode failed (exit {code}): {self.err_tail.strip()[-500:] or 'no output'}")

@@ -286,7 +286,8 @@ initout=""
 say "Hub set up in $ROOT/hub (you sign in as $OWNER)."
 plugins=$SRC/rook/plugins
 # The level's packages, from each manifest's package:; this machine's worker
-# runs the shell and file device plugins and, with agents, the engine.
+# runs the shell and file device plugins (the engine, a hub script, runs its
+# CLI there).
 HUB_PLUGINS=$("$PY" - "$plugins" "$LEVEL" <<'EOF'
 import sys, yaml
 from pathlib import Path
@@ -300,7 +301,7 @@ EOF
 ) || die "couldn't read the plugins' manifests"
 BACKEND=""
 if [ -n "$CLAUDE" ]; then BACKEND=agents-claude-code; elif [ -n "$OPENCODE" ]; then BACKEND=agents-opencode; fi
-WORKER_PLUGINS="shell file $BACKEND"
+WORKER_PLUGINS="shell file"
 mkdir -p "$ROOT/hub/library"
 for p in $HUB_PLUGINS $WORKER_PLUGINS; do
     [ -f "$plugins/$p/plugin.yaml" ] && ln -sfn "$plugins/$p" "$ROOT/hub/library/$p"
@@ -316,15 +317,21 @@ cfg["doors"]["mcp"] = {"bind": f"0.0.0.0:{mcp}"}
 cfg["log"] = {"level": "info", "format": "text"}
 path.write_text(head + yaml.safe_dump(cfg, sort_keys=False))
 EOF
-# The agents' engine (the agents plugin's backend setting), guided setup
-# (agent.setup): not done yet, and the install facts.
-[ -e "$ROOT/hub/library/agents" ] && "$PY" - "$ROOT" "$NAME" "$WORKER_NAME" "$HTTP_PORT" "$MCP_PORT" "$RELAY_PORT" "$MODEL" "$sha" "$AI" "$BACKEND" <<'EOF'
+# The agents' engine (the agents plugin's backend setting, and the engine's
+# own: this machine's worker runs its CLI), guided setup (agent.setup): not
+# done yet, and the install facts.
+[ -e "$ROOT/hub/library/agents" ] && "$PY" - "$ROOT" "$NAME" "$WORKER_NAME" "$HTTP_PORT" "$MCP_PORT" "$RELAY_PORT" "$MODEL" "$sha" "$AI" "$BACKEND" "$CLAUDE" "$OPENCODE" <<'EOF'
 import json, os, sys, time
 from pathlib import Path
-root, name, worker, http, mcp, relay, model, sha, ai, backend = sys.argv[1:]
+root, name, worker, http, mcp, relay, model, sha, ai, backend, claude, opencode = sys.argv[1:]
 settings = Path(root) / "hub" / "data" / "settings.json"
 stored = json.loads(settings.read_text()) if settings.exists() else {}
 stored.setdefault("agent", {})["backend"] = f"{backend}.turn"
+door = f"http://127.0.0.1:{mcp}/mcp"
+if claude:
+    stored["agents-claude-code"] = {"worker": worker, "claude": claude, "permission_mode": "auto", "door_url": door}
+elif opencode:
+    stored["agents-opencode"] = {"worker": worker, "opencode": opencode, "model": model, "door_url": door}
 settings.write_text(json.dumps(stored, indent=1))
 path = Path(root) / "hub" / "data" / "plugins" / "agent" / "setup.json"
 path.parent.mkdir(parents=True, exist_ok=True)
@@ -344,20 +351,13 @@ state["install"] = {
             "note": "OpenCode's free model: no account. Switch: install another agents-* backend and pick it in the agents plugin's backend setting."})}
 path.write_text(json.dumps(state, indent=1))
 EOF
-"$PY" - "$WORKER_CFG" "$WORKER_NAME" "$plugins" "$WORKER_PLUGINS" "$OPENCODE" "$MODEL" "$MCP_PORT" "$CLAUDE" <<'EOF'
+"$PY" - "$WORKER_CFG" "$WORKER_NAME" "$plugins" "$WORKER_PLUGINS" <<'EOF'
 import sys, yaml
 from pathlib import Path
-path, name, plugins, wanted, opencode, model, mcp, claude = sys.argv[1:]
+path, name, plugins, wanted = sys.argv[1:]
 plugins = Path(plugins)
-door = f"http://127.0.0.1:{mcp}/mcp"
-backend = {}
-if claude:
-    backend = {"agents-claude-code": {"claude": claude, "permission_mode": "auto", "door_url": door}}
-elif opencode:
-    backend = {"agents-opencode": {"opencode": opencode, "model": model, "door_url": door}}
 cfg = {"data": "./data", "name": name,
        "plugins": [str(plugins / p) for p in wanted.split() if (plugins / p / "plugin.yaml").is_file()],
-       "settings": backend,
        "log": {"level": "info", "format": "text"}}
 Path(path).write_text(yaml.safe_dump(cfg, sort_keys=False))
 EOF

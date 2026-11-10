@@ -242,6 +242,19 @@ def test_open_pipes_is_a_process_stream_and_takes_signals():
     go(body)
 
 
+def test_open_pipes_feeds_stdin_then_ends_it():
+    async def body():
+        host, streams, sid = await _open({"argv": ["sh", "-c", "wc -c; echo err >&2"], "stdin": "hello\n",
+                                          "pty": False})
+        try:
+            out = await _until(streams, sid, b"err")
+            assert out.split() == [b"6", b"err"]
+            assert (await _closed(streams, sid))["exit"] == 0
+        finally:
+            await host.close()
+    go(body)
+
+
 def test_open_failure_closes_the_stream():
     async def body():
         host, streams, _ = await _open({"argv": ["true"], "pty": False})

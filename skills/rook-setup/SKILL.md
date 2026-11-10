@@ -46,7 +46,8 @@ defaults for anything they don't care about (say which).
 - A systemd user session (`systemctl --user status` answers).
 - The chosen CLI signed in as the person, on this machine (`claude`, or
   `codex login`). If it lives on another machine, install the hub here and
-  put the agent backend on that machine once it has joined (step 5).
+  set the backend's `worker` setting to that machine once it has joined
+  (step 5).
 
 ## 4. Install
 
@@ -83,13 +84,16 @@ Then, without ever printing a secret into the chat:
   `~/.rook-castling/hub/hub.yaml`:
 
   ```yaml
-  contracts:
-    agent.backend: agents-codex.turn
+  settings:
+    agent: { backend: agents-codex.turn }
   ```
 
-Model settings live in `~/.rook-castling/worker/worker.yaml` under
-`settings:` (`agents-claude-code: {model, model_three}`, or
-`agents-codex: {model, model_three}`). Restart after a change:
+The backends run on the hub; their settings are the hub's (the Settings
+page, `setting.set`, or `hub.yaml` under `settings:`):
+`agents-claude-code: {worker, model, model_three}`, or
+`agents-codex: {worker, model, model_three}`, where `worker` is the machine
+whose CLI is signed in (the installer sets it to this one). A change on the
+Settings page applies to the next turn; after editing `hub.yaml`, restart:
 `~/.rook-castling/src/deploy/castling-sidecar/restart.sh`. The backends'
 manuals: `rook/plugins/agents-claude-code/docs/manual.md`,
 `rook/plugins/agents-codex/docs/manual.md`.

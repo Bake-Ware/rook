@@ -83,6 +83,7 @@ caps:
       cols: { type: int, default: 120, min: 1, max: 1000 }
       rows: { type: int, default: 32, min: 1, max: 1000 }
       title: { type: str, doc: "The stream's title; blank: the command." }
+      stdin: { type: str, doc: "Text fed to the process's input first; with pty=false its input then ends (end of file)." }
     run: scripts/shell.py:open_
 hooks:
   stop: scripts/shell.py:stop

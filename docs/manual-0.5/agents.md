@@ -17,16 +17,23 @@ one agent with a broader persona.
 
 Put `agents` in the hub's library, and a backend:
 
-- `agents-claude-code` on a worker that has Claude Code installed and
-  signed in: turns run `claude -p` under that subscription
+- `agents-claude-code`, with its `worker` setting naming a worker that has
+  Claude Code installed and signed in: the plugin runs on the hub and turns
+  run `claude -p` on that worker under that subscription
   ([its manual](../../rook/plugins/agents-claude-code/docs/manual.md)).
   Each turn reaches the hub's MCP door (its `door_url` setting, the local
   door by default) with a token made for that turn only, so the agent acts
   on the band as itself.
-- or `agents-codex` on a worker that has Codex installed and signed in
-  (`codex login`): turns run `codex exec` under that ChatGPT subscription
-  ([its manual](../../rook/plugins/agents-codex/docs/manual.md)), reaching
-  the door the same way with each turn's own token.
+- or `agents-codex` the same way, on a worker that has Codex installed and
+  signed in (`codex login`): turns run `codex exec` under that ChatGPT
+  subscription ([its manual](../../rook/plugins/agents-codex/docs/manual.md)),
+  reaching the door the same way with each turn's own token.
+- or `agents-opencode` on a worker with OpenCode: its free models need no
+  account ([its manual](../../rook/plugins/agents-opencode/docs/manual.md)).
+  The installer picks this one or Claude Code and sets its `worker` to the
+  machine it installs on.
+- Each keeps its work folder and generated config on that worker, in
+  `~/.rook-plugins/<plugin>/`.
 - `llm-cli`, `llm-anthropic` or `llm-openai` if other plugins need plain
   completions (`llm.complete`); agents themselves think through
   `agent.backend`.

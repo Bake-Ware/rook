@@ -2,27 +2,25 @@
 
 ``codex exec --json [-m M] -c developer_instructions=S ... -`` for a new
 session, ``codex exec resume --json ... ID -`` to continue one, with the
-prompt on stdin, started through the worker's launch path (as the normal
-user). Codex prints JSONL events: ``thread.started`` carries the session id,
+prompt on stdin, run from the hub as a process (shell.open) on the worker
+named by the ``worker`` setting, ended when the turn times out or is
+cancelled. Codex prints JSONL events: ``thread.started`` carries the session id,
 each ``item.completed`` of type ``agent_message`` a reply (the last one is
 the answer), ``turn.completed`` the token usage, ``turn.failed`` the error.
 Codex exits 0 on a failed turn, so the events decide.
 
-``door``: the turn token the agents runtime got from the hub for this turn
-(the agent, for the person behind it). The turn's Rook MCP server is the door
-at ``door_url``, its bearer token read from ``ROOK_DOOR_TOKEN`` in the turn's
-own environment: never on the command line or on disk.
+``door``: the turn's door token by name (``{{secret:turn-...}}``), from the
+agents runtime. It goes on untouched as ``ROOK_DOOR_TOKEN`` in the process's
+environment, where the hub puts the token on the way to the worker. The
+turn's Rook MCP server is the door at ``door_url``, its bearer token read
+from that variable: never on the command line or on disk.
 """
 from __future__ import annotations
 
-import asyncio
 import json
-import os
 import re
-from pathlib import Path
 
-from rook.core2.worker.security import launch
-from rook.kit._types import parse_duration
+from rook.kit.cli import Place, itself, stream, worker
 
 # A session id or model name, never an option (see agents-claude-code).
 _WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,127}")
@@ -46,8 +44,9 @@ def model_for(settings, model: str | None) -> str:
     return model
 
 
-def argv(settings, *, session=None, model=None, effort=None, system=None, door=False) -> list[str]:
-    out = [settings["codex"] or "codex", "exec"]
+def argv(settings, *, program="codex", session=None, model=None, effort=None, system=None,
+         door=False) -> list[str]:
+    out = [program, "exec"]
     if session:
         out.append("resume")
     out += ["--json", "--skip-git-repo-check"]
@@ -74,11 +73,6 @@ def argv(settings, *, session=None, model=None, effort=None, system=None, door=F
 
 async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, system=None, timeout="20m",
                door=None):
-    work = Path(cwd).expanduser() if cwd else ctx.data / "work"
-    if not cwd:
-        work.mkdir(parents=True, exist_ok=True)
-    elif not work.is_dir():
-        raise ctx.Error(f"no folder {work}")
     for name, value in (("session", session), ("model", model)):
         if value and not _WORD.fullmatch(value):
             raise ctx.Error(f"bad args: {name} is an id or a name, not {value[:40]!r}")
@@ -87,23 +81,17 @@ async def turn(ctx, prompt, session=None, cwd=None, model=None, effort=None, sys
             raise ctx.Error(f"agents-codex.config: {kv[:40]!r} is not key=value")
     if door and not ctx.settings["door_url"]:
         raise ctx.Error("set agents-codex.door_url to the hub's MCP door to give agents Rook")
-    cmd = argv(ctx.settings, session=session, model=model, effort=effort, system=system, door=bool(door))
-    env = {**os.environ, TOKEN_ENV: door} if door else None
-    try:
-        proc = await launch(cmd, getattr(ctx, "lease", None), cwd=str(work), stdin=asyncio.subprocess.PIPE,
-                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                            **({"env": env} if env else {}))
-    except FileNotFoundError:
-        raise ctx.Error(f"{cmd[0]} not found: install Codex or set agents-codex.codex") from None
-    try:
-        out, err = await asyncio.wait_for(proc.communicate(prompt.encode("utf-8")), parse_duration(timeout))
-    except asyncio.TimeoutError:
-        raise ctx.Error(f"Codex took longer than {timeout}", retry=True) from None
-    finally:
-        if proc.returncode is None:      # timed out or the call was cancelled: no orphan turn
-            proc.kill()
-            await proc.wait()
-    return parse(ctx, proc.returncode, out, err)
+    ctx = itself(ctx)
+    w = worker(ctx)
+    place = await Place.of(ctx, w)
+    work = place.expand(cwd) if cwd else await place.folder("work")
+    cmd = argv(ctx.settings, program=place.expand(ctx.settings["codex"] or "codex"), session=session,
+               model=model, effort=effort, system=system, door=bool(door))
+    lines: list[str] = []
+    code, tail = await stream(ctx, w, cmd, stdin=prompt, cwd=work, timeout=timeout, name="Codex",
+                              setting="agents-codex.codex", env={TOKEN_ENV: door} if door else None,
+                              line=lines.append)
+    return parse(ctx, code, lines, tail)
 
 
 def _message(raw) -> str:
@@ -117,9 +105,9 @@ def _message(raw) -> str:
     return text[:500]
 
 
-def parse(ctx, code, out: bytes, err: bytes) -> dict:
+def parse(ctx, code, lines: list, tail: str) -> dict:
     session, texts, usage, failed, done = None, [], {}, None, False
-    for line in out.decode("utf-8", "replace").splitlines():
+    for line in lines:
         try:
             ev = json.loads(line)
         except ValueError:
@@ -147,5 +135,5 @@ def parse(ctx, code, out: bytes, err: bytes) -> dict:
         raise ctx.Error(f"Codex: {failed}")
     if done:
         raise ctx.Error("Codex answered without a reply or a session id")
-    tail = (err.decode("utf-8", "replace").strip() or out.decode("utf-8", "replace").strip())[-500:]
-    raise ctx.Error(f"Codex failed (exit {code}): {tail or 'no output'}")
+    said = "\n".join(line for line in lines if not line.startswith("{")).strip() or tail.strip()
+    raise ctx.Error(f"Codex failed (exit {code}): {said[-500:] or 'no output'}")

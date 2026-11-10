@@ -174,26 +174,39 @@ def on_worker(plugin: str, cap: str, args: dict | None = None, *, os_name: str =
               appliance: dict | None = None, settings: dict | None = None, net: FakeNet | None = None,
               data: Path | None = None):
     """Run a hub plugin's ``on: worker`` cap as the hub does, for a worker that
-    serves only the primitives: the real shell and file plugins, and ``net``
-    (a FakeNet: the Rust worker's net.*, serial.open and stream.*).
-    ``ctx.worker`` names it and ``ctx.call_on`` reaches it. Returns (result,
-    [(cap, args)] it called); a failure raises KitError. ``settings``: the
-    plugin's hub settings; ``data``: the hub's plugin data folder (the plugin's is data/<plugin>)."""
+    serves only the primitives: the real shell and file plugins with their
+    streams (shell.open, the worker's stream.*), and ``net`` (a FakeNet: the
+    Rust worker's net.*, serial.open and stream.*). ``ctx.worker`` names it
+    and ``ctx.call_on`` reaches it. Returns (result, [(cap, args)] it
+    called); a failure raises KitError. ``settings``: the plugin's hub
+    settings; ``data``: the hub's plugin data folder (the plugin's is data/<plugin>)."""
+    from types import SimpleNamespace
+
     from rook.core2.hub.plugins import HubPlugins
+    from rook.core2.worker.builtins import handlers
     from rook.core2.worker.host import CallError, Host
     from rook.kit.contracts import Contracts
+    from rook.kit.ctx import KitError
     from rook.kit.records import RecordStore
+    from rook.streams import Streams
 
     async def body():
-        worker = Host(os_name=os_name)
+        streams = Streams(host="w1")
+        worker = Host(os_name=os_name, streams=streams)
         await worker.load(PLUGINS / "shell")
         await worker.load(PLUGINS / "file")
+        builtins = handlers(None, streams, None)
         fake = net or FakeNet()
         seen = []
 
         async def call(who, cap_, args_, uses=None, target=None, contract=None):
             assert target == "w1", target
             seen.append((cap_, args_))
+            if cap_.startswith("stream.") and args_.get("stream") not in fake.streams:
+                try:
+                    return {"ok": True, "result": await builtins[cap_](SimpleNamespace(caller=ME), **args_)}
+                except KitError as e:
+                    return {"ok": False, "error": e.message}
             if cap_.split(".")[0] in ("net", "serial", "stream"):
                 try:
                     return {"ok": True, "result": await fake.call(cap_, args_)}

@@ -51,8 +51,9 @@ What it does:
    `hub/data/plugins/agent/setup.json` (`install`), which `agent.setup`
    returns to the house agent.
 5. Writes and starts `NAME-relay`, `NAME-hub`, `NAME-worker` (systemd user
-   units; enabled at login unless `--no-boot`). The worker runs `shell`,
-   `file` and the backend: `agents-claude-code` (`claude` = the tested
+   units; enabled at login unless `--no-boot`). The worker runs `shell`
+   and `file`; the backend runs on the hub with its CLI on that worker
+   (`worker` = this machine): `agents-claude-code` (`claude` = the tested
    path, `permission_mode: auto`, `door_url` = this hub's MCP door; the
    agents plugin's `backend` setting is `agents-claude-code.turn`) or
    `agents-opencode` with the tested model (its own tools on); security is

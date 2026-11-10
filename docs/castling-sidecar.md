@@ -71,8 +71,10 @@ $S/uninstall.sh --purge   # ... and delete it instead
 
 Logs: `journalctl --user -u rook-castling-hub -f` (and `-worker`, `-relay`).
 Agent turns also leave Claude Code transcripts under
-`~/.claude/projects/-home-bake--rook-castling-worker-data-plugin-data-agents-claude-code-work/`
-(Claude Code's own folder; uninstall leaves it, delete it by hand).
+`~/.claude/projects/-home-bake--rook-plugins-agents-claude-code-work/`
+(Claude Code's own folder, for the engine's work folder
+`~/.rook-plugins/agents-claude-code/work`; uninstall leaves both, delete them
+by hand).
 
 Settings by environment, read by every script: `ROOK_CASTLING_HOME`,
 `ROOK_CASTLING_OWNER`, `ROOK_CASTLING_WORKER`, `ROOK_CASTLING_RELAY_PORT`,
@@ -135,7 +137,7 @@ Worker `cachyrig` (from `src/rook/plugins`, listed in `worker.yaml`):
 | `file` (`read`, `write`, `list`, `search`, `stat`) | works |
 | `screen-desktop` (`screen.capture`) | works (the worker reports `hardware: [display]`) |
 | `notification-desktop` (`notification.post`) | works |
-| `agents-claude-code` (`turn`, the `agent.backend` provider) | works: `claude -p` under the signed-in subscription, isolated from your own Claude Code settings, hooks and MCP servers |
+| `agents-claude-code` (`turn`, the `agent.backend` provider; runs on the hub, `claude` on this worker) | works: `claude -p` under the signed-in subscription, isolated from your own Claude Code settings, hooks and MCP servers |
 | `llm-cli` (`complete`, the `llm.complete` provider) | works through Claude Code (System One = haiku) |
 | `torrent` | loads, but deluged runs as user `deluge` and bake's `deluge-console` can't authenticate to it: calls fail with "Could not connect to daemon". Needs a deluge auth entry for bake (your call) |
 
@@ -180,9 +182,9 @@ curl -s -H "$H" '127.0.0.1:8750/journal?limit=5'
   the hub at its next keepalive (every 5 s on UDP); a call sent meanwhile is
   resent and goes through then. `check.sh` waits for it.
 - Each agent turn reaches the band as that agent, with a token the hub
-  makes for the turn. The sidecar's MCP door is on 8751, not the default
-  8741: set `agents-claude-code.door_url: http://127.0.0.1:8751/mcp` in
-  `worker.yaml` (`settings:`). No shared token to set up.
+  makes for the turn. The installer sets the engines' `door_url` to the
+  sidecar's MCP door (8751, not the default 8741) and their `worker` to this
+  machine, in `hub.yaml` (`settings:`). No shared token to set up.
 - The worker warns "anchor is writable by the worker": it runs as bake and
   owns its own folder. Harmless here.
 
