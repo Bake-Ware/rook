@@ -36,6 +36,8 @@ go through the house agent.
   (`wait: false` answers at once). It wakes the agent if it sleeps.
 - `agent.chat.read {agent, after}` reads your session with it; pass `next`
   back as `after`.
+- Children and guests may use both: this plugin adds `agent.chat.*` to the
+  `child` and `guest` presets.
 - A direct message to the band's Telegram or Discord bot, once you linked
   your account (`telegram.link`, `discord.link`), goes to the `chat_agent`
   (the house agent by default) in your session with it, as you; the reply

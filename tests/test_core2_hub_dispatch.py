@@ -556,6 +556,7 @@ def test_a_child_gets_what_its_preset_grants_without_a_queue(hub):
 
 def test_guest_expires_after_seven_days(hub):
     visitor = Caller(person="person:visitor")
+    hub.identities.add_plugin_presets("agent", {"guest": {"grants": ["agent.chat.*"]}})   # as the agents plugin does
     assert call(hub, visitor, "agent.chat.send")[0]["ok"]
     hub.clock_box[0] = NOW + 7 * 86400
     assert call(hub, visitor, "agent.chat.send")[0]["error"] == "denied: person: expired"

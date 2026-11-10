@@ -210,6 +210,11 @@ shell:
   dock: { file: shell/dock.js, caps: [agent.chat.send, agent.chat.read, agent.site, agent.look] }
   look: { file: shell/look.js, caps: [agent.look] }
 
+# Children and guests may talk to agents (inside their presets' limits).
+presets:
+  child: { grants: ["agent.chat.*"] }
+  guest: { grants: ["agent.chat.*"] }
+
 hooks:
   start: scripts/agents.py:start
   stop: scripts/agents.py:stop
