@@ -52,7 +52,7 @@ caps:
     on: hub
     risk: admin
     scope: multi-machine
-    effects: [persists]
+    effects: []
     args:
       worker: { type: str, required: true, doc: "The machine's name or id." }
       sacred: { type: bool, default: true, doc: "false: normal again." }
@@ -69,7 +69,7 @@ caps:
     on: hub
     risk: write
     scope: multi-machine
-    effects: [persists]
+    effects: []
     args:
       request: { type: str, required: true, doc: "Its id from hub.joins." }
       refuse: { type: bool, default: false, doc: "true: say no." }
@@ -85,7 +85,7 @@ caps:
     on: hub
     risk: admin
     scope: multi-user
-    effects: [persists]
+    effects: []
     args:
       door: { type: str, required: true, pattern: "^[a-z][a-z0-9_-]{0,31}$" }
       open: { type: bool, required: true, doc: "false closes the door, true opens it." }

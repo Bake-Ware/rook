@@ -14,7 +14,7 @@ caps:
     doc: "Where the phone is: {lat, lon, accuracy_m, age_s, stale, provider, maps_url}. Needs Location on and Rook's location permission (all the time)."
     risk: read
     scope: local
-    effects: [personal]
+    effects: []
     timeout: 30s
     args:
       timeout: { type: int, default: 8, min: 1, max: 25, doc: Seconds to wait for a fix. }

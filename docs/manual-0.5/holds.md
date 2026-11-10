@@ -23,7 +23,6 @@ where you are there yourself: `POST /holds` with your own token. Not an agent ac
   doesn't know),
 - revealing a secret's value,
 - sending as you to someone else (`sends_as`),
-- spending money (`spends`),
 - any change on a machine you marked **sacred** ([Workers](workers.md#sacred-machines)).
 
 What can't run at all is **denied**, not held: a call outside what the

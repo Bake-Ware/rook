@@ -13,11 +13,10 @@ from typing import Any
 
 RISKS = ("read", "write", "exec", "admin")
 SCOPES = ("self", "local", "multi-machine", "multi-user", "external")
-EFFECTS = ("destructive", "sensitive", "personal", "physical",
-           "sends_as", "spends", "persists", "taints")
+EFFECTS = ("destructive", "sensitive", "physical", "sends_as")
 # Effects that always hold a call for the person (spec 4.3). Unknown effect
 # flags count as destructive.
-HARD_STOP_EFFECTS = ("destructive", "sends_as", "spends")
+HARD_STOP_EFFECTS = ("destructive", "sends_as")
 
 PRESETS = {
     "owner": {"grants": ["*"]},

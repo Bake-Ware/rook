@@ -17,10 +17,9 @@ from pathlib import Path, PurePosixPath
 from .types import TypeSpecError, compile_fields, compile_type, setting_spec, type_key
 
 RISKS = ("read", "write", "exec", "admin")
-EFFECTS = ("destructive", "sensitive", "personal", "physical", "sends_as", "spends",
-           "persists", "taints")
+EFFECTS = ("destructive", "sensitive", "physical", "sends_as")
 # Effects a read cap shouldn't have: they change something.
-_CHANGING = {"destructive", "physical", "sends_as", "spends", "persists"}
+_CHANGING = {"destructive", "physical", "sends_as"}
 ACTION_TYPES = ("exec", "http", "tcp", "ws", "file")
 # Keys beside the action type in an action block.
 ACTION_KEYS = ("parse", "returns", "fail_if")

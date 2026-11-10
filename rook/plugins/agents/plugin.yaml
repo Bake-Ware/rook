@@ -172,7 +172,7 @@ caps:
       Blank done: just say where it stands.
     risk: write
     scope: multi-user
-    effects: [persists]
+    effects: []
     run: scripts/agents.py:setup
     args:
       done: { type: bool, doc: "true: setup is finished; false: not (the site opens on the setup chat again)." }
@@ -185,7 +185,7 @@ caps:
       answered, next is the first one that wasn't (null when all were).
     risk: write
     scope: multi-user
-    effects: [persists]
+    effects: []
     run: scripts/agents.py:look
     args:
       sound: { type: bool, doc: "Rookie's sounds on or off." }

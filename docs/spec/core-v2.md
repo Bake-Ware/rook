@@ -291,12 +291,8 @@ Security flags, a controlled vocabulary. A cap lists zero or more.
 |---|---|---|
 | `destructive` | erases or overwrites data for good | hard stop (10.3); never retried automatically |
 | `sensitive` | reveals secrets or private content (screen, camera, secret values) | hard stop when it reveals a secret's value |
-| `personal` | reads or writes a person's personal data (messages, contacts, location) | presets; multi-user filtering |
 | `physical` | acts on the physical world (power, locks, motors, speakers) | not in child or guest presets; never retried automatically |
 | `sends_as` | sends as a person to someone else | hard stop |
-| `spends` | spends money | hard stop |
-| `persists` | creates persistence (services, keys, users, scheduled tasks) | journaled loudly |
-| `taints` | brings outside content into the session (web, email, inbound messages) | marks the session tainted (8.4) |
 
 An unknown effect flag MUST be treated as `destructive` for holds, and is
 outside any rights object that lists its allowed effects (8.2). Egress has
@@ -788,7 +784,6 @@ Every call belongs to a session. A session is hub state:
 | `caps` | patterns declared at start; the hub signs tickets only for caps matching one of them |
 | `project` | the project its work belongs to (stamped on every journal entry, 11) |
 | `task` | the pinned task recorded at start |
-| `tainted` | set once the session calls a cap or receives an event with `taints`; never cleared |
 | `started`, `exp` | sessions last hours; hubs SHOULD end them after 12 h |
 
 `caps` is declared at the start and does not grow; a session that needs
@@ -943,8 +938,7 @@ name; a refusal is final. One approval path serves deploys and sacred caps.
 **Hard stops** always hold, and nothing (no relayed approval, no agent)
 releases them except the person: a change on a sacred machine,
 `destructive` effects (unknown effects count as destructive), revealing a
-secret's value (`sensitive` on a secret-revealing cap), `sends_as`, and
-`spends`.
+secret's value (`sensitive` on a secret-revealing cap), and `sends_as`.
 
 Lasting changes (deploys, configuration, plugin installs, trust and grant
 edits, deletes; guidance, not a hard rule) get a **change record** (what,
@@ -1083,9 +1077,9 @@ payload, replacing whatever the worker sent there. Refused events are
 dropped and logged; the batch is still answered. A taken event goes where
 the hub's own events go: hub plugins' `on:` hooks (library code an owner
 installed), jobs (event jobs are an owner's) and live pages, which show it
-only to viewers whose rights grant its name and whose data it is. An event declared `taints: true` taints the sessions that act
-on it (8.4): the session a hook or job runs its calls in, and a page's
-session once the page receives it.
+only to viewers whose rights grant its name and whose data it is. An event
+declared `taints: true` (outside content) that names no person shows to
+owners only.
 
 Worker administration (plugins over Drop, updates, configuration,
 enrollment changes) is defined by the core manifest's caps, not by this
@@ -1194,8 +1188,7 @@ signatures).
   it: `core.call` and `core.elevate` must be signed by the ticket's worker
   (13.1). It can send events as any worker the hub knows
   on the band, but only events that worker announced, within its ceiling;
-  they count as that worker's owner's data and, when declared `taints`,
-  taint whatever acts on them. A band member can still receive calls sent
+  they count as that worker's owner's data. A band member can still receive calls sent
   to a `worker_id` it impersonates and answer them first (replies are
   unsigned), and a hub pinning a key on first announce trusts whoever
   announces that `worker_id` first; enrollment pins the key out of band,

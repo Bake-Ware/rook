@@ -20,7 +20,7 @@ caps:
     on: hub
     risk: admin
     scope: multi-user
-    effects: [persists]
+    effects: []
     args:
       agent: { type: str, required: true, pattern: "^[a-z][a-z0-9_-]{0,39}$", doc: "The agent's name, e.g. claude-web." }
       label: { type: str, doc: "What it's for (shown on the Tokens page)." }
@@ -37,7 +37,7 @@ caps:
     on: hub
     risk: admin
     scope: multi-user
-    effects: [persists]
+    effects: []
     args:
       id: { type: str, required: true, pattern: "^[0-9a-f]{12}$" }
     result: { type: map }

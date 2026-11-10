@@ -158,7 +158,7 @@ CAPS = {
     "shell.exec": {"risk": "exec", "effects": []},
     "light.set": {"risk": "write", "effects": ["physical"]},
     "core.manifests": {"risk": "read", "effects": []},
-    "core.trust.set": {"risk": "admin", "effects": ["persists"]},
+    "core.trust.set": {"risk": "admin", "effects": []},
     "kvm.screen.capture": {"risk": "read", "effects": [], "contracts": ["screen.capture"]},
 }
 WORKER_STATE = {
@@ -443,7 +443,7 @@ def call(cap, risk="read", effects=(), target="kaiju"):
 
 ALL = {"grants": ["*"]}
 RIGHTS = [
-    ("star grants everything", [["person", ALL]], call("shell.exec", "exec", ["persists"]), {"ok": True}),
+    ("star grants everything", [["person", ALL]], call("shell.exec", "exec", ["destructive"]), {"ok": True}),
     ("glob crosses dots", [["agent", {"grants": ["phone.*"]}]], call("phone.motion.started"), {"ok": True}),
     ("glob must match the whole name", [["agent", {"grants": ["phone"]}]], call("phone.sms.send"),
      {"ok": False, "layer": "agent", "reason": "grants"}),
@@ -461,12 +461,12 @@ RIGHTS = [
      {"ok": True}),
     ("unknown risk counts as admin", [["person", {"grants": ["*"], "max_risk": "exec"}]], call("x.y", "sudo"),
      {"ok": False, "layer": "person", "reason": "risk"}),
-    ("effects absent allows all", [["person", {"grants": ["*"]}]], call("bank.pay", "write", ["spends"]),
+    ("effects absent allows all", [["person", {"grants": ["*"]}]], call("mail.send", "write", ["sends_as"]),
      {"ok": True}),
     ("effects [] allows none", [["person", {"grants": ["*"], "effects": []}]], call("tv.power", "write", ["physical"]),
      {"ok": False, "layer": "person", "reason": "effects"}),
     ("every effect must be allowed", [["person", {"grants": ["*"], "effects": ["physical"]}]],
-     call("lock.open", "write", ["physical", "persists"]), {"ok": False, "layer": "person", "reason": "effects"}),
+     call("lock.open", "write", ["physical", "destructive"]), {"ok": False, "layer": "person", "reason": "effects"}),
     ("unknown effect is outside a listed set", [["person", {"grants": ["*"], "effects": ["physical"]}]],
      call("x.y", "write", ["teleports"]), {"ok": False, "layer": "person", "reason": "effects"}),
     ("malformed rights refuse", [["agent", {"grant": ["*"]}]], call("info.ping"),
@@ -514,7 +514,7 @@ def gen_rights() -> dict:
 
 PRESET_CASES = [
     ("owner: anything", "owner", [], [], call("shell.exec", "admin", ["destructive"]), {"ok": True}),
-    ("adult: admin allowed", "adult", [], [], call("core.trust.set", "admin", ["persists"]), {"ok": True}),
+    ("adult: admin allowed", "adult", [], [], call("core.trust.set", "admin", []), {"ok": True}),
     ("child: chat", "child", [], [], call("agent.chat.send", "write"), {"ok": True}),
     ("child: page view", "child", [], [], call("page.view"), {"ok": True}),
     ("child: shell not granted", "child", [], [], call("shell.exec", "exec"), {"ok": False, "reason": "grants"}),
@@ -526,7 +526,7 @@ PRESET_CASES = [
      call("homework.item.purge", "admin", ["destructive"]), {"ok": False, "reason": "risk"}),
     ("child: owner grant can't pass effects", "child", [], ["lights.set"],
      call("lights.set", "write", ["physical"]), {"ok": False, "reason": "effects"}),
-    ("child: personal data refused", "child", {"phone": ["phone.*"]}, [], call("phone.sms.list", "read", ["personal"]),
+    ("child: sensitive data refused", "child", {"phone": ["phone.*"]}, [], call("phone.sms.list", "read", ["sensitive"]),
      {"ok": False, "reason": "effects"}),
     ("guest: chat", "guest", [], [], call("agent.chat.send", "write"), {"ok": True}),
     ("guest: pages not in preset", "guest", [], [], call("page.view"), {"ok": False, "reason": "grants"}),

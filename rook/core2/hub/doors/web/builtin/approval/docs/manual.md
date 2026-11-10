@@ -2,7 +2,7 @@
 
 Calls the hub held for a person's answer, and the answer. A call is held
 when it hits a hard stop (erasing data for good, revealing a secret,
-sending as someone, spending money, a change on a sacred machine), when a
+sending as someone, a change on a sacred machine), when a
 child uses a cap for the first time.
 
 | Cap | What it does |

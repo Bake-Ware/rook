@@ -33,7 +33,7 @@ caps:
     on: hub
     risk: admin
     scope: multi-user
-    effects: [persists]
+    effects: []
     timeout: 60m
     result: { type: map }
   list:

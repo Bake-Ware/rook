@@ -59,7 +59,7 @@ caps:
     doc: "Switch the Rook app on this phone to another Rook version (0.4 only, today): within about 30 s the app stops this 0.5 worker and starts its 0.4 worker with its saved 0.4 settings, so the phone leaves this band. {to, asked}; the app's own result is files/rook05/switch-result.json (readable from 0.4's shell.exec)."
     risk: admin
     scope: local
-    effects: [persists]
+    effects: []
     timeout: 15s
     args:
       to: { type: str, enum: ["0.4"], doc: The Rook version the app runs next. }

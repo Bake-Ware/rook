@@ -148,9 +148,9 @@ def test_presets():
 
 
 def test_hard_stops():
-    assert rights.hard_stop(["destructive"]) and rights.hard_stop(["spends"]) and rights.hard_stop(["sends_as"])
+    assert rights.hard_stop(["destructive"]) and rights.hard_stop(["sends_as"])
     assert rights.hard_stop(["teleports"])  # unknown effect counts as destructive
-    assert not rights.hard_stop(["physical", "persists"]) and not rights.hard_stop([])
+    assert not rights.hard_stop(["physical", "sensitive"]) and not rights.hard_stop([])
 
 
 def test_journal():

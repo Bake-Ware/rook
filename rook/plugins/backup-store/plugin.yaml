@@ -24,7 +24,7 @@ caps:
     doc: "Fetch a backup from the hub while its backup.run pushes it (backup.part, 4 MiB at a time: replies that big travel over Drop, which asks again for lost pieces), up to 24 parts a round; once the whole file is here, check its size and sha256 and keep it. This is how the hub's backup.run sends a backup here."
     risk: write
     scope: local
-    effects: [persists]
+    effects: []
     timeout: 60m
     args:
       name: { type: str, required: true, pattern: "^rook-hub-[0-9a-f]{8,64}-[0-9]{8}T[0-9]{6}Z\\.rookbak$" }
@@ -37,7 +37,7 @@ caps:
     doc: "Write part of a backup, at offset (0 starts it). The last part gives sha256 of the whole file: it is checked, then the file is kept under its name."
     risk: write
     scope: local
-    effects: [persists]
+    effects: []
     timeout: 120s
     args:
       name: { type: str, required: true, pattern: "^rook-hub-[0-9a-f]{8,64}-[0-9]{8}T[0-9]{6}Z\\.rookbak$" }

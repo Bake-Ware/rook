@@ -95,12 +95,7 @@ class Session:
     task: str | None
     started: float
     exp: float
-    tainted: bool = False
     ended: bool = False
-
-    def view(self) -> dict:
-        return {"id": self.id, "caps": list(self.caps), "project": self.project,
-                "task": self.task, "tainted": self.tainted}
 
 
 @dataclass
@@ -205,11 +200,6 @@ class Dispatcher:
             del self.leases[lid]
         held = [lid for lid, v in self.leases.items() if v[1] == sid]
         return sorted({self.leases.pop(lid)[0] for lid in held})
-
-    def taint(self, sid: str) -> None:
-        """An event with ``taints`` reached the session; never cleared."""
-        if sid in self.sessions:
-            self.sessions[sid].tainted = True
 
     # -- owner actions -----------------------------------------------------
 
@@ -444,8 +434,6 @@ class Dispatcher:
         except Exception as e:
             entry.update(ok=False, error=f"secret: {e}")
             return {"id": cid, "ok": False, "error": entry["error"]}
-        if "taints" in (meta.get("effects") or ()):
-            s.tainted = True
         wait = _timeout(meta, call.args) + TIMEOUT_GRACE
         may_retry = bool(meta.get("idempotent")) and not NO_RETRY & set(_hold_effects(meta))
         entry["ticket"], carried, first = [], [], w

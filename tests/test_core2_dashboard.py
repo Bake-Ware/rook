@@ -911,7 +911,6 @@ def test_approval_ask_is_the_one_question_path(site):
             assert out["ok"] and out["result"]["answered"] is False, out
             q1 = out["result"]["hold"]
             assert q1.startswith("q_") and heard == [("approval.asked", q1)]
-            assert hub.taints("approval.asked")               # the asker's words are outside content
             out = await call("solo", "approval.ask", question="Which disk?", options=["sda", "sdb"])
             q2 = out["result"]["hold"]                         # nobody behind it: asked of the owners
 

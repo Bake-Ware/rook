@@ -30,7 +30,7 @@ caps:
     on: hub
     risk: admin
     scope: multi-user
-    effects: [persists]
+    effects: []
     args:
       plugin: { type: str, required: true }
       key: { type: str, required: true }

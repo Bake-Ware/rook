@@ -81,12 +81,6 @@ def test_effects_say_what_the_caps_do():
     caps = {c: s for n in PHONE for c, s in load(PLUGINS / n, CONTRACTS).caps.items()}
     for cap in ("sms.send", "call.dial", "notification-android.notification.act"):
         assert "sends_as" in caps[cap]["effects"] and caps[cap]["scope"] == "external", cap
-    for cap in ("sms.list", "contact.search", "call.list", "location.get", "calendar.list",
-                "notification-android.notification.list"):
-        assert "personal" in caps[cap]["effects"], cap
-    for cap in ("sms.list", "notification-android.notification.list", "notification-android.notification.get",
-                "ui-android.ui.screen", "screen-android.screen.capture", "voice-android.voice.ask"):
-        assert "taints" in caps[cap]["effects"], cap
     assert "destructive" in caps["calendar.delete"]["effects"]
     assert caps["phone.unlock"]["args"]["pin"]["type"] == "secret"
     sms, notes = load(PLUGINS / "sms", CONTRACTS), load(PLUGINS / "notification-android", CONTRACTS)

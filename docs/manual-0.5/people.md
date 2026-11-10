@@ -82,6 +82,4 @@ Every call belongs to a **session**, which is one more layer that can only
 narrow. An agent may start one that declares the caps it will use and the
 project or task the work is for; calls in it can't reach other caps, and
 their journal entries carry that project ([MCP for agents](mcp.md#sessions)).
-Sessions end after 12 hours. A session that has read outside content (a web
-page, an email) is marked tainted for good, and the security gate treats
-its risky calls with more care ([Security plugins](security.md)).
+Sessions end after 12 hours.

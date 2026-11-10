@@ -100,7 +100,7 @@ class People:
         else:
             self.agents[name] = grants
 
-    def turn_token(self, plugin, person, name, seconds, tainted=False):
+    def turn_token(self, plugin, person, name, seconds):
         if name not in self.agents:
             raise KitError(f"{plugin} doesn't run agent {name}")
         token = f"tok{len(self.tokens)}"
@@ -630,8 +630,8 @@ def test_a_question_for_the_person_goes_through_the_house_agent(rig):
         await rig.call("on_asked", hook, event="approval.asked", payload=payload)
         cap, args, who = rig.backend.calls[-1]
         assert cap == "agent.chat.send" and args["agent"] == "house" and args["wait"] is False
-        # For the person it's for, tainted: house never acts alone on another agent's words.
-        assert (who.person, who.agent, who.tainted) == ("person:bake", None, True)
+        # For the person it's for: house never acts alone on another agent's words.
+        assert (who.person, who.agent) == ("person:bake", None)
         assert "approval.decide" in args["text"] and "q_1" in args["text"] and "Ship the docs today?" in args["text"]
         assert "one of: yes, no" in args["text"] and "never answer it yourself" in args["text"]
         n = len(rig.backend.calls)

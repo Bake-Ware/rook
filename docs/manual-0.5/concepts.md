@@ -55,8 +55,7 @@
   hub's signature.
 - **Protection stays out of your way.** Most calls just run. You are asked
   only for the few that need a person: erasing data for good, revealing a
-  secret, sending as you, spending money, or changing a machine you marked
-  sacred.
+  secret, sending as you, or changing a machine you marked sacred.
 - **Agents talk to caps, not shells.** A plugin turns a ten-step shell
   struggle into one clear call that says what it does, so both the hub and
   you can judge it.

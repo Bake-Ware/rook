@@ -67,9 +67,7 @@
    "call": {
     "cap": "core.trust.set",
     "risk": "admin",
-    "effects": [
-     "persists"
-    ],
+    "effects": [],
     "target": "kaiju"
    },
    "expect": {
@@ -264,7 +262,7 @@
    }
   },
   {
-   "name": "child: personal data refused",
+   "name": "child: sensitive data refused",
    "preset": "child",
    "plugin_grants": {
     "phone": [
@@ -285,7 +283,7 @@
     "cap": "phone.sms.list",
     "risk": "read",
     "effects": [
-     "personal"
+     "sensitive"
     ],
     "target": "kaiju"
    },

@@ -34,20 +34,19 @@ CAPS = {
     "file.delete": {"risk": "write", "scope": "local", "effects": ["destructive"], "idempotent": True,
                     "timeout": "1s"},
     "mail.send": {"risk": "write", "scope": "external", "effects": ["sends_as"]},
-    "shop.buy": {"risk": "write", "scope": "external", "effects": ["spends"]},
     "odd.thing": {"risk": "write", "scope": "local", "effects": ["teleports"]},
     "vault.show": {"risk": "read", "scope": "self", "effects": ["sensitive"],
                    "result": {"type": "map", "of": {"type": "secret"}}},
     "screen.grab": {"risk": "read", "scope": "local", "effects": ["sensitive"],
                     "result": {"type": "file"}},
-    "web.fetch": {"risk": "read", "scope": "external", "effects": ["taints"]},
+    "web.fetch": {"risk": "read", "scope": "external", "effects": []},
     "light.set": {"risk": "write", "scope": "local", "effects": ["physical"]},
     "homework.item.list": {"risk": "read", "scope": "self", "effects": []},
     "agent.chat.send": {"risk": "write", "scope": "self", "effects": []},
     "weird.risk": {"risk": "godmode", "scope": "nowhere", "effects": []},
     "pkg.fix": {"risk": "read", "scope": "local", "effects": [], "elevation": "upfront"},
     "core.manifests": {"risk": "read", "scope": "self", "effects": []},
-    "core.trust.set": {"risk": "admin", "scope": "self", "effects": ["persists"]},
+    "core.trust.set": {"risk": "admin", "scope": "self", "effects": []},
 }
 
 
@@ -517,7 +516,7 @@ def test_tokens_authenticate_to_a_caller():
 # -- holds and hard stops (10.3) ---------------------------------------------
 
 @pytest.mark.parametrize("cap,reason", [
-    ("file.delete", "destructive"), ("mail.send", "sends_as"), ("shop.buy", "spends"),
+    ("file.delete", "destructive"), ("mail.send", "sends_as"),
     ("odd.thing", "destructive"), ("vault.show", "reveals a secret"),
 ])
 def test_hard_stops_hold(hub, cap, reason):
@@ -651,24 +650,6 @@ def test_a_closed_mcp_door_refuses_agents_on_every_door(hub):
     system = Caller(agent="system:plugin.jobs")
     assert call(hub, system, "file.read", door="http")[0]["ok"]
     assert call(hub, CLAUDE_FOR_BAKE, "file.read")[0]["ok"]          # no door: the hub's own work
-
-
-# -- taint (8.4) -------------------------------------------------------------
-
-def test_taints_cap_marks_the_session_for_good(hub):
-    s = hub.start_session(BAKE, ["*"])
-    run(hub.dispatch(BAKE, Call(cap="file.read", target="kaiju", why="x", session=s.id)))
-    assert not s.tainted
-    run(hub.dispatch(BAKE, Call(cap="web.fetch", target="kaiju", why="x", session=s.id)))
-    assert s.tainted
-    s2 = hub.start_session(BAKE, ["*"])
-    hub.taint(s2.id)
-    assert s2.tainted
-
-
-def test_denied_taints_cap_does_not_taint(hub):
-    out, s = call(hub, BAKE, "web.fetch", caps=["file.*"])
-    assert not out["ok"] and not s.tainted
 
 
 # -- sending: re-mint, retries, timeouts (6.5) -------------------------------
@@ -814,7 +795,6 @@ def test_sub_call_runs_as_the_parent_with_uses(hub):
     assert results[2]["error"] == results[3]["error"] == "denied: core.call: no such call in flight"
     sub = hub.tx.requests[1]["ticket"]
     assert (sub["person"], sub["agent"], sub["session"]) == ("person:bake", "agent:claude", s.id)
-    assert s.tainted                                   # the sub-call's taint lands on the session
     after = run(hub.sub_call(WID, hub.tx.requests[0]["ticket"], "web.fetch", "kaiju", None, "late"))
     assert after["error"] == "denied: core.call: no such call in flight"
 

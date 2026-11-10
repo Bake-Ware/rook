@@ -50,7 +50,7 @@ caps:
     doc: Stream incoming messages.
     risk: read
     scope: external
-    effects: [taints]
+    effects: []
     stream: { types: [status], input: false, durable: true }
     exclusive: poller
     run: scripts/bot.py:watch
