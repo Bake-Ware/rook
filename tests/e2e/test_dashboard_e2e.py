@@ -11,6 +11,8 @@ import urllib.request
 
 from harness import HTTP_SECS, REPO, until
 
+from rook.core2.hub import passwords
+
 
 class Browser:
     def __init__(self, url: str):
@@ -41,6 +43,7 @@ class Browser:
 
 
 def test_a_person_uses_the_workers_page(band):
+    passwords.set_password(band.hub_dir / "data", "bake", "pw", by="test")    # claimed: the site asks for sign-in
     b = Browser(band.url)
     status, _, page = b.request("GET", "/")           # signed out: on to /login (urllib follows the 303)
     assert status == 200 and b'action="/login"' in page
@@ -95,7 +98,7 @@ def test_the_house_agent_makes_and_archives_a_page_from_the_dock(fresh):
         assert out.get("ok"), out
         return out["result"]
 
-    assert shell("page.site") == {"person": "person:bake", "start": None, "workbench": True, "setup": {"done": True}}
+    assert shell("page.site") == {"person": "person:bake", "start": None, "workbench": True}
     dock = shell("agent.site")
     assert dock["dock"] == "house" and dock["look"]["next"] == "sound"     # look and feel comes first
     assert shell("agent.chat.read", agent="house")["events"] == []         # first run

@@ -20,7 +20,7 @@ from rook.core2 import rights
 from rook.core2.hub import login_links, passwords
 from rook.core2.hub.identity import NONE, Caller
 from rook.kit.manifest.validate import glob_match
-from .caps import _inside, _read_json, _write, setup_state
+from .caps import _inside, _read_json, _write
 
 log = logging.getLogger("rook.hub.door.web")
 
@@ -117,11 +117,11 @@ class Web:
         public = self._public_route(req, method, path, query)
         if public is not None:
             return public
-        setup = self._setup_owner()
+        unclaimed = self._unclaimed_owner()
         if path == "/login":
             if method == "POST":
                 return self._login(req)
-            if setup:                  # still in setup: no sign-in, straight to the setup chat
+            if unclaimed:
                 return 303, {"Location": "/"}, b""
             return self._file("login.html", csp=SHELL_CSP)
         if method == "GET" and path == "/login/link":
@@ -129,13 +129,13 @@ class Web:
         sid, session = self._session(req)
         if method == "GET" and path in ("/", "/account"):
             cookie = {}
-            if session is None and setup:
-                # Setup isn't completed: whoever opens the hub is the owner
-                # setting it up (Bake, Nov 6: "It is simple. If configuration
-                # isn't completed assume we are still in setup mode").
-                sid = self._start(setup)
+            if session is None and unclaimed:
+                # A new hub is open until it is claimed: whoever opens it is
+                # the owner, until the owner sets a password (castling-design,
+                # Agents: "creating the first user claims it").
+                sid = self._start(unclaimed)
                 cookie = {"Set-Cookie": self._cookie(sid, SESSION_SECS)}
-                log.info("setup mode: signed in as the owner", extra={"fields": {"person": setup}})
+                log.info("unclaimed hub: signed in as the owner", extra={"fields": {"person": unclaimed}})
             elif session is None:
                 return 303, {"Location": "/login"}, b""
             status, headers, body = self._file("shell.html" if path == "/" else "account.html", csp=SHELL_CSP)
@@ -260,7 +260,7 @@ class Web:
         log.info("signed in", extra={"fields": {"person": person}})
         headers = {"Set-Cookie": self._cookie(sid, SESSION_SECS)}
         if form:
-            # A password made for them at setup: offer to change it first.
+            # A password made for them by init: offer to change it first.
             first = passwords.set_by(self.hub.data, person.partition(":")[2]) == passwords.GENERATED
             return 303, {**headers, "Location": "/account?first=1" if first else "/"}, b""
         return 200, {**headers, **_JSON}, b'{"ok": true}'
@@ -277,12 +277,13 @@ class Web:
         return 303, {"Set-Cookie": self._cookie(sid, SESSION_SECS), "Location": "/",
                      "Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}, b""
 
-    def _setup_owner(self) -> str | None:
-        """While first-run setup isn't completed (``hub.setup``), the owner
-        the site signs everyone in as (the first one); else None."""
-        if setup_state(self.hub)["done"]:
+    def _unclaimed_owner(self) -> str | None:
+        """While no owner has a password, the owner the site signs everyone
+        in as (the first one); else None."""
+        owners = [u.name for u in self.hub.identities.users.values() if u.preset == "owner"]
+        if not owners or any(passwords.set_by(self.hub.data, n) for n in owners):
             return None
-        return next((f"person:{u.name}" for u in self.hub.identities.users.values() if u.preset == "owner"), None)
+        return f"person:{owners[0]}"
 
     def _start(self, person: str) -> str:
         sid = secrets.token_urlsafe(32)
