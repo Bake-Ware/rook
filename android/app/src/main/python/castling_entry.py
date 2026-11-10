@@ -1,9 +1,7 @@
-"""Chaquopy entrypoint for Rook 0.5 (Castling) in the Android app.
+"""Chaquopy entrypoint for the Rook worker in the Android app.
 
-The app runs either the 0.4 worker (worker_entry) or this one; the person
-picks in Settings > Band > Rook version (0.4 is the default). Everything 0.5
-keeps lives in ``<files>/rook05``: the worker config, the anchor, the data
-folder and the phone plugins, unpacked from the APK.
+Everything the worker keeps lives in ``<files>/rook05``: the worker config,
+the anchor, the data folder and the phone plugins, unpacked from the APK.
 
 The Kotlin side (Castling.kt, WorkerService.kt) calls, off the main thread:
 
@@ -13,7 +11,6 @@ The Kotlin side (Castling.kt, WorkerService.kt) calls, off the main thread:
     castling_entry.start(files_dir)                               # blocks until stop()
     castling_entry.stop()
     castling_entry.kick(reason)                                   # the default network changed
-    castling_entry.connected()                                    # a band link is up
 
 ``target`` is the hub's address or the text of its sign-in QR
 (``rook://enroll?url=…&code=…&hub=…``, which the phone's camera hands the
@@ -172,8 +169,3 @@ def kick(reason: str = "") -> bool:
     from rook.core2.worker import android
     log.info("redial: %s", reason)
     return android.kick()
-
-
-def connected() -> bool:
-    from rook.core2.worker import android
-    return android.connected()

@@ -126,9 +126,8 @@ runs where and what the phone app needs):
 - [dongle](../../rook/plugins/dongle/docs/manual.md): the Rook RP2040 USB dongle.
 - Appliances ([what that means](workers.md#appliances)): [kvm](../../rook/plugins/kvm/docs/manual.md) (PiKVM), [tv](../../rook/plugins/tv/docs/manual.md) (LG webOS), [tv-roku](../../rook/plugins/tv-roku/docs/manual.md) (Roku over ECP), [adb](../../rook/plugins/adb/docs/manual.md) (Android over adb), [cec](../../rook/plugins/cec/docs/manual.md) (Pico-CEC); [appliance](../../rook/plugins/appliance/docs/manual.md) is the delegate worker's side.
 
-**Phone** (in the Rook Android app, which runs the 0.5 worker under
-Chaquopy once Settings > Band > Rook version says 0.5; 0.4 stays the default,
-and `docs/castling-phone.md` says what is still 0.4):
+**Phone** (in the Rook Android app, which runs the worker under Chaquopy;
+`docs/castling-phone.md` says how):
 
 - Messages and people: [sms](../../rook/plugins/sms/docs/manual.md) (texts), [call](../../rook/plugins/call/docs/manual.md) (the call log, placing calls), [contact](../../rook/plugins/contact/docs/manual.md).
 - Places and time: [location](../../rook/plugins/location/docs/manual.md), [clock](../../rook/plugins/clock/docs/manual.md) (timers and alarms), [calendar](../../rook/plugins/calendar/docs/manual.md).

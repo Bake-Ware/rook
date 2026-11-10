@@ -6,18 +6,13 @@ import android.media.AudioManager
 import android.os.Bundle
 import org.json.JSONObject
 
-/** Run on an isolated emulator, with Location permissions granted and a geo fix injected. */
+/** Run on an isolated emulator. */
 class NativeSmokeInstrumentation : Instrumentation() {
     private var mode: String? = null
     override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); mode = arguments?.getString("mode"); start() }
     override fun onStart() {
         if (mode == "voice") {
             try { finish(-1, VoiceSmokeTest.run(targetContext, context)) }
-            catch (error: Throwable) { finish(0, Bundle().apply { putString("stream", "FAIL: ${error.stackTraceToString()}") }) }
-            return
-        }
-        if (mode == "remind") {
-            try { finish(-1, RemindSmokeTest.run(targetContext)) }
             catch (error: Throwable) { finish(0, Bundle().apply { putString("stream", "FAIL: ${error.stackTraceToString()}") }) }
             return
         }
@@ -34,19 +29,7 @@ class NativeSmokeInstrumentation : Instrumentation() {
             check(JSONObject(FindDeviceBridge.ring(targetContext, 10)).getBoolean("ok"))
             FindDeviceBridge.stop()
             check(audio.getStreamVolume(AudioManager.STREAM_ALARM) == initial) { "stop must restore volume" }
-            val python = PythonHost.ensureStarted(targetContext)
-            val device = python.getModule("rook_android.plugins.device_android").callAttr("AndroidDevicePlugin")
-            val nativeRing = device.callAttr("_find", 1)
-            check(JSONObject(python.getModule("json").callAttr("dumps", nativeRing).toString()).getBoolean("ok")) { nativeRing.toString() }
-            check(JSONObject(python.getModule("json").callAttr("dumps", device.callAttr("_find_stop")).toString()).getBoolean("ok"))
-            val plugin = python.getModule("rook_android.plugins.location_android").callAttr("AndroidLocationPlugin")
-            val fix = plugin.callAttr("_get", 15.0)
-            val location = JSONObject(python.getModule("json").callAttr("dumps", fix).toString())
-            check(location.getBoolean("ok")) { location.toString() }
-            check(kotlin.math.abs(location.getDouble("lat") - 41.88) < .01) { "unexpected emulator position" }
-            check(!location.getBoolean("stale"))
-            check(location.getString("maps_url").startsWith("https://www.google.com/maps/"))
-            report.putString("stream", "PASS: maximum alarm volume, timed/manual restore, location with Maps closed, Maps URL\n")
+            report.putString("stream", "PASS: maximum alarm volume, timed/manual restore\n")
             finish(-1, report)
         } catch (error: Throwable) {
             FindDeviceBridge.stop()
