@@ -34,7 +34,7 @@ moves over all at once.
 
 ## For plugin authors
 
-- [Writing a plugin](authoring.md): the manifest, config caps (Deluge), appliances (PiKVM), `run:` scripts, testing.
+- [Writing a plugin](authoring.md): every manifest key; the walk-through is the [plugins skill](../../rook/plugins/agents/skills/plugins.md).
 - [Caps](caps.md) and [Holds](holds.md): choosing a cap's risk, scope and effects.
 
 ## Reference

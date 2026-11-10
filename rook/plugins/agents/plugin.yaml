@@ -13,7 +13,7 @@
 # what both may. Code: scripts/agents.py.
 manifest: 1
 plugin: agent
-version: 0.5.1
+version: 0.5.2
 title: Agents
 doc: Agents with a persona, a backend, persistent sessions, a private notepad and curated memory.
 package: agents
@@ -241,7 +241,7 @@ personas:
     title: House agent
     summary: "The person's personal assistant and guardian of the house: knows how and when to reach them."
     prompt: personas/house.md
-    skills: [first-run, reach-the-user, presence, attention, hub-pages, consult, notepad, housekeeping]
+    skills: [first-run, reach-the-user, presence, attention, hub-pages, consult, notepad, housekeeping, plugins]
     grants: ["*"]
     always_on: true
 
@@ -253,5 +253,6 @@ skills:
   notepad: skills/notepad.md
   hub-pages: skills/hub-pages.md
   housekeeping: skills/housekeeping.md
+  plugins: skills/plugins.md
 
 docs: { manual: docs/manual.md }
