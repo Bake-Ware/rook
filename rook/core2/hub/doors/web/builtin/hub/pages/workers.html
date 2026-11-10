@@ -497,7 +497,6 @@ async function setLayout(layout) {
 }
 for (const b of document.querySelectorAll(".view-toggle button")) b.onclick = () => setLayout(b.dataset.layout);
 rook.on("worker.*", load);
-rook.on("plugin.*", load);
 setInterval(load, 15000);         // heartbeats land every 30 s; the bars drain in between
 load();
 requestAnimationFrame(frame);
