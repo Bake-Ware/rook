@@ -19,6 +19,7 @@ from rook.core2.transport.band import (
     TelestheteHubTransport, WsLink)
 from rook.core2.transport.writer import FrameWriter, TokenBucket
 from rook.core2.transport.codec import KEEPALIVE_PAYLOAD, BandCodec
+from test_core2_minimal_worker import Relay
 
 PSK = "band-transport-test-psk"
 
@@ -697,29 +698,12 @@ async def test_slow_handler_does_not_stall_ingest():
 
 # -- loopback relay (no network beyond 127.0.0.1) ------------------------------
 
-class _Relay(asyncio.DatagramProtocol):
-    """Minimal telesthitium: forward each datagram to the band's other peers."""
-
-    def __init__(self):
-        self.peers: dict[bytes, set] = {}
-
-    def connection_made(self, transport):
-        self.transport = transport
-
-    def datagram_received(self, data, addr):
-        band = data[:16]
-        self.peers.setdefault(band, set()).add(addr)
-        for peer in self.peers[band]:
-            if peer != addr:
-                self.transport.sendto(data, peer)
-
-
 @pytest.mark.asyncio
 async def test_udp_large_and_small_messages_cross_the_relay():
-    # Paced: an unpaced burst of ~300 datagrams overflows the test relay's
-    # (default-sized) receive buffer, the real hub's failure mode.
+    # Paced, as bulk is on UDP to the hub: the small message goes out while
+    # the big one is still being sent.
     loop = asyncio.get_running_loop()
-    relay_t, _ = await loop.create_datagram_endpoint(_Relay, local_addr=("127.0.0.1", 0))
+    relay_t, _ = await loop.create_datagram_endpoint(Relay, local_addr=("127.0.0.1", 0))
     port = relay_t.get_extra_info("socket").getsockname()[1]
     a = TelestheteHubTransport(psk=PSK, hub_host="127.0.0.1", hub_port=port,
                                pacer=TokenBucket(2000.0, 64))

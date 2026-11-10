@@ -17,6 +17,7 @@ import pytest
 pytest.importorskip("telesthete")
 from rook.core2.hub.runtime import Config, Hub  # noqa: E402  (the hub under test)
 from rook.core2.transport import TelestheteLink  # noqa: E402  (the carrier only)
+from rook.core2.transport.band import _set_buffers  # noqa: E402  (the test relay's socket)
 
 # -- the worker -----------------------------------------------------------------
 
@@ -95,6 +96,10 @@ class Relay(asyncio.DatagramProtocol):
 
     def connection_made(self, transport):
         self.transport = transport
+        # Buffers like a real relay's: a default-sized one overflows while a
+        # busy machine starves this (shared) event loop, and a lost fragment
+        # loses the whole message.
+        _set_buffers(transport.get_extra_info("socket"))
 
     def datagram_received(self, data, addr):
         peers = self.peers.setdefault(data[:16], set())

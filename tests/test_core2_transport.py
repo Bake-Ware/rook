@@ -19,6 +19,7 @@ from rook.core2 import CORE_VERSION, wire  # noqa: E402
 from rook.core2.transport import (FEATURES, LoopbackRelay, TelestheteLink, Transport,  # noqa: E402
                                   TransportError, band_of, from_config)
 from rook.core2.transport import conn as conn_mod  # noqa: E402
+from test_core2_minimal_worker import Relay  # noqa: E402
 
 PSK, PSK2 = "test-band-psk-one", "test-band-psk-two"
 BAND, BAND2 = band_of(PSK), band_of(PSK2)
@@ -681,27 +682,10 @@ def test_from_config_builds_one_link_per_band(monkeypatch):
 
 # -- a real Telesthete round trip ------------------------------------------------------
 
-class _Relay(asyncio.DatagramProtocol):
-    """Minimal telesthitium: forward each datagram to the band's other peers."""
-
-    def __init__(self):
-        self.peers: dict[bytes, set] = {}
-
-    def connection_made(self, transport):
-        self.transport = transport
-
-    def datagram_received(self, data, addr):
-        band = data[:16]
-        self.peers.setdefault(band, set()).add(addr)
-        for peer in self.peers[band]:
-            if peer != addr:
-                self.transport.sendto(data, peer)
-
-
 def test_telesthete_round_trip_on_localhost():
     async def main():
         loop = asyncio.get_running_loop()
-        relay_t, _ = await loop.create_datagram_endpoint(_Relay, local_addr=("127.0.0.1", 0))
+        relay_t, _ = await loop.create_datagram_endpoint(Relay, local_addr=("127.0.0.1", 0))
         port = relay_t.get_extra_info("socket").getsockname()[1]
         relay = f"127.0.0.1:{port}"
         hub = Node(HUB, [TelestheteLink(PSK, relay=relay)], hello=lambda b: hub_announce(b))
