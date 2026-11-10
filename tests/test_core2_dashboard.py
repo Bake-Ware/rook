@@ -23,6 +23,7 @@ pytest.importorskip("jsonschema")
 
 from rook.core2.hub import passwords  # noqa: E402
 from rook.core2.hub.doors.web import caps as web_caps  # noqa: E402
+from rook.core2.hub.vault import caps as vault_caps  # noqa: E402
 from rook.core2.hub.doors.web.site import PAGE_CSP, inject  # noqa: E402
 from rook.core2.hub.identity import Caller  # noqa: E402
 from rook.core2.hub.runtime import Config, Hub, Loopback  # noqa: E402
@@ -754,6 +755,8 @@ def test_workers_journal_and_settings_pages(site):
             t = (await c.open("setting/settings"))["token"]
             status = (await c.page(t, "hub.status"))["result"]
             assert status["hub"] == hub.hub_id and status["people"][0]["name"] == "bake"
+            assert {"claude", "narrow"} <= {a["name"] for a in status["agents"]}
+            assert "relay" not in status and "ws_url" not in status         # a Loopback hub has no band address
             assert {"page", "hub", "approval", "journal", "setting", "board"} <= {p["plugin"] for p in status["plugins"]}
             listed = (await c.page(t, "setting.list"))["result"]["settings"]
             assert {(s["plugin"], s["key"], s["value"], s["source"]) for s in listed} == {
@@ -797,6 +800,44 @@ def test_workers_journal_and_settings_pages(site):
     run(go())
 
 
+def test_the_hub_status_gives_the_band_address(site):
+    async def go():
+        hub, tokens = await site(enroll={"relay": "relay.example:7777"})
+        try:
+            c = Client(hub)
+            await c.sign_in(tokens["bake"])
+            t = (await c.open("setting/settings"))["token"]
+            assert (await c.page(t, "hub.status"))["result"]["relay"] == "relay.example:7777"
+        finally:
+            await hub.stop()
+    run(go())
+
+
+def test_the_vault_page_calls_only_what_the_vault_serves(site):
+    async def go():
+        hub, tokens = await site(settings={"hub": {"security": "off"}})
+        try:
+            c = Client(hub)
+            await c.sign_in(tokens["bake"])
+            page = next(p for p in (await c.call("page.list"))["result"]["pages"] if p["page"] == "secret/vault")
+            assert not page["nav"]                                       # under More, like Journal and Settings
+            assert set(page["caps"]) <= set(hub.dispatcher.workers[hub.node].caps)
+            t = (await c.open("secret/vault"))["token"]
+            # the calls the page makes, with its args
+            assert (await c.page(t, "secret.set", {"name": "gh-token", "value": "s3cret", "description": "GitHub"},
+                                 why="The person saved gh-token on the Vault page."))["ok"]
+            assert (await c.page(t, "secret.set", {"name": "gh-token", "value": "n3w", "description": ""}))["ok"]
+            listed = (await c.page(t, "secret.list"))["result"]["secrets"]
+            assert [(x["name"], x["description"]) for x in listed] == [("gh-token", "GitHub")]   # replaced, kept its note
+            assert hub.vault.get("gh-token") == "n3w" and "n3w" not in json.dumps(listed)
+            assert (await c.page(t, "secret.delete", {"name": "gh-token"}))["ok"]
+            assert (await c.page(t, "secret.list"))["result"]["secrets"] == []
+            assert "error" in await c.page(t, "secret.reveal", {"name": "gh-token"})     # not the page's to call
+        finally:
+            await hub.stop()
+    run(go())
+
+
 def test_stored_settings_apply_at_start(site, tmp_path):
     async def go():
         (tmp_path / "data").mkdir()
@@ -833,7 +874,7 @@ def test_the_javascript_parses():
         pytest.skip("no node")
     static = Path(web_caps.__file__).with_name("static")
     files = sorted(static.glob("*.js"))
-    for page in sorted(web_caps.BUILTIN.glob("*/pages/*.html")):
+    for page in sorted([*web_caps.BUILTIN.glob("*/pages/*.html"), *Path(vault_caps.__file__).parent.glob("pages/*.html")]):
         for i, script in enumerate(_inline_scripts(page.read_text())):
             f = Path(static.parent / f".check-{page.stem}-{i}.js")
             files.append(f)

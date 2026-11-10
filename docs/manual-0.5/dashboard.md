@@ -24,7 +24,7 @@ in. `doors: {http: {web: false}}` turns the site off.
 
 | Installed | You get |
 |---|---|
-| the hub alone | **Workers** and **Jobs** in the sidebar; **Journal** and **Settings** under More |
+| the hub alone | **Workers**, **Tokens** and **Jobs** in the sidebar; **Journal**, **Vault** and **Settings** under More |
 | + agents | the house agent's **chat dock** beside every page. A hub the installer made opens on its guided first run (`agent.setup`); after that, on your first visit it asks how you want to use the site; it builds pages for you and can set your start page. With `trust` in the library, the **Trust map** too |
 | + workbench | **Tasks**, **Projects** and **Knowledge** pages; every page an agent makes is built under a task, so you can review it |
 
@@ -33,8 +33,14 @@ phone, the dock is a sheet behind the Chat button.
 
 - **Workers**: every machine, online or not, its plugins and what it can't serve.
 - **Jobs**: every job, its last run, Run now and on/off ([Jobs](jobs.md)).
+- **Tokens**: a token for an agent, with its ready `claude mcp add` line and
+  claude.ai connector details (this is the agent installer); revoke one.
 - **Journal**: what was done, by whom, and why ([The journal](journal.md)).
-- **Settings**: the hub's plugin settings and your own ([Settings](settings.md)).
+- **Vault**: the hub's secrets by name, never a value: add, replace, delete
+  ([the vault's manual](../../rook/core2/hub/vault/docs/manual.md)).
+- **Settings**: the hub (its band, and the relay machines join at), its
+  people and agents, the plugin settings and your own ([Settings](settings.md)).
+  People are added and removed in `hub.yaml` (`users:`), see [People](people.md).
 
 ## Pages agents make
 
