@@ -334,7 +334,7 @@ class FakeHub:
         self.dispatcher = SimpleNamespace(workers={n: SimpleNamespace(caps={"worker.update": {}} if up else {})
                                                    for n, up in workers.items()})
         self.transport = SimpleNamespace(offer=lambda band, blob, to=None: {"id": "d", "to": to})
-        self.fail: dict = {}            # worker -> how it fails: "refuse" | "rollback"
+        self.fail: dict = {}            # worker -> how it fails: "refuse" | "rollback" | the status it serves
         self.calls: list = []
         self.cores = {n: {"running": None, "trial": None, "failed": None} for n in workers}
 
@@ -347,7 +347,8 @@ class FakeHub:
                 return {"ok": False, "error": "update refused: smoke check failed"}
             self._version = args
             how = self.fail.get(target)
-            self.cores[target] = ({"running": None, "trial": None,
+            self.cores[target] = (how if isinstance(how, dict) else
+                                  {"running": None, "trial": None,
                                    "failed": {"version": self._target, "reason": "did not come up"}}
                                   if how == "rollback" else {"running": self._target, "trial": None, "failed": None})
             return {"ok": True, "result": {"restarting": True}}
@@ -450,6 +451,28 @@ def test_a_failing_canary_stops_the_rollout(tmp_path, monkeypatch):
     assert states["a"] == ("failed", "rolled back on the worker: did not come up")
     assert states["b"][0] == states["c"][0] == "not started"
     assert [t for cap, t, _ in hub.calls if cap == "worker.update"] == ["a"]
+
+
+def test_a_trial_that_gives_up_is_failed_even_before_it_restarts(tmp_path, monkeypatch):
+    """Between abandon() and its restart the trial process still serves
+    worker.status: running the version, no trial. That is a rollback."""
+    hub, up = make(tmp_path, monkeypatch, {"a": True})
+    hub._target = "0.5.1"
+    worker = updater(tmp_path / "w")
+    run(worker.receive(built(tmp_path, name="w")[0]))
+    trial = updater(tmp_path / "w", running="0.5.1")
+    trial.abandon("no call from the home hub served within 6s")
+    status = trial.status()
+    assert status["running"] == "0.5.1" and status["trial"] is None
+    hub.fail["a"] = status               # what the worker serves until it restarts
+
+    async def go():
+        await up.rollout(ctx(), "0.5.1", source=str(source(tmp_path)))
+        await finish(up)
+        return (await up.status(ctx()))["rollout"]
+    ro = asyncio.run(go())
+    assert ro["status"] == "failed", ro
+    assert ro["workers"][0]["reason"] == "rolled back on the worker: no call from the home hub served within 6s"
 
 
 def test_a_refused_update_and_a_worker_that_never_comes_back_fail(tmp_path, monkeypatch):

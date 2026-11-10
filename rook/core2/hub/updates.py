@@ -324,8 +324,10 @@ class Updates:
             rel = (st.get("result") or {}).get("release") if st.get("ok") else None
             if not isinstance(rel, dict):
                 continue                      # still restarting
+            # Checked first: a trial process that just gave up still runs the version
+            # (no trial, so it looks confirmed) until it restarts into the old core.
             failed = rel.get("failed") or {}
-            if failed.get("version") == version and rel.get("running") != version:
+            if failed.get("version") == version:
                 return self._done(w, False, f"rolled back on the worker: {failed.get('reason')}")
             if rel.get("running") == version and not rel.get("trial"):
                 return self._done(w, True)
