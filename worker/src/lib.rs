@@ -43,6 +43,10 @@ const SYNC_IDS: usize = 500;
 
 /// Caps of the announced manifests this worker doesn't serve, and why.
 const UNAVAILABLE: [(&str, &str); 1] = [("worker.log", "the hub's journal has every call this worker ran: read it there")];
+const EMBEDDED: [(&str, &str); 2] = [
+    ("worker.update", "it runs inside the desktop app, which updates it: update the app"),
+    ("worker.restart", "it runs inside the desktop app: turn this computer's worker off and on there"),
+];
 const PULL_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub struct Worker {
@@ -63,6 +67,9 @@ pub struct Worker {
     op_keys: Mutex<HashMap<String, String>>,
     /// Running a core update that hasn't served a call for the hub yet.
     on_trial: std::sync::atomic::AtomicBool,
+    /// Run inside another program (the desktop app), which updates and restarts it.
+    embedded: bool,
+    last_call: Mutex<Option<(String, f64)>>,
 }
 
 /// Events for the hub, sent in order as `core.event` batches.
@@ -94,7 +101,9 @@ fn id32() -> String {
 }
 
 impl Worker {
-    pub async fn start(cfg: Config) -> std::io::Result<Arc<Worker>> {
+    /// `embedded`: run inside another program (the desktop app), which
+    /// updates and restarts it; `worker.update` and `worker.restart` say so.
+    pub async fn start(cfg: Config, embedded: bool) -> std::io::Result<Arc<Worker>> {
         let link = Link::connect(&cfg.psk, &cfg.relay).await?;
         let band = link::band_id_hex(&cfg.psk);
         let manifests = manifests::served();
@@ -120,16 +129,20 @@ impl Worker {
             cfg, link, band, manifests, entries, started: now(), streams, outbox,
             hub: Mutex::new(None), waiting: Mutex::new(HashMap::new()), replies: drop::Replies::default(),
             core: core::Core::new(&cfg_data), op_keys: Mutex::new(HashMap::new()), on_trial: Default::default(),
+            embedded, last_call: Mutex::new(None),
         }))
     }
 
     /// Announce, then heartbeat, keep the relay's path open, send events and
     /// answer calls until the link fails.
+    /// Its loops end with this future: dropping it (an app turning its
+    /// worker off) stops them; `stop` ends its streams too.
     pub async fn run(self: Arc<Self>) -> std::io::Result<()> {
+        let mut loops = tokio::task::JoinSet::new();
         if self.core.in_trial() {
             self.on_trial.store(true, Ordering::SeqCst);
             let me = self.clone();
-            tokio::spawn(async move {
+            loops.spawn(async move {
                 let secs = core::trial_secs();
                 tokio::time::sleep(secs).await;
                 if me.on_trial.swap(false, Ordering::SeqCst) {
@@ -140,7 +153,7 @@ impl Worker {
         }
         self.announce().await;
         let me = self.clone();
-        tokio::spawn(async move {
+        loops.spawn(async move {
             loop {
                 let jitter = 0.8 + 0.4 * (link::random::<1>()[0] as f64 / 255.0);
                 tokio::time::sleep(Duration::from_secs_f64(HEARTBEAT * jitter)).await;
@@ -149,20 +162,20 @@ impl Worker {
             }
         });
         let me = self.clone();
-        tokio::spawn(async move {
+        loops.spawn(async move {
             loop {
                 tokio::time::sleep(link::KEEPALIVE_EVERY).await;
                 let _ = me.link.send(link::KEEPALIVE).await;
             }
         });
         let me = self.clone();
-        tokio::spawn(async move {
+        loops.spawn(async move {
             loop {
                 tokio::time::sleep(streams::ACTIVITY_EVERY).await;
                 me.streams.flush();
             }
         });
-        tokio::spawn(self.clone().send_events());
+        loops.spawn(self.clone().send_events());
         let mut reassembler = link::reassembler();
         loop {
             let payload = self.link.recv(&mut reassembler).await?;
@@ -211,6 +224,7 @@ impl Worker {
                     Ok(result) => json!({"id": id, "from": me.cfg.worker_id, "ok": true, "result": result}),
                     Err(error) => json!({"id": id, "from": me.cfg.worker_id, "ok": false, "error": error}),
                 };
+                *me.last_call.lock().unwrap() = Some((cap.clone(), now()));
                 if reply["ok"] == json!(true) && me.on_trial.swap(false, Ordering::SeqCst) {
                     me.core.confirm(); // this core served a call for the hub: it stays
                 }
@@ -296,7 +310,7 @@ impl Worker {
     }
 
     async fn announce(&self) {
-        let unavailable: Map<String, Value> = UNAVAILABLE.iter().map(|(c, why)| (c.to_string(), json!(why))).collect();
+        let unavailable: Map<String, Value> = self.unavailable().map(|(c, why)| (c.to_string(), json!(why))).collect();
         self.send(&json!({"kind": "announce", "worker_id": self.cfg.worker_id, "name": self.cfg.name, "core": CORE,
                           "version": self.version(), "facts": facts(), "manifests": self.entries,
                           "manifests_hash": manifests::sha256(&self.entries), "unavailable": unavailable}))
@@ -304,7 +318,7 @@ impl Worker {
     }
 
     async fn call(&self, cap: &str, a: Args<'_>, who: Vec<String>) -> Reply {
-        if let Some((_, why)) = UNAVAILABLE.iter().find(|(c, _)| *c == cap) {
+        if let Some((_, why)) = self.unavailable().find(|(c, _)| *c == cap) {
             return Err(format!("{cap} is unavailable: {why}"));
         }
         let by = who.last().cloned().unwrap_or_default(); // the agent if one acts, else the person
@@ -368,12 +382,27 @@ impl Worker {
             .filter(|m| m.raw["builtin"] != json!(true))
             .map(|m| format!("{}@{}", m.plugin, m.version))
             .collect();
-        let unavailable: Map<String, Value> = UNAVAILABLE.iter().map(|(c, why)| (c.to_string(), json!(why))).collect();
+        let unavailable: Map<String, Value> = self.unavailable().map(|(c, why)| (c.to_string(), json!(why))).collect();
         json!({"name": self.cfg.name, "worker_id": self.cfg.worker_id, "version": self.version(), "core": CORE,
                "facts": facts(), "pid": std::process::id(), "started": (self.started * 1000.0).round() / 1000.0,
                "uptime_s": (now() - self.started) as u64, "band": {"connected": true, "hub_contact": hub},
                "plugins": plugins, "unavailable": unavailable, "streams_open": self.streams.open_count(),
                "release": self.core.status()})
+    }
+
+    fn unavailable(&self) -> impl Iterator<Item = &(&'static str, &'static str)> {
+        UNAVAILABLE.iter().chain(if self.embedded { &EMBEDDED[..] } else { &[] })
+    }
+
+    /// What it is doing, cheaply: open streams, and the last call's cap and time.
+    pub fn activity(&self) -> (usize, Option<(String, f64)>) {
+        (self.streams.open_count(), self.last_call.lock().unwrap().clone())
+    }
+
+    /// End its streams (their processes get HUP, connections close); the
+    /// caller then drops `run`.
+    pub fn stop(&self) {
+        self.streams.close_all();
     }
 
     /// The release this process runs, else the version built into it.

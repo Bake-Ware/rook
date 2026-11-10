@@ -1,5 +1,5 @@
 //! The hub's pages by section, for the tray's Dashboard menu and the Rook
-//! panel. The hub lists them itself (`hub05::page_sections`).
+//! panel. The hub lists them itself (`hub::page_sections`).
 
 use serde::{Deserialize, Serialize};
 
@@ -38,7 +38,7 @@ mod tests {
 
     #[test]
     fn menu_ids_map_to_known_pages_only() {
-        let hub05 = vec![Section {
+        let hub = vec![Section {
             id: "hub".into(),
             title: "Hub".into(),
             pages: vec![Page {
@@ -46,9 +46,9 @@ mod tests {
                 title: "Workers".into(),
             }],
         }];
-        assert_eq!(path_for("page:/hub/workers", &hub05).as_deref(), Some("/#/hub/workers"));
-        assert_eq!(path_for(&menu_id("sessions"), &hub05), None);
-        assert_eq!(path_for("page:../etc", &hub05), None);
-        assert_eq!(path_for("/hub/workers", &hub05), None);
+        assert_eq!(path_for("page:/hub/workers", &hub).as_deref(), Some("/#/hub/workers"));
+        assert_eq!(path_for(&menu_id("sessions"), &hub), None);
+        assert_eq!(path_for("page:../etc", &hub), None);
+        assert_eq!(path_for("/hub/workers", &hub), None);
     }
 }

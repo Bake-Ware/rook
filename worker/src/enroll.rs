@@ -97,7 +97,7 @@ async fn post(client: &reqwest::Client, url: &str, path: &str, body: Value) -> R
 }
 
 /// Claim `code`, or ask and wait to be let in; the checked bundle.
-pub async fn sign_in(url: &str, name: &str, code: Option<&str>, pinned: Option<&str>, say: &dyn Fn(&str)) -> Result<Value, String> {
+pub async fn sign_in(url: &str, name: &str, code: Option<&str>, pinned: Option<&str>, say: &(dyn Fn(&str) + Sync)) -> Result<Value, String> {
     let client = reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(Duration::from_secs(30))
@@ -256,7 +256,7 @@ fn already(hub: Option<String>) -> String {
 
 /// The whole enrollment: find the hub, sign in, write the files.
 pub async fn enroll(config: &Path, target: &str, code: Option<&str>, name: Option<&str>, insecure: bool,
-                    force: bool, say: &dyn Fn(&str)) -> Result<Enrolled, String> {
+                    force: bool, say: &(dyn Fn(&str) + Sync)) -> Result<Enrolled, String> {
     let (url, qr_code, pinned) = parse_target(target)?;
     check_url(&url, insecure)?;
     if !force {

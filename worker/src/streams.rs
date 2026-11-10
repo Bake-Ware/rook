@@ -220,6 +220,15 @@ impl Streams {
         (self.report)("changed", s.summary());
     }
 
+    /// Every open stream: its producer is asked to end (HUP), then it closes.
+    pub fn close_all(&self) {
+        let open: Vec<String> = self.all.lock().unwrap().values().filter(|s| s.closed.is_none()).map(|s| s.id.clone()).collect();
+        for sid in open {
+            let _ = self.append(&sid, "input", Body::Json(json!({"signal": "HUP"})), "worker");
+            self.close(&sid, "worker", Map::new());
+        }
+    }
+
     pub fn open_count(&self) -> usize {
         self.all.lock().unwrap().values().filter(|s| s.closed.is_none()).count()
     }

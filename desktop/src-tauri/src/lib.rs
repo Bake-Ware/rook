@@ -13,18 +13,16 @@
 //! * add, start and stop this computer's worker;
 //! * one copy at a time, starting at sign-in if asked, and an update check.
 //!
-//! The hub client is `hub05`, the worker `worker05`; `hub` and `worker` hold
-//! what they share with the rest of the app.
+//! The hub client is `hub`; the worker (the `worker/` crate, compiled in)
+//! runs under `worker`.
 
 pub mod config;
 pub mod hub;
-pub mod hub05;
 pub mod notify;
 pub mod sections;
 pub mod update;
 pub mod voice;
 pub mod worker;
-pub mod worker05;
 
 use config::{Credentials, Settings, Store};
 use serde::Serialize;
@@ -62,9 +60,9 @@ pub struct App {
     settings: Mutex<Settings>,
     creds: Mutex<Credentials>,
     /// This computer's worker, run by the app.
-    worker05: Mutex<worker05::Controller>,
+    worker: Mutex<worker::Controller>,
     /// The hub's pages by section (`page.list`), for the tray and panel.
-    pages05: Mutex<Vec<sections::Section>>,
+    pages: Mutex<Vec<sections::Section>>,
     shortcuts: Mutex<(Option<Shortcut>, Option<Shortcut>)>,
     /// Bumped on every sign-in attempt, so an older cookie watcher stops.
     signin_gen: AtomicU64,
@@ -93,19 +91,19 @@ fn creds(app: &AppHandle) -> Credentials {
 
 /// The hub's door for the configured hub, with the person's token, if
 /// signed in to it.
-fn hub05_client(app: &AppHandle) -> Result<hub05::Hub05, String> {
+fn hub_client(app: &AppHandle) -> Result<hub::Hub, String> {
     let s = settings(app);
     let c = creds(app);
     let origin = config::normalize_hub_url(&s.hub_url)?;
     if !c.signed_in_to(&origin) {
         return Err(hub::HubError::NotSignedIn.to_string());
     }
-    Ok(hub05::Hub05::new(&origin, &c.token))
+    Ok(hub::Hub::new(&origin, &c.token))
 }
 
 /// The hub's own pages, by section.
 fn current_sections(app: &AppHandle) -> Vec<sections::Section> {
-    state(app).pages05.lock().unwrap().clone()
+    state(app).pages.lock().unwrap().clone()
 }
 
 fn notify(app: &AppHandle, title: &str, body: &str) {
@@ -384,7 +382,7 @@ async fn ui_state(app: &AppHandle) -> UiState {
 async fn system_facts(app: &AppHandle) -> (worker::Info, Option<String>) {
     let a = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let info = state(&a).worker05.lock().unwrap().info();
+        let info = state(&a).worker.lock().unwrap().info();
         (info, microphone_name())
     })
     .await
@@ -395,12 +393,11 @@ async fn system_facts(app: &AppHandle) -> (worker::Info, Option<String>) {
 async fn worker_do(app: &AppHandle, action: &str) -> Result<worker::Info, String> {
     let a = app.clone();
     let action = action.to_string();
-    let s = settings(app);
     tauri::async_runtime::spawn_blocking(move || {
         let st = state(&a);
-        let mut w = st.worker05.lock().unwrap();
+        let mut w = st.worker.lock().unwrap();
         match action.as_str() {
-            "start" => w.start(&worker05::python(&s.worker_python)),
+            "start" => w.start(),
             "stop" => w.stop(),
             _ => Ok(w.info()),
         }
@@ -561,7 +558,7 @@ async fn ask_impl(app: &AppHandle, question: &str) -> Result<hub::Answer, String
     if q.is_empty() {
         return Err("Type a question first.".into());
     }
-    let answer = hub05_client(app)?.ask(q, ASK_WAIT).await.map_err(|e| e.to_string())?;
+    let answer = hub_client(app)?.ask(q, ASK_WAIT).await.map_err(|e| e.to_string())?;
     // Answered while the box was closed: say so.
     let visible = app
         .get_webview_window("overlay")
@@ -778,7 +775,7 @@ fn spawn_poller(app: AppHandle) {
                 let (info, _) = system_facts(&app).await;
                 update_worker_item(&app, &info);
             }
-            let Ok(h) = hub05_client(&app) else { continue };
+            let Ok(h) = hub_client(&app) else { continue };
             if h.origin != watched_hub {
                 watcher = notify::Watcher::new();
                 watched_hub = h.origin.clone();
@@ -786,7 +783,7 @@ fn spawn_poller(app: AppHandle) {
             }
             // Pages come and go (agents make them); the site session lasts 30 days.
             if polls % 20 == 0 {
-                refresh_pages05(&app).await;
+                refresh_pages(&app).await;
                 keep_web_session(&app).await;
             }
             if !s.notifications {
@@ -812,14 +809,14 @@ fn spawn_poller(app: AppHandle) {
 }
 
 /// The hub's pages, for the tray's Dashboard menu and the panel.
-async fn refresh_pages05(app: &AppHandle) {
-    let Ok(h) = hub05_client(app) else { return };
+async fn refresh_pages(app: &AppHandle) {
+    let Ok(h) = hub_client(app) else { return };
     match h.pages().await {
         Ok(pages) => {
             let st = state(app);
-            let changed_now = *st.pages05.lock().unwrap() != pages;
+            let changed_now = *st.pages.lock().unwrap() != pages;
             if changed_now {
-                *st.pages05.lock().unwrap() = pages;
+                *st.pages.lock().unwrap() = pages;
                 rebuild_tray(app);
                 changed(app);
             }
@@ -838,12 +835,12 @@ async fn keep_web_session(app: &AppHandle) {
     if !c.signed_in_to(&origin) {
         return;
     }
-    if !c.cookie.is_empty() && hub05::web_me(&origin, &c.cookie).await.is_ok() {
+    if !c.cookie.is_empty() && hub::web_me(&origin, &c.cookie).await.is_ok() {
         return;
     }
-    match hub05::web_sign_in(&origin, &c.token).await {
+    match hub::web_sign_in(&origin, &c.token).await {
         // Unless the person signed out (or in again) meanwhile.
-        Ok((cookie, person)) if creds(app).token == c.token => save_sign_in05(app, &origin, &c.token, &cookie, person),
+        Ok((cookie, person)) if creds(app).token == c.token => save_sign_in(app, &origin, &c.token, &cookie, person),
         Ok(_) => {}
         Err(e) => log::info!("site session: {e}"),
     }
@@ -893,7 +890,7 @@ async fn check_update(app: &AppHandle) {
 }
 
 /// A sign-in: the person's token, and the site session from it.
-fn save_sign_in05(app: &AppHandle, origin: &str, token: &str, cookie: &str, person: String) {
+fn save_sign_in(app: &AppHandle, origin: &str, token: &str, cookie: &str, person: String) {
     let st = state(app);
     let mut c = st.creds.lock().unwrap();
     if c.hub != origin {
@@ -1091,9 +1088,9 @@ async fn save_settings(app: AppHandle, mut settings: Settings) -> Result<UiState
     st.store
         .save_settings(&settings)
         .map_err(|e| format!("Couldn't save settings: {e}"))?;
-    if old.hub_url != settings.hub_url && !st.pages05.lock().unwrap().is_empty() {
+    if old.hub_url != settings.hub_url && !st.pages.lock().unwrap().is_empty() {
         // Another hub: its pages come with its sign-in.
-        st.pages05.lock().unwrap().clear();
+        st.pages.lock().unwrap().clear();
         rebuild_tray(&app);
     }
     apply_wake(&app);
@@ -1155,9 +1152,9 @@ async fn sign_in_token(app: AppHandle, hub: String, token: String) -> Result<UiS
         return Err("Paste your sign-in token first.".into());
     }
     let origin = set_hub(&app, &hub)?;
-    let (cookie, person) = hub05::web_sign_in(&origin, &token).await.map_err(|e| e.to_string())?;
-    save_sign_in05(&app, &origin, &token, &cookie, person);
-    refresh_pages05(&app).await;
+    let (cookie, person) = hub::web_sign_in(&origin, &token).await.map_err(|e| e.to_string())?;
+    save_sign_in(&app, &origin, &token, &cookie, person);
+    refresh_pages(&app).await;
     Ok(ui_state(&app).await)
 }
 
@@ -1165,17 +1162,10 @@ async fn sign_in_token(app: AppHandle, hub: String, token: String) -> Result<UiS
 /// signed-in person (they clicked Add), then start it.
 #[tauri::command]
 async fn worker_add(app: AppHandle) -> Result<UiState, String> {
-    let h = hub05_client(&app)?;
+    let h = hub_client(&app)?;
     let code = h.join_code().await.map_err(|e| e.to_string())?;
-    let s = settings(&app);
-    let a = app.clone();
-    let said = tauri::async_runtime::spawn_blocking(move || {
-        let layout = state(&a).worker05.lock().unwrap().layout.clone();
-        let python = worker05::python(&s.worker_python);
-        worker05::enroll(&layout, &python, &h.origin, &code, None)
-    })
-    .await
-    .map_err(|_| "Adding this computer failed.".to_string())??;
+    let layout = state(&app).worker.lock().unwrap().layout.clone();
+    let said = worker::enroll(&layout, &h.origin, &code, None).await?;
     log::info!("worker enrolled: {said}");
     use_services(&app);
     worker_do(&app, "start").await?;
@@ -1187,7 +1177,7 @@ async fn worker_add(app: AppHandle) -> Result<UiState, String> {
 /// The config bundle's voice service fills the voice settings left empty.
 fn use_services(app: &AppHandle) {
     let st = state(app);
-    let Some(services) = st.worker05.lock().unwrap().layout.services() else {
+    let Some(services) = st.worker.lock().unwrap().layout.services() else {
         return;
     };
     let voice = &services["voice"];
@@ -1225,11 +1215,11 @@ async fn sign_out(app: AppHandle) -> Result<UiState, String> {
         old
     };
     if !old.1.is_empty() {
-        if let Err(e) = hub05::web_sign_out(&old.0, &old.1).await {
+        if let Err(e) = hub::web_sign_out(&old.0, &old.1).await {
             log::info!("hub logout: {e}");
         }
     }
-    st.pages05.lock().unwrap().clear();
+    st.pages.lock().unwrap().clear();
     rebuild_tray(&app);
     if let Some(w) = app.get_webview_window("dashboard") {
         let _ = w.clear_all_browsing_data();
@@ -1280,7 +1270,7 @@ fn to_json<T: Serialize>(r: Result<T, hub::HubError>) -> Result<serde_json::Valu
 /// needed for things like knowledge or tasks").
 #[tauri::command]
 async fn panel_data(app: AppHandle, kind: String) -> Result<serde_json::Value, String> {
-    let h = hub05_client(&app)?;
+    let h = hub_client(&app)?;
     match kind.as_str() {
         "waiting" => to_json(h.waiting().await),
         _ => Err("unknown list".into()),
@@ -1409,14 +1399,14 @@ fn check(out: Option<&str>) -> i32 {
     let s = store.load_settings();
     let c = store.load_credentials();
     let origin = config::normalize_hub_url(&s.hub_url).unwrap_or_default();
-    let worker = worker05::Controller::new(worker05::Layout::new(&dir)).info();
+    let worker = worker::Controller::new(worker::Layout::new(&dir)).info();
     let hub = tauri::async_runtime::block_on(async {
         if origin.is_empty() {
             return json!({"configured": false});
         }
         let mut v = json!({"configured": true, "origin": origin});
         if c.signed_in_to(&origin) {
-            v["waiting"] = match hub05::Hub05::new(&origin, &c.token).waiting().await {
+            v["waiting"] = match hub::Hub::new(&origin, &c.token).waiting().await {
                 Ok(w) => json!({"ok": true, "count": w.len()}),
                 Err(e) => json!({"ok": false, "error": e.to_string()}),
             };
@@ -1499,8 +1489,8 @@ pub fn run() {
                 store,
                 settings: Mutex::new(settings),
                 creds: Mutex::new(creds),
-                worker05: Mutex::new(worker05::Controller::new(worker05::Layout::new(&config_dir(&handle)))),
-                pages05: Mutex::new(Vec::new()),
+                worker: Mutex::new(worker::Controller::new(worker::Layout::new(&config_dir(&handle)))),
+                pages: Mutex::new(Vec::new()),
                 shortcuts: Mutex::new((None, None)),
                 signin_gen: AtomicU64::new(0),
                 worker_item: Mutex::new(None),
@@ -1542,7 +1532,7 @@ pub fn run() {
             spawn_poller(handle.clone());
             let h = handle.clone();
             tauri::async_runtime::spawn(async move {
-                refresh_pages05(&h).await;
+                refresh_pages(&h).await;
                 keep_web_session(&h).await;
             });
             match show.as_deref() {
@@ -1580,7 +1570,7 @@ pub fn run() {
     app.run(|app, event| match event {
         // A tray app keeps running with no window open; Quit exits.
         RunEvent::ExitRequested { api, code: None, .. } => api.prevent_exit(),
-        RunEvent::Exit => state(app).worker05.lock().unwrap().shutdown(),
+        RunEvent::Exit => state(app).worker.lock().unwrap().shutdown(),
         _ => {}
     });
 }
