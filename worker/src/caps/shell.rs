@@ -538,8 +538,8 @@ fn feed(
     child: Arc<Mutex<std::process::Child>>,
 ) {
     while let Ok(body) = events.recv() {
-        if let Some(text) = body["text"].as_str() {
-            if input.write_all(text.as_bytes()).and_then(|_| input.flush()).is_err() {
+        if let Some(data) = crate::streams::input_data(&body) {
+            if input.write_all(&data).and_then(|_| input.flush()).is_err() {
                 return; // the process closed its input
             }
         } else if let Some(sig) = body["signal"].as_str() {

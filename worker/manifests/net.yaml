@@ -1,9 +1,10 @@
-# TCP connections as streams, served by the Rust worker (worker/src/caps/net.rs).
+# Network connections as streams, served by the Rust worker (worker/src/caps/net.rs).
+# The hub script speaks the protocol (HTTP, WebSocket, SSDP, mDNS); the worker carries bytes.
 manifest: 1
 plugin: net
 version: 0.5.0
 title: Network
-doc: Open a TCP connection from this worker as a live stream.
+doc: Open a TCP connection (optionally TLS) or a UDP socket from this worker as a live stream.
 package: core
 builtin: true
 license: Apache-2.0
@@ -11,9 +12,10 @@ source: https://github.com/Bake-Ware/rook
 caps:
   open:
     doc: >-
-      Connect to host:port over TCP and return {stream}. What arrives comes as bytes events
-      (stream.read); stream.write {text} sends; stream.close (or any signal) closes the
-      connection. The stream closes when the far end does.
+      Connect to host:port over TCP and return {stream}; tls=true wraps it in TLS (verify=false
+      takes a self-signed certificate, as a PiKVM's or a TV's). What arrives comes as bytes events
+      (stream.read); stream.write {text} or {bytes} (base64) sends; stream.close (or any signal)
+      closes the connection. The stream closes when the far end does.
     risk: exec
     scope: local
     timeout: 30s
@@ -21,3 +23,16 @@ caps:
     args:
       host: { type: str, required: true }
       port: { type: int, required: true }
+      tls: { type: bool, default: false }
+      verify: { type: bool, default: true, doc: "Check the server's certificate against the web's roots (tls=true)." }
+  udp:
+    doc: >-
+      Open a UDP socket on a free port and return {stream}. stream.write {bytes} (base64) or
+      {text} with to (host:port) sends one datagram, to a broadcast or multicast address too
+      (Wake-on-LAN, SSDP's 239.255.255.250:1900, mDNS's 224.0.0.251:5353); each datagram that
+      arrives (a reply) is a bytes event whose `by` is its sender, ip:port. A send that fails
+      is a status event with error. stream.close closes it.
+    risk: exec
+    scope: local
+    timeout: 30s
+    stream: { types: [bytes], input: true, durable: false }

@@ -649,6 +649,8 @@ def test_stream_caps_drive_a_shell_terminal(setup):
             if b"castling" in seen:
                 break
         assert b"castling" in seen
+        raw = await hub.call("stream.write", {"stream": sid, "body": {"bytes": "AP8="}})
+        assert not raw["ok"] and "not on this worker" in raw["error"], raw        # the Rust worker's input
 
         # Someone else's stream doesn't exist for them.
         other = await hub.call("stream.read", {"stream": sid}, person="person:mallory")

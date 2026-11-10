@@ -159,6 +159,8 @@ def handlers(worker: Any, streams: Streams, ran: RanLog, *, restart: Callable[[]
 
     async def write(ctx, stream, body, type="input") -> dict:
         _get(stream, ctx.caller)
+        if isinstance(body, dict) and "bytes" in body:
+            raise KitError("bytes input is not on this worker (the Rust worker takes it); send text")
         try:
             ev = streams.append(stream, type, body, by=ctx.caller.actor)
         except StreamError as e:

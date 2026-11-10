@@ -27,6 +27,9 @@ flate2 = "1"
 tar = { version = "0.4", default-features = false }
 # The desktop app uses the same, so it is built once there.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# net.open's TLS: the rustls (with ring) and web roots reqwest already brings.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
