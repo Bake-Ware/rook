@@ -105,9 +105,9 @@ def init(path: Path, owner: str, relay: str | None, ws_url: str | None, url: str
         print("init: give the band's --relay (host:port) or --ws-url", file=sys.stderr)
         return 2
     band = {"psk": secrets.token_hex(24), **({"relay": relay} if relay else {}), **({"ws_url": ws_url} if ws_url else {})}
-    # connector: the agent an MCP connector that signs in acts through (doors/mcp_oauth.py, oauth_agent)
+    # claude-web: the agent claude.ai's connector acts through (doors/mcp_oauth.py, oauth_agent)
     raw = {"data": "./data", "library": "./library", "users": {owner: {"preset": "owner"}},
-           "agents": {"connector": {"grants": ["*"]}},
+           "agents": {"claude-web": {"grants": ["*"]}},
            "doors": {"http": {"bind": bind}}, "transport": {"bands": [band]}}
     if url:
         raw["enroll"] = {"url": url}

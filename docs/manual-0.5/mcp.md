@@ -65,7 +65,7 @@ with your Rook user name and password, the same as the hub site.
    shows, and each client gets the address it used:
    `oauth: ["https://rook.example", "https://mcp.rook.example"]`.
 
-2. The connector acts through the agent `connector` (`init` lists it
+2. The connector acts through the agent `claude-web` (`init` lists it
    under `agents:`; `oauth_agent: <name>` on the door picks another).
 
 3. In claude.ai: Settings, Connectors, Add custom connector, address
@@ -78,7 +78,7 @@ With just the address, claude.ai registers itself and shows the same
 sign-in page.
 
 Or, with no password typed: mint a token (`token.create {agent:
-"connector"}` from an agent, or the **Tokens** page) and use its reply's
+"claude-web"}` from an agent, or the **Tokens** page) and use its reply's
 `connector`: the address, client ID `rook-<token id>` and the token as the
 client secret, under Advanced settings. That connector goes straight
 through (no sign-in page) and uses that token; revoking it on the Tokens
