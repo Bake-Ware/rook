@@ -20,13 +20,15 @@ settings: { browser: { headless: false } }
 hardware: [gpu, display]       # what this machine has, for plugins that need it
 ```
 
-**Two kinds of worker.** The Python worker (`python -m rook.core2.worker`)
+**Kinds of worker.** The Python worker (`python -m rook.core2.worker`)
 reads everything above. The `rook-worker` binary (one file, `worker/` in
 the repo; the desktop app has it built in) reads only `data`, `anchor`,
 `name`, `worker_id` and `bands`, and runs no plugins: it serves commands
 and terminals (`shell.*`), files (`file.*`), streams (`stream.*`), TCP
 connections (`net.open`), serial ports (`serial.open`) and `worker.*`.
-Everything else becomes hub scripts that call those.
+Everything else becomes hub scripts that call those. `worker/rook_worker.py` is a third form,
+one Python file for machines where nothing can be installed: commands,
+files and `worker.*`, no streams ([Installing](install.md#where-nothing-can-be-installed)).
 
 Plugins listed under `plugins:` are trusted because the machine's owner put
 them there. Plugins the hub pushes are signed for this worker and installed

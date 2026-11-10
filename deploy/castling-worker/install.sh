@@ -18,6 +18,8 @@
 # unit, or a system unit when run as root (containers without a user bus).
 # Root installs default to /opt/rook05 (the Python worker then runs as root,
 # ROOK_RUN_AS=<account> for another, as the 0.4 worker runs there).
+# Where nothing can be installed (no service, no rights): copy worker/rook_worker.py and
+# run `python3 rook_worker.py enroll <hub>`, then `python3 rook_worker.py`.
 # Joining: the machine waits until someone taps Join on the hub's Workers page.
 # --code (or ROOK_JOIN_CODE) joins at once with a one-time code from the hub
 # (hub.join_code, or POST /enroll/code with a token).
