@@ -1,4 +1,4 @@
-# The journal (spec 11), for pages (castling-dashboard).
+# The journal (spec 7), for pages (castling-dashboard).
 # Implemented by the hub (rook.core2.hub.doors.web.caps).
 manifest: 1
 plugin: journal

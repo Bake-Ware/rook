@@ -4,10 +4,10 @@
 //! (`<config>/worker05/worker.yaml`, the folder earlier versions enrolled
 //! into), so it never touches a worker installed some other way.
 //!
-//! **Adding this computer** is enrollment (spec 12) with a one-time code: the
+//! **Adding this computer** is enrollment (spec 8) with a one-time code: the
 //! app, signed in as the person who clicked "Add", gets one with their token
 //! (`POST /enroll/code`) and the crate's `enroll` claims it, writing the
-//! anchor and home band. The person owns the machine (spec 9.1).
+//! anchor and home band. The person owns the machine (spec 8).
 //!
 //! It serves what the crate serves (commands and terminals, files, streams,
 //! sockets and serial ports). The app updates it with itself, so its

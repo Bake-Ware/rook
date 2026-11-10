@@ -121,7 +121,7 @@ class Rig:
         self.modules = {}
         self.streams = Streams(SqliteStore(str(tmp_path / "stream-events.db")), host="hub")   # the hub's
         self.records = RecordStore(str(tmp_path / "records.db"), emit=self._emit)
-        self.records.register(self.manifest, plugin_dir=AGENTS)
+        self.records.register(self.manifest)
         self.hooks = set()
 
     def _emit(self, event, payload, source):

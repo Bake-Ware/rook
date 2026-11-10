@@ -37,8 +37,7 @@ What happens:
 
 1. The hub validates the manifest, resolves the plugin's Python
    requirements for that worker (a conflict refuses the install with the
-   reason instead of breaking the worker), fetches its large assets and
-   checks their hashes.
+   reason instead of breaking the worker).
 2. It signs the list of the plugin's file hashes **for that worker**
    (`plugin.sig`) and sends the bundle with the cap `core.plugin.install`,
    dispatched and journaled like any call; `core.plugin.rollback` is the way

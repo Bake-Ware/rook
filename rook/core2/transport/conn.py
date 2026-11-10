@@ -13,11 +13,11 @@ What it does for every band, independently (a worker on several bands keeps
 one connection, one heartbeat and one hub-loss clock per band, 9.4):
 
 - **Connect** in the background with jittered backoff until the link comes
-  up; every (re)connect sends ``hello(band)`` (the full announce, 5.3/5.4).
+  up; every (re)connect sends ``hello(band)`` (the full announce, 4.2/10.3).
 - **Beat**: ``beat(band)`` every ``every`` seconds +-20 % (the worker's
   heartbeat 5.5, the hub's signed announce 5.4).
 - **Receive**: JSON objects go to ``on_message(band, msg)``, except
-  requests whose ``target`` is not this node (6.1: stay silent), messages
+  requests whose ``target`` is not this node (5.1: stay silent), messages
   that are neither request, reply nor a ``kind`` (3.1: foreign chatter),
   keepalives and Drop packets.
 - **Peers** (:meth:`peers`): every node heard from, with its name, stated
@@ -44,7 +44,7 @@ one connection, one heartbeat and one hub-loss clock per band, 9.4):
   delivered twice (a re-minted ticket for the same call id is new); a
   reply seen again is only acked. Resends going unanswered refresh our
   relay registration and route (a restarted relay forgot them).
-- **Hub loss** (5.4, 7.4): the host calls :meth:`contact` whenever it
+- **Hub loss** (10.3, 10.9): the host calls :meth:`contact` whenever it
   accepts hub contact on a band (a verified hub announce or ticket; the
   transport can't verify signatures). After ``lost_after`` seconds without
   one, ``on_lost(band)`` fires once; the next contact fires ``on_contact``.
@@ -76,9 +76,9 @@ from .links import Link
 log = logging.getLogger("rook.core2.transport")
 
 FEATURES = ["drop", "route", "ack"]    # what this transport speaks; put it in announces (2.1)
-BEAT_SECS = 30.0                # announce/heartbeat period, +-20 % (5.4, 5.5)
-LOST_SECS = 90.0                # no hub contact this long: hub lost (5.4)
-PEER_SECS = 90.0                # roster eviction (5.5)
+BEAT_SECS = 30.0                # announce/heartbeat period, +-20 % (4.4, 4.3)
+LOST_SECS = 90.0                # no hub contact this long: hub lost (10.3)
+PEER_SECS = 90.0                # roster eviction (4.3)
 DROP_THRESHOLD = 32 * 1024      # replies above this go over Drop when accepted (v1 14.2)
 MAX_MESSAGE = 32 * 1024 * 1024  # largest inline message (the codec's reassembly bound)
 BULK_MAX = 64 * 1024 * 1024     # bytes served over Drop at once, per band
@@ -116,7 +116,7 @@ class Peer:
     @property
     def compatible(self) -> bool:
         """False only once the peer stated a core version with nothing in
-        common with ours; unknown counts as compatible (5.6)."""
+        common with ours; unknown counts as compatible (4.3)."""
         return self.stated is None or self.core is not None
 
     def alive(self, within: float = PEER_SECS) -> bool:
@@ -642,7 +642,7 @@ class Transport:
         return self._band(band).link.connected
 
     def contact(self, band: str) -> None:
-        """The host accepted hub contact on ``band`` (5.4)."""
+        """The host accepted hub contact on ``band`` (10.3)."""
         self._band(band).contact()
 
     def lost(self, band: str) -> bool:

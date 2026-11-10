@@ -6,13 +6,10 @@ local HTTP server with a hard timeout."""
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import http.server
 import io
 import json
 import subprocess
 import tarfile
-import threading
 from pathlib import Path
 
 import pytest
@@ -419,34 +416,6 @@ def test_hub_refuses_invalid_builtin_platform_and_breaking(tmp_path):
         d.prepare(gone, ENV, signer=HUB_SK, hub=HUB_ID, current=old, resolve=no_uv)
 
 
-def test_requires_plugins_is_checked_against_what_the_band_runs(tmp_path):
-    needy = make_plugin(tmp_path, name="needy", extra='requires: { plugins: { knowledge: ">=0.5,<0.6" } }\n')
-    with pytest.raises(d.Refused, match="needs knowledge >=0.5,<0.6: not installed"):
-        d.prepare(needy, ENV, signer=HUB_SK, hub=HUB_ID, resolve=no_uv, installed={"tasks": "0.5.0"})
-    with pytest.raises(d.Refused, match="the band has 0.6.1"):
-        d.prepare(needy, ENV, signer=HUB_SK, hub=HUB_ID, resolve=no_uv, installed={"knowledge": "0.6.1"})
-    assert d.prepare(needy, ENV, signer=HUB_SK, hub=HUB_ID, resolve=no_uv, installed={"knowledge": "0.5.3"}).sig
-    assert d.prepare(needy, ENV, signer=HUB_SK, hub=HUB_ID, resolve=no_uv).sig     # nothing to check against
-    odd = make_plugin(tmp_path, name="odd", extra='requires: { plugins: { knowledge: "~0.5" } }\n')
-    with pytest.raises(d.Refused, match="not a version range"):
-        d.prepare(odd, ENV, signer=HUB_SK, hub=HUB_ID, resolve=no_uv, installed={"knowledge": "0.5.0"})
-
-
-@pytest.mark.parametrize("version, spec, ok", [
-    ("0.5.3", ">=0.5,<0.6", True), ("0.6.0", ">=0.5,<0.6", False), ("1.0.0", "1.0", True),
-    ("1.0.1", "==1.0.0", False), ("2.0.0", "", True), ("2.0.0", "*", True), ("1.0.0-beta.1", ">=1.0", False),
-    ("1.2.0", ">1.1.9, <= 1.2", True)])
-def test_satisfies(version, spec, ok):
-    from rook.kit.manifest import satisfies
-    assert satisfies(version, spec) is ok
-
-
-def test_satisfies_reads_the_whole_range_before_answering():
-    from rook.kit.manifest import satisfies
-    with pytest.raises(ValueError):
-        satisfies("0.0.0", ">=1.0,~2")     # the first comparator fails; the second is still unreadable
-
-
 def test_install_reports_refusals(tmp_path):
     inst, _ = worker(tmp_path)
     folder = make_plugin(tmp_path, files={"scripts/stats.py": "def collect(ctx): return 1"})
@@ -545,76 +514,3 @@ def test_python_pins_are_signed_and_installed_before_load(tmp_path):
     inst2, host2 = worker(tmp_path / "w2", install_python=broken)
     report = ship(folder, inst2, resolve=lambda reqs, env: ["anyio==4.15.1"])
     assert not report["ok"] and "no network" in report["reason"] and not host2.loaded
-
-
-# -- assets ----------------------------------------------------------------------------------
-
-def _asset_plugin(tmp_path, body: bytes, size=None):
-    sha = hashlib.sha256(body).hexdigest()
-    extra = f"assets: {{ model: {{ url: 'https://example.invalid/m.bin', sha256: {sha}"
-    extra += f", size: {size if size is not None else len(body)} }} }}"
-    return make_plugin(tmp_path, name=f"assets{len(list(tmp_path.iterdir()))}", extra=extra), sha
-
-
-def test_assets_fetched_checked_cached_and_shipped(tmp_path):
-    body = b"\x00model-weights" * 100
-    folder, sha = _asset_plugin(tmp_path, body)
-    fetched = []
-
-    def fetch(url, dest):
-        fetched.append(url)
-        Path(dest).write_bytes(body)
-
-    inst, _ = worker(tmp_path)
-    cache = tmp_path / "cache"
-    assert ship(folder, inst, cache=cache, fetch=fetch)["ok"]
-    name = yaml.safe_load((folder / "plugin.yaml").read_text())["plugin"]
-    assert (tmp_path / "plugins" / name / "1.0.0" / "assets" / "model").read_bytes() == body
-    assert (cache / sha).is_file()
-    d.prepare(folder, ENV, signer=HUB_SK, hub=HUB_ID, cache=cache, fetch=fetch, resolve=no_uv)
-    assert len(fetched) == 1   # second prepare used the cache
-
-
-def test_asset_hash_or_size_mismatch_refused(tmp_path):
-    folder, _ = _asset_plugin(tmp_path, b"good")
-    with pytest.raises(d.Refused, match="sha256 is"):
-        d.prepare(folder, ENV, signer=HUB_SK, hub=HUB_ID, cache=tmp_path / "c", resolve=no_uv,
-                  fetch=lambda url, dest: Path(dest).write_bytes(b"evil"))
-    assert not list((tmp_path / "c").iterdir())
-    folder, _ = _asset_plugin(tmp_path, b"good", size=99)
-    with pytest.raises(d.Refused, match="4 bytes, the manifest says 99"):
-        d.prepare(folder, ENV, signer=HUB_SK, hub=HUB_ID, cache=tmp_path / "c", resolve=no_uv,
-                  fetch=lambda url, dest: Path(dest).write_bytes(b"good"))
-    with pytest.raises(d.Refused, match="download failed"):
-        d.prepare(folder, ENV, signer=HUB_SK, hub=HUB_ID, cache=tmp_path / "c", resolve=no_uv,
-                  fetch=lambda url, dest: (_ for _ in ()).throw(OSError("dns")))
-
-
-def test_fetch_url_refuses_non_http(tmp_path):
-    with pytest.raises(d.Refused, match="http or https"):
-        d.fetch_url("file:///etc/passwd", tmp_path / "x")
-
-
-def test_fetch_url_over_local_http(tmp_path):
-    body = b"weights" * 1000
-
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *a):
-            pass
-
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    t = threading.Thread(target=server.serve_forever, daemon=True)
-    t.start()
-    try:
-        d.fetch_url(f"http://127.0.0.1:{server.server_port}/m.bin", tmp_path / "m", timeout=5)
-    finally:
-        server.shutdown()
-        server.server_close()
-        t.join(5)
-    assert (tmp_path / "m").read_bytes() == body

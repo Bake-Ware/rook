@@ -10,7 +10,7 @@ Running, it first picks its core (rook.core2.worker.boot): the installed
 package, or the release a hub installed under ``<data>/core/``, and execs into
 it when that isn't the code already running.
 
-``enroll`` (spec 12; rook.core2.enroll.device) signs the machine in as a
+``enroll`` (spec 8; rook.core2.enroll.device) signs the machine in as a
 person: with the QR's one-time code (``hub.join_code``), else by asking to
 join and waiting until someone taps Join on the hub's Workers page. It writes the anchor, the home
 band and the config's ``anchor``/``name``/``worker_id``; the rest of an

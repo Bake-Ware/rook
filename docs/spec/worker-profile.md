@@ -7,7 +7,9 @@ Python script, the Rust worker and the phone app all speak it. A native
 module talking to its local worker speaks these same messages.
 
 The example implementation is `tests/test_core2_minimal_worker.py` (about
-70 lines of worker), run against a real hub.
+70 lines of worker), run against a real hub. `worker/rook_worker.py` is
+the profile with the carrier written out too (standard library Python, no
+Telesthete library), a worker people run.
 
 The key words MUST, MAY and SHOULD are as in RFC 2119.
 
@@ -116,19 +118,16 @@ A worker MAY do any of these; the hub requires none of them.
 
 | What | core v2 |
 |---|---|
-| More announce fields: `version`, `description`, `facts`, `unavailable`, `status`, `role`, `ceiling` (absent ceiling = everything) | 5.3 |
-| A worker key (`key` in the announce) and signed `core.call`/`core.elevate` requests | 5.8, 13.1 |
-| Checking tickets, the replay cache, per-hub ceilings | 6.2, 6.3, 9.2 |
-| Verifying the signed hub announce, hub contact and hub loss | 5.2, 5.4 |
-| Events (`core.event`) | 13 |
-| Sub-calls through the hub (`core.call`) | 13, 13.1 |
-| Elevation and leases (`core.elevate`, `core.lease.drop`) | 7, 13 |
-| Several bands, memberships, the trust store (`core.trust.*`) | 9, 13 |
-| Streams (terminals, processes): caps that answer `{"stream": id}` | 13, `rook/core2/builtin/stream.yaml` |
-| Pushed plugins and self-update (`plugin.sig`, `release.sig`); a worker that runs one built file names it in `facts.artifact` and takes only core releases that hold it | 13, docs/castling-updates.md |
-| Appliances behind a delegate (`appliance`, `carry`) | 5.7, 6.1 |
-| Transport extensions: `route`, `drop`, `z`, `ack` (listed in `features`) | 2.1 |
-| Version negotiation beyond stating `core` | 2.2 |
+| More announce fields: `version`, `description`, `facts`, `unavailable`, `status` | 4.2 |
+| Checking tickets and the replay cache | 10.1 |
+| A worker key (`key` in the announce) and signed sub-calls (`core.call`) | 10.2 |
+| Verifying the signed hub announce, hub contact and hub loss | 10.3 |
+| Events (`core.event`) | 10.4 |
+| Streams (terminals, processes): caps that answer `{"stream": id}` | 10.5 |
+| Transport extensions: `route`, `drop`, `z`, `ack` (listed in `features`) | 10.6 |
+| Pushed plugins and self-update (`plugin.sig`, `release.sig`) | 10.7 |
+| Appliances behind a delegate (`appliance`, `carry`) | 10.8 |
+| Parked: elevation and leases; ceilings, memberships and several bands | 10.9, 10.10 |
 
 **Events, the minimum.** Declare the event under `emits` in your manifest.
 Take the hub's node id from the `worker_id` of any announce with `"name":

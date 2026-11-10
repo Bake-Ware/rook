@@ -302,7 +302,7 @@ def gen_leases() -> dict:
     return {"ticket": t, "keys": keys, "cases": out}
 
 
-# -- worker requests (13.1) ----------------------------------------------------
+# -- worker requests (10.2) ----------------------------------------------------
 
 HUB_NODE = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
 WORKER_B = "7e6d5c4b3a291807f6e5d4c3b2a19080"

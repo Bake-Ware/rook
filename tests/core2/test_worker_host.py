@@ -1,6 +1,6 @@
 """rook.core2.worker host + loader: plugin folders become callable caps.
 
-Fixtures: tests/fixtures/castling/echo (settings, unavailable caps) and counter (hooks).
+Fixtures: tests/fixtures/castling/echo (settings, an unavailable cap) and counter (hooks).
 Every test runs under a hard asyncio timeout.
 """
 
@@ -87,23 +87,13 @@ def test_unavailable_caps_have_reasons():
     async def body():
         host = Host(os_name="linux", hardware=["gpu"])
         p = await host.load(FIX / "echo")
-        assert p.unavailable == {
-            "echo.gone": "missing bin: rook-no-such-binary",
-            "echo.windows": "not on linux (runs on windows)",
-            "echo.lamp": "missing hardware: lamp",
-            "echo.motto": "setting not set: motto",
-        }
-        with pytest.raises(CallError, match=r"^unavailable: echo.lamp: missing hardware: lamp$"):
-            await host.call("echo.lamp", {}, ME)
-        assert "echo.lamp" not in host.caps()
+        assert p.unavailable == {"echo.windows": "not on linux (runs on windows)"}
+        with pytest.raises(CallError, match=r"^unavailable: echo.windows: not on linux \(runs on windows\)$"):
+            await host.call("echo.windows", {}, ME)
+        assert "echo.windows" not in host.caps()
         ann = await host.announce()
-        assert ann["unavailable"]["echo.gone"] == "missing bin: rook-no-such-binary"
+        assert ann["unavailable"]["echo.windows"] == "not on linux (runs on windows)"
         await host.close()
-
-        lamp = Host(os_name="linux", hardware=["lamp"])
-        p = await lamp.load(FIX / "echo")
-        assert "echo.lamp" in p.caps and "echo.lamp" not in p.unavailable
-        await lamp.close()
     go(body)
 
 
@@ -111,12 +101,20 @@ def test_plugin_level_requirements_disable_every_cap_and_hooks(tmp_path):
     async def body():
         src = counter(tmp_path)
         y = src / "plugin.yaml"
-        y.write_text(y.read_text().replace("doc: Counts.", "doc: Counts.\nplatforms: [macos]"))
+        y.write_text(y.read_text().replace("doc: Counts.", "doc: Counts.\nplatforms: [windows]"))
         host = Host(os_name="linux")
         p = await host.load(src)
         assert p.caps == {}
-        assert set(p.unavailable.values()) == {"not on linux (runs on macos)"}
+        assert set(p.unavailable.values()) == {"not on linux (runs on windows)"}
         assert "counter" not in host.scheduler.plugins   # hooks never started
+        await host.close()
+
+        y.write_text(y.read_text().replace("platforms: [windows]", "requires: { settings: [key] }"))
+        host = Host(os_name="linux")
+        p = await host.load(src)
+        assert set(p.unavailable.values()) == {"setting not set: key"}
+        await host.set_settings("counter", hub={"key": "k"})      # a required setting rebinds
+        assert host.plugins["counter"].unavailable == {}
         await host.close()
     go(body)
 
@@ -144,16 +142,14 @@ def test_secret_settings_come_from_the_hub_per_call(tmp_path):
     go(body)
 
 
-def test_settings_merge_and_requires_settings():
+def test_settings_merge():
     async def body():
         host = Host(os_name="linux")
         await host.set_settings("echo", local={"greeting": "hi", "motto": "local!"})
-        p = await host.load(FIX / "echo")
+        await host.load(FIX / "echo")
         assert (await host.call("echo.greet", {"name": "bake"}, ME)).strip() == "hi bake"
-        # motto is where: hub, so the local value doesn't count.
-        assert p.unavailable["echo.motto"] == "setting not set: motto"
+        # motto is where: hub, so the hub's value is the one used.
         await host.set_settings("echo", hub={"motto": "be kind", "greeting": "yo"})
-        assert "echo.motto" not in host.plugins["echo"].unavailable
         assert (await host.call("echo.motto", {}, ME)).strip() == "be kind"
         # greeting is where: worker: the local value wins over the hub's.
         assert (await host.call("echo.greet", {}, ME)).strip() == "hi world"
@@ -502,7 +498,7 @@ def test_load_folder_skips_hub_caps_and_refuses_builtin(tmp_path):
         load_folder(b, os_name="linux")
 
 
-# -- appliances (spec 5.7) --------------------------------------------------------
+# -- appliances (spec 10.8) --------------------------------------------------------
 
 LAMP_YAML = """\
 manifest: 1

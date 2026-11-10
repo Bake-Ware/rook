@@ -83,17 +83,7 @@ says why.
 | `POST /enroll/ask` | `{name}` | no token: ask to join (it waits for Join on the Workers page); a ticket to poll with |
 | `POST /enroll/poll` | `{ticket}` | no token: pending, refused, or the config, once |
 | `GET /recovery-key` | | owners: the recovery key |
-| `POST /bands/invite` | `{role?, ceiling?}` | owners: an invite to this hub's band |
-| `POST /memberships` | `{worker, why, invite? \| band?, role?, ceiling?}` | owners: a worker's other bands |
 | `GET /health` | | no token: the hub answers |
 | `GET /updates/desktop.json` | | no token: the desktop app's files in Rook's latest release, for its update check |
 
 The hub site is on `/`, `/login` and `/web/` ([The hub site](dashboard.md)).
-A hub plugin's own endpoints (its manifest's `routes:`) are under
-`/p/<plugin>/<path>`: `auth: user` takes the bearer token, `auth: none`
-lets anyone in and the plugin checks. `auth: {hmac: "{{settings.x}}"}` takes
-a request whose `X-Hub-Signature-256` is the HMAC-SHA256 of its body under
-that secret (GitHub's form, `sha256=<hex>`), `auth: {token: "{{settings.x}}"}`
-one whose `Authorization: Bearer` is the token; `header:` names another
-header (Telegram sends `X-Telegram-Bot-Api-Secret-Token`). Anything else is
-401, and so is every request while the secret isn't set.

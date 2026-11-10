@@ -3,7 +3,7 @@ token.revoke) behind the Tokens page.
 
 Bake (castling-switchover-decisions, "Claude connects itself"): "an agent
 can generate a token for the MCP". A token always acts for the person the
-caller calls for, so it never gets more than that person may (spec 8.3:
+caller calls for, so it never gets more than that person may (spec 6.2:
 each call gets only what both the person and the agent may). A new agent
 name gets the minting agent's rights (every grant, ``*``, when a person
 mints it on the dashboard), which the person's rights then narrow; it is kept beside the token in ``<data>/tokens.json`` (only

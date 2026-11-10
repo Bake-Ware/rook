@@ -17,7 +17,6 @@ caps:
     scope: local
     args: { op: { type: str } }
     bind: { op: b }
-    requires: { settings: [missing] }
     run: scripts/b.py:B.run
 records:
   log: { fields: { line: {} }, caps: [list, search, history] }

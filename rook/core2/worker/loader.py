@@ -35,7 +35,7 @@ from rook.kit._types import parse_duration
 from rook.kit.ctx import KitError, load_run
 from rook.kit.manifest import ManifestError, check, compile_fields, normalize
 
-DEFAULT_TIMEOUT = 15.0   # spec 6.5: a cap without a declared timeout gets 15 s
+DEFAULT_TIMEOUT = 15.0   # spec 5.3: a cap without a declared timeout gets 15 s
 
 
 def local_os() -> str:
@@ -70,7 +70,7 @@ class Cap:
 class Plugin:
     name: str
     version: str
-    hash: str                    # spec 5.3: sha256 of canonical(parsed manifest)
+    hash: str                    # spec 4.2: sha256 of canonical(parsed manifest)
     raw: dict                    # the parsed manifest, as the hub validated it
     manifest: dict               # normalized (defaults, caps by full name)
     folder: Path | None
@@ -220,8 +220,7 @@ def _bind(data: dict, folder: Path | None, handlers, os_name: str, hardware: set
         for name, spec in norm["caps"].items():
             if spec.get("on", "worker") != "worker":
                 continue   # a hub cap: the hub serves it
-            why = p.reason or spec.get("unavailable") or _platform(spec.get("platforms"), os_name) \
-                or _missing(spec.get("requires") or {}, os_name, hardware, settings, decls)
+            why = p.reason or spec.get("unavailable") or _platform(spec.get("platforms"), os_name)
             func = None
             if why is None and "run" in spec:
                 func = p.resolve(spec["run"])

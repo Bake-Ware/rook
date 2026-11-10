@@ -199,7 +199,7 @@ let workers = [], bands = {}, skew = 0, loaded = false;
 const open = new Set(), folded = new Set(), rows = new Map();     // id -> {wrap, bar, ...}
 let layoutSig = "";
 
-const OS = { linux: "Linux", windows: "Windows", macos: "macOS", darwin: "macOS", android: "Android", termux: "Android" };
+const OS = { linux: "Linux", windows: "Windows", android: "Android", termux: "Android" };
 function osOf(w) {
   if (w.hub) return "Hub";
   const os = String((w.facts || {}).os || "").toLowerCase();

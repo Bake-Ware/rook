@@ -224,7 +224,7 @@
     },
     {
       "level": "error",
-      "path": "/routes/hook/auth/hmac",
+      "path": "/appliance/discover/3/http/url",
       "code": "template-syntax"
     }
   ],
@@ -243,11 +243,6 @@
       "level": "error",
       "path": "/caps/find/args/owner",
       "code": "bad-type"
-    },
-    {
-      "level": "error",
-      "path": "/settings/login/type",
-      "code": "oauth-unsupported"
     },
     {
       "level": "error",
@@ -300,11 +295,6 @@
     },
     {
       "level": "error",
-      "path": "/caps/b/requires/settings/0",
-      "code": "unknown-setting"
-    },
-    {
-      "level": "error",
       "path": "/hooks/every/0",
       "code": "hook-action"
     },
@@ -344,16 +334,6 @@
       "level": "error",
       "path": "/records/item/aliases/list",
       "code": "schema-type"
-    },
-    {
-      "level": "error",
-      "path": "/routes/both/auth",
-      "code": "schema-anyOf"
-    },
-    {
-      "level": "error",
-      "path": "/routes/header-only/auth",
-      "code": "schema-anyOf"
     }
   ],
   "invalid/v1-2.yaml": [
@@ -376,16 +356,6 @@
       "level": "error",
       "path": "/records/item/aliases/list/0",
       "code": "cap-collision"
-    },
-    {
-      "level": "warning",
-      "path": "/routes/bare/auth",
-      "code": "route-auth-secret"
-    },
-    {
-      "level": "warning",
-      "path": "/routes/literal/auth",
-      "code": "route-auth-literal"
     }
   ],
   "invalid/yaml-alias.yaml": [
@@ -424,11 +394,6 @@
       "level": "warning",
       "path": "/provides/1",
       "code": "unknown-contract"
-    },
-    {
-      "level": "warning",
-      "path": "/requires/plugins/notify",
-      "code": "bad-range"
     }
   ],
   "valid/warnings.yaml": [
@@ -461,11 +426,6 @@
       "level": "warning",
       "path": "/presets/teen",
       "code": "unknown-preset"
-    },
-    {
-      "level": "warning",
-      "path": "/routes/open/auth",
-      "code": "route-auth-none"
     }
   ],
   "valid/windows-only.yaml": []

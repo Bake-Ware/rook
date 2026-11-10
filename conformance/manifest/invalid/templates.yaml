@@ -8,7 +8,6 @@ appliance:
     - http: { url: "https://{{host}}:{{port}}/{{settings.hots}}" }
     - http: { url: "https://{{worker.hostname}}/" }
     - http: { url: "https://{{host}/" }
+    - http: { url: "https://{{host}}/?k={{secret:bad name}}" }
 caps:
   get: { doc: Get., risk: read, scope: local, run: scripts/get.py:get }
-routes:
-  hook: { path: /hook, run: scripts/get.py:hook, auth: { hmac: "{{secret:bad name}}" } }

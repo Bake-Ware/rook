@@ -64,7 +64,7 @@ def test_the_app_signs_in_with_one_tap_and_runs_the_phone_plugins(request, tmp_p
 
         until(lambda: any(w["name"] == "testphone" and w["online"] for w in bake.get("/workers")["workers"]),
               30, "the hub to see the phone")
-        # its own key (5.8), sent at sign-in: the hub pinned it from enrollment
+        # its own key (10.2), sent at sign-in: the hub pinned it from enrollment
         pinned = [e for e in bake.get("/journal?kind=worker_key")["entries"] if e["name"] == "testphone"]
         assert [e["via"] for e in pinned] == ["enrollment"], pinned
         phone_caps = {"sms.send", "call.dial", "battery-android.battery.status", "notification-android.notification.post"}

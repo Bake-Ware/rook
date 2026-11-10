@@ -130,7 +130,7 @@ def enroll(files_dir: str, target: str, name: str, listener=None, force: bool = 
         device.check_url(url)       # https, or a hub on this phone itself (adb reverse in tests)
         if not force and device.home_of(path):
             raise device.EnrollError(device.already(device.home_of(path)))
-        key = device.signing_key(path, force)       # the phone's own key (spec 5.8): the hub records it
+        key = device.signing_key(path, force)       # the phone's own key (spec 10.2): the hub records it
         bundle = device.sign_in(url, name, code, pinned, key=wire.pub_text(key), say=say, sleep=_sleep)
         if _cancel.is_set():
             raise Cancelled()

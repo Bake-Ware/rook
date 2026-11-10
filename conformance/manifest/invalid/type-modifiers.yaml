@@ -3,7 +3,6 @@ plugin: thing
 version: 1.0.0
 settings:
   port: { type: int, default: eighty }
-  login: { type: oauth, provider: google }
 caps:
   find:
     doc: Find.

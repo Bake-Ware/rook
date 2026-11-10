@@ -53,7 +53,6 @@ class Page:
     file: Path
     caps: list = field(default_factory=list)
     events: list = field(default_factory=list)
-    sizes: list = field(default_factory=list)
     section: str = "Pages"
     made: dict | None = None     # agent-made: {authors: [{person, agent}], created}
     nav: bool = True             # in the sidebar; every page opens by its address either way
@@ -61,7 +60,7 @@ class Page:
 
     def view(self) -> dict:
         return {"page": self.id, "title": self.title, "caps": list(self.caps), "events": list(self.events),
-                "sizes": list(self.sizes), "section": self.section, "made": self.made is not None,
+                "section": self.section, "made": self.made is not None,
                 "nav": self.nav}
 
 
@@ -104,7 +103,7 @@ class Pages:
                     continue
                 out[f"{p.name}/{name}"] = Page(
                     f"{p.name}/{name}", spec.get("title") or name, Path(p.folder) / spec["file"],
-                    list(spec.get("caps") or ()), list(spec.get("events") or ()), list(spec.get("sizes") or ()),
+                    list(spec.get("caps") or ()), list(spec.get("events") or ()),
                     (spec.get("nav") or {}).get("section") or p.manifest.get("title") or p.name,
                     nav="nav" in spec)
         made = sorted(self.folder.glob("*/meta.json")) if self.folder.is_dir() else ()
@@ -121,7 +120,7 @@ class Pages:
                 c = components.get(item.get("component"))
                 caps += [x for x in (c.caps if c else ()) if x not in caps]
             out[pid] = Page(pid, m.get("title") or name, meta_path.parent / "page.html", caps,
-                            list(m.get("events") or ()), ["page"], m.get("section") or "Pages",
+                            list(m.get("events") or ()), m.get("section") or "Pages",
                             {k: m.get(k) for k in ("authors", "created")}, layout=layout)
         return out
 

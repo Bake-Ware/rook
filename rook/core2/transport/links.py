@@ -55,7 +55,7 @@ UDP_PACE = (20_000.0, 256)
 
 
 def band_of(psk: str) -> str:
-    """The band id of a PSK, as 32 hex (spec 5.1)."""
+    """The band id of a PSK, as 32 hex (spec 4.1)."""
     return hashlib.sha256(psk.encode("utf-8")).digest()[:16].hex()
 
 

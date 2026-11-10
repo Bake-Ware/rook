@@ -210,7 +210,7 @@ class Session:
 
 class _TV:
     def __init__(self, ctx):
-        # The instance the hub carried with the call (spec 5.7): {name, host,
+        # The instance the hub carried with the call (spec 10.8): {name, host,
         # port, settings: {client_key, mac}}, the key resolved from the vault.
         a = values(ctx.appliance)
         self.host = str(a.get("host") or "")

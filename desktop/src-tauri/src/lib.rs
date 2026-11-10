@@ -1103,7 +1103,7 @@ async fn save_settings(app: AppHandle, mut settings: Settings) -> Result<UiState
 }
 
 /// Make the system's start-at-sign-in entry match the setting (the Run key
-/// on Windows, a LaunchAgent on macOS, ~/.config/autostart on Linux).
+/// on Windows, ~/.config/autostart on Linux).
 fn apply_start_at_login(app: &AppHandle) -> Result<(), String> {
     let want = settings(app).start_at_login;
     let al = app.autolaunch();
@@ -1376,8 +1376,6 @@ fn show_requested(app: &AppHandle, which: Option<&str>) {
 fn current_os() -> &'static str {
     if cfg!(target_os = "linux") {
         "linux"
-    } else if cfg!(target_os = "macos") {
-        "macos"
     } else if cfg!(windows) {
         "windows"
     } else {

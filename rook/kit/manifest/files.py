@@ -1,9 +1,8 @@
-"""Canonical JSON, the plugin folder's file-hash list, and its trust class."""
+"""The plugin folder's file-hash list and its trust class."""
 
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 
 SIG_FILE = "plugin.sig"
@@ -11,13 +10,6 @@ SIG_FILE = "plugin.sig"
 _CONFIG = {".yaml", ".yml", ".md", ".json", ".txt"}
 _PAGE = {".html", ".htm", ".js", ".mjs", ".css", ".svg", ".png", ".jpg", ".jpeg",
          ".gif", ".webp", ".ico", ".woff", ".woff2"}
-
-
-def canonical_json(data) -> bytes:
-    """Sorted keys, no whitespace, ASCII-escaped: the form manifests are
-    hashed and signed in."""
-    return json.dumps(data, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=True, allow_nan=False).encode("ascii")
 
 
 def _walk(folder: Path):

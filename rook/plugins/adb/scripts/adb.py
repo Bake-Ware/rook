@@ -234,7 +234,7 @@ def ui_items(ctx, xml: str) -> tuple[str | None, list[dict]]:
 # -- adb ----------------------------------------------------------------------
 
 def _serial(ctx) -> str:
-    # The instance the hub carried with the call (spec 5.7): {name, settings: {serial}}.
+    # The instance the hub carried with the call (spec 10.8): {name, settings: {serial}}.
     a = ctx.appliance or {}
     serial = (a.get("settings") or {}).get("serial") or a.get("name") or ""
     if not _SERIAL.fullmatch(str(serial)):

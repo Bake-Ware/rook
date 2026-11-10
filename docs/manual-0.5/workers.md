@@ -20,13 +20,15 @@ settings: { browser: { headless: false } }
 hardware: [gpu, display]       # what this machine has, for plugins that need it
 ```
 
-**Two kinds of worker.** The Python worker (`python -m rook.core2.worker`)
+**Kinds of worker.** The Python worker (`python -m rook.core2.worker`)
 reads everything above. The `rook-worker` binary (one file, `worker/` in
 the repo; the desktop app has it built in) reads only `data`, `anchor`,
 `name`, `worker_id` and `bands`, and runs no plugins: it serves commands
 and terminals (`shell.*`), files (`file.*`), streams (`stream.*`), TCP
 connections (`net.open`), serial ports (`serial.open`) and `worker.*`.
-Everything else becomes hub scripts that call those.
+Everything else becomes hub scripts that call those. `worker/rook_worker.py` is a third form,
+one Python file for machines where nothing can be installed: commands,
+files and `worker.*`, no streams ([Installing](install.md#where-nothing-can-be-installed)).
 
 Plugins listed under `plugins:` are trusted because the machine's owner put
 them there. Plugins the hub pushes are signed for this worker and installed
@@ -52,15 +54,15 @@ account needs a sudoers rule you add yourself). No answer from the hub in
 10 seconds and the call fails: elevation fails closed. Leases end when
 rights change, when the worker loses the hub, or when it restarts. A worker
 running as root refuses to run normal calls as root. Elevation on Windows
-and macOS is not built yet.
+is not built yet.
 
 ## Ceilings
 
 A **ceiling** is the most a hub may ever do on a worker, kept on the
-worker and signed by its home hub. Your home hub's ceiling is "everything"
-until you narrow it; other bands get only the ceiling you set when you let
-them in ([Adding machines](enrollment.md#joining-another-band)). A ceiling
-is a rights object:
+worker. The Python worker keeps one per hub it trusts (its home hub's is
+"everything") and announces it; the Rust worker has none. Nothing on the
+hub changes ceilings any more: they are dormant until the hardening pass.
+A ceiling is a rights object:
 
 ```json
 {"grants": ["tv.*", "light.*@downstairs-*"], "max_risk": "write", "effects": ["physical"]}

@@ -1,4 +1,4 @@
-"""Finding a hub on the local network (spec 12): DNS-SD over mDNS, service
+"""Finding a hub on the local network (spec 8): DNS-SD over mDNS, service
 ``_rook-hub._tcp``, just enough of RFC 6762/6763 for that one service.
 
 The hub (with ``enroll: {discover: true, url: …}``) runs a :class:`Responder`

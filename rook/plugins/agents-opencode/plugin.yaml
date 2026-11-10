@@ -11,7 +11,7 @@ doc: Agent turns in the OpenCode CLI (free models need no account), for the agen
 package: agents
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-platforms: [linux, macos, windows]
+platforms: [linux, windows]
 settings:
   opencode: { default: opencode, doc: "The opencode program: a name on PATH or a full path." }
   model: { doc: "System Two's model when the agent names none, as provider/model (opencode models lists them); blank: OpenCode's own default." }

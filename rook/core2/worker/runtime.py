@@ -26,10 +26,10 @@ What it wires together:
   home hub it serves, else dropped after ``ROOK_UPDATE_TRIAL_SECS`` and the worker
   restarts on the core it had. ``worker.update {version}`` goes back by hand.
 - **Transport** (:mod:`rook.core2.transport`): one connection per band, each
-  with its own announce, heartbeat and hub-loss clock (9.4). Bands come from
+  with its own announce, heartbeat and hub-loss clock (10.10). Bands come from
   the config, enrollment and ``core.trust.set`` (the last two kept in
   ``<data>/bands.json``).
-  Losing the hub on a band drops its leases there (7.4).
+  Losing the hub on a band drops its leases there (10.9).
 
 Plugin events (``ctx.emit``) run this worker's ``on:`` hooks and go to every
 hub whose ceiling grants them, as ``core.event`` batches from a bounded
@@ -44,10 +44,10 @@ Plugin code's ``ctx.call`` becomes ``core.call`` on the hub, authenticated
 by the ticket of the call in flight it runs inside (13); hooks have no call
 in flight, so their ``ctx.call`` is refused.
 
-The worker's own key (spec 5.8) is ``<data>/worker.key``, made on
+The worker's own key (spec 10.2) is ``<data>/worker.key``, made on
 first start (or by enrollment) and never sent anywhere: its public half goes
 in every announce, and every ``core.call`` and ``core.elevate`` it sends a
-hub carries a ``rook-request`` proof signed with it (13.1).
+hub carries a ``rook-request`` proof signed with it (10.2).
 """
 from __future__ import annotations
 
@@ -436,7 +436,7 @@ class Worker:
             pass
 
     def _lost(self, band: str) -> None:
-        """No hub contact on ``band`` for a while: its leases end now (7.4)."""
+        """No hub contact on ``band`` for a while: its leases end now (10.9)."""
         dropped = sum(self.gate.drop_leases(m.hub, band, {})["dropped"] for m in self.trust.members(band))
         log.warning("hub lost", extra=_f(band=band[:8], leases_dropped=dropped))
 
@@ -475,14 +475,14 @@ class Worker:
 
     def _view(self, band: str) -> tuple[Member | None, dict]:
         """The band's membership and the ceiling its announce is filtered by
-        (9.4). A band normally has one hub; with several, their grants add up."""
+        (10.10). A band normally has one hub; with several, their grants add up."""
         members = self.trust.members(band)
         if len(members) == 1:
             return members[0], members[0].ceiling
         return None, {"grants": [g for m in members for g in m.ceiling.get("grants") or ()]}
 
     async def _announce(self, band: str) -> dict:
-        """The full announce (5.3) for one band's filtered view."""
+        """The full announce (4.2) for one band's filtered view."""
         member, ceiling = self._view(band)
         msg = {"kind": "announce", "worker_id": self.worker_id, "name": self.cfg.name, "core": CORE_VERSION,
                "key": wire.pub_text(self.key), "version": _version(), "facts": _facts(), **await self.host.announce(ceiling),
@@ -494,7 +494,7 @@ class Worker:
         return msg
 
     async def _heartbeat(self, band: str) -> dict:
-        """The heartbeat (5.5); also the clock that expires leases."""
+        """The heartbeat (4.3); also the clock that expires leases."""
         self.gate.tick()
         view = await self.host.announce(self._view(band)[1])
         msg = {"kind": "heartbeat", "worker_id": self.worker_id, "core": CORE_VERSION, "ts": int(time.time()),
@@ -638,7 +638,7 @@ class Worker:
         return {name: {**(self.cfg.settings.get(name) or {}), **stored.get(name, {})}
                 for name in {*self.cfg.settings, *stored}}
 
-    # -- who may approve plugins here (spec 13) -------------------------------------
+    # -- who may approve plugins here (spec 10.7) -------------------------------------
 
     def _approver_bands(self, hub: Any) -> list[str]:
         """Bands where ``hub`` has role home or co-owner."""
@@ -839,7 +839,7 @@ KEY_FILE = "worker.key"
 
 
 def worker_key(path: Path) -> SigningKey:
-    """The worker's own Ed25519 key (5.8): the 32-byte seed in hex, private
+    """The worker's own Ed25519 key (10.2): the 32-byte seed in hex, private
     to the worker's account; made the first time (a 2.0 worker upgrading
     gets its key here, and the hub pins it at its next announce)."""
     try:

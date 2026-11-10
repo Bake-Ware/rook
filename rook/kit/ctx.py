@@ -277,7 +277,7 @@ class Ctx:
         """Call a cap as ``caller`` rather than this call's caller, on
         ``target`` (a worker; None: wherever the host finds it). For hub
         plugins that act for someone else: a job runs as its creator, its
-        persona or the plugin that ships it; an agent as itself (spec 8.1,
+        persona or the plugin that ships it; an agent as itself (spec 6.2,
         10.1). Still held to this plugin's ``uses``; dispatch checks
         ``caller``'s own rights. ``provider``: ``cap`` is a contract and the
         call goes to this one of its providers (a cap), not the hub's choice

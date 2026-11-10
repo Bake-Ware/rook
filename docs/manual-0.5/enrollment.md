@@ -80,29 +80,5 @@ python -m rook.core2.worker --config worker.yaml enroll --discover
 - `name` and `worker_id` in `worker.yaml`. The rest of the file is kept.
 
 A machine that already has a home refuses to enroll again; `--force` makes a
-new home hub, a new key, and drops every other band. Off this machine, enrollment needs
+new home hub and a new key. Off this machine, enrollment needs
 `https://` (`--insecure` overrides it, for a trial on a trusted network).
-
-## Joining another band
-
-A worker can serve more than one band, for example a friend's hub that may
-use your living-room TV. Other hubs **invite**; they never pull. All changes
-happen on the worker's home hub, never on the machine.
-
-1. The other hub's owner makes an invite (it carries that band's key, so
-   treat it like a password):
-   `POST /bands/invite {"role": "guest", "ceiling": {"grants": ["tv.*"]}}`.
-   Roles are `guest` (limited by a ceiling) or `co-owner` (may also manage
-   the machine: plugins, settings).
-2. You accept it on your hub for one worker, with a ceiling of your own:
-   `POST /memberships {"worker": "kaiju", "invite": {…}, "ceiling": {"grants": ["tv.*"]}, "why": "Lend the TV to Sam's band."}`.
-3. To take the worker off that band again:
-   `POST /memberships {"worker": "kaiju", "band": "<band id>", "role": "removed", "why": "…"}`.
-
-The **ceiling** is the most that hub can ever do on this worker, whatever
-its own grants say ([Workers and appliances](workers.md#ceilings)). The
-other hub sees only the caps its ceiling covers. `{"worker", "role": "home",
-"ceiling"}` narrows what your own hub may do there.
-
-If the home hub is lost, the worker keeps serving its other bands within
-their ceilings; enrolling it again (`--force`) makes a new home.

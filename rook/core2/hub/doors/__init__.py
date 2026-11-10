@@ -1,4 +1,4 @@
-"""Doors: the ways into the hub (spec 10.1). Each one authenticates its
+"""Doors: the ways into the hub (spec 6.1). Each one authenticates its
 caller and calls the hub's async door API (``Hub.call``, ``Hub.workers_view``
 ...); every call ends at the one dispatch step.
 

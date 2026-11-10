@@ -74,6 +74,23 @@ installer: `rook-worker --config worker.yaml enroll <hub>`, then
 `rook-worker --config worker.yaml` under any service manager that restarts
 it. Windows has no installer yet.
 
+### Where nothing can be installed
+
+`worker/rook_worker.py` is a worker in one file: Python 3.8 or newer,
+standard library only, no installer and no rights needed. Copy it over,
+then:
+
+```sh
+python3 rook_worker.py enroll https://rook.example [--code <one-time code>] [--name kaiju]
+python3 rook_worker.py
+```
+
+It keeps its files in `~/.rook-worker` and serves commands
+(`shell.exec`, `shell.which`, `shell.env`), files (`file.*`) and `worker.*`;
+no terminals or streams, and it sends small results only (at most 256 KiB
+a reply). Start it again yourself if it stops; replace the file to update
+it.
+
 `init` options: `--owner` (your user name, lowercase), `--relay host:port`
 or `--ws-url` (the band's relay), `--url https://...` (where other devices
 reach this hub, for enrollment) and `--bind` (the HTTP door, default

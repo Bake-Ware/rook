@@ -8,7 +8,7 @@
 
 What it owns:
 
-- **Keys** (5.2): a root key (the hub's identity, ``hub_id``) and an
+- **Keys** (10.3): a root key (the hub's identity, ``hub_id``) and an
   operational key, made on first run under ``<data>/keys``. The root signs a
   ``rook-hubkey`` grant for the operational key, renewed daily; the
   operational key is replaced after 30 days.
@@ -21,14 +21,14 @@ What it owns:
 - **Plugins**: the trusted library (one folder per plugin) is validated at
   start; the hub hosts the parts that run on it (:mod:`.plugins`: hub caps,
   records in ``<data>/records.db``, hooks, contract routing).
-- **Workers** (5.3-5.6): announces and heartbeats keep a registry. Manifests
+- **Workers** (4.2, 4.3): announces and heartbeats keep a registry. Manifests
   are resolved from the library by hash, else fetched with ``core.manifests``
   and validated; caps stay known while a worker is offline (and across hub
   restarts, ``<data>/workers.json``). Presence follows heartbeats (90 s).
 - **The hub node**: calls to ``rook`` (the hub's own caps) are dispatched like
   any other and run in-process; the band's ``core.elevate`` and ``core.call``
   requests are answered here (13), each signed by the worker's own key
-  (13.1). The hub pins that key per worker: from enrollment, else
+  (10.2). The hub pins that key per worker: from enrollment, else
   the first announce that carries one; a later announce with another key is
   refused.
 - **The vault** (:mod:`.vault`): ``<data>/vault.db``, unlocked on start
@@ -37,8 +37,7 @@ What it owns:
 - **Backups** (:mod:`.backup`): ``backup.*`` caps for owners, sealed
   under the recovery key, pushed to the ``backup`` plugin's target.
 - **Enrollment** (:mod:`rook.core2.enroll.hub`): devices signing in as a
-  person, the config bundle, the owner's recovery key, other hubs' invites
-  and the memberships this hub signs for its workers (spec 9, 12).
+  person, the config bundle, the owner's recovery key (spec 8).
 - **Doors** (:mod:`.doors`): the ways in. They authenticate a token and call
   the async door API below (:meth:`Hub.call`, :meth:`Hub.workers_view`, ...).
 
@@ -70,7 +69,6 @@ from rook.kit._types import check as check_type
 from rook.kit.contracts import Contracts
 from rook.kit.ctx import Caller as KitCaller, KitError
 from rook.kit.manifest import check, normalize, validate
-from rook.kit.manifest.diff import semver_key
 from rook.kit.records import RecordStore
 from rook.streams import StreamError, StreamSpec
 
@@ -98,14 +96,14 @@ log = logging.getLogger("rook.hub")
 CALL_STREAM = StreamSpec(("status",), durable=True)
 
 HEX32 = re.compile(r"[0-9a-f]{32}")
-ANNOUNCE_EVERY = 30.0         # hub announce, ±20 % (5.4)
+ANNOUNCE_EVERY = 30.0         # hub announce, ±20 % (4.4)
 ANNOUNCE_GAP = 1.0            # at most one extra announce a second for workers that just announced
-OFFLINE_AFTER = 90.0          # roster eviction (5.5)
+OFFLINE_AFTER = 90.0          # roster eviction (4.3)
 EVENT_BATCH = 100             # events one core.event may carry
 EVENT_BYTES = 16 * 1024       # largest event payload (JSON) taken from a worker
 EVENT_IDS = 4096              # event ids remembered, to drop a batch sent again
-GRANT_DAYS = 7                # rook-hubkey lifetime; renewed daily (5.2)
-OP_KEY_DAYS = 30              # operational key rotation (5.2)
+GRANT_DAYS = 7                # rook-hubkey lifetime; renewed daily (10.3)
+OP_KEY_DAYS = 30              # operational key rotation (10.3)
 DAY = 86400.0
 SYSTEM = Caller(agent="system:hub")
 # The hub-node call a hub cap runs inside: (session id, the door's layers, door).
@@ -286,7 +284,7 @@ class Known:
     online: bool = False
     problem: str | None = None           # why some or all of it can't be used
     tried: str | None = None             # the last heartbeat manifests_hash a fetch was made for
-    key: str | None = None               # its pinned public key (5.8): signs its core.call/core.elevate
+    key: str | None = None               # its pinned public key (10.2): signs its core.call/core.elevate
 
     def saved(self) -> dict:
         d = asdict(self)
@@ -352,7 +350,7 @@ class Hub:
         self._tasks: set[asyncio.Task] = set()
         self._loops: list[asyncio.Task] = []
         self._pending: dict[str, asyncio.Future] = {}
-        self._replay = wire.ReplayCache()        # worker request nonces (13.1)
+        self._replay = wire.ReplayCache()        # worker request nonces (10.2)
         self._late: dict[str, dict] = {}         # call id -> {worker, who made it}, for calls given up on (bounded)
         self._event_ids: dict[tuple, None] = {}  # (worker, event id) seen lately (bounded)
         self._event_refused: set = set()         # (worker, event, why) logged once
@@ -581,12 +579,10 @@ class Hub:
             except ValueError as e:
                 log.warning("bad token entry", extra={"fields": {"error": str(e)}})
 
-    def _secret_step(self, args: Any, caller: Caller, cap: str, target: str | None = None) -> Any:
-        """Dispatch's secret step. Band keys go by enrollment's rule (an
-        owner's own ``core.trust.set``); every other ``{{secret:NAME}}`` is
-        the vault's, and only in a call to a worker: the hub's own caps keep
-        the reference as text, so a page, task or record never stores a value."""
-        args = self.enroll.resolve(args, caller, cap)
+    def _secret_step(self, args: Any, caller: Caller, target: str | None = None) -> Any:
+        """Dispatch's secret step: ``{{secret:NAME}}`` is the vault's, and only
+        in a call to a worker: the hub's own caps keep the reference as text,
+        so a page, task or record never stores a value."""
         if target == self.node:
             return args
         return resolver(self.vault, self.identities.is_owner)(args, caller)
@@ -785,7 +781,7 @@ class Hub:
         return None
 
     def _carry(self, w: Worker, cap: str, appliance: str | None) -> tuple[dict | None, list]:
-        """Dispatch's carry step (spec 5.7; castling-enrollment, Bake:
+        """Dispatch's carry step (spec 10.8; castling-enrollment, Bake:
         "Secrets: referenced only by vault name; the hub sends the value with
         each call; never written to worker disk."): what the hub sends beside
         a call's args. ``settings``: the target plugin's hub-kept settings
@@ -938,7 +934,7 @@ class Hub:
             return
         async with self._lock(wid):
             k = self.known.get(wid)
-            if k is None:      # an unknown worker: learn it from core.manifests (5.5)
+            if k is None:      # an unknown worker: learn it from core.manifests (4.3)
                 k = self.known[wid] = Known(wid, wid, band)
             before = (k.online, k.version)
             k.last_seen, k.online = self.clock(), True
@@ -1049,7 +1045,7 @@ class Hub:
                                **({"error": str(msg.get("error"))[:500]} if msg.get("ok") is not True else {})})
 
     def worker_key(self, wid: Any) -> str | None:
-        """The public key this hub pinned for a worker (5.8): from its
+        """The public key this hub pinned for a worker (10.2): from its
         announce once seen, else from its enrollment."""
         k = self.known.get(wid) if isinstance(wid, str) else None
         if k is not None and k.key:
@@ -1059,7 +1055,7 @@ class Hub:
         return key if wire.valid_pub(key) else None
 
     def _request_refused(self, band: str, req: dict) -> str | None:
-        """Check a worker's ``core.call`` or ``core.elevate`` (13.1): signed
+        """Check a worker's ``core.call`` or ``core.elevate`` (10.2): signed
         by the worker its parent ticket names, with that worker's pinned key,
         fresh and not replayed. Returns the refusal, or None."""
         args = req.get("args") if isinstance(req.get("args"), dict) else {}
@@ -1078,7 +1074,7 @@ class Hub:
     async def _band_request(self, band: str, req: dict) -> None:
         """``core.elevate`` and ``core.call`` from a worker, each authenticated
         by the ticket of a call in flight (13) and signed by the worker the
-        ticket names (13.1); ``core.event`` (13)."""
+        ticket names (10.2); ``core.event`` (10.4)."""
         rid, args = req.get("id"), req.get("args") if isinstance(req.get("args"), dict) else {}
         if not isinstance(rid, str) or not rid:
             return
@@ -1205,7 +1201,7 @@ class Hub:
     async def _local(self, req: dict) -> dict:
         """A call to the hub node. Dispatch minted its ticket a moment ago in
         this process, so it is read, not verified; who it is for comes only
-        from it (6.6)."""
+        from it (10.1)."""
         t = req["ticket"]
         caller = KitCaller(person=t.get("person"), agent=t.get("agent"), session=t["session"], band=t["band"],
                            why=t["why"], owner=self.identities.is_owner(t.get("person")))
@@ -1241,7 +1237,7 @@ class Hub:
         return out
 
     async def _announce_hub(self) -> None:
-        """The signed hub announce (5.4), every 30 s and when a worker joins."""
+        """The signed hub announce (4.4), every 30 s and when a worker joins."""
         self._seq = max(self._seq + 1, int(self.clock()))
         self._last_announce = self.clock()
         msg = wire.sign(self.op, {"kind": "announce", "typ": "rook-announce", "v": 2, "worker_id": self.node,
@@ -1356,21 +1352,6 @@ class Hub:
             layers=layers, door=door, contract=contract, parent=inside))
         self._announce(reply)
         return reply
-
-    def _installed(self) -> dict:
-        """{plugin: version} the band runs: the hub's plugins and every known
-        worker's (the newest when they differ)."""
-        out: dict = {}
-        found = [(n, p.manifest.get("version")) for n, p in self.plugins.plugins.items()]
-        found += [(e["plugin"], (self.manifests.get(e["hash"]) or {}).get("version"))
-                  for k in self.known.values() for e in k.manifests]
-        for name, version in found:
-            try:
-                if isinstance(version, str) and (name not in out or semver_key(version) > semver_key(out[name])):
-                    out[name] = version
-            except ValueError:
-                continue
-        return out
 
     def _target_for(self, cap: str) -> str | None:
         """The hub if it serves ``cap``, else the one worker that does (the
@@ -1488,7 +1469,7 @@ class Hub:
         if s is None or (s.person, s.agent) != (caller.person, caller.agent):
             return {"ok": False, "error": "unknown session"}
         self.dispatcher.end_session(sid)
-        for wid in self.dispatcher.lease_holders(sid):      # its elevation ends with it (7.4)
+        for wid in self.dispatcher.lease_holders(sid):      # its elevation ends with it (10.9)
             self._spawn(self.dispatcher.dispatch(SYSTEM, Call(
                 cap="core.lease.drop", target=wid, args={"session": sid}, session=self._system_session(),
                 why="The session ended: drop its elevation leases.")))
@@ -1520,7 +1501,7 @@ class Hub:
         return {"ok": True, "workers": out}
 
     async def journal_view(self, caller: Caller, filters: dict) -> dict:
-        """Journal entries (11.4): owners read everything, an agent its own
+        """Journal entries (7.4): owners read everything, an agent its own
         calls and its sessions' projects, a person their own."""
         if self.identities.is_owner(caller.person):
             viewer: dict = {"owner": True}
@@ -1607,7 +1588,7 @@ class Hub:
 
     async def push_plugin(self, caller: Caller, body: dict, door: str) -> dict:
         """``{worker, plugin, why}``: sign the library's copy of ``plugin``
-        for that worker (plugin.sig, spec 13) and send it with
+        for that worker (plugin.sig, spec 10.7) and send it with
         ``core.plugin.install``, which dispatch checks and journals like any
         call. Approving code for a machine is an owner's act. The worker
         installs, runs the plugin's checks and rolls back on a failure; the
@@ -1628,10 +1609,9 @@ class Hub:
             return {"ok": False, "error": f"{name} is not in the hub's library"}
         current = next((self.manifests.get(e["hash"]) for e in k.manifests if e["plugin"] == name), None)
         env = distribute.WorkerEnv(k.id, os=str(k.facts.get("os", "")), python=str(k.facts.get("python", "")))
-        try:     # uv resolution and asset downloads block: off the loop
+        try:     # uv resolution blocks: off the loop
             plan = await asyncio.to_thread(distribute.prepare, folder, env, signer=self.op, hub=self.hub_id,
-                                           current=current, cache=self.data / "assets",
-                                           installed=self._installed())
+                                           current=current)
         except distribute.Refused as e:
             return {"ok": False, "error": f"refused: {e}"}
         if plan.sig is None:
@@ -1686,7 +1666,7 @@ def _bundle_bytes(plan) -> bytes:
 
 
 def _facts(facts: Any) -> dict:
-    """Self-reported facts (5.3): at most 1024 bytes, grant-looking keys dropped."""
+    """Self-reported facts (4.2): at most 1024 bytes, grant-looking keys dropped."""
     if not isinstance(facts, dict) or len(json.dumps(facts, separators=(",", ":"), default=str)) > 1024:
         return {}
     return {f: v for f, v in facts.items() if not str(f).startswith("is_") and f not in ("role", "roles", "grants")}

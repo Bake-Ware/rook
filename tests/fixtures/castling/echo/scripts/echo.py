@@ -14,5 +14,3 @@ def motto(ctx):
     return ctx.settings["motto"]
 
 
-def on(ctx):
-    return "on"

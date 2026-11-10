@@ -65,11 +65,6 @@ def test_a_public_page_opens_without_signing_in(site):
     run(go())
 
 
-def test_public_pages_leave_plugin_webhooks_alone():
-    from rook.core2.hub.doors.web.site import Web
-    assert Web.owns("/public/hub/workers") and not Web.owns("/p/bot/signed")       # /p/<plugin>/... are webhooks
-
-
 def test_the_sidebar_has_a_menu_per_page_and_no_archive_button():
     html = (STATIC / "shell.html").read_text()
     assert "archive-btn" not in html
