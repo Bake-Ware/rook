@@ -8,6 +8,7 @@ What the hub knows about itself and its workers.
 | `hub.workers` | Every worker the hub knows, online or not: name, id, plugins, when it was last seen, and the caps it can't serve with the reason (`missing bin: ...`). |
 | `hub.sacred` | `{worker, sacred}`: make a machine sacred (every call there that isn't a read is a hard stop: it waits on a person while security is on) or normal again (`sacred: false`). Kept in hub.yaml's `sacred:` list and applied at once; `hub.workers` shows it. |
 | `hub.door` | `{door, open}`: the kill switch. Closing a door (`mcp`, `http`, `web`) makes it refuse everything (calls, sessions, reads, work already started through it); closing `mcp` also refuses agents' tokens on every door. Owners, or a hub component closing one (the security plugin). Kept across restarts. Over HTTP: `POST /doors/<name> {"open": false}`. |
+| `hub.load` | `{plugin}`: load a plugin from the hub's library (`library:` in hub.yaml) into the running hub, no restart. A loaded version is replaced and its hooks stop; a folder that fails the check or the load is refused with the reasons and the old version runs on. Its caps, pages, records, jobs and the caps it gives workers apply at once; emits `hub.loaded`. Agents write the folder with `file.write` on the hub machine's worker first. |
 | `hub.manifests` | The manifest of every plugin in use: the hub's own and those its workers announce. `section` (`jobs`, `personas`, ...) narrows it to the plugins that have that section, and only that section. |
 
 ## Security: off or on

@@ -36,7 +36,7 @@ from rook.kit.ctx import Caller, KitError
 log = logging.getLogger("rook.plugin.jobs")
 
 TRIGGERS = ("cron", "every", "on", "manual")
-SEED_EVERY = 3600.0                 # re-read other plugins' manifest jobs this often (and on worker events)
+SEED_EVERY = 3600.0                 # re-read other plugins' manifest jobs this often (and on worker events, hub.loaded)
 MAX_RESULT = 64_000
 FIELDS = ("name", "doc", "trigger", "call", "worker", "args", "persona", "enabled", "catch_up", "timeout")
 
@@ -462,7 +462,7 @@ async def on_event(ctx, event, payload):
     rt = _RT
     if rt is None or event.startswith("job."):      # never on our own records: no loops
         return
-    if event in ("worker.online", "worker.updated"):
+    if event in ("worker.online", "worker.updated", "hub.loaded"):
         rt.spawn(rt.seed())
     for job in rt.jobs():
         trig = job["trigger"]

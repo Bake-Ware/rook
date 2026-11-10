@@ -663,19 +663,34 @@ class Hub:
         if not lib.is_dir():
             raise ValueError(f"library {lib} is not a folder")
         for folder in sorted(p for p in lib.iterdir() if (p / "plugin.yaml").is_file()):
-            raw, issues = check(folder, self._contract_specs())
-            if raw is None or any(i.level == "error" for i in issues):
-                log.error("library plugin refused", extra={"fields": {
-                    "folder": folder.name, "issues": "; ".join(str(i) for i in issues if i.level == "error")}})
-                continue
             try:
-                p = await self.plugins.load(folder)
-            except Exception as e:
-                log.error("library plugin failed", extra={"fields": {"plugin": raw.get("plugin"), "error": str(e)}})
-                continue
-            self._cache(raw)
-            self.identities.add_plugin_presets(p.name, p.manifest.get("presets") or {})
-            self._sync_hub()
+                await self.load_plugin(folder)
+            except KitError as e:
+                log.error("library plugin refused", extra={"fields": {"folder": folder.name, "error": e.message}})
+
+    async def load_plugin(self, folder: Path) -> dict:
+        """Check the plugin in a library folder and load it into the running
+        hub, in place of the version loaded now (which runs on if this one
+        fails): its caps, records, contracts, hooks and presets, and the caps
+        it gives workers. Start-up and ``hub.load`` both run this. Raises
+        KitError with the validator's messages or the load's error."""
+        raw, issues = check(folder, self._contract_specs())
+        errors = "; ".join(str(i) for i in issues if i.level == "error")
+        if raw is None or errors:
+            raise KitError(errors or f"{folder.name}: no plugin.yaml")
+        was = self.plugins.plugins.get(raw.get("plugin"))
+        was = str(was.manifest["version"]) if was else None
+        try:
+            p = await self.plugins.load(folder)
+        except Exception as e:
+            raise e if isinstance(e, KitError) else KitError(f"{raw['plugin']}: {type(e).__name__}: {e}") from None
+        self._cache(raw)
+        self.identities.add_plugin_presets(p.name, p.manifest.get("presets") or {})
+        self._sync_hub()
+        for k in self.known.values():
+            self._sync(k)
+        return {"plugin": p.name, "version": str(p.manifest["version"]), "was": was, "caps": sorted(p.caps),
+                "hooks": p.hooks}
 
     def _contract_specs(self) -> dict:
         return {c: self.contracts.contract(c) for c in self.contracts.contracts() if self.contracts.contract(c)}

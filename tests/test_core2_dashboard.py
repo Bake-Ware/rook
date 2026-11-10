@@ -943,7 +943,7 @@ def test_every_builtin_cap_is_known():
         "page.list", "page.view", "page.get", "page.create", "page.update", "page.archive", "page.restore", "page.public",
         "page.components", "page.site", "page.start", "hub.status", "hub.workers", "hub.manifests", "hub.door", "hub.joins", "hub.join", "hub.join_code", "approval.list", "approval.decide", "approval.ask", "approval.get", "journal.search", "setting.list",
         "setting.set", "llm.providers", "llm.models", "llm.status", "token.create", "token.list", "token.revoke",
-        "hub.sacred", "hub.person"}
+        "hub.sacred", "hub.person", "hub.load"}
 
 
 def test_a_sacred_machine_survives_a_restart(tmp_path):

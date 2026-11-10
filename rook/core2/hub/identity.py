@@ -112,7 +112,9 @@ class Identities:
     def add_plugin_presets(self, plugin: str, presets: dict) -> None:
         """A manifest's ``presets:`` section ({preset: {grants: [...]}}).
         Patterns outside the plugin's namespace are dropped when rights are
-        computed (rights.preset_rights)."""
+        computed (rights.preset_rights). Replaces what the plugin gave before."""
+        for given in self.plugin_grants.values():
+            given.pop(plugin, None)
         for preset, body in (presets or {}).items():
             self.plugin_grants.setdefault(preset, {})[plugin] = list((body or {}).get("grants", ()))
 

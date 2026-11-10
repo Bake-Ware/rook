@@ -91,12 +91,16 @@ class HubPlugins:
         self.contracts.load(manifest)
 
     async def load(self, folder: str | Path) -> HubPlugin:
-        """Load the hub part of the plugin in ``folder``. Raises KitError or
-        ManifestError; a plugin that fails leaves nothing behind."""
+        """Load the hub part of the plugin in ``folder``, in place of the
+        version loaded now if there is one (its hooks stop, its caps go).
+        Raises KitError or ManifestError; a plugin that fails leaves nothing
+        behind, and the version that was loaded runs on."""
         m = load(folder, self._contract_specs())
         data, name = m.data, m.plugin
-        if name in self.plugins:
+        old = self.plugins.get(name)
+        if old is not None and old.manifest.get("builtin"):
             raise KitError(f"{name} is already loaded on the hub")
+        kept = await self._detach(old) if old is not None else None
         p = HubPlugin(name, data, m.folder)
         modules = self._modules.setdefault(name, {})
         resolve = lambda ref: load_run(m.folder, ref, modules)  # noqa: E731
@@ -120,6 +124,8 @@ class HubPlugins:
         except BaseException:
             self.plugins.pop(name, None)
             self._drop(p)
+            if old is not None:
+                await self._attach(old, *kept)
             raise
         log.info("hub plugin loaded", extra={"fields": {"plugin": name, "version": data["version"],
                                                         "caps": len(p.caps), "hooks": p.hooks}})
@@ -138,6 +144,27 @@ class HubPlugins:
                 self._add(p, cap, HubCap(meta, handlers[cap]))
         self.plugins[p.name] = p
         return p
+
+    async def _detach(self, p: HubPlugin) -> tuple[dict, dict]:
+        """Take a loaded plugin out, keeping what :meth:`_attach` needs to put
+        it back as it was: its caps and its module cache."""
+        caps, modules = {c: self._caps[c] for c in p.caps}, self._modules.get(p.name, {})
+        await self.unload(p.name)
+        return caps, modules
+
+    async def _attach(self, p: HubPlugin, caps: dict, modules: dict) -> None:
+        self._modules[p.name] = modules
+        self.contracts.load(short_caps(p.manifest))
+        self.records.register(p.manifest)
+        self._caps.update(caps)
+        self.plugins[p.name] = p
+        if p.hooks:
+            try:
+                await self.scheduler.start(p.manifest, make_ctx=lambda caller: self._ctx(p, caller),
+                                           resolve=lambda ref: load_run(p.folder, ref, modules), band=self.band)
+            except Exception as e:
+                p.hooks = False
+                log.error("hub plugin hooks not restarted", extra={"fields": {"plugin": p.name, "error": str(e)}})
 
     async def unload(self, name: str) -> None:
         p = self.plugins.pop(name, None)

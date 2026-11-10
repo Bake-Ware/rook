@@ -99,7 +99,7 @@ reach this hub, for enrollment) and `--bind` (the HTTP door, default
 ## What to install on the hub
 
 The hub loads every plugin folder in its **library** (`library:` in
-`hub.yaml`) at start. Point it at the plugins you want, for example
+`hub.yaml`) at start; `hub.load` loads one added later. Point it at the plugins you want, for example
 symlinks into `rook/plugins/`:
 
 - `agents` and `agents-claude-code` or `agents-codex`: the house agent and the
