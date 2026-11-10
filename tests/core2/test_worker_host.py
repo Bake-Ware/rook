@@ -131,7 +131,7 @@ def test_plugin_level_requirements_disable_every_cap_and_hooks(tmp_path):
         assert "counter" not in host.scheduler.plugins   # hooks never started
         await host.close()
 
-        y.write_text(y.read_text().replace("platforms: [macos]", "requires: { settings: [key] }"))
+        y.write_text(y.read_text().replace("platforms: [windows]", "requires: { settings: [key] }"))
         host = Host(os_name="linux")
         p = await host.load(src)
         assert set(p.unavailable.values()) == {"setting not set: key"}
