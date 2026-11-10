@@ -64,7 +64,9 @@ pub fn read(a: Args<'_>) -> Reply {
         return Err(format!("not a regular file: {path}"));
     }
     let mut raw = Vec::new();
-    f.take(max as u64 + 1).read_to_end(&mut raw).map_err(|e| error(e, &path))?;
+    f.take(max as u64 + 1)
+        .read_to_end(&mut raw)
+        .map_err(|e| error(e, &path))?;
     let mut out = Map::new();
     out.insert("size".into(), json!(meta.len()));
     out.insert("encoding".into(), json!(name));
@@ -76,7 +78,10 @@ pub fn read(a: Args<'_>) -> Reply {
         Enc::Base64 => B64.encode(&raw),
         Enc::Utf8 => String::from_utf8_lossy(&raw).into_owned(),
         Enc::Latin1 => raw.iter().map(|&b| b as char).collect(),
-        Enc::Ascii => raw.iter().map(|&b| if b < 128 { b as char } else { '\u{fffd}' }).collect(),
+        Enc::Ascii => raw
+            .iter()
+            .map(|&b| if b < 128 { b as char } else { '\u{fffd}' })
+            .collect(),
     };
     out.insert("content".into(), json!(content));
     Ok(Value::Object(out))
@@ -113,7 +118,9 @@ fn narrow(text: &str, limit: u32, name: &str) -> Result<Vec<u8>, String> {
     text.chars()
         .map(|c| u8::try_from(c as u32).ok().filter(|_| (c as u32) < limit))
         .collect::<Option<Vec<u8>>>()
-        .ok_or(format!("content can't be written as {name}: ordinal not in range({limit})"))
+        .ok_or(format!(
+            "content can't be written as {name}: ordinal not in range({limit})"
+        ))
 }
 
 fn meta(m: &Metadata) -> Map<String, Value> {
@@ -178,7 +185,10 @@ pub fn list(a: Args<'_>) -> Reply {
     let limit = a.int("limit", 5000)? as usize;
     let root = Path::new(&path);
     if !root.is_dir() {
-        return Err(format!("{}: {path}", if root.exists() { "not a directory" } else { "not found" }));
+        return Err(format!(
+            "{}: {path}",
+            if root.exists() { "not a directory" } else { "not found" }
+        ));
     }
     let mut entries = vec![];
     let mut todo = vec![root.to_path_buf()];
@@ -188,7 +198,9 @@ pub fn list(a: Args<'_>) -> Reply {
             if !hidden && name.starts_with('.') {
                 continue;
             }
-            let Ok(m) = child.path().symlink_metadata() else { continue };
+            let Ok(m) = child.path().symlink_metadata() else {
+                continue;
+            };
             if entries.len() >= limit {
                 return Ok(json!({"entries": entries, "truncated": true}));
             }

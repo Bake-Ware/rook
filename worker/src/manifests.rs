@@ -55,7 +55,9 @@ fn to_json(y: &Yaml) -> Value {
         Yaml::Array(a) => Value::Array(a.iter().map(to_json).collect()),
         Yaml::String(s) => Value::String(s.clone()),
         Yaml::Integer(i) => Value::from(*i),
-        Yaml::Real(r) => Number::from_f64(r.parse().expect("a YAML float")).map(Value::Number).expect("finite"),
+        Yaml::Real(r) => Number::from_f64(r.parse().expect("a YAML float"))
+            .map(Value::Number)
+            .expect("finite"),
         Yaml::Boolean(b) => Value::Bool(*b),
         Yaml::Null => Value::Null,
         other => panic!("not JSON in a manifest: {other:?}"),
@@ -131,14 +133,28 @@ mod tests {
         // parse, and an integer past 2^53) never occur in the embedded manifests.
         let text = include_str!("../../conformance/core-v2/vectors/canonical.json").replace(r#""\ud800""#, "null");
         let v: Value = serde_json::from_str(&text).unwrap();
-        for case in v["cases"].as_array().unwrap().iter().filter(|c| c.get("error").is_none()) {
+        for case in v["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c.get("error").is_none())
+        {
             assert_eq!(canonical(&case["value"]), case["canonical"].as_str().unwrap());
         }
     }
 
     #[test]
     fn numbers_print_as_ecmascript() {
-        for (f, want) in [(0.1, "0.1"), (30.0, "30"), (1e21, "1e+21"), (1.5e-7, "1.5e-7"), (1e-6, "0.000001"), (1e20, "100000000000000000000"), (123.456, "123.456"), (-2.0, "-2")] {
+        for (f, want) in [
+            (0.1, "0.1"),
+            (30.0, "30"),
+            (1e21, "1e+21"),
+            (1.5e-7, "1.5e-7"),
+            (1e-6, "0.000001"),
+            (1e20, "100000000000000000000"),
+            (123.456, "123.456"),
+            (-2.0, "-2"),
+        ] {
             assert_eq!(number(f), want);
         }
     }
@@ -148,7 +164,14 @@ mod tests {
         for (name, text) in FILES {
             let m = load(text);
             assert_eq!(m.plugin, name);
-            assert_eq!(m.raw["builtin"].as_bool(), if matches!(name, "shell" | "file") { None } else { Some(true) });
+            assert_eq!(
+                m.raw["builtin"].as_bool(),
+                if matches!(name, "shell" | "file") {
+                    None
+                } else {
+                    Some(true)
+                }
+            );
         }
     }
 }

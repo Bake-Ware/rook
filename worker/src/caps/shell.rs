@@ -17,8 +17,16 @@ use crate::streams::{Body, Streams};
 
 const OUT_MAX: usize = 8 << 20;
 const DENIED: [&str; 10] = [
-    "permission denied", "operation not permitted", "access is denied", "must be run as root", "are you root",
-    "requires root", "eacces", "eperm", "requires elevation", "administrator privileges",
+    "permission denied",
+    "operation not permitted",
+    "access is denied",
+    "must be run as root",
+    "are you root",
+    "requires root",
+    "eacces",
+    "eperm",
+    "requires elevation",
+    "administrator privileges",
 ];
 const PS_PRELUDE: &str = "$ProgressPreference='SilentlyContinue'\n\
     try{$__u=New-Object Text.UTF8Encoding $false;[Console]::OutputEncoding=$__u;\
@@ -79,7 +87,11 @@ pub async fn exec(a: Args<'_>) -> Reply {
 
 /// Python's `{:g}` for the timeout in the message.
 fn g(f: f64) -> String {
-    if f.fract() == 0.0 { format!("{f:.0}") } else { format!("{f}") }
+    if f.fract() == 0.0 {
+        format!("{f:.0}")
+    } else {
+        format!("{f}")
+    }
 }
 
 fn exit_code(status: &std::process::ExitStatus) -> i64 {
@@ -150,7 +162,11 @@ fn decode(b: &[u8]) -> String {
 }
 
 /// The program to run and the shell that runs `cmd` (none for argv).
-fn command(argv: Option<Vec<String>>, cmd: Option<String>, shell: Option<String>) -> Result<(Vec<String>, Option<&'static str>), String> {
+fn command(
+    argv: Option<Vec<String>>,
+    cmd: Option<String>,
+    shell: Option<String>,
+) -> Result<(Vec<String>, Option<&'static str>), String> {
     match (argv, cmd) {
         (Some(_), Some(_)) => Err("give argv or cmd, not both".into()),
         (None, None) => Err("give argv or cmd".into()),
@@ -187,7 +203,14 @@ fn shell_argv(cmd: &str, shell: Option<&str>) -> Result<(Vec<String>, Option<&'s
         "powershell" => {
             let bin = powershell().ok_or("PowerShell is not installed on this worker")?;
             let script = format!("{PS_PRELUDE}{cmd}{PS_EPILOGUE}");
-            vec![bin, "-NoLogo".into(), "-NoProfile".into(), "-NonInteractive".into(), "-Command".into(), script]
+            vec![
+                bin,
+                "-NoLogo".into(),
+                "-NoProfile".into(),
+                "-NonInteractive".into(),
+                "-Command".into(),
+                script,
+            ]
         }
         "cmd" if cfg!(windows) => {
             let comspec = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into());
@@ -195,23 +218,38 @@ fn shell_argv(cmd: &str, shell: Option<&str>) -> Result<(Vec<String>, Option<&'s
         }
         "cmd" => return Err("cmd.exe only exists on Windows workers".into()),
         _ if cfg!(windows) => {
-            let bin = git_sh(name).ok_or(format!("no {name} on this worker (install Git for Windows; WSL's bash is not used)"))?;
+            let bin = git_sh(name).ok_or(format!(
+                "no {name} on this worker (install Git for Windows; WSL's bash is not used)"
+            ))?;
             vec![bin, "-c".into(), cmd.into()]
         }
-        "bash" => vec![which_path("bash").ok_or("bash is not installed on this worker")?.to_string_lossy().into(), "-c".into(), cmd.into()],
+        "bash" => vec![
+            which_path("bash")
+                .ok_or("bash is not installed on this worker")?
+                .to_string_lossy()
+                .into(),
+            "-c".into(),
+            cmd.into(),
+        ],
         _ => vec!["/bin/sh".into(), "-c".into(), cmd.into()],
     };
     Ok((argv, Some(name)))
 }
 
 fn powershell() -> Option<String> {
-    let names: &[&str] = if cfg!(windows) { &["pwsh", "powershell"] } else { &["pwsh"] };
+    let names: &[&str] = if cfg!(windows) {
+        &["pwsh", "powershell"]
+    } else {
+        &["pwsh"]
+    };
     if let Some(found) = names.iter().find_map(|n| which_path(n)) {
         return Some(found.to_string_lossy().into());
     }
     if cfg!(windows) {
         let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
-        let path: PathBuf = [root.as_str(), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"].iter().collect();
+        let path: PathBuf = [root.as_str(), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"]
+            .iter()
+            .collect();
         if path.is_file() {
             return Some(path.to_string_lossy().into());
         }
@@ -270,7 +308,9 @@ fn runnable(p: &Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        p.metadata().map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+        p.metadata()
+            .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
     }
     #[cfg(not(unix))]
     p.is_file()
@@ -291,7 +331,11 @@ pub fn env(a: Args<'_>) -> Reply {
         (None, Some(prefix)) => {
             let mut vars: Vec<(String, String)> = std::env::vars().filter(|(k, _)| k.starts_with(&prefix)).collect();
             vars.sort();
-            Ok(Value::Object(vars.into_iter().map(|(k, v)| (k.clone(), json!(shown(&k, v)))).collect()))
+            Ok(Value::Object(
+                vars.into_iter()
+                    .map(|(k, v)| (k.clone(), json!(shown(&k, v))))
+                    .collect(),
+            ))
         }
         _ => Err("give name or prefix".into()),
     }
@@ -305,7 +349,10 @@ pub fn open(a: Args<'_>, streams: &Arc<Streams>, participants: Vec<String>, attr
     let (mut argv, mut cmd) = (a.strings("argv")?, a.str("cmd")?);
     if argv.is_none() && cmd.is_none() {
         argv = Some(if cfg!(windows) {
-            vec![powershell().unwrap_or_else(|| "powershell.exe".into()), "-NoLogo".into()]
+            vec![
+                powershell().unwrap_or_else(|| "powershell.exe".into()),
+                "-NoLogo".into(),
+            ]
         } else {
             vec![std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()), "-l".into()]
         });
@@ -316,17 +363,29 @@ pub fn open(a: Args<'_>, streams: &Arc<Streams>, participants: Vec<String>, attr
     if pty && cfg!(windows) {
         return Err("pty is not available on Windows workers yet; use pty=false".into());
     }
-    let size = (a.int("cols", 120)?.clamp(1, 1000) as u16, a.int("rows", 32)?.clamp(1, 1000) as u16);
+    let size = (
+        a.int("cols", 120)?.clamp(1, 1000) as u16,
+        a.int("rows", 32)?.clamp(1, 1000) as u16,
+    );
     let cwd = a.str("cwd")?;
-    let title = a.str("title")?.filter(|t| !t.is_empty()).unwrap_or_else(|| argv.join(" "));
+    let title = a
+        .str("title")?
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| argv.join(" "));
     let mut c = std::process::Command::new(&argv[0]);
     c.args(&argv[1..]).envs(a.env("env")?);
     if let Some(dir) = &cwd {
         c.current_dir(dir);
     }
-    let (child, output, master) = if pty { spawn_pty(&mut c, size) } else { spawn_pipes(&mut c) }
-        .map_err(|e| spawn_error(e, &argv[0], cwd.as_deref()))?;
-    let here = std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
+    let (child, output, master) = if pty {
+        spawn_pty(&mut c, size)
+    } else {
+        spawn_pipes(&mut c)
+    }
+    .map_err(|e| spawn_error(e, &argv[0], cwd.as_deref()))?;
+    let here = std::env::current_dir()
+        .map(|d| d.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let mut meta = attrs;
     meta.insert("cwd".into(), json!(cwd.unwrap_or(here)));
     meta.insert("pty".into(), json!(pty));
@@ -336,9 +395,20 @@ pub fn open(a: Args<'_>, streams: &Arc<Streams>, participants: Vec<String>, attr
     }
     let pid = child.id();
     meta.insert("pid".into(), json!(pid));
-    let opened = streams.open(if pty { "terminal" } else { "process" }, &title, "shell.open", participants, meta);
+    let opened = streams.open(
+        if pty { "terminal" } else { "process" },
+        &title,
+        "shell.open",
+        participants,
+        meta,
+    );
     let sid = opened.id.clone();
-    let _ = streams.append(&sid, "status", Body::Json(json!({"state": "started", "pid": pid})), "shell.open");
+    let _ = streams.append(
+        &sid,
+        "status",
+        Body::Json(json!({"state": "started", "pid": pid})),
+        "shell.open",
+    );
     let child = Arc::new(Mutex::new(child));
     let input = output.input;
     {
@@ -353,7 +423,10 @@ pub fn open(a: Args<'_>, streams: &Arc<Streams>, participants: Vec<String>, attr
             match out.read(&mut buf) {
                 Ok(0) | Err(_) => break, // EOF, or EIO once a pty's last writer is gone
                 Ok(n) => {
-                    if streams.append(&sid, "bytes", Body::Bytes(buf[..n].to_vec()), "shell.open").is_err() {
+                    if streams
+                        .append(&sid, "bytes", Body::Bytes(buf[..n].to_vec()), "shell.open")
+                        .is_err()
+                    {
                         signal(&child, "KILL"); // closed under it (stream.close)
                         break;
                     }
@@ -395,7 +468,14 @@ fn spawn_pipes(c: &mut std::process::Command) -> std::io::Result<Spawned> {
     }
     let mut child = c.spawn()?;
     let stdin = child.stdin.take().unwrap();
-    Ok((child, Pipes { read: Box::new(read), input: Box::new(stdin) }, None))
+    Ok((
+        child,
+        Pipes {
+            read: Box::new(read),
+            input: Box::new(stdin),
+        },
+        None,
+    ))
 }
 
 #[cfg(unix)]
@@ -408,12 +488,19 @@ fn spawn_pty(c: &mut std::process::Command, (cols, rows): (u16, u16)) -> std::io
     use std::os::fd::{FromRawFd, OwnedFd};
     use std::os::unix::process::CommandExt;
     let (mut m, mut s) = (0, 0);
-    let ws = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
+    let ws = libc::winsize {
+        ws_row: rows,
+        ws_col: cols,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
     if unsafe { libc::openpty(&mut m, &mut s, std::ptr::null_mut(), std::ptr::null(), &ws) } != 0 {
         return Err(std::io::Error::last_os_error());
     }
     let (master, slave) = unsafe { (OwnedFd::from_raw_fd(m), OwnedFd::from_raw_fd(s)) };
-    c.stdin(Stdio::from(slave.try_clone()?)).stdout(Stdio::from(slave.try_clone()?)).stderr(Stdio::from(slave));
+    c.stdin(Stdio::from(slave.try_clone()?))
+        .stdout(Stdio::from(slave.try_clone()?))
+        .stderr(Stdio::from(slave));
     // A new session with the pty as its controlling terminal: job control and Ctrl-C work.
     unsafe {
         c.pre_exec(|| {
@@ -426,16 +513,30 @@ fn spawn_pty(c: &mut std::process::Command, (cols, rows): (u16, u16)) -> std::io
     let child = c.spawn()?;
     let read = std::fs::File::from(master.try_clone()?);
     let input = std::fs::File::from(master.try_clone()?);
-    Ok((child, Pipes { read: Box::new(read), input: Box::new(input) }, Some(master)))
+    Ok((
+        child,
+        Pipes {
+            read: Box::new(read),
+            input: Box::new(input),
+        },
+        Some(master),
+    ))
 }
 
 #[cfg(not(unix))]
 fn spawn_pty(_: &mut std::process::Command, _: (u16, u16)) -> std::io::Result<Spawned> {
-    Err(std::io::Error::other("pty is not available on Windows workers yet; use pty=false"))
+    Err(std::io::Error::other(
+        "pty is not available on Windows workers yet; use pty=false",
+    ))
 }
 
 /// Input events to the process until the stream closes.
-fn feed(events: std::sync::mpsc::Receiver<Value>, mut input: Box<dyn Write + Send>, master: Option<Master>, child: Arc<Mutex<std::process::Child>>) {
+fn feed(
+    events: std::sync::mpsc::Receiver<Value>,
+    mut input: Box<dyn Write + Send>,
+    master: Option<Master>,
+    child: Arc<Mutex<std::process::Child>>,
+) {
     while let Ok(body) = events.recv() {
         if let Some(text) = body["text"].as_str() {
             if input.write_all(text.as_bytes()).and_then(|_| input.flush()).is_err() {
@@ -447,7 +548,12 @@ fn feed(events: std::sync::mpsc::Receiver<Value>, mut input: Box<dyn Write + Sen
             #[cfg(unix)]
             if let Some(m) = &master {
                 use std::os::fd::AsRawFd;
-                let ws = libc::winsize { ws_row: rows.min(1000) as u16, ws_col: cols.min(1000) as u16, ws_xpixel: 0, ws_ypixel: 0 };
+                let ws = libc::winsize {
+                    ws_row: rows.min(1000) as u16,
+                    ws_col: cols.min(1000) as u16,
+                    ws_xpixel: 0,
+                    ws_ypixel: 0,
+                };
                 unsafe { libc::ioctl(m.as_raw_fd(), libc::TIOCSWINSZ, &ws) };
             }
             #[cfg(not(unix))]

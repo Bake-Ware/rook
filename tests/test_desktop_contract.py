@@ -1,6 +1,6 @@
-"""What the desktop app (desktop/src-tauri/src/hub05.rs, worker05.rs,
-lib.rs) relies on from the hub, site and worker. The app has no
-Python; these checks catch a 0.5 change that would silently break it."""
+"""What the desktop app (desktop/src-tauri/src/hub.rs, worker.rs, lib.rs)
+relies on from the hub, site and worker crate. The app has no Python;
+these checks catch a 0.5 change that would silently break it."""
 
 import re
 from pathlib import Path
@@ -12,12 +12,13 @@ from rook.core2.hub.doors.web import site
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "desktop/src-tauri/src"
-HUB05 = (SRC / "hub05.rs").read_text(encoding="utf-8")
-WORKER05 = (SRC / "worker05.rs").read_text(encoding="utf-8")
+HUB = (SRC / "hub.rs").read_text(encoding="utf-8")
+WORKER = (SRC / "worker.rs").read_text(encoding="utf-8")
+ENROLL = (ROOT / "worker/src/enroll.rs").read_text(encoding="utf-8")
 LIB = (SRC / "lib.rs").read_text(encoding="utf-8")
 
 
-def rust_const(name: str, src: str = HUB05) -> str:
+def rust_const(name: str, src: str = HUB) -> str:
     m = re.search(rf'const {name}: &str = "([^"]*)";', src)
     assert m, f"{name} not found"
     return m.group(1)
@@ -28,14 +29,14 @@ def test_door_routes_the_app_uses():
     for route in ('("POST", "/call")', '("GET", "/holds")', '("POST", "/enroll/code")', '"/health"'):
         assert route in door, route
     for path in ('"/call"', '"/holds"', '"/enroll/code"', "/health", "/login", "/web/api/me", "/logout"):
-        assert path in HUB05, path
+        assert path in HUB, path
 
 
 def test_site_sign_in_cookie_and_csrf():
     assert rust_const("WEB_COOKIE") == site.COOKIE
     src = Path(site.__file__).read_text(encoding="utf-8")
     assert 'path == "/login"' in src and '"X-Rook-CSRF"' in src
-    assert '"X-Rook-CSRF"' in HUB05
+    assert '"X-Rook-CSRF"' in HUB
 
 
 def test_page_ids_the_panel_links_to_exist():
@@ -58,10 +59,10 @@ def test_caps_the_app_calls_exist():
     plugin, own, _ = caps("agents")
     assert plugin == "agent" and "chat.send" in own
     for cap in ('"agent.chat.send"', '"page.list"'):
-        assert cap in HUB05, cap
+        assert cap in HUB, cap
     # no workbench lists on 0.5 (castling-attention: the agent opens a page; drift #29)
     for cap in ('"agent.list"', '"agent.list"', '"task.list"', '"task.search"', '"knowledge.search"', '"project.list"'):
-        assert cap not in HUB05, cap
+        assert cap not in HUB, cap
     assert rust_const("HOUSE") in (ROOT / "rook/plugins/agents/plugin.yaml").read_text()
 
 
@@ -73,15 +74,15 @@ def test_dock_markup_for_ask_about_this_page():
     assert m and "dock-btn" in m.group(1) and "dock-text" in m.group(1) and "dock-open" in m.group(1)
 
 
-def test_enroll_code_and_worker_cli():
+def test_enroll_code_and_the_worker_crate():
     device = (ROOT / "rook/core2/enroll/device.py").read_text(encoding="utf-8")
-    main = (ROOT / "rook/core2/worker/__main__.py").read_text(encoding="utf-8")
-    assert 'add_argument("--config"' in main and 'add_parser("enroll"' in main
-    # worker05::enroll passes the one-time code from POST /enroll/code (its answer's "code").
-    assert 'add_argument("--code"' in main and '"--code", code' in WORKER05
+    # "Add this computer" hands the code from POST /enroll/code (its answer's "code")
+    # to the worker crate's enroll, which claims it.
+    assert "rook_worker::enroll::enroll(" in WORKER and "Some(code)" in WORKER
+    assert '"/enroll/claim"' in ENROLL and 'json!({"code": code, "name": name})' in ENROLL
     assert '"code": code' in (ROOT / "rook/core2/enroll/hub.py").read_text(encoding="utf-8")
-    assert re.search(r'"rook\.core2\.worker", "--config"', WORKER05)
-    for p in re.search(r"DESKTOP_PLUGINS: \[&str; \d\] = \[(.*?)\]", WORKER05).group(1).split(","):
-        assert (ROOT / "rook/plugins" / p.strip().strip('"') / "plugin.yaml").is_file(), p
-    # Enrollment writes the anchor beside the config (Layout::enrolled).
+    assert '"/enroll/claim"' in Path(http.__file__).read_text(encoding="utf-8")
+    # Enrollment writes the anchor beside the config (Layout::enrolled), in both workers.
     assert 'raw.get("anchor") or "anchor.json"' in device
+    assert 'unwrap_or("anchor.json")' in ENROLL and 'join("anchor.json")' in WORKER
+    assert "python" not in WORKER.lower() and "python" not in (SRC / "lib.rs").read_text().lower()

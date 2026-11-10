@@ -53,13 +53,11 @@ desktop/
   src-tauri/
     src/lib.rs        tray, windows, hotkeys, commands, background polling
     src/config.rs     settings.json and credentials.json (0600)
-    src/hub.rs        what the rest shares: errors, answers, waiting items, the HTTP client, the update feed
-    src/hub05.rs      the hub: token sign-in, the HTTP door, holds, pages, quick ask
+    src/hub.rs        the hub: token sign-in, the HTTP door, holds, pages, quick ask, the update feed
     src/notify.rs     what deserves a notification (pure)
     src/sections.rs   the hub's pages by section, for the tray menu
     src/update.rs     which published file is a newer app for this install (pure)
-    src/worker.rs     the worker's status, and finding its processes
-    src/worker05.rs   this computer's worker: join with a one-time code, run as a child
+    src/worker.rs     this computer's worker (the worker/ crate, compiled in): join with a one-time code, run as a task
     src/voice/        audio helpers, transcription, capture and playback (cpal),
                       speech pieces and WAV (speak.rs), wake word (tract)
     tests/live_hub05.rs  end-to-end against a running hub, adding a worker too (ignored by default)
@@ -93,8 +91,8 @@ The dashboard window loads the hub's own site and stays there:
 - **This computer's worker**: "Add this computer" gets a one-time code as
   the person (`POST /enroll/code`) and runs the worker's `enroll` with it;
   the config bundle configures the worker, and its
-  voice service fills empty voice settings. The app runs `python -m
-  rook.core2.worker` from `<settings>/worker05/` as a child process.
+  voice service fills empty voice settings. The worker crate (`worker/`)
+  is compiled into the app and runs as a task, from `<settings>/worker05/`.
 - **Updates**: the public `/updates/desktop.json`.
 
 ## Building
@@ -143,7 +141,7 @@ cargo test --features wake-word --lib       # unit tests (no hub, no microphone)
 cargo clippy --features wake-word --all-targets
 # against a running hub (docs/castling-e2e.md, "A 0.5 hub and worker by hand"):
 ROOK_TEST_HUB05=http://127.0.0.1:8740 ROOK_TEST_TOKEN05=<a person's token> \
-  ROOK_TEST_PYTHON05=<python with rook + telesthete> cargo test --test live_hub05 -- --ignored
+  ROOK_TEST_ADD=1 cargo test --test live_hub05 -- --ignored
 ```
 
 CI (`.github/workflows/desktop.yml`) runs fmt, clippy and the tests on Linux

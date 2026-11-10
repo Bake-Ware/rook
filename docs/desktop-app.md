@@ -114,12 +114,13 @@ A worker lets your hub and its agents use this computer. Settings > This
 computer's worker shows whether this computer is added and its worker
 running.
 
-- **Add this computer** makes it a worker on your hub. The app runs
-  `python -m rook.core2.worker` from a Python with Rook installed (Settings >
-  This computer's worker > Python; empty is `python3`), joins it with a
-  one-time code the app gets as you, then starts it. It loads the
-  shell, file, notification and screenshot plugins and runs while the app is
-  open. Its files are in the app's settings folder, under `worker05/`. A
+- **Add this computer** makes it a worker on your hub. The worker is built
+  into the app (no Python needed): it joins with a one-time code the app
+  gets as you, then starts. It runs commands and terminals, reads and writes
+  files, and opens network connections and serial ports, while the app is
+  open; Settings shows how many streams it has open and its last call. The
+  app updates it with itself. Its files are in the app's settings folder,
+  under `worker05/`. A
   voice server in the hub's config bundle fills the voice settings you left
   empty. Off this computer the hub needs https for this (the band key
   travels in the bundle).
@@ -166,7 +167,7 @@ hub's node with a why for `page.list` and `agent.chat.send`; `POST
 /enroll/code` for its own worker's one-time code. The hub site's `/login`
 (the token, once) gives the window's session; `/web/api/me` names the
 person; `/updates/desktop.json` (no token) lists the release's
-`rook-desktop-*` files. tests/test_desktop_contract05.py checks these against
+`rook-desktop-*` files. tests/test_desktop_contract.py checks these against
 the hub's code.
 
 See also: [desktop/README.md](../desktop/README.md) (building, design
