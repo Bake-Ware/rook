@@ -8,7 +8,7 @@ the ones agents make.
 | `page.list` | The pages on the site, by section; `archived=true` lists the archived ones. |
 | `page.view` | Open a page: what it may call and hear. The site calls it when you open one. |
 | `page.get` | One page: its title, caps and events; for a page an agent made, who made it, its layout and its note (why it exists and every change); for a plugin's page, which plugin. |
-| `page.create` | Make a page: `{name, title, note, html \| layout, caps?, events?, section?, task?}`. |
+| `page.create` | Make a page: `{name, title, note, html \| layout, caps?, events?, section?}`. |
 | `page.update` | Change one: `{page, change, ...}`; `change` says what and why, kept in its history. |
 | `page.archive` / `page.restore` | Take a page off the site without losing it, or bring it back. |
 | `page.public` | Make a page readable by anyone at `/public/<page>` without signing in (a report, a reference), or private again with `public: false`. Its calls act as whoever made it public. |
