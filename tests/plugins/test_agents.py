@@ -47,8 +47,6 @@ class Backend:
                     out.append({"plugin": plugin, "version": m["version"], args["section"]: m[args["section"]],
                                 "folder": str(PLUGINS / folder)})
             return {"manifests": out}
-        if cap == "hub.setup":             # first-run setup: done (the hub's builtin)
-            return {"done": True}
         if cap == "knowledge.get":
             if args["id"] not in self.pages:
                 raise KitError(f"no page {args['id']}")
@@ -117,6 +115,8 @@ class Rig:
     def __init__(self, tmp_path, **settings):
         self.manifest = load(AGENTS, CONTRACTS).data
         self.data = tmp_path / "agents"
+        self.data.mkdir()
+        (self.data / "setup.json").write_text('{"done": true}')      # first-run setup is over
         self.settings = {"warm": "10s", **settings}
         self.backend = Backend()
         self.people = People()

@@ -7,7 +7,7 @@
 # It asks what you use for AI now, sets that up and tests it (1 = Claude Code on
 # this machine; the rest start on OpenCode's free model for now), installs the
 # hub site, the band relay and a worker for this machine as systemd user
-# units, and opens the site (no sign-in until setup is completed). The house agent
+# units, and opens the site (no sign-in until you set a password). The house agent
 # takes it from there.
 #
 # Options (all optional; to run beside other installs give a new --dir,
@@ -21,7 +21,7 @@
 #   --ref REF          the Rook branch or commit to install (curl installs only)
 #   --no-boot          don't start it at login (units are written and started, not enabled)
 #   --no-browser       print the sign-in link instead of opening a browser
-#   --open             just open the site again (after setup: with a sign-in link)
+#   --open             just open the site again (once you have a password: with a sign-in link)
 #   --uninstall        stop and remove it (the folder is moved aside to DIR.removed-<time>, not deleted)
 set -euo pipefail
 
@@ -65,14 +65,13 @@ WORKER_NAME=$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]' || echo this-
 LOG=$ROOT/install.log
 export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"
 
-# While setup isn't completed the site needs no sign-in: the hub's address
-# opens straight into the setup chat (Bake, Nov 6: "If configuration isn't
-# completed assume we are still in setup mode"). After setup, --open gives a
-# sign-in link (login-link; it keeps working).
+# Until the owner sets a password the site needs no sign-in (the hub is
+# open until it is claimed). After that, --open gives a sign-in link
+# (login-link; it keeps working).
 open_site() {
     local link=$URL
-    if "$PY" -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("done") else 1)' \
-        "$ROOT/hub/data/setup.json" 2>/dev/null; then
+    if "$PY" -c 'import sys; from rook.core2.hub import passwords; sys.exit(0 if passwords.set_by(*sys.argv[1:]) else 1)' \
+        "$ROOT/hub/data" "$OWNER" 2>/dev/null; then
         link=$("$PY" -m rook.core2.hub --config "$HUB_CFG" login-link --url "$URL") || die "couldn't make a sign-in link"
     fi
     if [ $BROWSER_OPEN = 1 ] && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; } &&
@@ -284,11 +283,13 @@ cfg["contracts"] = {"agent.backend": f"{backend}.turn"}
 cfg["log"] = {"level": "info", "format": "text"}
 path.write_text(head + yaml.safe_dump(cfg, sort_keys=False))
 EOF
-"$PY" - "$ROOT" "$NAME" "$WORKER_NAME" "$HTTP_PORT" "$MCP_PORT" "$RELAY_PORT" "$MODEL" "$sha" "$AI" <<'EOF'
+# The install facts, for the agents plugin's guided setup (agent.setup).
+[ -e "$ROOT/hub/library/agents" ] && "$PY" - "$ROOT" "$NAME" "$WORKER_NAME" "$HTTP_PORT" "$MCP_PORT" "$RELAY_PORT" "$MODEL" "$sha" "$AI" <<'EOF'
 import json, os, sys, time
 from pathlib import Path
 root, name, worker, http, mcp, relay, model, sha, ai = sys.argv[1:]
-path = Path(root) / "hub" / "data" / "setup.json"
+path = Path(root) / "hub" / "data" / "plugins" / "agent" / "setup.json"
+path.parent.mkdir(parents=True, exist_ok=True)
 state = json.loads(path.read_text()) if path.exists() else {}
 state["install"] = {
     "by": "deploy/install/install.sh", "when": time.strftime("%Y-%m-%d %H:%M %Z"), "version": sha,

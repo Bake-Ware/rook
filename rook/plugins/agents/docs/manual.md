@@ -95,7 +95,13 @@ its manifest, files in `shell/`): the chat dock beside every page with
 Rookie, its avatar, the work pane and the guided first run, and the look
 pickers on Your account. `agent.site` is what the dock needs: the agent in
 it (the `dock` setting, `house`; blank: no dock), whether it can answer yet
-(a worker serving `agent.backend` is online) and your look and feel.
+(a worker serving `agent.backend` is online), your look and feel and
+whether first-run setup is done. `agent.setup {done?}` reads or sets that
+(kept in the plugin's data as `setup.json`; none yet: not done, so a new
+hub with the agents package opens on the guided first run), with `install`,
+the facts the installer left there. Guided setup does not keep the site
+open: once the owner sets a password, a new browser gets the sign-in page
+even while setup carries on.
 `agent.look {sound?, rookie?, theme?, name?}` sets the look and feel: sound,
 Rookie's style and theme are yours (the per-person settings `sound`,
 `rookie`, `rookie_theme`), the name is the house agent's (`house_name`;

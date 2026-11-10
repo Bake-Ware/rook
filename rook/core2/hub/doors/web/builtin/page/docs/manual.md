@@ -13,7 +13,7 @@ the ones agents make.
 | `page.archive` / `page.restore` | Take a page off the site without losing it, or bring it back. |
 | `page.public` | Make a page readable by anyone at `/public/<page>` without signing in (a report, a reference), or private again with `public: false`. Its calls act as whoever made it public. |
 | `page.components` | The ready-made components a layout can use, with their props and caps. |
-| `page.site` | Your start page, and whether first-run setup is done. |
+| `page.site` | Your start page. |
 | `page.start` | Set the page the site opens on: yours, or (acting for nobody) the hub's. |
 
 A `layout` is a list of components (`[{component, props?, title?, wide?}]`).

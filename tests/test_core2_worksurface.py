@@ -111,7 +111,7 @@ def test_every_install_combination(tmp_path, combo):
         c = Client(hub)
         await c.sign_in(tokens["bake"])
         s = (await c.call("page.site"))["result"]
-        assert s == {"person": "person:bake", "start": None, "workbench": workbench, "setup": {"done": True}}
+        assert s == {"person": "person:bake", "start": None, "workbench": workbench}
         # the dock is the agents package's part of the shell: none in core, not even its files
         status, _, shell = await c.req("GET", "/")
         assert status == 200 and (b"/web/plugin/agent/dock" in shell) is agents
@@ -126,6 +126,7 @@ def test_every_install_combination(tmp_path, combo):
             assert dock["dock"] == "house" and dock["ready"] is True    # the fake brain serves agent.backend
             assert dock["look"]["next"] == "sound" and dock["look"]["name"] == "Rookie"
             assert dock["look"]["chosen"]["name"] is False
+            assert dock["setup"] == {"done": False}                     # a new hub: guided setup
 
         # a lean sidebar: workers and tokens (+ what packages add: the agents package's trust map,
         # "it matters most to the agents"); journal and settings by address.
