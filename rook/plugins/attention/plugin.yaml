@@ -11,7 +11,7 @@
 # wants an instant job on them; this plugin needs none of its own code.
 manifest: 1
 plugin: attention
-version: 0.5.0
+version: 0.5.1
 title: Attention
 doc: What is trying to get the person's attention, curated in one place by the house agent.
 package: agents
