@@ -12,8 +12,9 @@ Calls reach these caps the way they reach any worker: through dispatch, with
 a ticket minted for the hub's own node; the runtime hands the request here
 instead of to the band. What gets served:
 
-- caps with ``on: hub`` (``run:`` functions get the kit's ctx; ``action:``
-  caps run in the action engine);
+- caps with ``on: hub`` (``run:`` functions get the kit's ctx), and the
+  ``on: worker`` caps of ``runs_on: hub`` plugins (a worker's caps whose
+  scripts run here, with ``ctx.worker``);
 - the generated caps of ``records:`` types (rook.kit.records);
 - one service cap per ``route: provider`` contract (core.yaml), which goes on
   to the chosen provider as the same caller (rook.kit.contracts).
@@ -32,11 +33,8 @@ from typing import Any, Awaitable, Callable
 
 from jsonschema import Draft202012Validator
 
-from rook.kit._types import parse_duration
-from rook.kit.actions import run_action
-from rook.kit.actions.parse import file_result
 from rook.kit.contracts import Contracts
-from rook.kit.ctx import Caller, Ctx, FileResult, KitError, invoke, load_run
+from rook.kit.ctx import Caller, Ctx, FileResult, KitError, file_result, invoke, load_run
 from rook.kit.hooks import Scheduler
 from rook.kit.manifest import compile_fields, load
 from rook.kit.records import RecordStore
@@ -53,7 +51,6 @@ CallAs = Callable[..., Awaitable[dict]]
 class HubCap:
     meta: dict                                    # manifest data, as dispatch reads it
     handler: Callable[..., Any] | None = None     # handler(ctx, **args)
-    action: dict | None = None
     validator: Draft202012Validator | None = None
     plugin: str | None = None
 
@@ -115,8 +112,6 @@ class HubPlugins:
                     continue
                 if "run" in meta:
                     self._add(p, cap, HubCap(meta, resolve(meta["run"])))
-                elif "action" in meta and not worker_cap:
-                    self._add(p, cap, HubCap(meta, action=meta["action"]))
             self.plugins[name] = p          # its hooks' calls need its uses
             if data.get("runs_on") == "hub" and data.get("hooks"):
                 await self.scheduler.start(data, make_ctx=lambda caller: self._ctx(p, caller),
@@ -132,13 +127,14 @@ class HubPlugins:
 
     def add_builtin(self, folder: str | Path, handlers: dict) -> HubPlugin:
         """A builtin plugin the hub implements itself (``builtin: true``, no
-        ``run:``): each of its ``on: hub`` caps runs ``handlers[cap](ctx, **args)``."""
+        ``run:``): each of its caps (``on: hub``, or a worker's ``on: worker``)
+        runs ``handlers[cap](ctx, **args)``."""
         m = load(folder)
         if m.plugin in self.plugins:
             raise KitError(f"{m.plugin} is already loaded on the hub")
         p = HubPlugin(m.plugin, m.data, m.folder)
         for cap, meta in m.data["caps"].items():
-            if meta.get("on") == "hub":
+            if meta.get("on") == "hub" or (meta.get("on") == "worker" and m.data["runs_on"] == "hub"):
                 self._add(p, cap, HubCap(meta, handlers[cap]))
         self.plugins[p.name] = p
         return p
@@ -233,12 +229,10 @@ class HubPlugins:
                 args[key] = copy.deepcopy(spec["default"])
         args.update(copy.deepcopy(hc.meta.get("bind") or {}))
         p = self.plugins[hc.plugin]
-        if hc.action is not None:
-            return await run_action(hc.action, args, settings=self.settings.get(p.name, {}),
-                                    worker={"os": "hub"}, secrets=self.resolve_secret,
-                                    plugin_dir=str(p.folder) if p.folder else None,
-                                    plugin_data=str(self._data(p)) if self.data_dir else None,
-                                    timeout=_timeout(hc.meta))
+        if appliance is not None:       # its appliance settings' defaults, as the worker host applied them
+            decls = (p.manifest.get("appliance") or {}).get("settings") or {}
+            appliance = {**appliance, "settings": {**{k: d["default"] for k, d in decls.items() if "default" in d},
+                                                   **(appliance.get("settings") or {})}}
         ctx = self._ctx(p, caller, cap)
         ctx.worker, ctx.appliance = worker, appliance
         res = await invoke(hc.handler, ctx, args)
@@ -284,10 +278,3 @@ def _result(reply: dict) -> Any:
         hold = f" (hold {reply['hold']})" if reply.get("held") else ""   # the inner call waits for a person
         raise KitError(str(reply.get("error", "failed")) + hold, retry=bool(reply.get("retry")))
     return reply.get("result")
-
-
-def _timeout(meta: dict) -> float:
-    try:
-        return parse_duration(meta["timeout"]) if meta.get("timeout") else 15.0
-    except ValueError:
-        return 15.0

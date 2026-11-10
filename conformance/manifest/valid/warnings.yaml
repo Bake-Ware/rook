@@ -10,14 +10,7 @@ caps:
     scope: local
     effects: [physical, levitates]
     color: blue
-    action:
-      exec: { argv: [zap] }
-  serial.send:
-    doc: Uses an action type from a later minor version.
-    risk: write
-    scope: local
-    action:
-      serial: { port: /dev/ttyUSB0, send: "hi" }
+    run: scripts/zap.py:zap
 emits:
   zapped: { doc: Not in the plugin's namespace. }
 presets:

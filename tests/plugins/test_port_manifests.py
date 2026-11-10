@@ -14,8 +14,8 @@ PORTS = sorted(p.parent.name for p in PLUGINS.glob("*/plugin.yaml")
 
 
 def test_the_ports_are_there():
-    assert PORTS == ["adb", "appliance", "battery", "browser", "camera", "cec", "dongle", "dongle-s3", "file",
-                     "hid-desktop", "kvm", "notification-desktop", "screen-desktop", "shell", "torrent", "tv", "tv-roku"]
+    assert PORTS == ["adb", "battery", "browser", "camera", "cec", "dongle", "dongle-s3", "file", "hid-desktop",
+                     "kvm", "notification-desktop", "screen-desktop", "shell", "torrent", "tv", "tv-roku"]
 
 
 @pytest.mark.parametrize("name", PORTS)
@@ -35,8 +35,8 @@ def test_every_cap_says_risk_scope_and_doc(name):
         # The browser's page actions reach the internet, appliance.test a device on the network: external.
         assert spec["doc"] and spec["risk"] and spec["scope"] in (
             ("local", "external") if name in ("browser", "appliance") else ("local",)), cap
-        # A builtin manifest's caps are served by the device itself (firmware): neither.
-        assert ("action" in spec) + ("run" in spec) == (0 if m.data["builtin"] else 1), cap
+        # A builtin manifest's caps are served by the device itself (firmware): no run.
+        assert ("run" in spec) == (not m.data["builtin"]) and "action" not in spec, cap
         if spec["risk"] == "read":
             assert "physical" not in spec.get("effects", ()), cap
         # Can lose unsaved work. A TV switched off loses nothing (tv.power.off).
@@ -44,13 +44,11 @@ def test_every_cap_says_risk_scope_and_doc(name):
             assert "destructive" in spec["effects"], cap
 
 
-CONFIG_ONLY = {"cec", "dongle-s3"}
-
-
-def test_only_config_plugins_are_data():
-    # Config-only plugins are data; a plugin with scripts is code (review, signing).
+def test_every_port_is_code_except_firmware():
+    # A cap that is a run: script makes its port code (review, signing); the
+    # firmware's builtin manifest is only data.
     classes = {name: trust_class(PLUGINS / name) for name in PORTS}
-    assert classes == {name: "config" if name in CONFIG_ONLY else "code" for name in PORTS}
+    assert classes == {name: "config" if name == "dongle-s3" else "code" for name in PORTS}
 
 
 def test_scripts_start_processes_only_through_launch():

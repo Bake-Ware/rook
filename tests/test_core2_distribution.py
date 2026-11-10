@@ -46,11 +46,11 @@ caps:
     doc: Say hi.
     risk: read
     scope: self
-    action: {{ exec: {{ argv: [echo, hi] }} }}
+    run: scripts/p.py:ping
 {"check: [" + name + ".ping]" if check else ""}
 {extra}"""
     (folder / "plugin.yaml").write_text(text)
-    for rel, body in (files or {}).items():
+    for rel, body in {"scripts/p.py": "def ping(ctx):\n    return 'hi'\n", **(files or {})}.items():
         (folder / rel).parent.mkdir(parents=True, exist_ok=True)
         (folder / rel).write_text(body)
     return folder
@@ -280,7 +280,7 @@ def _nothing_written(tmp_path):
 
 @pytest.mark.parametrize("change, reason", [
     (lambda n, b: None if n == "plugin.sig" else (n, b), "unsigned bundle"),
-    (lambda n, b: (n, b.replace(b"[echo, hi]", b"[rm, -rf]")) if n == "plugin.yaml" else (n, b), "does not match its signed hash"),
+    (lambda n, b: (n, b.replace(b"scripts/p.py:ping", b"scripts/p.py:wipe")) if n == "plugin.yaml" else (n, b), "does not match its signed hash"),
     (lambda n, b: (n, b) if n != "plugin.sig" else (n, b), None),
 ])
 def test_tampered_bundles_refused(tmp_path, change, reason):
@@ -428,16 +428,23 @@ def test_install_reports_refusals(tmp_path):
 def test_hub_only_plugin_has_no_worker_part(tmp_path):
     folder = make_plugin(tmp_path, check=False, extra="runs_on: hub")
     plan = d.prepare(folder, ENV, signer=HUB_SK, hub=HUB_ID)
-    assert plan.sig is None and plan.hub_runs and plan.trust == "config"
+    assert plan.sig is None and plan.hub_runs and plan.trust == "code"
     transport = d.MemoryTransport()
     assert run(d.push(plan, transport)) == {"ok": True, "plugin": "echo", "version": "1.0.0", "pushed": False}
     assert transport.sent == []
 
 
 def test_trust_class_is_derived(tmp_path):
-    assert d.prepare(make_plugin(tmp_path), None, signer=HUB_SK, hub=HUB_ID).trust == "config"
-    page = make_plugin(tmp_path, name="page", files={"pages/a.html": "<p>"})
-    assert d.prepare(page, None, signer=HUB_SK, hub=HUB_ID).trust == "page"
+    assert d.prepare(make_plugin(tmp_path), None, signer=HUB_SK, hub=HUB_ID).trust == "code"
+    for name, files, trust in (("notes", {}, "config"), ("board", {"pages/a.html": "<p>"}, "page")):
+        folder = tmp_path / name
+        folder.mkdir()
+        (folder / "plugin.yaml").write_text(f"manifest: 1\nplugin: {name}\nversion: 1.0.0\nruns_on: hub\n"
+                                            "records: { note: { fields: { text: {} } } }\n")
+        for rel, body in files.items():
+            (folder / rel).parent.mkdir(parents=True, exist_ok=True)
+            (folder / rel).write_text(body)
+        assert d.prepare(folder, None, signer=HUB_SK, hub=HUB_ID).trust == trust
 
 
 # -- python requirements with uv (mocked) ------------------------------------------------

@@ -131,7 +131,9 @@ def test_handle_says_why_a_cap_is_unavailable(tmp_path):
     lamp.mkdir()
     (lamp / "plugin.yaml").write_text(
         "manifest: 1\nplugin: lamp\nversion: 1.0.0\nrequires: { hardware: [lamp] }\n"
-        "caps:\n  on:\n    doc: Light.\n    risk: write\n    scope: local\n    action: { exec: { argv: [\"true\"] } }\n")
+        "caps:\n  on:\n    doc: Light.\n    risk: write\n    scope: local\n    run: scripts/lamp.py:on\n")
+    (lamp / "scripts").mkdir()
+    (lamp / "scripts" / "lamp.py").write_text("def on(ctx):\n    return True\n")
 
     async def body():
         host = make_host(tmp_path)

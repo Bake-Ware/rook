@@ -110,16 +110,18 @@ def _folder(tmp_path, text, files=()):
 
 
 def test_load_normalizes(tmp_path):
-    m = load(_folder(tmp_path, (ROOT / "valid" / "deluge.yaml").read_text(), ["scripts/stats.py"]))
-    assert m.plugin == "deluge" and m.version == "1.2.0"
-    assert set(m.caps) == {"deluge.torrents.list", "deluge.torrents.remove", "deluge.stats.custom"}
-    cap = m.caps["deluge.torrents.remove"]
+    m = load(_folder(tmp_path, PIKVM, ["scripts/pikvm.py"]))
+    assert m.plugin == "pikvm" and m.version == "1.0.0"
+    assert set(m.caps) == {"pikvm.power.set", "pikvm.screen.get"}
+    cap = m.caps["pikvm.power.set"]
     assert cap["on"] == "worker" and cap["elevation"] == "never"
-    assert cap["args"]["id"] == {"type": "str", "required": True, "pattern": "^[0-9a-f]{40}$"}
-    assert m.data["settings"]["password"] == {"where": "hub", "secret": True, "type": "secret",
-                                              "required": False, "apply": "live"}
-    assert m.data["settings"]["console"]["where"] == "worker"
+    assert cap["args"]["action"] == {"type": "str", "required": True, "enum": ["on", "off", "off_hard", "reset_hard"]}
     assert m.warnings == []
+    from rook.kit.manifest import normalize
+    settings = normalize(_yaml.loads((ROOT / "valid" / "everything.yaml").read_text()))["settings"]
+    assert settings["webhook_secret"] == {"where": "hub", "secret": True, "type": "secret", "required": False,
+                                          "apply": "live"}
+    assert settings["limit"]["where"] == "worker"
 
 
 def test_load_generates_record_caps(tmp_path):
@@ -152,7 +154,6 @@ def test_load_v1_1(tmp_path):
     assert m.caps["task.history"]["risk"] == "read" and m.caps["task.history"]["idempotent"]
     assert m.data["settings"]["api"]["apply"] == "reload" and m.data["settings"]["tls_verify"]["apply"] == "live"
     assert m.data["contracts"]["screen.capture"]["route"] == "target"
-    assert m.caps["task.remote"]["args"]["tags"]["join"] == ","
 
 
 def test_undeclared_args_are_refused():
@@ -166,21 +167,19 @@ def test_url_and_path_types():
     assert compile_type({"type": "url", "pattern": "^https:"})["format"] == "uri"
     assert compile_type({"type": "path", "min": 1}) == {"type": "string", "x-rook-type": "path", "minLength": 1}
     with pytest.raises(TypeSpecError):
-        compile_type({"type": "str", "join": ","})
+        compile_type({"type": "str", "items": {}})
 
 
-def test_load_marks_unknown_action_unavailable(tmp_path):
-    m = load(_folder(tmp_path, (ROOT / "valid" / "warnings.yaml").read_text(), ["scripts/open.py"]))
-    assert m.caps["gizmo.serial.send"]["unavailable"] == "unknown action type: serial"
-    assert "unavailable" not in m.caps["gizmo.zap"]
-    assert {w.code for w in m.warnings} >= {"unknown-key", "unknown-action", "unknown-effect"}
+def test_load_warns_about_unknown_keys_and_effects(tmp_path):
+    m = load(_folder(tmp_path, (ROOT / "valid" / "warnings.yaml").read_text(), ["scripts/zap.py"]))
+    assert {w.code for w in m.warnings} >= {"unknown-key", "unknown-effect"}
     assert hold_effects(m.caps["gizmo.zap"]) == {"physical", "levitates", "destructive"}
 
 
 def test_load_raises_with_all_issues(tmp_path):
     with pytest.raises(ManifestError) as e:
-        load(_folder(tmp_path, (ROOT / "invalid" / "templates.yaml").read_text()))
-    assert len([i for i in e.value.issues if i.level == "error"]) == 5
+        load(_folder(tmp_path, (ROOT / "invalid" / "templates.yaml").read_text(), ["scripts/get.py"]))
+    assert len([i for i in e.value.issues if i.level == "error"]) == 4
 
 
 def test_missing_files_are_errors_with_a_folder(tmp_path):
@@ -326,9 +325,9 @@ def test_prerelease_ordering():
 
 def test_cli_validate(tmp_path, capsys):
     (tmp_path / "good").mkdir()
-    good = _folder(tmp_path / "good", PIKVM)
+    good = _folder(tmp_path / "good", PIKVM, ["scripts/pikvm.py"])
     assert main(["validate", str(good)]) == 0
-    assert capsys.readouterr().out.strip() == "ok: pikvm 1.0.0, 2 cap(s), 1 file(s), trust class config"
+    assert capsys.readouterr().out.strip() == "ok: pikvm 1.0.0, 2 cap(s), 2 file(s), trust class code"
     (tmp_path / "bad").mkdir()
     bad = _folder(tmp_path / "bad", (ROOT / "invalid" / "missing-version.yaml").read_text())
     assert main(["validate", str(bad)]) == 1
@@ -336,11 +335,11 @@ def test_cli_validate(tmp_path, capsys):
 
 
 def test_cli_validate_takes_the_yaml_path(tmp_path, capsys):
-    _folder(tmp_path, PIKVM)
+    _folder(tmp_path, PIKVM, ["scripts/pikvm.py"])
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "x.md").write_text("")
     assert main(["validate", str(tmp_path / "plugin.yaml")]) == 0
-    assert "2 file(s)" in capsys.readouterr().out
+    assert "3 file(s)" in capsys.readouterr().out
 
 
 def test_cli_diff(tmp_path, capsys):

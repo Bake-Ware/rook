@@ -90,7 +90,10 @@ def test_the_rust_worker_on_a_real_hub(tmp_path, binary):
         relay, _ = await asyncio.get_running_loop().create_datagram_endpoint(Relay, local_addr=("127.0.0.1", 0))
         addr = "127.0.0.1:%d" % relay.get_extra_info("socket").getsockname()[1]
         psk = secrets.token_hex(24)
-        hub = Hub(Config(data=tmp_path / "hub", users={"bake": {"preset": "owner"}},
+        library = tmp_path / "library"
+        library.mkdir()
+        (library / "kvm").symlink_to(ROOT / "rook/plugins/kvm", target_is_directory=True)
+        hub = Hub(Config(data=tmp_path / "hub", users={"bake": {"preset": "owner"}}, library=library,
                          doors={"http": {"bind": "127.0.0.1:0"}},
                          transport={"bands": [{"psk": psk, "relay": addr}]}), clock=lambda: now[0])
         await hub.start()
@@ -135,7 +138,8 @@ def test_the_rust_worker_on_a_real_hub(tmp_path, binary):
 
             async def learned():        # the hub has fetched its manifests (core.manifests)
                 caps = (await door(hub, token, "/caps?worker=rusty"))["workers"].get("rusty", {}).get("caps", {})
-                return {"worker.ping", "shell.exec", "file.read", "net.open", "serial.open"} <= set(caps)
+                return {"worker.ping", "shell.exec", "file.read", "net.open", "serial.open",
+                        "appliance.discover", "kvm.power.status"} <= set(caps)   # hub scripts for it too
             await until(learned)
             out = await call("worker.ping")
             assert out["ok"] and out["result"]["pong"] is True, out
@@ -297,6 +301,31 @@ def test_the_rust_worker_on_a_real_hub(tmp_path, binary):
             finally:
                 os.close(device)
                 os.close(port_fd)
+
+            # A device plugin on the hub through this worker: kvm against a fake kvmd over HTTPS with a
+            # self-signed certificate (TLS, an HTTP request and a binary JPEG through net.open's stream).
+            jpeg = b"\xff\xd8\xff\xe0" + secrets.token_bytes(5000) + b"\xff\xd9"
+
+            async def kvmd(reader, writer):
+                head = (await reader.readuntil(b"\r\n\r\n")).decode()
+                path = head.split()[1]
+                body, ctype = (b'{"ok": true, "result": {"busy": false, "leds": {"power": true, "hdd": false}}}',
+                               "application/json") if path == "/api/atx" else (jpeg, "image/jpeg")
+                writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\n\r\n%s"
+                             % (ctype.encode(), len(body), body))
+                await writer.drain()
+                writer.close()
+            kvm_server = await asyncio.start_server(kvmd, "127.0.0.1", 0, ssl=self_signed(tmp_path))
+            kvm_at = "127.0.0.1:%d" % kvm_server.sockets[0].getsockname()[1]
+            out = await door(hub, token, "/call", {"worker": "rook", "cap": "appliance.add", "why": "Test kvm.",
+                                                   "args": {"name": "rack-kvm", "plugin": "kvm", "worker": "rusty",
+                                                            "host": kvm_at}})
+            assert out["ok"], out
+            out = await door(hub, token, "/call", {"worker": "rack-kvm", "cap": "kvm.power.status", "why": "Test kvm."})
+            assert out["ok"] and out["result"] == {"power": True, "hdd": False, "busy": False}, out
+            out = await door(hub, token, "/call", {"worker": "rack-kvm", "cap": "kvm.screen.capture", "why": "Test kvm."})
+            assert out["ok"] and base64.b64decode(out["result"]["data"]) == jpeg, str(out)[:300]
+            kvm_server.close()
 
             async def answered_hub():   # its announce on first hearing the hub's, so what comes next is a heartbeat
                 return len(heard) >= 2

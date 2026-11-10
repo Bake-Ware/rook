@@ -14,4 +14,4 @@ caps:
       kind: { enum: [a, b], default: c }
       q: { type: str }
     examples: [ { args: { q: x, extra: 1 } } ]
-    action: { exec: { argv: [find] } }
+    run: scripts/x.py:f

@@ -14,7 +14,7 @@ A hub plugin can also serve a worker's caps: its scripts run on the hub
 and reach the machine through the worker's primitives (`shell.exec`,
 `file.*`, streams). An agent still calls `worker=kaiju cap=battery.status`
 and finds it in kaiju's caps; nothing is installed on kaiju
-([Writing a plugin](authoring.md#a-workers-cap-run-from-the-hub)).
+([Writing a plugin](authoring.md#the-smallest-plugin-a-workers-cap)).
 
 ## The hub's library
 
@@ -121,7 +121,7 @@ runs where and what the phone app needs):
 - [torrent](../../rook/plugins/torrent/docs/manual.md): Deluge.
 - [dongle](../../rook/plugins/dongle/docs/manual.md): the Rook RP2040 USB dongle.
 - [dongle-s3](../../rook/plugins/dongle-s3/docs/manual.md): the Rook ESP32-S3 dongle, its own worker on the band (firmware; nothing runs on the hub).
-- Appliances ([what that means](workers.md#appliances)): [kvm](../../rook/plugins/kvm/docs/manual.md) (PiKVM), [tv](../../rook/plugins/tv/docs/manual.md) (LG webOS), [tv-roku](../../rook/plugins/tv-roku/docs/manual.md) (Roku over ECP), [adb](../../rook/plugins/adb/docs/manual.md) (Android over adb), [cec](../../rook/plugins/cec/docs/manual.md) (Pico-CEC); [appliance](../../rook/plugins/appliance/docs/manual.md) is the delegate worker's side.
+- Appliances ([what that means](workers.md#appliances)): [kvm](../../rook/plugins/kvm/docs/manual.md) (PiKVM), [tv](../../rook/plugins/tv/docs/manual.md) (LG webOS), [tv-roku](../../rook/plugins/tv-roku/docs/manual.md) (Roku over ECP), [adb](../../rook/plugins/adb/docs/manual.md) (Android over adb), [cec](../../rook/plugins/cec/docs/manual.md) (Pico-CEC); the hub's [appliance](../../rook/core2/hub/appliance/docs/manual.md) registry onboards them and finds them on a worker's network (`appliance.discover`).
 
 **Phone** (in the Rook Android app, which runs the worker under Chaquopy;
 `docs/castling-phone.md` says how):
