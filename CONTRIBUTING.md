@@ -21,14 +21,12 @@ pip install -e '.[dev]'
 ```
 
 `telesthete` (the transport) is installed from GitHub as a dependency. If a checkout
-exists at `../telesthete`, the tests and the worker-bundle builder use it instead, so
-you can work on both at once.
+exists at `../telesthete`, the tests and the APK staging use it instead, so you can
+work on both at once.
 
 The pin is one commit, in `pyproject.toml` (the `telesthete @ git+...@<sha>`
-dependency). The bundle builders
-(`rook/remote/build_band_worker.py`, `android/stage_worker.py`) refuse to build
-from a telesthete git checkout at any other commit, so a bundle never ships a
-different transport than the hub installs; set `ROOK_TELESTHETE_ANY_REV=1` to
+dependency). `android/stage_worker.py` refuses to stage a telesthete git checkout at
+any other commit, so the APK never ships a different transport than the hub installs; set `ROOK_TELESTHETE_ANY_REV=1` to
 build anyway (a warning) while changing both repos. The pin may point at a
 telesthete PR branch while a change is in review; when that PR merges, move it
 to the merged commit on telesthete `main`.
@@ -37,8 +35,7 @@ To run a hub locally, see [Install and first run](docs/manual-0.5/install.md).
 
 CI (`.github/workflows/ci.yml`) runs the suite on Python 3.11 and 3.12 with the voice
 service's light deps (`tests/requirements-voice.txt`), the generators' `--check` modes,
-`node --check` and shellcheck. Releases are cut by pushing a `vX.Y.Z` tag; see
-[Releases and versions](docs/operations/install.md#releases-and-versions).
+`node --check` and shellcheck.
 
 ## Tests
 
@@ -60,18 +57,12 @@ steps; see [android/README.md](android/README.md) and the PlatformIO project in
 - **Python 3.11+**, standard library first. The worker in particular must stay light:
   it runs on Raspberry Pis, phones (via Chaquopy) and Windows. New worker dependencies
   need a good reason and must be optional where possible.
-- **Plugins** live in `rook/worker/plugins/`, export `PLUGIN`, claim one namespace, and
-  mark methods with `@capability`. Implement `available()` so the plugin only loads
-  where it can actually work.
+- **Plugins** live in `rook/plugins/<name>/`: a `plugin.yaml` manifest and scripts
+  (docs/manual-0.5/authoring.md).
 - **Windows is a first-class worker.** Open text files with `encoding="utf-8"`.
 - **Configuration goes through flags and `ROOK_*` environment variables**, documented in
   `--help`. Never commit keys, tokens, passwords,
   hostnames or IP addresses of real machines; use `example.com` and placeholders.
-- **Peer compatibility has a floor.** `rook/core/compat.py` names the oldest worker
-  build, Android app and hub this release still talks to. A fallback that serves only
-  peers older than that can go; one the newest Android app or the ESP32/RP2040
-  firmware still needs stays, and so does code that reads files or databases an older
-  release wrote. Raise the floor deliberately, in its own change.
 - Match the surrounding code's style and comment density. Comments explain *why*.
 
 ## The user manual

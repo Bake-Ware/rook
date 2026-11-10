@@ -33,8 +33,8 @@ token dies when the turn ends. Dreams run as the agent alone, without a
 token (a completion, no tools). A message with no sender's ctx (it came in
 before a hub restart) is answered with an error, never run as the plugin.
 
-Backends are reached only through the ``agent.backend`` contract: the hub's
-chosen provider, or the one an agent is pinned to (``backend``: a provider
+Backends are reached only through the ``agent.backend`` contract: the
+``backend`` setting's provider, or the one an agent is pinned to (``backend``: a provider
 cap, e.g. ``agents-claude-code.turn``), so any plugin that provides the
 contract plugs in.
 Session streams live in the hub's one stream store (``ctx.streams``), so
@@ -419,10 +419,12 @@ class Runtime:
     async def backend(self, ctx, a: dict, prompt: str, *, system: str, why: str, session: str | None = None,
                       model: str | None = None, door: bool = False) -> dict:
         """One ``agent.backend`` turn as the agent: for ``ctx``'s person, or
-        alone when it has none. The hub's chosen provider, or the provider
-        cap the agent is pinned to. ``door``: hand the harness a turn token
+        alone when it has none. The backend setting's provider, or the
+        provider cap the agent is pinned to. ``door``: hand the harness a turn token
         for the same pair, ended when the turn returns."""
         name, kind = a["name"], a.get("backend") or "default"
+        if kind == "default":
+            kind = self.settings.get("backend") or "default"
         who = Caller(person=ctx.person, agent=f"agent:{name}", band=ctx.band, why=why)
         args = {"prompt": inert(prompt), "system": inert(system), "timeout": self.settings["turn_timeout"]}
         model = model or (a.get("model") or {}).get("two")

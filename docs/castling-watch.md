@@ -3,12 +3,11 @@
 Castling wave 6. The Wear OS app (`android/wear`) is a microphone and a
 speaker: it streams its mic to the Rook app on the paired phone over the Wear
 Data Layer (`android/wearlink`, path `/rook/voice`) and plays what comes back.
-The phone does the network work in `WatchBridge`. That split stays in 0.5, so
-**the watch app and the link protocol didn't change**. The phone picks the
-voice session behind the bridge with its own 0.4/0.5 switch (Settings > Band >
-Rook version, docs/castling-phone.md).
+The phone does the network work in `WatchBridge`: a `WatchSpeech` session on
+the hub's `speech` plugin. The table compares it with the 0.4 voice server the
+watch used before.
 
-| | 0.4 (default) | 0.5 |
+| | 0.4 (before) | Now |
 |---|---|---|
 | Session | `VoiceClient`: the 0.4 voice server's WebSocket (Settings > App's voice address and key) | `WatchSpeech`: the hub's `speech` plugin (rook/plugins/speech, docs/castling-speech.md) |
 | Reaching it | the voice server directly | the hub's HTTP door, `POST /call` as the person (`HubDoor`), at the address the phone signed in with |
@@ -22,8 +21,8 @@ Rook version, docs/castling-phone.md).
 
 Code: `android/app/src/main/java/systems/bake/rook/` `WatchSpeech.kt` (the
 session), `HubDoor.kt` (door client; plain http only to the phone itself),
-`SpeechAudio.kt` (`Segmenter`, `Wav`), the `v05` branches in `WatchBridge.kt`,
-the token field in Settings > Band (`Castling.TOKEN_PREF`).
+`SpeechAudio.kt` (`Segmenter`, `Wav`), `WatchBridge.kt`, the token field in
+Settings > Band (`Castling.TOKEN_PREF`).
 
 ## Tests
 

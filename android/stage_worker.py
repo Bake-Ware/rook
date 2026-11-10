@@ -1,36 +1,33 @@
 #!/usr/bin/env python3
-"""Stage rook.worker + telesthete.protocol (and Rook 0.5) into the Chaquopy python source set.
+"""Stage Rook 0.5 + telesthete.protocol into the Chaquopy python source set.
 
 Chaquopy bundles whatever lives under ``app/src/main/python`` into the APK and
-puts it on ``sys.path``. The worker code and the telesthete protocol package
-live outside this module (and telesthete is a sibling repo), so we copy them in
-before each build — same sources the band-worker.pyz is built from, one source
-of truth.
+puts it on ``sys.path``. castling_entry.py needs rook.core2 (less the hub),
+rook.kit, rook.streams, the manifest schema, telesthete.protocol (a sibling
+repo), and the phone plugins: the plugin folders whose manifest lists
+``android`` in ``platforms``, zipped into ``castling_plugins.zip`` (the 0.5
+loader reads folders from disk; the app unpacks them at start).
 
 Run from anywhere:
     python3 android/stage_worker.py
 
-Rook 0.5 (castling_entry.py) needs rook.core2 (less the hub), rook.kit,
-rook.streams, the manifest schema, and the phone plugins: the plugin folders
-whose manifest lists ``android`` in ``platforms``, zipped into
-``castling_plugins.zip`` (the 0.5 loader reads folders from disk; the app
-unpacks them at start).
-
-Re-run whenever rook.worker or telesthete.protocol changes. The staged dirs are
-git-ignored (see android/.gitignore) so they never get committed twice.
+The staged dirs are git-ignored (see android/.gitignore) so they never get
+committed twice.
 """
 
 from __future__ import annotations
 
+import os
+import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 HERE = Path(__file__).resolve().parent              # android/
 REPO_ROOT = HERE.parent                             # repo root (…/rook)
-WORKER_SRC = REPO_ROOT / "rook" / "worker"
-# telesthete is a sibling checkout, matching build_band_worker.py's layout;
-# without one, the pip-installed package (as the zipapp builder does).
+# telesthete is a sibling checkout; without one, the pip-installed package.
 TELESTHETE_ROOT = REPO_ROOT.parent / "telesthete" / "telesthete"
 if not TELESTHETE_ROOT.is_dir():
     import importlib.util as _ilu
@@ -38,6 +35,73 @@ if not TELESTHETE_ROOT.is_dir():
     if _spec and _spec.origin:
         TELESTHETE_ROOT = Path(_spec.origin).parent
 PY_DST = HERE / "app" / "src" / "main" / "python"
+
+# telesthete.protocol modules the worker imports. route.py (addressed hub
+# routing, telesthete 0.3.0) is the newest: a checkout without it is older than
+# pyproject.toml pins, so refuse to build.
+REQUIRED_TELESTHETE = ("crypto.py", "fragment.py", "framing.py", "sequence.py",
+                       "drop.py", "route.py")
+
+
+# Set to 1 to build from a telesthete git checkout at another revision than
+# the pin (e.g. while changing both repos at once): a warning, not an error.
+ANY_REV_ENV = "ROOK_TELESTHETE_ANY_REV"
+
+
+def pinned_telesthete_rev(pyproject: Path = REPO_ROOT / "pyproject.toml") -> Optional[str]:
+    """The telesthete commit pyproject.toml pins (``telesthete @ git+...@<sha>``)."""
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.search(r'"telesthete\s*@\s*git\+[^"@]+@([0-9a-fA-F]{7,40})"', text)
+    return m.group(1).lower() if m else None
+
+
+def _checkout_rev(root: Path) -> Optional[str]:
+    """HEAD of the git checkout whose top level holds the ``telesthete``
+    package dir ``root``, or None when ``root`` isn't one (a pip install)."""
+    checkout = root.resolve().parent
+    try:
+        top = subprocess.check_output(
+            ["git", "-C", str(checkout), "rev-parse", "--show-toplevel"],
+            text=True, stderr=subprocess.DEVNULL).strip()
+        if Path(top).resolve() != checkout:
+            return None   # e.g. site-packages inside some unrelated repo
+        return subprocess.check_output(
+            ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+            text=True, stderr=subprocess.DEVNULL).strip().lower()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def check_telesthete(root: Path, *, verify_rev: bool = True,
+                     pin: Optional[str] = None) -> None:
+    """Raise if ``root`` (a ``telesthete`` package dir) can't go in a bundle:
+    it lacks a protocol module the worker needs, or (``verify_rev``) it is a
+    git checkout at another commit than pyproject.toml pins. A pip-installed
+    telesthete (from the pin, or any non-checkout install) is checked for
+    modules only: it is the transport this hub itself runs, so it needs no
+    ``ROOK_TELESTHETE_ANY_REV``."""
+    missing = [m for m in REQUIRED_TELESTHETE if not (root / "protocol" / m).is_file()]
+    if missing:
+        raise FileNotFoundError(
+            f"telesthete at {root} is too old (missing protocol/{', protocol/'.join(missing)}); "
+            "update it to the commit pinned in pyproject.toml")
+    if not verify_rev:
+        return
+    pin = pin or pinned_telesthete_rev()
+    head = _checkout_rev(root)
+    if pin is None or head is None or head.startswith(pin) or pin.startswith(head):
+        return
+    msg = (f"telesthete checkout {root.parent} is at {head[:12]}, but pyproject.toml pins "
+           f"{pin[:12]}: the bundle would ship a different transport than the hub "
+           f"installs. Check out the pinned commit (git -C {root.parent} checkout {pin}), "
+           f"or set {ANY_REV_ENV}=1 to build anyway.")
+    if os.environ.get(ANY_REV_ENV, "").strip() == "1":
+        print(f"WARNING: {msg}", file=sys.stderr)
+        return
+    raise RuntimeError(msg)
 
 
 def _copy_pkg(src: Path, dst: Path) -> None:
@@ -78,7 +142,7 @@ def plugins_zip(folders: list[Path]) -> bytes:
 
 
 def stage_castling(rook_dst: Path) -> list[Path]:
-    """Rook 0.5 beside the 0.4 worker in the same ``rook`` package."""
+    """Rook 0.5 into the staged ``rook`` package."""
     src = REPO_ROOT / "rook"
     if (rook_dst / "core2").exists():
         shutil.rmtree(rook_dst / "core2")
@@ -101,17 +165,11 @@ def stage_castling(rook_dst: Path) -> list[Path]:
 
 
 def main() -> int:
-    if not WORKER_SRC.is_dir():
-        print(f"ERROR: worker source not found: {WORKER_SRC}", file=sys.stderr)
-        return 1
     if not TELESTHETE_ROOT.is_dir():
         print(f"ERROR: telesthete source not found: {TELESTHETE_ROOT}\n"
               "Expected a sibling checkout at ../telesthete/telesthete or a pip-installed "
-              "telesthete (same as build_band_worker.py).", file=sys.stderr)
+              "telesthete.", file=sys.stderr)
         return 1
-
-    sys.path.insert(0, str(REPO_ROOT))
-    from rook.remote.build_band_worker import check_telesthete
     try:
         # Modules (e.g. route.py) and, for a git checkout, the pinned commit.
         check_telesthete(TELESTHETE_ROOT)
@@ -119,24 +177,12 @@ def main() -> int:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
 
-    # rook.worker  ->  python/rook/worker  (with a minimal rook/__init__.py)
     rook_dst = PY_DST / "rook"
-    rook_dst.mkdir(parents=True, exist_ok=True)
+    if rook_dst.exists():
+        shutil.rmtree(rook_dst)             # only what is staged below ships
+    rook_dst.mkdir(parents=True)
     (rook_dst / "__init__.py").write_text('__version__ = "0.1.0"\n', encoding="utf-8")
-    _copy_pkg(WORKER_SRC, rook_dst / "worker")
-    # rook.core (plugin host, registry, facts) is shared with the hub and
-    # imported by rook.worker; stdlib-only.
-    _copy_pkg(REPO_ROOT / "rook" / "core", rook_dst / "core")
     folders = stage_castling(rook_dst)
-    # Native workers report the same source build as the zipapp.
-    import datetime
-    sys.path.insert(0,str(REPO_ROOT))
-    from rook.remote.build_band_worker import compute_build,_stamp_build_info,_stamp_pubkey
-    build,commit,version=compute_build()
-    _stamp_build_info(rook_dst/'worker',build,commit,version,
-                      datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds'))
-    _stamp_pubkey(rook_dst/'worker')
-
 
     # telesthete.protocol  ->  python/telesthete/protocol
     tel_dst = PY_DST / "telesthete"
@@ -144,9 +190,9 @@ def main() -> int:
     (tel_dst / "__init__.py").write_text("", encoding="utf-8")
     _copy_pkg(TELESTHETE_ROOT / "protocol", tel_dst / "protocol")
 
-    print(f"Staged worker -> {rook_dst / 'worker'}")
+    print(f"Staged Rook 0.5 -> {rook_dst}")
     print(f"Staged telesthete.protocol -> {tel_dst / 'protocol'}")
-    print(f"Staged Rook 0.5 + {len(folders)} phone plugins -> {PY_DST / 'castling_plugins.zip'}")
+    print(f"Staged {len(folders)} phone plugins -> {PY_DST / 'castling_plugins.zip'}")
     return 0
 
 

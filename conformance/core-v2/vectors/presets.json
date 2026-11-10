@@ -15,16 +15,13 @@
   },
   "child": {
    "grants": [
-    "agent.chat.*",
     "page.view"
    ],
    "max_risk": "write",
    "effects": []
   },
   "guest": {
-   "grants": [
-    "agent.chat.*"
-   ],
+   "grants": [],
    "max_risk": "write",
    "effects": [],
    "expires": "7d"
@@ -75,14 +72,18 @@
    }
   },
   {
-   "name": "child: chat",
+   "name": "child: chat, as the agents plugin adds it",
    "preset": "child",
-   "plugin_grants": [],
+   "plugin_grants": {
+    "agent": [
+     "agent.chat.*"
+    ]
+   },
    "user_grants": [],
    "rights": {
     "grants": [
-     "agent.chat.*",
-     "page.view"
+     "page.view",
+     "agent.chat.*"
     ],
     "max_risk": "write",
     "effects": []
@@ -104,7 +105,6 @@
    "user_grants": [],
    "rights": {
     "grants": [
-     "agent.chat.*",
      "page.view"
     ],
     "max_risk": "write",
@@ -127,7 +127,6 @@
    "user_grants": [],
    "rights": {
     "grants": [
-     "agent.chat.*",
      "page.view"
     ],
     "max_risk": "write",
@@ -155,7 +154,6 @@
    "user_grants": [],
    "rights": {
     "grants": [
-     "agent.chat.*",
      "page.view",
      "homework.item.list"
     ],
@@ -184,7 +182,6 @@
    "user_grants": [],
    "rights": {
     "grants": [
-     "agent.chat.*",
      "page.view"
     ],
     "max_risk": "write",
@@ -212,7 +209,6 @@
    "user_grants": [],
    "rights": {
     "grants": [
-     "agent.chat.*",
      "page.view",
      "homework.*"
     ],
@@ -241,7 +237,6 @@
    ],
    "rights": {
     "grants": [
-     "agent.chat.*",
      "page.view",
      "lights.set"
     ],
@@ -272,7 +267,6 @@
    "user_grants": [],
    "rights": {
     "grants": [
-     "agent.chat.*",
      "page.view",
      "phone.*"
     ],
@@ -293,9 +287,13 @@
    }
   },
   {
-   "name": "guest: chat",
+   "name": "guest: chat, as the agents plugin adds it",
    "preset": "guest",
-   "plugin_grants": [],
+   "plugin_grants": {
+    "agent": [
+     "agent.chat.*"
+    ]
+   },
    "user_grants": [],
    "rights": {
     "grants": [
@@ -315,14 +313,33 @@
    }
   },
   {
+   "name": "guest: nothing without a plugin",
+   "preset": "guest",
+   "plugin_grants": [],
+   "user_grants": [],
+   "rights": {
+    "grants": [],
+    "max_risk": "write",
+    "effects": []
+   },
+   "call": {
+    "cap": "agent.chat.send",
+    "risk": "write",
+    "effects": [],
+    "target": "kaiju"
+   },
+   "expect": {
+    "ok": false,
+    "reason": "grants"
+   }
+  },
+  {
    "name": "guest: pages not in preset",
    "preset": "guest",
    "plugin_grants": [],
    "user_grants": [],
    "rights": {
-    "grants": [
-     "agent.chat.*"
-    ],
+    "grants": [],
     "max_risk": "write",
     "effects": []
    },
@@ -346,7 +363,6 @@
    ],
    "rights": {
     "grants": [
-     "agent.chat.*",
      "music.play"
     ],
     "max_risk": "write",

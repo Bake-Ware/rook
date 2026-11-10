@@ -95,7 +95,7 @@ everything (and takes its identity off the hub until you restore it).
 Owners curate an agent's memory with `agent.memory.*`. A persona's
 **grants** are its own rights, checked on every call it makes; every agent
 may also run its own turns (`agent.backend`). `backend` is `default` (the
-hub's chosen provider) or one provider's cap, e.g.
+agents plugin's `backend` setting) or one provider's cap, e.g.
 `agents-claude-code.turn`. Skills are markdown playbooks an agent follows
 (`agent.skill {name}` reads one). Any plugin can ship personas and skills
 in its manifest; each installed plugin's personas become agents. With the

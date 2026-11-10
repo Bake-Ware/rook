@@ -4,7 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 
-/** Restart the worker after reboot, using the last-saved band settings. */
+/** Restart the worker after reboot. */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
@@ -22,16 +22,12 @@ class BootReceiver : BroadcastReceiver() {
         // Only autostart if the user has started it at least once before.
         if (!prefs.getBoolean("autostart", false)) return
 
-        val hub = prefs.getString("hub", BuildConfig.DEFAULT_HUB)!!
-        val psk = prefs.getString("psk", BuildConfig.DEFAULT_PSK)!!
-        val fallback = (android.os.Build.MODEL ?: "android").replace(' ', '-')
-        val name = prefs.getString("name", fallback)!!
         // Android 14+ forbids starting a dataSync foreground service straight from
         // BOOT_COMPLETED (ForegroundServiceStartNotAllowedException). Don't let
         // that crash the boot broadcast — the worker is START_STICKY and the user
         // can also start it from the app. Best-effort autostart only.
         try {
-            WorkerService.start(context, hub, psk, name)
+            WorkerService.start(context)
         } catch (t: Throwable) {
             android.util.Log.w("RookBootReceiver", "autostart on boot not permitted", t)
         }

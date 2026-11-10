@@ -32,7 +32,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 /**
- * Speech for the `voice.speak` worker cap (rook_android/plugins/speak_android.py).
+ * Speech for the `voice.speak` worker cap (rook/plugins/voice-android).
  *
  * When the app has a voice server configured, each line is synthesized there
  * (POST /api/voice) in the app's selected voice, so agents sound like the

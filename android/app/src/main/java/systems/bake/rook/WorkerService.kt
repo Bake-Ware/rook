@@ -13,19 +13,16 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
-import android.os.SystemClock
 import android.util.Log
 import com.chaquo.python.PyObject
 import kotlin.concurrent.thread
 
 /**
- * Foreground service that runs the Python band worker for the life of the app.
+ * Foreground service that runs the Python worker for the life of the app.
  *
- * The actual worker is `rook.worker` (staged into the Chaquopy python source by
- * stage_worker.py). We call `worker_entry.start(hub, psk, name)` on a dedicated
- * thread; it owns its own asyncio loop and blocks until [stopWorker] is called.
- * With Rook 0.5 chosen ([Castling]) it is `castling_entry.start(files dir)`
- * instead: the hub, keys and name come from the phone's enrollment.
+ * We call `castling_entry.start(files dir)` on a dedicated thread; it owns its
+ * own asyncio loop and blocks until [stopWorker] is called. The hub, keys and
+ * name come from the phone's enrollment ([Castling]).
  */
 class WorkerService : Service() {
 
@@ -55,23 +52,6 @@ class WorkerService : Service() {
         }
     }
 
-    /** The 0.4/0.5 switch asked from afar ([Castling.takeSwitch]): looked for every 15 s. */
-    @Volatile private var switching = false
-    private val switchTick = object : Runnable {
-        override fun run() {
-            if (!switching && Castling.switchFile(applicationContext).isFile) {
-                switching = true
-                thread(name = "rook-switch", isDaemon = true) {
-                    try { applySwitch() } catch (t: Throwable) {
-                        Log.e(TAG, "switch failed", t)
-                        Castling.switchResult(applicationContext, false, "the switch failed: ${t.message}")
-                    } finally { switching = false }
-                }
-            }
-            updateHandler.postDelayed(this, SWITCH_TICK_MS)
-        }
-    }
-
     /** ACTION_USER_PRESENT is not a manifest broadcast: attention hears unlocks while the worker runs. */
     private val unlockReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
@@ -91,7 +71,6 @@ class WorkerService : Service() {
         androidx.core.content.ContextCompat.registerReceiver(this, unlockReceiver,
             android.content.IntentFilter(Intent.ACTION_USER_PRESENT), androidx.core.content.ContextCompat.RECEIVER_EXPORTED)
         updateHandler.postDelayed(updateTick, 30_000)
-        updateHandler.postDelayed(switchTick, SWITCH_TICK_MS)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             try { getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(networkCallback) }
             catch (t: Throwable) { Log.w(TAG, "network callback unavailable", t) }
@@ -114,8 +93,7 @@ class WorkerService : Service() {
         when (intent?.action) {
             ACTION_START_CAPTURE -> {
                 wantProjection = true
-                if (lastName.isEmpty()) lastName = (if (Castling.on(this)) prefs.getString(Castling.NAME_PREF, null) else null)
-                    ?: prefs.getString("name", defaultName()) ?: defaultName()
+                if (lastName.isEmpty()) lastName = prefs.getString(Castling.NAME_PREF, null) ?: defaultName()
                 startForegroundCompat(NOTIF_ID, buildNotification("on band as $lastName · screen"))
                 acquireWakeLock()
                 val code = intent.getIntExtra(EXTRA_CODE, android.app.Activity.RESULT_CANCELED)
@@ -128,11 +106,7 @@ class WorkerService : Service() {
                     Log.i(TAG, "capture session start ok=$ok")
                 }
                 // Make sure the band worker itself is up too (usually already is).
-                startWorker(
-                    prefs.getString("hub", BuildConfig.DEFAULT_HUB) ?: BuildConfig.DEFAULT_HUB,
-                    prefs.getString("psk", BuildConfig.DEFAULT_PSK) ?: BuildConfig.DEFAULT_PSK,
-                    lastName,
-                )
+                startWorker()
                 return START_STICKY
             }
             ACTION_STOP_CAPTURE -> {
@@ -143,48 +117,31 @@ class WorkerService : Service() {
             }
         }
 
-        // On a START_STICKY restart the intent is null. Fall back to the last
-        // SAVED band settings rather than the (empty) BuildConfig defaults, so a
-        // killed worker actually reconnects instead of coming back with a blank PSK.
-        val hub = intent?.getStringExtra(EXTRA_HUB)
-            ?: prefs.getString("hub", BuildConfig.DEFAULT_HUB) ?: BuildConfig.DEFAULT_HUB
-        val psk = intent?.getStringExtra(EXTRA_PSK)
-            ?: prefs.getString("psk", BuildConfig.DEFAULT_PSK) ?: BuildConfig.DEFAULT_PSK
-        val name = (if (Castling.on(this)) prefs.getString(Castling.NAME_PREF, null) else null)
-            ?: intent?.getStringExtra(EXTRA_NAME)
-            ?: prefs.getString("name", defaultName()) ?: defaultName()
+        val name = prefs.getString(Castling.NAME_PREF, null) ?: defaultName()
         lastName = name
         wantProjection = ScreenCaptureBridge.hasSession()
 
         startForegroundCompat(NOTIF_ID, buildNotification("on band as $name"))
         acquireWakeLock()
-        startWorker(hub, psk, name)
+        startWorker()
         return START_STICKY
     }
 
-    private fun startWorker(hub: String, psk: String, name: String) {
+    private fun startWorker() {
         if (workerThread?.isAlive == true) return
         workerThread = thread(name = "rook-worker", isDaemon = true) {
             try {
                 val py = PythonHost.ensureStarted(applicationContext)
-                // Blocks until the worker stops (entry installs its own SIGTERM-
-                // equivalent stop Event, triggered from stopWorker()). Both entries
-                // have stop() and kick(reason).
-                if (Castling.on(applicationContext)) {
-                    entry = py.getModule("castling_entry")
-                    entry?.callAttr("start", applicationContext.filesDir.absolutePath)
-                } else {
-                    entry = py.getModule("worker_entry")
-                    entry?.callAttr("start", hub, psk, name)
-                }
+                // Blocks until the worker stops (stopWorker() calls the entry's stop()).
+                entry = py.getModule("castling_entry")
+                entry?.callAttr("start", applicationContext.filesDir.absolutePath)
             } catch (t: Throwable) {
                 Log.e(TAG, "worker crashed", t)
             }
         }
     }
 
-    private fun stopWorker(join: Boolean = false) {
-        val running = workerThread
+    private fun stopWorker() {
         try {
             entry?.callAttr("stop")
         } catch (t: Throwable) {
@@ -192,73 +149,10 @@ class WorkerService : Service() {
         }
         workerThread = null
         entry = null
-        if (join) running?.join(20_000)
-    }
-
-    /**
-     * Run the request in `files/rook05/switch.json` (on the switch thread).
-     * To 0.5: sign in first if this phone isn't signed in to that hub (the
-     * 0.4 worker keeps running meanwhile; a refused sign-in leaves it be),
-     * then run 0.5 and go back to 0.4 when no band link is up within
-     * `trial_seconds` (default 300, 0 = no trial). To 0.4: run 0.4.
-     */
-    private fun applySwitch() {
-        val ctx = applicationContext
-        val req = Castling.takeSwitch(ctx) ?: return
-        val prefs = getSharedPreferences("rook", MODE_PRIVATE)
-        when (req.optString("to")) {
-            Castling.V05 -> {
-                val hub = req.optString("hub").trim().trimEnd('/')
-                val name = req.optString("name").trim().ifEmpty { prefs.getString(Castling.NAME_PREF, null) ?: defaultName() }
-                val now = Castling.status(ctx)
-                val home = now.optBoolean("enrolled") && (hub.isEmpty() || now.optString("url").trimEnd('/') == hub)
-                if (!home) {
-                    if (hub.isEmpty()) { Castling.switchResult(ctx, false, "not signed in to a 0.5 hub, and the request names none"); return }
-                    Castling.switchResult(ctx, null, "signing in to $hub as $name")
-                    val got = Castling.enroll(ctx, hub, name, now.optBoolean("enrolled"), object : Castling.Listener {
-                        override fun say(text: String) = Castling.switchResult(ctx, null, text)
-                    })
-                    if (!got.optBoolean("ok")) {
-                        Castling.switchResult(ctx, false, "sign-in failed: ${got.optString("error")}; still on ${Castling.version(ctx)}")
-                        return
-                    }
-                }
-                val trial = req.optInt("trial_seconds", 300).coerceIn(0, 3600)
-                runAs(Castling.V05)
-                val deadline = SystemClock.elapsedRealtime() + trial * 1000L
-                while (trial > 0 && SystemClock.elapsedRealtime() < deadline) {
-                    Thread.sleep(5_000)
-                    if (runCatching { Castling.connected(ctx) }.getOrDefault(false)) break
-                }
-                if (trial > 0 && !runCatching { Castling.connected(ctx) }.getOrDefault(false)) {
-                    runAs(Castling.V04)
-                    Castling.switchResult(ctx, false, "Rook 0.5 didn't reach its hub within $trial s; back on 0.4")
-                } else Castling.switchResult(ctx, true, "on Rook 0.5 as $lastName")
-            }
-            Castling.V04 -> { runAs(Castling.V04); Castling.switchResult(ctx, true, "on Rook 0.4 as $lastName") }
-            else -> Castling.switchResult(ctx, false, "unknown Rook version '${req.optString("to")}' (0.4 or 0.5)")
-        }
-    }
-
-    /** Stop whichever worker runs and start Rook [v]'s with its saved settings; autostart stays on. */
-    private fun runAs(v: String) {
-        val prefs = getSharedPreferences("rook", MODE_PRIVATE)
-        stopWorker(join = true)
-        Castling.setVersion(applicationContext, v)
-        if (v == Castling.V05) runCatching { Castling.status(applicationContext).optString("name") }.getOrNull()
-            ?.takeIf { it.isNotEmpty() }?.let { prefs.edit().putString(Castling.NAME_PREF, it).apply() }
-        prefs.edit().putBoolean("autostart", true).apply()
-        val name = (if (v == Castling.V05) prefs.getString(Castling.NAME_PREF, null) else null)
-            ?: prefs.getString("name", defaultName()) ?: defaultName()
-        lastName = name
-        startForegroundCompat(NOTIF_ID, buildNotification("on band as $name"))
-        startWorker(prefs.getString("hub", BuildConfig.DEFAULT_HUB) ?: BuildConfig.DEFAULT_HUB,
-            prefs.getString("psk", BuildConfig.DEFAULT_PSK) ?: BuildConfig.DEFAULT_PSK, name)
     }
 
     override fun onDestroy() {
         updateHandler.removeCallbacks(updateTick)
-        updateHandler.removeCallbacks(switchTick)
         runCatching { unregisterReceiver(unlockReceiver) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             try { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(networkCallback) }
@@ -347,10 +241,6 @@ class WorkerService : Service() {
         private const val TAG = "RookWorkerService"
         private const val CHANNEL_ID = "rook_worker"
         private const val NOTIF_ID = 1001
-        private const val SWITCH_TICK_MS = 15_000L
-        const val EXTRA_HUB = "hub"
-        const val EXTRA_PSK = "psk"
-        const val EXTRA_NAME = "name"
         const val EXTRA_CODE = "projCode"
         const val EXTRA_DATA = "projData"
         const val ACTION_START_CAPTURE = "systems.bake.rook.START_CAPTURE"
@@ -364,12 +254,8 @@ class WorkerService : Service() {
             else @Suppress("DEPRECATION") ctx.startService(i)
         }
 
-        fun start(ctx: Context, hub: String, psk: String, name: String) {
-            val i = Intent(ctx, WorkerService::class.java)
-                .putExtra(EXTRA_HUB, hub)
-                .putExtra(EXTRA_PSK, psk)
-                .putExtra(EXTRA_NAME, name)
-            launch(ctx, i)
+        fun start(ctx: Context) {
+            launch(ctx, Intent(ctx, WorkerService::class.java))
         }
 
         fun stop(ctx: Context) {

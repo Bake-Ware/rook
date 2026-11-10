@@ -479,25 +479,6 @@ emits:
       name: { type: str }
       from: { type: str }
       to: { type: str, required: true }
-  plugin.installed:
-    doc: A plugin was installed on the hub or a worker.
-    payload:
-      plugin: { type: str, required: true }
-      version: { type: str, required: true }
-      worker: { type: str, doc: "blank: the hub." }
-  plugin.updated:
-    doc: A plugin moved to another version (an update or a rollback).
-    payload:
-      plugin: { type: str, required: true }
-      from: { type: str }
-      to: { type: str, required: true }
-      worker: { type: str }
-  plugin.removed:
-    doc: A plugin was uninstalled.
-    payload:
-      plugin: { type: str, required: true }
-      version: { type: str }
-      worker: { type: str }
   hold.created:
     doc: A call is waiting for a person's approval.
     payload:
@@ -518,20 +499,9 @@ emits:
       person: { type: str, doc: "Who the held call was for (a page shows it to them and owners only)." }
       ok: { type: bool, doc: "Approved: whether the call then ran and succeeded (its result goes to whoever approved)." }
       error: { type: str, doc: "Approved but it failed: why." }
-  session.started:
-    doc: An agent session began.
-    payload:
-      session: { type: str, required: true }
-      agent: { type: str }
-      person: { type: str }
-  session.ended:
-    doc: An agent session ended.
-    payload:
-      session: { type: str, required: true }
-      agent: { type: str }
 
 presets:
   owner: { grants: ["*"] }
   adult: { grants: ["*"], max_risk: admin }
-  child: { grants: ["agent.chat.*", page.view], max_risk: write, effects: [] }
-  guest: { grants: ["agent.chat.*"], max_risk: write, effects: [], expires: 7d }
+  child: { grants: [page.view], max_risk: write, effects: [] }
+  guest: { grants: [], max_risk: write, effects: [], expires: 7d }

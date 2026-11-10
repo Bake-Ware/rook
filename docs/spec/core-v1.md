@@ -1,17 +1,13 @@
 # Rook core specification, version 1.0
 
-Status: **1.0**, describing the Python reference on `beta` (core API 1.1,
-interoperable with build-167 workers). Companion material:
-
-- `conformance/vectors/*.json`: test vectors generated from the reference
-  (`conformance/generate.py`); where prose and vectors disagree, the vectors
-  win and the prose is a bug.
-- `conformance/harness.py`: the live check of a candidate against a
-  reference hub.
-- `examples/ports/typescript`, `examples/ports/rust`: two small
-  implementations written from this document.
-- Design background: `docs/design/plugins.md`, `docs/design/permissions.md`,
-  `docs/design/settings.md`.
+Status: **1.0**, describing the 0.4 Python reference (core API 1.1,
+interoperable with build-167 workers), which is gone. The sections core-v2.md
+2.1 lists (transport 2.1 to 2.6, rosters 3.4, extensions 14.1 to 14.4) stay
+normative under core v2, with their vectors
+in `conformance/vectors/` (`band_crypto.json`, `fragments.json`,
+`frames.json`); where prose and vectors disagree, the vectors win. The rest of
+this document is history. Design background: `docs/design/plugins.md`,
+`docs/design/permissions.md`, `docs/design/settings.md`.
 
 The key words MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD, SHOULD NOT,
 RECOMMENDED, MAY and OPTIONAL are to be read as in RFC 2119 and RFC 8174 when

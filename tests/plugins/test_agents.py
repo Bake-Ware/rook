@@ -333,6 +333,16 @@ def test_create_update_archive(rig):
     run(rig, body)
 
 
+def test_the_backend_setting_picks_the_engine_for_default_agents(tmp_path):
+    rig = Rig(tmp_path, backend="agents-opencode.turn")       # the installer's choice
+
+    async def body():
+        await rig.call("chat_send", agent="pm", text="hi")
+        assert rig.backend.turns()[-1][0] == "agents-opencode.turn"
+        assert rig.backend.contracts[-1] == "agent.backend"
+    run(rig, body)
+
+
 # -- sessions and turns ------------------------------------------------------------------
 
 def test_turns_resume_the_backend_session_with_the_agents_system_prompt(rig):

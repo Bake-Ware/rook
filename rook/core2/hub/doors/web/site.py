@@ -318,8 +318,8 @@ class Web:
         return {"ok": True}
 
     def _secret(self, person: str, body: dict) -> dict:
-        """The Vault work view's Save (the house agent opens it with the key
-        filled in for a sudo password or an API key): straight into the
+        """The Vault work view's Save (opened with the key filled in for a
+        sudo password or an API key): straight into the
         hub's vault; the chat only hears that it was saved (Bake, Nov 9:
         "this chat interface needs to be able to pull in other aspects like
         add a secret")."""

@@ -92,7 +92,7 @@ caps:
     result: { type: map }
 
 pages:
-  workers: { title: Workers, file: pages/workers.html, caps: [hub.workers, hub.joins, hub.join], events: ["worker.*", "plugin.*"], nav: { section: Hub } }
+  workers: { title: Workers, file: pages/workers.html, caps: [hub.workers, hub.joins, hub.join], events: ["worker.*"], nav: { section: Hub } }
 
 components:
   workers: { title: Workers, file: components/workers.js, doc: "The band's workers: online or not, last seen.", caps: [hub.workers], props: { only: { type: list, items: { type: str }, doc: "Worker names to show; blank: all." } } }

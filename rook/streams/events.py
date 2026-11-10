@@ -5,7 +5,7 @@ A stream is an append-only log of typed events. Five event types:
 * ``bytes``: raw output (a PTY, a process). The body is ``bytes``.
 * ``text``: a chat message. Body ``{"text": str, ...}``.
 * ``turn``: one step of an agent session. Body ``{"role": prompt|reply|tool, ...}``.
-* ``status``: lifecycle and state (started, exited, closed, a huddle status).
+* ``status``: lifecycle and state (started, exited, closed, a plugin's own state).
   Body: any JSON object.
 * ``input``: something sent *to* the producer: keystrokes or a message
   (``{"text": str}``), a signal (``{"signal": "INT"}``) or a terminal size
@@ -163,7 +163,7 @@ class Meta:
     spec: StreamSpec
     title: str = ""
     host: str = ""                    # who owns the producer/log: a worker name, or "hub"
-    producer: str = ""                # what writes output: pty, process, claude, codex, voice, ...
+    producer: str = ""                # what writes output: pty, process, an agent harness, voice, ...
     participants: list[str] = field(default_factory=list)
     attrs: dict = field(default_factory=dict)       # kind-specific: cwd, pid, exit_code, ...
     created: float = 0.0

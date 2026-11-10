@@ -8,8 +8,8 @@ and the plugins that provide them (castling-manifest-2, "Contracts and provides"
     provides: [screen.capture]       # or: the cap is declared under the contract's name
 
 The hub serves each contract as a cap of its own name; a call to it is routed
-to the chosen provider: the one picked in the hub setting (house agent or
-user), else the first installed. The provider runs with the original caller's
+to the chosen provider: the one picked in the hub config's ``contracts:``,
+else the first installed. The provider runs with the original caller's
 rights, as if they had called it directly.
 
 A contract with ``route: target`` (device contracts: ``screen.capture``,

@@ -137,8 +137,7 @@ feel is done.
    as that machine reaches it:
    - Linux: `curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/castling/deploy/castling-worker/install.sh | bash -s -- --hub <hub address>`
    - Windows: coming soon; say so.
-   - Android: the Rook app; in its Settings > Band, switch Rook version to
-     0.5 and sign in to this hub (the phone needs the hub at an https
+   - Android: the Rook app; in its Settings > Band, sign in to this hub (the phone needs the hub at an https
      address, so this comes after "From anywhere").
    Then `[[open: page hub/workers]]`: the machine shows there under "Wants
    to join" (`hub.joins`) and they tap **Join** for it. Tell them when it has

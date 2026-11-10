@@ -10,8 +10,8 @@ their own. An agent working for a person can do only what **both** may.
 |---|---|---|---|---|
 | `owner` | everything | no limit | all | owns every band of the hub; manages people, plugins, bands and ceilings; the only one who pushes plugins |
 | `adult` | everything | `admin` | all | |
-| `child` | talking to agents (`agent.chat.*`) and viewing pages (`page.view`) | `write` | none | a child gets more only when an owner adds a grant |
-| `guest` | talking to agents | `write` | none | the account stops working 7 days after it was made |
+| `child` | viewing pages (`page.view`), and talking to agents (`agent.chat.*`) with the agents package | `write` | none | a child gets more only when a plugin or an owner adds a grant |
+| `guest` | talking to agents, with the agents package | `write` | none | the account stops working 7 days after it was made |
 
 "Effects allowed: none" means a child or guest can never use a cap that
 touches the physical world, personal data, money or secrets, even if a

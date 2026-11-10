@@ -39,7 +39,3 @@ branching) and the record links it: `job` (applies and tests) and `rollback_job`
   starting work can pull recent changes and their reasons first.
 - `change.update` writes the outcome or corrects the words; `change.history`
   keeps every revision.
-
-Core writes a record here for plugin pushes (`category: plugin`) when this
-plugin is installed. Without it pushes work the same and the journal is
-their trail.

@@ -4,6 +4,7 @@ tests/e2e/test_phone_app_e2e.py runs the whole sign-in against a real hub."""
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import threading
 import time
@@ -90,3 +91,57 @@ def test_a_waiting_sign_in_says_so_and_cancels(tmp_path, monkeypatch):
 def test_the_worker_wont_start_before_sign_in(tmp_path):
     with pytest.raises(RuntimeError, match="isn't signed in"):
         castling_entry.start(str(tmp_path))
+
+
+def test_staging_requires_the_pinned_telesthete_checkout(tmp_path, monkeypatch):
+    import shutil
+    import subprocess
+    if shutil.which("git") is None:
+        pytest.skip("no git")
+    checkout = tmp_path / "telesthete"
+    pkg = checkout / "telesthete"
+    (pkg / "protocol").mkdir(parents=True)
+    for m in stage_worker.REQUIRED_TELESTHETE:
+        (pkg / "protocol" / m).write_text("", encoding="utf-8")
+
+    def git(*a):
+        return subprocess.check_output(
+            ["git", "-C", str(checkout), "-c", "user.email=t@example.com",
+             "-c", "user.name=t", *a], text=True).strip()
+
+    git("init", "-q")
+    git("add", "-A")
+    git("commit", "-q", "-m", "one")
+    first = git("rev-parse", "HEAD")
+    (pkg / "x.py").write_text("", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-q", "-m", "two")
+    head = git("rev-parse", "HEAD")
+    monkeypatch.delenv(stage_worker.ANY_REV_ENV, raising=False)
+    stage_worker.check_telesthete(pkg, pin=head)               # at the pin
+    stage_worker.check_telesthete(pkg, pin=head[:12])          # short pins work too
+    with pytest.raises(RuntimeError, match=f"pins {first[:12]}"):
+        stage_worker.check_telesthete(pkg, pin=first)
+    stage_worker.check_telesthete(pkg, pin=first, verify_rev=False)
+    monkeypatch.setenv(stage_worker.ANY_REV_ENV, "1")
+    stage_worker.check_telesthete(pkg, pin=first)              # warns only
+    # A pip install (not the top of a git checkout) is checked for modules only.
+    monkeypatch.delenv(stage_worker.ANY_REV_ENV)
+    plain = tmp_path / "site" / "telesthete"
+    shutil.copytree(pkg, plain)
+    stage_worker.check_telesthete(plain, pin=first)
+
+
+def test_staging_takes_a_pip_installed_telesthete(tmp_path, monkeypatch):
+    monkeypatch.delenv(stage_worker.ANY_REV_ENV, raising=False)
+    # A pip install: a package dir with no git checkout around it.
+    pkg = tmp_path / "site-packages" / "telesthete"
+    (pkg / "protocol").mkdir(parents=True)
+    for m in stage_worker.REQUIRED_TELESTHETE:
+        (pkg / "protocol" / m).write_text("", encoding="utf-8")
+    stage_worker.check_telesthete(pkg, pin="0" * 40)
+    # site-packages inside some unrelated repository (a venv in a clone).
+    if subprocess.run(["git", "init", "-q", str(tmp_path)], capture_output=True).returncode == 0:
+        stage_worker.check_telesthete(pkg, pin="0" * 40)
+    # The telesthete this hub runs (pinned in pyproject.toml) is accepted as is.
+    stage_worker.check_telesthete(stage_worker.TELESTHETE_ROOT)

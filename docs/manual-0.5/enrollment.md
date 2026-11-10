@@ -44,8 +44,7 @@ without the pin.
 
 ## A phone
 
-In the Rook Android app, Settings > Band > Rook version: pick **0.5 preview**
-(0.4 stays the default). Then either type the hub's address and tap
+In the Rook Android app, Settings > Band: either type the hub's address and tap
 **Sign in**, and tap **Join** for the phone on the Workers page, as above. Or
 scan the hub's QR text (`rook://enroll?…`) with the phone's camera: the app
 opens, names the hub and asks before it signs in. Tap **Start worker** once
