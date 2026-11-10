@@ -11,7 +11,6 @@ caps:
     risk: read
     scope: local
     bind: { op: a }
-    action: { exec: { argv: [/bin/true] } }
   b:
     doc: A bound arg can't also be declared.
     risk: read
@@ -20,14 +19,6 @@ caps:
     bind: { op: b }
     requires: { settings: [missing] }
     run: scripts/b.py:B.run
-  c:
-    doc: Bad regex, join on a non-list, tls.verify from an arg.
-    risk: read
-    scope: local
-    args: { x: { type: str, join: "," }, v: { type: bool } }
-    action:
-      http: { url: "https://h/", tls: { verify: "{{args.v}}" } }
-      fail_if: { regex: "(" }
 records:
   log: { fields: { line: {} }, caps: [list, search, history] }
 hooks:

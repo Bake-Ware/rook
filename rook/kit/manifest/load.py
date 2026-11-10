@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import _yaml
-from .validate import ACTION_KEYS, ACTION_TYPES, Issue, cap_name, provided, record_caps, validate
+from .validate import Issue, cap_name, provided, record_caps, validate
 
 MANIFEST_FILE = "plugin.yaml"
 
@@ -101,9 +101,6 @@ def normalize(data: dict) -> dict:
         _field_defaults(c["args"])
         if c.get("timeout") == "none":
             c["timeout"] = None  # never times out; absent = the host's default
-        unknown = sorted(set(c.get("action", {})) - set(ACTION_TYPES) - set(ACTION_KEYS))
-        if unknown:
-            c["unavailable"] = f"unknown action type: {', '.join(unknown)}"
         caps[cap_name(plugin, rel)] = c
     for name, c in record_caps(out).items():
         caps[name] = {"tags": [], "args": {}, "idempotent": c["risk"] == "read",

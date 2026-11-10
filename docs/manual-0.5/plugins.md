@@ -14,7 +14,7 @@ A hub plugin can also serve a worker's caps: its scripts run on the hub
 and reach the machine through the worker's primitives (`shell.exec`,
 `file.*`, streams). An agent still calls `worker=kaiju cap=battery.status`
 and finds it in kaiju's caps; nothing is installed on kaiju
-([Writing a plugin](authoring.md#a-workers-cap-run-from-the-hub)).
+([Writing a plugin](authoring.md#the-smallest-plugin-a-workers-cap)).
 
 ## The hub's library
 

@@ -1,5 +1,5 @@
-# YAML-only plugin for tests/core2/test_worker_host.py: exec actions, settings,
-# a secret, and caps this worker can't serve.
+# A small plugin for tests/core2/test_worker_host.py: settings, a secret,
+# and caps this worker can't serve.
 manifest: 1
 plugin: echo
 version: 1.0.0
@@ -15,47 +15,40 @@ caps:
     scope: self
     args: { text: { type: str, required: true } }
     aliases: [echo.speak]
-    action:
-      exec: { argv: [echo, "{{args.text}}"] }
+    run: scripts/echo.py:say
   greet:
     doc: Greet someone.
     risk: read
     scope: self
     args: { name: { type: str, default: world } }
-    action:
-      exec: { argv: [echo, "{{settings.greeting}}", "{{args.name}}"] }
+    run: scripts/echo.py:greet
   secret:
     doc: Echo the token (test only).
     risk: read
     scope: self
-    action:
-      exec: { argv: [echo, "{{settings.token}}"] }
+    run: scripts/echo.py:secret
   motto:
     doc: Echo the band motto.
     risk: read
     scope: self
     requires: { settings: [motto] }
-    action:
-      exec: { argv: [echo, "{{settings.motto}}"] }
+    run: scripts/echo.py:motto
   gone:
     doc: Needs a binary nobody has.
     risk: read
     scope: self
     requires: { bins: [rook-no-such-binary] }
-    action:
-      exec: { argv: [rook-no-such-binary] }
+    run: scripts/echo.py:say
   windows:
     doc: Windows only.
     risk: read
     scope: self
     platforms: [windows]
-    action:
-      exec: { argv: [cmd, /c, ver] }
+    run: scripts/echo.py:say
   lamp:
     doc: Needs a lamp.
     risk: write
     scope: local
     effects: [physical]
     requires: { hardware: [lamp] }
-    action:
-      exec: { argv: [echo, "on"] }
+    run: scripts/echo.py:on

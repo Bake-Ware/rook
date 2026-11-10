@@ -6,7 +6,7 @@ Pure loading: no event loop, no hooks, no state beyond the returned
 A cap is **available** when this worker can serve it. It isn't when the
 plugin or the cap names other ``platforms``, ``requires`` a missing ``bins``
 entry, ``hardware`` this worker doesn't report, or ``settings`` that have no
-value, or when its action type is unknown. Unavailable caps stay in the
+value. Unavailable caps stay in the
 manifest (the hub knows them) and are announced with the reason.
 
 ``run:`` targets are ``file.py:func`` or ``file.py:Class.method``. A class is
@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import functools
 import inspect
+import os
+import platform
 import shutil
 import sys
 from dataclasses import dataclass, field
@@ -30,11 +32,19 @@ from jsonschema import Draft202012Validator
 
 from rook.core2 import wire
 from rook.kit._types import parse_duration
-from rook.kit.actions.engine import _local_os as local_os   # one answer for worker.os
 from rook.kit.ctx import KitError, load_run
 from rook.kit.manifest import ManifestError, check, compile_fields, normalize
 
 DEFAULT_TIMEOUT = 15.0   # spec 6.5: a cap without a declared timeout gets 15 s
+
+
+def local_os() -> str:
+    """This machine's worker.os: termux, android, windows, macos or linux."""
+    if "TERMUX_VERSION" in os.environ or "com.termux" in os.environ.get("PREFIX", ""):
+        return "termux"
+    if "ANDROID_ROOT" in os.environ:
+        return "android"
+    return {"Windows": "windows", "Darwin": "macos"}.get(platform.system(), "linux")
 
 
 class LoadError(Exception):
@@ -51,7 +61,6 @@ class Cap:
     name: str
     spec: dict                         # the normalized manifest entry
     func: Callable[..., Any] | None    # run: target or builtin handler
-    action: dict | None                # action: block
     bind: dict                         # fixed args, merged over the caller's
     timeout: float | None              # None: ``timeout: none``, never times out
     validator: Draft202012Validator
@@ -220,12 +229,12 @@ def _bind(data: dict, folder: Path | None, handlers, os_name: str, hardware: set
                 func = handlers.get(name)
                 if func is None:
                     why = "not implemented on this worker"
-            elif why is None and "action" not in spec:
-                why = "no action or run"   # record caps and the like: served elsewhere
+            elif why is None:
+                why = "no run"   # record caps and the like: served elsewhere
             if why is not None:
                 p.unavailable[name] = why
                 continue
-            cap = Cap(name, spec, func, spec.get("action"), dict(spec.get("bind") or {}),
+            cap = Cap(name, spec, func, dict(spec.get("bind") or {}),
                       _timeout(spec), Draft202012Validator(compile_fields(spec.get("args") or {})))
             for alias in [name, *spec.get("aliases", ())]:
                 p.caps[alias] = cap

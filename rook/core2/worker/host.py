@@ -10,7 +10,7 @@
 A request from a band goes through :meth:`Host.handle`: the worker gate
 (security.py) checks its ticket (spec 6.3) and runs it, elevating when the
 cap asks; the host checks args against the manifest, merges ``bind``, takes
-the cap's ``exclusive`` lock, runs the action or ``run:`` function under the
+the cap's ``exclusive`` lock, runs the ``run:`` function under the
 cap's timeout, and turns every failure into an error reply: a plugin never
 takes the worker down. The gate's cap table follows every load and unload.
 
@@ -20,7 +20,7 @@ the plugin's hub-kept settings with secret values already read from the
 hub's vault (castling-enrollment: "Secrets: referenced only by vault name;
 the hub sends the value with each call; never written to worker disk"), and
 ``instance``, an appliance's name, address and instance settings, which
-become ``{{appliance.*}}`` in actions and ``ctx.appliance`` in Python.
+become ``ctx.appliance``.
 
 Replacing a plugin stops the old version's hooks, binds the new one from its
 folder and starts its hooks; if that fails the old one comes back. The
@@ -36,27 +36,26 @@ import hashlib
 import inspect
 import json
 import logging
-import re
-import tempfile
 from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from rook.core2 import rights, wire
-from rook.kit.actions import ActionError, Secret, appliance_values, run_action
-from rook.kit.actions.parse import file_result
-from rook.kit.ctx import Caller, Ctx, FileResult, KitError, invoke
+from rook.kit.ctx import Caller, Ctx, FileResult, KitError, file_result, invoke
 from rook.kit.hooks import Scheduler
 
 from .loader import LoadError, Plugin, load_builtin, load_folder, local_os, merge_settings
-from .security import Call, NeedsElevation, WorkerGate, launch, reply
+from .security import Call, NeedsElevation, WorkerGate, reply
 
 __all__ = ["CallError", "Host", "LoadError"]
 
 log = logging.getLogger("rook.worker.host")
 
-_SETTING_REF = re.compile(r"\{\{\s*settings\.([A-Za-z0-9_-]+)")
-_TMP_REF = re.compile(r"\{\{\s*tmp\s*\}\}")
+
+
+class Secret(str):
+    """A secret value the hub sent with a call: read as a plain string, kept
+    out of the call's error text."""
 
 
 class CallError(Exception):
@@ -331,9 +330,9 @@ class Host:
             # Held until the work really ends: a timed-out sync function keeps
             # its thread, and the device it holds stays locked until it returns.
             work.add_done_callback(lambda _: lock.release())
-        # Async work (actions included) is cancelled on timeout; a sync
+        # Async work is cancelled on timeout; a sync
         # function's thread can't be stopped, so its task is left to finish.
-        stoppable = c.func is None or inspect.iscoroutinefunction(c.func)
+        stoppable = inspect.iscoroutinefunction(c.func)
         try:
             done, _ = await asyncio.wait(
                 {work}, timeout=None if deadline is None else max(0.0, deadline - loop.time()))
@@ -349,7 +348,7 @@ class Host:
             return _jsonable(work.result())
         except (CallError, NeedsElevation, PermissionError):
             raise
-        except (KitError, ActionError) as e:
+        except KitError as e:
             msg = _redact(getattr(e, "message", None) or str(e), shown)
             raise CallError(msg, retry=e.retry) from None
         except asyncio.CancelledError:   # the plugin cancelled itself
@@ -376,28 +375,13 @@ class Host:
                     lease: dict | None = None, settings: dict | None = None,
                     instance: dict | None = None) -> Any:
         settings = self._call_settings(p) if settings is None else settings
-        if c.action is None:
-            ctx = self._ctx(p, caller, shown, cap=c.name, settings=settings)
-            # TODO(castling:wiring): the call context (6.6: hub, call id, risk,
-            # lease) belongs on Caller; until then the lease rides on ctx so
-            # plugin code can pass it to security.launch.
-            ctx.lease = lease
-            ctx.appliance = instance
-            return await invoke(c.func, ctx, args)
-        text = json.dumps(c.action)
-        settings = self._action_settings(p, settings, set(_SETTING_REF.findall(text)))
-        tmp = tempfile.TemporaryDirectory(prefix=f"rook-{p.name}-") if _TMP_REF.search(text) else None
-        try:
-            # cap=: arg join/map and result coercion (manifest 1.1).
-            return await run_action(
-                c.action, args, settings=settings, appliance=instance, worker={"os": self.os_name},
-                secrets=self.resolve_secret, tmp=tmp.name if tmp else None,
-                plugin_dir=str(p.folder) if p.folder else None,
-                plugin_data=str(self._data_dir(p)) if self.data_root else None,
-                timeout=c.timeout, cap=c.spec, launch=partial(launch, lease=lease))
-        finally:
-            if tmp is not None:
-                tmp.cleanup()
+        ctx = self._ctx(p, caller, shown, cap=c.name, settings=settings)
+        # TODO(castling:wiring): the call context (6.6: hub, call id, risk,
+        # lease) belongs on Caller; until then the lease rides on ctx so
+        # plugin code can pass it to security.launch.
+        ctx.lease = lease
+        ctx.appliance = instance
+        return await invoke(c.func, ctx, args)
 
     def _call_settings(self, p: Plugin) -> dict:
         """The plugin's settings for one call with nothing carried: a secret
@@ -410,9 +394,8 @@ class Host:
                  shown: list[str]) -> tuple[dict, dict | None]:
         """(settings, appliance instance) for one call: the plugin's own
         settings with what the hub carried on top, secret ones marked so
-        errors never show them; the instance built as
-        ``appliance_values`` does (host, port and name, its settings over
-        their defaults on top)."""
+        errors never show them; the instance: host, port and name, then its
+        settings over their defaults on top (a port setting wins)."""
         decls = p.manifest.get("settings") or {}
         settings = self._call_settings(p)
         got = (carry or {}).get("settings")
@@ -441,19 +424,7 @@ class Host:
                 shown.append(str(value))
             values[key] = value
         base = {"name": appliance, **{k: inst[k] for k in ("host", "port") if inst.get(k) is not None}}
-        return settings, appliance_values(base, values)
-
-    def _action_settings(self, p: Plugin, settings: Mapping, used: set[str]) -> dict:
-        """Setting values for an action: defaults filled in; a secret one it
-        names must have come from the hub with this call."""
-        out = {}
-        for key, decl in (p.manifest.get("settings") or {}).items():
-            value = settings.get(key, None if _secret(decl) else decl.get("default"))
-            if _secret(decl) and key in used and value is None:
-                raise CallError(f"setting {key} is a secret and the hub sent none: set it on the hub (setting.set)")
-            if value is not None:
-                out[key] = value
-        return out
+        return settings, {**base, **{k: v for k, v in values.items() if v is not None}}
 
     def _ctx(self, p: Plugin, caller: Caller, shown: list[str] | None = None,
              cap: str | None = None, settings: Mapping | None = None) -> Ctx:

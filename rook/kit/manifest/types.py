@@ -53,8 +53,6 @@ _ONLY = {
     "items": {"list", "map"},
     "fields": {"map"},
     "to": {"ref"},
-    # Cap args only: how an action renders a list inside a string.
-    "join": {"list"},
 }
 
 _BOUNDS = {**{t: ("minLength", "maxLength") for t in _TEXT}, "list": ("minItems", "maxItems")}

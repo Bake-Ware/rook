@@ -1,221 +1,130 @@
 # Writing a plugin
 
-A plugin is a thin adapter: it drives software or an API that already
-exists, so an agent gets one clear call instead of a ten-step shell
-struggle. Most plugins are only a `plugin.yaml`. Write code only for a cap
-that needs logic.
+A plugin is a thin adapter: it drives software, a device or an API that
+already exists, so an agent gets one clear call instead of a ten-step shell
+struggle. There is one way to write one: a manifest plus Python scripts that
+run on the hub. Workers only reach things (run a command, read and write
+files, open a stream); the script on the hub knows what to say.
 
 ```
 myplugin/
   plugin.yaml      the manifest: required
-  scripts/*.py     code for run: caps and hooks
+  scripts/*.py     the code each cap runs (run:)
   docs/manual.md   the plugin's manual page
-  pages/*          dashboard pages (hub plugins)
+  pages/*          dashboard pages
   skills/*.md  personas/*.md
 ```
 
-The manifest is the whole contract. The hub validates it, answers "what
-does this cap do" from it with the worker offline, and signs the folder
-when it installs it. You never write `plugin.sig`. Plugins never import each
+The manifest is the whole contract: the hub validates it and answers "what
+does this cap do" from it with the worker offline. Plugins never import each
 other; they call each other's caps.
 
-## The smallest plugin
+## The smallest plugin: a worker's cap
 
 ```yaml
 manifest: 1
-plugin: hello
+plugin: uptime
 version: 0.1.0
+doc: How long a worker has been up.
+runs_on: hub
+platforms: [linux]
+uses: [shell.exec]
 caps:
-  say:
-    doc: Say hello.
-    risk: read
-    scope: local
-    action:
-      exec: { argv: [echo, hello] }
-      parse: text
-```
-
-Only `manifest`, `plugin` and `version` are required at the top. The
-plugin's name is its caps' namespace: this cap is `hello.say`. Every cap
-needs `doc`, `risk` and `scope` ([Caps](caps.md)).
-
-## A config plugin: Deluge
-
-A Deluge plugin with no code (the shipped `torrent` plugin is a hub script now): each cap
-maps to a built-in **action**.
-
-```yaml
-manifest: 1
-plugin: deluge
-version: 1.0.0
-title: Deluge
-doc: List and pause torrents through deluge-console.
-requires: { bins: [deluge-console] }
-settings:
-  console: { default: deluge-console, where: worker, doc: The deluge-console program. }
-caps:
-  list:
-    doc: Every torrent, one line each.
+  get:
+    doc: The worker's uptime line.
+    on: worker
     risk: read
     scope: local
     idempotent: true
-    action:
-      exec: { argv: ["{{settings.console}}", info], env: { LANG: C } }
-      fail_if: { regex: '(?i)^\s*could not connect' }
-      parse: lines
-  pause:
-    doc: Pause one torrent by its hash.
-    risk: write
-    scope: local
-    undo: deluge.resume
-    args:
-      id: { type: str, required: true, pattern: '^[0-9a-f]{40}$', doc: The torrent's 40-hex hash. }
-    action:
-      exec: { argv: ["{{settings.console}}", "pause {{args.id}}"] }
-      parse: text
-  resume:
-    doc: Resume one torrent by its hash.
-    risk: write
-    scope: local
-    args:
-      id: { type: str, required: true, pattern: '^[0-9a-f]{40}$' }
-    action:
-      exec: { argv: ["{{settings.console}}", "resume {{args.id}}"] }
-      parse: text
-check: [deluge.list]
+    run: scripts/uptime.py:get
+docs: { manual: docs/manual.md }
 ```
 
-What each part does:
-
-- `requires.bins`: a worker without `deluge-console` shows these caps as
-  unavailable, with the reason, instead of failing strangely.
-- `settings`: values a person sets per worker (`worker.yaml`) or on the hub
-  ([Settings](settings.md)). Templates read them as `{{settings.console}}`.
-- `exec.argv`: always a list; each item is one argument slot, never a
-  shell string, so an argument can't break out of its slot.
-- `pattern` on `id`: deluge-console re-splits its command on `;`, so the
-  pattern is the injection guard. The validator warns when an argument
-  sits inside a larger argv item without a `pattern`, `enum` or number
-  type (`argv-arg-unguarded`), or could start with `-`
-  (`argv-option-injection`).
-- `fail_if`: deluge-console exits 0 when it can't reach the daemon; a
-  matching line turns that into an error.
-- `parse`: `text`, `lines`, `json`, `kv`, `csv`, `bytes` (a file), or
-  `{regex: "(?P<name>...)", each: true}` for one item per matching line.
-  `returns` picks fields from the result.
-- `undo`: names the cap that reverses this one.
-- `check`: caps called after every install or update; a failure rolls the
-  plugin back by itself. Pick a cap that needs nothing running.
-
-## More from the action engine
-
-Five action types: `exec`, `http` (method, url, headers, query,
-json/form/body, basic or bearer auth, `tls: {verify}`), `tcp` (send a line,
-read the reply), `ws` (one message, one reply) and `file` (read or write).
-
-```yaml
-action:
-  exec:
-    argv: ["{{settings.console}}", info, ["-s", "{{args.state}}"]]   # a nested list is dropped unless its args are set
-    windows: { argv: ["{{settings.console}}.exe", info] }           # per-OS override: linux, windows, macos, android, termux
-    try: [ { argv: [grim, "{{tmp}}/s.png"] }, { argv: [scrot, "{{tmp}}/s.png"] } ]   # fallbacks, in order
-    output: "{{tmp}}/s.png"                                          # return this file instead of stdout
+```python
+# scripts/uptime.py
+async def get(ctx):
+    out = await ctx.call_on(ctx.worker["id"], "shell.exec", argv=["uptime"])
+    if out["code"] != 0:
+        raise ctx.Error(out["stderr"].strip() or "uptime failed")
+    return out["stdout"].strip()
 ```
 
-Template variables: `args.*`, `settings.*`, `appliance.*`, `worker.os`,
-`worker.arch`, `worker.name`, `tmp` (a per-call folder), `plugin.dir`,
-`plugin.data`, and secrets as `{{secret:name}}`. URL parts are escaped and
-headers can't carry newlines. There are no loops, conditionals or
-variables in YAML: logic means `run:`. An `exec` whose program comes from an
-argument must be `risk: exec`. The full rules are on the knowledge page
-`castling-manifest-actions`.
+Only `manifest`, `plugin` and `version` are required at the top. The
+plugin's name is its caps' namespace: this cap is `uptime.get`. Every cap
+needs `doc`, `risk` and `scope` ([Caps](caps.md)) and a `run:` target.
 
-## An appliance: PiKVM
+`on: worker` makes `uptime.get` a cap **of a worker**: the hub lists it
+among the caps of every worker whose `os` is in `platforms` (none: every os)
+and that serves the caps in `uses`, and an agent calls it there
+(`worker=kaiju cap=uptime.get`). The script runs on the hub with
+`ctx.worker` (`{id, name, os}`) and reaches the machine through the
+worker's primitives: `shell.exec`, `shell.env`, `file.*`, and streams
+(`shell.open`; on the Rust worker also `net.open`, `net.udp`,
+`serial.open`). Each of those calls is journaled as its own call, linked to
+the outer one by `parent`. The hub doesn't check for programs on the worker:
+run the command and report the real failure. A cap without `on: worker` in
+a hub plugin is a cap of the hub itself (`worker=rook`).
 
-An appliance plugin targets devices that run no worker; a worker that can
-reach the device carries the call. A cut-down version of the shipped `kvm`
-plugin:
+- An argument goes in its own `argv` slot, never into a shell string. A
+  tool that re-parses its arguments (deluge-console splits on `;`) needs a
+  `pattern` on the arg: that is the injection guard.
+- `settings` are set on the hub ([Settings](settings.md)) and read as
+  `ctx.settings["name"]`, secrets resolved.
+- `undo` names the cap that reverses this one.
+
+## A device: an appliance
+
+A device that runs no worker (a TV, a PiKVM, a bridge on the LAN) is an
+**appliance**: an instance with a name, onboarded with `appliance.add`
+([Workers](workers.md#appliances)), reached through a delegate worker on its
+network. The plugin declares how to find one and its per-device settings;
+the same `on: worker` caps are then called by the device's name, and the
+script gets the instance as `ctx.appliance` (`{name, host, port,
+settings}`, secrets resolved) with the delegate as `ctx.worker`.
 
 ```yaml
 manifest: 1
 plugin: pikvm
 version: 1.0.0
 package: devices
+runs_on: hub
+uses: [net.open, stream.read, stream.write, stream.close]
 appliance:
   discover: [ { http: { url: "https://{{host}}/api/info", match: kvmd } } ]
   settings:
     password: { secret: true, setup: Ask the user for the PiKVM web password. }
-    verify_tls: { type: bool, default: false }
 caps:
-  power.set:
-    doc: Press the ATX power button.
-    risk: write
-    scope: local
-    effects: [physical]
-    args: { action: { type: str, enum: [on, off, off_hard, reset_hard], required: true } }
-    action:
-      http:
-        method: POST
-        url: "https://{{appliance.host}}/api/atx/power"
-        query: { action: "{{args.action}}" }
-        auth: { basic: [admin, "{{appliance.password}}"] }
-        tls: { verify: "{{appliance.verify_tls}}" }
-  screen.get:
-    doc: Current screen as JPEG.
+  power.status:
+    doc: "ATX state: {power, hdd}."
+    on: worker
     risk: read
     scope: local
-    effects: [sensitive]
-    result: { type: file }
-    action:
-      http: { url: "https://{{appliance.host}}/api/streamer/snapshot", auth: { basic: [admin, "{{appliance.password}}"] }, tls: { verify: "{{appliance.verify_tls}}" } }
-      fail_if: { regex: '\A\{\s*"ok"\s*:\s*false' }
-      parse: bytes
-```
-
-- `appliance.discover`: how onboarding finds one (here: `/api/info`
-  answering `kvmd`).
-- `appliance.settings`: per-device values; `secret: true` keeps the
-  password in the vault, fetched per call. `setup` tells the person (or the
-  agent onboarding the device) what to do.
-- Templates read the device as `{{appliance.host}}` and its settings as
-  `{{appliance.<name>}}`; the caps take no host argument.
-- `effects: [physical]` keeps `power.set` from children and guests;
-  `sensitive` marks the screen as private content.
-
-Onboard a device with the hub's `appliance.add` ([Workers](workers.md#appliances));
-its instance values reach the cap with each call. `run:` code reads the
-same values as `ctx.appliance`.
-
-## Code: `run:`
-
-When a cap needs logic, point it at a function:
-
-```yaml
-manifest: 1
-plugin: uptime
-version: 0.1.0
-caps:
-  since:
-    doc: When this machine booted, as Unix time.
-    risk: read
-    scope: local
-    idempotent: true
-    result: { type: map, fields: { booted: { type: time } } }
-    run: scripts/uptime.py:since
+    run: scripts/pikvm.py:status
 ```
 
 ```python
-# scripts/uptime.py
-import time
+# scripts/pikvm.py
+import base64, json
+from rook.kit.net import http, values
 
-def since(ctx):
-    try:
-        with open("/proc/uptime") as f:
-            up = float(f.read().split()[0])
-    except OSError:
-        raise ctx.Error("no /proc/uptime on this machine")
-    return {"booted": int(time.time() - up)}
+async def status(ctx):
+    a = values(ctx.appliance)            # name, host, port, then its settings
+    auth = base64.b64encode(f"admin:{a['password']}".encode()).decode()
+    code, _, body = await http(ctx, ctx.worker["id"], "GET", a["host"], 443, "/api/atx",
+                               headers={"Authorization": "Basic " + auth}, tls=True, verify=False)
+    if code != 200:
+        raise ctx.Error(f"PiKVM answered {code}")
+    leds = json.loads(body)["result"]["leds"]
+    return {"power": leds["power"], "hdd": leds["hdd"]}
 ```
+
+`rook.kit.net` is what the device plugins share: `Stream` (a worker's TCP,
+TLS, UDP or serial stream, read until a condition), `http` (one HTTP/1.1
+request over it) and `WebSocket`. `appliance.discover` hints tell an agent
+what an onboarding search (`appliance.discover` on a worker) should look
+for; `setup` tells the person what to give.
+
+## The call context
 
 A function (sync or async) gets `ctx` and the cap's arguments as keywords,
 and returns JSON-able data, `ctx.file(...)` or `ctx.stream(...)`.
@@ -223,26 +132,29 @@ and returns JSON-able data, `ctx.file(...)` or `ctx.stream(...)`.
 again later may work). `ctx` also carries:
 
 - who asks: `ctx.person`, `ctx.agent`, `ctx.session`, `ctx.why`;
+- `ctx.worker` and `ctx.appliance` for `on: worker` caps;
 - `ctx.settings` (secrets resolved), `ctx.data` (the plugin's own
   folder), `ctx.tmp` (removed after the call), `ctx.log`;
 - `ctx.call(cap, **args)` and `ctx.call_on(worker, cap, **args)`: other
   caps, only those the manifest's `uses:` lists, and never more than the
   caller may do;
 - `ctx.emit(event, payload)` for events the manifest declares in `emits:`;
-- `ctx.records` for the plugin's own records (hub plugins).
+- `ctx.records` for the plugin's own records.
 
-Start processes only through core's launch path,
+A plugin with any `.py` file is treated as code: reviewed and signed like
+code. Keep dependencies few; list them in `requires.python`.
+
+A few plugins still run on a worker, because what they do has to live on
+that machine (`shell`, `file`, the browser, the phone app's plugins): they
+have no `runs_on: hub`, the hub pushes them to a worker, and their scripts
+start processes only through core's launch path,
 `rook.core2.worker.security.launch(argv, getattr(ctx, "lease", None), ...)`,
-never `subprocess` directly, so no plugin can skip the normal-user rule and
-elevation ([Workers](workers.md#normal-user-elevation-on-request)). A
-plugin with any `.py` file is treated as code: reviewed and signed like
-code. Keep dependencies few; list them in `requires.python` and the hub
-resolves them for each worker before it installs.
+never `subprocess` directly ([Workers](workers.md#normal-user-elevation-on-request)).
+A new plugin is a hub script.
 
 ## A hub plugin: records, presets, pages
 
-Plugins can run on the hub (`runs_on: hub`) and declare **records**
-instead of building storage: the kit gives each record type its caps
+A hub plugin can declare **records** instead of building storage: the kit gives each record type its caps
 (`list`, `get`, `search`, `create`, `update`, `archive`, `history`),
 change history and events.
 
@@ -285,49 +197,6 @@ docs: { manual: docs/manual.md }
   have no effects, so a child can use them.
 - `pages.board` is a sandboxed page that may call only `homework.*`
   ([The hub site](dashboard.md)).
-
-## A worker's cap, run from the hub
-
-In a `runs_on: hub` plugin, a cap with `on: worker` is a cap **of a
-worker** whose script runs on the hub. The hub lists it among the caps of
-every worker whose `os` is in the plugin's `platforms` (none: every os)
-and that serves the caps in its `uses`. A call to it runs the script with
-`ctx.worker` (`{id, name, os}`), and the script reaches the machine with
-`ctx.call_on(ctx.worker["id"], "shell.exec", ...)`. Each of those calls is
-journaled as its own call, linked to the outer one by `parent`.
-
-```yaml
-manifest: 1
-plugin: uptime
-version: 0.1.0
-doc: How long a worker has been up.
-runs_on: hub
-platforms: [linux]
-uses: [shell.exec]
-caps:
-  get:
-    doc: The worker's uptime line.
-    on: worker
-    risk: read
-    scope: local
-    run: scripts/uptime.py:get
-```
-
-```python
-# scripts/uptime.py
-async def get(ctx):
-    out = await ctx.call_on(ctx.worker["id"], "shell.exec", argv=["uptime"])
-    if out["code"] != 0:
-        raise ctx.Error(out["stderr"].strip() or "uptime failed")
-    return out["stdout"].strip()
-```
-
-The hub doesn't check for programs on the worker (`requires` isn't read
-for these caps): the script runs the command and reports the real failure.
-With an `appliance:` section the same caps are called by the appliance's
-name: the script runs for its delegate (`ctx.worker`) and gets the
-instance as `ctx.appliance` (`{name, host, port, settings}`, secrets
-resolved).
 
 ## Hooks and events
 
@@ -373,10 +242,8 @@ python -m rook.kit.manifest validate myplugin/        # errors and warnings, the
 python -m rook.kit.manifest diff old/ new/            # breaking changes and the version bump they need
 ```
 
-Then try it on one worker: add the folder to `plugins:` in `worker.yaml`
-and restart that worker, or put it in the hub's library and push it
-([Plugins](plugins.md#installing-a-plugin-on-a-worker)), which loads it
-without a restart and rolls back a failing check. Bump `version` for every
-change you push: a worker refuses the same version with different files.
+Then put the folder in the hub's library ([Plugins](plugins.md#the-hubs-library))
+and restart the hub: its caps show up on every worker it fits. Bump
+`version` for every change.
 Write the plugin's `docs/manual.md` (what each cap does, its settings, its
 quirks) and list it in the manifest as `docs: { manual: docs/manual.md }`.

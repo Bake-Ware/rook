@@ -39,13 +39,7 @@ caps:
     idempotent: false
     elevation: never
     on: hub
-    action:
-      http:
-        method: POST
-        url: "https://api.telegram.org/bot{{secret:telegram-bot}}/sendMessage"
-        json: { chat_id: "{{args.to}}", text: "{{args.text}}" }
-        ok: [200]
-      returns: { id: result.message_id }
+    run: scripts/bot.py:send
   updates.watch:
     doc: Stream incoming messages.
     risk: read
@@ -62,31 +56,12 @@ caps:
     requires: { bins: [curl] }
     deprecated: Use send with a dry run.
     undo: telegram.send
-    action:
-      exec:
-        try: [ { argv: [curl, "-s", "https://api.telegram.org"] }, { argv: [wget, "-qO-", "https://api.telegram.org"] } ]
-        ok_exit: [0]
-        cwd: "{{plugin.data}}"
-        output: "{{tmp}}/out.txt"
-  probe:
-    doc: Raw TCP probe.
-    risk: read
-    scope: external
-    action:
-      tcp: { host: api.telegram.org, port: 443, send: "", until: { bytes: 4 }, tls: true }
-  sock:
-    doc: One websocket round trip.
-    risk: read
-    scope: external
-    action:
-      ws: { url: "wss://example.org/{{worker.name}}", send: "{\"os\": \"{{worker.os}}\"}" }
+    run: scripts/bot.py:ping
   note.read:
     doc: Read the local notes file.
     risk: read
     scope: self
-    action:
-      file: { read: "{{plugin.data}}/notes.txt" }
-      parse: lines
+    run: scripts/bot.py:notes
 records:
   chat:
     fields:

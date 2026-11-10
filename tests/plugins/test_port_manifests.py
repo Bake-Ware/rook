@@ -35,7 +35,7 @@ def test_every_cap_says_risk_scope_and_doc(name):
         # The browser's page actions reach the internet, appliance.test a device on the network: external.
         assert spec["doc"] and spec["risk"] and spec["scope"] in (
             ("local", "external") if name in ("browser", "appliance") else ("local",)), cap
-        assert ("action" in spec) != ("run" in spec), cap
+        assert "run" in spec and "action" not in spec, cap
         if spec["risk"] == "read":
             assert "physical" not in spec.get("effects", ()), cap
         # Can lose unsaved work. A TV switched off loses nothing (tv.power.off).
@@ -43,13 +43,9 @@ def test_every_cap_says_risk_scope_and_doc(name):
             assert "destructive" in spec["effects"], cap
 
 
-CONFIG_ONLY = set()
-
-
-def test_only_config_plugins_are_data():
-    # Config-only plugins are data; a plugin with scripts is code (review, signing).
-    classes = {name: trust_class(PLUGINS / name) for name in PORTS}
-    assert classes == {name: "config" if name in CONFIG_ONLY else "code" for name in PORTS}
+def test_every_port_is_code():
+    # Every cap is a run: script, so every port is code (review, signing).
+    assert {trust_class(PLUGINS / name) for name in PORTS} == {"code"}
 
 
 def test_scripts_start_processes_only_through_launch():

@@ -23,11 +23,13 @@ fakes and the kit never imports the hub.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextvars
 import fnmatch
 import functools
 import inspect
 import logging
+import mimetypes
 import shutil
 import sys
 import tempfile
@@ -40,7 +42,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 from rook.streams import Producer, StreamError, cap_stream
 
-__all__ = ["Caller", "Ctx", "FileResult", "KitError", "allowed", "invoke", "load_run"]
+__all__ = ["Caller", "Ctx", "FileResult", "KitError", "allowed", "file_result", "invoke", "load_run"]
 
 
 class KitError(Exception):
@@ -80,6 +82,14 @@ class FileResult:
     data: bytes | None = None
     name: str | None = None
     mime: str | None = None
+
+
+def file_result(data: bytes, name: str | None = None, mime: str | None = None) -> dict:
+    """A returned file as a cap's result: {name, mime, bytes, data (base64)}."""
+    if not mime and name:
+        mime = mimetypes.guess_type(name)[0]
+    return {"name": name or "output", "mime": mime or "application/octet-stream",
+            "bytes": len(data), "data": base64.b64encode(data).decode("ascii")}
 
 
 def allowed(plugin: str, uses: Iterable[str], cap: str) -> bool:
