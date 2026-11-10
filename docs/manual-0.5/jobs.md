@@ -58,6 +58,10 @@ jobs:
     args: { agent: archivist, text: Sweep the wiki for stale and duplicate pages. }
 ```
 
+The site's **Jobs** page (Hub) lists your jobs with their last run, runs one
+now, turns one on or off, shows a job's recent runs and installs ready-made
+jobs.
+
 More: [the jobs plugin's manual](../../rook/plugins/jobs/docs/manual.md).
 
 ## Timers inside a plugin

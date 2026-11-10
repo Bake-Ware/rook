@@ -51,3 +51,12 @@ Any plugin can ship jobs in its manifest (`jobs:`, each a trigger and a
 `call`). `job.templates` lists them; `job.install template=plugin/job` makes
 one yours (it runs as you). A plugin's `enabled: true` job that runs as a
 persona is installed active; edit it and plugin updates leave it alone.
+
+## The Jobs page
+
+Hub > Jobs lists every job you can see: what triggers it, the call it makes
+and where, who it runs as, its last run (ok, or the error), and an on/off
+switch. Run now starts it; click a job for its recent runs with their result
+or error. Ready-made jobs from plugins are listed under it with Install. The
+page updates as jobs and runs change. Jobs are made by agents (`job.create`),
+not on the page.
