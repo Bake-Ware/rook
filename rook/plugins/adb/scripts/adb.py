@@ -1,6 +1,7 @@
-"""Android devices over adb. Every cap but ``scan`` targets one appliance
-instance (a device cabled to this worker) and checks it is attached and
-authorized first. adb starts through the worker's launch path (spec 7.1).
+"""Android devices over adb, worked out on the hub. Every cap but ``scan``
+targets one appliance instance (a device cabled to its delegate worker) and
+checks it is attached and authorized first. adb runs on the worker the call
+is for (``ctx.worker``: for an appliance its delegate) through shell.exec.
 
 Safety, as in 0.4: only the instance's serial is ever addressed (``adb -s``),
 never "whatever is plugged in"; Rook never authorizes itself (a person taps
@@ -10,16 +11,18 @@ Allow on the device once); nothing runs ``adb root``, ``tcpip``, ``reboot``,
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import io
 import re
 import shlex
-import shutil
 import xml.etree.ElementTree as ET
 
-from rook.core2.worker.security import LaunchRefused, launch
+from PIL import Image
+
 from rook.kit._types import parse_duration
 
 OUTPUT_CAP = 1 << 20        # per stream; a band reply is not a file transfer
-SHOT_CAP = 64 << 20
 _SERIAL = re.compile(r"[A-Za-z0-9._:-]{1,64}")
 _ENV_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 # What adb itself prints when the device goes away mid-command.
@@ -49,8 +52,8 @@ _input_locks: dict[str, asyncio.Lock] = {}
 async def scan(ctx):
     code, out, err, _ = await _adb(ctx, "devices", "-l", timeout=10)
     if code != 0:
-        raise ctx.Error(_text(err or out)[:300] or f"adb devices failed (exit {code})")
-    return {"items": [{"serial": s, **row} for s, row in sorted(parse_devices(_text(out)).items())]}
+        raise ctx.Error((err or out)[:300] or f"adb devices failed (exit {code})")
+    return {"items": [{"serial": s, **row} for s, row in sorted(parse_devices(out).items())]}
 
 
 async def shell_exec(ctx, argv=None, cmd=None, stdin=None, cwd=None, env=None, timeout=30):
@@ -72,15 +75,15 @@ async def shell_exec(ctx, argv=None, cmd=None, stdin=None, cwd=None, env=None, t
     if prefix:
         remote = "\n".join([*prefix, remote])
     serial = await _ready(ctx)
-    # Killing the local adb ends the device-side command too (shell v2).
+    # Killing adb on the worker ends the device-side command too (shell v2).
     code, out, err, cut = await _adb(ctx, "-s", serial, "shell", "-T", "--", remote,
-                                     timeout=timeout, stdin=stdin, cap=OUTPUT_CAP,
+                                     timeout=timeout, stdin=stdin,
                                      on_timeout="ended on the device; partial side effects may have landed")
-    stderr = _text(err)
-    if code == 1 and _GONE.search(stderr):
+    if code == 1 and _GONE.search(err):
         # adb's own failure, not the command's exit 1: the cable went.
         raise ctx.Error(f"{_name(ctx)} left adb while the command ran; partial side effects may have landed")
-    reply = {"code": code, "stdout": _text(out), "stderr": stderr}
+    cut = cut or len(out) > OUTPUT_CAP or len(err) > OUTPUT_CAP
+    reply = {"code": code, "stdout": out[:OUTPUT_CAP], "stderr": err[:OUTPUT_CAP]}
     if cut:
         reply["truncated"] = True
     return reply
@@ -103,25 +106,22 @@ async def battery_status(ctx):
 
 async def screen_capture(ctx, quality=None):
     serial = await _ready(ctx)
-    code, data, err, cut = await _adb(ctx, "-s", serial, "exec-out", "screencap", "-p",
-                                      timeout=30, cap=SHOT_CAP)
+    # shell.exec answers text: the device base64s the PNG (toybox base64).
+    code, out, err, cut = await _adb(ctx, "-s", serial, "exec-out", "screencap -p | base64", timeout=30)
+    try:
+        data = base64.b64decode(out)
+    except (binascii.Error, ValueError):
+        data = b""
     if code != 0 or cut or not data.startswith(b"\x89PNG"):
-        raise ctx.Error(_text(err).strip()[:300] or "screencap failed")
-    png = ctx.tmp / "screen.png"
-    png.write_bytes(data)
-    jpg = await _to_jpeg(ctx, png, 85 if quality is None else quality)
-    # Bytes, not a path: ctx.tmp is gone once the call returns.
-    if jpg is not None:
-        return ctx.file(data=jpg.read_bytes(), name="screen.jpg", mime="image/jpeg")
-    return ctx.file(data=data, name="screen.png", mime="image/png")
+        raise ctx.Error(err.strip()[:300] or ("the screen is too large to send" if cut else "screencap failed"))
+    return ctx.file(data=_to_jpeg(data, 85 if quality is None else quality), name="screen.jpg", mime="image/jpeg")
 
 
 async def ui_screen(ctx, limit=None):
     serial = await _ready(ctx)
     for attempt in range(3):
         code, out, err, _ = await _adb(ctx, "-s", serial, "exec-out", "uiautomator", "dump",
-                                       "/dev/tty", timeout=12, cap=OUTPUT_CAP * 8)
-        out, err = _text(out), _text(err)
+                                       "/dev/tty", timeout=12)
         start = out.find("<?xml")
         # uiautomator gives up while the screen animates ("null root node");
         # a dump only reads, so trying again is safe.
@@ -234,26 +234,25 @@ def ui_items(ctx, xml: str) -> tuple[str | None, list[dict]]:
 # -- adb ----------------------------------------------------------------------
 
 def _serial(ctx) -> str:
-    # The instance the hub carried with the call (spec 5.7): {name, serial}.
-    a = getattr(ctx, "appliance", None) or {}
-    serial = a.get("serial") or a.get("name") or ""
+    # The instance the hub carried with the call (spec 5.7): {name, settings: {serial}}.
+    a = ctx.appliance or {}
+    serial = (a.get("settings") or {}).get("serial") or a.get("name") or ""
     if not _SERIAL.fullmatch(str(serial)):
         raise ctx.Error("adb: this call has no device instance (or its serial is not an adb serial)")
     return serial
 
 
 def _name(ctx) -> str:
-    a = getattr(ctx, "appliance", None) or {}
-    return a.get("name") or _serial(ctx)
+    return (ctx.appliance or {}).get("name") or _serial(ctx)
 
 
 async def _ready(ctx) -> str:
     """The instance's serial, once the device is attached and authorized."""
     serial = _serial(ctx)
     code, out, err, _ = await _adb(ctx, "-s", serial, "get-state", timeout=8)
-    state = _text(out).strip() if code == 0 else ""
+    state = out.strip() if code == 0 else ""
     if not state:
-        low = _text(err).lower()
+        low = err.lower()
         state = "unauthorized" if "unauthorized" in low else "offline" if "offline" in low else "missing"
     if state == "device":
         return serial
@@ -268,11 +267,10 @@ async def _ready(ctx) -> str:
 async def _sh(ctx, remote: str, timeout: float = 15) -> str:
     """A fixed helper command on the device: its stdout, or an error."""
     serial = await _ready(ctx)
-    code, out, err, _ = await _adb(ctx, "-s", serial, "shell", "-T", "--", remote,
-                                   timeout=timeout, cap=OUTPUT_CAP)
+    code, out, err, _ = await _adb(ctx, "-s", serial, "shell", "-T", "--", remote, timeout=timeout)
     if code != 0:
-        raise ctx.Error(_text(err or out).strip()[:300] or f"{remote.split()[0]} failed (exit {code})")
-    return _text(out)
+        raise ctx.Error((err or out).strip()[:300] or f"{remote.split()[0]} failed (exit {code})")
+    return out
 
 
 async def _input(ctx, *commands: tuple[str, ...], timeout: float = 15) -> None:
@@ -283,93 +281,27 @@ async def _input(ctx, *commands: tuple[str, ...], timeout: float = 15) -> None:
 
 
 async def _adb(ctx, *args: str, timeout: float, stdin: str | None = None,
-               cap: int | None = None, on_timeout: str = "") -> tuple[int, bytes, bytes, bool]:
-    """Run adb: ``(code, stdout, stderr, truncated)``. With ``cap`` each stream
-    keeps its first ``cap`` bytes and adb is stopped past that (which ends the
-    command on the device). Killed at ``timeout``, or when the call is cancelled."""
-    binary = shutil.which("adb")
-    if not binary:
-        raise ctx.Error("adb is not installed on this worker")
-    return await _run(ctx, [binary, *args], timeout=timeout, stdin=stdin, cap=cap,
-                      what="adb", on_timeout=on_timeout)
-
-
-async def _run(ctx, argv: list[str], *, timeout: float, stdin: str | None = None,
-               cap: int | None = None, what: str, on_timeout: str = ""):
-    payload = stdin.encode() if stdin is not None else None
+               on_timeout: str = "") -> tuple[int, str, str, bool]:
+    """Run adb on the worker: ``(code, stdout, stderr, truncated)``. Killed at
+    ``timeout`` there, or when the call is cancelled."""
+    req = {"argv": ["adb", *args], "timeout": timeout}
+    if stdin is not None:
+        req["stdin"] = stdin
     try:
-        proc = await launch(
-            argv, getattr(ctx, "lease", None),
-            stdin=asyncio.subprocess.PIPE if payload is not None else asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    except LaunchRefused as e:
-        raise ctx.Error(f"can't start {what}: {e}") from None
-    except OSError as e:
-        raise ctx.Error(f"can't start {what}: {e.strerror or e}") from None
-    cut = False
-
-    async def drain(stream) -> bytes:
-        nonlocal cut
-        buf = bytearray()
-        while chunk := await stream.read(65536):
-            if cap is not None and len(buf) + len(chunk) > cap:
-                buf.extend(chunk[:max(0, cap - len(buf))])
-                if proc.returncode is None:
-                    proc.kill()
-                cut = True
-            else:
-                buf.extend(chunk)
-        return bytes(buf)
-
-    async def feed() -> None:
-        if payload is not None:
-            try:
-                proc.stdin.write(payload)
-                await proc.stdin.drain()
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-            proc.stdin.close()
-
-    async def both():
-        _, out, err = await asyncio.gather(feed(), drain(proc.stdout), drain(proc.stderr))
-        await proc.wait()
-        return out, err
-
-    try:
-        out, err = await asyncio.wait_for(both(), timeout)
-    except TimeoutError:
-        _kill(proc)
-        await proc.wait()
-        raise ctx.Error(f"{what} timed out after {timeout:g}s" + (f"; {on_timeout}" if on_timeout else "")) \
-            from None
-    except asyncio.CancelledError:
-        _kill(proc)
+        out = await ctx.call_on(ctx.worker["id"], "shell.exec", **req)
+    except ctx.Error as e:
+        if e.message == "not found: adb":
+            raise ctx.Error("adb is not installed on this worker") from None
+        if e.message.startswith("timed out after"):
+            raise ctx.Error(f"adb timed out after {timeout:g}s" + (f"; {on_timeout}" if on_timeout else "")) \
+                from None
         raise
-    return proc.returncode or 0, out, err, cut
+    return out["code"], out["stdout"], out["stderr"], bool(out.get("truncated"))
 
 
-def _kill(proc) -> None:
-    if proc.returncode is None:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-
-
-async def _to_jpeg(ctx, png, quality: int):
-    """Downscale and re-encode with ImageMagick when it's here; None if not."""
-    conv = shutil.which("magick") or shutil.which("convert")
-    if not conv:
-        return None
-    out = png.with_suffix(".jpg")
-    try:
-        code, _, _, _ = await _run(ctx, [conv, str(png), "-resize", "1600x1600>",
-                                         "-quality", str(quality), str(out)],
-                                   timeout=15, what="ImageMagick")
-    except ctx.Error:
-        return None
-    return out if code == 0 and out.is_file() and out.stat().st_size else None
-
-
-def _text(data: bytes) -> str:
-    return data.decode("utf-8", errors="replace")
+def _to_jpeg(png: bytes, quality: int) -> bytes:
+    """Re-encoded at full size, so its pixels stay hid.click's x and y."""
+    img = Image.open(io.BytesIO(png))
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, "JPEG", quality=quality)
+    return buf.getvalue()
