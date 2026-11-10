@@ -11,6 +11,7 @@ import json
 import secrets
 
 from rook.kit._types import parse_duration
+from rook.kit.cli import Place, itself, plain, worker
 from rook.kit.ctx import KitError
 
 DEFAULTS = {"claude": {"one": "haiku", "two": "opus", "three": "haiku"}, "codex": {}}
@@ -18,6 +19,7 @@ USAGE = {"input": "input_tokens", "output": "output_tokens"}
 
 
 async def complete(ctx, messages, model=None, max_tokens=None, temperature=None, stop=None):
+    ctx = itself(ctx)
     tool = ctx.settings["tool"]
     model = system_model(ctx.settings, model)
     system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
@@ -35,7 +37,7 @@ async def complete(ctx, messages, model=None, max_tokens=None, temperature=None,
             cmd += ["-m", model] if model else []
             await _run(ctx, cmd + ["-"], f"{system}\n\n{prompt}" if system else prompt, folder.path)
             try:
-                got = await ctx.call_on(_worker(ctx), "file.read", path=last)
+                got = await ctx.call_on(worker(ctx), "file.read", path=last)
                 text = got["content"].strip()
             except KitError:
                 text = ""
@@ -48,6 +50,7 @@ async def complete(ctx, messages, model=None, max_tokens=None, temperature=None,
 
 
 async def models(ctx):
+    ctx = itself(ctx)
     out = await _run(ctx, [_program(ctx), "--version"], "", None)
     return {"tool": ctx.settings["tool"], "version": out.strip()[:200],
             "models": sorted({m for m in systems(ctx.settings).values() if m}), "systems": systems(ctx.settings)}
@@ -80,32 +83,23 @@ def _program(ctx) -> str:
     return str(ctx.settings["program"] or ctx.settings["tool"])
 
 
-def _worker(ctx) -> str:
-    if not ctx.settings["worker"]:
-        raise KitError("set llm-cli.worker to the worker where the CLI is signed in")
-    return ctx.settings["worker"]
-
-
 class _Folder:
     """A fresh folder in the worker's temp folder for one run, removed after."""
 
     def __init__(self, ctx):
-        self.ctx, self.wid = ctx, _worker(ctx)
+        self.ctx, self.wid = ctx, worker(ctx)
 
     def join(self, name: str) -> str:
-        return f"{self.path}{self.sep}{name}"
+        return self.place.join(self.path, name)
 
     async def __aenter__(self):
-        call = self.ctx.call_on
-        self.windows = await call(self.wid, "shell.env", name="OS") == "Windows_NT"
-        self.sep = "\\" if self.windows else "/"
-        root = await call(self.wid, "shell.env", name="TEMP" if self.windows else "TMPDIR", default="/tmp")
-        self.path = f"{root}{self.sep}rook-llm-{secrets.token_hex(8)}"
-        await call(self.wid, "file.write", path=self.join(".rook"), content="", create_parents=True)
+        self.place = place = await Place.of(self.ctx, self.wid)
+        root = await place.env("TEMP" if place.windows else "TMPDIR", "/tmp")
+        self.path = await place.mkdir(place.join(root, f"rook-llm-{secrets.token_hex(8)}"))
         return self
 
     async def __aexit__(self, *exc):
-        rm = ["cmd", "/c", "rmdir", "/s", "/q", self.path] if self.windows else ["rm", "-rf", self.path]
+        rm = ["cmd", "/c", "rmdir", "/s", "/q", self.path] if self.place.windows else ["rm", "-rf", self.path]
         await self.ctx.call_on(self.wid, "shell.exec", argv=rm)
 
 
@@ -113,13 +107,9 @@ async def _run(ctx, cmd: list, stdin: str, cwd: str | None) -> str:
     limit = parse_duration(ctx.settings["timeout"])
     req = {"argv": cmd, "stdin": stdin, "timeout": limit, **({"cwd": cwd} if cwd else {})}
     try:
-        out = await ctx.call_on(_worker(ctx), "shell.exec", **req)
+        out = await ctx.call_on(worker(ctx), "shell.exec", **req)
     except KitError as e:
-        if e.message == f"not found: {cmd[0]}":
-            raise KitError(f"{cmd[0]} not found: install it or set llm-cli.program") from None
-        if e.message.startswith("timed out after"):
-            raise KitError(f"{cmd[0]} took longer than {ctx.settings['timeout']}", retry=True) from None
-        raise
+        raise plain(e, cmd[0], "llm-cli.program", ctx.settings["timeout"]) from None
     if out["code"] != 0:
         tail = (out["stderr"].strip() or out["stdout"].strip())[-300:]
         raise KitError(f"{cmd[0]} failed (exit {out['code']}): {tail or 'no output'}")

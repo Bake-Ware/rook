@@ -43,6 +43,7 @@ class Stream:
         self.closed = False
         self.datagrams: list[tuple[bytes, str | None]] = []
         self.max_bytes: int | None = None
+        self.exit: int | None = None
 
     @classmethod
     async def open(cls, ctx, worker: str, cap: str, **args) -> "Stream":
@@ -90,6 +91,8 @@ class Stream:
                 new = True
             elif ev.get("type") == "status" and ev.get("error"):
                 raise KitError(str(ev["error"]))
+            elif ev.get("type") == "status" and "exit" in (ev.get("data") or {}):
+                self.exit = ev["data"]["exit"]          # a process's exit code (shell.open)
         self.closed = self.closed or bool(got.get("closed"))
         return new
 
