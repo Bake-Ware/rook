@@ -8,7 +8,7 @@ folder and the phone plugins, unpacked from the APK.
 The Kotlin side (Castling.kt, WorkerService.kt) calls, off the main thread:
 
     castling_entry.status(files_dir)                              # JSON: signed in? hub, url, owner, name
-    castling_entry.enroll(files_dir, target, name, listener, force)   # blocks until approved, refused or cancelled
+    castling_entry.enroll(files_dir, target, name, listener, force)   # blocks until let in, refused or cancelled
     castling_entry.cancel()                                       # ends a sign-in that waits for approval
     castling_entry.start(files_dir)                               # blocks until stop()
     castling_entry.stop()
@@ -17,9 +17,9 @@ The Kotlin side (Castling.kt, WorkerService.kt) calls, off the main thread:
 
 ``target`` is the hub's address or the text of its sign-in QR
 (``rook://enroll?url=…&code=…&hub=…``, which the phone's camera hands the
-app as a link). Without a one-time code the hub gives a short code; the
-listener's ``say(text)`` shows it so the person can approve it on the
-dashboard. Enrollment is rook.core2.enroll.device, the same as
+app as a link). Without a one-time code the phone asks to join and waits
+until someone taps Join on the hub's Workers page; the listener's
+``say(text)`` shows that it is waiting. Enrollment is rook.core2.enroll.device, the same as
 ``python -m rook.core2.worker enroll``.
 """
 

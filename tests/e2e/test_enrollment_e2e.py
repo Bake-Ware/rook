@@ -1,5 +1,5 @@
 """Enrollment as real processes (spec 9, 12): an owner hub set up with
-``hub init``, a fresh worker enrolled with a device code the owner approves,
+``hub init``, a fresh worker that asks to join and is let in with one tap,
 then a second hub's band joined as a guest under a ceiling the home hub's
 owner set, and left again."""
 from __future__ import annotations
@@ -29,7 +29,6 @@ class InitHub:
         self.recovery = re.search(r"shows it again\.\n  (\S+)", out)[1]
         cfg = yaml.safe_load((self.dir / "hub.yaml").read_text())
         cfg["log"] = {"level": "info", "format": "json"}
-        cfg.setdefault("settings", {}).setdefault("hub", {"security": "on"})   # these approve device codes
         (self.dir / "hub.yaml").write_text(yaml.safe_dump(cfg))
 
     def start(self) -> Door:
@@ -42,7 +41,7 @@ class InitHub:
         return self.door
 
 
-def test_a_fresh_worker_enrolls_with_a_device_code_and_joins_a_second_band_as_a_guest(request, tmp_path):
+def test_a_fresh_worker_is_let_in_with_one_tap_and_joins_a_second_band_as_a_guest(request, tmp_path):
     b = Band(tmp_path)
     request.node._e2e_band = b
     try:
@@ -59,13 +58,12 @@ def test_a_fresh_worker_enrolls_with_a_device_code_and_joins_a_second_band_as_a_
                                                       "log": {"level": "info", "format": "json"}}))
         enroll = b._spawn("enroll", [sys.executable, "-m", "rook.core2.worker", "--config", "worker.yaml",
                                      "enroll", home.url, "--name", "laptop"], wdir)
-        line = until(lambda: next((ln for ln in enroll.lines if "approve code" in ln), None), START_SECS,
-                     "the device's code")
-        code = re.search(r"approve code ([A-Z]{4}-[A-Z]{4}) on hub ([0-9a-f]{16})", line)
-        assert code[2] == home.hub_id
-        waiting = bake.get("/enroll/pending")["devices"]
-        assert [(d["user_code"], d["name"]) for d in waiting] == [(code[1], "laptop")]
-        assert bake.post("/enroll/approve", {"code": code[1]})["ok"]
+        line = until(lambda: next((ln for ln in enroll.lines if "waiting for someone" in ln), None), START_SECS,
+                     "the device waiting")
+        assert home.hub_id in line
+        waiting = bake.call("hub.joins", worker="rook")["result"]["devices"]
+        assert [d["name"] for d in waiting] == ["laptop"]
+        assert bake.call("hub.join", {"request": waiting[0]["id"]}, worker="rook")["ok"]      # the Join button
         assert enroll.p.wait(START_SECS) == 0, "\n".join(enroll.lines)
         anchor = json.loads((wdir / "anchor.json").read_text())
         assert anchor["hub"] == home.hub_id

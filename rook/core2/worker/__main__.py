@@ -116,7 +116,7 @@ def main(argv=None) -> int:
     en = sub.add_parser("enroll", help="sign this machine in with its home hub (writes the anchor and config)")
     en.add_argument("hub", nargs="?", help="the hub's address, or the text of its enrollment QR")
     en.add_argument("--discover", action="store_true", help="find the hub on the local network")
-    en.add_argument("--code", help="a one-time code from the hub (else a code to approve is shown)")
+    en.add_argument("--code", help="a one-time code from the hub (hub.join_code): joins with no tap")
     en.add_argument("--name", help="this machine's name on the band (default: the config's, else the hostname)")
     en.add_argument("--insecure", action="store_true", help="allow a plain http hub address off this machine")
     en.add_argument("--force", action="store_true", help="enroll again: a new home hub, every other band dropped")
