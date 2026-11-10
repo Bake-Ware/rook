@@ -43,7 +43,7 @@ def test_every_cap_says_risk_scope_and_doc(name):
             assert "destructive" in spec["effects"], cap
 
 
-CONFIG_ONLY = {"battery", "cec", "notification-desktop", "screen-desktop", "torrent"}
+CONFIG_ONLY = {"cec", "notification-desktop", "screen-desktop", "torrent"}
 
 
 def test_only_config_plugins_are_data():
@@ -60,7 +60,8 @@ def test_scripts_start_processes_only_through_launch():
         assert not banned.search(script.read_text()), script
 
 
-@pytest.mark.parametrize("name", PORTS)
+# A plugin that runs on the hub binds nothing on a worker.
+@pytest.mark.parametrize("name", [n for n in PORTS if "\nruns_on: hub\n" not in (PLUGINS / n / "plugin.yaml").read_text()])
 def test_binds_in_the_worker_host(name):
     async def body():
         host = Host(os_name="linux", hardware={"display", "battery"})

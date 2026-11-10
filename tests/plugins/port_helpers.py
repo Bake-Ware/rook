@@ -72,3 +72,37 @@ def bins(tmp_path, monkeypatch):
     if sys.platform == "win32":
         pytest.skip("fake binaries are POSIX scripts")
     return Bins(tmp_path / "bin", monkeypatch)
+
+
+def on_worker(plugin: str, cap: str, args: dict | None = None, *, os_name: str = "linux",
+              appliance: dict | None = None):
+    """Run a hub plugin's ``on: worker`` cap as the hub does, for a worker that
+    serves only the real shell plugin: ``ctx.worker`` names it and
+    ``ctx.call_on`` reaches it. Returns (result, [(cap, args)] it called);
+    a failure raises KitError."""
+    from rook.core2.hub.plugins import HubPlugins
+    from rook.core2.worker.host import CallError, Host
+    from rook.kit.contracts import Contracts
+    from rook.kit.records import RecordStore
+
+    async def body():
+        worker = Host(os_name=os_name)
+        await worker.load(PLUGINS / "shell")
+        seen = []
+
+        async def call(who, cap_, args_, uses=None, target=None, contract=None):
+            assert target == "w1", target
+            seen.append((cap_, args_))
+            try:
+                return {"ok": True, "result": await worker.call(cap_, args_, ME)}
+            except CallError as e:
+                return {"ok": False, "error": e.message}
+        hub = HubPlugins(records=RecordStore(), contracts=Contracts(), call=call)
+        await hub.load(PLUGINS / plugin)
+        try:
+            return await hub.run(cap, args, ME, worker={"id": "w1", "name": "kaiju", "os": os_name},
+                                 appliance=appliance), seen
+        finally:
+            await hub.close()
+            await worker.close()
+    return go(body)

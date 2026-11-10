@@ -122,10 +122,10 @@ class MemoryTransport:
 # -- where the plugin runs ---------------------------------------------------------
 
 def needs_worker(data: dict) -> bool:
-    """A normalized manifest has a worker part: a cap or hooks that run there."""
-    if any(c.get("on") == "worker" for c in data["caps"].values()):
-        return True
-    return data["runs_on"] == "worker" and bool(data.get("hooks"))
+    """A normalized manifest has a worker part: a cap or hooks that run there
+    (a ``runs_on: hub`` plugin's ``on: worker`` caps run on the hub)."""
+    return data["runs_on"] == "worker" and (
+        any(c.get("on") == "worker" for c in data["caps"].values()) or bool(data.get("hooks")))
 
 
 def hub_runs(data: dict) -> bool:
@@ -133,7 +133,7 @@ def hub_runs(data: dict) -> bool:
         return True
     if data.get("routes") or data.get("gate") or data.get("records"):
         return True
-    return data["runs_on"] == "hub" and bool(data.get("hooks"))
+    return data["runs_on"] == "hub" and bool(data["caps"] or data.get("hooks"))
 
 
 def hub_content(data: dict, folder: Path) -> dict:
