@@ -1389,3 +1389,130 @@ def test_appliances_are_onboarded_called_by_name_and_carry_their_settings(hubs, 
         finally:
             await hub.stop()
     run(go())
+
+
+SHELL = """\
+manifest: 1
+plugin: shell
+version: 1.0.0
+doc: Runs commands.
+caps:
+  exec:
+    doc: Run a command.
+    risk: exec
+    scope: local
+    run: scripts/shell.py:exec_
+    args:
+      argv: { type: list, items: { type: str } }
+"""
+
+PROBE = """\
+manifest: 1
+plugin: probe
+version: 1.0.0
+doc: A worker's uptime, worked out on the hub.
+runs_on: hub
+platforms: [linux]
+uses: [shell.exec]
+appliance:
+  settings:
+    level: { type: int, default: 50 }
+caps:
+  uptime:
+    doc: The worker's uptime.
+    on: worker
+    risk: read
+    scope: local
+    run: scripts/probe.py:uptime
+  count:
+    doc: A hub cap beside it.
+    risk: read
+    scope: self
+    run: scripts/probe.py:count
+"""
+
+PROBE_PY = """\
+async def uptime(ctx):
+    out = await ctx.call_on(ctx.worker["id"], "shell.exec", argv=["uptime"])
+    return {"worker": ctx.worker, "appliance": ctx.appliance, "stdout": out["stdout"]}
+
+def count(ctx):
+    return 1
+"""
+
+NEEDY = """\
+manifest: 1
+plugin: needy
+version: 1.0.0
+doc: Needs a primitive no worker serves.
+runs_on: hub
+uses: [serial.open]
+caps:
+  poke:
+    doc: Poke it.
+    on: worker
+    risk: read
+    scope: local
+    run: scripts/needy.py:poke
+"""
+
+
+def test_a_hub_plugin_serves_a_workers_cap_and_an_appliances(hubs, tmp_path):
+    """castling-design, Workers: "workers reach things, the hub knows what to
+    say"; Plugins: "A script can call any worker, check results, branch and
+    loop; every step lands in the journal." """
+    lib = tmp_path / "lib"
+    plugin(lib, "probe", PROBE, {"probe.py": PROBE_PY})
+    plugin(lib, "needy", NEEDY, {"needy.py": "def poke(ctx): return 1\n"})
+    ran = []
+
+    def exec_(msg):
+        ran.append(msg["args"])
+        return {"ok": True, "code": 0, "stdout": "up 3 days", "stderr": ""}
+
+    cfg = config(tmp_path, library=lib, settings={"hub": {"security": "off"}})
+
+    async def go():
+        hub, w, token = await hubs(cfg, extra={SHELL: {"shell.exec": exec_}})
+
+        async def rc(cap, worker, args=None):
+            return (await http(hub, "POST", "/call", {"worker": worker, "cap": cap, "why": WHY,
+                                                      "args": args or {}}, token))[1]
+        try:
+            assert "probe.count" in hub.dispatcher.workers[hub.node].caps
+            assert "probe.uptime" not in hub.dispatcher.workers[hub.node].caps
+            await w.announce(facts={"os": "windows"})
+            await until(lambda: "shell.exec" in hub.dispatcher.workers.get(WID, runtime.Worker("", "", "", {}, {})).caps)
+            assert "probe.uptime" not in hub.dispatcher.workers[WID].caps      # not one of its platforms
+            await w.announce(facts={"os": "linux"})
+            await until(lambda: "probe.uptime" in hub.dispatcher.workers[WID].caps)
+            assert "needy.poke" not in hub.dispatcher.workers[WID].caps         # it serves no serial.open
+            _, caps = await http(hub, "GET", "/caps?worker=kaiju", token=token)
+            assert "probe.uptime" in caps["workers"]["kaiju"]["caps"]
+
+            # Called on the worker as any of its caps; the script runs on the hub.
+            n = len(w.verified)
+            out = await rc("probe.uptime", "kaiju")
+            assert out["ok"], out
+            assert out["result"] == {"worker": {"id": WID, "name": "kaiju", "os": "linux"}, "appliance": None,
+                                     "stdout": "up 3 days"}
+            assert [t["cap"] for t in w.verified[n:]] == ["shell.exec"] and ran == [{"argv": ["uptime"]}]
+            outer = hub.journal.query(call=out["id"])[0]
+            assert (outer["cap"], outer["worker"], outer["why"]) == ("probe.uptime", WID, WHY)
+            [inner] = [e for e in hub.journal.query(cap="shell.exec") if e.get("parent") == out["id"]]
+            assert (inner["worker"], inner["why"], inner["session"]) == (WID, WHY, outer["session"])
+
+            # The same through an appliance: the delegate's primitives, the instance in ctx.
+            out = await rc("appliance.add", "rook", {"name": "den-box", "plugin": "probe", "worker": "kaiju",
+                                                     "host": "10.0.0.7", "settings": {"level": 80}})
+            assert out["ok"], out
+            out = await rc("probe.uptime", "den-box")
+            assert out["ok"], out
+            assert out["result"]["worker"]["id"] == WID
+            assert out["result"]["appliance"] == {"name": "den-box", "host": "10.0.0.7", "settings": {"level": 80}}
+            outer = hub.journal.query(call=out["id"])[0]
+            assert (outer["appliance"], outer["worker"]) == ("den-box", WID)
+            assert [e["cap"] for e in hub.journal.query() if e.get("parent") == out["id"]] == ["shell.exec"]
+        finally:
+            await hub.stop()
+    run(go())
