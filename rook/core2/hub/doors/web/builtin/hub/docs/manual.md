@@ -4,8 +4,9 @@ What the hub knows about itself and its workers.
 
 | Cap | What it does |
 |---|---|
-| `hub.status` | The hub's id, band, core version, doors (and which are closed), plugins and `security` (`off` or `on`); for owners, its people too. |
+| `hub.status` | The hub's id, band, core version, doors (and which are closed), plugins and `security` (`off` or `on`); for owners, its people and agents with their grants too. |
 | `hub.workers` | Every worker the hub knows, online or not: name, id, plugins, when it was last seen, and the caps it can't serve with the reason (`missing bin: ...`). |
+| `hub.sacred` | `{worker, sacred}`: make a machine sacred (every call there that isn't a read is a hard stop: it waits on a person while security is on) or normal again (`sacred: false`). Kept in hub.yaml's `sacred:` list and applied at once; `hub.workers` shows it. |
 | `hub.door` | `{door, open}`: the kill switch. Closing a door (`mcp`, `http`, `web`) makes it refuse everything (calls, sessions, reads, work already started through it); closing `mcp` also refuses agents' tokens on every door. Owners, or a hub component closing one (the security plugin). Kept across restarts. Over HTTP: `POST /doors/<name> {"open": false}`. |
 | `hub.manifests` | The manifest of every plugin in use: the hub's own and those its workers announce. `section` (`jobs`, `personas`, ...) narrows it to the plugins that have that section, and only that section. |
 
@@ -20,9 +21,8 @@ value: on}`; the call is journaled like any other.
   (each journal entry says `security: off`, and `would_hold` lists a
   hard stop it would have waited on); `core.elevate` checks rights and the
   ceiling but no gate; a device code is approved at once as the first
-  owner (the `enroll` journal entry names the machine); a sacred project
-  needs no owner sign-off (reviewers still sign).
-- `on`: gates, holds, device-code approval and sacred sign-off apply.
+  owner (the `enroll` journal entry names the machine).
+- `on`: gates, holds and device-code approval apply.
 
 Either way the vault stays encrypted and secrets stay masked in the journal.
 

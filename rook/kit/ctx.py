@@ -205,7 +205,7 @@ class Ctx:
     @property
     def security_off(self) -> bool:
         """Hub only: the hub has security off (its ``hub.security`` setting), so
-        nothing waits on a person, e.g. no owner sign-off on a sacred project."""
+        nothing waits on a person."""
         check = getattr(self._people, "security_off", None)
         return bool(check and check())
 

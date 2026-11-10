@@ -201,7 +201,7 @@ function machineCard(m) {
       levelTag(m.level),
       h("span", { class: "mg-tag line", text: m.online ? "online" : "offline · " + ago(m.last_seen) })),
     m.description ? h("div", { text: m.description }) : null,
-    levelSeg(m.level, ["sacred", "normal"], (l) => change("trust.sacred", { worker: m.name, sacred: l === "sacred" },
+    levelSeg(m.level, ["sacred", "normal"], (l) => change("hub.sacred", { worker: m.name, sacred: l === "sacred" },
       "Make " + m.name + " " + l + "."), "Level of " + m.name));
 }
 
@@ -215,7 +215,7 @@ function projectCard(p) {
       const said = words.value.trim();
       const args = p.trust_id ? { id: p.trust_id, revision: p.revision, level: l } : { project: p.id, level: l };
       if (said) args.note = said;
-      change(p.trust_id ? "project.trust.update" : "project.trust.create", args, "Make project " + p.title + " " + l + ".");
+      change(p.trust_id ? "trust.level.update" : "trust.level.create", args, "Make project " + p.title + " " + l + ".");
     }, "Level of " + p.title));
 }
 

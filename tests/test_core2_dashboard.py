@@ -879,7 +879,18 @@ def test_every_builtin_cap_is_known():
         "page.list", "page.view", "page.get", "page.create", "page.update", "page.archive", "page.restore", "page.public",
         "page.components", "page.site", "page.start", "hub.status", "hub.workers", "hub.manifests", "hub.door", "hub.setup", "approval.list", "approval.decide", "approval.ask", "approval.get", "journal.search", "setting.list",
         "setting.set", "llm.providers", "llm.models", "llm.status", "token.create", "token.list", "token.revoke",
-        "trust.map", "trust.sacred"}
+        "hub.sacred"}
+
+
+def test_a_sacred_machine_survives_a_restart(tmp_path):
+    from rook.core2.hub.runtime import load_config
+    conf = tmp_path / "hub.yaml"
+    conf.write_text("# head\ndata: data\nband: " + "a" * 32 + "\nusers: {bake: {preset: owner}}\n")
+    cfg = load_config(conf)
+    cfg.sacred = ["kaiju"]
+    assert web_caps._save_sacred(cfg) == str(conf)
+    again = load_config(conf)
+    assert again.sacred == ["kaiju"] and conf.read_text().startswith("# head\n")
 
 
 def test_a_library_plugin_cant_take_a_builtin_name(site, tmp_path):

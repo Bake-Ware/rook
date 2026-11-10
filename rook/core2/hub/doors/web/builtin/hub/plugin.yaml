@@ -21,13 +21,12 @@ settings:
     doc: >-
       off: nothing waits on a person. No gate runs and no call is held (each journal entry says
       security: off), elevation is not gated, device codes are approved at once (journaled with the
-      machine name) and a sacred project needs no owner sign-off. Rights still apply; the vault stays
-      encrypted and secrets stay masked in the journal. on: gates, holds, device-code approval and
-      sacred sign-off apply.
+      machine name). Rights still apply; the vault stays encrypted and secrets stay masked in the
+      journal. on: gates, holds and device-code approval apply.
 
 caps:
   status:
-    doc: "What the hub runs: its id, band, core version, doors, plugins and (for owners) its people."
+    doc: "What the hub runs: its id, band, core version, doors, plugins and (for owners) its people and agents with their grants."
     on: hub
     risk: read
     scope: multi-user
@@ -60,6 +59,18 @@ caps:
     effects: [persists]
     args:
       done: { type: bool, doc: "true: setup is finished; false: not (the site opens on the setup chat again)." }
+    result: { type: map }
+  sacred:
+    doc: >-
+      Make a machine sacred (every call there that isn't a read is a hard stop: it waits on a person while
+      security is on) or normal again. Kept in hub.yaml's sacred list and applied at once.
+    on: hub
+    risk: admin
+    scope: multi-machine
+    effects: [persists]
+    args:
+      worker: { type: str, required: true, doc: "The machine's name or id." }
+      sacred: { type: bool, default: true, doc: "false: normal again." }
     result: { type: map }
   door:
     doc: "The kill switch: close a door (mcp, http, web) so it refuses everything, or open it again. Closing mcp also refuses agents' tokens on every door. Owners, or a hub component closing one (the security plugin); kept across restarts. Also POST /doors/<name>."

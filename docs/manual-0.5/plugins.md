@@ -67,13 +67,12 @@ linked.
 **Core** (the hub itself; always there):
 
 - [approval](../../rook/core2/hub/doors/web/builtin/approval/docs/manual.md): held calls and your answers.
-- [hub](../../rook/core2/hub/doors/web/builtin/hub/docs/manual.md): the hub and its workers.
+- [hub](../../rook/core2/hub/doors/web/builtin/hub/docs/manual.md): the hub and its workers (and which machines are sacred).
 - [journal](../../rook/core2/hub/doors/web/builtin/journal/docs/manual.md): searching the journal.
 - [llm](../../rook/core2/hub/doors/web/builtin/llm/docs/manual.md): which language models the hub can use.
 - [page](../../rook/core2/hub/doors/web/builtin/page/docs/manual.md): the hub site's pages.
 - [setting](../../rook/core2/hub/doors/web/builtin/setting/docs/manual.md): hub and per-person settings.
 - [token](../../rook/core2/hub/doors/web/builtin/token/docs/manual.md): door tokens for agents (an agent mints its own MCP token).
-- [trust](../../rook/core2/hub/doors/web/builtin/trust/docs/manual.md): the trust map: sacred machines, project levels, hard stops and what each agent may do.
 - [backup](../../rook/core2/hub/backup/docs/manual.md): sealed backups of the hub that only the recovery key opens, and restoring one on a new machine.
 
 **Core services** (install on the hub):
@@ -96,6 +95,7 @@ linked.
 - [claudecode](../../rook/plugins/claudecode/docs/manual.md): Claude Code rules written once on the hub.
 - [decide](../../rook/plugins/decide/docs/manual.md): one-pass decision model for typed questions.
 - [huddle](../../rook/plugins/huddle/docs/manual.md): group threads where people and agents in roles work something out.
+- [trust](../../rook/plugins/trust/docs/manual.md): the trust map: sacred machines, project levels, hard stops and what each agent may do.
 
 **Speech** (talk to your agents by voice; `docs/castling-speech.md` says what
 runs where and what the phone app needs):

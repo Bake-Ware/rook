@@ -3,7 +3,7 @@
 
 Each verb becomes a real hub cap with a manifest-shaped spec (doc, risk,
 scope, effects, args in the type language, result) and a ``(ctx, **args)``
-handler, so the trust map can tell ``homework.item.update`` from
+handler, so grants and hard stops can tell ``homework.item.update`` from
 ``homework.item.delete`` and nobody writes an ``action=`` switch again.
 
 Default risks: list/get/search read, create/update/archive write, delete write

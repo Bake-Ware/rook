@@ -47,7 +47,8 @@ hooks:
 def library(tmp_path: Path, packages=()) -> Path:
     lib = make_library(tmp_path)          # the board plugin: a page and caps
     if "agents" in packages:
-        (lib / "agents").symlink_to(PLUGINS / "agents", target_is_directory=True)
+        for folder in ("agents", "trust"):
+            (lib / folder).symlink_to(PLUGINS / folder, target_is_directory=True)
         shutil.copytree(BRAIN, lib / "agents-local")
     if "workbench" in packages:
         for folder in WORKBENCH:
@@ -126,12 +127,15 @@ def test_every_install_combination(tmp_path, combo):
             assert dock["look"]["next"] == "sound" and dock["look"]["name"] == "Rookie"
             assert dock["look"]["chosen"]["name"] is False
 
-        # a lean sidebar: workers, tokens and the trust map (Bake, Nov 9: "Let's bring over the trust
-        # map") (+ what packages add); journal and settings by address.
+        # a lean sidebar: workers and tokens (+ what packages add: the agents package's trust map,
+        # "it matters most to the agents"); journal and settings by address.
         listed = {p["page"]: p for p in (await c.call("page.list"))["result"]["pages"]}
         nav = {pid for pid, p in listed.items() if p["nav"]}
         work = {"task/tasks", "project/projects", "knowledge/knowledge"}
-        assert nav == {"hub/workers", "token/tokens", "trust/trust", "board/board"} | (work if workbench else set())
+        assert nav == {"hub/workers", "token/tokens", "board/board"} | (work if workbench else set()) | \
+            ({"trust/trust"} if agents else set())
+        trust_caps = [cap for cap in hub.plugins.caps() if cap.startswith("trust.")]
+        assert bool(trust_caps) is agents, trust_caps
         assert {"journal/journal", "setting/settings"} <= set(listed) - nav
         for pid in ("journal/journal", "setting/settings"):
             assert (await c.open(pid))["ok"]

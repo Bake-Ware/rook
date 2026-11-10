@@ -100,6 +100,8 @@ sacred: [nas, router]
 
 On a sacred machine, every call that isn't read-only is a **hard stop**:
 it waits for you, and only you can release it ([Holds](holds.md)).
+`hub.sacred {worker, sacred}` changes the list while the hub runs; the
+agents package's **Trust map** page shows and sets it.
 
 ## Appliances
 
