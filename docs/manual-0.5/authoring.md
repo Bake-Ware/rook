@@ -41,7 +41,7 @@ needs `doc`, `risk` and `scope` ([Caps](caps.md)).
 
 ## A config plugin: Deluge
 
-A cut-down version of the shipped `torrent` plugin. No code: each cap
+A Deluge plugin with no code (the shipped `torrent` plugin is a hub script now): each cap
 maps to a built-in **action**.
 
 ```yaml

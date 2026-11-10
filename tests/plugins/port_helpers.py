@@ -75,11 +75,11 @@ def bins(tmp_path, monkeypatch):
 
 
 def on_worker(plugin: str, cap: str, args: dict | None = None, *, os_name: str = "linux",
-              appliance: dict | None = None):
+              appliance: dict | None = None, settings: dict | None = None):
     """Run a hub plugin's ``on: worker`` cap as the hub does, for a worker that
     serves only the real shell and file plugins (the primitives): ``ctx.worker`` names it and
     ``ctx.call_on`` reaches it. Returns (result, [(cap, args)] it called);
-    a failure raises KitError."""
+    a failure raises KitError. ``settings``: the plugin's hub settings."""
     from rook.core2.hub.plugins import HubPlugins
     from rook.core2.worker.host import CallError, Host
     from rook.kit.contracts import Contracts
@@ -98,7 +98,8 @@ def on_worker(plugin: str, cap: str, args: dict | None = None, *, os_name: str =
                 return {"ok": True, "result": await worker.call(cap_, args_, ME)}
             except CallError as e:
                 return {"ok": False, "error": e.message}
-        hub = HubPlugins(records=RecordStore(), contracts=Contracts(), call=call)
+        hub = HubPlugins(records=RecordStore(), contracts=Contracts(), call=call,
+                         settings={plugin: settings} if settings else None)
         await hub.load(PLUGINS / plugin)
         try:
             return await hub.run(cap, args, ME, worker={"id": "w1", "name": "kaiju", "os": os_name},

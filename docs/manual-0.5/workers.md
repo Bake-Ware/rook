@@ -16,7 +16,7 @@ anchor: ./anchor.json          # the home hub: written at enrollment
 name: kaiju
 description: GPU box in the rack (what this machine is for, for people and agents)
 plugins: [../rook/plugins/shell, ../rook/plugins/file]   # plugin folders loaded at start
-settings: { torrent: { console: /usr/bin/deluge-console } }
+settings: { browser: { headless: false } }
 hardware: [gpu, display]       # what this machine has, for plugins that need it
 ```
 
