@@ -51,7 +51,7 @@ caps:
       each file's diff without writing.
     risk: admin
     scope: local
-    effects: [persists]
+    effects: []
     timeout: 60s
     args:
       dry_run: { type: bool, default: false }

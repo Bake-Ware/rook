@@ -61,7 +61,7 @@ records:
       grants: { type: list, items: { type: str }, doc: "Cap patterns it may use as agent:<name> (plus agent.backend, its own turns); acting for a person it gets only what both may, alone only these." }
       backend: { type: str, pattern: "^(default|[a-z][a-z0-9-]*\\.[a-z][a-z0-9_.]*)$", doc: "default (the backend setting's provider) or one provider's cap, e.g. agents-claude-code.turn." }
       model: { type: map, items: { type: str }, doc: "Per-system model: {two: opus, three: haiku}; default: the backend's model and model_three settings." }
-      always_on: { type: bool, doc: "Never sleeps on idle (house, security); others wake when addressed." }
+      always_on: { type: bool, doc: "Never sleeps on idle (house); others wake when addressed." }
       cwd: { type: str, doc: "The folder its backend works in; blank: the backend's own." }
       awake: { type: bool, doc: "Whether it is awake now (the agents plugin keeps this)." }
       dreamed: { type: float, doc: "When its last dream cycle ran (the agents plugin keeps this)." }
@@ -173,7 +173,7 @@ caps:
       Blank done: just say where it stands.
     risk: write
     scope: multi-user
-    effects: [persists]
+    effects: []
     run: scripts/agents.py:setup
     args:
       done: { type: bool, doc: "true: setup is finished; false: not (the site opens on the setup chat again)." }
@@ -186,7 +186,7 @@ caps:
       answered, next is the first one that wasn't (null when all were).
     risk: write
     scope: multi-user
-    effects: [persists]
+    effects: []
     run: scripts/agents.py:look
     args:
       sound: { type: bool, doc: "Rookie's sounds on or off." }
@@ -244,13 +244,6 @@ personas:
     skills: [first-run, reach-the-user, presence, attention, hub-pages, consult, notepad, housekeeping]
     grants: ["*"]
     always_on: true
-  security:
-    title: Security triage
-    summary: Triages security events - blocked calls, exposed secrets, odd journal activity - and proposes safer ways.
-    prompt: personas/security.md
-    skills: [security-triage, consult, notepad]
-    grants: ["*"]
-    always_on: true
 
 skills:
   first-run: skills/first-run.md
@@ -258,7 +251,6 @@ skills:
   presence: skills/presence.md
   consult: skills/consult.md
   notepad: skills/notepad.md
-  security-triage: skills/security-triage.md
   hub-pages: skills/hub-pages.md
   housekeeping: skills/housekeeping.md
 

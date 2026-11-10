@@ -14,7 +14,7 @@ caps:
     doc: "What is playing: each media session's app, package, state (playing, paused, stopped, buffering, ...), title, artist, album, position_s and duration_s, the playing one first; music_active. Without notification access only music_active is known."
     risk: read
     scope: local
-    effects: [personal]
+    effects: []
     idempotent: true
     timeout: 10s
     result: { type: map }

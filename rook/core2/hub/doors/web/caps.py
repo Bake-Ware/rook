@@ -664,8 +664,8 @@ class Settings:
     def run_agent(self, plugin: str, name: str, grants: list | None) -> None:
         self.hub.run_agent(plugin, name, grants)
 
-    def turn_token(self, plugin: str, person: str | None, name: str, seconds: float, tainted: bool = False) -> str:
-        return self.hub.turn_token(plugin, person, name, seconds, tainted)
+    def turn_token(self, plugin: str, person: str | None, name: str, seconds: float) -> str:
+        return self.hub.turn_token(plugin, person, name, seconds)
 
     def end_turn_token(self, token: str) -> None:
         self.hub.end_turn_token(token)

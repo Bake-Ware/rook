@@ -20,6 +20,14 @@ settings: { torrent: { console: /usr/bin/deluge-console } }
 hardware: [gpu, display]       # what this machine has, for plugins that need it
 ```
 
+**Two kinds of worker.** The Python worker (`python -m rook.core2.worker`)
+reads everything above. The `rook-worker` binary (one file, `worker/` in
+the repo; the desktop app has it built in) reads only `data`, `anchor`,
+`name`, `worker_id` and `bands`, and runs no plugins: it serves commands
+and terminals (`shell.*`), files (`file.*`), streams (`stream.*`), TCP
+connections (`net.open`), serial ports (`serial.open`) and `worker.*`.
+Everything else becomes hub scripts that call those.
+
 Plugins listed under `plugins:` are trusted because the machine's owner put
 them there. Plugins the hub pushes are signed for this worker and installed
 under `<data>/plugins` ([Plugins](plugins.md)). The full key list is in the
@@ -38,11 +46,8 @@ Every call runs as the worker's normal account: no `sudo`, no "run as
 administrator". Shell stays fully open within that account. A cap that
 needs administrator rights declares `elevation: upfront` or `may` in its
 manifest; the worker then asks the hub, inside the same call, for a
-15-minute **lease** for that person, agent and session. The hub runs its
-security gates on the call as an admin call first (elevation must pass:
-a flag refuses it, since nothing can wait for you mid-call; ask with
-`elevate` up front and a flag becomes a hold instead), journals it, and the
-call runs elevated (on Linux through `sudo -n`, so the worker's
+15-minute **lease** for that person, agent and session. The hub checks
+rights, journals it, and the call runs elevated (on Linux through `sudo -n`, so the worker's
 account needs a sudoers rule you add yourself). No answer from the hub in
 10 seconds and the call fails: elevation fails closed. Leases end when
 rights change, when the worker loses the hub, or when it restarts. A worker
@@ -83,6 +88,12 @@ own code, its **core**, updates from a release the hub signs:
 4. `update.status` follows a rollout; `update.history` lists past ones.
    `worker.update {version}` on a worker goes back to a core it keeps
    (`installed`: the one installed with the package) by hand.
+
+A `rook-worker` binary takes a release of built files instead: put the
+release job's files in a folder on the hub machine and roll it out with
+`update.rollout {source: <folder>, version: "0.5.1"}`; each worker takes the
+file named in its `facts.artifact` ([Core updates](../castling-updates.md#a-one-file-worker)).
+The desktop app's built-in worker updates with the app.
 
 A worker with terminals or streams open refuses the update (they would
 end): close them and roll out again. The phone app's worker updates with the

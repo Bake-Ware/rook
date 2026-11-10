@@ -2,7 +2,7 @@
 # notify.send and notify.channels; this plugin is the channel behind them).
 # A person links their Discord account with a one-time code (!link CODE in a
 # direct message to the bot), so the hub knows which user is theirs.
-# Inbound messages become discord.message events, tainted (outside content).
+# Inbound messages become discord.message events (outside content).
 # REST API plus the Gateway websocket (identify, heartbeat, reconnect with
 # backoff) over aiohttp; no discord.py. The bot needs the Message Content
 # intent to read messages in servers. Code: scripts/discord.py.
@@ -65,7 +65,7 @@ caps:
     on: hub
     risk: write
     scope: self
-    effects: [persists]
+    effects: []
     run: scripts/discord.py:link
     result: { type: map }
   unlink:

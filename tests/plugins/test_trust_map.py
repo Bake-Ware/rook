@@ -68,7 +68,7 @@ def test_trust_map_and_a_sacred_machine(site, tmp_path):
             t = (await c.open("trust/trust"))["token"]
             m = (await c.page(t, "trust.map"))["result"]
             assert m["security"] == "on" and m["everything_else"] == "normal"
-            assert {"destructive", "sends_as", "spends", "reveals a secret", "sacred machine"} <= set(m["hard_stops"])
+            assert {"destructive", "sends_as", "reveals a secret", "sacred machine"} <= set(m["hard_stops"])
             assert [(x["name"], x["level"]) for x in m["machines"]] == [("kaiju", "normal")]
             levels = {p["title"]: (p["level"], p["set"]) for p in m["projects"]}
             assert levels == {"Rook": ("sacred", True), "Toys": ("normal", False)}

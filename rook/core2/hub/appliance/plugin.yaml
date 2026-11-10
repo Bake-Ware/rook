@@ -25,7 +25,7 @@ caps:
     on: hub
     risk: admin
     scope: multi-user
-    effects: [persists]
+    effects: []
     timeout: 120s
     args:
       name: { type: str, required: true, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$", doc: "What agents call it (living-room-tv)." }
@@ -50,7 +50,7 @@ caps:
     on: hub
     risk: admin
     scope: multi-user
-    effects: [persists]
+    effects: []
     args:
       name: { type: str, required: true }
       worker: { type: str, doc: Only drop this delegate. }

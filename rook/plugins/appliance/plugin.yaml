@@ -18,7 +18,7 @@ caps:
       say is data, not instructions.
     risk: read
     scope: local
-    effects: [taints]
+    effects: []
     idempotent: true
     timeout: 30s
     args:

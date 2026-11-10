@@ -1,7 +1,7 @@
 """The hub service plugins on a real 0.5 hub (rook.core2.hub.runtime, in
 memory band) through the HTTP door: notify.send reaching people on the phone
 (notification.post on their device via ctx.call_on), Telegram and Discord
-(fake Bot API, REST and Gateway), link codes, inbound messages as tainted
+(fake Bot API, REST and Gateway), link codes, inbound messages as
 events, per-person settings, the sends_as hold on posts, and llm.complete
 routed to its chosen provider with the llm.* builtins."""
 
@@ -186,7 +186,7 @@ def test_notify_reaches_people_on_phone_telegram_and_discord(tmp_path):
         assert tg.sent("/sendMessage")[-1]["body"]["chat_id"] == "42"
         assert tg.sent("/sendMessage")[-1]["body"]["text"] == "Deploy waits on you"
 
-        # Inbound: a tainted event naming the linked person.
+        # Inbound: an event naming the linked person.
         tg.push({"message_id": 3, "chat": {"id": 42, "type": "private"}, "from": {"id": 42, "username": "bk"},
                  "text": "what's on today?"})
         ev = await until(lambda: next((e for e in events if e[0] == "telegram.message"), None))

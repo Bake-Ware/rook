@@ -38,7 +38,6 @@ The agents package makes these:
 | Agent | Role |
 |---|---|
 | `house` | your personal assistant and the guardian of the house; knows how and when to reach you, and offers to set up a project when something has become real work. Always on |
-| `security` | triages security events, proposes safer ways. Always on |
 
 With the workbench installed, its team roles come too (the workbench's
 plugins ship them as personas):

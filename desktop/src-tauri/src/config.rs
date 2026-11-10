@@ -42,9 +42,6 @@ pub struct Settings {
     pub start_at_login: bool,
     /// The newest app version already announced, so each is announced once.
     pub update_notified: String,
-    /// The Python that runs this computer's worker (Rook installed in it);
-    /// empty is `python3` (`python` on Windows).
-    pub worker_python: String,
 }
 
 impl Default for Settings {
@@ -63,7 +60,6 @@ impl Default for Settings {
             speak_answers: SPEAK_VOICE.into(),
             start_at_login: false,
             update_notified: String::new(),
-            worker_python: String::new(),
         }
     }
 }
@@ -82,7 +78,6 @@ impl Settings {
         if ![SPEAK_VOICE, SPEAK_ALWAYS, SPEAK_NEVER].contains(&self.speak_answers.as_str()) {
             self.speak_answers = SPEAK_VOICE.into();
         }
-        self.worker_python = self.worker_python.trim().to_string();
         self
     }
 }

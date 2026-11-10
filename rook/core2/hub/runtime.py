@@ -16,11 +16,11 @@ What it owns:
   overrides and plugin grants), agents with rights, bearer tokens (only their
   hashes are stored, in ``<data>/tokens.json``).
 - **Dispatch** (10): one :class:`~rook.core2.hub.dispatch.Dispatcher` every
-  door ends at, with the library's gates; the journal (11) in
+  door ends at; the journal (11) in
   ``<data>/journal.db``.
 - **Plugins**: the trusted library (one folder per plugin) is validated at
   start; the hub hosts the parts that run on it (:mod:`.plugins`: hub caps,
-  records in ``<data>/records.db``, hooks, gates, contract routing).
+  records in ``<data>/records.db``, hooks, contract routing).
 - **Workers** (4.2, 4.3): announces and heartbeats keep a registry. Manifests
   are resolved from the library by hash, else fetched with ``core.manifests``
   and validated; caps stay known while a worker is offline (and across hub
@@ -357,8 +357,8 @@ class Hub:
         self._event_refused: set = set()         # (worker, event, why) logged once
         self._locks: dict[str, asyncio.Lock] = {}
         self._door_sessions: dict[tuple, str] = {}
-        self._component_sessions: dict = {}            # "hub" or (component, tainted) -> session
-        self._acting_sessions: dict[tuple, str] = {}   # (person, agent, tainted) -> session for ctx.call_as
+        self._component_sessions: dict = {}            # "hub" (the system session) or (component,) -> session
+        self._acting_sessions: dict[tuple, str] = {}   # (person, agent) -> session for ctx.call_as
         self._seq = 0
         self._last_announce = 0.0
         self._announce_due = False
@@ -439,7 +439,6 @@ class Hub:
         self.dispatcher.closed_doors = set(_read_doors(self.data))
         self._sync_hub()
         await self._load_library()
-        self.dispatcher.gates = self.plugins.gates()
         self._load_manifests()
         self._load_workers()
         self._sync_hub()
@@ -640,24 +639,18 @@ class Hub:
         self.dispatcher._note("agent", None, by=f"system:plugin.{plugin}", agent=f"agent:{name}",
                               grants=None if grants is None else list(grants))
 
-    def turn_token(self, plugin: str, person: str | None, name: str, seconds: float,
-                   tainted: bool = False) -> str:
+    def turn_token(self, plugin: str, person: str | None, name: str, seconds: float) -> str:
         """A door token for one turn of Rook-run agent ``name``, acting for
         ``person`` (the caller whose message it answers) or alone. Only the
         plugin that runs the agent gets one; it lives ``seconds`` at most, in
-        memory, and :meth:`end_turn_token` kills it when the turn ends. A
-        ``tainted`` turn (answering outside content) taints the pair's door
-        session, where its harness's calls run (6.3: taint only restricts)."""
+        memory, and :meth:`end_turn_token` kills it when the turn ends."""
         if self.identities.run_by.get(name) != plugin:
             raise KitError(f"{plugin} doesn't run agent {name}")
         now, caller = self.clock(), Caller(person, f"agent:{name}")
         try:
-            token = self.identities.add_turn_token(caller, now + max(1.0, seconds), now)
+            return self.identities.add_turn_token(caller, now + max(1.0, seconds), now)
         except ValueError as e:
             raise KitError(str(e)) from None
-        if tainted:
-            self.dispatcher.taint(self._door_session(caller))
-        return token
 
     def end_turn_token(self, token: str) -> None:
         self.identities.revoke_token(token)
@@ -1181,13 +1174,6 @@ class Hub:
             return "payload is not JSON"
         return None
 
-    def taints(self, event: str) -> bool:
-        """Whether ``event`` brings outside content in: a manifest the hub
-        knows declares it with ``taints: true`` (any one: when two disagree,
-        the event taints). The hub's builtin plugins count too (approval.asked)."""
-        known = [*self._norm.values(), *(p.manifest for p in self.plugins.plugins.values())]
-        return any(((m.get("emits") or {}).get(event) or {}).get("taints") for m in known)
-
     async def _send(self, band: str, request: dict) -> dict:
         """Dispatch's ``send``: the hub's own caps run here, the rest go over
         the band and wait for the reply (dispatch owns the timeout)."""
@@ -1218,10 +1204,8 @@ class Hub:
         this process, so it is read, not verified; who it is for comes only
         from it (10.1)."""
         t = req["ticket"]
-        s = self.dispatcher.sessions.get(t["session"])
         caller = KitCaller(person=t.get("person"), agent=t.get("agent"), session=t["session"], band=t["band"],
-                           why=t["why"], owner=self.identities.is_owner(t.get("person")),
-                           tainted=bool(s and s.tainted))     # a call in a tainted session acts on outside content
+                           why=t["why"], owner=self.identities.is_owner(t.get("person")))
         out = {"id": req["id"], "from": t["worker"]}       # the hub answers for the worker it ran a cap of
         # The layers the door put on this call (a page's caps, its authors) and
         # the door ride on its ctx.call; plugin ``uses`` don't compose: each
@@ -1307,7 +1291,7 @@ class Hub:
         and workers' (``core.event``). Hub plugins' ``on:`` hooks, then the
         listeners (the site's live pages)."""
         log.debug("event", extra={"fields": {"event": event, "source": source}})
-        self.plugins.scheduler.publish(event, payload, source, taints=self.taints(event))
+        self.plugins.scheduler.publish(event, payload, source)
         for fn in self.listeners:
             try:
                 fn(event, payload, source)
@@ -1337,7 +1321,7 @@ class Hub:
         """Dispatch a call a hub plugin makes. With a person or agent it runs
         as them: in the call's session, or (a job acting for its creator or
         persona, ``ctx.call_as``) in a session of their own for such calls,
-        apart from their door session so its taint stays there. Without (a hook),
+        apart from their door session. Without (a hook),
         as ``system:plugin.<name>`` (a dot no plugin name has, so no plugin
         can be ``system:hub``). ``uses`` is the plugin's extra layer;
         ``target`` names the worker (``ctx.call_on``, ``ctx.call_as``), else
@@ -1345,22 +1329,18 @@ class Hub:
         call to its chosen provider, so rights match the contract's name. A
         call in the session of the hub-node call it runs inside also carries
         the layers its door put on that call (a page's caps and authors) and
-        the door. A ``tainted`` caller (a hook or job acting on a tainting
-        event) gets a tainted session of its own, apart from its clean one."""
+        the door."""
         if who.person or who.agent:
             caller = Caller(who.person, who.agent)
             if caller.problem():
                 return {"ok": False, "error": f"denied: caller: {caller.problem()}"}
-            sid = who.session or self._session(self._acting_sessions, (caller.person, caller.agent, who.tainted),
-                                               caller, ["*"])
+            sid = who.session or self._session(self._acting_sessions, (caller.person, caller.agent), caller, ["*"])
         else:
             component = f"plugin.{who.plugin}" if who.plugin else "hub"
             caller = Caller(agent=f"system:{component}")
             if who.plugin in self.plugins.plugins:
                 self.identities.add_component(component, {"grants": self.plugins.uses(who.plugin)})
-            sid = self._session(self._component_sessions, (component, who.tainted), caller, ["*"])
-        if who.tainted:     # acting on outside content (a tainting event): its own session, tainted (6.3)
-            self.dispatcher.taint(sid)
+            sid = self._session(self._component_sessions, (component,), caller, ["*"])
         target = target or self._target_for(cap)
         if target is None:
             return {"ok": False, "error": f"no single worker serves {cap}"}
@@ -1491,7 +1471,7 @@ class Hub:
         if h is not None:
             self._emit("hold.created", {"hold": h.name, "cap": h.call.cap, "worker": h.worker.id,
                                         "person": h.caller.person, "agent": h.caller.agent, "why": h.call.why,
-                                        "session": h.session.id, "reasons": h.reasons()}, "core")
+                                        "session": h.session.id, "reasons": h.hard}, "core")
 
     async def start_session(self, caller: Caller, body: dict) -> dict:
         try:
@@ -1569,7 +1549,7 @@ class Hub:
         return {"ok": True, "holds": [
             {"hold": h.name, "kind": "call", "cap": h.call.cap, "worker": h.worker.name, "why": h.call.why,
              "args": h.entry.get("args", h.call.args),
-             "person": h.caller.person, "agent": h.caller.agent, "reasons": h.reasons()}
+             "person": h.caller.person, "agent": h.caller.agent, "reasons": h.hard}
             for h in self.dispatcher.holds.values()
             if owner or (caller.person and h.caller.person == caller.person) or h.caller == caller]
             + self.asks.view(caller)}

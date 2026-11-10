@@ -56,9 +56,7 @@ class KitError(Exception):
 @dataclass(frozen=True)
 class Caller:
     """Who a call runs for. ``plugin`` is set when a plugin acts on its own
-    (hooks, ``ctx.call``); ``owner`` lets records show private rows.
-    ``tainted``: it acts on outside content (an event with ``taints``), so
-    the hub runs its calls in a tainted session (spec 6.3)."""
+    (hooks, ``ctx.call``); ``owner`` lets records show private rows."""
 
     person: str | None = None
     agent: str | None = None
@@ -67,7 +65,6 @@ class Caller:
     why: str = ""
     owner: bool = False
     plugin: str | None = None
-    tainted: bool = False
 
     @property
     def actor(self) -> str:
@@ -240,12 +237,12 @@ class Ctx:
 
     def turn_token(self, agent: str, seconds: float) -> str:
         """Hub only: a door token for one turn of ``agent`` (one this plugin
-        runs), acting for this call's person, or alone when it has none;
-        tainted when this call is. It dies after ``seconds``; end it sooner
+        runs), acting for this call's person, or alone when it has none.
+        It dies after ``seconds``; end it sooner
         with :meth:`end_turn_token`."""
         if self._people is None or not hasattr(self._people, "turn_token"):
             raise KitError("no turn tokens here: the hub mints them")
-        return self._people.turn_token(self.plugin, self.caller.person, agent, seconds, self.caller.tainted)
+        return self._people.turn_token(self.plugin, self.caller.person, agent, seconds)
 
     def end_turn_token(self, token: str) -> None:
         if self._people is not None and hasattr(self._people, "end_turn_token"):

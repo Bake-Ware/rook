@@ -87,7 +87,13 @@ impl Stream {
             .iter()
             .filter(|(k, v)| k.len() <= 64 && (v.is_string() || v.is_number() || v.is_boolean()))
             .take(32)
-            .map(|(k, v)| (k.clone(), v.as_str().map_or(v.clone(), |s| json!(s.chars().take(200).collect::<String>()))))
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    v.as_str()
+                        .map_or(v.clone(), |s| json!(s.chars().take(200).collect::<String>())),
+                )
+            })
             .collect();
         if let Some(band) = self.attrs.get("band") {
             attrs.insert("band".into(), band.clone());
@@ -119,16 +125,29 @@ pub struct Opened {
 impl Streams {
     /// `report(change, row)`: "changed" with the index row, "deleted" with `{id}`.
     pub fn new(report: Report) -> Arc<Streams> {
-        Arc::new(Streams { all: Mutex::new(HashMap::new()), report })
+        Arc::new(Streams {
+            all: Mutex::new(HashMap::new()),
+            report,
+        })
     }
 
     /// A new stream with its producer attached: the caller writes output
     /// with `append` and takes input from `Opened::input`.
-    pub fn open(&self, kind: &str, title: &str, producer: &str, participants: Vec<String>, attrs: Map<String, Value>) -> Opened {
+    pub fn open(
+        &self,
+        kind: &str,
+        title: &str,
+        producer: &str,
+        participants: Vec<String>,
+        attrs: Map<String, Value>,
+    ) -> Opened {
         let id = format!("s_{}", crate::link::hex(&crate::link::random::<8>()));
         let (tx, rx) = mpsc::channel();
         let mut all = self.all.lock().unwrap();
-        let mut closed: Vec<(f64, String)> = all.values().filter_map(|s| s.closed.map(|c| (c, s.id.clone()))).collect();
+        let mut closed: Vec<(f64, String)> = all
+            .values()
+            .filter_map(|s| s.closed.map(|c| (c, s.id.clone())))
+            .collect();
         closed.sort_by(|a, b| a.0.total_cmp(&b.0));
         for (_, old) in closed.iter().take(closed.len().saturating_sub(KEEP_CLOSED - 1)) {
             all.remove(old);
@@ -177,7 +196,13 @@ impl Streams {
         if let (Body::Json(v), "input") = (&body, kind) {
             check_input(v)?;
         }
-        let ev = Event { seq: s.last_seq + 1, at: crate::now(), kind: kind.into(), by: by.into(), body };
+        let ev = Event {
+            seq: s.last_seq + 1,
+            at: crate::now(),
+            kind: kind.into(),
+            by: by.into(),
+            body,
+        };
         if ev.size() - 64 > MAX_EVENT {
             return Err(format!("event larger than {MAX_EVENT} bytes; split it"));
         }
@@ -210,7 +235,13 @@ impl Streams {
         body.insert("state".into(), json!("closed"));
         let now = crate::now();
         s.last_seq += 1;
-        let ev = Event { seq: s.last_seq, at: now, kind: "status".into(), by: by.into(), body: Body::Json(Value::Object(body)) };
+        let ev = Event {
+            seq: s.last_seq,
+            at: now,
+            kind: "status".into(),
+            by: by.into(),
+            body: Body::Json(Value::Object(body)),
+        };
         s.held += ev.size();
         s.events.push_back(ev);
         s.closed = Some(now);
@@ -218,6 +249,22 @@ impl Streams {
         s.dirty = false;
         s.changed.notify_waiters();
         (self.report)("changed", s.summary());
+    }
+
+    /// Every open stream: its producer is asked to end (HUP), then it closes.
+    pub fn close_all(&self) {
+        let open: Vec<String> = self
+            .all
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|s| s.closed.is_none())
+            .map(|s| s.id.clone())
+            .collect();
+        for sid in open {
+            let _ = self.append(&sid, "input", Body::Json(json!({"signal": "HUP"})), "worker");
+            self.close(&sid, "worker", Map::new());
+        }
     }
 
     pub fn open_count(&self) -> usize {
@@ -241,7 +288,13 @@ impl Streams {
         }
     }
 
-    fn read_now(&self, sid: &str, after: u64, limit: u64, types: &Option<Vec<String>>) -> Result<(Value, bool), String> {
+    fn read_now(
+        &self,
+        sid: &str,
+        after: u64,
+        limit: u64,
+        types: &Option<Vec<String>>,
+    ) -> Result<(Value, bool), String> {
         let all = self.all.lock().unwrap();
         let s = all.get(sid).ok_or(format!("no stream {sid}"))?;
         let first = s.events.front().map_or(s.last_seq + 1, |e| e.seq);
@@ -253,7 +306,11 @@ impl Streams {
         }
         let mut out = vec![];
         let mut next = s.last_seq;
-        for ev in s.events.iter().filter(|e| e.seq > after && types.as_ref().is_none_or(|t| t.contains(&e.kind))) {
+        for ev in s
+            .events
+            .iter()
+            .filter(|e| e.seq > after && types.as_ref().is_none_or(|t| t.contains(&e.kind)))
+        {
             out.push(ev.wire());
             if out.len() as u64 >= limit {
                 next = ev.seq;
@@ -261,7 +318,10 @@ impl Streams {
             }
         }
         let empty = out.is_empty();
-        Ok((json!({"events": out, "next": next, "dropped": dropped, "closed": s.closed.is_some()}), empty && s.closed.is_none()))
+        Ok((
+            json!({"events": out, "next": next, "dropped": dropped, "closed": s.closed.is_some()}),
+            empty && s.closed.is_none(),
+        ))
     }
 
     // -- the stream caps (rook/core2/builtin/stream.yaml) ----------------------------
@@ -272,7 +332,13 @@ impl Streams {
         let limit = a.int("limit", 200)?.clamp(1, READ_LIMIT);
         let wait = a.float("wait", 0.0)?;
         let types = a.strings("types")?.filter(|t| !t.is_empty());
-        let changed = self.all.lock().unwrap().get(&sid).map(|s| s.changed.clone()).ok_or(format!("no stream {sid} of yours on this worker"))?;
+        let changed = self
+            .all
+            .lock()
+            .unwrap()
+            .get(&sid)
+            .map(|s| s.changed.clone())
+            .ok_or(format!("no stream {sid} of yours on this worker"))?;
         let woke = changed.notified();
         tokio::pin!(woke);
         woke.as_mut().enable(); // before the read: an append in between is never missed
@@ -313,7 +379,9 @@ impl Streams {
         let sid = a.need("stream")?;
         let attached = {
             let all = self.all.lock().unwrap();
-            let s = all.get(&sid).ok_or(format!("no stream {sid} of yours on this worker"))?;
+            let s = all
+                .get(&sid)
+                .ok_or(format!("no stream {sid} of yours on this worker"))?;
             s.closed.is_none() && s.feed.is_some()
         };
         if attached {
@@ -335,8 +403,13 @@ impl Streams {
 }
 
 fn check_input(body: &Value) -> Result<(), String> {
-    let Value::Object(m) = body else { return Err("an input event needs an object body".into()) };
-    let keys: Vec<&str> = ["text", "signal", "resize"].into_iter().filter(|k| m.contains_key(*k)).collect();
+    let Value::Object(m) = body else {
+        return Err("an input event needs an object body".into());
+    };
+    let keys: Vec<&str> = ["text", "signal", "resize"]
+        .into_iter()
+        .filter(|k| m.contains_key(*k))
+        .collect();
     match keys.as_slice() {
         ["text"] if m["text"].is_string() => Ok(()),
         ["text"] => Err("input text must be a string".into()),
@@ -378,7 +451,10 @@ mod tests {
         for _ in 0..400 {
             s.append(&o.id, "bytes", Body::Bytes(vec![b'x'; 1000]), "p").unwrap();
         }
-        let got = s.read(Args(&args(json!({"stream": o.id, "after": 1, "limit": 1})))).await.unwrap();
+        let got = s
+            .read(Args(&args(json!({"stream": o.id, "after": 1, "limit": 1}))))
+            .await
+            .unwrap();
         assert!(got["dropped"].as_u64().unwrap() > 0);
     }
 
@@ -386,13 +462,19 @@ mod tests {
     async fn input_reaches_the_producer_and_close_ends_it() {
         let s = quiet();
         let o = s.open("terminal", "t", "shell.open", vec![], Map::new());
-        s.write(Args(&args(json!({"stream": o.id, "body": {"text": "ls\r"}}))), "me").unwrap();
+        s.write(Args(&args(json!({"stream": o.id, "body": {"text": "ls\r"}}))), "me")
+            .unwrap();
         assert_eq!(o.input.recv().unwrap(), json!({"text": "ls\r"}));
-        assert!(s.write(Args(&args(json!({"stream": o.id, "body": {"signal": "NOPE"}}))), "me").is_err());
+        assert!(s
+            .write(Args(&args(json!({"stream": o.id, "body": {"signal": "NOPE"}}))), "me")
+            .is_err());
         s.close(&o.id, "p", args(json!({"exit": 0})));
         assert!(o.input.recv().is_err());
         let got = s.read(Args(&args(json!({"stream": o.id})))).await.unwrap();
         assert_eq!(got["closed"], true);
-        assert_eq!(got["events"].as_array().unwrap().last().unwrap()["data"], json!({"exit": 0, "state": "closed"}));
+        assert_eq!(
+            got["events"].as_array().unwrap().last().unwrap()["data"],
+            json!({"exit": 0, "state": "closed"})
+        );
     }
 }

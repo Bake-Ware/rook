@@ -35,7 +35,7 @@ caps:
     doc: Open a huddle with some roles (agent names) about a project.
     risk: write
     scope: multi-user
-    effects: [persists]
+    effects: []
     run: scripts/huddle.py:start
     args:
       title: { type: str, required: true }

@@ -16,8 +16,6 @@ held to the plugin's ``uses`` like ``ctx.call``. ``on`` run functions get
 ``event=`` and ``payload=``, and ``source=`` (the plugin or ``core`` that
 published it) when they take a ``source`` parameter; ``on`` calls get only
 their declared ``args``.
-An event published with ``taints=True`` (outside content) runs its hooks
-with ``ctx.caller.tainted`` set, so whatever they call is tainted too.
 
 The scheduler never lets a hook take down another: errors are logged and the
 next tick runs. :meth:`Scheduler.stop` cancels a plugin's timers and in-flight
@@ -157,16 +155,15 @@ class Scheduler:
 
     # -- events ---------------------------------------------------------------
 
-    def publish(self, event: str, payload: Mapping | None = None, source: str | None = None,
-                taints: bool = False) -> None:
+    def publish(self, event: str, payload: Mapping | None = None, source: str | None = None) -> None:
         """Run every ``on`` hook matching ``event`` (exact or glob). Safe to call
         from any thread; returns at once. Signature fits ``Ctx(emit=...)`` and
         ``RecordStore(emit=...)``."""
         if self._loop is None or self._loop.is_closed():
             return
-        self._loop.call_soon_threadsafe(self._fan_out, event, dict(payload or {}), taints, source)
+        self._loop.call_soon_threadsafe(self._fan_out, event, dict(payload or {}), source)
 
-    def _fan_out(self, event: str, payload: dict, taints: bool = False, source: str | None = None) -> None:
+    def _fan_out(self, event: str, payload: dict, source: str | None = None) -> None:
         for p in list(self._plugins.values()):
             if p.on and self.may_receive is not None and not self.may_receive(p.name, event):
                 continue
@@ -175,7 +172,7 @@ class Scheduler:
                     args = {"event": event, "payload": payload} if target.func else {}
                     if target.func and _takes(target.func, "source"):
                         args["source"] = source
-                    self._spawn(p, self._safe(p, target, args, taints))
+                    self._spawn(p, self._safe(p, target, args))
 
     # -- running --------------------------------------------------------------
 
@@ -189,16 +186,16 @@ class Scheduler:
             await asyncio.sleep(seconds)
             await self._safe(p, target, {})
 
-    async def _safe(self, p: _Plugin, target: _Target, args: dict, tainted: bool = False) -> None:
+    async def _safe(self, p: _Plugin, target: _Target, args: dict) -> None:
         try:
-            await self._run(p, target, args, tainted)
+            await self._run(p, target, args)
         except asyncio.CancelledError:
             raise
         except Exception as e:
             log.warning("%s hook %s failed: %s", p.name, target.label, _message(e))
 
-    async def _run(self, p: _Plugin, target: _Target, args: dict, tainted: bool = False) -> Any:
-        caller = Caller(plugin=p.name, band=p.band, why=f"{p.name} hook: {target.label}", tainted=tainted)
+    async def _run(self, p: _Plugin, target: _Target, args: dict) -> Any:
+        caller = Caller(plugin=p.name, band=p.band, why=f"{p.name} hook: {target.label}")
         if target.cap is not None:
             if not allowed(p.name, (p.manifest or {}).get("uses") or [], target.cap):
                 raise KitError(f"{p.name} may not call {target.cap}: not in its manifest's uses")

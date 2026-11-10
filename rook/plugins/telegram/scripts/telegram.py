@@ -1,5 +1,5 @@
 """The band's Telegram bot: direct messages to linked people, posts to chats,
-link codes, and inbound messages as tainted ``telegram.message`` events.
+link codes, and inbound messages as ``telegram.message`` events.
 
 One long-poll loop (``getUpdates``) runs from the start hook until stop.
 Links are ``link`` kit records (the person, their Telegram user, chat and

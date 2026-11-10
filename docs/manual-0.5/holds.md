@@ -16,20 +16,14 @@ caller's own words: it never grants anything.
 ## What waits for you
 
 **Hard stops** always wait, and only you can release them, from a place
-where you are there yourself: `POST /holds` with your own token. Not an agent acting for you, not the
-security agent, and not a job or plugin acting as you (the
+where you are there yourself: `POST /holds` with your own token. Not an agent acting for you, and not a job or plugin acting as you (the
 `approval.decide` cap never answers a hard stop):
 
 - a cap that erases data for good (`destructive`, or an effect the hub
   doesn't know),
 - revealing a secret's value,
 - sending as you to someone else (`sends_as`),
-- spending money (`spends`),
 - any change on a machine you marked **sacred** ([Workers](workers.md#sacred-machines)).
-
-**Other holds:**
-
-- A security gate may flag a call that looks out of place ([Security plugins](security.md)).
 
 What can't run at all is **denied**, not held: a call outside what the
 person, the agent, the session or the worker's ceiling allows comes back
@@ -48,8 +42,7 @@ and its result is in the journal. Holds don't expire.
 
 When a cap needs administrator rights, the worker asks the hub for a short
 lease inside the same call ([Workers](workers.md#normal-user-elevation-on-request)).
-The hub checks rights and journals it; it does not ask you. Elevation
-should be rare, and the security plugins watch it.
+The hub checks rights and journals it; it does not ask you.
 
 ## For plugin authors
 
