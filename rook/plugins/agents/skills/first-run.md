@@ -135,7 +135,8 @@ feel is done.
    `[[choices: A Linux computer | A Windows PC | An Android phone | Not now]]`.
    Give the one line for each they pick, filled in with this hub's address
    as that machine reaches it:
-   - Linux: `curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/castling/deploy/castling-worker/install.sh | bash -s -- --hub <hub address>`
+   - Linux: `curl -fsSL https://raw.githubusercontent.com/Bake-Ware/rook/castling/deploy/castling-worker/install.sh | bash -s -- --binary <URL of the release's rook-worker-linux-x86_64 (or -aarch64)> --hub <hub address>`
+     (one file, no Python; if no release carries the file yet, say so instead of guessing a URL).
    - Windows: coming soon; say so.
    - Android: the Rook app; in its Settings > Band, sign in to this hub (the phone needs the hub at an https
      address, so this comes after "From anywhere").
