@@ -19,6 +19,8 @@ dependencies = [
     # Plugin manifests (rook.kit.manifest). Pure-Python fallback, so it
     # installs everywhere a worker runs.
     "pyyaml>=6",
+    # The adb plugin turns a phone's screenshot into a JPEG on the hub.
+    "Pillow>=12.3,<13",
 ]
 
 [project.optional-dependencies]
