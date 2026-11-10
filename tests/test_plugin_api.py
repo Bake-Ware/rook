@@ -420,10 +420,6 @@ def test_worker_announce_carries_facts_and_old_keys(tmp_path, monkeypatch):
 
 # -- the hub node + band client ------------------------------------------------
 
-def _node(tmp_path, **kw):
-    from rook.hub.node import HubNode
-    return HubNode(str(tmp_path), entry_points=False, **kw)
-
 
 # -- MCP bridge end to end -------------------------------------------------------
 

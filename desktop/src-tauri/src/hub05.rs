@@ -1,5 +1,5 @@
-//! Talking to a Rook 0.5 hub (castling): the same panel, quick ask and
-//! notifications as `hub` (0.4), over the 0.5 doors.
+//! Talking to the hub: the panel, quick ask and notifications, over its
+//! doors.
 //!
 //! * sign-in: the person's own door token, the one the hub site's sign-in
 //!   page takes. The app posts it to the site's `/login` once, which checks
@@ -12,9 +12,9 @@
 //!   computer's worker, see `worker05`). Calls run as the person, with their
 //!   rights; nothing here widens them.
 //!
-//! The 0.4 MCP path for quick ask isn't needed: the door runs
-//! `agent.chat.send` as the person, and the reply lands in the same session
-//! the dashboard's dock shows.
+//! Quick ask needs no MCP path: the door runs `agent.chat.send` as the
+//! person, and the reply lands in the same session the dashboard's dock
+//! shows.
 
 use crate::hub::{client, first_line, set_cookie_pairs, text, Answer, AttentionItem, HubError, Waiting};
 use crate::sections::{Page, Section};
@@ -346,7 +346,7 @@ mod tests {
             Err(HubError::Agent("Denied: person layer".into()))
         );
         let held = call_result(json!({"ok": false, "held": true, "hold": "brave-otter-lamp"}));
-        assert!(matches!(held, Err(HubError::Agent(m)) if m.contains("brave-otter-lamp") && m.contains("Approvals")));
+        assert!(matches!(held, Err(HubError::Agent(m)) if m.contains("brave-otter-lamp") && m.contains("approval")));
         assert!(call_result(json!({"ok": false})).is_err());
     }
 

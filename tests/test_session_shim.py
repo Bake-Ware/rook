@@ -24,7 +24,6 @@ import pytest_asyncio
 from rook.worker import shim, shim_client, termwire
 from rook.worker.plugins.terminals import TerminalsPlugin
 from rook.worker.plugins.sessions import record
-from rook.remote.term_hub import TermStream
 
 pytestmark = pytest.mark.skipif(os.name != "posix" or sys.platform == "win32",
                                 reason="the session shim is POSIX-only")
@@ -521,27 +520,6 @@ def test_record_marks_local_terminals():
     rec = record("claude", "sid", term=term, live=True)
     assert rec["local"] is True and rec["view"]["terminal"] == "t1" and rec["input"] == "pty"
     assert "local" not in record("claude", "sid", term=dict(term, local=None), live=True)
-
-
-def test_hub_ignores_resizes_of_a_fixed_terminal():
-    calls = []
-
-    class Hub:
-        def spawn(self, coro):
-            calls.append(coro)
-            coro.close()
-
-    s = TermStream(Hub(), "w", "t")
-    from rook.remote.term_hub import Viewer
-    v = Viewer("me")
-    s.viewers[v.id] = v
-    s.holder = v.id
-    s.fixed = True
-    s.control(v, {"op": "resize", "cols": 100, "rows": 40})
-    assert calls == [] and s.state()["fixed"] is True
-    s.fixed = False
-    s.control(v, {"op": "resize", "cols": 100, "rows": 40})
-    assert len(calls) == 1
 
 
 def test_session_shim_plugin_caps(home, monkeypatch):

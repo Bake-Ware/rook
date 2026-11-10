@@ -6,7 +6,7 @@
 //!
 //! With `ROOK_TEST_PYTHON05` (a Python that has Rook 0.5 and telesthete) it
 //! also adds a worker the way "Add this computer" does: it enrolls one in a
-//! temp folder (approving its device code with the token), starts it, waits
+//! temp folder with a one-time code the token gets, starts it, waits
 //! for it on the band and stops it. Give the token of an owner or adult.
 //! `ROOK_TEST_ASK05=1` also asks the house agent (an agent turn: it needs an
 //! `agent.backend` worker on the band).

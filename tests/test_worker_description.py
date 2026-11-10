@@ -7,7 +7,6 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from rook.worker import core, admin
 from rook.worker.metadata import WorkerMetadata
-from rook.remote.bootstrap import CombinedServer
 
 
 @pytest.fixture

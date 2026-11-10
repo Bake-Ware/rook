@@ -166,48 +166,11 @@ SETUP = {"band_name": "b", "band_psk": "alpha-bravo-charlie-delta-echo",
          "hub_public": "hub.example.com:443", "pyz_domain": "hub.example.com"}
 
 
-@pytest.fixture
-def dash(tmp_path, monkeypatch):
-    from rook.remote import setup_store
-    from rook.remote.bootstrap import CombinedServer
-    monkeypatch.setenv("ROOK_SETUP_PATH", str(tmp_path / "setup.json"))
-    monkeypatch.setenv("ROOK_CHAT_DB", str(tmp_path / "chat.db"))
-    monkeypatch.setenv("ROOK_ENROLLMENT_DB", str(tmp_path / "enrollment.db"))
-    monkeypatch.delenv("ROOK_GOOGLE_CLIENT_FILE", raising=False)
-    setup_store.save(SETUP)
-    th = make()
-    monkeypatch.setattr(throttle_mod, "_shared", th)
-    servers = []
-
-    def build(**kw):
-        servers.append(CombinedServer(**kw))
-        return servers[-1]
-    yield SimpleNamespace(build=build, throttle=th)
-    for s in servers:
-        if s._chat:
-            s._chat.close()
-
-
 def _basic(password):
     return {"Authorization": "Basic " + base64.b64encode(f"owner:{password}".encode()).decode()}
 
 
 # -- MCP side --------------------------------------------------------------------
-
-def _guarded_app(throttle, checks):
-    from rook.band_mcp.auth_throttle import ThrottleMiddleware, note
-
-    async def mcp(request):
-        checks.append(1)
-        ok = request.headers.get("authorization") == "Bearer good-token"
-        note(ok)
-        return JSONResponse({"ok": ok}, status_code=200 if ok else 401)
-
-    async def other(request):
-        note(False)                                # unguarded: must not count
-        return JSONResponse({}, status_code=401)
-    return ThrottleMiddleware(Starlette(routes=[Route("/mcp", mcp, methods=["POST"]),
-                                                Route("/jobs/account-api", other)]), throttle)
 
 
 def _client(app, peer="192.0.2.10"):

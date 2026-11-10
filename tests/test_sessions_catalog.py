@@ -10,13 +10,11 @@ from types import SimpleNamespace
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from test_band_management import portal  # noqa: F401 — fixture
 from rook.worker import agent_activity as aa, session_mirror
 from rook.worker.plugins import sessions as sp
 from rook.worker.plugins.claude_history import ClaudeHistoryPlugin
 from rook.worker.plugins.codex_history import CodexHistoryPlugin
 from rook.worker.plugins.terminals import build_argv
-from rook.remote.work_web import legacy_records
 
 C1 = "11111111-1111-4111-8111-111111111111"   # live claude, idle, external
 C2 = "22222222-2222-4222-8222-222222222222"   # closed claude
@@ -434,18 +432,6 @@ async def test_remote_control_and_handoff_together(tmp_path, monkeypatch):
 
 # -- hub merged list ---------------------------------------------------------------------
 
-def test_legacy_records_from_work_sessions_shape():
-    items = [dict(agent="claude", session_id=C1, title="a", cwd="/a", updated=5, active=True,
-                  activity="ready"),
-             dict(agent="codex", session_id=X1, title="b", cwd="/b", updated=4, active=False)]
-    live = [dict(id="t1", harness="codex", resume=X1, running=True, title="codex"),
-            dict(id="t2", harness="shell", running=True, title="sh", session="ws")]
-    recs = {(r["agent"], r["native_id"]): r for r in legacy_records(items, live)}
-    assert recs[("claude", C1)]["state"] == "idle" and recs[("claude", C1)]["input"] == "none"
-    assert recs[("codex", X1)]["state"] == "live" and recs[("codex", X1)]["view"]["terminal"] == "t1"
-    assert recs[("codex", X1)]["input"] == "pty" and recs[("codex", X1)]["origin"] == "rook"
-    assert recs[("shell", "t2")]["links"] == {"work_session": "ws"}
-
 
 class CatalogBand:
     def __init__(self):
@@ -495,85 +481,3 @@ class CatalogBand:
         return {"ok": True, "from": target, "result": result}
 
 
-@pytest.mark.asyncio
-async def test_hub_merges_every_worker_catalog(portal):  # noqa: F811
-    p = portal
-    p.server._band = band = CatalogBand()
-    work = p.account.work_web
-    sid = "c" * 32
-    work.store.save(dict(id=sid, owner=p.uid, worker_id="w1", worker_name="new-host", band="test",
-                         agent="claude", imported=True, source_id=C1, cwd="/srv", title="x",
-                         status="pending", error=""))
-    async with TestClient(TestServer(p.app)) as client:
-        assert (await client.get("/account/work/sessions")).status == 401
-        r = await client.get("/account/work/sessions", headers=p.headers)
-        assert r.status == 200 and "no-store" in r.headers["Cache-Control"]
-        body = await r.json()
-        keys = [s["key"] for s in body["sessions"]]
-        assert set(keys) == {f"w1/claude/{C1}", f"w1/claude/{C2}", "w2/shell/t1", f"w2/codex/{X1}",
-                             f"w2/claude/{C3}", f"w4/claude/{C3}"}
-        # Live and idle first (newest first), then closed.
-        assert [s["state"] for s in body["sessions"]][:4] == ["live", "live", "live", "idle"]
-        assert body["sessions"][0]["key"] == f"w4/claude/{C3}"
-        by = {s["key"]: s for s in body["sessions"]}
-        assert by[f"w1/claude/{C1}"]["worker"] == "new-host"
-        assert by[f"w1/claude/{C1}"]["links"] == {"work_session": sid}
-        assert by[f"w2/claude/{C3}"]["input"] == "inbox" and by[f"w2/claude/{C3}"]["state"] == "live"
-        workers = {w["worker_id"]: w for w in body["workers"]}
-        assert set(workers) == {"w1", "w2", "w4"}
-        assert workers["w1"]["source"] == "sessions.list" and workers["w1"]["counts"] == {"live": 1, "idle": 1}
-        assert workers["w2"]["source"] == "work.sessions"
-        assert body["errors"] == []
-        # A worker that stops answering is served from the cache, marked stale.
-        band.flaky = True
-        body = await (await client.get("/account/work/sessions", headers=p.headers)).json()
-        assert {w["worker_id"]: w["stale"] for w in body["workers"]}["w4"] is True
-        assert f"w4/claude/{C3}" in [s["key"] for s in body["sessions"]]
-        assert body["errors"][0]["worker_id"] == "w4"
-        # Filters and limits pass through to workers and apply to older ones here.
-        band.calls.clear()
-        body = await (await client.get("/account/work/sessions?live_only=1&query=legacy&limit=5",
-                                       headers=p.headers)).json()
-        assert [s["key"] for s in body["sessions"]] == [f"w2/claude/{C3}"]
-        new = next(a for t, c, a in band.calls if t == "w1")
-        assert new == {"limit": 5, "query": "legacy", "live_only": True}
-        body = await (await client.get("/account/work/sessions?worker=mid-host", headers=p.headers)).json()
-        assert [w["worker_id"] for w in body["workers"]] == ["w2"]
-        assert (await client.get("/account/work/sessions?limit=x", headers=p.headers)).status == 400
-        guest = p.store.create_local("guest", "long enough test password")
-        token = p.store.new_session(guest)
-        assert (await client.get("/account/work/sessions",
-                                 headers={"Cookie": "rook_account=" + token})).status == 403
-
-
-@pytest.mark.asyncio
-async def test_hub_classic_resume_opens_a_rook_terminal(portal):  # noqa: F811
-    p = portal
-    work = p.account.work_web
-    calls = []
-
-    class Band:
-        workers = {"host1": dict(worker_id="host1", name="h", band="test", last_seen=time.time(),
-                                 caps=["claude-history.resume", "work.stream.open", "work.stream.read",
-                                       "work.stream.write"])}
-
-        async def call(self, cap, args, target, timeout, identity=None):
-            calls.append((cap, args))
-            assert cap == "work.stream.open"
-            return {"ok": True, "from": target, "result": {"ok": True, "id": "t5"}}
-    p.server._band = Band()
-    sid = "d" * 32
-    work.store.save(dict(id=sid, owner=p.uid, worker_id="host1", worker_name="h", band="test",
-                         agent="claude", imported=True, source_id=C2, cwd="/srv", title="x",
-                         status="pending", error=""))
-    await work.command(sid, {"op": "resume", "id": "resume-terminal-1"})
-    s = work.store.get(sid)
-    assert s["term_id"] == "t5" and s["term_running"] and s["harness"] == "claude"
-    assert not s.get("external_handle") and s["error"] == ""
-    assert calls[0][1]["resume"] == C2 and calls[0][1]["cwd"] == "/srv" and calls[0][1]["session"] == sid
-    # A host without Rook terminals is told to update; no *-history.resume fallback.
-    Band.workers["host1"]["caps"] = ["claude-history.resume"]
-    s.update(term_running=False, term_id=None)
-    work.store.save(s)
-    await work.command(sid, {"op": "resume", "id": "resume-terminal-2"})
-    assert "update its worker" in work.store.get(sid)["error"] and len(calls) == 1

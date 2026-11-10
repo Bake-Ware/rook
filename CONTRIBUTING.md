@@ -63,8 +63,7 @@ steps; see [android/README.md](android/README.md) and the PlatformIO project in
 - **Plugins** live in `rook/worker/plugins/`, export `PLUGIN`, claim one namespace, and
   mark methods with `@capability`. Implement `available()` so the plugin only loads
   where it can actually work.
-- **Windows is a first-class worker.** Open text files with `encoding="utf-8"`, and keep
-  PowerShell installer text in `rook/remote/bootstrap.py` pure ASCII.
+- **Windows is a first-class worker.** Open text files with `encoding="utf-8"`.
 - **Configuration goes through flags and `ROOK_*` environment variables**, documented in
   `--help`. Never commit keys, tokens, passwords,
   hostnames or IP addresses of real machines; use `example.com` and placeholders.

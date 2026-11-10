@@ -512,16 +512,6 @@ def test_ws_url_overrides_the_bridge_url():
     assert t._ws_url == "wss://hub.example.com:443/band"
 
 
-def test_installer_public_ws_url(monkeypatch):
-    from rook.remote import bootstrap
-    monkeypatch.setenv("ROOK_HUB_PUBLIC_WS_URL", "wss://relay.example.com/band")
-    assert bootstrap.public_ws_url() == "wss://relay.example.com/band"
-    monkeypatch.setenv("ROOK_HUB_PUBLIC_WS_URL", "wss://x.example.com/band; rm -rf ~")
-    assert bootstrap.public_ws_url() == ""
-    monkeypatch.delenv("ROOK_HUB_PUBLIC_WS_URL")
-    assert bootstrap.public_ws_url() == ""
-
-
 def _bbw():
     import importlib.util
     import pathlib
