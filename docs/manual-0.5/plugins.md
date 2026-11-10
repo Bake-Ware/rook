@@ -29,7 +29,7 @@ there.
 Owners push a plugin from the library to one worker:
 
 ```sh
-curl -s -H "$H" -d '{"worker":"kaiju","plugin":"torrent","why":"Manage torrents on kaiju."}' \
+curl -s -H "$H" -d '{"worker":"kaiju","plugin":"browser","why":"Drive web pages on kaiju."}' \
   http://127.0.0.1:8740/plugins/push
 ```
 
@@ -51,7 +51,7 @@ What happens:
 4. A failing check rolls the plugin back by itself. To go back by hand:
 
 ```sh
-curl -s -H "$H" -d '{"worker":"kaiju","cap":"core.plugin.rollback","args":{"plugin":"torrent"},"why":"The new version breaks pause."}' \
+curl -s -H "$H" -d '{"worker":"kaiju","cap":"core.plugin.rollback","args":{"plugin":"browser"},"why":"The new version breaks browser.open."}' \
   http://127.0.0.1:8740/call
 ```
 

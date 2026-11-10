@@ -1,15 +1,15 @@
 """llm-cli: one completion through Claude Code (``claude -p --output-format
 json --tools "" --strict-mcp-config --setting-sources project,local``: no
 tools, no MCP servers, none of the signed-in user's hooks; the system
-prompt by --system-prompt) or Codex (``codex
-exec --ephemeral -s read-only -o FILE -``), the prompt on stdin, started
-through the worker's launch path in a per-call temp folder."""
+prompt by --system-prompt) or Codex (``codex exec --ephemeral -s read-only
+-o FILE -``), the prompt on stdin. It runs on the worker named by the
+``worker`` setting (where the CLI is signed in) through shell.exec, in a
+fresh folder in that worker's temp folder, removed afterwards."""
 from __future__ import annotations
 
-import asyncio
 import json
+import secrets
 
-from rook.core2.worker.security import launch
 from rook.kit._types import parse_duration
 from rook.kit.ctx import KitError
 
@@ -22,19 +22,24 @@ async def complete(ctx, messages, model=None, max_tokens=None, temperature=None,
     model = system_model(ctx.settings, model)
     system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
     prompt = transcript([m for m in messages if m["role"] != "system"])
-    if tool == "claude":
-        cmd = [_program(ctx), "-p", "--output-format", "json", "--tools", "", "--strict-mcp-config",
-               "--setting-sources", "project,local", "--no-session-persistence"]
-        cmd += ["--model", model] if model else []
-        cmd += ["--system-prompt", system] if system else []
-        out = await _run(ctx, cmd, prompt)
-        text, usage = _claude(out)
-    else:
-        last = ctx.tmp / "reply.txt"
-        cmd = [_program(ctx), "exec", "--ephemeral", "--skip-git-repo-check", "-s", "read-only", "-o", str(last)]
-        cmd += ["-m", model] if model else []
-        await _run(ctx, cmd + ["-"], f"{system}\n\n{prompt}" if system else prompt)
-        text, usage = (last.read_text(encoding="utf-8").strip() if last.is_file() else ""), {}
+    async with _Folder(ctx) as folder:
+        if tool == "claude":
+            cmd = [_program(ctx), "-p", "--output-format", "json", "--tools", "", "--strict-mcp-config",
+                   "--setting-sources", "project,local", "--no-session-persistence"]
+            cmd += ["--model", model] if model else []
+            cmd += ["--system-prompt", system] if system else []
+            text, usage = _claude(await _run(ctx, cmd, prompt, folder.path))
+        else:
+            last = folder.join("reply.txt")
+            cmd = [_program(ctx), "exec", "--ephemeral", "--skip-git-repo-check", "-s", "read-only", "-o", last]
+            cmd += ["-m", model] if model else []
+            await _run(ctx, cmd + ["-"], f"{system}\n\n{prompt}" if system else prompt, folder.path)
+            try:
+                got = await ctx.call_on(_worker(ctx), "file.read", path=last)
+                text = got["content"].strip()
+            except KitError:
+                text = ""
+            usage = {}
     reason = "end"
     for s in stop or ():
         if s and s in text:
@@ -43,8 +48,8 @@ async def complete(ctx, messages, model=None, max_tokens=None, temperature=None,
 
 
 async def models(ctx):
-    out = await _run(ctx, [_program(ctx), "--version"], "")
-    return {"tool": ctx.settings["tool"], "version": out.decode("utf-8", "replace").strip()[:200],
+    out = await _run(ctx, [_program(ctx), "--version"], "", None)
+    return {"tool": ctx.settings["tool"], "version": out.strip()[:200],
             "models": sorted({m for m in systems(ctx.settings).values() if m}), "systems": systems(ctx.settings)}
 
 
@@ -75,29 +80,54 @@ def _program(ctx) -> str:
     return str(ctx.settings["program"] or ctx.settings["tool"])
 
 
-async def _run(ctx, cmd: list, stdin: str) -> bytes:
-    try:
-        proc = await launch(cmd, getattr(ctx, "lease", None), cwd=str(ctx.tmp), stdin=asyncio.subprocess.PIPE,
-                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    except FileNotFoundError:
-        raise KitError(f"{cmd[0]} not found: install it or set llm-cli.program") from None
-    try:
-        out, err = await asyncio.wait_for(proc.communicate(stdin.encode("utf-8")),
-                                          parse_duration(ctx.settings["timeout"]))
-    except asyncio.TimeoutError:
-        raise KitError(f"{cmd[0]} took longer than {ctx.settings['timeout']}", retry=True) from None
-    finally:
-        if proc.returncode is None:      # timed out or cancelled: no orphan process
-            proc.kill()
-            await proc.wait()
-    if proc.returncode != 0:
-        tail = (err.decode("utf-8", "replace").strip() or out.decode("utf-8", "replace").strip())[-300:]
-        raise KitError(f"{cmd[0]} failed (exit {proc.returncode}): {tail or 'no output'}")
-    return out
+def _worker(ctx) -> str:
+    if not ctx.settings["worker"]:
+        raise KitError("set llm-cli.worker to the worker where the CLI is signed in")
+    return ctx.settings["worker"]
 
 
-def _claude(out: bytes) -> tuple[str, dict]:
-    text = out.decode("utf-8", "replace").strip()
+class _Folder:
+    """A fresh folder in the worker's temp folder for one run, removed after."""
+
+    def __init__(self, ctx):
+        self.ctx, self.wid = ctx, _worker(ctx)
+
+    def join(self, name: str) -> str:
+        return f"{self.path}{self.sep}{name}"
+
+    async def __aenter__(self):
+        call = self.ctx.call_on
+        self.windows = await call(self.wid, "shell.env", name="OS") == "Windows_NT"
+        self.sep = "\\" if self.windows else "/"
+        root = await call(self.wid, "shell.env", name="TEMP" if self.windows else "TMPDIR", default="/tmp")
+        self.path = f"{root}{self.sep}rook-llm-{secrets.token_hex(8)}"
+        await call(self.wid, "file.write", path=self.join(".rook"), content="", create_parents=True)
+        return self
+
+    async def __aexit__(self, *exc):
+        rm = ["cmd", "/c", "rmdir", "/s", "/q", self.path] if self.windows else ["rm", "-rf", self.path]
+        await self.ctx.call_on(self.wid, "shell.exec", argv=rm)
+
+
+async def _run(ctx, cmd: list, stdin: str, cwd: str | None) -> str:
+    limit = parse_duration(ctx.settings["timeout"])
+    req = {"argv": cmd, "stdin": stdin, "timeout": limit, **({"cwd": cwd} if cwd else {})}
+    try:
+        out = await ctx.call_on(_worker(ctx), "shell.exec", **req)
+    except KitError as e:
+        if e.message == f"not found: {cmd[0]}":
+            raise KitError(f"{cmd[0]} not found: install it or set llm-cli.program") from None
+        if e.message.startswith("timed out after"):
+            raise KitError(f"{cmd[0]} took longer than {ctx.settings['timeout']}", retry=True) from None
+        raise
+    if out["code"] != 0:
+        tail = (out["stderr"].strip() or out["stdout"].strip())[-300:]
+        raise KitError(f"{cmd[0]} failed (exit {out['code']}): {tail or 'no output'}")
+    return out["stdout"]
+
+
+def _claude(text: str) -> tuple[str, dict]:
+    text = text.strip()
     try:
         res = json.JSONDecoder().raw_decode(text, text.index("{"))[0] if "{" in text else None
     except ValueError:

@@ -6,14 +6,14 @@ Each plugin setting says in the plugin's manifest where it lives:
 
 | `where` | Set in | Example |
 |---|---|---|
-| `worker` (the default for worker plugins) | the worker's `worker.yaml`, under `settings:` | the path to `deluge-console` on that machine |
+| `worker` (the default for worker plugins) | the worker's `worker.yaml`, under `settings:` | whether the browser on that machine shows its window |
 | `hub` | the hub: `hub.yaml` under `settings:`, or the Settings page | which agent answers the dashboard's chat dock |
 | `person` | each person's own, on the Settings page | which channel `notify` reaches you on |
 
 ```yaml
 # worker.yaml
 settings:
-  torrent: { console: /usr/bin/deluge-console }
+  browser: { headless: false }
 # hub.yaml
 settings:
   agent: { dock: house }

@@ -290,7 +290,9 @@ plugins=$SRC/rook/plugins
 HUB_PLUGINS=$("$PY" - "$plugins" "$LEVEL" <<'EOF'
 import sys, yaml
 from pathlib import Path
-packages = {"minimal": {"core"}, "assistant": {"core", "agents"}, "team": {"core", "agents", "workbench"}}[sys.argv[2]]
+# devices at every level: a worker's caps (many now run on the hub) are part of the minimal level.
+packages = {"minimal": {"core", "devices"}, "assistant": {"core", "devices", "agents"},
+            "team": {"core", "devices", "agents", "workbench"}}[sys.argv[2]]
 for manifest in sorted(Path(sys.argv[1]).glob("*/plugin.yaml")):
     if (yaml.safe_load(manifest.read_text()) or {}).get("package") in packages:
         print(manifest.parent.name)

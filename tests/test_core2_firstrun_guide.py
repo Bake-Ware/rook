@@ -331,13 +331,14 @@ def test_each_level_links_its_packages_plugins_from_their_manifests():
     for m in (REPO / "rook/plugins").glob("*/plugin.yaml"):
         package[m.parent.name] = yaml.safe_load(m.read_text()).get("package")
     minimal, assistant, team = (_level_plugins(level) for level in ("minimal", "assistant", "team"))
-    assert minimal == {p for p, pkg in package.items() if pkg == "core"} and {"notify", "jobs"} <= minimal
+    assert minimal == {p for p, pkg in package.items() if pkg in ("core", "devices")} and {"notify", "jobs"} <= minimal
+    # devices at every level: a worker's caps that run on the hub exist only if its library has them
+    assert {"battery", "adb", "camera", "torrent", "hid-desktop", "screen-desktop"} <= minimal
     assert assistant - minimal == {p for p, pkg in package.items() if pkg == "agents"}
     assert {"agents", "trust", "agents-claude-code", "agents-opencode"} <= assistant
     assert team - assistant == {p for p, pkg in package.items() if pkg == "workbench"}
     assert {"tasks", "projects", "knowledge", "concepts", "whiteboard", "changes"} <= team
-    # device plugins are never a level's: this machine's worker runs shell and file, as before
-    assert not {p for p, pkg in package.items() if pkg == "devices"} & team
+    # this machine's worker runs shell and file, as before
     sh = (REPO / "deploy/install/install.sh").read_text()
     assert 'WORKER_PLUGINS="shell file $BACKEND"' in sh
 

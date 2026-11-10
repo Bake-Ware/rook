@@ -3,21 +3,25 @@
 # that). One completion per call, with tools and MCP servers off:
 # `claude -p --tools "" --strict-mcp-config --setting-sources project,local`
 # (none of the signed-in user's hooks) or
-# `codex exec` in a read-only sandbox, run on the worker where the CLI is
-# signed in, through core's launch path. The conversation goes in on stdin.
+# `codex exec` in a read-only sandbox. The plugin runs on the hub; the CLI
+# runs through shell.exec on the worker named by the `worker` setting (where
+# it is signed in), in a fresh temp folder there. The conversation goes in on
+# stdin.
 # max_tokens and temperature can't be passed to a CLI and are ignored; stop
 # sequences cut the reply here. Code: scripts/cli.py.
 manifest: 1
 plugin: llm-cli
-version: 0.5.0
+version: 0.6.0
 title: Models through Claude Code or Codex
-doc: Completions through a Claude Code or Codex subscription signed in on this worker.
+doc: Completions through a Claude Code or Codex subscription signed in on one of the band's workers.
 package: core
 license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
-platforms: [linux, macos, windows]
+runs_on: hub
+uses: [shell.exec, shell.env, file.read, file.write]
 
 settings:
+  worker: { doc: "The worker (name) where the CLI is signed in; calls fail until it is set." }
   tool: { enum: [claude, codex], default: claude, doc: "Which CLI: claude (Claude Code) or codex." }
   program: { type: path, doc: "The CLI's program: a name on PATH or a full path; blank: claude or codex." }
   model_one: { doc: "System One's model; blank: haiku for claude, the CLI's default for codex." }
@@ -53,7 +57,7 @@ caps:
         stop_reason: { type: str }
         usage: { type: map, items: { type: int } }
   models:
-    doc: Whether the CLI runs here (its version) and the System One/Two/Three choices.
+    doc: Whether the CLI runs on its worker (its version) and the System One/Two/Three choices.
     risk: exec
     scope: local
     idempotent: true

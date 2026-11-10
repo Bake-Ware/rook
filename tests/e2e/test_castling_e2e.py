@@ -76,13 +76,13 @@ def test_caps_stay_known_while_the_worker_is_offline_and_across_hub_restarts(fre
     assert [e["args"]["text"] for e in calls] == ["before", "after"]
 
 
-def test_real_plugin_ports_say_what_this_machine_can_serve(band):
-    """battery runs on the hub for the real worker: listed among its caps, it
-    runs the OS's tool there through shell.exec and answers what that tool
-    said. torrent, on the worker, says why a cap it can't serve is unavailable."""
+def test_real_plugin_ports_run_on_the_hub_for_the_real_worker(band):
+    """battery and torrent run on the hub for the real worker: listed among
+    its caps, they run the OS's tools there through shell.exec and answer
+    what those tools said (no battery, no deluge-console: their own failure)."""
     c = band.caps()
     assert {"battery.status", "torrent.version", "torrent.add"} <= set(c["caps"])
-    assert "battery.status" not in c.get("unavailable", {})
+    assert not {"battery.status", "torrent.version"} & set(c.get("unavailable", {}))
     out = band.owner.call("battery.status")
     if out["ok"]:
         assert set(out["result"]) == {"percent", "status"}, out
@@ -90,13 +90,11 @@ def test_real_plugin_ports_say_what_this_machine_can_serve(band):
         assert not out["error"].startswith("unavailable"), out
     steps = [e for e in band.owner.get("/journal?cap=shell.exec&limit=50")["entries"] if e.get("parent") == out["id"]]
     assert steps and {e["cap"] for e in steps} == {"shell.exec"}, steps
+    v = band.owner.call("torrent.version")
     if shutil.which("deluge-console"):
-        v = band.owner.call("torrent.version")
         assert v["ok"] and v["result"]["deluge"], v
     else:
-        assert c["unavailable"]["torrent.version"] == "missing bin: deluge-console"
-        assert band.owner.call("torrent.version")["error"] == \
-            "unavailable: torrent.version: missing bin: deluge-console"
+        assert v["error"] == "not found: deluge-console", v
 
 
 def test_shell_and_file_run_on_the_real_worker(band, tmp_path):
