@@ -45,7 +45,7 @@ rm -rf "$SRC.old"
 chmod -R go-w "$SRC"
 say "venv: $VENV"
 [ -x "$PY" ] || uv venv -q --python 3.12 "$VENV"
-uv pip install -q --python "$PY" -e "$SRC[manifest,desktop]"
+uv pip install -q --python "$PY" -e "$SRC[manifest]"
 
 # -- the units ------------------------------------------------------------------------
 say "units: ${UNITS[*]} (not enabled at boot)"

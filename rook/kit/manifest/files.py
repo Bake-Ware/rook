@@ -15,7 +15,7 @@ _PAGE = {".html", ".htm", ".js", ".mjs", ".css", ".svg", ".png", ".jpg", ".jpeg"
 
 def canonical_json(data) -> bytes:
     """Sorted keys, no whitespace, ASCII-escaped: the form manifests are
-    hashed and signed in (same rules as rook.core.authz.canonical)."""
+    hashed and signed in."""
     return json.dumps(data, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=True, allow_nan=False).encode("ascii")
 

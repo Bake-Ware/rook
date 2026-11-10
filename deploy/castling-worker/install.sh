@@ -91,13 +91,11 @@ say "venv: $VENV"
 if [ ! -x "$PY" ]; then
     if [ -n "$PYTHON" ]; then "$PYTHON" -m venv "$VENV"; else uv venv -q --python 3.12 "$VENV"; fi
 fi
-extras=""
-{ [ -n "${WAYLAND_DISPLAY:-}" ] || [ -n "${DISPLAY:-}" ]; } && extras="[desktop]"
 if [ -x "$VENV/bin/pip" ]; then
     "$VENV/bin/pip" install -q --upgrade pip >/dev/null 2>&1 || true
-    "$VENV/bin/pip" install -q "$SRC$extras"
+    "$VENV/bin/pip" install -q "$SRC"
 else
-    uv pip install -q --python "$PY" "$SRC$extras"
+    uv pip install -q --python "$PY" "$SRC"
 fi
 rm -rf "$SRC.old"
 
