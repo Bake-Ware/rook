@@ -33,7 +33,6 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../../scripts/install-hub.sh": "install-hub.sh",
       "../../android/app/src/main/assets/wakeword/melspectrogram.onnx": "wakeword/melspectrogram.onnx",
       "../../android/app/src/main/assets/wakeword/embedding_model.onnx": "wakeword/embedding_model.onnx"
     }

@@ -1,5 +1,5 @@
-"""What the desktop app's 0.5 side (desktop/src-tauri/src/hub05.rs,
-worker05.rs) relies on from the castling hub, site and worker. The app has no
+"""What the desktop app (desktop/src-tauri/src/hub05.rs, worker05.rs,
+lib.rs) relies on from the hub, site and worker. The app has no
 Python; these checks catch a 0.5 change that would silently break it."""
 
 import re
@@ -69,7 +69,7 @@ def test_dock_markup_for_ask_about_this_page():
     js = (ROOT / "rook/plugins/agents/shell/dock.js").read_text(encoding="utf-8")
     assert 'id="dock-btn"' in js and 'id="dock-text"' in js
     assert '"dock-open"' in js
-    m = re.search(r'const OPEN_DOCK_JS_05: &str = "(.*?)";\n', LIB, re.S)
+    m = re.search(r'const OPEN_DOCK_JS: &str = "(.*?)";\n', LIB, re.S)
     assert m and "dock-btn" in m.group(1) and "dock-text" in m.group(1) and "dock-open" in m.group(1)
 
 

@@ -8,8 +8,6 @@
     "allow-get-state",
     "allow-save-settings",
     "allow-save-secrets",
-    "allow-sign-in-password",
-    "allow-sign-in-browser",
     "allow-sign-in-token",
     "allow-sign-out",
     "allow-open-dashboard-cmd",
