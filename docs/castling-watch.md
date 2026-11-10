@@ -47,8 +47,8 @@ the token field in Settings > Band (`Castling.TOKEN_PREF`).
 ## Not done yet
 
 - **Token sign-in.** The person pastes a door token, as the desktop app does.
-  The device's own 0.5 enrollment doesn't hand out a person token
-  (desktop/README.md, "Talking to the hub"). It is stored in
+  The device's own 0.5 enrollment doesn't hand out a person token. It is
+  stored in
   the app's private preferences, like the 0.4 voice key.
 - **The phone's own voice, Talk widget and Chat widget** still use the 0.4
   voice server in both modes. `WatchSpeech` is the piece they could share.

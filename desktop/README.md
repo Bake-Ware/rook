@@ -59,7 +59,7 @@ desktop/
     src/sections.rs   the hub's pages by section, for the tray menu
     src/update.rs     which published file is a newer app for this install (pure)
     src/worker.rs     the worker's status, and finding its processes
-    src/worker05.rs   this computer's worker: enroll by device code, run as a child
+    src/worker05.rs   this computer's worker: join with a one-time code, run as a child
     src/voice/        audio helpers, transcription, capture and playback (cpal),
                       speech pieces and WAV (speak.rs), wake word (tract)
     tests/live_hub05.rs  end-to-end against a running hub, adding a worker too (ignored by default)
@@ -83,18 +83,16 @@ The dashboard window loads the hub's own site and stays there:
 - **Sign in** with the person's door token, the one the hub site's sign-in
   page takes. The site's `/login` checks once that it is a person's token
   (an agent's is refused) and gives the hub's window its `rook_web` session;
-  `/web/api/me` names the person. A device-code sign-in that handed the app a
-  person token would widen what a phished device code gets (a person's full
-  rights), so the app uses the token the site already takes.
+  `/web/api/me` names the person.
 - **Everything else** is the HTTP door's JSON API with `Authorization:
   Bearer <token>`, as the person: `POST /call` (each with a why, journaled)
   for `agent.chat.send` (quick ask, in the person's own session with the
   house agent, the dock's) and `page.list` (the tray and panel pages, every
   20 polls), and `GET /holds` (the panel and notifications). No MCP door: its
   tokens are an agent's, acting for a person; the app acts as the person.
-- **This computer's worker**: "Add this computer" runs the worker's
-  `enroll` (device code) and approves the code with the token
-  (`POST /enroll/approve`); the config bundle configures the worker, and its
+- **This computer's worker**: "Add this computer" gets a one-time code as
+  the person (`POST /enroll/code`) and runs the worker's `enroll` with it;
+  the config bundle configures the worker, and its
   voice service fills empty voice settings. The app runs `python -m
   rook.core2.worker` from `<settings>/worker05/` as a child process.
 - **Updates**: the public `/updates/desktop.json`.

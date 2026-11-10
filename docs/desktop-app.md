@@ -116,8 +116,8 @@ running.
 
 - **Add this computer** makes it a worker on your hub. The app runs
   `python -m rook.core2.worker` from a Python with Rook installed (Settings >
-  This computer's worker > Python; empty is `python3`), enrolls it with a
-  device code and approves that code as you, then starts it. It loads the
+  This computer's worker > Python; empty is `python3`), joins it with a
+  one-time code the app gets as you, then starts it. It loads the
   shell, file, notification and screenshot plugins and runs while the app is
   open. Its files are in the app's settings folder, under `worker05/`. A
   voice server in the hub's config bundle fills the voice settings you left
@@ -163,7 +163,7 @@ and the hub's answers. It changes nothing.
 With the person's token on the HTTP door (`Authorization: Bearer`): `GET
 /holds` (waiting on you, and its notifications), and `POST /call` on the
 hub's node with a why for `page.list` and `agent.chat.send`; `POST
-/enroll/approve` for its own worker's device code. The hub site's `/login`
+/enroll/code` for its own worker's one-time code. The hub site's `/login`
 (the token, once) gives the window's session; `/web/api/me` names the
 person; `/updates/desktop.json` (no token) lists the release's
 `rook-desktop-*` files. tests/test_desktop_contract05.py checks these against
