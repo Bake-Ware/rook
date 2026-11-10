@@ -74,7 +74,15 @@ def is_jpeg_file(res):
     assert base64.b64decode(res["data"]) == JPEG and res["bytes"] == len(JPEG)
 
 
-def test_grim_first_with_quality_and_region(bins):
+@pytest.fixture
+def tmp_env(tmp_path, monkeypatch):
+    folder = tmp_path / "tmp"
+    folder.mkdir()
+    monkeypatch.setenv("TMPDIR", str(folder))
+    return folder
+
+
+def test_grim_first_with_quality_and_region(bins, tmp_env):
     bins.add("grim", WRITE_JPEG)
     is_jpeg_file(shot()[0])
     is_jpeg_file(shot({"quality": 40, "x": 10, "y": 20, "w": 300, "h": 200})[0])
@@ -83,10 +91,11 @@ def test_grim_first_with_quality_and_region(bins):
     a, b, c = (call["argv"] for call in bins.calls("grim"))
     assert a[:4] == ["-t", "jpeg", "-q", "85"] and len(a) == 5
     assert b[:6] == ["-t", "jpeg", "-q", "40", "-g", "10,20 300x200"]
-    assert c == a[:4] + [c[-1]] and c[-1].startswith("/tmp/rook-shot-")
-    # the tool, the read back, the temp file removed
-    assert [cap for cap, _ in seen] == ["shell.exec", "file.read", "shell.exec"]
-    assert seen[1][1] == {"path": c[-1], "encoding": "base64"} and seen[2][1]["argv"] == ["rm", "-f", c[-1]]
+    assert c == a[:4] + [c[-1]] and c[-1].startswith(f"{tmp_env}/rook-shot-")
+    # where to write, the tool, the read back, the temp file removed
+    assert [cap for cap, _ in seen] == ["shell.env", "shell.exec", "file.read", "shell.exec"]
+    assert seen[2][1] == {"path": c[-1], "encoding": "base64"} and seen[3][1]["argv"] == ["rm", "-f", c[-1]]
+    assert list(tmp_env.iterdir()) == []
 
 
 def test_a_failing_tool_hands_over_to_the_next(bins):

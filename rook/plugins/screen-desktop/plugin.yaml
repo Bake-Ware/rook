@@ -1,5 +1,5 @@
-# Runs on the hub. On Linux the first capture tool that works writes a temp
-# file on the worker, read back with file.read and removed; on Windows
+# Runs on the hub. On Linux the first capture tool that works writes a file
+# in the worker's temp folder, read back with file.read and removed; on Windows
 # PowerShell prints the JPEG as base64.
 manifest: 1
 plugin: screen-desktop
@@ -11,7 +11,7 @@ license: Apache-2.0
 source: https://github.com/Bake-Ware/rook
 runs_on: hub
 platforms: [linux, windows]
-uses: [shell.exec, file.read]
+uses: [shell.exec, shell.env, file.read]
 caps:
   screen.capture:
     doc: The screen (or a region of it) as a JPEG.

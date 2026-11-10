@@ -29,7 +29,8 @@ async def capture(ctx, quality=85, x=None, y=None, w=None, h=None):
         out = await _exec(ctx, ["powershell", "-NoProfile", "-NonInteractive", "-Command", WINDOWS])
         return _jpeg(ctx, base64.b64decode(out["stdout"]))
     region = (x, y, w, h) if None not in (x, y, w, h) else None
-    path = f"/tmp/rook-shot-{secrets.token_hex(8)}.jpg"
+    folder = await ctx.call_on(wid, "shell.env", name="TMPDIR", default="/tmp")
+    path = f"{folder}/rook-shot-{secrets.token_hex(8)}.jpg"
     missing, failed = [], None
     try:
         for argv in _tools(path, str(quality), region):
