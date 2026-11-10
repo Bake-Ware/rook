@@ -4,7 +4,9 @@ Sends HDMI-CEC frames through a Pico-CEC bridge: a Pico W on the HDMI CEC
 bus running the WiFi Pico-CEC firmware, which takes one text command per
 line over TCP. The bridge is an **appliance**: onboard it once (its host,
 and its port if it isn't 9526), and a worker that can reach it carries the
-calls. Name the bridge in the call.
+calls: the plugin runs on the hub and talks to the bridge over a TCP stream
+from that worker (`net.open`, which the Rust worker serves). Name the bridge
+in the call.
 
 | Cap | What it does |
 |---|---|

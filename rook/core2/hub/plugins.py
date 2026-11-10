@@ -269,6 +269,10 @@ class HubPlugins:
                                     plugin_dir=str(p.folder) if p.folder else None,
                                     plugin_data=str(self._data(p)) if self.data_dir else None,
                                     timeout=_timeout(hc.meta))
+        if appliance is not None:       # its appliance settings' defaults, as the worker host applied them
+            decls = (p.manifest.get("appliance") or {}).get("settings") or {}
+            appliance = {**appliance, "settings": {**{k: d["default"] for k, d in decls.items() if "default" in d},
+                                                   **(appliance.get("settings") or {})}}
         ctx = self._ctx(p, caller, cap)
         ctx.worker, ctx.appliance = worker, appliance
         res = await invoke(hc.handler, ctx, args)
