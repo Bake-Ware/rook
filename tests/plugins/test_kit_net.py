@@ -82,7 +82,7 @@ def test_http_cuts_off_a_stream_that_never_ends():
     # Review K2 (kvm.api_get with a follow query read forever): a time and a size limit.
     def handler(conn):
         conn.recv(65536)
-        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n")
+        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n" + b"log line\n" * 200)
         try:
             for _ in range(400):
                 conn.sendall(b"log line\n" * 100)
