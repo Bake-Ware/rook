@@ -521,7 +521,6 @@
         },
         "index": {"$ref": "#/$defs/strings"},
         "search": {"$ref": "#/$defs/strings"},
-        "semantic": {"$ref": "#/$defs/strings"},
         "history": {"type": "boolean"},
         "private": {"type": "boolean"},
         "retain": {"$ref": "#/$defs/duration"},
@@ -534,7 +533,6 @@
           "propertyNames": {"enum": ["list", "get", "search", "create", "update", "archive", "delete", "history"]},
           "additionalProperties": {"$ref": "#/$defs/risk"}
         },
-        "migrations": {"$ref": "#/$defs/rel_path"},
         "aliases": {
           "type": "object",
           "propertyNames": {"enum": ["list", "get", "search", "create", "update", "archive", "delete", "history"]},

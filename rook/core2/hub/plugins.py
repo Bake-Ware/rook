@@ -105,7 +105,7 @@ class HubPlugins:
         resolve = lambda ref: load_run(m.folder, ref, modules)  # noqa: E731
         try:
             self.contracts.load(short_caps(data))
-            self.records.register(data, plugin_dir=m.folder)
+            self.records.register(data)
             for cap, gen in record_caps(self.records, name).items():
                 self._add(p, cap, HubCap({**data["caps"].get(cap, {}), **gen.spec}, gen.handler))
             for cap, meta in data["caps"].items():

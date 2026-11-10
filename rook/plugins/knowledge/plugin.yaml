@@ -28,7 +28,6 @@ records:
       reviewed_at: { type: float }
     index: [kind]
     search: [title, body]
-    semantic: [body]
     history: true
     caps: [list, search, archive, history]
 caps:

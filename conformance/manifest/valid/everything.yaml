@@ -86,12 +86,10 @@ records:
       tags: { type: list, items: { type: str } }
       meta: { type: json }
       slug: { type: str, unique: true }
-    semantic: [title]
     private: true
     retain: 90d
     caps: [list, get, delete]
     risk: { delete: admin }
-    migrations: scripts/migrate.py
 emits:
   telegram.message.received: { doc: A message arrived., payload: { from: { type: str }, text: { type: str } }, taints: true }
 hooks:

@@ -474,7 +474,7 @@ class _Checker:
             fields = spec["fields"]
             for fname, f in fields.items():
                 self.type_(f, path + ("fields", fname))
-            for key in ("index", "search", "semantic"):
+            for key in ("index", "search"):
                 for i, fname in enumerate(spec.get(key) or ()):
                     if fname not in fields:
                         self.error(path + (key, i), "unknown-field", f"no field {fname!r} in {rec}")
@@ -483,8 +483,6 @@ class _Checker:
                     self.error(path + ("caps", i), "record-verb", "search needs search fields")
                 elif verb == "history" and not spec.get("history"):
                     self.error(path + ("caps", i), "record-verb", "history needs history: true")
-            if "migrations" in spec:
-                self.file(spec["migrations"], path + ("migrations",))
 
     def events(self):
         for name, ev in (self.data.get("emits") or {}).items():
