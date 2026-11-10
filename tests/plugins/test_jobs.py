@@ -455,3 +455,19 @@ def test_the_jobs_page_calls_only_what_the_plugin_serves(cfg):
         finally:
             await rig.stop()
     run(body)
+
+
+def test_a_plugin_loaded_while_the_hub_runs_seeds_its_jobs(cfg):
+    async def body():
+        rig = await Rig(cfg).start()
+        try:
+            await until(lambda: [j for j in rig.hub.records.type("job.job").list(_owner())
+                                 if j["source"] == "probe/sweep"], what="the first seeding")
+            text = PROBE.replace("plugin: probe", "plugin: later").replace("probe.", "later.")
+            plugin(cfg.library, "later", text, {"later.py": PROBE_PY})
+            assert (await rig.bake.ok("hub.load", plugin="later"))["version"] == "1.0.0"
+            await until(lambda: [j for j in rig.hub.records.type("job.job").list(_owner())
+                                 if j["source"] == "later/sweep"], what="the new plugin's job")
+        finally:
+            await rig.stop()
+    run(body)
