@@ -130,18 +130,13 @@ def _project(ctx, t):
         return "normal", {}
     p = ctx.call("project.get", id=t["project"])
     pool = ctx.call("concept.pool", concepts=p["concepts"]) if p.get("concepts") else {}
-    return _trust_level(ctx, p["id"]), pool
-
-
-def _trust_level(ctx, project):
-    """The trust plugin's level for the project; normal without one or without the plugin."""
     try:
-        trust = ctx.call("trust.level.list", where={"project": project}, limit=1)
+        trust = ctx.call("trust.level.list", where={"project": p["id"]}, limit=1)
     except ctx.Error as e:
         if not e.message.startswith(("unknown capability", "no single worker")):
             raise
-        trust = []
-    return trust[0]["level"] if trust else "normal"
+        trust = []                      # no trust plugin: every project is normal
+    return (trust[0]["level"] if trust else "normal"), pool
 
 
 def request_signoff(ctx, id, reviewers=None, note=None):

@@ -1,7 +1,5 @@
-"""trust.map: everything that decides what agents may do to what, in one read.
-Machines, security and agents come from core's hub caps; projects and agents'
-grants from their plugins (a plugin that isn't installed leaves its part
-empty and is named in ``missing``)."""
+"""trust.map: what agents may do to what, in one read, from core's hub caps and
+the projects and agents plugins (one that isn't installed is in ``missing``)."""
 
 from rook.core2.rights import HARD_STOP_EFFECTS
 
@@ -51,8 +49,8 @@ def map(ctx):
                               "revision": a.get("revision"), "persona": a.get("persona") or "",
                               "grants": list(a.get("grants") or []), "source": "agents"})
     listed = {a["name"] for a in out["agents"]}
-    out["agents"] += [{"name": a["name"], "title": "", "grants": a["grants"], "source": "hub.yaml"}
-                      for a in status.get("agents") or () if a["name"] not in listed]
+    out["agents"] += [{**a, "title": "", "source": "hub.yaml"} for a in status.get("agents") or ()
+                      if a["name"] not in listed]
     out["waiting"] = len(ctx.call("approval.list")["holds"])
     out["history"] = _history(ctx)
     out["summary"] = _summary(out)

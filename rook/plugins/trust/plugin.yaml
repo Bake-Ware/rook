@@ -1,8 +1,6 @@
-# The trust map (Bake, Nov 9: "Let's bring over the trust map ... pages too";
-# castling-design, Agents: "Trust map (sacred machines and project levels):
-# lives here"): sacred machines (core's hub.sacred), the projects' levels
-# (this plugin's level records), the hard stops, the security switch
-# (hub.security) and what each agent may do (its grants).
+# The trust map (castling-design, Agents: "Trust map (sacred machines and
+# project levels): lives here"): core's sacred flag (hub.sacred), project
+# levels (this plugin's records), the hard stops, security and agents' grants.
 manifest: 1
 plugin: trust
 version: 0.5.0

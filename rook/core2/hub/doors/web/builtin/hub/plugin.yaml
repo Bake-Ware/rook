@@ -61,9 +61,7 @@ caps:
       done: { type: bool, doc: "true: setup is finished; false: not (the site opens on the setup chat again)." }
     result: { type: map }
   sacred:
-    doc: >-
-      Make a machine sacred (every call there that isn't a read is a hard stop: it waits on a person while
-      security is on) or normal again. Kept in hub.yaml's sacred list and applied at once.
+    doc: "Make a machine sacred (every call there that isn't a read is a hard stop) or normal again; kept in hub.yaml's sacred list."
     on: hub
     risk: admin
     scope: multi-machine

@@ -39,11 +39,10 @@ def test_manifest_is_clean_and_hub_only(folder):
 
 
 class Bench:
-    """The five plugins (and the agents package's trust levels) loaded in one
+    """The five plugins and the agents package's trust levels in one
     HubPlugins; ``run`` raises KitError."""
 
-    def __init__(self, trust=True):
-        self.trust = trust
+    def __init__(self):
         self.events = []
         emit = lambda e, p, s: self.events.append((e, p))  # noqa: E731
         self.plugins = HubPlugins(records=RecordStore(emit=emit), contracts=Contracts(), call=self._call, emit=emit,
@@ -56,7 +55,7 @@ class Bench:
             return {"ok": False, "error": e.message}
 
     async def load(self):
-        for folder in sorted(FOLDERS) + (["trust"] if self.trust else []):
+        for folder in [*sorted(FOLDERS), "trust"]:
             await self.plugins.load(PLUGINS / folder)
         return self
 
@@ -64,9 +63,9 @@ class Bench:
         return await self.plugins.run(cap, args, who)
 
 
-def bench(body, timeout=20, trust=True):
+def bench(body, timeout=20):
     async def main():
-        b = await Bench(trust).load()
+        b = await Bench().load()
         try:
             await body(b)
         finally:
@@ -287,11 +286,11 @@ def test_signoff_goes_to_the_pool_and_sacred_adds_the_owner():
 
 def test_without_the_trust_plugin_every_project_is_normal():
     async def body(b):
-        p = await b("project.create", title="Rook", slug="rook")
-        t = await b("task.create", title="Vault", project=p["id"])
+        await b.plugins.unload("trust")
+        t = await b("task.create", title="Vault", project=(await b("project.create", title="Rook"))["id"])
         out = await b("task.request_signoff", id=t["id"], reviewers=["agent:bob"])
         assert [s["reviewer"] for s in out["signoff"]] == ["agent:bob"]
-    bench(body, trust=False)
+    bench(body)
 
 
 def test_concept_pool_and_project_tags():
