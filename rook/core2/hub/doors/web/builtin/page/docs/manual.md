@@ -22,7 +22,7 @@ every few seconds if you like), `hub/workers` and
 `journal/recent`; plugins ship more.
 
 Every call a page makes runs as the person viewing it, and only for the
-caps the page declared. With the workbench, each page an agent makes is
-built under a task assigned to the person to review.
+caps the page declared. Making or changing a page emits `page.created` or
+`page.updated`.
 
 How pages are built and the `window.rook` API: `docs/castling-dashboard.md`.

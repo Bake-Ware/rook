@@ -20,10 +20,11 @@ on. Set their start page with `page.start {page}` once there is one they
 like.
 
 **Build a page**
-1. With the workbench (`page.site` says `workbench: true`): make a task for
-   the build first and write the requirements from the conversation into it
-   (`task.create {title, body, criteria}`), then pass its id as `task`. Without
-   one, `page.create` makes the task itself.
+1. With the workbench (`task.create` is there): make a task for the build
+   first, write the requirements from the conversation into it
+   (`task.create {title, body, criteria}`) and link the page to it before
+   making it (`task.link {id, kind: page, ref: page/<name>, relation:
+   produced}`). Without one, the workbench makes the task itself.
 2. Ready-made: `page.components` lists components with their props and caps.
    `page.create {name, title, note, layout: [{component, props, title?, wide?}]}`.
    `page/text` is a note, `page/value` shows any cap's result (add that cap

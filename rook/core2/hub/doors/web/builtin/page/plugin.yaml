@@ -47,8 +47,7 @@ caps:
       Make a page on the hub site: either one self-contained HTML file (inline script and style), or a
       layout of ready-made components (page.components lists them). It runs sandboxed and reaches data
       only through window.rook.call on the caps it declares (a layout: its components' caps), as whoever
-      views it and never more than its author may. The note says why it exists. With the workbench,
-      the page is linked to the task it was built under (one is made when task is blank).
+      views it and never more than its author may. The note says why it exists.
     on: hub
     risk: write
     scope: multi-user
@@ -66,7 +65,6 @@ caps:
       caps: { type: list, items: { type: str }, doc: "Cap patterns the page may call." }
       events: { type: list, items: { type: str }, doc: "Event patterns the page hears." }
       section: { type: str, doc: "Sidebar section; blank: Pages." }
-      task: { type: str, doc: "The task this page was built under (workbench); blank: one is made." }
     result: { type: map }
   update:
     doc: Change a page an agent made. Each change is added to its note's history.
@@ -156,5 +154,13 @@ components:
       worker: { type: str, doc: "Where the cap runs; blank: wherever the hub finds it." }
       field: { type: str, doc: "A dotted path into the result, e.g. workers or battery.level." }
       every: { type: int, min: 0, doc: "Seconds between refreshes; 0: once." }
+
+emits:
+  page.created:
+    doc: Someone made a page (page.create).
+    payload: { page: { type: str }, title: { type: str }, note: { type: str }, by: { type: str }, person: { type: str } }
+  page.updated:
+    doc: Someone changed a page they made (page.update).
+    payload: { page: { type: str }, change: { type: str }, by: { type: str }, person: { type: str } }
 
 docs: { manual: docs/manual.md }

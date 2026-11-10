@@ -179,3 +179,32 @@ def signoff(ctx, id, approve, note=None, reviewer=None):
     ctx.records.task.get(id)
     _set_signoff(ctx, id, target, state="approved" if approve else "declined", note=note or "", by=me)
     return {"id": id, "signoff": [_view(s) for s in _signoffs(ctx, id)]}
+
+
+# -- pages (castling-dashboard, provenance): a page build is a task --------------
+
+def _page_tasks(ctx, page):
+    return [t for t in ctx.records.task.list(limit=500)
+            if any(x.get("kind") == "page" and x.get("ref") == page for x in t["links"] or ())]
+
+
+def on_page_created(ctx, event, payload):
+    """A new page is a task for the person to review, linked to it, unless a
+    task already links the page (the builder made one first)."""
+    page = payload["page"]
+    if _page_tasks(ctx, page):
+        return
+    person = payload.get("person")
+    ctx.records.task.create(
+        title=f"Page: {payload.get('title') or page}", body=payload.get("note") or "", state="in_progress",
+        criteria=["The person has looked at the page and it shows what they asked for."],
+        links=[{"kind": "page", "ref": page, "relation": "produced", "note": payload.get("title") or "",
+                "by": payload.get("by") or "", "when": time.time()}],
+        **({"assignee": person} if person else {}))
+
+
+def on_page_updated(ctx, event, payload):
+    """Every task linked to a page hears each change to it."""
+    for t in _page_tasks(ctx, payload["page"]):
+        ctx.records.comment.create(task=t["id"], text=f"Changed the page {payload['page']}: "
+                                                      f"{(payload.get('change') or '').strip()}")
