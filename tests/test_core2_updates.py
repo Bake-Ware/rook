@@ -3,6 +3,7 @@ the worker's boot selector and updater, and the hub's update.* rollout."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import subprocess
@@ -329,7 +330,7 @@ class FakeHub:
 
     def __init__(self, data: Path, workers: dict):
         self.data, self.op, self.hub_id, self.node = data, OP, HUB, "hubnode"
-        self.known = {n: SimpleNamespace(id=n, name=n, version="0.5.0", online=True, band="b") for n in workers}
+        self.known = {n: SimpleNamespace(id=n, name=n, version="0.5.0", online=True, band="b", facts={}) for n in workers}
         self.dispatcher = SimpleNamespace(workers={n: SimpleNamespace(caps={"worker.update": {}} if up else {})
                                                    for n, up in workers.items()})
         self.transport = SimpleNamespace(offer=lambda band, blob, to=None: {"id": "d", "to": to})
@@ -407,6 +408,31 @@ def test_rollout_goes_canary_first_then_batches_and_skips_what_it_cannot_update(
         {"c": "updated", "a": "updated", "b": "updated", "d": "skipped", "phone": "skipped"}
     events = [e["event"] for e in history["entries"]]
     assert events[0] == "rollout.done" and events[-1] == "prepared" and events.count("worker.updated") == 3
+
+
+def test_a_release_of_built_files_goes_only_to_workers_that_run_one_of_them(tmp_path, monkeypatch):
+    hub, up = make(tmp_path, monkeypatch, {"py": True, "one": True, "other": True})
+    hub.known["one"].facts = {"artifact": "rook-worker-linux-x86_64"}
+    hub.known["other"].facts = {"artifact": "rook-worker-linux-aarch64"}
+    hub._target = "0.5.1"
+    built = tmp_path / "built"
+    built.mkdir()
+    (built / "rook-worker-linux-x86_64").write_bytes(b"\x7fELF one")
+
+    async def go():
+        started = await up.rollout(ctx(), "0.5.1", source=str(built))
+        await finish(up)
+        source_ro = await up._prepare(ctx(), version="0.5.2", source=str(source(tmp_path)))
+        return started, source_ro, up._workers("0.5.2")
+    started, source_ro, rows = asyncio.run(go())
+    assert started["canary"] == ["one"] and started["rest"] == []
+    assert started["skipped"] == {"other": "0.5.1 has no rook-worker-linux-aarch64",
+                                  "py": "0.5.1 holds built files, not the source this worker runs"}
+    sig = release.read_sig(tmp_path / "hub" / "releases" / "0.5.1.tar.gz")
+    assert sig["files"] == {"rook-worker-linux-x86_64": hashlib.sha256(b"\x7fELF one").hexdigest()}
+    assert source_ro["artifacts"] == []
+    assert {r["name"]: r.get("skip") for r in rows} == {
+        "py": None, "one": "0.5.2 has no rook-worker-linux-x86_64", "other": "0.5.2 has no rook-worker-linux-aarch64"}
 
 
 def test_a_failing_canary_stops_the_rollout(tmp_path, monkeypatch):

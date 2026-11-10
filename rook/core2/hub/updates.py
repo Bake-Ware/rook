@@ -143,6 +143,7 @@ class Updates:
             dest.unlink(missing_ok=True)
             raise KitError("refused: the source changed while the release was built; try again")
         meta = {"version": version, "digest": digest, "files": len(sig["files"]), "size": dest.stat().st_size,
+                "artifacts": sorted(n for n in sig["files"] if "/" not in n),
                 "sha256": release.sha256_file(dest), "core": sig["core"], "requires": sig["requires"],
                 "source": str(src.resolve()), "at": round(time.time(), 3), "by": ctx.caller.person}
         self._write(meta_path, meta)
@@ -161,15 +162,23 @@ class Updates:
     def _workers(self, version: str) -> list[dict]:
         """Every known worker with its core and whether a rollout can take it."""
         hub, out = self.hub, []
+        # A worker that runs one built file (facts.artifact) takes only releases
+        # holding that file; the others take source releases.
+        artifacts = (self._read(self.releases / f"{version}.json") or {}).get("artifacts") or [] if version else []
         for k in sorted(hub.known.values(), key=lambda k: k.name):
             w = hub.dispatcher.workers.get(k.id)
             row = {"name": k.name, "id": k.id, "version": k.version, "online": k.online}
+            artifact = (k.facts or {}).get("artifact")
             if not k.online:
                 row["skip"] = "offline"
             elif w is None or "worker.update" not in w.caps:
                 row["skip"] = "can't update its core over the band (an app's worker, or an older core)"
             elif k.version == version:
                 row["skip"] = f"already on {version}"
+            elif artifact and artifact not in artifacts:
+                row["skip"] = f"{version} has no {artifact}"
+            elif not artifact and artifacts:
+                row["skip"] = f"{version} holds built files, not the source this worker runs"
             out.append(row)
         return out
 
