@@ -3,8 +3,7 @@
 Rook gives an agent more access where it matters: your machines, your
 devices and your accounts, reached through one hub that decides what may
 run and keeps a journal of everything that did. This is the manual for
-Rook 0.5 ("Castling"). The 0.4 manual is in `docs/manual/` and stays as it
-is until 0.5 ships.
+Rook 0.5 ("Castling"). The 0.4 manual is in the `v0.4.0` tag.
 
 0.5 is a clean cut from 0.4: no 0.4 machine talks to a 0.5 one, and a band
 moves over all at once.

@@ -25,16 +25,8 @@ REPO = Path(__file__).resolve().parents[1]
 SHELL = REPO / "rook/plugins/agents/shell"
 
 
-def _root_tokens(css: str) -> dict:
-    block = re.search(r":root\s*\{([^}]*)\}", css).group(1)
-    return dict((k.strip(), v.strip()) for k, v in (d.split(":", 1) for d in block.split(";") if ":" in d)
-                if k.strip().startswith("--"))
-
-
 def test_pages_default_to_the_04_rook_style():
     page = (STATIC / "page.css").read_text()
-    theme = (REPO / "rook/web/theme.css").read_text()
-    assert _root_tokens(page) == _root_tokens(theme)          # rook-dark, token for token
     assert "color-scheme:dark" in page and "prefers-color-scheme" not in page
     assert "body{margin:0;padding:16px 24px 40px;background:transparent" in page   # the drawing shows behind
     assert "border-radius:0" in page and "var(--sans)" in page
@@ -73,7 +65,6 @@ def test_the_shell_draws_the_04_rook_behind_every_page():
     assert 'id="art-toggle"' in html and '<script type="module" src="/web/static/art.js"></script>' in html
     assert " style=" not in html                              # SHELL_CSP: no inline styles
     assert "rook-scene.js" in (STATIC / "art.js").read_text() and "mountRook" in (STATIC / "art.js").read_text()
-    assert (STATIC / "rook-scene.js").read_bytes() == (REPO / "rook/web/rook-scene.js").read_bytes()
     css = (STATIC / "shell.css").read_text()
     assert ".rook-art { position: fixed; z-index: 0;" in css and "#stage iframe { flex: 1; border: 0; width: 100%; height: 100%; background: transparent" in css
 

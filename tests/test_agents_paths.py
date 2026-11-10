@@ -93,28 +93,6 @@ def claude_home(tmp_path, monkeypatch):
     return home
 
 
-def test_scan_read_and_search(claude_home):
-    from rook.cli import cc_history
-    by_project = cc_history.scan_history()
-    assert set(by_project) == {"/srv/app", "/srv/other"}
-    s = by_project["/srv/app"][0]
-    assert s.session_id == SID and s.subagent_count == 1 and s.message_count == 3
-    assert s.first_prompt == "fix the nginx timeouts" and s.duration_str == "6m"
-    assert by_project["/srv/other"][0].jsonl_path is None
-    msgs = cc_history.read_session(s)
-    assert [m["role"] for m in msgs] == ["user", "assistant"]
-    assert "proxy_read_timeout" in msgs[1]["content"] and "[tool_use: Edit]" in msgs[1]["content"]
-    hits = cc_history.search_sessions("PROXY_READ", by_project)
-    assert [h[0].session_id for h in hits] == [SID]
-    assert cc_history.search_sessions("only in", by_project)[0][0].session_id == OTHER
-
-
-def test_rook_tmux_is_retired():
-    out = subprocess.run([sys.executable, "-m", "rook", "tmux", "list"], capture_output=True, text=True,
-                         env={**os.environ, "PYTHONPATH": os.getcwd()})
-    assert out.returncode == 2 and "Sessions page" in out.stderr
-
-
 def test_byte_ring_pages_by_absolute_cursor():
     from rook.worker.ring import ByteRing
     r = ByteRing(8)

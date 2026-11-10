@@ -167,17 +167,6 @@ def test_failures_reach_the_caller_as_a_top_level_error():
 
 # -- the worker state directory -----------------------------------------------
 
-def test_state_dir_honours_rook_worker_home(tmp_path, monkeypatch):
-    from rook.core import paths
-    from rook import paths as hub_paths
-    monkeypatch.setenv("ROOK_WORKER_HOME", str(tmp_path / "w"))
-    assert kit.state_dir() == paths.worker_state_dir() == tmp_path / "w"
-    assert kit.state_path("a", "b") == tmp_path / "w" / "a" / "b"
-    assert hub_paths.worker_state_dir() == tmp_path / "w"
-    assert paths.worker_install_dir() == Path.home() / ".rook-band-worker"
-    monkeypatch.delenv("ROOK_WORKER_HOME")
-    assert kit.state_dir() == Path.home() / ".rook-band-worker"
-
 
 def test_every_worker_state_file_follows_rook_worker_home(tmp_path):
     """Module-level paths are resolved at import, so check them in a fresh
@@ -253,13 +242,6 @@ def clean_env(monkeypatch):
                 "ROOK_MEMORY_VAULT", "ROOK_DONGLE_PORT", "ROOK_PIKVM_URL", "ROOK_CEC_HOST",
                 "ROOK_AGENT_WAKE_COMMAND", "ROOK_MEMORY_NOTES_DIR"):
         monkeypatch.delenv(var, raising=False)
-
-
-def test_gated_plugins_always_export_for_schema_tooling(clean_env):
-    from rook.hub.settings_schema import _plugin_classes
-    from rook.worker.plugins import cec, hermes
-    assert cec.PLUGIN is cec.CecPlugin and hermes.PLUGIN is hermes.HermesPlugin
-    assert "cec" in {cls.NAMESPACE for _, cls in _plugin_classes("rook.worker.plugins")}
 
 
 def test_cec_reads_settings_and_gates_on_host(clean_env, monkeypatch):

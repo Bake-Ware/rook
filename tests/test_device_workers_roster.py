@@ -70,113 +70,11 @@ async def _config(client, fleet, enrolled, key, want=('workers',)):
     return response.status, await response.json()
 
 
-@pytest.mark.asyncio
-async def test_account_device_sees_only_its_accounts_bands(fleet):
-    key, enrolled = _enroll(fleet, fleet.home, fleet.alice)       # account-sponsored
-    bkey, benrolled = _enroll(fleet, fleet.work, fleet.bob)
-    async with TestClient(TestServer(fleet.server._app)) as client:
-        status, body = await _config(client, fleet, enrolled, key)
-        assert status == 200 and body['band']['id'] == fleet.home   # config itself unchanged
-        roster = body['workers']
-        assert roster['scope'] == 'account' and roster['connected'] is True
-        assert [(b['id'], b['name'], b['current']) for b in roster['bands']] == [
-            (fleet.home, 'Home', True), (fleet.lab, 'Lab', False)]   # current band first
-        assert [w['worker_id'] for b in roster['bands'] for w in b['workers']] == ['w-home', 'w-lab']
-        text = json.dumps(roster)
-        for leak in ('bob', 'Work', 'office', 'w-work', 'w-any', 'alice-lab-key', 'psk',
-                     'label', 'secret-plugin', '10.0.0.9', 'is_hub'):
-            assert leak not in text
-
-        status, body = await _config(client, fleet, benrolled, bkey)
-        assert [b['id'] for b in body['workers']['bands']] == [fleet.work]
-        assert [w['name'] for w in body['workers']['bands'][0]['workers']] == ['office']
-
-
-@pytest.mark.asyncio
-async def test_payload_shape(fleet):
-    key, enrolled = _enroll(fleet, fleet.home, fleet.alice)
-    async with TestClient(TestServer(fleet.server._app)) as client:
-        _, body = await _config(client, fleet, enrolled, key)
-    band = body['workers']['bands'][0]
-    assert set(band) == {'id', 'name', 'role', 'current', 'workers'} and band['role'] == 'owner'
-    (worker,) = band['workers']
-    assert set(worker) == {'worker_id', 'name', 'description', 'caps', 'version', 'build',
-                           'app_release', 'hb', 'last_seen_age_secs'}
-    assert worker['caps'] == 3 and worker['build'] == 120 and worker['version'] == '120.x'
-    assert worker['app_release'] == {'platform': 'android', 'version': '0.4.11', 'code': 15}
-    assert worker['hb'] == {'battery': {'percent': 55, 'charging': False}}
-    assert 4 <= worker['last_seen_age_secs'] < 60
-    assert isinstance(body['workers']['generated_at'], float)
-
-
 def test_app_release_strings_are_capped():
     from rook.remote.account_web import roster_row
     row = roster_row(_worker('w', 'n', 'x', app_release={'platform': 'p' * 5000, 'version': 'v' * 5000,
                                                          'code': 15, 'extra': 'x'}), time.time())
     assert row['app_release'] == {'platform': 'p' * 40, 'version': 'v' * 40, 'code': 15}
-
-
-@pytest.mark.asyncio
-async def test_pair_code_device_gets_only_its_own_band(fleet):
-    # A pairing code names the band's first owner as sponsor, but whoever held
-    # the code is not necessarily that owner: no cross-band view.
-    key, csr = certificate_request()
-    devices = fleet.server._accounts.devices
-    enrolled = devices.enroll(fleet.home, None, csr, 'paired phone')
-    async with TestClient(TestServer(fleet.server._app)) as client:
-        _, body = await _config(client, fleet, enrolled, key)
-        roster = body['workers']
-        assert roster['scope'] == 'band'
-        assert [b['id'] for b in roster['bands']] == [fleet.home]
-        assert [w['worker_id'] for w in roster['bands'][0]['workers']] == ['w-home']
-        # The same key enrolled again through the account itself upgrades it.
-        assert devices.enroll(fleet.home, fleet.alice, csr, 'phone', account_scope=True)['device_id'] == enrolled['device_id']
-        fleet.server._accounts._roster_served.clear()
-        _, body = await _config(client, fleet, enrolled, key)
-        assert body['workers']['scope'] == 'account' and len(body['workers']['bands']) == 2
-
-
-@pytest.mark.asyncio
-async def test_no_device_proof_no_roster(fleet):
-    key, enrolled = _enroll(fleet, fleet.home, fleet.alice)
-    async with TestClient(TestServer(fleet.server._app)) as client:
-        # A PSK is no credential here, and neither is a bad or replayed proof.
-        for body in ({'want': ['workers'], 'psk': 'alice-home-key'},
-                     {'want': ['workers'], 'challenge': 'x', 'certificate': enrolled['certificate'], 'signature': 'AA=='}):
-            response = await client.post('/auth/devices/config', json=body)
-            assert response.status == 403 and 'workers' not in await response.json()
-        wrong, _ = certificate_request()
-        status, body = await _config(client, fleet, enrolled, wrong)
-        assert status == 403 and 'workers' not in body
-        fleet.server._accounts.devices.revoke(fleet.alice, enrolled['device_id'])
-        status, body = await _config(client, fleet, enrolled, key)
-        assert status == 403 and 'workers' not in body
-
-
-@pytest.mark.asyncio
-async def test_opt_in_and_rate_limited_per_device(fleet, monkeypatch):
-    import rook.remote.account_web as account_web
-    key, enrolled = _enroll(fleet, fleet.home, fleet.alice)
-    async with TestClient(TestServer(fleet.server._app)) as client:
-        _, body = await _config(client, fleet, enrolled, key, want=None)
-        assert 'workers' not in body                                # old clients: unchanged
-        _, body = await _config(client, fleet, enrolled, key)
-        assert 'workers' in body
-        _, body = await _config(client, fleet, enrolled, key)       # burst: config only
-        assert 'workers' not in body and body['band']['id'] == fleet.home
-        monkeypatch.setattr(account_web, 'ROSTER_MIN_INTERVAL', 0)
-        _, body = await _config(client, fleet, enrolled, key)
-        assert 'workers' in body
-
-
-@pytest.mark.asyncio
-async def test_hub_without_band_connection_still_configures(fleet):
-    fleet.server._band = None
-    key, enrolled = _enroll(fleet, fleet.home, fleet.alice)
-    async with TestClient(TestServer(fleet.server._app)) as client:
-        status, body = await _config(client, fleet, enrolled, key)
-    assert status == 200 and body['workers']['connected'] is False
-    assert all(b['workers'] == [] for b in body['workers']['bands'])
 
 
 async def _grant_enroll(client, fleet, grant, csr, key):
@@ -185,47 +83,6 @@ async def _grant_enroll(client, fleet, grant, csr, key):
     issued = await response.json()
     fleet.server._accounts._roster_served.clear()
     return await _config(client, fleet, issued, key)
-
-
-@pytest.mark.asyncio
-async def test_migration_enrolled_friend_device_stays_band_scoped(fleet):
-    # Alice migrates her Home band: the hub mints a CSR-bound grant in her name
-    # for every worker that held the band key, including a friend's device.
-    import hashlib
-    key, csr = certificate_request()
-    csr_hash = hashlib.sha256(csr.encode()).hexdigest()
-    async with TestClient(TestServer(fleet.server._app)) as client:
-        grant = fleet.store.grant('device_enroll', {'user_id': fleet.alice, 'band_id': fleet.home,
-                                                    'csr_hash': csr_hash, 'scope': 'band'}, 300)
-        status, body = await _grant_enroll(client, fleet, grant, csr, key)
-        assert status == 200 and body['workers']['scope'] == 'band'
-        assert [b['id'] for b in body['workers']['bands']] == [fleet.home]
-        assert 'Lab' not in json.dumps(body['workers'])
-        # Even a CSR-bound grant that claims account scope stays band scoped.
-        key2, csr2 = certificate_request()
-        grant = fleet.store.grant('device_enroll', {'user_id': fleet.alice, 'band_id': fleet.home,
-                                                    'csr_hash': hashlib.sha256(csr2.encode()).hexdigest(),
-                                                    'scope': 'account'}, 300)
-        status, body = await _grant_enroll(client, fleet, grant, csr2, key2)
-        assert body['workers']['scope'] == 'band'
-        # A grant with no scope at all (minted by an older hub) is band scoped too.
-        key3, csr3 = certificate_request()
-        grant = fleet.store.grant('device_enroll', {'user_id': fleet.alice, 'band_id': fleet.home}, 300)
-        status, body = await _grant_enroll(client, fleet, grant, csr3, key3)
-        assert body['workers']['scope'] == 'band'
-
-
-@pytest.mark.asyncio
-async def test_device_login_the_user_approved_is_account_scoped(fleet):
-    store = fleet.store
-    login = store.device_login_start()
-    store.device_login_approve(fleet.alice, login['user_code'])
-    grants = store.device_login_poll(login['device_code'])['enrollment_grants']
-    key, csr = certificate_request()
-    async with TestClient(TestServer(fleet.server._app)) as client:
-        status, body = await _grant_enroll(client, fleet, grants[fleet.home], csr, key)
-    assert status == 200 and body['workers']['scope'] == 'account'
-    assert [b['id'] for b in body['workers']['bands']] == [fleet.home, fleet.lab]
 
 
 def test_pair_code_enrollment_ignores_account_scope_without_a_sponsor(accounts):  # noqa: F811

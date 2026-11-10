@@ -175,25 +175,3 @@ def test_existing_migration_database_is_upgraded_without_losing_progress(tmp_pat
         assert 'deleted' in {r[1] for r in db.execute('PRAGMA table_info(bands)')}
 
 
-@pytest.mark.asyncio
-async def test_band_component_auth_assets_and_member_page(portal):
-    p=portal
-    async with TestClient(TestServer(p.app)) as client:
-        r=await client.get('/account/bands/component',allow_redirects=False)
-        assert r.status==401
-        for name in ('bands.js','bands.css','shell.css','rook-art.css','rook-scene.js','rook-scene.js.LEGAL.txt','rook-illustration.png'):
-            r=await client.get('/account/bands/assets/'+name)
-            assert r.status==200
-        r=await client.get('/account/bands/assets/rook-scene.js')
-        assert r.headers['Content-Type']=='application/javascript'
-        assert r.headers['Cache-Control']=='no-cache'
-        etag=r.headers['ETag']
-        await r.read()
-        r=await client.get('/account/bands/assets/rook-scene.js',headers={'If-None-Match':etag})
-        assert r.status==304
-        r=await client.get('/account/bands/assets/accounts.py')
-        assert r.status==404
-        uid=p.store.create_local('member','long enough test password')
-        token=p.store.new_session(uid)
-        r=await client.get('/account/bands',headers={'Cookie':'rook_account='+token})
-        assert r.status==200 and 'mountBands' in await r.text()

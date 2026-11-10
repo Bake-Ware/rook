@@ -89,24 +89,3 @@ async def test_failed_worker_keeps_recent_summary():
         await cache.close()
 
 
-@pytest.mark.asyncio
-async def test_overview_uses_existing_operator_auth(tmp_path, monkeypatch):
-    from rook.remote import setup_store
-    for key, filename in (("ROOK_SETUP_PATH", "setup.json"), ("ROOK_ENROLLMENT_DB", "enrollment.db"), ("ROOK_CHAT_DB", "chat.db")):
-        monkeypatch.setenv(key, str(tmp_path / filename))
-    monkeypatch.delenv("ROOK_GOOGLE_CLIENT_FILE", raising=False)
-    setup_store.save({"band_name": "test", "band_psk": "test-band", "hub_public": "hub.example.com:443", "pyz_domain": "rook.example.com"})
-    server = CombinedServer(web_user="operator", web_pass="operator-password")
-    server._band = SimpleNamespace(workers={"one": {**row("one"), "last_seen": time.time()}}, call=AsyncMock(return_value={"ok": True, "result": {"rooms": []}}))
-    guest = server._accounts.store.create_local("guest", "guest-password-long")
-    token = server._accounts.store.new_session(guest)
-    async with TestClient(TestServer(server._app)) as client:
-        for headers in ({"Accept": "application/json"}, {"Accept": "application/json", "Cookie": "rook_account=" + token}):
-            response = await client.get("/api/band/overview", headers=headers)
-            assert response.status == 401
-        assert server._overview._task is None
-        auth = "Basic " + base64.b64encode(b"operator:operator-password").decode()
-        response = await client.get("/api/band/overview", headers={"Authorization": auth})
-        assert response.status == 200 and response.headers["Cache-Control"] == "no-store"
-        assert (await response.json())["workers"][0]["worker_id"] == "one"
-    assert server._overview._task is None

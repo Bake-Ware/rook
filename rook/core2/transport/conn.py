@@ -51,8 +51,8 @@ one connection, one heartbeat and one hub-loss clock per band, 9.4):
   A worker host drops that hub's elevation leases there.
 
 What it does not do: verify anything (the worker gate and hub dispatch do),
-compress (14.3; inbound compressed payloads are still inflated by the link
-codec) or send native DROP frames (14.4; Drop rides pass-through packets).
+compress (14.3) or send native DROP frames (14.4; Drop rides pass-through
+packets).
 """
 from __future__ import annotations
 
@@ -66,12 +66,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
-from rook.core.backoff import Backoff
-from rook.worker.ota_drop import DropReplyServer, drop_id_of, is_drop_packet, valid_descriptor
-from rook.worker.wire.codec import route_id_for
-
 from .. import CORE_VERSION, wire
 from . import drop
+from .backoff import Backoff
+from .codec import route_id_for
+from .drop import DropReplyServer, drop_id_of, is_drop_packet, valid_descriptor
 from .links import Link
 
 log = logging.getLogger("rook.core2.transport")

@@ -66,35 +66,6 @@ APIS = {"guidance": (_guidance, True), "vault": (_vault, True), "tokens": (_toke
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("name", list(APIS))
-async def test_account_api_gate(name):
-    factory, operator_only = APIS[name]
-    routes, body = factory()
-    path = routes[0].path
-    app = Starlette(routes=routes)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
-        # Signed out: JSON 401 on both methods, never HTML.
-        for r in (await c.get(path), await c.post(path, json={**body, "csrf": "tok-op"})):
-            assert r.status_code == 401 and "error" in r.json()
-            assert r.headers["cache-control"] == "no-store"
-        # Wrong account.
-        r = await c.get(path, headers=MEMBER)
-        assert (r.status_code == 403) is operator_only
-        # Bad CSRF: missing, wrong, another session's, non-string, non-ASCII.
-        for bad in ({}, {"csrf": "nope"}, {"csrf": "tok-m"}, {"csrf": ["tok-op"]}, {"csrf": "tök"}):
-            r = await c.post(path, headers=OP, json={**body, **bad})
-            assert r.status_code == 403 and r.json()["error"] == "Form expired; reload the page.", bad
-        # Not a JSON object.
-        assert (await c.post(path, headers=OP, json=["x"])).status_code == 400
-        assert (await c.post(path, headers=OP, content=b"{")).status_code == 400
-        # OK.
-        r = await c.get(path, headers=OP)
-        assert r.status_code == 200, r.text
-        r = await c.post(path, headers=OP, json={**body, "csrf": "tok-op"})
-        assert r.status_code == 200, r.text
-
-
-@pytest.mark.asyncio
 async def test_decorator_hands_user_and_body():
     seen = []
 

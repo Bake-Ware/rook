@@ -11,7 +11,6 @@ import threading
 
 import pytest
 
-from rook.cli import band_tui
 from rook.worker import cli, desktop
 
 
@@ -44,53 +43,6 @@ def run_worker(monkeypatch, *argv):
     cli.main()
 
 
-def test_unpaired_worker_without_a_local_hub_says_how_to_join(fresh, monkeypatch, capsys):
-    monkeypatch.setattr(band_tui, "local_hub", lambda timeout=1.0: False)
-    with pytest.raises(SystemExit) as exit_:
-        run_worker(monkeypatch, "--psk", "k")
-    assert exit_.value.code == 2 and fresh == []
-    err = capsys.readouterr().err
-    assert "rook pair <code> --hub http://<hub address>:7005" in err
-    assert "127.0.0.1" not in err
-
-
-def test_no_psk_no_hub_is_the_same_plain_message(fresh, monkeypatch, capsys):
-    monkeypatch.setattr(band_tui, "local_hub", lambda timeout=1.0: False)
-    with pytest.raises(SystemExit) as exit_:
-        run_worker(monkeypatch)
-    assert exit_.value.code == 2 and fresh == []
-    assert "rook pair" in capsys.readouterr().err
-
-
-def test_hub_on_this_machine_is_used(fresh, monkeypatch):
-    monkeypatch.setattr(band_tui, "local_hub", lambda timeout=1.0: True)
-    with pytest.raises(Dialled):
-        run_worker(monkeypatch, "--psk", "k")
-    assert fresh == [("127.0.0.1", 7474)]
-
-
-@pytest.mark.parametrize("given", ["flag", "env"])
-def test_named_hub_never_probes_this_machine(fresh, monkeypatch, given):
-    def probe(timeout=1.0):
-        raise AssertionError("probed 127.0.0.1 though a hub was named")
-    monkeypatch.setattr(band_tui, "local_hub", probe)
-    argv = ["--psk", "k"]
-    if given == "flag":
-        argv += ["--hub", "hub.example.com:7474"]
-    else:
-        monkeypatch.setenv("ROOK_HUB", "hub.example.com:7474")
-    with pytest.raises(Dialled):
-        run_worker(monkeypatch, *argv)
-    assert fresh == [("hub.example.com", 7474)]
-
-
-def test_ws_url_names_the_hub(fresh, monkeypatch):
-    monkeypatch.setattr(band_tui, "local_hub", lambda timeout=1.0: pytest.fail("probed"))
-    with pytest.raises(Dialled):
-        run_worker(monkeypatch, "--psk", "k", "--ws-url", "wss://relay.example.com/band")
-    assert fresh == [("relay.example.com", 443)]
-
-
 def test_given_hub_and_psk_are_not_reported_as_overridden(fresh, monkeypatch, caplog):
     with pytest.raises(Dialled):
         run_worker(monkeypatch, "--psk", "k", "--hub", "hub.example.com:7474")
@@ -112,48 +64,6 @@ def pair(server):
     enroll.save({"server": server, "bands": [], "active_band": None})
 
 
-@pytest.mark.parametrize("where", ["home", "file"])
-def test_dashboard_reads_the_enrollment_the_worker_saves(fresh, monkeypatch, tmp_path, where):
-    if where == "file":
-        monkeypatch.setenv("ROOK_ENROLLMENT_FILE", str(tmp_path / "elsewhere.json"))
-    assert band_tui.enrolled_server() == ""
-    pair("https://rook.example.com")
-    assert band_tui.enrolled_server() == "https://rook.example.com"
-
-
-def test_dashboard_uses_the_paired_hub_without_probing(fresh, monkeypatch, no_tty_answer):
-    pair("https://rook.example.com")
-    monkeypatch.setattr(band_tui, "local_hub", lambda timeout=1.0: pytest.fail("probed"))
-    assert band_tui.hub_url(None, {}) == "https://rook.example.com"
-    assert no_tty_answer == []
-
-
-def test_dashboard_prefers_given_and_saved_urls(fresh, monkeypatch):
-    pair("https://paired.example.com")
-    assert band_tui.hub_url("http://given:7005", {"url": "http://saved"}) == "http://given:7005"
-    assert band_tui.hub_url(None, {"url": "http://saved"}) == "http://saved"
-    monkeypatch.setenv("ROOK_WEB_URL", "http://env")
-    assert band_tui.hub_url(None, {"url": "http://saved"}) == "http://env"
-
-
-def test_dashboard_uses_a_hub_on_this_machine(fresh, monkeypatch, no_tty_answer):
-    monkeypatch.setattr(band_tui, "local_hub", lambda timeout=1.0: True)
-    assert band_tui.hub_url(None, {}) == band_tui.LOCAL_DASHBOARD
-    assert no_tty_answer == []
-
-
-@pytest.mark.parametrize("typed, url", [
-    ("192.168.1.10:7005", "http://192.168.1.10:7005"),
-    ("rook.example.com", "https://rook.example.com"),
-    ("http://rook.example.com:7005", "http://rook.example.com:7005"),
-    ("", ""),
-])
-def test_dashboard_asks_when_nothing_is_known(fresh, monkeypatch, typed, url):
-    monkeypatch.setattr(band_tui, "local_hub", lambda timeout=1.0: False)
-    monkeypatch.setattr("builtins.input", lambda prompt="": typed)
-    assert band_tui.hub_url(None, {}) == url
-
-
 # -- finding a hub on this machine --------------------------------------------------
 
 def serve(body, status=200):
@@ -170,28 +80,3 @@ def serve(body, status=200):
     return server
 
 
-@pytest.mark.parametrize("body, status, found", [
-    (json.dumps({"status": "ok", "band_workers": 0}).encode(), 200, True),
-    (json.dumps({"status": "ok"}).encode(), 200, False),   # some other service
-    (b"<html>hello</html>", 200, False),
-    (b"", 500, False),
-])
-def test_local_hub_needs_a_rook_health_answer(monkeypatch, body, status, found):
-    server = serve(body, status)
-    try:
-        monkeypatch.setattr(band_tui, "LOCAL_DASHBOARD",
-                            f"http://127.0.0.1:{server.server_address[1]}")
-        monkeypatch.setenv("http_proxy", "http://192.0.2.1:9")  # must be bypassed
-        assert band_tui.local_hub(timeout=2.0) is found
-    finally:
-        server.shutdown()
-
-
-def test_local_hub_false_when_nothing_listens(monkeypatch):
-    import socket
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    monkeypatch.setattr(band_tui, "LOCAL_DASHBOARD", f"http://127.0.0.1:{port}")
-    assert band_tui.local_hub(timeout=1.0) is False

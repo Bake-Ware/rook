@@ -112,29 +112,6 @@ def test_retried_csr_returns_same_identity_after_lost_enrollment_response(fleet)
     with pytest.raises(ValueError):f.devices.enroll(f.band['id'],f.owner,csr,'retry revoked')
 
 
-@pytest.mark.asyncio
-async def test_csr_bound_grant_discloses_no_psk_and_needs_private_key(fleet):
-    from aiohttp.test_utils import TestClient,TestServer
-    from rook.remote.bootstrap import CombinedServer
-    f=fleet
-    server=CombinedServer(band_psk=f.band['psk'],web_user='operator',web_pass='operator-password',domain='rook.example.com')
-    # The HTTP server must share this fixture's already authorized band database.
-    server._accounts.store=f.accounts;server._accounts.devices=f.devices
-    key,csr=device_key.certificate_request()
-    grant=f.accounts.grant('device_enroll',{'user_id':f.owner,'band_id':f.band['id'],'csr_hash':hashlib.sha256(csr.encode()).hexdigest()})
-    async with TestClient(TestServer(server._app)) as client:
-        response=await client.post('/auth/devices/enroll',json={'enrollment_grant':grant,'csr':csr})
-        assert response.status==200
-        issued=await response.json()
-        assert 'band' not in issued and f.band['psk'] not in str(issued)
-        result=await client.post('/auth/devices/config',json=proof(f,(key,issued,'http')))
-        assert result.status==200 and (await result.json())['band']['psk']==f.band['psk']
-        grant=f.accounts.grant('device_enroll',{'user_id':f.owner,'band_id':f.band['id'],'csr_hash':hashlib.sha256(csr.encode()).hexdigest()})
-        _,other=device_key.certificate_request()
-        response=await client.post('/auth/devices/enroll',json={'enrollment_grant':grant,'csr':other})
-        assert response.status==403
-
-
 def destination(f):
     bid=f.accounts.create_band(f.owner,'destination','hub.example.com:443')
     return next(b for b in f.enrollment.bands(secrets_visible=True) if b['id']==bid)

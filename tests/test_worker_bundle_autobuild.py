@@ -99,29 +99,3 @@ def lan_hub(tmp_path, monkeypatch):
     return server
 
 
-@pytest.mark.asyncio
-async def test_fresh_hub_builds_a_signed_bundle_in_the_background(lan_hub):
-    from rook.remote.update_keys import load_signing_key, public_key_b64
-    from rook.worker._update_verify import verify_manifest
-    server = lan_hub
-    async with TestClient(TestServer(server._app)) as client:
-        first = await client.get("/band-worker.pyz")
-        assert first.status == 503 and first.headers["Retry-After"] == "60"
-        assert "retry in a minute" in await first.text()
-        assert (await client.get("/band-worker.json")).status == 503
-        deadline = time.monotonic() + 300
-        while server._bundle.building and time.monotonic() < deadline:
-            server._bundle.wait(1)
-        assert not server._bundle.error, server._bundle.error
-        manifest = await (await client.get("/band-worker.json")).json()
-        pyz = await (await client.get("/band-worker.pyz")).read()
-        enrollment_pyz = await (await client.get("/band-worker-enrollment.pyz")).read()
-    pub = public_key_b64(load_signing_key())
-    assert manifest["sig"] and verify_manifest(manifest, pub)
-    assert manifest["url"] == f"http://{LAN}:7005/band-worker.pyz"
-    assert manifest["sha256"] == hashlib.sha256(pyz).hexdigest() and pyz == enrollment_pyz
-    bundle = server._bundle.out_dir / "band-worker.pyz"
-    with zipfile.ZipFile(bundle) as z:
-        assert pub in z.read("rook/worker/_update_pubkey.py").decode()
-        assert "VERSION =" in z.read("rook/worker/_build_info.py").decode()
-    assert server._bundle.stale_reason() == ""

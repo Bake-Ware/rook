@@ -45,23 +45,8 @@
   "agenthost.turn": {
    "tier": "exec"
   },
-  "approvals.list": {
-   "tier": "read"
-  },
-  "approvals.relay": {
-   "tier": "write"
-  },
   "attention.feed": {
    "tier": "exec",
-   "tags": [
-    "sensitive"
-   ]
-  },
-  "attention.log": {
-   "tier": "read"
-  },
-  "attention.notices": {
-   "tier": "read",
    "tags": [
     "sensitive"
    ]
@@ -92,21 +77,6 @@
   },
   "attention.rules_set": {
    "tier": "admin"
-  },
-  "attention.send": {
-   "tier": "write"
-  },
-  "attention.sorting": {
-   "tier": "read"
-  },
-  "attention.status": {
-   "tier": "read"
-  },
-  "attention.stream": {
-   "tier": "read",
-   "tags": [
-    "sensitive"
-   ]
   },
   "attention.update": {
    "tier": "admin"
@@ -214,13 +184,7 @@
   "caps.describe": {
    "tier": "read"
   },
-  "ccmod.activity": {
-   "tier": "read"
-  },
   "ccmod.apply": {
-   "tier": "admin"
-  },
-  "ccmod.delete": {
    "tier": "admin"
   },
   "ccmod.events": {
@@ -229,25 +193,7 @@
     "sensitive"
    ]
   },
-  "ccmod.get": {
-   "tier": "read"
-  },
-  "ccmod.history": {
-   "tier": "read"
-  },
-  "ccmod.list": {
-   "tier": "read"
-  },
-  "ccmod.preview": {
-   "tier": "admin"
-  },
-  "ccmod.push": {
-   "tier": "admin"
-  },
   "ccmod.remove": {
-   "tier": "admin"
-  },
-  "ccmod.set": {
    "tier": "admin"
   },
   "ccmod.status": {
@@ -271,42 +217,6 @@
     "physical"
    ]
   },
-  "change.catalog": {
-   "tier": "write"
-  },
-  "change.decide": {
-   "tier": "write"
-  },
-  "change.digest": {
-   "tier": "read"
-  },
-  "change.get": {
-   "tier": "read"
-  },
-  "change.irreducible": {
-   "tier": "write"
-  },
-  "change.list": {
-   "tier": "read"
-  },
-  "change.reduce": {
-   "tier": "write"
-  },
-  "change.revert": {
-   "tier": "write"
-  },
-  "change.submit": {
-   "tier": "write"
-  },
-  "change.update": {
-   "tier": "write"
-  },
-  "chat.delete": {
-   "tier": "write",
-   "tags": [
-    "destructive"
-   ]
-  },
   "chat.open": {
    "tier": "write"
   },
@@ -316,19 +226,10 @@
     "sensitive"
    ]
   },
-  "chat.presence": {
-   "tier": "read"
-  },
-  "chat.read": {
-   "tier": "read"
-  },
   "chat.rooms": {
    "tier": "read"
   },
   "chat.send": {
-   "tier": "write"
-  },
-  "chat.write": {
    "tier": "write"
   },
   "claude-history.analyze": {
@@ -468,33 +369,6 @@
   },
   "customcap.remove": {
    "tier": "admin"
-  },
-  "decide.confirm": {
-   "tier": "exec",
-   "tags": [
-    "physical"
-   ]
-  },
-  "decide.drive": {
-   "tier": "exec",
-   "tags": [
-    "physical"
-   ]
-  },
-  "decide.health": {
-   "tier": "read"
-  },
-  "decide.info": {
-   "tier": "read"
-  },
-  "decide.run": {
-   "tier": "read"
-  },
-  "decide.runs": {
-   "tier": "read"
-  },
-  "decide.stop": {
-   "tier": "write"
   },
   "deluge.add": {
    "tier": "write"
@@ -638,12 +512,6 @@
     "physical"
    ]
   },
-  "discord.send": {
-   "tier": "write"
-  },
-  "discord.status": {
-   "tier": "read"
-  },
   "dongle.consumer": {
    "tier": "write",
    "tags": [
@@ -750,9 +618,6 @@
   "handoff.write": {
    "tier": "write"
   },
-  "help": {
-   "tier": "read"
-  },
   "hermes.chat": {
    "tier": "exec"
   },
@@ -822,60 +687,6 @@
     "physical"
    ]
   },
-  "home.ask": {
-   "tier": "write"
-  },
-  "home.digest": {
-   "tier": "read"
-  },
-  "home.explain": {
-   "tier": "read"
-  },
-  "home.ledger": {
-   "tier": "read"
-  },
-  "home.overturn": {
-   "tier": "write"
-  },
-  "home.playbook": {
-   "tier": "read"
-  },
-  "home.playbook_edit": {
-   "tier": "write"
-  },
-  "home.projects": {
-   "tier": "read"
-  },
-  "home.restore": {
-   "tier": "write"
-  },
-  "home.session_ask": {
-   "tier": "write"
-  },
-  "home.session_compact": {
-   "tier": "write"
-  },
-  "home.session_flow": {
-   "tier": "write"
-  },
-  "home.session_note": {
-   "tier": "write"
-  },
-  "home.sessions": {
-   "tier": "read"
-  },
-  "home.settle": {
-   "tier": "write"
-  },
-  "home.status": {
-   "tier": "read"
-  },
-  "home.voice_models": {
-   "tier": "read"
-  },
-  "home.voice_models_set": {
-   "tier": "admin"
-  },
   "homeassistant.devices": {
    "tier": "read"
   },
@@ -886,9 +697,6 @@
    ]
   },
   "homeassistant.scenes": {
-   "tier": "read"
-  },
-  "hub.info": {
    "tier": "read"
   },
   "hub.plugin.disable": {
@@ -906,39 +714,6 @@
     "destructive"
    ]
   },
-  "hub.plugins": {
-   "tier": "read"
-  },
-  "huddle.archive": {
-   "tier": "write"
-  },
-  "huddle.card": {
-   "tier": "write"
-  },
-  "huddle.list": {
-   "tier": "read"
-  },
-  "huddle.pin": {
-   "tier": "write"
-  },
-  "huddle.post": {
-   "tier": "write"
-  },
-  "huddle.read": {
-   "tier": "read"
-  },
-  "huddle.start": {
-   "tier": "write"
-  },
-  "huddle.table": {
-   "tier": "read"
-  },
-  "huddle.vote": {
-   "tier": "write"
-  },
-  "huddle.write": {
-   "tier": "write"
-  },
   "identity.whoami": {
    "tier": "read"
   },
@@ -951,35 +726,11 @@
   "info.uptime": {
    "tier": "read"
   },
-  "job.read": {
-   "tier": "read"
-  },
-  "job.write": {
-   "tier": "write"
-  },
   "journal.read": {
    "tier": "read",
    "tags": [
     "sensitive"
    ]
-  },
-  "knowledge.read": {
-   "tier": "read"
-  },
-  "knowledge.write": {
-   "tier": "write"
-  },
-  "llm.check": {
-   "tier": "read"
-  },
-  "llm.models": {
-   "tier": "read"
-  },
-  "llm.providers": {
-   "tier": "read"
-  },
-  "llmanifold.status": {
-   "tier": "read"
   },
   "location.get": {
    "tier": "exec",
@@ -999,18 +750,6 @@
     "sensitive"
    ]
   },
-  "manual.get": {
-   "tier": "read"
-  },
-  "manual.list": {
-   "tier": "read"
-  },
-  "manual.status": {
-   "tier": "read"
-  },
-  "manual.update": {
-   "tier": "admin"
-  },
   "media.control": {
    "tier": "exec",
    "tags": [
@@ -1026,29 +765,11 @@
   "member.admin": {
    "tier": "admin"
   },
-  "memory.consolidate": {
-   "tier": "write"
-  },
-  "memory.edit": {
-   "tier": "write"
-  },
   "memory.entities": {
    "tier": "read"
   },
-  "memory.forget": {
-   "tier": "write",
-   "tags": [
-    "destructive"
-   ]
-  },
   "memory.get": {
    "tier": "read"
-  },
-  "memory.list": {
-   "tier": "read",
-   "tags": [
-    "sensitive"
-   ]
   },
   "memory.note": {
    "tier": "write"
@@ -1056,25 +777,7 @@
   "memory.put": {
    "tier": "write"
   },
-  "memory.recall": {
-   "tier": "read",
-   "tags": [
-    "sensitive"
-   ]
-  },
-  "memory.remember": {
-   "tier": "write"
-  },
   "memory.search": {
-   "tier": "read"
-  },
-  "memory.show": {
-   "tier": "read",
-   "tags": [
-    "sensitive"
-   ]
-  },
-  "memory.status": {
    "tier": "read"
   },
   "msg.clear": {
@@ -1101,9 +804,6 @@
     "sensitive"
    ]
   },
-  "notify.channels": {
-   "tier": "read"
-  },
   "notify.dismiss": {
    "tier": "exec"
   },
@@ -1116,32 +816,8 @@
   "notify.post": {
    "tier": "exec"
   },
-  "notify.send": {
-   "tier": "write"
-  },
   "persona.apply": {
    "tier": "write"
-  },
-  "persona.assign": {
-   "tier": "admin"
-  },
-  "persona.delete": {
-   "tier": "admin"
-  },
-  "persona.get": {
-   "tier": "read"
-  },
-  "persona.history": {
-   "tier": "read"
-  },
-  "persona.list": {
-   "tier": "read"
-  },
-  "persona.render": {
-   "tier": "read"
-  },
-  "persona.set": {
-   "tier": "admin"
   },
   "persona.status": {
    "tier": "read"
@@ -1204,30 +880,6 @@
     "physical"
    ]
   },
-  "plugin.marketplace.install": {
-   "tier": "admin",
-   "tags": [
-    "destructive"
-   ]
-  },
-  "plugin.marketplace.list": {
-   "tier": "read"
-  },
-  "policy.explain": {
-   "tier": "read"
-  },
-  "policy.get": {
-   "tier": "read",
-   "tags": [
-    "sensitive"
-   ]
-  },
-  "policy.set": {
-   "tier": "admin"
-  },
-  "policy.status": {
-   "tier": "read"
-  },
   "proc.close": {
    "tier": "exec",
    "tags": [
@@ -1254,69 +906,6 @@
   },
   "proc.write": {
    "tier": "exec"
-  },
-  "role.ask": {
-   "tier": "write"
-  },
-  "role.delete": {
-   "tier": "admin"
-  },
-  "role.get": {
-   "tier": "read"
-  },
-  "role.history": {
-   "tier": "read"
-  },
-  "role.list": {
-   "tier": "read"
-  },
-  "role.memory": {
-   "tier": "read"
-  },
-  "role.memory_edit": {
-   "tier": "admin"
-  },
-  "role.move": {
-   "tier": "admin"
-  },
-  "role.presets": {
-   "tier": "read"
-  },
-  "role.session_send": {
-   "tier": "write"
-  },
-  "role.session_start": {
-   "tier": "write"
-  },
-  "role.session_stop": {
-   "tier": "write"
-  },
-  "role.sessions": {
-   "tier": "read"
-  },
-  "role.set": {
-   "tier": "admin"
-  },
-  "role.workspace": {
-   "tier": "read"
-  },
-  "routine.attention_digest": {
-   "tier": "write",
-   "tags": [
-    "sensitive"
-   ]
-  },
-  "routine.camera_review": {
-   "tier": "write",
-   "tags": [
-    "sensitive"
-   ]
-  },
-  "routine.security_scan": {
-   "tier": "write",
-   "tags": [
-    "sensitive"
-   ]
   },
   "screenshot.capture": {
    "tier": "read",
@@ -1369,15 +958,6 @@
     "sensitive"
    ]
   },
-  "serves.clear": {
-   "tier": "write"
-  },
-  "serves.list": {
-   "tier": "read"
-  },
-  "serves.set": {
-   "tier": "write"
-  },
   "sessions.follow": {
    "tier": "read",
    "tags": [
@@ -1411,39 +991,6 @@
     "destructive"
    ]
   },
-  "settings.apply_worker": {
-   "tier": "admin"
-  },
-  "settings.describe": {
-   "tier": "read"
-  },
-  "settings.fetch": {
-   "tier": "read",
-   "tags": [
-    "sensitive"
-   ]
-  },
-  "settings.get": {
-   "tier": "read"
-  },
-  "settings.history": {
-   "tier": "read"
-  },
-  "settings.report": {
-   "tier": "write"
-  },
-  "settings.reset": {
-   "tier": "admin"
-  },
-  "settings.set": {
-   "tier": "admin"
-  },
-  "settings.worker_secret": {
-   "tier": "read",
-   "tags": [
-    "sensitive"
-   ]
-  },
   "shell.env.get": {
    "tier": "read",
    "tags": [
@@ -1462,21 +1009,6 @@
   "shell.which": {
    "tier": "read"
   },
-  "show.close": {
-   "tier": "write"
-  },
-  "show.list": {
-   "tier": "read"
-  },
-  "show.present": {
-   "tier": "write",
-   "tags": [
-    "physical"
-   ]
-  },
-  "show.screens": {
-   "tier": "read"
-  },
   "sms.list": {
    "tier": "exec",
    "tags": [
@@ -1486,35 +1018,8 @@
   "sms.send": {
    "tier": "exec"
   },
-  "task.read": {
-   "tier": "read"
-  },
-  "task.write": {
-   "tier": "write"
-  },
-  "telegram.send": {
-   "tier": "write"
-  },
-  "telegram.status": {
-   "tier": "read"
-  },
   "token.admin": {
    "tier": "admin"
-  },
-  "trust.check": {
-   "tier": "read"
-  },
-  "trust.get": {
-   "tier": "read"
-  },
-  "trust.history": {
-   "tier": "read"
-  },
-  "trust.propose": {
-   "tier": "write"
-  },
-  "trust.tighten": {
-   "tier": "write"
   },
   "tv.apps": {
    "tier": "read",
@@ -1654,78 +1159,6 @@
     "sensitive"
    ]
   },
-  "updates.apply_hub": {
-   "tier": "admin",
-   "tags": [
-    "destructive"
-   ]
-  },
-  "updates.check": {
-   "tier": "admin"
-  },
-  "updates.history": {
-   "tier": "read"
-  },
-  "updates.prepare_hub": {
-   "tier": "admin"
-  },
-  "updates.rollout": {
-   "tier": "admin",
-   "tags": [
-    "destructive"
-   ]
-  },
-  "updates.status": {
-   "tier": "read"
-  },
-  "users.chat_bot": {
-   "tier": "write"
-  },
-  "users.explain": {
-   "tier": "read"
-  },
-  "users.grant": {
-   "tier": "admin"
-  },
-  "users.history": {
-   "tier": "read"
-  },
-  "users.link_code": {
-   "tier": "write"
-  },
-  "users.links": {
-   "tier": "read"
-  },
-  "users.list": {
-   "tier": "read"
-  },
-  "users.me": {
-   "tier": "read"
-  },
-  "users.request": {
-   "tier": "write"
-  },
-  "users.revoke": {
-   "tier": "admin"
-  },
-  "users.role": {
-   "tier": "admin"
-  },
-  "users.settle": {
-   "tier": "admin"
-  },
-  "users.space": {
-   "tier": "admin"
-  },
-  "users.spaces": {
-   "tier": "read"
-  },
-  "users.token": {
-   "tier": "admin"
-  },
-  "users.unlink": {
-   "tier": "write"
-  },
   "voice.replies": {
    "tier": "read"
   },
@@ -1742,9 +1175,6 @@
    "tier": "write"
   },
   "voice.speak_voices": {
-   "tier": "read"
-  },
-  "voice.status": {
    "tier": "read"
   },
   "webos.discover": {
@@ -2018,7 +1448,7 @@
    "declared": null,
    "override": null,
    "lower": false,
-   "tier": "write"
+   "tier": "exec"
   },
   {
    "cap": "conformance.echo",

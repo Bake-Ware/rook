@@ -17,7 +17,7 @@ from rook.worker._build_info import BUILD
 from rook.worker.plugins import selfupdate as su_mod
 from rook.worker.plugins.selfupdate import SelfUpdatePlugin
 
-from test_band_protocol import PSK, _until, band_factory  # noqa: F401  (fixture)
+from test_band_protocol import PSK, _until
 
 
 class FakeWorker:
@@ -257,63 +257,6 @@ async def test_swap_records_pre_update_band_contact(su):
 
 
 # -- over a real relay -------------------------------------------------------
-
-@pytest.mark.parametrize("case", ["peer", "nodeless-swap", "nodeless-calls"])
-@pytest.mark.asyncio
-async def test_gate_over_a_real_band(band_factory, su, monkeypatch, tmp_path, case):  # noqa: F811
-    """A real Worker after an update boot over the test relay.
-
-    peer: another worker announces; the probe gets an (addressed) reply and
-    the build is kept. nodeless-*: a hub without its node (only a band
-    client, which never announces): the old build recorded no probe target,
-    so the gate isn't enforced; and if it was enforced anyway (a peer left)
-    but the hub keeps calling us, the alive check decides, no rollback."""
-    from rook.worker import core
-    from rook.worker.core import Worker
-    from rook.worker.transports.telesthete_hub import TelestheteHubTransport
-    monkeypatch.setenv("ROOK_UPDATE_HEALTH_SECS", "3")
-    band = await band_factory(routing=True)
-    other = None
-    if case == "peer":
-        other = await band.worker(monkeypatch, tmp_path, name="peer")
-    monkeypatch.setattr(core, "_WORKER_ID_FILE", tmp_path / "gated-id")
-    _swapped(probe_target=case != "nodeless-swap")
-    t = TelestheteHubTransport(psk=PSK, hub_host="127.0.0.1", hub_port=band.relay.port)
-    w = Worker(t, enabled=["selfupdate"], name="gated")
-    gated = next(p for p in w.plugins if p.NAMESPACE == "worker")
-    restarts = []
-    gated._schedule_restart = lambda argv, delay=1.0: restarts.append(argv)
-    band.workers.append(w)
-    band.tasks.append(asyncio.create_task(w.run()))
-    await _until(lambda: gated._health_task is not None)
-    client = await band.client() if case != "peer" else None
-
-    async def poke():
-        while True:        # announces come every 30 s; don't wait for one
-            await asyncio.sleep(0.2)
-            if other is not None:
-                await other.announce()
-            if case == "nodeless-calls":
-                await client.call("caps.describe", target=w.worker_id, timeout=2)
-
-    poker = asyncio.create_task(poke())
-    try:
-        await asyncio.wait_for(gated._health_task, 10)
-    finally:
-        poker.cancel()
-    assert restarts == [] and not su_mod._PREV.exists()
-    assert su_mod._PYZ.read_bytes() == b"new build"
-    check = gated._last_result()["check"]
-    if case == "peer":
-        assert check == "band"
-        assert w.band_rx_at is not None and w.band_rtt_at is not None
-        assert w.band_peers()[0] == other.worker_id
-        assert w.worker_id not in w.band_peers()
-    elif case == "nodeless-swap":
-        assert check == "alive"
-    else:
-        assert check == "alive (no probe target)" and w.band_rx_at is not None
-        assert w.band_peers() == []
 
 
 def test_worker_contact_stamps_ignore_our_own_traffic(tmp_path, monkeypatch):

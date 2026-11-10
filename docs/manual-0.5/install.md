@@ -33,10 +33,10 @@ From the top of the checkout (this makes `hub/` and `worker/` folders there):
 ```sh
 pip install -e '.[manifest]'          # the hub validates plugin manifests with jsonschema
 
-# 1. A relay. The small one from the tests listens on 127.0.0.1 only, so it
-#    serves this machine's workers; for other machines run Telesthete's
-#    relay, telesthete-hub (prebuilt binaries: the Telesthete README).
-python tests/e2e/relay.py 7474 &
+# 1. A relay. Rook's small one listens on 127.0.0.1 unless you give it a
+#    host (`python -m rook.core2.relay 7474 0.0.0.0`); Telesthete's relay,
+#    telesthete-hub, also works (prebuilt binaries: the Telesthete README).
+python -m rook.core2.relay 7474 &
 
 # 2. The hub: init writes hub/hub.yaml (with a new band key), makes the
 #    hub's keys, asks for your sign-in password, and prints an API token

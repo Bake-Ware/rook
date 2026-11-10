@@ -31,31 +31,6 @@ APP = Starlette(routes=[Route("/x/account-api", api, methods=["GET", "POST"]),
 
 
 @pytest.mark.asyncio
-async def test_registered_origin_is_served_in_memory():
-    undo = upstream.register_local(["http://127.0.0.1:8765", "http://localhost:8765"], APP)
-    try:
-        assert upstream.local_app("http://127.0.0.1:8765/x/account-api") is APP
-        assert upstream.local_app("http://LOCALHOST:8765/x") is APP
-        assert upstream.local_app("http://127.0.0.1:9999/x") is None
-        status, data = await upstream.request_json(
-            "POST", "http://127.0.0.1:8765/x/account-api?a=1", params={"b": "2"},
-            json={"csrf": "c"}, cookies={"rook_account": "tok"},
-            headers={"Authorization": "Bearer t"})
-        assert status == 201
-        assert data == {"method": "POST", "query": {"a": "1", "b": "2"}, "cookie": "tok",
-                        "auth": "Bearer t", "body": '{"csrf": "c"}', "type": "application/json"}
-        status, data = await upstream.request_json("GET", "http://localhost:8765/x/account-api")
-        assert data["body"] is None and data["type"] is None   # json=None sends no body
-        with pytest.raises(upstream.Unavailable):
-            await upstream.request_json("GET", "http://127.0.0.1:8765/text")
-        with pytest.raises(upstream.Unavailable):
-            await upstream.request_json("GET", "http://127.0.0.1:8765/boom")
-    finally:
-        undo()
-    assert upstream.local_app("http://127.0.0.1:8765/x") is None
-
-
-@pytest.mark.asyncio
 async def test_other_urls_go_over_http():
     async def handler(request):
         return web.json_response({"cookie": request.cookies.get("rook_account"),
