@@ -22,7 +22,16 @@ pipes instead of a terminal.
 
 A Rust worker (`worker/`) also opens a TCP connection (`net.open {host,
 port}`) or a serial port (`serial.open {port, baud}`) as a stream: what
-arrives is output, `{"text": ...}` is sent, closing the stream closes it.
+arrives is output, `{"text": ...}` or `{"bytes": <base64>}` is sent, closing
+the stream closes it. `net.open {..., tls: true}` wraps the connection in
+TLS (`verify: false` takes a device's self-signed certificate); the hub
+script speaks HTTP or WebSocket over it, the worker only carries bytes.
+
+`net.udp` opens a UDP socket: `{"bytes": ..., "to": "host:port"}` sends one
+datagram (broadcast and multicast addresses too: Wake-on-LAN, SSDP, mDNS),
+and each datagram that arrives is a `bytes` event whose `by` is its sender
+(`ip:port`). `{"bytes": ...}` input is the Rust worker's; the Python worker
+answers that it isn't on it.
 
 ## Reading and writing
 

@@ -1200,12 +1200,14 @@ dependencies = [
  "libc",
  "regex",
  "reqwest",
+ "rustls",
  "serde_json",
  "serialport",
  "sha2",
  "tar",
  "telesthete",
  "tokio",
+ "webpki-roots",
  "yaml-rust2",
 ]
 

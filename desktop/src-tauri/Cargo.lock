@@ -4259,12 +4259,14 @@ dependencies = [
  "libc",
  "regex",
  "reqwest 0.12.28",
+ "rustls",
  "serde_json",
  "serialport",
  "sha2",
  "tar",
  "telesthete",
  "tokio",
+ "webpki-roots",
  "yaml-rust2",
 ]
 

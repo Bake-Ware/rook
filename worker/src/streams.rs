@@ -402,24 +402,35 @@ impl Streams {
     }
 }
 
+/// What an input event sends: its `text`, or its `bytes` (base64) decoded.
+pub fn input_data(body: &Value) -> Option<Vec<u8>> {
+    match (body["text"].as_str(), body["bytes"].as_str()) {
+        (Some(text), _) => Some(text.as_bytes().to_vec()),
+        (None, Some(b64)) => B64.decode(b64).ok(),
+        _ => None,
+    }
+}
+
 fn check_input(body: &Value) -> Result<(), String> {
     let Value::Object(m) = body else {
         return Err("an input event needs an object body".into());
     };
-    let keys: Vec<&str> = ["text", "signal", "resize"]
+    let keys: Vec<&str> = ["text", "bytes", "signal", "resize"]
         .into_iter()
         .filter(|k| m.contains_key(*k))
         .collect();
     match keys.as_slice() {
         ["text"] if m["text"].is_string() => Ok(()),
         ["text"] => Err("input text must be a string".into()),
+        ["bytes"] if m["bytes"].as_str().is_some_and(|b| B64.decode(b).is_ok()) => Ok(()),
+        ["bytes"] => Err("input bytes must be base64".into()),
         ["signal"] if m["signal"].as_str().is_some_and(|s| SIGNALS.contains(&s)) => Ok(()),
         ["signal"] => Err(format!("signal must be one of {}", SIGNALS.join(", "))),
         ["resize"] => match m["resize"].as_array() {
             Some(r) if r.len() == 2 && r.iter().all(|x| x.as_u64().is_some_and(|n| n > 0)) => Ok(()),
             _ => Err("resize is [cols, rows]".into()),
         },
-        _ => Err("an input event has exactly one of text, signal, resize".into()),
+        _ => Err("an input event has exactly one of text, bytes, signal, resize".into()),
     }
 }
 
@@ -456,6 +467,18 @@ mod tests {
             .await
             .unwrap();
         assert!(got["dropped"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn input_carries_text_or_bytes() {
+        assert_eq!(input_data(&json!({"text": "hi"})), Some(b"hi".to_vec()));
+        assert_eq!(input_data(&json!({"bytes": "AP8=", "to": "h:9"})), Some(vec![0, 255]));
+        assert_eq!(input_data(&json!({"signal": "HUP"})), None);
+        assert!(check_input(&json!({"bytes": "AP8="})).is_ok());
+        assert!(check_input(&json!({"bytes": "not base64!"}))
+            .unwrap_err()
+            .contains("base64"));
+        assert!(check_input(&json!({"text": "a", "bytes": "AA=="})).is_err());
     }
 
     #[tokio::test]

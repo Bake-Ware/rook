@@ -34,8 +34,9 @@ caps:
   write:
     doc: >-
       Send input to a live stream: body {text} (keystrokes; "\r" is Enter on a terminal),
-      {signal: INT|TERM|KILL|HUP} or {resize: [cols, rows]}. Typing into a shell runs what you
-      type, so this is exec.
+      {bytes} (base64, raw bytes; the Rust worker only), {signal: INT|TERM|KILL|HUP} or
+      {resize: [cols, rows]}. A UDP stream (net.udp) also takes `to` (host:port) beside text
+      or bytes. Typing into a shell runs what you type, so this is exec.
     risk: exec
     scope: local
     args:

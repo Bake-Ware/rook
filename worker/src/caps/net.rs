@@ -1,12 +1,19 @@
-//! net.open (TCP) and serial.open (worker/manifests/net.yaml, serial.yaml):
-//! a connection or a port as a stream. What arrives becomes `bytes` events;
-//! input `text` is sent; any signal (stream.close sends HUP) closes it.
+//! net.open (TCP, optionally TLS), net.udp and serial.open
+//! (worker/manifests/net.yaml, serial.yaml): a connection, a UDP socket or a
+//! port as a stream. What arrives becomes `bytes` events; input `text` or
+//! `bytes` is sent; any signal (stream.close sends HUP) closes it. The hub
+//! script speaks the protocol (HTTP, WebSocket, SSDP); the worker carries bytes.
 
 use std::io::{ErrorKind, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{TcpStream, ToSocketAddrs, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
+
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, RootCertStore, SignatureScheme, StreamOwned};
 
 use serde_json::{json, Map, Value};
 
@@ -21,26 +28,192 @@ pub fn tcp(a: Args<'_>, streams: &Arc<Streams>, participants: Vec<String>, mut a
     let host = a.need("host")?;
     let port = a.int("port", 0)?;
     let port = u16::try_from(port).map_err(|_| "port must be 1-65535".to_string())?;
+    let (tls, verify) = (a.bool("tls", false)?, a.bool("verify", true)?);
     let addr = (host.as_str(), port)
         .to_socket_addrs()
         .map_err(|e| format!("{host}: {e}"))?
         .next()
         .ok_or(format!("{host}: no address"))?;
-    let sock = TcpStream::connect_timeout(&addr, CONNECT).map_err(|e| format!("{host}:{port}: {e}"))?;
-    sock.set_read_timeout(Some(POLL)).map_err(|e| e.to_string())?;
-    let writer = sock.try_clone().map_err(|e| e.to_string())?;
+    let mut sock = TcpStream::connect_timeout(&addr, CONNECT).map_err(|e| format!("{host}:{port}: {e}"))?;
     attrs.insert("host".into(), json!(host));
     attrs.insert("port".into(), json!(port));
+    attrs.insert("tls".into(), json!(tls));
+    let title = format!("{host}:{port}");
+    if !tls {
+        sock.set_read_timeout(Some(POLL)).map_err(|e| e.to_string())?;
+        let writer = sock.try_clone().map_err(|e| e.to_string())?;
+        return Ok(pump(
+            streams,
+            "socket",
+            &title,
+            "net.open",
+            participants,
+            attrs,
+            Box::new(sock),
+            Box::new(writer),
+        ));
+    }
+    let name = ServerName::try_from(host.clone()).map_err(|e| format!("{host}: {e}"))?;
+    let mut conn = ClientConnection::new(tls_config(verify), name).map_err(|e| e.to_string())?;
+    sock.set_read_timeout(Some(CONNECT)).map_err(|e| e.to_string())?;
+    while conn.is_handshaking() {
+        conn.complete_io(&mut sock)
+            .map_err(|e| format!("{host}:{port}: TLS: {e}"))?;
+    }
+    sock.set_read_timeout(Some(POLL)).map_err(|e| e.to_string())?;
+    let shared = Shared(Arc::new(Mutex::new(StreamOwned::new(conn, sock))));
     Ok(pump(
         streams,
         "socket",
-        &format!("{host}:{port}"),
+        &title,
         "net.open",
         participants,
         attrs,
-        Box::new(sock),
-        Box::new(writer),
+        Box::new(shared.clone()),
+        Box::new(shared),
     ))
+}
+
+/// One TLS session read and written from two threads, one call at a time
+/// (a read waits at most `POLL`).
+struct Shared<S>(Arc<Mutex<S>>);
+
+impl<S> Clone for Shared<S> {
+    fn clone(&self) -> Self {
+        Shared(self.0.clone())
+    }
+}
+
+impl<S: Read> Read for Shared<S> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().read(buf)
+    }
+}
+
+impl<S: Write> Write for Shared<S> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.lock().unwrap().flush()
+    }
+}
+
+/// The web's roots, or (`verify` false: a device with a self-signed
+/// certificate) any certificate, its handshake signatures still checked.
+fn tls_config(verify: bool) -> Arc<ClientConfig> {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let builder = ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .expect("ring supports the default versions");
+    let config = if verify {
+        let roots = RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+        };
+        builder.with_root_certificates(roots).with_no_client_auth()
+    } else {
+        builder
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(AnyCertificate(provider)))
+            .with_no_client_auth()
+    };
+    Arc::new(config)
+}
+
+#[derive(Debug)]
+struct AnyCertificate(Arc<CryptoProvider>);
+
+impl ServerCertVerifier for AnyCertificate {
+    fn verify_server_cert(
+        &self,
+        _: &CertificateDer<'_>,
+        _: &[CertificateDer<'_>],
+        _: &ServerName<'_>,
+        _: &[u8],
+        _: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls12_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+    }
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls13_signature(message, cert, dss, &self.0.signature_verification_algorithms)
+    }
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
+}
+
+/// A UDP socket as a stream: input `{text | bytes, to: "host:port"}` sends
+/// one datagram (broadcast and multicast addresses too); each datagram that
+/// arrives is a `bytes` event whose `by` is its sender (`ip:port`).
+pub fn udp(_: Args<'_>, streams: &Arc<Streams>, participants: Vec<String>, mut attrs: Map<String, Value>) -> Reply {
+    let sock = UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("udp: {e}"))?;
+    sock.set_broadcast(true).map_err(|e| format!("udp: {e}"))?;
+    sock.set_read_timeout(Some(POLL)).map_err(|e| e.to_string())?;
+    let port = sock.local_addr().map_err(|e| e.to_string())?.port();
+    attrs.insert("port".into(), json!(port));
+    let opened = streams.open("udp", &format!("udp :{port}"), "net.udp", participants, attrs);
+    let (sid, input) = (opened.id.clone(), opened.input);
+    let stop = Arc::new(AtomicBool::new(false));
+    {
+        let (stop, sock, streams, sid) = (
+            stop.clone(),
+            sock.try_clone().map_err(|e| e.to_string())?,
+            streams.clone(),
+            sid.clone(),
+        );
+        std::thread::spawn(move || {
+            while let Ok(body) = input.recv() {
+                if body.get("signal").is_some() {
+                    break;
+                }
+                let sent = match (crate::streams::input_data(&body), body["to"].as_str()) {
+                    (Some(data), Some(to)) => to
+                        .to_socket_addrs()
+                        .map_err(|e| format!("{to}: {e}"))
+                        .and_then(|mut a| a.find(|a| a.is_ipv4()).ok_or(format!("{to}: no IPv4 address")))
+                        .and_then(|addr| sock.send_to(&data, addr).map_err(|e| format!("{to}: {e}"))),
+                    _ => Err("a datagram needs text or bytes, and to (host:port)".into()),
+                };
+                if let Err(e) = sent {
+                    let _ = streams.append(&sid, "status", Body::Json(json!({"error": e})), "net.udp");
+                }
+            }
+            stop.store(true, Ordering::Relaxed);
+        });
+    }
+    let streams = streams.clone();
+    std::thread::spawn(move || {
+        let mut buf = vec![0u8; 65536];
+        loop {
+            match sock.recv_from(&mut buf) {
+                Ok((n, from)) => {
+                    if streams
+                        .append(&sid, "bytes", Body::Bytes(buf[..n].to_vec()), &from.to_string())
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(_) if !stop.load(Ordering::Relaxed) => {} // a quiet POLL, or an ICMP refusal from a send
+                Err(_) => break,
+            }
+        }
+        streams.close(&sid, "net.udp", Map::new());
+    });
+    Ok(json!({"stream": opened.id}))
 }
 
 pub fn serial(a: Args<'_>, streams: &Arc<Streams>, participants: Vec<String>, mut attrs: Map<String, Value>) -> Reply {
@@ -84,8 +257,8 @@ fn pump(
         let stop = stop.clone();
         std::thread::spawn(move || {
             while let Ok(body) = input.recv() {
-                if let Some(text) = body["text"].as_str() {
-                    if w.write_all(text.as_bytes()).and_then(|_| w.flush()).is_err() {
+                if let Some(data) = crate::streams::input_data(&body) {
+                    if w.write_all(&data).and_then(|_| w.flush()).is_err() {
                         break;
                     }
                 } else if body.get("signal").is_some() {

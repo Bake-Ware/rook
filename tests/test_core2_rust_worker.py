@@ -39,6 +39,41 @@ def binary() -> Path:
     return ROOT / "worker/target/debug/rook-worker"
 
 
+
+def self_signed(folder):
+    """A server TLS context with a fresh self-signed certificate (a device's)."""
+    import datetime
+    import ssl
+
+    crypto = pytest.importorskip("cryptography")  # noqa: F841
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "device.local")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(x509.random_serial_number()).not_valid_before(now)
+            .not_valid_after(now + datetime.timedelta(days=1)).sign(key, hashes.SHA256()))
+    (folder / "dev.pem").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    (folder / "dev.key").write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                                       serialization.NoEncryption()))
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(folder / "dev.pem", folder / "dev.key")
+    return ctx
+
+
+def can_broadcast() -> bool:
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            s.sendto(b"", ("255.255.255.255", 9))
+        return True
+    except OSError:
+        return False
+
 def enrolled(home: Path, psk: str, relay: str, worker_id: str) -> Path:
     """What `python -m rook.core2.worker enroll` leaves: worker.yaml and <data>/bands.json."""
     (home / "data").mkdir(parents=True)
@@ -197,6 +232,54 @@ def test_the_rust_worker_on_a_real_hub(tmp_path, binary):
             server.close()
             out = await call("net.open", host="127.0.0.1", port=port)
             assert not out["ok"] and "refused" in out["error"].lower(), out
+
+            # TLS to a device with a self-signed certificate, raw bytes both ways.
+            blob = bytes(range(256)) * 4
+            tls_server = await asyncio.start_server(echo, "127.0.0.1", 0, ssl=self_signed(tmp_path))
+            port = tls_server.sockets[0].getsockname()[1]
+            out = await call("net.open", host="127.0.0.1", port=port, tls=True)
+            assert not out["ok"] and "TLS" in out["error"] and "certificate" in out["error"], out
+            out = await call("net.open", host="127.0.0.1", port=port, tls=True, verify=False)
+            assert out["ok"], out
+            tls = out["result"]["stream"]
+            await call("stream.write", stream=tls, body={"bytes": base64.b64encode(blob).decode()})
+            await output(tls, blob)
+            assert (await call("stream.close", stream=tls))["result"]["closed"]
+            tls_server.close()
+
+            # UDP: datagrams out (unicast, broadcast) and in, each with its sender.
+            class Echo(asyncio.DatagramProtocol):
+                def connection_made(self, transport):
+                    self.transport = transport
+
+                def datagram_received(self, data, addr):
+                    self.transport.sendto(b"re:" + data, addr)
+            peer, _ = await asyncio.get_running_loop().create_datagram_endpoint(Echo, local_addr=("127.0.0.1", 0))
+            peer_at = "127.0.0.1:%d" % peer.get_extra_info("socket").getsockname()[1]
+            out = await call("net.udp")
+            assert out["ok"], out
+            udp = out["result"]["stream"]
+            if can_broadcast():           # Wake-on-LAN's broadcast; a send error would be a status event
+                await call("stream.write", stream=udp, body={"bytes": base64.b64encode(b"\xff" * 6).decode(),
+                                                             "to": "255.255.255.255:9"})
+            await call("stream.write", stream=udp, body={"bytes": base64.b64encode(b"\x00M-SEARCH").decode(),
+                                                         "to": peer_at})
+
+            async def datagrams():
+                got = (await call("stream.read", stream=udp, wait=5))["result"]["events"]
+                return got if any(e["type"] == "bytes" for e in got) else None
+            got = await until(datagrams)
+            assert [(e["by"], base64.b64decode(e["b64"])) for e in got if e["type"] == "bytes"] == \
+                [(peer_at, b"re:\x00M-SEARCH")], got
+            assert not [e for e in got if e["type"] == "status" and "error" in e["data"]], got
+            worker_port = next(r for r in (await call("stream.list"))["result"]["streams"] if r["id"] == udp)["attrs"]["port"]
+            peer.sendto(b"hello", ("127.0.0.1", worker_port))           # unsolicited, the other way
+            await output(udp, b"hello")
+            await call("stream.write", stream=udp, body={"text": "x"})    # no destination
+            got = (await call("stream.read", stream=udp, types=["status"], wait=5))["result"]["events"]
+            assert any("to (host:port)" in e["data"].get("error", "") for e in got), got
+            assert (await call("stream.close", stream=udp))["result"]["closed"]
+            peer.close()
 
             # Serial: one end of a pty pair is the "device".
             device, port_fd = os.openpty()
