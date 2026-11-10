@@ -1,6 +1,7 @@
 # Attention on the hub (castling-attention: "Attention becomes an aggregation
 # job on the hub run by the house agent"). No sorting engine and no rules:
-# a ready-made job wakes the house agent every so often; its attention skill
+# a ready-made job, off until the person says yes in guided setup, wakes the
+# house agent every so often; its attention skill
 # collects what is trying to reach the person through ordinary caps (the
 # phone's notifications and texts, mail, chat), curates what matters into
 # attention records (attention.list: one place), and gets word to the person
@@ -41,7 +42,6 @@ jobs:
       text: "Attention pass: follow your attention skill (agent.skill attention). Look at what has arrived for the people you look after since your last pass, curate what matters into attention records, and reach them only if something can't wait."
     as: persona
     persona: house
-    enabled: true
 
 skills:
   attention: skills/attention.md

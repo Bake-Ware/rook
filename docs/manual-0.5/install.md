@@ -104,7 +104,8 @@ symlinks into `rook/plugins/`:
 
 - `agents` and `agents-claude-code` or `agents-codex`: the house agent and the
   other ready-made agents ([Agents](agents.md)); `attention`: the house
-  agent's attention pass over what tries to reach you (needs `jobs`).
+  agent's attention pass over what tries to reach you (needs `jobs`; off
+  until you say yes when guided setup asks).
 - `tasks`, `projects`, `knowledge`, `concepts`, `whiteboard`: the workbench
   ([The workbench](workbench.md)).
 - `notify`, `telegram`, `discord`: reaching people.
