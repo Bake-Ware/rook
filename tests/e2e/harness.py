@@ -40,7 +40,8 @@ E2E_TIMEOUT = int(os.environ.get("E2E_TIMEOUT", "150"))
 START_SECS = 30.0
 HTTP_SECS = 60.0
 WHY = "End-to-end test of the Castling hub and worker."
-PORTS = ("battery", "torrent", "shell", "file")   # real 0.5 ports the worker loads too
+PORTS = ("torrent", "shell", "file")   # real 0.5 ports the worker loads too
+HUB_PORTS = ("battery",)                # real 0.5 ports whose scripts run on the hub for the worker
 
 
 def until(cond, seconds: float = 20.0, what: str = "condition", every: float = 0.1):
@@ -171,6 +172,8 @@ class Band:
         keys = self.hub_dir / "data" / "keys"
         keys.mkdir(parents=True, mode=0o700)
         self.library.mkdir()
+        for name in HUB_PORTS:
+            (self.library / name).symlink_to(REPO / "rook" / "plugins" / name, target_is_directory=True)
         for name, key in (("root.key", self.root_key), ("op.key", self.op_key)):
             (keys / name).write_text(bytes(key).hex() + "\n")
             (keys / name).chmod(0o600)

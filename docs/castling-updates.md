@@ -130,6 +130,33 @@ releases are kept on a worker; the hub keeps its three newest releases.
 - A rollout cut short by a hub restart is recorded as `interrupted`; start it
   again (workers already on the release are skipped).
 
+## A one-file worker
+
+The Rust worker (`worker/`) is one built file per platform, and updates the
+same way with the same caps:
+
+- **A release of built files.** Put the files in a folder on the hub
+  machine, named as the workers run them (`rook-worker-linux-x86_64`,
+  `rook-worker-windows-x86_64.exe`, ...), and roll it out with
+  `update.rollout {source: <that folder>, version: "0.5.1"}`. The hub signs
+  them as one release (`files` = name -> SHA-256, `requires` empty); it
+  never builds or fetches them.
+- **Who takes it.** A worker that runs one built file says so in its
+  announce, `facts.artifact`; it takes only releases that hold that file,
+  and a worker without `artifact` takes only source releases.
+- **On the worker.** The installed binary is the base and is never
+  overwritten. It pulls the release, checks the chain anchor.json's `root`
+  -> the `rook-hubkey` grant the hub announces -> the operational key ->
+  `release.sig` -> its file's SHA-256, keeps the file in
+  `<data>/core/<version>/`, and restarts. Every start goes through the base,
+  which runs the core `state.json` picks (the same file and the same trial
+  as above: three boots, a call from the hub served within 120 s, else back
+  to `current`). `worker.update {version}` switches by hand (`installed` is
+  the base).
+- Not here: requirements, the smoke check (the trial covers a file that
+  won't start) and re-hashing at every start. Windows refuses updates over
+  the band, as above.
+
 ## The desktop app's update check (R10)
 
 `GET /updates/desktop.json` (no token, like 0.4's) lists the

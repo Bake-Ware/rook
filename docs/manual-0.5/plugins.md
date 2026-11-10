@@ -10,6 +10,12 @@ doesn't ship it. Plugins only talk to each other through caps.
 Some plugins run on workers (shell, files, devices), some on the hub (the
 workbench, agents, notify), and a plugin can have parts on both.
 
+A hub plugin can also serve a worker's caps: its scripts run on the hub
+and reach the machine through the worker's primitives (`shell.exec`,
+`file.*`, streams). An agent still calls `worker=kaiju cap=battery.status`
+and finds it in kaiju's caps; nothing is installed on kaiju
+([Writing a plugin](authoring.md#a-workers-cap-run-from-the-hub)).
+
 ## The hub's library
 
 The hub's **library** (`library:` in `hub.yaml`) is the folder of plugins

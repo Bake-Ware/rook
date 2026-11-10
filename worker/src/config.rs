@@ -1,10 +1,11 @@
 //! What joining needs, from the files enrollment writes for the Python
 //! worker (rook/core2/enroll/device.py `install`): the config's `name`,
 //! `worker_id` and `data`, its inline `bands`, and `<data>/bands.json`.
-//! The first band with a PSK and a relay is joined.
+//! The first band with a PSK and a relay is joined. `anchor` names the home
+//! hub's root key (core updates).
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use yaml_rust2::{Yaml, YamlLoader};
@@ -14,6 +15,9 @@ pub struct Config {
     pub worker_id: String,
     pub psk: String,
     pub relay: String,
+    pub data: PathBuf,
+    /// anchor.json: the home hub's root key, which a core release's signature chains to.
+    pub anchor: PathBuf,
 }
 
 pub fn load(path: &Path) -> Result<Config, String> {
@@ -22,6 +26,7 @@ pub fn load(path: &Path) -> Result<Config, String> {
     let raw = docs.into_iter().next().unwrap_or(Yaml::Null);
     let base = path.parent().unwrap_or(Path::new("."));
     let data = base.join(raw["data"].as_str().ok_or(format!("{}: data is required", path.display()))?);
+    let anchor = base.join(raw["anchor"].as_str().unwrap_or("anchor.json"));
     let name = match raw["name"].as_str() {
         Some(n) => n.to_string(),
         None => hostname(),
@@ -52,7 +57,7 @@ pub fn load(path: &Path) -> Result<Config, String> {
         .into_iter()
         .find_map(|(p, r)| Some((p?, r?)))
         .ok_or("no band with a psk and a relay in the config or <data>/bands.json")?;
-    Ok(Config { name, worker_id, psk, relay })
+    Ok(Config { name, worker_id, psk, relay, data, anchor })
 }
 
 /// `<data>/worker_id`, made once when the config names none (as the Python worker does).

@@ -759,12 +759,31 @@ class Hub:
             caps.update(mine)
             uses[plugin] = list(norm.get("uses") or ())
             plugins[plugin] = sorted(mine)
+        # Hub plugins' ``on: worker`` caps: this worker's, run on the hub, when
+        # its os is in their platforms and it serves the primitives they use.
+        # One of the same name the worker still runs itself gives way (it moved).
+        own = set(caps)
+        for plugin, (norm, mine) in self.plugins.worker_caps().items():
+            os_name = k.facts.get("os")
+            mine = {n: self._contracted(m) for n, m in mine.items()
+                    if not m.get("platforms") or os_name in m["platforms"]}
+            if not mine or not all(u in own for u in norm.get("uses") or () if not any(c in u for c in "*?[")):
+                continue
+            for n in plugins.pop(plugin, ()):
+                caps.pop(n, None)
+            uses.pop(plugin, None)
+            caps.update(mine)
+            plugins[plugin] = sorted(mine)
         ceiling = k.ceiling if rights.valid_rights(k.ceiling) else {"grants": ["*"]}
         self.dispatcher.workers[k.id] = Worker(k.id, k.name, k.band, caps, ceiling, uses=uses,
                                                plugins=plugins, sacred=k.name in self.cfg.sacred)
 
     def worker_manifest(self, wid: str, plugin: str) -> dict | None:
         """The normalized manifest of ``plugin`` as worker ``wid`` runs it."""
+        w = self.dispatcher.workers.get(wid)
+        hub = self.plugins.worker_caps().get(plugin)
+        if hub is not None and w is not None and plugin in w.plugins:
+            return hub[0]                  # its caps run on the hub for this worker
         k = self.known.get(wid)
         for e in k.manifests if k else ():
             norm = self._norm.get(e["hash"])
@@ -1175,7 +1194,7 @@ class Hub:
     async def _send(self, band: str, request: dict) -> dict:
         """Dispatch's ``send``: the hub's own caps run here, the rest go over
         the band and wait for the reply (dispatch owns the timeout)."""
-        if request["target"] == self.node:
+        if request["target"] == self.node or self.plugins.runs_for_worker(request["cap"]):
             return await self._local(request)
         fut = self.loop.create_future()
         self._pending[request["id"]] = fut
@@ -1206,15 +1225,20 @@ class Hub:
         caller = KitCaller(person=t.get("person"), agent=t.get("agent"), session=t["session"], band=t["band"],
                            why=t["why"], owner=self.identities.is_owner(t.get("person")),
                            tainted=bool(s and s.tainted))     # a call in a tainted session acts on outside content
-        out = {"id": req["id"], "from": self.node}
+        out = {"id": req["id"], "from": t["worker"]}       # the hub answers for the worker it ran a cap of
         # The layers the door put on this call (a page's caps, its authors) and
         # the door ride on its ctx.call; plugin ``uses`` don't compose: each
         # hub plugin's own apply at each hop (the agents runtime relies on it).
         held = self.dispatcher._inflight.get(t["nonce"])
-        parent = _PARENT.set((t["session"], [layer for layer in held[3] if layer[0] != "uses"], held[4])
+        parent = _PARENT.set((t["session"], [layer for layer in held[3] if layer[0] != "uses"], held[4], t["call"])
                              if held else None)
+        worker = None
+        if t["worker"] != self.node:        # an on: worker cap of a hub plugin: the worker it was called on
+            w, k = self.dispatcher.workers.get(t["worker"]), self.known.get(t["worker"])
+            worker = {"id": t["worker"], "name": w.name if w else None, "os": k.facts.get("os") if k else None}
         try:
-            out.update(ok=True, result=await self.plugins.run(req["cap"], req.get("args"), caller))
+            out.update(ok=True, result=await self.plugins.run(req["cap"], req.get("args"), caller, worker=worker,
+                                                              appliance=(req.get("carry") or {}).get("instance")))
         except asyncio.CancelledError:
             raise
         except (Exception, SystemExit) as e:    # plugin code never takes the hub down
@@ -1229,7 +1253,7 @@ class Hub:
         try:
             json.dumps(out.get("result"), allow_nan=False)
         except (TypeError, ValueError):
-            out = {"id": req["id"], "from": self.node, "ok": False, "error": f"{req['cap']}: result is not JSON"}
+            out = {"id": req["id"], "from": t["worker"], "ok": False, "error": f"{req['cap']}: result is not JSON"}
         return out
 
     async def _announce_hub(self) -> None:
@@ -1344,12 +1368,12 @@ class Hub:
         if target is None:
             return {"ok": False, "error": f"no single worker serves {cap}"}
         layers, door = [["uses", {"grants": list(uses)}]] if uses is not None else [], None
-        parent = _PARENT.get()
+        parent, inside = _PARENT.get(), None
         if parent and sid == parent[0]:     # inside the call it runs in: that call's layers and door too
-            layers, door = [*parent[1], *layers], parent[2]
+            layers, door, inside = [*parent[1], *layers], parent[2], parent[3]
         reply = await self.dispatcher.dispatch(caller, Call(
             cap=cap, target=target, args=args, why=who.why or f"{who.plugin or 'hub'} plugin", session=sid,
-            layers=layers, door=door, contract=contract))
+            layers=layers, door=door, contract=contract, parent=inside))
         self._announce(reply)
         return reply
 

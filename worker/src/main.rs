@@ -16,6 +16,7 @@ fn main() {
         eprintln!("rook-worker: {e}");
         std::process::exit(2);
     });
+    rook_worker::core::select(&cfg.data); // the core state.json picks: it may exec another file
     let rt = tokio::runtime::Runtime::new().expect("a tokio runtime");
     let out = rt.block_on(async {
         let worker = rook_worker::Worker::start(cfg).await?;

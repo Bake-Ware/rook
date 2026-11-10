@@ -77,15 +77,19 @@ def test_caps_stay_known_while_the_worker_is_offline_and_across_hub_restarts(fre
 
 
 def test_real_plugin_ports_say_what_this_machine_can_serve(band):
-    """battery and torrent from rook/plugins in the real worker: the hub
-    lists their caps, and one the machine can't serve says why, in the
-    listing and in the reply."""
+    """battery runs on the hub for the real worker: listed among its caps, it
+    runs the OS's tool there through shell.exec and answers what that tool
+    said. torrent, on the worker, says why a cap it can't serve is unavailable."""
     c = band.caps()
     assert {"battery.status", "torrent.version", "torrent.add"} <= set(c["caps"])
-    # the worker's config declares no battery hardware
-    assert c["unavailable"]["battery.status"] == "missing hardware: battery"
+    assert "battery.status" not in c.get("unavailable", {})
     out = band.owner.call("battery.status")
-    assert out["error"] == "unavailable: battery.status: missing hardware: battery", out
+    if out["ok"]:
+        assert set(out["result"]) == {"percent", "status"}, out
+    else:                       # this machine has no battery or no tool: the tool's own failure
+        assert not out["error"].startswith("unavailable"), out
+    steps = [e for e in band.owner.get("/journal?cap=shell.exec&limit=50")["entries"] if e.get("parent") == out["id"]]
+    assert steps and {e["cap"] for e in steps} == {"shell.exec"}, steps
     if shutil.which("deluge-console"):
         v = band.owner.call("torrent.version")
         assert v["ok"] and v["result"]["deluge"], v

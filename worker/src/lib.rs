@@ -5,12 +5,15 @@
 
 pub mod caps;
 pub mod config;
+pub mod core;
 pub mod drop;
 pub mod link;
 pub mod manifests;
+pub mod sig;
 pub mod streams;
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -38,10 +41,8 @@ const MAX_QUEUED: usize = 1000;
 const SYNC_IDS: usize = 500;
 
 /// Caps of the announced manifests this worker doesn't serve, and why.
-const UNAVAILABLE: [(&str, &str); 2] = [
-    ("worker.log", "the hub's journal has every call this worker ran: read it there"),
-    ("worker.update", "not in the Rust worker yet"),
-];
+const UNAVAILABLE: [(&str, &str); 1] = [("worker.log", "the hub's journal has every call this worker ran: read it there")];
+const PULL_TIMEOUT: Duration = Duration::from_secs(300);
 
 pub struct Worker {
     cfg: Config,
@@ -56,6 +57,11 @@ pub struct Worker {
     hub: Mutex<Option<(String, Instant)>>,
     waiting: Mutex<HashMap<String, oneshot::Sender<Value>>>,
     replies: drop::Replies,
+    core: core::Core,
+    /// The hub's operational keys (kid -> key), from grants its root key signed.
+    op_keys: Mutex<HashMap<String, String>>,
+    /// Running a core update that hasn't served a call for the hub yet.
+    on_trial: std::sync::atomic::AtomicBool,
 }
 
 /// Events for the hub, sent in order as `core.event` batches.
@@ -103,6 +109,7 @@ impl Worker {
                 })
                 .collect(),
         );
+        let cfg_data = cfg.data.clone();
         let outbox = Arc::new(Outbox::default());
         let streams = {
             let outbox = outbox.clone();
@@ -111,12 +118,25 @@ impl Worker {
         Ok(Arc::new(Worker {
             cfg, link, band, manifests, entries, started: now(), streams, outbox,
             hub: Mutex::new(None), waiting: Mutex::new(HashMap::new()), replies: drop::Replies::default(),
+            core: core::Core::new(&cfg_data), op_keys: Mutex::new(HashMap::new()), on_trial: Default::default(),
         }))
     }
 
     /// Announce, then heartbeat, keep the relay's path open, send events and
     /// answer calls until the link fails.
     pub async fn run(self: Arc<Self>) -> std::io::Result<()> {
+        if self.core.in_trial() {
+            self.on_trial.store(true, Ordering::SeqCst);
+            let me = self.clone();
+            tokio::spawn(async move {
+                let secs = core::trial_secs();
+                tokio::time::sleep(secs).await;
+                if me.on_trial.swap(false, Ordering::SeqCst) {
+                    me.core.abandon(&format!("no call from the home hub served within {}s", secs.as_secs()));
+                    core::restart();
+                }
+            });
+        }
         self.announce().await;
         let me = self.clone();
         tokio::spawn(async move {
@@ -153,6 +173,11 @@ impl Worker {
             let Ok(Value::Object(msg)) = serde_json::from_slice::<Value>(&payload) else { continue };
             let text = |k: &str| msg.get(k).and_then(Value::as_str);
             if text("kind") == Some("announce") && text("name") == Some("rook") {
+                if let Some(key) = msg.get("hubkey").and_then(|g| sig::grant_key(g, &self.root()?)) {
+                    if let Some(kid) = sig::key_id(&key) {
+                        self.op_keys.lock().unwrap().insert(kid, key);
+                    }
+                }
                 self.hub_announced(text("worker_id").unwrap_or_default()).await;
                 continue;
             }
@@ -185,6 +210,9 @@ impl Worker {
                     Ok(result) => json!({"id": id, "from": me.cfg.worker_id, "ok": true, "result": result}),
                     Err(error) => json!({"id": id, "from": me.cfg.worker_id, "ok": false, "error": error}),
                 };
+                if reply["ok"] == json!(true) && me.on_trial.swap(false, Ordering::SeqCst) {
+                    me.core.confirm(); // this core served a call for the hub: it stays
+                }
                 let data = reply.to_string();
                 if drop && data.len() > drop::THRESHOLD {
                     let desc = me.replies.serve(&id, &me.cfg.worker_id, data.into_bytes());
@@ -269,7 +297,7 @@ impl Worker {
     async fn announce(&self) {
         let unavailable: Map<String, Value> = UNAVAILABLE.iter().map(|(c, why)| (c.to_string(), json!(why))).collect();
         self.send(&json!({"kind": "announce", "worker_id": self.cfg.worker_id, "name": self.cfg.name, "core": CORE,
-                          "version": VERSION, "facts": facts(), "manifests": self.entries,
+                          "version": self.version(), "facts": facts(), "manifests": self.entries,
                           "manifests_hash": manifests::sha256(&self.entries), "unavailable": unavailable}))
             .await;
     }
@@ -288,12 +316,10 @@ impl Worker {
             "worker.ping" => Ok(json!({"pong": true, "at": now()})),
             "worker.status" => Ok(self.status()),
             "worker.restart" => {
-                tokio::spawn(async {
-                    tokio::time::sleep(RESTART_DELAY).await;
-                    restart();
-                });
+                restart_soon();
                 Ok(json!({"restarting": true}))
             }
+            "worker.update" => self.update(a).await,
             "shell.exec" => shell::exec(a).await,
             "shell.which" => shell::which(a),
             "shell.env" => shell::env(a),
@@ -342,12 +368,65 @@ impl Worker {
             .map(|m| format!("{}@{}", m.plugin, m.version))
             .collect();
         let unavailable: Map<String, Value> = UNAVAILABLE.iter().map(|(c, why)| (c.to_string(), json!(why))).collect();
-        json!({"name": self.cfg.name, "worker_id": self.cfg.worker_id, "version": VERSION, "core": CORE,
+        json!({"name": self.cfg.name, "worker_id": self.cfg.worker_id, "version": self.version(), "core": CORE,
                "facts": facts(), "pid": std::process::id(), "started": (self.started * 1000.0).round() / 1000.0,
                "uptime_s": (now() - self.started) as u64, "band": {"connected": true, "hub_contact": hub},
                "plugins": plugins, "unavailable": unavailable, "streams_open": self.streams.open_count(),
-               "release": null})
+               "release": self.core.status()})
     }
+
+    /// The release this process runs, else the version built into it.
+    fn version(&self) -> String {
+        self.core.running.clone().unwrap_or_else(|| VERSION.to_string())
+    }
+
+    fn root(&self) -> Option<String> {
+        let anchor: Value = serde_json::from_str(&std::fs::read_to_string(&self.cfg.anchor).ok()?).ok()?;
+        anchor["root"].as_str().map(String::from)
+    }
+
+    /// worker.update: `bundle` (a release from update.rollout: pull it,
+    /// check its signature, restart into it on trial) or `version` (restart
+    /// on a core this worker keeps).
+    async fn update(&self, a: Args<'_>) -> Reply {
+        let (bundle, version) = (a.0.get("bundle").filter(|b| !b.is_null()), a.str("version")?);
+        if bundle.is_some() == version.is_some() {
+            return Err("bad args: bundle (a release from update.rollout) or version (a kept core), one of them".into());
+        }
+        let open = self.streams.open_count();
+        if open > 0 {
+            return Err(format!("busy: {open} terminal or stream(s) open here would end; close them, or update this worker later"));
+        }
+        if let Some(v) = version {
+            let report = self.core.switch(&v)?;
+            restart_soon();
+            return Ok(report);
+        }
+        if cfg!(windows) {
+            return Err("core updates over the band aren't supported on Windows yet".into());
+        }
+        let blob = self.replies.pull(&self.link, bundle.unwrap(), PULL_TIMEOUT).await.map_err(|e| format!("release not received: {e}"))?;
+        let (release, file) = core::unpack(&blob).map_err(|e| format!("update refused: {e}"))?;
+        let kid = release["kid"].as_str().unwrap_or_default();
+        let key = self.op_keys.lock().unwrap().get(kid).cloned()
+            .ok_or(format!("update refused: signature refused: not signed by a hub that may approve code here (hub {})", release["hub"]))?;
+        if release["typ"] != "rook-release" || !sig::verify(&key, &release) {
+            return Err("update refused: signature refused: bad signature".into());
+        }
+        if !core::matches(&release, &file) {
+            return Err("update refused: tampered release: the file does not match its signed hash".into());
+        }
+        let report = self.core.receive(&release, file).map_err(|e| format!("update refused: {e}"))?;
+        restart_soon();
+        Ok(report)
+    }
+}
+
+fn restart_soon() {
+    tokio::spawn(async {
+        tokio::time::sleep(RESTART_DELAY).await;
+        core::restart();
+    });
 }
 
 async fn blocking(f: impl FnOnce() -> Reply + Send + 'static) -> Reply {
@@ -357,25 +436,5 @@ async fn blocking(f: impl FnOnce() -> Reply + Send + 'static) -> Reply {
 fn facts() -> Value {
     let os = if cfg!(windows) { "windows" } else { "linux" };
     let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
-    json!({"os": os, "arch": std::env::consts::ARCH, "cpus": cpus})
-}
-
-/// Replace this process with a fresh one on the same command line.
-fn restart() {
-    let exe = std::env::current_exe().expect("own path");
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        let e = std::process::Command::new(exe).args(args).exec();
-        eprintln!("rook-worker: restart failed: {e}");
-    }
-    #[cfg(windows)]
-    {
-        if let Err(e) = std::process::Command::new(exe).args(args).spawn() {
-            eprintln!("rook-worker: restart failed: {e}");
-            return;
-        }
-        std::process::exit(0);
-    }
+    json!({"os": os, "arch": std::env::consts::ARCH, "cpus": cpus, "artifact": core::artifact()})
 }

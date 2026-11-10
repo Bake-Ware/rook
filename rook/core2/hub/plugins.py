@@ -133,11 +133,13 @@ class HubPlugins:
             for cap, gen in record_caps(self.records, name).items():
                 self._add(p, cap, HubCap({**data["caps"].get(cap, {}), **gen.spec}, gen.handler))
             for cap, meta in data["caps"].items():
-                if meta.get("on") != "hub" or cap in self._caps or meta.get("unavailable"):
+                # A runs_on: hub plugin's ``on: worker`` caps are a worker's caps whose scripts run here.
+                worker_cap = meta.get("on") == "worker" and data["runs_on"] == "hub"
+                if (meta.get("on") != "hub" and not worker_cap) or cap in self._caps or meta.get("unavailable"):
                     continue
                 if "run" in meta:
                     self._add(p, cap, HubCap(meta, resolve(meta["run"])))
-                elif "action" in meta:
+                elif "action" in meta and not worker_cap:
                     self._add(p, cap, HubCap(meta, action=meta["action"]))
             if data.get("gate"):
                 g = data["gate"]
@@ -217,7 +219,7 @@ class HubPlugins:
         """``{cap: manifest data}`` for the hub node. ``metas(cap)`` gives a
         provider cap's data wherever it runs, so a contract's service cap
         carries the chosen provider's risk, scope and effects."""
-        out = {cap: hc.meta for cap, hc in self._caps.items()}
+        out = {cap: hc.meta for cap, hc in self._caps.items() if hc.meta.get("on") == "hub"}
         for contract in self.contracts.contracts():
             spec = self.contracts.contract(contract)
             if not spec or spec.get("route") != "provider" or contract in out:
@@ -232,9 +234,27 @@ class HubPlugins:
                              **({"timeout": provider["timeout"]} if "timeout" in provider else {})}
         return out
 
-    async def run(self, cap: str, args: dict | None, caller: Caller) -> Any:
+    def worker_caps(self) -> dict:
+        """``{plugin: (manifest, {cap: data})}``: the ``on: worker`` caps of hub
+        plugins, caps of a worker (or of an appliance, through its delegate)
+        whose scripts run here."""
+        out = {}
+        for name, p in self.plugins.items():
+            caps = {c: self._caps[c].meta for c in p.caps if self._caps[c].meta.get("on") == "worker"}
+            if caps:
+                out[name] = (p.manifest, caps)
+        return out
+
+    def runs_for_worker(self, cap: str) -> bool:
+        hc = self._caps.get(cap)
+        return hc is not None and hc.meta.get("on") == "worker"
+
+    async def run(self, cap: str, args: dict | None, caller: Caller, worker: dict | None = None,
+                  appliance: dict | None = None) -> Any:
         """Run one hub cap for ``caller`` (from the ticket). Returns the result;
-        raises KitError (message for the caller) on failure."""
+        raises KitError (message for the caller) on failure. ``worker``: the
+        worker an ``on: worker`` cap was called on ({id, name, os}; for an
+        appliance its delegate); ``appliance``: the instance the hub carried."""
         args = dict(args or {})
         hc = self._caps.get(cap)
         if hc is None:
@@ -257,7 +277,9 @@ class HubPlugins:
                                     plugin_dir=str(p.folder) if p.folder else None,
                                     plugin_data=str(self._data(p)) if self.data_dir else None,
                                     timeout=_timeout(hc.meta))
-        res = await invoke(hc.handler, self._ctx(p, caller, cap), args)
+        ctx = self._ctx(p, caller, cap)
+        ctx.worker, ctx.appliance = worker, appliance
+        res = await invoke(hc.handler, ctx, args)
         if isinstance(res, FileResult):     # ctx.file: the same file map a worker returns
             res = file_result(res.data if res.data is not None else res.path.read_bytes(), res.name, res.mime)
         return res

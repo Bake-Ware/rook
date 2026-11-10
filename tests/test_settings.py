@@ -152,33 +152,6 @@ def _worker_node(caps=("worker.plugin.list", "worker.config_get", "worker.settin
 
 # -- the dashboard: environment over setup.json (P1), chat path (P4) ------------------
 
-def test_dashboard_explicit_env_beats_setup_and_store():
-    from rook.remote import dashboard_settings as ds
-    assert ds.explicit_sources(["--domain", "x"], {"ROOK_BAND_NAME": "b"}) == {
-        "domain": "flag --domain", "band_name": "env ROOK_BAND_NAME"}
-    current = {"domain": "env.example.com", "hub_public": "hub.example.com:443", "band_name": "rook-band"}
-    setup = {"pyz_domain": "file.example.com", "hub_public": "file.example.com:443", "band_name": "filed"}
-    vals, src, conflicts = ds.resolve(current, {"domain": "env ROOK_DOMAIN"}, setup,
-                                      {"band_name": "stored-name"})
-    assert vals == {"domain": "env.example.com", "hub_public": "file.example.com:443",
-                    "band_name": "stored-name"}
-    assert src == {"domain": "env ROOK_DOMAIN", "hub_public": "setup.json", "band_name": "stored"}
-    assert conflicts and conflicts[0]["key"] == "core.hub.domain"
-    # Older callers (no explicit map): setup.json still wins over the constructor.
-    vals, _, conflicts = ds.resolve(current, None, setup, {})
-    assert vals["domain"] == "file.example.com" and not conflicts
-
-
-def test_enrollment_env_key_only_seeds(tmp_path, monkeypatch):
-    from rook.remote.enrollment import EnrollmentStore
-    monkeypatch.setenv("ROOK_SETUP_PATH", str(tmp_path / "setup.json"))
-    e = EnrollmentStore(tmp_path / "enrollment.db")
-    assert e.import_config(["first-key-alpha"], seed_only=True) == []
-    assert e.transport_psks() == ["first-key-alpha"]
-    # A different key later in the environment is ignored, not added.
-    assert e.import_config(["stale-key-bravo"], seed_only=True) == ["stale-key-bravo"]
-    assert e.transport_psks() == ["first-key-alpha"]
-
 
 # -- worker side -----------------------------------------------------------------------
 

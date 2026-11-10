@@ -6,26 +6,20 @@ design: [docs/design/desktop-voice.md](../docs/design/desktop-voice.md).
 
 What it does:
 
-- shows the hub's dashboard in a window, signed in, with a tray Dashboard
-  menu of its five sections (`ui/sections.json`, checked against the hub's
-  sidebar by tests/test_desktop_contract.py);
-- the Rook panel (`ui/panel.html`): what waits on you (`approvals.list`),
-  tasks in progress and blocked (`task.read` deck), knowledge search
-  (`knowledge.read`) and agent sessions (`/account/work/sessions`), each item
-  a link into the dashboard;
+- shows the hub's site in a window, signed in, with a tray Dashboard menu
+  of the hub's own pages by section (`page.list`);
+- the Rook panel (`ui/panel.html`): the hub's pages, and the calls waiting
+  for your approval (`GET /holds`), each item a link into the site;
 - opens a quick-ask box on a global hotkey (default `Ctrl+Alt+Space`) and
-  asks the hub's home agent; "Ask about this page" opens the dashboard's
-  page-aware @home dock instead;
-- shows desktop notifications for new chat messages and for what waits on
-  you;
+  asks the hub's house agent (`agent.chat.send`); "Ask about this page"
+  opens the site's dock instead;
+- shows desktop notifications for what waits on you;
 - push-to-talk (hold `Ctrl+Alt+V`) with answers read aloud by the voice
   server (`/api/voice`, played with cpal) and, in builds with the
   `wake-word` feature, a wake word;
 - one copy at a time (a second launch shows the panel), start at sign-in,
   and an update check against the hub's `/updates/desktop.json`;
-- starts and stops this computer's worker;
-- installs a hub on this computer (Linux) or explains how to (macOS: Docker;
-  Windows: WSL or Docker).
+- adds this computer to the hub as a worker, and starts and stops it.
 
 ## Why Tauri 2 and not Electron
 
@@ -55,22 +49,20 @@ Firefox, so this is a small risk; WebKitGTK is the one to test.
 
 ```
 desktop/
-  ui/                 the app's own pages: settings, quick-ask overlay, hub installer (plain HTML/JS, no build step)
+  ui/                 the app's own pages: settings, quick-ask overlay, panel (plain HTML/JS, no build step)
   src-tauri/
     src/lib.rs        tray, windows, hotkeys, commands, background polling
     src/config.rs     settings.json and credentials.json (0600)
-    src/hub.rs        sign-in, home agent (chat or MCP), chat rooms, the panel's lists, updates
-    src/hub05.rs      the same on a 0.5 hub: token sign-in, the HTTP door, holds, pages
+    src/hub.rs        what the rest shares: errors, answers, waiting items, the HTTP client, the update feed
+    src/hub05.rs      the hub: token sign-in, the HTTP door, holds, pages, quick ask
     src/notify.rs     what deserves a notification (pure)
-    src/sections.rs   the dashboard's sections for the tray menu (ui/sections.json)
+    src/sections.rs   the hub's pages by section, for the tray menu
     src/update.rs     which published file is a newer app for this install (pure)
-    src/worker.rs     find and start/stop this computer's worker
-    src/worker05.rs   this computer's 0.5 worker: enroll by device code, run as a child
-    src/installer.rs  the hub installer wizard's plan, arguments and output parsing
+    src/worker.rs     the worker's status, and finding its processes
+    src/worker05.rs   this computer's worker: join with a one-time code, run as a child
     src/voice/        audio helpers, transcription, capture and playback (cpal),
                       speech pieces and WAV (speak.rs), wake word (tract)
-    tests/live_hub.rs end-to-end against a running hub (ignored by default)
-    tests/live_hub05.rs  the same against a 0.5 hub, adding a worker too
+    tests/live_hub05.rs  end-to-end against a running hub, adding a worker too (ignored by default)
 ```
 
 The dashboard window loads the hub's own site and stays there:
@@ -78,49 +70,32 @@ The dashboard window loads the hub's own site and stays there:
 - **No app access for hub pages.** `build.rs` declares every app command in
   an ACL manifest, so a command is callable only from a window whose
   capability allows it (`capabilities/settings.json`, `overlay.json`,
-  `install.json`, `panel.json`, each listing just what that page uses). No
+  `panel.json`, each listing just what that page uses). No
   capability names the dashboard window. "Ask about this page" runs one
-  constant script there (`OPEN_DOCK_JS`: click the dock's launcher, focus its
+  constant script there (`OPEN_DOCK_JS`: click the dock's button, focus its
   text box); nothing from the page comes back to the app.
 - **Navigation guard.** It may navigate only within the hub's origin. Links
   elsewhere, popups and `target=_blank` open in the system browser (the
   opener plugin); other schemes are dropped.
 
-## 0.4 and 0.5
-
-Settings > Your hub > Rook version switches between a 0.4 hub (`hub.rs`,
-`worker.rs`, below) and a Rook 0.5 hub (castling: `hub05.rs`,
-`worker05.rs`). The switch stays until every hub is on 0.5; the 0.4 paths
-are unchanged. On 0.5 the app signs in with the person's door token (the hub
-site's `/login` checks it is a person's and gives the dashboard window its
-session), calls the HTTP door as that person, and runs this computer's 0.5
-worker itself: "Add this computer" runs the worker's `enroll` (device code)
-and approves the code with the token. Details: [docs/castling-desktop.md](../docs/castling-desktop.md).
-
 ## Talking to the hub
 
-Nothing new is needed on the hub. The app uses the dashboard API with the
-same session cookie a browser gets:
-
-- **Sign in** in the dashboard window (the app reads the `rook_account` or
-  `rook_session` cookie from the webview's cookie store once you are in), or
-  with a user name and password (the account login form, else the dashboard
-  password). Only the hub's operator can use the dashboard API, the same rule
-  as the browser.
-- **Quick ask.** `home.ask` is the API `rook_home_ask` uses, but the hub
-  refuses write-risk caps over the band, so `/api/band/call` can't reach it
-  (by design: the dashboard's band path must not widen what callers may do).
-  So by default the app asks in a private two-person chat room with the home
-  agent (`Quick ask (desktop)`), which the home agent answers like any
-  `@home` message, with the room's recent messages as context. With an agent
-  token (Tokens page) in Settings > Quick ask > Advanced, it calls
-  `rook_call(worker="rook", cap="home.ask")` over the hub's `/mcp`, exactly as
-  `rook_home_ask` does.
-- **Notifications** poll `/api/chat/rooms` (unread counts and the last
-  message; it never moves your read marker) and `approvals.list` (a hub
-  without it is asked again only every 20 polls).
-- **The panel** calls read-risk hub caps through `/api/band/call`, which
-  the hub forwards to its MCP side and runs as the signed-in person.
+- **Sign in** with the person's door token, the one the hub site's sign-in
+  page takes. The site's `/login` checks once that it is a person's token
+  (an agent's is refused) and gives the hub's window its `rook_web` session;
+  `/web/api/me` names the person.
+- **Everything else** is the HTTP door's JSON API with `Authorization:
+  Bearer <token>`, as the person: `POST /call` (each with a why, journaled)
+  for `agent.chat.send` (quick ask, in the person's own session with the
+  house agent, the dock's) and `page.list` (the tray and panel pages, every
+  20 polls), and `GET /holds` (the panel and notifications). No MCP door: its
+  tokens are an agent's, acting for a person; the app acts as the person.
+- **This computer's worker**: "Add this computer" gets a one-time code as
+  the person (`POST /enroll/code`) and runs the worker's `enroll` with it;
+  the config bundle configures the worker, and its
+  voice service fills empty voice settings. The app runs `python -m
+  rook.core2.worker` from `<settings>/worker05/` as a child process.
+- **Updates**: the public `/updates/desktop.json`.
 
 ## Building
 
@@ -141,7 +116,7 @@ cargo run --features wake-word -- --show settings
 cargo tauri build --features wake-word      # installers in target/release/bundle/
 ```
 
-`--show settings|overlay|install|panel|dashboard` opens that window at start
+`--show settings|overlay|panel|dashboard` opens that window at start
 (the settings window also opens on first run, and a start by hand shows the
 panel; `--background`, which start-at-sign-in passes, shows nothing).
 `--check [file]` prints what the app sees on this computer as JSON and exits
@@ -157,9 +132,8 @@ Features:
 - `wake-word`: openWakeWord on tract. Off at runtime until the person turns
   it on and picks a model.
 
-Bundles include `scripts/install-hub.sh` and the two openWakeWord feature
-models from `android/app/src/main/assets/wakeword/` (no copies in this
-directory).
+Bundles include the two openWakeWord feature models from
+`android/app/src/main/assets/wakeword/` (no copies in this directory).
 
 ## Tests
 
@@ -167,10 +141,7 @@ directory).
 cd desktop/src-tauri
 cargo test --features wake-word --lib       # unit tests (no hub, no microphone)
 cargo clippy --features wake-word --all-targets
-# against a local hub (scripts/local-hub.sh) with the home agent on:
-ROOK_TEST_HUB=http://127.0.0.1:7005 ROOK_TEST_PASS=... ROOK_TEST_MCP_TOKEN=... \
-  cargo test --test live_hub -- --ignored
-# against a 0.5 hub (docs/castling-e2e.md, "A 0.5 hub and worker by hand"):
+# against a running hub (docs/castling-e2e.md, "A 0.5 hub and worker by hand"):
 ROOK_TEST_HUB05=http://127.0.0.1:8740 ROOK_TEST_TOKEN05=<a person's token> \
   ROOK_TEST_PYTHON05=<python with rook + telesthete> cargo test --test live_hub05 -- --ignored
 ```
@@ -186,16 +157,13 @@ by commit, the Tauri CLI by exact version, and cargo runs with `--locked`.
 - **Global hotkeys on Linux need X11.** Under Wayland the hotkey does not
   register (a platform limit of global shortcuts); use the tray menu, or a
   desktop-environment shortcut that runs the app's "Ask" action (follow-up).
-- **The sign-in cookie is stored in a 0600 file** in the app's config
+- **The sign-in token is stored in a 0600 file** in the app's config
   directory, not the OS keychain (follow-up).
 - **Publishing:** CI builds the bundles on every push to master;
   `python tools/desktop_publish.py --run <run id> --tag <release>` attaches
   them to a GitHub release as `rook-desktop-<version>-*`, which is what the
   hub's update check offers (only a green run of a push to master). The app
   offers only installers from Rook's GitHub releases (`update::RELEASES`).
-- **Google sign-in** leaves the hub's origin, so the navigation guard sends
-  it to the system browser, where it signs in the browser, not the app. Use
-  the password sign-in, or a local account.
 - **Tray on GNOME** needs the AppIndicator extension (Ubuntu ships it). Where
   no tray shows, the hotkey still works, and running the app again shows the
   panel of the running copy (`--show settings` for its settings).
@@ -205,6 +173,3 @@ by commit, the Tauri CLI by exact version, and cargo runs with `--locked`.
   step; see the voice design doc.
 - **Updates are manual**: the app tells you and opens the download; it
   doesn't install it itself (that needs signed builds).
-- **Bundle a hub with the app** ("one binary that also installs the hub"): the
-  wizard runs the hub installer; shipping the hub inside the app is a
-  follow-up.

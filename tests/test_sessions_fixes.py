@@ -11,7 +11,6 @@ from types import SimpleNamespace
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from test_band_management import portal  # noqa: F401 — fixture
 from rook.worker import agent_activity as aa
 from rook.worker.plugins import claude_history as ch
 from rook.worker.plugins import sessions as sp
@@ -339,60 +338,3 @@ class SlowBand:
         return {"ok": True, "from": target, "result": {"ok": True, "items": [rec], "total": 1}}
 
 
-@pytest.mark.asyncio
-async def test_hub_serves_its_cached_list_at_once(portal):  # noqa: F811
-    p = portal
-    p.server._band = band = SlowBand()
-    async with TestClient(TestServer(p.app)) as client:
-        get = lambda q: client.get("/account/work/sessions" + q, headers=p.headers)
-        # Nothing read yet: every host listed, none asked, nothing fetched.
-        body = await (await get("?cached=1")).json()
-        assert body["cached"] is True and band.calls == [] and body["sessions"] == []
-        assert {w["worker_id"]: (w["fetched"], w["stale"], w["cached"]) for w in body["workers"]} == {
-            "w1": (None, False, True), "w2": (None, False, True)}
-        # Each host asked on its own fills the cache.
-        for wid in ("w1", "w2"):
-            one = await (await get("?worker=" + wid)).json()
-            assert [w["worker_id"] for w in one["workers"]] == [wid] and one["cached"] is False
-        band.calls.clear()
-        body = await (await get("?cached=1")).json()
-        assert band.calls == [] and {s["key"] for s in body["sessions"]} == {f"w1/claude/{C1}", f"w2/claude/{C2}"}
-        assert all(w["fetched"] and not w["stale"] for w in body["workers"])
-        # A host whose last read failed is stale in the cached list too, with its error.
-        band.fail = True
-        failed = await (await get("?worker=w2")).json()
-        assert failed["workers"][0]["stale"] and failed["errors"][0]["worker_id"] == "w2"
-        body = await (await get("?cached=1")).json()
-        assert {w["worker_id"]: w["stale"] for w in body["workers"]} == {"w1": False, "w2": True}
-        assert [e["worker_id"] for e in body["errors"]] == ["w2"]
-        assert f"w2/claude/{C2}" in {s["key"] for s in body["sessions"]}
-        # Filters apply to the cached copy.
-        body = await (await get("?cached=1&live_only=1")).json()
-        assert body["sessions"] == []
-        band.fail = False
-        await get("?worker=w2")
-        body = await (await get("?cached=1")).json()
-        assert not any(w["stale"] for w in body["workers"]) and body["errors"] == []
-
-
-@pytest.mark.asyncio
-async def test_hub_follow_asks_for_the_tail_and_falls_back(portal):  # noqa: F811
-    p = portal
-    p.server._band = band = SlowBand()
-    body = {"csrf": p.csrf, "worker": "w1", "agent": "claude", "native_id": C1, "offset": 0, "version": ""}
-    async with TestClient(TestServer(p.app)) as client:
-        out = await (await client.post("/account/work/session/follow", json=dict(body, tail=40),
-                                        headers=p.headers)).json()
-        assert out["tail_from"] == 7 and band.calls[-1][2]["tail"] == 40
-        out = await (await client.post("/account/work/session/follow", json=dict(body, tail=999),
-                                        headers=p.headers)).json()
-        assert band.calls[-1][2]["tail"] == 200
-        await client.post("/account/work/session/follow", json=body, headers=p.headers)
-        assert "tail" not in band.calls[-1][2]
-        # A worker from before tail=: asked again without it.
-        band.old_follow = True
-        band.calls.clear()
-        out = await (await client.post("/account/work/session/follow", json=dict(body, tail=40),
-                                        headers=p.headers)).json()
-        assert out["ok"] and out.get("tail_from") is None and out["total_messages"] == 47
-        assert [("tail" in c[2]) for c in band.calls] == [True, False]

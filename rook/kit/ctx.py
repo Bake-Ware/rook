@@ -178,6 +178,9 @@ class Ctx:
         self._streams = streams
         self._loop = loop
         self._tmp: Path | None = None
+        # The worker and appliance instance a hub-run ``on: worker`` cap was called on.
+        self.worker: dict | None = None
+        self.appliance: dict | None = None
         self.log = logging.getLogger(f"rook.plugin.{self.plugin}")
 
     person = property(lambda self: self.caller.person)

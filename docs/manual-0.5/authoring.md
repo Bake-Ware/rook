@@ -286,6 +286,49 @@ docs: { manual: docs/manual.md }
 - `pages.board` is a sandboxed page that may call only `homework.*`
   ([The hub site](dashboard.md)).
 
+## A worker's cap, run from the hub
+
+In a `runs_on: hub` plugin, a cap with `on: worker` is a cap **of a
+worker** whose script runs on the hub. The hub lists it among the caps of
+every worker whose `os` is in the plugin's `platforms` (none: every os)
+and that serves the caps in its `uses`. A call to it runs the script with
+`ctx.worker` (`{id, name, os}`), and the script reaches the machine with
+`ctx.call_on(ctx.worker["id"], "shell.exec", ...)`. Each of those calls is
+journaled as its own call, linked to the outer one by `parent`.
+
+```yaml
+manifest: 1
+plugin: uptime
+version: 0.1.0
+doc: How long a worker has been up.
+runs_on: hub
+platforms: [linux]
+uses: [shell.exec]
+caps:
+  get:
+    doc: The worker's uptime line.
+    on: worker
+    risk: read
+    scope: local
+    run: scripts/uptime.py:get
+```
+
+```python
+# scripts/uptime.py
+async def get(ctx):
+    out = await ctx.call_on(ctx.worker["id"], "shell.exec", argv=["uptime"])
+    if out["code"] != 0:
+        raise ctx.Error(out["stderr"].strip() or "uptime failed")
+    return out["stdout"].strip()
+```
+
+The hub doesn't check for programs on the worker (`requires` isn't read
+for these caps): the script runs the command and reports the real failure.
+With an `appliance:` section the same caps are called by the appliance's
+name: the script runs for its delegate (`ctx.worker`) and gets the
+instance as `ctx.appliance` (`{name, host, port, settings}`, secrets
+resolved).
+
 ## Hooks and events
 
 `hooks:` runs code without a call: `start` and `stop` (open and close
