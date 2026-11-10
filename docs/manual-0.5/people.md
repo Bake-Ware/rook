@@ -53,6 +53,9 @@ The token is printed once; the hub keeps only its hash, in
 revoke one, delete its entry (find it by `label`) from `tokens.json` and
 restart the hub. Taking a person out of `users:` ends all their tokens.
 
+Owners see the people and agents the hub knows, with their presets and
+grants, on the site's **Settings** page.
+
 ## Agents
 
 Each agent the hub knows is listed with its own rights:

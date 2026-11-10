@@ -435,7 +435,7 @@ class _Handlers:
 
     async def hub_status(self, ctx) -> dict:
         hub = self.hub
-        out = {"hub": hub.hub_id, "node": hub.node, "band": hub.band, "core": CORE_VERSION,
+        out = {"hub": hub.hub_id, "node": hub.node, "band": hub.band, **hub.enroll.address(), "core": CORE_VERSION,
                "doors": [d.name for d in hub.doors], "closed_doors": sorted(hub.dispatcher.closed_doors),
                "plugins": [{"plugin": p.name, "version": str(p.manifest["version"]),
                             "title": p.manifest.get("title") or p.name, "builtin": bool(p.manifest.get("builtin")),

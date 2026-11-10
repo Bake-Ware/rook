@@ -10,4 +10,7 @@ The hub plugins' settings, and each person's own.
 Values set here are kept in the hub's data folder (`settings.json`,
 `person-settings.json`) and win over `hub.yaml`'s `settings:`. The
 **Settings** page (under More) shows the hub's status and edits both kinds.
+Its Hub section gives the band, the relay (or WebSocket address) machines
+join at, and a link to the Workers page where they are let in. Owners also
+see the people and agents the hub knows; people are added in `hub.yaml`.
 Worker-side settings are only in each worker's `worker.yaml` for now.

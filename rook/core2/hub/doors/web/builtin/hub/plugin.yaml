@@ -25,7 +25,7 @@ settings:
 
 caps:
   status:
-    doc: "What the hub runs: its id, band, core version, doors, plugins and (for owners) its people and agents with their grants."
+    doc: "What the hub runs: its id, band and the relay (or ws_url) machines join it at, core version, doors, plugins and (for owners) its people and agents with their grants."
     on: hub
     risk: read
     scope: multi-user
