@@ -125,9 +125,7 @@ def pub_text(sk) -> str:
 
 
 def manifest_hash(manifest: dict) -> str:
-    """Hex SHA-256 of a parsed manifest's canonical JSON (spec 4.2).
-    TODO(castling:manifest): use rook.kit.manifest's hash once it lands, if
-    it hashes the same bytes."""
+    """Hex SHA-256 of a parsed manifest's canonical JSON (spec 4.2)."""
     return hashlib.sha256(canonical(manifest)).hexdigest()
 
 

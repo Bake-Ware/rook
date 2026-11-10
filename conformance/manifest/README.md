@@ -47,7 +47,7 @@ aliases, custom tags, duplicate keys, non-string keys.
 
 ## Canonical form
 
-For hashing and signing: the parsed manifest as JSON with sorted keys, no
-whitespace, ASCII-escaped (`canonical_json`). The signed file-hash list is
+For hashing and signing: the parsed manifest as RFC 8785 canonical JSON
+(`rook.core2.wire.canonical`). The signed file-hash list is
 every file in the plugin folder except `plugin.sig`, as sorted
 `path -> sha256`; symlinks are refused.

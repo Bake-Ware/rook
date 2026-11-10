@@ -8,7 +8,7 @@ import pytest
 
 pytest.importorskip("jsonschema")
 
-from rook.kit.manifest import (ManifestError, canonical_json, check_bump, compile_type, diff,
+from rook.kit.manifest import (ManifestError, check_bump, compile_type, diff,
                                file_hashes, glob_match, hold_effects, load, schema,
                                trust_class, validate)
 from rook.kit.manifest import _yaml
@@ -220,12 +220,6 @@ def test_not_a_mapping():
 
 
 # -- hashing and trust class ---------------------------------------------------
-
-def test_canonical_json():
-    assert canonical_json({"b": [1, "é"], "a": {"d": 1, "c": None}}) == \
-        b'{"a":{"c":null,"d":1},"b":[1,"\\u00e9"]}'
-    assert canonical_json(_yaml.loads(PIKVM)) == canonical_json(json.loads(json.dumps(_yaml.loads(PIKVM))))
-
 
 def test_file_hashes_and_trust_class(tmp_path):
     _folder(tmp_path, PIKVM)
